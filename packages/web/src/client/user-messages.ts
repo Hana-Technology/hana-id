@@ -52,7 +52,8 @@ const BY_CODE: Readonly<Record<string, string>> = Object.freeze({
   login_method_unavailable: 'This way of signing in isn’t available for this app. Choose another one.',
   code_invalid: 'The code was wrong. Sign in again to get a new one.',
   challenge_expired: 'The code expired. Sign in again to get a new one.',
-  link_pending: 'This sign-in method was added to a wallet recently and can’t open it yet. Use the wallet’s other sign-in method for now.',
+  // D864: true for whoever made the link and for the email's holder who didn't (the window offers to cancel it).
+  link_pending: `This email is waiting to be linked to a wallet. Sign in again and follow the steps in the ${P} window.`,
   link_refused: 'These sign-in methods can’t be linked. Sign in with the one that opened your wallet.',
   email_sharing_unavailable: `${P} can’t share your email right now. Try again later.`,
 });

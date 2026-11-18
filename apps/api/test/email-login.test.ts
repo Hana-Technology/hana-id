@@ -478,6 +478,29 @@ describe('POST /v1/link/cancel and /v1/link/unlink', () => {
     expect(await emailUsage(app.id)).toBeNull();
   });
 
+  it('D864: the pending member cancels itself with an email token over its own link_change nonce; no other nonce or member', async () => {
+    const { app, near, e, root, member } = await account(false);
+    const share = await seedShare(app.id, `${app.scope}#google#${G_SUB}#0`);
+    const changeToken = async (action: 'cancel' | 'unlink', key: string, epoch = 1, sub = e) =>
+      emailToken({ aud: emailAud(app.scope), sub, nonce: await linkChangeNonce(env.SIGNER_ACCOUNT, app.scope, action, root, fromHex(key), epoch, Uint8Array.from(salt)) });
+    // A session nonce (the refused login's token) is no cancel proof: link_mismatch, nothing relayed.
+    const sessionJwt = (await emailSessionBody(app.scope, {}, { sub: e })).jwt as string;
+    const asSession = await body(await linkCall('/v1/link/cancel', app, { jwt: sessionJwt, memberKey: member, epoch: 1, salt }));
+    expect([asSession.code, asSession.reason]).toEqual(['link_refused', 'link_mismatch']);
+    // The unlink nonce, a stale epoch, and the root as the member: refused before any gas.
+    expect((await body(await linkCall('/v1/link/cancel', app, { jwt: await changeToken('unlink', member), memberKey: member, epoch: 1, salt }))).reason).toBe('link_mismatch');
+    expect((await body(await linkCall('/v1/link/cancel', app, { jwt: await changeToken('cancel', member, 0), memberKey: member, epoch: 0, salt }))).reason).toBe('stale_epoch');
+    const rootKey = ikSync(app.scope, 'google', G_SUB);
+    expect((await body(await linkCall('/v1/link/cancel', app, { jwt: await changeToken('cancel', rootKey), memberKey: rootKey, epoch: 1, salt }))).reason).toBe('no_such_member');
+    expect(near.sent).toHaveLength(0);
+    const jwt = await changeToken('cancel', member);
+    const res = await linkCall('/v1/link/cancel', app, { jwt, memberKey: member, epoch: 1, salt });
+    expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+    expect([near.sent[0]!.method, near.sent[0]!.args]).toEqual(['cancel_link', { scope_id: app.scope, jwt, member_key: member, epoch: 1, salt }]);
+    // The account root's shares are revoked, as for any cancel (its devices sign in again and see the change).
+    expect(await revokedAt(share)).not.toBeNull();
+  });
+
   it('cancel and unlink refuse a Google token carrying hd or email (token_has_pii), relaying nothing (D271)', async () => {
     const { app, aud, near, root, member } = await account(false);
     for (const [path, action, extra] of [

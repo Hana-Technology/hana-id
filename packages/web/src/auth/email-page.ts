@@ -55,6 +55,12 @@
 // - `done`: "Signed in", or the link banners first (a pending method with Cancel, one just added); a banner's action
 //   is a proof, then the vault's answer;
 // - `stop`: why the login ended (a pending link: when it activates).
+// - `link_waiting` (D864): this email sign-in was refused because the email itself waits to join a wallet (someone
+//   linked it to a Google account with one code to this address): the screen says so, with the date the link starts
+//   working, and offers "Cancel this link" (one more code to the same address, over the vault's `link_change`
+//   commitment for this email only, answered `as: 'proof'`) or "Keep the link" (closes; nothing changes). Then
+//   `link_cancel`: the link was cancelled, was already gone, can't be cancelled any more (the waiting period ended:
+//   the notice mail's stronger advice), or wasn't cancelled (what to do next, with the code for support).
 //
 // - pk_test_ apps (the login entry carries /login's timings): this step's stages ride in the relay slot with the token
 //   (timings.ts `emailLoad` … `emailVerify`), each a sum of durations on this page's clock. Nothing else is measured.
@@ -82,7 +88,7 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
-import { type Dom, dom, errorView, originText } from './dom.ts';
+import { type Dom, dom, errorView, originText, supportCode } from './dom.ts';
 import { STORAGE_BLOCKED } from './errors.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { issuerDetail } from './email-api.ts';
@@ -127,7 +133,11 @@ export type EmailStage =
   /** Follow-up mode: a screen that waits for the user (google-match's choice, banners, a stop). */
   | 'link_choice'
   | 'banners'
-  | 'stopped';
+  | 'stopped'
+  /** D864: this email waits to join a wallet: Cancel this link, or Keep the link. */
+  | 'link_waiting'
+  /** D864: what became of that cancel. */
+  | 'link_cancelled';
 
 /** What the user saw last that the vault should hear if they cancel now (D245), or why the step can't go on. */
 type Reason = 'email_cancelled' | 'email_code_invalid' | 'email_challenge_expired' | 'email_rate_limited' | 'email_unavailable';
@@ -1053,6 +1063,10 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         return showDone(n.banners, slot);
       case 'stop':
         return showStop(n, slot);
+      case 'link_waiting':
+        return showLinkWaiting(n, slot);
+      case 'link_cancel':
+        return showLinkCancel(n);
     }
   }
 
@@ -1275,6 +1289,126 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       ),
     );
     settle('banners');
+  }
+
+  // ---- D864: the email that waits to join a wallet ----
+
+  /** The other sign-in the waiting screen named ("that Google account"), for the outcome's words. */
+  let waitingOther = 'that account';
+
+  /** The panel's close button: ends the follow-up mode and closes the window. */
+  function closeButton(id: string, label = 'Close'): HTMLElement {
+    const b = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id } }, label);
+    b.addEventListener('click', () => {
+      endFollow();
+      settle('done');
+      win.close();
+    });
+    return b;
+  }
+
+  /**
+   * The person who just proved this mailbox learns that it is being linked with another sign-in (`n.provider`, the
+   * wallet's own: named only by its kind, as the banners do), and since when it will work; Cancel proves the mailbox
+   * once more over the vault's `link_change` commitment. The safe default is to cancel: the one who made the link can
+   * make it again, while a link nobody here made would let this email open someone else's wallet.
+   */
+  function showLinkWaiting(n: Extract<FollowNotice, { t: 'link_waiting' }>, slot: number): void {
+    const google = n.provider === 'google';
+    const other = google ? 'a Google account' : 'another sign-in';
+    waitingOther = google ? 'that Google account' : 'that sign-in';
+    const when = dateText(n.effectiveAtMs);
+    const cancelB = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'link-cancel' } }, 'Cancel this link');
+    const keepB = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'link-keep' } }, 'Keep the link');
+    // One choice per screen, however fast the taps (the buttons are disabled too).
+    let chosen = false;
+    cancelB.addEventListener('click', () => {
+      if (chosen) return;
+      chosen = true;
+      cancelB.setAttribute('disabled', '');
+      keepB.setAttribute('disabled', '');
+      if (!follow || n.prove.method !== 'email' || n.prove.purpose !== 'link_change') {
+        endFollow();
+        fatal('Link not cancelled', 'This sign-in can’t cancel the link. Close this window and sign in with this email again.', 'token_invalid');
+        return;
+      }
+      startAs = { kind: 'link', purpose: 'link_change', commitment: n.prove.commitment };
+      sink = { kind: 'answer', slot, as: 'proof' };
+      // The address this window just proved: the code goes to it again, no retyping.
+      if (validAddress(address)) void sendCode();
+      else showAddress();
+    });
+    keepB.addEventListener('click', () => {
+      if (chosen) return;
+      chosen = true;
+      cancelB.setAttribute('disabled', '');
+      keepB.setAttribute('disabled', '');
+      endFollow();
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'The link stays'), header(), d.h('p', {}, `Nothing changed. This email can sign in here from ${when}.`), d.h('p', { class: 'muted' }, 'You can close this window.')));
+      settle('done');
+      win.close();
+    });
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel', attrs: { id: 'link-waiting' } },
+        d.h('h1', {}, google ? 'A Google account is being linked to this email' : 'Another sign-in is being linked to this email'),
+        header(),
+        alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'link-waiting-what' } }, `This email is being linked with ${other}, so both will open the same ${BRAND.company} wallet. The link starts working on ${when}. Until then, you can’t sign in here with this email.`),
+        d.h('p', { attrs: { id: 'link-waiting-advice' } }, 'Didn’t do this? Cancel the link. We’ll send one more code to this email to check it’s you. If you’re not sure, cancel it.'),
+        d.h('p', { class: 'muted', attrs: { id: 'link-waiting-keep' } }, `If you linked this email yourself, keep the link. This email opens that wallet from ${when}.`),
+        d.h('div', { class: 'actions stack' }, cancelB, keepB),
+      ),
+    );
+    notice = 'link_pending';
+    settle('link_waiting');
+  }
+
+  /** What became of the cancel (the vault re-read the chain before it said so). */
+  function showLinkCancel(n: Extract<FollowNotice, { t: 'link_cancel' }>): void {
+    endFollow();
+    const app = () => d.h('strong', {}, ctx.appName);
+    const codeLine = n.code ? d.h('p', { class: 'code' }, supportCode(n.code)) : null;
+    const passwordAdvice = d.h('p', { attrs: { id: 'link-cancel-advice' } }, 'If you didn’t start this link, change your email password. Someone may have used a code from your mailbox.');
+    let body: (HTMLElement | null)[];
+    let title: string;
+    switch (n.outcome) {
+      case 'cancelled':
+        title = 'Link cancelled';
+        body = [alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'link-cancel-what' } }, `This email is no longer being linked with ${waitingOther}. Anyone signed in to that wallet in this app will be asked to sign in again.`), passwordAdvice];
+        break;
+      case 'already_cancelled':
+        title = 'This link was already cancelled';
+        body = [alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'link-cancel-what' } }, `This email is no longer being linked with ${waitingOther}. There’s nothing more to do.`), passwordAdvice];
+        break;
+      case 'now_active':
+        title = 'This link can’t be cancelled any more';
+        body = [
+          alert(d, 'danger', { class: 'note', attrs: { role: 'alert', id: 'link-cancel-what' } }, `The waiting period has ended. This email and ${waitingOther} now open the same ${BRAND.company} wallet.`),
+          d.h('p', { attrs: { id: 'link-cancel-advice' } }, `This email now opens a wallet that belongs to whoever holds ${waitingOther}. Anything you add to it is theirs. If you didn’t do this, change your email password. Don’t sign in to `, app(), ' with this email, don’t add money to that wallet, and tell the app’s support.'),
+          d.h('p', { class: 'muted', attrs: { id: 'link-cancel-remove' } }, 'Within 7 days, whoever signs in to ', app(), ` with ${waitingOther} can remove this email: the sign-in window shows them a button to remove it.`),
+        ];
+        break;
+      case 'not_cancelled':
+        title = 'The link wasn’t cancelled';
+        body = [
+          alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'link-cancel-what' } }, 'Nothing changed: the link is still waiting.'),
+          d.h('p', { attrs: { id: 'link-cancel-advice' } }, 'Close this window, then sign in to ', app(), ' with this email again to try again.'),
+          codeLine,
+        ];
+        break;
+      case 'unknown':
+        title = 'We couldn’t check the link';
+        body = [
+          alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'link-cancel-what' } }, `${BRAND.company} couldn’t be reached, so we can’t tell whether the link was cancelled.`),
+          d.h('p', { attrs: { id: 'link-cancel-advice' } }, 'Sign in to ', app(), ' with this email again. If the link is still waiting, you’ll see the button to cancel it again.'),
+          codeLine,
+        ];
+        break;
+    }
+    d.show(d.h('section', { class: 'panel', attrs: { id: 'link-cancel-result', 'data-outcome': n.outcome } }, d.h('h1', {}, title), header(), ...body, d.h('div', { class: 'actions' }, closeButton('link-cancel-close'))));
+    notice = n.code ?? n.outcome;
+    settle('link_cancelled');
   }
 
   // ---- start ----

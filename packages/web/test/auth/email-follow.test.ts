@@ -380,3 +380,141 @@ describe('the follow-up mode', () => {
     expect(await s.answerIn(3)).toEqual({ idToken: TOKEN, as: 'proof' });
   });
 });
+
+describe('D864: the email that waits to join a wallet', () => {
+  const AT = NOW + 86_400_000;
+  const commitment = { scopeId: 's1', action: 'cancel', rootIk: 'a'.repeat(64), memberIk: 'b'.repeat(64), epoch: 1, salt: Array.from({ length: 32 }, (_, i) => i) };
+  const waitingNotice: FollowNotice = { t: 'link_waiting', provider: 'google', effectiveAtMs: AT, prove: { method: 'email', purpose: 'link_change', commitment } };
+
+  /** An email login whose token was relayed, then the vault's link_waiting in slot 2. */
+  async function onWaiting(): Promise<Setup> {
+    const s = setup();
+    await toCode('ada@example.com');
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await vi.waitFor(() => expect(s.page.stage).toBe('following'));
+    await s.vaultSays(2, waitingNotice);
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_waiting'));
+    return s;
+  }
+
+  it('says what is waiting and from when, in plain words; Cancel is first, Keep the link second', async () => {
+    const s = await onWaiting();
+    expect(document.querySelector('h1')?.textContent).toBe('A Google account is being linked to this email');
+    const what = document.getElementById('link-waiting-what')!;
+    expect(what.className).toContain('jp-alert-warning');
+    expect(what.textContent).toContain('This email is being linked with a Google account, so both will open the same Journear wallet.');
+    expect(what.textContent).toContain('The link starts working on');
+    expect(document.getElementById('link-waiting-advice')?.textContent).toBe('Didn’t do this? Cancel the link. We’ll send one more code to this email to check it’s you. If you’re not sure, cancel it.');
+    expect(document.getElementById('link-waiting-keep')?.textContent).toContain('If you linked this email yourself, keep the link.');
+    const buttons = [...document.querySelectorAll('.actions button')].map((b) => [b.id, b.textContent]);
+    expect(buttons).toEqual([
+      ['link-cancel', 'Cancel this link'],
+      ['link-keep', 'Keep the link'],
+    ]);
+    expect(s.page.notice).toBe('link_pending');
+    // Nothing of the other sign-in but its kind.
+    expect(pageText()).not.toContain('@');
+  });
+
+  it('Cancel sends one more code to the same address over the vault’s link_change commitment; the code answers slot 3 as a proof', async () => {
+    const s = await onWaiting();
+    click('link-cancel');
+    await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+    expect(s.issuer.startLink).toHaveBeenCalledTimes(1);
+    expect(s.issuer.startLink).toHaveBeenCalledWith(PK, 'ada@example.com', 'link_change', commitment, null);
+    expect(pageText()).toContain('ada@example.com');
+    typeInto('email-code', '333333');
+    submit('email-verify');
+    expect(await s.answerIn(3)).toEqual({ idToken: TOKEN, as: 'proof' });
+    await s.vaultSays(4, { t: 'link_cancel', outcome: 'cancelled' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_cancelled'));
+    expect(document.querySelector('h1')?.textContent).toBe('Link cancelled');
+    expect(document.getElementById('link-cancel-what')?.className).toContain('jp-alert-success');
+    expect(pageText()).toContain('This email is no longer being linked with that Google account.');
+    expect(pageText()).not.toContain('Nothing else changed');
+    // The cancel signs that wallet's devices out in this app (the API revokes its shares): said plainly.
+    expect(pageText()).toContain('Anyone signed in to that wallet in this app will be asked to sign in again.');
+    expect(pageText()).toContain('If you didn’t start this link, change your email password.');
+    click('link-cancel-close');
+    expect(s.win.closed).toBe(true);
+  });
+
+  it('a double tap on Cancel sends one code', async () => {
+    const s = await onWaiting();
+    // The same button twice, as a quick double tap reaches it (the second lands on the disabled button).
+    const button = document.getElementById('link-cancel') as HTMLButtonElement;
+    button.click();
+    expect(button.disabled).toBe(true);
+    expect((document.getElementById('link-keep') as HTMLButtonElement | null)?.disabled ?? true).toBe(true);
+    button.click();
+    await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+    await flush();
+    expect(s.issuer.startLink).toHaveBeenCalledTimes(1);
+  });
+
+  it('Keep the link closes the window and answers nothing (the link stays)', async () => {
+    const s = await onWaiting();
+    click('link-keep');
+    expect(s.win.closed).toBe(true);
+    expect(pageText()).toContain('The link stays');
+    await flush();
+    const slot3 = followSlot(s.followKey, 3).id;
+    expect(s.api.writeRelay.mock.calls.some((c) => c[0] === slot3)).toBe(false);
+    expect(s.issuer.startLink).not.toHaveBeenCalled();
+  });
+
+  it('too late: the waiting period ended (danger, the notice mail’s advice, who can still remove it)', async () => {
+    const s = await onWaiting();
+    await s.vaultSays(4, { t: 'link_cancel', outcome: 'now_active' });
+    // Slot 4 is read only after an answer: give it one, as the code would.
+    click('link-cancel');
+    await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+    typeInto('email-code', '333333');
+    submit('email-verify');
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_cancelled'));
+    expect(document.querySelector('h1')?.textContent).toBe('This link can’t be cancelled any more');
+    expect(document.getElementById('link-cancel-what')?.className).toContain('jp-alert-danger');
+    expect(pageText()).toContain('The waiting period has ended. This email and that Google account now open the same Journear wallet.');
+    expect(document.getElementById('link-cancel-advice')?.textContent).toBe(
+      'This email now opens a wallet that belongs to whoever holds that Google account. Anything you add to it is theirs. If you didn’t do this, change your email password. Don’t sign in to Partner App with this email, don’t add money to that wallet, and tell the app’s support.',
+    );
+    expect(pageText()).not.toContain('someone else may be able to open');
+    expect(document.getElementById('link-cancel-remove')?.textContent).toContain('Within 7 days, whoever signs in to Partner App with that Google account can remove this email');
+  });
+
+  for (const [outcome, title, line, code] of [
+    ['already_cancelled', 'This link was already cancelled', 'There’s nothing more to do.', undefined],
+    ['not_cancelled', 'The link wasn’t cancelled', 'Nothing changed: the link is still waiting.', 'stale_epoch'],
+    ['unknown', 'We couldn’t check the link', 'Journear couldn’t be reached, so we can’t tell whether the link was cancelled.', 'api_unavailable'],
+  ] as const) {
+    it(`outcome ${outcome}: “${title}”`, async () => {
+      const s = await onWaiting();
+      click('link-cancel');
+      await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+      typeInto('email-code', '333333');
+      submit('email-verify');
+      await s.answerIn(3);
+      await s.vaultSays(4, { t: 'link_cancel', outcome, ...(code ? { code } : {}) });
+      await vi.waitFor(() => expect(s.page.stage).toBe('link_cancelled'));
+      expect(document.querySelector('h1')?.textContent).toBe(title);
+      expect(pageText()).toContain(line);
+      if (code) expect(pageText()).toContain(`Error code (for support): ${code}`);
+      expect(s.page.notice).toBe(code ?? outcome);
+    });
+  }
+
+  it('a link_waiting whose proof isn’t an email link_change cancels nothing', async () => {
+    const s = setup();
+    await toCode('ada@example.com');
+    typeInto('email-code', '123456');
+    submit('email-verify');
+    await vi.waitFor(() => expect(s.page.stage).toBe('following'));
+    await s.vaultSays(2, { t: 'link_waiting', provider: 'google', effectiveAtMs: AT, prove: { method: 'email', purpose: 'session', commitment: {} } });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_waiting'));
+    click('link-cancel');
+    await vi.waitFor(() => expect(s.page.stage).toBe('error'));
+    expect(s.issuer.startLink).not.toHaveBeenCalled();
+    expect(s.issuer.start).toHaveBeenCalledTimes(1);
+  });
+});

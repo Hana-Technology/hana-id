@@ -241,7 +241,7 @@ describe('the names (D765)', () => {
 describe('notices: the designed HTML part', () => {
   const hrefs = (html: string): string[] => [...html.matchAll(/href="([^"]+)"/gu)].map((m) => m[1]!);
 
-  it('the link notice: no link (D862: the cancel page was never built); "Not you?" says where to cancel or remove', () => {
+  it('the link notice: no link (D862); "Not you?" says where to cancel (D864: this email’s own sign-in) or remove', () => {
     const m = linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', pending: true, look: LOOK });
     expect(m.text).toMatchSnapshot('text');
     expect(m.html).toMatchSnapshot('html');
@@ -250,7 +250,7 @@ describe('notices: the designed HTML part', () => {
       [
         'This email is being linked with a Google account, so both will open the same Journear wallet in “Sodax Demo”. The link starts working after a waiting period (24 hours; shorter in a test version), and it can be cancelled until then.',
         '',
-        'Not you? Change your email password. Then, before the waiting period ends, sign in to “Sodax Demo” with that Google account: the Journear Passport sign-in window shows this email with a button to cancel it. If that Google account isn’t yours, don’t sign in to “Sodax Demo” with this email, and tell the app’s support.',
+        'Not you? Change your email password. Then sign in to “Sodax Demo” with this email before the waiting period ends: Journear Passport will show the new sign-in with a button to cancel it. Once the waiting period has ended, don’t sign in to “Sodax Demo” with this email, and tell the app’s support.',
         '',
       ].join('\n'),
     );
@@ -263,7 +263,7 @@ describe('notices: the designed HTML part', () => {
       for (const line of n.text.split('\n').filter(Boolean)) expect(visibleText(n.html)).toContain(line);
     }
     // An app name that isn't display-safe is "an app" in the advice too.
-    expect(linkNoticeMail({ to: 'a@example.com', appName: 'evil.com', pending: true }).text).toContain('sign in to an app with that Google account');
+    expect(linkNoticeMail({ to: 'a@example.com', appName: 'evil.com', pending: true }).text).toContain('sign in to an app with this email before the waiting period ends');
   });
 
   it('unlock and confirm: one button to their page with the token in the fragment', () => {

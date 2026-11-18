@@ -36,7 +36,7 @@ import type { RelayResult } from '../relayer-key.ts';
 import { classifyWriteError, usageTransport } from '../usage/record.ts';
 import { statusObject } from './outcome.ts';
 import { nearRelayConfig, nearRelayKeys } from './relay.ts';
-import { type FinalOutcome, Rpc, RpcError, RpcHealth, rpcEndpoints } from './rpc.ts';
+import { type FinalOutcome, RpcError, RpcHealth, nearRpcEndpoint, rpcEndpoints } from './rpc.ts';
 import { burntGas } from './tx.ts';
 
 const MINUTE = 60_000;
@@ -207,7 +207,7 @@ export class BudgetedRpc {
     this.used++;
     const url = this.urls[this.at % this.urls.length] as string;
     try {
-      return await new Rpc(url, { health: this.health, viewTimeoutMs: READ_TIMEOUT_MS, txTimeoutMs: READ_TIMEOUT_MS }).call<T>(method, params, READ_TIMEOUT_MS);
+      return await nearRpcEndpoint(url, { health: this.health, viewTimeoutMs: READ_TIMEOUT_MS, txTimeoutMs: READ_TIMEOUT_MS }).call<T>(method, params, READ_TIMEOUT_MS);
     } catch (e) {
       // No JSON-RPC answer (network, timeout, 5xx): the next call asks the next endpoint.
       if (!(e instanceof RpcError) || e.rpc === null) this.at++;

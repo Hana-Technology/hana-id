@@ -1189,7 +1189,9 @@ state override when the account has no code; `502 evm_rpc_unavailable`). `allowe
 `delegated_elsewhere`, `paused` (the relayer is halted, D851, or its balance is under 3 × the cheapest batch's worst
 case), `not_available` (the user's failures for the day: never named), `budget_exhausted` (the app's or the env's day
 can't take another batch at the fee cap) or `gas_too_high` (no minGas above the floor fits `maxGasPerTx`). `maxMinGas`
-is the largest `minGas` whose gas limit fits `maxGasPerTx` for these calls (with the authorization when `none`). Signs
+is the largest `minGas` whose gas limit fits `maxGasPerTx` for these calls (with the authorization when `none`),
+computed on a calldata shape that costs at least any real batch (its deadline, minGas and signature words without a
+zero byte), so a send at exactly `maxMinGas` always fits. Signs
 nothing, sends nothing.
 
 **`POST /v1/evm/sponsor/send`** `{chainId, account, calls, executeNonce, deadline, relayer, minGas, signature (65 bytes r

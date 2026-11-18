@@ -12926,8 +12926,8 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   cancel's cost from the relayer's `lookup` (`outcome: cancel`, `costWei`) or the cancel's receipt. `request` charges a
   failure (`422 not_executed`); `pricing` (the relayer's follow-up) is `503 gas_price_too_high` (15 s); `relayer` and any
   cause not known yet are `503 sponsorship_paused` and `evm_relay_stuck`; neither of the last two charges the user's
-  failure slot, attempts or shared windows. The relayer's coded `fees_too_low` (its follow-up) is `503
-  gas_price_too_high` (15 s), read by string before its type lands; `relayer_busy` (also `:account`) is `429` with
+  failure slot, attempts or shared windows. The relayer's coded `fees_too_low` (PR 81) is `503
+  gas_price_too_high` (15 s), with the relayer's own types since `next` @ e70ac794; `relayer_busy` (also `:account`) is `429` with
   `retryAfterS` 2 (5 for `account`); a coded refusal not caused by the user's input gives their attempts back too. (4)
   **The relayer's funds:** before each send its balance (cached 3 s per isolate, forgotten after each send) must be at
   least `lowBalanceEth` and cover 3 × this send's worst case; then, binding, the audit row is inserted by one `INSERT …
@@ -12950,7 +12950,11 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   object over its mocked chain (the stand-in is deleted); `apps/api/test/evm-sponsor-relayer.test.ts` runs the routes
   against the real object over `test/evm-mock.ts`. Found while integrating: the relayer takes a second batch of one
   account only after its own run saw the first mined (its alarm, 15 s after a change), so a user's next action within
-  about that long is `429 relayer_busy` (retry in 5 s).
+  about that long is `429 relayer_busy` (retry in 5 s). Also found by the e2e: the vault sends `minGas = maxMinGas`
+  exactly, so prepare's calldata shape must cost at least any real batch's: its deadline, minGas and signature words
+  have no zero byte (a real deadline's zero byte made a shape cheaper than the batch, `403 gas_too_high`). Every new
+  code has a plain sentence in the vault's `SPONSOR_TEXT` and the SDK's `SPONSOR_REASONS` (D853): paused, fees too high,
+  busy, the session check, the wrong account.
 - Address impact: none.
 
 ### D848. The sponsorship audit table and its security events

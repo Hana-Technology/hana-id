@@ -1,5 +1,5 @@
 // D853 on the stamps site: the words people read (its notices, errors, slots, labels and page) hold no chain or
-// engineering jargon (`@hana-id/brand/plain-words`). The one exception is the judges' legend of what each stamp proves
+// engineering jargon (the stamps' ink too) (`@hana-id/brand/plain-words`). The one exception is the judges' legend of what each stamp proves
 // (`STAMP_PROOFS`), which stays technical under a heading that says so (`UI_TEXT.proofs`): its sentences are allowed by
 // exact string, nothing else is. Codes are fine (`near_page_rpc_failed` is not a word).
 import { readFileSync } from 'node:fs';
@@ -10,7 +10,7 @@ import { CONTRACT_ERRORS } from '../../src/stamps.ts';
 import { STAMP_PROOFS, UI_TEXT } from '../../src/ui/labels.ts';
 
 const ROOT = new URL('../../', import.meta.url);
-const FILES = ['src/messages.ts', 'src/view.ts', 'src/app.ts', 'src/ui/labels.ts', 'src/ui/index.ts'];
+const FILES = ['src/messages.ts', 'src/view.ts', 'src/app.ts', 'src/ui/labels.ts', 'src/ui/index.ts', 'src/ui/art.ts'];
 const LEGEND: ReadonlySet<string> = new Set(Object.values(STAMP_PROOFS));
 
 describe('plain words on the stamps site (D853)', () => {

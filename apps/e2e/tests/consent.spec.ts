@@ -37,7 +37,7 @@ test('consent shows verified names, partner names labelled and flagged, short ad
   await login(page);
   await runAction(page, 'consent', 'requestAutoApprove');
   const popup = await clickLauncher(page, 'Review in Journear Passport');
-  await expect(popup.getByRole('heading', { name: 'Allow automatic signing?' })).toBeVisible();
+  await expect(popup.getByRole('heading', { name: 'Allow automatic approvals?' })).toBeVisible();
 
   const lines = popup.locator('.contracts p.contract');
   await expect(lines).toHaveCount(4);
@@ -56,9 +56,9 @@ test('consent shows verified names, partner names labelled and flagged, short ad
   await expect(lines.nth(1).locator('.name-warning')).toHaveCount(0);
   await expect(lines.nth(1).getByRole('link')).toHaveAttribute('href', `https://basescan.org/address/${OTHER}`);
 
-  await expect(lines.nth(2)).toContainText('Sodax Asset Manager · named by E2E Partner — not the verified Sodax Asset Manager');
+  await expect(lines.nth(2)).toContainText('Sodax Asset Manager · named by E2E Partner — not the Sodax Asset Manager Journear checked');
   await expect(lines.nth(2).locator('.verified')).toHaveCount(0);
-  await expect(popup.getByText('E2E Partner gave some contracts below names that look like verified ones')).toBeVisible();
+  await expect(popup.getByText('E2E Partner gave some programs below names that look like ones Journear checked')).toBeVisible();
 
   // An unknown chain: the short address, no link.
   await expect(lines.nth(3)).toContainText('Example vault · named by E2E Partner');

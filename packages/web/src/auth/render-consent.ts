@@ -8,6 +8,8 @@
 // with check marks removed from it, and flagged when it imitates a verified name or protocol.
 import {
   type ContractChain,
+  STELLAR_MAINNET_PASSPHRASE,
+  STELLAR_TESTNET_PASSPHRASE,
   type NameCollision,
   displayPartnerName,
   evmChainInfo,
@@ -28,10 +30,10 @@ const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);
 const facts = (d: Dom, entries: Parameters<typeof rows>[1]): HTMLDListElement => rows(d, entries, 'jp-kv facts');
 
 function rule(d: Dom, r: FunctionRule): HTMLElement {
-  if (r.decoder !== undefined) return d.h('span', { class: 'muted' }, `checked by ${BRAND.company}’s ${r.decoder} decoder`);
+  if (r.decoder !== undefined) return d.h('span', { class: 'muted' }, `checked by ${BRAND.company} (${r.decoder})`);
   return r.addressArgs === 'any'
-    ? d.h('strong', { class: 'danger' }, 'can send to any address')
-    : d.h('span', { class: 'muted' }, 'only to you or the contracts listed here');
+    ? d.h('strong', { class: 'danger' }, 'can send to anyone')
+    : d.h('span', { class: 'muted' }, 'only to you or the programs listed here');
 }
 
 /** "12 h", "1 h 30 min", "45 min". */
@@ -44,7 +46,7 @@ export function formatDuration(ms: number): string {
 
 /** Shown after "named by {app}" when the partner's name imitates a verified one. */
 export function collisionText(c: NameCollision): string {
-  return c.kind === 'verified-name' ? `not the verified ${c.entry.name}` : `not a verified ${c.protocol} contract`;
+  return c.kind === 'verified-name' ? `not the ${c.entry.name} ${BRAND.company} checked` : `not a ${c.protocol} program ${BRAND.company} checked`;
 }
 
 /** A partner-named contract whose name imitates a verified one, on these chains. */
@@ -59,13 +61,13 @@ export function contractLine(d: Dom, chains: readonly ContractChain[], address: 
   const verified = verifiedContractOnAll(chains, address);
   let name: HTMLElement;
   if (verified) {
-    name = d.h('strong', { class: 'verified', attrs: { title: `On ${BRAND.company}’s list of verified contracts` } }, `✓ ${verified.name}`);
+    name = d.h('strong', { class: 'verified', attrs: { title: `Checked by ${BRAND.company}` } }, `✓ ${verified.name}`);
   } else {
     const collision = nameCollision(partnerName, chains, address);
     name = d.h(
       'span',
       { class: 'partner-named' },
-      d.h('strong', {}, displayPartnerName(partnerName) || 'Unnamed contract'),
+      d.h('strong', {}, displayPartnerName(partnerName) || 'Unnamed program'),
       d.h('span', { class: 'muted' }, ` · named by ${appName}`),
       collision ? d.h('strong', { class: 'danger name-warning' }, ` — ${collisionText(collision)}`) : null,
     );
@@ -95,7 +97,7 @@ function hasImitation(policy: AutoApprovePolicyV1): boolean {
 }
 
 /** Shown for the native coin of a chain Hana can't name. */
-export const UNKNOWN_NATIVE_COIN = 'of this chain’s native coin';
+export const UNKNOWN_NATIVE_COIN = 'of this network’s own coin';
 
 /**
  * A native amount with its unit: "0.001 ETH (1000000000000000 wei)", or, on a chain Hana can't name, "0.001 of this
@@ -112,9 +114,13 @@ export function nativeAmount(chainId: number, wei: string): string {
  */
 export function evmChainHeading(d: Dom, chainId: number): HTMLElement {
   const info = evmChainInfo(chainId);
-  if (!info) return d.h('h2', {}, `EVM chain ${chainId}`);
-  return d.h('h2', {}, info.label, ' ', d.h('span', { class: 'muted chain-id' }, `EVM chain ${chainId}`));
+  if (!info) return d.h('h2', {}, `Ethereum-style network no. ${chainId}`);
+  return d.h('h2', {}, info.label, ' ', d.h('span', { class: 'muted chain-id' }, `network no. ${chainId}`));
 }
+
+/** A Stellar network's plain name in front of its passphrase (D853: the raw value stays, with a plain label). */
+const stellarNetworkName = (passphrase: string): string =>
+  passphrase === STELLAR_MAINNET_PASSPHRASE ? 'Stellar (real money)' : passphrase === STELLAR_TESTNET_PASSPHRASE ? 'Stellar (test network)' : `A Stellar network ${BRAND.company} doesn’t know`;
 
 /** An absolute time in the user's locale, with the date: "28 Oct 2026, 21:30". */
 export function formatEndTime(ms: number): string {
@@ -136,24 +142,24 @@ export interface ConsentView {
  * already has.
  */
 export const lingeringSignaturesNote = (appName: string): string =>
-  `Signatures made under these rules go to ${appName}, and stopping doesn’t cancel the ones it already has: a transaction stays usable until it expires, a Stellar authorization until the ledger it names, and typed data until its own deadline.`;
+  `Approvals made under these rules go to ${appName}. Stopping doesn’t cancel the ones it already has. Each one stays usable until its own end time, which can be later than when you stop.`;
 
 /** The consent body (everything above the Allow / Don't allow buttons). */
 export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
   const { policy, appName, parentOrigin } = view;
   const parts: Child[] = [
-    d.h('h1', {}, 'Allow automatic signing?'),
-    d.h('p', {}, d.h('strong', {}, appName), ' at ', originText(d, parentOrigin), ' asks to sign some requests without asking you each time.'),
+    d.h('h1', {}, 'Allow automatic approvals?'),
+    d.h('p', {}, d.h('strong', {}, appName), ' at ', originText(d, parentOrigin), ` wants ${BRAND.company} to approve some requests without asking you each time.`),
     d.h('p', { class: 'label' }, `“${policy.label}”`),
     alert(
       d,
       'warning',
       { class: 'warn' },
-      `Requests that match the rules below are signed by ${BRAND.product} without asking you. Anything else still asks you. You can stop this at any time from any ${BRAND.product} window.`,
+      `${BRAND.product} will approve requests that match the rules below without asking you. Anything else still asks you. You can stop this at any time from any ${BRAND.product} window.`,
     ),
-    hasAny(policy) ? alert(d, 'danger', { class: 'danger' }, 'Some functions below can send to any address. Only allow this if you trust this app completely.') : null,
+    hasAny(policy) ? alert(d, 'danger', { class: 'danger' }, 'Some actions below can send your money or tokens to anyone. Allow this only if you trust this app completely.') : null,
     hasImitation(policy)
-      ? alert(d, 'danger', { class: 'danger' }, `${appName} gave some contracts below names that look like verified ones, but they are other contracts. Don’t allow this unless you know why.`)
+      ? alert(d, 'danger', { class: 'danger' }, `${appName} gave some programs below names that look like ones ${BRAND.company} checked, but they are different programs. It may be a scam. Don’t allow this unless you know why.`)
       : null,
   ];
 
@@ -163,10 +169,10 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
     parts.push(
       d.h('h2', {}, 'Stellar'),
       facts(d, [
-        row(d, s.networkPassphrases.length === 1 ? 'Network' : 'Networks', s.networkPassphrases.join(', ')),
-        row(d, 'Maximum fee per transaction', `${formatUnits(s.maxFeeStroops, 7)} XLM`),
-        s.changeTrustAssets && s.changeTrustAssets.length > 0 && row(d, 'May add trustlines for', ...s.changeTrustAssets.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
-        s.addresses && s.addresses.length > 0 && row(d, 'Also allowed as recipients', ...s.addresses.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
+        row(d, s.networkPassphrases.length === 1 ? 'Network' : 'Networks', ...s.networkPassphrases.flatMap((p, i) => [i > 0 ? '; ' : '', `${stellarNetworkName(p)}: `, mono(d, p)])),
+        row(d, 'Most network fee each time', `${formatUnits(s.maxFeeStroops, 7)} XLM`),
+        s.changeTrustAssets && s.changeTrustAssets.length > 0 && row(d, 'May let your account hold', ...s.changeTrustAssets.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
+        s.addresses && s.addresses.length > 0 && row(d, 'Can also send to', ...s.addresses.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
       ]),
       d.h(
         'ul',
@@ -176,7 +182,7 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
             'li',
             {},
             contractLine(d, chains, c.id, c.name, appName),
-            d.h('ul', {}, ...c.functions.map((f) => d.h('li', {}, mono(d, f.name), ': ', rule(d, f)))),
+            d.h('ul', {}, ...c.functions.map((f) => d.h('li', {}, 'Action ', mono(d, f.name), ': ', rule(d, f)))),
           ),
         ),
       ),
@@ -187,10 +193,10 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
     parts.push(
       evmChainHeading(d, ch.chainId),
       facts(d, [
-        row(d, 'Maximum value plus network fees, per transaction', nativeAmount(ch.chainId, ch.maxValueWei)),
-        row(d, 'Maximum value plus network fees, per day', nativeAmount(ch.chainId, ch.maxValueWeiPerDay)),
-        row(d, 'Maximum network fee per transaction', nativeAmount(ch.chainId, ch.maxFeeWei)),
-        ch.addresses && ch.addresses.length > 0 && row(d, 'Also allowed as recipients', ...ch.addresses.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
+        row(d, 'Most it can send each time, fees included', nativeAmount(ch.chainId, ch.maxValueWei)),
+        row(d, 'Most it can send a day, fees included', nativeAmount(ch.chainId, ch.maxValueWeiPerDay)),
+        row(d, 'Most network fee each time', nativeAmount(ch.chainId, ch.maxFeeWei)),
+        ch.addresses && ch.addresses.length > 0 && row(d, 'Can also send to', ...ch.addresses.flatMap((a, i) => [i > 0 ? ', ' : '', mono(d, a)])),
       ]),
       d.h(
         'ul',
@@ -200,12 +206,12 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
             'li',
             {},
             contractLine(d, [{ kind: 'evm', chainId: ch.chainId }], c.address, c.name, appName),
-            d.h('ul', {}, ...c.selectors.map((f) => d.h('li', {}, mono(d, f.signature), ': ', rule(d, f)))),
+            d.h('ul', {}, ...c.selectors.map((f) => d.h('li', {}, 'Action ', mono(d, f.signature), ': ', rule(d, f)))),
           ),
         ),
       ),
       ch.typedData && ch.typedData.length > 0
-        ? d.h('div', {}, d.h('p', {}, 'Typed-data signatures:'), d.h('ul', {}, ...ch.typedData.map((t) => d.h('li', {}, mono(d, t.primaryType), ' for ', mono(d, t.verifyingContract)))))
+        ? d.h('div', {}, d.h('p', {}, 'Signatures it may approve:'), d.h('ul', {}, ...ch.typedData.map((t) => d.h('li', {}, mono(d, t.primaryType), ' for the program ', mono(d, t.verifyingContract)))))
         : null,
     );
   }
@@ -213,7 +219,7 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
   parts.push(
     d.h('h2', {}, 'Limits'),
     facts(d, [
-      row(d, 'Requests per day', `at most ${policy.limits.perDayCount} (UTC day, on this device)`),
+      row(d, 'Requests a day', `at most ${policy.limits.perDayCount} (a day starts at midnight UTC; counted on this device)`),
       row(
         d,
         'Until',

@@ -34,9 +34,9 @@ test('a demo app signs a small Stellar public-network payment behind the red ban
   expect(demo).toMatchObject({ evmChains: [8453], stellarNetworkPassphrase: 'Public Global Stellar Network ; September 2015', txCapUsd: '9.99' });
   await runAction(page, 'sig', 'stellarSignPubnet', '2');
   const popup = await clickLauncher(page, 'Review in Journear Passport');
-  await expect(popup.getByText('Real funds, test custody: these funds may be lost')).toBeVisible();
-  await expect(popup.getByText('This request can move about $2.01, fee included. Journear’s limit is $9.99 per transaction.')).toBeVisible();
-  await expect(popup.getByText('This wallet holds about $25.00: keep test funds under $10.00 — move the rest out.')).toBeVisible();
+  await expect(popup.getByText('Real money, test system: you could lose it.')).toBeVisible();
+  await expect(popup.getByText('This can move about $2.01, fees included. Journear’s limit is $9.99 each time.')).toBeVisible();
+  await expect(popup.getByText('This account holds about $25.00. Keep less than $10.00 here and move the rest out.')).toBeVisible();
   await shot(popup, 'mainnet-1-approval-banner', browserName);
   await approve(popup);
   expect(await okValue(page, 'sig')).toEqual({ signerAddress: stellar });

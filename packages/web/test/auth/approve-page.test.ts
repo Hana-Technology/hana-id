@@ -34,6 +34,7 @@ import { formatEndTime, lingeringSignaturesNote } from '../../src/auth/render-co
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, invocation, paymentOp, sorobanData, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { Address, Operation, xdr } from '@stellar/stellar-base';
+import { shortId } from '@hana-id/core/decode';
 import { sodaxHubWalletOf } from '@hana-id/core/mainnet-demo';
 import { ENV, EVIL, FakeWindow, PARTNER, type RemoteWindow, asWindow, pageText, remoteWindow, resetDom } from './helpers.ts';
 import { OTHER, SODAX_ASSET_MANAGER_BASE, sodaxBridgeDeposit, sodaxEmptyDeposit, sodaxStellarSwapCalls, sodaxSwapDeposit } from '../vault/chains.ts';
@@ -175,7 +176,7 @@ describe('/approve', () => {
     send(evmRequest({ autoApprove: { label: 'Swaps', active: true, reason: 'daily_count_reached' } }));
     const note = document.querySelector('p.note.jp-alert');
     expect(note?.classList.contains('jp-alert-warning')).toBe(true);
-    expect(note?.textContent).toBe('Not signed automatically under “Swaps”: today’s limit of automatic signatures is reached.');
+    expect(note?.textContent).toBe('Partner App usually signs these without asking, but this one is outside what you allowed, so please check it yourself. Why: today’s limit of automatic approvals is reached.');
   });
 
   it('says hello to its opener on vaultOrigin', () => {
@@ -214,7 +215,7 @@ describe('/approve', () => {
     const r = evmRequest({ logoUrl: LOGO });
     send(r);
     expect(document.querySelector('header.app img.app-logo')?.getAttribute('src')).toBe(LOGO);
-    expect(pageText()).toContain('Request 1 of 1 from Partner App');
+    expect(pageText()).toContain('From Partner App');
     // The digest binds what the request is, not the decoration: the logo changes nothing there.
     arm();
     click(primary());
@@ -230,17 +231,24 @@ describe('/approve', () => {
       resetDom();
       start(env);
       send(evmRequest({ logoUrl }));
-      expect(pageText()).toContain('from Partner App');
+      expect(pageText()).toContain('From Partner App');
       expect(document.querySelector('img')).toBeNull();
     }
   });
 
-  it('batch C15: shows the session’s Support ID, as text, first in the details (D808); none without one', () => {
+  it('batch C15: shows the session’s Support ID, as text, in the details right after the whole account (D808, D859); none without one', () => {
     const r = evmRequest({ supportId: 'HANA-2750-G5HM' });
     send(r);
     const line = document.querySelector('p.support-id');
     expect(line?.parentElement?.matches('details.request-details > .details-body')).toBe(true);
-    expect(line?.parentElement?.firstElementChild).toBe(line);
+    // D859: the account line shows the short form; the whole account is the details' first row.
+    const account = line?.parentElement?.firstElementChild;
+    expect(account?.matches('dl.your-account')).toBe(true);
+    expect(account?.textContent).toBe(`Your account${EVM}`);
+    expect(account?.nextElementSibling).toBe(line);
+    expect(document.querySelector('p.account')?.textContent).toBe(`Your account: ${shortId(EVM)} ${EVM} (Ethereum-style)`);
+    expect(document.querySelector('p.account code.short-id')?.getAttribute('aria-hidden')).toBe('true');
+    expect(document.querySelector('p.account .sr-only')?.textContent).toBe(` ${EVM}`);
     expect(line?.textContent).toBe(`Support ID HANA-2750-G5HM ${SUPPORT_ID_HINT}`);
     expect(line?.querySelector('code')?.textContent).toBe('HANA-2750-G5HM');
     // Decoration only: the digest binds the request, not the code.
@@ -682,7 +690,7 @@ describe('/approve', () => {
     send(r);
     const text = pageText();
     // D810: the red risk line is the summary's, in plain words.
-    expect(text).toContain('This asks you to sign something Journear can’t read at all. On Stellar it could give away control of your account or your funds. Reject unless you are certain.');
+    expect(text).toContain('Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re signing.');
     expect(text).toContain(`0x${Buffer.from(bytes).toString('hex')}`);
     expect(text).not.toContain('payment');
     arm();
@@ -695,7 +703,7 @@ describe('/approve', () => {
     send(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('Sign in to Partner') }));
     expect(pageText()).toContain('Sign in to Partner');
     send(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('pay‮evil') }));
-    expect(pageText()).toContain('shown as hex');
+    expect(pageText()).toContain('shown in its raw form');
     expect(pageText()).not.toContain('pay‮evil');
   });
 
@@ -723,7 +731,7 @@ describe('/approve', () => {
   it('says a test app signs only for test networks (D39), on requests and the consent screen; nothing for a live app', () => {
     send(evmRequest({ testApp: true }));
     expect(pageText()).toContain(TEST_APP_NOTE);
-    expect(TEST_APP_NOTE).toMatch(/only for test networks/u);
+    expect(TEST_APP_NOTE).toMatch(/only with test money/u);
     send(evmRequest());
     expect(pageText()).not.toContain(TEST_APP_NOTE);
     send(consentRequest({ testApp: true }));
@@ -738,7 +746,7 @@ describe('/approve', () => {
   it('a test app with the mainnet demo on gets a note that is true for it, on requests and the consent screen (D428)', () => {
     const note = () => document.querySelector('p.note.test-app')?.textContent;
     expect(TEST_APP_DEMO_NOTE).toBe(
-      'Test app with Journear’s mainnet demo on: besides test networks, Journear Passport signs real transactions on Base and Stellar’s public network here, up to $9.99 each. Those always ask you first and are never signed automatically. Other mainnets are refused. The keys are test keys that can be reset or lost, so keep only small amounts at this account.',
+      'This app is a test version with Journear’s real-money demo on. Besides test money, Journear Passport approves real-money requests on Base and Stellar here, up to $9.99 each. Those always ask you first and are never approved automatically. Other real networks are refused. The keys are test keys that can be reset or lost, so keep only small amounts in this account.',
     );
     // A test-network request and the consent screen: the demo's note, never "mainnets are refused".
     for (const m of [evmRequest({ testApp: true, mainnetDemo: true }), consentRequest({ testApp: true, mainnetDemo: true })]) {
@@ -767,7 +775,7 @@ describe('/approve', () => {
 
   it('shows why a request was not auto-approved, and "Stop auto-approving" while a consent is active', () => {
     send(evmRequest({ autoApprove: { label: 'Swaps on Example', active: true, reason: 'contract_not_listed' } }));
-    expect(pageText()).toContain('Not signed automatically under “Swaps on Example”: the contract isn’t listed in the rules.');
+    expect(pageText()).toContain('Partner App usually signs these without asking, but this one is outside what you allowed, so please check it yourself. Why: it uses a program you didn’t allow.');
     const stop = document.querySelector('button.link');
     expect(stop?.textContent).toBe('Stop auto-approving');
     click(stop);
@@ -808,10 +816,10 @@ describe('/approve', () => {
       expect(text.length).toBeGreaterThan(0);
       expect(autoApproveReasonText(code)).toBe(text);
     }
-    expect(autoApproveReasonText('some_new_reason')).toBe('it doesn’t match the rules');
-    expect(autoApproveReasonText('constructor')).toBe('it doesn’t match the rules');
+    expect(autoApproveReasonText('some_new_reason')).toBe('it doesn’t match what you allowed');
+    expect(autoApproveReasonText('constructor')).toBe('it doesn’t match what you allowed');
     send(evmRequest({ autoApprove: { label: 'Swaps', active: true, reason: 'daily_count_reached' } }));
-    expect(pageText()).toContain('today’s limit of automatic signatures is reached');
+    expect(pageText()).toContain('today’s limit of automatic approvals is reached');
   });
 
   describe('a new request while one is on screen and unanswered', () => {
@@ -900,10 +908,10 @@ describe('/approve after an answer (D471)', () => {
     send(evmRequest());
     click(secondary());
     expect(page.state).toBe('waiting');
-    expect(heading()).toBe('Declined');
+    expect(heading()).toBe('Rejected');
     expect(mark()).toBeNull();
     const text = pageText();
-    expect(text).toContain('Nothing was signed.');
+    expect(text).toContain('Nothing was sent or approved.');
     expect(text).not.toContain('You can go back to');
     expect(text).not.toContain('If it needs another approval');
     expect(countdown()).toBe('Closing in 15 s');
@@ -932,8 +940,8 @@ describe('/approve after an answer (D471)', () => {
     expect(heading()).toBe('Not allowed');
     expect(mark()).toBeNull();
     const text = pageText();
-    expect(text).toContain('Automatic signing wasn’t turned on.');
-    expect(text).not.toContain('Declined');
+    expect(text).toContain('Automatic approvals weren’t turned on.');
+    expect(text).not.toContain('Rejected');
     expect(text).not.toContain('Nothing was signed');
     expect(countdown()).toBe('Closing in 15 s');
   });
@@ -942,7 +950,7 @@ describe('/approve after an answer (D471)', () => {
     send(evmRequest({ bytes: new Uint8Array([0x02, 0xc0]) }));
     click(secondary());
     expect(results()[0]).toMatchObject({ approved: false });
-    expect(heading()).toBe('Declined');
+    expect(heading()).toBe('Rejected');
   });
 
   it('the app’s name is text only: markup in it is not parsed, and it is bidi-isolated in a <strong>', () => {
@@ -1024,7 +1032,7 @@ describe('/approve after an answer (D471)', () => {
     vi.advanceTimersByTime(4000);
     send(stellarRequest());
     click(secondary());
-    expect(heading()).toBe('Declined');
+    expect(heading()).toBe('Rejected');
     expect(countdown()).toBe('Closing in 15 s');
     expect(vi.getTimerCount()).toBe(2);
   });
@@ -1180,19 +1188,19 @@ describe('/approve consent screen', () => {
   it('shows the app, origin, label, every contract with name and address, the functions, the address rule, limits and duration', () => {
     send(consentRequest());
     const text = pageText();
-    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to any address', 'at most 3', 'deposit(uint256)', 'EVM chain 8453', 'PermitSingle', 'Maximum value plus network fees, per transaction', 'Maximum value plus network fees, per day', 'Maximum network fee per transaction']) {
+    for (const s of ['Partner App', PARTNER, '“Swaps on Example”', 'Example pool', 'USDC', 'Router', 'swap', 'deposit', 'route', 'can send to anyone', 'at most 3', 'deposit(uint256)', 'network no. 8453', 'PermitSingle', 'Most it can send each time, fees included', 'Most it can send a day, fees included', 'Most network fee each time']) {
       expect(text).toContain(s);
     }
     for (const c of POLICY.ok ? POLICY.policy.stellar?.contracts ?? [] : []) expect(text).toContain(shortAddress(c.id));
     expect(text).toContain('Example pool · named by Partner App');
-    expect(text).toContain('Some functions below can send to any address');
+    expect(text).toContain('Some actions below can send your money or tokens to anyone');
   });
 
   it('names a known chain with its number beside it, and gives native amounts their unit', () => {
     send(consentRequest());
     const h2 = [...document.querySelectorAll('h2')].find((h) => h.textContent?.includes('8453'));
-    expect(h2?.firstChild?.textContent).toBe('Base');
-    expect(h2?.querySelector('span.chain-id')?.textContent).toBe('EVM chain 8453');
+    expect(h2?.firstChild?.textContent).toBe('Base (real money)');
+    expect(h2?.querySelector('span.chain-id')?.textContent).toBe('network no. 8453');
     const dds = [...document.querySelectorAll('dd')].map((x) => x.textContent);
     expect(dds).toEqual(expect.arrayContaining(['0.000000000000101 ETH (101000 wei)', '0.0000000000003015 ETH (301500 wei)', '0.0000000000001 ETH (100000 wei)']));
     // The address chip has its own class: the email sheet's block style (`p.address`) never applies to it.
@@ -1204,7 +1212,7 @@ describe('/approve consent screen', () => {
   it('says that stopping can’t take back signatures the app already has (CORE-3, D116)', () => {
     send(consentRequest());
     expect(document.querySelector('p.note.lingering')?.textContent).toBe(lingeringSignaturesNote('Partner App'));
-    expect(pageText()).toContain('a Stellar authorization until the ledger it names');
+    expect(pageText()).toContain('Each one stays usable until its own end time');
   });
 
   it('shows the actual end time the vault sent, not only the policy’s maximum', () => {
@@ -1252,7 +1260,7 @@ describe('/approve consent screen', () => {
   ])('refuses %s: no Allow button', (_, over) => {
     send(consentRequest(over));
     expect(primary()).toBeNull();
-    expect(pageText()).toContain('couldn’t be checked');
+    expect(pageText()).toContain('couldn’t check this app’s rules for automatic approvals');
     click(secondary());
     expect(results()[0]).toMatchObject({ allowed: false });
   });
@@ -1324,21 +1332,21 @@ describe('/approve consent screen: contract names (D44)', () => {
     send(consentRequest(evmPolicy(8453, [{ address: OTHER, name: 'Sodax Asset Manager' }])));
     const l = line(OTHER);
     expect(l.querySelector('.verified')).toBeNull();
-    expect(l.textContent).toContain('Sodax Asset Manager · named by Partner App — not the verified Sodax Asset Manager');
+    expect(l.textContent).toContain('Sodax Asset Manager · named by Partner App — not the Sodax Asset Manager Journear checked');
     expect(l.querySelector('.name-warning.danger')).not.toBeNull();
-    expect(pageText()).toContain('Partner App gave some contracts below names that look like verified ones');
+    expect(pageText()).toContain('Partner App gave some programs below names that look like ones Journear checked');
   });
 
   it('a partner name mentioning a verified protocol is flagged ("Sodax Router" on an unverified address)', () => {
     send(consentRequest(evmPolicy(8453, [{ address: OTHER, name: 'Sodax Router' }])));
-    expect(line(OTHER).textContent).toContain('Sodax Router · named by Partner App — not a verified Sodax contract');
+    expect(line(OTHER).textContent).toContain('Sodax Router · named by Partner App — not a Sodax program Journear checked');
   });
 
   it('a verified name on the wrong chain is not verified: the same address on another chain is flagged', () => {
     send(consentRequest(evmPolicy(42220, [{ address: SODAX_BASE, name: 'Sodax Asset Manager' }])));
     const l = line(SODAX_BASE);
     expect(l.querySelector('.verified')).toBeNull();
-    expect(l.textContent).toContain('— not the verified Sodax Asset Manager');
+    expect(l.textContent).toContain('— not the Sodax Asset Manager Journear checked');
   });
 
   it('check marks in a partner name are removed: only the verified mark shows one', () => {
@@ -1570,8 +1578,8 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
   it('says what a Sodax bridge does: the amount, 1:1, the destination and the recipient the bytes name (D476)', async () => {
     startDemo(async () => rpcAnswer('0x0'));
     send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER, EVM) })) }));
-    expect(document.querySelector('.demo-bridge')?.textContent).toBe(`Bridge 1 USDC from Base to Stellar, 1:1. Recipient on Stellar: ${OTHER}`);
-    expect(pageText()).toContain('This request can move about');
+    expect(document.querySelector('.demo-bridge')?.textContent).toBe(`Moves 1 USDC from Base to Stellar. The same amount arrives. Receiver on Stellar: ${OTHER}`);
+    expect(pageText()).toContain('This can move about');
     expect(pageText()).not.toContain('Journear can’t read this request');
   });
 
@@ -1580,7 +1588,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data: sodaxBridgeDeposit(OTHER, EVM, `0x${'22'.repeat(20)}`) })) }));
     expect(document.querySelector('.demo-bridge')).toBeNull();
     expect(pageText()).not.toContain('Recipient on');
-    expect(pageText()).not.toContain('This request can move about');
+    expect(pageText()).not.toContain('This can move about');
   });
 
   const sodaxRequest = (data: string) => send(baseRequest({ bytes: evmTxSigningPayload(parseEvmTxRequest({ ...BASE_TX, to: SODAX_ASSET_MANAGER_BASE, value: '0x0', data })) }));
@@ -1589,8 +1597,8 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
   it('names a swap’s recipient from its own decoding of the bytes (D492)', () => {
     startDemo(async () => rpcAnswer('0x0'));
     sodaxRequest(sodaxSwapDeposit(OTHER, EVM));
-    expect(document.querySelector('.demo-swap')?.textContent).toBe(`Swap on Sodax. Recipient on Stellar: ${OTHER}`);
-    expect(pageText()).toContain('This request can move about');
+    expect(document.querySelector('.demo-swap')?.textContent).toBe(`Swaps on Sodax. Receiver on Stellar: ${OTHER}`);
+    expect(pageText()).toContain('This can move about');
     expect(document.querySelector('.demo-bridge')).toBeNull();
   });
 
@@ -1635,7 +1643,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
   ] as const)('Stellar → Base: shows the minimum in %s, in its own decimals', (_name, outputToken, minOutput, text) => {
     startDemo(async () => rpcAnswer('0x0'));
     send(stellarSwapRequest({ outputToken, minOutput }));
-    expect(document.querySelector('.demo-swap')?.textContent).toMatch(/^Swap on Sodax\. Recipient on Base: 0x/u);
+    expect(document.querySelector('.demo-swap')?.textContent).toMatch(/^Swaps on Sodax\. Receiver on Base: 0x/u);
     expect(minimumLine()?.textContent).toBe(text);
   });
 
@@ -1675,13 +1683,13 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     sodaxRequest(sodaxSwapDeposit(OTHER, EVM, over));
     expect(document.querySelector('.demo-swap')).toBeNull();
     expect(pageText()).not.toContain('Recipient on');
-    expect(pageText()).not.toContain('This request can move about');
+    expect(pageText()).not.toContain('This can move about');
   });
 
   it('values a plain deposit to the signing address’s own hub wallet, and names no recipient (D492)', () => {
     startDemo(async () => rpcAnswer('0x0'));
     sodaxRequest(sodaxEmptyDeposit(EVM));
-    expect(pageText()).toContain('This request can move about');
+    expect(pageText()).toContain('This can move about');
     expect(document.querySelector('.demo-swap')).toBeNull();
     expect(document.querySelector('.demo-bridge')).toBeNull();
   });
@@ -1689,7 +1697,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
   it('shows no value for a plain deposit to another hub wallet (D492)', () => {
     startDemo(async () => rpcAnswer('0x0'));
     sodaxRequest(sodaxEmptyDeposit(EVM, OTHER_HUB_WALLET));
-    expect(pageText()).not.toContain('This request can move about');
+    expect(pageText()).not.toContain('This can move about');
   });
 
   it('shows no bridge line for a plain send', () => {
@@ -1707,11 +1715,11 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     });
     send(baseRequest());
     expect(pageText()).toContain(MAINNET_DEMO_BANNER);
-    expect(pageText()).toContain('This request can move about $8.01, fee included. Journear’s limit is $9.99 per transaction.');
+    expect(pageText()).toContain('This can move about $8.01, fees included. Journear’s limit is $9.99 each time.');
     expect(pageText()).not.toContain(TEST_APP_NOTE);
     expect(document.querySelector('.mainnet-demo')?.getAttribute('role')).toBe('alert');
     await settle();
-    expect(pageText()).toContain('This wallet holds about $7.15.');
+    expect(pageText()).toContain('This account holds about $7.15.');
     expect(new Set(calls)).toEqual(new Set(['https://mainnet.base.org']));
     // The request is still approvable as usual: the banner warns, it never blocks.
     arm();
@@ -1724,13 +1732,13 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     send(baseRequest());
     await settle();
     const warning = document.querySelector('.demo-balance');
-    expect(warning?.textContent).toMatch(/^This wallet holds about \$\d+\.\d\d: keep test funds under \$10\.00 — move the rest out\.$/u);
+    expect(warning?.textContent).toMatch(/^This account holds about \$\d+\.\d\d\. Keep less than \$10\.00 here and move the rest out\.$/u);
     expect(warning?.className).toContain('danger');
 
     startDemo(async () => new Response('nope', { status: 500 }));
     send(baseRequest());
     await settle();
-    expect(pageText()).toContain('Balance unknown.');
+    expect(pageText()).toContain('Couldn’t read the balance.');
   });
 
   it('reads a Stellar balance from Horizon, counting XLM and Circle’s USDC only', async () => {
@@ -1750,7 +1758,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     send(pubnetRequest());
     expect(pageText()).toContain(MAINNET_DEMO_BANNER);
     await settle();
-    expect(pageText()).toContain('This wallet holds about $5.60.');
+    expect(pageText()).toContain('This account holds about $5.60.');
     expect(calls).toEqual([`https://horizon.stellar.org/accounts/${USER}`]);
   });
 
@@ -1775,9 +1783,9 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
       startDemo(balances);
       send(baseRequest({ demoPrices: LIVE_PRICES }));
       // 0.001 ETH at $2,251.7985, plus the 100,000 wei fee: $2.2517985…
-      expect(pageText()).toContain('This request can move about $2.26, fee included. Journear’s limit is $9.99 per transaction.');
+      expect(pageText()).toContain('This can move about $2.26, fees included. Journear’s limit is $9.99 each time.');
       await settle();
-      expect(pageText()).toContain('This wallet holds about $4.28.');
+      expect(pageText()).toContain('This account holds about $4.28.');
     });
 
     it('warns about the balance at those prices, not the table’s', async () => {
@@ -1787,7 +1795,7 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
       });
       send(baseRequest({ demoPrices: LIVE_PRICES }));
       await settle();
-      expect(document.querySelector('.demo-balance')?.textContent).toBe('This wallet holds about $67.56: keep test funds under $10.00 — move the rest out.');
+      expect(document.querySelector('.demo-balance')?.textContent).toBe('This account holds about $67.56. Keep less than $10.00 here and move the rest out.');
     });
 
     it.each([
@@ -1796,15 +1804,15 @@ describe('/approve: the mainnet demo banner (D428, D429)', () => {
     ])('falls back to the fixed table for %s: the highest value it could show', async (_name, book) => {
       startDemo(balances);
       send(baseRequest({ demoPrices: book }));
-      expect(pageText()).toContain('This request can move about $8.01');
+      expect(pageText()).toContain('This can move about $8.01');
       await settle();
-      expect(pageText()).toContain('This wallet holds about $7.15.');
+      expect(pageText()).toContain('This account holds about $7.15.');
     });
 
     it('takes a book older than the vault’s limit: the vault checks the age, this page’s clock may be off', () => {
       startDemo(balances);
       send(baseRequest({ demoPrices: { ...LIVE_PRICES, atMs: DEMO_NOW - 3_600_000 } }));
-      expect(pageText()).toContain('This request can move about $2.26');
+      expect(pageText()).toContain('This can move about $2.26');
     });
   });
 

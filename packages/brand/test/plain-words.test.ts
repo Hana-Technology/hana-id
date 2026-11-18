@@ -9,10 +9,12 @@ describe('jargonIn', () => {
     expect(jargonIn('Get testnet NEAR from the Faucet')).toEqual(['faucet', 'testnet']);
     expect(jargonIn('Public, on\nchain.')).toEqual(['on chain']);
     expect(jargonIn('The EVM key')).toEqual(['EVM']);
+    // The approval window's words are on the same list (one list for every surface).
+    expect(jargonIn('The relayed call burns NEAR on this chain')).toEqual(['chain', 'burns', 'relayed']);
   });
 
   it('ignores codes, class names and words that only contain a banned one', () => {
-    for (const s of ['mainnet_not_allowed', 'jp-vault', 'near_delegate_nonce_used', 'gaslight', 'relayed', 'blocked', 'contracted', 'Ethereum-style key', 'hana-id-auth-sandbox-dev.example']) expect(jargonIn(s), s).toEqual([]);
+    for (const s of ['mainnet_not_allowed', 'jp-vault', 'near_delegate_nonce_used', 'gaslight', 'blocked', 'blocks the window', 'contracted', 'Ethereum-style key', 'hana-id-auth-sandbox-dev.example']) expect(jargonIn(s), s).toEqual([]);
   });
 
   it('lists each word once', () => {
@@ -23,6 +25,6 @@ describe('jargonIn', () => {
 describe('sentencesIn', () => {
   it('takes literals with a space outside comment lines, and skips URLs', () => {
     const src = ["// 'a comment with gas'", "const a = 'You paid no gas.';", 'const b = `${x} on chain`;', "const c = 'https://a.example/x y';", "const d = 'single';"].join('\n');
-    expect(sentencesIn(src)).toEqual(['You paid no gas.', '${x} on chain']);
+    expect(sentencesIn(src)).toEqual(['You paid no gas.', '… on chain']);
   });
 });

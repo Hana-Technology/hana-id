@@ -47,7 +47,7 @@ test('one click on the partner’s Sign opens the approval popup with the reques
   expect(url.pathname).toBe('/approve');
   expect(url.searchParams.get('from')).toBe('partner');
   expect(url.searchParams.get('v')).toBe(await page.evaluate(() => (window as any).e2e.vaultFrameName()));
-  await expect(popup.getByText('Request 1 of 1', { exact: false })).toBeVisible();
+  await expect(popup.locator('header.app p').first()).toHaveText('From E2E Partner');
   await expect(popup.getByText('E2E Partner').first()).toBeVisible();
   await approve(popup);
   expect(await okValue(page, 'sig')).toMatchObject({ valid: true });
@@ -104,7 +104,7 @@ test('two sequential requests from two clicks reuse the one approval window', as
   const nextP = page.waitForEvent('popup');
   await clickAction(page, 'third', 'personalSign', 'third');
   const next = await nextP;
-  await expect(next.getByText('Request 1 of 1', { exact: false })).toBeVisible();
+  await expect(next.locator('header.app p').first()).toHaveText('From E2E Partner');
   await next.getByRole('button', { name: 'Reject', exact: true }).click();
   expect(await errorCode(page, 'third')).toBe(4001);
 });
@@ -154,7 +154,7 @@ test('an auto-approved request opens the popup in the click and closes it withou
   await consent.close();
   await page.waitForTimeout(800); // the vault polls its window every 0.5 s, then tells the page it is gone
   // The control: the recorder saw the consent screen and its buttons.
-  expect(ui.some((t) => t.includes('Allow automatic signing?') && t.includes('buttons:'))).toBe(true);
+  expect(ui.some((t) => t.includes('Allow automatic approvals?') && t.includes('buttons:'))).toBe(true);
   ui.length = 0;
   const mark = await eventCount(page);
 

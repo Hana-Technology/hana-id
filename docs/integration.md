@@ -706,7 +706,9 @@ Every signing request goes through the user. The Journear Passport popup decodes
 misdescribe them. It starts with one plain sentence built only from those bytes ("Your App wants to send 0.1 NEAR to
 bob.testnet", "Your App wants to use stamps.testnet (collect)", "Your App wants you to sign a message"), the network
 and the most the network fee can be; a plain transfer (EVM value with no call data on a chain it names, one native XLM
-payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). Every warning is
+payment or account creation, NEAR transfers only) also shows the amount large ("Sends 0.001 ETH"). An address or key in a
+sentence is shortened (`0x3333…3333`) and written out whole once, in its own labelled row right under it (two that
+look alike are numbered "account 1", "account 2"). Every warning is
 always in view, the red ones right under that sentence: changes to who controls the account, raw signing, and any request that lets someone spend the
 user's tokens (an ERC-20 `approve` or `increaseAllowance`, `setApprovalForAll`, EIP-2612 and Permit2 signatures, a
 Soroban token `approve`, NEAR's `nft_approve`), red when the amount has no limit, with the spender named when Journear
@@ -715,13 +717,15 @@ actions, raw arguments, typed-data trees, the user's Support ID) are folded behi
 always open. When the popup can't explain a request in plain words (a function it doesn't recognise, typed data other
 than a permit it knows, a Soroban call that isn't a token transfer or approval or that authorizes anything else, a
 liquidity pool deposit or withdrawal, more steps than it lists, raw bytes) it says so above the details in plain words,
-for example "Journear can’t tell what this request does. It could move your money or tokens. Only approve if you fully
-trust Your App.", in red when what it can't read could move funds or control with no visible limit; for raw signing,
-"This asks you to sign something Journear can’t read at all. … Reject unless you are certain." The details stay
-folded in every case until the user opens them. Token amounts carry a symbol only for the few tokens Journear has reviewed; anything else shows the
-amount in the token's smallest units, so describe amounts in your own page too. **Reject** and **Approve** are below.
+for example "Journear can’t check what this does. It could take your money or tokens. If you’re not sure, reject
+it.", in red when what it can't read could move funds or control with no visible limit; for raw signing,
+"Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re
+signing." The details stay folded in every case until the user opens them. Every word is plain, for people who don't
+know crypto: no "gas", "contract" or "testnet" outside the details. Token amounts carry a symbol only for the few
+tokens Journear has reviewed (USDC and EURC where Circle publishes them, wrapped NEAR), with a line that it is the real one; anything else reads "N units of an unlisted token" with a line telling the user to check
+the amount in your app, so describe amounts in your own page too. **Reject** and **Approve** are below.
 The popup stays open for 15 s after an answer, so a follow-up request (`restoreFootprint`, a
-re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Declined" and counts down,
+re-sign, a trustline) appears there without another click. Meanwhile it says "Approved" or "Rejected" and counts down,
 with a Close now button. Each follow-up still needs its own Approve. Reject, closing the
 popup, or 5 min without an answer gives `4001`.
 
@@ -769,8 +773,8 @@ clicking in place without moving the mouse, Enter and Space never arm it. That s
 tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) carry a line that the signature
 isn't tied to one network: they are valid wherever the key is. For a test app every request and consent screen also
 says that Journear Passport signs only for test networks (for a test app with Journear's mainnet demo on, it says what the demo signs
-instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (testnet)", with the chain ID beside it) and
-gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
+instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (test network)", with "network no.
+11155111" beside it) and gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
 
 ### Stellar
 
@@ -1069,7 +1073,10 @@ action fails its NEAR is refunded to the user's account. So the user's balance g
 account itself: deleting it (everything), staking (locked), publishing a global contract (burnt), a call to a contract
 on the user's own account (it decides what it moves: the popup says "Unknown") and fees spent through a function-call
 key the action adds (up to its allowance). The actions run as the user's account, so a contract they call acts in the
-user's name (it can move tokens the user holds there).
+user's name (it can move tokens the user holds there). The approval window says so: "Network fee: free for you.
+Someone else pays it.", and for every call an amber "This acts as you: {contract} can use anything you keep with
+it."; anything that can take the user's NEAR or tokens also shows a "NEAR leaving your account" row. For a live app it also says, in amber, that the approval could be used on the other NEAR
+network if the account exists there.
 
 <a id="near-relay"></a>**Journear Passport's relay** (`hana.near.relay`, `POST /v1/near/relay`; `hana.near.activate`,
 `POST /v1/near/activate`). Testnet only, and running on sandbox-dev. Both are checked against your publishable key and
@@ -1563,7 +1570,7 @@ Sepolia (421614), OP Sepolia (11155420), Sonic testnet (14601), Sonic Blaze test
 
 **Journear's sandbox mainnet demo (not for partner apps).** Journear runs its own Sodax demo on sandbox under an internal
 exception: one Journear Passport test app may sign on Base (8453) and Stellar's public network, at most $9.99 per transaction (fee
-included), every request through Journear Passport's window with a red "Real funds, test custody" banner, the request's value and
+included), every request through Journear Passport's window with a red "Real money, test system" banner, the request's value and
 the wallet's balance. Partner apps can't get it, and in production it doesn't exist. What the SDK shows of it (SDK
 0.2.1; the `prices` field and `mainnetDemoKnown` need a current vault), so a page built on it knows where it stands:
 

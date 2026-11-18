@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { SDK_PACKAGES, codeBlocks, fileListProblems, localPathProblems, manifestProblems, sampleModule, sourceMapProblems, typeCommentProblems } from '../lib/pack-check.ts';
+import { GUIDE_PARTS, SDK_PACKAGES, codeBlocks, fileListProblems, guideModule, localPathProblems, manifestProblems, sampleModule, sourceMapProblems, typeCommentProblems } from '../lib/pack-check.ts';
 import { buildPackage, outDirOf, rewriteDtsSpecifiers } from '../lib/sdk-build.ts';
 import { checkVersion, setSdkVersion, withPackageVersion, withVersionConstant } from '../lib/sdk-version.ts';
 
@@ -317,6 +317,17 @@ describe('sdk-version', () => {
 
 
 describe("the partner guide's samples (pack check)", () => {
+  it('every part the pack check type-checks is in docs/integration.md, with samples, one module file each', () => {
+    const guide = readFileSync(new URL('../../docs/integration.md', import.meta.url), 'utf8');
+    expect(GUIDE_PARTS.map((p) => p.file)).toEqual(['guide-login.ts', 'guide-gas-free.ts', 'guide-near.ts', 'guide-errors.ts']);
+    for (const part of GUIDE_PARTS) {
+      expect(codeBlocks(guide, part.start, part.end).length, part.start).toBeGreaterThan(0);
+      const module = guideModule(part, guide);
+      expect(module).toMatch(/^import \{ [^}]*\bcreateHana\b[^}]*\} from '@hana-id\/web';$/mu);
+      expect(module).toContain('const hana = createHana(');
+    }
+  });
+
   const md = ['# Guide', '```ts', 'outside();', '```', '### Part', 'text', '```ts', "import { a } from 'm';", 'a();', '```', '```sh', 'npm i', '```', '```tsx', '<X />', '```', '```ts', "import type { T } from 'm';", "import { b, type U } from 'n';", 'const t: T = b();', '```', '### Next', '```ts', 'after();', '```'].join('\n');
 
   it('codeBlocks takes only the ts blocks between the two headings', () => {

@@ -39,7 +39,7 @@ import type { TypedDataStruct, TypedDataValue } from '../typed-data.ts';
 export type SummaryPart = string | { readonly kind: 'app' } | { readonly kind: 'code'; readonly text: string; readonly role?: IdRole } | { readonly kind: 'strong'; readonly text: string };
 
 /**
- * What an address, key or id in a sentence is (D859): the page shows a long one by its short form in the sentence and
+ * What an address, key or id in a sentence is: the page shows a long one by its short form in the sentence and
  * in full once, in its own labelled row ("To", "Who gets the permission", "Key", …). A code part without a role (a
  * method name, a token id, a sign-in domain, a network passphrase) is shown whole in the sentence, as before.
  */
@@ -74,9 +74,9 @@ export type SummaryWarningCode =
   | 'raw_signing'
   /** A sponsored EVM action that also sets the account up (its EIP-7702 authorization): the one-time setup note. */
   | 'account_setup'
-  /** A relayed NEAR action that calls another account's contract: it acts as the user there (D858). */
+  /** A relayed NEAR action that calls another account's contract: it acts as the user there. */
   | 'acts_as_you'
-  /** A Stellar asset whose code is a listed token's (USDC) but whose issuer isn't the listed one: it may be a copy (D860). */
+  /** A Stellar asset whose code is a listed token's (USDC) but whose issuer isn't the listed one: it may be a copy. */
   | 'token_lookalike';
 
 export interface SummaryWarning {
@@ -98,7 +98,7 @@ export interface ApprovalSummary {
   /** The network the request is bound to, as a value ("Sepolia (test network)"), when the request names one. NEAR's line is the page's. */
   readonly network: SummaryText | null;
   /**
-   * D858 (as corrected 2026-11-18): a relayed NEAR action that takes none of the user's NEAR and that Journear sees
+   * A relayed NEAR action that takes none of the user's NEAR and that Journear sees
    * moving none of their tokens: the page then drops the "NEAR leaving your account: None of your NEAR…" row, which
    * only repeated the fee row. It says nothing about what a call does with what the user keeps at the contract (the
    * amber acts-as-you line does); the window never says such a request costs nothing.
@@ -136,11 +136,11 @@ export function shortId(text: string): string {
   return text.length > 16 ? `${text.slice(0, 6)}…${text.slice(-4)}` : text;
 }
 
-/** A readable NEAR account name (`stamps.testnet`): shown whole in a sentence, never cut (D859). */
+/** A readable NEAR account name (`stamps.testnet`): shown whole in a sentence, never cut. */
 const NEAR_NAMED = /^(?=.{2,64}$)(?!0x)[a-z0-9]+(?:[-_][a-z0-9]+)*(?:\.[a-z0-9]+(?:[-_][a-z0-9]+)*)+$/u;
 
 /**
- * Whether a value in a sentence is shown by its short form, with the whole value in its own row (D859): a long address,
+ * Whether a value in a sentence is shown by its short form, with the whole value in its own row: a long address,
  * key or id (what shortId cuts), never a readable NEAR name, which is shown whole as it is.
  */
 export const isLongId = (text: string): boolean => shortId(text) !== text && !NEAR_NAMED.test(text);
@@ -157,7 +157,7 @@ const spenderShort = (t: SummaryText): SummaryText => {
 export type RiskLevel = 'danger' | 'warning';
 
 /**
- * The one shape of every "Journear can't check" line (D810 as reworded under D853): what Journear can't do, an
+ * The one shape of every "Journear can't check" line: what Journear can't do, an
  * optional short plain reason in brackets, the risk, and one ending. Red: "If you’re not sure, reject it."; amber:
  * "Approve only if you expected this from {App}." `reason` is Journear's own words, or parts with code values.
  */
@@ -273,7 +273,7 @@ interface KnownToken {
   readonly decimals: number;
 }
 
-/** A token (never a collectible) on Journear's reviewed list (known-tokens.ts, D860) for exactly this id there, or null. */
+/** A token (never a collectible) on Journear's reviewed list (known-tokens.ts) for exactly this id there, or null. */
 const listedToken = (net: TokenNetwork, id: string, list: KnownTokenList = KNOWN_TOKENS): KnownToken | null => {
   const t = knownToken(net, id, list);
   return t && t.kind === 'token' ? t : null;
@@ -289,13 +289,13 @@ export const knownStellarToken = (networkPassphrase: string, id: string): KnownT
 export const knownNearToken = (network: 'testnet' | 'mainnet', account: string): KnownToken | null => listedToken({ kind: 'near', network }, account);
 
 /**
- * D860: the line beside an amount of a listed token, with the token's id (whole in its row, D859): the symbol is
+ * The line beside an amount of a listed token, with the token's id (whole in its row): the symbol is
  * Journear's, from its reviewed list, never the token's own claim.
  */
 export const realTokenLine = (id: string, token: KnownToken): SummaryText => [`This is the real ${token.symbol} (`, code(id, 'token'), '), checked by Journear.'];
 
 /**
- * D860: a Stellar asset whose code is a listed token's on this network but whose issuer isn't the listed one. The code
+ * A Stellar asset whose code is a listed token's on this network but whose issuer isn't the listed one. The code
  * is the asset's own (in the signed request, as every wallet shows it), not something read from a contract.
  */
 const lookalikeToken = (symbol: string, asset: string): SummaryWarning => ({
@@ -336,7 +336,7 @@ function amountOf(amount: bigint, token: KnownToken | null, dir: AmountDirection
 const units = (n: bigint): string => (n === 1n ? 'unit' : 'units');
 
 /**
- * The line under an amount of a token Journear doesn't know (D853): it can't say what the units are worth, and what
+ * The line under an amount of a token Journear doesn't know: it can't say what the units are worth, and what
  * to do. The token's address stays in view here.
  */
 const unlistedLine = (amount: bigint | null, contract: string, nft = false): SummaryText => [
@@ -357,7 +357,7 @@ function tokenName(contract: string, token: KnownToken | null): SummaryText {
   return token ? [token.symbol] : ['tokens from ', code(contract, 'token'), ' (an unlisted token)'];
 }
 
-/** For a listed token named by its symbol: which contract that is, so the contract is always in view (D860). */
+/** For a listed token named by its symbol: which contract that is, so the contract is always in view. */
 const tokenContractLine = (contract: string, token: KnownToken): SummaryText => realTokenLine(contract, token);
 
 /** Who would be allowed to take: a verified contract by name, else its address, said to be unchecked. */
@@ -407,7 +407,7 @@ function evmNative(chainId: number, wei: bigint): string {
   return info ? `${displayUnits(wei, 18)} ${info.nativeSymbol}` : `${displayUnits(wei, 18)} of this network’s coin`;
 }
 
-/** The network by its plain name ("Base Sepolia (test network)"); its number is in the details only (D853). */
+/** The network by its plain name ("Base Sepolia (test network)"); its number is in the details only. */
 function evmNetwork(chainId: number): SummaryText {
   const info = evmChainInfo(chainId);
   return info ? [info.label] : ['a network Journear doesn’t know'];
@@ -859,7 +859,7 @@ function stellarNetwork(passphrase: string): SummaryText {
 const xlm = (stroops: string | bigint, dir: AmountDirection = 'out'): string => `${displayUnits(BigInt(stroops), 7, dir)} XLM`;
 
 /**
- * A Stellar asset named in a sentence (D860): XLM; a listed asset by its symbol, with the real-token line; anything
+ * A Stellar asset named in a sentence: XLM; a listed asset by its symbol, with the real-token line; anything
  * else as "the asset CODE:ISSUER" (a code is its issuer's choice), with the look-alike warning when its code is a listed
  * token's symbol on this network.
  */
@@ -1622,13 +1622,13 @@ function nearMovesValue(a: NearAction): boolean {
 }
 
 /**
- * D858 (as corrected 2026-11-18): the fee row of a relayed NEAR action. It speaks about the fee only, never about what
+ * The fee row of a relayed NEAR action. It speaks about the fee only, never about what
  * the action costs. Never "Journear pays": a partner may relay it itself.
  */
 export const RELAYED_FEE: SummaryText = Object.freeze(['free for you. Someone else pays it.']) as SummaryText;
 
 /**
- * D858: the risk that a relayed call acts as the user (it was half of the blue relayer note): the contract it calls can
+ * The risk that a relayed call acts as the user (it was half of the blue relayer note): the contract it calls can
  * use anything the user keeps with it. Amber, named by the receiver (an account id the decoder checked).
  */
 export const actsAsYou = (receiver: string): SummaryWarning => ({

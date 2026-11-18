@@ -79,7 +79,7 @@ const PUB_EURC = stellarAsset('EURC', CIRCLE_EURC);
 const TEST_USDC = stellarAsset('USDC', CIRCLE_USDC);
 const TEST_EURC = stellarAsset('EURC', CIRCLE_EURC);
 
-/** The reviewed list. Seeded conservatively (D860): only what the issuers' own pages list. */
+/** The reviewed list. Seeded conservatively: only what the issuers' own pages list. */
 export const KNOWN_TOKENS: KnownTokenList = Object.freeze({
   evm: Object.freeze({
     // Mainnets.

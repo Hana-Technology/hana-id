@@ -63,7 +63,7 @@ const EVM_NATIVE_SYMBOLS: Readonly<Record<number, string>> = Object.freeze({
 
 export interface EvmChainInfo {
   /**
-   * Hana's own name for the network as a user reads it (D853): "Base Sepolia (test network)", "Base (real money)",
+   * Hana's own name for the network as a user reads it: "Base Sepolia (test network)", "Base (real money)",
    * "Local test network (Hardhat, Anvil)". The chain's number is never in it (it lives in the folded details).
    */
   readonly label: string;

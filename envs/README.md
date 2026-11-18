@@ -219,7 +219,9 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   live)", D849).
 - `chains`: 1 to 4, by decimal chain ID. Each must be one of core's `TEST_EVM_CHAINS`; the local dev chains 31337 and
   1337 only in `local*` envs. `opStack` is true exactly for the OP Stack test chains (84532 Base Sepolia, 11155420 OP
-  Sepolia), which also charge an L1 data fee. `rpc` and the optional `rpcFallback` are https URLs of DNS names (no IP
+  Sepolia), which also charge an L1 data fee. `rpc` and `rpcFallback` (required outside `local*` envs: the vault signs a user's one-time setup only when both
+  answer and agree on the account, D855; optional in `local*` envs, where the setup may then rest on `rpc` alone) are
+  https URLs of DNS names (no IP
   literal, no loopback or link-local `.local` host, a dot and no trailing dot) with no credentials, path, query or
   fragment; a loopback host (http or https) only in `local*` envs; outside them the two are different providers
   (registrable domains). **No API keys in manifest URLs**: the manifest is committed, so a keyed RPC goes in a secret
@@ -246,8 +248,9 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   exactly one of them, so nothing can be appended at the sponsor's cost; use it for every function whose arguments
   are fixed (the demo's `checkIn()` takes none: `["0x183ff085"]`). A selector without entries matches any data starting
   with it, up to `maxDataBytes`. Calls carry no value: there is no field for one. An empty `apps` sponsors nothing.
-- `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts `{ chainId: { delegate, relayer } }`
-  into the vault's envs (`HanaEnv.evmSponsor`); a change needs `gen`, a page build and a redeploy of the API and the
+- `gen` writes the block as the API var `EVM_SPONSOR` and the page build puts `{ chainId: { delegate, relayer, rpc,
+  rpcFallback? } }` into the vault's envs (`HanaEnv.evmSponsor`; the vault reads the account's setup from those public
+  endpoints itself, D855, so `rpc` and `rpcFallback` must stay key-free and reachable from a browser, CORS included); a change needs `gen`, a page build and a redeploy of the API and the
   pages. A `__proto__`, `constructor` or `prototype` key anywhere in the block
   is refused.
 

@@ -33,6 +33,12 @@ const BASE_FEE = '0x3b9aca00';
 export class MockEvm {
   /** Raw signed transactions as broadcast, in order. */
   readonly raw: `0x${string}`[] = [];
+  /**
+   * Accounts the sponsorship stand-in set up (sponsor-standin.ts): their code (an EIP-7702 designator) and transaction
+   * count, which eth_getCode and eth_getTransactionCount answer for them. Any other address has no code and the count of
+   * broadcast transactions, as before.
+   */
+  readonly accounts = new Map<string, { code: `0x${string}`; nonce: number }>();
 
   handler(): Handler {
     return async (request) => {
@@ -51,8 +57,10 @@ export class MockEvm {
           return ok('0x1');
         case 'eth_getBlockByNumber':
           return ok({ number: '0x1', hash: `0x${'11'.repeat(32)}`, parentHash: `0x${'00'.repeat(32)}`, timestamp: '0x6553f100', baseFeePerGas: BASE_FEE, gasLimit: '0x1c9c380', gasUsed: '0x0', transactions: [] });
-        case 'eth_getTransactionCount':
-          return ok(`0x${this.raw.length.toString(16)}`);
+        case 'eth_getTransactionCount': {
+          const known = typeof body.params?.[0] === 'string' ? this.accounts.get(body.params[0].toLowerCase()) : undefined;
+          return ok(`0x${(known ? known.nonce : this.raw.length).toString(16)}`);
+        }
         case 'eth_estimateGas':
           return ok('0x5208');
         case 'eth_gasPrice':
@@ -61,7 +69,10 @@ export class MockEvm {
           return ok(BASE_FEE);
         case 'eth_getBalance':
           return ok('0xde0b6b3a7640000');
-        case 'eth_getCode':
+        case 'eth_getCode': {
+          const known = typeof body.params?.[0] === 'string' ? this.accounts.get(body.params[0].toLowerCase()) : undefined;
+          return ok(known?.code ?? '0x');
+        }
         case 'eth_call':
           return ok('0x');
         case 'eth_sendRawTransaction': {

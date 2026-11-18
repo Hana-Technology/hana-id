@@ -303,6 +303,32 @@ export class VaultApi {
     return this.consentRequest('/v1/vault/consents/revoke', body, isConsentRevoked);
   }
 
+  /**
+   * POST /v1/evm/sponsor/prepare or /v1/evm/sponsor/send (D832: the vault's calls only; D856: `body` carries its
+   * session proof): the answer's JSON object, unchecked (vault/evm-sponsor.ts reads it strictly). A refusal throws
+   * ApiError whose `details` keep the body's extra fields and the `retry-after` header as `retryAfterS` (whole seconds);
+   * a network failure or `signal` throws as fetch does.
+   */
+  async evmSponsor(route: 'prepare' | 'send', body: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const res = await this.fetchFn(`${this.base}/v1/evm/sponsor/${route}`, {
+      method: 'POST',
+      headers: this.headers(true),
+      body: JSON.stringify(body),
+      credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      ...(signal ? { signal } : {}),
+    });
+    try {
+      return await parseApiResponse(res);
+    } catch (e) {
+      const header = res.headers.get('retry-after');
+      const retryAfterS = header !== null && /^(?:0|[1-9][0-9]{0,4})$/u.test(header) ? Number(header) : null;
+      if (e instanceof ApiError && retryAfterS !== null && e.details.retryAfterS === undefined) throw new ApiError(e.status, e.code, e.message, e.nearTx, e.requestId, { ...e.details, retryAfterS });
+      throw e;
+    }
+  }
+
   /** D411: POST /v1/identity/email-consent/state: the app's setting and the session's consent state. */
   async emailConsentState(body: EmailConsentProof & { sealedEmail?: string }): Promise<EmailConsentStateResponse> {
     return (await this.post('/v1/identity/email-consent/state', body, isEmailConsentStateResponse)).value;

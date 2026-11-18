@@ -35,6 +35,7 @@ import { nearRpc } from './rpc.ts';
 import { parseKeyPair } from './tx.ts';
 import { nearAccountUser } from '../directory/near.ts';
 import { delegateFailure, relayAnswerBody } from './relay-answer.ts';
+import { recordAfterAnswer } from './relay-billing.ts';
 
 export { delegateFailure, relayAnswerBody };
 export type { RelayAnswer } from './relay-answer.ts';
@@ -402,7 +403,11 @@ function delegateRefusal(ctx: Ctx, d: DecodedDelegate, config: NearRelayConfig):
   }
 }
 
-export async function handleNearRelay(request: Request, env: Env, requestId: string): Promise<Response> {
+/**
+ * `exec`: the request's execution context: the billing record (D863) is written after the answer (`waitUntil`), so the
+ * relay waits for nothing and answers exactly as before.
+ */
+export async function handleNearRelay(request: Request, env: Env, requestId: string, exec?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
   const ctx = newCtx(env, requestId, NEAR_RELAY_ENDPOINT, request);
   const gate = await appGate(request, env, ctx, 'near');
   if (!gate.ok) return gate.response;
@@ -526,12 +531,14 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
   if (certainlyNotSent(result)) await Promise.all([unmark(), giveBackWindows(env, daily, dailyAt)]);
   else await raiseFloor(env, ctx, senderSubject, d.nonce);
   await settleBudget(env, ctx, app, reserved, result, now);
+  // The billing record (D863): only a transaction that may have reached the chain; never the user's account.
+  if (!certainlyNotSent(result)) recordAfterAnswer(env, exec, app, result, { kind: 'delegate', receiver: d.receiverId, methods: d.actions.map((a) => a.methodName), attachedYocto: d.actions.reduce((n, a) => n + a.deposit, 0n) });
   return relayAnswer(ctx, result, d.senderId);
 }
 
 // ---- POST /v1/near/activate ----
 
-export async function handleNearActivate(request: Request, env: Env, requestId: string): Promise<Response> {
+export async function handleNearActivate(request: Request, env: Env, requestId: string, exec?: Pick<ExecutionContext, 'waitUntil'>): Promise<Response> {
   const ctx = newCtx(env, requestId, NEAR_ACTIVATE_ENDPOINT, request);
   const gate = await appGate(request, env, ctx, 'near-activate');
   if (!gate.ok) return gate.response;
@@ -594,6 +601,9 @@ export async function handleNearActivate(request: Request, env: Env, requestId: 
   lapRelay(ctx, result);
   await settleBudget(env, ctx, app, reserved, result, now, config.activationYocto);
   if (certainlyNotSent(result)) await giveBackWindows(env, daily, dailyAt);
+  // The billing record (D863): the activation's transfer is NEAR the relay sent for the user; its receiver (the user's
+  // account) is not kept.
+  else recordAfterAnswer(env, exec, app, result, { kind: 'activation', receiver: null, methods: [], attachedYocto: config.activationYocto });
   // A concurrent copy of this activation was relayed first (L6): the account exists now, so answer as a repeat does.
   if (!result.ok && result.code === ALREADY_RELAYED) {
     const now2 = await implicitAccountKey(nearRpc(env), req.accountId).catch(() => null);

@@ -373,9 +373,12 @@ describe('uid-erase and the sponsored EVM sends (D848)', PGLITE, () => {
     row.run(id(), olivia, await userOf(OTHER), digest);
     // The billing record of the user's transaction (D852): no personal data, kept through the erasure on purpose.
     api.prepare("INSERT INTO evm_sponsor_billing (chain_id, record_key, send_id, org_id, app_id, environment, tx_hash, outcome, settled_wei, call_count, targets_json, with_setup, created_at, settled_at) VALUES (84532, ?, 'es_00000000000000000000000000000001', 'org_a', 'app_a', 'sandbox-dev', ?, 'executed', '5', 1, '[]', 0, 1, 2)").run(`0x${'ab'.repeat(32)}`, `0x${'ab'.repeat(32)}`);
+    api.prepare("INSERT INTO near_relay_billing (network, tx_hash, org_id, app_id, environment, kind, relay_code, outcome, attached_yocto, receiver, methods_json, created_at, next_try_at) VALUES ('testnet', ?, 'org_a', 'app_a', 'sandbox-dev', 'delegate', 'ok', 'executed', '0', 'stamps.test.near', '[]', 1, 1)").run('1'.repeat(44));
     const out = await uidErase([...ARGV, '--yes'], deps());
     expect(out!.plan.sponsorSends).toBe(2);
     expect(one(api, 'SELECT COUNT(*) AS n FROM evm_sponsor_billing')).toBe(1);
+    // The NEAR relay's billing records (D863) too: kept through the erasure.
+    expect(one(api, 'SELECT COUNT(*) AS n FROM near_relay_billing')).toBe(1);
     expect(lines.join('\n')).toMatch(/sponsored 2 sponsored EVM send audit row\(s\) deleted/u);
     expect(lines.join('\n')).not.toContain(evm);
     expect(out!.erased).toMatchObject({ evmSponsorSends: 2 });

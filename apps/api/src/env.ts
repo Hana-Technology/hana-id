@@ -151,6 +151,13 @@ export interface Env {
    */
   USAGE_DB?: Hyperdrive;
   /**
+   * D872: the usage ledger's Neon plan when it has a monthly compute allowance (the free plan), JSON
+   * `{computeHoursPerMonth, computeUnits}` from the manifest's `usage.neonPlan`. With it every ledger connection is noted
+   * in D1 (`neon_compute`, usage/neon-compute.ts) and `neon_compute_high` is raised at 70% and 90% of the estimate;
+   * without it nothing is noted.
+   */
+  NEON_PLAN?: string;
+  /**
    * Secret (`usage-setup <env> user-id-key`): the uid key, base64 of 32 bytes (docs/batch-c-spec.md "uid"). Without
    * it events carry no uid (MAU and new users go uncounted). Never logged, never rotated within a contract term.
    */

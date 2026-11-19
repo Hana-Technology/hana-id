@@ -6,6 +6,7 @@
 import { usageDay } from '../apps.ts';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
+import { withNeonWake } from './neon-compute.ts';
 import { classifyWriteError, usageTransport } from './record.ts';
 
 /** Days copied each run (today included): a Neon outage shorter than this loses nothing. */
@@ -49,7 +50,7 @@ export async function syncIdentityUsage(env: Env, now = Date.now()): Promise<num
   for (let i = 0; i < rows.length; i += IDENTITY_SYNC_BATCH) {
     const batch = rows.slice(i, i + IDENTITY_SYNC_BATCH).map((r) => ({ app_id: r.app_id, day: r.day, org_id: r.org_id, scope_id: r.scope_id, tokens: r.tokens }));
     try {
-      await usageTransport.query(binding, RECORD_IDENTITY_SQL, [JSON.stringify(batch)]);
+      await withNeonWake(env, () => usageTransport.query(binding, RECORD_IDENTITY_SQL, [JSON.stringify(batch)]));
       sent += batch.length;
     } catch (err) {
       log({ event: 'identity_usage_sync_failed', code: classifyWriteError(err).code, synced: sent }, 'error');

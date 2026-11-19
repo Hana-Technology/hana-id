@@ -38,6 +38,17 @@ SendGrid event signed with a throwaway P-256 key). Both no CORS, refused with an
 routed in the browser), and the two mails. The in-memory Durable Object alarm waits past Node's longest timer (24.8
 days) instead of firing at once (a staff action's 30-day log).
 
+Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
+sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,
+can't be removed, no other button); a waiting email linked to a Google wallet (case B) listed as waiting by kind only,
+cancelled where its line points (the banner's "Cancel this link" at a Google sign-in), then one line again; a link past
+its waiting period (`POST /__e2e/links/expire`) removed by the email's own sign-in (D865), then one line, and that email's
+next sign-in a new wallet, alone in its own Home list; a failed read (both NEAR endpoints answering a JSON-RPC error,
+then only the second: Home needs both to agree) and Try again. Every page on the sign-in origin (Home and the sign-in
+windows) fails on a CSP violation, an uncaught error or a console error other than the two browser lines the spec names
+exactly (`ALLOWED_BROWSER_LINES`: the D347 signal refused when its opener isn't a vault frame, and Firefox's aborted
+font download of the origin's own IBM Plex files). With `HANA_SHOTS_DIR=<dir>` (Chromium) it saves the screens at 390 px, light.
+
 Gas-free EVM actions (D838, D847, D851, D855, D856): `tests/evm-sponsor.spec.ts` runs `hana.evm.sendSponsored` from a
 click through the vault's prepare, one approval and send against apps/api's **own** sponsorship routes (the session
 proof, the allowlist and every check) and the **real relayer object** (`EvmRelayer`, in memory), which signs with the

@@ -5,6 +5,7 @@ export * from './directory.ts';
 export * from './evm-relay.ts';
 export * from './governance.ts';
 export * from './health.ts';
+export * from './neon-compute.ts';
 export * from './ids.ts';
 export * from './issuer-apps.ts';
 export * from './jcs.ts';

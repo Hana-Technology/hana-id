@@ -31,6 +31,8 @@ const FILES = [
   'auth/home-devices.ts',
   'auth/home-email.ts',
   'auth/home-profile.ts',
+  // D874: the ways to sign in to an app's wallet.
+  'auth/home-sign-ins.ts',
   'client/user-messages.ts',
   'vault/approvals.ts',
   // The sponsored action's words (SPONSOR_TEXT: the vault's errors and the approval flow's notes). client/evm-sponsor.ts's

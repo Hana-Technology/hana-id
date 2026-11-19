@@ -33,11 +33,16 @@ export {
   appChangeDelayProblems,
   DASHBOARD_BLOCKS,
   DEFAULT_ACCESS_SESSION_DURATION,
+  DEFAULT_OPS_EVERY_MINUTES,
   emailFromProblem,
   hanaOwnOrigins,
   MAX_APP_CHANGE_DELAY_MS,
   MIN_APP_CHANGE_DELAY_MS,
   PRODUCTION_APP_CHANGE_DELAY_MS,
+  neonPlanSchema,
+  neonPlanVar,
+  opsEveryMinutesOf,
+  opsEveryMinutesProblem,
   usersScreenProblem,
 } from './dashboard.ts';
 export {

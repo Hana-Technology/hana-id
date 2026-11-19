@@ -4,7 +4,9 @@
 // lets the user open that wallet and take its private key to another wallet app (home-export.ts): it does nothing until
 // the user expands it and signs in again, and nothing in the page's address can open or start it. "Devices and
 // auto-approve" (home-devices.ts) sits on the front page and on each app's page, above the move; "Your name"
-// (home-profile.ts) after it, where the user sets an optional first and last name and shares it per app (D714).
+// (home-profile.ts) after it, where the user sets an optional first and last name and shares it per app (D714). "Ways
+// to sign in" (home-sign-ins.ts, D874) sits on each app's page after the devices: the sign-ins that open that wallet,
+// read from the chain only when the user asks, read-only.
 //
 // Sign-in, with Google or an email code (`SIGN_IN_METHODS`). Google: a click opens a child `/login?mode=home` (as the
 // export window opens its own), which takes `hana:home-params` only from this page, goes to Google with a nonce that
@@ -39,6 +41,7 @@ import { googleKeys } from './google-keys.ts';
 import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
 import { type HomeDevices, startHomeDevices } from './home-devices.ts';
 import { type HomeProfileSection, startHomeProfile } from './home-profile.ts';
+import { type HomeSignIns, startHomeSignIns } from './home-sign-ins.ts';
 import { EMAIL_SUB_RE, type HomeEmailApi, type HomeEmailStep, emailTokenClaims, homeEmailStep } from './home-email.ts';
 import { type HomeExport, type HomeExportState, homeExportRoute, startHomeExport } from './home-export.ts';
 import { type HomeProblem, homeProblem } from './home-problems.ts';
@@ -132,6 +135,8 @@ export interface HomePage {
   readonly devices: Pick<HomeDevices, 'front' | 'app' | 'confirming' | 'errorCode' | 'requests'>;
   /** "Your name" (home-profile.ts), on the front page and each app's page. */
   readonly profile: Pick<HomeProfileSection, 'front' | 'app' | 'confirming' | 'errorCode' | 'requests'>;
+  /** "Ways to sign in" (home-sign-ins.ts), on each app's page. */
+  readonly signIns: Pick<HomeSignIns, 'state' | 'reads' | 'errorCode'>;
   /** Resolves once nothing the page started is still running (tests). */
   idle(): Promise<void>;
 }
@@ -391,6 +396,22 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     now: () => clock.now(),
   });
 
+  // ---- the ways to sign in to each app's wallet (home-sign-ins.ts) ----
+  const signIns: HomeSignIns = startHomeSignIns({
+    win,
+    d,
+    near: deps.near,
+    signer: env.signer,
+    isGesture,
+    session: () => {
+      checkSession();
+      return identity && identity.usable && account ? { provider: account.provider, sub: account.sub, address: account.provider === 'email' ? emailAddress : null } : null;
+    },
+    ended: () => session === 'ended',
+    track,
+    now: () => clock.now(),
+  });
+
   // ---- small view parts ----
   const byId = (id: string): HTMLElement | null => win.document.getElementById(id);
   const fill = (id: string, ...children: Child[]): void => {
@@ -456,6 +477,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     if (session === 'none') return;
     session = 'ended';
     byId('home-who')?.replaceWith(whoText());
+    signIns.sessionEnded();
     renderBanner();
   }
 
@@ -643,6 +665,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     // Leaving an app's page locks its wallet: nothing of it stays in the page. Its devices are read again next time.
     moving.leave();
     devices.leaveApp();
+    signIns.leaveApp();
     profile.leaveApp();
     openScope = null;
     problem = null;
@@ -980,6 +1003,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function clearScreen(): void {
     moving.leave();
     devices.reset();
+    signIns.reset();
     // The name and anything typed for it go with the account.
     profile.reset();
     opened.clear();
@@ -1369,9 +1393,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           )
         : null,
       d.h('p', { class: 'copy-status', attrs: { id: 'home-copied', role: 'status' } }, copied),
-      // Where the per-app tools go: the devices signed in to it, the name it gets, and moving the wallet out (last, never
-      // featured).
-      d.h('div', { attrs: { id: 'home-app-extras' } }, devices.appView(scope), profile.appView(scope), moving.view(scope, fromLink)),
+      // Where the per-app tools go: the devices signed in to it, the ways to sign in to its wallet, the name it gets, and
+      // moving the wallet out (last, never featured).
+      d.h('div', { attrs: { id: 'home-app-extras' } }, devices.appView(scope), signIns.appView(scope), profile.appView(scope), moving.view(scope, fromLink)),
     ];
   }
 
@@ -1444,6 +1468,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     moving,
     devices,
     profile,
+    signIns,
     idle,
   };
 }

@@ -93,7 +93,8 @@ export function authPageDirectives(pathname: string, origins: { api: string; rpc
     case '/home':
       // Hana Home (docs/hana-home-spec.md "Pages and packages"): the API (`/v1/home/*`, the login relay's read) and
       // Google's JWKS for its own token check, and the NEAR RPC origins, read only when the user opens a wallet there
-      // (the app's registration, the path on both providers, a lost outcome): the export window's list, plus the email
+      // (the app's registration, the path on both providers, a lost outcome) or presses "Show ways to sign in" on an
+      // app's page (D874: `get_identity` and `get_account` on both providers): the export window's list, plus the email
       // issuer for its email sign-in (H10) in an env that has one.
       return ["frame-ancestors 'none'", `connect-src ${origins.api} ${origins.rpc} ${GOOGLE_CERTS_ORIGIN}${origins.emailIssuer ? ` ${origins.emailIssuer}` : ''}`];
     case '/home/callback':

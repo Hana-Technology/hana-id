@@ -172,17 +172,17 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
    * function both refuse more), limited per member. Neon only: no hot-DB statement, so no `cost`.
    */
   usage(c: unknown) {
-    return runRpc(this.env, 'usage', usageInput, c, { actors: MEMBER }, async ({ input }) => ({ rows: await orgUsage(this.env, input) }));
+    return runRpc(this.env, 'usage', usageInput, c, { actors: MEMBER }, async ({ input }) => ({ rows: await orgUsage(this.env, input, Date.now(), this.ctx) }));
   }
 
   /** The org's frozen monthly statements: metadata, hashes and the stored totals (the on-screen statement, D92). */
   statements(c: unknown) {
-    return runRpc(this.env, 'statements', statementsInput, c, { actors: MEMBER }, async ({ input }) => ({ statements: await orgStatements(this.env, input) }));
+    return runRpc(this.env, 'statements', statementsInput, c, { actors: MEMBER }, async ({ input }) => ({ statements: await orgStatements(this.env, input, Date.now(), this.ctx) }));
   }
 
   /** One page of the ledger CSV's rows for a month (`asOf` pins every page of one CSV to the same bound). */
   ledger(c: unknown) {
-    return runRpc(this.env, 'ledger', ledgerInput, c, { actors: MEMBER }, ({ input }) => orgLedger(this.env, input));
+    return runRpc(this.env, 'ledger', ledgerInput, c, { actors: MEMBER }, ({ input }) => orgLedger(this.env, input, Date.now(), this.ctx));
   }
 
   cancelChange(c: unknown) {

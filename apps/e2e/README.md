@@ -11,11 +11,13 @@ cd apps/e2e && corepack pnpm exec playwright test --project=chromium tests/email
 HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a base of your choice (a worktree has its own by default; not 5010: see below)
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 corepack pnpm --filter @hana-id/e2e staff-demo out-of-money   # the staff admin portal's hand test: a relayer state (below)
+corepack pnpm --filter @hana-id/e2e hand-browser   # a headed Chromium with the suite's Google stub and NEAR relay, for a person (below)
 ```
 
 The hosted demo's NEAR card (D750–D754): `tests/demo.spec.ts` writes to the guestbook on the mocked NEAR testnet
 (`src/server/chain.ts`: users' implicit accounts, `block`, the guestbook's `get_messages`, and the test-only
-`e2e_near_activate` / `e2e_guestbook_add` the test's mocked relayer routes call); `tests/demo-near-shots.spec.ts` saves
+`e2e_near_activate` / `e2e_guestbook_add` the mocked relayer routes call, `src/near-relay.ts`, shared with the hand
+browser); `tests/demo-near-shots.spec.ts` saves
 its screens with `HANA_SHOTS_DIR=<dir>` (Chromium only, skipped otherwise).
 
 The stamps site (`apps/stamps`, D798–D802): `tests/stamps.spec.ts` signs in by email, collects Arrival, Sponsored,
@@ -117,6 +119,39 @@ while Playwright still performs the click makes the click reject with "Target pa
 closed"; the helpers drop that error only when the window is in fact closed. `waitForEvent('close')` on a window that
 has already closed waits for its whole timeout.
 
+## Trying sign-ins and NEAR actions by hand: the hand browser (D880)
+
+A person's own browser on the stack can't sign in with Google (the bundles keep Google's real endpoints) or write to
+the guestbook (the stack's API has no NEAR relayer: `503 relayer_unconfigured`): the tests supply both inside their
+browser context. `corepack pnpm --filter @hana-id/e2e hand-browser [--tag <tag>]` (`src/hand-browser.ts`, with the same
+`HANA_E2E_PORT_BASE` as the running `serve`) launches a headed Chromium whose one context has exactly those routes
+(`src/hand-test.ts`):
+
+- `routeStubs` (`src/browser-routes.ts`, moved out of `tests/fixtures.ts`, which re-exports it and installs it in every
+  test's context): the Google stub, the foreign site, live mode's origins. The stub's chooser lists six named test
+  accounts fixed by the tag (`handAccounts`): Ada (a Gmail address: case A), Ben, Cleo, Dev, Eve (a made-up domain: case
+  B waits 24 h) and Finn. One stub for the whole context, so popups and new tabs share it.
+- `routeNearRelayer(context, ['demo', 'stamps'])` (`src/near-relay.ts`): the NEAR relay mock `tests/demo.spec.ts`,
+  `tests/stamps.spec.ts` and `tests/demo-near-shots.spec.ts` use, chosen by the request's Origin (a request from another
+  origin falls through to the API). A call that isn't the site's own (another key, receiver or method, a deposit, over
+  10 Tgas) is answered `400 e2e_relay_mismatch` and kept in `problems`, which those specs assert empty.
+- A start page at `http://hand-test.localhost/`, answered by a route (never by the stack): the local sites, the
+  accounts with their addresses, and buttons that call the stack's test-only controls from the script's process (they
+  refuse any request with an Origin): `POST /__e2e/links/expire` (**Make its waiting link take effect**),
+  `POST /__e2e/links/age` 8 days (**Make its link 8 days old**), the outbox's newest code (**Show the latest code**), and
+  clearing the sign-in origin's `hana.ol.*` keys as a private window would (**Forget “Done” in this browser**, D875).
+  It answers only POSTs with its own Origin and an `x-hand-test` header. The same helpers from the terminal:
+  `hand-browser expire|age|code <name>` (the tag of the browser opened last on that base, `.build/hand-browser-<base>.json`).
+
+No `bypassCSP`, no disabled web security, no product change: the pages run with their own CSPs, as in the suite; CSP
+violations and page errors are printed in the terminal instead of failing. The browser runs until every window is
+closed (or Ctrl+C, or the browser goes away), then the command ends with 0. It warns, and still runs, when the stack's
+fingerprint isn't this checkout's. `--headless` is for checks only. The steps a person follows: `docs/operations.md`
+"Trying sign-ins and NEAR actions by hand on the local stack". `tests/hand-browser.spec.ts` (Chromium) runs those flows
+headless through `openHandSession` by the pages' labels; `test/hand-browser.test.ts` checks the hand browser's route
+set equals `routeStubs` + `routeNearRelayer` plus only its start page, that no spec routes Google or `/v1/near/*`
+itself, the accounts and the start page's Origin check; `test/near-relay.test.ts` the relay's answers.
+
 ## What runs
 
 Ports are `HANA_E2E_PORT_BASE` (default 4410 in the main checkout; a linked worktree's own base, below) plus the offsets
@@ -173,7 +208,8 @@ The demo (`apps/demo`) is bundled by esbuild from its own `index.html` and `src/
 stack (`DEMO_CONFIG` in `src/build.ts`: the e2e env, the mocked EVM chain, its sponsorship). It bakes its key in at build time, as the
 deployed demo does, so its app has a fixed key (`DEMO_PK`): `POST /__e2e/apps` with `publishableKey` creates it once
 and returns it after that, and every demo test and browser shares it (each test still has its own browser context);
-every demo spec creates it with `DEMO_APP` (`tests/fixtures.ts`, named "Journear demo").
+every demo spec creates it with `DEMO_APP` (`src/site-apps.ts`, re-exported by `tests/fixtures.ts`, named "Journear
+demo", email sign-in on since D880; the hand browser creates the same app).
 The stamps site is built the same way (`STAMPS_CONFIG`, its fixed key `STAMPS_PK`, the contract `e2e-stamps.testnet`).
 
 The bundles are built by `@hana-id/web`'s own per-env build scripts for `local-e2e`, an env defined in `src/stack.ts`

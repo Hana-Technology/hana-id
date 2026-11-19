@@ -431,7 +431,7 @@ describe('the sponsored action’s summary (D831, D850)', () => {
     for (const [to, data] of cases) {
       const s = sponsored([sponsoredCall(to as `0x${string}`, data as `0x${string}`)]);
       const p = plain(to, data);
-      const extra = quiet.has(data) ? ['None of your ETH is used.'] : [];
+      const extra = quiet.has(data as `0x${string}`) ? ['None of your ETH is used.'] : [];
       expect([text(s.headline), s.lines.map(text), warnings(s), s.explainable], data).toEqual([text(p.headline), [...p.lines.map(text), ...extra], warnings(p), p.explainable]);
     }
     // Never on the check-in (its line says it moves no money), alone or with the setup note.

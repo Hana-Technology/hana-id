@@ -41,7 +41,7 @@
 import { ApiError, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
 import { BRAND } from '@hana-id/brand';
-import { type Dom, SIGN_IN_WINDOW, dom, errorView, supportCode } from './dom.ts';
+import { type Dom, SIGN_IN_WINDOW, dom, errorView, originText, supportCode } from './dom.ts';
 import { type BannerAction, dropEmailContext, readEmailContext } from './email-storage.ts';
 import {
   type AccessTokenSub,
@@ -219,23 +219,28 @@ export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<Callb
 }
 
 /** D881: the banner change the email page started, if its outcome is the vault's word in `next`, with the app's name. */
-function bannerChangeAt(storage: Storage, home: string, next: number | undefined, now: number): { action: BannerAction; appName: string } | null {
+function bannerChangeAt(storage: Storage, home: string, next: number | undefined, now: number): { action: BannerAction; appName: string; parentOrigin: string } | null {
   const ctx = readEmailContext(storage, home, now)?.context;
   const action = ctx?.bannerAction ?? null;
-  return ctx && action && action.slot === next ? { action, appName: ctx.appName } : null;
+  return ctx && action && action.slot === next ? { action, appName: ctx.appName, parentOrigin: ctx.parentOrigin } : null;
 }
 
 /** D881: a banner's Remove or Cancel whose Google check didn't finish: nothing changed (email-page.ts CHANGE_TEXT's words). */
-function showChangeNotProved(d: Dom, win: PageWindow, change: BannerAction, appName: string, error: string): void {
+function showChangeNotProved(d: Dom, win: PageWindow, home: string, now: () => number, at: { action: BannerAction; appName: string; parentOrigin: string }, error: string): void {
+  const change = at.action;
+  const appName = at.appName;
   const kind = change.provider === 'google' ? 'Google account' : 'email address';
   const removing = change.kind === 'unlink';
   const close = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'link-change-close' } }, 'Close');
-  close.addEventListener('click', () => win.close());
+  // As the email page's result: a finished sign-in goes on as Done does (the sharing sheet, D411); a stopped one closes.
+  close.addEventListener('click', () => (change.signedIn ? closeOrShare(win, home, now()) : win.close()));
   d.show(
     d.h(
       'section',
       { class: 'panel', attrs: { id: 'link-change-result', 'data-kind': change.kind, 'data-outcome': 'not_proved' } },
       d.h('h1', {}, removing ? `The ${kind} wasn’t removed` : 'The link wasn’t cancelled'),
+      // Which app, at which site, as the sign-in window's other screens say (email-page.ts `header`; no logo here).
+      d.h('p', { class: 'asker' }, 'Signing in to ', d.h('strong', {}, appName), ' at ', originText(d, at.parentOrigin)),
       alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'link-change-what' } }, removing ? `Nothing changed. The ${kind} still opens this wallet.` : 'Nothing changed. The link is still waiting.', ' ', 'Google didn’t finish checking it’s you.'),
       d.h('p', { attrs: { id: 'link-change-advice' } }, 'Close this window, then sign in to ', d.h('strong', {}, appName), ' again to try again.'),
       d.h('p', { class: 'code' }, supportCode(error)),
@@ -536,7 +541,7 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
     if (change) {
       zeroTaken(taken);
       dropEmailContext(win.sessionStorage, home);
-      showChangeNotProved(d, win, change.action, change.appName, fragment.error);
+      showChangeNotProved(d, win, home, now, change, fragment.error);
       return 'relayed';
     }
   }

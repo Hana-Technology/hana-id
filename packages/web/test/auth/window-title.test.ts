@@ -74,4 +74,36 @@ describe('the banner change the email page remembers (D881)', () => {
     window.sessionStorage.setItem(EMAIL_ENTRY_PREFIX + relayId, JSON.stringify(raw));
     expect(readEmailContext(window.sessionStorage, relayId, 1_000)).toBeNull();
   });
+
+  it('a field a page doesn’t know is read along, kept and stored again unused (as an older page treats `bannerAction`)', () => {
+    const relayId = relayIdFor(crypto.getRandomValues(new Uint8Array(32)));
+    const ctx = {
+      pk: 'pk_test_x',
+      appName: 'App',
+      parentOrigin: 'https://partner.example',
+      scopeId: 's1',
+      sessionPublicKey: new Uint8Array(32),
+      expiresAtMs: 2_000,
+      salt: new Uint8Array(32),
+      keyIndex: 0,
+      maxUses: 1,
+      nonce: 'n',
+      clientId: null,
+      methods: ['google', 'email'],
+      opener: 'partner',
+      vaultFrame: null,
+      emailHint: null,
+      challengeId: null,
+    } as EmailContext;
+    storeEmailContext(window.sessionStorage, relayId, ctx, 1_000);
+    const raw = JSON.parse(window.sessionStorage.getItem(EMAIL_ENTRY_PREFIX + relayId)!);
+    raw.c.laterField = { any: 'thing' };
+    window.sessionStorage.setItem(EMAIL_ENTRY_PREFIX + relayId, JSON.stringify(raw));
+    // Read: valid, the unknown field along with the rest (the read spreads the stored object).
+    const read = readEmailContext(window.sessionStorage, relayId, 1_000)!.context as EmailContext & { laterField?: unknown };
+    expect(read.laterField).toEqual({ any: 'thing' });
+    // Stored again (a page's `remember`): still there, for the page that knows it.
+    storeEmailContext(window.sessionStorage, relayId, { ...read, challengeId: null }, 1_000);
+    expect(JSON.parse(window.sessionStorage.getItem(EMAIL_ENTRY_PREFIX + relayId)!).c.laterField).toEqual({ any: 'thing' });
+  });
 });

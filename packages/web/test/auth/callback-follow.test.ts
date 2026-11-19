@@ -10,6 +10,7 @@ import { EMAIL_PROMPT_TEXT, runCallbackPage } from '../../src/auth/callback-page
 import { parseCallbackFragment } from '../../src/auth/google.ts';
 import { type BannerAction, type EmailContext, readEmailContext, storeEmailContext } from '../../src/auth/email-storage.ts';
 import { LOGIN_ENTRY_PREFIX, storeLoginEntry } from '../../src/auth/login-storage.ts';
+import { SHARE_PATH, markEmailShare } from '../../src/auth/share-handoff.ts';
 import { FakeWindow, resetDom } from './helpers.ts';
 
 const NOW = 1_800_000_000_000;
@@ -232,8 +233,23 @@ describe('D881: a banner’s Remove or Cancel whose Google check didn’t finish
     // Done with: the context (and its marker) is gone, and no follow-up entry was left.
     expect(readEmailContext(win.sessionStorage, home, NOW)).toBeNull();
     expect(win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + home)).toBeNull();
+    // Which app, at which site, as the sign-in window's other screens.
+    expect(document.querySelector('.asker')?.textContent).toBe('Signing in to Partner App at https://partner.example');
     (document.getElementById('link-change-close') as HTMLButtonElement).click();
     expect(win.closed).toBe(true);
+  });
+
+  it('its Close goes on to the sharing sheet when the finished sign-in asks for it (D411), and just closes after a stopped one', async () => {
+    for (const signedIn of [true, false]) {
+      resetDom();
+      const { home, win } = leg(3, (s) => `#error=access_denied&state=${s}`, { next: 4, leg: 'proof', clientId: CLIENT });
+      storeEmailContext(win.sessionStorage, home, context({ kind: 'unlink', provider: 'google', method: 'email', slot: 4, signedIn }), NOW);
+      markEmailShare(win.sessionStorage, home, NOW);
+      await runCallbackPage({ win, api: api(), now: () => NOW, authOrigin: AUTH });
+      (document.getElementById('link-change-close') as HTMLButtonElement).click();
+      expect(win.location.assigned, String(signedIn)).toEqual(signedIn ? [`${SHARE_PATH}?from=login`] : []);
+      expect(win.closed, String(signedIn)).toBe(!signedIn);
+    }
   });
 
   it('Cancel: the same, in the link’s words', async () => {

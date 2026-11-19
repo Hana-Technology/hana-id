@@ -80,7 +80,8 @@ export interface EmailContext {
    * D881: a banner's Remove or Cancel this window started, so the vault's next word (in `slot`) is that change's
    * outcome, also after the proof's Google round trip: `kind` the change, `provider` the sign-in it changes (named by
    * its kind only), `method` the proof's (this login's), `signedIn` whether the sign-in itself finished. Kinds only:
-   * no address, key or token. An older page ignores it (unknown fields are dropped on read).
+   * no address, key or token. An older page reads it along with the rest (the read spreads the stored object), keeps
+   * it and stores it again unused.
    */
   bannerAction?: BannerAction | null;
 }

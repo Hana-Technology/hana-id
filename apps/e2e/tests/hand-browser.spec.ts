@@ -245,7 +245,7 @@ test('case B waiting, cancelled from the email’s own sign-in (D864)', async ({
   await expect(popup.getByRole('button', { name: 'Keep the link' })).toBeVisible();
   await expect(popup.locator('#link-waiting-what')).toContainText('The link starts working on');
   // D881: the demo behind the window says it plainly too (no "Something went wrong (link_pending)").
-  await expect(demo.locator('#error-text')).toHaveText('This sign-in is waiting to be added to another wallet, so it can’t open one yet. The Journear sign-in window says what to do.');
+  await expect(demo.locator('#error-text')).toHaveText('This sign-in is waiting to be linked to a wallet, so it can’t open one yet. The Journear sign-in window says what to do.');
   await nextCode(h, popup, cleo, () => popup.getByRole('button', { name: 'Cancel this link' }).click());
   await expect(popup.getByRole('heading', { name: 'Link cancelled' })).toBeVisible();
   const closed = closes(popup);
@@ -304,7 +304,7 @@ test('the automatic same-address link (case A)', async ({ browser }) => {
   // D881: the follow-up screen says what happened and which wallet, and the window's title is that screen's.
   await expect(google.locator('h1')).toHaveText('You can now sign in with Google too');
   await expect(google).toHaveTitle('You can now sign in with Google too');
-  await expect(google.locator('#link-banners')).toContainText('You already have a wallet in this app, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet.');
+  await expect(google.locator('#link-banners')).toContainText('You already have a wallet here, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet.');
   await expect(google.locator('#link-fresh-home')).toHaveText('You can see every way to sign in to your wallet in Passport Home, under “Ways to sign in”.');
   const done = closes(google);
   await google.getByRole('button', { name: 'Done' }).click();

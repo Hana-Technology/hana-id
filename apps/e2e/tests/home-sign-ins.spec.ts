@@ -390,7 +390,7 @@ test('D875: an added sign-in past its first 7 days: Home says where Remove is; t
   await shot(third, 'sign-in-remove-confirm', browserName);
   await third.click('#banner-remove-confirm');
   await expect(third.locator('h1')).toHaveText('The email address was removed');
-  await expect(third.locator('#link-change-what')).toHaveText('The email address no longer opens this wallet. Your money is still in this wallet.');
+  await expect(third.locator('#link-change-what')).toHaveText('The email address no longer opens this wallet. Removing it didn’t move any money.');
   await shot(third, 'sign-in-removed', browserName);
   await clickClosing(third, '#link-change-close');
   await expect.poll(() => linkEvents(page)).toContainEqual({ provider: 'email', status: 'removed', effectiveAtMs: null });

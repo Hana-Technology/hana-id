@@ -34,7 +34,7 @@ describe('plainMessage', () => {
     expect(plainMessage(new HanaError('code_invalid', 'x'), 'login')).toMatch(/wrong code/u);
     expect(plainMessage(new HanaError('challenge_expired', 'x'), 'login')).toMatch(/expired/u);
     // D881: a sign-in still waiting to join another wallet (D864): a plain, true sentence, not "Something went wrong".
-    expect(plainMessage(new HanaError('link_pending', 'x', { effectiveAtMs: 1 }), 'login')).toBe('This sign-in is waiting to be added to another wallet, so it can’t open one yet. The Journear sign-in window says what to do.');
+    expect(plainMessage(new HanaError('link_pending', 'x', { effectiveAtMs: 1 }), 'login')).toBe('This sign-in is waiting to be linked to a wallet, so it can’t open one yet. The Journear sign-in window says what to do.');
     // login_timeout: the window never connected, or the sign-in was left unfinished past the vault's 5 minutes.
     expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'connect' }), 'login')).toBe('The Journear sign-in window did not respond in time. Try again.');
     expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'pending' }), 'login')).toMatch(/wasn’t finished within 5 minutes/u);

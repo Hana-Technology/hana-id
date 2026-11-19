@@ -4574,8 +4574,8 @@ you can do them in any order. Where a step says "Ben's address", copy it from th
 2. Press **Sign out**. Press **Sign in with email**.
 3. Type Cleo's address in **Email address**. Press **Send code**. Get the code, type it in **Code**, press **Continue**.
 4. The window says "A Google account is being linked to this email" and when the link starts working, with **Cancel
-   this link** and **Keep the link**. (The demo behind it says "This sign-in is waiting to be added to another wallet,
-   so it can’t open one yet. The Journear sign-in window says what to do.") Press **Cancel this link**.
+   this link** and **Keep the link**. (The demo behind it says "This sign-in is waiting to be linked to a wallet, so it
+   can’t open one yet. The Journear sign-in window says what to do.") Press **Cancel this link**.
 5. A second code is sent. Get it, type it in **Code**, press **Continue**.
 6. The window says "Link cancelled". Press **Close**.
 
@@ -4604,7 +4604,7 @@ device** opens it and stops asking in this browser.)
 3. Press **Sign out**. Press **Sign in with Google**.
 4. In "Choose an account", press **Ada**.
 5. With nothing to decide, the window (its title too) says "You can now sign in with Google too", then "You already
-   have a wallet in this app, made when you signed in with your email address. Your Google account uses the same
+   have a wallet here, made when you signed in with your email address. Your Google account uses the same
    address, so signing in with Google now opens that same wallet. Nothing was moved or lost, and you can sign in either
    way." and, smaller, where Passport Home lists the ways to sign in. Press **Done**. The demo shows the same addresses
    as in step 2.

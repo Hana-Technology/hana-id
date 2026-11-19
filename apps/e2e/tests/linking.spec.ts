@@ -114,7 +114,7 @@ test('case A, Google-hosted: an email wallet, then Google with that Gmail addres
   // D881: what happened, which wallet and why, under a heading that says so (and the window's title is the screen's).
   await expect(popup.locator('h1')).toHaveText('You can now sign in with Google too');
   await expect(popup).toHaveTitle('You can now sign in with Google too');
-  await expect(popup.locator('#link-banners')).toContainText('You already have a wallet in this app, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet.');
+  await expect(popup.locator('#link-banners')).toContainText('You already have a wallet here, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet.');
   await clickClosing(popup, '#banner-done');
   await expect.poll(() => linkEvents(page)).toContainEqual(expect.objectContaining({ provider: 'google', status: 'active' }));
   // A link notice went to the address.
@@ -201,7 +201,7 @@ test('case B, Google-hosted: a Google wallet, then the same Gmail by email: “L
   await popup.click('#account-0');
   expect(await okValue(page, 'email')).toEqual(wallet);
   await expect(popup.locator('h1')).toHaveText('You can now sign in with email too');
-  await expect(popup.locator('#link-banners')).toContainText('You already have a wallet in this app, made when you signed in with Google. You chose to link your email address, so signing in with it now opens the same wallet.');
+  await expect(popup.locator('#link-banners')).toContainText('You already have a wallet here, made when you signed in with Google. You chose to link your email address, so signing in with it now opens the same wallet.');
   await clickClosing(popup, '#banner-done');
   await expect.poll(() => linkEvents(page)).toContainEqual(expect.objectContaining({ provider: 'email', status: 'active' }));
 
@@ -357,7 +357,7 @@ test('D864: the email’s own sign-in during the wait cancels the link; the emai
   expect((await mails(to)).filter((m) => m.kind === 'code').at(-1)?.subject).toMatch(/^Your code to remove a sign-in method/u);
   await expect(popup.locator('#link-cancel-result')).toHaveAttribute('data-outcome', 'cancelled');
   await expect(popup.locator('h1')).toHaveText('Link cancelled');
-  await expect(popup.locator('#link-cancel-what')).toContainText('Anyone signed in to that wallet in this app will be asked to sign in again.');
+  await expect(popup.locator('#link-cancel-what')).toContainText('Anyone signed in to that wallet will be asked to sign in again.');
   await shot(popup, 'cancelled-confirmation', browserName);
   // One cancel, from the vault (the stack's chain is shared by parallel tests: this context's requests only).
   expect(requests.count(`${API_URL}/v1/link/cancel`)).toBe(1);

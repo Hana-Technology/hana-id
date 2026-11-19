@@ -185,7 +185,7 @@ export function plainMessage(e: unknown, action: DemoAction): string {
     case 'link_pending':
       // D864/D881: an email (or a Google account) that is still waiting to join another wallet; the sign-in window
       // shows what to do (cancel or keep the link) or when it starts working.
-      return 'This sign-in is waiting to be added to another wallet, so it can’t open one yet. The Journear sign-in window says what to do.';
+      return 'This sign-in is waiting to be linked to a wallet, so it can’t open one yet. The Journear sign-in window says what to do.';
     case 'coop_blocks_popup':
       return 'The Journear sign-in window closed before it finished loading. Try again and keep the window open.';
     case 'login_timeout':

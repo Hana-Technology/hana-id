@@ -2,16 +2,17 @@
 // /login/email in batch 8b: case B's "Link and continue" (the ticket and the address's `sub` stored for the callback,
 // D139), and the follow-up mode: the vault's notices read from their slots (link_code, use_email, prove, done with
 // banners and their Cancel, stop) and the popup's answers written to the next slot.
-import { type FollowNotice, type LinkBanner, RECENT_LINK_MS, type RelayCiphertext, decryptRelayPayload, encryptRelayValue, followSlot, relayIdFor, sessionNonce } from '@hana-id/core';
+import { ApiError, type FollowNotice, type LinkBanner, RECENT_LINK_MS, type RelayCiphertext, decryptRelayPayload, encryptRelayValue, followSlot, relayIdFor, sessionNonce } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthApi } from '../../src/auth/api.ts';
 import type { EmailApi } from '../../src/auth/email-api.ts';
-import { CHANGE_TEXT, type EmailPage, FRESH_TEXT, HOME_SIGN_INS_SECTION, KEEP_WRITE_MS, OLDER_LINK_NOTE, changeFailure, kindName, olderLinkText, startEmailPage } from '../../src/auth/email-page.ts';
+import { CHANGE_TEXT, type EmailPage, FOLLOW_LIMIT_MS, FRESH_TEXT, HOME_SIGN_INS_SECTION, KEEP_WRITE_MS, OLDER_LINK_NOTE, changeFailure, kindName, olderLinkText, startEmailPage } from '../../src/auth/email-page.ts';
 import { HOME_SIGN_INS_TITLE } from '../../src/auth/home-sign-ins.ts';
 import { EMAIL_ENTRY_PREFIX, readEmailContext } from '../../src/auth/email-storage.ts';
 import type { GoogleEmailFlow } from '../../src/auth/google.ts';
 import { EMAIL_PATH } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX, storeLoginEntry } from '../../src/auth/login-storage.ts';
+import { SHARE_PATH, markEmailShare } from '../../src/auth/share-handoff.ts';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import { CLIENT_ID, ENV, FakeWindow, PARTNER, PK, type RemoteWindow, asWindow, flush, pageText, remoteWindow, resetDom, vaultAcks } from './helpers.ts';
 
@@ -147,7 +148,7 @@ function setup(o: { next?: number; flow?: GoogleEmailFlow; serverNow?: number; t
  * The same window back from a Google proof: /login/callback relayed it and stored the login entry for the vault's next
  * notice (`next`), then navigated here again; the email context (and what it remembered) is the same storage's.
  */
-function backFromGoogle(s: Setup, next: number): EmailPage {
+function backFromGoogle(s: Setup, next: number, at: number = NOW): EmailPage {
   const kept = Object.entries(window.sessionStorage).filter(([k]) => k.startsWith(EMAIL_ENTRY_PREFIX));
   resetDom();
   for (const [k, v] of kept) window.sessionStorage.setItem(k, v);
@@ -155,7 +156,7 @@ function backFromGoogle(s: Setup, next: number): EmailPage {
   win.opener = s.win.opener;
   storeLoginEntry(win.sessionStorage, s.relayId, Uint8Array.from(s.relayKey), NOW, undefined, { followKey: Uint8Array.from(s.followKey), home: s.relayId, next });
   s.win = win;
-  return startEmailPage({ win, env: EMAIL_ENV, issuer: s.issuer as unknown as EmailApi, api: s.api as never, tickets: window.localStorage, now: () => NOW, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout: () => {} });
+  return startEmailPage({ win, env: EMAIL_ENV, issuer: s.issuer as unknown as EmailApi, api: s.api as never, tickets: window.localStorage, now: () => at, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout: () => {} });
 }
 
 async function toCode(address = 'ada@example.com'): Promise<void> {
@@ -295,7 +296,7 @@ describe('the follow-up mode', () => {
     // D881: the wallet is named by the address the case-A screen showed.
     expect(document.querySelector('h1')?.textContent).toBe('You can now sign in with Google too');
     expect(document.querySelector('#link-banners li[data-fresh="true"]')?.textContent).toBe(
-      'You already have a wallet in this app, made when you signed in with a…@example.com. You confirmed that address with a code, so signing in with Google now opens that same wallet. Nothing was moved or lost, and you can sign in either way.',
+      'You already have a wallet here, made when you signed in with a…@example.com. You confirmed that address with a code, so signing in with Google now opens that same wallet. Nothing was moved or lost, and you can sign in either way.',
     );
     click('banner-done');
     expect(s.win.closed).toBe(true);
@@ -454,7 +455,7 @@ describe('D864: the email that waits to join a wallet', () => {
     expect(pageText()).toContain('This email is no longer being linked with that Google account.');
     expect(pageText()).not.toContain('Nothing else changed');
     // The cancel signs that wallet's devices out in this app (the API revokes its shares): said plainly.
-    expect(pageText()).toContain('Anyone signed in to that wallet in this app will be asked to sign in again.');
+    expect(pageText()).toContain('Anyone signed in to that wallet will be asked to sign in again.');
     expect(pageText()).toContain('If you didn’t start this link, change your email password.');
     click('link-cancel-close');
     expect(s.win.closed).toBe(true);
@@ -652,7 +653,7 @@ describe('D865: an active member’s own notice', () => {
     await vi.waitFor(() => expect(s.page.stage).toBe('member_removed'));
     expect(document.querySelector('h1')?.textContent).toBe('This email was removed');
     expect(document.getElementById('member-removed-what')?.textContent).toBe(
-      'This email no longer opens that wallet. Anything in it stays there, with whoever holds that Google account. Anyone signed in to that wallet in this app will be asked to sign in again.',
+      'This email no longer opens that wallet. Anything in it stays there, with whoever holds that Google account. Anyone signed in to that wallet will be asked to sign in again.',
     );
     expect(document.getElementById('member-removed-next')?.textContent).toBe('If you sign in with this email again, it opens a new, empty wallet of its own.');
     // A remove doesn't mark the link kept: if it failed, the next sign-in asks again.
@@ -916,7 +917,7 @@ describe('D881: the screen after a sign-in that added a way to sign in, by case'
     // The window's title is the screen's, not the page file's "Sign in with email".
     expect(document.title).toBe('You can now sign in with Google too');
     expect(said()).toBe(
-      'You already have a wallet in this app, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet. Nothing was moved or lost, and you can sign in either way.',
+      'You already have a wallet here, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet. Nothing was moved or lost, and you can sign in either way.',
     );
     expect(document.getElementById('link-fresh-home')?.textContent).toBe('You can see every way to sign in to your wallet in Passport Home, under “Ways to sign in”.');
     // Good news, not a warning: the green tick, no amber or red box.
@@ -936,7 +937,7 @@ describe('D881: the screen after a sign-in that added a way to sign in, by case'
     await vi.waitFor(() => expect(s.page.stage).toBe('banners'));
     expect(document.querySelector('h1')?.textContent).toBe('You can now sign in with email too');
     expect(said()).toBe(
-      'You already have a wallet in this app, made when you signed in with Google. You chose to link your email address, so signing in with it now opens the same wallet. Nothing was moved or lost, and you can sign in either way. Remove',
+      'You already have a wallet here, made when you signed in with Google. You chose to link your email address, so signing in with it now opens the same wallet. Nothing was moved or lost, and you can sign in either way. Remove',
     );
     expect(document.getElementById('link-fresh-home')).not.toBeNull();
   });
@@ -1078,10 +1079,10 @@ describe('D881: a banner’s Remove asks first, and a Remove or Cancel ends on w
     expect(result()?.getAttribute('data-outcome')).toBe('done');
     expect(document.querySelector('h1')?.textContent).toBe('The email address was removed');
     expect(document.getElementById('link-change-what')?.className).toContain('jp-alert-success');
-    expect(text('link-change-what')).toBe('The email address no longer opens this wallet. Your money is still in this wallet.');
-    expect(text('link-change-signin')).toBe('Anyone signed in to this wallet, on this device too, will be asked to sign in again.');
+    expect(text('link-change-what')).toBe('The email address no longer opens this wallet. Removing it didn’t move any money.');
+    expect(text('link-change-signin')).toBe('Devices signed in to this wallet, this one too, will be asked to sign in again.');
     expect(text('link-change-next')).toBe('If you sign in with that email address later, it opens a new, empty wallet of its own. It won’t be added back automatically.');
-    expect(text('link-change-advice')).toBe('Didn’t add it yourself? Someone else may have used this wallet while it was added. To be safe, move your money to a wallet only you can open.');
+    expect(text('link-change-advice')).toBe('Didn’t add it yourself? Someone else may have used this wallet while it was added. To be safe, move your money to a new wallet. Signing in the same way opens this same wallet, so use a different email address or another wallet app.');
     expect(back.notice).toBe('link_removed');
     // Done with: the context (and what it remembered) is gone.
     expect(readEmailContext(window.sessionStorage, s.relayId, NOW)).toBeNull();
@@ -1110,11 +1111,12 @@ describe('D881: a banner’s Remove asks first, and a Remove or Cancel ends on w
   it('Remove → fails → Close: each stop says whether anything changed and what to do; nothing is marked seen or written again', async () => {
     const cases: [string, string, string, string | null][] = [
       ['token_invalid', 'not_you', 'Nothing changed. The email address still opens this wallet. We couldn’t check it was you.', 'Close this window, then sign in to Partner App again to try again.'],
-      ['link_refused', 'changed', 'Nothing was changed. The ways to sign in to this wallet changed after this window opened.', 'Close this window, then sign in to Partner App again to see them as they are now.'],
-      ['rate_limited', 'busy', 'Nothing changed. The email address still opens this wallet. Journear couldn’t do this just now.', 'Wait a few minutes, then sign in to Partner App again to try again.'],
+      ['link_refused', 'changed', 'Nothing was changed. The ways to sign in to this wallet may have changed after this window opened.', 'Close this window, then sign in to Partner App again to see them as they are now.'],
+      ['rate_limited', 'busy', 'Nothing changed. The email address still opens this wallet. Journear couldn’t do this just now.', 'Close this window, then sign in to Partner App again later to try again.'],
       ['links_unavailable', 'busy', 'Nothing changed. The email address still opens this wallet. Journear couldn’t do this just now.', null],
-      ['api_unavailable', 'unknown', 'Journear couldn’t be reached, so we can’t tell whether the email address was removed.', 'Sign in to Partner App again. If the email address still opens this wallet, you’ll see it there with Remove.'],
-      ['near_unavailable', 'unknown', 'Journear couldn’t be reached, so we can’t tell whether the email address was removed.', null],
+      ['api_unavailable', 'unknown', 'Something went wrong, so we can’t tell whether the email address was removed.', 'Sign in to Partner App again. If the email address still opens this wallet, you’ll see it there with Remove.'],
+      ['near_unavailable', 'busy', 'Nothing changed. The email address still opens this wallet. Journear couldn’t do this just now.', null],
+      ['link_in_flight', 'unknown', 'Something went wrong, so we can’t tell whether the email address was removed.', null],
     ];
     for (const [code, outcome, what, advice] of cases) {
       window.localStorage.clear();
@@ -1131,7 +1133,7 @@ describe('D881: a banner’s Remove asks first, and a Remove or Cancel ends on w
       expect(text('link-change-what'), code).toBe(what);
       expect(document.getElementById('link-change-what')?.className, code).toContain('jp-alert-warning');
       if (advice) expect(text('link-change-advice'), code).toBe(advice);
-      expect(text('link-change-why'), code).toBe(code === 'token_invalid' ? 'You may have picked a different Google account.' : null);
+      expect(text('link-change-why'), code).toBe(code === 'token_invalid' ? 'If you picked a different Google account, try again with the one you signed in with.' : null);
       expect(pageText(), code).toContain(`Error code (for support): ${code}`);
       expect(back.notice).toBe(code);
       click('link-change-close');
@@ -1152,16 +1154,16 @@ describe('D881: a banner’s Remove asks first, and a Remove or Cancel ends on w
     await vi.waitFor(() => expect(back.stage).toBe('link_changed'));
     expect(document.querySelector('h1')?.textContent).toBe('Link cancelled');
     expect(text('link-change-what')).toBe('The email address is no longer being linked to this wallet, so it won’t open it.');
-    expect(text('link-change-signin')).toBe('Anyone signed in to this wallet, on this device too, will be asked to sign in again.');
+    expect(text('link-change-signin')).toBe('Devices signed in to this wallet, this one too, will be asked to sign in again.');
     expect(back.notice).toBe('link_cancelled');
     click('link-change-close');
     expect(s.win.closed).toBe(true);
 
     const failures: [string, string, string | null][] = [
       ['token_invalid', 'Nothing changed. The link is still waiting. We couldn’t check it was you.', 'Close this window, then sign in to Partner App again to try again.'],
-      ['link_refused', 'Nothing was changed. The ways to sign in to this wallet changed after this window opened.', null],
+      ['link_refused', 'Nothing was changed. The ways to sign in to this wallet may have changed after this window opened.', null],
       ['rate_limited', 'Nothing changed. The link is still waiting. Journear couldn’t do this just now.', null],
-      ['api_unavailable', 'Journear couldn’t be reached, so we can’t tell whether the link was cancelled.', 'Sign in to Partner App again. If the link is still waiting, you’ll see Cancel this link again.'],
+      ['api_unavailable', 'Something went wrong, so we can’t tell whether the link was cancelled.', 'Sign in to Partner App again. If the link is still waiting, you’ll see Cancel this link again.'],
     ];
     for (const [code, what, advice] of failures) {
       resetDom();
@@ -1191,20 +1193,124 @@ describe('D881: a banner’s Remove asks first, and a Remove or Cancel ends on w
     expect(text('link-change-why')).toBeNull();
   });
 
-  it('a sign-in that stopped (its banners on the stop screen): the change remembers it, so its result’s Close just closes (no sharing sheet)', async () => {
+  it('a sign-in that stopped (its banners on the stop screen): its result’s Close just closes, even with the sharing sheet asked for', async () => {
     const s = setup({ next: 2 });
     await s.vaultSays(2, { t: 'stop', code: 'link_pending', banners: [waiting()] });
     await vi.waitFor(() => expect(s.page.stage).toBe('banners'));
     click('banner-cancel-0');
     await flush();
     expect(readEmailContext(window.sessionStorage, s.relayId, NOW)?.context.bannerAction?.signedIn).toBe(false);
+    const back = backFromGoogle(s, 4);
+    markEmailShare(window.sessionStorage, s.relayId, NOW);
+    await s.vaultSays(4, { t: 'done', banners: [] });
+    await vi.waitFor(() => expect(back.stage).toBe('link_changed'));
+    click('link-change-close');
+    expect(s.win.closed).toBe(true);
+    expect(s.win.location.assigned).toEqual([]);
+  });
+
+  it('a finished sign-in’s result Close goes on to the sharing sheet when the app asks for it (D411)', async () => {
+    const s = await withBanners([recent()]);
+    click('banner-unlink-0');
+    click('banner-remove-confirm');
+    await flush();
+    const back = backFromGoogle(s, 4);
+    markEmailShare(window.sessionStorage, s.relayId, NOW);
+    await s.vaultSays(4, { t: 'done', banners: [] });
+    await vi.waitFor(() => expect(back.stage).toBe('link_changed'));
+    click('link-change-close');
+    expect(s.win.location.assigned).toEqual([`${SHARE_PATH}?from=login`]);
+    expect(s.win.closed).toBe(false);
+  });
+
+  it('an email root’s check left at the code step (Cancel): nothing changed, said plainly, never “Removing…” then “Sign-in cancelled”', async () => {
+    const s = await emailRootWith([recent({ provider: 'google', action: { kind: 'unlink', prove: { method: 'email', purpose: 'link_change', commitment: emailCommitment } } })]);
+    click('banner-unlink-0');
+    click('banner-remove-confirm');
+    await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+    const seen: string[] = [];
+    const watch = new MutationObserver(() => seen.push(document.querySelector('h1')?.textContent ?? ''));
+    watch.observe(document.getElementById('app')!, { childList: true, subtree: true });
+    click('email-cancel');
+    expect(await s.answerIn(3)).toEqual({ error: 'email_cancelled' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_changed'));
+    watch.disconnect();
+    expect(seen.filter((h) => /Removing|Sign-in cancelled|Signing in/u.test(h))).toEqual([]);
+    expect(result()?.getAttribute('data-outcome')).toBe('not_proved');
+    expect(document.querySelector('h1')?.textContent).toBe('The Google account wasn’t removed');
+    expect(text('link-change-what')).toBe('Nothing changed. The Google account still opens this wallet. The check was cancelled before the code was entered.');
+    expect(text('link-change-advice')).toBe('Close this window, then sign in to Partner App again to try again.');
+    expect(s.win.closed).toBe(false);
+    markEmailShare(window.sessionStorage, s.relayId, NOW);
+    click('link-change-close');
+    expect(s.win.location.assigned).toEqual([`${SHARE_PATH}?from=login`]);
+  });
+
+  it('an email root’s check that can’t send a code (email unavailable): nothing changed, and why', async () => {
+    const s = await emailRootWith([waiting({ provider: 'google', action: { kind: 'cancel', prove: { method: 'email', purpose: 'link_change', commitment: { ...emailCommitment, action: 'cancel' } } } })]);
+    s.issuer.startLink.mockRejectedValueOnce(new ApiError(403, 'email_not_enabled', 'off', null, null));
+    click('banner-cancel-0');
+    expect(await s.answerIn(3)).toEqual({ error: 'email_unavailable' });
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_changed'));
+    expect(document.querySelector('h1')?.textContent).toBe('The link wasn’t cancelled');
+    expect(text('link-change-what')).toBe('Nothing changed. The link is still waiting. We couldn’t send a code to check it’s you.');
+  });
+
+  it('the vault’s word never comes, or can’t be read: “can’t tell”, never sign-in words', async () => {
+    const cases: [string, (s: Setup) => EmailPage | Promise<EmailPage>, string][] = [
+      ['the 10-minute limit', (s) => backFromGoogle(s, 4, NOW + FOLLOW_LIMIT_MS), 'login_timeout'],
+      [
+        'a slot that is gone (410)',
+        (s) => {
+          s.api.readRelay.mockRejectedValue(new ApiError(410, 'relay_expired', 'gone', null, null));
+          return backFromGoogle(s, 4);
+        },
+        'relay_expired',
+      ],
+      [
+        'a notice that can’t be read',
+        async (s) => {
+          const page = backFromGoogle(s, 4);
+          const { id } = followSlot(s.followKey, 4);
+          await s.api.writeRelay(id, await encryptRelayValue(crypto.getRandomValues(new Uint8Array(32)), id, { t: 'done', banners: [] }));
+          return page;
+        },
+        'token_invalid',
+      ],
+    ];
+    for (const [what, back, code] of cases) {
+      resetDom();
+      const s = await withBanners([recent()]);
+      click('banner-unlink-0');
+      click('banner-remove-confirm');
+      await flush();
+      const page = await back(s);
+      await vi.waitFor(() => expect(page.stage, what).toBe('link_changed'));
+      expect(result()?.getAttribute('data-outcome'), what).toBe('unknown');
+      expect(document.querySelector('h1')?.textContent, what).toBe('We couldn’t check the removal');
+      expect(pageText(), what).toContain(`Error code (for support): ${code}`);
+    }
+  });
+
+  it('a proof whose write fails may have reached the vault: “can’t tell”', async () => {
+    const s = await emailRootWith([recent({ provider: 'google', action: { kind: 'unlink', prove: { method: 'email', purpose: 'link_change', commitment: emailCommitment } } })]);
+    click('banner-unlink-0');
+    click('banner-remove-confirm');
+    await vi.waitFor(() => expect(s.page.stage).toBe('code'));
+    s.api.writeRelay.mockRejectedValueOnce(new Error('network'));
+    typeInto('email-code', '333333');
+    submit('email-verify');
+    await vi.waitFor(() => expect(s.page.stage).toBe('link_changed'));
+    expect(result()?.getAttribute('data-outcome')).toBe('unknown');
+    expect(text('link-change-what')).toBe('Something went wrong, so we can’t tell whether the Google account was removed.');
   });
 
   it('what each stop code means (the API answers before sending anything, or may have sent it)', () => {
     expect(changeFailure('token_invalid')).toBe('not_you');
     expect(changeFailure('link_refused')).toBe('changed');
-    for (const c of ['rate_limited', 'links_unavailable', 'link_pending']) expect(changeFailure(c), c).toBe('busy');
-    for (const c of ['api_unavailable', 'near_unavailable', 'relayer_unavailable', 'link_in_flight', 'timeout']) expect(changeFailure(c), c).toBe('unknown');
+    // Refused before anything was relayed (apps/api links.ts), a relay that certainly didn't run, or a reverted refusal.
+    for (const c of ['rate_limited', 'rate_limiter_unavailable', 'links_unavailable', 'link_pending', 'bad_request', 'nonce_mismatch', 'token_expired', 'near_unavailable', 'near_rejected', 'relayer_busy', 'relayer_unconfigured', 'method_not_allowed']) expect(changeFailure(c), c).toBe('busy');
+    for (const c of ['api_unavailable', 'relayer_unavailable', 'link_in_flight', 'timeout', 'outcome_unknown', 'something_new']) expect(changeFailure(c), c).toBe('unknown');
     expect([kindName('google'), kindName('email')]).toEqual(['Google account', 'email address']);
     expect(CHANGE_TEXT.removeButton).toBe('Remove it');
   });

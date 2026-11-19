@@ -496,6 +496,42 @@ p.copy-status:not(:empty) {
   }
 }
 
+/* ---- "Ways to sign in" (home-sign-ins.ts): the devices' cards, one per sign-in ---- */
+.home-sign-in-ic {
+  width: 1em;
+  height: 1em;
+  margin-right: var(--jp-space-2);
+  vertical-align: -0.125em;
+  color: var(--jp-fg-muted);
+}
+
+.home-sign-in-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jp-space-1);
+}
+
+.home-sign-in-how {
+  display: grid;
+  gap: var(--jp-space-1);
+  margin-top: var(--jp-space-1);
+}
+
+.home-sign-ins > .home-sign-in-list {
+  margin-bottom: var(--jp-space-3);
+}
+
+/* A waiting link, or a sign-in nothing can remove now: the amber box under its card's row. */
+.home-sign-in > .home-sign-in-risk {
+  margin: 0 var(--jp-space-4) var(--jp-space-4);
+  width: auto;
+  font-size: var(--jp-text-sm);
+}
+
+.home-sign-in-risk p {
+  margin: 0;
+}
+
 /* A stop's confirmation, under its row: what it does and doesn't, then the stop itself (the only danger button). */
 .home-confirm {
   display: grid;

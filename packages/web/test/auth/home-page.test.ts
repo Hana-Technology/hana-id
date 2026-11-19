@@ -2,7 +2,7 @@
 // Hana Home (`/home`, docs/hana-home-spec.md): the page's states, the sign-in child and its opener checks, the signed API
 // call, partner strings as text only, the sign-in's end (detect, warn, lose nothing, never retry, memory only) and how
 // each API refusal reads.
-import { ApiError, type RelayPayload, type RelayReadResponse, decodeHomeIdentity, encryptRelayPayload, homeMessage, homeNonce, parseWindowMessage } from '@hana-id/core';
+import { ApiError, type RelayPayload, type RelayReadResponse, decodeHomeIdentity, encryptRelayPayload, homeMessage, homeNonce, identityKeyHex, parseWindowMessage } from '@hana-id/core';
 import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOME_UNNAMED_APP, homeApi, homeAppName, parseHomeApps, parseHomeConfig } from '../../src/auth/home-api.ts';
 import { HOME_EXPIRY_WARN_MS, coverageText, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
@@ -85,7 +85,8 @@ let now = T0;
 let signer: TokenSigner;
 let consoleSpies: ReturnType<typeof vi.spyOn>[] = [];
 
-function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; opener?: RemoteWindow; clipboard?: null; config?: () => Response } = {}): Harness {
+function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; opener?: RemoteWindow; clipboard?: null; config?: () => Response; view?: (signer: string, method: string, args: unknown) => Promise<unknown> } = {}): Harness {
+  const independentViews = opts.view ? (s: string) => ({ primary: (m: string, a: unknown) => opts.view!(s, `primary:${m}`, a), second: (m: string, a: unknown) => opts.view!(s, `second:${m}`, a) }) : noChain;
   const win = new FakeWindow('/home', opts.search ?? '');
   if (opts.framed) win.top = {};
   if (opts.opener) win.opener = asWindow(opts.opener);
@@ -130,7 +131,8 @@ function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; o
       },
     },
     // Listing and viewing read no chain: any NEAR read in these tests is a failure (opening a wallet is home-export.test.ts).
-    near: { getSession: noChain, txOutcome: noChain, view: noChain, independent: noChain },
+    // "Ways to sign in" reads its two views on both providers only when asked (`opts.view`, named `primary:` or `second:`).
+    near: { getSession: noChain, txOutcome: noChain, view: noChain, independent: independentViews },
     jwks: async (kid) => (kid === signer.jwk.kid ? signer.jwk : null),
     deviceNow: () => now,
     sleep: async () => {},
@@ -809,7 +811,7 @@ describe('partner strings are text only', () => {
     const open = document.querySelector('.home-open') as HTMLElement;
     expect(open.getAttribute('aria-label')).toBe(`View ${XSS}`);
     open.click();
-    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Passport Home', 'App details', 'App', 'Would a wallet here need the app?', 'Your addresses', 'Devices and auto-approve', 'Your name', 'Move this wallet to another wallet app']);
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Passport Home', 'App details', 'App', 'Would a wallet here need the app?', 'Your addresses', 'Devices and auto-approve', 'Ways to sign in', 'Your name', 'Move this wallet to another wallet app']);
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe(XSS);
     expect(document.querySelector('#app script')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
@@ -1164,7 +1166,8 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     await h.signIn();
     (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
     const extras = [...(document.getElementById('home-app-extras')?.children ?? [])].map((c) => c.id);
-    expect(extras.slice(0, 2)).toEqual(['home-app-devices', 'home-app-profile']);
+    // D874: the ways to sign in sit between the devices and the name.
+    expect(extras.slice(0, 3)).toEqual(['home-app-devices', 'home-sign-ins', 'home-app-profile']);
     expect(h.nameCalls()).toEqual([]);
     h.nameAnswer = (url) => json(200, { name: ADA, shares: [], more: false, app: { appId: url.searchParams.get('appId'), shared: false } });
     h.click('home-app-profile-show');
@@ -1212,5 +1215,48 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     expect(document.getElementById('home-profile-show')).not.toBeNull();
     expect(document.documentElement.outerHTML).not.toContain('Typed, never saved');
     expect(document.documentElement.outerHTML).not.toContain('Lovelace');
+  });
+});
+
+describe('“Ways to sign in” on the page (home-sign-ins.ts, D874)', () => {
+  it('sits on each app’s page, reads the chain only when asked, for the signed-in identity, and starts over for another account', async () => {
+    const views: { method: string; args: unknown }[] = [];
+    const h = await ready({
+      view: async (s, method, args) => {
+        expect(s).toBe(ENV.signer);
+        views.push({ method, args });
+        const a = args as { scope_id: string; provider: string; sub: string };
+        return method.endsWith(':get_identity') ? { key: identityKeyHex(a.scope_id, a.provider, a.sub), status: 'own', opened: true, root: null, effective_at_ms: null, account_epoch: 0 } : null;
+      },
+    });
+    h.answer = () => json(200, { scopes: [mine('s1')], nextCursor: null });
+    await h.signIn();
+    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    await h.page.idle();
+    expect(document.getElementById('home-sign-ins-title')?.textContent).toBe('Ways to sign in');
+    expect(views).toEqual([]);
+    expect(h.page.signIns.state).toBe('closed');
+    h.click('home-sign-ins-show');
+    await h.page.idle();
+    const args = { scope_id: 's1', provider: 'google', sub: 'sub-1' };
+    expect(views).toEqual([
+      { method: 'primary:get_identity', args },
+      { method: 'primary:get_account', args },
+      { method: 'second:get_identity', args },
+      { method: 'second:get_account', args },
+    ]);
+    expect(h.page.signIns.state).toBe('ready');
+    expect(document.querySelector('#home-sign-ins-list > li')?.textContent).toContain('Your Google account');
+    // Back and in again: what was read is shown again, nothing is read.
+    h.click('home-back');
+    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    expect(h.page.signIns.state).toBe('ready');
+    expect(views).toHaveLength(4);
+    // Signed out, then another account: nothing of the first one's stays.
+    h.click('home-sign-out');
+    await h.signIn('sub-2');
+    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    expect(h.page.signIns.state).toBe('closed');
+    expect(views).toHaveLength(4);
   });
 });

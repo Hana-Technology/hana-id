@@ -867,7 +867,7 @@ D860: Circle's USDC and EURC where Circle lists them, wrapped NEAR, the Stellar 
 is the real USDC token (…)."; any other amount reads "N units of an unlisted token" with a line that
 Journear can't tell what it is worth. Addresses and keys in sentences are short, each written out once in its own
 labelled row (D859), the label above it, in one piece on nearly even lines (D876; spacing them in groups of four
-for the counterparty rows is one constant, `COUNTERPARTY_GROUPS`, the founder's open decision); the details' first row
+was rejected by the founder for the counterparty rows too, and stays one constant away, `COUNTERPARTY_GROUPS`); the details' first row
 is the user's whole account with a Copy button (D876).
 The facts' values are words in the text face, only exact values (addresses, keys, hashes, amounts, numbers) in mono;
 a fee the user doesn't pay reads "Free." in bold after a check mark (D877); the relayed NEAR approval says "someone

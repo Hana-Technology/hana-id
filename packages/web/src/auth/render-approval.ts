@@ -1164,7 +1164,7 @@ class IdBook {
 
 /**
  * Whether the rows under the sentences ("To", "Key", "Program", …) space their whole values in groups of four (D876:
- * off; whether to turn it back on for those rows is the founder's open decision). The user's own account never is.
+ * off: the founder chose one piece for them too, 2026-11-19; kept as a switch). The user's own account never is.
  */
 export const COUNTERPARTY_GROUPS = false;
 

@@ -499,7 +499,7 @@ describe('D859: addresses and keys in sentences: short there, whole once in thei
     expect(whole.querySelectorAll('wbr')).toHaveLength(10);
     expect(whole.classList.contains('grouped')).toBe(false);
     expect(COUNTERPARTY_GROUPS).toBe(false);
-    // Switched on (the founder's open decision), the same text: only the class (CSS spacing) changes.
+    // Off by the founder's decision (D876); switched on, the same text: only the class (CSS spacing) changes.
     const grouped = fullId(dom(document), SPENDER, true);
     expect(grouped.textContent).toBe(SPENDER);
     expect(grouped.className).toBe('mono id-full grouped');

@@ -692,7 +692,7 @@ const MOVES_SHOWN: ReadonlySet<string> = new Set([
 // the subject decoder refuses any value on a sponsored call and only the build's relayer can submit the batch. Never
 // "tokens it moves are yours": a contract that already holds a permission from the user can move tokens Journear can't
 // see.
-/** "None of your ETH is used." for the chain's coin (D884). */
+/** "None of your ETH is used." for the chain's coin. */
 export const noCoinUsed = (chainId: number): SummaryText => [`None of your ${evmChainInfo(chainId)?.nativeSymbol ?? 'coin on this network'} is used.`];
 
 /**

@@ -793,6 +793,8 @@ describe('halt: relayer_cannot_send', () => {
     expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 0, code: 'insufficient_funds' });
     expect(await codeOf(stub.send(request()))).toBe('relayer_halted');
     await runDurableObjectAlarm(stub);
+    // Still halted, the record taken by no endpoint: the next run 15 s on (D882; several runs: the D882 tests below).
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
     expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ refused: 'relayer_cannot_send' });
     expect(sent.broadcast).toBe('rejected');
     chain.onSend = undefined;
@@ -811,8 +813,10 @@ describe('halt: relayer_cannot_send', () => {
     chain.onSend = () => ({ error: 'insufficient funds for gas * price + value' });
     await runDurableObjectAlarm(stub);
     expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', nonce: 0, code: 'insufficient_funds' });
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
     await runDurableObjectAlarm(stub);
     expect((await stored(stub)).recs[0]!.versions.map((v) => v.kind)).toEqual(['execute', 'cancel']);
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
   });
 
   it('later, `nonce too low` for a record never accepted halts nothing by itself: receipts at confirmed depth decide', async () => {
@@ -923,6 +927,116 @@ describe('halt: storage_inconsistent', () => {
     expect(await halted(stub)).toMatchObject({ reason: 'storage_inconsistent' });
     expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ refused: 'storage_inconsistent' });
   });
+});
+
+describe('while halted, the alarm comes back on its own cadence: never at or before now (D882)', () => {
+  /**
+   * `runs` halted runs, each when its alarm is due (time moves to the stored alarm first, as the runtime fires it):
+   * the next alarm's distance from that run's `now`, and the halt after each run.
+   */
+  async function haltedRuns(stub: Stub, runs = 5): Promise<{ gaps: number[]; reasons: (string | null)[] }> {
+    const gaps: number[] = [];
+    const reasons: (string | null)[] = [];
+    for (let i = 0; i < runs; i++) {
+      const at = (await stored(stub)).alarm;
+      expect(at).not.toBeNull();
+      if (at! > now) now = at!;
+      await runDurableObjectAlarm(stub);
+      const next = (await stored(stub)).alarm;
+      expect(next).not.toBeNull();
+      // Never at or before now: an alarm due already would run again at once, again and again.
+      expect(next!).toBeGreaterThan(now);
+      gaps.push(next! - now);
+      reasons.push((await halted(stub))?.reason ?? null);
+    }
+    return { gaps, reasons };
+  }
+
+  const insufficientFunds = () => ({ error: 'insufficient funds for gas * price + value' });
+  const everyRun = Array.from({ length: 5 }, () => EVM_RELAYER_ALARM_MS);
+
+  it('relayer_cannot_send (insufficient_funds) at send: every halted run sets the next alarm at now + 15 s, no backoff', async () => {
+    const stub = await fresh();
+    chain.onSend = insufficientFunds;
+    await stub.send(request());
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+    // The send's own alarm: 15 s on.
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
+    // The record no endpoint took holds the cadence at 15 s (#schedule's `urgent`): no backoff while halted.
+    expect(await haltedRuns(stub)).toEqual({ gaps: everyRun, reasons: Array(5).fill('relayer_cannot_send') });
+  });
+
+  it('relayer_cannot_send (insufficient_funds) found by a later run: the same, every 15 s', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    await stub.send(request());
+    chain.onSend = insufficientFunds;
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+    expect(await haltedRuns(stub)).toEqual({ gaps: everyRun, reasons: Array(5).fill('relayer_cannot_send') });
+  });
+
+  it('stuck_past_deadline (its cancel never taken): every 15 s', async () => {
+    const stub = await fresh();
+    chain.onSend = () => 'network';
+    await stub.send(request({ execute: { deadline: nowS() + 60n } }));
+    advance(61_000);
+    await runDurableObjectAlarm(stub);
+    advance(EVM_RELAYER_STUCK_AFTER_DEADLINE_MS);
+    await runDurableObjectAlarm(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'stuck_past_deadline' });
+    expect(await haltedRuns(stub)).toEqual({ gaps: everyRun, reasons: Array(5).fill('stuck_past_deadline') });
+  });
+
+  /** Halts whose records a node took (accepted): the usual cadence, 15 s after a change (a bump) else doubling. */
+  const accepted: [string, string, () => Promise<Stub>][] = [
+    ['nonce_consumed_elsewhere (the key used elsewhere)', 'nonce_consumed_elsewhere', async () => {
+      const stub = await fresh();
+      await stub.send(request());
+      await stub.send(request());
+      chain.admit(foreign(0));
+      chain.mine(RELAYER, 1);
+      await runDurableObjectAlarm(stub);
+      return stub;
+    }],
+    ['nonce_gap', 'nonce_gap', async () => {
+      chain.admit(foreign(0));
+      const stub = await fresh();
+      await stub.send(request());
+      chain.drop(RELAYER, 0);
+      await runDurableObjectAlarm(stub);
+      await runDurableObjectAlarm(stub);
+      return stub;
+    }],
+    ['foreign_transactions', 'foreign_transactions', async () => {
+      const stub = await fresh();
+      await stub.send(request());
+      await stub.send(request());
+      chain.admit(foreign(2));
+      await runDurableObjectAlarm(stub);
+      return stub;
+    }],
+    ['key_mismatch (nothing can be signed, so nothing changes: up to 5 minutes)', 'key_mismatch', async () => {
+      const stub = await fresh();
+      await stub.send(request());
+      await stub.send(request());
+      await configure(stub, overlay({ EVM_RELAY_KEYS: JSON.stringify([keyHex(OTHER_KEY)]), EVM_SPONSOR: sponsorVar({}, OTHER) }));
+      await runDurableObjectAlarm(stub);
+      return stub;
+    }],
+  ];
+  for (const [name, reason, setup] of accepted) {
+    it(`${name}: each halted run's next alarm is 15 s to 5 minutes on, never at or before now`, async () => {
+      const stub = await setup();
+      expect(await halted(stub)).toMatchObject({ reason });
+      const { gaps, reasons } = await haltedRuns(stub, 8);
+      expect(reasons).toEqual(Array(8).fill(reason));
+      for (const g of gaps) {
+        expect(g).toBeGreaterThanOrEqual(EVM_RELAYER_ALARM_MS);
+        expect(g).toBeLessThanOrEqual(EVM_RELAYER_ALARM_MAX_MS);
+      }
+    });
+  }
 });
 
 describe('staff tools: input and records', () => {

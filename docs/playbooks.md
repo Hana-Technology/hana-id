@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-18 (branch `feat/admin-evm-sponsor` after its re-check: `evm-relay-paused` checks the wallet for a thief before a refill); 2026-11-18 (branch `feat/admin-evm-sponsor`, after its independent review: `evm-relay-paused` sends a possibly leaked key to an engineer first, no refill, Resume only on the engineer’s word, D843); 2026-11-18 (branch `feat/admin-evm-sponsor`, not merged, not deployed: the six free-network-fee playbooks `evm-relay-paused`, `evm-relay-balance-low`, `evm-relay-budget-high`, `evm-relay-receipt-odd`, `evm-billing-late` and `evm-relay-slot-taken` for the sponsorship’s events as merged (the stuck alert at 2 minutes, `quarantined`), and `near-billing-late` (its five counts), D843); 2026-11-18 (branch `fix/evm-sponsor-consumed-elsewhere-not-charged`, not merged, not deployed: the new `evm-relay-closed-slot-mined`, D869); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: `near-relay-budget-high` and `near-relay-balance-low` quote sandbox-dev's 6 NEAR and 9 NEAR, D793); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: `exit-client-unpinned`: the combined alarm, unreadable pins, the alarm's limits and the threshold, D493); 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, after its review: `evm-relay-balance-low` is “Gas sponsorship: the relayer wallet is running low”, `near-billing-late` is “NEAR relay: a billing record is late”, D879); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: the seven EVM relayer playbooks name the feature “Gas sponsorship” for staff, D879); 2026-11-18 (branch `feat/admin-evm-sponsor` after its re-check: `evm-relay-paused` checks the wallet for a thief before a refill); 2026-11-18 (branch `feat/admin-evm-sponsor`, after its independent review: `evm-relay-paused` sends a possibly leaked key to an engineer first, no refill, Resume only on the engineer’s word, D843); 2026-11-18 (branch `feat/admin-evm-sponsor`, not merged, not deployed: the six free-network-fee playbooks `evm-relay-paused`, `evm-relay-balance-low`, `evm-relay-budget-high`, `evm-relay-receipt-odd`, `evm-billing-late` and `evm-relay-slot-taken` for the sponsorship’s events as merged (the stuck alert at 2 minutes, `quarantined`), and `near-billing-late` (its five counts), D843); 2026-11-18 (branch `fix/evm-sponsor-consumed-elsewhere-not-charged`, not merged, not deployed: the new `evm-relay-closed-slot-mined`, D869); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: `near-relay-budget-high` and `near-relay-balance-low` quote sandbox-dev's 6 NEAR and 9 NEAR, D793); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: `exit-client-unpinned`: the combined alarm, unreadable pins, the alarm's limits and the threshold, D493); 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -52,13 +52,13 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Passport Home's daily derive budget reached 80%](#home-budget-high) | warning | — |
 | [The NEAR relay's daily budget reached 80%](#near-relay-budget-high) | warning | — |
 | [The NEAR relay account is running low](#near-relay-balance-low) | warning | — |
-| [Free network fees are paused or slow](#evm-relay-paused) | critical | — |
-| [The free network fees wallet is running low](#evm-relay-balance-low) | warning | — |
-| [Free network fees: today's budget is nearly used up](#evm-relay-budget-high) | warning | — |
-| [Free network fees: a payment looked wrong](#evm-relay-receipt-odd) | warning | — |
-| [Free network fees: a billing record is late](#evm-billing-late) | warning | — |
-| [Free network fees: a payment slot was used by another transaction](#evm-relay-slot-taken) | critical | — |
-| [Free NEAR transactions: a billing record is late](#near-billing-late) | warning | — |
+| [Gas sponsorship is paused or slow](#evm-relay-paused) | critical | — |
+| [Gas sponsorship: the relayer wallet is running low](#evm-relay-balance-low) | warning | — |
+| [Gas sponsorship: today's budget is nearly used up](#evm-relay-budget-high) | warning | — |
+| [Gas sponsorship: a payment looked wrong](#evm-relay-receipt-odd) | warning | — |
+| [Gas sponsorship: a billing record is late](#evm-billing-late) | warning | — |
+| [Gas sponsorship: a payment slot was used by another transaction](#evm-relay-slot-taken) | critical | — |
+| [NEAR relay: a billing record is late](#near-billing-late) | warning | — |
 | [The usage database’s free monthly allowance is running low](#neon-compute-high) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
@@ -81,7 +81,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Email-login issuer key compromised (planned)](#email-issuer-key-compromised) | critical (planned) | — |
 | [Identity token signing key compromised (testnet Worker-secret key)](#identity-signing-key-compromised) | critical | — |
 | [Identity token KMS signer misused (planned: staging and mainnet)](#identity-kms-signer-compromised) | critical (planned) | — |
-| [Free network fees: a slot staff closed went through after all](#evm-relay-closed-slot-mined) | warning | — |
+| [Gas sponsorship: a slot staff closed went through after all](#evm-relay-closed-slot-mined) | warning | — |
 
 ## Alert playbooks
 
@@ -1555,30 +1555,30 @@ A `near_relay_balance_low` security event: the hourly check found `near.relay.ac
 
 <a id="evm-relay-paused"></a>
 
-### Free network fees are paused or slow
+### Gas sponsorship is paused or slow
 
 `evm-relay-paused` · critical
 
-An `evm_relay_stuck` security event, or the System status tile “Free network fees” saying “Paused: needs a person”: the relayer that pays users' network fees stopped, turned a user's action away for a reason on our side, or has a transaction waiting too long.
+An `evm_relay_stuck` security event, or the System status tile “Gas sponsorship” saying “Paused: needs a person”: the relayer that pays users' gas stopped, turned a user's action away for a reason on our side, or has a transaction waiting too long.
 
 **Signals**
 
-- The tile “Free network fees (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.
+- The tile “Gas sponsorship (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.
 - An `evm_relay_stuck` row in the admin's security events, emailed by the feed (at most one an hour per network), with one of: `halted` (the relayer stopped itself; `haltCode` the network's refusal), `rejected` (a refusal on our side turned a user's action away), `oldestPendingMs` or `oldestUnacceptedMs` over 2 minutes (the oldest transaction not on the network, or not taken by any node), or a send still unsettled after 10 minutes.
 - An `evm_relay_stuck` row with `rejected: gas_limit` and `gas model: yes` (its own row, at most one an hour per network): the network refused the gas Journear set for a user's action. The relayer does not pause for it and the user is not charged; it is a fault in Journear's gas settings or formula.
 
 **Impact**
 
-- While it is paused nobody gets free network fees: apps tell their users the offer is paused. Nothing is lost and no money moves by itself; transactions already sent are still looked after.
+- While it is paused gas sponsorship is stopped for everyone: apps tell their users the offer is paused. Nothing is lost and no money moves by itself; transactions already sent are still looked after.
 - How urgent: soon, not an emergency, unless the reason says the relayer's key is being used somewhere else: then at once.
 
 **Steps**
 
 1. **Read the tile** (who: anyone). Open System status. The tile says why in one sentence and what to do as numbered steps. The code for engineers under it (for example `relayer_cannot_send · insufficient_funds`) is what to quote to an engineer.
 
-2. **Do the steps** (who: a founder). Follow the numbered steps on the tile. Most often the relayer's wallet is out of test ETH: first open the wallet on the block explorer, and if money went out in transfers nobody at Journear made, stop and tell an engineer now (the next step); otherwise send test ETH to its address from a Base Sepolia faucet, then press Resume on the Free network fees page. Every tool there asks for a note, says what it will do before it does it, and is recorded in the audit log.
+2. **Do the steps** (who: a founder). Follow the numbered steps on the tile. Most often the relayer's wallet is out of test ETH: first open the wallet on the block explorer, and if money went out in transfers nobody at Journear made, stop and tell an engineer now (the next step); otherwise send test ETH to its address from a Base Sepolia faucet, then press Resume on the Gas sponsorship page. Every tool there asks for a note, says what it will do before it does it, and is recorded in the audit log.
 
-3. **If the key may be someone else’s, the engineer first** (who: a founder). If the box says the key may be used by someone else (a slot used by a transaction Journear didn't send, a gap, more transactions than the relayer sent, or the network saying another sender holds its numbers): don't send money to the wallet; tell an engineer now. The engineer follows “A relayer key leaked” in the runbook (free network fees off, the money moved out, the key replaced), then uses the slot tools under Advanced. Press Resume only when the engineer says the key is safe or replaced: the page asks you to confirm that, also when such a sign was seen after a pause that started for another reason. Your tick is your own recorded statement, not a second person's approval.
+3. **If the key may be someone else’s, the engineer first** (who: a founder). If the box says the key may be used by someone else (a slot used by a transaction Journear didn't send, a gap, more transactions than the relayer sent, or the network saying another sender holds its numbers): don't send money to the wallet; tell an engineer now. The engineer follows “A relayer key leaked” in the runbook (gas sponsorship off, the money moved out, the key replaced), then uses the slot tools under Advanced. Press Resume only when the engineer says the key is safe or replaced: the page asks you to confirm that, also when such a sign was seen after a pause that started for another reason. Your tick is your own recorded statement, not a second person's approval.
 
 4. **Ask an engineer when the steps say so** (who: a founder). If the records disagree (a bug), or Resume keeps being refused for the same reason, stop and ask an engineer. The relayer refuses anything unsafe itself; never work around a refusal.
 
@@ -1594,11 +1594,11 @@ An `evm_relay_stuck` security event, or the System status tile “Free network f
 
 - If the wallet ran out of money, check whether the daily budget or the low-balance line in the settings should be higher.
 
-**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), [`docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live`](operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-balance-low](#evm-relay-balance-low), [evm-relay-slot-taken](#evm-relay-slot-taken)
+**Refs:** [`docs/operations.md#gas-sponsorship-in-the-admin-portal-d843`](operations.md#gas-sponsorship-in-the-admin-portal-d843), [`docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live`](operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-balance-low](#evm-relay-balance-low), [evm-relay-slot-taken](#evm-relay-slot-taken)
 
 <a id="evm-relay-balance-low"></a>
 
-### The free network fees wallet is running low
+### Gas sponsorship: the relayer wallet is running low
 
 `evm-relay-balance-low` · warning
 
@@ -1606,7 +1606,7 @@ An `evm_relay_balance_low` security event, or the tile saying “Low on money”
 
 **Signals**
 
-- The tile “Free network fees” says “Low on money”.
+- The tile “Gas sponsorship” says “Low on money”.
 - An `evm_relay_balance_low` row in the admin's security events, emailed by the feed (one a day per network: the wallet, its balance, the low line, and `neededWei` when it fired at a send).
 
 **Impact**
@@ -1616,7 +1616,7 @@ An `evm_relay_balance_low` security event, or the tile saying “Low on money”
 
 **Steps**
 
-1. **Check it is ordinary use** (who: anyone). On the Free network fees page, open the relayer wallet on the block explorer. Many small transactions to users' accounts is ordinary use. A large transfer out that nobody at Journear made means the key leaked: tell an engineer at once.
+1. **Check it is ordinary use** (who: anyone). On the Gas sponsorship page, open the relayer wallet on the block explorer. Many small transactions to users' accounts is ordinary use. A large transfer out that nobody at Journear made means the key leaked: tell an engineer at once.
 
 2. **Add test ETH** (who: a founder). Send test ETH from a Base Sepolia faucet (docs.base.org, “Network faucets”) to the relayer wallet's address shown on the tile: at least the low line plus a day's budget (sandbox-dev: 0.07 test ETH). Never send real money.
 
@@ -1628,15 +1628,15 @@ An `evm_relay_balance_low` security event, or the tile saying “Low on money”
 
 - If it runs low every day, raise the amount you keep in it, or ask whether the daily budget is right.
 
-**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D836 (`docs/decisions.md`) · **See also:** [evm-relay-paused](#evm-relay-paused), [evm-relay-budget-high](#evm-relay-budget-high)
+**Refs:** [`docs/operations.md#gas-sponsorship-in-the-admin-portal-d843`](operations.md#gas-sponsorship-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D836 (`docs/decisions.md`) · **See also:** [evm-relay-paused](#evm-relay-paused), [evm-relay-budget-high](#evm-relay-budget-high)
 
 <a id="evm-relay-budget-high"></a>
 
-### Free network fees: today's budget is nearly used up
+### Gas sponsorship: today's budget is nearly used up
 
 `evm-relay-budget-high` · warning
 
-An `evm_relay_budget_high` security event: today's reservations for sponsored network fees reached 80% of `dailyBudgetEth` on a network (sandbox-dev 0.02 test ETH).
+An `evm_relay_budget_high` security event: today's reservations for sponsored gas reached 80% of `dailyBudgetEth` on a network (sandbox-dev 0.02 test ETH).
 
 **Signals**
 
@@ -1650,9 +1650,9 @@ An `evm_relay_budget_high` security event: today's reservations for sponsored ne
 
 **Steps**
 
-1. **Tell real use from abuse** (who: anyone). On the Free network fees page, look at which app the waiting transactions belong to. A demo or a busy day is real use. One app far ahead of the others, or many users nobody knows, points at a leaked publishable key.
+1. **Tell real use from abuse** (who: anyone). On the Gas sponsorship page, look at which app the waiting transactions belong to. A demo or a busy day is real use. One app far ahead of the others, or many users nobody knows, points at a leaked publishable key.
 
-2. **Raise it or stop it** (who: a founder). Real use: it starts again at 00:00 UTC; to raise it, an engineer changes `dailyBudgetEth` in the settings and deploys (keep the wallet funded to match). Abuse: ask an engineer to take the app off the free-fee list, or suspend the app.
+2. **Raise it or stop it** (who: a founder). Real use: it starts again at 00:00 UTC; to raise it, an engineer changes `dailyBudgetEth` in the settings and deploys (keep the wallet funded to match). Abuse: ask an engineer to take the app off the gas sponsorship list, or suspend the app.
 
 **Verify**
 
@@ -1662,11 +1662,11 @@ An `evm_relay_budget_high` security event: today's reservations for sponsored ne
 
 - If one app keeps causing it, talk to the partner.
 
-**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D836 (`docs/decisions.md`) · **See also:** [evm-relay-balance-low](#evm-relay-balance-low)
+**Refs:** [`docs/operations.md#gas-sponsorship-in-the-admin-portal-d843`](operations.md#gas-sponsorship-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D836 (`docs/decisions.md`) · **See also:** [evm-relay-balance-low](#evm-relay-balance-low)
 
 <a id="evm-relay-receipt-odd"></a>
 
-### Free network fees: a payment looked wrong
+### Gas sponsorship: a payment looked wrong
 
 `evm-relay-receipt-odd` · warning
 
@@ -1696,11 +1696,11 @@ An `evm_relay_receipt_odd` security event: a confirmation from the network provi
 
 - If the network provider gave wrong answers, the engineer may change the read provider (docs/operations.md, step 9).
 
-**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D847 (`docs/decisions.md`), D848 (`docs/decisions.md`) · **See also:** [evm-billing-late](#evm-billing-late)
+**Refs:** [`docs/operations.md#gas-sponsorship-in-the-admin-portal-d843`](operations.md#gas-sponsorship-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D847 (`docs/decisions.md`), D848 (`docs/decisions.md`) · **See also:** [evm-billing-late](#evm-billing-late)
 
 <a id="evm-billing-late"></a>
 
-### Free network fees: a billing record is late
+### Gas sponsorship: a billing record is late
 
 `evm-billing-late` · warning
 
@@ -1729,11 +1729,11 @@ An `evm_billing_late` security event: a finished sponsored send has no billing r
 
 - None.
 
-**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D852 (`docs/decisions.md`) · **See also:** [evm-relay-receipt-odd](#evm-relay-receipt-odd)
+**Refs:** [`docs/operations.md#gas-sponsorship-in-the-admin-portal-d843`](operations.md#gas-sponsorship-in-the-admin-portal-d843), D843 (`docs/decisions.md`), D852 (`docs/decisions.md`) · **See also:** [evm-relay-receipt-odd](#evm-relay-receipt-odd)
 
 <a id="evm-relay-slot-taken"></a>
 
-### Free network fees: a payment slot was used by another transaction
+### Gas sponsorship: a payment slot was used by another transaction
 
 `evm-relay-slot-taken` · critical
 
@@ -1742,7 +1742,7 @@ An `evm_relay_nonce_taken` security event: a slot (the relayer's transaction num
 **Signals**
 
 - An `evm_relay_nonce_taken` row in the admin's security events, emailed by the feed.
-- Before it, the tile “Free network fees” paused with “used up on the network by a transaction the relayer didn't send”, and a staff member closed that slot.
+- Before it, the tile “Gas sponsorship” paused with “used up on the network by a transaction the relayer didn't send”, and a staff member closed that slot.
 
 **Impact**
 
@@ -1751,7 +1751,7 @@ An `evm_relay_nonce_taken` security event: a slot (the relayer's transaction num
 
 **Steps**
 
-1. **Treat the key as leaked** (who: a founder). Ask an engineer to follow “A relayer key leaked” in docs/operations.md now: free network fees are switched off, the money left in the wallet is moved out, and a new key is made.
+1. **Treat the key as leaked** (who: a founder). Ask an engineer to follow “A relayer key leaked” in docs/operations.md now: gas sponsorship is switched off, the money left in the wallet is moved out, and a new key is made.
 
 2. **Find out how it leaked** (who: a founder). With the engineer: where was the key kept or copied (the `.secrets` folder, the API Worker's secrets, a log or a paste)? Close that first, or the new key leaks the same way.
 
@@ -1763,11 +1763,11 @@ An `evm_relay_nonce_taken` security event: a slot (the relayer's transaction num
 
 - Record what happened and when in the decision log.
 
-**Refs:** [`docs/operations.md#free-network-fees-in-the-admin-portal-d843`](operations.md#free-network-fees-in-the-admin-portal-d843), [`docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live`](operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-paused](#evm-relay-paused), [relayer-key-stolen](#relayer-key-stolen)
+**Refs:** [`docs/operations.md#gas-sponsorship-in-the-admin-portal-d843`](operations.md#gas-sponsorship-in-the-admin-portal-d843), [`docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live`](operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-paused](#evm-relay-paused), [relayer-key-stolen](#relayer-key-stolen)
 
 <a id="near-billing-late"></a>
 
-### Free NEAR transactions: a billing record is late
+### NEAR relay: a billing record is late
 
 `near-billing-late` · warning
 
@@ -2960,7 +2960,7 @@ No env signs with AWS KMS yet (the adapter is built, the AWS account isn't: docs
 
 <a id="evm-relay-closed-slot-mined"></a>
 
-### Free network fees: a slot staff closed went through after all
+### Gas sponsorship: a slot staff closed went through after all
 
 `evm-relay-closed-slot-mined` · warning
 

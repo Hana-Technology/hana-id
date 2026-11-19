@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -516,7 +516,7 @@ A fresh email address, a private window. Give each site a minute after the deplo
    page on a NEAR testnet explorer instead (the runbook allows either). If the
    account lost more: newer NEAR versions charge something the record misses; tell the developer team (the records
    would under-count the cost, D863). Nothing needs undoing.
-6. The next day, the admin portal: no "Free NEAR transactions: a billing record is late" alert. If one comes, its
+6. The next day, the admin portal: no "NEAR relay: a billing record is late" alert. If one comes, its
    counts say why: `parked` and `unmirrored` usually catch up by themselves; `misses` or `unrecordedLast` (the last
    transaction the chain took from a relay key that day has no record) go to the developer team with the day;
    `notFinal` means checking the NEAR RPC endpoints.
@@ -732,11 +732,11 @@ the relayer address.
 
 ### 4.16 What the admin portal should show (you)
 
-- **Security & monitoring**: no "Free network fees: …" alert (their meanings: operations "EVM gas sponsorship",
+- **Security & monitoring**: no "Gas sponsorship: …" alert (their meanings: operations "EVM gas sponsorship",
   "Watching it").
-- The relayer's state: System status's tile **Free network fees (Base Sepolia)** says "Working" (else why and what
-  to do, as numbered steps); its link opens the Free network fees page, with what is waiting and the staff tools
-  (operations "Free network fees in the admin portal (D843)"). The table in phase 3 already deploys the API (row 2)
+- The relayer's state: System status's tile **Gas sponsorship (Base Sepolia)** says "Working" (else why and what
+  to do, as numbered steps); its link opens the Gas sponsorship page, with what is waiting and the staff tools
+  (operations "Gas sponsorship in the admin portal (D843)"). The table in phase 3 already deploys the API (row 2)
   and the console (row 5) before the admin portal (row 7), which this needs: with an older API the tile says "This page
   is newer than the API: deploy the API first" and the tools do nothing; with an older console the tools say so and do
   nothing. Without the read endpoint (4.12) the tile says "Not set up" with the upload step.
@@ -843,14 +843,14 @@ Look at the admin portal (**Security & monitoring** and **System status**) once 
 |---|---|---|
 | `near_relay_balance_low` | The NEAR relay account is below its low line | [playbook](playbooks.md#near-relay-balance-low) |
 | `near_relay_budget_high` | Today's NEAR relay spend reached 80% of its budget | [playbook](playbooks.md#near-relay-budget-high) |
-| "Free NEAR transactions: a billing record is late" (`near_billing_late`) | A NEAR relay's record is missing, waiting, not read back, not copied to the ledger, or a key's last transaction of the day has none (`unrecordedLast`) | operations "NEAR relay billing records", "Watching it"; 3.12 item 6 |
+| "NEAR relay: a billing record is late" (`near_billing_late`) | A NEAR relay's record is missing, waiting, not read back, not copied to the ledger, or a key's last transaction of the day has none (`unrecordedLast`) | operations "NEAR relay billing records", "Watching it"; 3.12 item 6 |
 | `relayer_balance_low` and the other relayer funds alerts | The sign-in relayer is running low | [playbook](playbooks.md#relayer-out-of-funds) |
-| "Free network fees: the paying account is running low" (`evm_relay_balance_low`) | The EVM relayer needs test ETH | operations "EVM gas sponsorship", "Watching it"; fund it (4.5) |
-| "Free network fees: paused or slow, needs a look" (`evm_relay_stuck`) | The relayer stopped itself, refused an action, its oldest transaction waited over 2 minutes, or a send stayed unsettled over 10 | operations "The relayer: what it does, when it stops, what to do" |
-| "Free network fees: today's budget is nearly used up" (`evm_relay_budget_high`) | 80% of the day's 0.02 test ETH is used | usually nothing; it resets at 00:00 UTC |
-| "Free network fees: a payment looked wrong …" (`evm_relay_receipt_odd`) | The read endpoint gave an odd answer | check or replace the endpoint (4.12) |
-| "Free network fees: a payment slot was used by another transaction" (`evm_relay_nonce_taken`) | The relayer key may be used elsewhere | the leaked-key steps in operations "EVM sponsorship relay" |
-| "Free network fees: a billing record is late" (`evm_billing_late`) | A sponsored send's record didn't reach the ledger | check the ledger connection first |
+| "Gas sponsorship: the relayer wallet is running low" (`evm_relay_balance_low`) | The EVM relayer needs test ETH | operations "EVM gas sponsorship", "Watching it"; fund it (4.5) |
+| "Gas sponsorship: paused or slow, needs a look" (`evm_relay_stuck`) | The relayer stopped itself, refused an action, its oldest transaction waited over 2 minutes, or a send stayed unsettled over 10 | operations "The relayer: what it does, when it stops, what to do" |
+| "Gas sponsorship: today's budget is nearly used up" (`evm_relay_budget_high`) | 80% of the day's 0.02 test ETH is used | usually nothing; it resets at 00:00 UTC |
+| "Gas sponsorship: a payment looked wrong …" (`evm_relay_receipt_odd`) | The read endpoint gave an odd answer | check or replace the endpoint (4.12) |
+| "Gas sponsorship: a payment slot was used by another transaction" (`evm_relay_nonce_taken`) | The relayer key may be used elsewhere | the leaked-key steps in operations "EVM sponsorship relay" |
+| "Gas sponsorship: a billing record is late" (`evm_billing_late`) | A sponsored send's record didn't reach the ledger | check the ledger connection first |
 | `usage_write_failed` in the API's logs | A usage event didn't reach the ledger | operations "Usage capture", "What to watch" |
 | A demo says the vault didn't load | Usually a cold Worker for a minute after a deploy; else an origin or build problem | operations "Common failures" |
 | Cloudflare's usage page near a free limit | Requests, Durable Objects or D1 near the day's free allowance | stop and ask before anything upgrades |
@@ -934,7 +934,7 @@ Free: faucets, Blockscout and Basescan verification, standard GitHub runners on 
    both places; the address isn't in this repository.
 4. **If faucets are slow, may the assistant give you a `cast send` command that moves 0.1 test ETH from the deployer
    to the relayer (4.5)?** Recommended: yes; it signs with your keystore and asks for its password.
-5. **Which app may use free network fees (4.7)?** Recommended: the hosted demo's app only, the one the check-in card
+5. **Which app may use gas sponsorship (4.7)?** Recommended: the hosted demo's app only, the one the check-in card
    will live in, and no partner app until the admin page exists.
 6. **When does phase 4 happen?** Recommended: not on the first deploy day; once the admin portal's sponsorship page
    and the demo's check-in card are merged and deployed.

@@ -1,4 +1,4 @@
-// "Free network fees" (D843) as the browser runs public/app.js (boot.ts), over the Worker's own answers for the preview
+// "Gas sponsorship" (D843) as the browser runs public/app.js (boot.ts), over the Worker's own answers for the preview
 // scenarios (test-spa/preview-status.ts runs src/status.ts and src/evm-relay.ts): the tile in each state in plain
 // words, its issue with numbered steps, the detail page (waiting transactions, explorer links, the tools by risk with
 // the Advanced ones folded), a tool's confirmation naming its consequence and the exact request it sends, a refusal and
@@ -32,22 +32,22 @@ const openStatus = async (s: Scenario) => {
   await vi.waitFor(() => expect(page.main().querySelector('.verdict')).not.toBeNull());
   return page;
 };
-const feesTile = (p: Awaited<ReturnType<typeof openStatus>>) => [...p.main().querySelectorAll('.tile')].find((t) => (t.querySelector('h3')?.textContent ?? '').startsWith('Free network fees'))!;
+const feesTile = (p: Awaited<ReturnType<typeof openStatus>>) => [...p.main().querySelectorAll('.tile')].find((t) => (t.querySelector('h3')?.textContent ?? '').startsWith('Gas sponsorship'))!;
 
 describe('the System status tile', () => {
   it('each state in plain words: Working, Paused: needs a person, Low on money, Not set up', async () => {
     const want: [Scenario, string, string, string][] = [
-      ['fees-working', 'Working', 'tile ok', 'Free network fees (Base Sepolia)'],
-      ['fees-paused-money', 'Paused: needs a person', 'tile critical wide', 'Free network fees (Base Sepolia)'],
-      ['fees-paused-key', 'Paused: needs a person', 'tile critical wide', 'Free network fees (Base Sepolia)'],
-      ['fees-low', 'Low on money', 'tile warning wide', 'Free network fees (Base Sepolia)'],
-      ['green', 'Not set up', 'tile off', 'Free network fees'],
+      ['fees-working', 'Working', 'tile ok', 'Gas sponsorship (Base Sepolia)'],
+      ['fees-paused-money', 'Paused: needs a person', 'tile critical wide', 'Gas sponsorship (Base Sepolia)'],
+      ['fees-paused-key', 'Paused: needs a person', 'tile critical wide', 'Gas sponsorship (Base Sepolia)'],
+      ['fees-low', 'Low on money', 'tile warning wide', 'Gas sponsorship (Base Sepolia)'],
+      ['green', 'Not set up', 'tile off', 'Gas sponsorship'],
     ];
     for (const [s, chip, cls, name] of want) {
       const p = await openStatus(s);
       const t = feesTile(p);
       expect([t.querySelector('.state-chip')!.textContent, t.className, t.querySelector('h3')!.textContent], s).toEqual([chip, cls, name]);
-      expect(t.querySelector('a')?.getAttribute('href') ?? null, s).toBe(s === 'green' ? null : '/free-network-fees/84532');
+      expect(t.querySelector('a')?.getAttribute('href') ?? null, s).toBe(s === 'green' ? null : '/gas-sponsorship/84532');
       await closeWindow();
     }
   });
@@ -60,7 +60,7 @@ describe('the System status tile', () => {
       'Open the relayer wallet on Basescan (its address is below). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.',
       'Check the wallet’s balance below.',
       'Send at least 0.07 test ETH to the relayer wallet (its address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”).',
-      'When the balance below shows the new amount, press Resume on the Free network fees page.',
+      'When the balance below shows the new amount, press Resume on the Gas sponsorship page.',
       'If it pauses again for the same reason, it still needs more money: send more, then press Resume again.',
     ]);
     expect(t.querySelector('.engineer-code')!.textContent).toBe('Code for engineers: relayer_cannot_send · insufficient_funds · slot 42');
@@ -76,7 +76,7 @@ describe('the System status tile', () => {
     // The issue at the top: the same sentence, its steps, its playbook.
     const issue = [...p.main().querySelectorAll('.issue')].find((i) => i.textContent!.includes('out of money'))!;
     expect(issue.querySelectorAll('.issue-steps li')).toHaveLength(5);
-    expect(issue.querySelector('.issue-links')!.textContent).toContain('Playbook: Free network fees are paused or slow');
+    expect(issue.querySelector('.issue-links')!.textContent).toContain('Playbook: Gas sponsorship is paused or slow');
   });
 
   it('paused because the key is used elsewhere: the engineer first', async () => {
@@ -95,7 +95,7 @@ describe('the System status tile', () => {
 function openDetail(s: Scenario, onAct?: (c: Call) => Answer) {
   const acts: Call[] = [];
   let reads = 0;
-  const page = boot('/free-network-fees/84532', (c: Call): Answer => {
+  const page = boot('/gas-sponsorship/84532', (c: Call): Answer => {
     if (c.path === '/api/evm-relay/84532' && c.method === 'GET') {
       const d = detail[s] as { status: number; body: { token: string } };
       return (reads++ === 0 ? d : { ...d, body: { ...d.body, token: `evmact_${String(reads).padStart(22, 'r')}` } }) as Answer;
@@ -108,9 +108,9 @@ function openDetail(s: Scenario, onAct?: (c: Call) => Answer) {
   });
   return { ...page, acts };
 }
-const ready = async (p: ReturnType<typeof openDetail>) => vi.waitFor(() => expect(p.main().querySelector('h1')?.textContent).toBe('Free network fees (Base Sepolia)'));
+const ready = async (p: ReturnType<typeof openDetail>) => vi.waitFor(() => expect(p.main().querySelector('h1')?.textContent).toBe('Gas sponsorship (Base Sepolia)'));
 
-describe('the Free network fees page', () => {
+describe('the Gas sponsorship page', () => {
   it('the state, the wallet with its explorer link, the waiting transactions with their links, the staff log', async () => {
     const p = openDetail('fees-working');
     await ready(p);
@@ -135,7 +135,7 @@ describe('the Free network fees page', () => {
     expect(p.text()).toContain('Time limit long gone; slot 39 waiting behind it');
     // Resume isn't offered while it runs; the Advanced tools are folded and warned about.
     expect(p.buttons('Resume')).toEqual([]);
-    expect(p.text()).toContain('Not needed now: free network fees aren’t paused.');
+    expect(p.text()).toContain('Not needed now: gas sponsorship isn’t paused.');
     const adv = p.main().querySelector('details.advanced')!;
     expect(adv.hasAttribute('open')).toBe(false);
     expect(adv.querySelector('summary')!.textContent).toBe('Advanced: rarely needed');
@@ -156,7 +156,7 @@ describe('the Free network fees page', () => {
     input.value = 'Sent 0.1 test ETH from the faucet; balance now 0.1';
     p.submit(tool.querySelector('form'));
     const confirm = tool.querySelector('.confirm')!;
-    expect(confirm.textContent).toContain('Resume free network fees? The relayer checks the network first, and says no if the problem is still there.');
+    expect(confirm.textContent).toContain('Resume gas sponsorship? The relayer checks the network first, and says no if the problem is still there.');
     expect(p.acts).toEqual([]);
     (confirm.querySelector('button') as unknown as HTMLButtonElement).click();
     await vi.waitFor(() => expect(p.acts).toHaveLength(1));
@@ -167,7 +167,7 @@ describe('the Free network fees page', () => {
     expect(tool.textContent).toContain('It can’t tell whether its key is safe');
     expect(p.acts[0]!.headers['x-hana-admin']).toBe('1');
     await vi.waitFor(() => expect(p.main().querySelector('.act-result')).not.toBeNull());
-    expect(p.main().querySelector('.act-result')!.textContent).toContain('Resume: doneFree network fees are running again.');
+    expect(p.main().querySelector('.act-result')!.textContent).toContain('Resume: doneGas sponsorship is running again.');
     expect(p.dialogs).toEqual([]);
   });
 
@@ -277,23 +277,78 @@ describe('the Free network fees page', () => {
     (fill.querySelector('input[name=slot]') as unknown as HTMLInputElement).value = '41';
     (fill.querySelector('input[name=note]') as unknown as HTMLInputElement).value = 'Slot 41 is empty after a transaction we did not send';
     p.submit(fill.querySelector('form'));
-    expect(fill.querySelector('.confirm')!.textContent).toContain('Fill slot 41 with a harmless empty transfer? It costs a small network fee from the relayer wallet.');
+    expect(fill.querySelector('.confirm')!.textContent).toContain('Fill slot 41 with a harmless empty transfer? It costs a little ETH for gas, from the relayer wallet.');
   });
 
   it('text only: a hostile note or app name stays text', async () => {
     const d = structuredClone(detail['fees-working']) as Fake & { body: { staffLog: { note: string }[]; records: { app: string }[] } };
     d.body.staffLog[0]!.note = '<img src=x onerror=alert(1)>';
     d.body.records[0]!.app = '<script>alert(1)</script>';
-    const p = boot('/free-network-fees/84532', (c) => (c.path === '/api/evm-relay/84532' ? (d as Answer) : { status: 404, body: {} }));
+    const p = boot('/gas-sponsorship/84532', (c) => (c.path === '/api/evm-relay/84532' ? (d as Answer) : { status: 404, body: {} }));
     await vi.waitFor(() => expect(p.main().querySelector('h1')).not.toBeNull());
     expect(p.main().querySelector('img, script')).toBeNull();
     expect(p.text()).toContain('<img src=x onerror=alert(1)>');
     expect(p.text()).toContain('<script>alert(1)</script>');
   });
 
+  it('staff’s name for it (D879): the subtitle says who pays the gas; the old path is no page and reads nothing', async () => {
+    const p = openDetail('fees-working');
+    await ready(p);
+    expect(p.main().querySelector('.page-head, header')?.textContent ?? p.text()).toContain('Journear pays users’ gas on Base Sepolia through its relayer.');
+    expect(p.text()).not.toMatch(/free network fee/iu);
+    await closeWindow();
+    const old = boot('/free-network-fees/84532', () => ({ status: 404, body: { error: { code: 'not_found' } } }));
+    await vi.waitFor(() => expect(old.main().querySelector('h1')?.textContent).toBe('Page not found'));
+    expect(old.api()).toEqual([]);
+  });
+
   it('an env without sponsorship: the API’s not found is said in plain words', async () => {
     const p = openDetail('green');
     await vi.waitFor(() => expect(p.main().querySelector('.jp-alert-danger')).not.toBeNull());
     expect(p.text()).toContain('Not found');
+  });
+});
+
+// ---- the users' term stays on the users' side (D879) ----
+
+describe('no "free network fees" on the staff side (D879)', () => {
+  const OLD = /free.network.fee/iu;
+  it('every preview scenario: the status answer, the detail answer and the rendered status and detail pages', async () => {
+    const m = (await import(MODULE)) as { SCENARIOS: readonly string[]; previewStatus: (s: string) => Promise<Record<string, unknown>>; previewEvmDetail: (s: string) => Promise<Fake> };
+    expect(m.SCENARIOS.length).toBeGreaterThan(10);
+    for (const s of m.SCENARIOS) {
+      const st = await m.previewStatus(s);
+      const de = await m.previewEvmDetail(s);
+      expect(JSON.stringify(st), s).not.toMatch(OLD);
+      expect(JSON.stringify(de.body), s).not.toMatch(OLD);
+      const sp = boot('/', (c: Call): Answer => (c.path === '/api/status' ? { body: st } : { status: 404, body: { error: { code: 'not_found' } } }));
+      await vi.waitFor(() => expect(sp.main().querySelector('.verdict')).not.toBeNull());
+      expect(sp.text(), s).not.toMatch(OLD);
+      await closeWindow();
+      if (de.status !== 200) continue;
+      const dp = boot('/gas-sponsorship/84532', (c: Call): Answer => (c.path === '/api/evm-relay/84532' ? (de as Answer) : { status: 404, body: { error: { code: 'not_found' } } }));
+      await vi.waitFor(() => expect(dp.main().querySelector('h1')?.textContent).toBe('Gas sponsorship (Base Sepolia)'));
+      // The text includes the folded Advanced tools and every confirmation's words (in the page's source below).
+      expect(dp.text(), s).not.toMatch(OLD);
+      await closeWindow();
+    }
+  });
+
+  it('the seven gas sponsorship playbooks and event titles, and the page’s own code', async () => {
+    const { PLAYBOOKS } = await import('@hana-id/playbooks');
+    const { SECURITY_EVENT_TITLES } = await import('@hana-id/console-core');
+    const evmPlaybooks = PLAYBOOKS.filter((p) => p.id.startsWith('evm-'));
+    const evmTitles = Object.entries(SECURITY_EVENT_TITLES).filter(([k]) => k.startsWith('evm_'));
+    expect([evmPlaybooks.length, evmTitles.length]).toEqual([7, 7]);
+    for (const p of evmPlaybooks) {
+      expect(JSON.stringify(p), p.id).not.toMatch(OLD);
+      expect(p.title, p.id).toMatch(/^Gas sponsorship/u);
+    }
+    for (const [k, t] of evmTitles) expect(t, k).toMatch(/^Gas sponsorship: /u);
+    // The page's code (tool texts, confirmations shown only on a press): the term only in the comment that names D879.
+    const { SRC } = await import('./boot.ts');
+    const page = SRC.slice(SRC.indexOf('// ---- Gas sponsorship (D843'), SRC.indexOf('async function evmRelayPage'));
+    expect(page.length).toBeGreaterThan(1000);
+    expect(page).not.toMatch(OLD);
   });
 });

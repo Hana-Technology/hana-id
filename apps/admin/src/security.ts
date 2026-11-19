@@ -20,8 +20,8 @@ import { WATCH_CURSOR } from './watcher.ts';
 
 /**
  * The playbook of each security event kind that has one (docs/playbooks.md): what it means, how urgent, what to do.
- * The free-network-fee kinds (D848, D852, D869) and the NEAR relay's billing kind (D863) included (D843); a test holds
- * every free-network-fees and billing-late kind to a playbook that exists.
+ * The gas sponsorship kinds (D848, D852, D869) and the NEAR relay's billing kind (D863) included (D843); a test holds
+ * every gas sponsorship and billing-late kind to a playbook that exists.
  */
 export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object.freeze({
   home_budget_high: 'home-budget-high',

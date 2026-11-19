@@ -1,4 +1,4 @@
-// The admin portal's "Free network fees" (D843): what the API's AdminRpc answers about the EVM relayer (D851) and what
+// The admin portal's "Gas sponsorship" (D843): what the API's AdminRpc answers about the EVM relayer (D851) and what
 // a staff tool call takes. The API reads its relayer object through apps/api/src/evm-relayer-staff.ts only; the admin
 // Worker turns these views into plain words (apps/admin/src/evm-relay.ts). Every view holds public data only: the
 // relayer's address, slot numbers, transaction hashes, amounts, times, app ids and names, the staff log (staff emails,

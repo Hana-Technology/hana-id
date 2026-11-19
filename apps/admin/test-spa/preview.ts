@@ -13,8 +13,8 @@
 //
 // The System status page (D425): `/api/status` is the real `buildStatus` over the fake sources of one scenario
 // (test-spa/preview-status.ts: green, warnings, critical, mixed-build, watchdog-down, the NEAR relay's relay-low,
-// relay-budget, relay-key-missing, relay-off and relay-stale, and free network fees' fees-working, fees-paused-money, fees-paused-money-leak,
-// fees-paused-key and fees-low, whose "Free network fees" page and tools answer here too; a done Resume there switches
+// relay-budget, relay-key-missing, relay-off and relay-stale, and gas sponsorship's fees-working, fees-paused-money, fees-paused-money-leak,
+// fees-paused-key and fees-low, whose "Gas sponsorship" page and tools answer here too; a done Resume there switches
 // the page to working). `PREVIEW_STATUS=<scenario>` picks
 // it at start (green by default); opening /preview/status/<scenario> switches it and goes to the page.
 import { readFileSync } from 'node:fs';
@@ -34,7 +34,7 @@ const { SCENARIOS, previewStatus, previewEvmDetail, previewEvmAct } = (await imp
   previewEvmDetail: (s: Scenario) => Promise<Fake>;
   previewEvmAct: (body: Record<string, unknown>, s: Scenario) => Promise<Fake & { resumed: boolean }>;
 };
-/** The "Free network fees" page's scenario: the status one, until a resume there is done (then it shows working). */
+/** The "Gas sponsorship" page's scenario: the status one, until a resume there is done (then it shows working). */
 let feesResumed = false;
 
 const PUBLIC = new URL('../public/', import.meta.url);

@@ -100,7 +100,7 @@ export interface AdminRpcClient {
   neonAdminRun(c: unknown): Answer<{ run: { value: string; updatedAt: number } | null }>;
   /** The System status page (D425): the API's build, hot DB, crons, notice backlog, pool keys and governance. */
   systemStatus(c: unknown): Answer<ApiSystemStatus>;
-  /** "Free network fees" (D843): one sponsored chain's relayer, its waiting transactions and staff log. */
+  /** "Gas sponsorship" (D843): one sponsored chain's relayer, its waiting transactions and staff log. */
   evmRelayDetail(c: unknown): Answer<{ detail: EvmRelayDetail }>;
   /** One relayer staff tool (D843): done, or the relayer's reason. */
   evmRelayAct(c: unknown): Answer<{ result: EvmRelayActResult }>;

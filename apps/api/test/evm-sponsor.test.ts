@@ -1283,7 +1283,7 @@ describe('the relayer’s final interface (PR #70)', () => {
     expect(await billingRows()).toEqual([]);
   });
 
-  it('a halted relayer: evm_relay_stuck (“Free network fees: paused or slow, needs a look”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {
+  it('a halted relayer: evm_relay_stuck (“Gas sponsorship: paused or slow, needs a look”), status answers paused, a send is 503 sponsorship_paused with everything back', async () => {
     const s = await setup();
     const halted = { reason: 'nonce_gap' as const, since: Date.now(), nonce: 3 };
     s.relayer.statusValue = { address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, oldestUnacceptedMs: null, nextNonce: 3, halted };

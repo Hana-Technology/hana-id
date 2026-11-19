@@ -173,3 +173,19 @@ describe('the lane’s ledger: PGlite behind the wire-protocol listener (pglite-
     }
   });
 });
+
+describe('the Gas sponsorship page’s path (D879)', () => {
+  it('staff-demo prints, and the specs open, the path the admin Worker links its tile to', async () => {
+    const { evmRelayPath } = (await import(new URL('../../admin/src/evm-relay.ts', import.meta.url).href)) as { evmRelayPath(id: number): string };
+    expect(evmRelayPath(31337)).toBe('/gas-sponsorship/31337');
+    const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+    expect(read('../src/staff-demo.ts')).toContain('${lane}/gas-sponsorship/31337');
+    expect(read('../tests/admin-fixtures.ts')).toContain('export const DETAIL = `/gas-sponsorship/${CHAIN}`;');
+    // The old path is nowhere in the suite (nothing of the page was deployed under it: no redirect is kept).
+    const root = fileURLToPath(new URL('../', import.meta.url));
+    const old = ['src', 'tests', 'test']
+      .flatMap((d) => files(join(root, d)))
+      .filter((f) => !f.endsWith('admin-lane.test.ts') && readFileSync(f, 'utf8').includes('free-network-fees'));
+    expect(old).toEqual([]);
+  });
+});

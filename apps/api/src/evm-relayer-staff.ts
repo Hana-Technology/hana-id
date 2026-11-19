@@ -1,5 +1,5 @@
 // The EVM relayer's staff tools (D851) and their admin view (D843), reached only through AdminRpc (rpc/admin.ts: staff
-// actors only, the admin portal's "Free network fees"); no route reaches them. Any holder of the EVM_RELAYER binding
+// actors only, the admin portal's "Gas sponsorship"); no route reaches them. Any holder of the EVM_RELAYER binding
 // could call the object's staff methods, so their guard lives here, and a test (scripts/test/evm-relayer-staff.test.ts)
 // keeps every file in apps/api/src but this one, the object and rpc/admin.ts (the sponsorship handlers under src/evm/
 // and the public routes included) from importing this file or naming the guard, a staff method or these functions.

@@ -4,6 +4,8 @@
 // read, an answer about someone else), the contract's own rules for who may cancel or remove whom (derived from
 // contracts/hana-signer/src/tests/email.rs "Cancel and unlink"), the last sign-in's guard, and the words.
 import { identityKeyHex } from '@hana-id/core';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { jargonIn } from '@hana-id/brand/plain-words';
 import { dom } from '../../src/auth/dom.ts';
@@ -13,14 +15,17 @@ import {
   type HomeSignIns,
   type HomeSignInsWho,
   SIGN_INS_READ_LIMIT_MS,
+  SIGN_IN_MAX_MS,
   SIGN_IN_TEXT,
   type SignInRow,
   type SignInViewer,
   mayCancel,
   mayRemove,
   pointerFor,
+  pointerSignsIn,
   pointerText,
   rowFacts,
+  signInDate,
   signInModel,
   startHomeSignIns,
 } from '../../src/auth/home-sign-ins.ts';
@@ -65,15 +70,20 @@ function views(chain: Chain, scopeId: string, who: { provider: string; sub: stri
 
 const homeScope = (scopeId = S): HomeScope => ({ scopeId, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: [], logoUrl: null }] });
 
+type Which = 'primary' | 'second';
 interface Harness {
   section: HomeSignIns;
   chain: Chain;
+  /** What the second provider sees, when it differs (a lying or stale one). */
+  chain2: Chain | null;
+  /** The env has no second provider. */
+  noSecond: boolean;
   who: HomeSignInsWho | null;
   ended: boolean;
   now: number;
-  calls: { method: string; args: unknown }[];
-  /** Replaces the chain's answer (a failing or slow provider). */
-  view: ((method: string, args: Record<string, string>) => Promise<unknown>) | null;
+  calls: { which: Which; method: string; args: unknown }[];
+  /** Replaces a provider's answer (a failing or slow provider). */
+  view: ((method: string, args: Record<string, string>, which: Which) => Promise<unknown>) | null;
   /** Ends the read's time limit. */
   late: () => void;
   click(id: string): void;
@@ -84,18 +94,24 @@ interface Harness {
 function start(chain: Chain, who: HomeSignInsWho | null, o: { gesture?: boolean } = {}): Harness {
   const running = new Set<Promise<unknown>>();
   let lateResolve: (() => void)[] = [];
-  const h = { chain, who, ended: false, now: T0, calls: [], view: null } as unknown as Harness;
+  const h = { chain, chain2: null, noSecond: false, who, ended: false, now: T0, calls: [], view: null } as unknown as Harness;
+  const at =
+    (which: Which) =>
+    async (method: string, args: unknown): Promise<unknown> => {
+      h.calls.push({ which, method, args });
+      const a = args as Record<string, string>;
+      if (h.view) return h.view(method, a, which);
+      const v = views(which === 'second' && h.chain2 ? h.chain2 : h.chain, a.scope_id as string, { provider: a.provider as string, sub: a.sub as string });
+      return method === 'get_identity' ? v.identity : v.account;
+    };
   const near: NearReader = {
     getSession: () => Promise.reject(new Error('not used')),
     txOutcome: () => Promise.reject(new Error('not used')),
-    independent: () => null,
-    view: async (signer, method, args) => {
+    // One provider's word (with its fallback) is never enough for this list (D874 as amended): only `independent`.
+    view: () => Promise.reject(new Error('the list must be read on both providers alone')),
+    independent: (signer) => {
       expect(signer).toBe(ENV.signer);
-      h.calls.push({ method, args });
-      const a = args as Record<string, string>;
-      if (h.view) return h.view(method, a);
-      const v = views(h.chain, a.scope_id as string, { provider: a.provider as string, sub: a.sub as string });
-      return method === 'get_identity' ? v.identity : v.account;
+      return h.noSecond ? null : { primary: at('primary'), second: at('second') };
     },
   };
   h.section = startHomeSignIns({
@@ -166,9 +182,12 @@ describe('reading', () => {
     h.click('home-sign-ins-show');
     expect(document.getElementById('home-sign-ins')?.textContent).toContain(SIGN_IN_TEXT.loading);
     await h.idle();
+    const args = { scope_id: S, provider: 'email', sub: E.sub };
     expect(h.calls).toEqual([
-      { method: 'get_identity', args: { scope_id: S, provider: 'email', sub: E.sub } },
-      { method: 'get_account', args: { scope_id: S, provider: 'email', sub: E.sub } },
+      { which: 'primary', method: 'get_identity', args },
+      { which: 'primary', method: 'get_account', args },
+      { which: 'second', method: 'get_identity', args },
+      { which: 'second', method: 'get_account', args },
     ]);
     expect(h.section.state).toBe('ready');
     expect(h.section.reads).toBe(1);
@@ -183,10 +202,10 @@ describe('reading', () => {
     h.section.leaveApp();
     h.mount();
     expect(h.section.state).toBe('ready');
-    expect(h.calls).toHaveLength(2);
+    expect(h.calls).toHaveLength(4);
     h.click('home-sign-ins-again');
     await h.idle();
-    expect(h.calls).toHaveLength(4);
+    expect(h.calls).toHaveLength(8);
     h.section.reset();
     h.mount();
     expect(h.section.state).toBe('closed');
@@ -261,7 +280,14 @@ describe('reading', () => {
       const h = start(emailOnly(), asEmail);
       h.view = async (m, a) => bad(m, a);
       await shown(h);
+      expect(h.section.errorCode).toBe('sign_ins_disputed');
+      expect(rows()).toEqual([]);
+      // Only the second provider's answer is wrong: still no list.
+      h.view = async (m, a, w) => (w === 'second' ? bad(m, a) : views(emailOnly(), S, E)[m === 'get_identity' ? 'identity' : 'account']);
+      h.click('home-sign-ins-retry');
+      await h.idle();
       expect(h.section.state).toBe('failed');
+      expect(h.section.errorCode).toBe('sign_ins_disputed');
       expect(rows()).toEqual([]);
     }
   });
@@ -333,7 +359,7 @@ describe('what it shows', () => {
     await shown(h);
     const me = rows()[0]!;
     expect([me.kind, me.role, me.you]).toEqual(['email', 'member', true]);
-    expect(me.text).toContain('choose Remove this email when asked. It then no longer opens this wallet, and signing in with it opens a new, empty wallet of its own.');
+    expect(me.text).toContain('choose Remove this email when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.');
     expect(me.text).toContain(SIGN_IN_TEXT.removeOwnMoney);
     expect(me.text).toContain(SIGN_IN_TEXT.removeOwnNotAsked);
   });
@@ -462,6 +488,165 @@ describe('who may cancel or remove whom (links.rs; tests/email.rs “Cancel and 
     ]);
     expect(rows()[2]!.text).toContain(SIGN_IN_TEXT.otherKind);
     expect(rows()[2]!.text).toContain(SIGN_IN_TEXT.notYours);
+  });
+});
+
+describe('both providers (D874 as amended, D263’s independent reads)', () => {
+  it('both agree: the list', async () => {
+    const h = start(googleWithEmail(T0 - DAY, true), asGoogle);
+    h.chain2 = googleWithEmail(T0 - DAY, true);
+    await shown(h);
+    expect(rows()).toHaveLength(2);
+  });
+
+  it('they disagree (the second hides the added email): no list, a failed read that says it couldn’t be confirmed', async () => {
+    const h = start(googleWithEmail(T0 - DAY, true), asGoogle);
+    h.chain2 = { opened: new Set([key(G)]), accounts: [] };
+    await shown(h);
+    expect(h.section.state).toBe('failed');
+    expect(h.section.errorCode).toBe('sign_ins_disputed');
+    expect(rows()).toEqual([]);
+    expect(document.getElementById('home-sign-ins-problem')?.textContent).toContain('couldn’t confirm the ways to sign in, so it shows none');
+  });
+
+  it('they disagree only on a date or how it was added: still no list', async () => {
+    for (const other of [googleWithEmail(T0 - 2 * DAY, true), googleWithEmail(T0 - DAY, true, false), googleWithEmail(T0 - DAY, false)]) {
+      resetDom();
+      const h = start(googleWithEmail(T0 - DAY, true), asGoogle);
+      h.chain2 = other;
+      await shown(h);
+      expect(h.section.errorCode).toBe('sign_ins_disputed');
+    }
+  });
+
+  it('one provider down, or no second provider: no list (never one provider’s word)', async () => {
+    for (const down of ['primary', 'second'] as const) {
+      resetDom();
+      const h = start(googleWithEmail(T0 - DAY, true), asGoogle);
+      h.view = async (m, a, w) => {
+        if (w === down) throw new Error('down');
+        return views(h.chain, S, { provider: a.provider as string, sub: a.sub as string })[m === 'get_identity' ? 'identity' : 'account'];
+      };
+      await shown(h);
+      expect(h.section.errorCode).toBe('sign_ins_unreadable');
+      expect(rows()).toEqual([]);
+    }
+    resetDom();
+    const h = start(emailOnly(), asEmail);
+    h.noSecond = true;
+    await shown(h);
+    expect(h.section.errorCode).toBe('sign_ins_unreadable');
+    expect(h.calls).toEqual([]);
+  });
+
+  it('a date the page can’t write (past the year 9999, up to the u64 views’ 8.64e15 and beyond) is a failed read, not kept: Try again reads afresh', async () => {
+    for (const bad of [SIGN_IN_MAX_MS + 1, 8.64e15 + 1, Number.MAX_SAFE_INTEGER]) {
+      resetDom();
+      const h = start(googleWithEmail(bad, true), asGoogle);
+      await shown(h);
+      expect(h.section.state).toBe('failed');
+      expect(h.section.errorCode).toBe('sign_ins_disputed');
+      h.chain = googleWithEmail(T0 - DAY, true);
+      h.click('home-sign-ins-retry');
+      await h.idle();
+      expect(h.section.state).toBe('ready');
+      expect(rows()).toHaveLength(2);
+    }
+    expect(SIGN_IN_MAX_MS).toBe(Date.UTC(9999, 11, 31, 23, 59, 59, 999));
+    expect(() => signInDate(8.64e15 + 1)).not.toThrow();
+  });
+});
+
+describe('the contract’s own rules, copied from links.rs (not from the page’s encoding)', () => {
+  // links.rs, verbatim lines this table is copied from. If any changes, this test fails: re-derive the table.
+  // (Read from the package's directory: vitest runs here, and happy-dom's import.meta.url isn't a file URL.)
+  const LINKS_RS = readFileSync(resolve(process.cwd(), '../../contracts/hana-signer/src/links.rs'), 'utf8');
+  const LINES = [
+    // cancel_link
+    'if j != member {\n            self.assert_active_in(&scope_id, &j, &root, now);\n        }',
+    'assert!(matches!(self.standing(&member, now), Standing::Pending { .. }), "No such member");',
+    // assert_active_in: the root (Own and j == root), an active member of the same root; a pending one refused
+    'Standing::Own => assert!(j == root, "Sign-in method is not in this account"),',
+    'env::panic_str("Sign-in method link is pending");',
+    // unlink_identity
+    'if j != root && j != member {',
+    'env::panic_str("Only the root or the member itself can unlink");',
+    'assert!(member != root, "Cannot unlink the root");',
+    'assert!(matches!(self.standing(&member, now), Standing::Member { .. }), "No such member");',
+  ];
+  it('the lines the table is copied from are still in links.rs', () => {
+    for (const l of LINES) expect(LINKS_RS, l).toContain(l);
+  });
+
+  type Standing = 'root' | 'active' | 'pending';
+  /** cancel_link(j, member): line 1 (j == member skips the check), assert_active_in (root or active member), line 2. */
+  const contractCancel = (j: { key: string; standing: Standing }, member: { key: string; standing: Standing }): boolean => {
+    if (member.standing !== 'pending') return false; // "No such member" (Standing::Pending only)
+    if (j.key === member.key) return true; // `if j != member` skips assert_active_in
+    return j.standing === 'root' || j.standing === 'active'; // assert_active_in: Own && j == root, or Member of root; Pending panics
+  };
+  /** unlink_identity(j, member): `if j != root && j != member` panics; root refused; only Standing::Member. */
+  const contractUnlink = (j: { key: string; standing: Standing }, member: { key: string; standing: Standing }): boolean => {
+    if (j.standing !== 'root' && j.key !== member.key) return false; // "Only the root or the member itself can unlink"
+    if (member.standing === 'root') return false; // "Cannot unlink the root"
+    return member.standing === 'active'; // "No such member" unless Standing::Member
+  };
+  const role = (st: Standing): SignInRow['role'] => (st === 'root' ? 'first' : st === 'active' ? 'member' : 'waiting');
+
+  it('mayCancel and mayRemove agree with the copied rules for every viewer and line', () => {
+    const all: Standing[] = ['root', 'active', 'pending'];
+    for (const vs of all) {
+      for (const ts of all) {
+        for (const same of [true, false]) {
+          if (same && vs !== ts) continue;
+          if (!same && vs === 'root' && ts === 'root') continue; // one root per account
+          const j = { key: 'j', standing: vs };
+          const m = { key: same ? 'j' : 'm', standing: ts };
+          const v: SignInViewer = { key: 'j', role: role(vs), kind: 'email' };
+          const r = row(role(ts), m.key, { you: same });
+          expect(mayCancel(v, r), `cancel ${vs}→${ts} same=${same}`).toBe(contractCancel(j, m));
+          expect(mayRemove(v, r), `remove ${vs}→${ts} same=${same}`).toBe(contractUnlink(j, m));
+        }
+      }
+    }
+  });
+});
+
+describe('the lines that send the user to sign in (D874 as amended)', () => {
+  it('an added sign-in’s own removal: two sentences, the money advice, and what to do when it isn’t asked (an automatic same-address link, or “Don’t ask again on this device”)', () => {
+    for (const kind of ['email', 'google'] as const) {
+      const lines = pointerText({ kind: 'remove_own' }, row('member', 'e', { kind, you: true })).lines;
+      const label = kind === 'email' ? 'Remove this email' : 'Remove this Google account';
+      expect(lines[0]).toBe(`To remove it, sign in to this app with it and choose ${label} when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.`);
+      for (const sentence of lines[0]!.split(/(?<=\.) /u)) expect(sentence.split(' ').length, sentence).toBeLessThanOrEqual(22);
+      expect(lines).toContain(SIGN_IN_TEXT.removeOwnMoney);
+      expect(lines).toContain('Not asked? Try signing in in a private window. If this was added automatically because both use the same address, you won’t be asked.');
+    }
+  });
+
+  it('the automatic Google member (the silent case) gets the same not-asked line', async () => {
+    const chain: Chain = { opened: new Set([key(E)]), accounts: [{ root: E, members: [{ who: G, effectiveAtMs: T0 - DAY, active: true, auto: true }], epoch: 1 }] };
+    const h = start(chain, asGoogle);
+    await shown(h);
+    expect(rows()[0]!.text).toContain(SIGN_IN_TEXT.autoGoogle);
+    expect(rows()[0]!.text).toContain(SIGN_IN_TEXT.removeOwnNotAsked);
+  });
+
+  it('says once to sign out of the app first, only where a line sends the user to sign in', async () => {
+    const one = start(emailOnly(), asEmail);
+    await shown(one);
+    expect(document.getElementById('home-sign-ins-sign-out-first')).toBeNull();
+    resetDom();
+    const several = start(googleWithEmail(T0 + DAY, false), asGoogle);
+    await shown(several);
+    expect(document.querySelectorAll('#home-sign-ins-sign-out-first')).toHaveLength(1);
+    expect(document.getElementById('home-sign-ins-sign-out-first')?.textContent).toBe(SIGN_IN_TEXT.signOutFirst);
+    resetDom();
+    const none = start(googleWithEmail(T0 - 8 * DAY, true), asGoogle);
+    await shown(none);
+    expect(document.getElementById('home-sign-ins-sign-out-first')).toBeNull();
+    expect(pointerSignsIn({ kind: 'remove_none' })).toBe(false);
+    expect(pointerSignsIn({ kind: 'cancel_own_email' })).toBe(true);
   });
 });
 

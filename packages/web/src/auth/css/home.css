@@ -517,6 +517,10 @@ p.copy-status:not(:empty) {
   margin-top: var(--jp-space-1);
 }
 
+.home-sign-ins > .home-sign-in-list {
+  margin-bottom: var(--jp-space-3);
+}
+
 /* A waiting link, or a sign-in nothing can remove now: the amber box under its card's row. */
 .home-sign-in > .home-sign-in-risk {
   margin: 0 var(--jp-space-4) var(--jp-space-4);

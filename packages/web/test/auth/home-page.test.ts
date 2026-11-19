@@ -86,6 +86,7 @@ let signer: TokenSigner;
 let consoleSpies: ReturnType<typeof vi.spyOn>[] = [];
 
 function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; opener?: RemoteWindow; clipboard?: null; config?: () => Response; view?: (signer: string, method: string, args: unknown) => Promise<unknown> } = {}): Harness {
+  const independentViews = opts.view ? (s: string) => ({ primary: (m: string, a: unknown) => opts.view!(s, `primary:${m}`, a), second: (m: string, a: unknown) => opts.view!(s, `second:${m}`, a) }) : noChain;
   const win = new FakeWindow('/home', opts.search ?? '');
   if (opts.framed) win.top = {};
   if (opts.opener) win.opener = asWindow(opts.opener);
@@ -130,8 +131,8 @@ function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; o
       },
     },
     // Listing and viewing read no chain: any NEAR read in these tests is a failure (opening a wallet is home-export.test.ts).
-    // "Ways to sign in" reads its two views only when asked (`opts.view`).
-    near: { getSession: noChain, txOutcome: noChain, view: opts.view ?? noChain, independent: noChain },
+    // "Ways to sign in" reads its two views on both providers only when asked (`opts.view`, named `primary:` or `second:`).
+    near: { getSession: noChain, txOutcome: noChain, view: noChain, independent: independentViews },
     jwks: async (kid) => (kid === signer.jwk.kid ? signer.jwk : null),
     deviceNow: () => now,
     sleep: async () => {},
@@ -1225,7 +1226,7 @@ describe('“Ways to sign in” on the page (home-sign-ins.ts, D874)', () => {
         expect(s).toBe(ENV.signer);
         views.push({ method, args });
         const a = args as { scope_id: string; provider: string; sub: string };
-        return method === 'get_identity' ? { key: identityKeyHex(a.scope_id, a.provider, a.sub), status: 'own', opened: true, root: null, effective_at_ms: null, account_epoch: 0 } : null;
+        return method.endsWith(':get_identity') ? { key: identityKeyHex(a.scope_id, a.provider, a.sub), status: 'own', opened: true, root: null, effective_at_ms: null, account_epoch: 0 } : null;
       },
     });
     h.answer = () => json(200, { scopes: [mine('s1')], nextCursor: null });
@@ -1237,9 +1238,12 @@ describe('“Ways to sign in” on the page (home-sign-ins.ts, D874)', () => {
     expect(h.page.signIns.state).toBe('closed');
     h.click('home-sign-ins-show');
     await h.page.idle();
+    const args = { scope_id: 's1', provider: 'google', sub: 'sub-1' };
     expect(views).toEqual([
-      { method: 'get_identity', args: { scope_id: 's1', provider: 'google', sub: 'sub-1' } },
-      { method: 'get_account', args: { scope_id: 's1', provider: 'google', sub: 'sub-1' } },
+      { method: 'primary:get_identity', args },
+      { method: 'primary:get_account', args },
+      { method: 'second:get_identity', args },
+      { method: 'second:get_account', args },
     ]);
     expect(h.page.signIns.state).toBe('ready');
     expect(document.querySelector('#home-sign-ins-list > li')?.textContent).toContain('Your Google account');
@@ -1247,12 +1251,12 @@ describe('“Ways to sign in” on the page (home-sign-ins.ts, D874)', () => {
     h.click('home-back');
     (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
     expect(h.page.signIns.state).toBe('ready');
-    expect(views).toHaveLength(2);
+    expect(views).toHaveLength(4);
     // Signed out, then another account: nothing of the first one's stays.
     h.click('home-sign-out');
     await h.signIn('sub-2');
     (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
     expect(h.page.signIns.state).toBe('closed');
-    expect(views).toHaveLength(2);
+    expect(views).toHaveLength(4);
   });
 });

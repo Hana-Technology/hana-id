@@ -2,7 +2,10 @@
 // chain's accounts and links, and the sign-in window's own Cancel and Remove, which the section's lines point to (Home
 // itself can't cancel or remove a sign-in: home-sign-ins.ts says why). Each test has a scope, a Google account and an
 // address of its own. Every page on Journear's sign-in origin (Home and the sign-in windows) fails the test on a
-// console error, an uncaught error or a CSP violation.
+// console error (but the two browser lines `ALLOWED_BROWSER_LINES` names exactly), an uncaught error or a CSP
+// violation.
+//
+// Both NEAR providers are read, each alone, and must agree (D874 as amended); a failed read shows no list.
 //
 // With HANA_SHOTS_DIR set (Chromium only), the founder's screens are saved there at phone width (390), light:
 // `home-sign-ins-one`, `home-sign-ins-several-waiting`, `home-sign-ins-member`, `remove-confirmation` and
@@ -10,7 +13,7 @@
 // `home-sign-ins-read-failed`.
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
-import { API_URL, AUTH_ORIGIN, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
+import { API_URL, AUTH_ORIGIN, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { type App, clickAction, clickClosing, clickMayClose, clickUntilTaken, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted, walletDirectory } from './fixtures.ts';
 import { signIn } from './home-steps.ts';
 
@@ -40,18 +43,26 @@ async function shot(page: Page, name: string, browserName: string): Promise<void
   if (SHOTS && browserName === 'chromium') await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
 }
 
+const esc = (t: string): string => t.replace(/[.*+?^${}()|[\]\\/]/gu, '\\$&');
+const RECIPIENTS = `(${[AUTH_ORIGIN, PARTNER_ORIGIN].map(esc).join('|')})`;
 /**
- * The browser's own line when the Google callback's D347 signals (sent with the vault's origin as their target, so
- * only a vault frame can read them) meet an opener that isn't one, as Home's sign-in child is: the browser refusing
- * the delivery, by design (callback-page.ts). Not an error of the page.
+ * The two browser lines the sign-in origin's pages are allowed, each named exactly:
+ * - D347: the Google callback sends its signals with the vault's origin as the target (only a vault frame may read
+ *   them); when its opener is Home or the partner page itself, the browser refuses the delivery and says so (WebKit on
+ *   the opener, Firefox on the callback). By design (callback-page.ts), not the page's error.
+ * - Firefox's "downloadable font: download failed" for the sign-in origin's own IBM Plex files, when a sign-in window
+ *   closes while its fonts load.
  */
-const D347_SIGNAL = /^Unable to post message to \S+\. Recipient has origin /u;
+const ALLOWED_BROWSER_LINES: readonly RegExp[] = [
+  new RegExp(`^Unable to post message to ${esc(VAULT_ORIGIN)}\\. Recipient has origin ${RECIPIENTS}\\.?\\s*$`, 'u'),
+  new RegExp(`Failed to execute ‘postMessage’ on ‘DOMWindow’: The target origin provided \\(‘${esc(VAULT_ORIGIN)}’\\) does not match the recipient window’s origin \\(‘${RECIPIENTS}’\\)`, 'u'),
+  new RegExp(`downloadable font: download failed \\(font-family: "IBM Plex Sans"[^)]*\\): status=\\d+ source: ${esc(AUTH_ORIGIN)}/assets/files/ibm-plex-sans-\\d+-[A-Z0-9]+\\.woff2`, 'u'),
+];
 
 /**
- * Passport Home (every `/home` page in this context): console errors and uncaught errors. Every page of the sign-in
- * origin, the sign-in windows included: CSP violations (an init script reports each as a console error) and uncaught
- * errors. (Firefox logs a font download cut off by a window closing, and the D347 refusal above, on the sign-in windows:
- * the browser's lines, not the pages', so their other console lines aren't held here.) Returns what was seen so far.
+ * Every page of the sign-in origin in this context (Passport Home and the sign-in windows): console errors other than
+ * the two browser lines above, uncaught errors, and CSP violations (an init script reports each as a console error, and
+ * none is ever allowed). Returns what was seen so far.
  */
 async function watchAuthPages(context: BrowserContext): Promise<() => string[]> {
   const seen: string[] = [];
@@ -61,8 +72,8 @@ async function watchAuthPages(context: BrowserContext): Promise<() => string[]> 
   const watch = (p: Page): void => {
     p.on('console', (m) => {
       if (m.type() !== 'error' || !p.url().startsWith(AUTH_ORIGIN)) return;
-      const home = new URL(p.url()).pathname === '/home';
-      if (m.text().startsWith('CSP violation') || (home && !D347_SIGNAL.test(m.text()))) seen.push(`${p.url()}: ${m.text()}`);
+      const t = m.text();
+      if (t.includes('CSP violation') || !ALLOWED_BROWSER_LINES.some((r) => r.test(t))) seen.push(`${p.url()}: ${t}`);
     });
     p.on('pageerror', (e) => {
       if (p.url().startsWith(AUTH_ORIGIN)) seen.push(`${p.url()}: ${e.message}`);
@@ -191,7 +202,8 @@ test('an email-only wallet: Home reads nothing until asked, then shows one sign-
   expect(await sectionButtons(home)).toEqual(['Show ways to sign in']);
   await home.locator('#home-sign-ins-show').click();
   await expect(signInRows(home)).toHaveCount(1);
-  expect(views()).toEqual(['get_identity', 'get_account']);
+  // Both providers, each alone (D874 as amended).
+  expect(views().sort()).toEqual(['get_account', 'get_account', 'get_identity', 'get_identity']);
   const only = signInRows(home).first();
   await expect(only).toHaveAttribute('data-role', 'first');
   await expect(only).toHaveAttribute('data-you', 'true');
@@ -204,7 +216,7 @@ test('an email-only wallet: Home reads nothing until asked, then shows one sign-
   await home.locator('#home-back').click();
   await openApp(home, scopeId, name);
   await expect(signInRows(home)).toHaveCount(1);
-  expect(views()).toHaveLength(2);
+  expect(views()).toHaveLength(4);
   // Nothing in storage or the address (D619, D553).
   expect(await home.evaluate(() => location.href)).toBe(`${AUTH_ORIGIN}/home`);
   expect(problems()).toEqual([]);
@@ -248,7 +260,7 @@ test('a waiting link shows as waiting with where to cancel it; cancelled there (
   await home.locator('#home-sign-ins-again').click();
   await expect(signInRows(home)).toHaveCount(1);
   await expect(signInRows(home).first()).toHaveAttribute('data-role', 'first');
-  expect(views()).toEqual(['get_identity', 'get_account', 'get_identity', 'get_account']);
+  expect(views()).toHaveLength(8);
   expect(problems()).toEqual([]);
 });
 
@@ -270,6 +282,7 @@ test('a link that took effect: listed with where to remove it; removed from its 
   await expect(member).toContainText('Opens this wallet since');
   await expect(member).toContainText('Added at a sign-in, after a code was sent to this email address.');
   await expect(member).toContainText('Didn’t add it? Sign in to this app the way you signed in here, before');
+  await expect(home.locator('#home-sign-ins-sign-out-first')).toHaveText('If you’re already signed in to this app, sign out of it first.');
   expect(await sectionButtons(home)).toEqual(['Show again']);
   await shot(home, 'home-sign-ins-member', browserName);
 
@@ -316,7 +329,7 @@ test('a link that took effect: listed with where to remove it; removed from its 
   expect(problems()).toEqual([]);
 });
 
-test('a failed read says so plainly with Try again, changes nothing, and Try again reads the list', async ({ page, context, browserName }, info) => {
+test('a failed read (both providers, or only one) says so plainly with Try again, shows no list, and Try again reads it', async ({ page, context, browserName }, info) => {
   test.setTimeout(150_000);
   const problems = await watchAuthPages(context);
   const scopeId = newScope(browserName);
@@ -343,12 +356,19 @@ test('a failed read says so plainly with Try again, changes nothing, and Try aga
   await home.route(match, down);
   await home.locator('#home-sign-ins-show').click();
   const problem = home.locator('#home-sign-ins-problem');
-  await expect(problem).toContainText('Passport Home couldn’t check the ways to sign in. Nothing was changed. Try again in a moment.');
+  await expect(problem).toContainText('Passport Home couldn’t confirm the ways to sign in, so it shows none. Nothing was changed. Try again in a moment.');
   await expect(problem).toContainText('Error code (for support): sign_ins_unreadable');
   await expect(signInRows(home)).toHaveCount(0);
   expect(await sectionButtons(home)).toEqual(['Try again']);
   await shot(home, 'home-sign-ins-read-failed', browserName);
   await home.unroute(match, down);
+  // Only the second provider down: still no list (never one provider's word).
+  const second = (u: URL): boolean => u.origin === new URL(NEAR_RPC_FALLBACK).origin;
+  await home.route(second, down);
+  await home.locator('#home-sign-ins-retry').click();
+  await expect(problem).toContainText('Error code (for support): sign_ins_unreadable');
+  await expect(signInRows(home)).toHaveCount(0);
+  await home.unroute(second, down);
   await home.locator('#home-sign-ins-retry').click();
   await expect(signInRows(home)).toHaveCount(1);
   expect(problems()).toEqual([]);

@@ -13,9 +13,12 @@
 // the contract would refuse (`mayCancel`, `mayRemove`: links.rs `cancel_link`, `unlink_identity`).
 //
 // The chain is read only when the user asks ("Show ways to sign in"): `get_identity` and `get_account` of the signed-in
-// identity in that app's scope, side by side on the env's NEAR provider (its fallback if it fails), at most
-// `SIGN_INS_READ_LIMIT_MS` in all. The answer is kept in memory for this Home sign-in, per app, so going back to an app
-// reads nothing; "Show again" reads again. Nothing is written to storage, a URL or a log.
+// identity in that app's scope, on each of the env's two NEAR providers alone (`rpc` and `rpcFallback`, D263's
+// `independent()`), all four side by side, at most `SIGN_INS_READ_LIMIT_MS` in all. The list is shown only when both
+// providers answer and describe the same list; one down, no second provider, or any difference is a failed read, never
+// a partial list (D874 as amended: one lying or stale provider could otherwise hide an added sign-in). A confirmed
+// answer is kept in memory for this Home sign-in, per app, so going back to an app reads nothing; "Show again" reads
+// again; a failed read is never kept. Nothing is written to storage, a URL or a log.
 //
 // PRIVACY: the chain holds identity keys (hashes) for the sign-ins added to a wallet, and the wallet's own sign-in as
 // `(provider, sub)`, whose `sub` is Google's number or the email issuer's pseudonymous `e1.` id: never an address.
@@ -24,9 +27,8 @@
 // here looks an address up.
 //
 // SECURITY: every text is a text node (dom.ts). The views are checked against each other and against the identity key
-// computed here, so an answer about another identity or a half-made account reads as a failed read, never as a list.
-// One provider's word is trusted for what is shown, as the sign-in window's banners trust the vault's RPC: a lying
-// provider could hide or invent a line, but nothing here acts on it.
+// computed here, so an answer about another identity or a half-made account reads as a failed read, never as a list;
+// dates past the year 9999 too (a date the page can't write would break it). Both providers must agree on the list.
 import { type AccountView, type IdentityView, ViewShapeError, identityKeyHex, parseAccountView, parseIdentityView } from '@hana-id/core';
 import { type Child, type Dom, addressText, maskedAddress, supportCode } from './dom.ts';
 import { plainProblem } from './home-problems.ts';
@@ -43,8 +45,11 @@ export const SIGN_INS_READ_LIMIT_MS = 20_000;
  * (vault/login.ts `RECENT_LINK_MS`, D259; a test holds the two equal).
  */
 export const BANNER_REMOVE_MS = 7 * 24 * 3_600_000;
-/** The failed read's code, for support. */
+/** A failed read's codes, for support: a provider didn't answer in time (or there is no second one); the answers disagree or don't hold together. */
 export const SIGN_INS_UNREADABLE = 'sign_ins_unreadable';
+export const SIGN_INS_DISPUTED = 'sign_ins_disputed';
+/** The last moment a date may name (9999-12-31T23:59:59.999Z): beyond it a view is refused, as the page couldn't write it. */
+export const SIGN_IN_MAX_MS = 253_402_300_799_999;
 
 // ---- what the chain says, as rows ----
 
@@ -93,6 +98,7 @@ export function signInModel(scopeId: string, me: { provider: string; sub: string
     const mine = account.members.find((m) => m.key === myKey);
     if (!mine || mine.active !== (identity.status === 'member')) throw new ViewShapeError('get_account member');
   }
+  if (account.members.some((m) => m.effectiveAtMs > SIGN_IN_MAX_MS)) throw new ViewShapeError('get_account effective_at_ms');
   const rootKey = identityKeyHex(scopeId, account.root.provider, account.root.sub);
   const keys = new Set([rootKey, ...account.members.map((m) => m.key)]);
   if (keys.size !== account.members.length + 1) throw new ViewShapeError('get_account keys');
@@ -168,7 +174,7 @@ export const SIGN_IN_TEXT = Object.freeze({
   loading: 'Checking the ways to sign in…',
   again: 'Show again',
   retry: 'Try again',
-  failed: 'Passport Home couldn’t check the ways to sign in. Nothing was changed. Try again in a moment.',
+  failed: 'Passport Home couldn’t confirm the ways to sign in, so it shows none. Nothing was changed. Try again in a moment.',
   noWallet: 'You don’t have a wallet in this app yet.',
   youBadge: 'You’re signed in with this now',
   waitingBadge: 'Waiting',
@@ -177,18 +183,19 @@ export const SIGN_IN_TEXT = Object.freeze({
   otherGoogle: 'A Google account',
   otherKind: 'Another way to sign in',
   first: 'The wallet was made with this sign-in, so it can’t be removed.',
-  autoGoogle: 'Added automatically at a sign-in. This usually happens when it uses the same Gmail or Google Workspace address as this wallet’s email.',
+  autoGoogle: 'Added automatically at a sign-in, because this Google account uses the same email address as this wallet.',
   autoEmail: 'Added at a sign-in, after a code was sent to this email address.',
   byHand: 'Added by hand in the app, after both sign-ins were checked.',
-  shared: 'Each of these opens the same wallet. Whoever holds any of them can use the money in it.',
+  shared: 'Each of these opens the same wallet, or will once it stops waiting. Anyone who can sign in with one of them can use the money in it.',
   readOnly: 'Passport Home can show these, but can’t cancel or remove them yet.',
   privacy: 'Journear doesn’t show the addresses of your other sign-ins, only what kind they are.',
   cancelOwnEmail: 'Didn’t set this up? Sign in to this app with this email and choose Cancel this link. If you’re not sure, cancel it.',
-  cancelOwnNone: 'This can be cancelled only from the wallet’s other sign-ins, in this app. If you didn’t set this up, don’t add money to that wallet.',
+  cancelOwnNone: 'Only the email this wallet was made with can cancel this. If you didn’t set this up, don’t add money to that wallet.',
   cancelAtSignIn: 'Didn’t add it? Sign in to this app the way you signed in here, and choose Cancel this link. If you’re not sure, cancel it.',
-  removeNone: 'Passport Home can’t remove it, and the sign-in window offers that only in the first 7 days. If you don’t recognise it, move your money out of this wallet and tell the app’s support.',
+  removeNone: 'Nothing can remove it now. If you don’t recognise it, move your money to a different wallet that only you can open. Moving this wallet to another wallet app won’t help.',
   notYours: 'Only the sign-in this wallet was made with, or this sign-in itself, can remove it.',
-  removeOwnNotAsked: 'If you’re not asked, Passport Home can’t remove it for you yet.',
+  removeOwnNotAsked: 'Not asked? Try signing in in a private window. If this was added automatically because both use the same address, you won’t be asked.',
+  signOutFirst: 'If you’re already signed in to this app, sign out of it first.',
   removeOwnMoney: 'If you added money to this wallet, move it out first. It stays in this wallet.',
 });
 
@@ -197,7 +204,11 @@ export function signInDate(ms: number): string {
   try {
     return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(ms);
   } catch {
-    return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+    try {
+      return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+    } catch {
+      return 'a date Passport Home can’t show';
+    }
   }
 }
 
@@ -229,7 +240,7 @@ export function pointerText(p: SignInPointer, row: SignInRow): { lines: string[]
     case 'remove_own':
       return {
         lines: [
-          `To remove it, sign in to this app with it and choose ${removeLabel} when asked. It then no longer opens this wallet, and signing in with it opens a new, empty wallet of its own.`,
+          `To remove it, sign in to this app with it and choose ${removeLabel} when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.`,
           SIGN_IN_TEXT.removeOwnMoney,
           SIGN_IN_TEXT.removeOwnNotAsked,
         ],
@@ -243,6 +254,9 @@ export function pointerText(p: SignInPointer, row: SignInRow): { lines: string[]
       return { lines: [SIGN_IN_TEXT.notYours], risk: false };
   }
 }
+
+/** Whether a pointer tells the user to sign in to the app (then the section says once to sign out of it first). */
+export const pointerSignsIn = (p: SignInPointer | null): boolean => p !== null && ['cancel_own_email', 'cancel_at_sign_in', 'remove_own', 'remove_at_sign_in'].includes(p.kind);
 
 // ---- the section ----
 
@@ -321,14 +335,33 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     }
   };
 
-  async function readViews(scopeId: string, who: HomeSignInsWho): Promise<SignInModel> {
+  /** One provider's list, or why there is none. */
+  async function readOne(read: (method: string, args: unknown) => Promise<unknown>, scopeId: string, who: HomeSignInsWho): Promise<SignInModel | 'unreachable' | 'disputed'> {
     const args = { scope_id: scopeId, provider: who.provider, sub: who.sub };
-    const views = Promise.all([deps.near.view(deps.signer, 'get_identity', args), deps.near.view(deps.signer, 'get_account', args)]);
-    // A failure that comes after the limit is nobody's to handle (it must not reach the console as unhandled).
-    views.catch(() => {});
-    const got = await Promise.race([views, sleep(SIGN_INS_READ_LIMIT_MS).then(() => null)]);
-    if (got === null) throw new Error('The sign-ins read took too long');
-    return signInModel(scopeId, who, parseIdentityView(got[0]), parseAccountView(got[1]));
+    let raw: [unknown, unknown];
+    try {
+      raw = await Promise.all([read('get_identity', args), read('get_account', args)]);
+    } catch {
+      return 'unreachable';
+    }
+    try {
+      return signInModel(scopeId, who, parseIdentityView(raw[0]), parseAccountView(raw[1]));
+    } catch {
+      return 'disputed';
+    }
+  }
+
+  /** The list both providers agree on, or the failed read's code. Every answer is in before the verdict. */
+  async function readViews(scopeId: string, who: HomeSignInsWho): Promise<SignInModel | typeof SIGN_INS_UNREADABLE | typeof SIGN_INS_DISPUTED> {
+    const views = deps.near.independent(deps.signer);
+    if (!views) return SIGN_INS_UNREADABLE;
+    const both = Promise.all([readOne(views.primary, scopeId, who), readOne(views.second, scopeId, who)]);
+    const got = await Promise.race([both, sleep(SIGN_INS_READ_LIMIT_MS).then(() => null)]);
+    if (got === null) return SIGN_INS_UNREADABLE;
+    const [a, b] = got;
+    if (a === 'disputed' || b === 'disputed') return SIGN_INS_DISPUTED;
+    if (a === 'unreachable' || b === 'unreachable') return SIGN_INS_UNREADABLE;
+    return JSON.stringify(a) === JSON.stringify(b) ? a : SIGN_INS_DISPUTED;
   }
 
   async function load(): Promise<void> {
@@ -349,20 +382,22 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     state = 'loading';
     render();
     reads += 1;
-    let model: SignInModel | null = null;
+    let answer: SignInModel | string;
     try {
-      model = await readViews(scopeId, who);
+      answer = await readViews(scopeId, who);
     } catch {
-      model = null;
+      answer = SIGN_INS_UNREADABLE;
     }
     if (at !== epoch || scope?.scopeId !== scopeId) return;
+    const model = typeof answer === 'string' ? null : answer;
     if (model) {
       cache.set(scopeId, { who, model });
       state = 'ready';
     } else {
+      // A failed read is never kept: the next press reads again.
       cache.delete(scopeId);
       state = 'failed';
-      errorCode = SIGN_INS_UNREADABLE;
+      errorCode = answer as string;
       problemText = SIGN_IN_TEXT.failed;
     }
     render();
@@ -412,6 +447,8 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
       const { viewer, rows } = entry.model;
       if (rows.length > 1) out.push(d.h('p', { attrs: { id: 'home-sign-ins-shared' } }, SIGN_IN_TEXT.shared));
       out.push(d.h('ul', { class: 'home-device-list home-sign-in-list', attrs: { id: 'home-sign-ins-list' } }, ...rows.map((r, i) => rowView(entry, r, viewer, i))));
+      // Said once, where any line sends the user to the app's sign-in: the app shows it only to someone signed out.
+      if (rows.some((r) => pointerSignsIn(pointerFor(viewer, r, deps.now())))) out.push(d.h('p', { attrs: { id: 'home-sign-ins-sign-out-first' } }, SIGN_IN_TEXT.signOutFirst));
       out.push(d.h('p', { class: 'muted', attrs: { id: 'home-sign-ins-read-only' } }, SIGN_IN_TEXT.readOnly, ' ', rows.length > 1 ? SIGN_IN_TEXT.privacy : null));
     }
     out.push(d.h('div', { class: 'actions start' }, button(SIGN_IN_TEXT.again, 'home-sign-ins-again', () => deps.track(load()))));

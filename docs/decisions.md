@@ -15648,8 +15648,8 @@ From `next` @ a8692ea0; not merged, not deployed.
   `packages/web/src/auth/email-page.ts` (`FRESH_TEXT`, `CHANGE_TEXT`, `changeFailure`, `kindName`,
   `HOME_SIGN_INS_SECTION`, `showBanners`, `showRemoveConfirm`, `startChange`, `showChangeResult`), `email-storage.ts`
   (`bannerAction`, `isBannerAction`), `dom.ts` (`DomOptions.titleFromHeading`, `SIGN_IN_WINDOW`), `login-page.ts`,
-  `callback-page.ts`, `home-callback-page.ts`; `apps/demo/src/errors.ts`, `near-card.ts`, `index.html`; tests
-  `packages/web/test/auth/email-follow.test.ts` ("D881"), `window-title.test.ts` (new), `apps/demo/test/errors.test.ts`,
+  `callback-page.ts` (`bannerChangeAt`, `showChangeNotProved`), `home-callback-page.ts`; `apps/demo/src/errors.ts`, `near-card.ts`, `index.html`; tests
+  `packages/web/test/auth/email-follow.test.ts` ("D881"), `callback-follow.test.ts` ("D881"), `window-title.test.ts` (new), `apps/demo/test/errors.test.ts`,
   `page.test.ts`, `apps/e2e/tests/linking.spec.ts`, `home-sign-ins.spec.ts`, `google-cancel.spec.ts`,
   `hand-browser.spec.ts`, `demo.spec.ts`, `demo-near-shots.spec.ts`; docs `operations.md` (the hand-test flows A, B, D,
   E, G and the linking table), `architecture.md`, `security.md`, `integration.md`, `apps/e2e/README.md`.
@@ -15726,6 +15726,12 @@ From `next` @ a8692ea0; not merged, not deployed.
        tell whether the {kind} was removed." / "…whether the link was cancelled."; "Sign in to {app} again. If the
        {kind} still opens this wallet, you’ll see it there with Remove." / "…If the link is still waiting, you’ll see
        Cancel this link again."
+     - Google's check not finished (cancelled on Google's screen, or Google's error): the vault does nothing with an
+       answer that isn't a proof and sends no further notice, so `/login/callback` (which relays that error) reads the
+       same marker and shows the outcome itself instead of handing over to a follow-up mode that would wait for
+       nothing: "The {kind} wasn’t removed" / "The link wasn’t cancelled"; "Nothing changed. The {kind} still opens
+       this wallet." / "Nothing changed. The link is still waiting." + "Google didn’t finish checking it’s you.";
+       "Close this window, then sign in to {app} again to try again." Every other proof's error goes on as before.
      Each failure shows "Error code (for support): {code}", and leaves the banner or line for the next sign-in (nothing
      marked seen). **Close** goes on as Done does: a finished sign-in to the sharing sheet when the app asks (D411),
      else closes.

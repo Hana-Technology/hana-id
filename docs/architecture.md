@@ -548,7 +548,9 @@ message.
    proof's method, the outcome's slot, whether the sign-in finished), so the vault's next notice, also after the Google
    proof's round trip through `/login/callback`, shows as that change's outcome: `done` (removed, or "Link cancelled")
    or `stop` with the API's code (`token_invalid`: not this sign-in; `link_refused`: the sign-ins changed;
-   `rate_limited`, `links_unavailable`, `link_pending`: nothing sent; anything else: can't tell), each with **Close**.
+   `rate_limited`, `links_unavailable`, `link_pending`: nothing sent; anything else: can't tell), each with **Close**;
+   a Google check that didn't finish (the vault sends nothing after a non-proof answer) is shown by `/login/callback`
+   from the same marker ("Nothing changed").
    A fresh active banner (the method this login linked) gets a heading and sentences by case (`FRESH_TEXT`: Google
    after case A's code, naming the masked address that screen showed; Google at once, Google-hosted; email, case B),
    and a line pointing to Passport Home's "Ways to sign in". The sign-in window's pages (`/login`, `/login/callback`,

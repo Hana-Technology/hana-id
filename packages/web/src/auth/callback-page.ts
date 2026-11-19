@@ -41,8 +41,8 @@
 import { ApiError, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
 import { BRAND } from '@hana-id/brand';
-import { SIGN_IN_WINDOW, dom, errorView } from './dom.ts';
-import { readEmailContext } from './email-storage.ts';
+import { type Dom, SIGN_IN_WINDOW, dom, errorView, supportCode } from './dom.ts';
+import { type BannerAction, dropEmailContext, readEmailContext } from './email-storage.ts';
 import {
   type AccessTokenSub,
   type CallbackFragment,
@@ -56,7 +56,7 @@ import {
   unverifiedSub,
 } from './google.ts';
 import { type TakenLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
-import { BTN } from './ui.ts';
+import { BTN, alert } from './ui.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
 import { closeOrShare } from './share-handoff.ts';
 import { type SignalTimers, type VaultSignals, vaultSignals } from './vault-signal.ts';
@@ -216,6 +216,32 @@ export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<Callb
   if (followKey && taken.tokenFirst && !taken.leg && !taken.task) return tokenFirstAccess(deps, fragment, taken, scriptStart);
   if (followKey && taken.leg === 'id') return tokenFirstId(deps, fragment, taken, scriptStart);
   return relayLeg(deps, toSlot(fragment, taken), taken, scriptStart);
+}
+
+/** D881: the banner change the email page started, if its outcome is the vault's word in `next`, with the app's name. */
+function bannerChangeAt(storage: Storage, home: string, next: number | undefined, now: number): { action: BannerAction; appName: string } | null {
+  const ctx = readEmailContext(storage, home, now)?.context;
+  const action = ctx?.bannerAction ?? null;
+  return ctx && action && action.slot === next ? { action, appName: ctx.appName } : null;
+}
+
+/** D881: a banner's Remove or Cancel whose Google check didn't finish: nothing changed (email-page.ts CHANGE_TEXT's words). */
+function showChangeNotProved(d: Dom, win: PageWindow, change: BannerAction, appName: string, error: string): void {
+  const kind = change.provider === 'google' ? 'Google account' : 'email address';
+  const removing = change.kind === 'unlink';
+  const close = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'link-change-close' } }, 'Close');
+  close.addEventListener('click', () => win.close());
+  d.show(
+    d.h(
+      'section',
+      { class: 'panel', attrs: { id: 'link-change-result', 'data-kind': change.kind, 'data-outcome': 'not_proved' } },
+      d.h('h1', {}, removing ? `The ${kind} wasn’t removed` : 'The link wasn’t cancelled'),
+      alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'link-change-what' } }, removing ? `Nothing changed. The ${kind} still opens this wallet.` : 'Nothing changed. The link is still waiting.', ' ', 'Google didn’t finish checking it’s you.'),
+      d.h('p', { attrs: { id: 'link-change-advice' } }, 'Close this window, then sign in to ', d.h('strong', {}, appName), ' again to try again.'),
+      d.h('p', { class: 'code' }, supportCode(error)),
+      d.h('div', { class: 'actions' }, close),
+    ),
+  );
 }
 
 /** The fragment as its relay slot's: an attempt under a fresh OAuth `state` (D341) answers the slot its entry names. */
@@ -501,6 +527,18 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
     zeroTaken(taken);
     d.show(errorView(d, 'Sign-in stopped', STORAGE_TEXT, 'storage_unavailable'));
     return 'relay_failed';
+  }
+  // D881: Google didn't give the proof of a banner's Remove or Cancel (cancelled on Google's screen, or an error). The
+  // vault does nothing with an answer that isn't a proof and sends no further notice, so this window says what became
+  // of it here instead of waiting in the follow-up mode for a word that won't come.
+  if (followKey && taken.leg === 'proof' && fragment.kind === 'error') {
+    const change = bannerChangeAt(win.sessionStorage, home, taken.next, now());
+    if (change) {
+      zeroTaken(taken);
+      dropEmailContext(win.sessionStorage, home);
+      showChangeNotProved(d, win, change.action, change.appName, fragment.error);
+      return 'relayed';
+    }
   }
   // Every login with the follow-up key reads the vault's last word, a record-only one too (D865: a member is asked
   // before its wallet opens, whatever app it signs in through).

@@ -487,7 +487,7 @@ commit. Any `FAIL:` line: stop and ask. (The two demo sites aren't stamped, so `
 A fresh email address, a private window. Give each site a minute after the deploy (cold Workers).
 
 1. Stamps site: sign in by email. Collect **Arrival**. In the approval window you see a plain summary at the top, the
-   network row (no fee row: D884), an amber line "This acts as you: … can use anything you keep with it." (naming the
+   network row, the row "NEAR leaving your account: None of your NEAR." (no fee row: D884), an amber line "This acts as you: … can use anything you keep with it." (naming the
    stamps program), and the technical part folded behind **Show details**, which starts with "Network fee: Free.
    Sponsored by {the stamps app's name}." After you approve: "It was free for you." Keep the tab open: item 5 uses your
    next stamp.

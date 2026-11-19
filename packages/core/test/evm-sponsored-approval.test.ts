@@ -408,7 +408,7 @@ describe('the sponsored action’s summary (D831, D850)', () => {
     expect(text(s.fee!)).toBe(`Free. Sponsored by ${APP}.`);
   });
 
-  it('every known call reads as it does unsponsored (headline, lines, warnings, explainable)', () => {
+  it('every known call reads as it does unsponsored (headline, lines, warnings, explainable); one that moves nothing Journear sees adds what it costs (D884)', () => {
     const cases: [string, string][] = [
       [TOKEN, TRANSFER],
       [TOKEN, APPROVE_MAX],
@@ -426,11 +426,21 @@ describe('the sponsored action’s summary (D831, D850)', () => {
       [TOKEN, '0xdeadbeef'],
       [TOKEN, `${calldata('transfer(address,uint256)', RECIPIENT, 1n)}`.slice(0, 20)],
     ];
+    // Read, no warning, no amount or grant in its line: taking a permission back, a withdraw, a generic call.
+    const quiet = new Set([calldata('decreaseAllowance(address,uint256)', SPENDER, 5n), calldata('setApprovalForAll(address,bool)', SPENDER, false), calldata('withdraw(uint256)', 10n), calldata('deposit()')]);
     for (const [to, data] of cases) {
       const s = sponsored([sponsoredCall(to as `0x${string}`, data as `0x${string}`)]);
       const p = plain(to, data);
-      expect([text(s.headline), s.lines.map(text), warnings(s), s.explainable], data).toEqual([text(p.headline), p.lines.map(text), warnings(p), p.explainable]);
+      const extra = quiet.has(data) ? ['None of your ETH is used.'] : [];
+      expect([text(s.headline), s.lines.map(text), warnings(s), s.explainable], data).toEqual([text(p.headline), [...p.lines.map(text), ...extra], warnings(p), p.explainable]);
     }
+    // Never on the check-in (its line says it moves no money), alone or with the setup note.
+    for (const authNonce of [null, 0n]) expect(sponsored([sponsoredCall(CHECK_IN, '0x183ff085')], { authNonce }).lines.map(text)).not.toContain('None of your ETH is used.');
+    // With the setup note only (amber, about the setup, not cost), a quiet call still gets it.
+    expect(sponsored([sponsoredCall(TOKEN, calldata('deposit()'))], { authNonce: 0n }).lines.map(text)).toContain('None of your ETH is used.');
+    // A batch: only when every call is quiet (or the check-in); any amount or grant answers cost already.
+    expect(sponsored([sponsoredCall(CHECK_IN, '0x183ff085'), sponsoredCall(TOKEN, calldata('deposit()'))]).lines.map(text)).toContain('None of your ETH is used.');
+    expect(sponsored([sponsoredCall(TOKEN, TRANSFER), sponsoredCall(TOKEN, calldata('deposit()'))]).lines.map(text)).not.toContain('None of your ETH is used.');
   });
 
   it('several calls: one line each (at most four), grouped only when identical; every warning kept', () => {

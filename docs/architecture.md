@@ -889,7 +889,9 @@ The facts' values are words in the text face, only exact values (addresses, keys
 a fee row in the main view means the user pays it: a fee the user doesn't pay (a sponsored EVM action, a relayed NEAR
 action) is only in the details, first, as "Network fee: Free. Sponsored by {App}." ("Free." in bold after a check mark,
 D877; the app's name as the header shows it; "the app" when there is none to show), and the relayed NEAR details name
-the app the same way (D884). Reject (secondary) and Approve (primary) side by side, with the guard's line
+the app the same way (D884). Every free action's main view still says what it costs: a plain relayed NEAR call "NEAR
+leaving your account: None of your NEAR.", a sponsored call that moves nothing Journear sees "None of your ETH is
+used." (`noCoinUsed`), the others their amount, check-in line, red or amber line or total row (D884's review). Reject (secondary) and Approve (primary) side by side, with the guard's line
 under them that says what turns the button on (D878; the guard is called first, the hint after it in a try/catch). Opening or closing the details doesn't
 touch the guard; the overflow note is measured again when they toggle.
 The guard, its timings and the facts decoded didn't change. The vault recomputes the digest from the queued request

@@ -203,6 +203,9 @@ test.describe('plain-wording screens', () => {
     await inject(popup, 'evm_sponsored', encodeSponsorSubject(subject({ calls: [{ to: UNLISTED, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) as `0x${string}` }] })), me, EVM_CHAIN_ID);
     await expect(popup.locator('.danger-box')).toBeVisible();
     await feeShots(popup, 'fee-sponsored-unlimited-permission');
+    await inject(popup, 'evm_sponsored', encodeSponsorSubject(subject({ calls: [{ to: UNLISTED, value: 0n, data: call('deposit()') as `0x${string}` }] })), me, EVM_CHAIN_ID);
+    await expect(popup.getByText('None of your ETH is used.')).toBeVisible();
+    await feeShots(popup, 'fee-sponsored-quiet-call');
     await popup.close();
     await okValue(page, 'send').catch(() => undefined);
 
@@ -256,6 +259,11 @@ test.describe('plain-wording screens', () => {
           domain: { name: 'Stamp Trail', ...(chainId ? { chainId } : {}) },
           message: { text: 'Hello from Stamp Trail' },
         });
+      // Text with a hidden direction-changing character: Journear can't show it as text (D884's review).
+      popup = await popupFor(page, 'hex', 'personalSign', 'pay\u202eevil');
+      await expect(popup.getByText('Sign only if you know why you’re signing it', { exact: false })).toBeVisible();
+      await phone(popup, 'personal-sign-unreadable');
+      await done(page, popup, 'hex');
       popup = await popupFor(page, 'typed', 'ethSignTypedData', typed(EVM_CHAIN_ID));
       await phone(popup, 'typed-data');
       await done(page, popup, 'typed');

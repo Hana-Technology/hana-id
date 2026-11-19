@@ -9561,7 +9561,7 @@ suspended app's Home logins (D586's `suspended` line, built as "Hana pays"), to 
 | Was | Now | Source |
 |---|---|---|
 | D35/D813: a message's window: headline, the blue "This signature isn't tied to one network.", then the message; a test app's plain note after it | Headline, "The message" and the message, then "Your signature counts on every network, real-money ones included. Sign only if you agree with what the message says.", a test app's in one box with its advice; typed data's amber line reworded (D886) | `packages/web/src/auth/render-approval.ts` `message`, `NO_NETWORK_NOTE`, `testAppNoteKind`; `approve-page.ts` `testAppNote` |
-| D858/D877: a free network fee in the main view's facts, "✓ **Free.** Journear pays it for you." (sponsored EVM) and "✓ **Free for you.** Someone else pays it." (relayed NEAR); the relayed details "NEAR transaction, fee paid by a relayer" and "Someone else (a relayer) sends this for you…"; "NEAR it sends, paid by someone else"; the sponsored details' "Paid by" | Only in the folded details, first: "✓ **Free.** Sponsored by {App}." for both; "NEAR transaction, sent for you", "Someone else sends this for you, sponsored by {App}…"; "NEAR it sends, not from you"; "EVM action, sent for you by Journear", "Sent by" (D884) | `packages/core/src/decode/summary.ts` `FREE_FEE`, `packages/web/src/auth/render-approval.ts` `renderApproval`, `nearDelegate`, `sponsoredDetails` |
+| D858/D877: a free network fee in the main view's facts, "✓ **Free.** Journear pays it for you." (sponsored EVM) and "✓ **Free for you.** Someone else pays it." (relayed NEAR); the relayed details "NEAR transaction, fee paid by a relayer" and "Someone else (a relayer) sends this for you…"; "NEAR it sends, paid by someone else"; the sponsored details' "Paid by" | Only in the folded details, first: "✓ **Free.** Sponsored by {App}." for both; "NEAR transaction, sent for you", "Someone else sends this for you, sponsored by {App}…"; "NEAR it sends, not from your account"; "EVM action, sent for you by Journear", "Sent by" (D884) | `packages/core/src/decode/summary.ts` `FREE_FEE`, `packages/web/src/auth/render-approval.ts` `renderApproval`, `nearDelegate`, `sponsoredDetails` |
 | D843: the staff admin portal names EVM gas sponsorship "Free network fees" (tile, page `/free-network-fees/<chainId>`, events, playbooks, audit labels "Network fee relayer tool used/result"); D853's "no gas above the fold" read as covering the staff pages too | Staff read **Gas sponsorship** (the page at `/gas-sponsorship/<chainId>`, no redirect; audit labels "Gas sponsorship tool used/result"), "gas" allowed on staff pages where clearer; users keep "free network fees" (D879) | `apps/admin/src/evm-relay.ts`, `status.ts`, `public/app.js`, `packages/console-core/src/audit-words.ts`, `packages/playbooks/src/incidents.ts` |
 | D280/D380: the admin's 5-minute cron opens the ledger every run for the feed and the watcher; each run's budget shares as listed | With `admin.opsEveryMinutes` 15 (testnet only) only the `:00`/`:15`/`:30`/`:45` run opens it; with `usage.neonPlan` each run that opens it sets aside one call for its wake-up report (`neon_mark`) (D872) | `apps/admin/src/cron.ts`, `ledger-cron.ts`, `neon.ts` |
 | D425: the System status page reads the crons' records, partitions and settlement from the ledger itself | With `usage.neonPlan` it opens no ledger connection: the crons hand the API what it shows (`AdminRpc.neonWake`, `systemStatus`'s `neon`) (D872) | `apps/admin/src/status.ts`, `apps/api/src/usage/neon-compute.ts` |
@@ -13818,10 +13818,11 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
   "Free. Sponsored by {App}." (the app named as an attribution: still never "Journear pays"). The details' heading is
   "NEAR transaction, sent for you" and the note "Someone else sends this for you, sponsored by {App}. They pay the
   network fee and any NEAR it attaches or sends. If an action fails, that NEAR comes back to your account. The actions
-  run as your account."; the main view's "NEAR it sends, paid by someone else" row is "NEAR it sends, not from you";
-  the total "None of your NEAR (someone else pays the fee and any NEAR it sends). Tokens it moves are yours." is "None
-  of your NEAR. Tokens it moves are yours.". The reason the "None of your NEAR" row is dropped for a plain relayed call
-  (it repeated the fee row) no longer holds in the main view: D884's "to confirm" 6 proposes bringing it back.
+  run as your account."; the main view's "NEAR it sends, paid by someone else" row is "NEAR it sends, not from your
+  account"; the total "None of your NEAR (someone else pays the fee and any NEAR it sends). Tokens it moves are
+  yours." is "None of your NEAR. It can move tokens you hold." when the action holds a contract call, "None of your
+  NEAR." otherwise. With the fee row gone from the main view, a plain relayed call gets its cost row back as "NEAR
+  leaving your account: None of your NEAR." (D858 had dropped it only because it repeated the fee row).
 
 ### D859. Addresses and keys in sentences: a name or a short form there, the whole value once in its own row
 - Date 2026-11-18 · Status: **decided by the user 2026-11-18**; details decided while building, **confirmed by the user 2026-11-18** (PR 80 approved); the review amendments of PR 80 amended while building, to confirm · Amends
@@ -15953,10 +15954,10 @@ From `next` @ 032711e8; not merged, not deployed.
   or sends; if an action fails, that NEAR comes back to your account. The actions run as your account." → "Someone
   else sends this for you, sponsored by **{App}**. They pay the network fee and any NEAR it attaches or sends. If an
   action fails, that NEAR comes back to your account. The actions run as your account." (the refund rule kept);
-  (3) the main view's row "NEAR it sends, paid by someone else: {amount}" → "NEAR it sends, not from you: {amount}"
+  (3) the main view's row "NEAR it sends, paid by someone else: {amount}" → "NEAR it sends, not from your account: {amount}"
   (the app is named in the details, not here: "sponsored" stays off the main view, D853, and a long name doesn't sit
   in a label); (4) the main view's total "None of your NEAR (someone else pays the fee and any NEAR it sends). Tokens it
-  moves are yours." → "None of your NEAR. Tokens it moves are yours." (who pays is in the details now); (5) the
+  moves are yours." → "None of your NEAR. It can move tokens you hold." when the action holds a contract call, "None of your NEAR." otherwise (who pays is in the details now); (5) the
   sponsored details' heading "EVM action, network fee paid by Journear" → "EVM action, sent for you by Journear", and
   its row "Paid by: Journear’s relayer 0x…" → "Sent by: Journear’s relayer 0x…" (true on the chain, but beside
   "Sponsored by {App}" it read as a second, different payer). Unchanged: the amber setup note ("turns on free network
@@ -15997,12 +15998,19 @@ From `next` @ 032711e8; not merged, not deployed.
   change: the sponsored check-in says "It doesn’t move any money or tokens."; a sponsored token move says the amount in
   its headline; a sponsored permission says it in its red or amber line; a sponsored call Journear can't read says "It
   could take your money or tokens." in red; a relayed NEAR action that can take the user's NEAR or tokens keeps "NEAR
-  leaving your account" ("None of your NEAR. Tokens it moves are yours.", an amount, "All of it", "Unknown", "NEAR locked
-  up for staking", tested); NEAR the action attaches reads "NEAR it sends, not from you". Not answered, now that the
-  fee row is gone, and not changed here ("to confirm" 6): a sponsored readable call that moves nothing Journear can
-  see ("{App} wants to use the program X (deposit)", a take-back of a permission, a withdraw), and a plain relayed NEAR
-  call (the stamps' collect, the guestbook), whose main view is the headline, the network row and the amber "This acts
-  as you: … can use anything you keep with it."
+  leaving your account" ("None of your NEAR. It can move tokens you hold.", an amount, "All of it", "Unknown", "NEAR
+  locked up for staking", tested); NEAR the action attaches reads "NEAR it sends, not from your account". Two kinds
+  said nothing about cost once the fee row left; after the review of PR 107 (decided while building, to confirm) each
+  gets one line, only where nothing stronger answers cost: a plain relayed NEAR call (the stamps' collect, the
+  guestbook: `noNearLeaves`) the row "NEAR leaving your account: None of your NEAR." (nothing about tokens: the summary
+  sees none move, and the amber "acts as you" line says the call can use what the user keeps with that contract); a
+  sponsored EVM action Journear reads whose calls move nothing it can see (a generic call such as `deposit()`, taking a
+  permission back, `withdraw`; alone or batched with the check-in; no warning but the setup note) the line "None of
+  your ETH is used." with the chain's coin (`noCoinUsed`; true: the subject decoder refuses any value on a sponsored
+  call and only the build's relayer can submit the batch, `contracts/evm-delegate/src/HanaDelegateExecutor.sol`). Never
+  "tokens it moves are yours": a contract that already holds a permission from the user can move tokens the window
+  can't see. Not on the check-in (its line says it moves no money), an amount in a headline, a grant, a call Journear
+  can't read, or a total row. A test holds that every free action's main view says something about cost.
 - The app's name: exactly the header's value (`msg.appName`, the same string the "From" box and the headline show; no
   new source). Its rules apply as they do everywhere: stored NFC, trimmed, 1 to 64 characters, one display-safe line,
   not like a web address and never "Hana", "Journear" or "Passport Home" in any case, spacing or look-alike alphabet
@@ -16024,19 +16032,43 @@ From `next` @ 032711e8; not merged, not deployed.
   model); naming the app in the main view's "NEAR it sends" row (puts "sponsored" above the fold and a long name in a
   label; the details say it); the fee row at the end of the details (after raw data).
 - To confirm: (1) the placement, first in the details above "Your account"; (2) the check mark kept there, with
-  D877's colour rule; (3) "the app" when there is no name; (4) "NEAR it sends, not from you" and "None of your NEAR.
-  Tokens it moves are yours."; (5) the details' "EVM action, sent for you by Journear", "Sent by" and "NEAR transaction,
-  sent for you", and the relayed note's words; (6) the free actions whose main view now says nothing about cost (the
-  list above), with a proposed line each, not built: a plain relayed NEAR call gets back the total row "NEAR leaving
-  your account: None of your NEAR. Tokens it moves are yours." (D858 dropped it only because it repeated the fee row,
-  which is gone from the main view); a sponsored EVM call that moves nothing Journear can see gets "None of your ETH is
-  used. Tokens it moves are yours." (true: the decoder refuses any value on a sponsored call; the chain's own coin
-  name); (7) "Sponsored by {App}" while partner billing is off (Journear pays today; the records name the app); (8) a
+  D877's colour rule; (3) "the app" when there is no name; (4) "NEAR it sends, not from your account", "None of your
+  NEAR. It can move tokens you hold." (an action with a contract call) and "None of your NEAR." (without); (5) the
+  details' "EVM action, sent for you by Journear", "Sent by" and "NEAR transaction, sent for you", and the relayed
+  note's words; (6) the two cost lines built after the review, "NEAR leaving your account: None of your NEAR." and
+  "None of your ETH is used.", and where they show; proposed, not built: after "None of your ETH is used." a short
+  true warning "It may still use tokens you've already let this program use."; (7) "Sponsored by {App}" while partner
+  billing is off (Journear pays today; the records name the app): see below; (8) a
   Stellar fee bump paid by another account keeps its main-view line "The network fee is paid by {account}." (a fee the
   user doesn't pay, said in view, but naming an account the request names, not the app); (9) texts outside the window
   left as they are: the hosted demo's card "Journear paid the network fee, so it cost you nothing." (`apps/demo`, not
   this branch), the stamps site's "Fare paid" blurb "Free for you: Journear pays the network fee, so you need no
-  NEAR." and "It was free for you." (Journear's own apps, where Journear does pay).
+  NEAR." and "It was free for you." (Journear's own apps, where Journear does pay). The hosted demo's cards (D881)
+  say "Journear paid the network fee, so it cost you nothing." for the check-in and the guestbook while the window's
+  details say "Sponsored by Journear demo.": both true, the demo being Journear's own app; the card speaks after the
+  action ran, the window never claims zero cost (D858). The SDK's default user messages say "Journear's free network
+  fees…" (`packages/web/src/client/user-messages.ts`): left for the partner-side terms (D879's open question 4).
+- After the review of PR 107 (2026-11-19):
+  - The attribution: "Sponsored by {App}" was built as the founder asked. The founder was told on 2026-11-19 that
+    partners are not charged yet (an earlier statement in this work that they are billed was wrong: today Journear's
+    relayers pay, and the cost is recorded against the app). Keeping it, softening it (for example "Free for you,
+    through {App}.") or dropping the name is the founder's open decision. The reviewer's point: any page can ask for a
+    NEAR delegate signature, so any app gets "Sponsored by {App}" on one; it costs the user nothing either way.
+  - "A fee row in the main view means you pay it" is not exact in two cases that existed before, both erring toward
+    safety, not changed: a Stellar transaction whose source is another account (not a fee bump) shows "Up to X XLM"
+    though that account pays (`packages/core/src/decode/summary.ts` `stellarTx`'s fee); and when building the summary
+    fails (`UNEXPLAINED_SUMMARY`) the summary has no fee, so a fee the user pays isn't in view, under the red "can't
+    read this request" box. Follow-ups.
+  - Follow-up for the app-name rules (not built here): registration allows names shaped like "Word. Sentence" and
+    "Passport" alone (`packages/console-core/src/names.ts` `appNameProblem`), so "Sponsored by Passport." could read
+    as the wallet itself.
+  - A message Journear can't read (non-text bytes, such as a 32-byte order hash, or text with hidden characters):
+    the network note no longer says "Sign only if you agree with what the message says" (the user can't agree with
+    hex); it reads "Your signature counts on every network, real-money ones included. Sign only if you know why you’re
+    signing it." (a test app's: "This app is a test version, but your signature counts on every network, real-money
+    ones included. Sign only if you know why you’re signing it, and don’t keep real money in this account."), in amber
+    like the line above it that says the message can't be read (never calmer than it). Tested for `personal_sign`, a
+    Stellar message and a NEAR message, test and live apps (D886).
 
 ### D886. A message being signed comes right after the headline; one note about networks, true for test and live apps
 - Date 2026-11-19 · Status: **asked for by the founder 2026-11-19** while hand-testing a Stellar message on the hosted
@@ -16086,6 +16118,11 @@ From `next` @ 032711e8; not merged, not deployed.
   account") is in every test-app screen, inside the merged box where the plain note is left out; the guards and the
   hint line under the buttons are untouched.
 - Address impact: none (display only).
+- After the review of PR 107 (2026-11-19): blue kept for a readable message (the reviewer agrees); the reasoning per
+  kind, as the reviewer verified it: EVM `personal_sign` (EIP-191) carries no network; a Stellar message (SEP-53) is
+  signed with a prefix that carries none; a NEAR message (NEP-413) is bound to a recipient and a nonce, not a network,
+  and its amber "proves to {recipient}" line stays above the message. A message Journear can't read gets the amber
+  note in D884's review amendments ("Sign only if you know why you’re signing it.").
 - To confirm: (1) the order and the label "The message"; (2) the sentences above, exactly; (3) blue rather than amber
   for a test app's message (amber would say a harmless sign-in is a risk; the advice covers the case); (4) one merged
   box for a test app's message instead of the plain note; (5) the amber box staying before the message on NEP-413.

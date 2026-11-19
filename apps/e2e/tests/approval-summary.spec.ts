@@ -192,6 +192,8 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
   await expect(details(popup).getByText('Account setup (EIP-7702)', { exact: true })).toBeVisible();
   await expect(details(popup).getByText('checkIn()', { exact: true })).toBeVisible();
 
+  // The check-in's own line answers cost: no "None of your ETH is used." (D884's review).
+  await expect(popup.getByText('None of your ETH is used.')).toHaveCount(0);
   // Later: the same check-in, no box at all.
   await injectSponsored(popup, subject({ executeNonce: 1n, calls: checkIn }));
   await expect(headline).toHaveText('E2E Partner wants to check you in');
@@ -254,6 +256,8 @@ test('D884: a relayed NEAR call’s free fee is only in the details, naming the 
   const detailsFee = details(popup).locator('dl.fee-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
   await expect(popup.locator('.summary-facts dt')).toHaveText(['Network']);
   await expect(mainFee(popup)).toHaveCount(0);
+  // What it costs, still in view (D884's review): nothing about tokens on a plain call.
+  await expect(popup.locator('div.request > dl.facts:not(.summary-facts)')).toHaveText('NEAR leaving your accountNone of your NEAR.');
   await expect(detailsFee).toBeHidden();
   await popup.getByText('Show details', { exact: true }).click();
   await expect(detailsFee).toHaveText('Free. Sponsored by E2E Partner.');

@@ -832,11 +832,12 @@ signButton.addEventListener('click', () => {
 The Approve button arms only after the request has been on screen for 1 s and the window has had focus for 1 s, then
 a mouse move, a tap, or Tab or an arrow key. The gesture that arms it doesn't approve, so a tap-only user taps twice;
 clicking in place without moving the mouse, Enter and Space never arm it. That stops clickjacking and double-click
-tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) show the message first, then a
-line that the signature counts on every network, real-money ones included: they are valid wherever the key is. For a
-test app that line also carries the test-app advice; every other request and consent screen of a test app says that
-Journear Passport signs only for test networks (for a test app with Journear's mainnet demo on, it says what the demo signs
-instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (test network)", with "network no.
+tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `near_signMessage`, `signRaw`) show the
+message first, then a line that the signature counts on every network, real-money ones included: they are valid
+wherever the key is. For a test app that line also carries the test-app advice. Typed data that names no network says,
+in amber, that it may work on any network, and a test app's note says the signature isn't limited to test money. Every
+other request and consent screen of a test app says that Journear Passport signs only for test networks (for a test
+app with Journear's mainnet demo on, it says what the demo signs instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (test network)", with "network no.
 11155111" beside it) and gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
 
 ### What your users see
@@ -861,9 +862,12 @@ are yours.
   says "Approved" or "Rejected" and stays open 15 seconds for a follow-up request.
 - **A network fee row** in the main view means the user pays it. A fee the user doesn't pay (a gas-free action, a
   relayed NEAR action) is only behind **Show details**, first: "Network fee: Free. Sponsored by {your app's name}."
+  Who pays today: when Journear's relayer sends it, Journear pays and records the cost against your app, and your app
+  isn't charged for it during the pilot; a NEAR action your app relays itself is paid by your app.
   A gas-free action's first one also says, in view, that it turns on free network fees for their account, that their
   address stays the same, and that they still approve every action ([Gas-free actions](#gas-free-actions-not-live)).
-- **A test app** says, on every request, that Journear Passport signs only for test networks.
+- **A test app** says, on every request, that Journear Passport signs only for test networks; on a message, raw
+  signing or typed data that names no network, it says instead that the signature isn't limited to test money.
 - **When something fails** inside a Journear Passport window, it says what happened and what to do, with "Error code
   (for support): …" at the end. Your page gets the same `code` in the error.
 
@@ -1291,8 +1295,9 @@ key the action adds (up to its allowance). The actions run as the user's account
 user's name (it can move tokens the user holds there). The approval window says so: no fee row in view, and behind
 **Show details** "Network fee: Free. Sponsored by {your app's name}." (whoever relays it: the window can't tell who);
 for every call an amber "This acts as you: {contract} can use anything you keep with it."; NEAR the action attaches
-or sends is in its own row, "NEAR it sends, not from you"; anything that can take the user's NEAR or tokens also
-shows a "NEAR leaving your account" row. For a live app it also says, in amber, that the approval could be used on the other NEAR
+or sends is in its own row, "NEAR it sends, not from your account"; a "NEAR leaving your account" row says what it
+costs: "None of your NEAR." for a plain call, "None of your NEAR. It can move tokens you hold." when a call can move
+tokens the user holds, or the NEAR that leaves. For a live app it also says, in amber, that the approval could be used on the other NEAR
 network if the account exists there.
 
 <a id="near-relay"></a>**Journear Passport's relay** (`hana.near.relay`, `POST /v1/near/relay`; `hana.near.activate`,

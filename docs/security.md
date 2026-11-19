@@ -1565,10 +1565,11 @@ handshake removes the frame and closes its port, as `destroy()` does.
   transfers (refunded to the user's account if an action fails), and the popup says so (D858 as amended by D884: the
   fee row, only in the folded details, "Free. Sponsored by {App}." speaks about the fee only and names the app as an
   attribution, not a fact the popup checked (it can't see who relays; it can guarantee only that the user's account
-  pays no fee); NEAR the action attaches or sends is in view as "NEAR it sends, not from you"; the window never says
+  pays no fee); NEAR the action attaches or sends is in view as "NEAR it sends, not from your account"; the window never says
   a relayed request costs nothing;
-  the "NEAR leaving your account: None of your NEAR" row is dropped only when no NEAR or token of the user's that
-  Journear can see leaves; every relayed call to another account carries the amber "This acts as you: {contract} can
+  the "NEAR leaving your account" row reads "None of your NEAR." when no NEAR or token of the user's that Journear can
+  see leaves, and "None of your NEAR. It can move tokens you hold." for any other action with a contract call (D884's
+  review: with the fee row in the details, the main view still says what every free action costs, tested); every relayed call to another account carries the amber "This acts as you: {contract} can
   use anything you keep with it."; only a live app's says, in amber, that the approval names no network). AddKey (any), DeleteKey, DeleteAccount, DeployContract and
   UseGlobalContract are shown under `NEAR_ACCOUNT_CONTROL_BANNER` with a warning each, mirroring D110 (shown, not
   refused); a call to a contract on the user's own account and a DeployGlobalContract (its burn) get a red warning

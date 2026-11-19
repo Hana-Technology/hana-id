@@ -676,6 +676,42 @@ function sponsoredStep(chainId: number, c: DecodedEvmCallSite, d: Draft, me: str
   }
 }
 
+/** Calls whose line already says what they move: an amount in the headline or a line. */
+const MOVES_SHOWN: ReadonlySet<string> = new Set([
+  'transfer(address,uint256)',
+  'transferFrom(address,address,uint256)',
+  'safeTransferFrom(address,address,uint256)',
+  'safeTransferFrom(address,address,uint256,bytes)',
+  'safeTransferFrom(address,address,uint256,uint256,bytes)',
+  'safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)',
+  'permit(address,address,uint256,uint256,uint8,bytes32,bytes32)',
+]);
+
+// D884 (as amended by its review): a free fee is only in the details, so a sponsored call Journear can read that moves
+// nothing it can see would say nothing about cost. It gets "None of your ETH is used." (the chain's coin): true, as
+// the subject decoder refuses any value on a sponsored call and only the build's relayer can submit the batch. Never
+// "tokens it moves are yours": a contract that already holds a permission from the user can move tokens Journear can't
+// see.
+/** "None of your ETH is used." for the chain's coin (D884). */
+export const noCoinUsed = (chainId: number): SummaryText => [`None of your ${evmChainInfo(chainId)?.nativeSymbol ?? 'coin on this network'} is used.`];
+
+/**
+ * Whether a sponsored action's main view would otherwise say nothing about cost: every call read, no warning but the
+ * setup note, no call whose line shows an amount or a grant, and at least one call that isn't the demo check-in (whose
+ * own line says it moves no money).
+ */
+function quietSponsored(chainId: number, calls: readonly DecodedEvmCallSite[], drafts: readonly Draft[], warnings: readonly SummaryWarning[], explainable: boolean): boolean {
+  if (!explainable || warnings.some((w) => w.code !== 'account_setup')) return false;
+  let quiet = false;
+  for (const [i, c] of calls.entries()) {
+    if (isDemoCheckInCall(chainId, c.to, c.data, c.value)) continue;
+    const d = drafts[i] as Draft;
+    if (!c.call || !d.explainable || d.warnings.length > 0 || MOVES_SHOWN.has(c.call.signature)) return false;
+    quiet = true;
+  }
+  return quiet;
+}
+
 function sponsoredAction(decoded: Extract<DecodedApproval, { kind: 'evm_sponsored' }>, me: string): ApprovalSummary {
   const { chainId, calls } = decoded;
   const drafts = calls.map((c) => (calls.length > 1 && isDemoCheckInCall(chainId, c.to, c.data, c.value) ? demoCheckIn(c.to, true) : evmCall(chainId, c, me)));
@@ -707,6 +743,7 @@ function sponsoredAction(decoded: Extract<DecodedApproval, { kind: 'evm_sponsore
       warnings.push(stepsNotListed(drafts.length, g.hidden, g.hiddenRisk));
     }
   }
+  if (quietSponsored(chainId, calls, drafts, warnings, explainable)) lines.push(noCoinUsed(chainId));
   if (decoded.setup) warnings.push(accountSetupNote(chainId));
   return { headline, lines, fee: SPONSORED_FEE, freeFee: true, network: evmNetwork(chainId), warnings, explainable, shownSteps };
 }

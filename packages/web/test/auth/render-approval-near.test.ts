@@ -14,6 +14,7 @@ import {
   NEAR_DELEGATE_NOTES,
   type NearRenderContext,
   NEAR_DELEGATE_NONE,
+  NEAR_DELEGATE_NONE_TOKENS,
   NEAR_SENT_FOR_YOU,
   NO_NETWORK_NOTE,
   NO_NETWORK_TEST_APP_NOTE,
@@ -246,9 +247,11 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     // D884: no fee row in the main view (the user doesn't pay it); the network row stays.
     expect(factRows(el)).toEqual(['Network: NEAR test network (checked by Journear)']);
     expect(detailsFee(el)).toEqual([FEE]);
-    // No "NEAR leaving your account" row, no blue note, nothing about who pays above the fold.
+    // D884 review: with the fee row gone, the cost row says only "None of your NEAR." (no tokens move that Journear
+    // sees; the amber line says the call can use what the user keeps there). No blue note, nothing about who pays.
     const shown = aboveFold(el);
-    expect(shown).not.toContain('NEAR leaving your account');
+    expect([...el.querySelectorAll('.request > dl.facts:not(.summary-facts) dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`)).toEqual(['NEAR leaving your account: None of your NEAR.']);
+    expect(shown).not.toMatch(/tokens/iu);
     expect(shown).not.toMatch(/fee|sponsor|pays/iu);
     // Never a claim that it costs nothing (as corrected 2026-11-18): a call can use what the user keeps there.
     expect(shown).not.toMatch(/nothing|cost to you|costs? you/iu);
@@ -301,16 +304,19 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(factRows(attached)).toEqual(['Network: NEAR test network (checked by Journear)']);
     expect(detailsFee(attached)).toEqual([FEE]);
     expect(aboveFold(attached)).toContain(`${NEAR_SENT_FOR_YOU}1 NEAR`);
-    expect(NEAR_SENT_FOR_YOU).toBe('NEAR it sends, not from you');
+    expect(NEAR_SENT_FOR_YOU).toBe('NEAR it sends, not from your account');
+    expect(aboveFold(attached)).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
+    expect(aboveFold(attached)).not.toMatch(/tokens/iu);
     // A token transfer: the NEAR-leaving row as decided (D723, D729).
     const tokens = relayed([{ type: 'functionCall', methodName: 'ft_transfer', args: utf8('{"receiver_id":"bob.testnet","amount":"5"}'), gas: 30_000_000_000_000n, deposit: 1n }], true, 'usdc.testnet');
     expect(factRows(tokens)).toEqual(['Network: NEAR test network (checked by Journear)']);
     expect(detailsFee(tokens)).toEqual([FEE]);
-    expect(aboveFold(tokens)).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
+    expect(aboveFold(tokens)).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE_TOKENS}`);
     expect(aboveFold(tokens)).not.toMatch(/nothing\.|cost to you/iu);
     // Every relayed call keeps the amber acts-as-you line in view.
     for (const el of [attached, tokens]) expect(el.querySelector('.warning-box')?.textContent).toContain('This acts as you:');
-    expect(NEAR_DELEGATE_NONE).toBe('None of your NEAR. Tokens it moves are yours.');
+    expect(NEAR_DELEGATE_NONE).toBe('None of your NEAR.');
+    expect(NEAR_DELEGATE_NONE_TOKENS).toBe('None of your NEAR. It can move tokens you hold.');
   });
 
   it('a delegate action: what it sends is the relayer’s; a burn or a deleted account still leaves the user’s', () => {
@@ -323,6 +329,8 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     );
     const sends = render([{ type: 'transfer', deposit: 2n * 10n ** 24n }]);
     expect(sends).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
+    // No call, so nothing about tokens.
+    expect(sends).not.toContain(NEAR_DELEGATE_NONE_TOKENS);
     // A call to a contract on the user's own account: unknown, under the banner.
     const own = render([{ type: 'functionCall', methodName: 'm', args: new Uint8Array(0), gas: 1n, deposit: 0n }]);
     expect(own).toContain(`NEAR leaving your account${NEAR_OWN_CONTRACT_TOTAL}`);

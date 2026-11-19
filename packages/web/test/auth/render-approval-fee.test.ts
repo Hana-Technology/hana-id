@@ -49,6 +49,11 @@ const CASES: readonly [string, () => DecodedApproval, string][] = [
   ['a sponsored EVM check-in, first time with its setup (free)', () => sponsored(undefined, 0n), SPONSOR_ME],
   ['a sponsored unlimited permission (free, beside a red box)', () => sponsored([sponsoredCall(TOKEN, calldata('approve(address,uint256)', SPENDER, UINT256_MAX))]), SPONSOR_ME],
   ['a sponsored call Journear can’t read (free, beside a red box)', () => sponsored([sponsoredCall('0x4444444444444444444444444444444444444444', CHECK_IN_DATA)]), SPONSOR_ME],
+  ['a sponsored call Journear reads that moves nothing it sees (free)', () => sponsored([sponsoredCall(TOKEN, calldata('deposit()'))]), SPONSOR_ME],
+  ['a sponsored take-back of a permission (free)', () => sponsored([sponsoredCall(TOKEN, calldata('setApprovalForAll(address,bool)', SPENDER, false))]), SPONSOR_ME],
+  ['a sponsored withdraw (free)', () => sponsored([sponsoredCall(TOKEN, calldata('withdraw(uint256)', 10n))]), SPONSOR_ME],
+  ['a sponsored token transfer (free; its amount in the headline)', () => sponsored([sponsoredCall(TOKEN, calldata('transfer(address,uint256)', SPENDER, 5n))]), SPONSOR_ME],
+  ['a relayed NEAR limited key on the user’s own account (free fee; no tokens)', () => nearDelegate([{ type: 'addKey', publicKey: { type: 'ed25519', bytes: new Uint8Array(32).fill(9) }, accessKey: { nonce: 0n, permission: { type: 'functionCall', allowance: 10n ** 23n, receiverId: 'guestbook.testnet', methodNames: [] } } }], NEAR_ME), NEAR_ME],
   ['a NEAR transfer (the user pays)', () => nearTx([{ type: 'transfer', deposit: 10n ** 24n }]), NEAR_ME],
   ['a relayed NEAR call (free)', () => nearDelegate([call('collect')]), NEAR_ME],
   ['a relayed NEAR call that attaches NEAR (free; the NEAR is the sender’s)', () => nearDelegate([call('collect', 10n ** 24n)]), NEAR_ME],
@@ -69,6 +74,9 @@ const render = (decoded: DecodedApproval, address: string, appName = APP): HTMLE
 };
 const feeRows = (root: Element) => [...root.querySelectorAll('dt')].filter((dt) => dt.textContent === 'Network fee').map((dt) => dt.nextElementSibling as HTMLElement);
 const mainView = (el: Element) => [...el.children].filter((c) => !c.matches('details'));
+const mainText = (el: Element) => mainView(el).map((c) => c.textContent).join('\n');
+/** What answers "will this cost me anything?" in a main view: a "None of your…" line or row, an amount, a red or amber line. */
+const COST = /None of your (NEAR|ETH)|doesn’t move any money|could take your money| wants to (send|move) |take all your|let someone else spend|NEAR leaving your account|NEAR locked up/u;
 const detailsBody = (el: Element) => el.querySelector('details.request-details > .details-body') as HTMLElement;
 
 beforeEach(() => document.body.replaceChildren());
@@ -102,6 +110,8 @@ describe('D884: a fee the user pays is always in the main view; a free one never
         expect(inMain[0]?.textContent).not.toMatch(/free|sponsor/iu);
         expect(inDetails).toEqual([]);
       }
+      // D884 review: every free action's main view still says what it costs the user.
+      if (summary.freeFee) expect(mainText(el), name).toMatch(COST);
       // Nowhere does the window say Journear pays, nor that someone unnamed does (D884 replaces both).
       expect(el.textContent).not.toMatch(/Journear pays|Someone else pays|paid by someone else|Free for you/u);
     });
@@ -116,7 +126,18 @@ describe('D884: a fee the user pays is always in the main view; a free one never
     const stake = render(nearDelegate([{ type: 'stake', stake: 10n ** 24n, publicKey: { type: 'ed25519', bytes: PUB } }], NEAR_ME), NEAR_ME);
     expect(mainView(stake).map((c) => c.textContent).join('\n')).toContain('NEAR locked up for staking1 NEAR');
     const tokens = render(nearDelegate([call('ft_transfer', 1n)], 'usdc.testnet'), NEAR_ME);
-    expect(mainView(tokens).map((c) => c.textContent).join('\n')).toContain('NEAR leaving your accountNone of your NEAR. Tokens it moves are yours.');
+    expect(mainText(tokens)).toContain('NEAR leaving your accountNone of your NEAR. It can move tokens you hold.');
+  });
+
+  it('the cost lines appear only where nothing stronger already answers cost (D884 review)', () => {
+    const coin = (d: DecodedApproval) => mainText(render(d, SPONSOR_ME)).split('None of your ETH is used.').length - 1;
+    for (const data of [calldata('deposit()'), calldata('withdraw(uint256)', 10n), calldata('setApprovalForAll(address,bool)', SPENDER, false)]) expect(coin(sponsored([sponsoredCall(TOKEN, data)]))).toBe(1);
+    // The check-in (its own line), an amount, a grant (red), a call Journear can't read (red): never.
+    for (const d of [sponsored(), sponsored(undefined, 0n), sponsored([sponsoredCall(TOKEN, calldata('transfer(address,uint256)', SPENDER, 5n))]), sponsored([sponsoredCall(TOKEN, calldata('approve(address,uint256)', SPENDER, UINT256_MAX))]), sponsored([sponsoredCall('0x4444444444444444444444444444444444444444', CHECK_IN_DATA)])]) expect(coin(d)).toBe(0);
+    // NEAR: a plain relayed call gets "None of your NEAR." and nothing about tokens; a call that can move tokens says so.
+    const plainCall = mainText(render(nearDelegate([call('collect')]), NEAR_ME));
+    expect(plainCall).toContain('NEAR leaving your accountNone of your NEAR.');
+    expect(plainCall).not.toMatch(/tokens/u);
   });
 });
 

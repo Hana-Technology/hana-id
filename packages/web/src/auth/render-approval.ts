@@ -818,14 +818,19 @@ function nearTotal(d: Dom, actions: readonly NearAction[], receiver: string, me:
  * relayer's. What the user's own balance loses is only what acts on the user's account itself: a DeleteAccount
  * (everything), Stake (locked) and a global contract's burn.
  */
-/** A delegate action's total when it takes none of the user's NEAR (D884: who pays the fee and the NEAR it sends is in the details). */
-export const NEAR_DELEGATE_NONE = 'None of your NEAR. Tokens it moves are yours.';
+/**
+ * A delegate action's total when it takes none of the user's NEAR (D884: who pays the fee and the NEAR it sends is in
+ * the details). With a contract call in it, the call can move tokens the user holds at that contract: said, as a
+ * warning, never as "tokens it moves are yours" (which reads as "you get them"); with no call, nothing about tokens.
+ */
+export const NEAR_DELEGATE_NONE = 'None of your NEAR.';
+export const NEAR_DELEGATE_NONE_TOKENS = 'None of your NEAR. It can move tokens you hold.';
 
 /**
  * The label of the NEAR a delegate action attaches or sends: the sender's, never the user's (nearcore). Who that is
  * (the app, as the fee row names it) is in the details (D884); Journear's relay refuses such a deposit (D732).
  */
-export const NEAR_SENT_FOR_YOU = 'NEAR it sends, not from you';
+export const NEAR_SENT_FOR_YOU = 'NEAR it sends, not from your account';
 
 function nearDelegateTotal(d: Dom, actions: readonly NearAction[], receiver: string, me: string): HTMLElement {
   const t = nearDeposits(actions);
@@ -836,7 +841,7 @@ function nearDelegateTotal(d: Dom, actions: readonly NearAction[], receiver: str
       ? d.h('strong', { class: 'danger words' }, NEAR_OWN_CONTRACT_TOTAL)
       : t.burned > 0n
         ? d.h('strong', {}, nearDisplay(t.burned))
-        : d.h('strong', { class: 'words' }, NEAR_DELEGATE_NONE);
+        : d.h('strong', { class: 'words' }, actions.some((a) => a.type === 'functionCall') ? NEAR_DELEGATE_NONE_TOKENS : NEAR_DELEGATE_NONE);
   return facts(d, [
     row(d, 'NEAR leaving your account', leaving),
     t.total > 0n && row(d, NEAR_SENT_FOR_YOU, mono(d, nearDisplay(t.total))),
@@ -931,7 +936,12 @@ function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_de
   return {
     alerts: ctx.testApp ? alerts : { ...alerts, warnings: [...alerts.warnings, risk(5, 'warn no-network', [NEAR_DELEGATE_NOTES.network(decoded.network)], [])] },
     network: nearNetworkLine('near_delegate', decoded.network, ctx),
-    visible: summary.noNearLeaves ? (sent > 0n ? [facts(d, [row(d, NEAR_SENT_FOR_YOU, mono(d, nearDisplay(sent)))])] : []) : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
+    // D884 (as amended by its review): with the fee row gone from the main view, a plain relayed call still says what
+    // it costs: "None of your NEAR." (no word about tokens: the summary sees none move; the amber line says the call
+    // can use what the user keeps with the contract).
+    visible: summary.noNearLeaves
+      ? [facts(d, [row(d, 'NEAR leaving your account', d.h('strong', { class: 'words' }, NEAR_DELEGATE_NONE)), sent > 0n && row(d, NEAR_SENT_FOR_YOU, mono(d, nearDisplay(sent)))])]
+      : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
     details: [
       d.h('h3', {}, NEAR_DELEGATE_HEADING),
       d.h('p', { class: 'muted relayer-note' }, ...summaryNodes(d, sponsorText(NEAR_DELEGATE_NOTES.relayer, appName), appName)),
@@ -983,7 +993,7 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
     },
     network: null,
     // D886: the message first, then the blue note about networks.
-    visible: [facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]), ...message(d, decoded.message), noNetworkNote(d, 'message', ctx)],
+    visible: [facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]), ...message(d, decoded.message), noNetworkNote(d, decoded.message.text === null ? 'unreadable' : 'message', ctx)],
     details: [d.h('h3', {}, 'Prove this NEAR account is yours (NEP-413)'), facts(d, [row(d, 'Recipient', mono(d, p.recipient)), row(d, 'Nonce', mono(d, toHex(p.nonce)))])],
   };
 }
@@ -1002,13 +1012,22 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
 export const NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included. Sign only if you agree with what the message says.';
 export const NO_NETWORK_TEST_APP_NOTE =
   'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you agree with what the message says, and don’t keep real money in this account.';
+/**
+ * A message Journear can't read (D884 review): the user can't agree with hex, so the advice is raw signing's, and the
+ * box is amber like the line above it that says Journear can't read the message (never calmer than it).
+ */
+export const UNREADABLE_NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included. Sign only if you know why you’re signing it.';
+export const UNREADABLE_NO_NETWORK_TEST_APP_NOTE =
+  'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you know why you’re signing it, and don’t keep real money in this account.';
 /** Raw signing's (no message to agree with; its red line says to reject it unless the user is sure). */
 export const RAW_NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included.';
 export const RAW_NO_NETWORK_TEST_APP_NOTE = 'This app is a test version, but your signature counts on every network, real-money ones included. Don’t keep real money in this account.';
 
-function noNetworkNote(d: Dom, kind: 'message' | 'raw', ctx: ApprovalRenderContext): HTMLElement {
+function noNetworkNote(d: Dom, kind: 'message' | 'unreadable' | 'raw', ctx: ApprovalRenderContext): HTMLElement {
   const test = ctx.testAppNoteHere === true;
-  return noteLine(d, test ? 'note no-network test-app' : 'note no-network', kind === 'message' ? (test ? NO_NETWORK_TEST_APP_NOTE : NO_NETWORK_NOTE) : test ? RAW_NO_NETWORK_TEST_APP_NOTE : RAW_NO_NETWORK_NOTE);
+  const cls = test ? 'note no-network test-app' : 'note no-network';
+  if (kind === 'unreadable') return warnLine(d, cls, test ? UNREADABLE_NO_NETWORK_TEST_APP_NOTE : UNREADABLE_NO_NETWORK_NOTE);
+  return noteLine(d, cls, kind === 'message' ? (test ? NO_NETWORK_TEST_APP_NOTE : NO_NETWORK_NOTE) : test ? RAW_NO_NETWORK_TEST_APP_NOTE : RAW_NO_NETWORK_NOTE);
 }
 
 /**
@@ -1398,7 +1417,7 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Appr
         alerts: NO_ALERTS,
         network: null,
         // D886: the message right after the headline, then the blue note about networks.
-        visible: [...message(d, decoded.message), noNetworkNote(d, 'message', near)],
+        visible: [...message(d, decoded.message), noNetworkNote(d, decoded.message.text === null ? 'unreadable' : 'message', near)],
         details: [d.h('h3', {}, decoded.kind === 'personal_sign' ? 'Sign a message' : 'Sign a Stellar message'), facts(d, [row(d, 'Size', `${decoded.message.length} bytes`)]), d.h('p', {}, 'The message’s bytes:'), mono(d, decoded.message.hex)],
       };
     case 'evm_tx':

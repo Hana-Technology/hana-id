@@ -7,6 +7,7 @@ import {
   approvalDigest,
   consentDigest,
   encodeNearTransaction,
+  encodeNep413Message,
   evmTxSigningPayload,
   nearImplicitPublicKey,
   newRequestId,
@@ -35,7 +36,16 @@ import {
   autoApproveReasonText,
   startApprovePage,
 } from '../../src/auth/approve-page.ts';
-import { MESSAGE_LABEL, NO_NETWORK_NOTE, NO_NETWORK_TEST_APP_NOTE, RAW_NO_NETWORK_NOTE, RAW_NO_NETWORK_TEST_APP_NOTE, TYPED_DATA_NO_CHAIN } from '../../src/auth/render-approval.ts';
+import {
+  MESSAGE_LABEL,
+  NO_NETWORK_NOTE,
+  NO_NETWORK_TEST_APP_NOTE,
+  RAW_NO_NETWORK_NOTE,
+  RAW_NO_NETWORK_TEST_APP_NOTE,
+  TYPED_DATA_NO_CHAIN,
+  UNREADABLE_NO_NETWORK_NOTE,
+  UNREADABLE_NO_NETWORK_TEST_APP_NOTE,
+} from '../../src/auth/render-approval.ts';
 import { formatEndTime, lingeringSignaturesNote } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, invocation, paymentOp, sorobanData, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
@@ -802,6 +812,24 @@ describe('/approve', () => {
       // With its network named, the plain note: the signature is bound to that network.
       send(typed(11155111, { testApp: true }));
       expect(blue()).toEqual([TEST_APP_NOTE]);
+    });
+
+    it('a message Journear can’t read (D884 review): never "agree with what the message says"; amber like the line that says it can’t be read', () => {
+      const nep413 = (over: Record<string, unknown> = {}) =>
+        evmRequest({ kind: 'near_message', chain: 'near', address: 'a'.repeat(64), context: {}, bytes: encodeNep413Message({ message: 'pay\u202eevil', nonce: new Uint8Array(32), recipient: 'localhost', callbackUrl: null }), ...over });
+      const unreadable = [(o: Record<string, unknown>) => message({ bytes: new Uint8Array(32).fill(0xff), ...o }), (o: Record<string, unknown>) => stellarMessage({ bytes: utf8('pay\u202eevil'), ...o }), nep413];
+      for (const make of unreadable) {
+        for (const testApp of [false, true]) {
+          send(make(testApp ? { testApp: true } : {}));
+          expect(pageText()).toContain('shown in its raw form');
+          const note = document.querySelector('.request > .no-network');
+          expect(note?.textContent).toBe(testApp ? UNREADABLE_NO_NETWORK_TEST_APP_NOTE : UNREADABLE_NO_NETWORK_NOTE);
+          expect(note?.classList.contains('jp-alert-warning')).toBe(true);
+          expect(pageText()).not.toContain('agree with what the message says');
+          if (testApp) expect(pageText()).not.toContain(TEST_APP_NOTE);
+        }
+      }
+      expect(UNREADABLE_NO_NETWORK_NOTE).toBe('Your signature counts on every network, real-money ones included. Sign only if you know why you’re signing it.');
     });
 
     it('the real-money demo on: its own note, unchanged, and the live app’s note about networks', () => {

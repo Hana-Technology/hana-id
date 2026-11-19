@@ -12,7 +12,8 @@
     "e2e:install": "playwright install --with-deps chromium webkit firefox",
     "test": "vitest run",
     "typecheck": "tsx ../../packages/web/scripts/gen-envs.ts && tsc --noEmit",
-    "staff-demo": "tsx src/staff-demo.ts"
+    "staff-demo": "tsx src/staff-demo.ts",
+    "hand-browser": "tsx src/hand-browser.ts"
   },
   "dependencies": {
     "@hana-id/core": "workspace:*",

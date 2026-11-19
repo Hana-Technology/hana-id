@@ -38,7 +38,10 @@ from `e2e-access.invalid`, answered in the stack's process) and `POST {ISSUER}/_
 SendGrid event signed with a throwaway P-256 key). Both no CORS, refused with an `Origin`. With `HANA_SHOTS_DIR=<dir>`
 (Chromium) it saves each page at phone width before the button, after it and expired (the issuer's `410 link_expired`
 routed in the browser), and the two mails. The in-memory Durable Object alarm waits past Node's longest timer (24.8
-days) instead of firing at once (a staff action's 30-day log).
+days) instead of firing at once (a staff action's 30-day log). With `soonAlarmMs` (the relayer's, on the main stack and
+the hand-test lane) only an alarm set from outside the handler (or an outside `sync()` while one at most 15 s away is
+pending) fires after that short delay; one the handler sets for itself keeps its time (`src/server/workers.ts`,
+`MemoryStorage`; `test/stack.test.ts`, D882).
 
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
 sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,
@@ -95,7 +98,12 @@ The plain-wording review (D853, D858–D860): `tests/approval-plain-shots.spec.t
 (Chromium only, skipped otherwise), the screens the founder reviews: the stamps demo's relayed NEAR call for a test app
 and a live app, an EVM transfer of a listed token (USDC on Base Sepolia, posted to the popup as its vault would: the
 partner page knows only the local chain) and of an unlisted one, an unlimited permission, an unknown call, a NEAR
-full-access key, a Stellar payment, the sponsored check-in and the screen after Reject. It checks nothing itself.
+full-access key, a Stellar payment, the sponsored check-in and the screen after Reject; and, for D884 (where the network
+fee is), each of the sponsored check-in (first time and later), a sponsored unlimited permission, a sponsored call that moves nothing Journear sees, the relayed NEAR call
+(and one that attaches NEAR), an EVM send, a NEAR transfer and a Stellar payment at 390 px and at the popup's size,
+folded and with the details open (`fee-{case}-{main|details}-{phone|popup}.png`); and, for D886, a Stellar message,
+an EVM message (and one Journear can't read), typed data with and without a network and a NEAR message, for a test app and a live app, at 390 px
+(`msg-{kind}-{test|live}-phone.png`). It checks nothing itself.
 
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown
@@ -112,7 +120,7 @@ partner page, the vault frame and the popup) and fast-forward past the vault's 5
 (`tests/fixtures.ts`) checks the vault frame and the partner page still run a script. In all three browsers the
 partner page shares the vault frame's renderer here, so a loop in the vault freezes it too.
 
-Popups that close themselves (a banner's Done or Cancel, the email step's Cancel, the callback after its relay): click
+Popups that close themselves (a banner's Done, the Close on what became of a banner's Remove or Cancel, D881, the email step's Cancel, the callback after its relay): click
 them with `clickClosing(popup, selector)` (or `clickMayClose` when the click only sometimes closes the window), and
 wait with `closeOf(popup)`, never a bare `popup.waitForEvent('close')` (`tests/fixtures.ts`). A window that closes
 while Playwright still performs the click makes the click reject with "Target page, context or browser has been
@@ -358,7 +366,9 @@ the Worker): `GET state` (the relayer's slots, pause and staff log, the chain's 
 {times?}` (time passes for the relayer: its alarm, then the API cron's relay check, which writes the security events),
 `POST clock {advanceMs}`, and `POST acquire` / `release {lease}`: each test holds its lane (`tests/admin-fixtures.ts`),
 so two runs on one stack or `--repeat-each` never share a relayer at once. In the suite's lanes the relayer's alarm runs
-only by a control; in the hand-test lane also by itself (250 ms after a change, then as deployed).
+only by a control; in the hand-test lane also by itself: 250 ms after a change from outside the alarm (a send, a staff
+tool), then as deployed (the relayer's own 15 s, or its backoff up to 5 minutes), never in a loop (D882; while paused
+with a transaction no node took, that is every 15 s).
 
 **What the spec covers**, in every browser: sign-in and the refusals (no token, a forged one, a client's own header,
 someone not on the list); every page in the sidebar opens; System status's tile **Gas sponsorship (local test network)**

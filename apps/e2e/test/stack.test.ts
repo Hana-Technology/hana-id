@@ -645,6 +645,127 @@ describe('in-memory Durable Objects', () => {
       vi.useRealTimers();
     }
   });
+
+  describe('soonAlarmMs: only a change from outside the handler fires soon (D882)', () => {
+    const SOON = 250;
+    /** As the EVM relayer: each run awaits (the network), then sets its own next alarm 15 s on. `gate` holds run 1. */
+    class SelfScheduler {
+      constructor(readonly state: { storage: MemoryStorage; id: string }) {}
+      alarms = 0;
+      gate: Promise<void> | null = null;
+      syncInside = false;
+      async alarm(): Promise<void> {
+        this.alarms += 1;
+        const gate = this.alarms === 1 ? this.gate : null;
+        await new Promise((r) => setTimeout(r, 10));
+        if (gate) await gate;
+        if (this.syncInside) await this.state.storage.sync();
+        await this.state.storage.setAlarm(Date.now() + 15_000);
+      }
+    }
+    const make = (name: string) => new MemoryNamespace(SelfScheduler, () => ({}), { soonAlarmMs: SOON }).get(name);
+    const fake = () => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+
+    it('an alarm the handler sets itself at +15 s fires once per 15 s, not every soonAlarmMs; the stored time is the one asked', async () => {
+      fake();
+      try {
+        const a = make('self');
+        await a.state.storage.setAlarm(Date.now() + 15_000);
+        await vi.advanceTimersByTimeAsync(SOON + 20);
+        expect(a.alarms).toBe(1);
+        const next = await a.state.storage.getAlarm();
+        expect(next! - Date.now()).toBeGreaterThan(14_900);
+        await vi.advanceTimersByTimeAsync(14_000);
+        expect(a.alarms).toBe(1);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(a.alarms).toBe(2);
+        // Each run takes 10 ms before it sets the next: runs at about 15.26 s, 30.27 s, 45.28 s, 60.29 s, 75.30 s.
+        await vi.advanceTimersByTimeAsync(60_100);
+        expect(a.alarms).toBe(6);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('one set from outside fires after soonAlarmMs; one asked for more than 15 s ahead keeps its time', async () => {
+      fake();
+      try {
+        const a = make('outside');
+        await a.state.storage.setAlarm(Date.now() + 15_000);
+        await vi.advanceTimersByTimeAsync(SOON - 1);
+        expect(a.alarms).toBe(0);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(a.alarms).toBe(1);
+        const b = make('later');
+        await b.state.storage.setAlarm(Date.now() + 20_000);
+        await vi.advanceTimersByTimeAsync(19_000);
+        expect(b.alarms).toBe(0);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(b.alarms).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('a set from outside while a run awaits is outside (soon), and makes that run’s own next alarm soon once', async () => {
+      fake();
+      try {
+        const a = make('during');
+        let release!: () => void;
+        a.gate = new Promise<void>((r) => (release = r));
+        await a.state.storage.setAlarm(Date.now() + 1_000);
+        await vi.advanceTimersByTimeAsync(SOON + 20);
+        expect(a.alarms).toBe(1); // run 1 holds at its gate
+        // A request's set while run 1 awaits: not part of the run, so soon. Run 2 fires beside run 1.
+        await a.state.storage.setAlarm(Date.now() + 15_000);
+        await vi.advanceTimersByTimeAsync(SOON + 20);
+        expect(a.alarms).toBe(2);
+        // Run 2 asked for +15 s itself: nothing soon.
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(a.alarms).toBe(2);
+        // Run 1 goes on: its own set comes after the request's, so it is soon (once).
+        release();
+        await vi.advanceTimersByTimeAsync(SOON + 20);
+        expect(a.alarms).toBe(3);
+        // Run 3 saw no outside change: its +15 s stands.
+        await vi.advanceTimersByTimeAsync(14_000);
+        expect(a.alarms).toBe(3);
+        await vi.advanceTimersByTimeAsync(1_500);
+        expect(a.alarms).toBe(4);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('an outside sync() brings a pending soon alarm forward; the handler’s own sync and a direct alarm() call do not', async () => {
+      fake();
+      try {
+        const a = make('sync');
+        a.syncInside = true;
+        await a.state.storage.setAlarm(Date.now() + 15_000);
+        await vi.advanceTimersByTimeAsync(SOON + 20);
+        expect(a.alarms).toBe(1); // it synced inside, then set +15 s: no loop
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(a.alarms).toBe(1);
+        // A request leaves the pending alarm (10 s away) in place and confirms its writes, as the relayer's send does.
+        await a.state.storage.sync();
+        await vi.advanceTimersByTimeAsync(SOON);
+        expect(a.alarms).toBe(2);
+        // A lane's control runs the alarm directly: what it sets keeps its time.
+        const b = make('direct');
+        const direct = b.alarm();
+        await vi.advanceTimersByTimeAsync(20);
+        await direct;
+        expect(b.alarms).toBe(1);
+        await vi.advanceTimersByTimeAsync(14_000);
+        expect(b.alarms).toBe(1);
+        await vi.advanceTimersByTimeAsync(1_500);
+        expect(b.alarms).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });
 
 describe('the email issuer: apps/email-issuer’s Worker, its app lookups through the API’s IssuerRpc (D434)', () => {

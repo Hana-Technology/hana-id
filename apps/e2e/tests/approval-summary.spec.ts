@@ -167,7 +167,9 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
     ...over,
   });
   const headline = popup.locator('h2.summary-headline');
-  const fee = popup.locator('.summary-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
+  // D884: a free fee is only in the details (first), never among the main view's facts.
+  const fee = details(popup).locator('dl.fee-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
+  const mainFee = popup.locator('.summary-facts dt', { hasText: 'Network fee' });
   const setup = 'One-time setup: this also turns on free network fees for your account on the local test network. Your address stays the same and you still approve every action.';
 
   const checkIn = [{ to: CHECK_IN, value: 0n, data: '0x183ff085' as const }];
@@ -177,21 +179,27 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
   await injectSponsored(popup, subject({ authNonce: 0n, calls: checkIn }));
   await expect(headline).toHaveText('E2E Partner wants to check you in');
   await expect(popup.locator('p.summary-line')).toHaveText(checkInLines);
-  await expect(fee).toHaveText('Free. Journear pays it for you.');
+  await expect(fee).toHaveText('Free. Sponsored by E2E Partner.');
+  await expect(fee).toBeHidden();
+  await expect(mainFee).toHaveCount(0);
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(setup);
   await expect(popup.locator('.danger-box')).toHaveCount(0);
   await expect(popup.locator('button.primary')).toBeVisible();
   await expect(details(popup)).not.toHaveAttribute('open', '');
   expect(await popup.locator('body').innerText()).not.toMatch(/upgrade|smart account/iu);
   await popup.getByText('Show details', { exact: true }).click();
+  await expect(fee).toBeVisible();
   await expect(details(popup).getByText('Account setup (EIP-7702)', { exact: true })).toBeVisible();
   await expect(details(popup).getByText('checkIn()', { exact: true })).toBeVisible();
 
+  // The check-in's own line answers cost: no "None of your ETH is used." (D884's review).
+  await expect(popup.getByText('None of your ETH is used.')).toHaveCount(0);
   // Later: the same check-in, no box at all.
   await injectSponsored(popup, subject({ executeNonce: 1n, calls: checkIn }));
   await expect(headline).toHaveText('E2E Partner wants to check you in');
   await expect(popup.locator('.risk-box')).toHaveCount(0);
-  await expect(fee).toHaveText('Free. Journear pays it for you.');
+  await expect(fee).toHaveText('Free. Sponsored by E2E Partner.');
+  await expect(mainFee).toHaveCount(0);
 
   // A token transfer, first time and later.
   await injectSponsored(popup, subject({ authNonce: 0n }));
@@ -234,6 +242,67 @@ async function done(page: Page, popup: Page, name: string): Promise<void> {
   await okValue(page, name);
   await popup.waitForEvent('close', { timeout: 20_000 }).catch(() => undefined);
 }
+
+test('D884: a relayed NEAR call’s free fee is only in the details, naming the app; a NEAR transfer’s fee, which the user pays, is in the main view', async ({ page }) => {
+  await openPartner(page, await newApp());
+  await login(page);
+  const near = (await page.evaluate(() => (window as any).e2e.addresses().near)) as string;
+  const key = { type: 'ed25519' as const, bytes: nearImplicitPublicKey(near) };
+  await nearRpc('e2e_near_activate', { account_id: near });
+  const collect: NearAction = { type: 'functionCall', methodName: 'collect', args: new TextEncoder().encode('{"stamp":"arrival"}'), gas: 30_000_000_000_000n, deposit: 0n };
+  // A contract that isn't one of Journear's reviewed ones (D885): the stamps contract's collect reads as reviewed, below.
+  const delegate = encodeNearDelegateAction({ senderId: near, receiverId: 'plain-contract.testnet', actions: [collect], nonce: (NEAR_HEIGHT - 1n) * 1_000_000n + 6n, maxBlockHeight: NEAR_HEIGHT + 100n, publicKey: key });
+  let popup = await popupFor(page, 'delegate', 'nearSignDelegate', base64Encode(delegate));
+  const mainFee = (p: Page) => p.locator('.summary-facts dt', { hasText: 'Network fee' });
+  const detailsFee = details(popup).locator('dl.fee-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
+  await expect(popup.locator('.summary-facts dt')).toHaveText(['Network']);
+  await expect(mainFee(popup)).toHaveCount(0);
+  // What it costs, still in view (D884's review): nothing about tokens on a plain call.
+  await expect(popup.locator('div.request > dl.facts:not(.summary-facts)')).toHaveText('NEAR leaving your accountNone of your NEAR.');
+  await expect(detailsFee).toBeHidden();
+  await popup.getByText('Show details', { exact: true }).click();
+  await expect(detailsFee).toHaveText('Free. Sponsored by E2E Partner.');
+  await expect(detailsFee).toBeVisible();
+  await expect(details(popup).locator('p.relayer-note')).toHaveText(/^Someone else sends this for you, sponsored by E2E Partner\. /u);
+  await expect(popup.locator('body')).not.toContainText(/Journear pays|Someone else pays|Free for you/u);
+  await done(page, popup, 'delegate');
+
+  // D885: the same call to Journear's reviewed stamps contract: no fee row and no "None of your NEAR" row in view, its
+  // own line answering cost; the free fee first in the details all the same.
+  const reviewedCall = encodeNearDelegateAction({ senderId: near, receiverId: E2E_STAMPS, actions: [collect], nonce: (NEAR_HEIGHT - 1n) * 1_000_000n + 7n, maxBlockHeight: NEAR_HEIGHT + 100n, publicKey: key });
+  popup = await popupFor(page, 'reviewed', 'nearSignDelegate', base64Encode(reviewedCall));
+  await expect(popup.locator('h2.summary-headline')).toHaveText('E2E Partner wants to collect the Arrival stamp for you');
+  await expect(mainFee(popup)).toHaveCount(0);
+  await expect(popup.locator('div.request > dl.facts:not(.summary-facts)')).toHaveCount(0);
+  await expect(popup.locator('p.summary-line').first()).toHaveText('Collecting a stamp doesn’t move any money or tokens.');
+  await popup.getByText('Show details', { exact: true }).click();
+  await expect(details(popup).locator('dl.fee-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]')).toHaveText('Free. Sponsored by E2E Partner.');
+  await done(page, popup, 'reviewed');
+
+  const transfer = encodeNearTransaction({ signerId: near, publicKey: key, nonce: 13n, receiverId: 'bob.testnet', blockHash: NEAR_BLOCK, actions: [{ type: 'transfer', deposit: 10n ** 23n }] });
+  popup = await popupFor(page, 'neartx', 'nearSignTx', base64Encode(transfer));
+  await expect(mainFee(popup)).toHaveCount(1);
+  await expect(mainFee(popup).locator('xpath=following-sibling::dd[1]')).toHaveText('A small amount of NEAR, from your account');
+  await expect(details(popup).locator('dl.fee-facts')).toHaveCount(0);
+  await done(page, popup, 'neartx');
+});
+
+test('D886: a message comes right after the headline, then one note about networks that is true for a test app', async ({ page }) => {
+  await openPartner(page, await newApp());
+  await login(page);
+  for (const [name, action] of [['evm', 'personalSign'], ['stellar', 'stellarSignMessage']] as const) {
+    const popup = await popupFor(page, name, action, 'Sign in to Stamp Trail');
+    const blocks = popup.locator('div.request > h2.summary-headline, div.request > p.message-label, div.request > pre.message, div.request > .jp-alert');
+    await expect(blocks).toHaveText([
+      'E2E Partner wants you to sign a message',
+      'The message',
+      'Sign in to Stamp Trail',
+      'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you agree with what the message says, and don’t keep real money in this account.',
+    ]);
+    await expect(popup.getByText('works only with test money', { exact: false })).toHaveCount(0);
+    await done(page, popup, name);
+  }
+});
 
 test('screens for review', async ({ page, browserName }) => {
   test.skip(!SHOTS || browserName !== 'chromium', 'HANA_SHOTS_DIR, Chromium only');

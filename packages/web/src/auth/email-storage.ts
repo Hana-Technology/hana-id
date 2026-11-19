@@ -76,7 +76,38 @@ export interface EmailContext {
   proof?: { purpose: 'link_new'; commitment: Record<string, unknown> } | null;
   /** The export window's email re-authentication (export mode): no follow-up channel, no case B link. */
   exportMode?: boolean;
+  /**
+   * D881: a banner's Remove or Cancel this window started, so the vault's next word (in `slot`) is that change's
+   * outcome, also after the proof's Google round trip: `kind` the change, `provider` the sign-in it changes (named by
+   * its kind only), `method` the proof's (this login's), `signedIn` whether the sign-in itself finished. Kinds only:
+   * no address, key or token. An older page reads it along with the rest (the read spreads the stored object), keeps
+   * it and stores it again unused.
+   */
+  bannerAction?: BannerAction | null;
 }
+
+/** D881: what a banner's Remove or Cancel changes, and where its outcome arrives. */
+export interface BannerAction {
+  kind: 'unlink' | 'cancel';
+  provider: LoginMethod;
+  method: LoginMethod;
+  slot: number;
+  signedIn: boolean;
+}
+
+const isMethod = (v: unknown): v is LoginMethod => v === 'google' || v === 'email';
+
+/** A stored BannerAction, checked field by field (the follow-up slots run 2..12, as the login entry's `next`). */
+export const isBannerAction = (v: unknown): v is BannerAction =>
+  isObj(v) &&
+  Object.keys(v).every((k) => ['kind', 'provider', 'method', 'slot', 'signedIn'].includes(k)) &&
+  (v.kind === 'unlink' || v.kind === 'cancel') &&
+  isMethod(v.provider) &&
+  isMethod(v.method) &&
+  isInt(v.slot) &&
+  (v.slot as number) >= 2 &&
+  (v.slot as number) <= 12 &&
+  typeof v.signedIn === 'boolean';
 
 interface Stored {
   v: 1;
@@ -113,7 +144,8 @@ function decode(raw: string | null): Stored | null {
       (c.vaultFrame === null || typeof c.vaultFrame === 'string') &&
       (c.challengeId === null || (typeof c.challengeId === 'string' && CHALLENGE_ID_RE.test(c.challengeId))) &&
       (c.proof === undefined || c.proof === null || (isObj(c.proof) && c.proof.purpose === 'link_new' && isObj(c.proof.commitment))) &&
-      (c.exportMode === undefined || typeof c.exportMode === 'boolean');
+      (c.exportMode === undefined || typeof c.exportMode === 'boolean') &&
+      (c.bannerAction === undefined || c.bannerAction === null || isBannerAction(c.bannerAction));
     return ok ? (v as unknown as Stored) : null;
   } catch {
     return null;

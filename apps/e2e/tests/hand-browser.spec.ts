@@ -155,7 +155,7 @@ test('the start page, a Google sign-in with a named account, and a guestbook wri
   await expect(demo.locator('#near-balance')).toHaveText('Balance: 0 NEAR. The guestbook write needs none.');
   const approval = await popupOf(demo, () => demo.getByRole('button', { name: 'Write to the guestbook (no NEAR needed)' }).click());
   await approve(approval);
-  await expect(demo.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. You paid no gas.');
+  await expect(demo.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
   await expect(demo.locator('#near-messages li', { hasText: text }).locator('.you')).toHaveText('you');
   expect(h.relay.guestbook).toEqual([text]);
   expect(h.relay.problems).toEqual([]);
@@ -218,8 +218,12 @@ test('case B waiting, cancelled from a Google sign-in (D864), with Passport Home
   await signOut(demo);
   const again = await demoGoogle(demo, ben);
   await expect(again.getByRole('button', { name: 'Cancel this link' })).toBeVisible();
-  const cancelled = closes(again);
   await again.getByRole('button', { name: 'Cancel this link' }).click();
+  // D881: back from Google's check, the window says what became of it.
+  await expect(again.getByRole('heading', { name: 'Link cancelled' })).toBeVisible();
+  await expect(again.locator('#link-change-what')).toHaveText('The email address is no longer being linked to this wallet, so it won’t open it.');
+  const cancelled = closes(again);
+  await again.getByRole('button', { name: 'Close' }).click();
   await cancelled;
   await expect(demo.locator('#status')).toContainText('Signed in');
 
@@ -240,6 +244,8 @@ test('case B waiting, cancelled from the email’s own sign-in (D864)', async ({
   await expect(popup.getByRole('heading', { name: 'A Google account is being linked to this email' })).toBeVisible();
   await expect(popup.getByRole('button', { name: 'Keep the link' })).toBeVisible();
   await expect(popup.locator('#link-waiting-what')).toContainText('The link starts working on');
+  // D881: the demo behind the window says it plainly too (no "Something went wrong (link_pending)").
+  await expect(demo.locator('#error-text')).toHaveText('This sign-in is waiting to be linked to a wallet, so it can’t open one yet. The Journear sign-in window says what to do.');
   await nextCode(h, popup, cleo, () => popup.getByRole('button', { name: 'Cancel this link' }).click());
   await expect(popup.getByRole('heading', { name: 'Link cancelled' })).toBeVisible();
   const closed = closes(popup);
@@ -295,7 +301,11 @@ test('the automatic same-address link (case A)', async ({ browser }) => {
   const evm = await demo.locator('#evm-address').textContent();
   await signOut(demo);
   const google = await demoGoogle(demo, ada);
-  await expect(google.locator('#link-banners')).toContainText('Your Google sign-in now opens this wallet too');
+  // D881: the follow-up screen says what happened and which wallet, and the window's title is that screen's.
+  await expect(google.locator('h1')).toHaveText('You can now sign in with Google too');
+  await expect(google).toHaveTitle('You can now sign in with Google too');
+  await expect(google.locator('#link-banners')).toContainText('You already have a wallet here, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet.');
+  await expect(google.locator('#link-fresh-home')).toHaveText('You can see every way to sign in to your wallet in Passport Home, under “Ways to sign in”.');
   const done = closes(google);
   await google.getByRole('button', { name: 'Done' }).click();
   await done;
@@ -340,8 +350,13 @@ test('an added sign-in 8 days old: Home’s line, the quiet line with Done, not 
   await h.start.getByRole('button', { name: 'Forget “Done” in this browser' }).click();
   await expect(h.start.locator('#forget-result')).toHaveText('Done: this browser has forgotten it. The next sign-in shows the line again.');
   const third = await demoGoogle(demo, eve);
-  const removed = closes(third);
+  // D881: Remove asks first, then says what became of it.
   await third.getByRole('button', { name: 'Remove' }).click();
+  await expect(third.getByRole('heading', { name: 'Remove the email address from this wallet?' })).toBeVisible();
+  await third.getByRole('button', { name: 'Remove it' }).click();
+  await expect(third.getByRole('heading', { name: 'The email address was removed' })).toBeVisible();
+  const removed = closes(third);
+  await third.getByRole('button', { name: 'Close' }).click();
   await removed;
   await showAgain(home);
   await expect(rows(home)).toHaveCount(1);

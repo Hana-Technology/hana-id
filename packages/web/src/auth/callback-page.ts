@@ -41,8 +41,8 @@
 import { ApiError, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
 import { BRAND } from '@hana-id/brand';
-import { dom, errorView } from './dom.ts';
-import { readEmailContext } from './email-storage.ts';
+import { type Dom, SIGN_IN_WINDOW, dom, errorView, originText, supportCode } from './dom.ts';
+import { type BannerAction, dropEmailContext, readEmailContext } from './email-storage.ts';
 import {
   type AccessTokenSub,
   type CallbackFragment,
@@ -56,7 +56,7 @@ import {
   unverifiedSub,
 } from './google.ts';
 import { type TakenLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
-import { BTN } from './ui.ts';
+import { BTN, alert } from './ui.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
 import { closeOrShare } from './share-handoff.ts';
 import { type SignalTimers, type VaultSignals, vaultSignals } from './vault-signal.ts';
@@ -153,7 +153,7 @@ export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<Callb
   /** Google's redirect URI for a second request: this page's own origin (the env's authOrigin). */
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
   const scriptStart = perfNow();
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   // First: read the fragment and drop it from the URL and history entry.
   const fragment = parseCallbackFragment(win.location.hash);
   try {
@@ -218,6 +218,37 @@ export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<Callb
   return relayLeg(deps, toSlot(fragment, taken), taken, scriptStart);
 }
 
+/** D881: the banner change the email page started, if its outcome is the vault's word in `next`, with the app's name. */
+function bannerChangeAt(storage: Storage, home: string, next: number | undefined, now: number): { action: BannerAction; appName: string; parentOrigin: string } | null {
+  const ctx = readEmailContext(storage, home, now)?.context;
+  const action = ctx?.bannerAction ?? null;
+  return ctx && action && action.slot === next ? { action, appName: ctx.appName, parentOrigin: ctx.parentOrigin } : null;
+}
+
+/** D881: a banner's Remove or Cancel whose Google check didn't finish: nothing changed (email-page.ts CHANGE_TEXT's words). */
+function showChangeNotProved(d: Dom, win: PageWindow, home: string, now: () => number, at: { action: BannerAction; appName: string; parentOrigin: string }, error: string): void {
+  const change = at.action;
+  const appName = at.appName;
+  const kind = change.provider === 'google' ? 'Google account' : 'email address';
+  const removing = change.kind === 'unlink';
+  const close = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'link-change-close' } }, 'Close');
+  // As the email page's result: a finished sign-in goes on as Done does (the sharing sheet, D411); a stopped one closes.
+  close.addEventListener('click', () => (change.signedIn ? closeOrShare(win, home, now()) : win.close()));
+  d.show(
+    d.h(
+      'section',
+      { class: 'panel', attrs: { id: 'link-change-result', 'data-kind': change.kind, 'data-outcome': 'not_proved' } },
+      d.h('h1', {}, removing ? `The ${kind} wasn’t removed` : 'The link wasn’t cancelled'),
+      // Which app, at which site, as the sign-in window's other screens say (email-page.ts `header`; no logo here).
+      d.h('p', { class: 'asker' }, 'Signing in to ', d.h('strong', {}, appName), ' at ', originText(d, at.parentOrigin)),
+      alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'link-change-what' } }, removing ? `Nothing changed. The ${kind} still opens this wallet.` : 'Nothing changed. The link is still waiting.', ' ', 'Google didn’t finish checking it’s you.'),
+      d.h('p', { attrs: { id: 'link-change-advice' } }, 'Close this window, then sign in to ', d.h('strong', {}, appName), ' again to try again.'),
+      d.h('p', { class: 'code' }, supportCode(error)),
+      d.h('div', { class: 'actions' }, close),
+    ),
+  );
+}
+
 /** The fragment as its relay slot's: an attempt under a fresh OAuth `state` (D341) answers the slot its entry names. */
 function toSlot<F extends { state: string }>(fragment: F, taken: TakenLogin): F {
   return taken.slot ? { ...fragment, state: taken.slot } : fragment;
@@ -253,7 +284,7 @@ function goBack(deps: CallbackRun, taken: TakenLogin, slot: string, loginHint: s
     return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
   }
   zeroTaken(taken);
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), d.h('p', { class: 'muted' }, 'Google sign-in was cancelled.')));
   // `back` may not be acked yet (nothing awaited since it went out).
   return deps.signals.leave(() => win.location.assign(`${FOLLOW_PATH}#${slot}`)).then(() => 'cancelled' as const);
@@ -274,7 +305,7 @@ export type CallbackStopCode = keyof typeof STOPS;
  * effort), shows why, zeroes the entry's keys: the login ends here.
  */
 async function stopLogin(deps: CallbackRun, taken: TakenLogin, slot: string, code: CallbackStopCode, claim?: string): Promise<CallbackOutcome> {
-  const d = dom(deps.win.document);
+  const d = dom(deps.win.document, SIGN_IN_WINDOW);
   try {
     const named = claim !== undefined && RELAY_CLAIM_NAME.test(claim) ? { claim } : {};
     await deps.api.writeRelay(slot, await encryptRelayPayload(taken.relayKey, slot, { error: code, ...named }));
@@ -296,7 +327,7 @@ async function tokenFirstAccess(deps: CallbackRun, fragment: Exclude<CallbackFra
   const { win, api } = deps;
   const now = deps.now ?? (() => Date.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   /** This attempt's OAuth `state` (its next leg's too), and the relay slot it answers (D341: they differ after a cancel). */
   const state = fragment.state;
   const slot = taken.slot ?? state;
@@ -451,7 +482,7 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
   const now = deps.now ?? (() => Date.now());
   const perfNow = deps.perfNow ?? (() => performance.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   const { relayKey } = taken;
   const followKey = taken.followKey ?? null;
   const home = taken.home ?? fragment.state;
@@ -501,6 +532,18 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
     zeroTaken(taken);
     d.show(errorView(d, 'Sign-in stopped', STORAGE_TEXT, 'storage_unavailable'));
     return 'relay_failed';
+  }
+  // D881: Google didn't give the proof of a banner's Remove or Cancel (cancelled on Google's screen, or an error). The
+  // vault does nothing with an answer that isn't a proof and sends no further notice, so this window says what became
+  // of it here instead of waiting in the follow-up mode for a word that won't come.
+  if (followKey && taken.leg === 'proof' && fragment.kind === 'error') {
+    const change = bannerChangeAt(win.sessionStorage, home, taken.next, now());
+    if (change) {
+      zeroTaken(taken);
+      dropEmailContext(win.sessionStorage, home);
+      showChangeNotProved(d, win, home, now, change, fragment.error);
+      return 'relayed';
+    }
   }
   // Every login with the follow-up key reads the vault's last word, a record-only one too (D865: a member is asked
   // before its wallet opens, whatever app it signs in through).

@@ -75,14 +75,20 @@ describe('a sponsored action’s window', () => {
     expect(el.querySelector('.danger-box')).toBeNull();
     expect(el.querySelectorAll('.warning-box')).toHaveLength(1);
     expect(el.querySelector('.warning-box p.risk-lead.summary-warning.account-setup')?.textContent).toBe(SETUP);
-    expect(fact(el, 'Network fee')).toBe('Free. Journear pays it for you.');
+    // D884: the fee the user doesn't pay is not in the main view; the network is.
+    expect(fact(el.querySelector('dl.summary-facts')!, 'Network fee')).toBeNull();
+    // (The amber setup note keeps its own words, "free network fees", D884.)
+    expect(aboveFold(el)).not.toMatch(/Network fee|Free\.|sponsor|pays/u);
     expect(fact(el, 'Network')).toBe('Local test network');
-    // The technical facts are in the details, which start folded.
+    // The technical facts are in the details, which start folded; the free fee first (D884).
     const d = details(el);
     expect(d.open).toBe(false);
-    expect(d.querySelector('h3')?.textContent).toBe('EVM action, network fee paid by Journear');
+    expect(d.querySelector('.details-body')?.firstElementChild?.matches('dl.jp-kv.fee-facts')).toBe(true);
+    expect(fact(d, 'Network fee')).toBe(`Free. Sponsored by ${APP}.`);
+    expect(d.querySelector('h3')?.textContent).toBe('EVM action, sent for you by Journear');
     expect(fact(d, 'Account setup (EIP-7702)')).toBe(`account helper ${SPONSOR_DELEGATE} ✓ Journear Passport account helper v1, chain 31337, account nonce 0`);
-    expect(fact(d, 'Paid by')).toBe(`Journear’s relayer ${SPONSOR_RELAYER}`);
+    expect(fact(d, 'Paid by')).toBeNull();
+    expect(fact(d, 'Sent by')).toBe(`Journear’s relayer ${SPONSOR_RELAYER}`);
     expect(fact(d, 'From')).toBe(SPONSOR_ME);
     expect(fact(d, 'Valid until')).toMatch(/^\d\d:\d\d( on \d{4}-\d\d-\d\d)? \(your time; unix 1900000000\)$/u);
     expect(fact(d, 'Action nonce')).toBe('0');
@@ -118,7 +124,7 @@ describe('a sponsored action’s window', () => {
       `This lets ${shortId(SPENDER)} (not checked by Journear) take all your tokens from ${shortId(TOKEN)} (an unlisted token), now or later, with no limit. Approve only if you trust them completely.`,
     );
     expect(el.querySelector('.warning-box p.risk-lead')?.textContent).toBe(SETUP);
-    // The red box comes right under the headline, the amber one after the fee row.
+    // The red box comes right under the headline, the amber one after the facts (the network row; the fee is in the details).
     const kids = [...el.children];
     expect(kids.indexOf(el.querySelector('.danger-box') as Element)).toBe(1);
     expect(kids.indexOf(el.querySelector('.warning-box') as Element)).toBeGreaterThan(kids.indexOf(el.querySelector('.summary-facts') as Element));
@@ -335,17 +341,21 @@ describe('D877: words in the text face, exact values in mono; the free fee in bo
     return c.textContent ?? '';
   };
 
-  it('the sponsored fee: “Free. Journear pays it for you.”, “Free.” in bold after a decorative check mark; the network one line’s worth', () => {
+  it('the sponsored fee (D884): “Free. Sponsored by {App}.” in the details, “Free.” in bold after a decorative check mark; the network one line’s worth', () => {
     const el = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
-    const fee = valueOf(el, 'Network fee')!;
-    expect(fee.textContent).toBe('Free. Journear pays it for you.');
+    const fee = valueOf(details(el), 'Network fee')!;
+    expect(fee.textContent).toBe(`Free. Sponsored by ${APP}.`);
     expect(fee.classList.contains('fee-free')).toBe(true);
     expect(fee.querySelector('strong')?.textContent).toBe('Free.');
+    // The app's name as every sentence shows it: bold, its own element (bidi-isolated by the page's CSS).
+    expect(fee.querySelector('strong.app-name')?.textContent).toBe(APP);
     const mark = fee.firstElementChild!;
     expect(mark.matches('svg.ic.fee-free-mark')).toBe(true);
     expect(mark.getAttribute('aria-hidden')).toBe('true');
-    // Still one row in the summary's facts, no box of its own.
-    expect(fee.closest('dl.jp-kv.summary-facts')).not.toBeNull();
+    // One row of its own, first in the details, no box of its own; not among the main view's facts.
+    expect(fee.closest('dl.jp-kv.fee-facts')).not.toBeNull();
+    expect(fee.closest('details.request-details')).not.toBeNull();
+    expect(el.querySelector('dl.summary-facts dd.fee-free')).toBeNull();
     expect(fee.closest('.jp-alert')).toBeNull();
     // Words, not code: nothing in mono in the network or the fee row.
     expect(valueOf(el, 'Network')?.textContent).toBe('Local test network');
@@ -377,7 +387,7 @@ describe('D877: words in the text face, exact values in mono; the free fee in bo
     const el = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }), SPONSOR_NOW_MS);
     const d = details(el);
     for (const label of ['Chain ID', 'From', 'Action nonce', 'Gas floor']) expect(wordsOf(valueOf(d, label)!).trim(), label).toBe('');
-    expect(wordsOf(valueOf(d, 'Paid by')!)).toBe('Journear’s relayer ');
+    expect(wordsOf(valueOf(d, 'Sent by')!)).toBe('Journear’s relayer ');
     // The time in words; its unix seconds exact, in mono; the same text as validUntil.
     const until = valueOf(d, 'Valid until')!;
     expect(until.textContent).toBe(validUntil(sponsorSubject({}).deadline, SPONSOR_NOW_MS));
@@ -385,15 +395,15 @@ describe('D877: words in the text face, exact values in mono; the free fee in bo
     expect(wordsOf(until)).toMatch(/^\d{2}:\d{2}.* \(your time; unix \)$/u);
   });
 
-  it('the check mark speaks of the fee only: beside a red box it is in the text colour, never the success green', () => {
+  it('the check mark speaks of the fee only: beside a red box it is in the text colour, never the success green (in the details too, D884)', () => {
     const el = render(decodeSponsored({ calls: [sponsoredCall(TOKEN, APPROVE_MAX)] }));
     expect(el.querySelector('.danger-box')).not.toBeNull();
-    const fee = valueOf(el, 'Network fee')!;
-    expect(fee.textContent).toBe('Free. Journear pays it for you.');
+    const fee = valueOf(details(el), 'Network fee')!;
+    expect(fee.textContent).toBe(`Free. Sponsored by ${APP}.`);
     expect(fee.className).toBe('fee-free beside-danger');
     const calm = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
     expect(calm.querySelector('.danger-box')).toBeNull();
-    expect(valueOf(calm, 'Network fee')?.className).toBe('fee-free');
+    expect(valueOf(details(calm), 'Network fee')?.className).toBe('fee-free');
   });
 
   it('the stylesheet: the approval’s values in the text face, mono only for code, the free fee’s mark in the success colour', () => {

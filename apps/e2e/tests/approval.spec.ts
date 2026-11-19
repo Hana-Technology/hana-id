@@ -314,7 +314,7 @@ test.describe('raw signing', () => {
     const bytes = await runSignRaw(page, 'raw', 'stellar', 64, 2);
     const popup = await clickLauncher(page, 'Review in Journear Passport');
     await expect(popup.getByText('Signing this could hand over your whole account and everything in it.', { exact: false })).toBeVisible();
-    await expect(popup.getByText('This signature isn’t tied to one network.', { exact: false })).toBeVisible();
+    await expect(popup.getByText('Your signature counts on every network, real-money ones included.', { exact: true })).toBeVisible();
     await expect(popup.getByText(stellar).first()).toBeVisible();
     await expect(popup.getByText(LIVE_PARTNER_ORIGIN, { exact: true })).toBeVisible();
     // A live app's popup has no test-network notice.

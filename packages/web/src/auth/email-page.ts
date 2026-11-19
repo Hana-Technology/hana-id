@@ -103,11 +103,11 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
-import { type Dom, dom, errorView, originText, supportCode } from './dom.ts';
+import { type Child, type Dom, SIGN_IN_WINDOW, dom, errorView, originText, supportCode } from './dom.ts';
 import { STORAGE_BLOCKED } from './errors.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { issuerDetail } from './email-api.ts';
-import { EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, dropUnlockTokenFor, liveUnlockToken, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
+import { type BannerAction, EMAIL_STEP_LIMIT_MS, type EmailContext, deviceTicketFor, dropEmailContext, dropUnlockTokenFor, liveUnlockToken, readEmailContext, saveDeviceTicket, storeEmailContext } from './email-storage.ts';
 import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, googleAccessUrl, googleAuthUrl, googleTokenFirstUrl, loginGoogleRequest } from './google.ts';
 import { type TakenLogin, peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
@@ -156,7 +156,10 @@ export type EmailStage =
   /** D865: an active member's own notice (Remove or Keep it), its confirmation step, and the removal's outcome. */
   | 'member_link'
   | 'member_confirm'
-  | 'member_removed';
+  | 'member_removed'
+  /** D881: a banner's Remove asks first; then what became of a Remove or Cancel. */
+  | 'banner_confirm'
+  | 'link_changed';
 
 /** What the user saw last that the vault should hear if they cancel now (D245), or why the step can't go on. */
 type Reason = 'email_cancelled' | 'email_code_invalid' | 'email_challenge_expired' | 'email_rate_limited' | 'email_unavailable';
@@ -228,6 +231,128 @@ export const OLDER_LINK_NOTE = `After you press Done, this browser won’t show 
 /** How long a window waits for its `{choice: 'keep'}` write before it closes anyway (D875). */
 export const KEEP_WRITE_MS = 1_500;
 
+/** Passport Home's section that lists the ways to sign in (home-sign-ins.ts HOME_SIGN_INS_TITLE; a test keeps them equal). */
+export const HOME_SIGN_INS_SECTION = 'Ways to sign in';
+
+/**
+ * D881: the screen after a sign-in that just added a way to sign in (a banner with `fresh: true` that is active), by
+ * case. The vault's banner names only the kind of sign-in that joined; the rest this window knows itself: a Google
+ * sign-in that joined after this window's "Link and continue" code (case A, not Google-hosted) shows the masked address
+ * that screen already showed (`n.to`, a…@domain); a Google one without it joined at once (case A, Google-hosted:
+ * nothing to decide, D119); an email one joined a Google wallet after the email step's "Link and continue" (case B,
+ * Google-hosted). A waiting one (case B not hosted, `linkAccount`) keeps the waiting line.
+ */
+export const FRESH_TEXT = Object.freeze({
+  googleHeading: 'You can now sign in with Google too',
+  emailHeading: 'You can now sign in with email too',
+  googleHosted:
+    'You already have a wallet here, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet.',
+  googleCodeLead: 'You already have a wallet here, made when you signed in with ',
+  googleCodeRest: '. You confirmed that address with a code, so signing in with Google now opens that same wallet.',
+  email: 'You already have a wallet here, made when you signed in with Google. You chose to link your email address, so signing in with it now opens the same wallet.',
+  same: 'Nothing was moved or lost, and you can sign in either way.',
+  home: `You can see every way to sign in to your wallet in ${BRAND.home}, under “${HOME_SIGN_INS_SECTION}”.`,
+});
+
+/** How a sign-in is named when only its kind is known (D259, D874: never another sign-in's address). */
+export const kindName = (provider: string): string => (provider === 'google' ? 'Google account' : 'email address');
+
+/**
+ * D881 (decided by the founder 2026-11-19: "we need a confirmation screen … it's too abrupt and I didn't even know what
+ * happened"): a banner's Remove asks first, and a Remove or Cancel ends on a screen that says what became of it.
+ */
+export const CHANGE_TEXT = Object.freeze({
+  confirmTitle: (kind: string) => `Remove the ${kind} from this wallet?`,
+  confirmWhat: (kind: string) => `After you remove it, the ${kind} can’t open this wallet any more. Your money stays in this wallet.`,
+  later: (kind: string) => `If you sign in with that ${kind} later, it opens a new, empty wallet of its own. It won’t be added back automatically.`,
+  checkGoogle: 'Google will ask you to sign in again to check it’s you.',
+  checkEmail: 'We’ll send one more code to your email address to check it’s you.',
+  removeButton: 'Remove it',
+  backButton: 'Go back',
+  removingTitle: (kind: string) => `Removing the ${kind}`,
+  cancellingTitle: 'Cancelling the link',
+  working: 'This takes a few seconds…',
+  removedTitle: (kind: string) => `The ${kind} was removed`,
+  removedWhat: (kind: string) => `The ${kind} no longer opens this wallet. Removing it didn’t move any money.`,
+  /**
+   * links.ts `revokeAccountShares` (D233): every vault share of the wallet's path in the scope (every app of it) is
+   * revoked. An open session holding one ends at its next share check (vault.ts: about a minute while the tab is shown,
+   * every 5 minutes when idle, and before any signature); a session without a share ('none' persistence) ends with its
+   * tab. Either way the next use asks to sign in again.
+   */
+  signInAgain: 'Devices signed in to this wallet, this one too, will be asked to sign in again.',
+  /** Removing ends the access from now on; it can't take back what was done with it before. */
+  /**
+   * Removing ends that sign-in's access from now on only (a key exported meanwhile still works). Passport Home's words
+   * for this risk (home-devices.ts: "move your money to a new wallet"), and how: signing in the same way opens this
+   * same wallet; a different email address opens a new, empty one here (or another wallet app).
+   */
+  notYours:
+    'Didn’t add it yourself? Someone else may have used this wallet while it was added. To be safe, move your money to a new wallet. Signing in the same way opens this same wallet, so use a different email address or another wallet app.',
+  cancelledTitle: 'Link cancelled',
+  cancelledWhat: (kind: string) => `The ${kind} is no longer being linked to this wallet, so it won’t open it.`,
+  notRemovedTitle: (kind: string) => `The ${kind} wasn’t removed`,
+  notCancelledTitle: 'The link wasn’t cancelled',
+  stillOpens: (kind: string) => `Nothing changed. The ${kind} still opens this wallet.`,
+  stillWaiting: 'Nothing changed. The link is still waiting.',
+  notYou: 'We couldn’t check it was you.',
+  /** `token_invalid` is also the vault's own failure to check the proof (its app settings or keys unreadable). */
+  otherGoogle: 'If you picked a different Google account, try again with the one you signed in with.',
+  changed: 'Nothing was changed. The ways to sign in to this wallet may have changed after this window opened.',
+  busy: 'Journear couldn’t do this just now.',
+  /** The check this change needed didn't finish (the vault does nothing with an answer that isn't a proof). */
+  notProved: {
+    email_cancelled: 'The check was cancelled before the code was entered.',
+    email_code_invalid: 'The code was wrong.',
+    email_challenge_expired: 'The code expired.',
+    email_rate_limited: 'Too many codes were asked for.',
+    email_unavailable: 'We couldn’t send a code to check it’s you.',
+    google: 'Google didn’t finish checking it’s you.',
+  } as Readonly<Record<string, string>>,
+  unknownRemovedTitle: 'We couldn’t check the removal',
+  unknownCancelledTitle: 'We couldn’t check the link',
+  unknownRemoved: (kind: string) => `Something went wrong, so we can’t tell whether the ${kind} was removed.`,
+  unknownCancelled: 'Something went wrong, so we can’t tell whether the link was cancelled.',
+});
+
+/**
+ * D881: what a `stop` after a banner's Remove or Cancel means. The vault sends the API's code only (vault/login.ts
+ * Afterword; `contract_rejected` becomes `link_refused`):
+ * - `token_invalid`: the proof wasn't this sign-in's, or the vault couldn't check it (its own failures say so too).
+ * - `link_refused`: the contract's rules (apps/api/src/links.ts `precheckChange`, or the contract's own refusal, which
+ *   is reverted): the sign-in already gone, the link already active or cancelled, the sign-ins changed, a nonce
+ *   mismatch. Nothing changed.
+ * - Refused before anything is relayed (links.ts: `rate_limited` and `rate_limiter_unavailable` at :211-213 and :304,
+ *   `bad_request` at :248-250, `token_expired` from `loginTokenRefusal` at :258, `nonce_mismatch` at :259,
+ *   `near_unavailable` at :103 and :267), or a relay failure that certainly didn't execute (links.ts NOT_EXECUTED at :65:
+ *   `near_unavailable`, `near_rejected`, `relayer_busy`, `relayer_unconfigured`, `method_not_allowed`), or a contract
+ *   refusal (panics.ts: `links_unavailable`, `link_pending`, reverted): nothing changed.
+ * - Anything else (`api_unavailable` for no answer, `link_in_flight`, `relayer_unavailable`, `timeout`, …) may follow a
+ *   send: the outcome is unknown.
+ * `not_proved` is the window's own: the check didn't finish, so the vault got no proof and changed nothing.
+ */
+export type ChangeFailure = 'not_you' | 'changed' | 'busy' | 'not_proved' | 'unknown';
+const NOTHING_SENT: ReadonlySet<string> = new Set([
+  'rate_limited',
+  'rate_limiter_unavailable',
+  'links_unavailable',
+  'link_pending',
+  'bad_request',
+  'nonce_mismatch',
+  'token_expired',
+  'near_unavailable',
+  'near_rejected',
+  'relayer_busy',
+  'relayer_unconfigured',
+  'method_not_allowed',
+]);
+export function changeFailure(code: string): ChangeFailure {
+  if (code === 'token_invalid') return 'not_you';
+  if (code === 'link_refused') return 'changed';
+  if (NOTHING_SENT.has(code)) return 'busy';
+  return 'unknown';
+}
+
 /** D341: the line the screen after a cancel on Google's sign-in screen shows. */
 export const GOOGLE_CANCELLED_TEXT = 'Google sign-in was cancelled.';
 
@@ -252,7 +377,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   const perfNow = deps.perfNow ?? (() => performance.now());
   const setT = deps.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
   const clearT = deps.clearTimeout ?? ((t) => clearTimeout(t as ReturnType<typeof setTimeout>));
-  const d: Dom = dom(win.document);
+  const d: Dom = dom(win.document, SIGN_IN_WINDOW);
   let stage: EmailStage = 'address';
   let notice: string | null = null;
   let reason: Reason = 'email_cancelled';
@@ -309,6 +434,16 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   /** Where the next verified token goes, and which `start` the address screen makes. */
   let sink: Sink = { kind: 'first' };
   let startAs: StartAs = ctx.proof ? { kind: 'link', purpose: ctx.proof.purpose, commitment: ctx.proof.commitment } : { kind: 'session' };
+  /**
+   * D881: the masked address (a…@domain) of the case-A code this window sent after "Link and continue", as its screen
+   * showed it: the fresh banner that follows names the wallet by it. Memory only.
+   */
+  let codeLinkTo: string | null = null;
+  /** Off the case-A code path (an email login instead): the code's address no longer names anything. */
+  const leavePrepared = (): void => {
+    startAs = { kind: 'session' };
+    codeLinkTo = null;
+  };
   /** Follow-up mode's keys, in memory only (taken from the login entry). */
   let follow: { relayKey: Uint8Array; followKey: Uint8Array } | null = null;
   /**
@@ -509,6 +644,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       reason = 'email_cancelled';
       // A prepared case-A code can't go to another address: "a different email" is an email login.
       if (startAs.kind === 'prepared') {
+        leavePrepared();
         startAs = { kind: 'session' };
         if (sink.kind === 'answer') sink = { ...sink, as: 'session' };
         address = '';
@@ -636,7 +772,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         notice = 'challenge_expired';
         reason = 'email_challenge_expired';
         remember({ challengeId: null });
-        if (startAs.kind === 'prepared') startAs = { kind: 'session' };
+        if (startAs.kind === 'prepared') leavePrepared();
         showAddress(TEXT.expired);
         return;
       }
@@ -670,7 +806,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         reason = 'email_code_invalid';
         if (left === 0) {
           remember({ challengeId: null });
-          if (startAs.kind === 'prepared') startAs = { kind: 'session' };
+          if (startAs.kind === 'prepared') leavePrepared();
           showAddress('That code is wrong, and this attempt has no tries left. Send a new code.');
           return;
         }
@@ -681,7 +817,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         notice = 'challenge_expired';
         reason = 'email_challenge_expired';
         remember({ challengeId: null });
-        if (startAs.kind === 'prepared') startAs = { kind: 'session' };
+        if (startAs.kind === 'prepared') leavePrepared();
         showAddress(TEXT.expired);
         return;
       }
@@ -1012,16 +1148,24 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     const f = follow;
     if (!f) return;
     clearT(resendTimer);
-    busy('Signing in', 'Finishing sign-in…', 'relaying');
+    // D881: an answer to a banner's Remove or Cancel. A proof shows the change's own words while the vault works; an
+    // error (the code step cancelled or failed) changes nothing, and says so once written.
+    const change = actionAt(slot + 2);
+    const failed = 'error' in payload ? String(payload.error) : null;
+    if (!(change && failed !== null) && !changeBusy(slot + 2, 'relaying')) busy('Signing in', 'Finishing sign-in…', 'relaying');
     const { id } = followSlot(f.followKey, slot + 1);
     try {
       await api.writeRelay(id, await encryptRelayPayload(f.relayKey, id, payload));
     } catch (err) {
+      const code = err instanceof ApiError ? err.code : 'api_unavailable';
+      // A proof that may have reached the vault: can't tell. An error answer that didn't: nothing changed either way.
+      if (change) return showChangeResult(change, failed ?? code, failed === null ? 'unknown' : 'not_proved');
       endFollow();
-      fatal('Sign-in couldn’t finish', `${BRAND.company} couldn’t be reached to finish the sign-in. Close this window and try again from the app.`, err instanceof ApiError ? err.code : 'api_unavailable');
+      fatal('Sign-in couldn’t finish', `${BRAND.company} couldn’t be reached to finish the sign-in. Close this window and try again from the app.`, code);
       return;
     }
     sink = { kind: 'first' };
+    if (change && failed !== null) return showChangeResult(change, failed, 'not_proved');
     if ('error' in payload) {
       endFollow();
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign-in cancelled'), d.h('p', { class: 'muted' }, 'You can close this window.')));
@@ -1042,7 +1186,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   async function readNotice(slot: number): Promise<void> {
     const f = follow;
     if (!f) return;
-    busy('Signing in', 'Finishing sign-in…', 'following');
+    if (!changeBusy(slot, 'following')) busy('Signing in', 'Finishing sign-in…', 'following');
     settle('following');
     const { id, readKey } = followSlot(f.followKey, slot);
     const key = base64UrlEncode(readKey);
@@ -1051,6 +1195,9 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     for (;;) {
       if (!follow) return;
       if (now() >= createdAt + FOLLOW_LIMIT_MS) {
+        // D881: the vault's word on a change never came (its own wait may have ended first): can't tell.
+        const change = actionAt(slot);
+        if (change) return showChangeResult(change, 'login_timeout', 'unknown');
         endFollow();
         d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), d.h('p', { class: 'muted' }, 'You can close this window.')));
         settle('done');
@@ -1061,6 +1208,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         value = await api.readRelay(id, key, 25);
       } catch (err) {
         if (err instanceof ApiError && (err.status === 403 || err.status === 410)) {
+          const change = actionAt(slot);
+          if (change) return showChangeResult(change, err.code, 'unknown');
           endFollow();
           fatal('Sign-in stopped', 'This sign-in can’t be finished any more. Start again from the app.', err.code);
           return;
@@ -1074,6 +1223,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       try {
         n = await decryptRelayValue(f.relayKey, id, value, isFollowNotice);
       } catch {
+        const change = actionAt(slot);
+        if (change) return showChangeResult(change, 'token_invalid', 'unknown');
         endFollow();
         fatal('Sign-in stopped', 'This sign-in couldn’t be read. Start again from the app.', 'token_invalid');
         return;
@@ -1120,6 +1271,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       other.setAttribute('disabled', '');
       startAs = { kind: 'prepared', challengeId: n.challengeId, to: n.to };
       sink = { kind: 'answer', slot, as: 'link' };
+      codeLinkTo = n.to;
       remember({ challengeId: n.challengeId });
       void resendCode();
     });
@@ -1234,6 +1386,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   }
 
   function toEmailLogin(slot: number): void {
+    leavePrepared();
     startAs = { kind: 'session' };
     sink = { kind: 'answer', slot, as: 'session' };
     address = '';
@@ -1271,6 +1424,9 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   /** The vault's last word: "Signed in", or the link banners first. */
   function showDone(banners: LinkBanner[], slot: number, serverTimeMs: number): void {
+    // D881: the vault's word after a banner's Remove or Cancel this window started: it was done.
+    const after = actionAt(slot);
+    if (after) return showChangeResult(after, null);
     // D875: an older link this browser has already dismissed (Done) is no reason to keep the window open.
     const worth = banners.filter((b) => !olderLink(b, serverTimeMs) || !olderSeenHere(b));
     if (worth.length === 0) {
@@ -1284,17 +1440,23 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       else closeOrShare(win, rid, now());
       return;
     }
-    showBanners('Signed in', banners, slot, null, serverTimeMs);
+    // D881: a way to sign in this sign-in just added gets a heading that says so.
+    const fresh = banners.find((b) => b.fresh && b.status === 'active' && (b.provider === 'google' || b.provider === 'email'));
+    const title = fresh ? (fresh.provider === 'google' ? FRESH_TEXT.googleHeading : FRESH_TEXT.emailHeading) : 'Signed in';
+    showBanners(title, banners, slot, null, serverTimeMs, true);
   }
 
   function showStop(n: Extract<FollowNotice, { t: 'stop' }>, slot: number, serverTimeMs: number): void {
+    // D881: the vault's word after a banner's Remove or Cancel this window started: it wasn't done, or may not be.
+    const after = actionAt(slot);
+    if (after) return showChangeResult(after, n.code);
     const text =
       n.code === 'link_pending' && n.effectiveAtMs !== undefined
         ? `This sign-in method was added to a wallet recently. It can open the wallet from ${dateText(n.effectiveAtMs)}.`
         : (STOP_TEXT[n.code] ?? 'The sign-in couldn’t finish. Close this window and try again from the app.');
     notice = n.code;
     if (n.banners && n.banners.length > 0) {
-      showBanners('Sign-in stopped', n.banners, slot, text, serverTimeMs);
+      showBanners('Sign-in stopped', n.banners, slot, text, serverTimeMs, false);
       return;
     }
     endFollow();
@@ -1349,18 +1511,46 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     );
   }
 
-  /** Link banners (spec "Notices"): each method, its state, and its Cancel or Remove when this sign-in may. */
-  function showBanners(title: string, banners: LinkBanner[], slot: number, text: string | null, serverTimeMs: number): void {
+  /**
+   * D881: what a fresh, active banner says, by case (FRESH_TEXT): the sign-in that joined, the wallet it opens (the
+   * one made with the other sign-in), and that nothing was moved. Text nodes; the masked address only as this window's
+   * own case-A screen showed it.
+   */
+  function freshText(b: LinkBanner): Child[] {
+    if (b.provider === 'email') return [FRESH_TEXT.email, ' ', FRESH_TEXT.same];
+    if (codeLinkTo !== null) return [FRESH_TEXT.googleCodeLead, d.h('strong', {}, codeLinkTo), FRESH_TEXT.googleCodeRest, ' ', FRESH_TEXT.same];
+    return [FRESH_TEXT.googleHosted, ' ', FRESH_TEXT.same];
+  }
+
+  /**
+   * Link banners (spec "Notices"): each method, its state, and its Cancel or Remove when this sign-in may. `signedIn`:
+   * the sign-in itself finished (`done`), so Done goes on as a finished sign-in does (D411); a `stop` closes.
+   */
+  function showBanners(title: string, banners: LinkBanner[], slot: number, text: string | null, serverTimeMs: number, signedIn: boolean): void {
+    const again = (): void => showBanners(title, banners, slot, text, serverTimeMs, signedIn);
+    /** One press per screen: Done, a Remove or a Cancel (each takes this screen away). */
+    let pressed = false;
+    const once = (f: () => void) => () => {
+      if (pressed) return;
+      pressed = true;
+      f();
+    };
     const button = (b: LinkBanner, i: number): HTMLElement | null => {
       const action = b.action;
       if (!action) return null;
       const el = d.h('button', { class: 'link', attrs: { type: 'button', id: `banner-${action.kind}-${i}` } }, action.kind === 'cancel' ? 'Cancel this link' : 'Remove');
-      el.addEventListener('click', () => prove(action.prove, slot, 'Confirm it’s you'));
+      const change: BannerAction = { kind: action.kind, provider: b.provider === 'google' ? 'google' : 'email', method: action.prove.method, slot: slot + 2, signedIn };
+      // D881: Remove asks first (what it costs); Cancel, the safe side of a link nobody may have meant, doesn't.
+      el.addEventListener(
+        'click',
+        once(() => (action.kind === 'unlink' ? showRemoveConfirm(change, action.prove, slot, again) : startChange(change, action.prove, slot))),
+      );
       return el;
     };
     const items: HTMLElement[] = [];
     const older: HTMLElement[] = [];
     const shownOlder: LinkBanner[] = [];
+    let freshShown = false;
     banners.forEach((b, i) => {
       const remove = button(b, i);
       if (olderLink(b, serverTimeMs)) {
@@ -1369,31 +1559,44 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         shownOlder.push(b);
         return;
       }
-      const what =
+      const fresh = b.status === 'active' && b.fresh;
+      if (fresh) freshShown = true;
+      const what: Child[] =
         b.status === 'pending'
-          ? `${providerName(b.provider) === 'email' ? 'An email' : 'A Google account'} will be able to open this wallet from ${dateText(b.effectiveAtMs)}.`
-          : b.fresh
-            ? `Your ${providerName(b.provider)} sign-in now opens this wallet too.`
-            : `A sign-in method was added: ${providerName(b.provider)} on ${dateText(b.effectiveAtMs)}.`;
-      items.push(d.h('li', { class: b.status === 'pending' ? 'banner pending' : 'banner', attrs: { 'data-provider': b.provider, 'data-status': b.status } }, icon(d, b.status === 'pending' ? 'clock' : 'check-c'), d.h('span', { class: 'banner-text' }, what, remove ? ' ' : null, remove)));
+          ? [`${providerName(b.provider) === 'email' ? 'An email' : 'A Google account'} will be able to open this wallet from ${dateText(b.effectiveAtMs)}.`]
+          : fresh
+            ? freshText(b)
+            : [`A sign-in method was added: ${providerName(b.provider)} on ${dateText(b.effectiveAtMs)}.`];
+      items.push(
+        d.h(
+          'li',
+          { class: b.status === 'pending' ? 'banner pending' : 'banner', attrs: { 'data-provider': b.provider, 'data-status': b.status, ...(fresh ? { 'data-fresh': 'true' } : {}) } },
+          icon(d, b.status === 'pending' ? 'clock' : 'check-c'),
+          d.h('span', { class: 'banner-text' }, ...what, remove ? ' ' : null, remove),
+        ),
+      );
     });
     const done = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'banner-done' } }, 'Done');
-    done.addEventListener('click', () => {
-      // D875: only Done uses up an older line in this browser. Remove (which may still fail or be abandoned), the
-      // window's own close button, or the app closing the window leaves it to be shown at the next sign-in.
-      for (const b of shownOlder) olderShownHere(b);
-      // Done means no Remove or Cancel from this screen: tell the vault so it stops waiting. Safe: a Remove or Cancel
-      // takes this window away to its proof, so a Done here means nothing was written to this slot's answer (and the
-      // relay takes one write per slot anyway).
-      const told = banners.some((b) => b.action) ? keepAnswer(slot) : null;
-      endFollow();
-      settle('done');
-      const leave = (): void => (title === 'Signed in' ? closeOrShare(win, rid, now()) : win.close());
-      if (told) {
-        done.setAttribute('disabled', '');
-        void told.then(leave);
-      } else leave();
-    });
+    done.addEventListener(
+      'click',
+      once(() => {
+        // D875: only Done uses up an older line in this browser. Remove (which may still fail or be abandoned, or be
+        // gone back from, D881), the window's own close button, or the app closing the window leaves it to be shown at
+        // the next sign-in.
+        for (const b of shownOlder) olderShownHere(b);
+        // Done means no Remove or Cancel from this screen: tell the vault so it stops waiting. Safe: a Remove or Cancel
+        // takes this window away to its confirmation or proof, and only the proof writes this slot's answer; "Go back"
+        // writes nothing, so a Done here is the slot's one write (and the relay takes one write per slot anyway).
+        const told = banners.some((b) => b.action) ? keepAnswer(slot) : null;
+        endFollow();
+        settle('done');
+        const leave = (): void => (signedIn ? closeOrShare(win, rid, now()) : win.close());
+        if (told) {
+          done.setAttribute('disabled', '');
+          void told.then(leave);
+        } else leave();
+      }),
+    );
     d.show(
       d.h(
         'section',
@@ -1402,11 +1605,157 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         header(),
         text ? alert(d, 'danger', { attrs: { role: 'alert' } }, text) : null,
         items.length > 0 ? d.h('ul', { class: 'banners', attrs: { id: 'link-banners' } }, ...items) : null,
+        // D881: where every way to sign in is listed (D874); the older lines' own note says it when they are shown.
+        freshShown && older.length === 0 ? d.h('p', { class: 'muted', attrs: { id: 'link-fresh-home' } }, FRESH_TEXT.home) : null,
         older.length > 0 ? d.h('div', { class: 'older-links', attrs: { id: 'link-older' } }, ...older, d.h('p', { class: 'muted' }, OLDER_LINK_NOTE)) : null,
         d.h('div', { class: 'actions' }, done),
       ),
     );
     settle('banners');
+  }
+
+  // ---- D881: a banner's Remove (asked first) and Cancel, and what became of them ----
+
+  /** The Remove or Cancel this window started whose outcome is the vault's word in `slot`, if any. */
+  function actionAt(slot: number): BannerAction | null {
+    const a = ctx.bannerAction ?? null;
+    return a && a.slot === slot ? a : null;
+  }
+
+  /**
+   * Before a Remove: what it costs, in D865's shape and tone ("Remove it" / "Go back"). Go back shows the banners again
+   * with nothing written or marked seen (D875: only Done does that).
+   */
+  function showRemoveConfirm(change: BannerAction, p: FollowProve, slot: number, onBack: () => void): void {
+    const kind = kindName(change.provider);
+    const go = d.h('button', { class: `${BTN.danger} jp-btn-lg`, attrs: { type: 'button', id: 'banner-remove-confirm' } }, CHANGE_TEXT.removeButton);
+    const back = d.h('button', { class: `${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'banner-remove-back' } }, CHANGE_TEXT.backButton);
+    let chosen = false;
+    go.addEventListener('click', () => {
+      if (chosen) return;
+      chosen = true;
+      go.setAttribute('disabled', '');
+      back.setAttribute('disabled', '');
+      startChange(change, p, slot);
+    });
+    back.addEventListener('click', () => {
+      if (chosen) return;
+      chosen = true;
+      onBack();
+    });
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel', attrs: { id: 'banner-remove', 'data-provider': change.provider } },
+        d.h('h1', {}, CHANGE_TEXT.confirmTitle(kind)),
+        header(),
+        alert(d, 'danger', { class: 'note', attrs: { role: 'alert', id: 'banner-remove-what' } }, CHANGE_TEXT.confirmWhat(kind)),
+        d.h('p', { attrs: { id: 'banner-remove-next' } }, CHANGE_TEXT.later(kind)),
+        d.h('p', { class: 'muted', attrs: { id: 'banner-remove-check' } }, change.method === 'google' ? CHANGE_TEXT.checkGoogle : CHANGE_TEXT.checkEmail),
+        d.h('div', { class: 'actions stack' }, go, back),
+      ),
+    );
+    notice = 'banner_remove';
+    settle('banner_confirm');
+  }
+
+  /**
+   * The change's proof. The window remembers what it started (the email context, so a Google proof's round trip
+   * through /login/callback keeps it), so the vault's next word shows as its outcome. An email proof goes to the
+   * address this window just proved, as D864's and D865's do (no retyping); the address screen only when it isn't here.
+   */
+  function startChange(change: BannerAction, p: FollowProve, slot: number): void {
+    remember({ bannerAction: change });
+    if (p.method === 'email' && p.purpose === 'link_change' && validAddress(address)) {
+      startAs = { kind: 'link', purpose: 'link_change', commitment: p.commitment };
+      sink = { kind: 'answer', slot, as: 'proof' };
+      void sendCode();
+      return;
+    }
+    prove(p, slot, 'Confirm it’s you');
+  }
+
+  /** While the vault makes the change: its own words, not "Signing in". */
+  function changeBusy(slot: number, s: EmailStage): boolean {
+    const a = actionAt(slot);
+    if (!a) return false;
+    busy(a.kind === 'unlink' ? CHANGE_TEXT.removingTitle(kindName(a.provider)) : CHANGE_TEXT.cancellingTitle, CHANGE_TEXT.working, s);
+    return true;
+  }
+
+  /**
+   * What became of the change: `code` null when the vault said it was done, else its `stop` code (changeFailure). A
+   * failure leaves the banner or line to be shown again at the next sign-in (nothing is marked seen, D875).
+   */
+  function showChangeResult(change: BannerAction, code: string | null, as?: ChangeFailure): void {
+    endFollow();
+    const kind = kindName(change.provider);
+    const removing = change.kind === 'unlink';
+    const app = () => d.h('strong', {}, ctx.appName);
+    const say = (tone: 'success' | 'warning', ...text: Child[]) => alert(d, tone, { class: 'note', attrs: { role: tone === 'success' ? 'status' : 'alert', id: 'link-change-what' } }, ...text);
+    const advice = (...text: Child[]) => d.h('p', { attrs: { id: 'link-change-advice' } }, ...text);
+    const failure = code === null ? null : (as ?? changeFailure(code));
+    let title: string;
+    let body: (HTMLElement | null)[];
+    if (failure === null) {
+      title = removing ? CHANGE_TEXT.removedTitle(kind) : CHANGE_TEXT.cancelledTitle;
+      body = removing
+        ? [
+            say('success', CHANGE_TEXT.removedWhat(kind)),
+            d.h('p', { attrs: { id: 'link-change-signin' } }, CHANGE_TEXT.signInAgain),
+            d.h('p', { attrs: { id: 'link-change-next' } }, CHANGE_TEXT.later(kind)),
+            d.h('p', { attrs: { id: 'link-change-advice' } }, CHANGE_TEXT.notYours),
+          ]
+        : [say('success', CHANGE_TEXT.cancelledWhat(kind)), d.h('p', { attrs: { id: 'link-change-signin' } }, CHANGE_TEXT.signInAgain)];
+    } else {
+      // Can't tell: the heading says so too (D865's and D864's own headings for the same case).
+      title = failure === 'unknown' ? (removing ? CHANGE_TEXT.unknownRemovedTitle : CHANGE_TEXT.unknownCancelledTitle) : removing ? CHANGE_TEXT.notRemovedTitle(kind) : CHANGE_TEXT.notCancelledTitle;
+      const nothing = removing ? CHANGE_TEXT.stillOpens(kind) : CHANGE_TEXT.stillWaiting;
+      const tryAgain = advice('Close this window, then sign in to ', app(), ' again to try again.');
+      switch (failure) {
+        case 'not_you':
+          body = [say('warning', nothing, ' ', CHANGE_TEXT.notYou), change.method === 'google' ? d.h('p', { attrs: { id: 'link-change-why' } }, CHANGE_TEXT.otherGoogle) : null, tryAgain];
+          break;
+        case 'not_proved':
+          body = [say('warning', nothing, ' ', CHANGE_TEXT.notProved[code as string] ?? CHANGE_TEXT.notProved.google!), tryAgain];
+          break;
+        case 'changed':
+          body = [say('warning', CHANGE_TEXT.changed), advice('Close this window, then sign in to ', app(), ' again to see them as they are now.')];
+          break;
+        case 'busy':
+          // A day's limit can be what refused it (links.ts: 100 changes a day per wallet): "later", not "in a few minutes".
+          body = [say('warning', nothing, ' ', CHANGE_TEXT.busy), advice('Close this window, then sign in to ', app(), ' again later to try again.')];
+          break;
+        case 'unknown':
+          body = [
+            say('warning', removing ? CHANGE_TEXT.unknownRemoved(kind) : CHANGE_TEXT.unknownCancelled),
+            removing
+              ? advice('Sign in to ', app(), ` again. If the ${kind} still opens this wallet, you’ll see it there with Remove.`)
+              : advice('Sign in to ', app(), ' again. If the link is still waiting, you’ll see Cancel this link again.'),
+          ];
+          break;
+      }
+      body.push(d.h('p', { class: 'code' }, supportCode(code as string)));
+    }
+    const close = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'link-change-close' } }, 'Close');
+    close.addEventListener('click', () => {
+      settle('done');
+      // A finished sign-in goes on as it does after Done (D411); a stopped one just closes.
+      if (change.signedIn) closeOrShare(win, rid, now());
+      else win.close();
+    });
+    d.show(
+      d.h(
+        'section',
+        { class: 'panel', attrs: { id: 'link-change-result', 'data-kind': change.kind, 'data-outcome': failure ?? 'done' } },
+        d.h('h1', {}, title),
+        header(),
+        ...body,
+        d.h('div', { class: 'actions' }, close),
+      ),
+    );
+    notice = code ?? (removing ? 'link_removed' : 'link_cancelled');
+    settle('link_changed');
   }
 
   // ---- D864: the email that waits to join a wallet ----
@@ -1494,7 +1843,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     switch (n.outcome) {
       case 'cancelled':
         title = 'Link cancelled';
-        body = [alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'link-cancel-what' } }, `This email is no longer being linked with ${waitingOther}. Anyone signed in to that wallet in this app will be asked to sign in again.`), passwordAdvice];
+        body = [alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'link-cancel-what' } }, `This email is no longer being linked with ${waitingOther}. Anyone signed in to that wallet will be asked to sign in again.`), passwordAdvice];
         break;
       case 'already_cancelled':
         title = 'This link was already cancelled';
@@ -1702,7 +2051,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       case 'removed':
         title = `This ${self} was removed`;
         body = [
-          alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'member-removed-what' } }, `This ${self} no longer opens that wallet. Anything in it stays there, with whoever holds that ${memberOther}. Anyone signed in to that wallet in this app will be asked to sign in again.`),
+          alert(d, 'success', { class: 'note', attrs: { role: 'status', id: 'member-removed-what' } }, `This ${self} no longer opens that wallet. Anything in it stays there, with whoever holds that ${memberOther}. Anyone signed in to that wallet will be asked to sign in again.`),
           fresh,
           d.h('p', { attrs: { id: 'member-removed-advice' } }, `If you didn’t set up the link, change your ${self === 'email' ? 'email' : 'Google'} password.`),
         ];

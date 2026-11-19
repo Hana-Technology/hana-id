@@ -180,11 +180,11 @@ describe('each entry: the exact match and its plain reading', () => {
     const note = 'Hello from Kuala Lumpur 👋';
     const s = reviewed({ actions: [collect({ stamp: 'postcard', note })] });
     expect(text(s.headline)).toBe(`${APP} wants to collect the Postcard stamp for you`);
-    expect(s.lines[0]).toEqual(['The note:', { kind: 'quote', text: note }]);
-    expect(lines(s)).toEqual([`The note:${note}`, POSTED, 'Collecting a stamp doesn’t move any money or tokens.', uses('stamps', STAMPS)]);
+    expect(s.lines[0]).toEqual(['The note', { kind: 'quote', text: note }]);
+    expect(lines(s)).toEqual([`The note${note}`, POSTED, 'Collecting a stamp doesn’t move any money or tokens.', uses('stamps', STAMPS)]);
     // Right-to-left and long text is kept whole, as stored (the page isolates its direction).
     const rtl = 'مرحبا من هنا';
-    expect(reviewed({ actions: [collect({ stamp: 'postcard', note: rtl })] }).lines[0]).toEqual(['The note:', { kind: 'quote', text: rtl }]);
+    expect(reviewed({ actions: [collect({ stamp: 'postcard', note: rtl })] }).lines[0]).toEqual(['The note', { kind: 'quote', text: rtl }]);
     // Ordinary text stays: an apostrophe in a word (straight or curly), two accents on one letter (Vietnamese).
     for (const ok of ['I don’t mind', 'it\'s fine', 'Phở ngon quá', 'Tiếng Việt: ệ']) expect(reviewed({ actions: [collect({ stamp: 'postcard', note: ok })] }).reviewed, ok).toBe(true);
     expect(reviewed({ actions: [collect({ stamp: 'postcard', note: '😀'.repeat(STAMP_NOTE_MAX_CHARS) })] }).reviewed).toBe(true);
@@ -223,11 +223,11 @@ describe('each entry: the exact match and its plain reading', () => {
     const msg = 'gm from the demo';
     const relayed = reviewed({ actions: [addMessage({ text: msg })], receiver: BOOK });
     expect(text(relayed.headline)).toBe(`${APP} wants to add a message to the demo guestbook`);
-    expect(lines(relayed)).toEqual([`The message:${msg}`, POSTED, 'Adding it doesn’t move any money or tokens.', uses('guestbook', BOOK)]);
-    expect(relayed.lines[0]).toEqual(['The message:', { kind: 'quote', text: msg }]);
+    expect(lines(relayed)).toEqual([`The message${msg}`, POSTED, 'Adding it doesn’t move any money or tokens.', uses('guestbook', BOOK)]);
+    expect(relayed.lines[0]).toEqual(['The message', { kind: 'quote', text: msg }]);
     expect(relayed.warnings).toEqual([]);
     const direct = reviewed({ actions: [addMessage({ text: msg })], receiver: BOOK, relayed: false });
-    expect(lines(direct)).toEqual([`The message:${msg}`, POSTED, 'The message itself doesn’t move any money or tokens.', uses('guestbook', BOOK)]);
+    expect(lines(direct)).toEqual([`The message${msg}`, POSTED, 'The message itself doesn’t move any money or tokens.', uses('guestbook', BOOK)]);
     expect(direct.fee).toEqual(today({ actions: [addMessage({ text: msg })], receiver: BOOK, relayed: false }).fee);
     expect(reviewed({ actions: [addMessage({ text: 'x'.repeat(GUESTBOOK_TEXT_MAX_CHARS) })], receiver: BOOK }).reviewed).toBe(true);
   });

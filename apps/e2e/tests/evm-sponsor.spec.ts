@@ -88,8 +88,10 @@ async function approveAndWait(page: Page, popup: Page, name: string): Promise<un
   return v;
 }
 
-const fee = (popup: Page) => popup.locator('.summary-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
 const details = (popup: Page) => popup.locator('details.request-details');
+/** D884: the free fee's row, only in the details; the main view's facts have none. */
+const fee = (popup: Page) => details(popup).locator('dl.fee-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
+const mainFee = (popup: Page) => popup.locator('.summary-facts dt', { hasText: 'Network fee' });
 
 test('the demo check-in, first and later: one window, the setup note only the first time; both run (D831, D854, D855)', async ({ page, browserName }) => {
   const { evm, appId } = await freshSession(page);
@@ -98,7 +100,8 @@ test('the demo check-in, first and later: one window, the setup note only the fi
   // First: Journear's demo check-in (on the verified list, D854) with the account's one-time setup.
   let popup = await sponsoredWindow(page, 'first', [CHECK_IN_CALL]);
   await expect(popup.locator('h2.summary-headline')).toHaveText('E2E Partner wants to check you in');
-  await expect(fee(popup)).toHaveText('Free. Journear pays it for you.');
+  await expect(fee(popup)).toHaveText('Free. Sponsored by E2E Partner.');
+  await expect(mainFee(popup)).toHaveCount(0);
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(SETUP);
   await expect(popup.locator('.danger-box')).toHaveCount(0);
   expect(await popup.locator('body').innerText()).not.toMatch(/upgrade|smart account/iu);
@@ -112,7 +115,8 @@ test('the demo check-in, first and later: one window, the setup note only the fi
   // Later: the same check-in, no box at all.
   popup = await sponsoredWindow(page, 'later', [CHECK_IN_CALL]);
   await expect(popup.locator('.risk-box')).toHaveCount(0);
-  await expect(fee(popup)).toHaveText('Free. Journear pays it for you.');
+  await expect(fee(popup)).toHaveText('Free. Sponsored by E2E Partner.');
+  await expect(mainFee(popup)).toHaveCount(0);
   await shot(popup, 'sponsored-later', browserName);
   expect(await approveAndWait(page, popup, 'later')).toMatchObject({ status: 'executed' });
 

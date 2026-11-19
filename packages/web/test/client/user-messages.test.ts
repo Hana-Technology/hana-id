@@ -66,8 +66,8 @@ describe('userMessage (D861)', () => {
     }
   });
 
-  it('link_pending is true for the one who made the link and for the email’s holder who didn’t (D864)', () => {
-    expect(userMessageFor('link_pending', { effectiveAtMs: 1 })).toBe('This email is waiting to be linked to a wallet. Sign in again and follow the steps in the Journear Passport window.');
+  it('link_pending is true for the one who made the link and for the email’s holder who didn’t (D864), and for a waiting Google account (D881)', () => {
+    expect(userMessageFor('link_pending', { effectiveAtMs: 1 })).toBe('This sign-in is waiting to be linked to a wallet, so it can’t open one yet. Sign in again and follow the steps in the Journear Passport window.');
   });
 
   it('login_cancelled when the user chose to remove this sign-in from a wallet (D865): true before and after the removal is confirmed', () => {

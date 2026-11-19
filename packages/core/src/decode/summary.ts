@@ -107,10 +107,15 @@ export interface ApprovalSummary {
   readonly lines: readonly SummaryText[];
   /**
    * The network fee, as a row's value that starts with a capital: the most it can be ("Up to 0.000042 ETH"), or
-   * that the user pays none ("Free. Journear pays it for you."); null when the request costs no fee itself.
+   * that the user pays none (FREE_FEE: "Free. Sponsored by {App}."); null when the request costs no fee itself.
    */
   readonly fee: SummaryText | null;
-  /** The fee row says the user pays no network fee: a sponsored action (Journear's relayer) or a relayed NEAR action. */
+  /**
+   * The user pays no network fee: a sponsored action (this build's own relayer, checked by the decoder) or a relayed
+   * NEAR action (whoever sends it pays, never the user). The page shows such a fee only in the folded details; a fee
+   * row in the main view means the user pays it.
+   */
+  // D884.
   readonly freeFee?: true;
   /** The network the request is bound to, as a value ("Sepolia (test network)"), when the request names one. NEAR's line is the page's. */
   readonly network: SummaryText | null;
@@ -598,18 +603,30 @@ function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
 
 // ---- sponsored EVM actions (D831, D850) ----
 //
-// A batch of calls Journear's relayer sends for the user (the network fee is Journear's), through the pinned EIP-7702
-// delegate. Each call is summarised by evmCall, exactly as the same call in an ordinary transaction, with all of its
-// warnings: a sponsored `approve(spender, unlimited)` is as alarming as an unsponsored one. What differs is said in
-// plain words: the fee line, and the one-time setup note when the approval also signs the account's authorization.
+// A batch of calls Journear's relayer sends for the user (its wallet pays the network fee on chain, recorded against
+// the app, D852), through the pinned EIP-7702 delegate. Each call is summarised by evmCall, exactly as the same call in
+// an ordinary transaction, with all of its warnings: a sponsored `approve(spender, unlimited)` is as alarming as an
+// unsponsored one. What differs is said in plain words: the fee line (in the details, D884), and the one-time setup
+// note when the approval also signs the account's authorization.
 // The calls carry no value (the subject decoder refuses any), so nothing is said about ETH leaving.
 
+// D884 (amends D858, D877): the app named as an attribution; Journear's relayers record the cost against the app (D852,
+// D863); never a claim that the request costs nothing (D858).
 /**
- * The fee line of a sponsored action: "Network fee: Free.
- * Journear pays it for you." True for every sponsored action: the decoder takes only this build's own relayer (its
- * sponsor chains), so the fee is always Journear's. "Free." is the row's first word, in bold.
+ * A network fee the user doesn't pay: "Free. Sponsored by {App}.", the app's name as the window's header shows it.
+ * The same words for both kinds of free fee, a sponsored EVM action and a relayed NEAR action. "Free." is the row's
+ * first word, in bold. The window can't see who pays in the end, only that the user doesn't: naming the app is an
+ * attribution (the app asked for the action; an app that relays a NEAR action itself pays for it). It never says the
+ * request costs nothing. The page shows it only in the folded details.
  */
-export const SPONSORED_FEE: SummaryText = Object.freeze([strong('Free.'), ' Journear pays it for you.']) as SummaryText;
+export const FREE_FEE: SummaryText = Object.freeze([strong('Free.'), ' Sponsored by ', APP, '.']) as SummaryText;
+
+// D884: it was "Free. Journear pays it for you." (D877).
+/**
+ * The fee of a sponsored action: FREE_FEE. True for every sponsored action: the decoder takes only this build's own
+ * relayer (its sponsor chains), so the user never pays it.
+ */
+export const SPONSORED_FEE: SummaryText = FREE_FEE;
 
 /** A network's own name for a sentence ("Base Sepolia"), without the network line's "(test network)". */
 const chainName = (chainId: number): string => evmChainInfo(chainId)?.name ?? 'this network';
@@ -678,6 +695,42 @@ function sponsoredStep(chainId: number, c: DecodedEvmCallSite, d: Draft, me: str
   }
 }
 
+/** Calls whose line already says what they move: an amount in the headline or a line. */
+const MOVES_SHOWN: ReadonlySet<string> = new Set([
+  'transfer(address,uint256)',
+  'transferFrom(address,address,uint256)',
+  'safeTransferFrom(address,address,uint256)',
+  'safeTransferFrom(address,address,uint256,bytes)',
+  'safeTransferFrom(address,address,uint256,uint256,bytes)',
+  'safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)',
+  'permit(address,address,uint256,uint256,uint8,bytes32,bytes32)',
+]);
+
+// D884 (as amended by its review): a free fee is only in the details, so a sponsored call Journear can read that moves
+// nothing it can see would say nothing about cost. It gets "None of your ETH is used." (the chain's coin): true, as
+// the subject decoder refuses any value on a sponsored call and only the build's relayer can submit the batch. Never
+// "tokens it moves are yours": a contract that already holds a permission from the user can move tokens Journear can't
+// see.
+/** "None of your ETH is used." for the chain's coin. */
+export const noCoinUsed = (chainId: number): SummaryText => [`None of your ${evmChainInfo(chainId)?.nativeSymbol ?? 'coin on this network'} is used.`];
+
+/**
+ * Whether a sponsored action's main view would otherwise say nothing about cost: every call read, no warning but the
+ * setup note, no call whose line shows an amount or a grant, and at least one call that isn't the demo check-in (whose
+ * own line says it moves no money).
+ */
+function quietSponsored(chainId: number, calls: readonly DecodedEvmCallSite[], drafts: readonly Draft[], warnings: readonly SummaryWarning[], explainable: boolean): boolean {
+  if (!explainable || warnings.some((w) => w.code !== 'account_setup')) return false;
+  let quiet = false;
+  for (const [i, c] of calls.entries()) {
+    if (isDemoCheckInCall(chainId, c.to, c.data, c.value)) continue;
+    const d = drafts[i] as Draft;
+    if (!c.call || !d.explainable || d.warnings.length > 0 || MOVES_SHOWN.has(c.call.signature)) return false;
+    quiet = true;
+  }
+  return quiet;
+}
+
 function sponsoredAction(decoded: Extract<DecodedApproval, { kind: 'evm_sponsored' }>, me: string): ApprovalSummary {
   const { chainId, calls } = decoded;
   const drafts = calls.map((c) => (calls.length > 1 && isDemoCheckInCall(chainId, c.to, c.data, c.value) ? demoCheckIn(c.to, true) : evmCall(chainId, c, me)));
@@ -709,6 +762,7 @@ function sponsoredAction(decoded: Extract<DecodedApproval, { kind: 'evm_sponsore
       warnings.push(stepsNotListed(drafts.length, g.hidden, g.hiddenRisk));
     }
   }
+  if (quietSponsored(chainId, calls, drafts, warnings, explainable)) lines.push(noCoinUsed(chainId));
   if (decoded.setup) warnings.push(accountSetupNote(chainId));
   return { headline, lines, fee: SPONSORED_FEE, freeFee: true, network: evmNetwork(chainId), warnings, explainable, shownSteps };
 }
@@ -1663,11 +1717,13 @@ function nearMovesValue(a: NearAction): boolean {
   }
 }
 
+// D884: it was "Free for you. Someone else pays it." (D858, D877).
 /**
- * The fee row of a relayed NEAR action. It speaks about the fee only, never about what
- * the action costs. Never "Journear pays": a partner may relay it itself.
+ * The fee of a relayed NEAR action: FREE_FEE. It speaks about the fee only, never about what the action costs. Never
+ * "Journear pays": a partner may relay it itself; the app is named as the sponsor, an attribution, not something the
+ * window checked.
  */
-export const RELAYED_FEE: SummaryText = Object.freeze([strong('Free for you.'), ' Someone else pays it.']) as SummaryText;
+export const RELAYED_FEE: SummaryText = FREE_FEE;
 
 /**
  * The risk that a relayed call acts as the user (it was half of the blue relayer note): the contract it calls can
@@ -1704,7 +1760,7 @@ function reviewedNearReading(r: ReviewedNearCall, relayed: boolean): { headline:
     case 'collect': {
       const lines: SummaryText[] = [];
       // The app chose the note (entries are per contract): "The note", never "your note".
-      if (r.note !== undefined) lines.push(['The note:', quote(r.note)], [POSTED]);
+      if (r.note !== undefined) lines.push(['The note', quote(r.note)], [POSTED]);
       if (r.stamp === 'signature') lines.push(['It includes the message you signed for this stamp.']);
       lines.push(relayed ? ['Collecting a stamp doesn’t move any money or tokens.'] : ['The stamp itself doesn’t move any money or tokens.'], reviewedUses(r));
       return { headline: [APP, ` wants to collect the ${REVIEWED_STAMP_TITLES[r.stamp]} stamp for you`], lines };
@@ -1712,7 +1768,7 @@ function reviewedNearReading(r: ReviewedNearCall, relayed: boolean): { headline:
     case 'add_message':
       return {
         headline: [APP, ' wants to add a message to the demo guestbook'],
-        lines: [['The message:', quote(r.text)], [POSTED], relayed ? ['Adding it doesn’t move any money or tokens.'] : ['The message itself doesn’t move any money or tokens.'], reviewedUses(r)],
+        lines: [['The message', quote(r.text)], [POSTED], relayed ? ['Adding it doesn’t move any money or tokens.'] : ['The message itself doesn’t move any money or tokens.'], reviewedUses(r)],
       };
   }
 }

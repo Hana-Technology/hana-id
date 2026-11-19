@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dom } from '../../src/auth/dom.ts';
-import { nearMessageWarning, renderApproval } from '../../src/auth/render-approval.ts';
+import { NO_NETWORK_NOTE, NO_NETWORK_TEST_APP_NOTE, REVIEWED_SIGNATURE_NOTE, REVIEWED_SIGNATURE_TEST_APP_NOTE, nearMessageWarning, renderApproval } from '../../src/auth/render-approval.ts';
 import { jargonWatch } from './plain-words.ts';
 
 const PUB = Uint8Array.from({ length: 32 }, (_, i) => i + 3);
@@ -37,10 +37,10 @@ function render(actions: NearAction[], o: Opts = {}): HTMLElement {
 }
 
 /** `watch`: false for today's screen of a message to a `.testnet` recipient, whose recipient lines name it as text. */
-function renderMessage(o: { message?: string; recipient?: string; accounts?: ReviewedNearAccounts | null; watch?: boolean } = {}): HTMLElement {
+function renderMessage(o: { message?: string; recipient?: string; accounts?: ReviewedNearAccounts | null; watch?: boolean; testApp?: boolean } = {}): HTMLElement {
   const bytes = encodeNep413Message({ message: o.message ?? `Stamp my passport: ${ME}`, nonce: new Uint8Array(32).fill(4), recipient: o.recipient ?? STAMPS, callbackUrl: null });
   const accounts = o.accounts === undefined ? ACCOUNTS : o.accounts;
-  const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'Stamp Trail', { envNetwork: 'testnet', testApp: true, address: ME, parentOrigin: 'https://stamps.example', ...(accounts ? { reviewedNear: accounts } : {}) });
+  const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'Stamp Trail', { envNetwork: 'testnet', testApp: o.testApp ?? true, testAppNoteHere: o.testApp ?? true, address: ME, parentOrigin: 'https://stamps.example', ...(accounts ? { reviewedNear: accounts } : {}) });
   document.body.replaceChildren(el);
   if (o.watch !== false) plain(el);
   return el;
@@ -90,16 +90,17 @@ describe('reviewed NEAR calls in the window (D885)', () => {
     expect(box.querySelector('b')).toBeNull();
     // Its own block, straight after its label's sentence, outside every sentence of Journear's.
     expect(box.closest('p')).toBeNull();
-    expect(box.previousElementSibling?.matches('p.summary-line')).toBe(true);
-    expect(box.previousElementSibling?.textContent).toBe('The note:');
+    // Under a label in D886's style for a message being signed ("The message"), not one of Journear's sentences.
+    expect(box.previousElementSibling?.matches('p.message-label')).toBe(true);
+    expect(box.previousElementSibling?.textContent).toBe('The note');
     expect(el.querySelectorAll('p.summary-line div, p.summary-line .summary-quote')).toHaveLength(0);
-    expect(lines(el)).toEqual(['The note:', 'It’s posted under your account. Anyone can see it, and you can’t delete it.', 'Collecting a stamp doesn’t move any money or tokens.', `It uses Journear demo stamps (${STAMPS}, checked by Journear).`]);
+    expect(lines(el)).toEqual(['It’s posted under your account. Anyone can see it, and you can’t delete it.', 'Collecting a stamp doesn’t move any money or tokens.', `It uses Journear demo stamps (${STAMPS}, checked by Journear).`]);
     expect(el.querySelector('q')).toBeNull();
     for (const relayed of [true, false]) {
       const book = render([fn('add_message', { text: 'gm' })], { receiver: BOOK, relayed });
       expect(headline(book)).toBe('Stamp Trail wants to add a message to the demo guestbook');
       expect(book.querySelector('div.summary-quote')?.textContent).toBe('gm');
-      expect(book.querySelector('div.summary-quote')?.previousElementSibling?.textContent).toBe('The message:');
+      expect(book.querySelector('div.summary-quote')?.previousElementSibling?.textContent).toBe('The message');
       expect(lines(book)).toContain(`It uses Journear demo guestbook (${BOOK}, checked by Journear).`);
       expect(book.querySelector('.warning-box')).toBeNull();
       expect(book.getAttribute('data-reviewed')).toBe('true');
@@ -155,5 +156,34 @@ describe('reviewed NEAR calls in the window (D885)', () => {
       expect(now, JSON.stringify(o)).toBe(render(actions, { ...o, accounts: null }).outerHTML);
       expect(now).not.toContain('checked by Journear).');
     }
+  });
+
+  it('after D884: no fee row and no "None of your NEAR" row in a reviewed call’s main view; its own line answers cost; the free fee first in the details', () => {
+    const el = render([fn('collect', { stamp: 'arrival' })]);
+    const main = [...el.children].filter((c) => !c.matches('details')).map((c) => c.textContent).join('\n');
+    expect(main).not.toContain('NEAR leaving your account');
+    expect(main).not.toContain('Network fee');
+    expect(main).toMatch(/doesn’t move any money/u);
+    expect(details(el).textContent).toContain('Free. Sponsored by Stamp Trail.');
+    // Today's screen has the row (D884), with no entry.
+    expect([...render([fn('collect', { stamp: 'arrival' })], { accounts: null }).children].filter((c) => !c.matches('details')).map((c) => c.textContent).join('\n')).toContain('NEAR leaving your account');
+    // The user's own transaction keeps the fee they pay in the main view.
+    const own = render([fn('collect', { stamp: 'own_fare' })], { relayed: false });
+    expect([...own.querySelectorAll('dl.summary-facts dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`)).toContain('Network fee: A small amount of NEAR, from your account');
+  });
+
+  it('after D886: the Signature message’s note says what this signature is bound to, never that it counts on every network', () => {
+    for (const testApp of [true, false]) {
+      const el = renderMessage({ testApp });
+      const notes = [...el.querySelectorAll('.note')].map((n) => n.textContent);
+      expect(notes).toContain(testApp ? REVIEWED_SIGNATURE_TEST_APP_NOTE : REVIEWED_SIGNATURE_NOTE);
+      expect(el.textContent).not.toContain('counts on every network');
+      expect(el.querySelector('.warning-box')).toBeNull();
+      // Today's screen for any other message keeps D886's note.
+      const other = renderMessage({ message: 'Stamp my passport: someone.testnet', testApp, watch: false });
+      expect(other.textContent).toContain(testApp ? NO_NETWORK_TEST_APP_NOTE : NO_NETWORK_NOTE);
+    }
+    expect(REVIEWED_SIGNATURE_NOTE).toBe('This signature names your account and the stamps program. The program accepts it only from your account, to collect this one stamp.');
+    expect(REVIEWED_SIGNATURE_TEST_APP_NOTE).toBe('This app is a test version, so don’t keep real money in this account. This signature names your account and the stamps program, which accepts it only from your account, to collect this one stamp.');
   });
 });

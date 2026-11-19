@@ -481,21 +481,22 @@ function validUntilView(d: Dom, deadline: bigint, nowMs?: number): Child[] {
 
 /**
  * A sponsored action's details: the request's own facts (chain, account, the account helper it uses or sets up, the
- * relayer that pays, until when it can run, its nonce and gas floor), then every call as an EVM transaction's details
- * show one. EIP-7702 is named only here, folded (D831).
+ * relayer that sends it, until when it can run, its nonce and gas floor), then every call as an EVM transaction's
+ * details show one. EIP-7702 is named only here, folded (D831). Who the fee is free thanks to is the fee row's, first
+ * in the details (D884): these say only who sends it.
  */
 function sponsoredDetails(d: Dom, decoded: Extract<DecodedApproval, { kind: 'evm_sponsored' }>, nowMs: number | undefined): HTMLElement[] {
   const s = decoded.subject;
   const helper = `${BRAND.product} account helper v${decoded.helperVersion}`;
   return [
-    d.h('h3', {}, `EVM action, network fee paid by ${BRAND.company}`),
+    d.h('h3', {}, `EVM action, sent for you by ${BRAND.company}`),
     facts(d, [
       row(d, 'Chain ID', mono(d, String(decoded.chainId))),
       row(d, 'From', mono(d, s.account)),
       s.authNonce !== null
         ? row(d, 'Account setup (EIP-7702)', 'account helper ', mono(d, s.delegate), ` ✓ ${helper}, chain `, mono(d, String(decoded.chainId)), ', account nonce ', mono(d, String(s.authNonce)))
         : row(d, 'Account helper (EIP-7702)', mono(d, s.delegate), ` ✓ ${helper} (no setup in this approval)`),
-      row(d, 'Paid by', `${BRAND.company}’s relayer `, mono(d, s.relayer)),
+      row(d, 'Sent by', `${BRAND.company}’s relayer `, mono(d, s.relayer)),
       row(d, 'Valid until', ...validUntilView(d, s.deadline, nowMs)),
       row(d, 'Action nonce', mono(d, String(s.executeNonce))),
       row(d, 'Gas floor', mono(d, `${s.minGas} gas`)),
@@ -514,10 +515,15 @@ function typedNode(d: Dom, n: TypedDataNode): HTMLElement {
   return d.h('li', {}, `${n.name} (${n.type}): `, n.value === null ? mono(d, `shown as hex ${n.hex ?? ''}`) : mono(d, n.value));
 }
 
+/** The words above a message being signed (D886): what the box below is. */
+export const MESSAGE_LABEL = 'The message';
+
+/** A message being signed: its label, then the message itself (D886: right after the headline and the facts). */
 function message(d: Dom, m: DecodedMessage): HTMLElement[] {
+  const label = d.h('p', { class: 'message-label' }, MESSAGE_LABEL);
   return m.text === null
-    ? [warnLine(d, 'warn', 'This message isn’t readable text, so it’s shown in its raw form.'), mono(d, m.hex)]
-    : [d.h('pre', { class: 'message' }, m.text)];
+    ? [label, warnLine(d, 'warn', 'This message isn’t readable text, so it’s shown in its raw form.'), mono(d, m.hex)]
+    : [label, d.h('pre', { class: 'message' }, m.text)];
 }
 
 // ---- NEAR (D723) ----
@@ -531,13 +537,17 @@ export const NEAR_ACCOUNT_CONTROL_BANNER =
   `Danger: this changes who controls a NEAR account. Whoever gets control can take everything in it, and ${BRAND.product} can’t undo it. Approve only if you started this change yourself. An app should almost never need it.`;
 
 /**
- * A delegate action (NEP-366): who pays, in the details (D858: the window's cost row and the amber "acts as you" line
- * say it above the fold); and, for a live app only, that it names no network (amber, D858: a test app's delegate
- * actions are bound to the test network by the vault, D726, D729).
+ * A delegate action (NEP-366): who sends it and pays, in the details (D858, D884: the app is named as the sponsor, as
+ * the fee row names it; the amber "acts as you" line is above the fold); and, for a live app only, that it names no
+ * network (amber, D858: a test app's delegate actions are bound to the test network by the vault, D726, D729).
+ * `relayer` names the app as every sentence does (its app part: the header's name, bold and bidi-isolated).
  */
 export const NEAR_DELEGATE_NOTES = {
-  relayer:
-    'Someone else (a relayer) sends this for you. They pay the network fee and prepay any NEAR it attaches or sends; if an action fails, that NEAR comes back to your account. The actions run as your account.',
+  relayer: Object.freeze([
+    'Someone else sends this for you, sponsored by ',
+    { kind: 'app' },
+    '. They pay the network fee and any NEAR it attaches or sends. If an action fails, that NEAR comes back to your account. The actions run as your account.',
+  ]) as SummaryText,
   network: (network: 'testnet' | 'mainnet'): string => `This approval could also be used on the ${network === 'testnet' ? 'real NEAR network' : 'NEAR test network'} if your account exists there.`,
 } as const;
 
@@ -808,8 +818,19 @@ function nearTotal(d: Dom, actions: readonly NearAction[], receiver: string, me:
  * relayer's. What the user's own balance loses is only what acts on the user's account itself: a DeleteAccount
  * (everything), Stake (locked) and a global contract's burn.
  */
-/** A delegate action's total when it takes none of the user's NEAR. */
-export const NEAR_DELEGATE_NONE = 'None of your NEAR (someone else pays the fee and any NEAR it sends). Tokens it moves are yours.';
+/**
+ * A delegate action's total when it takes none of the user's NEAR (D884: who pays the fee and the NEAR it sends is in
+ * the details). With a contract call in it, the call can move tokens the user holds at that contract: said, as a
+ * warning, never as "tokens it moves are yours" (which reads as "you get them"); with no call, nothing about tokens.
+ */
+export const NEAR_DELEGATE_NONE = 'None of your NEAR.';
+export const NEAR_DELEGATE_NONE_TOKENS = 'None of your NEAR. It can move tokens you hold.';
+
+/**
+ * The label of the NEAR a delegate action attaches or sends: the sender's, never the user's (nearcore). Who that is
+ * (the app, as the fee row names it) is in the details (D884); Journear's relay refuses such a deposit (D732).
+ */
+export const NEAR_SENT_FOR_YOU = 'NEAR it sends, not from your account';
 
 function nearDelegateTotal(d: Dom, actions: readonly NearAction[], receiver: string, me: string): HTMLElement {
   const t = nearDeposits(actions);
@@ -820,10 +841,10 @@ function nearDelegateTotal(d: Dom, actions: readonly NearAction[], receiver: str
       ? d.h('strong', { class: 'danger words' }, NEAR_OWN_CONTRACT_TOTAL)
       : t.burned > 0n
         ? d.h('strong', {}, nearDisplay(t.burned))
-        : d.h('strong', { class: 'words' }, NEAR_DELEGATE_NONE);
+        : d.h('strong', { class: 'words' }, actions.some((a) => a.type === 'functionCall') ? NEAR_DELEGATE_NONE_TOKENS : NEAR_DELEGATE_NONE);
   return facts(d, [
     row(d, 'NEAR leaving your account', leaving),
-    t.total > 0n && row(d, 'NEAR it sends, paid by someone else', mono(d, nearDisplay(t.total))),
+    t.total > 0n && row(d, NEAR_SENT_FOR_YOU, mono(d, nearDisplay(t.total))),
     t.burned > 0n && row(d, 'NEAR destroyed', d.h('strong', { class: 'danger' }, nearDisplay(t.burned)), ' (gone for good: publishing a shared program)'),
     t.staked > 0n && row(d, 'NEAR locked up for staking', mono(d, nearDisplay(t.staked))),
   ]);
@@ -898,24 +919,36 @@ function nearTx(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_tx' }>, 
   };
 }
 
+/** The details' heading of a relayed NEAR action (D884: who it is sponsored by is the fee row's and the note's). */
+export const NEAR_DELEGATE_HEADING = 'NEAR transaction, sent for you';
+
 /**
- * D858 (as corrected 2026-11-18): a relayed NEAR action. The fee row says only that someone else pays the fee. When no
- * NEAR of the user's leaves (`summary.noNearLeaves`), the "NEAR leaving your account: None of your NEAR…" row, which
- * only repeated it, is dropped (NEAR it sends is someone else's, in its own row); otherwise the total stays as decided
- * (D723, D729). The acts-as-you risk is the summary's amber line. For a live app only, the amber line that the
+ * D858 (as corrected 2026-11-18): a relayed NEAR action. The fee row (in the details, D884) says only that the fee is
+ * free, sponsored by the app. When no NEAR of the user's leaves (`summary.noNearLeaves`), the "NEAR leaving your
+ * account: None of your NEAR…" row is dropped (NEAR it sends is someone else's, in its own row); otherwise the total
+ * stays as decided (D723, D729). The acts-as-you risk is the summary's amber line. For a live app only, the amber line that the
  * approval names no network; a test app's is bound to the test network by the vault (D726, D729).
  */
-function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext, summary: ApprovalSummary): Parts {
+function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_delegate' }>, ctx: NearRenderContext, summary: ApprovalSummary, appName: string): Parts {
   const da = decoded.delegate;
   const alerts = nearAlerts(d, da.actions, da.receiverId, da.senderId);
   const sent = nearDeposits(da.actions).total;
   return {
     alerts: ctx.testApp ? alerts : { ...alerts, warnings: [...alerts.warnings, risk(5, 'warn no-network', [NEAR_DELEGATE_NOTES.network(decoded.network)], [])] },
     network: nearNetworkLine('near_delegate', decoded.network, ctx),
-    visible: summary.noNearLeaves ? (sent > 0n ? [facts(d, [row(d, 'NEAR it sends, paid by someone else', mono(d, nearDisplay(sent)))])] : []) : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
+    // D884 (as amended by its review): with the fee row gone from the main view, a plain relayed call still says what
+    // it costs: "None of your NEAR." (no word about tokens: the summary sees none move; the amber line says the call
+    // can use what the user keeps with the contract).
+    // D885: a reviewed call's own lines say it moves no money or tokens: no "None of your NEAR" row to repeat it (it
+    // attaches no NEAR, so there is no "sent for you" row either).
+    visible: summary.reviewed
+      ? []
+      : summary.noNearLeaves
+      ? [facts(d, [row(d, 'NEAR leaving your account', d.h('strong', { class: 'words' }, NEAR_DELEGATE_NONE)), sent > 0n && row(d, NEAR_SENT_FOR_YOU, mono(d, nearDisplay(sent)))])]
+      : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
     details: [
-      d.h('h3', {}, 'NEAR transaction, fee paid by a relayer'),
-      d.h('p', { class: 'muted relayer-note' }, NEAR_DELEGATE_NOTES.relayer),
+      d.h('h3', {}, NEAR_DELEGATE_HEADING),
+      d.h('p', { class: 'muted relayer-note' }, ...summaryNodes(d, sponsorText(NEAR_DELEGATE_NOTES.relayer, appName), appName)),
       facts(d, [
         row(d, 'Network', nearNetworkDetail('near_delegate', decoded.network, ctx)),
         row(d, 'From', mono(d, da.senderId)),
@@ -948,10 +981,11 @@ const asciiEscaped = (s: string): string => Array.from(s, (ch) => (/^[\x20-\x7e]
 
 /**
  * A NEP-413 message. The signature stamp's own message, exactly (`summary.reviewed`, D885: for the build's reviewed
- * stamps account, naming the user's own account, no callback), has no "proves to" or recipient lines: the reviewed
- * contract only checks it to collect that stamp, and the summary names it as checked by Journear.
+ * stamps account, naming the user's own account, no callback), has no "proves to" or recipient lines and, in place of
+ * the note that a signature counts on every network, one that says what this one is bound to: the reviewed contract
+ * only checks it to collect that stamp, and the summary names it as checked by Journear.
  */
-function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: NearRenderContext, summary: ApprovalSummary): Parts {
+function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: ApprovalRenderContext, summary: ApprovalSummary): Parts {
   const p = decoded.payload;
   const host = originHost(ctx.parentOrigin);
   const sameSite = host !== null && (p.recipient === host || p.recipient === ctx.parentOrigin);
@@ -968,7 +1002,12 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
       ],
     },
     network: null,
-    visible: [facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]), noteLine(d, 'note', NO_NETWORK_NOTE), ...message(d, decoded.message)],
+    // D886: the message first, then the blue note about networks.
+    visible: [
+      facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]),
+      ...message(d, decoded.message),
+      summary.reviewed ? noteLine(d, ctx.testAppNoteHere === true ? 'note reviewed-signature test-app' : 'note reviewed-signature', ctx.testAppNoteHere === true ? REVIEWED_SIGNATURE_TEST_APP_NOTE : REVIEWED_SIGNATURE_NOTE) : noNetworkNote(d, decoded.message.text === null ? 'unreadable' : 'message', ctx),
+    ],
     details: [d.h('h3', {}, 'Prove this NEAR account is yours (NEP-413)'), facts(d, [row(d, 'Recipient', mono(d, p.recipient)), row(d, 'Nonce', mono(d, toHex(p.nonce)))])],
   };
 }
@@ -978,7 +1017,60 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
  * Shown on message and raw requests: their approval binds no network (an empty context in the approval digest; user
  * decision 2026-10-28, docs/decisions.md). Typed data shows its domain's chain instead.
  */
-export const NO_NETWORK_NOTE = 'This signature isn’t tied to one network.';
+/**
+ * A signature that names no network (a message or raw signing, D35) counts on every network the key is used on, test
+ * or real (D886). Said after the message, in blue: what it means for the user and what to do, never "isn't tied to one
+ * network" alone. For a test app (without the real-money demo) one box says it with the test-app note's advice, which
+ * would otherwise read "works only with test money", untrue for such a signature: the page leaves its own note out.
+ */
+export const NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included. Sign only if you agree with what the message says.';
+export const NO_NETWORK_TEST_APP_NOTE =
+  'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you agree with what the message says, and don’t keep real money in this account.';
+/**
+ * A message Journear can't read (D884 review): the user can't agree with hex, so the advice is raw signing's, and the
+ * box is amber like the line above it that says Journear can't read the message (never calmer than it).
+ */
+export const UNREADABLE_NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included. Sign only if you know why you’re signing it.';
+export const UNREADABLE_NO_NETWORK_TEST_APP_NOTE =
+  'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you know why you’re signing it, and don’t keep real money in this account.';
+/** Raw signing's (no message to agree with; its red line says to reject it unless the user is sure). */
+export const RAW_NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included.';
+export const RAW_NO_NETWORK_TEST_APP_NOTE = 'This app is a test version, but your signature counts on every network, real-money ones included. Don’t keep real money in this account.';
+/**
+ * The Signature stamp's own message, exactly (D885): in place of the "counts on every network" note, what this signature
+ * is bound to. It names the user's account and Journear's reviewed stamps program as its recipient, and that program
+ * accepts it only from this account and only to collect this stamp, once (its reviewed code). For a test app the
+ * test-app note's advice too (the page leaves its own note out on a message).
+ */
+export const REVIEWED_SIGNATURE_NOTE = 'This signature names your account and the stamps program. The program accepts it only from your account, to collect this one stamp.';
+export const REVIEWED_SIGNATURE_TEST_APP_NOTE =
+  'This app is a test version, so don’t keep real money in this account. This signature names your account and the stamps program, which accepts it only from your account, to collect this one stamp.';
+
+function noNetworkNote(d: Dom, kind: 'message' | 'unreadable' | 'raw', ctx: ApprovalRenderContext): HTMLElement {
+  const test = ctx.testAppNoteHere === true;
+  const cls = test ? 'note no-network test-app' : 'note no-network';
+  if (kind === 'unreadable') return warnLine(d, cls, test ? UNREADABLE_NO_NETWORK_TEST_APP_NOTE : UNREADABLE_NO_NETWORK_NOTE);
+  return noteLine(d, cls, kind === 'message' ? (test ? NO_NETWORK_TEST_APP_NOTE : NO_NETWORK_NOTE) : test ? RAW_NO_NETWORK_TEST_APP_NOTE : RAW_NO_NETWORK_NOTE);
+}
+
+/**
+ * Which test-app note a request gets (D886): `here`, the window's own network note says it (a message or raw signing);
+ * `not_only_test`, typed data that names no network (its amber line says it may work anywhere), so the plain note's
+ * "works only with test money" would be untrue; `plain` otherwise.
+ */
+export function testAppNoteKind(decoded: DecodedApproval): 'here' | 'not_only_test' | 'plain' {
+  switch (decoded.kind) {
+    case 'personal_sign':
+    case 'stellar_message':
+    case 'near_message':
+    case 'raw':
+      return 'here';
+    case 'eip712':
+      return decoded.chainId === null ? 'not_only_test' : 'plain';
+    default:
+      return 'plain';
+  }
+}
 
 /** The confirm and sign pattern's headline (D765): what a plain transfer sends, in one number and its unit. */
 export interface AmountHeadline {
@@ -1219,6 +1311,17 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string, book?: IdBook, re
  */
 const quoteBox = (d: Dom, text: string): HTMLElement => d.h('div', { class: 'summary-quote', attrs: { dir: 'auto' } }, text);
 
+/** What a sentence that names the app as its sponsor says when the app has no name to show (D884). */
+export const NO_APP_NAME = 'the app';
+
+/**
+ * A sentence naming the app as a free fee's sponsor (D884), with "the app" in place of the name when there is none to
+ * show (the window always has a registered name today, D686: this only keeps such a sentence true and whole).
+ */
+function sponsorText(t: SummaryText, appName: string): SummaryText {
+  return appName.trim() === '' ? t.map((p) => (typeof p !== 'string' && p.kind === 'app' ? NO_APP_NAME : p)) : t;
+}
+
 /** A sentence and, right under it, the rows of the long values it names first (D859). */
 function withRows(d: Dom, book: IdBook, el: HTMLElement, refs: readonly IdRef[]): HTMLElement[] {
   const r = book.rows(d, refs);
@@ -1306,9 +1409,14 @@ export interface ApprovalRenderContext extends NearRenderContext {
   readonly detailsExtra?: readonly (HTMLElement | null)[];
   /** The page's clock (ms): a sponsored action's "Valid until" names its date when it isn't today. */
   readonly nowMs?: number;
+  /**
+   * A test app's note is the plain one (no real-money demo): a message or raw signing then says it in its own network
+   * note, and the page leaves its note out (D886, `testAppNoteKind`).
+   */
+  readonly testAppNoteHere?: boolean;
 }
 
-function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext, summary: ApprovalSummary, nowMs?: number): Parts {
+function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: ApprovalRenderContext, summary: ApprovalSummary, nowMs?: number): Parts {
   switch (decoded.kind) {
     case 'stellar_tx': {
       const memo = decoded.envelope.tx.memo;
@@ -1341,7 +1449,8 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
       return {
         alerts: NO_ALERTS,
         network: null,
-        visible: [noteLine(d, 'note', NO_NETWORK_NOTE), ...message(d, decoded.message)],
+        // D886: the message right after the headline, then the blue note about networks.
+        visible: [...message(d, decoded.message), noNetworkNote(d, decoded.message.text === null ? 'unreadable' : 'message', near)],
         details: [d.h('h3', {}, decoded.kind === 'personal_sign' ? 'Sign a message' : 'Sign a Stellar message'), facts(d, [row(d, 'Size', `${decoded.message.length} bytes`)]), d.h('p', {}, 'The message’s bytes:'), mono(d, decoded.message.hex)],
       };
     case 'evm_tx':
@@ -1368,20 +1477,20 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
         // The red risk line is the summary's (raw_signing).
         alerts: NO_ALERTS,
         network: null,
-        visible: [noteLine(d, 'note', NO_NETWORK_NOTE)],
+        visible: [noNetworkNote(d, 'raw', near)],
         details: [d.h('h3', {}, 'Raw signature'), mono(d, decoded.hex)],
       };
     case 'near_tx':
       return nearTx(d, decoded, near);
     case 'near_delegate':
-      return nearDelegate(d, decoded, near, summary);
+      return nearDelegate(d, decoded, near, summary, appName);
     case 'near_message':
       return nearMessage(d, decoded, near, summary);
   }
 }
 
 /** Typed data whose domain names no chain (D35). */
-export const TYPED_DATA_NO_CHAIN = 'This signature isn’t tied to one network. It may work on any of them.';
+export const TYPED_DATA_NO_CHAIN = 'This signature names no network, so it may work on any of them, real-money ones included.';
 
 /** The body of the approval screen for a decoded request. */
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
@@ -1406,19 +1515,25 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   book.place(headRefs);
   const network = summary.network ? summaryNodes(d, summary.network, appName) : k.network ? [k.network] : null;
   const headline = amountHeadline(decoded);
-  // D877: a fee the user doesn't pay reads "Free." in bold after a check mark, in the same row (no box of its own). The
-  // mark is about the fee only, never a sign the request is safe: on a window with a red box it is in the plain text
+  // D884: a fee row in the main view means the user pays it. A fee the user doesn't pay ("Free. Sponsored by {App}.")
+  // is only in the details, first. D877's look stays there: "Free." in bold after a check mark, in the row; the mark
+  // is about the fee only, never a sign the request is safe, so on a window with a red box it is in the plain text
   // colour, not the success green (colour matches meaning, D853).
-  const fee = summary.fee && row(d, 'Network fee', ...(summary.freeFee ? [icon(d, 'check', 'fee-free-mark')] : []), ...summaryNodes(d, summary.fee, appName));
-  if (fee && summary.freeFee) fee[1]?.classList.add(...(red.length > 0 ? ['fee-free', 'beside-danger'] : ['fee-free']));
-  const keyFacts = [network && row(d, 'Network', ...network), fee];
+  const paid = summary.fee && !summary.freeFee ? row(d, 'Network fee', ...summaryNodes(d, summary.fee, appName)) : null;
+  const free = summary.fee && summary.freeFee ? row(d, 'Network fee', icon(d, 'check', 'fee-free-mark'), ...summaryNodes(d, sponsorText(summary.fee, appName), appName)) : null;
+  free?.[1]?.classList.add(...(red.length > 0 ? ['fee-free', 'beside-danger'] : ['fee-free']));
+  const keyFacts = [network && row(d, 'Network', ...network), paid];
   const lines = summary.lines.flatMap((l) => {
     const refs: IdRef[] = [];
-    // A line with quoted words (D885): its label as a sentence, then the words in their own box, never inside it.
+    // A line with quoted words (D885): its label as a message's label is shown ("The note", "The message", as D886's
+    // "The message"), then the words in their own box, never inside a sentence.
     const quoted = l.filter((part): part is { kind: 'quote'; text: string } => typeof part !== 'string' && part.kind === 'quote');
-    const words = l.filter((part) => typeof part === 'string' || part.kind !== 'quote');
-    const p = d.h('p', { class: 'summary-line' }, ...summaryNodes(d, words, appName, book, refs));
-    return [...withRows(d, book, p, refs), ...quoted.map((q) => quoteBox(d, q.text))];
+    if (quoted.length > 0) {
+      const label = l.filter((part) => typeof part === 'string' || part.kind !== 'quote');
+      return [d.h('p', { class: 'message-label' }, ...summaryNodes(d, label, appName)), ...quoted.map((q) => quoteBox(d, q.text))];
+    }
+    const p = d.h('p', { class: 'summary-line' }, ...summaryNodes(d, l, appName, book, refs));
+    return withRows(d, book, p, refs);
   });
   const amberBox = riskBox(d, 'warning', amber, appName, book);
   return d.h(
@@ -1436,6 +1551,6 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
     amberBox,
     ...k.visible,
     ...(ctx.notes ?? []),
-    detailsSection(d, [...(ctx.detailsExtra ?? []), ...k.details]),
+    detailsSection(d, [free ? rows(d, [free], 'jp-kv facts fee-facts') : null, ...(ctx.detailsExtra ?? []), ...k.details]),
   );
 }

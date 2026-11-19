@@ -80,7 +80,7 @@ p.summary-line {
 }
 
 /* A reviewed call's quoted words (D885): the app's or the user's text, never in the flow of Journear's sentences. Its
-   own line and box, the look of a signed message's box; nothing drawn in it (stacked marks, a long word) can paint
+   own line and box under a `p.message-label`, the look of a signed message's box (pre.message, D886); nothing drawn in it (stacked marks, a long word) can paint
    outside it. The words are text only, their direction isolated (dir="auto"). */
 div.summary-quote {
   display: block;
@@ -97,6 +97,7 @@ div.summary-quote {
   border: 1px solid var(--jp-border);
   border-radius: var(--jp-radius-md);
   padding: var(--jp-space-3);
+  margin: 0;
   unicode-bidi: isolate;
 }
 
@@ -164,6 +165,11 @@ dl.id-rows dd + dt {
 /* The mark speaks of the fee only: beside a red box it takes the text colour, so it never reads as "safe". */
 .request dl.jp-kv dd.fee-free.beside-danger .fee-free-mark {
   color: var(--jp-fg);
+}
+
+/* A free fee is only in the details, first (D884): one rule above it; the "Your account" row's own rule is under it. */
+.request-details > .details-body > dl.fee-facts {
+  border-bottom: 0;
 }
 
 /* The user's own account in the details (D876): as the rows above, then Copy and what it did. */
@@ -594,4 +600,11 @@ p.countdown {
   font-size: var(--jp-text-sm);
   /* The digits don't shift the line as they change. */
   font-variant-numeric: tabular-nums;
+}
+
+/* The words above a message being signed (D886): small and quiet, the message's box right under them. */
+.request p.message-label {
+  margin: 0 0 calc(-1 * var(--jp-space-2));
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
 }

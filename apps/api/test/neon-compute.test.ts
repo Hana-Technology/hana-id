@@ -97,6 +97,15 @@ describe('noteNeonWake (D872)', () => {
     expect(await events('2031-04')).toEqual([]);
   });
 
+  it('a start within 48 hours of the 1st counts the hours before it as awake (both alerts at once on a tiny plan); a later start only itself', async () => {
+    const inside = Date.UTC(2031, 5, 1, 1, 0); // 1 h in: 1 h awake × 4 CU = 4 compute-hours, over the plan's 1
+    await noteNeonWake(withPlan(TINY), inside, inside, inside);
+    expect((await events('2031-06')).map((e) => e.threshold)).toEqual([70, 90]);
+    const outside = Date.UTC(2031, 6, 3, 0, 1); // 48 h 1 min in: partial, nothing assumed
+    await noteNeonWake(withPlan(TINY), outside, outside, outside);
+    expect(await events('2031-07')).toEqual([]);
+  });
+
   it('a jump past both thresholds raises both events; a failed D1 write is logged, never thrown', async () => {
     const t = Date.UTC(2031, 4, 2, 8, 0);
     await noteNeonWake(withPlan(TINY), t, t + 10 * MIN, t + 10 * MIN); // 10 min open: 66.7%

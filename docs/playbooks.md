@@ -1811,7 +1811,7 @@ A `neon_compute_high` security event (once at 70% and once at 90% a month), or t
 **Signals**
 
 - A `neon_compute_high` row in the admin's security events, emailed by the feed, with `threshold` (70 or 90), `hoursUsed` and `allowanceHours`.
-- The “Neon compute this month” tile on System status amber (70%) or red (90%), or amber with “Counted since <date>” in the month counting began (the deploy that turned it on): that month the tile and the alerts know only what was counted since then, so Neon’s own figure is higher and an alert can come late or not at all.
+- The “Neon compute this month” tile on System status amber (70%) or red (90%), or amber with “Counted since <date>” when counting began more than 48 hours into the month (the deploy that turned it on): that month the tile and the alerts know only what was counted since then, so Neon’s own figure is higher and an alert can come late or not at all. A start within 48 hours counts the hours before it as awake, so that month’s figure errs high.
 - Neon's own email saying the project has used most of its compute allowance.
 
 **Impact**

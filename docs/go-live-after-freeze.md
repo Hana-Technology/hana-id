@@ -464,11 +464,12 @@ commit. Any `FAIL:` line: stop and ask. (The two demo sites aren't stamped, so `
    `*/5 * * * *` and `*/15 * * * *`; `apps/api/wrangler.jsonc` has the same `NEON_PLAN`. In Cloudflare: the admin
    Worker, Settings, Triggers shows both (a trigger change can take up to 15 minutes to reach every location, and a run
    can be missed meanwhile).
-2. An hour later, open **System status**: **Neon compute this month** reads, in amber, "Counted since <the deploy's
-   date>: about N compute-hours since then. Neon's own figure for the month is higher: check Neon's console." It counts
-   only from this deploy, so for this month Neon's own figure is the one to read (on a deploy on the reset day it is
-   only the hours before the deploy). From the next 1st it reads "About N of 100 compute-hours used this month
-   (estimate)", green below 70%.
+2. An hour later, open **System status**: **Neon compute this month** reads "About N of 100 compute-hours used this
+   month (estimate) (counting began on 1 Dec; the hours before are assumed awake)", green below 70%. A deploy within
+   48 hours of the reset counts the month as whole, the hours before the deploy taken as fully awake (at most 12
+   compute-hours), so the figure errs high. Deployed later than that, it reads in amber "Counted since <date>: about N
+   compute-hours since then. Neon's own figure for the month is higher: check Neon's console." for that month: read
+   Neon's own figure then.
 3. In Neon's console the compute's activity, over a quiet hour, should show it suspended for about 10 minutes of
    every 15. If it never suspends: tell the assistant (something still opens the database every few minutes, or
    Hyperdrive's pool keeps it awake: [Neon compute on the free plan](operations.md#neon-compute-on-the-free-plan-d872)

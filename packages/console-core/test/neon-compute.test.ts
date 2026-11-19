@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NEON_SUSPEND_MS, addWake, alertLevel, countedPartly, allowancePct, awakeMsAt, computeHours, neonMonth, neonPlanOf, neonWakeInput, nextMonthStart } from '../src/neon-compute.ts';
+import { NEON_SUSPEND_MS, addWake, alertLevel, assumedAwakeMs, countedPartly, estimateAwakeMs, allowancePct, awakeMsAt, computeHours, neonMonth, neonPlanOf, neonWakeInput, nextMonthStart } from '../src/neon-compute.ts';
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 10, 19, 10, 0);
@@ -62,12 +62,23 @@ describe('Neon compute estimate (D872)', () => {
     expect(nextMonthStart('2026-12')).toBe(Date.UTC(2027, 0, 1));
   });
 
-  it('counting that began after the 1st is partial (the deploy’s month); from 00:00 on the 1st it is the whole month', () => {
-    expect(countedPartly('2026-11', Date.UTC(2026, 10, 1, 0, 0, 3))).toBe(false);
-    expect(countedPartly('2026-11', Date.UTC(2026, 10, 1, 0, 29))).toBe(false);
-    expect(countedPartly('2026-11', Date.UTC(2026, 10, 1, 0, 31))).toBe(true);
+  it('a start more than 48 hours into the month is partial; within 48 hours the month counts whole, the hours before assumed awake', () => {
+    const H = 60 * MIN;
+    const nov1 = Date.UTC(2026, 10, 1);
+    expect(countedPartly('2026-11', nov1 + 3_000)).toBe(false);
+    expect(countedPartly('2026-11', nov1 + 10 * H)).toBe(false);
+    expect(countedPartly('2026-11', nov1 + 48 * H)).toBe(false);
+    expect(countedPartly('2026-11', nov1 + 48 * H + 1)).toBe(true);
     expect(countedPartly('2026-11', Date.UTC(2026, 10, 27, 9, 0))).toBe(true);
-    expect(countedPartly('2026-12', Date.UTC(2026, 11, 1, 0, 0))).toBe(false);
+    // Within 48 h: the lead is added as awake (at most 48 h, 12 compute-hours at 0.25 CU); a partial month adds nothing.
+    expect(assumedAwakeMs('2026-11', nov1 + 10 * H)).toBe(10 * H);
+    expect(assumedAwakeMs('2026-11', nov1 + 48 * H)).toBe(48 * H);
+    expect(computeHours(assumedAwakeMs('2026-11', nov1 + 48 * H), 0.25)).toBe(12);
+    expect(assumedAwakeMs('2026-11', nov1 + 48 * H + 1)).toBe(0);
+    const row = addWake(null, '2026-11', nov1 + 10 * H, nov1 + 10 * H + 10_000);
+    expect(estimateAwakeMs('2026-11', row, nov1 + 11 * H)).toBe(10 * H + 10_000 + NEON_SUSPEND_MS);
+    const late = addWake(null, '2026-11', nov1 + 50 * H, nov1 + 50 * H + 10_000);
+    expect(estimateAwakeMs('2026-11', late, nov1 + 51 * H)).toBe(10_000 + NEON_SUSPEND_MS);
   });
 
   it('a window across midnight on the 1st counts in the month it began; the next month starts its own row', () => {

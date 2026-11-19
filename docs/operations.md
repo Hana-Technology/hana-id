@@ -993,9 +993,12 @@ size. A usage event's note goes with its write after the response; a console rep
 from 70%, red from 90%, and one `neon_compute_high` security event at 70% and one at 90% each month (emailed by the
 feed; playbook `neon-compute-high`). It is an estimate: it can't see Neon's own activity, a script run by hand, or a
 compute's start-up seconds, and it takes Neon's period to be the calendar month in UTC. **The month it starts:**
-counting begins at the deploy that turns it on (`first_at`); in that month the tile reads "Counted since <date>: about
-N compute-hours since then. Neon's own figure for the month is higher: check Neon's console." in amber, with no
-projection and no share of the allowance, and the alerts know only what was counted. **D1 writes:** each wake-up is one
+counting begins at the deploy that turns it on (`first_at`). Within 48 hours of the 1st the month counts as whole: the
+hours before are added as fully awake (at most 48 h, 12 compute-hours at 0.25 CU), so the figure errs high, and the
+tile adds "(counting began on <date>; the hours before are assumed awake)"; the alerts use the same figure. Later than
+48 hours, the tile reads "Counted since <date>: about N compute-hours since then. Neon's own figure for the month is
+higher: check Neon's console." in amber, with no projection and no share of the allowance, and the alerts know only
+what was counted. **D1 writes:** each wake-up is one
 row written (`neon_compute`), each admin run's report one or two more (`neon_admin_runs`); at 15 that is about 96 × 2 +
 96 × 3 ≈ 480 a day for the admin's runs, 24 to 72 for the API's hourly work, plus **one per usage event** (each login,
 session, derive and the rest): well inside D1's free 100,000 rows written a day on a testnet, but it is a write per

@@ -8,7 +8,7 @@
 // report's note goes after its answer (`noteNeonWakeAfter`, the RPC's `waitUntil`); a cron run notes at its end; the
 // admin's report (`AdminRpc.neonWake`) is answered after the note. Never throws; a failed note is logged
 // (`neon_wake_failed`) and only makes the estimate lower.
-import { NEON_ALERT_PCTS, NEON_RUN_KEYS, NEON_SUSPEND_MS, type NeonRunKey, type NeonStatus, alertLevel, allowancePct, awakeMsAt, computeHours, neonMonth, neonPlanOf } from '@hana-id/console-core';
+import { NEON_ALERT_PCTS, NEON_RUN_KEYS, NEON_SUSPEND_MS, type NeonRunKey, type NeonStatus, alertLevel, allowancePct, computeHours, estimateAwakeMs, neonMonth, neonPlanOf } from '@hana-id/console-core';
 import { eventId } from '../changes/guard.ts';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
@@ -33,9 +33,10 @@ export const NEON_WAKE_SQL = `INSERT INTO neon_compute (month, first_at, closed_
                    ELSE MAX(neon_compute.win_end, excluded.win_end) END,
     windows = neon_compute.windows + CASE WHEN excluded.win_start > neon_compute.win_end THEN 1 ELSE 0 END,
     updated_at = excluded.updated_at
-  RETURNING closed_ms, win_start, win_end, alerted`;
+  RETURNING first_at, closed_ms, win_start, win_end, alerted`;
 
 interface WakeRow {
+  first_at: number;
   closed_ms: number;
   win_start: number;
   win_end: number;
@@ -53,7 +54,8 @@ export async function noteNeonWake(env: Pick<Env, 'DB' | 'NEON_PLAN'>, startMs: 
     const month = neonMonth(startMs);
     const row = await env.DB.prepare(NEON_WAKE_SQL).bind(month, startMs, Math.max(startMs, endMs) + NEON_SUSPEND_MS, now).first<WakeRow>();
     if (!row) return;
-    const hours = computeHours(awakeMsAt({ closedMs: row.closed_ms, winStart: row.win_start, winEnd: row.win_end }, Math.max(now, endMs)), plan.computeUnits);
+    // The hours before a start within the month's first 48 h count as awake (errs high); a later start counts only itself.
+    const hours = computeHours(estimateAwakeMs(month, { firstAt: Number(row.first_at), closedMs: row.closed_ms, winStart: row.win_start, winEnd: row.win_end }, Math.max(now, endMs)), plan.computeUnits);
     const pct = allowancePct(hours, plan);
     const level = alertLevel(pct);
     if (level <= row.alerted) return;

@@ -83,15 +83,36 @@ export function addWake(row: NeonMonthRow | null, month: string, startMs: number
 /** A wake-up report whose start is further than this from the API's clock is refused (`AdminRpc.neonWake`). */
 export const NEON_WAKE_MAX_SKEW_MS = 60 * 60_000;
 
+const monthStart = (month: string): number => {
+  const [y, m] = month.split('-').map(Number) as [number, number];
+  return Date.UTC(y, m - 1, 1);
+};
+
 /**
- * Whether counting began after the month's start (the month of the deploy that turned it on): the crons wake Neon at
- * 00:00 on the 1st, so a first wake-up more than this after it means the month's earlier hours weren't counted.
+ * The crons wake Neon at 00:00 on the 1st, so a month's first wake-up later than this after it is a late start (the
+ * month of the deploy that turned counting on), worth saying on the tile.
  */
 export const NEON_PARTIAL_AFTER_MS = 30 * 60_000;
-export const countedPartly = (month: string, firstAt: number): boolean => {
-  const [y, m] = month.split('-').map(Number) as [number, number];
-  return firstAt - Date.UTC(y, m - 1, 1) > NEON_PARTIAL_AFTER_MS;
-};
+/**
+ * A start later than this (48 hours) leaves the month partly counted: the tile says so and claims no share of the
+ * allowance. Within it the month counts as whole, the hours before the start assumed awake (`assumedAwakeMs`: at most
+ * 48 h, 12 compute-hours at 0.25 CU), so the figure errs high.
+ */
+export const NEON_LATE_START_MS = 48 * 60 * 60_000;
+
+/** Counting began more than 48 hours into the month: the month's figure is partial (D872). */
+export const countedPartly = (month: string, firstAt: number): boolean => firstAt - monthStart(month) > NEON_LATE_START_MS;
+
+/** The time before a late start within 48 hours, added to the estimate as if awake (0 for a start on time or a partial month). */
+export function assumedAwakeMs(month: string, firstAt: number): number {
+  const lead = firstAt - monthStart(month);
+  return lead > 0 && lead <= NEON_LATE_START_MS ? lead : 0;
+}
+
+/** The month's estimate at `now`: the awake windows counted, plus the assumed-awake hours of a start within 48 h. */
+export function estimateAwakeMs(month: string, row: Pick<NeonMonthRow, 'firstAt' | 'closedMs' | 'winStart' | 'winEnd'>, now: number): number {
+  return awakeMsAt(row, now) + assumedAwakeMs(month, row.firstAt);
+}
 
 /** The month's estimated awake time at `now`: the closed windows, plus the open one up to now (never beyond its end). */
 export function awakeMsAt(row: Pick<NeonMonthRow, 'closedMs' | 'winStart' | 'winEnd'>, now: number): number {

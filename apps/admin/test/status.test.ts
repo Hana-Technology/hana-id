@@ -1143,8 +1143,8 @@ describe('Neon compute on the free plan (D872)', () => {
 
   it('a month counted only from the deploy: amber, “Counted since”, no projection and no share of the allowance', async () => {
     tracked();
-    // Counting began 45 minutes into the 1st (after the 30 minutes a whole month allows).
-    const first = Date.UTC(new Date(NOW).getUTCFullYear(), new Date(NOW).getUTCMonth(), 1, 0, 45);
+    // Counting began 49 hours into the month (past the 48 hours a whole month allows).
+    const first = Date.UTC(new Date(NOW).getUTCFullYear(), new Date(NOW).getUTCMonth(), 3, 1, 0);
     const partial = neon(4, {});
     (partial as { row: Record<string, unknown> }).row.firstAt = first;
     world.api = apiAnswer({ neon: partial });
@@ -1156,6 +1156,25 @@ describe('Neon compute on the free plan (D872)', () => {
     expect(t).toMatchObject({ state: 'warning', detail: `Counted since ${day}: about 1 compute-hours since then. Neon’s own figure for the month is higher: check Neon’s console.` });
     expect(t.detail).not.toMatch(/of 100|on course/u);
     expect(issuesOf(a, 'neon-compute').map((i) => [i.severity, i.title, i.playbook?.id])).toEqual([['warning', `This month’s Neon estimate only counts from ${day}: check Neon’s console for the month’s figure`, 'neon-compute-high']]);
+  });
+
+  it('a start within 48 hours of the 1st: the month counts whole, the hours before assumed awake, and the tile says so', async () => {
+    tracked();
+    const first = Date.UTC(new Date(NOW).getUTCFullYear(), new Date(NOW).getUTCMonth(), 1, 8, 0);
+    const n = neon(160); // 40 compute-hours counted
+    (n as { row: Record<string, unknown> }).row.firstAt = first;
+    world.api = apiAnswer({ neon: n });
+    const a = await read();
+    const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][new Date(first).getUTCMonth()];
+    // + 8 h assumed awake × 0.25 CU = 2 more: about 42.
+    expect(tile(a, 'neon-compute')).toMatchObject({ state: 'ok' });
+    expect(tile(a, 'neon-compute').detail).toMatch(new RegExp(`^About 42 of 100 compute-hours used this month \\(estimate\\) \\(counting began on 1 ${mon}; the hours before are assumed awake\\) · 340 wake-ups · on course for about \\d+ · starts again on 1 [A-Z][a-z]{2}$`, 'u'));
+    // Exactly 48 hours in: still whole; a start at 00:00 on the 1st says nothing about it.
+    (n as { row: Record<string, unknown> }).row.firstAt = Date.UTC(new Date(NOW).getUTCFullYear(), new Date(NOW).getUTCMonth(), 3, 0, 0);
+    expect(tile(await read(), 'neon-compute').detail).toContain('the hours before are assumed awake');
+    expect(tile(await read(), 'neon-compute').detail).not.toMatch(/^Counted since/u);
+    world.api = apiAnswer({ neon: neon(160) });
+    expect(tile(await read(), 'neon-compute').detail).not.toContain('assumed awake');
   });
 
   it('Neon down: the 15-minute tile says the run happened but couldn’t reach the database', async () => {

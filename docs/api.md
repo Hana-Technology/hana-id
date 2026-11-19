@@ -2986,9 +2986,11 @@ words: a tile's `stateLabel` (Working, Paused: needs a person, Low on money, Not
 right now) and `explain: {why, steps, code}`, its lines' `stateLabel`, and an issue's `steps` and `code`; without
 `evmRelay` one grey `evm-relay` tile "Not set up", never an issue. **Neon compute this month** (`neon-compute`, group
 `headroom`, D872) judges `systemStatus`'s `neon`: the month's estimate against `computeHoursPerMonth`, `warning` from
-70%, `critical` from 90% (playbook `neon-compute-high`); in a month whose `firstAt` is over 30 minutes after the 1st,
-`warning` "Counted since <date>: about N compute-hours since then. Neon's own figure for the month is higher: check
-Neon's console." (no projection, no share; `critical` if what was counted reaches 90%); `not_measured` without the admin's `NEON_PLAN`, `unknown`
+70%, `critical` from 90% (playbook `neon-compute-high`); a `firstAt` within 48 hours of the 1st adds the time
+before it as awake (the detail says "(counting began on <date>; the hours before are assumed awake)" when it is over
+30 minutes; the API's alerts count it too); one later than 48 hours is `warning` "Counted since <date>: about N
+compute-hours since then. Neon's own figure for the month is higher: check Neon's console." (no projection, no share;
+`critical` if what was counted reaches 90%); `not_measured` without the admin's `NEON_PLAN`, `unknown`
 for an older API, an API without the plan or a D1 failure. With `NEON_PLAN` the answer makes no Hyperdrive connection:
 the `ledger` tile and the admin cron tiles read `neon.runs` (the `ledger` tile `unknown` with no report or one older
 than 35 minutes). `500 internal` only if the

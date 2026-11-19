@@ -27,7 +27,7 @@ import { type WatchdogStatusView, findingsOf, statusView } from './monitoring.ts
 import { arr, num, obj, plainString, str } from './plain.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 import { MIN_PARTITIONS_AHEAD } from './security.ts';
-import { NEON_ALERT_PCTS, type NeonStatus, allowancePct, awakeMsAt, computeHours, countedPartly, nextMonthStart } from '@hana-id/console-core';
+import { NEON_ALERT_PCTS, NEON_PARTIAL_AFTER_MS, type NeonStatus, allowancePct, assumedAwakeMs, awakeMsAt, computeHours, countedPartly, estimateAwakeMs, nextMonthStart } from '@hana-id/console-core';
 import { opsEveryMinutesOf, tracksNeon } from './neon.ts';
 import { type ChainPlain, LINE_LABELS, STATE_LABELS, evmRelayPath, evmRelayTitle, explainChain } from './evm-relay.ts';
 import { type BuildRead, CallCount, type NearEndpoint, type NearRead, SLOW_MS, buildTargets, nearEndpoints, readBuild, readNear } from './status-probes.ts';
@@ -1031,13 +1031,15 @@ function neonComputeTile(r: Report, env: Env, s: Sources): void {
   if (n.state === 'off') return r.add({ ...base, detail: 'Not tracked: the API has no Neon plan set (NEON_PLAN)' }, [{ severity: 'unknown', title: 'This console tracks Neon’s compute but the API doesn’t', action: 'Run `gen <env>` for the API and redeploy it: both get NEON_PLAN from the manifest.', key: 'api-off' }]);
   if (n.state === 'error') return r.add({ ...base, detail: 'Unknown: the API couldn’t read its count' }, [{ severity: 'unknown', title: 'The API couldn’t read its Neon compute count', action: 'Check the API’s D1 (the Hot D1 tile) and that migration 0023 is applied.', key: 'error' }]);
   const now = r.now;
-  const awake = n.row ? awakeMsAt(n.row, now) : 0;
+  // A start within the month's first 48 h: the hours before it count as awake; a later one counts only itself (below).
+  const partial = n.row ? countedPartly(n.month, n.row.firstAt) : false;
+  const awake = n.row ? (partial ? awakeMsAt(n.row, now) : estimateAwakeMs(n.month, n.row, now)) : 0;
   const hours = computeHours(awake, n.plan.computeUnits);
   const pct = allowancePct(hours, n.plan);
   const [amber, red] = NEON_ALERT_PCTS;
   // D872 after review: counting began after the 1st (the deploy's month): Neon counted hours this tile never saw, so no
   // projection and no share of the allowance; amber all month, and the alerts only know what was counted.
-  if (n.row && countedPartly(n.month, n.row.firstAt)) {
+  if (n.row && partial) {
     const since = new Date(n.row.firstAt);
     const sinceText = `${since.getUTCDate()} ${MONTH_NAMES[since.getUTCMonth()]!.slice(0, 3)}`;
     const problems: Problem[] = [
@@ -1057,7 +1059,9 @@ function neonComputeTile(r: Report, env: Env, s: Sources): void {
   const projected = (hours * (end - start)) / elapsed;
   const resets = `${new Date(end).getUTCDate()} ${MONTH_NAMES[new Date(end).getUTCMonth()]!.slice(0, 3)}`;
   const used = `about ${hoursText(hours)} of ${n.plan.computeHoursPerMonth} compute-hours used this month (estimate)`;
-  const detail = `${used[0]!.toUpperCase()}${used.slice(1)} · ${n.row?.windows ?? 0} wake-up${n.row?.windows === 1 ? '' : 's'} · on course for about ${hoursText(projected)} · starts again on ${resets}`;
+  const lateStart = n.row && assumedAwakeMs(n.month, n.row.firstAt) > NEON_PARTIAL_AFTER_MS ? new Date(n.row.firstAt) : null;
+  const lateText = lateStart ? ` (counting began on ${lateStart.getUTCDate()} ${MONTH_NAMES[lateStart.getUTCMonth()]!.slice(0, 3)}; the hours before are assumed awake)` : '';
+  const detail = `${used[0]!.toUpperCase()}${used.slice(1)}${lateText} · ${n.row?.windows ?? 0} wake-up${n.row?.windows === 1 ? '' : 's'} · on course for about ${hoursText(projected)} · starts again on ${resets}`;
   const problems: Problem[] = [];
   if (pct >= amber) {
     problems.push({

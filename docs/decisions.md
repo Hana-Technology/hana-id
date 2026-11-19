@@ -14942,10 +14942,13 @@ code two classifier variants and the settlement's bound on a receipt's gas price
      after the email depends on the env's delays: yes with production-length ones; on sandbox-dev (60-second
      `changeDelayMs`, `appChangeDelayMs`, `ownerGrantDelayMs`) the email can come after the change took effect, as it
      already could at 5 minutes (`docs/security.md`).
-  10. **The month counting began.** `neon_compute.first_at` (0023, still editable); when the first wake-up is more than
-      30 minutes after the 1st, the tile says "Counted since <date>: about N compute-hours since then. Neon's own figure
-      for the month is higher: check Neon's console." in amber, with no projection and no share of the allowance; that
-      month's alerts know only what was counted (the playbook says so).
+  10. **The month counting began.** `neon_compute.first_at` (0023, still editable). A start within 48 hours of the 1st
+      counts the month as whole, the hours before added as fully awake (at most 12 compute-hours at 0.25 CU, so the
+      figure errs high; in the alerts too), the tile's detail adding "(counting began on <date>; the hours before are
+      assumed awake)": so a deploy on the reset day isn't amber all month. A later start: the tile says "Counted since
+      <date>: about N compute-hours since then. Neon's own figure for the month is higher: check Neon's console." in
+      amber, with no projection and no share of the allowance; that month's alerts know only what was counted (the
+      playbook says so).
   11. **Smaller points.** A wake-up report must start within an hour of the API's clock; a late report reaching into
       the open window moves its start back, one entirely before it adds its own length (both err high). A console
       report's note goes after its answer (`waitUntil`). A staff page's clock is read before its connection opens.

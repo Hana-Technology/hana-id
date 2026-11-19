@@ -148,6 +148,17 @@ export type FollowProve =
   | { method: 'google'; nonce: string; loginHint: string | null }
   | { method: 'email'; purpose: 'session' | 'link_new' | 'link_account' | 'link_change'; commitment: Record<string, unknown> };
 
+/**
+ * How long after a sign-in method starts opening a wallet it counts as recent (spec "Notices", D259): the sign-in window
+ * shows a recent one as a full banner at every sign-in. D875: an older one is still offered to the wallet's own
+ * sign-in (its root) with Remove, as one quiet line that each device shows once. The vault (which banners it sends),
+ * the sign-in window (how it shows them) and Passport Home (what it tells the user) all read this one value.
+ */
+export const RECENT_LINK_MS = 7 * 24 * 3_600_000;
+
+/** Whether a member active since `effectiveAtMs` is still recent at `nowMs` (both on the server-corrected clock). */
+export const isRecentLink = (effectiveAtMs: number, nowMs: number): boolean => effectiveAtMs > nowMs - RECENT_LINK_MS;
+
 /** A link banner (spec "Notices"): a sign-in method of this wallet's account, and what this popup may do about it. */
 export interface LinkBanner {
   provider: string;

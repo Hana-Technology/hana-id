@@ -5,6 +5,7 @@
 import {
   API_REQUEST_ID_SDK_MIN,
   type FollowNotice,
+  MAX_MEMBERS,
   type RelayPayload,
   addressesFromCkdSecret,
   autoLinkNonce,
@@ -28,7 +29,7 @@ import {
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { HanaEnv } from '../../src/hana-env.ts';
 import { openRecordStore } from '../../src/vault/record.ts';
-import { AFTERWORD_MS, EMAIL_CONSENT_ROUNDS, LOGIN_PENDING_MS, PIN_READ_TIMEOUT_MS } from '../../src/vault/login.ts';
+import { AFTERWORD_MS, EMAIL_CONSENT_ROUNDS, LOGIN_PENDING_MS, PIN_READ_TIMEOUT_MS, RECENT_LINK_MS } from '../../src/vault/login.ts';
 import { ACCOUNT_CACHE_MS } from '../../src/vault/vault.ts';
 import {
   Browser,
@@ -41,6 +42,7 @@ import {
   type LoginRun,
   SCOPE,
   ABORTED_READS_CAP,
+  START_MS,
   SUB,
   type Tab,
   apiError,
@@ -975,6 +977,148 @@ describe('D865: an active member’s own notice, and its removal of itself', () 
     await answer(m.t, m.run, 2, { error: 'email_cancelled' });
     expect((await m.pending).error?.code).toBe('login_cancelled');
     expect(m.b.backend.count('/v1/login')).toBe(0);
+  });
+});
+
+describe('D875: the wallet’s own sign-in is offered Remove for an added sign-in at any age', () => {
+  const DAY = 24 * 3_600_000;
+  /** A second email member (the fake chain takes it; the real one allows one sign-in per kind): a non-root viewer. */
+  const E2 = { provider: 'email', sub: `e1.${'Z'.repeat(43)}` };
+  const relayReads = (t: Tab, run: LoginRun, n: number): number => {
+    const { id } = followSlot(run.params.followKey as Uint8Array, n);
+    return t.browser.backend.calls.filter((c) => c.method === 'GET' && c.path === `/v1/login-relay/${id}`).length;
+  };
+
+  /** A Google login of G, the root of an account that E has opened since `since`: the reply, then the slot-2 notice. */
+  async function rootLogin(since: number) {
+    const b = emailBrowser();
+    b.backend.opened.add(hex(ik(G)));
+    b.backend.link(G, E, { active: true, effectiveAtMs: since });
+    const t = await tab(b);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    await googleAnswer(t, run);
+    const reply = await pending;
+    const done = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'done' }>;
+    return { b, t, run, reply, done };
+  }
+
+  const removeOffer = (since: number) => ({
+    t: 'done',
+    banners: [{ provider: 'email', status: 'active', effectiveAtMs: since, fresh: false, action: { kind: 'unlink', prove: { method: 'google', nonce: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u), loginHint: SUB } } }],
+  });
+
+  it('8 days and 1 year after it started: the root is offered Remove, proved and relayed exactly as within the 7 days', async () => {
+    for (const age of [8 * DAY, 365 * DAY]) {
+      const since = START_MS - age;
+      const { b, t, run, reply, done } = await rootLogin(since);
+      expect(reply.error, `${age}`).toBeUndefined();
+      expect(done, `${age}`).toEqual(removeOffer(since));
+      const prove = done.banners[0]!.action!.prove as { nonce: string };
+      await answer(t, run, 2, { idToken: await g.token(tokenClaims({ nonce: prove.nonce }, {}, t.browser.timers.now)), as: 'proof' });
+      expect(await notice(t, run, 4), `${age}`).toEqual({ t: 'done', banners: [] });
+      expect(b.backend.calls.filter((c) => c.path === '/v1/link/unlink').map((c) => c.body), `${age}`).toEqual([expect.objectContaining({ memberKey: hex(ik(E)), epoch: 1 })]);
+      expect(b.backend.accounts.get(hex(ik(G)))!.members, `${age}`).toEqual([]);
+      await t.waitUntil(() => linkEvents(t).some((e) => (e as { status: string }).status === 'removed'), 'linkChanged removed');
+    }
+  });
+
+  it('the proof is the same as within the 7 days: another nonce, or a cancel nonce for that member, removes nothing', async () => {
+    const { b, t, run } = await rootLogin(START_MS - 30 * DAY);
+    await answer(t, run, 2, { idToken: await g.token(tokenClaims({ nonce: 'x'.repeat(43) }, {}, t.browser.timers.now)), as: 'proof' });
+    expect(await notice(t, run, 4)).toEqual({ t: 'stop', code: 'token_invalid' });
+    expect(b.backend.count('/v1/link/unlink')).toBe(0);
+    expect(b.backend.accounts.get(hex(ik(G)))!.members).toHaveLength(1);
+  });
+
+  it('an email root: the Remove of its older Google sign-in is an email code over the unlink commitment for that member', async () => {
+    const b = emailBrowser();
+    b.backend.opened.add(hex(ik(E)));
+    b.backend.link(E, G, { active: true, effectiveAtMs: START_MS - 90 * DAY });
+    const t = await tab(b);
+    const pending = t.request('hana_login', { method: 'email' });
+    const run = await popupHello(t);
+    await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, {}, t.browser.timers.now)) });
+    expect((await pending).error).toBeUndefined();
+    const done = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'done' }>;
+    expect(done.banners).toMatchObject([{ provider: 'google', status: 'active', fresh: false, action: { kind: 'unlink', prove: { method: 'email', purpose: 'link_change', commitment: { scopeId: SCOPE, action: 'unlink', rootIk: hex(ik(E)), memberIk: hex(ik(G)), epoch: 1 } } } }]);
+  });
+
+  it('within the 7 days nothing changed: the same banner with Remove, every sign-in', async () => {
+    for (const age of [0, DAY, RECENT_LINK_MS - 60_000]) {
+      const { done } = await rootLogin(START_MS - age);
+      expect(done, `${age}`).toEqual(removeOffer(START_MS - age));
+    }
+  });
+
+  it('non-root sign-ins gain nothing: an older added sign-in is sent to nobody but the root (a recent one, as before, without an action)', async () => {
+    for (const [age, sent] of [
+      [30 * DAY, false],
+      [DAY, true],
+    ] as const) {
+      const b = emailBrowser();
+      b.backend.opened.add(hex(ik(G)));
+      b.backend.link(G, E, { active: true, effectiveAtMs: START_MS - age });
+      b.backend.link(G, E2, { active: true, effectiveAtMs: START_MS - 40 * DAY });
+      const t = await tab(b);
+      const pending = t.request('hana_login', { method: 'email' });
+      const run = await popupHello(t);
+      await b.backend.writeRelay(run.params.relayId as string, run.params.relayKey as Uint8Array, { idToken: await issuer.token(emailClaims(run.params, { sub: E2.sub }, t.browser.timers.now)) });
+      // E2 is an active member: its own notice first (D865), kept.
+      expect((await notice(t, run, 2)).t).toBe('member_link');
+      await answer(t, run, 2, { choice: 'keep' });
+      expect((await pending).error).toBeUndefined();
+      const done = (await notice(t, run, 4)) as Extract<FollowNotice, { t: 'done' }>;
+      expect(done.banners, `${age}`).toEqual(sent ? [{ provider: 'email', status: 'active', effectiveAtMs: START_MS - age, fresh: false }] : []);
+    }
+  });
+
+  it('an older link comes after the others; with at most 3 members (MAX_MEMBERS) the window’s cap of 4 never drops one', async () => {
+    expect(MAX_MEMBERS).toBeLessThan(4);
+    const b = emailBrowser();
+    b.backend.opened.add(hex(ik(G)));
+    b.backend.link(G, E, { active: true, effectiveAtMs: START_MS - 30 * DAY });
+    for (let i = 0; i < MAX_MEMBERS - 1; i++) b.backend.link(G, { provider: 'email', sub: `e1.${String(i).repeat(43)}` }, { active: false, effectiveAtMs: START_MS + DAY + i });
+    const t = await tab(b);
+    const pending = t.request('hana_login');
+    const run = await popupHello(t);
+    await googleAnswer(t, run);
+    expect((await pending).error).toBeUndefined();
+    const done = (await notice(t, run, 2)) as Extract<FollowNotice, { t: 'done' }>;
+    expect(done.banners.map((x) => [x.status, x.action?.kind])).toEqual([
+      ['pending', 'cancel'],
+      ['pending', 'cancel'],
+      ['active', 'unlink'],
+    ]);
+    expect(done.banners[2]!.effectiveAtMs).toBe(START_MS - 30 * DAY);
+  });
+
+  it('no added login delay: the app has its answer before the popup says anything; the popup’s keep ends the vault’s wait at once', async () => {
+    const { b, t, run, reply, done } = await rootLogin(START_MS - 30 * DAY);
+    // The reply came before any answer in slot 3 (the vault's wait for it runs beside the login, never in front of it).
+    expect(reply.error).toBeUndefined();
+    expect(done.banners[0]?.action?.kind).toBe('unlink');
+    await t.waitUntil(() => relayReads(t, run, 3) > 0, 'the vault waits for slot 3');
+    // The popup has nothing to show (this device saw the line before): it answers keep, and the vault stops reading.
+    await answer(t, run, 2, { choice: 'keep' });
+    const { id } = followSlot(run.params.followKey as Uint8Array, 3);
+    await t.waitUntil(() => b.backend.relay.get(id) === 'consumed', 'the keep read');
+    await new Promise((r) => setTimeout(r, 100));
+    const after = relayReads(t, run, 3);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(relayReads(t, run, 3)).toBe(after);
+    expect(relayReads(t, run, 5)).toBe(0);
+    expect(b.backend.count('/v1/link/unlink')).toBe(0);
+    expect(b.backend.abortedRelayReads).toBe(0);
+  });
+
+  it('no answer at all (the window closed): the wait ends at AFTERWORD_MS as before, nothing relayed, no runaway read', async () => {
+    const { b, t, run } = await rootLogin(START_MS - 30 * DAY);
+    await t.waitUntil(() => relayReads(t, run, 3) > 0, 'the vault waits for slot 3');
+    t.browser.timers.advance(AFTERWORD_MS);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(b.backend.abortedRelayReads).toBe(0);
+    expect(b.backend.count('/v1/link/unlink')).toBe(0);
   });
 });
 

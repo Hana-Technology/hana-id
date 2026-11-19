@@ -37,6 +37,8 @@
 //   GET  /__e2e/evm-sponsor?appId=    {prepares, sends, executed, proofRefusals}: the routes' answers for that app
 //   POST /__e2e/links/expire          {rootSub}: the waiting period of the pending members of that root's accounts ends
 //                                     now (D864's "too late" path) → {moved}
+//   POST /__e2e/links/age             {rootSub, ageMs}: every member of that root's accounts started opening the wallet
+//                                     ageMs ago (D875's older links) → {moved}
 //   GET  /__e2e/wallets?address=<a>   [{userId, supportCode, internalId, scopeId, wallets: [{chain, address}],
 //                                     identities: [{provider, sub, role, status}]}]: the wallet directory's users listing
 //                                     that address (migration 0011, written by the Worker's own POST /v1/wallets/record;
@@ -588,6 +590,11 @@ export class MockApi {
       const { rootSub } = (await req.json()) as { rootSub?: unknown };
       if (typeof rootSub !== 'string') return json(400, { error: 'bad_request' });
       return json(200, { moved: this.chain.expirePending(rootSub) });
+    }
+    if (p === '/__e2e/links/age' && req.method === 'POST') {
+      const { rootSub, ageMs } = (await req.json()) as { rootSub?: unknown; ageMs?: unknown };
+      if (typeof rootSub !== 'string' || !Number.isSafeInteger(ageMs) || (ageMs as number) < 0) return json(400, { error: 'bad_request' });
+      return json(200, { moved: this.chain.ageMembers(rootSub, ageMs as number) });
     }
     const m = /^\/__e2e\/apps\/(pk_(?:test|live)_[1-9A-HJ-NP-Za-km-z]+)\/(revoke|shares)$/u.exec(p);
     if (m?.[2] === 'revoke' && req.method === 'POST') return json(200, { revoked: this.revokeApp(m[1] as string) });

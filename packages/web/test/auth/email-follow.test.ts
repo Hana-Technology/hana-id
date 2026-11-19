@@ -2,11 +2,11 @@
 // /login/email in batch 8b: case B's "Link and continue" (the ticket and the address's `sub` stored for the callback,
 // D139), and the follow-up mode: the vault's notices read from their slots (link_code, use_email, prove, done with
 // banners and their Cancel, stop) and the popup's answers written to the next slot.
-import { type FollowNotice, type RelayCiphertext, decryptRelayPayload, encryptRelayValue, followSlot, relayIdFor, sessionNonce } from '@hana-id/core';
+import { type FollowNotice, type LinkBanner, RECENT_LINK_MS, type RelayCiphertext, decryptRelayPayload, encryptRelayValue, followSlot, relayIdFor, sessionNonce } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthApi } from '../../src/auth/api.ts';
 import type { EmailApi } from '../../src/auth/email-api.ts';
-import { type EmailPage, startEmailPage } from '../../src/auth/email-page.ts';
+import { type EmailPage, KEEP_WRITE_MS, OLDER_LINK_NOTE, olderLinkText, startEmailPage } from '../../src/auth/email-page.ts';
 import { EMAIL_ENTRY_PREFIX } from '../../src/auth/email-storage.ts';
 import type { GoogleEmailFlow } from '../../src/auth/google.ts';
 import { EMAIL_PATH } from '../../src/auth/login-page.ts';
@@ -57,7 +57,7 @@ interface Setup {
 }
 
 /** The page with a login of an app with email: the context, and the login entry (`next` set: follow-up mode). */
-function setup(o: { next?: number; flow?: GoogleEmailFlow } = {}): Setup {
+function setup(o: { next?: number; flow?: GoogleEmailFlow; serverNow?: number; tickets?: Storage | null } = {}): Setup {
   const sessionPublicKey = crypto.getRandomValues(new Uint8Array(32));
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const expiresAtMs = 1_900_000_000_000;
@@ -116,10 +116,10 @@ function setup(o: { next?: number; flow?: GoogleEmailFlow } = {}): Setup {
         return null;
       }
       slots.delete(id);
-      return { ...v, serverTimeMs: NOW };
+      return { ...v, serverTimeMs: o.serverNow ?? NOW };
     }),
   };
-  const page = startEmailPage({ win, env: EMAIL_ENV, issuer: issuer as unknown as EmailApi, api: api as never, tickets: window.localStorage, now: () => NOW, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout: () => {}, ...(o.flow ? { googleEmailFlow: o.flow } : {}) });
+  const page = startEmailPage({ win, env: EMAIL_ENV, issuer: issuer as unknown as EmailApi, api: api as never, tickets: o.tickets === undefined ? window.localStorage : o.tickets, now: () => NOW, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout: () => {}, ...(o.flow ? { googleEmailFlow: o.flow } : {}) });
   return {
     win,
     page,
@@ -692,5 +692,133 @@ describe('D865: an active member’s own notice', () => {
     await vi.waitFor(() => expect(s.win.location.assigned).toHaveLength(1));
     const url = new URL(s.win.location.assigned[0]!);
     expect([url.searchParams.get('nonce'), url.searchParams.get('login_hint')]).toEqual(['U'.repeat(43), SUBJECT]);
+  });
+});
+
+describe('D875: the wallet’s own sign-in sees its older ways to sign in quietly, with Remove, once on each device', () => {
+  const DAY = 24 * 3_600_000;
+  const nonce = 'R'.repeat(43);
+  const older = (since: number, o: Partial<LinkBanner> = {}): LinkBanner => ({ provider: 'email', status: 'active', effectiveAtMs: since, fresh: false, action: { kind: 'unlink', prove: { method: 'google', nonce, loginHint: SUBJECT } }, ...o });
+  const seenKeys = (): string[] => Object.keys(window.localStorage).filter((k) => k.startsWith('hana.ol.'));
+  const slotWrites = (s: Setup, n: number): number => s.api.writeRelay.mock.calls.filter((c) => c[0] === followSlot(s.followKey, n).id).length;
+
+  async function signedIn(banners: LinkBanner[], o: { serverNow?: number; tickets?: Storage | null } = {}): Promise<Setup> {
+    resetDom();
+    const s = setup({ next: 2, ...o });
+    await s.vaultSays(2, { t: 'done', banners });
+    await vi.waitFor(() => expect(['banners', 'done']).toContain(s.page.stage));
+    return s;
+  }
+
+  it('8 days and 1 year on: one plain line (no box, no colour) with Remove, and the note; Remove asks for the same Google proof', async () => {
+    for (const age of [8 * DAY, 365 * DAY]) {
+      window.localStorage.clear();
+      const s = await signedIn([older(NOW - age)]);
+      expect(s.page.stage, `${age}`).toBe('banners');
+      expect(document.querySelector('h1')?.textContent).toBe('Signed in');
+      const line = document.querySelector('#link-older .older-link')!;
+      expect(line.textContent).toBe(`${olderLinkText('email', new Date(NOW - age).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }))} Remove`);
+      expect(line.textContent).toMatch(/^An email address also opens this wallet, since .+\. Remove$/u);
+      expect(document.getElementById('link-older')?.textContent).toContain(OLDER_LINK_NOTE);
+      expect(OLDER_LINK_NOTE).toBe('This is shown once on each device. You can see the ways to sign in to your wallet in Passport Home.');
+      // Quiet: not a banner, no alert box, no icon.
+      expect(document.getElementById('link-banners')).toBeNull();
+      expect(document.querySelector('#link-older .jp-alert, #link-older [role="alert"], #link-older svg')).toBeNull();
+      expect(document.getElementById('banner-unlink-0')?.textContent).toBe('Remove');
+      expect(seenKeys()).toHaveLength(1);
+      click('banner-unlink-0');
+      await flush();
+      const url = new URL(s.win.location.assigned[0]!);
+      expect([url.searchParams.get('nonce'), url.searchParams.get('login_hint')]).toEqual([nonce, SUBJECT]);
+      expect(url.searchParams.get('state')).toBe(followSlot(s.followKey, 3).id);
+    }
+  });
+
+  it('a Google account is named by its kind only too', async () => {
+    await signedIn([older(NOW - 30 * DAY, { provider: 'google' })]);
+    expect(document.querySelector('#link-older .older-link')?.textContent).toMatch(/^A Google account also opens this wallet, since .+\. Remove$/u);
+    expect(pageText()).not.toContain('@');
+  });
+
+  it('once on each device: the next sign-in closes at once, as with no banners, and tells the vault to stop waiting (keep)', async () => {
+    const first = await signedIn([older(NOW - 30 * DAY)]);
+    click('banner-done');
+    expect(first.win.closed).toBe(true);
+    const again = await signedIn([older(NOW - 30 * DAY)]);
+    await vi.waitFor(() => expect(again.win.closed).toBe(true));
+    expect(again.page.stage).toBe('done');
+    expect(pageText()).toContain('Signed in');
+    expect(document.getElementById('link-older')).toBeNull();
+    expect(await again.answerIn(3)).toEqual({ choice: 'keep' });
+    expect(slotWrites(again, 3)).toBe(1);
+  });
+
+  it('the keep write never holds the window: a write that hangs gives way after KEEP_WRITE_MS', async () => {
+    await signedIn([older(NOW - 30 * DAY)]);
+    resetDom();
+    const s = setup({ next: 2 });
+    s.api.writeRelay.mockImplementation(() => new Promise(() => undefined));
+    await s.vaultSays(2, { t: 'done', banners: [older(NOW - 30 * DAY)] });
+    await vi.waitFor(() => expect(s.win.closed).toBe(true));
+    expect(KEEP_WRITE_MS).toBeLessThanOrEqual(2_000);
+  });
+
+  it('within the first 7 days nothing changed: the full banner with Remove, at every sign-in, nothing remembered', async () => {
+    for (const age of [0, DAY, RECENT_LINK_MS - 60_000]) {
+      for (let round = 0; round < 2; round++) {
+        const s = await signedIn([older(NOW - age)]);
+        expect(s.page.stage, `${age} ${round}`).toBe('banners');
+        expect(document.querySelector('#link-banners li[data-status="active"]')?.textContent).toMatch(/^A sign-in method was added: email on .+\. Remove$/u);
+        expect(document.getElementById('link-older')).toBeNull();
+        expect(seenKeys()).toEqual([]);
+      }
+    }
+  });
+
+  it('a recent banner keeps the window open as before; a seen older line is shown with it (no extra wait)', async () => {
+    await signedIn([older(NOW - 30 * DAY)]);
+    const s = await signedIn([{ provider: 'email', status: 'pending', effectiveAtMs: NOW + DAY, fresh: true, action: { kind: 'cancel', prove: { method: 'google', nonce: 'C'.repeat(43), loginHint: SUBJECT } } }, older(NOW - 30 * DAY, { provider: 'google' })]);
+    expect(s.page.stage).toBe('banners');
+    expect(document.querySelectorAll('#link-banners li')).toHaveLength(1);
+    expect(document.querySelectorAll('#link-older .older-link')).toHaveLength(1);
+    expect(document.getElementById('banner-cancel-0')?.textContent).toBe('Cancel this link');
+    expect(document.getElementById('banner-unlink-1')?.textContent).toBe('Remove');
+    expect(slotWrites(s, 3)).toBe(0);
+  });
+
+  it('judged on the API’s time, as the vault judges it, not the device’s clock', async () => {
+    // The device's clock (NOW) says 6 days; the API says 8: an older link.
+    const s = await signedIn([older(NOW - 6 * DAY)], { serverNow: NOW + 2 * DAY });
+    expect(s.page.stage).toBe('banners');
+    expect(document.getElementById('link-older')).not.toBeNull();
+    // The device's clock says 8 days; the API says 6: still the full banner.
+    window.localStorage.clear();
+    await signedIn([older(NOW - 8 * DAY)], { serverNow: NOW - 2 * DAY });
+    expect(document.querySelector('#link-banners li')).not.toBeNull();
+    expect(document.getElementById('link-older')).toBeNull();
+  });
+
+  it('storage that can’t be read or written: shown every time (the safe side)', async () => {
+    const blocked = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    } as unknown as Storage;
+    for (const tickets of [blocked, null]) {
+      for (let round = 0; round < 2; round++) {
+        const s = await signedIn([older(NOW - 30 * DAY)], { tickets });
+        expect(s.page.stage, `${tickets === null ? 'none' : 'blocked'} ${round}`).toBe('banners');
+      }
+    }
+  });
+
+  it('an older line without an action (none was offered) that was seen: closes without writing anything', async () => {
+    await signedIn([older(NOW - 30 * DAY, { action: undefined })]);
+    const s = await signedIn([older(NOW - 30 * DAY, { action: undefined })]);
+    await vi.waitFor(() => expect(s.win.closed).toBe(true));
+    expect(slotWrites(s, 3)).toBe(0);
   });
 });

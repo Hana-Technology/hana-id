@@ -3,7 +3,7 @@
 // the sign-in, every state (one sign-in, several, waiting and started links, how each was added, a failed or slow
 // read, an answer about someone else), the contract's own rules for who may cancel or remove whom (derived from
 // contracts/hana-signer/src/tests/email.rs "Cancel and unlink"), the last sign-in's guard, and the words.
-import { identityKeyHex } from '@hana-id/core';
+import { RECENT_LINK_MS, identityKeyHex } from '@hana-id/core';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,7 +11,6 @@ import { jargonIn } from '@hana-id/brand/plain-words';
 import { dom } from '../../src/auth/dom.ts';
 import type { HomeScope } from '../../src/auth/home-api.ts';
 import {
-  BANNER_REMOVE_MS,
   type HomeSignIns,
   type HomeSignInsWho,
   SIGN_INS_READ_LIMIT_MS,
@@ -30,7 +29,6 @@ import {
   startHomeSignIns,
 } from '../../src/auth/home-sign-ins.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
-import { RECENT_LINK_MS } from '../../src/vault/login.ts';
 import { ENV, FakeWindow, pageText, resetDom } from './helpers.ts';
 
 const T0 = 1_800_000_000_000;
@@ -377,11 +375,23 @@ describe('what it shows', () => {
     expect(rowFacts({ key: 'k', kind: 'email', role: 'member', you: false, sinceMs: T0, auto: false })).toContain(SIGN_IN_TEXT.byHand);
   });
 
-  it('after the banner’s 7 days the wallet’s own sign-in is told plainly that nothing here can remove it (amber), and what to do', async () => {
-    const h = start(googleWithEmail(T0 - 8 * DAY, true), asGoogle);
-    await shown(h);
-    const other = document.querySelector('#home-sign-ins-list > li[data-role="member"]');
-    expect(other?.querySelector('.home-sign-in-risk')?.textContent).toContain(SIGN_IN_TEXT.removeNone);
+  it('D875: after the banner’s 7 days the wallet’s own sign-in is told where Remove still is (plain, no amber), and what to do if it isn’t offered', async () => {
+    for (const age of [8 * DAY, 365 * DAY]) {
+      resetDom();
+      const h = start(googleWithEmail(T0 - age, true), asGoogle);
+      await shown(h);
+      const other = document.querySelector('#home-sign-ins-list > li[data-role="member"]')!;
+      expect(other.querySelector('.home-sign-in-risk'), `${age}`).toBeNull();
+      const how = [...other.querySelectorAll('.home-sign-in-how p')].map((p) => p.textContent);
+      expect(how, `${age}`).toEqual([
+        'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.',
+        'The sign-in window offers this once on each device. Not offered? Try signing in in a private window.',
+      ]);
+      expect(other.textContent).not.toContain('Nothing can remove it');
+      expect(other.textContent).not.toContain('before');
+      // It sends the user to sign in, so the section says once to sign out of the app first.
+      expect(document.getElementById('home-sign-ins-sign-out-first')?.textContent).toBe(SIGN_IN_TEXT.signOutFirst);
+    }
   });
 
   it('the signed-in address is text only, and masked once the sign-in ends', async () => {
@@ -441,7 +451,7 @@ describe('who may cancel or remove whom (links.rs; tests/email.rs “Cancel and 
               if (rr === 'first') expect(p).toBeNull();
               if (acts) expect(p!.kind.startsWith('cancel') ? mayCancel(v, r) : mayRemove(v, r)).toBe(true);
               if (rr === 'waiting' && mayCancel(v, r)) expect(p?.kind.startsWith('cancel')).toBe(true);
-              if (rr === 'member' && mayRemove(v, r)) expect(['remove_own', 'remove_at_sign_in', 'remove_none']).toContain(p?.kind);
+              if (rr === 'member' && mayRemove(v, r)) expect(['remove_own', 'remove_at_sign_in', 'remove_at_sign_in_once']).toContain(p?.kind);
             }
           }
         }
@@ -454,15 +464,21 @@ describe('who may cancel or remove whom (links.rs; tests/email.rs “Cancel and 
     expect(pointerFor(viewer('waiting', 'g', 'google'), row('waiting', 'g', { kind: 'google', you: true }), T0)).toEqual({ kind: 'cancel_own_none' });
     expect(pointerFor(viewer('first', 'g'), row('waiting', 'e'), T0)).toEqual({ kind: 'cancel_at_sign_in' });
     expect(pointerFor(viewer('member', 'e', 'email'), row('member', 'e', { you: true }), T0)).toEqual({ kind: 'remove_own' });
-    expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - DAY }), T0)).toEqual({ kind: 'remove_at_sign_in', untilMs: T0 - DAY + BANNER_REMOVE_MS });
-    expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - BANNER_REMOVE_MS }), T0)).toEqual({ kind: 'remove_none' });
+    expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - DAY }), T0)).toEqual({ kind: 'remove_at_sign_in', untilMs: T0 - DAY + RECENT_LINK_MS });
+    // D875: past the 7 days (the sign-in window's own boundary, core relay.ts), still a place to remove it, at any age.
+    expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - RECENT_LINK_MS + 1 }), T0)).toMatchObject({ kind: 'remove_at_sign_in' });
+    for (const age of [RECENT_LINK_MS, 8 * DAY, 365 * DAY, T0]) expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - age }), T0), `${age}`).toEqual({ kind: 'remove_at_sign_in_once' });
+    // Nobody else gains anything from the age: another added sign-in still can't remove it.
+    expect(pointerFor(viewer('member', 'p'), row('member', 'e', { sinceMs: T0 - 365 * DAY }), T0)).toEqual({ kind: 'not_yours' });
     expect(pointerFor(viewer('member', 'p'), row('member', 'e'), T0)).toEqual({ kind: 'not_yours' });
     expect(pointerFor(viewer('waiting', 'p'), row('member', 'e'), T0)).toBeNull();
     expect(pointerFor(viewer('waiting', 'p'), row('waiting', 'e'), T0)).toBeNull();
   });
 
-  it('the banner’s 7 days are the sign-in window’s own (vault/login.ts RECENT_LINK_MS)', () => {
-    expect(BANNER_REMOVE_MS).toBe(RECENT_LINK_MS);
+  it('the 7 days are the sign-in window’s own: Home reads the vault’s RECENT_LINK_MS (core relay.ts), not a copy', async () => {
+    const vault = await import('../../src/vault/login.ts');
+    expect(vault.RECENT_LINK_MS).toBe(RECENT_LINK_MS);
+    expect(readFileSync(resolve(process.cwd(), 'src/auth/home-sign-ins.ts'), 'utf8')).not.toMatch(/7 \* 24 \* 3_600_000/u);
   });
 
   it('three kinds: an added sign-in viewing another added one is told only who can remove it', async () => {
@@ -642,10 +658,12 @@ describe('the lines that send the user to sign in (D874 as amended)', () => {
     expect(document.querySelectorAll('#home-sign-ins-sign-out-first')).toHaveLength(1);
     expect(document.getElementById('home-sign-ins-sign-out-first')?.textContent).toBe(SIGN_IN_TEXT.signOutFirst);
     resetDom();
-    const none = start(googleWithEmail(T0 - 8 * DAY, true), asGoogle);
+    const none = start(googleWithEmail(T0 - 8 * DAY, true), asEmail);
     await shown(none);
-    expect(document.getElementById('home-sign-ins-sign-out-first')).toBeNull();
-    expect(pointerSignsIn({ kind: 'remove_none' })).toBe(false);
+    // The added email viewing itself: removed from its own sign-in (D865), which also sends the user to sign in.
+    expect(document.querySelectorAll('#home-sign-ins-sign-out-first')).toHaveLength(1);
+    expect(pointerSignsIn({ kind: 'remove_at_sign_in_once' })).toBe(true);
+    expect(pointerSignsIn({ kind: 'not_yours' })).toBe(false);
     expect(pointerSignsIn({ kind: 'cancel_own_email' })).toBe(true);
   });
 });
@@ -662,7 +680,7 @@ describe('the model', () => {
 describe('words (D853)', () => {
   it('no banned word in any sentence the section can show', () => {
     const samples: string[] = [...Object.values(SIGN_IN_TEXT)];
-    for (const p of [{ kind: 'remove_own' }, { kind: 'remove_at_sign_in', untilMs: T0 }] as const) for (const kind of ['email', 'google'] as const) samples.push(...pointerText(p, row('member', 'e', { kind })).lines);
+    for (const p of [{ kind: 'remove_own' }, { kind: 'remove_at_sign_in', untilMs: T0 }, { kind: 'remove_at_sign_in_once' }] as const) for (const kind of ['email', 'google'] as const) samples.push(...pointerText(p, row('member', 'e', { kind })).lines);
     samples.push(...rowFacts(row('member', 'e')), ...rowFacts(row('waiting', 'e')));
     for (const s of samples) expect(jargonIn(s), s).toEqual([]);
   });

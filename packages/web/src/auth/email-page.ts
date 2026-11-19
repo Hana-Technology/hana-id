@@ -54,7 +54,10 @@
 // - `use_email` (case A that can't link): only "Sign in with email";
 // - `prove`: a link method's proof (Google: the vault's nonce and account; email: a code over its commitment);
 // - `done`: "Signed in", or the link banners first (a pending method with Cancel, one just added); a banner's action
-//   is a proof, then the vault's answer;
+//   is a proof, then the vault's answer. D875: for the wallet's own sign-in, an active method past its first 7 days
+//   (`RECENT_LINK_MS`, on the API's time from the read) is one plain line with Remove, shown once on each device
+//   (`localStorage` on authOrigin, `hana.ol.<id>`, an opaque hash of the line's kind and date). When nothing is left
+//   to show, the window answers `{choice: 'keep'}` (so the vault stops waiting) and closes as with no banners;
 // - `stop`: why the login ended (a pending link: when it activates).
 // - `link_waiting` (D864): this email sign-in was refused because the email itself waits to join a wallet (someone
 //   linked it to a Google account with one code to this address): the screen says so, with the date the link starts
@@ -90,6 +93,10 @@ import {
   encryptRelayPayload,
   followSlot,
   isFollowNotice,
+  isRecentLink,
+  sha256,
+  toHex,
+  utf8,
 } from '@hana-id/core';
 import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
@@ -209,6 +216,15 @@ const STOP_TEXT: Record<string, string> = {
  */
 export const LINK_DELAY_TEXT =
   '“Link and continue” lets this email open the same wallet too. If this isn’t a Gmail or Google Workspace address, the link starts working after a waiting period (24 hours; shorter in a test version), and you can cancel it until then.';
+
+/**
+ * D875: the wallet's own sign-in sees its older ways to sign in (past their first 7 days) as plain lines with Remove,
+ * once on each device. What a line says (by kind only, as the banners do), and the note under them.
+ */
+export const olderLinkText = (provider: string, since: string): string => `${provider === 'email' ? 'An email address' : 'A Google account'} also opens this wallet, since ${since}.`;
+export const OLDER_LINK_NOTE = `This is shown once on each device. You can see the ways to sign in to your wallet in ${BRAND.home}.`;
+/** How long a window that shows nothing waits for its `{choice: 'keep'}` write before it closes anyway (D875). */
+export const KEEP_WRITE_MS = 1_500;
 
 /** D341: the line the screen after a cancel on Google's sign-in screen shows. */
 export const GOOGLE_CANCELLED_TEXT = 'Google sign-in was cancelled.';
@@ -1060,12 +1076,13 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         fatal('Sign-in stopped', 'This sign-in couldn’t be read. Start again from the app.', 'token_invalid');
         return;
       }
-      show(n, slot);
+      show(n, slot, value.serverTimeMs);
       return;
     }
   }
 
-  function show(n: FollowNotice, slot: number): void {
+  /** `serverTimeMs`: the API's time on the read that brought `n` (an older link's line is judged on it, D875). */
+  function show(n: FollowNotice, slot: number, serverTimeMs: number): void {
     switch (n.t) {
       case 'link_code':
         return showLinkCode(n, slot);
@@ -1076,9 +1093,9 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       case 'prove':
         return prove(n.prove, slot, n.why === 'link_account' ? `Sign in with the ${providerName(n.provider)} that opens this wallet` : null);
       case 'done':
-        return showDone(n.banners, slot);
+        return showDone(n.banners, slot, serverTimeMs);
       case 'stop':
-        return showStop(n, slot);
+        return showStop(n, slot, serverTimeMs);
       case 'link_waiting':
         return showLinkWaiting(n, slot);
       case 'link_cancel':
@@ -1251,26 +1268,31 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   }
 
   /** The vault's last word: "Signed in", or the link banners first. */
-  function showDone(banners: LinkBanner[], slot: number): void {
-    if (banners.length === 0) {
+  function showDone(banners: LinkBanner[], slot: number, serverTimeMs: number): void {
+    // D875: an older link this device has already shown is no reason to keep the window open.
+    const worth = banners.filter((b) => !olderLink(b, serverTimeMs) || !olderSeenHere(b));
+    if (worth.length === 0) {
+      // Something was offered (only an older link's Remove, already shown here): tell the vault not to wait for it.
+      const told = banners.some((b) => b.action) ? keepAnswer(slot) : null;
       endFollow();
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signed in'), d.h('p', { class: 'muted' }, 'You can close this window.')));
       settle('done');
       // D411: an `at_login` app's popup goes on to the email sharing sheet instead of closing (share-handoff.ts).
-      closeOrShare(win, rid, now());
+      if (told) void told.then(() => closeOrShare(win, rid, now()));
+      else closeOrShare(win, rid, now());
       return;
     }
-    showBanners('Signed in', banners, slot, null);
+    showBanners('Signed in', banners, slot, null, serverTimeMs);
   }
 
-  function showStop(n: Extract<FollowNotice, { t: 'stop' }>, slot: number): void {
+  function showStop(n: Extract<FollowNotice, { t: 'stop' }>, slot: number, serverTimeMs: number): void {
     const text =
       n.code === 'link_pending' && n.effectiveAtMs !== undefined
         ? `This sign-in method was added to a wallet recently. It can open the wallet from ${dateText(n.effectiveAtMs)}.`
         : (STOP_TEXT[n.code] ?? 'The sign-in couldn’t finish. Close this window and try again from the app.');
     notice = n.code;
     if (n.banners && n.banners.length > 0) {
-      showBanners('Sign-in stopped', n.banners, slot, text);
+      showBanners('Sign-in stopped', n.banners, slot, text, serverTimeMs);
       return;
     }
     endFollow();
@@ -1278,19 +1300,76 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     settle('stopped');
   }
 
+  // ---- D875: the older ways to sign in, offered quietly to the wallet's own sign-in ----
+
+  /** The device remembers the older links it has shown: authOrigin's localStorage, an opaque id of the link only. */
+  const OLDER_SEEN_PREFIX = 'hana.ol.';
+  const olderId = (b: LinkBanner): string => toHex(sha256(utf8(`hana-id/older-link/v1|${b.provider}|${b.effectiveAtMs}`)));
+  /**
+   * An active link past its first 7 days that this login didn't make (core relay.ts `RECENT_LINK_MS`), judged on the
+   * API's time as the vault judged it. The vault sends one only to the wallet's own sign-in, with Remove.
+   */
+  const olderLink = (b: LinkBanner, serverTimeMs: number): boolean => b.status === 'active' && !b.fresh && !isRecentLink(b.effectiveAtMs, serverTimeMs);
+  const olderSeenHere = (b: LinkBanner): boolean => {
+    try {
+      const v = deps.tickets?.getItem(OLDER_SEEN_PREFIX + olderId(b));
+      return v !== null && v !== undefined;
+    } catch {
+      // Storage unreadable: show it (the safe side).
+      return false;
+    }
+  };
+  const olderShownHere = (b: LinkBanner): void => {
+    try {
+      deps.tickets?.setItem(OLDER_SEEN_PREFIX + olderId(b), String(now()));
+    } catch {
+      // Storage refused: the next sign-in on this device shows it again.
+    }
+  };
+
+  /**
+   * Tells the vault there's nothing to wait for: `{choice: 'keep'}` in slot + 1 ends its wait for a banner's answer at
+   * once, instead of after AFTERWORD_MS. One request, given at most KEEP_WRITE_MS before the window closes anyway (the
+   * app's sign-in finished before it). Never fails.
+   */
+  function keepAnswer(slot: number): Promise<void> {
+    const f = follow;
+    if (!f) return Promise.resolve();
+    const { id } = followSlot(f.followKey, slot + 1);
+    // Encrypted at once (the key is copied before this returns), so endFollow may zero it straight after.
+    const write = (async () => api.writeRelay(id, await encryptRelayPayload(f.relayKey, id, { choice: 'keep' })))();
+    return Promise.race([write, new Promise<void>((r) => setT(r, KEEP_WRITE_MS))]).then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
   /** Link banners (spec "Notices"): each method, its state, and its Cancel or Remove when this sign-in may. */
-  function showBanners(title: string, banners: LinkBanner[], slot: number, text: string | null): void {
-    const items = banners.map((b, i) => {
+  function showBanners(title: string, banners: LinkBanner[], slot: number, text: string | null, serverTimeMs: number): void {
+    const button = (b: LinkBanner, i: number): HTMLElement | null => {
+      const action = b.action;
+      if (!action) return null;
+      const el = d.h('button', { class: 'link', attrs: { type: 'button', id: `banner-${action.kind}-${i}` } }, action.kind === 'cancel' ? 'Cancel this link' : 'Remove');
+      el.addEventListener('click', () => prove(action.prove, slot, 'Confirm it’s you'));
+      return el;
+    };
+    const items: HTMLElement[] = [];
+    const older: HTMLElement[] = [];
+    banners.forEach((b, i) => {
+      const remove = button(b, i);
+      if (olderLink(b, serverTimeMs)) {
+        // D875: one plain line, no box, no colour: who else opens this wallet, and Remove.
+        older.push(d.h('p', { class: 'older-link', attrs: { 'data-provider': b.provider } }, olderLinkText(b.provider, dateText(b.effectiveAtMs)), remove ? ' ' : null, remove));
+        olderShownHere(b);
+        return;
+      }
       const what =
         b.status === 'pending'
           ? `${providerName(b.provider) === 'email' ? 'An email' : 'A Google account'} will be able to open this wallet from ${dateText(b.effectiveAtMs)}.`
           : b.fresh
             ? `Your ${providerName(b.provider)} sign-in now opens this wallet too.`
             : `A sign-in method was added: ${providerName(b.provider)} on ${dateText(b.effectiveAtMs)}.`;
-      const action = b.action;
-      const button = action ? d.h('button', { class: 'link', attrs: { type: 'button', id: `banner-${action.kind}-${i}` } }, action.kind === 'cancel' ? 'Cancel this link' : 'Remove') : null;
-      if (button && action) button.addEventListener('click', () => prove(action.prove, slot, 'Confirm it’s you'));
-      return d.h('li', { class: b.status === 'pending' ? 'banner pending' : 'banner', attrs: { 'data-provider': b.provider, 'data-status': b.status } }, icon(d, b.status === 'pending' ? 'clock' : 'check-c'), d.h('span', { class: 'banner-text' }, what, button ? ' ' : null, button));
+      items.push(d.h('li', { class: b.status === 'pending' ? 'banner pending' : 'banner', attrs: { 'data-provider': b.provider, 'data-status': b.status } }, icon(d, b.status === 'pending' ? 'clock' : 'check-c'), d.h('span', { class: 'banner-text' }, what, remove ? ' ' : null, remove)));
     });
     const done = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'banner-done' } }, 'Done');
     done.addEventListener('click', () => {
@@ -1306,7 +1385,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         d.h('h1', {}, title),
         header(),
         text ? alert(d, 'danger', { attrs: { role: 'alert' } }, text) : null,
-        d.h('ul', { class: 'banners', attrs: { id: 'link-banners' } }, ...items),
+        items.length > 0 ? d.h('ul', { class: 'banners', attrs: { id: 'link-banners' } }, ...items) : null,
+        older.length > 0 ? d.h('div', { class: 'older-links', attrs: { id: 'link-older' } }, ...older, d.h('p', { class: 'muted' }, OLDER_LINK_NOTE)) : null,
         d.h('div', { class: 'actions' }, done),
       ),
     );

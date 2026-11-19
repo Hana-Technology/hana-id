@@ -5,9 +5,9 @@
 // the public passport. Nothing of another chain is ever on the page. The page is configured at build time like the
 // deployed one (src/build.ts STAMPS_CONFIG), so its app has a fixed key (STAMPS_PK).
 import { type Page, type TestInfo } from '@playwright/test';
-import { base64Decode, decodeNearSignedDelegateAction } from '@hana-id/core';
-import { API_URL, E2E_STAMPS, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, STAMPS_ORIGIN, STAMPS_PK, VAULT_ORIGIN } from '../src/stack.ts';
-import { approve, clickClosing, clickUntilTaken, expect, newApp, test, walletDirectory } from './fixtures.ts';
+import { routeNearRelayer } from '../src/near-relay.ts';
+import { E2E_STAMPS, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, STAMPS_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { STAMPS_APP, approve, clickClosing, clickUntilTaken, expect, newApp, test } from './fixtures.ts';
 
 /** Records every CSP violation on the site's own document (the page CSP must allow everything the page does). */
 async function recordCspViolations(page: Page): Promise<void> {
@@ -77,53 +77,11 @@ async function emailLogin(popup: Page, to: string): Promise<void> {
   await clickClosing(popup, '#email-verify');
 }
 
-/**
- * Journear's NEAR relayer, mocked at the network layer as the demo's spec does (the stack runs no relay account):
- * activate creates the account on the mocked testnet; relay decodes the signed delegate action, checks it calls
- * `collect` on the stamps contract with no deposit and at most the relay's 10 Tgas, and delivers it to the stamps
- * contract (`e2e_stamps_collect`): a panic is the API's 422 `contract_rejected`. Both answer 409
- * near_account_unrecorded until the stack's real wallet directory holds the user's NEAR account.
- */
-/** The relayer's transaction in the mocked answers (base58, as NEAR's hashes). */
-const RELAY_TX = '4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi';
-
-async function routeNearRelayer(page: Page): Promise<{ relayed: Record<string, unknown>[]; refused: string[] }> {
-  const relayed: Record<string, unknown>[] = [];
-  const refused: string[] = [];
-  const cors = { 'access-control-allow-origin': STAMPS_ORIGIN, 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-hana-key', 'access-control-expose-headers': 'retry-after', vary: 'Origin' };
-  const chain = async (method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> => {
-    const res = await fetch(NEAR_RPC, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
-    return ((await res.json()) as { result: Record<string, unknown> }).result;
-  };
-  await page.route(`${API_URL}/v1/near/*`, async (route) => {
-    const req = route.request();
-    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
-    expect(req.headers()['x-hana-key']).toBe(STAMPS_PK);
-    const body = req.postDataJSON() as Record<string, string>;
-    const activate = req.url().endsWith('/v1/near/activate');
-    const sender = activate ? body.accountId! : decodeNearSignedDelegateAction(base64Decode(body.signedDelegateAction!)).delegateAction.senderId;
-    const recorded = (await walletDirectory(sender)).some((u) => u.wallets.some((w) => w.chain === 'near' && w.address === sender));
-    if (!recorded) {
-      refused.push(req.url().slice(API_URL.length));
-      return route.fulfill({ status: 409, headers: { ...cors, 'retry-after': '2' }, contentType: 'application/json', body: JSON.stringify({ error: 'not recorded yet', code: 'near_account_unrecorded', retryable: true }) });
-    }
-    if (activate) return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(await chain('e2e_near_activate', { account_id: body.accountId })) });
-    const { delegateAction: d } = decodeNearSignedDelegateAction(base64Decode(body.signedDelegateAction!));
-    expect(d.actions).toHaveLength(1);
-    const call = d.actions[0] as { type: string; methodName: string; args: Uint8Array; gas: bigint; deposit: bigint };
-    expect([d.receiverId, call.type, call.methodName, call.deposit]).toEqual([E2E_STAMPS, 'functionCall', 'collect', 0n]);
-    expect(call.gas).toBeLessThanOrEqual(10_000_000_000_000n);
-    const args = new TextDecoder().decode(call.args);
-    relayed.push(JSON.parse(args) as Record<string, unknown>);
-    const { panic } = (await chain('e2e_stamps_collect', { account_id: d.senderId, args, sponsored: true, nonce: String(d.nonce) })) as { panic: string | null };
-    // The API's answers as apps/api/src/near/relay.ts relayAnswerBody writes them (the panic text as NEAR's
-    // ExecutionError gives it, the failed receipt's executor, the relay's transaction).
-    const tx = { transactionHash: RELAY_TX, nearTx: RELAY_TX };
-    if (panic) return route.fulfill({ status: 422, headers: cors, contentType: 'application/json', body: JSON.stringify({ error: `Smart contract panicked: ${panic}`, code: 'contract_rejected', status: 'failed', executor: E2E_STAMPS, ...tx }) });
-    return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ status: 'executed', ...tx }) });
-  });
-  return { relayed, refused };
-}
+// Journear's NEAR relayer, mocked at the network layer as the demo's spec does (src/near-relay.ts, shared with the
+// hand-test browser, D880): activate creates the account on the mocked testnet; relay checks the delegate action calls
+// `collect` on the stamps contract with no deposit and at most the relay's 10 Tgas, and delivers it to the stamps
+// contract (`e2e_stamps_collect`): a panic is the API's 422 `contract_rejected`. Both answer 409
+// near_account_unrecorded until the stack's real wallet directory holds the user's NEAR account.
 
 const stampEl = (page: Page, id: string) => page.locator(`[data-stamp="${id}"]`);
 
@@ -151,8 +109,8 @@ async function collectWith(page: Page, id: string, open: Page | null): Promise<P
 
 test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature with zero NEAR, then the public passport', async ({ page }, info) => {
   test.setTimeout(150_000);
-  await newApp({ name: 'Stamp Trail', origins: [STAMPS_ORIGIN], publishableKey: STAMPS_PK, loginMethods: 'google,email' });
-  const relayer = await routeNearRelayer(page);
+  await newApp(STAMPS_APP);
+  const relayer = await routeNearRelayer(page, ['stamps']);
   await recordCspViolations(page);
   await recordSlotStates(page);
   const res = await page.goto(`${STAMPS_ORIGIN}/`);
@@ -227,9 +185,10 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   expect(seen).not.toContain('signature:continue');
   expect(seen.filter((x) => x.includes('Review in'))).toEqual([]);
 
-  expect(relayer.relayed.map((a) => a.stamp)).toEqual(['arrival', 'sponsored', 'postcard', 'signature']);
-  expect(relayer.relayed[2]).toEqual({ stamp: 'postcard', note });
-  expect(relayer.relayed[3]).toMatchObject({ stamp: 'signature', proof: { message: `Stamp my passport: ${account}`, recipient: E2E_STAMPS } });
+  expect(relayer.stamps.map((a) => a.stamp)).toEqual(['arrival', 'sponsored', 'postcard', 'signature']);
+  expect(relayer.stamps[2]).toEqual({ stamp: 'postcard', note });
+  expect(relayer.stamps[3]).toMatchObject({ stamp: 'signature', proof: { message: `Stamp my passport: ${account}`, recipient: E2E_STAMPS } });
+  expect(relayer.problems).toEqual([]);
   await expectNearOnly(page);
   expect(await cspViolations(page)).toEqual([]);
 
@@ -256,8 +215,8 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
 
 test('the Signature stamp’s second step after its window was closed in between: Continue in the slot opens it, the message is not signed again (D807)', async ({ page }, info) => {
   test.setTimeout(120_000);
-  await newApp({ name: 'Stamp Trail', origins: [STAMPS_ORIGIN], publishableKey: STAMPS_PK, loginMethods: 'google,email' });
-  const relayer = await routeNearRelayer(page);
+  await newApp(STAMPS_APP);
+  const relayer = await routeNearRelayer(page, ['stamps']);
   // The vault's own read of the key before it queues a delegate action (checkNearDelegate), held 4 s when armed: time
   // for the user to close the window after the first approval, before the second request reaches it.
   let hold = false;
@@ -309,6 +268,7 @@ test('the Signature stamp’s second step after its window was closed in between
   await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the stamps program');
   await approve(next);
   await expect(stampEl(page, 'signature')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
-  expect(relayer.relayed.map((a) => a.stamp)).toEqual(['arrival', 'signature']);
+  expect(relayer.stamps.map((a) => a.stamp)).toEqual(['arrival', 'signature']);
+  expect(relayer.problems).toEqual([]);
 
 });

@@ -4,8 +4,8 @@
 //
 //   HANA_SHOTS_DIR=<dir> corepack pnpm exec playwright test --project=chromium tests/demo-near-shots.spec.ts
 import { type Page } from '@playwright/test';
-import { base64Decode, decodeNearSignedDelegateAction } from '@hana-id/core';
-import { API_URL, DEMO_ORIGIN, E2E_GUESTBOOK, NEAR_RPC } from '../src/stack.ts';
+import { routeNearRelayer } from '../src/near-relay.ts';
+import { DEMO_ORIGIN, E2E_GUESTBOOK, NEAR_RPC } from '../src/stack.ts';
 import { DEMO_APP, approve, chooseAccount, expect, newApp, test } from './fixtures.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
@@ -55,22 +55,17 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   const activation = gate();
   const relaying = gate();
   let failNext = false;
-  const cors = { 'access-control-allow-origin': DEMO_ORIGIN, 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type, x-hana-key' };
-  await page.route(`${API_URL}/v1/near/*`, async (route) => {
-    const req = route.request();
-    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
-    const body = req.postDataJSON() as Record<string, string>;
-    if (req.url().endsWith('/activate')) {
-      await activation.wait;
-      const answer = await chain('e2e_near_activate', { account_id: body.accountId });
-      return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(answer) });
-    }
-    if (failNext) return route.fulfill({ status: 403, headers: cors, contentType: 'application/json', body: JSON.stringify({ code: 'receiver_not_allowed', error: 'receiver not allowed' }) });
-    await relaying.wait;
-    const { delegateAction: d } = decodeNearSignedDelegateAction(base64Decode(body.signedDelegateAction!));
-    const { text } = JSON.parse(new TextDecoder().decode((d.actions[0] as { args: Uint8Array }).args)) as { text: string };
-    await chain('e2e_guestbook_add', { account_id: d.senderId, text, nonce: String(d.nonce) });
-    return route.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ transactionHash: '4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi', status: 'executed' }) });
+  // The shared relay (src/near-relay.ts), held at each stage and refusing the write when asked.
+  const relayer = await routeNearRelayer(page, ['demo'], {
+    intercept: async (kind) => {
+      if (kind === 'activate') {
+        await activation.wait;
+        return undefined;
+      }
+      if (failNext) return { status: 403, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: 'receiver_not_allowed', error: 'receiver not allowed' }) };
+      await relaying.wait;
+      return undefined;
+    },
   });
   // Other writers, one of them hostile.
   await chain('e2e_guestbook_add', { account_id: 'alice.testnet', text: 'First! gm from NEAR testnet 🌸' });
@@ -129,4 +124,5 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await expect(page.locator('#near-results li').first()).toContainText('signed, not sent');
   await page.bringToFront();
   await shots(page, '08-transaction-not-sent');
+  expect(relayer.problems).toEqual([]);
 });

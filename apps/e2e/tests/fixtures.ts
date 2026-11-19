@@ -6,28 +6,27 @@
 // with `{ live: true }`) in the stack's live mode, whose https origins the context routes to the stack (src/stack.ts
 // LIVE_UPSTREAMS). The partner test app (partner/app.ts) is driven through `window.e2e`: gesture
 // actions are armed and then started by a real click on its #act button, so window.open runs with user activation.
-import { type APIResponse, type BrowserContext, type Frame, type FrameLocator, type Page, type Route, test as base, expect } from '@playwright/test';
-import { GOOGLE_AUTH_URL, GOOGLE_CERTS_URL, GOOGLE_TOKENINFO_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
+import { type BrowserContext, type Frame, type FrameLocator, type Page, test as base, expect } from '@playwright/test';
+import { routeStubs } from '../src/browser-routes.ts';
+import { GOOGLE_AUTH_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
 import type { AppSpec as ServerAppSpec } from '../src/server/api.ts';
 import {
   API_URL,
   AUTH_ORIGIN,
-  DEMO_ORIGIN,
-  DEMO_PK,
-  EVIL_ORIGIN,
   EVM_RPC,
   ISSUER_URL,
   LIVE_API_URL,
   LIVE_AUTH_ORIGIN,
   LIVE_ENV_NAME,
   LIVE_PARTNER_ORIGIN,
-  LIVE_UPSTREAMS,
   LIVE_VAULT_ORIGIN,
   PARTNER_ORIGIN,
   VAULT_ORIGIN,
 } from '../src/stack.ts';
 
 export { expect };
+/** The Google stub's routes, the foreign site and live mode's origins: one definition, shared with the hand browser (D880). */
+export { routeStubs };
 
 /** An app for POST /__e2e/apps; `origins` defaults to the partner origin. */
 export type AppSpec = Partial<ServerAppSpec>;
@@ -60,49 +59,6 @@ export class RequestLog {
     const hit = (url: string) => (typeof match === 'string' ? url.startsWith(match) : match.test(url));
     return this.entries.slice(since).filter((e) => e.method !== 'OPTIONS' && hit(e.url)).length;
   }
-}
-
-/** The page script of a foreign site (EVIL_ORIGIN): never Hana code, served only by a route in the test's context. */
-const EVIL_HTML = `<!doctype html><meta charset="utf-8"><title>evil</title><script>
-window.received = [];
-addEventListener('message', (e) => { window.received.push({ origin: e.origin, t: e.data && e.data.t }); });
-</script><h1>evil</h1>`;
-
-/**
- * Routes Google's endpoints (authorization, JWKS, tokeninfo) to `google`, the foreign site to its static page, and
- * live mode's https origins to the stack (LIVE_UPSTREAMS), in `context`.
- */
-export async function routeStubs(context: BrowserContext, google: GoogleStub): Promise<void> {
-  await context.route(`${GOOGLE_AUTH_URL}**`, async (route) => route.fulfill(await google.authorize(new URL(route.request().url()))));
-  await context.route(GOOGLE_CERTS_URL, async (route) =>
-    route.fulfill({ status: 200, headers: { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }, body: JSON.stringify(await google.jwks()) }),
-  );
-  // token_first's callback asks tokeninfo from the browser (D270): a form POST, with Google's CORS for the page.
-  await context.route(`${GOOGLE_TOKENINFO_URL}**`, async (route) => {
-    const r = route.request();
-    await route.fulfill(google.tokeninfo(r.method(), (await r.headerValue('origin')) ?? null, r.postData()));
-  });
-  await context.route(`${EVIL_ORIGIN}/**`, (route) => route.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: EVIL_HTML }));
-  await context.route((url) => Object.hasOwn(LIVE_UPSTREAMS, url.origin), forwardLive);
-}
-
-/**
- * A request to one of live mode's https origins, forwarded to the stack server behind it (as a TLS-terminating front
- * would: method, headers and body unchanged, the server's response, headers included, as is). The servers rewrite the
- * URL back to the https origin (src/server/http.ts servedAt). Long polls (the login relay) take as long as they take.
- */
-async function forwardLive(route: Route): Promise<void> {
-  const url = new URL(route.request().url());
-  const upstream = LIVE_UPSTREAMS[url.origin] as string;
-  let response: APIResponse;
-  try {
-    response = await route.fetch({ url: `${upstream}${url.pathname}${url.search}`, maxRedirects: 0, timeout: 0 });
-  } catch {
-    // The page went away mid-request (a closed popup, the end of a test).
-    await route.abort().catch(() => undefined);
-    return;
-  }
-  await route.fulfill({ response }).catch(() => undefined);
 }
 
 /**
@@ -157,10 +113,10 @@ export const test = base.extend<{ google: GoogleStub; requests: RequestLog; noCo
 // ---- the mocked API's control endpoints ----
 
 /**
- * The hosted demo's app on the stack: created once with its fixed key (the first create wins, so every demo spec
- * creates it with this spec). Its sponsorship allowlist is the exact demo check-in (src/server/api.ts, D867).
+ * The hosted demo's and the stamps site's apps on the stack (src/site-apps.ts): each created once with its fixed key
+ * (the first create wins, so every spec creates it with this spec).
  */
-export const DEMO_APP: Readonly<AppSpec> = Object.freeze({ name: 'Journear demo', origins: [DEMO_ORIGIN], publishableKey: DEMO_PK });
+export { DEMO_APP, STAMPS_APP } from '../src/site-apps.ts';
 
 export async function newApp(spec: AppSpec = {}): Promise<App> {
   const res = await fetch(`${API_URL}/__e2e/apps`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ origins: [PARTNER_ORIGIN], ...spec }) });

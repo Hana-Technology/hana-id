@@ -31,7 +31,9 @@
     "access-setup": "tsx access-setup.ts",
     "near-relay-keys": "tsx near-relay-keys.ts",
     "deploy-evm-delegate": "tsx deploy-evm-delegate.ts",
-    "evm-relay-keys": "tsx evm-relay-keys.ts"
+    "evm-relay-keys": "tsx evm-relay-keys.ts",
+    "check-reviewed-near": "tsx check-reviewed-near.ts",
+    "reviewed-near-rebuild": "tsx reviewed-near-rebuild.ts"
   },
   "dependencies": {
     "@hana-id/console-core": "workspace:*",

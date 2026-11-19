@@ -5,6 +5,7 @@
 import { type Page } from '@playwright/test';
 import { routeNearRelayer } from '../src/near-relay.ts';
 import { DEMO_ORIGIN, DEMO_PK, E2E_GUESTBOOK, VAULT_ORIGIN } from '../src/stack.ts';
+import { expectPlainWindow } from './plain-checks.ts';
 import { DEMO_APP, LOGIN_ENDPOINT, LOGIN_PENDING_MS, VAULT_FRAME, approve, chooseAccount, clickLauncher, expect, newApp, responsive, test, vaultFrame, walletDirectory } from './fixtures.ts';
 
 /** Records every CSP violation on the demo's own document (the page CSP must allow everything the page does). */
@@ -126,13 +127,14 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
   // D808: the plain summary leads; the request's kind heading is in the details.
   // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.
-  await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add your message to the demo guestbook$/u);
+  await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add a message to the demo guestbook$/u);
   await expect(approval.locator('p.summary-line').last()).toHaveText(`It uses Journear demo guestbook (${E2E_GUESTBOOK}, checked by Journear).`);
   // The user's words, quoted; the raw method stays in the folded details.
-  await expect(approval.locator('q.summary-quote')).toHaveText(text);
+  await expect(approval.locator('div.summary-quote')).toHaveText(text);
   await expect(approval.locator('details.request-details')).toContainText('add_message');
   await expect(approval.getByText(E2E_GUESTBOOK).first()).toBeVisible();
   await expect(approval.locator('.warning-box')).toHaveCount(0);
+  await expectPlainWindow(approval);
   await approve(approval);
 
   await expect(page.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. You paid no gas.');
@@ -162,7 +164,7 @@ test('the demo writes to the guestbook when clicked before Hana recorded the NEA
   const approval = await approvalP;
   // D808: the plain summary leads; the request's kind heading is in the details.
   // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.
-  await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add your message to the demo guestbook$/u);
+  await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add a message to the demo guestbook$/u);
   await expect(approval.locator('p.summary-line').last()).toHaveText(`It uses Journear demo guestbook (${E2E_GUESTBOOK}, checked by Journear).`);
   await approve(approval);
   await expect(page.locator('#near-done')).toBeVisible();

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -248,5 +249,18 @@ describe('Journear’s reviewed NEAR contracts in the build (D885)', () => {
     const near = sandbox.near!;
     expect(nearReviewedOf({ ...sandbox, near: { ...near, demoStamps: undefined } })).toEqual({ nearReviewed: { guestbook: near.demoGuestbook } });
     expect(nearReviewedOf({ ...sandbox, near: undefined })).toEqual({});
+  });
+
+  it('the build refuses a manifest that names another account than the one checked, or an env off testnet', () => {
+    const near = sandbox.near!;
+    const moved = { ...sandbox, near: { ...near, demoStamps: 'hana-id-stamps-dev2.testnet' } };
+    expect(() => nearReviewedOf(moved)).toThrow(/near\.demoStamps hana-id-stamps-dev2\.testnet is not the account core's REVIEWED_NEAR_DEPLOYS was checked against/u);
+    expect(() => hanaEnv(moved)).toThrow(/not the account/u);
+    expect(() => nearReviewedOf({ ...sandbox, near: { ...near, demoGuestbook: 'hana-id-guestbook-dev1.testnet.evil.testnet' } })).toThrow(/near\.demoGuestbook/u);
+    expect(() => nearReviewedOf({ ...sandbox, network: 'mainnet' as never })).toThrow(/reviewed calls are testnet only/u);
+    // Each record holds the sha256 of the account it was checked against, never the name.
+    for (const [env, record] of Object.entries(REVIEWED_NEAR_DEPLOYS)) {
+      for (const [c, d] of Object.entries(record)) expect(d!.accountSha256, `${env} ${c}`).toBe(createHash('sha256').update(REVIEWED_ACCOUNTS[env]![c]!, 'utf8').digest('hex'));
+    }
   });
 });

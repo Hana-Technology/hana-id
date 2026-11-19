@@ -22,6 +22,11 @@
 //                                     the allowlisted targets' code; and, through wrangler (names only), that the API
 //                                     Worker has each chain's EVM_SPONSOR_RPC_<chainId> secret. Only when the manifest
 //                                     has evm.sponsor
+//   near-reviewed reviewed NEAR calls JSON-RPC to the manifest's `rpc` and `rpcFallback` (lib/reviewed-near-check.ts,
+//                                     D885): every contract core's REVIEWED_NEAR_DEPLOYS records for the env is still
+//                                     locked, runs the recorded code and no global contract, both endpoints agreeing.
+//                                     Only when core records the env, and only with `--only near-reviewed` (it reads a
+//                                     chain, not a build: the go-live gate and the runbook run it, as check-reviewed-near)
 //
 // The admin's origin is behind Cloudflare Access, which this script can't (and mustn't) pass, and the watchdog serves
 // nothing without its bearer token; neither gets a public route (D406). For both, wrangler reads the deployed version's
@@ -49,6 +54,8 @@ import { type LocalBuild, localBuild } from '@hana-id/env/local-build';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { CliError, parseCli } from './cli.ts';
 import { type PinnedDelegatesWithHash, checkEvmSponsor } from './deploy-check-evm.ts';
+import { checkReviewedNear } from './reviewed-near-check.ts';
+import { REVIEWED_NEAR_DEPLOYS } from '@hana-id/core';
 
 export const DEPLOY_CHECK_USAGE = `Usage: deploy-check.ts <env> [--only <groups>] [--skip <groups>] [--d1] [--skip-head] [--strict]
   After a deploy: reads the build id of every deployed piece of envs/<env>.json and checks they all name one commit,
@@ -56,7 +63,9 @@ export const DEPLOY_CHECK_USAGE = `Usage: deploy-check.ts <env> [--only <groups>
   only when the manifest has it): api, pages (the vault and auth Workers and bundles), issuer, console (Worker and
   SPA), console-auth, files, admin (through wrangler: the API's Cloudflare login), watchdog (through wrangler on its
   own account: read only when --only names it, logged in to that account), evm (only with the manifest's evm.sponsor:
-  each chain's RPC, the delegate's code against its artifact and core's pin, the relayer's balance, the targets' code).
+  each chain's RPC, the delegate's code against its artifact and core's pin, the relayer's balance, the targets' code),
+  near-reviewed (only when core records reviewed NEAR contracts for the env, and only when --only names it: on both
+  NEAR endpoints, each is locked, runs the recorded code and no global contract).
   --only <g,…> read only these groups (comma-separated or repeated)
   --skip <g,…> read every group but these
   --d1         also list the D1 migrations of this checkout that the env's databases lack (the API's, the issuer's,
@@ -71,10 +80,10 @@ export const BODY_LIMIT = 16_384;
 export const BANNER_LIMIT = 256;
 
 /** What `--only` and `--skip` name, in the order the pieces are read and printed. */
-export const GROUPS = ['api', 'pages', 'issuer', 'console', 'console-auth', 'files', 'admin', 'watchdog', 'evm'] as const;
+export const GROUPS = ['api', 'pages', 'issuer', 'console', 'console-auth', 'files', 'admin', 'watchdog', 'evm', 'near-reviewed'] as const;
 export type Group = (typeof GROUPS)[number];
 /** Read only when `--only` names them: the watchdog's Cloudflare account has its own login (D86). */
-export const OPT_IN_GROUPS: readonly Group[] = ['watchdog'];
+export const OPT_IN_GROUPS: readonly Group[] = ['watchdog', 'near-reviewed'];
 
 export type TargetKind = 'json' | 'vault-js' | 'html-meta' | 'wrangler';
 
@@ -160,7 +169,8 @@ export interface Selection {
 export function selectGroups(m: Manifest, targets: readonly Target[], only: readonly Group[], skip: readonly Group[]): Selection {
   if (only.length > 0 && skip.length > 0) throw new CliError('Pass --only or --skip, not both');
   // `evm` has no build id to read: it is there when the manifest has evm.sponsor (D849).
-  const present = GROUPS.filter((g) => targets.some((t) => t.group === g) || (g === 'evm' && m.evm?.sponsor !== undefined));
+  // `near-reviewed` neither: it is there when core records reviewed NEAR contracts for the env (D885).
+  const present = GROUPS.filter((g) => targets.some((t) => t.group === g) || (g === 'evm' && m.evm?.sponsor !== undefined) || (g === 'near-reviewed' && hasReviewedNear(m)));
   for (const g of only) if (!present.includes(g)) throw new CliError(`envs/${m.name}.json has no ${g}: nothing of it is deployed to check`);
   const groups = only.length > 0 ? present.filter((g) => only.includes(g)) : present.filter((g) => !skip.includes(g) && !OPT_IN_GROUPS.includes(g));
   if (groups.length === 0) throw new CliError('Nothing to check: every group is skipped');
@@ -171,8 +181,14 @@ export function selectGroups(m: Manifest, targets: readonly Target[], only: read
   if (only.length === 0 && notRead.includes('watchdog') && !skip.includes('watchdog')) {
     notes.push(`the watchdog (${m.watchdog!.cloudflare.workerName}) is on its own Cloudflare account (D86) and not read by default: check it with \`deploy-check ${m.name} --only watchdog\`, logged in to that account`);
   }
+  if (only.length === 0 && notRead.includes('near-reviewed') && !skip.includes('near-reviewed')) {
+    notes.push(`${m.name}'s reviewed NEAR contracts (D885) are not read by default: check them with \`deploy-check ${m.name} --only near-reviewed\` (or \`check-reviewed-near ${m.name}\`)`);
+  }
   return { groups, notRead, notes };
 }
+
+/** Whether core records reviewed NEAR contracts for this env (REVIEWED_NEAR_DEPLOYS). */
+const hasReviewedNear = (m: Manifest): boolean => Object.hasOwn(REVIEWED_NEAR_DEPLOYS, m.name) && Object.keys(REVIEWED_NEAR_DEPLOYS[m.name] ?? {}).length > 0;
 
 export interface Observed {
   name: string;
@@ -594,6 +610,14 @@ export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps
     }
   }
 
+  // Journear's reviewed NEAR calls (D885): only with --only near-reviewed, for an env core records.
+  const nearReviewedRead = selection.groups.includes('near-reviewed');
+  if (nearReviewedRead) {
+    const r = await checkReviewedNear(m, { fetch: deps.fetch ?? fetch });
+    for (const l of r.lines) log(l);
+    failures.push(...r.failures);
+  }
+
   if (args.flag('d1')) {
     const pnpm = deps.pnpm ?? defaultPnpm;
     const hasConfig = deps.hasWranglerConfig ?? defaultHasConfig;
@@ -632,7 +656,7 @@ export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps
   for (const f of failures) log(`FAIL: ${f}`);
   const scope = selection.notRead.length > 0 ? `; not read: ${selection.notRead.join(', ')}` : '';
   const evmOk = evmRead ? '; EVM sponsorship checked' : '';
-  const ok = observed.length === 0 ? `OK: ${m.name}'s EVM sponsorship checks out${scope}` : `OK: every piece of ${m.name} runs ${observed[0]?.build?.id ?? ''}${args.flag('skip-head') ? '' : ' (this checkout)'}${evmOk}${scope}`;
+  const ok = observed.length === 0 ? `OK: ${m.name}'s ${[evmRead ? 'EVM sponsorship' : '', nearReviewedRead ? 'reviewed NEAR contracts' : ''].filter(Boolean).join(' and ')} ${nearReviewedRead ? 'check' : 'checks'} out${scope}` : `OK: every piece of ${m.name} runs ${observed[0]?.build?.id ?? ''}${args.flag('skip-head') ? '' : ' (this checkout)'}${evmOk}${scope}`;
   log(failures.length === 0 ? ok : `${failures.length} failure(s)`);
   return failures.length === 0 ? 0 : 1;
 }

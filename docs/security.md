@@ -1712,19 +1712,27 @@ handshake removes the frame and closes its port, as `destroy()` does.
 - **Journear's reviewed NEAR calls read plainly (D885).** The stamps contract's `collect` and the demo guestbook's
   `add_message` (`packages/core/src/reviewed-near-calls.ts`), on the accounts the env's manifest names
   (`near.demoStamps`, `near.demoGuestbook`), reach the popup only through the build (`HanaEnv.nearReviewed`), and only
-  for an env core records as deployed from the reviewed source and **locked** (no access key: the code can never
-  change; neither contract has an upgrade method; sandbox-dev's, 2026-11-12 and 2026-11-13). A test pins each record to
-  its manifest account, another the sha256 of each reviewed `src/lib.rs`. A request that is exactly a reviewed call
-  (testnet, that account, one function call of that method, no deposit, at most 30 Tgas, strict JSON arguments of
-  exactly the reviewed shape, relayed or direct as the site sends it) reads "{App} wants to collect the Arrival stamp
-  for you", "It uses **Journear demo stamps** (…, checked by Journear).", and the user's note or message as quoted
-  text only when it is exactly what the contract stores (one display-safe line, trimmed, within its length). Their
+  for an env core records as deployed from the reviewed files and **locked** (no access key: the code can never
+  change; neither contract has an upgrade method; sandbox-dev's, 2026-11-12 and 2026-11-13). The build refuses a
+  manifest account whose sha256 isn't the record's, or an env off testnet (`gen-envs`). A test pins the sha256 of each
+  contract's four build files (`src/lib.rs`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`); `verify --full`
+  rebuilds them with the deploy tool's command and compares with the recorded code hashes (observed to match on two
+  machines with Rust 1.85.1 and cargo-near 0.22.0, 2026-11-19; other hosts unverified); `check-reviewed-near <env>`
+  reads both NEAR endpoints (no key, the recorded code hash, no global contract, both agreeing), a go-live gate before
+  each pages deploy (not yet run). A request that is exactly a reviewed call (testnet, that account, one function call
+  of that method, no deposit, at most 30 Tgas, strict JSON arguments of exactly the reviewed shape, the Signature
+  proof's signature verified by the sender's own key, relayed or direct as the site sends it) reads "{App} wants to
+  collect the Arrival stamp for you", "It uses **Journear demo stamps** (…, checked by Journear).". A note or message
+  is shown only when it is exactly what the contract stores, one display-safe line with no run of more than two
+  combining marks and no quotation mark, and then in a box of its own under "The note:" / "The message:" (clipped,
+  never inside one of Journear's sentences): the app chooses those words, so they are never called "yours". Their
   amber "This acts as you" line goes, and for the Signature stamp's exact NEP-413 message the "proves to" and
   recipient lines: the reviewed code takes no deposit, makes no call and can only add the caller's own stamp or
   message. Anything else, a look-alike account, an extra argument or action, a deposit, reads exactly as before. Per
-  contract, not per app: the reading is the code's, whoever asks. No network read was added: an approval-time code-hash
-  read was rejected (it buys nothing for a locked account). Residual: the builds aren't reproducible, so the record
-  rests on the deploy tool's own hash check against its build of the unchanged source at deploy time.
+  contract, not per app: the reading is the code's, whoever asks. No network read was added to the approval path: an
+  approval-time code-hash read was rejected (it buys nothing for a locked account). Residual: which commit each deploy
+  built wasn't recorded (the files are unchanged since and rebuild to the recorded hashes), and the on-chain facts
+  rest on the last `check-reviewed-near` run.
 - **Wording (D853, standing rule).** Every user-visible text is in plain, everyday words for people who don't know
   Web3: what happens to their money, tokens or account first; chain jargon only in the folded details; never a wording
   that makes a risk sound smaller. Outside the approval window too (D861): the SDK's errors carry `userMessage`, a

@@ -27,7 +27,9 @@ export const ZERO_COST = /\b(costs? (you )?nothing|cost to you|nothing (of yours
 export const ZERO_COST_ALLOWED: readonly string[] = [
   'This is Journear’s demo check-in. It doesn’t move any money or tokens.',
   'This is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens.',
-  // D885: Journear's reviewed NEAR calls (a relayed one moves nothing; the user's own transaction pays its fee).
+];
+/** D885: Journear's reviewed NEAR calls' sentences, allowed only in a summary marked `reviewed` (a page with `data-reviewed`). */
+export const ZERO_COST_ALLOWED_REVIEWED: readonly string[] = [
   'Collecting a stamp doesn’t move any money or tokens.',
   'The stamp itself doesn’t move any money or tokens.',
   'Adding it doesn’t move any money or tokens.',
@@ -37,7 +39,7 @@ export const ZERO_COST_ALLOWED: readonly string[] = [
 
 /** Every text of a summary that claims zero cost outside the allowlist (an allowed sentence may sit inside a longer line). */
 export const zeroCostIn = (s: ApprovalSummary): string[] =>
-  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => ZERO_COST.test(ZERO_COST_ALLOWED.reduce((t, a) => t.split(a).join(' '), w)));
+  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => ZERO_COST.test([...ZERO_COST_ALLOWED, ...(s.reviewed ? ZERO_COST_ALLOWED_REVIEWED : [])].reduce((t, a) => t.split(a).join(' '), w)));
 
 /** Every text of a summary a user reads (headline, lines, fee, network, warnings and their bullets) that uses jargon. */
 export const jargonIn = (s: ApprovalSummary): string[] =>

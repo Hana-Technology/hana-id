@@ -307,23 +307,26 @@ describe('the plan', () => {
 
   it('--full: every package and job whatever changed, Playwright on all three browsers', () => {
     const p = plan('full', ['docs/operations.md']);
-    expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'anvil', 'pack', 'e2e']);
+    expect(ran(p)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'reviewed-near', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'anvil', 'pack', 'e2e']);
     expect(p.selection.all).toBe(true);
+    // D885: the reviewed NEAR rebuild, in the contract lane after its builds, only in --full.
+    expect(step(p, 'reviewed-near').run.map(line)).toEqual(['pnpm --filter @hana-id/scripts run reviewed-near-rebuild']);
+    expect(step(plan('default', ['contracts/hana-stamps/src/lib.rs']), 'reviewed-near').skip).toBe('only in --full');
     expect(step(p, 'typecheck').run.map(line)).toEqual(['pnpm -r --workspace-concurrency=4 --reporter=append-only typecheck']);
     expect(step(p, 'e2e').run.map(line)).toEqual(['pnpm --filter @hana-id/e2e run e2e --forbid-only --project chromium --project firefox --project webkit']);
   });
 
   it('cheapest first: lockfile; gitleaks + typecheck + contract; unit + docs; sandbox beside pack then browsers (D423)', () => {
     const p = plan('full', null);
-    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, evm: 1, audit: 1, unit: 2, docs: 2, sandbox: 3, anvil: 3, pack: 3, e2e: 4 });
+    expect(Object.fromEntries(p.steps.map((s) => [s.id, s.phase]))).toEqual({ install: 0, secrets: 1, typecheck: 1, contract: 1, 'reviewed-near': 1, evm: 1, audit: 1, unit: 2, docs: 2, sandbox: 3, anvil: 3, pack: 3, e2e: 4 });
     const laneIds = (ph: number) => V.lanes(p.steps, ph).map(([lane, steps]) => [lane, steps.map((s) => s.id)]);
-    expect(laneIds(1)).toEqual([['secrets', ['secrets']], ['typecheck', ['typecheck']], ['contract', ['contract']], ['evm', ['evm']], ['audit', ['audit']]]);
+    expect(laneIds(1)).toEqual([['secrets', ['secrets']], ['typecheck', ['typecheck']], ['contract', ['contract', 'reviewed-near']], ['evm', ['evm']], ['audit', ['audit']]]);
     // The pack check and Playwright one after the other (both build @hana-id/web), beside the sandbox nodes.
     expect(laneIds(3)).toEqual([['sandbox', ['sandbox']], ['anvil', ['anvil']], ['web', ['pack']]]);
     // Playwright alone, after the sandbox nodes are gone (Firefox timed out beside them, 2026-11-06).
     expect(laneIds(4)).toEqual([['e2e', ['e2e']]]);
     // The table lists the steps in the order they start.
-    expect(p.steps.map((s) => s.id)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'anvil', 'pack', 'e2e']);
+    expect(p.steps.map((s) => s.id)).toEqual(['install', 'secrets', 'typecheck', 'contract', 'reviewed-near', 'evm', 'audit', 'unit', 'docs', 'sandbox', 'anvil', 'pack', 'e2e']);
   });
 
   it('the unit tests share their phase with the docs checks only, in every tier (D140: PGlite and workerd time out under load)', () => {

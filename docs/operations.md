@@ -444,6 +444,7 @@ directory (D406). The console's `run deploy` builds its SPA first.
 | `admin` | admin Worker | the deployed version's `HANA_BUILD` var: `wrangler deployments status` + `versions view --json` (see below) | `pnpm --filter @hana-id/admin run deploy` |
 | `watchdog` | watchdog Worker | the same, on `watchdog.cloudflare.accountId`; **only with `--only watchdog`** | `pnpm --filter @hana-id/watchdog run deploy` |
 | `evm` | EVM sponsorship (only with the manifest's `evm.sponsor`; nothing new for an env without it) | JSON-RPC to each chain's `rpc` and `rpcFallback` (D849): `eth_chainId`, the delegate's code hash against `contracts/evm-delegate/artifacts` and core's pinned table, the relayer's balance (a failure below one transaction's worst execution cost, doubled on an OP Stack chain for the L1 data fee, which is extra; a warning below `lowBalanceEth`), each allowlisted target's code; and, through `wrangler secret list --name <API Worker> --format json` from `apps/api` (secret **names** only: Cloudflare never returns a value), that the API Worker has each chain's `EVM_SPONSOR_RPC_<chainId>`, a failure without it (D851 as amended) | `deploy-evm-delegate`, its follow-up PR, `evm-relay-keys`, the read endpoint's `wrangler secret put` ("EVM sponsorship relay (not live)" step 9) |
+| `near-reviewed` | Journear's reviewed NEAR contracts (only for an env core's `REVIEWED_NEAR_DEPLOYS` records; **only with `--only near-reviewed`**: it reads a chain, not a build) | `status`, `view_account` and `view_access_key_list` on the manifest's `rpc` and `rpcFallback` (D885): no access key, the recorded code hash, no global contract, both endpoints agreeing; the same as `check-reviewed-near <env>` | nothing: the contracts are locked |
 | `--d1` | each D1 of the groups read | `wrangler d1 migrations list <db> --remote` from `apps/api` (`cloudflare.d1Name`), `apps/email-issuer` (`emailIssuer.cloudflare.d1Name`), `apps/console` (`console.d1Name`), `apps/watchdog` (`watchdog.cloudflare.d1Name`) | needs each `wrangler.jsonc` generated for `<env>` (`gen`) |
 
 A group is read only when the manifest has it (the dashboard blocks, `emailIssuer`, `watchdog`). `--only <g,…>` reads
@@ -4256,7 +4257,7 @@ through a meta transaction the Hana relayer pays for. Its account is `near.demoG
 
 `deploy-guestbook <env>` reads the chain, prints the plan and changes nothing without `--yes`, like `deploy-contract`.
 With `--yes` it builds the wasm as `deploy-contract` builds hana-signer (`cargo near build non-reproducible-wasm
---no-abi`, not reproducible), then sends **one** transaction from the guestbook account: `DeployContract` and
+--no-abi`; it rebuilds to the deployed hash with Rust 1.85.1 and cargo-near 0.22.0, D885), then sends **one** transaction from the guestbook account: `DeployContract` and
 `new()`, so no one can initialise it in between. It checks the code hash and `total_messages() = 0` afterwards.
 Re-running it once deployed does nothing; it never redeploys: the guestbook has no upgrade path, and a new version
 goes to a new account (a new `near.demoGuestbook`, e.g. `hana-id-guestbook-dev2.testnet`, which starts empty). It
@@ -4392,31 +4393,66 @@ and the local e2e stack. The list is `packages/core/src/reviewed-near-calls.ts`,
 changes it, never D1 or the API. It never covers a partner's contract (that is a later step, labels attributed to the
 partner) and never a mainnet env.
 
+**Before every deploy of the vault and sign-in pages to an env with reviewed contracts** (and so before the first one
+that carries them: `docs/go-live-after-freeze.md` 1.6a), run the on-chain check, read-only, on both of the manifest's
+NEAR endpoints, and keep its output with the deploy's notes:
+
+```sh
+corepack pnpm --filter @hana-id/scripts run check-reviewed-near sandbox-dev
+# the same check: corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --only near-reviewed
+```
+
+It fails (exit 1) on an access key on the account, another code hash, a global contract, the two endpoints
+disagreeing, an endpoint down or missing, or a manifest account other than the one checked. A failure means: don't
+deploy the pages; remove the env's record (the window then reads those calls as any other) or find out why. Also re-run
+it once a month while the record stands (the account can't change while it has no key, but this is how you'd see a
+record that was wrong).
+
+**Last on-chain check:** not run yet (no chain reads were made while building D885; the first is go-live 1.6a).
+Paste the output here, and in D885, each time.
+
+`corepack pnpm verify --full` also rebuilds both contracts with the deploy tool's command and compares the code hashes
+with the records (`reviewed-near-rebuild`; it skips, passing, without cargo-near 0.22.0 and Rust 1.85.1).
+
 **What a person must check first, for a contract** (write each answer in the decision that adds it):
-1. Read the whole contract source. Every method the entry reads must take no deposit (no `#[payable]`), make no
-   promise (no transfer, no cross-contract call, no deploy) and be unable to use, move or remove anything of the
-   caller's; the contract must have no owner, admin or upgrade method. If any of that fails, no entry: the window
-   keeps its generic reading and its amber "This acts as you" line.
-2. Decide the exact argument shape (every key, every value's kind) and how each value may be shown: from a fixed set,
-   or as the user's quoted words only when it is exactly what the contract stores.
-3. Add the contract to `REVIEWED_NEAR_CONTRACTS` with the sha256 of its whole `src/lib.rs` (`shasum -a 256`, LF line
+1. Read the whole contract source **and what decides its build**: `src/lib.rs`, `Cargo.toml`, `Cargo.lock` (every
+   crate it pulls in, near-sdk's version above all: it adds the deposit check a non-payable method relies on) and
+   `rust-toolchain.toml`.
+2. Every method the entry reads must take no deposit (no `#[payable]`), make no promise (no transfer, no cross-contract
+   call, no deploy) and be unable to use, move or remove anything of the caller's. The contract must have no owner,
+   admin or upgrade method; its `#[init]` must not take `ignore_state` (and run once, in the deploy transaction); look
+   for `#[private]` callbacks, raw `env::storage_write`/`storage_remove` and anything else that writes state outside
+   the methods you read; and for any method whose state changes what the reviewed method does (a setting another call
+   can flip). If any of that fails, no entry: the window keeps its generic reading and its amber "This acts as you"
+   line.
+3. Decide the exact argument shape (every key, every value's kind) and how each value may be shown: from a fixed set,
+   or as words in their own box (`reviewedText`: exactly what the contract stores, one display-safe line, no run of
+   more than two combining marks, no quotation mark). Check **every sentence of the reading is true for every value
+   the match admits**, whoever asks (entries are per contract: any app can make the call, so the words are "the note",
+   never "your note").
+4. Add the contract to `REVIEWED_NEAR_CONTRACTS` with the sha256 of each of the four files (`shasum -a 256`, LF line
    endings), the reading in `decode/summary.ts` (`reviewedNearReading`), and the tests: every match, every near-miss
    equal to the no-entry summary, the verbatim source lines the reading rests on.
 
 **What a person must check first, for an env** (the deployed account):
 1. The account is the manifest's (`near.demoStamps`, `near.demoGuestbook`) and was deployed by `deploy-stamps` /
-   `deploy-guestbook` from the reviewed source, which checks the code hash against its build; note the commit.
-2. It is **locked**: `deploy-… <env> --lock --yes` ran, the account shows no access key
-   (`near account list-keys <account> network-config testnet now`, or `view_access_key_list` from each of the env's
-   two RPC endpoints, `rpc` and `rpcFallback`), and its code hash (`near account view-account-summary …`) is the one
-   the deploy printed.
-3. Add the env to `REVIEWED_NEAR_DEPLOYS` (code hash, lock date, lock transaction: no account name, which stays the
-   manifest's), and the account to `REVIEWED_ACCOUNTS` in `packages/web/test/gen-envs.test.ts`. That test fails
-   whenever a manifest names another account than the one checked: a redeploy to a new account (the only way to
-   change these contracts) needs this whole check again before it reads as reviewed.
+   `deploy-guestbook` from the reviewed files, which checks the code hash against its build; note the commit.
+2. Rebuild from the reviewed files with the deploy tool's command, `cargo near build non-reproducible-wasm --no-abi`
+   in the crate (Rust 1.85.1 from its rust-toolchain.toml, cargo-near 0.22.0: `REVIEWED_NEAR_BUILD`), and compare the
+   wasm's code hash (base58 of its sha256; cargo-near prints it as "SHA-256 checksum bs58") with the account's.
+   `reviewed-near-rebuild` does it once the record exists. Without `--no-abi` the hash differs.
+3. It is **locked**: `deploy-… <env> --lock --yes` ran, the account shows no access key, uses no global contract, and
+   runs that code hash. Add the record (step 4), then run `check-reviewed-near <env>` and keep its output (above, and in
+   the decision).
+4. Add the env to `REVIEWED_NEAR_DEPLOYS`: the sha256 of the account id (`printf %s <account> | shasum -a 256`; never
+   the name: CLAUDE.md), the code hash, the lock date and the lock transaction; and the account to `REVIEWED_ACCOUNTS`
+   in `packages/web/test/gen-envs.test.ts`. `gen-envs` then refuses to build the pages whenever the manifest names
+   another account than the one checked: a redeploy to a new account (the only way to change these contracts) needs
+   this whole check again before it reads as reviewed.
 
-Changing `src/lib.rs` of a reviewed contract fails `packages/core/test/reviewed-near-calls.test.ts`: review the
-change, then update the hash. A changed contract is a new deploy to a new account, so its env needs the env check too.
+Changing any of a reviewed contract's four files fails `packages/core/test/reviewed-near-calls.test.ts`: review the
+change, then update the hashes. A changed contract is a new deploy to a new account, so its env needs the env check
+too.
 
 ## Smoke test (`apps/smoke`)
 

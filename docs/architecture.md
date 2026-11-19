@@ -901,18 +901,24 @@ in plain words (D854).
 
 **Journear's reviewed NEAR calls (D885).** The NEAR side of the check-in: `packages/core/src/reviewed-near-calls.ts`
 names Journear's two demo contracts (`collect` on the stamps contract, `add_message` on the demo guestbook), each
-with the sha256 of the `src/lib.rs` a person reviewed, and `REVIEWED_NEAR_DEPLOYS` records, per env name, the locked
-deploys (code hash, lock date, lock transaction; sandbox-dev's two). `gen-envs` puts the manifest's
-`near.demoStamps` and `near.demoGuestbook` into `HanaEnv.nearReviewed` only for an env with a record (the e2e stack
-sets its own for its models); the approval page passes them to `summarizeApproval` (`SummaryContext.reviewedNear`).
-`reviewedNearCall` matches only exactly the reviewed call (testnet, that account, one function call of that method, no
-deposit, gas at most 30 Tgas, strict JSON of exactly the reviewed argument shape, Own fare direct and the other stamps
-relayed) and `reviewedNearMessage` only the Signature stamp's exact NEP-413 message; the summary then keeps the
-generic one's fee, network and total rows and sets the reviewed headline and lines ("{App} wants to collect the
-Arrival stamp for you", "It uses **Journear demo stamps** (…, checked by Journear).", a note or message as a `quote`
-part the page renders as `<q dir="auto">` text), drops the amber acts-as-you line, and marks itself `reviewed`, which
-makes the page leave out the NEP-413 "proves to" and recipient lines. Anything else gets exactly the generic summary.
-The raw account and method stay in the details.
+with the sha256 of the four files a person reviewed (`src/lib.rs`, `Cargo.toml`, `Cargo.lock`,
+`rust-toolchain.toml`) and the build they were checked with (`REVIEWED_NEAR_BUILD`); `REVIEWED_NEAR_DEPLOYS` records,
+per env name, the locked deploys (the sha256 of the account id, code hash, lock date, lock transaction; sandbox-dev's
+two). `gen-envs` puts the manifest's `near.demoStamps` and `near.demoGuestbook` into `HanaEnv.nearReviewed` only for
+an env with a record, and refuses to build when the env isn't on testnet or an account isn't the one recorded (the e2e
+stack sets its own for its models); the approval page passes them to `summarizeApproval`
+(`SummaryContext.reviewedNear`). `reviewedNearCall` matches only exactly the reviewed call (testnet, that account, one
+function call of that method, no deposit, gas at most 30 Tgas, strict JSON of exactly the reviewed argument shape, the
+Signature proof's ed25519 signature verified by the sender's key, Own fare direct and the other stamps relayed, a note
+or message only as `reviewedText` allows: stored form, display-safe, no combining-mark run, no quotation mark) and
+`reviewedNearMessage` only the Signature stamp's exact NEP-413 message; the summary then keeps the generic one's fee,
+network and total rows and sets the reviewed headline and lines ("{App} wants to collect the Arrival stamp for you",
+"It uses **Journear demo stamps** (…, checked by Journear).", a note or message as a label line and a `quote` part the
+page renders in its own clipped box, `div.summary-quote`, never inside a sentence), drops the amber acts-as-you line,
+and marks itself `reviewed` (the page: `data-reviewed`), which makes the page leave out the NEP-413 "proves to" and
+recipient lines. Anything else gets exactly the generic summary. The raw account and method stay in the details. On
+chain, `scripts/check-reviewed-near.ts` (or `deploy-check --only near-reviewed`) reads both NEAR endpoints for each
+record; `verify --full` rebuilds the contracts against the recorded hashes.
 
 ### NEAR requests (D720–D729)
 

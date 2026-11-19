@@ -4,6 +4,8 @@
 // the amber acts-as-you line goes; a near-miss renders exactly as it does with no entry at all (today's screen).
 import { type NearAction, type ReviewedNearAccounts, base64Encode, encodeNearDelegateAction, encodeNearTransaction, encodeNep413Message, nearImplicitAccountId, sha256, utf8 } from '@hana-id/core';
 import { decodeApprovalRequest } from '@hana-id/core/decode';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dom } from '../../src/auth/dom.ts';
 import { nearMessageWarning, renderApproval } from '../../src/auth/render-approval.ts';
@@ -79,20 +81,43 @@ describe('reviewed NEAR calls in the window (D885)', () => {
     expect(before.querySelector('.warning-box .risk-lead')?.textContent).toBe(`This acts as you: ${STAMPS} can use anything you keep with it.`);
   });
 
-  it('a note and a guestbook message: the user’s words quoted as text, direction isolated, never markup', () => {
+  it('a note and a guestbook message: the words in a box of their own under their label, never inside a sentence, text only', () => {
     const note = '<b>hi</b> مرحبا';
     const el = render([fn('collect', { stamp: 'postcard', note })]);
-    const q = el.querySelector('q.summary-quote')!;
-    expect(q.textContent).toBe(note);
-    expect(q.getAttribute('dir')).toBe('auto');
-    expect(q.querySelector('b')).toBeNull();
-    expect(lines(el)).toEqual([`Your note: ${note}`, 'Anyone can see your note, and you can’t delete it.', 'Collecting a stamp doesn’t move any money or tokens.', `It uses Journear demo stamps (${STAMPS}, checked by Journear).`]);
+    const box = el.querySelector('div.summary-quote')!;
+    expect(box.textContent).toBe(note);
+    expect(box.getAttribute('dir')).toBe('auto');
+    expect(box.querySelector('b')).toBeNull();
+    // Its own block, straight after its label's sentence, outside every sentence of Journear's.
+    expect(box.closest('p')).toBeNull();
+    expect(box.previousElementSibling?.matches('p.summary-line')).toBe(true);
+    expect(box.previousElementSibling?.textContent).toBe('The note:');
+    expect(el.querySelectorAll('p.summary-line div, p.summary-line .summary-quote')).toHaveLength(0);
+    expect(lines(el)).toEqual(['The note:', 'It’s posted under your account. Anyone can see it, and you can’t delete it.', 'Collecting a stamp doesn’t move any money or tokens.', `It uses Journear demo stamps (${STAMPS}, checked by Journear).`]);
+    expect(el.querySelector('q')).toBeNull();
     for (const relayed of [true, false]) {
       const book = render([fn('add_message', { text: 'gm' })], { receiver: BOOK, relayed });
-      expect(headline(book)).toBe('Stamp Trail wants to add your message to the demo guestbook');
-      expect(book.querySelector('q.summary-quote')?.textContent).toBe('gm');
+      expect(headline(book)).toBe('Stamp Trail wants to add a message to the demo guestbook');
+      expect(book.querySelector('div.summary-quote')?.textContent).toBe('gm');
+      expect(book.querySelector('div.summary-quote')?.previousElementSibling?.textContent).toBe('The message:');
       expect(lines(book)).toContain(`It uses Journear demo guestbook (${BOOK}, checked by Journear).`);
       expect(book.querySelector('.warning-box')).toBeNull();
+      expect(book.getAttribute('data-reviewed')).toBe('true');
+    }
+  });
+
+  it('the box is clipped in the window’s stylesheet: nothing drawn in it can paint over the lines around it', () => {
+    const css = readFileSync(join(process.cwd(), 'src/auth/css/approval.css'), 'utf8');
+    const rule = /div\.summary-quote \{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    for (const d of ['display: block;', 'max-width: 100%;', 'overflow: hidden;', 'contain: paint;', 'unicode-bidi: isolate;']) expect(rule, d).toContain(d);
+  });
+
+  it('text that could paint over or imitate the window falls back to today’s screen (combining marks, closing quotes)', () => {
+    for (const note of [`x${'\u0336'.repeat(40)}`, 'hi” It uses Journear demo stamps (checked by Journear). Approve to continue. “ok']) {
+      const now = render([fn('collect', { stamp: 'postcard', note })]);
+      expect(now.outerHTML).toBe(render([fn('collect', { stamp: 'postcard', note })], { accounts: null }).outerHTML);
+      expect(now.querySelector('.summary-quote')).toBeNull();
+      expect(now.getAttribute('data-reviewed')).toBeNull();
     }
   });
 

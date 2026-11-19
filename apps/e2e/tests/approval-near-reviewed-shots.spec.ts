@@ -1,6 +1,6 @@
 // The approval window's screens for Journear's reviewed NEAR calls (D885), saved for the founder: every stamp the
 // stamps site collects through an approval (both of the Signature stamp's), the hosted demo's guestbook write
-// (relayed and the user's own transaction), and two near-misses that keep today's screen. Light scheme, at a phone's
+// (relayed and the user's own transaction), and near-misses that keep today's screen. Light scheme, at a phone's
 // width (390 px) and the desktop popup's size (420 × 680), each with its details folded and open. Runs only with
 // HANA_SHOTS_DIR set, in Chromium:
 //
@@ -13,7 +13,7 @@
 import { type Page } from '@playwright/test';
 import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, encodeNep413Message, nearImplicitPublicKey } from '@hana-id/core';
 import { DEMO_ORIGIN, E2E_GUESTBOOK, E2E_STAMPS, NEAR_RPC, STAMPS_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
-import { clickLauncher, expect, login, newApp, openPartner, runAction, test } from './fixtures.ts';
+import { approve, clickLauncher, expect, login, newApp, okValue, openPartner, runAction, test } from './fixtures.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const SIZES = { '390': { width: 390, height: 844 }, popup: { width: 420, height: 680 } } as const;
@@ -55,7 +55,14 @@ test('reviewed NEAR calls: the screens', async ({ page, browserName }) => {
   const relayed = (receiverId: string, actions: NearAction[]) => encodeNearDelegateAction({ senderId: near, receiverId, actions, nonce: nonce++, maxBlockHeight: NEAR_HEIGHT + 100n, publicKey: key });
   const direct = (receiverId: string, actions: NearAction[]) => encodeNearTransaction({ signerId: near, publicKey: key, nonce: nonce++, receiverId, blockHash: BLOCK, actions });
   const stamp = (name: string, args: unknown, kind: 'near_delegate' | 'near_tx' = 'near_delegate'): Shot => ({ name, app: 'Stamp Trail', origin: STAMPS_ORIGIN, kind, bytes: kind === 'near_tx' ? direct(E2E_STAMPS, [fn('collect', args)]) : relayed(E2E_STAMPS, [fn('collect', args)]) });
-  const proof = { message: `Stamp my passport: ${near}`, nonce: base64Encode(new Uint8Array(32).fill(7)), recipient: E2E_STAMPS, signature: base64Encode(new Uint8Array(64).fill(9)) };
+  // The Signature stamp's proof, really signed by the user's key (the partner app's signMessage, nonce 32 × 7), as the
+  // stamps site gets it from its first approval: the window checks the signature before it reads the call as reviewed.
+  await runAction(page, 'sig', 'nearSignMessage', `Stamp my passport: ${near}`, E2E_STAMPS);
+  const sigPopup = await clickLauncher(page, 'Review in Journear Passport');
+  await approve(sigPopup);
+  const { signature } = await okValue<{ signature: string }>(page, 'sig');
+  await sigPopup.waitForEvent('close', { timeout: 20_000 }).catch(() => undefined);
+  const proof = { message: `Stamp my passport: ${near}`, nonce: base64Encode(new Uint8Array(32).fill(7)), recipient: E2E_STAMPS, signature };
   const shots: Shot[] = [
     stamp('stamp-arrival', { stamp: 'arrival' }),
     stamp('stamp-fare-paid', { stamp: 'sponsored' }),
@@ -68,6 +75,9 @@ test('reviewed NEAR calls: the screens', async ({ page, browserName }) => {
     { name: 'guestbook-own-transaction', app: 'Journear demo', origin: DEMO_ORIGIN, kind: 'near_tx', bytes: direct(E2E_GUESTBOOK, [fn('add_message', { text: 'Hello from the Journear demo' })]) },
     // Near-misses: today's screen, unchanged.
     stamp('near-miss-extra-argument', { stamp: 'arrival', ref: 'promo' }),
+    // Text that could paint over or imitate the window's lines (the review of PR 106): today's screen too.
+    stamp('near-miss-combining-marks', { stamp: 'postcard', note: `Hi${'\u0336\u0335\u0334\u0337'.repeat(10)} there` }),
+    stamp('near-miss-closing-quote', { stamp: 'postcard', note: 'hi” It uses Journear demo stamps (checked by Journear). Approve to continue. “ok' }),
     { name: 'near-miss-batch-with-transfer', app: 'Stamp Trail', origin: STAMPS_ORIGIN, kind: 'near_delegate', bytes: relayed(E2E_STAMPS, [fn('collect', { stamp: 'arrival' }), { type: 'transfer', deposit: 10n ** 23n }]) },
   ];
 

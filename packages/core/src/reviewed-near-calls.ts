@@ -3,14 +3,18 @@
 // (demo-check-in.ts, D854). Pinned data and pure matching, built into the popup bundle: a code release changes it.
 //
 // What an entry rests on (D885 "The trust argument"):
-// - the contract's source in this repository, read by a person (`REVIEWED_NEAR_CONTRACTS[*].sourceSha256`: the
-//   whole `src/lib.rs`; test/reviewed-near-calls.test.ts fails when it changes, so a review can't outlive its source);
+// - the contract's source in this repository, read by a person: `REVIEWED_NEAR_CONTRACTS[*].files` pins the sha256 of
+//   every file that decides the build (`src/lib.rs`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`);
+//   test/reviewed-near-calls.test.ts fails when any changes, so a review can't outlive its source. What the pin can't
+//   hold (cargo-near's version, the host) the rebuild carries: `scripts/reviewed-near-rebuild.ts` (`pnpm verify --full`)
+//   rebuilds with the deploy tool's command and compares with each record's code hash;
 // - the account the env's manifest names for it (`near.demoStamps`, `near.demoGuestbook`), which reaches the popup
 //   only through the build (HanaEnv.nearReviewed, packages/web/scripts/gen-envs.ts), and only for an env with a
 //   deployment record below: the contract deployed from that source, then locked (no access key left: nothing can
 //   deploy other code to it, and it has no upgrade method), checked by a person and written down here. The record
-//   holds no account name (CLAUDE.md: names come from the manifests); packages/web/test/gen-envs.test.ts pins each
-//   record to its manifest account, so a new account in the manifest fails the tests until it is reviewed;
+//   holds no account name (CLAUDE.md: names come from the manifests), only the sha256 of the account checked: gen-envs
+//   refuses to build when the manifest names another (packages/web/test/gen-envs.test.ts pins it too). On chain,
+//   `scripts/check-reviewed-near.ts <env>` (and deploy-check's `near-reviewed` group) reads both RPC providers;
 // - an exact match on the request (`reviewedNearCall`, `reviewedNearMessage`): the network, the account, one action,
 //   the method, no deposit, gas within a bound, the arguments exactly in the reviewed shape, relayed or direct as the
 //   site sends it. Anything else is not a match, and the window shows what it shows for any other call.
@@ -19,9 +23,12 @@
 // same whichever app asks; the window names the asking app from the vault, never from the request.
 //
 // No imports beyond core's own pure helpers: the popup bundle takes it as it is.
+import { ed25519 } from '@noble/curves/ed25519';
+import { isNearImplicitAccountId, nearImplicitPublicKey } from './addresses.ts';
+import { type Bytes, base64Decode, base64Encode } from './bytes.ts';
 import { isDisplaySafeLine } from './display-safe.ts';
 import { parseStrictJson } from './decode/json.ts';
-import type { NearAction, Nep413Payload } from './near/codec.ts';
+import { type NearAction, type Nep413Payload, encodeNep413Message, nep413Hash } from './near/codec.ts';
 
 /** Journear's reviewed NEAR contracts. */
 export type ReviewedNearContract = 'stamps' | 'guestbook';
@@ -32,23 +39,59 @@ export type ReviewedNearAccounts = Readonly<Partial<Record<ReviewedNearContract,
 export interface ReviewedNearContractInfo {
   /** Shown in bold, as a checked contract's name is: "It uses {name} (…, checked by Journear)." */
   readonly name: string;
-  /** The reviewed source, from the repository root. */
+  /** The crate's directory, from the repository root. */
+  readonly crate: string;
+  /** The reviewed source file (in `files`), from the repository root. */
   readonly source: string;
-  /** sha256 (hex) of that file as reviewed, line endings as LF. */
-  readonly sourceSha256: string;
+  /** sha256 (hex, line endings as LF) of every file in the crate that decides the build, by path from the repository root. */
+  readonly files: Readonly<Record<string, string>>;
   /** The one method the window reads for this contract. */
   readonly method: string;
   /** The ISO date the source was reviewed for this list. */
   readonly reviewed: string;
 }
 
+const crateFiles = (crate: string, lib: string, cargoToml: string, cargoLock: string, toolchain: string): Readonly<Record<string, string>> =>
+  Object.freeze({ [`${crate}/src/lib.rs`]: lib, [`${crate}/Cargo.toml`]: cargoToml, [`${crate}/Cargo.lock`]: cargoLock, [`${crate}/rust-toolchain.toml`]: toolchain });
+
+/** rust-toolchain.toml as reviewed: Rust 1.85.1 with the wasm32-unknown-unknown target. */
+const TOOLCHAIN_SHA256 = 'ac07090eaf2dfc1a06a87781c16a027e8958e7ba0dc4d43d569dcec029a3b5b5';
+
 export const REVIEWED_NEAR_CONTRACTS: Readonly<Record<ReviewedNearContract, ReviewedNearContractInfo>> = Object.freeze({
-  stamps: Object.freeze({ name: 'Journear demo stamps', source: 'contracts/hana-stamps/src/lib.rs', sourceSha256: 'ea2d68de011b74afd97b88f628fc49bd79b9152fbcfbfefb9acefb198737fbba', method: 'collect', reviewed: '2026-11-19' }),
-  guestbook: Object.freeze({ name: 'Journear demo guestbook', source: 'contracts/hana-guestbook/src/lib.rs', sourceSha256: '04114e0190f500504772f012b9ea0714dc9b8b99d6690990957eb8f3ab43f197', method: 'add_message', reviewed: '2026-11-19' }),
+  stamps: Object.freeze({
+    name: 'Journear demo stamps',
+    crate: 'contracts/hana-stamps',
+    source: 'contracts/hana-stamps/src/lib.rs',
+    files: crateFiles('contracts/hana-stamps', 'ea2d68de011b74afd97b88f628fc49bd79b9152fbcfbfefb9acefb198737fbba', 'e55dd4bfddb49777eaa8bf8019991477d5c6cf355ef7f1b7f54ba5c998d99463', 'd9885f9240a9abb2cc7b94622a84651052942bb162244edec76321421d9e0d92', TOOLCHAIN_SHA256),
+    method: 'collect',
+    reviewed: '2026-11-19',
+  }),
+  guestbook: Object.freeze({
+    name: 'Journear demo guestbook',
+    crate: 'contracts/hana-guestbook',
+    source: 'contracts/hana-guestbook/src/lib.rs',
+    files: crateFiles('contracts/hana-guestbook', '04114e0190f500504772f012b9ea0714dc9b8b99d6690990957eb8f3ab43f197', 'a0326bb9378e7a3d36d86e1517c0da42a0773c4dde15b7f78c14e9cee66bb388', 'cfce151f5c4e0e01801e3de8a897c4dcdea4daec2c1763721d51c6e024ef10d8', TOOLCHAIN_SHA256),
+    method: 'add_message',
+    reviewed: '2026-11-19',
+  }),
 });
+
+/** How a reviewed code hash is rebuilt from the pinned files: the deploy tool's own command and the tools it ran on. */
+export interface ReviewedNearBuild {
+  /** Run in the crate's directory. */
+  readonly command: string;
+  /** The Rust toolchain (rust-toolchain.toml's channel). */
+  readonly rust: string;
+  /** `cargo near --version`'s version. */
+  readonly cargoNear: string;
+}
+
+export const REVIEWED_NEAR_BUILD: ReviewedNearBuild = Object.freeze({ command: 'cargo near build non-reproducible-wasm --no-abi', rust: '1.85.1', cargoNear: '0.22.0' });
 
 /** A deployed, locked copy of a reviewed contract on one env, as a person checked it on chain. */
 export interface ReviewedNearDeploy {
+  /** sha256 (hex) of the account id that was checked, UTF-8: the build refuses a manifest that names another. */
+  readonly accountSha256: string;
   /** The account's code hash (base58) after the deploy, as the deploy tool checked it against its build. */
   readonly codeHash: string;
   /** The ISO date its last access key was deleted: from then on nothing can change its code. */
@@ -63,8 +106,8 @@ export interface ReviewedNearDeploy {
  */
 export const REVIEWED_NEAR_DEPLOYS: Readonly<Record<string, Readonly<Partial<Record<ReviewedNearContract, ReviewedNearDeploy>>>>> = Object.freeze({
   'sandbox-dev': Object.freeze({
-    stamps: Object.freeze({ codeHash: '9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA', locked: '2026-11-13', lockTx: 'wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU' }),
-    guestbook: Object.freeze({ codeHash: '2cGY7mcQevAjB5nssu8VNYkkSiqSiSdimB98QYXbKJxb', locked: '2026-11-12', lockTx: 'HqnP7FRupTXdAUkKwVspAwRsY2ov3AWpwJLs4rR3VqDr' }),
+    stamps: Object.freeze({ accountSha256: '3a5d1a60b53fe18b309d7298aa55ad7836ec0dcf7f9850cdd24033a397dda892', codeHash: '9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA', locked: '2026-11-13', lockTx: 'wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU' }),
+    guestbook: Object.freeze({ accountSha256: '31d46333abc5c948e22c4102e1d488111d1df47126f338e2baabcccdb4981b03', codeHash: '2cGY7mcQevAjB5nssu8VNYkkSiqSiSdimB98QYXbKJxb', locked: '2026-11-12', lockTx: 'HqnP7FRupTXdAUkKwVspAwRsY2ov3AWpwJLs4rR3VqDr' }),
   }),
 });
 
@@ -108,17 +151,59 @@ function contractAt(accounts: ReviewedNearAccounts | undefined, account: string)
 const trimLikeRust = (s: string): string => s.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, '');
 
 /**
- * A text the contract stores exactly as signed and the window can show as quoted text: already trimmed, 1 to `max`
- * Unicode scalar values, and one display-safe line (no control, format, bidi or invisible character).
+ * More than two combining marks in a row: enough to stack glyphs far above or below their line and paint over the
+ * window's own sentences (two cover every accent a language puts on one letter, e.g. Vietnamese).
  */
-const storedText = (v: unknown, max: number): v is string => {
-  if (typeof v !== 'string' || trimLikeRust(v) !== v || !isDisplaySafeLine(v)) return false;
+export const COMBINING_RUN = /\p{M}{3,}/u;
+
+/**
+ * Characters that open or close a quotation, so a text could seem to end the quoted words and go on in the window's own
+ * voice: every Unicode Quotation_Mark, the look-alikes that aren't classed as one (double primes, modifier letters,
+ * ditto, ornaments), except the single quotes that are also the apostrophe in "don't" and "I’m" (U+0027, U+2018,
+ * U+2019, U+201B, U+FF07). Those stay: the window draws no quotation marks around the text at all (its own box).
+ */
+export const QUOTE_LIKE = /(?![\u0027\u2018\u2019\u201b\uff07])[\p{Quotation_Mark}\u02ba\u02dd\u02ee\u2033\u2036\u3003\u275d\u275e\u{1f676}-\u{1f678}]/u;
+
+/**
+ * A text the window may show as the words of a reviewed call: exactly what the contract stores (already trimmed,
+ * 1 to `max` Unicode scalar values), one display-safe line (no control, format, bidi, invisible character or variation
+ * selector), no run of more than two combining marks and no quotation mark (apostrophes aside). Anything else: today's
+ * screen.
+ */
+export function reviewedText(v: unknown, max: number): v is string {
+  if (typeof v !== 'string' || trimLikeRust(v) !== v || !isDisplaySafeLine(v) || COMBINING_RUN.test(v) || QUOTE_LIKE.test(v)) return false;
   const n = [...v].length;
   return n >= 1 && n <= max;
-};
+}
 
-/** Standard base64 with padding of exactly `bytes` bytes (its shape: the contract checks the rest). */
-const base64Of = (v: unknown, bytes: 32 | 64): boolean => typeof v === 'string' && (bytes === 32 ? /^[A-Za-z0-9+/]{43}=$/u : /^[A-Za-z0-9+/]{86}==$/u).test(v);
+/** Standard base64 with padding of exactly `bytes` bytes, in its one canonical form, decoded; else null. */
+function base64Of(v: unknown, bytes: 32 | 64): Bytes | null {
+  if (typeof v !== 'string' || !(bytes === 32 ? /^[A-Za-z0-9+/]{43}=$/u : /^[A-Za-z0-9+/]{86}==$/u).test(v)) return null;
+  try {
+    const out = base64Decode(v);
+    return out.length === bytes && base64Encode(out) === v ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `proof` is what the stamps contract accepts for `sender` (its `proof_is_valid`): the message for that account,
+ * this contract as the recipient, no callback, and an ed25519 signature by the account's own key (an implicit account:
+ * the key is the account id). Checked here so the window can say the user signed it. Pure math: no new trust.
+ */
+function proofSignedBy(proof: Record<string, unknown>, sender: string, account: string): boolean {
+  if (!keysAre(proof, ['message', 'nonce', 'recipient', 'signature']) || proof.message !== `${STAMP_SIGN_MESSAGE_PREFIX}${sender}` || proof.recipient !== account) return false;
+  const nonce = base64Of(proof.nonce, 32);
+  const signature = base64Of(proof.signature, 64);
+  if (nonce === null || signature === null || !isNearImplicitAccountId(sender)) return false;
+  try {
+    const hash = nep413Hash(encodeNep413Message({ message: proof.message, nonce, recipient: account, callbackUrl: null }));
+    return ed25519.verify(signature, hash, nearImplicitPublicKey(sender), { zip215: false });
+  } catch {
+    return false;
+  }
+}
 
 const keysAre = (o: Record<string, unknown>, keys: readonly string[]): boolean => {
   const own = Object.keys(o);
@@ -146,14 +231,12 @@ function collectCall(args: Record<string, unknown>, sender: string, account: str
   if (relayed !== (id !== 'own_fare')) return null;
   switch (id) {
     case 'postcard':
-      return keysAre(args, ['stamp', 'note']) && storedText(args.note, STAMP_NOTE_MAX_CHARS) ? { contract: 'stamps', account, kind: 'collect', stamp: id, note: args.note } : null;
+      return keysAre(args, ['stamp', 'note']) && reviewedText(args.note, STAMP_NOTE_MAX_CHARS) ? { contract: 'stamps', account, kind: 'collect', stamp: id, note: args.note } : null;
     case 'signature': {
       if (!keysAre(args, ['stamp', 'proof'])) return null;
       const p = args.proof;
       if (p === null || typeof p !== 'object' || Array.isArray(p)) return null;
-      const proof = p as Record<string, unknown>;
-      const ok = keysAre(proof, ['message', 'nonce', 'recipient', 'signature']) && proof.message === `${STAMP_SIGN_MESSAGE_PREFIX}${sender}` && proof.recipient === account && base64Of(proof.nonce, 32) && base64Of(proof.signature, 64);
-      return ok ? { contract: 'stamps', account, kind: 'collect', stamp: id } : null;
+      return proofSignedBy(p as Record<string, unknown>, sender, account) ? { contract: 'stamps', account, kind: 'collect', stamp: id } : null;
     }
     default:
       return keysAre(args, ['stamp']) ? { contract: 'stamps', account, kind: 'collect', stamp: id } : null;
@@ -175,7 +258,7 @@ export function reviewedNearCall(r: ReviewedNearRequest, accounts: ReviewedNearA
   const args = argsObject(a.args);
   if (args === null) return null;
   if (contract === 'stamps') return collectCall(args, r.sender, r.receiver, r.relayed);
-  return keysAre(args, ['text']) && storedText(args.text, GUESTBOOK_TEXT_MAX_CHARS) ? { contract: 'guestbook', account: r.receiver, kind: 'add_message', text: args.text } : null;
+  return keysAre(args, ['text']) && reviewedText(args.text, GUESTBOOK_TEXT_MAX_CHARS) ? { contract: 'guestbook', account: r.receiver, kind: 'add_message', text: args.text } : null;
 }
 
 /**

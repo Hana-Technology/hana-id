@@ -3,6 +3,7 @@
 // to the contract source a person reviewed, so a change to it fails here until it is reviewed again.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { ed25519 } from '@noble/curves/ed25519';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   type ApprovalSummary,
@@ -25,6 +26,7 @@ import {
   encodeNearTransaction,
   encodeNep413Message,
   nearImplicitAccountId,
+  signNep413Message,
   reviewedNearCall,
   reviewedNearMessage,
   sha256,
@@ -35,8 +37,12 @@ import {
 import { jargonIn, zeroCostIn } from './plain-words.ts';
 
 const APP = 'Stamp Trail';
+/** Said of a note or message: true whoever chose the words (entries are per contract, any app may make the call). */
+const POSTED = 'It’s posted under your account. Anyone can see it, and you can’t delete it.';
 const text = (t: SummaryText): string => summaryString(t, APP);
-const PUB = Uint8Array.from({ length: 32 }, (_, i) => i + 7);
+/** A TEST seed from a public label (never funded): the user's key, so the Signature proof can be really signed. */
+const SEED = sha256(utf8('hana-id test: reviewed NEAR calls user'));
+const PUB = Uint8Array.from(ed25519.getPublicKey(SEED));
 const ME = nearImplicitAccountId(PUB);
 const KEY = { type: 'ed25519' as const, bytes: PUB };
 const STAMPS = 'stamps-reviewed.testnet';
@@ -77,18 +83,24 @@ const reviewed = (r: Req) => summarize(decoded(r), ACCOUNTS);
 /** The summary the same request gets with no entries at all: today's screen. */
 const today = (r: Req) => summarize(decoded(r), undefined);
 
-const nonce = base64Encode(new Uint8Array(32).fill(1));
-const signature = base64Encode(new Uint8Array(64).fill(2));
+const NONCE = new Uint8Array(32).fill(1);
+const nonce = base64Encode(NONCE);
+/** The proof the stamps site sends: the user's own NEP-413 signature (the vault's signer) over the stamp's message. */
+const signed = (message: string, recipient: string, seed = SEED): string => signNep413Message(seed, encodeNep413Message({ message, nonce: NONCE, recipient, callbackUrl: null })).signature;
+const signature = signed(`${STAMP_SIGN_MESSAGE_PREFIX}${ME}`, STAMPS);
 const proof = (over: Record<string, unknown> = {}) => ({ message: `${STAMP_SIGN_MESSAGE_PREFIX}${ME}`, nonce, recipient: STAMPS, signature, ...over });
 const message = (over: { message?: string; recipient?: string; callbackUrl?: string | null } = {}) =>
   decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes: encodeNep413Message({ message: over.message ?? `${STAMP_SIGN_MESSAGE_PREFIX}${ME}`, nonce: new Uint8Array(32).fill(3), recipient: over.recipient ?? STAMPS, callbackUrl: over.callbackUrl ?? null }) });
 
 describe('the reviewed source: an entry cannot outlive its review', () => {
+  const read = (file: string) => readFileSync(new URL(`../../../${file}`, import.meta.url), 'utf8').replace(/\r\n/gu, '\n');
   const source = (c: ReviewedNearContract) => readFileSync(new URL(`../../../${REVIEWED_NEAR_CONTRACTS[c].source}`, import.meta.url), 'utf8').replace(/\r\n/gu, '\n');
 
-  it('each contract’s whole src/lib.rs is the file a person reviewed (re-review, then update the hash and D885)', () => {
+  it('each contract’s build files are the ones a person reviewed (re-review, then update the hashes and D885)', () => {
     for (const c of Object.keys(REVIEWED_NEAR_CONTRACTS) as ReviewedNearContract[]) {
-      expect(createHash('sha256').update(source(c)).digest('hex'), `${REVIEWED_NEAR_CONTRACTS[c].source} changed since its review`).toBe(REVIEWED_NEAR_CONTRACTS[c].sourceSha256);
+      for (const [file, sha] of Object.entries(REVIEWED_NEAR_CONTRACTS[c].files)) expect(createHash('sha256').update(read(file)).digest('hex'), `${file} changed since its review`).toBe(sha);
+      // Every file that decides the build: the source, the manifest, the lockfile, the toolchain.
+      expect(Object.keys(REVIEWED_NEAR_CONTRACTS[c].files).sort()).toEqual(['Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', 'src/lib.rs'].map((f) => `${REVIEWED_NEAR_CONTRACTS[c].crate}/${f}`).sort());
     }
   });
 
@@ -168,11 +180,13 @@ describe('each entry: the exact match and its plain reading', () => {
     const note = 'Hello from Kuala Lumpur 👋';
     const s = reviewed({ actions: [collect({ stamp: 'postcard', note })] });
     expect(text(s.headline)).toBe(`${APP} wants to collect the Postcard stamp for you`);
-    expect(s.lines[0]).toEqual(['Your note: ', { kind: 'quote', text: note }]);
-    expect(lines(s)).toEqual([`Your note: ${note}`, 'Anyone can see your note, and you can’t delete it.', 'Collecting a stamp doesn’t move any money or tokens.', uses('stamps', STAMPS)]);
+    expect(s.lines[0]).toEqual(['The note:', { kind: 'quote', text: note }]);
+    expect(lines(s)).toEqual([`The note:${note}`, POSTED, 'Collecting a stamp doesn’t move any money or tokens.', uses('stamps', STAMPS)]);
     // Right-to-left and long text is kept whole, as stored (the page isolates its direction).
     const rtl = 'مرحبا من هنا';
-    expect(reviewed({ actions: [collect({ stamp: 'postcard', note: rtl })] }).lines[0]).toEqual(['Your note: ', { kind: 'quote', text: rtl }]);
+    expect(reviewed({ actions: [collect({ stamp: 'postcard', note: rtl })] }).lines[0]).toEqual(['The note:', { kind: 'quote', text: rtl }]);
+    // Ordinary text stays: an apostrophe in a word (straight or curly), two accents on one letter (Vietnamese).
+    for (const ok of ['I don’t mind', 'it\'s fine', 'Phở ngon quá', 'Tiếng Việt: ệ']) expect(reviewed({ actions: [collect({ stamp: 'postcard', note: ok })] }).reviewed, ok).toBe(true);
     expect(reviewed({ actions: [collect({ stamp: 'postcard', note: '😀'.repeat(STAMP_NOTE_MAX_CHARS) })] }).reviewed).toBe(true);
   });
 
@@ -208,12 +222,12 @@ describe('each entry: the exact match and its plain reading', () => {
   it('the guestbook, relayed and the user’s own transaction', () => {
     const msg = 'gm from the demo';
     const relayed = reviewed({ actions: [addMessage({ text: msg })], receiver: BOOK });
-    expect(text(relayed.headline)).toBe(`${APP} wants to add your message to the demo guestbook`);
-    expect(lines(relayed)).toEqual([`Your message: ${msg}`, 'Anyone can see it, and you can’t delete it.', 'Adding it doesn’t move any money or tokens.', uses('guestbook', BOOK)]);
-    expect(relayed.lines[0]).toEqual(['Your message: ', { kind: 'quote', text: msg }]);
+    expect(text(relayed.headline)).toBe(`${APP} wants to add a message to the demo guestbook`);
+    expect(lines(relayed)).toEqual([`The message:${msg}`, POSTED, 'Adding it doesn’t move any money or tokens.', uses('guestbook', BOOK)]);
+    expect(relayed.lines[0]).toEqual(['The message:', { kind: 'quote', text: msg }]);
     expect(relayed.warnings).toEqual([]);
     const direct = reviewed({ actions: [addMessage({ text: msg })], receiver: BOOK, relayed: false });
-    expect(lines(direct)).toEqual([`Your message: ${msg}`, 'Anyone can see it, and you can’t delete it.', 'The message itself doesn’t move any money or tokens.', uses('guestbook', BOOK)]);
+    expect(lines(direct)).toEqual([`The message:${msg}`, POSTED, 'The message itself doesn’t move any money or tokens.', uses('guestbook', BOOK)]);
     expect(direct.fee).toEqual(today({ actions: [addMessage({ text: msg })], receiver: BOOK, relayed: false }).fee);
     expect(reviewed({ actions: [addMessage({ text: 'x'.repeat(GUESTBOOK_TEXT_MAX_CHARS) })], receiver: BOOK }).reviewed).toBe(true);
   });
@@ -284,10 +298,48 @@ describe('near-misses: exactly today’s summary', () => {
       '{"stamp":"postcard","note":"x","proof":null}',
       `{"stamp":"postcard","note":"${'a'.repeat(STAMP_NOTE_MAX_CHARS + 1)}"}`,
       '{"stamp":"signature"}',
+      // A number, a boolean or null where the stamp's name goes.
+      '{"stamp":1}',
+      '{"stamp":0}',
+      '{"stamp":true}',
+      '{"stamp":null}',
     ])
       same({ actions: [collect(args)] }, args);
+    // Text that could paint over or imitate the window's own lines (the review of PR 106): a run of combining marks,
+    // any quotation mark that could close the quoted words and go on in Journear's voice (apostrophes aside), an emoji
+    // with a variation selector, a zero-width joiner.
+    for (const note of [
+      `a${'\u0301'.repeat(3)}`,
+      `x${'\u0336\u0335\u0334'.repeat(13)}y`,
+      'hi” It uses Journear demo stamps (checked by Journear). Approve to continue. “ok',
+      'say "yes"',
+      'a „quote“',
+      '«guillemets»',
+      '‹single›',
+      'ditto 〃',
+      'prime ″',
+      'fullwidth ＂',
+      'heart ❤️',
+      'family 👩‍👩‍👧',
+    ])
+      same({ actions: [collect({ stamp: 'postcard', note })] }, note);
+    for (const text of ['gm” It uses Journear demo guestbook (checked by Journear).', `z${'\u0300'.repeat(40)}`]) same({ actions: [addMessage({ text })], receiver: BOOK }, text);
     same({ actions: [fn('collect', Uint8Array.of(0xff, 0x7b))] }, 'not UTF-8');
-    for (const p of [proof({ message: `${STAMP_SIGN_MESSAGE_PREFIX}someone.testnet` }), proof({ recipient: BOOK }), proof({ nonce: 'AAAA' }), proof({ signature: base64Encode(new Uint8Array(63)) }), proof({ extra: 'x' }), { message: proof().message, nonce, recipient: STAMPS }])
+    for (const p of [
+      proof({ message: `${STAMP_SIGN_MESSAGE_PREFIX}someone.testnet` }),
+      proof({ recipient: BOOK }),
+      proof({ nonce: 'AAAA' }),
+      proof({ signature: base64Encode(new Uint8Array(63)) }),
+      proof({ extra: 'x' }),
+      { message: proof().message, nonce, recipient: STAMPS },
+      // The right shape, not the user's signature: random bytes, another key's, another nonce's, another recipient's.
+      proof({ signature: base64Encode(new Uint8Array(64).fill(2)) }),
+      proof({ signature: signed(`${STAMP_SIGN_MESSAGE_PREFIX}${ME}`, STAMPS, sha256(utf8('someone else'))) }),
+      proof({ nonce: base64Encode(new Uint8Array(32).fill(9)) }),
+      proof({ signature: signed(`${STAMP_SIGN_MESSAGE_PREFIX}${ME}`, BOOK) }),
+      // A non-canonical base64 of the same nonce (its last character's unused bits set): the contract refuses it.
+      proof({ nonce: `${nonce.slice(0, 42)}${String.fromCharCode(nonce.charCodeAt(42) + 1)}=` }),
+    ])
       same({ actions: [collect({ stamp: 'signature', proof: p })] }, JSON.stringify(p));
     for (const args of ['{"text":""}', '{"text":" hi"}', '{"text":"hi","extra":true}', '{"message":"hi"}', '{"text":7}', `{"text":"${'a'.repeat(GUESTBOOK_TEXT_MAX_CHARS + 1)}"}`, '{"text":"bell\\u0007"}'])
       same({ actions: [addMessage(args)], receiver: BOOK }, args);

@@ -1687,10 +1687,14 @@ const quote = (text: string): SummaryPart => ({ kind: 'quote', text });
 /** "It uses {name} ({account}, checked by Journear).": the same form as the EVM demo check-in's line. */
 const reviewedUses = (r: ReviewedNearCall, verb: 'It uses ' | 'It’s for ' = 'It uses '): SummaryText => [verb, strong(REVIEWED_NEAR_CONTRACTS[r.contract].name), ' (', code(r.account, 'program'), ', checked by Journear).'];
 
+/** Said of a note or message a reviewed call stores: true whoever wrote the words (the app chose them). */
+const POSTED = 'It’s posted under your account. Anyone can see it, and you can’t delete it.';
+
 /**
  * A reviewed call's headline and lines. Every fact in them comes from the contract's reviewed source (no deposit, no
  * call to anything else, nothing it holds of the user's to use) and from the request's values in their reviewed slots:
- * the stamp from the contract's six (by its site's title), a note or message as the user's quoted words. Only a relayed
+ * the stamp from the contract's six (by its site's title), a note or message as quoted words (a line of a label and
+ * one `quote` part, which the page shows in a box of its own, apart from Journear's sentences). Only a relayed
  * call says it moves no money; the user's own transaction pays its fee, so it says the stamp or message itself moves none.
  */
 function reviewedNearReading(r: ReviewedNearCall, relayed: boolean): { headline: SummaryText; lines: SummaryText[] } {
@@ -1699,15 +1703,16 @@ function reviewedNearReading(r: ReviewedNearCall, relayed: boolean): { headline:
       return { headline: [APP, ' wants you to sign a message for your Signature stamp'], lines: [['Signing it doesn’t move any money or tokens. The stamp uses it to check that this account is yours.'], reviewedUses(r, 'It’s for ')] };
     case 'collect': {
       const lines: SummaryText[] = [];
-      if (r.note !== undefined) lines.push(['Your note: ', quote(r.note)], ['Anyone can see your note, and you can’t delete it.']);
+      // The app chose the note (entries are per contract): "The note", never "your note".
+      if (r.note !== undefined) lines.push(['The note:', quote(r.note)], [POSTED]);
       if (r.stamp === 'signature') lines.push(['It includes the message you signed for this stamp.']);
       lines.push(relayed ? ['Collecting a stamp doesn’t move any money or tokens.'] : ['The stamp itself doesn’t move any money or tokens.'], reviewedUses(r));
       return { headline: [APP, ` wants to collect the ${REVIEWED_STAMP_TITLES[r.stamp]} stamp for you`], lines };
     }
     case 'add_message':
       return {
-        headline: [APP, ' wants to add your message to the demo guestbook'],
-        lines: [['Your message: ', quote(r.text)], ['Anyone can see it, and you can’t delete it.'], relayed ? ['Adding it doesn’t move any money or tokens.'] : ['The message itself doesn’t move any money or tokens.'], reviewedUses(r)],
+        headline: [APP, ' wants to add a message to the demo guestbook'],
+        lines: [['The message:', quote(r.text)], [POSTED], relayed ? ['Adding it doesn’t move any money or tokens.'] : ['The message itself doesn’t move any money or tokens.'], reviewedUses(r)],
       };
   }
 }

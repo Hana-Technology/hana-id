@@ -8,6 +8,7 @@ import { type Page, type TestInfo } from '@playwright/test';
 import { REVIEWED_STAMP_TITLES, type ReviewedStampId } from '@hana-id/core';
 import { routeNearRelayer } from '../src/near-relay.ts';
 import { E2E_STAMPS, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, STAMPS_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { expectPlainWindow } from './plain-checks.ts';
 import { STAMPS_APP, approve, clickClosing, clickUntilTaken, expect, newApp, test } from './fixtures.ts';
 
 /** Records every CSP violation on the site's own document (the page CSP must allow everything the page does). */
@@ -115,10 +116,11 @@ async function collectWith(page: Page, id: ReviewedStampId, open: Page | null, n
  */
 async function expectReviewedStamp(window: Page, id: ReviewedStampId, note?: string): Promise<void> {
   await expect(window.locator('h2.summary-headline')).toHaveText(`Stamp Trail wants to collect the ${REVIEWED_STAMP_TITLES[id]} stamp for you`);
-  if (note !== undefined) await expect(window.locator('q.summary-quote')).toHaveText(note);
+  if (note !== undefined) await expect(window.locator('div.summary-quote')).toHaveText(note);
   await expect(window.locator('p.summary-line').last()).toHaveText(`It uses Journear demo stamps (${E2E_STAMPS}, checked by Journear).`);
   await expect(window.locator('.warning-box')).toHaveCount(0);
   await expect(window.locator('details.request-details')).toContainText('collect');
+  await expectPlainWindow(window);
 }
 
 /** D885: the Signature stamp's first approval, its NEP-413 message, read as the reviewed one. */
@@ -126,6 +128,7 @@ async function expectReviewedSignatureMessage(window: Page): Promise<void> {
   await expect(window.locator('h2.summary-headline')).toHaveText('Stamp Trail wants you to sign a message for your Signature stamp');
   await expect(window.locator('p.summary-line').last()).toHaveText(`It’s for Journear demo stamps (${E2E_STAMPS}, checked by Journear).`);
   await expect(window.locator('.warning-box')).toHaveCount(0);
+  await expectPlainWindow(window);
 }
 
 test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature with zero NEAR, then the public passport', async ({ page }, info) => {

@@ -1202,8 +1202,8 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string, book?: IdBook, re
     if (typeof p === 'string') return [p];
     if (p.kind === 'app') return [d.h('strong', { class: 'app-name' }, appName)];
     if (p.kind === 'strong') return [d.h('strong', {}, p.text)];
-    // A reviewed call's quoted words (D885): text, in quotation marks, its direction isolated from the sentence's.
-    if (p.kind === 'quote') return [d.h('q', { class: 'summary-quote', attrs: { dir: 'auto' } }, p.text)];
+    // A reviewed call's quoted words (D885): never inline; renderApproval puts each in its own box (quoteBox).
+    if (p.kind === 'quote') return [quoteBox(d, p.text)];
     if (!p.role || !book || !isLongId(p.text)) return [mono(d, p.text)];
     refs?.push({ role: p.role, full: p.text });
     const n = book.number(p.text);
@@ -1212,6 +1212,12 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string, book?: IdBook, re
     return [d.h('code', { class: 'mono short-id', attrs: { 'aria-hidden': 'true' } }, shortId(p.text)), ...(hint ? [d.h('span', { class: 'sr-only' }, hint)] : [])];
   });
 }
+
+/**
+ * A reviewed call's quoted words (D885): the text alone, in a box of its own under its label, apart from Journear's
+ * sentences, clipped to the box (approval.css `div.summary-quote`), its direction isolated. Set as text, never markup.
+ */
+const quoteBox = (d: Dom, text: string): HTMLElement => d.h('div', { class: 'summary-quote', attrs: { dir: 'auto' } }, text);
 
 /** A sentence and, right under it, the rows of the long values it names first (D859). */
 function withRows(d: Dom, book: IdBook, el: HTMLElement, refs: readonly IdRef[]): HTMLElement[] {
@@ -1408,13 +1414,16 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   const keyFacts = [network && row(d, 'Network', ...network), fee];
   const lines = summary.lines.flatMap((l) => {
     const refs: IdRef[] = [];
-    const p = d.h('p', { class: 'summary-line' }, ...summaryNodes(d, l, appName, book, refs));
-    return withRows(d, book, p, refs);
+    // A line with quoted words (D885): its label as a sentence, then the words in their own box, never inside it.
+    const quoted = l.filter((part): part is { kind: 'quote'; text: string } => typeof part !== 'string' && part.kind === 'quote');
+    const words = l.filter((part) => typeof part === 'string' || part.kind !== 'quote');
+    const p = d.h('p', { class: 'summary-line' }, ...summaryNodes(d, words, appName, book, refs));
+    return [...withRows(d, book, p, refs), ...quoted.map((q) => quoteBox(d, q.text))];
   });
   const amberBox = riskBox(d, 'warning', amber, appName, book);
   return d.h(
     'div',
-    { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable) } },
+    { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable), ...(summary.reviewed ? { 'data-reviewed': 'true' } : {}) } },
     headlineEl,
     // The red banners and lines right under the headline: nothing a partner sizes (the summary's lines, the number of
     // operations) can push them down (review M2).

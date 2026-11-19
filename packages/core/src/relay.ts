@@ -149,10 +149,10 @@ export type FollowProve =
   | { method: 'email'; purpose: 'session' | 'link_new' | 'link_account' | 'link_change'; commitment: Record<string, unknown> };
 
 /**
- * How long after a sign-in method starts opening a wallet it counts as recent (spec "Notices", D259): the sign-in window
- * shows a recent one as a full banner at every sign-in. D875: an older one is still offered to the wallet's own
- * sign-in (its root) with Remove, as one quiet line that each device shows once. The vault (which banners it sends),
- * the sign-in window (how it shows them) and Passport Home (what it tells the user) all read this one value.
+ * How long after a sign-in method starts opening a wallet it counts as recent: the sign-in window shows a recent one as
+ * a full banner at every sign-in. An older one is still offered to the wallet's own sign-in (its root) with Remove, as
+ * one quiet line that each device shows once. The vault (which banners it sends), the sign-in window (how it shows
+ * them) and Passport Home (what it tells the user) all read this one value.
  */
 export const RECENT_LINK_MS = 7 * 24 * 3_600_000;
 

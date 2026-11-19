@@ -137,7 +137,7 @@ button.onclick = () =>                                            // in the clic
 ```
 
 Every action shows Journear Passport's window (no fee row in view; under "Show details", first, "Network fee: Free.
-Sponsored by {your app's name}.", D884); none is approved automatically. The first one also sets the account up (an EIP-7702 authorization: the address stays the same).
+Sponsored by {your app's name}."); none is approved automatically. The first one also sets the account up (an EIP-7702 authorization: the address stays the same).
 EIP-5792 `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` on `hana.ethereum` do the same for
 viem and wagmi (`5710` on a chain without it, where 0.4.x answered `4200`). `eth_sendTransaction` is never gas-free.
 Refusals are `HanaSponsorError` with `data.reason` (type `SponsorReason`: the known reasons, or any string, so a new

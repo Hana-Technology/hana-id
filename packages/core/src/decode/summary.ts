@@ -100,9 +100,10 @@ export interface ApprovalSummary {
   readonly fee: SummaryText | null;
   /**
    * The user pays no network fee: a sponsored action (this build's own relayer, checked by the decoder) or a relayed
-   * NEAR action (whoever sends it pays, never the user). D884: the page shows such a fee only in the folded details; a
-   * fee row in the main view means the user pays it.
+   * NEAR action (whoever sends it pays, never the user). The page shows such a fee only in the folded details; a fee
+   * row in the main view means the user pays it.
    */
+  // D884.
   readonly freeFee?: true;
   /** The network the request is bound to, as a value ("Sepolia (test network)"), when the request names one. NEAR's line is the page's. */
   readonly network: SummaryText | null;
@@ -590,19 +591,21 @@ function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
 // note when the approval also signs the account's authorization.
 // The calls carry no value (the subject decoder refuses any), so nothing is said about ETH leaving.
 
+// D884 (amends D858, D877): the app named as an attribution; Journear's relayers record the cost against the app (D852,
+// D863); never a claim that the request costs nothing (D858).
 /**
- * A network fee the user doesn't pay (D884): "Free. Sponsored by {App}.", the app's name as the window's header shows
- * it. The same words for both kinds of free fee, a sponsored EVM action and a relayed NEAR action. "Free." is the
- * row's first word, in bold. The window can't see who pays in the end, only that the user doesn't: naming the app is
- * an attribution (the app asked for the action; Journear's relayer, when it sends, records the cost against that app,
- * D852, D863; an app that relays a NEAR action itself pays for it). It never says the request costs nothing (D858).
- * The page shows it only in the folded details (D884).
+ * A network fee the user doesn't pay: "Free. Sponsored by {App}.", the app's name as the window's header shows it.
+ * The same words for both kinds of free fee, a sponsored EVM action and a relayed NEAR action. "Free." is the row's
+ * first word, in bold. The window can't see who pays in the end, only that the user doesn't: naming the app is an
+ * attribution (the app asked for the action; an app that relays a NEAR action itself pays for it). It never says the
+ * request costs nothing. The page shows it only in the folded details.
  */
 export const FREE_FEE: SummaryText = Object.freeze([strong('Free.'), ' Sponsored by ', APP, '.']) as SummaryText;
 
+// D884: it was "Free. Journear pays it for you." (D877).
 /**
- * The fee of a sponsored action: FREE_FEE (D884; it was "Free. Journear pays it for you.", D877). True for every
- * sponsored action: the decoder takes only this build's own relayer (its sponsor chains), so the user never pays it.
+ * The fee of a sponsored action: FREE_FEE. True for every sponsored action: the decoder takes only this build's own
+ * relayer (its sponsor chains), so the user never pays it.
  */
 export const SPONSORED_FEE: SummaryText = FREE_FEE;
 
@@ -1658,10 +1661,11 @@ function nearMovesValue(a: NearAction): boolean {
   }
 }
 
+// D884: it was "Free for you. Someone else pays it." (D858, D877).
 /**
- * The fee of a relayed NEAR action: FREE_FEE (D884; it was "Free for you. Someone else pays it.", D858, D877). It
- * speaks about the fee only, never about what the action costs. Never "Journear pays": a partner may relay it itself
- * (D858); the app is named as the sponsor, an attribution, not something the window checked.
+ * The fee of a relayed NEAR action: FREE_FEE. It speaks about the fee only, never about what the action costs. Never
+ * "Journear pays": a partner may relay it itself; the app is named as the sponsor, an attribution, not something the
+ * window checked.
  */
 export const RELAYED_FEE: SummaryText = FREE_FEE;
 

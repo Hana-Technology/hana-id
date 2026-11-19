@@ -67,9 +67,17 @@ export const STAGES = {
   reading: 'Reading your NEAR account on testnet…',
   activating: 'Preparing your NEAR account…',
   approving: 'Waiting for your approval in the Journear window…',
-  relaying: 'Sending it through Journear’s relayer, which pays the fee…',
+  relaying: 'Sending it. Journear pays the network fee…',
   retrying: 'That request’s number was already used. Building a fresh one: approve it once more in the Journear window…',
 } as const;
+
+/**
+ * D881 (decided by the founder 2026-11-19: "change the guestbook one to match the check in card"): a written guestbook
+ * message, in the gas-free check-in card's words. Journear's NEAR relay sent it and paid the fee; the first write after
+ * this page created the account says so too.
+ */
+export const guestbookDone = (created: boolean): string =>
+  `Written to the guestbook on NEAR testnet.${created ? ' Your NEAR account was created for it.' : ''} Journear paid the network fee, so it cost you nothing.`;
 
 export interface NearCardDeps {
   config: DemoConfig;
@@ -325,7 +333,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     b.hidden = false;
     b.textContent = p.key
       ? `Balance: ${formatNear(p.balance)} NEAR${p.balance < TX_FEE_RESERVE ? '. The guestbook write needs none.' : '.'}`
-      : 'Not on NEAR testnet yet: your first guestbook write creates it (Journear’s relayer sends it a zero-value transfer), for free.';
+      : 'Not on NEAR testnet yet: your first guestbook write creates it (Journear sends it a zero-value transfer), at no cost to you.';
   }
 
   /** A signing result, newest first (result.ts): the facts as mono rows, then the explorer link when it was sent. */
@@ -434,7 +442,8 @@ export function startNearCard(deps: NearCardDeps): NearCard {
           stage(null);
           // The first write after this page's activation (in the click or in the background) says so.
           const created = justCreated.delete(accountId);
-          done(`Written to the guestbook on NEAR testnet.${created ? ' Your NEAR account was created for it.' : ''} You paid no gas.`, transactionHash);
+          // D881: the check-in card's words (gas-free-card.ts `GAS_FREE_TEXT.done`): Journear's NEAR relay paid the fee.
+          done(guestbookDone(created), transactionHash);
           input.value = '';
           renderCount();
           refresh(accountId).catch(() => {});
@@ -500,7 +509,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
             { label: 'Signed transaction', value: shorten(r.signedTransaction, 24, 16) },
             { label: 'Transaction hash', value: r.hash },
           ],
-          'Not sent: your NEAR account has no NEAR to pay the network fee. Use “Write to the guestbook (no NEAR needed)” above, where Journear’s relayer pays.',
+          'Not sent: your NEAR account has no NEAR to pay the network fee. Use “Write to the guestbook (no NEAR needed)” above, where Journear pays the network fee.',
           true,
         );
       } catch (e) {

@@ -11,7 +11,26 @@ export interface Dom {
   show(...children: Child[]): void;
 }
 
-export function dom(doc: Document): Dom {
+export interface DomOptions {
+  /**
+   * D881: the window's title follows the screen. One page file shows many screens (the sign-in window's email page
+   * shows a Google sign-in's follow-up screens too), so its built `<title>` can be wrong for the screen in view: each
+   * `show` sets the title to the screen's heading (its first `h1`), or back to the built title when it has none.
+   */
+  titleFromHeading?: boolean;
+}
+
+/** The sign-in window's pages (/login, /login/callback, /login/email, /home/callback): their title follows the screen. */
+export const SIGN_IN_WINDOW: DomOptions = Object.freeze({ titleFromHeading: true });
+
+/** The title each document was built with, before any screen changed it (several `dom()` calls may share a page). */
+const BUILT_TITLES = new WeakMap<Document, string>();
+
+/** The text a heading reads as: its text content, white space collapsed. */
+export const headingText = (el: Element | null): string => (el?.textContent ?? '').replace(/\s+/gu, ' ').trim();
+
+export function dom(doc: Document, options: DomOptions = {}): Dom {
+  if (options.titleFromHeading && !BUILT_TITLES.has(doc)) BUILT_TITLES.set(doc, doc.title);
   const append = (el: Element, children: Child[]) => {
     for (const c of children) {
       if (c === null || c === undefined || c === false) continue;
@@ -31,6 +50,7 @@ export function dom(doc: Document): Dom {
       const root = doc.getElementById('app') ?? doc.body;
       root.replaceChildren();
       append(root, children);
+      if (options.titleFromHeading) doc.title = headingText(root.querySelector('h1')) || (BUILT_TITLES.get(doc) ?? doc.title);
     },
   };
 }

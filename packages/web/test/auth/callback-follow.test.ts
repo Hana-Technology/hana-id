@@ -8,7 +8,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuthApi } from '../../src/auth/api.ts';
 import { EMAIL_PROMPT_TEXT, runCallbackPage } from '../../src/auth/callback-page.ts';
 import { parseCallbackFragment } from '../../src/auth/google.ts';
+import { type BannerAction, type EmailContext, readEmailContext, storeEmailContext } from '../../src/auth/email-storage.ts';
 import { LOGIN_ENTRY_PREFIX, storeLoginEntry } from '../../src/auth/login-storage.ts';
+import { SHARE_PATH, markEmailShare } from '../../src/auth/share-handoff.ts';
 import { FakeWindow, resetDom } from './helpers.ts';
 
 const NOW = 1_800_000_000_000;
@@ -191,5 +193,80 @@ describe('/login/callback with the follow-up channel (batch 8b)', () => {
     expect(parseCallbackFragment(`#access_token=ya29.x&state=${s}`)).toEqual({ kind: 'access', state: s, accessToken: 'ya29.x' });
     expect(parseCallbackFragment(`#id_token=${GTOKEN}&access_token=ya29.x&state=${s}`)).toEqual({ kind: 'token', state: s, idToken: GTOKEN, accessToken: 'ya29.x' });
     expect(parseCallbackFragment(`#access_token=a&access_token=b&state=${s}`)).toEqual({ kind: 'malformed', state: s });
+  });
+});
+
+describe('D881: a banner’s Remove or Cancel whose Google check didn’t finish', () => {
+  const context = (bannerAction: BannerAction | null): EmailContext => ({
+    pk: 'pk_test_x',
+    appName: 'Partner App',
+    parentOrigin: 'https://partner.example',
+    scopeId: 's1',
+    sessionPublicKey: new Uint8Array(32),
+    expiresAtMs: NOW + 600_000,
+    salt: new Uint8Array(32),
+    keyIndex: 0,
+    maxUses: 1,
+    nonce: 'n',
+    clientId: CLIENT,
+    methods: ['google', 'email'],
+    opener: 'partner',
+    vaultFrame: null,
+    emailHint: null,
+    challengeId: null,
+    bannerAction,
+  });
+  const text = (id: string) => document.getElementById(id)?.textContent ?? null;
+
+  it('Remove: the error is relayed (the vault does nothing with it), and the window says nothing changed instead of waiting', async () => {
+    const { home, relayKey, slot, win } = leg(3, (s) => `#error=access_denied&state=${s}`, { next: 4, leg: 'proof', clientId: CLIENT });
+    storeEmailContext(win.sessionStorage, home, context({ kind: 'unlink', provider: 'email', method: 'google', slot: 4, signedIn: true }), NOW);
+    const a = api();
+    await runCallbackPage({ win, api: a, now: () => NOW, authOrigin: AUTH });
+    expect(await decrypt(relayKey, slot, a)).toEqual({ error: 'access_denied' });
+    expect(win.location.assigned).toEqual([]);
+    expect(document.querySelector('h1')?.textContent).toBe('The email address wasn’t removed');
+    expect(document.title).toBe('The email address wasn’t removed');
+    expect(text('link-change-what')).toBe('Nothing changed. The email address still opens this wallet. Google didn’t finish checking it’s you.');
+    expect(text('link-change-advice')).toBe('Close this window, then sign in to Partner App again to try again.');
+    expect(document.body.textContent).toContain('Error code (for support): access_denied');
+    // Done with: the context (and its marker) is gone, and no follow-up entry was left.
+    expect(readEmailContext(win.sessionStorage, home, NOW)).toBeNull();
+    expect(win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + home)).toBeNull();
+    // Which app, at which site, as the sign-in window's other screens.
+    expect(document.querySelector('.asker')?.textContent).toBe('Signing in to Partner App at https://partner.example');
+    (document.getElementById('link-change-close') as HTMLButtonElement).click();
+    expect(win.closed).toBe(true);
+  });
+
+  it('its Close goes on to the sharing sheet when the finished sign-in asks for it (D411), and just closes after a stopped one', async () => {
+    for (const signedIn of [true, false]) {
+      resetDom();
+      const { home, win } = leg(3, (s) => `#error=access_denied&state=${s}`, { next: 4, leg: 'proof', clientId: CLIENT });
+      storeEmailContext(win.sessionStorage, home, context({ kind: 'unlink', provider: 'google', method: 'email', slot: 4, signedIn }), NOW);
+      markEmailShare(win.sessionStorage, home, NOW);
+      await runCallbackPage({ win, api: api(), now: () => NOW, authOrigin: AUTH });
+      (document.getElementById('link-change-close') as HTMLButtonElement).click();
+      expect(win.location.assigned, String(signedIn)).toEqual(signedIn ? [`${SHARE_PATH}?from=login`] : []);
+      expect(win.closed, String(signedIn)).toBe(!signedIn);
+    }
+  });
+
+  it('Cancel: the same, in the link’s words', async () => {
+    const { home, win } = leg(3, (s) => `#error=access_denied&state=${s}`, { next: 4, leg: 'proof', clientId: CLIENT });
+    storeEmailContext(win.sessionStorage, home, context({ kind: 'cancel', provider: 'google', method: 'google', slot: 4, signedIn: true }), NOW);
+    await runCallbackPage({ win, api: api(), now: () => NOW, authOrigin: AUTH });
+    expect(document.querySelector('h1')?.textContent).toBe('The link wasn’t cancelled');
+    expect(text('link-change-what')).toBe('Nothing changed. The link is still waiting. Google didn’t finish checking it’s you.');
+  });
+
+  it('any other proof’s error (no banner change, or another slot’s) goes back to the follow-up mode as before', async () => {
+    for (const marker of [null, { kind: 'unlink', provider: 'email', method: 'google', slot: 6, signedIn: true } as BannerAction]) {
+      resetDom();
+      const { home, win } = leg(3, (s) => `#error=access_denied&state=${s}`, { next: 4, leg: 'proof', clientId: CLIENT });
+      storeEmailContext(win.sessionStorage, home, context(marker), NOW);
+      await runCallbackPage({ win, api: api(), now: () => NOW, authOrigin: AUTH });
+      expect(win.location.assigned).toEqual([`/login/email#${home}`]);
+    }
   });
 });

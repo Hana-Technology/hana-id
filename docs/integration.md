@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-19 (a free fee only behind Show details; message requests' note), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-19 (a free fee in Show details; message requests' note; the sign-in window's link notice), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -590,7 +590,7 @@ button.addEventListener('click', async () => {
 
   | The user… | They see | Result |
   |---|---|---|
-  | signs in with Google, and an email wallet exists for that Gmail address (or a Workspace address Google hosts) | nothing extra; the popup may show "Your Google sign-in now opens this wallet too" | the email wallet's addresses; Google is linked at once |
+  | signs in with Google, and an email wallet exists for that Gmail address (or a Workspace address Google hosts) | nothing extra; the popup may show "You can now sign in with Google too" | the email wallet's addresses; Google is linked at once |
   | signs in with Google, and an email wallet exists for an address Google doesn't host | "This email already has a wallet": **Link and continue** (a code to `a…@domain`) or **Sign in with email** | the email wallet either way; linked only after the code |
   | signs in with email, and a Google wallet exists for that address | "This email belongs to a wallet you created by signing in with Google": **Link and continue** or **Sign in with Google**, then Google | the Google wallet's addresses; the email joins it at once (Google-hosted) or after 24 h (other addresses: a pending banner with **Cancel this link**) |
   | has neither wallet | the usual sign-in | a new wallet for that method |

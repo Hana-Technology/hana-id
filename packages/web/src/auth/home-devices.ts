@@ -43,7 +43,7 @@ export const HOME_STOP_CONFIRM: Readonly<Record<HomeStop['kind'], { title: strin
       'The next time the app is opened or reloaded there, it asks to sign in again.',
       'Whoever has that device can still approve and sign in a tab of the app that is already open there for up to about a minute, or for up to about 3 minutes while that device can’t reach Journear.',
       'A tab nobody is using may still look signed in for a few minutes, but it can’t sign anything.',
-      'Signatures and transactions already made stay valid. Signing out doesn’t move your funds: if someone else may have your wallet’s key, move your funds to a new wallet.',
+      'Signatures and transactions already made stay valid. Signing out doesn’t move your money: if someone else may have your wallet’s key, move your money to a new wallet.',
     ],
     go: 'Sign out',
     going: 'Signing out…',

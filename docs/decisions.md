@@ -4048,6 +4048,9 @@ D139 in the vault, banners, `linkAccount`, email export). Each takes the safer r
   - **Amended 2026-11-19 (D875):** Remove for the root is no longer limited to 7 days. Past them, an added sign-in is
     sent to the root only, and the window shows it as one quiet line with Remove, until Done is pressed on it in that
     browser.
+  - **Amended 2026-11-19 (D881):** the member this login added is no longer "your … sign-in now opens this wallet
+    too": the window's heading and sentences say which wallet and why, by case. Remove asks first; Remove and Cancel
+    no longer just close the window: it says what became of them. What links and what each proof needs are unchanged.
 - Why: the popup is the one Hana surface every login passes through; the partner page gets the facts to show.
 
 ## Demo polish (branch `fix/demo-polish`), 2026-11-03
@@ -14111,6 +14114,9 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
   contract change: a session nonce isn't a `link_change` proof, and a founder decision and redeploy); continuing the
   sign-in after a cancel (the login already ended for the partner; the email would then face case B's choice anyway).
 - Address impact: none.
+- Note 2026-11-19 (D881): the banner's own "Cancel this link" (by an active sign-in of the wallet) now ends on a result
+  screen in this entry's words ("Link cancelled"; "We couldn't check the link" when the outcome is unknown), and the
+  hosted demo says this email's `link_pending` plainly.
 
 ### D852. Every sponsored transaction leaves a permanent billing record, in D1 and copied to the usage ledger
 - Date 2026-11-18 · Status: the requirement decided by the user 2026-11-18 ("we should have necessary records in place so
@@ -15327,6 +15333,8 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
   (the loud period); (6) Done now writes `{choice: 'keep'}` on every banner screen that offered an action, the
   pending link's Cancel included (the vault stops waiting at once instead of after 5 minutes); (7) the window's own
   close button leaves the line to be shown again, so someone who always closes it that way sees it every time.
+- Note 2026-11-19 (D881): the line's Remove now asks first (Go back marks nothing seen) and ends on what became of it;
+  a failed or unknown removal leaves the line to be shown at the next sign-in, as before.
 
 ## The approval window's whole account, fee row and guard line (branch `feat/unbroken-address-copy`), 2026-11-19
 
@@ -15652,6 +15660,189 @@ From `next` @ a8692ea0; not merged, not deployed.
   API's `sponsorship_paused` error string says "Free network fees are paused for now". `docs/go-live-after-freeze.md`
   keeps its "gas-free action(s)" wording (its glossary's "Relayer" and the phase headings) for the same reason: that is
   the partner-side term, which the founder decides separately.
+
+## The sign-in window says what a link did, asks before Remove, and says what became of it (branch `feat/link-notice-wording`), 2026-11-19
+
+### D881. The notice after a link names the wallet and why; Remove asks first; Remove and Cancel end on their outcome; the window's title is the screen's
+- Date 2026-11-19 · Status: **decided by the founder 2026-11-19** (the notice, from the hand test: "the messaage feel
+  confusing, it says 'opens this wallet too' but doesn't say what wallet etc"; the Remove confirmation and result:
+  "yeah I think we need a confirmation screen as you suggested, it's too abrupt and I didn't even know what happened";
+  the guestbook: "yes change the guestbook one to match the check in card"); every sentence below decided while
+  building and amended after PR 105's independent review, **to confirm** · Built: display text, screens and the
+  window's title only, in the sign-in window's pages, Passport Home's one sentence, the SDK's one sentence and the
+  hosted demo; no vault, API, issuer or contract change, nothing new in the vault's notices.
+  `packages/web/src/auth/email-page.ts` (`FRESH_TEXT`, `CHANGE_TEXT`, `changeFailure`, `kindName`,
+  `HOME_SIGN_INS_SECTION`, `showBanners`, `showRemoveConfirm`, `startChange`, `showChangeResult`, `answer`,
+  `readNotice`), `email-storage.ts` (`bannerAction`, `isBannerAction`), `dom.ts` (`DomOptions.titleFromHeading`,
+  `SIGN_IN_WINDOW`), `login-page.ts`, `callback-page.ts` (`bannerChangeAt`, `showChangeNotProved`),
+  `home-callback-page.ts`, `home-devices.ts`, `client/user-messages.ts`; `apps/demo/src/errors.ts`, `near-card.ts`,
+  `index.html`; tests `packages/web/test/auth/email-follow.test.ts` ("D881"), `callback-follow.test.ts` ("D881"),
+  `window-title.test.ts` (new), `test/client/user-messages.test.ts`, `apps/demo/test/errors.test.ts`, `page.test.ts`,
+  `apps/e2e/tests/linking.spec.ts`, `home-sign-ins.spec.ts`, `google-cancel.spec.ts`, `hand-browser.spec.ts`,
+  `demo.spec.ts`, `demo-near-shots.spec.ts`; docs `operations.md` (the hand-test flows A, B, D, E, G and the linking
+  table), `architecture.md`, `security.md`, `integration.md`, `apps/e2e/README.md`.
+- Decision:
+  1. **The notice after a sign-in that added a way to sign in** (a banner with `fresh: true` that is active). The
+     vault's banner names only the kind that joined; the window knows the case itself. Every case that sends one:
+     - *Case A, Google-hosted* (the user had an email wallet, pressed Sign in with Google and picked the Google account
+       with the same Gmail or Workspace address; joined at once, nothing to decide, D119): heading "You can now sign in
+       with Google too"; "You already have a wallet here, made when you signed in with your email address. Your Google
+       account uses the same address, so signing in with Google now opens that same wallet. Nothing was moved or lost,
+       and you can sign in either way."
+     - *Case A, not hosted* (the same, after "Link and continue" and a code to the address): the same heading; "You
+       already have a wallet here, made when you signed in with {a…@domain}. You confirmed that address with a code, so
+       signing in with Google now opens that same wallet. Nothing was moved or lost, and you can sign in either way."
+     - *Case B, Google-hosted* (the user had a Google wallet, typed the same Gmail address at Sign in with email, chose
+       "Link and continue" and signed in with Google; the email joined at once): "You can now sign in with email too";
+       "You already have a wallet here, made when you signed in with Google. You chose to link your email address, so
+       signing in with it now opens the same wallet. Nothing was moved or lost, and you can sign in either way." (with
+       Remove, as before: the Google sign-in is the wallet's own).
+     - *Case B not hosted* and *`linkAccount`* send a fresh banner that is **waiting**: its line ("An email will be able
+       to open this wallet from {date}.") and the "Signed in" heading are unchanged.
+     "here", not "in this app": a wallet belongs to the app's scope, which can hold several of the partner's apps, so
+     the email wallet may have been made in a sibling app; "here" sits under "Signing in to {app} at {site}". Under the
+     line, smaller: "You can see every way to sign in to your wallet in Passport Home, under “Ways to sign in”." (D874's
+     section lists the wallet's own sign-in and every added one, active or waiting; when D875's older lines are shown
+     too, their own note points to Passport Home instead). The tick stays green; no amber.
+  2. **The address**: shown only in case A not hosted, and only as the masked `a…@domain` that the vault's `link_code`
+     notice gave this window and its previous screen showed (`email-page.ts` `showLinkCode`, `codeLinkTo`, forgotten
+     when the user leaves that path for an email sign-in): no new data flow and no new notice field. Case A hosted:
+     this window never held the address (the Google sign-in came back through `/login/callback`; the vault's sealed
+     address can't be read here). Case B: the address was typed in an earlier page load of the window, and the page
+     stores no address (`email-storage.ts`), so it is gone. Nobody else's address is ever shown (D259, D874).
+  3. **Remove asks first** (the first-7-days banner and D875's older line, both the wallet's own sign-in's), in D865's
+     shape: "Remove the {email address | Google account} from this wallet?"; a red box "After you remove it, the
+     {kind} can’t open this wallet any more. Your money stays in this wallet."; "If you sign in with that {kind} later,
+     it opens a new, empty wallet of its own. It won’t be added back automatically." (true: an unlinked pair is never
+     re-matched, the issuer's `unlinked` decision, so that sign-in opens its own path; an explicit `linkAccount` could
+     add it back only before it opens a wallet of its own, which the sentence doesn't promise); muted "Google will ask
+     you to sign in again to check it’s you." or "We’ll send one more code to your email address to check it’s you.";
+     **Remove it** (red) and **Go back**. Go back shows the banners again, with nothing written and nothing marked seen
+     (D875: only Done does). One press per screen, the buttons disabled, as D865's (the sign-in window has no timed
+     press guard: D36/D878's guard is the approval and export windows'; none was added). An email root's code goes
+     straight to the address this window proved (as D864 and D865 do).
+  4. **Cancel this link** (a waiting link; any active sign-in of the wallet) asks nothing: cancelling is the safe side.
+  5. **The outcome**, for both: the window remembers which change it started in its email context
+     (`hana.email.<relayId>`: `bannerAction` = change, the sign-in's kind, the proof's method, the outcome's slot,
+     whether the sign-in finished; kinds only), so the vault's next notice, also after the Google proof's round trip
+     through `/login/callback`, shows as that change's outcome instead of closing the window. An older page reads the
+     field along with the rest (the read spreads the stored object), keeps it and stores it again unused; it only
+     shows the old screens. While the vault works: "Removing the {kind}" / "Cancelling the link", "This takes a few
+     seconds…" (only for a proof; never for an answer that isn't one). The vault's `done` (its word after a change,
+     `banners: []`):
+     - Removed: "The {kind} was removed"; green "The {kind} no longer opens this wallet. Removing it didn’t move any
+       money."; "Devices signed in to this wallet, this one too, will be asked to sign in again."; the "If you sign in
+       with that {kind} later…" line; and "Didn’t add it yourself? Someone else may have used this wallet while it was
+       added. To be safe, move your money to a new wallet. Signing in the same way opens this same wallet, so use a
+       different email address or another wallet app." (plain text, not a box, so someone tidying their own second
+       sign-in isn't alarmed; Passport Home's sentence for the same risk now says "money" too: "Signing out doesn’t move
+       your money: if someone else may have your wallet’s key, move your money to a new wallet.").
+     - Cancelled: "Link cancelled"; green "The {kind} is no longer being linked to this wallet, so it won’t open it.";
+       the same "Devices signed in…" line (the API revokes after a cancel too).
+     Who is signed out, traced: after a change the API revokes every vault share of the wallet's path in its scope,
+     every app of it (apps/api `links.ts` `revokeAccountShares`, D233; a failed revocation is logged and those shares
+     end at their own limit). A session open in a tab doesn't stop at once: the vault checks its share about once a
+     minute while the tab is shown, every 5 minutes when idle, at once when a hidden tab is shown, and before any
+     signature (`packages/web/src/vault/vault.ts:21-26`, `STATUS_READ_MS` :487, `STATUS_IDLE_READ_MS` :505,
+     `confirmHolder` :1131, `shareConfirmed` :1150); a `'revoked'` answer ends it. A session without a share
+     (`'none'` persistence) ends with its tab. So "will be asked to sign in again" holds for each, and no time is
+     promised. D864's and D865's "Anyone signed in to that wallet in this app…" now drop "in this app" (the revocation
+     covers every app of the scope): "Anyone signed in to that wallet will be asked to sign in again."
+     The vault's `stop` carries the API's code only (no reason), so the outcome is told by code (`changeFailure`):
+     - `token_invalid` (the proof wasn't this sign-in's, or the vault couldn't check it: its own failures send the same
+       code): "The {kind} wasn’t removed" / "The link wasn’t cancelled"; "Nothing changed. The {kind} still opens this
+       wallet." / "Nothing changed. The link is still waiting." + "We couldn’t check it was you."; for a Google check
+       "If you picked a different Google account, try again with the one you signed in with."; "Close this window, then
+       sign in to {app} again to try again."
+     - `link_refused` (the contract's rules, prechecked or its own refusal, which is reverted: the sign-in already gone,
+       the link already active or cancelled, the sign-ins changed, a nonce that doesn't match): "Nothing was changed.
+       The ways to sign in to this wallet may have changed after this window opened."; "Close this window, then sign
+       in to {app} again to see them as they are now."
+     - Nothing changed, proved from apps/api: refused before anything is relayed (`links.ts`: `rate_limited` :211,
+       `rate_limiter_unavailable` :213 and :304, `bad_request` :248-250, `token_expired` from `loginTokenRefusal` :258,
+       `nonce_mismatch` :259, `near_unavailable` :103 and :267), a relay that certainly didn't run (`NOT_EXECUTED`
+       :65: `near_unavailable`, `near_rejected`, `relayer_busy`, `relayer_unconfigured`, `method_not_allowed`), or the
+       contract's refusal (`panics.ts` :13-17: `links_unavailable`, `link_pending`; reverted): "Nothing changed. The
+       {kind} still opens this wallet." / "…The link is still waiting." + "Journear couldn’t do this just now."; "Close
+       this window, then sign in to {app} again later to try again." ("later": a day's limit can be what refused it,
+       100 changes a day per wallet, `links.ts` :56).
+     - Anything else (`api_unavailable` for no answer, `link_in_flight`, `relayer_unavailable`, `timeout`, …: may follow
+       a send): "We couldn’t check the removal" / "We couldn’t check the link" (D865's and D864's headings);
+       "Something went wrong, so we can’t tell whether the {kind} was removed." / "…whether the link was cancelled.";
+       "Sign in to {app} again. If the {kind} still opens this wallet, you’ll see it there with Remove." / "…If the link
+       is still waiting, you’ll see Cancel this link again." The window's own endings after a change take this group
+       too, as nobody can say what the vault did: the 10-minute follow limit (the vault's 5-minute wait can end while
+       the user is still on Google's screen), a slot that is gone (403/410), a notice that can't be read, and a proof
+       whose write failed (it may have reached the vault).
+     - The check didn't finish (the vault does nothing with an answer that isn't a proof, so nothing changed): an
+       email check left or failed at the code step ("The check was cancelled before the code was entered.", "The code
+       was wrong.", "The code expired.", "Too many codes were asked for.", "We couldn’t send a code to check it’s
+       you."), and a Google check cancelled or failed on Google's screen ("Google didn’t finish checking it’s you.",
+       shown by `/login/callback`, which relays that answer and would otherwise hand over to a follow-up mode waiting
+       for nothing). Each with "Nothing changed. The {kind} still opens this wallet." / "…The link is still waiting."
+       and "Close this window, then sign in to {app} again to try again."; the callback's screen has the same "Signing
+       in to {app} at {site}" line.
+     Each failure shows "Error code (for support): {code}", and leaves the banner or line for the next sign-in (nothing
+     marked seen). **Close** goes on as Done does, on the email page and on the callback: a finished sign-in to the
+     sharing sheet when the app asks (D411), else closes.
+  6. **The keep answer** (D875) is still written once per slot: only Done writes `{choice: 'keep'}`; Go back writes
+     nothing; Remove it and Cancel write the proof (or the check's error) into that slot instead; the result's Close
+     writes nothing.
+  7. **The window's title is the screen's**: the sign-in window's pages (`/login`, `/login/callback`, `/login/email`,
+     `/home/callback`) set `document.title` to each screen's heading, or back to the page's built title when a screen
+     has none (`dom.ts` `titleFromHeading`), so a Google sign-in's follow-up screens no longer read "Sign in with
+     email". Other pages keep their one title (each already true for all its screens).
+  8. **`link_pending`, in the SDK and the hosted demo** (true for an email waiting for its Google wallet, D864, and
+     for a waiting Google account): the SDK's `userMessage` was "This email is waiting to be linked to a wallet. Sign
+     in again and follow the steps in the Journear Passport window." and is now "This sign-in is waiting to be linked
+     to a wallet, so it can’t open one yet. Sign in again and follow the steps in the Journear Passport window." (no
+     version bump: SDK 0.5.0 isn't with partners yet, and the guide says these sentences may be reworded at any time;
+     `integration.md` doesn't quote it). The demo (was "Something went wrong (link_pending)…"): "This sign-in is
+     waiting to be linked to a wallet, so it can’t open one yet. The Journear sign-in window says what to do."
+     `relayer_unconfigured` (was "Journear’s relayer isn’t set up on this environment yet. Tell the Journear team."):
+     "The demo’s free NEAR transactions aren’t set up on this test version yet. Tell the Journear team."
+  9. **The guestbook in the check-in card's words** (D867): "Written to the guestbook on NEAR testnet.[ Your NEAR
+     account was created for it.] Journear paid the network fee, so it cost you nothing." (Journear's NEAR relay sends
+     it and pays). Same case, same pass: the stage "Sending it. Journear pays the network fee…" (was "Sending it
+     through Journear’s relayer, which pays the fee…"); the balance line "…creates it (Journear sends it a zero-value
+     transfer), at no cost to you." (was "(Journear’s relayer sends it a zero-value transfer), for free."); the
+     no-NEAR send "…above, where Journear pays the network fee." (was "where Journear’s relayer pays."); the card's
+     hint "Journear sends it and pays the network fee, so your account needs no NEAR." (was "Journear’s relayer sends
+     it and pays the fee…"); the refusals `gas_too_high` "Journear refused this request: its network fee could be more
+     than the guestbook needs, and Journear pays only up to that." (was "Journear’s relayer refused the request’s gas:
+     it pays for at most what the guestbook needs."), `near_delegate_test_app_action` / `_receiver` "a test app’s
+     request that Journear pays for…" (was "gasless request"), `near_send_failed` "…Use “Write to the guestbook (no
+     NEAR needed)” instead." (was "Use the gasless write instead."). Left, listed for the founder: the NEAR card's
+     other refusals still say "Journear’s relayer" (about 20 sentences in `errors.ts` `RELAYER_REASONS` and
+     `nearMessage`: a tester-facing error table, its own pass), and "NEAR testnet" throughout the demo; the stamps site
+     needed nothing (its user text was reworded under D853; `STAMP_PROOFS`' "pays the gas" is its deliberate technical
+     legend), nor did the demo's diagnostics.
+- Why: the notice was the only word that a second way into the wallet now exists, and it named neither the wallet nor
+  the reason; a Remove with no question and no result left the founder not knowing what happened.
+- Rejected: a new field in the vault's notices (the email address, the stop's reason): an older window rejects a
+  notice with an unknown key (`isFollowNotice`) during a deploy, and the vault would have to read or send the address;
+  an amber box for the notice (a harmless event shouldn't look like a warning); a confirmation for Cancel (the safe
+  action); a timed press guard on Remove it (none in the sign-in window today; D865's once-flag kept); a title per
+  page file (the class of problem is one file, many screens); "Journear couldn't be reached" for every unknown outcome
+  (Journear did answer for some of those codes).
+- Not changed, listed for the founder (the same unclear "this wallet" with nothing to point to, or close to it):
+  the waiting line "An email will be able to open this wallet from {date}." / "A Google account will…"; D875's "An
+  email address also opens this wallet, since {date}."; the non-fresh recent line "A sign-in method was added: {email
+  | Google} on {date}."; `linkAccount`'s proof title "Sign in with the {Google | email} that opens this wallet" (also
+  reads "the Google"), its address step "Enter the email that opens this wallet, to allow the new sign-in method." and
+  "Enter the email you want to add. It can open this wallet after a waiting period."; and `linkAccount`'s last screen
+  still headed "Signed in". An email proof's address screen (`prove` → `showAddress(title)`) shows its title in an
+  amber notice box; the banners' email proofs no longer reach it when the address is here.
+- To confirm: every sentence in items 1, 3, 5, 8 and 9 (and the headings "You can now sign in with Google too", "You
+  can now sign in with email too", "Remove the {kind} from this wallet?", "The {kind} was removed", "The {kind} wasn’t
+  removed", "Link cancelled", "The link wasn’t cancelled", "We couldn’t check the removal", "We couldn’t check the
+  link", "Removing the {kind}", "Cancelling the link"); "here" for the wallet; "Didn’t add it yourself? …" in plain
+  text on the result only (not on the confirmation), and its "how" (a different email address or another wallet app:
+  the only honest one-line way today; there is no "make a new wallet" button); "money" over "funds", Passport Home's
+  sentence included; "will be asked to sign in again" with no time; the codes in the "nothing changed" group above;
+  showing the masked address only in case A not hosted; the window's title following the heading on the four sign-in
+  pages only; the Home pointer only when no older line is shown.
+- Address impact: none (display text, screens and a page-side marker; nothing about paths, keys or what links).
 
 ## The local stack's relayer alarm (branch `fix/e2e-local-alarm-cadence`), 2026-11-19
 

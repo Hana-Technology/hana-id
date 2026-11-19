@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { accessSessionDurationOf, accessSessionDurationProblem, appChangeDelayProblems, DASHBOARD_BLOCKS, DEFAULT_ACCESS_SESSION_DURATION, emailFromProblem, hanaOwnOrigins, loadEnv, manifestPath, manifestSchema, usersScreenProblem } from './index.ts';
+import { dashboardRules } from './dashboard.ts';
+import { accessSessionDurationOf, accessSessionDurationProblem, appChangeDelayProblems, DASHBOARD_BLOCKS, DEFAULT_ACCESS_SESSION_DURATION, DEFAULT_OPS_EVERY_MINUTES, emailFromProblem, hanaOwnOrigins, loadEnv, manifestPath, manifestSchema, opsEveryMinutesOf, opsEveryMinutesProblem, usersScreenProblem } from './index.ts';
 
 type Raw = Record<string, unknown>;
 // Without identityToken: these tests move apiUrl, and the identity issuer must follow it (tested in identity.test.ts).
@@ -206,6 +207,58 @@ describe('dashboard blocks', () => {
     for (const bad of ['A'.repeat(64), 'a'.repeat(63), '']) expect(messages(withDashboard((d) => (block(d, 'admin').accessAud = bad)))).not.toEqual([]);
     for (const bad of ['hana.example.com', 'https://hana.cloudflareaccess.com', '.cloudflareaccess.com']) {
       expect(messages(withDashboard((d) => (block(d, 'admin').accessTeamDomain = bad)))).not.toEqual([]);
+    }
+  });
+
+  it('admin.opsEveryMinutes: 5 or 15, default 5 (D872)', () => {
+    expect(opsEveryMinutesOf({})).toBe(DEFAULT_OPS_EVERY_MINUTES);
+    expect(DEFAULT_OPS_EVERY_MINUTES).toBe(5);
+    expect(manifestSchema.parse(withDashboard()).admin!.opsEveryMinutes).toBeUndefined();
+    const plan = { computeHoursPerMonth: 100, computeUnits: 0.25 };
+    for (const v of [5, 15]) expect(messages(withDashboard((d) => ((block(d, 'admin').opsEveryMinutes = v), (block(d, 'usage').neonPlan = plan)))), String(v)).toEqual([]);
+    // 15 needs usage.neonPlan (its catch-up reads what the plan's tracking keeps); 5 doesn't.
+    expect(messages(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = 15))).join('\n')).toContain('admin.opsEveryMinutes 15 needs usage.neonPlan');
+    expect(messages(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = 5)))).toEqual([]);
+    for (const bad of [0, 1, 10, 30, 60, '15', 15.5, null]) expect(messages(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = bad))), String(bad)).not.toEqual([]);
+  });
+
+  it('admin.opsEveryMinutes 15 is refused outright on any network but testnet: no acknowledgement field (D872)', () => {
+    for (const network of ['mainnet', 'staging-net']) {
+      expect(opsEveryMinutesProblem({ network, admin: { opsEveryMinutes: 15 } }), network).toContain('testnet only');
+      expect(opsEveryMinutesProblem({ network, admin: { opsEveryMinutes: 5 } }), network).toBeNull();
+      expect(opsEveryMinutesProblem({ network, admin: {} }), network).toBeNull();
+    }
+    // Any testnet env may (a staging env too): the founder's rule is testnet and staging, never production.
+    expect(opsEveryMinutesProblem({ network: 'testnet', admin: { opsEveryMinutes: 15 }, usage: { neonPlan: {} } })).toBeNull();
+    // The schema runs it (dashboardRules): today the manifest's network is testnet only, so a mainnet manifest fails
+    // on its network first; the rule is what refuses 15 once a production network is admitted.
+    const mainnet = withDashboard((d) => (block(d, 'admin').opsEveryMinutes = 15));
+    mainnet.network = 'mainnet';
+    expect(messages(mainnet)).not.toEqual([]);
+    const issues: string[] = [];
+    const fifteen = (d: Raw) => ((block(d, 'admin').opsEveryMinutes = 15), (block(d, 'usage').neonPlan = { computeHoursPerMonth: 100, computeUnits: 0.25 }));
+    dashboardRules(manifestSchema.parse(withDashboard(fifteen)) as never, { addIssue: (i: { message?: string }) => issues.push(String(i.message)) } as never);
+    expect(issues).toEqual([]);
+    const parsed = { ...manifestSchema.parse(withDashboard(fifteen)), network: 'mainnet' };
+    dashboardRules(parsed as never, { addIssue: (i: { message?: string }) => issues.push(String(i.message)) } as never);
+    expect(issues.join('\n')).toContain('admin.opsEveryMinutes 15 is for testnet only');
+    // An unknown acknowledgement field is refused too (the block is strict).
+    expect(messages(withDashboard((d) => (block(d, 'admin').opsEveryMinutesAcknowledged = true)))).not.toEqual([]);
+  });
+
+  it('sandbox-dev’s manifest sets the 15-minute ops interval and its Neon free plan (D872)', () => {
+    const env = loadEnv('sandbox-dev');
+    expect(env.admin!.opsEveryMinutes).toBe(15);
+    expect(env.usage!.neonPlan).toEqual({ computeHoursPerMonth: 100, computeUnits: 0.25 });
+  });
+
+  it('usage.neonPlan: optional; whole compute-hours, a compute size in quarter units (D872)', () => {
+    expect(manifestSchema.parse(withDashboard()).usage!.neonPlan).toBeUndefined();
+    const plan = (v: unknown) => messages(withDashboard((d) => (block(d, 'usage').neonPlan = v)));
+    expect(plan({ computeHoursPerMonth: 100, computeUnits: 0.25 })).toEqual([]);
+    expect(plan({ computeHoursPerMonth: 300, computeUnits: 2 })).toEqual([]);
+    for (const bad of [{ computeHoursPerMonth: 0, computeUnits: 0.25 }, { computeHoursPerMonth: 100.5, computeUnits: 0.25 }, { computeHoursPerMonth: 100, computeUnits: 0 }, { computeHoursPerMonth: 100, computeUnits: 0.3 }, { computeHoursPerMonth: 100 }, { computeHoursPerMonth: 100, computeUnits: 0.25, extra: 1 }]) {
+      expect(plan(bad), JSON.stringify(bad)).not.toEqual([]);
     }
   });
 

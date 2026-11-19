@@ -153,6 +153,7 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   evm_relay_receipt_odd: 'Free network fees: a payment looked wrong and was counted at the most it could cost',
   evm_billing_late: 'Free network fees: a billing record is late',
   near_billing_late: 'Free NEAR transactions: a billing record is late',
+  neon_compute_high: 'The usage database’s free monthly allowance is running low',
   evm_relay_nonce_taken: 'Free network fees: a payment slot was used by another transaction',
   evm_relay_closed_slot_mined: 'Free network fees: a slot staff closed went through after all',
 };

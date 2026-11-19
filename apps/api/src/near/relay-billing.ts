@@ -32,6 +32,7 @@ import { eventId } from '../changes/guard.ts';
 import type { Env } from '../env.ts';
 import { limiter } from '../handlers.ts';
 import { log } from '../log.ts';
+import { withNeonWake } from '../usage/neon-compute.ts';
 import type { RelayResult } from '../relayer-key.ts';
 import { classifyWriteError, usageTransport } from '../usage/record.ts';
 import { statusObject } from './outcome.ts';
@@ -498,7 +499,7 @@ export async function mirrorNearBilling(env: Env, now: number = Date.now()): Pro
   }
   if (rows.length === 0) return 0;
   try {
-    await usageTransport.query(binding, RECORD_NEAR_RELAYED_SQL, [JSON.stringify(rows.map(nearLedgerRow))]);
+    await withNeonWake(env, () => usageTransport.query(binding, RECORD_NEAR_RELAYED_SQL, [JSON.stringify(rows.map(nearLedgerRow))]));
   } catch (err) {
     log({ event: 'near_billing_mirror_failed', code: classifyWriteError(err).code }, 'error');
     return 0;

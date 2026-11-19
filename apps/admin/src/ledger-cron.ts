@@ -16,6 +16,11 @@
 // what counts, from Cloudflare's docs); the security work goes first. Each job's share is in the run's summary and its
 // `budget` log line. Each step runs on its own (a failing one is logged, the others still run), and a run without
 // USAGE_DB, or without RELAYER_ACCOUNT for the steps that need it, is skipped with an error line every time.
+//
+// D872 (neon.ts): with NEON_PLAN the run reports its wake-up to the API at its end (`AdminRpc.neonWake`, one call set
+// aside with the connection's), with its `ledger_cron.last_run` and `ledger.health` (reachable, partitions ahead, the
+// settlement backlog: two queries on the open connection, no call), which the System status page reads instead of
+// opening Neon.
 import type { Env } from './env.ts';
 import { runAlerts, runStatementNotices } from './alerts.ts';
 import { outbound } from './email/sender.ts';
@@ -26,6 +31,7 @@ import { Budget, RUN_BUDGET, meteredEnv } from './mail.ts';
 import { runLinkJumpAlert } from './link-alerts.ts';
 import { nearReader } from './near.ts';
 import { runNonceCheck } from './nonce-check.ts';
+import { reportNeonWake, tracksNeon } from './neon.ts';
 import { coingecko, runRates } from './rates.ts';
 import { runRejectionCheck } from './rejections.ts';
 import { type RetentionSummary, isRetentionTick, runRetention, runRetentionAlerts, sendRetentionSkipped } from './retention.ts';
@@ -57,8 +63,12 @@ async function step<T>(budget: Budget, name: string, run: () => Promise<T>, fail
 async function withStore<T>(env: Env, budget: Budget, run: string, fn: (store: LedgerStore) => Promise<T>, onMissing?: (code: 'ledger_unavailable' | 'usage_db_missing') => Promise<void>): Promise<T | null> {
   let store: LedgerStore | null;
   try {
-    // The run's one Hyperdrive connection: one call of the budget (mail.ts), its queries none.
-    if (env.USAGE_DB) await budget.as('ledger', async () => budget.take());
+    // The run's one Hyperdrive connection: one call of the budget (mail.ts), its queries none; with NEON_PLAN its
+    // wake-up's report too (D872).
+    if (env.USAGE_DB) {
+      await budget.as('ledger', async () => budget.take());
+      if (tracksNeon(env)) await budget.as('neon_mark', async () => budget.takeRpc());
+    }
     store = await ledgerSource.open(env.USAGE_DB);
   } catch (err) {
     log({ event: 'ledger_cron', step: run, outcome: 'error', code: 'ledger_unavailable', error: errorName(err) }, 'error');
@@ -136,6 +146,10 @@ export async function everyFifteenMinutes(env: Env, now = Date.now()): Promise<F
   };
   const failed: string[] = [];
   const track = <T>(name: string, run: () => Promise<T>): Promise<T | null> => step(budget, name, run, failed);
+  const openedAt = Date.now();
+  // What the System status page shows of the ledger (D872): unreachable unless the run read it.
+  let health: Record<string, unknown> = { at: now, ok: false };
+  let lastRun: string | null = null;
   const out = await withStore(env, budget, 'fifteen', async (store) => {
     const relayer = env.RELAYER_ACCOUNT;
     if (!relayer) log({ event: 'ledger_cron', step: 'relayer', outcome: 'skipped', code: 'relayer_account_missing' }, 'error');
@@ -167,13 +181,26 @@ export async function everyFifteenMinutes(env: Env, now = Date.now()): Promise<F
     if (daily) daily.rates = await track('rates', () => runRates({ store, fetchRate: coingecko(env.COINGECKO_API_KEY), budget, now }));
     const settlement = relayer && keys ? await track('settlement', () => runSettlement({ store, near, poolKeys: new Map(keys.map((k) => [k.publicKey, k.pool])), relayerAccount: relayer, signerAccount: env.SIGNER_ACCOUNT, budget, now })) : null;
     const summary = { daily, nonce, retention, alerts, retentionAlerts, notices, settlement, budgetLeft: budget.remaining, calls: { ...budget.used } };
+    lastRun = JSON.stringify({ at: now, budgetLeft: summary.budgetLeft, calls: summary.calls, failed });
     try {
-      await store.state.setState(LEDGER_LAST_RUN, JSON.stringify({ at: now, budgetLeft: summary.budgetLeft, calls: summary.calls, failed }));
+      await store.state.setState(LEDGER_LAST_RUN, lastRun);
     } catch (err) {
       log({ event: 'ledger_cron', step: 'last_run', outcome: 'error', error: errorName(err) }, 'warn');
     }
+    if (tracksNeon(env)) {
+      try {
+        health = { at: now, ok: true, partitionsAhead: await store.partitionsAhead(), settlement: await store.settlementBacklog() };
+      } catch (err) {
+        log({ event: 'ledger_cron', step: 'health', outcome: 'error', error: errorName(err) }, 'warn');
+      }
+    }
     return summary;
   }, onMissing);
+  if (env.USAGE_DB) {
+    const runs: { key: 'ledger_cron.last_run' | 'ledger.health'; value: string }[] = [{ key: 'ledger.health', value: JSON.stringify(health) }];
+    if (lastRun) runs.push({ key: 'ledger_cron.last_run', value: lastRun });
+    await reportNeonWake(env, openedAt, Date.now(), runs);
+  }
   log({ event: 'ledger_cron', step: 'budget', outcome: 'ok', count: RUN_BUDGET - budget.remaining, calls: { ...budget.used } });
   return out;
 }

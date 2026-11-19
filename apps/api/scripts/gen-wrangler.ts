@@ -29,7 +29,7 @@ import { randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, type PinnedSponsorDelegates, accountIdFields, apiRpcFallbacksOf, customDomainPlacement, emailIssuerUrl, evmSponsorDelegateProblems, hanaOwnOrigins, isLoopbackHost, loadEnv, p256Thumbprint, repoRoot } from '@hana-id/env';
+import { IDENTITY_SECRET_FILES, identitySealKeyId, type Manifest, type PinnedSponsorDelegates, accountIdFields, apiRpcFallbacksOf, customDomainPlacement, emailIssuerUrl, evmSponsorDelegateProblems, hanaOwnOrigins, isLoopbackHost, loadEnv, neonPlanVar, p256Thumbprint, repoRoot } from '@hana-id/env';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { IDENTITY_RATE_LIMITS } from '../src/identity/limits.ts';
@@ -209,6 +209,9 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
       ...(m.near?.relay ? { NEAR_RELAY: nearRelayVar(m.near.relay) } : {}),
       // EVM gas sponsorship (D834): relayer, chains, limits and the staff-only allowlist; its key is the secret EVM_RELAY_KEYS.
       ...evmSponsorVars(m, opts.sponsorDelegates),
+      // D872: the Neon plan's monthly compute allowance (a free plan), only when the manifest sets one: the API notes
+      // each ledger wake-up in D1 and raises `neon_compute_high` at 70% and 90% of the estimate.
+      ...(m.usage?.neonPlan ? { NEON_PLAN: neonPlanVar(m.usage.neonPlan) } : {}),
     },
     d1_databases: [{ binding: 'DB', database_name: m.cloudflare.d1Name, database_id: d1Id, migrations_dir: 'migrations' }],
     // The usage ledger's writer (role usage_writer, caching disabled on the config), batch C4; optional. `wrangler dev`

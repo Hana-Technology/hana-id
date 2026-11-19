@@ -7,6 +7,7 @@
 import { usageDay } from '../apps.ts';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
+import { withNeonWake } from './neon-compute.ts';
 import { IDENTITY_SYNC_BATCH, IDENTITY_SYNC_DAYS } from './identity-sync.ts';
 import { classifyWriteError, usageTransport } from './record.ts';
 
@@ -53,7 +54,7 @@ export async function syncEmailUsage(env: Env, now = Date.now()): Promise<number
       .slice(i, i + EMAIL_SYNC_BATCH)
       .map((r) => ({ app_id: r.app_id, day: r.day, org_id: r.org_id, scope_id: r.scope_id, email_sessions: r.email_sessions, links: r.links }));
     try {
-      await usageTransport.query(binding, RECORD_EMAIL_SQL, [JSON.stringify(batch)]);
+      await withNeonWake(env, () => usageTransport.query(binding, RECORD_EMAIL_SQL, [JSON.stringify(batch)]));
       sent += batch.length;
     } catch (err) {
       log({ event: 'email_usage_sync_failed', code: classifyWriteError(err).code, synced: sent }, 'error');

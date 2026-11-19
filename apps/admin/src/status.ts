@@ -7,7 +7,9 @@
 // Budget (Workers Free: 50 subrequests, 10 ms CPU): one cold read makes at most 1 watchdog call, 3 RPCs, 10 public
 // build reads, one NEAR read per endpoint (`nearEndpoints`: 3 on sandbox-dev, at most 5), 1 Hyperdrive connection and
 // 2 R2 reads (20 on sandbox-dev, at most 22, counted in `calls`); the Access check before the route adds its certs
-// fetch on a cold isolate. The answer is kept in the isolate for STATUS_CACHE_MS and
+// fetch on a cold isolate. With NEON_PLAN (D872) the Hyperdrive connection isn't made: the ledger's tiles come from
+// what the admin crons last handed the API (`AdminRpc.neonWake`), so opening this page never wakes Neon; the
+// "Neon compute this month" tile reads the API's estimate. The answer is kept in the isolate for STATUS_CACHE_MS and
 // concurrent misses share one read, so refreshes and other tabs cost nothing within that window. Nothing is added to
 // any cron.
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
@@ -25,6 +27,8 @@ import { type WatchdogStatusView, findingsOf, statusView } from './monitoring.ts
 import { arr, num, obj, plainString, str } from './plain.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 import { MIN_PARTITIONS_AHEAD } from './security.ts';
+import { NEON_ALERT_PCTS, NEON_PARTIAL_AFTER_MS, type NeonStatus, allowancePct, assumedAwakeMs, awakeMsAt, computeHours, countedPartly, estimateAwakeMs, nextMonthStart } from '@hana-id/console-core';
+import { opsEveryMinutesOf, tracksNeon } from './neon.ts';
 import { type ChainPlain, LINE_LABELS, STATE_LABELS, evmRelayPath, evmRelayTitle, explainChain } from './evm-relay.ts';
 import { type BuildRead, CallCount, type NearEndpoint, type NearRead, SLOW_MS, buildTargets, nearEndpoints, readBuild, readNear } from './status-probes.ts';
 import { callWatchdog, watchdogConfigured } from './watchdog.ts';
@@ -257,6 +261,36 @@ interface LedgerPart {
   state: Map<string, { value: string; updatedAt: number }>;
   partitionsAhead: number | null;
   settlement: { pending: number; oldestAt: number | null } | null;
+  /**
+   * D872: read from the 15-minute run's report instead of Neon (NEON_PLAN): when that run checked (`at`), or `missing`
+   * when there is no report to read (an API without the field, or no run yet).
+   */
+  fromRun?: { at: number | null; missing: boolean };
+}
+
+/**
+ * The ledger as the admin crons last reported it to the API (D872): their records and the 15-minute run's health. No
+ * Neon connection.
+ */
+export function ledgerFromRuns(env: Env, neon: NeonStatus | undefined): LedgerPart {
+  const none: LedgerPart = { bound: env.USAGE_DB !== undefined, ok: false, state: new Map(), partitionsAhead: null, settlement: null, fromRun: { at: null, missing: true } };
+  if (!neon || neon.state !== 'on') return none;
+  const state = new Map<string, { value: string; updatedAt: number }>();
+  for (const k of [CRON_LAST_RUN, LEDGER_LAST_RUN] as const) {
+    const v = neon.runs[k];
+    if (v) state.set(k, v);
+  }
+  const h = parseRun(neon.runs['ledger.health']?.value);
+  if (!h) return { ...none, state };
+  const settlement = obj(h.settlement);
+  return {
+    bound: none.bound,
+    ok: h.ok === true,
+    state,
+    partitionsAhead: num(h.partitionsAhead),
+    settlement: settlement ? { pending: num(settlement.pending) ?? 0, oldestAt: num(settlement.oldestAt) } : null,
+    fromRun: { at: num(h.at), missing: false },
+  };
 }
 
 async function ledgerPart(env: Env, staff: StaffRequest, calls: CallCount): Promise<LedgerPart> {
@@ -324,11 +358,12 @@ async function gatherSources(env: Env, staff: StaffRequest, accessJwt: string, n
     env.ISSUER ? rpc<{ build: string | null; db: { ok: boolean; latencyMs: number } }>('GET /api/status issuer', staff, calls, () => env.ISSUER!.health({ requestId: staff.requestId, accessJwt })) : Promise.resolve(null),
     Promise.all(targets.map(async (t) => [t.id, await readBuild(t, calls)] as const)).then((e) => new Map(e)),
     Promise.all(nearEndpoints(env).map(async (endpoint) => ({ endpoint, read: await readNear(endpoint.url, calls) }))),
-    ledgerPart(env, staff, calls),
+    // D872: with NEON_PLAN the page never opens the ledger (it reads the crons' report from the API's answer below).
+    tracksNeon(env) ? Promise.resolve(null) : ledgerPart(env, staff, calls),
     bucketPart(env.STATEMENTS, calls),
     bucketPart(env.EXPORTS, calls),
   ]);
-  return { watchdog: w, api, console: con, issuer, builds, near, ledger, statements, exports: exportsBucket };
+  return { watchdog: w, api, console: con, issuer, builds, near, ledger: ledger ?? ledgerFromRuns(env, api.ok ? api.value.neon : undefined), statements, exports: exportsBucket };
 }
 
 // ---- the checks ----
@@ -736,14 +771,17 @@ function dataTiles(r: Report, s: Sources): void {
   const l = s.ledger;
   const lbase: TileInput = { id: 'ledger', group: 'data', name: 'Usage ledger (Neon)', affects: 'Reports, statements, gas settlement, and the security feed and watcher emails (logins don’t wait for it)', detail: '', link: L.feed };
   if (!l.bound) r.add({ ...lbase, detail: 'USAGE_DB isn’t bound here' }, [{ severity: 'warning', title: 'The usage ledger isn’t bound to this console: the feed, the watcher, settlement and reports are off', action: 'Bind it: `gen <env> --admin-hyperdrive-id <id>` and redeploy (docs/operations.md "Admin Worker").', key: 'unbound' }]);
-  else if (!l.ok) r.add({ ...lbase, detail: 'Unreachable' }, [{ severity: 'critical', title: 'The usage ledger can’t be reached (Neon or Hyperdrive)', action: 'Check Neon’s status and the Hyperdrive config; logins keep working (usage capture fails open), the feed and settlement catch up when it’s back.', key: 'down' }]);
+  else if (l.fromRun?.missing) r.add({ ...lbase, detail: 'Not read from here (opening it would wake the database): no report from the 15-minute run yet' }, [{ severity: 'unknown', title: 'The usage ledger’s state isn’t known yet: the admin’s 15-minute run hasn’t reported it', action: 'It reports every 15 minutes once the API and this console are on the same release: deploy both from one checkout, then wait 15 minutes.', key: 'unreported' }]);
+  else if (l.fromRun && l.fromRun.at !== null && r.now - l.fromRun.at > lateAfter(CRON_INTERVALS.adminFifteen)) r.add({ ...lbase, detail: `Last checked ${ago(r.now - l.fromRun.at)} ago by the 15-minute run` }, [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
+  else if (!l.ok) r.add({ ...lbase, detail: l.fromRun ? 'Unreachable at the last 15-minute run' : 'Unreachable' }, [{ severity: 'critical', title: 'The usage ledger can’t be reached (Neon or Hyperdrive)', action: 'Check Neon’s status and the Hyperdrive config, and the “Neon compute this month” tile (at 100% of the free plan Neon pauses the database until the 1st); logins keep working (usage capture fails open), the feed and settlement catch up when it’s back.', playbook: l.fromRun ? 'neon-compute-high' : undefined, key: 'down' }]);
   else {
     const problems: Problem[] = [];
     const ahead = l.partitionsAhead ?? 0;
     if (ahead < MIN_PARTITIONS_AHEAD) problems.push({ severity: ahead === 0 ? 'critical' : 'warning', title: `The usage ledger has ${ahead} monthly partition${ahead === 1 ? '' : 's'} ahead (fewer than ${MIN_PARTITIONS_AHEAD})`, action: 'Both keepers create them (the API hourly, this console daily): check their logs (`usage_partitions_failed`).', key: 'partitions' });
     const oldest = l.settlement?.oldestAt ?? null;
     if (oldest !== null && r.now - oldest > SETTLEMENT_WARN_MS) problems.push({ severity: 'warning', title: `Gas settlement is behind: the oldest unsettled event is ${ago(r.now - oldest)} old`, action: 'See the ledger part of Feed and notices; a burst drains over a few runs.', since: oldest, key: 'settlement' });
-    r.add({ ...lbase, detail: `Reachable · ${ahead} months ahead · ${l.settlement?.pending ?? 0} event${l.settlement?.pending === 1 ? '' : 's'} to settle` }, problems);
+    const when = l.fromRun?.at != null ? ` at the 15-minute run ${ago(r.now - l.fromRun.at)} ago` : '';
+    r.add({ ...lbase, detail: `Reachable${when} · ${ahead} months ahead · ${l.settlement?.pending ?? 0} event${l.settlement?.pending === 1 ? '' : 's'} to settle` }, problems);
   }
 
   // R2.
@@ -780,7 +818,7 @@ const sumCalls = (run: Record<string, unknown> | null): number | null => {
   return c ? Object.values(c).reduce<number>((a, b) => a + (typeof b === 'number' && Number.isFinite(b) ? b : 0), 0) : null;
 };
 
-function jobTiles(r: Report, s: Sources): void {
+function jobTiles(r: Report, env: Env, s: Sources): void {
   const now = r.now;
   // The API's 15-minute run (the Google-key sync records every run).
   const apiBase: TileInput = { id: 'cron-api', group: 'jobs', name: 'API every 15 min (Google key sync)', affects: 'Google key rotations followed on chain (Google logins break when Google rotates without it), and the API’s hourly housekeeping', detail: '', link: L.monitoring };
@@ -797,21 +835,30 @@ function jobTiles(r: Report, s: Sources): void {
   }
 
   // This Worker's two crons (their records in ops.state).
-  const ledgerDown = !s.ledger.ok;
+  // From the crons' report (D872) the records don't depend on Neon answering this page.
+  const ledgerDown = !s.ledger.ok && !s.ledger.fromRun;
   const five = parseRun(s.ledger.state.get(CRON_LAST_RUN)?.value);
-  const fiveBase: TileInput = { id: 'cron-admin-5', group: 'jobs', name: 'Admin every 5 min (notices, feed, watcher)', affects: 'Blocking notices (partner changes, invites and owner grants wait for them), the security feed, the on-chain watcher', detail: '', link: L.feed };
+  // D872: at 15 the record is written by the runs that open the ledger (every 15 minutes); the notices still go every 5.
+  const opsEvery = opsEveryMinutesOf(env);
+  const fiveInterval = opsEvery === 15 ? CRON_INTERVALS.adminFifteen : CRON_INTERVALS.adminFive;
+  const fiveBase: TileInput = { id: 'cron-admin-5', group: 'jobs', name: opsEvery === 15 ? 'Admin every 5 min (notices; feed and watcher every 15 min)' : 'Admin every 5 min (notices, feed, watcher)', affects: 'Blocking notices (partner changes, invites and owner grants wait for them), the security feed, the on-chain watcher', detail: '', link: L.feed };
   if (ledgerDown) r.add({ ...fiveBase, detail: 'Unknown: its record is in the usage ledger, which can’t be read' }, [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
   else if (!five || num(five.at) === null) r.add({ ...fiveBase, detail: 'No run recorded yet' }, [{ severity: 'unknown', title: 'The admin’s 5-minute cron has no recorded run', action: 'It records each run once it reaches the ops store: wait 5 minutes, else check this Worker’s logs (`cron`).', key: 'never' }]);
   else {
     const at = num(five.at)!;
-    const problems = cronProblems('The admin’s 5-minute cron', at, CRON_INTERVALS.adminFive, now);
-    if (five.feed === false) problems.push({ severity: 'warning', title: 'The security feed didn’t complete in the last 5-minute run', action: 'See this Worker’s `feed` log lines.', key: 'feed' });
-    if (five.watcher === false) problems.push({ severity: 'warning', title: 'The on-chain watcher didn’t complete in the last 5-minute run', action: 'See this Worker’s `watcher` log lines (often NEAR RPC).', key: 'watcher' });
+    const problems = cronProblems(opsEvery === 15 ? 'The admin’s feed and watcher run' : 'The admin’s 5-minute cron', at, fiveInterval, now);
+    if (five.feed === false) problems.push({ severity: 'warning', title: `The security feed didn’t complete in its last run`, action: 'See this Worker’s `feed` log lines.', key: 'feed' });
+    if (five.watcher === false) problems.push({ severity: 'warning', title: `The on-chain watcher didn’t complete in its last run`, action: 'See this Worker’s `watcher` log lines (often NEAR RPC).', key: 'watcher' });
     r.add({ ...fiveBase, detail: `Last run ${ago(now - at)} ago · ${sumCalls(five) ?? '?'} of ${RUN_BUDGET} calls` }, problems);
   }
   const fifteen = parseRun(s.ledger.state.get(LEDGER_LAST_RUN)?.value);
   const fifBase: TileInput = { id: 'cron-admin-15', group: 'jobs', name: 'Admin every 15 min (ledger)', affects: 'Gas settlement, the ledger’s alerts, statement notices, and the daily checks and rate', detail: '', link: L.feed };
-  if (ledgerDown) r.add({ ...fifBase, detail: 'Unknown: its record is in the usage ledger, which can’t be read' }, [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
+  // D872: the run reported after its record (the ledger's health) and couldn't reach the database: it ran.
+  const healthAt = s.ledger.fromRun?.at ?? null;
+  const fifAt = fifteen ? num(fifteen.at) : null;
+  if (s.ledger.fromRun && !s.ledger.ok && healthAt !== null && (fifAt === null || healthAt > fifAt)) {
+    r.add({ ...fifBase, detail: `Last ran ${ago(now - healthAt)} ago but couldn’t reach the usage database` }, [...cronProblems('The admin’s 15-minute cron', healthAt, CRON_INTERVALS.adminFifteen, now), { severity: 'warning', title: 'n/a', action: '', issue: false }]);
+  } else if (ledgerDown) r.add({ ...fifBase, detail: 'Unknown: its record is in the usage ledger, which can’t be read' }, [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
   else if (!fifteen || num(fifteen.at) === null) r.add({ ...fifBase, detail: 'No run recorded yet' }, [{ severity: 'unknown', title: 'The admin’s 15-minute cron has no recorded run', action: 'It records each run from this release on: wait 15 minutes, else check this Worker’s logs (`ledger_cron`).', key: 'never' }]);
   else {
     const at = num(fifteen.at)!;
@@ -952,7 +999,7 @@ function headroomTiles(r: Report, env: Env, s: Sources): void {
   }
 
   // The crons' call budget (D380).
-  const runs = s.ledger.ok ? [parseRun(s.ledger.state.get(CRON_LAST_RUN)?.value), parseRun(s.ledger.state.get(LEDGER_LAST_RUN)?.value)] : [null, null];
+  const runs = s.ledger.ok || s.ledger.fromRun ? [parseRun(s.ledger.state.get(CRON_LAST_RUN)?.value), parseRun(s.ledger.state.get(LEDGER_LAST_RUN)?.value)] : [null, null];
   const used = runs.map(sumCalls);
   const bBase: TileInput = { id: 'call-budget', group: 'headroom', name: 'Admin crons’ call budget', affects: 'How fast the admin crons’ backlog drains (each run has 40 outbound calls of its 50 subrequests)', detail: '' };
   if (used.every((u) => u === null)) r.add({ ...bBase, detail: 'Unknown: no run recorded' }, [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
@@ -962,7 +1009,70 @@ function headroomTiles(r: Report, env: Env, s: Sources): void {
     r.add({ ...bBase, detail: `Last runs: 5-minute ${used[0] ?? '?'} and 15-minute ${used[1] ?? '?'} of ${RUN_BUDGET} calls` }, problems);
   }
 
+  neonComputeTile(r, env, s);
+
   r.add({ id: 'usage-limits', group: 'headroom', name: 'Requests, D1, Hyperdrive, R2 and SendGrid against free limits', affects: 'Staying on the free tiers (D417)', detail: 'Not measured: needs Cloudflare’s and SendGrid’s usage APIs (see below)', notMeasured: true });
+}
+
+/** "about 41" (10 and over), "about 4.2" (under 10). */
+const hoursText = (h: number): string => (h >= 10 ? String(Math.round(h)) : (Math.round(h * 10) / 10).toString());
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/**
+ * "Neon compute this month" (D872): the API's estimate of the month's compute-hours against the free plan's
+ * allowance, amber at 70%, red at 90%. Not measured without NEON_PLAN (a plan without a monthly allowance).
+ */
+function neonComputeTile(r: Report, env: Env, s: Sources): void {
+  const base: TileInput = { id: 'neon-compute', group: 'headroom', name: 'Neon compute this month', affects: 'The usage database on Neon’s free plan: at 100% Neon pauses it until the 1st (usage records, the security feed and alerts stop; logins keep working)', detail: '', link: null };
+  if (!tracksNeon(env)) return r.add({ ...base, detail: 'Not tracked here: this env’s Neon plan has no monthly allowance in its manifest (usage.neonPlan)', notMeasured: true });
+  if (!s.api.ok) return r.add({ ...base, detail: 'Unknown: the API didn’t answer' }, [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
+  const n = s.api.value.neon;
+  if (!n) return r.add({ ...base, detail: 'Unknown: the API doesn’t count it yet' }, [{ severity: 'unknown', title: 'The API doesn’t report Neon’s compute yet', action: 'Deploy the API and this console from the same checkout.', key: 'old-api' }]);
+  if (n.state === 'off') return r.add({ ...base, detail: 'Not tracked: the API has no Neon plan set (NEON_PLAN)' }, [{ severity: 'unknown', title: 'This console tracks Neon’s compute but the API doesn’t', action: 'Run `gen <env>` for the API and redeploy it: both get NEON_PLAN from the manifest.', key: 'api-off' }]);
+  if (n.state === 'error') return r.add({ ...base, detail: 'Unknown: the API couldn’t read its count' }, [{ severity: 'unknown', title: 'The API couldn’t read its Neon compute count', action: 'Check the API’s D1 (the Hot D1 tile) and that migration 0023 is applied.', key: 'error' }]);
+  const now = r.now;
+  // A start within the month's first 48 h: the hours before it count as awake; a later one counts only itself (below).
+  const partial = n.row ? countedPartly(n.month, n.row.firstAt) : false;
+  const awake = n.row ? (partial ? awakeMsAt(n.row, now) : estimateAwakeMs(n.month, n.row, now)) : 0;
+  const hours = computeHours(awake, n.plan.computeUnits);
+  const pct = allowancePct(hours, n.plan);
+  const [amber, red] = NEON_ALERT_PCTS;
+  // D872 after review: counting began after the 1st (the deploy's month): Neon counted hours this tile never saw, so no
+  // projection and no share of the allowance; amber all month, and the alerts only know what was counted.
+  if (n.row && partial) {
+    const since = new Date(n.row.firstAt);
+    const sinceText = `${since.getUTCDate()} ${MONTH_NAMES[since.getUTCMonth()]!.slice(0, 3)}`;
+    const problems: Problem[] = [
+      {
+        severity: pct >= red ? 'critical' : 'warning',
+        title: `This month’s Neon estimate only counts from ${sinceText}: check Neon’s console for the month’s figure`,
+        action: 'The estimate started at the deploy that turned it on, so the month’s earlier hours are missing here, and its alerts only know what was counted. Read Neon’s console (the project, then Usage); from the 1st the tile counts the whole month.',
+        playbook: 'neon-compute-high',
+        key: 'partial',
+      },
+    ];
+    return r.add({ ...base, detail: `Counted since ${sinceText}: about ${hoursText(hours)} compute-hours since then. Neon’s own figure for the month is higher: check Neon’s console.` }, problems);
+  }
+  const start = Date.UTC(Number(n.month.slice(0, 4)), Number(n.month.slice(5, 7)) - 1, 1);
+  const end = nextMonthStart(n.month);
+  const elapsed = Math.max(now - start, 60 * MIN);
+  const projected = (hours * (end - start)) / elapsed;
+  const resets = `${new Date(end).getUTCDate()} ${MONTH_NAMES[new Date(end).getUTCMonth()]!.slice(0, 3)}`;
+  const used = `about ${hoursText(hours)} of ${n.plan.computeHoursPerMonth} compute-hours used this month (estimate)`;
+  const lateStart = n.row && assumedAwakeMs(n.month, n.row.firstAt) > NEON_PARTIAL_AFTER_MS ? new Date(n.row.firstAt) : null;
+  const lateText = lateStart ? ` (counting began on ${lateStart.getUTCDate()} ${MONTH_NAMES[lateStart.getUTCMonth()]!.slice(0, 3)}; the hours before are assumed awake)` : '';
+  const detail = `${used[0]!.toUpperCase()}${used.slice(1)}${lateText} · ${n.row?.windows ?? 0} wake-up${n.row?.windows === 1 ? '' : 's'} · on course for about ${hoursText(projected)} · starts again on ${resets}`;
+  const problems: Problem[] = [];
+  if (pct >= amber) {
+    problems.push({
+      severity: pct >= red ? 'critical' : 'warning',
+      title: `The usage database has used about ${hoursText(hours)} of its ${n.plan.computeHoursPerMonth} free compute-hours this month (estimate, ${Math.floor(pct)}%)`,
+      action: 'At 100% Neon pauses it until the 1st: logins keep working, but usage records, the security feed and the alerts stop. Check the real figure in Neon’s console, then follow the playbook.',
+      playbook: 'neon-compute-high',
+      key: pct >= red ? 'red' : 'amber',
+    });
+  }
+  r.add({ ...base, detail }, problems);
 }
 
 export const NOT_MEASURED: readonly { what: string; why: string }[] = [
@@ -970,6 +1080,7 @@ export const NOT_MEASURED: readonly { what: string; why: string }[] = [
   { what: 'SendGrid’s daily sends against its free 100 a day', why: 'SendGrid’s stats need a key with more than Mail Send; this Worker’s is Mail Send only (D401).' },
   { what: 'The email issuer’s own sends (login codes) and its daily send budget', why: 'DirectoryRpc.health answers the issuer’s D1 only; its send outcomes are in its logs (`send_budget_exhausted`, `email_budget`).' },
   { what: 'The API’s hourly jobs (vault maintenance, drift detection, usage copies, the owner pool’s allowance)', why: 'Only in the API’s logs; this page sees the 15-minute run that carries them (its Google key sync).' },
+  { what: 'Neon’s own compute-hours and storage figures', why: 'Only Neon’s console or its API has them (a Neon API key this Worker doesn’t hold: a decision, D872); with usage.neonPlan the “Neon compute this month” tile shows our estimate from the wake-ups.' },
   { what: 'NEAR’s MPC network (key derivation)', why: 'A derivation needs a user’s session; nothing here probes it (the playbook mpc-ckd-outage).' },
 ];
 
@@ -985,7 +1096,7 @@ export async function buildStatus(env: Env, staff: StaffRequest, accessJwt: stri
   nearRelayTile(r, s);
   evmRelayTiles(r, s);
   dataTiles(r, s);
-  jobTiles(r, s);
+  jobTiles(r, env, s);
   externalTiles(r, env, s);
   headroomTiles(r, env, s);
   r.settleSince();

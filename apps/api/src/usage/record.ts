@@ -11,6 +11,7 @@ import pg from 'pg';
 import type { Env } from '../env.ts';
 import { homeBillingOrg } from '../home/billing.ts';
 import { log } from '../log.ts';
+import { withNeonWake } from './neon-compute.ts';
 import { userIdKey } from './uid-key.ts';
 
 export const USAGE_RETRY_DELAY_MS = 250;
@@ -129,7 +130,8 @@ export async function recordUsage(env: Env, draft: UsageDraftEvent, opts: { path
       log({ event: 'usage_write_rejected', ...at, code: 'invalid_event', problems }, 'error');
       return;
     }
-    await send(binding, checked.data, at);
+    // D872: the connection (and its retry) is a ledger wake-up, noted with NEON_PLAN only.
+    await withNeonWake(env, () => send(binding, checked.data, at));
   } catch {
     log({ event: 'usage_write_failed', ...at, code: 'internal' }, 'error');
   }

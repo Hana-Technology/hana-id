@@ -59,6 +59,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Free network fees: a billing record is late](#evm-billing-late) | warning | — |
 | [Free network fees: a payment slot was used by another transaction](#evm-relay-slot-taken) | critical | — |
 | [Free NEAR transactions: a billing record is late](#near-billing-late) | warning | — |
+| [The usage database’s free monthly allowance is running low](#neon-compute-high) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -1798,6 +1799,51 @@ A `near_billing_late` security event (once a day, with counts): the NEAR relay's
 - None.
 
 **Refs:** [`docs/operations.md#near-relay-billing-records-d863-built-not-deployed`](operations.md#near-relay-billing-records-d863-built-not-deployed), D863 (`docs/decisions.md`) · **See also:** [near-relay-balance-low](#near-relay-balance-low)
+
+<a id="neon-compute-high"></a>
+
+### The usage database’s free monthly allowance is running low
+
+`neon-compute-high` · warning
+
+A `neon_compute_high` security event (once at 70% and once at 90% a month), or the amber or red “Neon compute this month” tile on System status: by our estimate the usage database (Neon's free plan) has used most of its monthly compute-hours.
+
+**Signals**
+
+- A `neon_compute_high` row in the admin's security events, emailed by the feed, with `threshold` (70 or 90), `hoursUsed` and `allowanceHours`.
+- The “Neon compute this month” tile on System status amber (70%) or red (90%), or amber with “Counted since <date>” when counting began more than 48 hours into the month (the deploy that turned it on): that month the tile and the alerts know only what was counted since then, so Neon’s own figure is higher and an alert can come late or not at all. A start within 48 hours counts the hours before it as awake, so that month’s figure errs high.
+- Neon's own email saying the project has used most of its compute allowance.
+
+**Impact**
+
+- At 100% Neon pauses the database until its next monthly period starts. Logins, wallets and partner apps keep working: they never wait for it. The blocking notices keep going out.
+- What stops while it is paused: usage records (each login's record is lost, not kept for later), the security feed and the on-chain watcher emails, gas settlement, the ledger's alerts, statements, reports and exports, the partner console's Usage and Statements pages, and the ledger part of the Support ID lookup.
+- How urgent: at 70% within a day or two; at 90% today.
+
+**Steps**
+
+1. **Read the real figure** (who: anyone). Open Neon's console, the project, then Usage (or Billing): it shows the compute-hours used this period and when the period resets. The tile is our own estimate from the times our Workers opened the database; Neon's figure is the one that counts. In the month counting began the tile only knows the days since then. If they differ by more than a few hours otherwise, tell an engineer. Also check the compute's size: its autoscaling minimum and maximum should both be 0.25; if it can grow, the estimate is only a floor.
+
+2. **Check what keeps it awake** (who: anyone). The tile says how many wake-ups there were this month. In Neon's console the compute's graph shows when it ran. Activity every 5 minutes means the admin console is on its 5-minute setting: check that the manifest's `admin.opsEveryMinutes` is 15 (testnet only) and that the admin Worker's triggers are `*/5` and `*/15` (Cloudflare: the admin Worker, Settings, Triggers).
+
+3. **Slow it down for the rest of the month, by hand** (who: a founder). If it would run out before the period resets: change the admin Worker's 5-minute trigger to every 30 minutes, from apps/admin (or in Cloudflare's dashboard). Never change the `*/15` trigger: the Worker runs every other trigger as the 5-minute job, so the ledger work would stop. Notices, the feed and the watcher then run every 30 minutes until the next deploy of the admin Worker puts the triggers back.
+
+   ```sh
+   corepack pnpm exec wrangler triggers deploy --triggers "*/30 * * * *" "*/15 * * * *"
+   ```
+
+4. **If it runs out** (who: a founder). Nothing to repair: logins keep working. Wait for the next period (the database starts again by itself), or ask the user about Neon's paid plan: a decision (D417 keeps personal accounts on free tiers). Once it is back, the feed, the watcher and settlement catch up by themselves; the usage records of the paused days are lost.
+
+**Verify**
+
+- Neon's console shows the compute running again, and System status shows the “Usage ledger (Neon)” tile green.
+- The month’s estimate grows by about 2 compute-hours a day or less on a quiet testnet.
+
+**Follow-ups**
+
+- Reading Neon's exact figure through its API needs a Neon API key held by the admin Worker: a decision, not built (docs/operations.md "Neon compute on the free plan").
+
+**Refs:** [`docs/operations.md#neon-compute-on-the-free-plan-d872`](operations.md#neon-compute-on-the-free-plan-d872), D872 (`docs/decisions.md`), D417 (`docs/decisions.md`)
 
 <a id="updater-key-stolen"></a>
 

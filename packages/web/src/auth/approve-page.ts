@@ -38,11 +38,12 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView, originText, row, rows } from './dom.ts';
+import { GuardHint, coarsePointer } from './guard-hint.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 import { fullId, renderApproval, watchOverflowing } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
-import { alert } from './ui.ts';
+import { BTN, alert, icon } from './ui.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
 import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
@@ -56,6 +57,34 @@ const ACCOUNT_CHAIN_NAMES = { stellar: 'Stellar', evm: 'Ethereum-style', near: '
  */
 export const accountLine = (d: Dom, chain: keyof typeof ACCOUNT_CHAIN_NAMES, address: string): HTMLElement =>
   d.h('p', { class: 'account' }, 'Your account: ', d.h('code', { class: 'mono short-id', attrs: { 'aria-hidden': 'true' } }, shortId(address)), d.h('span', { class: 'sr-only' }, ` ${address}`), ` (${ACCOUNT_CHAIN_NAMES[chain]})`);
+
+/**
+ * The details' Copy for the user's own account (D876): the button, its name for screen readers, and what it says after
+ * a press. The clipboard gets the account exactly (nothing secret: the account is public).
+ */
+export const COPY_ACCOUNT_TEXT = Object.freeze({
+  button: 'Copy',
+  name: 'Copy your account',
+  copied: 'Copied',
+  failed: 'Couldn’t copy. Select your account above and copy it yourself.',
+});
+/** How long "Copied" stays beside the button. */
+export const COPIED_MS = 3000;
+
+/** The Clipboard API's write, the only part of it this page uses. Never read. */
+export interface ApproveClipboard {
+  writeText(text: string): Promise<void>;
+}
+
+/** `navigator.clipboard` when this browser has the Clipboard API's write here, else null. */
+function browserClipboard(): ApproveClipboard | null {
+  try {
+    const c = (globalThis as { navigator?: { clipboard?: Partial<ApproveClipboard> } }).navigator?.clipboard;
+    return c && typeof c.writeText === 'function' ? (c as ApproveClipboard) : null;
+  } catch {
+    return null;
+  }
+}
 
 export const KEEP_OPEN_MS = 15_000;
 /** A partner-opened popup that no request reaches within this long says bye and closes (vault approvals.ts LATE_CLOSE_MS). */
@@ -156,6 +185,8 @@ export interface ApprovePageDeps {
   render?: typeof renderApproval;
   /** The consent's renderer (tests inject one that fails). */
   renderConsentScreen?: typeof renderConsent;
+  /** The clipboard the account's Copy writes to (default: `navigator.clipboard` when there is one; null: none). */
+  clipboard?: ApproveClipboard | null;
 }
 
 type Current =
@@ -177,6 +208,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   const balanceFetch: BalanceFetch = deps.fetch ?? ((url, init) => fetch(url, init));
   const renderRequest = deps.render ?? renderApproval;
   const renderPolicy = deps.renderConsentScreen ?? renderConsent;
+  const clipboard = (): ApproveClipboard | null => (deps.clipboard === undefined ? browserClipboard() : deps.clipboard);
   const d: Dom = dom(win.document);
   const opener = win.opener;
   const opened = approveOpenerMode(win.location.search);
@@ -191,8 +223,12 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   let stopped = false;
   const visible = () => win.document.visibilityState !== 'hidden';
   const hasFocus = () => (typeof win.document.hasFocus === 'function' ? win.document.hasFocus() : true);
-  const guard = new ApproveGuard(now, visible() && hasFocus() ? now() : null, (armed) => {
+  const focusedAtStart = visible() && hasFocus() ? now() : null;
+  // D878: the line under Approve (or Allow) while the guard holds it. Display only: told what the guard is told.
+  const hint = new GuardHint({ d, now, focusedAtStart, coarse: coarsePointer(win as unknown as Parameters<typeof coarsePointer>[0]), id: 'guard-hint' });
+  const guard = new ApproveGuard(now, focusedAtStart, (armed) => {
     if (primary) primary.disabled = !armed;
+    hint.armed(armed);
   });
 
   /** The vault window: the opener, or the partner page's vault frame (looked up each time, as the login popup does). */
@@ -216,18 +252,30 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   };
 
   const onGesture = (type: GuardInput['type']) => (e: Event) => {
-    if (isGesture(e)) guard.gesture(guardInputOf(type, e));
+    if (!isGesture(e)) return;
+    const input = guardInputOf(type, e);
+    guard.gesture(input);
+    hint.input(input);
+  };
+  // The hint first, so its words follow the guard's state change that comes with each of these.
+  const onFocus = () => {
+    hint.focused();
+    guard.focused();
+  };
+  const onBlur = () => {
+    hint.blurred();
+    guard.blurred();
   };
   const listeners: [string, (e: Event) => void][] = [
     ['message', onMessage],
-    ['focus', () => guard.focused()],
-    ['blur', () => guard.blurred()],
+    ['focus', onFocus],
+    ['blur', onBlur],
     ['pointermove', onGesture('pointermove')],
     ['pointerdown', onGesture('pointerdown')],
     ['keydown', onGesture('keydown')],
     ['pagehide', onPageHide],
   ];
-  const onVisibility = () => (visible() ? guard.focused() : guard.blurred());
+  const onVisibility = () => (visible() ? onFocus() : onBlur());
 
   function clearIdle(): void {
     clearTimeout(idleTimer);
@@ -316,7 +364,47 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       if (isGesture(e) && enabled && onShow() && guard.mayActivate((e as MouseEvent).detail === 0)) answer(true);
     });
     primary = enabled ? ok : null;
-    return d.h('div', { class: 'actions decide' }, reject, enabled ? ok : null);
+    if (enabled) hint.describe(ok, primaryLabel);
+    const row = d.h('div', { class: 'actions decide' }, reject, enabled ? ok : null);
+    // D878: right under the decision row, its space kept, so neither button moves when it appears or goes.
+    return enabled ? d.h('div', { class: 'decide-group' }, row, hint.el) : row;
+  }
+
+  /**
+   * The details' "Your account" row (D876): the whole account in one piece, then Copy. Copy only writes the account to
+   * the clipboard and says so beside it; it is ordinary content for the Approve guard (a press of it is a gesture like
+   * any other in the window, and it never answers anything). It sits in the folded details, at the start of the line,
+   * away from the decision row, small and with its own words, so it can't be taken for Reject or Approve. "Copied" fits
+   * beside it on the same line; only the refusal's sentence can take another line, and it stays until the next press.
+   */
+  function accountRow(address: string): HTMLElement {
+    const status = d.h('span', { class: 'copy-status', attrs: { role: 'status' } });
+    const btn = d.h('button', { class: `${BTN.secondary} jp-btn-sm copy-account`, attrs: { type: 'button', 'aria-label': COPY_ACCOUNT_TEXT.name } }, icon(d, 'copy'), COPY_ACCOUNT_TEXT.button);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const say = (text: string, fade: boolean) => {
+      clearTimeout(timer);
+      status.textContent = text;
+      if (fade)
+        timer = setTimeout(() => {
+          if (status.textContent === text) status.textContent = '';
+        }, COPIED_MS);
+    };
+    btn.addEventListener('click', (e) => {
+      if (!isGesture(e)) return;
+      const c = clipboard();
+      if (!c) return say(COPY_ACCOUNT_TEXT.failed, false);
+      let write: Promise<void>;
+      try {
+        write = c.writeText(address);
+      } catch {
+        return say(COPY_ACCOUNT_TEXT.failed, false);
+      }
+      write.then(
+        () => say(COPY_ACCOUNT_TEXT.copied, true),
+        () => say(COPY_ACCOUNT_TEXT.failed, false),
+      );
+    });
+    return rows(d, [row(d, 'Your account', fullId(d, address), d.h('div', { class: 'copy-line' }, btn, status))], 'jp-kv facts your-account');
   }
 
   /** The user's Support ID (batch C15), as the vault sent it: the code an app's support may ask for. Text only. */
@@ -436,7 +524,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   const unreadable = (problem: string, app: string, address?: string): HTMLElement[] => [
     alert(d, 'danger', { class: 'danger' }, `${BRAND.company} can’t read this request, so it can’t be approved.`),
     d.h('p', { class: 'unreadable-next' }, UNREADABLE_NEXT[0], d.h('strong', {}, app), UNREADABLE_NEXT[1]),
-    d.h('details', { class: 'request-details unreadable-reason' }, d.h('summary', { class: 'details-toggle' }, 'Show details'), address ? rows(d, [row(d, 'Your account', fullId(d, address))], 'jp-kv facts your-account') : null, d.h('p', { class: 'muted' }, 'Error (for support): ', d.h('code', { class: 'mono' }, problem))),
+    d.h('details', { class: 'request-details unreadable-reason' }, d.h('summary', { class: 'details-toggle' }, 'Show details'), address ? accountRow(address) : null, d.h('p', { class: 'muted' }, 'Error (for support): ', d.h('code', { class: 'mono' }, problem))),
   ];
 
   function showRequest(msg: WindowMessage<'hana:approve-request'>): void {
@@ -483,7 +571,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
         // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [rows(d, [row(d, 'Your account', fullId(d, msg.address))], 'jp-kv facts your-account'), supportId], nowMs: now() })
+          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [accountRow(msg.address), supportId], nowMs: now() })
           : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem, msg.appName, msg.address)),
         buttons('Approve', decoded !== null, msg.id),
         auto?.active ? stopAutoApproveButton(auto.label) : null,
@@ -495,6 +583,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     current = { kind: 'request', msg, input, decodable: approvable };
     state = 'request';
     d.show(screen);
+    hint.rendered(primary !== null);
     guard.rendered();
     // Boxes that hold more than they show say so, now that they are laid out, and again whenever their size changes.
     stopWatching?.();
@@ -537,6 +626,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     current = { kind: 'consent', msg, valid };
     state = 'consent';
     d.show(screen);
+    hint.rendered(primary !== null);
     guard.rendered();
   }
 
@@ -626,6 +716,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     current = null;
     primary = null;
     post(result(c, approved));
+    hint.cleared();
     guard.cleared();
     if (stopped) return;
     state = 'waiting';

@@ -885,6 +885,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           nearNotes(picked),
           d.h('div', { class: 'jp-field' }, d.h('label', { class: 'jp-label', attrs: { for: 'home-export-confirm' } }, `Type ${EXPORT_CONFIRMATION} to continue`), input),
           d.h('div', { class: 'actions start' }, go, button('Back', 'home-export-back', back)),
+          guard.hint('Continue'),
         );
         guard.rendered();
         return;
@@ -902,6 +903,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           r.out,
           r.ack,
           r.actions,
+          r.hint,
           r.status,
           d.h('p', { class: 'muted' }, `A shown key hides again after 60 seconds. It is erased from this page 5 minutes after you signed in, when you leave this app’s page, and when you close or reload ${BRAND.home}.`),
           d.h('p', { class: 'muted' }, EXPORT_CLIPBOARD_NOTE),

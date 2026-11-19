@@ -64,7 +64,8 @@ const EVM_NATIVE_SYMBOLS: Readonly<Record<number, string>> = Object.freeze({
 export interface EvmChainInfo {
   /**
    * Hana's own name for the network as a user reads it: "Base Sepolia (test network)", "Base (real money)",
-   * "Local test network (Hardhat, Anvil)". The chain's number is never in it (it lives in the folded details).
+   * "Local test network" (D877: one name for both local chains; which tool runs it is no help to a user). The chain's
+   * number is never in it (it lives in the folded details).
    */
   readonly label: string;
   /** The plain name alone, for a sentence: "Base Sepolia", "Sonic" (a "testnet" suffix dropped), "the local test network". */
@@ -85,7 +86,7 @@ export function evmChainInfo(chainId: number): EvmChainInfo | null {
   if (name === undefined) return null;
   const local = name.startsWith('Local');
   const plain = local ? 'the local test network' : name.replace(/\s+testnet$/iu, '');
-  const label = local ? `Local test network ${name.slice('Local '.length)}` : testnet ? `${plain} (test network)` : `${plain} (real money)`;
+  const label = local ? 'Local test network' : testnet ? `${plain} (test network)` : `${plain} (real money)`;
   return { label, name: plain, testnet, nativeSymbol: Object.hasOwn(EVM_NATIVE_SYMBOLS, chainId) ? (EVM_NATIVE_SYMBOLS[chainId] as string) : 'ETH' };
 }
 

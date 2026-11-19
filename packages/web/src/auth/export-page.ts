@@ -658,6 +658,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
         d.h('div', { class: 'jp-field' }, d.h('label', { class: 'jp-label', attrs: { for: 'export-confirm' } }, `Type ${EXPORT_CONFIRMATION} to continue`), input),
         d.h('div', { class: 'actions' }, go),
+        guard.hint('Continue'),
       ),
     );
     guard.rendered();
@@ -681,6 +682,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         r.out,
         r.ack,
         r.actions,
+        r.hint,
         r.status,
         d.h('p', { class: 'muted' }, 'A shown key hides again after 60 seconds. Close this window when you are done: the key is erased when it closes, 5 minutes after you signed in, or when your session in the app ends.'),
         d.h('p', { class: 'muted' }, EXPORT_CLIPBOARD_NOTE),

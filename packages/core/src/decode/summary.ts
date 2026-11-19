@@ -93,8 +93,13 @@ export interface ApprovalSummary {
   readonly headline: SummaryText;
   /** More plain lines (an amount in smallest units, what else a call sends, what a list of actions does). */
   readonly lines: readonly SummaryText[];
-  /** The most the network fee can be, as a value ("up to 0.000042 ETH"), or null when the request costs no fee itself. */
+  /**
+   * The network fee, as a row's value that starts with a capital (D877): the most it can be ("Up to 0.000042 ETH"), or
+   * that the user pays none ("Free. Journear pays it for you."); null when the request costs no fee itself.
+   */
   readonly fee: SummaryText | null;
+  /** The fee row says the user pays no network fee: a sponsored action (Journear's relayer) or a relayed NEAR action (D877). */
+  readonly freeFee?: true;
   /** The network the request is bound to, as a value ("Sepolia (test network)"), when the request names one. NEAR's line is the page's. */
   readonly network: SummaryText | null;
   /**
@@ -245,6 +250,15 @@ export function displayUnits(value: bigint, decimals: number, dir: AmountDirecti
 export function upTo(shown: string): SummaryText {
   if (shown.startsWith('less than ')) return [strong(shown)];
   return ['up to ', strong(shown.startsWith('about ') ? shown.slice('about '.length) : shown)];
+}
+
+/** A text as a row's value (D877): its first letter a capital ("up to 0.1 ETH" → "Up to 0.1 ETH"). */
+export function rowValue(t: SummaryText): SummaryText {
+  const [first, ...rest] = t;
+  if (first === undefined) return t;
+  const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
+  if (typeof first === 'string') return [cap(first), ...rest];
+  return first.kind === 'strong' ? [strong(cap(first.text)), ...rest] : t;
 }
 
 /** A text as a sentence: one full stop at its end, never two (a line that already ends with one keeps it). */
@@ -413,7 +427,7 @@ function evmNative(chainId: number, wei: bigint): string {
 function evmNetwork(chainId: number): SummaryText {
   const info = evmChainInfo(chainId);
   // An unknown network keeps its number in view, so two of them never look the same.
-  return info ? [info.label] : [`a network Journear doesn’t know (no. ${chainId})`];
+  return info ? [info.label] : [`A network Journear doesn’t know (no. ${chainId})`];
 }
 
 /** "your account" when `address` is the user's, else the address as code. */
@@ -555,7 +569,7 @@ function evmCall(chainId: number, tx: EvmCallInput, me: string): Draft {
 }
 
 function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
-  const base = { fee: upTo(evmNative(chainId, tx.maxFeeWei)), network: evmNetwork(chainId) };
+  const base = { fee: rowValue(upTo(evmNative(chainId, tx.maxFeeWei))), network: evmNetwork(chainId) };
   if (tx.to === null) {
     return { ...base, headline: [APP, ' wants to create a new program'], lines: tx.value > 0n ? [['It also sends ', strong(evmNative(chainId, tx.value)), ' to the new program.']] : [], warnings: [{ ...cannotTell('warning', 'it creates a new program Journear can’t read'), code: 'contract_creation' }], explainable: false };
   }
@@ -571,8 +585,12 @@ function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
 // plain words: the fee line, and the one-time setup note when the approval also signs the account's authorization.
 // The calls carry no value (the subject decoder refuses any), so nothing is said about ETH leaving.
 
-/** The fee line of a sponsored action (the founder's wording): "Network fee: none. Journear pays it for you." */
-export const SPONSORED_FEE: SummaryText = Object.freeze(['none. Journear pays it for you.']) as SummaryText;
+/**
+ * The fee line of a sponsored action (D877, after the founder's "none. Journear pays it for you."): "Network fee: Free.
+ * Journear pays it for you." True for every sponsored action: the decoder takes only this build's own relayer (its
+ * sponsor chains), so the fee is always Journear's. "Free." is the row's first word, in bold.
+ */
+export const SPONSORED_FEE: SummaryText = Object.freeze([strong('Free.'), ' Journear pays it for you.']) as SummaryText;
 
 /** A network's own name for a sentence ("Base Sepolia"), without the network line's "(test network)". */
 const chainName = (chainId: number): string => evmChainInfo(chainId)?.name ?? 'this network';
@@ -673,7 +691,7 @@ function sponsoredAction(decoded: Extract<DecodedApproval, { kind: 'evm_sponsore
     }
   }
   if (decoded.setup) warnings.push(accountSetupNote(chainId));
-  return { headline, lines, fee: SPONSORED_FEE, network: evmNetwork(chainId), warnings, explainable, shownSteps };
+  return { headline, lines, fee: SPONSORED_FEE, freeFee: true, network: evmNetwork(chainId), warnings, explainable, shownSteps };
 }
 
 // ---- EIP-712 typed data ----
@@ -856,7 +874,7 @@ function stellarNetwork(passphrase: string): SummaryText {
   if (passphrase === STELLAR_MAINNET_PASSPHRASE) return ['Stellar (real money)'];
   if (passphrase === STELLAR_TESTNET_PASSPHRASE) return ['Stellar (test network)'];
   const shown = isDisplaySafeLine(passphrase) ? passphrase : `(shown as hex) ${toHex(new TextEncoder().encode(passphrase))}`;
-  return ['a Stellar network Journear doesn’t know: ', code(shown.length > 64 ? `${shown.slice(0, 63)}…` : shown)];
+  return ['A Stellar network Journear doesn’t know: ', code(shown.length > 64 ? `${shown.slice(0, 63)}…` : shown)];
 }
 
 const xlm = (stroops: string | bigint, dir: AmountDirection = 'out'): string => `${displayUnits(BigInt(stroops), 7, dir)} XLM`;
@@ -1407,7 +1425,7 @@ function stellarTxWith(decoded: Extract<DecodedApproval, { kind: 'stellar_tx' }>
   return {
     headline,
     lines,
-    fee: env.envelope === 'fee_bump' && !isMeStellar(env.feeSource, me) ? null : upTo(xlm(feeStroops)),
+    fee: env.envelope === 'fee_bump' && !isMeStellar(env.feeSource, me) ? null : rowValue(upTo(xlm(feeStroops))),
     network: stellarNetwork(decoded.networkPassphrase),
     warnings,
     explainable,
@@ -1630,7 +1648,7 @@ function nearMovesValue(a: NearAction): boolean {
  * The fee row of a relayed NEAR action. It speaks about the fee only, never about what
  * the action costs. Never "Journear pays": a partner may relay it itself.
  */
-export const RELAYED_FEE: SummaryText = Object.freeze(['free for you. Someone else pays it.']) as SummaryText;
+export const RELAYED_FEE: SummaryText = Object.freeze([strong('Free for you.'), ' Someone else pays it.']) as SummaryText;
 
 /**
  * The risk that a relayed call acts as the user (it was half of the blue relayer note): the contract it calls can
@@ -1691,7 +1709,8 @@ function nearActions(actions: readonly NearAction[], receiver: string, me: strin
     headline,
     // The token lines (D860) after the grouped lines.
     lines: [...lines, ...notes],
-    fee: relayed ? RELAYED_FEE : ['a small amount of NEAR, from your account'],
+    fee: relayed ? RELAYED_FEE : ['A small amount of NEAR, from your account'],
+    ...(relayed ? { freeFee: true as const } : {}),
     network: null,
     ...(noNearLeaves ? { noNearLeaves: true as const } : {}),
     warnings,

@@ -33,7 +33,7 @@ export function jargonWatch(): (el: Element) => Element {
  * D859's rules on a rendered window, above the fold: every short form in a sentence is the short form of a value
  * written out whole in a row (the same value), hidden from screen readers with a spoken pointer; every whole value has
  * exactly one row; a numbered value ("account 1") has a row labelled with its number; no sentence (outside the rows)
- * holds a value that has a row. Returns what breaks them.
+ * holds a value that has a row; and D876's: every whole value is in one piece. Returns what breaks them.
  */
 export function idProblems(el: Element): string[] {
   const out: string[] = [];
@@ -56,6 +56,11 @@ export function idProblems(el: Element): string[] {
       const below = (s.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
       if (hint !== (below ? ' (written out below)' : ' (written out above)')) out.push(`short form ${short} says “${hint}” but its row is ${below ? 'below' : 'above'}`);
     }
+  }
+  // D876: each whole value is in one piece: one text node, no spaces, groups or other elements inside it.
+  for (const c of q('code.id-full')) {
+    const v = c.textContent ?? '';
+    if (c.childNodes.length !== 1 || c.firstChild?.nodeType !== 3 || /\s/u.test(v)) out.push(`${v} isn’t shown in one piece`);
   }
   const labels = q('dl.id-rows dt').map((dt) => dt.textContent ?? '');
   for (const n of q('.id-number')) if (!labels.some((l) => l.endsWith(`(${n.textContent})`))) out.push(`${n.textContent} has no row`);

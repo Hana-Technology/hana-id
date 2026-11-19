@@ -98,7 +98,7 @@ test('the demo check-in, first and later: one window, the setup note only the fi
   // First: Journear's demo check-in (on the verified list, D854) with the account's one-time setup.
   let popup = await sponsoredWindow(page, 'first', [CHECK_IN_CALL]);
   await expect(popup.locator('h2.summary-headline')).toHaveText('E2E Partner wants to check you in');
-  await expect(fee(popup)).toHaveText('none. Journear pays it for you.');
+  await expect(fee(popup)).toHaveText('Free. Journear pays it for you.');
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(SETUP);
   await expect(popup.locator('.danger-box')).toHaveCount(0);
   expect(await popup.locator('body').innerText()).not.toMatch(/upgrade|smart account/iu);
@@ -112,7 +112,7 @@ test('the demo check-in, first and later: one window, the setup note only the fi
   // Later: the same check-in, no box at all.
   popup = await sponsoredWindow(page, 'later', [CHECK_IN_CALL]);
   await expect(popup.locator('.risk-box')).toHaveCount(0);
-  await expect(fee(popup)).toHaveText('none. Journear pays it for you.');
+  await expect(fee(popup)).toHaveText('Free. Journear pays it for you.');
   await shot(popup, 'sponsored-later', browserName);
   expect(await approveAndWait(page, popup, 'later')).toMatchObject({ status: 'executed' });
 

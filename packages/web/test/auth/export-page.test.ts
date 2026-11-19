@@ -530,22 +530,33 @@ describe('/export', () => {
     // Typed confirmation.
     const cont = button(/Continue/u) as HTMLButtonElement;
     const input = document.querySelector('input') as HTMLInputElement;
+    // D878: the line under Continue says nothing while Continue waits for the typed word (another reason).
+    const hint = () => document.querySelector('p.guard-hint');
+    expect(hint()?.previousElementSibling?.contains(cont)).toBe(true);
+    expect(cont.getAttribute('aria-describedby')).toBe('guard-hint');
+    expect(hint()?.textContent).toBe('');
     expect(cont.disabled).toBe(true);
     input.value = 'export';
     input.dispatchEvent(new Event('input'));
     expect(cont.disabled).toBe(true);
+    expect(hint()?.textContent).toBe('');
     input.value = EXPORT_CONFIRMATION;
     input.dispatchEvent(new Event('input'));
-    // Typed, but the guard (D430) waits for the pointer to move in this window first.
+    // Typed, but the guard (D430) waits for the pointer to move in this window first: the line says so (D878).
     expect(cont.disabled).toBe(true);
+    expect(hint()?.textContent).toBe('Move your mouse to continue.');
     stillClick(cont);
     expect(r.page.state).toBe('confirm');
     r.win.dispatch('pointermove', { pointerType: 'mouse', movementX: 2, movementY: 0, clientX: 1, clientY: 1 });
     expect(cont.disabled).toBe(false);
+    expect(hint()?.textContent).toBe('');
     click(cont);
     expect(r.page.state).toBe('reveal');
 
     // Show key / Hide key (D268): a click shows it, selectable, and a second click hides it, once the box is ticked.
+    // D878: on the new screen, nothing to say until the box is ticked; then the line under Show key and Copy key.
+    expect(hint()?.textContent).toBe('');
+    expect(hint()?.previousElementSibling?.matches('.actions.reveal')).toBe(true);
     tick();
     const { toggle, secret } = revealControls();
     expect(secret.textContent).toBe('••••••••');

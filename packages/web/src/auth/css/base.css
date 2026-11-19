@@ -375,6 +375,23 @@ p.links {
   font-size: var(--jp-text-sm);
 }
 
+/* The line under a guarded button (guard-hint.ts, D878): what to do while the guard holds it. Its two lines' space is
+   kept whether it says something or not, so no button moves when it appears or goes. Text only: no pointer target of
+   its own beyond the window's. */
+p.guard-hint {
+  margin: var(--jp-space-2) 0 0;
+  min-height: calc(2 * var(--jp-leading-body) * var(--jp-text-sm));
+  font-size: var(--jp-text-sm);
+  line-height: var(--jp-leading-body);
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* Under a row of buttons set at the start of the line (Passport Home), the line starts there too. */
+.actions.start + p.guard-hint {
+  text-align: start;
+}
+
 /* Kept rendered while empty (zero height), so screen readers announce the live region when it fills. */
 p.copy-status:empty {
   margin: 0;

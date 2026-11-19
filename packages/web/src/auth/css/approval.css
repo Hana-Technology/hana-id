@@ -90,20 +90,61 @@ dl.id-rows {
   font-weight: var(--jp-weight-regular);
 }
 
-/* The whole value, in groups of four for comparing: spaced by CSS (the text is the value exactly), wrapped between
-   groups, never folded or cut. */
+/* The whole value in one piece (D876): no spaces or groups inside it. One wider than its box wraps at the box's edge,
+   at any character, so the page never scrolls sideways; never folded or cut. A copy of it is the value exactly. */
 code.id-full {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: 0.45em;
-  row-gap: 2px;
   font-size: var(--jp-text-sm);
   color: var(--jp-fg);
+  overflow-wrap: anywhere;
   word-break: normal;
 }
 
-code.id-full > .grp {
-  white-space: nowrap;
+/* The facts' faces (D877): words and sentences (a network's name, the fee line, a date, a permission) in the text
+   face; only what is read character by character is mono: addresses, keys, hashes, raw data and exact amounts or
+   numbers, each as `code.mono` (or a `strong` amount). A `strong.words` is a sentence in bold, in the text face. */
+.request dl.jp-kv dd {
+  font-family: var(--jp-font-body);
+}
+
+.request dl.jp-kv dd strong.words,
+.request dl.jp-kv dd.fee-free strong {
+  font-family: var(--jp-font-body);
+}
+
+/* A fee the user doesn't pay (D877): a check mark in the success colour, then "Free." in bold; the row, no box. */
+.request dl.jp-kv dd.fee-free .fee-free-mark {
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--jp-success);
+  stroke-width: 2.25;
+}
+
+/* The user's own account in the details (D876): the label on its line, the account under it across the whole width
+   (fewer lines on a phone), then Copy and what it did. */
+dl.your-account {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--jp-space-1);
+}
+
+.copy-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jp-space-1) var(--jp-space-3);
+  margin-top: var(--jp-space-2);
+  font-family: var(--jp-font-body);
+}
+
+.copy-line .copy-status {
+  margin: 0;
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+}
+
+.copy-line .copy-status:empty {
+  display: none;
 }
 
 /* Read to screen readers instead of a short form, which they skip (the row says the whole value). */

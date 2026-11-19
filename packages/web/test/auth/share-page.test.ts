@@ -117,6 +117,24 @@ describe('the sheet', () => {
     expect(win.closed).toBe(true);
   });
 
+  it('D878: while the guard holds “Share email”, the line under it says what to do; gone once it enables', async () => {
+    start('?from=vault');
+    win.message(request(), ENV.vaultOrigin, vault);
+    await flush();
+    const yes = document.querySelector<HTMLButtonElement>('#share-email')!;
+    const hint = document.querySelector('p.guard-hint')!;
+    expect(hint.previousElementSibling?.contains(yes)).toBe(true);
+    expect(yes.getAttribute('aria-describedby')).toBe(hint.id);
+    expect(hint.textContent).toBe('One moment…');
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    expect(hint.textContent).toBe('Move your mouse to continue.');
+    win.dispatch('keydown', { key: 'Enter' });
+    expect(hint.textContent).toBe('Press Tab to reach Share email. Pause there before pressing Enter.');
+    win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });
+    expect(yes.disabled).toBe(false);
+    expect(hint.textContent).toBe('');
+  });
+
   it('"Not now" needs no guard and records declined; the own-Google-client caveat is shown (D42)', async () => {
     start('?from=vault');
     win.message(request({ ownGoogleClient: true }), ENV.vaultOrigin, vault);

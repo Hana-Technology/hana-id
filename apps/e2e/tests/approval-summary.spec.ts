@@ -177,7 +177,7 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
   await injectSponsored(popup, subject({ authNonce: 0n, calls: checkIn }));
   await expect(headline).toHaveText('E2E Partner wants to check you in');
   await expect(popup.locator('p.summary-line')).toHaveText(checkInLines);
-  await expect(fee).toHaveText('none. Journear pays it for you.');
+  await expect(fee).toHaveText('Free. Journear pays it for you.');
   await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toHaveText(setup);
   await expect(popup.locator('.danger-box')).toHaveCount(0);
   await expect(popup.locator('button.primary')).toBeVisible();
@@ -191,7 +191,7 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
   await injectSponsored(popup, subject({ executeNonce: 1n, calls: checkIn }));
   await expect(headline).toHaveText('E2E Partner wants to check you in');
   await expect(popup.locator('.risk-box')).toHaveCount(0);
-  await expect(fee).toHaveText('none. Journear pays it for you.');
+  await expect(fee).toHaveText('Free. Journear pays it for you.');
 
   // A token transfer, first time and later.
   await injectSponsored(popup, subject({ authNonce: 0n }));

@@ -6,7 +6,9 @@ import {
   type ApprovalDigestInput,
   approvalDigest,
   consentDigest,
+  encodeNearTransaction,
   evmTxSigningPayload,
+  nearImplicitPublicKey,
   newRequestId,
   parseEvmTxRequest,
   parseWindowMessage,
@@ -22,6 +24,8 @@ import {
   KEEP_OPEN_MS,
   LOADING_DELAY_MS,
   MAINNET_DEMO_BANNER,
+  COPIED_MS,
+  COPY_ACCOUNT_TEXT,
   SUPPORT_ID_HINT,
   TEST_APP_DEMO_NOTE,
   TEST_APP_NOTE,
@@ -244,7 +248,10 @@ describe('/approve', () => {
     // D859: the account line shows the short form; the whole account is the details' first row.
     const account = line?.parentElement?.firstElementChild;
     expect(account?.matches('dl.your-account')).toBe(true);
-    expect(account?.textContent).toBe(`Your account${EVM}`);
+    // D876: the whole account in one piece, then its Copy.
+    expect(account?.querySelector('dt')?.textContent).toBe('Your account');
+    expect(account?.querySelector('dd > code.id-full')?.textContent).toBe(EVM);
+    expect(account?.querySelector('dd button.copy-account')?.textContent).toBe('Copy');
     expect(account?.nextElementSibling).toBe(line);
     expect(document.querySelector('p.account')?.textContent).toBe(`Your account: ${shortId(EVM)} ${EVM} (Ethereum-style)`);
     expect(document.querySelector('p.account code.short-id')?.getAttribute('aria-hidden')).toBe('true');
@@ -874,6 +881,239 @@ describe('/approve', () => {
   });
 });
 
+describe('/approve: the whole account and its Copy (D876)', () => {
+  const NEAR_IMPLICIT = '6e5e4e2ad3b3c0f7ff6c7f3c8d1b5f2a9e0d4c3b2a1908f7e6d5c4b3a291f350';
+  const writes: string[] = [];
+  let refuse = false;
+  const clipboard = { writeText: vi.fn(async (t: string) => { if (refuse) throw new Error('NotAllowedError'); writes.push(t); }) };
+  const restart = (cb: typeof clipboard | null = clipboard) => {
+    page.stop();
+    resetDom();
+    win = new FakeWindow('/approve');
+    vault = remoteWindow();
+    win.opener = asWindow(vault);
+    page = startApprovePage({ win, env: ENV, isGesture: () => true, clipboard: cb });
+    win.dispatch('focus');
+  };
+  beforeEach(() => {
+    writes.length = 0;
+    refuse = false;
+    clipboard.writeText.mockClear();
+    restart();
+  });
+  const nearRequest = (me: string): Req =>
+    evmRequest({
+      kind: 'near_tx',
+      chain: 'near',
+      address: me,
+      context: { nearNetwork: 'testnet' },
+      bytes: encodeNearTransaction({ signerId: me, publicKey: { type: 'ed25519', bytes: /^[0-9a-f]{64}$/u.test(me) ? nearImplicitPublicKey(me) : new Uint8Array(32).fill(7) }, nonce: 1n, receiverId: 'bob.testnet', blockHash: new Uint8Array(32).fill(1), actions: [{ type: 'transfer', deposit: 10n ** 24n }] }),
+    });
+  const accountRow = () => document.querySelector('details.request-details dl.your-account');
+  const copy = () => document.querySelector<HTMLButtonElement>('button.copy-account');
+  const status = () => document.querySelector('dl.your-account .copy-status');
+  const flush = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  };
+
+  it('every chain: the account whole, in one piece (no spaces or groups), as one text node, first in the details', () => {
+    const cases: [Req, string][] = [
+      [evmRequest(), EVM],
+      [stellarRequest(), USER],
+      // The user's own NEAR account is always implicit (the protocol refuses any other as the request's address).
+      [nearRequest(NEAR_IMPLICIT), NEAR_IMPLICIT],
+    ];
+    for (const [req, address] of cases) {
+      restart();
+      send(req);
+      // Decoded and shown as a request (Approve on screen), not the unreadable screen.
+      expect(primary(), `${address}: ${pageText()}`).not.toBeNull();
+      const value = accountRow()?.querySelector('dd > code.id-full');
+      expect(value?.textContent, address).toBe(address);
+      expect(value?.childNodes).toHaveLength(1);
+      expect(value?.firstChild?.nodeType).toBe(3);
+      expect(value?.textContent).not.toMatch(/\s/u);
+      expect(value?.querySelector('*')).toBeNull();
+      expect(accountRow()?.parentElement?.firstElementChild).toBe(accountRow());
+    }
+  });
+
+  it('Copy: a real button with a plain name, in the details, never in the decision row; Approve and Reject unchanged', () => {
+    send(evmRequest());
+    const b = copy()!;
+    expect(b.tagName).toBe('BUTTON');
+    expect(b.getAttribute('type')).toBe('button');
+    expect(b.getAttribute('aria-label')).toBe('Copy your account');
+    expect(b.textContent).toBe('Copy');
+    expect(b.className).toBe('jp-btn jp-btn-secondary jp-btn-sm copy-account');
+    expect(b.closest('details.request-details')).not.toBeNull();
+    expect(b.closest('.actions.decide')).toBeNull();
+    expect(document.querySelectorAll('.actions.decide button')).toHaveLength(2);
+    expect(status()?.getAttribute('role')).toBe('status');
+    expect(status()?.textContent).toBe('');
+  });
+
+  it('a press copies exactly the account, says “Copied”, and the words go after a moment', async () => {
+    send(stellarRequest());
+    click(copy());
+    await flush();
+    expect(writes).toEqual([USER]);
+    expect(status()?.textContent).toBe(COPY_ACCOUNT_TEXT.copied);
+    vi.advanceTimersByTime(COPIED_MS);
+    expect(status()?.textContent).toBe('');
+    // A keyboard press works the same.
+    keyClick(copy());
+    await flush();
+    expect(writes).toEqual([USER, USER]);
+  });
+
+  it('a refused or missing clipboard: says so truthfully and stays; nothing written', async () => {
+    send(evmRequest());
+    refuse = true;
+    click(copy());
+    await flush();
+    expect(writes).toEqual([]);
+    expect(status()?.textContent).toBe('Couldn’t copy. Select your account above and copy it yourself.');
+    vi.advanceTimersByTime(COPIED_MS * 2);
+    expect(status()?.textContent).toBe(COPY_ACCOUNT_TEXT.failed);
+    restart(null);
+    send(evmRequest());
+    click(copy());
+    await flush();
+    expect(status()?.textContent).toBe(COPY_ACCOUNT_TEXT.failed);
+    // A clipboard that throws at once is the same.
+    restart({ writeText: vi.fn(() => { throw new Error('no'); }) } as never);
+    send(evmRequest());
+    click(copy());
+    expect(status()?.textContent).toBe(COPY_ACCOUNT_TEXT.failed);
+  });
+
+  it('an untrusted click copies nothing', async () => {
+    page.stop();
+    resetDom();
+    win = new FakeWindow('/approve');
+    vault = remoteWindow();
+    win.opener = asWindow(vault);
+    page = startApprovePage({ win, env: ENV, isGesture: () => false, clipboard });
+    win.dispatch('focus');
+    send(evmRequest());
+    copy()?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    await flush();
+    expect(writes).toEqual([]);
+  });
+
+  it('Copy never answers, and leaves the Approve guard as it was: it neither arms nor approves', async () => {
+    send(evmRequest());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    // A mouse press on Copy (no move) doesn't arm, as a press anywhere doesn't.
+    click(copy());
+    await flush();
+    expect(primary()?.disabled).toBe(true);
+    expect(results()).toEqual([]);
+    // Armed by a move as always; a press of Copy then still answers nothing.
+    win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });
+    expect(primary()?.disabled).toBe(false);
+    click(copy());
+    await flush();
+    expect(results()).toEqual([]);
+    // Approve still takes its own press.
+    click(primary());
+    expect(results()).toHaveLength(1);
+    expect(results()[0]?.approved).toBe(true);
+  });
+
+  it('a touch tap on Copy is a tap like any other: it may arm (after 1 s), and only a later tap on Approve approves', async () => {
+    send(evmRequest());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    tap(copy());
+    await flush();
+    expect(results()).toEqual([]);
+    expect(writes).toEqual([EVM]);
+    tap(primary());
+    expect(results()[0]?.approved).toBe(true);
+  });
+
+  it('the unreadable screen has the same row and Copy', async () => {
+    send(evmRequest({ bytes: new Uint8Array([0xff, 0x00]) }));
+    expect(primary()).toBeNull();
+    expect(accountRow()?.querySelector('code.id-full')?.textContent).toBe(EVM);
+    click(copy());
+    await flush();
+    expect(writes).toEqual([EVM]);
+  });
+});
+
+describe('/approve: the line under Approve while the guard holds it (D878)', () => {
+  const hintEl = () => document.querySelector('p.guard-hint');
+  it('a request: under the decision row, named by Approve, “One moment…”, then the mouse line, gone when Approve enables', () => {
+    send(evmRequest());
+    const h = hintEl()!;
+    expect(h.previousElementSibling?.matches('.actions.decide')).toBe(true);
+    expect(primary()?.getAttribute('aria-describedby')).toBe(h.id);
+    expect(secondary()?.hasAttribute('aria-describedby')).toBe(false);
+    expect(h.textContent).toBe('One moment…');
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    expect(h.textContent).toBe('Move your mouse to continue.');
+    expect(primary()?.disabled).toBe(true);
+    win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });
+    expect(primary()?.disabled).toBe(false);
+    expect(h.textContent).toBe('');
+    // A blur disables Approve again; the line changes only if it lasts, then waits with the guard after focus.
+    win.dispatch('blur');
+    expect(primary()?.disabled).toBe(true);
+    expect(h.textContent).toBe('');
+    vi.advanceTimersByTime(500);
+    expect(h.textContent).toBe('Click or tap this window to continue.');
+    win.dispatch('focus');
+    expect(h.textContent).toBe('One moment…');
+  });
+
+  it('touch: “Tap the screen once to continue.”; the first tap enables Approve and approves nothing, the next tap on Approve does', () => {
+    send(evmRequest());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    win.dispatch('pointermove', { pointerType: 'touch', clientX: 1, clientY: 1 });
+    // That touch move armed it (touch arms on any move or press), so the line is gone; a fresh request shows the words.
+    send(evmRequest());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    expect(hintEl()?.textContent).toBe('Tap the screen once to continue.');
+    tap(primary());
+    expect(results().filter((r) => r.approved === true)).toEqual([]);
+    expect(primary()?.disabled).toBe(false);
+    expect(hintEl()?.textContent).toBe('');
+    tap(primary());
+    expect(results().some((r) => r.approved === true)).toBe(true);
+  });
+
+  it('keyboard: Tab to Approve and pause; the guard’s keyboard rules unchanged', () => {
+    send(evmRequest());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    win.dispatch('keydown', { key: 'Enter' });
+    expect(hintEl()?.textContent).toBe('Press Tab to reach Approve. Pause there before pressing Enter.');
+    win.dispatch('keydown', { key: 'Tab' });
+    expect(primary()?.disabled).toBe(false);
+    expect(hintEl()?.textContent).toBe('');
+  });
+
+  it('the consent screen names Allow; a request that can’t be approved has no line (nothing the guard holds)', () => {
+    send(consentRequest());
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
+    win.dispatch('keydown', { key: 'Enter' });
+    expect(hintEl()?.textContent).toBe('Press Tab to reach Allow. Pause there before pressing Enter.');
+    send(evmRequest({ bytes: new Uint8Array([0xff]) }));
+    expect(primary()).toBeNull();
+    expect(hintEl()).toBeNull();
+  });
+
+  it('after an answer: no line', () => {
+    send(evmRequest());
+    arm();
+    click(primary());
+    expect(page.state).toBe('waiting');
+    expect(hintEl()).toBeNull();
+  });
+});
+
 describe('/approve after an answer (D471)', () => {
   const heading = () => document.querySelector('h1')?.textContent;
   const mark = () => document.querySelector('h1 svg.outcome-mark');
@@ -1008,6 +1248,9 @@ describe('/approve after an answer (D471)', () => {
     const next = stellarRequest();
     send(next);
     expect(page.state).toBe('request');
+    // The only timer left is the guard hint's 1 s wait (D878), gone once it ends: none for the countdown.
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
     expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(KEEP_OPEN_MS * 2);
     expect(pageText()).not.toContain('Closing in');
@@ -1022,6 +1265,9 @@ describe('/approve after an answer (D471)', () => {
     vi.advanceTimersByTime(3000);
     send(consentRequest());
     expect(page.state).toBe('consent');
+    // The only timer left is the guard hint's 1 s wait (D878), gone once it ends: none for the countdown.
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(GUARD_DELAY_MS);
     expect(vi.getTimerCount()).toBe(0);
     expect(pageText()).not.toContain('Closing in');
   });

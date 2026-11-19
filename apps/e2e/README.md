@@ -99,10 +99,10 @@ The plain-wording review (D853, D858–D860): `tests/approval-plain-shots.spec.t
 and a live app, an EVM transfer of a listed token (USDC on Base Sepolia, posted to the popup as its vault would: the
 partner page knows only the local chain) and of an unlisted one, an unlimited permission, an unknown call, a NEAR
 full-access key, a Stellar payment, the sponsored check-in and the screen after Reject; and, for D884 (where the network
-fee is), each of the sponsored check-in (first time and later), a sponsored unlimited permission, the relayed NEAR call
+fee is), each of the sponsored check-in (first time and later), a sponsored unlimited permission, a sponsored call that moves nothing Journear sees, the relayed NEAR call
 (and one that attaches NEAR), an EVM send, a NEAR transfer and a Stellar payment at 390 px and at the popup's size,
 folded and with the details open (`fee-{case}-{main|details}-{phone|popup}.png`); and, for D886, a Stellar message,
-an EVM message, typed data with and without a network and a NEAR message, for a test app and a live app, at 390 px
+an EVM message (and one Journear can't read), typed data with and without a network and a NEAR message, for a test app and a live app, at 390 px
 (`msg-{kind}-{test|live}-phone.png`). It checks nothing itself.
 
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC

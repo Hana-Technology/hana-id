@@ -38,7 +38,10 @@ from `e2e-access.invalid`, answered in the stack's process) and `POST {ISSUER}/_
 SendGrid event signed with a throwaway P-256 key). Both no CORS, refused with an `Origin`. With `HANA_SHOTS_DIR=<dir>`
 (Chromium) it saves each page at phone width before the button, after it and expired (the issuer's `410 link_expired`
 routed in the browser), and the two mails. The in-memory Durable Object alarm waits past Node's longest timer (24.8
-days) instead of firing at once (a staff action's 30-day log).
+days) instead of firing at once (a staff action's 30-day log). With `soonAlarmMs` (the relayer's, on the main stack and
+the hand-test lane) only an alarm set from outside the handler (or an outside `sync()` while one at most 15 s away is
+pending) fires after that short delay; one the handler sets for itself keeps its time (`src/server/workers.ts`,
+`MemoryStorage`; `test/stack.test.ts`, D882).
 
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
 sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,
@@ -358,7 +361,9 @@ the Worker): `GET state` (the relayer's slots, pause and staff log, the chain's 
 {times?}` (time passes for the relayer: its alarm, then the API cron's relay check, which writes the security events),
 `POST clock {advanceMs}`, and `POST acquire` / `release {lease}`: each test holds its lane (`tests/admin-fixtures.ts`),
 so two runs on one stack or `--repeat-each` never share a relayer at once. In the suite's lanes the relayer's alarm runs
-only by a control; in the hand-test lane also by itself (250 ms after a change, then as deployed).
+only by a control; in the hand-test lane also by itself: 250 ms after a change from outside the alarm (a send, a staff
+tool), then as deployed (the relayer's own 15 s, or its backoff up to 5 minutes), never in a loop (D882; while paused
+with a transaction no node took, that is every 15 s).
 
 **What the spec covers**, in every browser: sign-in and the refusals (no token, a forged one, a client's own header,
 someone not on the list); every page in the sidebar opens; System status's tile **Gas sponsorship (local test network)**

@@ -84,7 +84,7 @@ export interface Tile {
   lines?: TileLine[];
   /** The state in the component's own plain words ("Working", "Paused: needs a person"), shown instead of OK/Critical. */
   stateLabel?: string;
-  /** What is wrong in a sentence, what to do as numbered steps, and the code for engineers (Free network fees, D843). */
+  /** What is wrong in a sentence, what to do as numbered steps, and the code for engineers (Gas sponsorship, D843). */
   explain?: { why: string; steps: string[]; code: string | null };
 }
 
@@ -92,7 +92,7 @@ export interface TileLine {
   label: string;
   state: TileState;
   detail: string;
-  /** The state in plain words ("Problem", "Needs a look"), shown instead of Critical/Warning (Free network fees, D843). */
+  /** The state in plain words ("Problem", "Needs a look"), shown instead of Critical/Warning (Gas sponsorship, D843). */
   stateLabel?: string;
 }
 
@@ -111,7 +111,7 @@ export interface Issue {
   sinceSource: 'source' | 'first_seen';
   link: Link | null;
   playbook: { id: string; title: string } | null;
-  /** What to do as numbered steps, when the action is more than one (Free network fees, D843). */
+  /** What to do as numbered steps, when the action is more than one (Gas sponsorship, D843). */
   steps?: string[];
   /** The code for engineers (a small detail under the steps). */
   code?: string;
@@ -686,40 +686,40 @@ function nearRelayTile(r: Report, s: Sources): void {
 }
 
 /**
- * Free network fees (D843): EVM gas sponsorship's relayer per sponsored chain, from `AdminRpc.systemStatus`'s
+ * Gas sponsorship (D843; staff's name for it since D879): EVM gas sponsorship's relayer per sponsored chain, from `AdminRpc.systemStatus`'s
  * `evmRelay` (read live by the API; absent when the env has no `evm.sponsor`: then one grey "Not set up" tile, never an
  * issue, and nothing was read). In plain words (evm-relay.ts): Working, Paused: needs a person, Low on money, Not set
  * up; when it isn't working, why in a sentence and what to do as numbered steps, with the code for engineers.
  */
 function evmRelayTiles(r: Report, s: Sources): void {
-  const affects = 'Users’ free network fees on EVM test networks (Journear pays their fees): while it is paused, nobody gets them';
-  const base: TileInput = { id: 'evm-relay', group: 'funds', name: 'Free network fees', affects, detail: '' };
+  const affects = 'Users’ actions on EVM test networks whose gas Journear pays: while it is paused, Journear pays nobody’s gas';
+  const base: TileInput = { id: 'evm-relay', group: 'funds', name: 'Gas sponsorship', affects, detail: '' };
   if (!s.api.ok) return r.add({ ...base, detail: 'Can’t check right now: the API didn’t answer' }, [{ ...apiRpcProblem(s.api.code), issue: false }]);
   const evm = obj(s.api.value.evmRelay);
-  // An API that knows free network fees always says (`absent` included): a missing field is an older API (D843 review M4).
+  // An API that knows gas sponsorship always says (`absent` included): a missing field is an older API (D843 review M4).
   if (!evm) {
-    const explain = { why: 'This page is newer than the API, so it can’t tell whether free network fees are set up.', steps: ['Deploy the API first, then this admin console (docs/operations.md “Free network fees in the admin portal”, deploy order).', 'Press Check again.'], code: 'api_outdated' };
+    const explain = { why: 'This page is newer than the API, so it can’t tell whether gas sponsorship is set up.', steps: ['Deploy the API first, then this admin console (docs/operations.md “Gas sponsorship in the admin portal”, deploy order).', 'Press Check again.'], code: 'api_outdated' };
     return r.add({ ...base, detail: 'This page is newer than the API: deploy the API first.', stateLabel: 'Needs a look', explain }, [{ severity: 'warning', title: explain.why, action: '', steps: explain.steps, code: explain.code, key: 'outdated' }]);
   }
-  if (evm.state === 'absent') return r.add({ ...base, detail: 'Not set up in this environment (no evm.sponsor in its settings): nobody is offered free network fees.', notMeasured: true, stateLabel: STATE_LABELS.not_set_up });
+  if (evm.state === 'absent') return r.add({ ...base, detail: 'Not set up in this environment (no evm.sponsor in its settings): gas sponsorship isn’t offered to anyone.', notMeasured: true, stateLabel: STATE_LABELS.not_set_up });
   if (evm.state === 'timeout') {
-    const explain = { why: 'The API couldn’t read the relayer in time just now. That alone doesn’t stop free network fees.', steps: ['Press Check again in a minute.', 'If it stays like this for more than an hour, ask an engineer to look at the network provider.'], code: 'evm_relay_timeout' };
+    const explain = { why: 'The API couldn’t read the relayer in time just now. That alone doesn’t stop gas sponsorship.', steps: ['Press Check again in a minute.', 'If it stays like this for more than an hour, ask an engineer to look at the network provider.'], code: 'evm_relay_timeout' };
     return r.add({ ...base, detail: 'Can’t check right now: the reads took too long.', stateLabel: STATE_LABELS.unknown, explain }, [{ severity: 'unknown', title: explain.why, action: '', steps: explain.steps, code: explain.code, key: 'timeout' }]);
   }
   if (evm.state === 'bad_config') {
-    const explain = { why: 'The API refuses this environment’s free-network-fee settings, so nobody gets free network fees.', steps: ['Ask an engineer to check the evm.sponsor settings (envs/README.md), run gen and deploy the API.'], code: 'bad_config' };
+    const explain = { why: 'The API refuses this environment’s gas sponsorship settings, so gas sponsorship is off for everyone.', steps: ['Ask an engineer to check the evm.sponsor settings (envs/README.md), run gen and deploy the API.'], code: 'bad_config' };
     return r.add({ ...base, detail: 'Not set up: the settings are refused.', stateLabel: STATE_LABELS.not_set_up, explain }, [{ severity: 'critical', title: explain.why, action: '', steps: explain.steps, code: explain.code, playbook: 'evm-relay-paused', key: 'config' }]);
   }
   const chains = arr(evm.chains).filter((c): c is EvmRelayChainView => obj(c) !== null && typeof (c as { chainId?: unknown }).chainId === 'number');
-  if (evm.state !== 'on' || chains.length === 0) return r.add({ ...base, detail: 'Can’t check right now: the API’s answer isn’t one this console knows.' }, [{ severity: 'unknown', title: 'The API reports free network fees in a way this console doesn’t know', action: 'Deploy the API and this console from the same checkout.', key: 'state' }]);
+  if (evm.state !== 'on' || chains.length === 0) return r.add({ ...base, detail: 'Can’t check right now: the API’s answer isn’t one this console knows.' }, [{ severity: 'unknown', title: 'The API reports gas sponsorship in a way this console doesn’t know', action: 'Deploy the API and this console from the same checkout.', key: 'state' }]);
   for (const v of chains) {
     const id = `evm-relay-${v.chainId}`;
-    const link = { path: evmRelayPath(v.chainId), label: 'Free network fees' };
+    const link = { path: evmRelayPath(v.chainId), label: 'Gas sponsorship' };
     let p: ChainPlain;
     try {
       p = explainChain(v, r.now);
     } catch {
-      r.add({ ...base, id, name: evmRelayTitle(v.chainId), link, detail: 'Can’t check right now: the API’s answer can’t be read.' }, [{ severity: 'unknown', title: 'The API’s answer about free network fees can’t be read', action: 'Deploy the API and this console from the same checkout.', key: 'unparsed' }]);
+      r.add({ ...base, id, name: evmRelayTitle(v.chainId), link, detail: 'Can’t check right now: the API’s answer can’t be read.' }, [{ severity: 'unknown', title: 'The API’s answer about gas sponsorship can’t be read', action: 'Deploy the API and this console from the same checkout.', key: 'unparsed' }]);
       continue;
     }
     const problems: Problem[] = [];

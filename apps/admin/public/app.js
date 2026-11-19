@@ -2509,7 +2509,7 @@ function issueItem(i) {
 /** "Code for engineers: …": a technical code kept small, under the plain words (D853). */
 const engineerCode = (c) => h('p', { class: 'engineer-code' }, 'Code for engineers: ', h('code', {}, c));
 
-/** What is wrong in a sentence and what to do as numbered steps (Free network fees, D843). */
+/** What is wrong in a sentence and what to do as numbered steps (Gas sponsorship, D843). */
 function explainBlock(e) {
   if (!e || typeof e.why !== 'string') return '';
   return h('div', { class: 'explain' }, h('p', { class: 'explain-why' }, e.why), Array.isArray(e.steps) && e.steps.length ? h('ol', { class: 'explain-steps' }, e.steps.map((x) => h('li', {}, richText(x)))) : '', typeof e.code === 'string' && e.code ? engineerCode(e.code) : '');
@@ -2568,7 +2568,7 @@ async function statusPage(main) {
   startStatusTicker();
 }
 
-// ---- Free network fees (D843): EVM gas sponsorship's relayer, and the staff tools ----
+// ---- Gas sponsorship (D843; staff's name for it since D879): the EVM relayer, and the staff tools ----
 //
 // Everything on this page comes from the admin Worker in plain words (src/evm-relay.ts): the state, why and what to
 // do, the waiting transactions (block-explorer links built by the Worker for well-formed hashes only) and which tools
@@ -2658,15 +2658,15 @@ function evmToolsPanel(d) {
       'div',
       { class: 'tool' },
       h('h3', {}, 'Resume'),
-      h('p', {}, 'Starts free network fees again. Use it once you have done what the box above says. The relayer checks the network first and says no if the numbers still disagree. It can’t tell whether its key is safe: if the box above says the key may be used by someone else, wait for the engineer.'),
+      h('p', {}, 'Starts gas sponsorship again. Use it once you have done what the box above says. The relayer checks the network first and says no if the numbers still disagree. It can’t tell whether its key is safe: if the box above says the key may be used by someone else, wait for the engineer.'),
       !t.resume
-        ? h('p', { class: 'hint' }, 'Not needed now: free network fees aren’t paused.')
+        ? h('p', { class: 'hint' }, 'Not needed now: gas sponsorship isn’t paused.')
         : t.resumeNeedsKeyConfirmation
           ? [
               note('error', 'Only after the engineer says so', 'The box above says the relayer’s key may be used by someone else. Resume only once an engineer has made the key safe or replaced it. Your confirmation is kept in the audit log.'),
-              evmToolForm(d, 'resume', 'Resume', [{ name: 'keyConfirmed', type: 'checkbox', label: 'An engineer has confirmed the key is safe or replaced' }, noteField('Ana (engineer) replaced the key at 14:20 UTC and moved the money out')], 'Resume free network fees on the engineer’s word that the key is safe or replaced? The relayer checks the network first, but it can’t tell whether its key is safe.', { danger: true, keyConfirmation: true }),
+              evmToolForm(d, 'resume', 'Resume', [{ name: 'keyConfirmed', type: 'checkbox', label: 'An engineer has confirmed the key is safe or replaced' }, noteField('Ana (engineer) replaced the key at 14:20 UTC and moved the money out')], 'Resume gas sponsorship on the engineer’s word that the key is safe or replaced? The relayer checks the network first, but it can’t tell whether its key is safe.', { danger: true, keyConfirmation: true }),
             ]
-          : evmToolForm(d, 'resume', 'Resume', [noteField('Sent 0.1 test ETH from the faucet; balance now 0.12')], 'Resume free network fees? The relayer checks the network first, and says no if the problem is still there.', { primary: true }),
+          : evmToolForm(d, 'resume', 'Resume', [noteField('Sent 0.1 test ETH from the faucet; balance now 0.12')], 'Resume gas sponsorship? The relayer checks the network first, and says no if the problem is still there.', { primary: true }),
     ),
     h('div', { class: 'tool' }, h('h3', {}, 'Cancel a slot'), h('p', {}, 'Sends a harmless empty transfer in a slot’s place, so a stuck transaction stops holding up the ones behind it. The user’s action in that slot then doesn’t happen. It is offered only once a slot’s time limit has passed (or while the relayer is paused for a slot stuck past it). Press “Cancel…” on its row above.')),
   );
@@ -2680,9 +2680,9 @@ function evmToolsPanel(d) {
       'div',
       { class: 'tool' },
       h('h3', {}, 'Fill a gap'),
-      h('p', {}, 'Puts a harmless empty transfer into an empty slot so the slots after it can go through. It costs a small network fee from the relayer wallet. Use it only when the relayer is paused because a slot is empty.'),
+      h('p', {}, 'Puts a harmless empty transfer into an empty slot so the slots after it can go through. It costs a little gas, paid from the relayer wallet. Use it only when the relayer is paused because a slot is empty.'),
       t.fill
-        ? evmToolForm(d, 'fill', 'Fill the gap', [slotField({ max: t.fill.max, value: t.fill.suggested ?? '', help: t.fill.suggested !== null ? `The empty slot the relayer found: ${t.fill.suggested}.` : 'The empty slot, from the box above.' }), noteField('Slot 41 is empty after a transaction we did not send')], (n) => `Fill slot ${n} with a harmless empty transfer? It costs a small network fee from the relayer wallet.`, { danger: true })
+        ? evmToolForm(d, 'fill', 'Fill the gap', [slotField({ max: t.fill.max, value: t.fill.suggested ?? '', help: t.fill.suggested !== null ? `The empty slot the relayer found: ${t.fill.suggested}.` : 'The empty slot, from the box above.' }), noteField('Slot 41 is empty after a transaction we did not send')], (n) => `Fill slot ${n} with a harmless empty transfer? It costs a little gas, paid from the relayer wallet.`, { danger: true })
         : h('p', { class: 'hint' }, 'Not possible now: the relayer has no earlier slot, or its key isn’t loaded.'),
     ),
     h(
@@ -2718,7 +2718,7 @@ async function evmRelayPage(main, chainId) {
   main.append(
     pageHead(d.title, {
       crumbs: [{ href: '/status', text: 'System status' }],
-      subtitle: `Journear pays users’ network fees on ${d.chainName} through its relayer. This page shows what the relayer is doing, and the tools staff use when it needs a person.`,
+      subtitle: `Journear pays users’ gas on ${d.chainName} through its relayer. This page shows what the relayer is doing, and the tools staff use when it needs a person.`,
       actions: [h('button', { type: 'button', class: btn('secondary'), onclick: () => render() }, 'Check again')],
     }),
   );
@@ -3947,7 +3947,7 @@ async function render() {
     else if (path === '/security/upgrades') await upgradesPage(main);
     else if (path === '/security/playbooks') await playbooksPage(main);
     else if ((m = /^\/security\/playbooks\/([a-z0-9-]{1,64})$/u.exec(path))) await playbookPage(main, m[1]);
-    else if ((m = /^\/free-network-fees\/([1-9][0-9]{0,15})$/u.exec(path))) await evmRelayPage(main, Number(m[1]));
+    else if ((m = /^\/gas-sponsorship\/([1-9][0-9]{0,15})$/u.exec(path))) await evmRelayPage(main, Number(m[1]));
     else if (path === '/reports') await reportsPage(main);
     else if (path === '/statements') await statementsPage(main);
     else if (path === '/rates') await ratesPage(main);

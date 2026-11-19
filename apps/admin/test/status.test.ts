@@ -267,10 +267,10 @@ describe('all green', () => {
     expect(a.issues).toEqual([]);
     expect(a.verdict).toEqual({ state: 'ok', title: 'All systems operational', critical: 0, warning: 0 });
     const notOk = tiles(a).filter((t) => t.state !== 'ok');
-    // Free network fees aren't set up in this env (no `evmRelay` in the API's answer): grey, never an issue (D843); nor is
+    // Gas sponsorship isn't set up in this env (no `evmRelay` in the API's answer): grey, never an issue (D843); nor is
     // a Neon plan with a monthly allowance (no NEON_PLAN, D872).
     expect(notOk.map((t) => [t.id, t.state])).toEqual([['evm-relay', 'not_measured'], ['neon-compute', 'not_measured'], ['usage-limits', 'not_measured']]);
-    expect(tile(a, 'evm-relay')).toMatchObject({ name: 'Free network fees', stateLabel: 'Not set up' });
+    expect(tile(a, 'evm-relay')).toMatchObject({ name: 'Gas sponsorship', stateLabel: 'Not set up' });
     expect(a.builds).toMatchObject({ majority: BUILD, mixed: false });
     expect(tile(a, 'builds').detail).toContain(`All 12 stamped pieces on ${BUILD}`);
     expect(tile(a, 'cron-triggers').detail).toContain('5 of 5 (full');
@@ -984,7 +984,7 @@ describe('the route', () => {
   });
 });
 
-describe('Free network fees (D843)', () => {
+describe('Gas sponsorship (D843)', () => {
   const MILLI = 10n ** 15n;
   const HASH = `0x${'ab'.repeat(32)}`;
   const chain = (relayer: Record<string, unknown> = {}, over: Record<string, unknown> = {}) => ({
@@ -1009,7 +1009,7 @@ describe('Free network fees (D843)', () => {
     invariants(a);
     const funds = a.groups.find((g) => g.id === 'funds')!.tiles.map((t) => t.id);
     expect(funds.indexOf('evm-relay-84532')).toBe(funds.indexOf('near-relay') + 1);
-    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'ok', name: 'Free network fees (Base Sepolia)', stateLabel: 'Working', link: { path: '/free-network-fees/84532', label: 'Free network fees' } });
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'ok', name: 'Gas sponsorship (Base Sepolia)', stateLabel: 'Working', link: { path: '/gas-sponsorship/84532', label: 'Gas sponsorship' } });
     expect(issuesOf(a, 'evm-relay-84532')).toEqual([]);
   });
 

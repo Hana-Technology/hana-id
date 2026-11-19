@@ -15,14 +15,14 @@
 //   relay-key-missing  one of the API's two NEAR relay keys not on the relay account (red)
 //   relay-off      no NEAR relay in this env (Not measured, no issue)
 //   relay-stale    the NEAR relay's reading 40 minutes old (amber; the API reads it live, so only a test shows it)
-//   fees-working   free network fees on Base Sepolia (D843): working, two transactions waiting
+//   fees-working   gas sponsorship on Base Sepolia (D843): working, two transactions waiting
 //   fees-paused-money  paused: the relayer's wallet is out of money (`relayer_cannot_send` · `insufficient_funds`)
 //   fees-paused-money-leak  paused for money, then the relayer saw a sign of a leaked key (its `leakSeen` mark)
 //   fees-paused-key    paused: someone else used the relayer's key (`foreign_transactions`)
 //   fees-low       working, but the relayer's wallet under its low line
 //   fees-no-endpoint  set up, but the relayer's trusted read endpoint secret missing (sponsorship off: Not set up)
 // Every other scenario has no `evm.sponsor` (the API answers no `evmRelay`): the tile says "Not set up".
-// `previewEvmDetail` and `previewEvmAct` answer the "Free network fees" page and its tools through the Worker's own
+// `previewEvmDetail` and `previewEvmAct` answer the "Gas sponsorship" page and its tools through the Worker's own
 // routes (src/evm-relay.ts) over the same fake views.
 import { CRON_LAST_RUN } from '../src/cron.ts';
 import type { Env } from '../src/env.ts';
@@ -180,7 +180,7 @@ function world(now: number, s: Scenario): World {
   return w;
 }
 
-// ---- free network fees (D843) ----
+// ---- gas sponsorship (D843) ----
 
 const EVM_RELAYER = '0x7aD3c18E50fB2a6D9e4C31b0F5A7E8c2d1B9f640';
 const EVM_HELPER = '0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA';

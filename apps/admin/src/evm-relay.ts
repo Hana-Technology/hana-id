@@ -1,4 +1,4 @@
-// "Free network fees" (D843): EVM gas sponsorship's relayer (D851) for staff, in plain words. The System status tile
+// "Gas sponsorship" (D843, named so for staff by D879): EVM gas sponsorship's relayer (D851) for staff, in plain words. The System status tile
 // (status.ts builds it from `explainChain`), the detail page's answer (`GET /api/evm-relay/:chain`) and the staff tools
 // (`POST /api/evm-relay/:chain/act`). The words are written for a founder or a support person who is not an engineer
 // (D853): what is wrong in one sentence, what to do as numbered steps, and the technical code only as "code for
@@ -32,9 +32,9 @@ export const EVM_RELAY_CHAINS: Readonly<Record<number, ChainInfo>> = Object.free
   31337: { name: 'the local test network', faucet: 'the local node’s funded test account', explorer: null },
 });
 export const chainInfo = (id: number): ChainInfo => (Object.hasOwn(EVM_RELAY_CHAINS, id) ? EVM_RELAY_CHAINS[id]! : { name: `test network ${id}`, faucet: 'a faucet for that test network', explorer: null });
-/** The tile's and the page's title: "Free network fees (Base Sepolia)". */
-export const evmRelayTitle = (id: number): string => `Free network fees (${chainInfo(id).name.replace(/^the /u, '')})`;
-export const evmRelayPath = (id: number): string => `/free-network-fees/${id}`;
+/** The tile's and the page's title: "Gas sponsorship (Base Sepolia)" (D879: staff say "gas sponsorship"; users keep "free network fees"). */
+export const evmRelayTitle = (id: number): string => `Gas sponsorship (${chainInfo(id).name.replace(/^the /u, '')})`;
+export const evmRelayPath = (id: number): string => `/gas-sponsorship/${id}`;
 
 const WEI = /^\d{1,78}$/u;
 const HASH = /^0x[0-9a-fA-F]{64}$/u;
@@ -83,7 +83,7 @@ interface Words {
  */
 const leakSteps = (engineerSlotStep: string | null): string[] => [
   'Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.',
-  'The engineer follows “A relayer key leaked” in docs/operations.md: free network fees are switched off, the money left in the wallet is moved out, and the key is replaced.',
+  'The engineer follows “A relayer key leaked” in docs/operations.md: gas sponsorship is switched off, the money left in the wallet is moved out, and the key is replaced.',
   ...(engineerSlotStep ? [`After that, the engineer ${engineerSlotStep}`] : []),
   'Don’t press Resume until the engineer says the key is safe or replaced. Resume then asks you to confirm that.',
 ];
@@ -113,21 +113,21 @@ function haltReasonExplained(h: HaltWords, w: Words): Explained {
       if (h.code === 'insufficient_funds')
         return {
           why: 'The relayer’s wallet can’t send transactions: it is out of money.',
-          steps: [`${w.explorer ? `Open the relayer wallet on ${w.explorer} (its address is below).` : 'Check the relayer wallet’s recent transactions (ask an engineer if you can’t).'} If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.`, 'Check the wallet’s balance below.', `Send at least ${w.refill} to the relayer wallet (its address is below) from ${w.faucet}.`, 'When the balance below shows the new amount, press Resume on the Free network fees page.', 'If it pauses again for the same reason, it still needs more money: send more, then press Resume again.'],
+          steps: [`${w.explorer ? `Open the relayer wallet on ${w.explorer} (its address is below).` : 'Check the relayer wallet’s recent transactions (ask an engineer if you can’t).'} If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.`, 'Check the wallet’s balance below.', `Send at least ${w.refill} to the relayer wallet (its address is below) from ${w.faucet}.`, 'When the balance below shows the new amount, press Resume on the Gas sponsorship page.', 'If it pauses again for the same reason, it still needs more money: send more, then press Resume again.'],
         };
       if (h.code === 'fee_cap_too_low')
         return {
-          why: 'Network fees are higher right now than the relayer is allowed to pay, so it can’t even send its own cancel.',
-          steps: ['Wait: network fees usually fall again within an hour.', 'Then press Resume on the Free network fees page.', 'If it is still paused after a few hours, ask an engineer to raise the relayer’s fee limit (maxFeePerGasGwei in the settings).'],
+          why: 'Gas prices are higher right now than the relayer is allowed to pay, so it can’t even send its own cancel.',
+          steps: ['Wait: gas prices usually fall again within an hour.', 'Then press Resume on the Gas sponsorship page.', 'If it is still paused after a few hours, ask an engineer to raise the relayer’s fee limit (maxFeePerGasGwei in the settings).'],
         };
       if (h.code === 'replacement_underpriced' || h.code === 'sender_restricted') return { why: `Another transaction is using the relayer wallet’s ${n}: the relayer’s key is being used somewhere else.`, steps: leakSteps(null) };
       if (h.code === 'nonce_too_low' || h.code === 'nonce_too_high')
         return { why: 'The relayer’s slot numbers don’t match the network’s: someone else may be using its key.', steps: leakSteps(engineerWalletCheck(w)) };
-      return { why: 'The network refused a transaction the relayer built. This is probably a bug.', steps: ['Ask an engineer to look.', 'Don’t use the tools on the Free network fees page meanwhile.'] };
+      return { why: 'The network refused a transaction the relayer built. This is probably a bug.', steps: ['Ask an engineer to look.', 'Don’t use the tools on the Gas sponsorship page meanwhile.'] };
     case 'nonce_consumed_elsewhere':
       return {
         why: `${cap(n)} was used up on the network by a transaction the relayer didn’t send: someone else used the relayer’s key.`,
-        steps: leakSteps(`closes ${n} as “used by something else” on the Free network fees page (under Advanced).`),
+        steps: leakSteps(`closes ${n} as “used by something else” on the Gas sponsorship page (under Advanced).`),
       };
     case 'nonce_gap':
       return {
@@ -145,7 +145,7 @@ function haltReasonExplained(h: HaltWords, w: Words): Explained {
         steps: [
           'Check the wallet’s balance below. If it is low, send test ETH to the relayer wallet.',
           `If the balance is fine, press Cancel on ${n} to send a cancel with a higher fee.`,
-          'If Cancel is refused because network fees are above the relayer’s limit, ask an engineer to raise the fee limit.',
+          'If Cancel is refused because gas prices are above the relayer’s limit, ask an engineer to raise the fee limit.',
           `If ${n} has no Cancel button, it already has 8 copies and the relayer can’t send another: ask an engineer.`,
           'Once the slot shows as on the network, press Resume.',
         ],
@@ -153,7 +153,7 @@ function haltReasonExplained(h: HaltWords, w: Words): Explained {
     case 'key_mismatch':
       return { why: 'The relayer’s key changed while transactions signed with the old key were still waiting. It signs nothing new.', steps: ['Ask an engineer to put the old key back until nothing is waiting.', 'Then the engineer changes the key.', 'Then press Resume.'] };
     case 'storage_inconsistent':
-      return { why: 'The relayer’s own records disagree with each other. This is a bug.', steps: ['Ask an engineer.', 'Don’t use any of the tools on the Free network fees page.'] };
+      return { why: 'The relayer’s own records disagree with each other. This is a bug.', steps: ['Ask an engineer.', 'Don’t use any of the tools on the Gas sponsorship page.'] };
     default:
       return { why: 'The relayer stopped for a reason this page doesn’t know yet.', steps: ['Ask an engineer.', 'This console and the API may be on different versions: deploy both from the same checkout.'] };
   }
@@ -271,7 +271,7 @@ export function explainChain(v: EvmRelayChainView, now: number, chainCount?: Evm
       extra.push({
         key: 'budget',
         severity: spentState === 'critical' ? 'critical' : 'warning',
-        title: spentState === 'critical' ? `Free network fees have used up today’s budget (${testEth(spent)}): new requests are turned away until 00:00 UTC` : `Free network fees have used ${share}% of today’s budget (${testEth(spent)} of ${testEth(budget)})`,
+        title: spentState === 'critical' ? `Gas sponsorship has used up today’s budget (${testEth(spent)}): new requests are turned away until 00:00 UTC` : `Gas sponsorship has used ${share}% of today’s budget (${testEth(spent)} of ${testEth(budget)})`,
         steps: ['If this is real use (a demo, a busy day), it is fine: the budget starts again at 00:00 UTC.', 'If you can’t explain it, follow the playbook to find which app is using it.'],
         playbook: 'evm-relay-budget-high',
       });
@@ -310,7 +310,7 @@ export function explainChain(v: EvmRelayChainView, now: number, chainCount?: Evm
       e = { ...e, why: `${e.why} The relayer’s key has been replaced since it stopped (its transactions were signed by ${shortAddress(r.signerAddress)}; the settings now name the wallet below).` };
     // Never a refill while the key may be someone else's: money sent to it can be taken.
     if (!leak && (balanceState === 'critical' || balanceState === 'warning')) extra.push(lowProblem(balance!, low, w, balanceState));
-    return out('paused', 'critical', `Paused since ${utc(r.halted.since)} (${ageText(Math.max(0, now - r.halted.since))}). Nobody gets free network fees until a person fixes it. Nothing is lost.`, e, haltCode(r.halted, { chainAhead: ahead }), 'evm-relay-paused', r.halted.since);
+    return out('paused', 'critical', `Paused since ${utc(r.halted.since)} (${ageText(Math.max(0, now - r.halted.since))}). Gas sponsorship is stopped for everyone until a person fixes it. Nothing is lost.`, e, haltCode(r.halted, { chainAhead: ahead }), 'evm-relay-paused', r.halted.since);
   }
   if (v.key === 'wrong')
     return out('not_set_up', 'critical', 'The relayer sends nothing new.', { why: 'The relayer’s key doesn’t belong to the relayer wallet named in the settings, so it sends nothing new.', steps: ['Ask an engineer: the key file or relayerAddress in the settings is wrong.', 'Don’t change keys while transactions are waiting.'] }, 'key_wrong', 'evm-relay-paused');
@@ -319,7 +319,7 @@ export function explainChain(v: EvmRelayChainView, now: number, chainCount?: Evm
       'not_set_up',
       'warning',
       'Switched off: the relayer’s key isn’t loaded.',
-      { why: 'The relayer’s key isn’t loaded, so nobody gets free network fees. Removing the key is also how they are switched off on purpose.', steps: ['If someone switched free network fees off on purpose, leave it.', 'If not, ask an engineer to upload the relayer key again (docs/operations.md “EVM sponsorship relay”, step 9).'] },
+      { why: 'The relayer’s key isn’t loaded, so gas sponsorship is off for everyone. Removing the key is also how it is switched off on purpose.', steps: ['If someone switched gas sponsorship off on purpose, leave it.', 'If not, ask an engineer to upload the relayer key again (docs/operations.md “EVM sponsorship relay”, step 9).'] },
       'key_missing',
       'evm-relay-paused',
     );
@@ -329,7 +329,7 @@ export function explainChain(v: EvmRelayChainView, now: number, chainCount?: Evm
       'warning',
       'Off: the relayer’s read endpoint isn’t set.',
       {
-        why: `The relayer’s own read endpoint for ${info.name} isn’t set, so free network fees are off here. The public endpoint isn’t trusted for this outside local test setups.`,
+        why: `The relayer’s own read endpoint for ${info.name} isn’t set, so gas sponsorship is off here. The public endpoint isn’t trusted for this outside local test setups.`,
         steps: [
           `Get the https address of a ${info.name} endpoint from a provider account (Alchemy, QuickNode, Infura or similar).`,
           `Ask an engineer to upload it as the API’s secret EVM_SPONSOR_RPC_${v.chainId} (docs/operations.md “EVM sponsorship relay”, step 9). It is never shown anywhere.`,
@@ -344,7 +344,7 @@ export function explainChain(v: EvmRelayChainView, now: number, chainCount?: Evm
       'needs_person',
       'critical',
       h.codeHash === null ? 'The account helper program isn’t on the network.' : 'The account helper program on the network isn’t the checked version.',
-      { why: h.codeHash === null ? `The account helper program isn’t on ${info.name}, so users’ free network fees can’t work.` : `The program at the account helper’s address on ${info.name} isn’t the version Journear checked.`, steps: ['Ask an engineer now.', 'The engineer switches free network fees off until it is explained (docs/operations.md “EVM sponsorship relay”, the off switch).'] },
+      { why: h.codeHash === null ? `The account helper program isn’t on ${info.name}, so gas sponsorship can’t work.` : `The program at the account helper’s address on ${info.name} isn’t the version Journear checked.`, steps: ['Ask an engineer now.', 'The engineer switches gas sponsorship off until it is explained (docs/operations.md “EVM sponsorship relay”, the off switch).'] },
       h.codeHash === null ? 'helper_missing' : 'helper_mismatch',
       null,
     );
@@ -354,7 +354,7 @@ export function explainChain(v: EvmRelayChainView, now: number, chainCount?: Evm
   }
   if (!r || balanceState === 'unknown' || helperState === 'unknown') {
     const what = !r ? 'the relayer' : balanceState === 'unknown' ? 'the wallet’s balance' : 'the account helper program';
-    return out('unknown', 'unknown', `Can’t check ${what} right now.`, { why: `This page couldn’t read ${what} just now. That alone doesn’t stop free network fees.`, steps: ['Press Check again in a minute.', 'If it stays like this for more than an hour, ask an engineer to look at the network provider.'] }, !r ? (v.relayer.ok ? null : code(v.relayer.code)) : null, null);
+    return out('unknown', 'unknown', `Can’t check ${what} right now.`, { why: `This page couldn’t read ${what} just now. That alone doesn’t stop gas sponsorship.`, steps: ['Press Check again in a minute.', 'If it stays like this for more than an hour, ask an engineer to look at the network provider.'] }, !r ? (v.relayer.ok ? null : code(v.relayer.code)) : null, null);
   }
   return out('working', 'ok', r.started ? `Sending normally · the next transaction gets slot ${r.nextSlot ?? '?'}` : 'Ready · nothing sent yet', null, null, null);
 }
@@ -363,7 +363,7 @@ function lowProblem(balance: bigint, low: bigint, w: Words, s: Severity): ExtraP
   return {
     key: 'low',
     severity: s === 'critical' ? 'critical' : 'warning',
-    title: s === 'critical' ? `The relayer’s wallet has almost no money left (${testEth(balance)}): it can’t pay for another transaction.` : `The relayer’s wallet is running low (${testEth(balance)}). When it runs out, free network fees pause.`,
+    title: s === 'critical' ? `The relayer’s wallet has almost no money left (${testEth(balance)}): it can’t pay for another transaction.` : `The relayer’s wallet is running low (${testEth(balance)}). When it runs out, gas sponsorship pauses.`,
     steps: [`Send at least ${w.refill} to the relayer wallet (its address is below) from ${w.faucet}.`, `Aim to keep it above ${testEth(low)}.`],
     playbook: 'evm-relay-balance-low',
   };
@@ -492,7 +492,7 @@ export function refusalWords(refused: string, slot: number | null, w: Words): st
     key_mismatch: 'The relayer’s key doesn’t match the one these transactions were signed with, so it can’t sign anything.',
     nonce_mined: `${cap(n)} is already used on the network. Wait: it finishes by itself.`,
     no_valid_replacement: 'It can’t send another copy: it has already sent 8, or its fee limit leaves no room for a higher fee. Ask an engineer.',
-    fee_cap_too_low: 'Network fees are above the relayer’s limit right now. Try again later, or ask an engineer to raise the fee limit.',
+    fee_cap_too_low: 'Gas prices are above the relayer’s limit right now. Try again later, or ask an engineer to raise the fee limit.',
     record_exists: `${cap(n)} already has a transaction. Use Cancel on that slot instead.`,
     not_below_next_nonce: `${cap(n)} isn’t one of the relayer’s earlier slots, so there is no gap there.`,
     not_the_chains_next_nonce: `The network’s next slot for the relayer isn’t ${slot ?? 'that number'}. Fill the lowest empty slot first.`,
@@ -517,7 +517,7 @@ export function doneWords(tool: EvmRelayTool, slot: number | null): string {
   const n = slot === null ? 'the slot' : `slot ${slot}`;
   switch (tool) {
     case 'resume':
-      return 'Free network fees are running again.';
+      return 'Gas sponsorship is running again.';
     case 'cancel':
       return `A cancel for ${n} was sent. The user’s action in that slot won’t happen. Whichever copy the network takes first ends the slot.`;
     case 'close':

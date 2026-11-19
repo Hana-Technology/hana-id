@@ -1,7 +1,7 @@
 {
   "name": "@hana-id/e2e",
   "version": "0.0.0",
-  "description": "Playwright suite for the Hana pages and @hana-id/web against local builds, a mocked Hana API, NEAR RPC and MPC, and an OIDC stub for Google.",
+  "description": "Playwright suite for the Hana pages and @hana-id/web against local builds, a mocked Hana API, NEAR RPC and MPC, and an OIDC stub for Google, and the staff admin portal (apps/admin) behind a stand-in for Cloudflare Access.",
   "private": true,
   "license": "BUSL-1.1",
   "type": "module",
@@ -11,13 +11,15 @@
     "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps chromium webkit firefox",
     "test": "vitest run",
-    "typecheck": "tsx ../../packages/web/scripts/gen-envs.ts && tsc --noEmit"
+    "typecheck": "tsx ../../packages/web/scripts/gen-envs.ts && tsc --noEmit",
+    "staff-demo": "tsx src/staff-demo.ts"
   },
   "dependencies": {
     "@hana-id/core": "workspace:*",
     "@hana-id/web": "workspace:*"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.11",
     "@noble/curves": "1.9.7",
     "@playwright/test": "1.64.1",
     "@scure/base": "1.2.6",

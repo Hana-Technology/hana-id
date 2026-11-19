@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALERT_KINDS_WITH_PLAYBOOKS, ALERT_KIND_IDS, CHECKS, CHECK_IDS, RESEND_MS, RUN_INTERVAL_MS } from '../../watchdog/src/checks.ts';
 import worker from '../src/index.ts';
 import { CHECK_VIEWS } from '../src/monitoring-registry.ts';
-import { DELIVERIES_SHOWN, ackBy, alertView, findingsOf, statusView } from '../src/monitoring.ts';
+import { DELIVERIES_SHOWN, ackBy, alertView, findingsOf, monitoringRoute, statusView } from '../src/monitoring.ts';
 import { plainString } from '../src/plain.ts';
 import { WATCHDOG_LIMITS, watchdogTiming } from '../src/watchdog.ts';
 import { ADMIN, CSRF, type ReqInit, STAFF_EMAIL, STAFF_SUB, WATCHDOG, WATCHDOG_TOKEN, type WatchdogCall, adminRequest, envWith, json, overrideBinding, staffJwt, stubNetwork, watchdog } from './helpers.ts';
@@ -523,5 +523,16 @@ describe('GET /api/governance/pending-upgrades', () => {
     const res = await adminRequest('/api/governance/pending-upgrades');
     expect(res.status).toBe(503);
     expect(await json(res)).toMatchObject({ error: { code: 'near_unavailable' } });
+  });
+});
+
+describe('GET /api/monitoring: the security events in words (D873 finding)', () => {
+  it('each event carries its title and playbook, as Feed and notices has them', async () => {
+    const events = [{ id: 'se_1', kind: 'evm_relay_stuck', detectedAt: NOW, orgId: null, appId: null, scopeId: null, detail: { chainId: 84532 }, notifiedAt: null }];
+    const api = overrideBinding(env.API, { securityEvents: async () => ({ ok: true, events }) });
+    const staff = { actor: { kind: 'hana' as const, id: STAFF_SUB, email: STAFF_EMAIL }, requestId: 'req_monitoring_words', clientIp: '198.51.100.9' };
+    const d = (await (await monitoringRoute({ ...env, API: api } as never, staff, NOW)).json()) as Record<string, any>;
+    expect(d.events.ok).toBe(true);
+    expect(d.events.events[0]).toMatchObject({ kind: 'evm_relay_stuck', title: expect.stringMatching(/^Free network fees/u), playbook: { id: 'evm-relay-paused' } });
   });
 });

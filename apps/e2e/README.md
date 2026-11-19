@@ -10,6 +10,7 @@ corepack pnpm --filter @hana-id/e2e e2e --project webkit tests/approval.spec.ts
 cd apps/e2e && corepack pnpm exec playwright test --project=chromium tests/email.spec.ts   # one spec, one browser
 HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a base of your choice (a worktree has its own by default; not 5010: see below)
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
+corepack pnpm --filter @hana-id/e2e staff-demo out-of-money   # the staff admin portal's hand test: a relayer state (below)
 ```
 
 The hosted demo's NEAR card (D750–D754): `tests/demo.spec.ts` writes to the guestbook on the mocked NEAR testnet
@@ -116,6 +117,8 @@ below: the table shows 4410.
 | `http://127.0.0.1:4430` | `authOrigin`: apps/api's auth host over the built auth pages |
 | `http://127.0.0.1:4440` | the Hana API: apps/api's Worker, with `/v1/login`, `/v1/derive`, `/v1/sessions/revoke` and `/v1/link*` mocked; plus `/__e2e/*` control endpoints (`/__e2e/google-key`: the stack's Google signing key; `/__e2e/chain`: what the relayer sent to the mocked chain) |
 | `http://127.0.0.1:4442` | the email issuer: apps/email-issuer's Worker with the `outbox` stub; plus `GET /__e2e/outbox` (the mails, for the tests) and `GET /__e2e/directory?sub=` (one identity's rows in the user directory, D269) |
+| `http://127.0.0.1:4443` | the staff admin portal, hand-test lane: apps/admin's Worker and SPA behind the stack's Cloudflare Access stand-in (below); sign in at `/__e2e/access/sign-in?as=staff` |
+| `http://127.0.0.1:4444`, `:4445`, `:4446` | the same, one lane per browser project (Chromium, Firefox, WebKit) for `tests/admin-portal.spec.ts` |
 | `http://127.0.0.1:4450`, `:4460` | mocked NEAR RPC and EVM chain RPC |
 | `http://127.0.0.1:4451` | the same mocked chain as the env's `rpcFallback`: a member's path is confirmed on both (D263) |
 | `http://127.0.0.1:4421`, `:4431`, `:4441` | live mode's vault, auth and API hosts (below): reached only through the tests' routes |
@@ -256,6 +259,61 @@ is built from), so another worktree's stack, an unrelated server, or one started
 mistake; the error says to stop it or pick another base. In
 CI a test that fails and then passes on its retry fails the run (`failOnFlakyTests`): the Approve-guard and
 origin cases are timing-dependent security checks.
+
+## The staff admin portal (D873)
+
+`tests/admin-portal.spec.ts` runs apps/admin's REAL Worker and SPA, one LANE per origin (`src/stack.ts`
+`ADMIN_LANES`): `demo` (base + 33) for a person's hand test (`docs/operations.md` "Trying the staff admin portal by hand
+on the local stack", with `pnpm --filter @hana-id/e2e staff-demo <state>`), then one per browser project (base + 34 to
++ 36), so the browsers never share a relayer. Each lane is a worker thread of the stack's process
+(`src/server/admin-lane.ts` hands it the HTTP requests; `src/server/admin-lane-worker.ts` is the lane), started on its
+first request, with:
+
+- `API`: apps/api's real `AdminRpc` entrypoint on the lane's own D1, with EVM gas sponsorship's real relayer object on
+  chain 31337, signing with a key made when the lane starts. Its chain (`src/server/lane-evm.ts`) is the stack's
+  `MockEvm` behind a pool the controls drive (hold, refuse for lack of funds, a transaction with the relayer's key it
+  never sent, mined or pooled then dropped, the wallet's balance); the pinned delegate's address answers its real
+  runtime code (the checked-in artifact), so the page's "Account helper program" check meets core's pin. Waiting
+  transactions are sent through apps/api's own sponsorship routes, with the session proof, as the vault sends them.
+- `CONSOLE`: apps/console's real `StaffRpc` on its own D1 (the audit log). `ISSUER`: the stack's email issuer's real
+  `DirectoryRpc`, in the main thread (a message bridge): it checks the forwarded staff token itself (the issuer's
+  `ADMIN_ACCESS_*` vars are the stand-in's).
+- `USAGE_DB`: PGlite with apps/api's `migrations-usage`, behind a loopback Postgres wire-protocol listener
+  (`src/server/pglite-wire.ts`) that the admin's own `pg` client connects to as role `usage_admin`, as through
+  Hyperdrive. One connection at a time (PGlite is one session). Empty: the stack's API writes no usage events.
+- A clock of its own (`src/server/lane-clock.ts`, the thread's `Date`), moved only forward by a control.
+
+Each binding is called as a service binding: arguments and answers are structured clones. Not in the stack: the
+partner console and files Workers, the watchdog, the contract's governance views, R2, SendGrid and the admin's crons;
+the pages say so where they read them.
+
+**Access.** The stand-in (`src/server/access.ts`, in front of the Worker as Cloudflare Access is) decides nothing: it
+puts the `CF_Authorization` cookie into `Cf-Access-Jwt-Assertion` (any such header the client sent is dropped) and the
+Worker's own `src/access.ts` verifies it against the team certs at `https://e2e-access.invalid/cdn-cgi/access/certs`,
+answered inside the stack's threads only, then the staff list. One RS256 team key per stack start, never written
+anywhere; the email issuer's staff routes use the same stand-in. `GET /__e2e/access/sign-in?as=staff|outsider[&to=/path]`
+signs a token for `staff@e2e.invalid` (the one staff member) or `outsider@e2e.invalid` (on no list) at the real time
+and sets the cookie; `/__e2e/access/sign-out` clears it. `test/admin-lane.test.ts` checks the stand-in's tokens against
+the admin's own check, and that no admin source names `__e2e`, the stand-in or a sign-in bypass.
+
+**Controls** (`/__e2e/lane/*` on a lane's origin, no CORS, refused with an `Origin`, served by the stand-in and never by
+the Worker): `GET state` (the relayer's slots, pause and staff log, the chain's counts, the clock), `POST scenario
+{name}` (`ready`, `working`, `low-money`, `waiting`, `past-deadline`, `out-of-money`, `refill`, `key-used-elsewhere`,
+`foreign-transactions`, `gap`: each runs the relayer's own alarm until the relayer itself is in that state), `POST run
+{times?}` (time passes for the relayer: its alarm, then the API cron's relay check, which writes the security events),
+`POST clock {advanceMs}`, and `POST acquire` / `release {lease}`: each test holds its lane (`tests/admin-fixtures.ts`),
+so two runs on one stack or `--repeat-each` never share a relayer at once. In the suite's lanes the relayer's alarm runs
+only by a control; in the hand-test lane also by itself (250 ms after a change, then as deployed).
+
+**What the spec covers**, in every browser: sign-in and the refusals (no token, a forged one, a client's own header,
+someone not on the list); every page in the sidebar opens; System status's tile in each state; a waiting transaction
+and Cancel only past its time limit; out of money, refill, Resume; someone else using the relayer's key three ways
+(Close, Set the next slot number, Fill a gap, each confirmed, and Resume only with the engineer's word, refused by the
+page and by the Worker without it); a stale page and a second tab; the audit log's rows with who, when and the note;
+the sponsorship's events with their playbooks on Feed and notices and Security & monitoring; the ledger's pages; the
+staff unlock and unsuppress (the issuer's routes, no admin page) in the audit log. Every page is watched: a console
+error, an uncaught error, a CSP violation or a cookie set by the Worker fails it, except WebKit's own `<select>` CSP
+report (D873 item 8). With `HANA_SHOTS_DIR=<dir>` (Chromium) it saves the founder's screens (desktop, light).
 
 ## Live mode: `pk_live_` apps
 

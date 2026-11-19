@@ -379,7 +379,7 @@ export interface RecordPlain {
   sentAt: number;
   deadlineAt: number;
   stateText: string;
-  state: 'on_chain' | 'cancelling' | 'not_taken' | 'sent' | 'refused';
+  state: 'on_chain' | 'cancelling' | 'not_taken' | 'sent' | 'refused' | 'used_elsewhere';
   refusedCode: string | null;
   copies: { hash: string; kind: 'action' | 'cancel'; url: string | null }[];
   canCancel: boolean;
@@ -391,12 +391,17 @@ export interface RecordPlain {
 /**
  * One transaction in words. The app from the sponsorship's own records. Cancel only once its time limit has passed (or
  * during a `stuck_past_deadline` pause: the API refuses it otherwise, `not_past_deadline`), never on a slot already on
- * the network, past 8 copies or without the key.
+ * the network, past 8 copies or without the key. The slot of a `nonce_consumed_elsewhere` pause (`haltSlot`) is used on
+ * the network by a transaction the relayer didn't send: none of its own can go through and Cancel can't take it (the
+ * relayer would refuse, `nonce_mined`), so it says so and offers no Cancel; Close is its tool (D873's finding: it read
+ * "Sent, waiting to go through" with "Cancel shows once its time limit has passed").
  */
-export function recordPlain(r: EvmRelayRecordView, chainId: number, keyOk: boolean, apps: EvmRelayDetail['apps'], now: number, haltReason: string | null): RecordPlain {
+export function recordPlain(r: EvmRelayRecordView, chainId: number, keyOk: boolean, apps: EvmRelayDetail['apps'], now: number, haltReason: string | null, haltSlot: number | null = null): RecordPlain {
   const ex = chainInfo(chainId).explorer;
-  const state: RecordPlain['state'] = r.onChain ? 'on_chain' : r.cancelling ? 'cancelling' : r.refusedCode ? 'refused' : r.taken ? 'sent' : 'not_taken';
+  const usedElsewhere = !r.onChain && haltReason === 'nonce_consumed_elsewhere' && haltSlot === r.slot;
+  const state: RecordPlain['state'] = r.onChain ? 'on_chain' : usedElsewhere ? 'used_elsewhere' : r.cancelling ? 'cancelling' : r.refusedCode ? 'refused' : r.taken ? 'sent' : 'not_taken';
   const STATE: Record<RecordPlain['state'], string> = {
+    used_elsewhere: 'Used by a transaction Journear didn’t send: it won’t go through',
     on_chain: 'On the network, being confirmed',
     cancelling: r.kind === 'filler' ? 'Being sent (a harmless empty transfer)' : 'Being cancelled: the user’s action won’t happen',
     refused: 'Turned away by the network',
@@ -404,7 +409,7 @@ export function recordPlain(r: EvmRelayRecordView, chainId: number, keyOk: boole
     not_taken: 'Not yet picked up by the network',
   };
   const past = r.deadlineAt <= now || haltReason === 'stuck_past_deadline';
-  const noCancelBecause = r.onChain ? null : r.copies.length >= 8 ? 'No Cancel: it already has 8 copies, the most the relayer sends. Ask an engineer.' : !keyOk ? 'No Cancel: the relayer’s key isn’t loaded.' : !past ? 'Cancel shows once its time limit has passed.' : null;
+  const noCancelBecause = r.onChain ? null : usedElsewhere ? 'No Cancel: the network shows this slot already used. Close it instead (under Advanced), once the engineer says so.' : r.copies.length >= 8 ? 'No Cancel: it already has 8 copies, the most the relayer sends. Ask an engineer.' : !keyOk ? 'No Cancel: the relayer’s key isn’t loaded.' : !past ? 'Cancel shows once its time limit has passed.' : null;
   return {
     slot: r.slot,
     kind: r.kind,
@@ -579,6 +584,7 @@ export async function evmRelayDetailRoute(c: RouteCtx): Promise<Response> {
   log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'ok', count: d.records.length });
   const relayer = d.chain.relayer.ok ? d.chain.relayer : null;
   const haltReason = relayer?.halted?.reason ?? null;
+  const haltSlot = relayer?.halted?.slot ?? null;
   return json(200, {
     chainId,
     title: evmRelayTitle(chainId),
@@ -590,7 +596,7 @@ export async function evmRelayDetailRoute(c: RouteCtx): Promise<Response> {
     seen: { haltSince: relayer?.halted?.since ?? null, lastStaffSeq: relayer?.lastStaffSeq ?? 0 },
     token: newActToken(),
     apps: d.apps,
-    records: d.records.map((x) => recordPlain(x, chainId, d.chain.key === 'ok', d.apps, now, haltReason)),
+    records: d.records.map((x) => recordPlain(x, chainId, d.chain.key === 'ok', d.apps, now, haltReason, haltSlot)),
     tools: toolsOffered(d.chain, d.records, d.chainCount),
     closeBilling: CLOSE_BILLING,
     staffLog: (relayer?.staffLog ?? []).map((e) => ({ seq: e.seq, at: e.at, who: plainString(e.who, 128), tool: TOOL_NAMES[e.tool] ?? 'A tool', slot: e.slot, note: plainString(e.note, 500), done: e.done, refused: e.refused ? code(e.refused) : null })),

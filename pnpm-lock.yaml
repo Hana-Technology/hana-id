@@ -280,6 +280,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/web
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.11
+        version: 0.5.11
       '@noble/curves':
         specifier: 1.9.7
         version: 1.9.7

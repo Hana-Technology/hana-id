@@ -214,6 +214,15 @@ describe('the waiting transactions and the tools offered', () => {
     expect(recordPlain(record(9, { copies: Array.from({ length: 8 }, () => ({ hash: HASH, kind: 'action' as const })) }), 84532, true, 'recorded', NOW, null).noCancelBecause).toBe('No Cancel: it already has 8 copies, the most the relayer sends. Ask an engineer.');
   });
 
+  it('a slot the network shows used by someone else’s transaction (nonce_consumed_elsewhere): said so, no Cancel; Close is the tool (D873 finding)', () => {
+    const r = recordPlain(record(9, { deadlineAt: NOW - 60_000 }), 84532, true, 'recorded', NOW, 'nonce_consumed_elsewhere', 9);
+    expect(r).toMatchObject({ state: 'used_elsewhere', stateText: 'Used by a transaction Journear didn’t send: it won’t go through', canCancel: false, canClose: true });
+    expect(r.noCancelBecause).toBe('No Cancel: the network shows this slot already used. Close it instead (under Advanced), once the engineer says so.');
+    // Another slot of the same pause, or the same slot in another pause, reads as before.
+    expect(recordPlain(record(10, { deadlineAt: NOW + 60_000 }), 84532, true, 'recorded', NOW, 'nonce_consumed_elsewhere', 9)).toMatchObject({ state: 'sent', stateText: 'Sent, waiting to go through' });
+    expect(recordPlain(record(9), 84532, true, 'recorded', NOW, 'nonce_gap', 9)).toMatchObject({ state: 'sent', canCancel: true });
+  });
+
   it('Resume only while paused; fill and the next slot only where they can apply; none on a fresh relayer or broken records', () => {
     const count = (latest: number, pending = latest) => ({ ok: true as const, latest, pending });
     expect(toolsOffered(view(), [], count(14))).toEqual({ resume: false, resumeNeedsKeyConfirmation: false, fill: { suggested: null, max: 11 }, adopt: { suggested: 14, min: 12 }, adoptBecause: null, noneBecause: null });

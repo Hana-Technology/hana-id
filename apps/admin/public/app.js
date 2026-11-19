@@ -2402,7 +2402,8 @@ async function monitoringPage(main) {
       ),
     );
   }
-  main.append(panel('Security events', {}, d.events.ok ? table(['Detected', 'Kind', 'Organisation', 'App', 'Scope', 'Emailed', 'Details'], d.events.events.map((e) => tr(when(e.detectedAt), h('span', {}, mono(e.kind), h('span', { class: 'sub' }, e.id)), mono(e.orgId || ''), mono(e.appId || ''), mono(e.scopeId || ''), e.notifiedAt ? time(e.notifiedAt) : badge('not yet', 'warning'), detailPairs(e.detail))), { empty: 'No security event.' }) : sourceError('The security events', d.events)));
+  // Each event in words with its playbook (the Worker's withWords), as Feed and notices shows them; the code small under it.
+  main.append(panel('Security events', {}, d.events.ok ? table(['Detected', 'What happened', 'Organisation', 'App', 'Scope', 'Emailed', 'Details'], d.events.events.map((e) => tr(when(e.detectedAt), h('span', {}, e.title || e.kind, h('span', { class: 'sub' }, h('code', {}, e.kind), ` · ${e.id}`), h('span', { class: 'sub' }, 'What to do: ', playbookLink(e.playbook))), mono(e.orgId || ''), mono(e.appId || ''), mono(e.scopeId || ''), e.notifiedAt ? time(e.notifiedAt) : badge('not yet', 'warning'), detailPairs(e.detail))), { empty: 'No security event.' }) : sourceError('The security events', d.events)));
 }
 
 /**
@@ -2619,7 +2620,7 @@ function evmToolForm(d, tool, label, fields, confirmText, opts = {}) {
 
 /** A part's chip, when it isn't fine. */
 const LINE_WORDS = { warning: 'Needs a look', critical: 'Problem', unknown: 'Can’t check' };
-const RECORD_TONE = { on_chain: 'ok', cancelling: 'warning', refused: 'bad', sent: 'info', not_taken: 'warning' };
+const RECORD_TONE = { on_chain: 'ok', cancelling: 'warning', refused: 'bad', sent: 'info', not_taken: 'warning', used_elsewhere: 'bad' };
 
 function evmRecordsTable(d) {
   const now = Date.now();

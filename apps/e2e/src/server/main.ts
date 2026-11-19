@@ -11,6 +11,10 @@
 //   http://127.0.0.1:4440                  the Hana API: apps/api's Worker, /v1/login and /v1/derive mocked (and the
 //                                          tests' /__e2e control endpoints)
 //   http://127.0.0.1:4442                  the email issuer (apps/email-issuer's Worker, the outbox stub; /__e2e/outbox)
+//   http://127.0.0.1:4443                  the staff admin portal, hand-test lane (apps/admin's Worker and SPA behind the
+//                                          stack's Access stand-in, its own API copy and relayer: admin-lane.ts); sign in
+//                                          at /__e2e/access/sign-in?as=staff
+//   http://127.0.0.1:4444, :4445, :4446    the same, one lane per browser project (chromium, firefox, webkit)
 //   http://127.0.0.1:4450                  the mocked NEAR RPC
 //   http://127.0.0.1:4451                  the same chain, as the env's rpcFallback (D263)
 //   http://127.0.0.1:4460                  the mocked EVM chain RPC
@@ -25,9 +29,11 @@
 import '../port-env.ts'; // first: this checkout's port base, before stack.ts reads it
 import { buildAll } from '../build.ts';
 import { stackFingerprint } from '../fingerprint.ts';
-import { EMAIL_ISS, LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';
+import { ADMIN_LANES, EMAIL_ISS, LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';
 import { MockApi } from './api.ts';
 import { GoogleBackend } from './google-backend.ts';
+import { newAccessKeys } from './access.ts';
+import { AdminLanes } from './admin-lane.ts';
 import { LocalIssuer, newIssuerKey } from './issuer.ts';
 import { loadApiModules } from './api-modules.ts';
 import { Chain } from './chain.ts';
@@ -52,7 +58,9 @@ export async function startStack(fingerprint: string): Promise<void> {
   chain.googleKid = google.kid;
   const evm = new MockEvm(e2eRelayer().address);
   const api = new MockApi(d1, chain, modules, { fingerprint, email: { iss: EMAIL_ISS, publicKeys: [issuerKey.publicJwk] }, googleKey: () => google.privateJwk(), evm });
-  const issuer = await LocalIssuer.start(d1, issuerKey);
+  // The stack's Cloudflare Access stand-in (access.ts): one team key, for the issuer's staff routes and the admin lanes.
+  const access = newAccessKeys();
+  const issuer = await LocalIssuer.start(d1, issuerKey, access);
   const loopback = ['127.0.0.1'];
 
   // Browsers resolve localhost and *.localhost to 127.0.0.1 or ::1; listen on both where the machine has IPv6 loopback.
@@ -65,6 +73,10 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.auth, loopback, authHost(modules));
   await serve(PORTS.api, loopback, (req) => api.handle(req));
   await serve(PORTS.issuer, loopback, issuer.handler());
+  // The staff admin portal's lanes: each starts on its first request (admin-lane.ts).
+  const lanes = new AdminLanes({ access, issuer: issuer.directoryRpc });
+  const lanePorts = { demo: PORTS.admin, chromium: PORTS.adminChromium, firefox: PORTS.adminFirefox, webkit: PORTS.adminWebkit } as const;
+  for (const [name, origin] of Object.entries(ADMIN_LANES)) await serve(lanePorts[name as keyof typeof lanePorts], loopback, lanes.handler(name, origin));
   // Live mode (LIVE_ENV): a second Worker and pair of page hosts for the https origins, on the same D1 and chain.
   const live: PagesEnv = { envName: LIVE_ENV_NAME, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, apiUrl: LIVE_API_URL, nearRpc: LIVE_NEAR_RPC };
   const liveApi = new MockApi(d1, chain, modules, { serves: live });

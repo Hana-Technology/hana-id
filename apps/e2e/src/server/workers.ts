@@ -28,7 +28,9 @@ const MAX_TIMER_MS = 2_147_483_647;
  * can't change a stored value by mutating what it put or got.
  *
  * `soonAlarmMs`: an alarm asked for at most 15 s ahead fires after at most this long instead (the EVM relayer's run
- * after a change, so a user's next action needn't wait for it); a later one keeps its time.
+ * after a change, so a user's next action needn't wait for it); a later one keeps its time. `manual`: an alarm is only
+ * recorded (`getAlarm`), never fired by a timer: whoever holds the object runs it (an admin lane's controls, so a test
+ * decides when time passes, admin-lane-worker.ts).
  */
 export class MemoryStorage {
   private data = new Map<string, unknown>();
@@ -36,7 +38,10 @@ export class MemoryStorage {
   /** Called when the alarm fires (the object's `alarm()`). */
   onAlarm: () => Promise<void> = async () => undefined;
 
-  constructor(private readonly soonAlarmMs: number | null = null) {}
+  constructor(
+    private readonly soonAlarmMs: number | null = null,
+    private readonly manual = false,
+  ) {}
 
   readonly kv = {
     get: <T>(key: string): T | undefined => (this.data.has(key) ? (structuredClone(this.data.get(key)) as T) : undefined),
@@ -80,6 +85,7 @@ export class MemoryStorage {
   async setAlarm(at: number | Date): Promise<void> {
     this.clearAlarm();
     this.alarmAt = Number(at);
+    if (this.manual) return;
     const asked = Math.max(0, Number(at) - Date.now());
     // Node's timers hold at most 2^31 - 1 ms (about 24.8 days); a later alarm (a staff action's 30-day log, D866) would
     // otherwise fire after 1 ms, again and again. It waits the longest timer, then arms itself again.
@@ -123,7 +129,7 @@ export class MemoryNamespace<T extends object> {
   constructor(
     private readonly cls: DurableObjectClass<T>,
     private readonly env: () => unknown,
-    private readonly opts: { soonAlarmMs?: number } = {},
+    private readonly opts: { soonAlarmMs?: number; manualAlarms?: boolean } = {},
   ) {}
 
   idFromName(name: string): string {
@@ -133,7 +139,7 @@ export class MemoryNamespace<T extends object> {
   get(id: string): T {
     let obj = this.objects.get(id);
     if (!obj) {
-      const storage = new MemoryStorage(this.opts.soonAlarmMs ?? null);
+      const storage = new MemoryStorage(this.opts.soonAlarmMs ?? null, this.opts.manualAlarms === true);
       const created = new this.cls({ storage, id }, this.env());
       const alarm = (created as { alarm?: () => Promise<void> }).alarm;
       if (typeof alarm === 'function') storage.onAlarm = () => alarm.call(created);

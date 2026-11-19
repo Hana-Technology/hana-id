@@ -74,6 +74,20 @@ describe('the words of each state', () => {
     expect(paused.walletUrl).toBe(`https://sepolia.basescan.org/address/${RELAYER}`);
   });
 
+  it('a chain with no block explorer (the local one): no step names an explorer; the wallet’s recent transactions instead (D873 finding)', () => {
+    const local = { ...view({ balance: { ok: true, wei: '1000' } }, halt('relayer_cannot_send', 0, 'insufficient_funds')), chainId: 31337 };
+    const paused = explainChain(local, NOW);
+    expect(paused.explained!.steps[0]).toBe('Check the relayer wallet’s recent transactions (ask an engineer if you can’t). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.');
+    expect(paused.walletUrl).toBeNull();
+    const none = { chain: 'the local test network', faucet: 'a faucet', explorer: null, refill: '0.07 test ETH' };
+    const all = [haltExplained({ reason: 'relayer_cannot_send', slot: 3, code: 'nonce_too_low' }, none), haltExplained({ reason: 'relayer_cannot_send', slot: 3, code: 'insufficient_funds', leakSeen: true }, none)];
+    expect(all[0]!.steps).toContain('After that, the engineer checks the relayer wallet’s recent transactions for any nobody at Journear sent.');
+    for (const e of all) for (const step of e.steps) expect(step).not.toMatch(/explorer/iu);
+    // With an explorer, as before.
+    const base = explainChain(view({ balance: { ok: true, wei: '1000' } }, halt('relayer_cannot_send', 0, 'insufficient_funds')), NOW);
+    expect(base.explained!.steps[0]).toMatch(/^Open the relayer wallet on Basescan/u);
+  });
+
   it('every halt reason and refusal code has its own sentence and steps, and none uses a protocol word outside the code', () => {
     const w = { chain: 'Base Sepolia', faucet: 'a faucet', explorer: 'Basescan', refill: '0.07 test ETH' };
     const cases: [string, string | null][] = [
@@ -212,6 +226,15 @@ describe('the waiting transactions and the tools offered', () => {
     expect(recordPlain(early, 84532, true, 'recorded', NOW, 'stuck_past_deadline')).toMatchObject({ canCancel: true, noCancelBecause: null });
     expect(recordPlain(record(9), 84532, true, 'recorded', NOW, null)).toMatchObject({ canCancel: true, noCancelBecause: null });
     expect(recordPlain(record(9, { copies: Array.from({ length: 8 }, () => ({ hash: HASH, kind: 'action' as const })) }), 84532, true, 'recorded', NOW, null).noCancelBecause).toBe('No Cancel: it already has 8 copies, the most the relayer sends. Ask an engineer.');
+  });
+
+  it('a slot the network shows used by someone else’s transaction (nonce_consumed_elsewhere): said so, no Cancel; Close is the tool (D873 finding)', () => {
+    const r = recordPlain(record(9, { deadlineAt: NOW - 60_000 }), 84532, true, 'recorded', NOW, 'nonce_consumed_elsewhere', 9);
+    expect(r).toMatchObject({ state: 'used_elsewhere', stateText: 'Used by a transaction Journear didn’t send: it won’t go through', canCancel: false, canClose: true });
+    expect(r.noCancelBecause).toBe('No Cancel: the network shows this slot already used. Close it instead (under Advanced), once the engineer says so.');
+    // Another slot of the same pause, or the same slot in another pause, reads as before.
+    expect(recordPlain(record(10, { deadlineAt: NOW + 60_000 }), 84532, true, 'recorded', NOW, 'nonce_consumed_elsewhere', 9)).toMatchObject({ state: 'sent', stateText: 'Sent, waiting to go through' });
+    expect(recordPlain(record(9), 84532, true, 'recorded', NOW, 'nonce_gap', 9)).toMatchObject({ state: 'sent', canCancel: true });
   });
 
   it('Resume only while paused; fill and the next slot only where they can apply; none on a fresh relayer or broken records', () => {

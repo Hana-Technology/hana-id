@@ -22,6 +22,7 @@ import { getPlaybook } from '@hana-id/playbooks';
 import { type PlaybookLink, playbookFor } from './playbooks.ts';
 import { arr, bool, num, obj, plain, str } from './plain.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
+import { withWords } from './security.ts';
 import { callWatchdog } from './watchdog.ts';
 
 /** The watchdog's cron interval (apps/watchdog/src/checks.ts RUN_INTERVAL_MS); its own `run_interval_ms` wins when served. */
@@ -393,7 +394,8 @@ export async function monitoringRoute(env: Env, staff: StaffRequest, now = Date.
     env: env.ENV_NAME,
     watchdog: watchdog.ok ? { ok: true, ...watchdog.view } : { ok: false, code: watchdog.code },
     governance: governance.ok ? { ok: true, ...governanceView(governance.data, watchdog.ok ? watchdog.view : null) } : { ok: false, code: governance.code },
-    events: events.ok ? { ok: true, events: events.value.events } : { ok: false, code: events.code },
+    // In words with their playbooks, as Feed and notices shows them (security.ts withWords; D873 found them bare here).
+    events: events.ok ? { ok: true, events: events.value.events.map(withWords) } : { ok: false, code: events.code },
     findings: findingsOf({ env: env.ENV_NAME, now, watchdog, governance }),
   });
 }

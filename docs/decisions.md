@@ -15070,3 +15070,113 @@ From `next` @ 675d03a1; not merged, not deployed.
      lines change; the silent and "don't ask again" cases; agree, disagree, one down; the date overflow. The e2e guard
      checks every page of the sign-in origin, with two browser lines allowed by exact pattern (the D347 signal refused
      when its opener isn't a vault frame, Firefox's aborted font download).
+
+## The staff admin portal on the local stack (branch `test/e2e-admin-portal`), 2026-11-19
+
+From `next` @ 675d03a1, not merged, nothing deployed. Tests, the local stack and docs; in product code two fixes the
+new tests found (item 7).
+
+### D873. The staff admin portal runs in the local stack, behind a stand-in for Cloudflare Access
+- Date 2026-11-19 · Status: the requirement decided by the founder 2026-11-19 ("run the admin portal in the local
+  setup"); the details decided while building, to confirm · Built: `apps/e2e/src/server/admin-lane.ts`,
+  `admin-lane-worker.ts`, `access.ts`, `lane-evm.ts`, `lane-clock.ts`, `lane-clock-install.ts`, `pglite-wire.ts`,
+  `src/staff-demo.ts` (the `staff-demo` script), `src/ports.ts` and `src/stack.ts` (the lanes' ports), `issuer.ts` (the
+  shared stand-in; DirectoryRpc's admin Access vars), `workers.ts` (`manualAlarms`), `main.ts`; tests
+  `apps/e2e/tests/admin-portal.spec.ts`, `tests/admin-fixtures.ts`, `test/admin-lane.test.ts`, `test/stack.test.ts`;
+  `apps/admin/src/monitoring.ts`, `src/evm-relay.ts`, `public/app.js` (item 7) with `test/monitoring.test.ts`,
+  `test/evm-relay.test.ts`, `test-spa/monitoring-events.test.ts`; docs `docs/operations.md` ("Browser tests", "Trying
+  the staff admin portal by hand on the local stack", "Free network fees in the admin portal"), `docs/architecture.md`,
+  `docs/api.md`, `apps/e2e/README.md`.
+- Why: the admin's pages, the gas-sponsorship staff tools merged 2026-11-18 (D843) among them, had unit tests but no
+  browser test against real services, and the founder could not click through them. Two independent reviews flagged it.
+- Decision:
+  1. **What runs.** apps/admin's REAL Worker and SPA (`public/`, with the assets binding's single-page fallback) on
+     their own origin, one LANE per origin: `http://127.0.0.1:<base+33>` for a person's hand test, base+34, +35, +36
+     for the Chromium, Firefox and WebKit projects, so the browsers' runs never share a relayer. Each lane is a worker
+     thread of the stack's process (its isolate: the Worker's per-isolate caches and the lane's clock are its own),
+     started on its first request, so the stack starts as fast as before. Its bindings, each called as a service
+     binding (structured clones both ways): `API` = apps/api's real `AdminRpc` entrypoint on the lane's own D1 (apps/api's
+     migrations), with EVM gas sponsorship's REAL relayer object (`EvmRelayer`, in memory) on chain 31337, signing
+     with a key made when the lane starts; `CONSOLE` = apps/console's real `StaffRpc` on its own D1 (the audit log);
+     `ISSUER` = the stack's email issuer's real `DirectoryRpc` (in the main thread, through a message bridge: it
+     verifies the forwarded staff token itself); `USAGE_DB` = item 4; NEAR = a copy of the stack's mocked chain.
+     Waiting transactions are made through apps/api's own sponsorship routes (prepare, then send, with the session
+     proof of D856, as the vault sends them), so each has its app from `evm_sponsor_sends`. Left out, and so shown as
+     such on the pages: the partner console's and the files Worker's builds (no such Workers in the stack: `.invalid`
+     origins the status page doesn't read), the watchdog (not configured: Security & monitoring and System status say
+     so), the contract's governance views (the mocked chain has none: "can't be read"), R2 (statements and exports
+     refuse), SendGrid (no `EMAIL_API_KEY`: the status page says no mail can go out), and the admin's crons (none run).
+  2. **How Access is faked, and why that is safe.** A stand-in sits in front of the Worker, as Cloudflare Access does,
+     and decides nothing: it puts the `CF_Authorization` cookie's value into `Cf-Access-Jwt-Assertion` (dropping any
+     such header the client sent) and forwards everything else unchanged. The Worker's OWN check (`src/access.ts`)
+     verifies every token: RS256 against the team's certs at `https://e2e-access.invalid/cdn-cgi/access/certs`
+     (`.invalid` never resolves, RFC 6761; answered only inside the stack's threads), the AUD, `type: 'app'`, expiry,
+     then the staff list. The team key is made at each stack start and never written anywhere. The sign-in is
+     `GET /__e2e/access/sign-in?as=staff|outsider[&to=/path]` on the lane's origin (a token for `staff@e2e.invalid`,
+     the one staff member, or `outsider@e2e.invalid`, on no list), served by the stand-in, never by the Worker. No
+     product code changed for it: a source test holds that nothing under `apps/admin/src` names `__e2e`, the stand-in's
+     team, a stack import or a sign-in bypass, that `access.ts` reads only its three vars, and that no app's source
+     names the stand-in or the lane controls. A deployed Worker has neither the key nor a way to reach the team domain,
+     and the stand-in and the controls exist only under `apps/e2e`.
+  3. **The relayer's states by the stack's controls, not by waiting.** The lane's chain (`lane-evm.ts`) is the stack's
+     mocked chain behind a pool the controls drive: hold (a transaction waits), refuse (a node's "Insufficient funds"),
+     a transaction signed with the relayer's key that the relayer never sent (mined at a slot, or only pooled then
+     dropped), the relayer's balance; the pinned delegate's address answers its real runtime code (the checked-in
+     artifact with its immutables), so the page's "Account helper program" check meets core's pin. Each scenario
+     (`ready`, `working`, `low-money`, `waiting`, `past-deadline`, `out-of-money`, `refill`, `key-used-elsewhere`,
+     `foreign-transactions`, `gap`) runs the relayer's own alarm until the relayer itself reaches the state (the anvil
+     lane's recipes, D868), then the API cron's relay check (its security events). In the suite's lanes the relayer's
+     alarm runs only when a control says so; in the hand-test lane also by itself, as deployed. The lane's clock is its
+     own (`lane-clock.ts`: a worker thread's `Date`), moved forward only (past a time limit; the status page's 30 s
+     cache), so no test sleeps. Access tokens are signed at the real time, so the issuer (real clock) and the admin
+     (lane clock) both take them. Each test holds its lane (`/__e2e/lane/acquire`), so two runs on one stack or
+     `--repeat-each` never share a relayer at once.
+  4. **The ledger without Docker.** PGlite (as apps/api's ledger tests, D140) with every `migrations-usage` migration,
+     behind a small Postgres wire-protocol listener on a loopback port the OS picks (`pglite-wire.ts`: the start-up
+     answered without a password, the session as role `usage_admin` with its real grants, every other message handed to
+     PGlite's `execProtocolRaw`, which is Postgres's own protocol code; one connection at a time, since PGlite is one
+     session). The admin's own `pg` client connects to it as to Hyperdrive: Feed and notices (the feeds, the ledger's
+     part), Rates, Retention, Reports and Statements (issuing refuses: no R2) work, on an empty ledger (the stack's API
+     writes no usage events). About an hour's work, so no degraded mode was needed. After D872 (merged from `next`)
+     both lane Workers have `NEON_PLAN` (testnet's free plan, 100 compute-hours at 0.25 CU): System status never opens
+     the ledger (a spec counts the listener's connections around each load), its ledger tile says it wasn't read from
+     here (no 15-minute run reports in the stack), and the pages that open the ledger report their wake-ups, which the
+     "Neon compute this month" tile counts; a spec moves the lane's clock to a month's start (nothing counted, then a
+     whole month) and to 3 days into the next (counting began late, amber). The lane's Access tokens expire 24 hours
+     after the lane's clock, so a month ahead still signs in.
+  5. **The hand test.** `pnpm --filter @hana-id/e2e serve`, then the sign-in URL and `pnpm --filter @hana-id/e2e
+     staff-demo <state>` for each state (`docs/operations.md` "Trying the staff admin portal by hand on the local
+     stack"), mirroring the demo card's hand test.
+  6. **The specs** (`tests/admin-portal.spec.ts`, all three browsers, about 8 s a browser): sign-in, and the refusals
+     (no token, a forged one, a client's own header, someone not on the list); System status's tile in Working and
+     every state the relayer reaches, and its 30 s reading; a waiting transaction with its app, Cancel only past its
+     time limit; out of money (the steps, Resume refused while it can't send, refilled, Resume); someone else using the
+     key three ways (the leak steps, no refill asked, Resume refused without the engineer's word by the page and by the
+     Worker, then Close, Set the next slot number pre-filled from the network, Fill a gap, each confirmed and audited);
+     a stale page and a second tab (`version_conflict`, nothing done, the page read again); every action in the audit
+     log with who, when and the note; the sponsorship's security events in words with their playbooks on Feed and
+     notices and on Security & monitoring; the ledger pages; and the staff side of the support pages: unlock and
+     unsuppress have no admin page (support calls the issuer's `admin/unlock` and `admin/unsuppress` with their Access
+     token, `docs/operations.md` "Staff calls"), so that path runs through the stack's `/__e2e/staff` and its audit
+     rows are checked on the admin's Audit log. Every page is watched: a console error, an uncaught error, a CSP
+     violation or a cookie set by the Worker fails the test, but for one WebKit quirk (item 8).
+  7. **Findings, fixed in this branch** (each with its failing test first):
+     - Security & monitoring's "Security events" table showed each event's bare code, without its title in words or
+       its playbook, while Feed and notices showed both. `GET /api/monitoring` now gives each event its title and
+       playbook (`withWords`, as `GET /api/security`), and the table shows them as Feed and notices does (the column
+       "What happened", "What to do:" with the playbook link, the code small under it).
+     - During a `nonce_consumed_elsewhere` pause, that slot's row read "Sent, waiting to go through" and "Cancel shows
+       once its time limit has passed", though the relayer had found the slot used by a transaction it didn't send
+       (none of its own can go through, and the relayer would refuse a Cancel there, `nonce_mined`). The row now reads
+       "Used by a transaction Journear didn’t send: it won’t go through" (red), with "No Cancel: the network shows this
+       slot already used. Close it instead (under Advanced), once the engineer says so."
+  8. **Findings reported, not changed:** WebKit (Playwright's build of Safari's engine) reports a CSP `style-src-attr`
+     violation for every `<select>`, on the admin's pages and on a bare test page with the same CSP: its own control,
+     not the SPA (the selects render and work). The suite lets exactly that violation through in WebKit only. A fresh
+     visit without any Access token shows the expired-sign-in banner over a page that stays "Loading…" (behind real
+     Access unreachable: Access answers before the page; noted in `apps/admin/README.md`).
+  9. **Fixed after review** (the coordinator, 2026-11-19): on a chain with no block explorer (the local one) the
+     out-of-money steps said "Open the relayer wallet on the block explorer", and the engineer's leak step "checks the
+     relayer wallet on the block explorer". With no explorer they now say "Check the relayer wallet’s recent
+     transactions (ask an engineer if you can’t)." and "checks the relayer wallet’s recent transactions for any nobody
+     at Journear sent."; with one (Basescan) as before (`test/evm-relay.test.ts`).

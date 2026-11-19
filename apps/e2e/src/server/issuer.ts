@@ -16,12 +16,14 @@
 //
 // Staff calls and bounces (D866, `tests/support-pages.spec.ts`): the issuer's real staff routes and SendGrid webhook,
 // reached through two control endpoints. `POST /__e2e/staff {action: 'unlock' | 'unsuppress', email, ticket?}` calls
-// `/v1/email/admin/<action>` with a Cloudflare Access JWT this stack signs (a throwaway RS256 key; the issuer's Access
-// check fetches its certs from ACCESS_TEAM_DOMAIN, answered in this process) for the one staff address on its
-// allowlist. `POST /__e2e/bounce {email, event?: 'bounce' | 'spamreport'}` posts one SendGrid event for a code mail
+// `/v1/email/admin/<action>` with a Cloudflare Access JWT the stack's Access stand-in signs (access.ts: a throwaway RS256
+// key per stack; the issuer's Access check fetches its certs from ACCESS_TEAM_DOMAIN, answered in this process) for the
+// one staff address on its allowlist. The same stand-in signs the staff admin portal's tokens (admin-lane.ts), whose
+// ISSUER binding is this issuer's real DirectoryRpc (`directoryRpc`): it verifies the forwarded token itself. `POST /__e2e/bounce {email, event?: 'bounce' | 'spamreport'}` posts one SendGrid event for a code mail
 // to the webhook, signed with a throwaway P-256 key whose public half is the issuer's SENDGRID_WEBHOOK_PUBLIC_KEY.
 // Both: tests only, no CORS, refused with an Origin.
 import { createHash, createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
+import { ACCESS_AUD, ACCESS_TEAM, type AccessKeys, E2E_STAFF, installAccessCerts, signAccessJwt } from './access.ts';
 import { fileURLToPath } from 'node:url';
 import { AUTH_ORIGIN, E2E_ENV, EMAIL_ISS, ENV_NAME, ISSUER_URL, NEAR_RPC, VAULT_ORIGIN } from '../stack.ts';
 
@@ -40,6 +42,8 @@ interface IssuerModules {
   Challenge: new (state: unknown, env: unknown) => object;
   RateLimiter: new (state: unknown, env: unknown) => object;
   Outbox: new (state: unknown, env: unknown) => { list(): OutboxMessage[]; clear(): Promise<void> };
+  /** The staff directory's entrypoint (the admin portal's ISSUER binding, D275): each call verifies the staff's Access JWT. */
+  DirectoryRpc: new (ctx: unknown, env: unknown) => object;
 }
 
 /** apps/api/src/rpc/issuer.ts: the entrypoint class (constructed with a context and the API's env, as workerd does). */
@@ -72,45 +76,13 @@ export function newIssuerKey(): { privateJwk: string; publicJwk: EmailChainKey &
 
 const key32 = (): string => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64');
 
-/** The stack's Cloudflare Access stand-in: its team domain (answered in this process only), audience and staff. */
-export const ACCESS_TEAM = 'e2e-access.invalid';
-const ACCESS_AUD = 'e2e'.padEnd(64, '0');
-export const E2E_STAFF = 'staff@e2e.invalid';
-
-/** An Access team key (RS256) and a webhook key (P-256), new per stack, never written anywhere. */
-function staffKeys() {
-  const access = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 65537 });
-  const jwk = access.publicKey.export({ format: 'jwk' }) as Record<string, string>;
+/** A webhook key (P-256), new per stack, never written anywhere. */
+function webhookKeys() {
   const webhook = generateKeyPairSync('ec', { namedCurve: 'P-256' });
   return {
-    accessPrivate: access.privateKey.export({ format: 'pem', type: 'pkcs8' }) as string,
-    accessCerts: JSON.stringify({ keys: [{ kty: 'RSA', n: jwk.n, e: jwk.e, kid: 'e2e-access-1', alg: 'RS256', use: 'sig' }] }),
     webhookPrivate: webhook.privateKey.export({ format: 'pem', type: 'pkcs8' }) as string,
     webhookPublic: (webhook.publicKey.export({ format: 'der', type: 'spki' }) as Buffer).toString('base64'),
   };
-}
-
-const b64url = (b: Buffer | string): string => Buffer.from(b).toString('base64url');
-
-/** An Access JWT for E2E_STAFF, as Cloudflare Access would put in `Cf-Access-Jwt-Assertion`. */
-function accessJwt(privatePem: string): string {
-  const now = Math.floor(Date.now() / 1000);
-  const head = b64url(JSON.stringify({ alg: 'RS256', kid: 'e2e-access-1' }));
-  const body = b64url(JSON.stringify({ iss: `https://${ACCESS_TEAM}`, aud: [ACCESS_AUD], sub: 'e2e-staff', email: E2E_STAFF, iat: now, exp: now + 300 }));
-  return `${head}.${body}.${b64url(sign('sha256', Buffer.from(`${head}.${body}`), createPrivateKey(privatePem)))}`;
-}
-
-let accessInstalled = false;
-/** Answers the Access certs URL in this process (the issuer's AccessVerifier fetches it); everything else as before. */
-function installAccessCerts(certs: string): void {
-  if (accessInstalled) return;
-  accessInstalled = true;
-  const real = globalThis.fetch.bind(globalThis);
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (url === `https://${ACCESS_TEAM}/cdn-cgi/access/certs`) return new Response(certs, { headers: { 'content-type': 'application/json' } });
-    return real(input, init);
-  }) as typeof fetch;
 }
 
 /** A client address from 198.18.0.0/15 (RFC 2544), new per request. */
@@ -123,12 +95,15 @@ export class LocalIssuer {
   private readonly env: Record<string, unknown>;
   private readonly exec = new ExecContext();
   private outbox: { list(): OutboxMessage[] } | null = null;
-  private readonly staff = staffKeys();
+  private readonly staff = webhookKeys();
+  /** apps/email-issuer's DirectoryRpc on this issuer's env: what the admin portal's ISSUER service binding calls. */
+  readonly directoryRpc: object;
 
   private constructor(
     private readonly modules: IssuerModules,
     api: object,
     key: ReturnType<typeof newIssuerKey>,
+    private readonly access: AccessKeys,
   ) {
     const env: Record<string, unknown> = {
       DB: new D1Shim(ISSUER_MIGRATIONS),
@@ -152,22 +127,28 @@ export class LocalIssuer {
       ACCESS_TEAM_DOMAIN: ACCESS_TEAM,
       ACCESS_AUD,
       ACCESS_STAFF_EMAILS: JSON.stringify([E2E_STAFF]),
+      // The admin portal's Access application, which DirectoryRpc checks the forwarded staff token against (C8b): on
+      // the stack the same stand-in team, AUD and staff member (admin-lane.ts).
+      ADMIN_ACCESS_TEAM_DOMAIN: ACCESS_TEAM,
+      ADMIN_ACCESS_AUD: ACCESS_AUD,
+      ADMIN_STAFF_EMAILS: JSON.stringify([E2E_STAFF]),
       SENDGRID_WEBHOOK_PUBLIC_KEY: this.staff.webhookPublic,
     };
-    installAccessCerts(this.staff.accessCerts);
+    installAccessCerts(access.certs);
     env.EMAIL_CHALLENGE = new MemoryNamespace(modules.Challenge, () => env);
     env.RATE_LIMITER = new MemoryNamespace(modules.RateLimiter, () => env);
     const outbox = new MemoryNamespace(modules.Outbox, () => env);
     env.OUTBOX = outbox;
     this.outbox = outbox.get(outbox.idFromName('outbox'));
     this.env = env;
+    this.directoryRpc = new modules.DirectoryRpc(new ExecContext(), env);
   }
 
-  static async start(appDb: D1Shim, key: ReturnType<typeof newIssuerKey>): Promise<LocalIssuer> {
+  static async start(appDb: D1Shim, key: ReturnType<typeof newIssuerKey>, access: AccessKeys): Promise<LocalIssuer> {
     registerCloudflareModule();
     const modules = (await import(new URL('index.ts', ISSUER_SRC).href)) as IssuerModules;
     const { IssuerRpc } = (await import(ISSUER_RPC.href)) as { IssuerRpc: IssuerRpcClass };
-    return new LocalIssuer(modules, new IssuerRpc(new ExecContext(), { DB: appDb }), key);
+    return new LocalIssuer(modules, new IssuerRpc(new ExecContext(), { DB: appDb }), key, access);
   }
 
   /** Every mail the outbox holds, oldest first. */
@@ -206,7 +187,7 @@ export class LocalIssuer {
         if (typeof b.email !== 'string') return json(400, { error: 'email_required' });
         if (url.pathname === '/__e2e/staff') {
           if (b.action !== 'unlock' && b.action !== 'unsuppress') return json(400, { error: 'action' });
-          return this.call(`/v1/email/admin/${b.action}`, JSON.stringify({ email: b.email, ticket: b.ticket ?? 'E2E-1' }), { 'cf-access-jwt-assertion': accessJwt(this.staff.accessPrivate) });
+          return this.call(`/v1/email/admin/${b.action}`, JSON.stringify({ email: b.email, ticket: b.ticket ?? 'E2E-1' }), { 'cf-access-jwt-assertion': signAccessJwt(this.access, { email: E2E_STAFF, ttlS: 300 }) });
         }
         const ts = String(Math.floor(Date.now() / 1000));
         const events = JSON.stringify([{ event: b.event === 'spamreport' ? 'spamreport' : 'bounce', type: 'bounce', email: b.email, category: ['hana-id-code'], sg_event_id: crypto.randomUUID() }]);

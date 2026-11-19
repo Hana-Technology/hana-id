@@ -53,6 +53,15 @@ export function portsFrom(base: number) {
     liveApi: base + 31,
     /** The email issuer (apps/email-issuer's Worker), on its own origin as on sandbox-dev (D230). */
     issuer: base + 32,
+    /**
+     * The staff admin portal (apps/admin's Worker and SPA) behind the stack's Cloudflare Access stand-in, one lane each
+     * (src/server/admin-lane.ts): the hand-test lane, then one per browser project, so the browsers' runs never share a
+     * relayer. A lane starts on its first request.
+     */
+    admin: base + 33,
+    adminChromium: base + 34,
+    adminFirefox: base + 35,
+    adminWebkit: base + 36,
     near: base + 40,
     /**
      * A second NEAR RPC on the same mocked chain: the env's `rpcFallback`, the independent provider a member's path is

@@ -7,7 +7,8 @@
 // It hashes this package's absolute path and every file the stack builds or runs from source: the e2e stack and
 // partner app, @hana-id/web and @hana-id/core (the bundles), apps/api's Worker and migrations, the email issuer's Worker
 // and migrations, the demo and the stamps site (their pages,
-// sources and Workers).
+// sources and Workers), and the staff admin portal's lanes (D873: the admin Worker and SPA, the console's StaffRpc and
+// migrations, the ledger's migrations, the delegate's artifact the lane's chain serves).
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -36,6 +37,15 @@ export const FINGERPRINT_DIRS: readonly string[] = [
   'apps/stamps/worker',
   'apps/stamps/public',
   'apps/stamps/index.html',
+  'apps/admin/src',
+  'apps/admin/public',
+  'apps/console/src',
+  'apps/console/migrations',
+  'apps/api/migrations-usage',
+  'contracts/evm-delegate/artifacts',
+  'packages/console-core/src',
+  'packages/playbooks/src',
+  'packages/oidc/src',
 ];
 
 /** The files under `dir` (or `dir` itself when it is a file), sorted. */

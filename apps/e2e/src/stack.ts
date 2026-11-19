@@ -38,6 +38,18 @@ export const EMAIL_ISS = `${ISSUER_URL}/v1/email`;
 export const NEAR_RPC = `http://127.0.0.1:${PORTS.near}`;
 export const NEAR_RPC_FALLBACK = `http://127.0.0.1:${PORTS.nearFallback}`;
 export const EVM_RPC = `http://127.0.0.1:${PORTS.evm}`;
+
+/**
+ * The staff admin portal's lanes (src/server/admin-lane.ts): `demo` for a person's hand test, one per browser project
+ * for the suite. Each is apps/admin's Worker on its own origin, with its own relayer.
+ */
+export const ADMIN_LANES = Object.freeze({
+  demo: `http://127.0.0.1:${PORTS.admin}`,
+  chromium: `http://127.0.0.1:${PORTS.adminChromium}`,
+  firefox: `http://127.0.0.1:${PORTS.adminFirefox}`,
+  webkit: `http://127.0.0.1:${PORTS.adminWebkit}`,
+});
+export type AdminLaneName = keyof typeof ADMIN_LANES;
 /** A foreign site, served by Playwright routes only (see tests/fixtures.ts): it never runs Hana code. */
 export const EVIL_ORIGIN = 'http://evil.e2e.test';
 

@@ -12,7 +12,7 @@ import { CRON_LAST_RUN } from './cron.ts';
 import { FEED_CURSORS } from './feed.ts';
 import { json } from './http.ts';
 import { errorName, log } from './log.ts';
-import { trackedStore } from './neon.ts';
+import { openTracked } from './neon.ts';
 import { type LedgerStore, ledgerSource } from './ledger.ts';
 import { opsSource } from './ops.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
@@ -73,7 +73,7 @@ export async function securityView(env: Env, staff: StaffRequest): Promise<Respo
   let opsError: string | null = null;
   try {
     // D872: the screen opens the ledger (a Neon wake-up), reported when each connection closes (NEON_PLAN only).
-    const ops = trackedStore(env, await opsSource.open(env.USAGE_DB), Date.now());
+    const ops = await openTracked(env, () => opsSource.open(env.USAGE_DB));
     if (!ops) opsError = 'USAGE_DB is not bound: the feed and the watcher are off';
     else {
       try {
@@ -136,7 +136,7 @@ export const MIN_PARTITIONS_AHEAD = 2;
 async function ledgerPart(env: Env, staff: StaffRequest): Promise<Record<string, unknown>> {
   let store: LedgerStore | null;
   try {
-    store = trackedStore(env, await ledgerSource.open(env.USAGE_DB), Date.now());
+    store = await openTracked(env, () => ledgerSource.open(env.USAGE_DB));
   } catch (err) {
     log({ event: 'bff', route: 'GET /api/security', requestId: staff.requestId, outcome: 'error', code: 'ledger_unavailable', error: errorName(err) }, 'warn');
     return { error: 'The usage ledger is unavailable' };

@@ -270,7 +270,7 @@ const neonComputeHigh: Playbook = {
   summary: "A `neon_compute_high` security event (once at 70% and once at 90% a month), or the amber or red “Neon compute this month” tile on System status: by our estimate the usage database (Neon's free plan) has used most of its monthly compute-hours.",
   signals: [
     "A `neon_compute_high` row in the admin's security events, emailed by the feed, with `threshold` (70 or 90), `hoursUsed` and `allowanceHours`.",
-    'The “Neon compute this month” tile on System status amber (70%) or red (90%).',
+    'The “Neon compute this month” tile on System status amber (70%) or red (90%), or amber with “Counted since <date>” in the month counting began (the deploy that turned it on): that month the tile and the alerts know only what was counted since then, so Neon’s own figure is higher and an alert can come late or not at all.',
     "Neon's own email saying the project has used most of its compute allowance.",
   ],
   impact: [
@@ -282,7 +282,7 @@ const neonComputeHigh: Playbook = {
     {
       title: 'Read the real figure',
       who: 'anyone',
-      detail: "Open Neon's console, the project, then Usage (or Billing): it shows the compute-hours used this period and when the period resets. The tile is our own estimate from the times our Workers opened the database; Neon's figure is the one that counts. If they differ by more than a few hours, tell an engineer.",
+      detail: "Open Neon's console, the project, then Usage (or Billing): it shows the compute-hours used this period and when the period resets. The tile is our own estimate from the times our Workers opened the database; Neon's figure is the one that counts. In the month counting began the tile only knows the days since then. If they differ by more than a few hours otherwise, tell an engineer. Also check the compute's size: its autoscaling minimum and maximum should both be 0.25; if it can grow, the estimate is only a floor.",
     },
     {
       title: 'Check what keeps it awake',

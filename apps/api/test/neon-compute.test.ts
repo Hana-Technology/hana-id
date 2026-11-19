@@ -10,6 +10,7 @@ import { AdminRpc } from '../src/rpc/admin.ts';
 import { syncIdentityUsage } from '../src/usage/identity-sync.ts';
 import { noteNeonWake } from '../src/usage/neon-compute.ts';
 import { ensureUsagePartitions } from '../src/usage/partitions.ts';
+import { orgStatements, reportTransport } from '../src/usage/reports.ts';
 import { call, chain, seedApp, uid } from './helpers.ts';
 import { hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
 import { governanceViews, hana, member, ownerChain, system } from './rpc-helpers.ts';
@@ -24,13 +25,14 @@ const TINY = '{"computeHoursPerMonth":1,"computeUnits":4}';
 
 interface Row {
   month: string;
+  first_at: number;
   closed_ms: number;
   win_start: number;
   win_end: number;
   windows: number;
   alerted: number;
 }
-const row = (month: string) => env.DB.prepare('SELECT month, closed_ms, win_start, win_end, windows, alerted FROM neon_compute WHERE month = ?1').bind(month).first<Row>();
+const row = (month: string) => env.DB.prepare('SELECT month, first_at, closed_ms, win_start, win_end, windows, alerted FROM neon_compute WHERE month = ?1').bind(month).first<Row>();
 const events = async (month: string) =>
   (await env.DB.prepare("SELECT id, kind, detail_json FROM security_events WHERE kind = 'neon_compute_high' AND json_extract(detail_json, '$.month') = ?1 ORDER BY detected_at").bind(month).all<{ id: string; kind: string; detail_json: string }>()).results.map(
     (r): Record<string, unknown> => ({ id: r.id, ...(JSON.parse(r.detail_json) as Record<string, unknown>) }),
@@ -52,14 +54,17 @@ describe('noteNeonWake (D872)', () => {
     for (let i = 0; i < 20; i++) wakes.push([t0 + i * 15 * MIN, t0 + i * 15 * MIN + 10_000]);
     wakes.push([t0 + 7 * MIN, t0 + 7 * MIN + 400], [t0 + 22 * MIN, t0 + 22 * MIN + 300], [t0 + 61 * MIN, t0 + 63 * MIN], [t0 + 30 * MIN + 1000, t0 + 30 * MIN + 2000]);
     wakes.sort((a, b) => a[0] - b[0]);
-    wakes.push([t0 + 29 * MIN, t0 + 29 * MIN + 1]); // late: before the open window started
+    wakes.push([t0 + 29 * MIN, t0 + 29 * MIN + 1]); // late: ended before the open window began (adds its own length)
+    wakes.push([t0 + 284 * MIN, t0 + 284 * MIN + 500]); // late: reaching into the open window (moves its start back)
     let ref: NeonMonthRow | null = null;
     for (const [s, e] of wakes) {
       await noteNeonWake(withPlan(FREE), s, e, e);
       ref = addWake(ref, '2031-02', s, e);
     }
     const got = (await row('2031-02'))!;
-    expect({ closedMs: got.closed_ms, winStart: got.win_start, winEnd: got.win_end, windows: got.windows }).toEqual({ closedMs: ref!.closedMs, winStart: ref!.winStart, winEnd: ref!.winEnd, windows: ref!.windows });
+    expect({ firstAt: got.first_at, closedMs: got.closed_ms, winStart: got.win_start, winEnd: got.win_end, windows: got.windows }).toEqual({ firstAt: ref!.firstAt, closedMs: ref!.closedMs, winStart: ref!.winStart, winEnd: ref!.winEnd, windows: ref!.windows });
+    expect(got.first_at).toBe(t0);
+    expect(got.win_start).toBe(t0 + 284 * MIN);
     // 20 cron windows and the logins at :07 and :22 (each after its run's window ended), each its own; the :30 one and
     // the page at :61 fall inside the run's window (the page extends it), and the late note too.
     expect(got.windows).toBe(22);
@@ -136,6 +141,25 @@ describe('the API’s own ledger connections are noted (D872)', () => {
   });
 });
 
+describe('a console report’s wake-up is noted after its answer (D872 after review)', () => {
+  it('the answer doesn’t wait for the note; the note lands with the RPC’s waitUntil', async () => {
+    const month = new Date().toISOString().slice(0, 7);
+    await env.DB.prepare('DELETE FROM neon_compute WHERE month = ?1').bind(month).run();
+    vi.spyOn(reportTransport, 'rows').mockResolvedValue([]);
+    const pending: Promise<unknown>[] = [];
+    const exec = { waitUntil: (p: Promise<unknown>) => void pending.push(p) };
+    const rows = await orgStatements(withPlan(FREE), { ...member(), orgId: 'org_neon1' } as never, Date.now(), exec);
+    expect(rows).toEqual([]);
+    expect(pending).toHaveLength(1);
+    await Promise.all(pending);
+    expect(await row(month)).toMatchObject({ windows: 1 });
+    // Without the plan nothing is scheduled.
+    const none: Promise<unknown>[] = [];
+    await orgStatements(withPlan(undefined), { ...member(), orgId: 'org_neon1' } as never, Date.now(), { waitUntil: (p) => void none.push(p) });
+    expect(none).toEqual([]);
+  });
+});
+
 describe('AdminRpc.neonWake (D872)', () => {
   const rpc = (plan: string | undefined) => new AdminRpc(createExecutionContext(), withPlan(plan));
   const runs = [
@@ -171,8 +195,21 @@ describe('AdminRpc.neonWake (D872)', () => {
     expect(off.ok && off.neon).toEqual({ state: 'off' });
   });
 
-  it('refuses a member, a record that isn’t JSON, an unknown key and a window longer than a run', async () => {
+  it('neonAdminRun answers a run’s stored record, or null; staff or the crons only', async () => {
+    await env.DB.prepare('DELETE FROM neon_admin_runs').run();
+    expect(await rpc(FREE).neonAdminRun({ ...system(), key: 'cron.last_run' })).toEqual({ ok: true, run: null });
     const now = Date.now();
+    await rpc(FREE).neonWake({ ...system(), startMs: now - 1000, endMs: now, runs: [{ key: 'cron.last_run', value: '{"at":5,"feed":true,"watcher":true}' }] });
+    const r = await rpc(FREE).neonAdminRun({ ...system(), key: 'cron.last_run' });
+    expect(r).toMatchObject({ ok: true, run: { value: '{"at":5,"feed":true,"watcher":true}' } });
+    expect(await rpc(FREE).neonAdminRun({ ...member(), key: 'cron.last_run' })).toMatchObject({ ok: false, code: 'forbidden' });
+    expect(await rpc(FREE).neonAdminRun({ ...system(), key: 'feed.app_changes.seq' })).toMatchObject({ ok: false, code: 'bad_request' });
+  });
+
+  it('refuses a member, a record that isn’t JSON, an unknown key, a window longer than a run and a start an hour off the clock', async () => {
+    const now = Date.now();
+    for (const startMs of [now - 61 * MIN, now + 61 * MIN]) expect(await rpc(FREE).neonWake({ ...system(), startMs, endMs: startMs })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await rpc(FREE).neonWake({ ...system(), startMs: now - 59 * MIN, endMs: now - 59 * MIN })).toMatchObject({ ok: true, noted: true });
     expect(await rpc(FREE).neonWake({ ...member(), startMs: now, endMs: now })).toMatchObject({ ok: false, code: 'forbidden' });
     expect(await rpc(FREE).neonWake({ ...system(), startMs: now, endMs: now, runs: [{ key: 'cron.last_run', value: 'not json' }] })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await rpc(FREE).neonWake({ ...system(), startMs: now, endMs: now, runs: [{ key: 'feed.app_changes.seq', value: '1' }] })).toMatchObject({ ok: false, code: 'bad_request' });

@@ -44,6 +44,8 @@ interface Wake {
   runs?: { key: string; value: string }[];
 }
 const wakes: Wake[] = [];
+/** What the fake API keeps of the 5-minute run's record (AdminRpc.neonAdminRun). */
+let lastRecord: { value: string; updatedAt: number } | null = null;
 const KEY32 = (b: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(b)));
 const OWNER = { Oidc: { provider: 'google', sub: 'owner-sub-1' } };
 
@@ -520,8 +522,12 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
           getApp: async (c: { appId: string }) => ({ ok: true as const, app: { id: c.appId, name: c.appId, scopeId: 's', origins: [{ origin: `https://${c.appId}.example`, display: '', idn: false, activeFrom: 1 }] } }),
           neonWake: async (c: unknown) => {
             wakes.push(c as Wake);
+            // As the API: the run's record kept for the next run's catch-up decision.
+            const rec = (c as Wake).runs?.find((r) => r.key === 'cron.last_run');
+            if (rec) lastRecord = { value: rec.value, updatedAt: Date.now() };
             return { ok: true as const, noted: true };
           },
+          neonAdminRun: async () => ({ ok: true as const, run: lastRecord }),
         },
         rpc,
         'api',
@@ -615,18 +621,24 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
       return { sum, opens: opens - before.opens, wakes: wakes.slice(before.wakes), rpcs: rpc.slice(before.rpc) };
     };
     const fifteen = { OPS_EVERY_MINUTES: '15', NEON_PLAN: PLAN } as Partial<Env>;
-    for (const m of [5, 10, 20, 25, 35, 40, 50, 55]) {
+    // A healthy :00 run first (its record is what the off-quarter runs read).
+    expect((await run(0, fifteen)).opens).toBe(0 + 1);
+    for (const m of [5, 10]) {
       const r = await run(m, fifteen);
       expect(r.opens, `:${m}`).toBe(0);
       expect(r.wakes, `:${m}`).toEqual([]);
       expect(r.sum.calls.ops, `:${m}`).toBeUndefined();
       expect(r.sum.calls.neon_mark, `:${m}`).toBeUndefined();
+      // One call to read the record (D872 after review): no Neon.
+      expect(r.sum.calls.ops_check, `:${m}`).toBe(1);
+      expect(r.rpcs).toContain('api.neonAdminRun');
       expect(r.sum).toMatchObject({ feed: false, watcher: false });
       // The notices still ran (their page reads).
       expect(r.rpcs).toEqual(expect.arrayContaining(['api.pendingNotices', 'console.pendingMemberNotices']));
     }
-    for (const m of [0, 15, 30, 45]) {
+    for (const m of [15, 30, 45]) {
       const r = await run(m, fifteen);
+      expect(r.sum.calls.ops_check).toBeUndefined();
       expect(r.opens, `:${m}`).toBe(1);
       expect(r.sum).toMatchObject({ feed: true, watcher: true });
       expect(r.sum.calls.ops).toBe(1);
@@ -636,6 +648,8 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
       expect(JSON.parse(r.wakes[0]!.runs![0]!.value)).toMatchObject({ feed: true, watcher: true, calls: r.sum.calls });
       expect(r.rpcs[r.rpcs.length - 1]).toBe('api.neonWake');
     }
+    // After each healthy quarter hour the next runs read the record and don't repeat it.
+    for (const m of [50, 55]) expect((await run(m, fifteen)).opens, `:${m}`).toBe(0);
     // The default (no var, or anything but 15): every run opens the ledger, as before; without NEON_PLAN no report.
     for (const over of [{}, { OPS_EVERY_MINUTES: '5' }, { OPS_EVERY_MINUTES: '30' }] as Partial<Env>[]) {
       for (const m of [5, 10]) {
@@ -648,6 +662,46 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
     }
     // NEON_PLAN at the default 5: every run reports.
     expect((await run(5, { NEON_PLAN: PLAN } as Partial<Env>)).wakes).toHaveLength(1);
+  });
+
+  it('OPS_EVERY_MINUTES 15 (D872 after review): a failed or missing quarter-hour run is caught up once by the next 5-minute run; a healthy one is never repeated', async () => {
+    const at = (h: number, m: number) => Date.UTC(2031, 2, 3, h, m);
+    const run = async (h: number, m: number) => {
+      forgetAccepted();
+      const before = { opens, wakes: wakes.length };
+      const sum = await everyFiveMinutes(env({ OPS_EVERY_MINUTES: '15', NEON_PLAN: PLAN } as Partial<Env>), at(h, m) + 2_000, at(h, m));
+      return { sum, opens: opens - before.opens };
+    };
+    lastRecord = null;
+    // No record at all (the first run after the deploy): the :05 run catches up, then :10 doesn't.
+    expect((await run(9, 5)).sum).toMatchObject({ catchUp: true, feed: true, watcher: true });
+    expect((await run(9, 10)).opens).toBe(0);
+    // The :15 run fails to reach the ledger: it reports feed and watcher false; :20 catches up, once; :25 doesn't.
+    const failing = vi.spyOn(opsSource, 'open').mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+    expect((await run(9, 15)).sum).toMatchObject({ feed: false, watcher: false });
+    failing.mockRestore();
+    vi.spyOn(opsSource, 'open').mockImplementation(async () => {
+      opens++;
+      return ops;
+    });
+    const caught = await run(9, 20);
+    expect(caught.opens).toBe(1);
+    expect(caught.sum).toMatchObject({ catchUp: true, feed: true, watcher: true });
+    expect((await run(9, 25)).opens).toBe(0);
+    // The :30 run never ran (its invocation missed): the stored record is from :20, before the quarter: :35 catches up.
+    expect((await run(9, 35)).sum).toMatchObject({ catchUp: true });
+    expect((await run(9, 40)).opens).toBe(0);
+    // A healthy :45: :50 and :55 read it and do nothing.
+    expect((await run(9, 45)).opens).toBe(1);
+    for (const m of [50, 55]) expect((await run(9, m)).opens).toBe(0);
+    // The API unreadable: no catch-up (the next quarter hour runs as usual).
+    lastRecord = null;
+    const base = env({ OPS_EVERY_MINUTES: '15', NEON_PLAN: PLAN } as Partial<Env>);
+    const broken = { ...base, API: new Proxy(base.API, { get: (t, p) => (p === 'neonAdminRun' ? async () => Promise.reject(new Error('down')) : (t as unknown as Record<string | symbol, unknown>)[p]) }) } as Env;
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const before = opens;
+    await everyFiveMinutes(broken, at(10, 5), at(10, 5));
+    expect(opens).toBe(before);
   });
 
   it('a job given too little for a page reads nothing and moves no cursor', async () => {

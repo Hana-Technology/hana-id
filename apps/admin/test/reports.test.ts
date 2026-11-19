@@ -198,11 +198,15 @@ describe('the C12 crons', () => {
     let lines = await run('*/5 * * * *', e, Date.UTC(2026, 10, 5, 3, 10));
     expect(opens).not.toHaveBeenCalled();
     expect(lines.find((l) => l.event === 'cron' && l.step === 'ops')).toMatchObject({ outcome: 'skipped', code: 'ops_not_due' });
-    lines = await run('*/5 * * * *', e, Date.UTC(2026, 10, 5, 3, 15));
+    // A scheduledTime a little before its minute still counts as the :15 tick.
+    lines = await run('*/5 * * * *', e, Date.UTC(2026, 10, 5, 3, 14, 59));
     expect(opens).toHaveBeenCalledTimes(1);
     // The hand-set interim trigger (every 30 minutes, D872) is the 5-minute job too: its :30 run opens the ledger.
     lines = await run('*/30 * * * *', e, Date.UTC(2026, 10, 5, 3, 30));
     expect(opens).toHaveBeenCalledTimes(2);
+    // The month boundary: the run at 00:00 on the 1st is a quarter hour (and a */30 tick).
+    lines = await run('*/30 * * * *', e, Date.UTC(2026, 11, 1, 0, 0));
+    expect(opens).toHaveBeenCalledTimes(3);
     expect(lines.some((l) => l.event === 'ledger_cron')).toBe(false);
   });
 

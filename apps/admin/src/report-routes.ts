@@ -16,7 +16,7 @@ import { type StatementSqlRow, statementOf, statementView, usageInput, usageRowO
 import { errorResponse, json } from './http.ts';
 import { type LedgerStore, ledgerSource } from './ledger.ts';
 import { errorName, log } from './log.ts';
-import { trackedStore } from './neon.ts';
+import { openTracked } from './neon.ts';
 import type { RouteCtx } from './routes.ts';
 import { staffCtx } from './rpc.ts';
 import { MONTH_RE, type Refusal, exportKey, exportLedger, issueStatement, issuableFrom, monthDays, sha256Hex } from './statements.ts';
@@ -28,7 +28,7 @@ export async function withLedger(c: RouteCtx, route: string, fn: (store: LedgerS
   let store: LedgerStore | null;
   try {
     // D872: a page that opens the ledger is a Neon wake-up, reported when it closes (with NEON_PLAN only).
-    store = trackedStore(c.env, await ledgerSource.open(c.env.USAGE_DB), Date.now());
+    store = await openTracked(c.env, () => ledgerSource.open(c.env.USAGE_DB));
   } catch (err) {
     log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'error', code: 'ledger_unavailable', error: errorName(err) }, 'error');
     return errorResponse('ledger_unavailable');

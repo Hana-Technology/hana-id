@@ -4,8 +4,10 @@
 // has the model and its limits). One UPSERT per wake-up on the month's row; at 70% and 90% of the allowance one
 // `neon_compute_high` security event each a month, which the admin's feed emails. Without NEON_PLAN nothing is written.
 //
-// Never on a response's path: the usage write is after the response already (`waitUntil`), a cron run's note is at
-// its end. Never throws; a failed note is logged (`neon_wake_failed`) and only makes the estimate lower.
+// Where a note waits: a usage event's write is after the response already (`waitUntil`, its note with it); a console
+// report's note goes after its answer (`noteNeonWakeAfter`, the RPC's `waitUntil`); a cron run notes at its end; the
+// admin's report (`AdminRpc.neonWake`) is answered after the note. Never throws; a failed note is logged
+// (`neon_wake_failed`) and only makes the estimate lower.
 import { NEON_ALERT_PCTS, NEON_RUN_KEYS, NEON_SUSPEND_MS, type NeonRunKey, type NeonStatus, alertLevel, allowancePct, awakeMsAt, computeHours, neonMonth, neonPlanOf } from '@hana-id/console-core';
 import { eventId } from '../changes/guard.ts';
 import type { Env } from '../env.ts';
@@ -13,14 +15,22 @@ import { log } from '../log.ts';
 
 /**
  * The month's row after one wake-up `[?2, ?3]` (?3: the connection's close plus NEON_SUSPEND_MS), in one statement: a
- * wake-up after the open window closes it into `closed_ms` and opens its own; one inside it extends it. SQLite's SET
- * reads the row as it was before the update, so the three CASEs agree.
+ * wake-up after the open window closes it into `closed_ms` and opens its own; one inside it extends it; a late report
+ * reaching into the open window moves its start back, one entirely before it adds its own length (both err high). SQLite's SET reads the row as it was before the
+ * update, so the CASEs agree. `first_at`: the month's earliest wake-up (console-core `addWake` is the reference).
  */
-export const NEON_WAKE_SQL = `INSERT INTO neon_compute (month, closed_ms, win_start, win_end, windows, alerted, updated_at) VALUES (?1, 0, ?2, ?3, 1, 0, ?4)
+export const NEON_WAKE_SQL = `INSERT INTO neon_compute (month, first_at, closed_ms, win_start, win_end, windows, alerted, updated_at) VALUES (?1, ?2, 0, ?2, ?3, 1, 0, ?4)
   ON CONFLICT (month) DO UPDATE SET
-    closed_ms = CASE WHEN excluded.win_start > neon_compute.win_end THEN neon_compute.closed_ms + (neon_compute.win_end - neon_compute.win_start) ELSE neon_compute.closed_ms END,
-    win_start = CASE WHEN excluded.win_start > neon_compute.win_end THEN excluded.win_start ELSE neon_compute.win_start END,
-    win_end = CASE WHEN excluded.win_start > neon_compute.win_end THEN excluded.win_end ELSE MAX(neon_compute.win_end, excluded.win_end) END,
+    first_at = MIN(neon_compute.first_at, excluded.first_at),
+    closed_ms = CASE WHEN excluded.win_start > neon_compute.win_end THEN neon_compute.closed_ms + (neon_compute.win_end - neon_compute.win_start)
+                     WHEN excluded.win_end < neon_compute.win_start THEN neon_compute.closed_ms + (excluded.win_end - excluded.win_start)
+                     ELSE neon_compute.closed_ms END,
+    win_start = CASE WHEN excluded.win_start > neon_compute.win_end THEN excluded.win_start
+                     WHEN excluded.win_end < neon_compute.win_start THEN neon_compute.win_start
+                     ELSE MIN(neon_compute.win_start, excluded.win_start) END,
+    win_end = CASE WHEN excluded.win_start > neon_compute.win_end THEN excluded.win_end
+                   WHEN excluded.win_end < neon_compute.win_start THEN neon_compute.win_end
+                   ELSE MAX(neon_compute.win_end, excluded.win_end) END,
     windows = neon_compute.windows + CASE WHEN excluded.win_start > neon_compute.win_end THEN 1 ELSE 0 END,
     updated_at = excluded.updated_at
   RETURNING closed_ms, win_start, win_end, alerted`;
@@ -63,6 +73,26 @@ export async function noteNeonWake(env: Pick<Env, 'DB' | 'NEON_PLAN'>, startMs: 
   }
 }
 
+/**
+ * Notes `[startMs, now]` after the caller's answer (`exec.waitUntil`), so a console report isn't delayed by it; without
+ * an execution context it runs unawaited. Never throws.
+ */
+export function noteNeonWakeAfter(env: Pick<Env, 'DB' | 'NEON_PLAN'>, exec: Pick<ExecutionContext, 'waitUntil'> | undefined, startMs: number): void {
+  if (!neonPlanOf(env.NEON_PLAN)) return;
+  const pending = noteNeonWake(env, startMs, Date.now());
+  if (exec) exec.waitUntil(pending);
+}
+
+/** Runs `fn` (one ledger connection) and, after the caller's answer, notes its wake-up whatever it answered. */
+export async function withNeonWakeAfter<T>(env: Pick<Env, 'DB' | 'NEON_PLAN'>, exec: Pick<ExecutionContext, 'waitUntil'> | undefined, fn: () => Promise<T>): Promise<T> {
+  const start = Date.now();
+  try {
+    return await fn();
+  } finally {
+    noteNeonWakeAfter(env, exec, start);
+  }
+}
+
 /** Runs `fn` (one ledger connection) and notes its wake-up after it, whatever it answered. */
 export async function withNeonWake<T>(env: Pick<Env, 'DB' | 'NEON_PLAN'>, fn: () => Promise<T>): Promise<T> {
   const start = Date.now();
@@ -89,6 +119,12 @@ export async function storeAdminRuns(env: Pick<Env, 'DB'>, runs: { key: NeonRunK
   }
 }
 
+/** One admin run's stored record (`AdminRpc.neonAdminRun`), or null. Throws on a D1 failure (the RPC answers `internal`). */
+export async function adminRun(env: Pick<Env, 'DB'>, key: NeonRunKey): Promise<{ value: string; updatedAt: number } | null> {
+  const r = await env.DB.prepare('SELECT value_json, updated_at FROM neon_admin_runs WHERE key = ?1').bind(key).first<{ value_json: string; updated_at: number }>();
+  return r ? { value: r.value_json, updatedAt: Number(r.updated_at) } : null;
+}
+
 /** `ApiSystemStatus.neon`: the month's row and the admin runs' records; `off` without NEON_PLAN, `error` when D1 fails. */
 export async function neonStatus(env: Pick<Env, 'DB' | 'NEON_PLAN'>, now: number = Date.now()): Promise<NeonStatus> {
   const plan = neonPlanOf(env.NEON_PLAN);
@@ -96,7 +132,7 @@ export async function neonStatus(env: Pick<Env, 'DB' | 'NEON_PLAN'>, now: number
   try {
     const month = neonMonth(now);
     const [row, runs] = await Promise.all([
-      env.DB.prepare('SELECT closed_ms, win_start, win_end, windows, alerted, updated_at FROM neon_compute WHERE month = ?1').bind(month).first<WakeRow & { windows: number; updated_at: number }>(),
+      env.DB.prepare('SELECT first_at, closed_ms, win_start, win_end, windows, alerted, updated_at FROM neon_compute WHERE month = ?1').bind(month).first<WakeRow & { first_at: number; windows: number; updated_at: number }>(),
       env.DB.prepare('SELECT key, value_json, updated_at FROM neon_admin_runs').all<{ key: string; value_json: string; updated_at: number }>(),
     ]);
     const out: Partial<Record<NeonRunKey, { value: string; updatedAt: number }>> = {};
@@ -106,7 +142,7 @@ export async function neonStatus(env: Pick<Env, 'DB' | 'NEON_PLAN'>, now: number
       plan,
       readAt: now,
       month,
-      row: row ? { closedMs: Number(row.closed_ms), winStart: Number(row.win_start), winEnd: Number(row.win_end), windows: Number(row.windows), alerted: Number(row.alerted), updatedAt: Number(row.updated_at) } : null,
+      row: row ? { firstAt: Number(row.first_at), closedMs: Number(row.closed_ms), winStart: Number(row.win_start), winEnd: Number(row.win_end), windows: Number(row.windows), alerted: Number(row.alerted), updatedAt: Number(row.updated_at) } : null,
       runs: out,
     };
   } catch {

@@ -15,7 +15,7 @@ import { outbound } from './email/sender.ts';
 import { runFeed } from './feed.ts';
 import { errorName, log } from './log.ts';
 import { Budget, RUN_BUDGET, meteredEnv } from './mail.ts';
-import { opsDueAt, reportNeonWake, tracksNeon } from './neon.ts';
+import { opsDueAt, opsDueOrCatchUp, reportNeonWake, tracksNeon } from './neon.ts';
 import { runNotices } from './notices.ts';
 import { type OpsStore, opsSource } from './ops.ts';
 import { runWatcher } from './watcher.ts';
@@ -28,6 +28,8 @@ export interface RunSummary {
   feed: boolean;
   watcher: boolean;
   budgetLeft: number;
+  /** D872: this off-quarter run caught up a quarter hour's feed and watcher that didn't run or failed. */
+  catchUp?: true;
   /** The run's outbound calls per job (D380): `ops` (the connection), `notices`, `feed`, `watcher`. */
   calls: Record<string, number>;
 }
@@ -42,7 +44,9 @@ export async function everyFiveMinutes(env: Env, now = Date.now(), scheduledTime
   const menv = meteredEnv(env, budget);
   const sender = outbound.email(env);
   if (!sender.configured) log({ event: 'cron', step: 'email', outcome: 'skipped', code: 'email_api_key_missing' }, 'error');
-  const opsDue = opsDueAt(env, scheduledTime);
+  // D872: at the default every run; at 15 the quarter hour's, or a catch-up decided from the API's record (one call).
+  const { due: opsDue, catchUp } = env.USAGE_DB ? await budget.as('ops_check', () => opsDueOrCatchUp(env, budget, scheduledTime)) : { due: opsDueAt(env, scheduledTime), catchUp: false };
+  if (catchUp) log({ event: 'cron', step: 'ops', outcome: 'ok', code: 'catch_up' }, 'warn');
   // The ops connection's call is set aside first, so the notices can't leave the feed and the watcher without one; with
   // NEON_PLAN the wake-up's report too (D872).
   if (env.USAGE_DB && opsDue) {
@@ -52,7 +56,7 @@ export async function everyFiveMinutes(env: Env, now = Date.now(), scheduledTime
   const notices = await budget.as('notices', () => runNotices(menv, sender, budget));
   const acked = (notices.changes?.acked ?? 0) + (notices.members?.acked ?? 0);
   const failed = (notices.changes?.failed ?? 0) + (notices.members?.failed ?? 0);
-  const summary: RunSummary = { at: now, notices: notices.changes || notices.members ? { acked, failed } : null, feed: false, watcher: false, budgetLeft: 0, calls: {} };
+  const summary: RunSummary = { at: now, notices: notices.changes || notices.members ? { acked, failed } : null, feed: false, watcher: false, budgetLeft: 0, ...(catchUp ? { catchUp: true as const } : {}), calls: {} };
   if (!opsDue) {
     // D872: not this run's turn: the ledger stays closed, so Neon isn't woken for the notices (they don't need it).
     summary.budgetLeft = budget.remaining;

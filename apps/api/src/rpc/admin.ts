@@ -42,6 +42,8 @@ import {
   purgeAuditInput,
   purgeDirectoryInput,
   purgeUserEventsInput,
+  NEON_WAKE_MAX_SKEW_MS,
+  neonAdminRunInput,
   neonPlanOf,
   neonWakeInput,
   relayerKeysInput,
@@ -91,7 +93,7 @@ import { linkStats } from '../link-usage.ts';
 import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
 import { refuse } from '../changes/cas.ts';
-import { noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
+import { adminRun, noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
 const HANA = ['hana'] as const;
@@ -241,6 +243,8 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   neonWake(c: unknown) {
     return runRpc(this.env, 'admin.neonWake', neonWakeInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, w }) => {
       if (!neonPlanOf(this.env.NEON_PLAN)) return { noted: false };
+      // A report from far off this clock is a bug or a forgery: it would move a month's windows (D872 after review).
+      if (Math.abs(input.startMs - w.now) > NEON_WAKE_MAX_SKEW_MS) refuse('bad_request', 'startMs is more than an hour from now');
       for (const r of input.runs ?? []) {
         try {
           JSON.parse(r.value);
@@ -252,6 +256,14 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
       await storeAdminRuns(this.env, input.runs ?? [], w.now);
       return { noted: true };
     });
+  }
+
+  /**
+   * D872 (after review): one admin run's last record as `neonWake` stored it, so the 5-minute run can tell, without
+   * Neon, whether the quarter-hour's feed and watcher ran (a catch-up otherwise). `{run: null}` without one.
+   */
+  neonAdminRun(c: unknown) {
+    return runRpc(this.env, 'admin.neonAdminRun', neonAdminRunInput, c, { actors: HANA_OR_SYSTEM }, async ({ input }) => ({ run: await adminRun(this.env, input.key) }));
   }
 
   // ---- governance (batch C14, D83, D86): read-only, the snapshot GET /v1/governance serves ----

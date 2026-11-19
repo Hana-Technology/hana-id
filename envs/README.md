@@ -57,7 +57,9 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
     how often the admin's 5-minute trigger opens the usage ledger for the security feed and the on-chain watcher, `5`
     (the default: every run) or `15` (only the runs at `:00`, `:15`, `:30`, `:45`, beside the 15-minute ledger run, so
     Neon's free plan is woken four times an hour instead of twelve); the blocking notices go every 5 minutes either
-    way. `15` is refused on any network but testnet, with no override. It becomes the admin's `OPS_EVERY_MINUTES` var
+    way, and a quarter hour that didn't run or failed is caught up once by the next run. `15` is refused on any network
+    but testnet, with no override, and without `usage.neonPlan` (the catch-up reads the record the plan's tracking
+    keeps). It becomes the admin's `OPS_EVERY_MINUTES` var
     (absent at 5; the triggers are the same). sandbox-dev sets `15`.
   - `usage`: `{neonRegion: "aws-ap-southeast-2", writerHyperdrive, adminHyperdrive, neonPlan?}` (D73). `neonPlan`
     (D872): `{computeHoursPerMonth, computeUnits}`, for a Neon plan with a monthly compute allowance (the free plan:

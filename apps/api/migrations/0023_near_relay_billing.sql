@@ -60,11 +60,13 @@ CREATE INDEX near_relay_billing_nonce ON near_relay_billing (relayer_pk, relayer
 -- Neon compute on the free plan (D872; edited into this file in place before it was applied anywhere, as 0022 and 0023
 -- were before): only with the `NEON_PLAN` var. One row per UTC month of the usage ledger's wake-ups as our Workers
 -- noted them (the estimate of the month's compute-hours: packages/console-core/src/neon-compute.ts): the closed
--- windows' total, the open window, how many windows, the highest alert raised (0, 70, 90). One small UPSERT per
--- wake-up (a login's usage write, a cron run that opened the ledger, a staff page that did). No user data. Kept (one
--- row a month).
+-- windows' total, the open window, how many windows, the highest alert raised (0, 70, 90), and when counting began
+-- (`first_at`: after the 1st in the month of the deploy that turned it on, so that month's figure is partial). One small
+-- UPSERT per wake-up (a usage event's write, a cron run that opened the ledger, a staff page or console report that
+-- did). No user data. Kept (one row a month).
 CREATE TABLE neon_compute (
   month      TEXT PRIMARY KEY CHECK (length(month) = 7 AND month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'),
+  first_at   INTEGER NOT NULL,
   closed_ms  INTEGER NOT NULL CHECK (closed_ms >= 0),
   win_start  INTEGER NOT NULL,
   win_end    INTEGER NOT NULL CHECK (win_end >= win_start),

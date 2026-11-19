@@ -1075,7 +1075,7 @@ describe('Neon compute on the free plan (D872)', () => {
     plan: { computeHoursPerMonth: 100, computeUnits: 0.25 },
     readAt: NOW,
     month: month(),
-    row: awakeH === null ? null : { closedMs: awakeH * HOUR, winStart: NOW - MIN, winEnd: NOW - MIN, windows: 340, alerted: 0, updatedAt: NOW - MIN },
+    row: awakeH === null ? null : { firstAt: Date.UTC(new Date(NOW).getUTCFullYear(), new Date(NOW).getUTCMonth(), 1, 0, 0, 2), closedMs: awakeH * HOUR, winStart: NOW - MIN, winEnd: NOW - MIN, windows: 340, alerted: 0, updatedAt: NOW - MIN },
     runs: {
       'cron.last_run': { value: JSON.stringify(fiveRun({ at: NOW - 4 * MIN })), updatedAt: NOW - 4 * MIN },
       'ledger_cron.last_run': { value: JSON.stringify(fifteenRun({ at: NOW - 4 * MIN })), updatedAt: NOW - 4 * MIN },
@@ -1139,6 +1139,33 @@ describe('Neon compute on the free plan (D872)', () => {
     expect(tile(await read(), 'neon-compute').detail).toMatch(/^About 4\.3 of 100 /u);
     world.api = apiAnswer({ neon: neon(null) });
     expect(tile(await read(), 'neon-compute').detail).toMatch(/^About 0 of 100 compute-hours used this month \(estimate\) · 0 wake-ups/u);
+  });
+
+  it('a month counted only from the deploy: amber, “Counted since”, no projection and no share of the allowance', async () => {
+    tracked();
+    // Counting began 45 minutes into the 1st (after the 30 minutes a whole month allows).
+    const first = Date.UTC(new Date(NOW).getUTCFullYear(), new Date(NOW).getUTCMonth(), 1, 0, 45);
+    const partial = neon(4, {});
+    (partial as { row: Record<string, unknown> }).row.firstAt = first;
+    world.api = apiAnswer({ neon: partial });
+    const a = await read();
+    invariants(a);
+    const since = new Date(first);
+    const day = `${since.getUTCDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][since.getUTCMonth()]}`;
+    const t = tile(a, 'neon-compute');
+    expect(t).toMatchObject({ state: 'warning', detail: `Counted since ${day}: about 1 compute-hours since then. Neon’s own figure for the month is higher: check Neon’s console.` });
+    expect(t.detail).not.toMatch(/of 100|on course/u);
+    expect(issuesOf(a, 'neon-compute').map((i) => [i.severity, i.title, i.playbook?.id])).toEqual([['warning', `This month’s Neon estimate only counts from ${day}: check Neon’s console for the month’s figure`, 'neon-compute-high']]);
+  });
+
+  it('Neon down: the 15-minute tile says the run happened but couldn’t reach the database', async () => {
+    tracked();
+    world.api = apiAnswer({ neon: neon(10, { runs: { ...neon(10).runs, 'ledger.health': { value: JSON.stringify({ at: NOW - 2 * MIN, ok: false }), updatedAt: NOW - 2 * MIN } } }) });
+    const a = await read();
+    invariants(a);
+    expect(tile(a, 'cron-admin-15')).toMatchObject({ state: 'warning', detail: 'Last ran 2 min ago but couldn’t reach the usage database' });
+    expect(issuesOf(a, 'cron-admin-15')).toEqual([]);
+    expect(tile(a, 'ledger').state).toBe('critical');
   });
 
   it('unknown, never green: an older API, an API without the plan, a D1 failure, no report yet, a stale or failed report', async () => {

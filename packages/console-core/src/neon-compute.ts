@@ -49,9 +49,13 @@ export function nextMonthStart(month: string): number {
   return Date.UTC(m === 12 ? y + 1 : y, m === 12 ? 0 : m, 1);
 }
 
-/** One month's row: the closed windows' total, the open window, how many windows, and the highest alert raised. */
+/**
+ * One month's row: the closed windows' total, the open window, how many windows, the highest alert raised, and when
+ * counting began (`firstAt`: the month's first noted wake-up; after the 1st on the month of the deploy that turned it on).
+ */
 export interface NeonMonthRow {
   month: string;
+  firstAt: number;
   closedMs: number;
   winStart: number;
   winEnd: number;
@@ -62,14 +66,32 @@ export interface NeonMonthRow {
 /**
  * The row after one wake-up `[startMs, endMs]` (the same arithmetic as the API's single UPSERT, which is the one that
  * runs; this is its reference, and what the tests check the SQL against). A wake-up after the open window ends closes
- * it and opens a new one; one inside it (or starting before it: a late note) extends it.
+ * it and opens a new one; one inside it extends it. A late report: one that starts before the open window but reaches
+ * it moves the window's start back; one that ends before the open window began is added to the closed total on its
+ * own (it may overlap a closed window: the estimate errs high, never low). Reports start within an hour of the API's
+ * clock (`NEON_WAKE_MAX_SKEW_MS`), which bounds both.
  */
 export function addWake(row: NeonMonthRow | null, month: string, startMs: number, endMs: number): NeonMonthRow {
   const end = Math.max(startMs, endMs) + NEON_SUSPEND_MS;
-  if (!row) return { month, closedMs: 0, winStart: startMs, winEnd: end, windows: 1, alerted: 0 };
-  if (startMs > row.winEnd) return { ...row, closedMs: row.closedMs + (row.winEnd - row.winStart), winStart: startMs, winEnd: end, windows: row.windows + 1 };
-  return { ...row, winEnd: Math.max(row.winEnd, end) };
+  if (!row) return { month, firstAt: startMs, closedMs: 0, winStart: startMs, winEnd: end, windows: 1, alerted: 0 };
+  const firstAt = Math.min(row.firstAt, startMs);
+  if (startMs > row.winEnd) return { ...row, firstAt, closedMs: row.closedMs + (row.winEnd - row.winStart), winStart: startMs, winEnd: end, windows: row.windows + 1 };
+  if (end < row.winStart) return { ...row, firstAt, closedMs: row.closedMs + (end - startMs) };
+  return { ...row, firstAt, winStart: Math.min(row.winStart, startMs), winEnd: Math.max(row.winEnd, end) };
 }
+
+/** A wake-up report whose start is further than this from the API's clock is refused (`AdminRpc.neonWake`). */
+export const NEON_WAKE_MAX_SKEW_MS = 60 * 60_000;
+
+/**
+ * Whether counting began after the month's start (the month of the deploy that turned it on): the crons wake Neon at
+ * 00:00 on the 1st, so a first wake-up more than this after it means the month's earlier hours weren't counted.
+ */
+export const NEON_PARTIAL_AFTER_MS = 30 * 60_000;
+export const countedPartly = (month: string, firstAt: number): boolean => {
+  const [y, m] = month.split('-').map(Number) as [number, number];
+  return firstAt - Date.UTC(y, m - 1, 1) > NEON_PARTIAL_AFTER_MS;
+};
 
 /** The month's estimated awake time at `now`: the closed windows, plus the open one up to now (never beyond its end). */
 export function awakeMsAt(row: Pick<NeonMonthRow, 'closedMs' | 'winStart' | 'winEnd'>, now: number): number {
@@ -113,6 +135,9 @@ export const neonWakeInput = ctx
   .refine((v) => v.endMs >= v.startMs && v.endMs - v.startMs <= 15 * 60_000, { message: 'endMs is at or after startMs, within 15 minutes' });
 export type NeonWakeInput = z.infer<typeof neonWakeInput>;
 
+/** `AdminRpc.neonAdminRun` (a `system` or `hana` actor): one admin run's last record as `neonWake` stored it (D872). */
+export const neonAdminRunInput = ctx.extend({ key: z.enum(NEON_RUN_KEYS) }).strict();
+
 /**
  * `ApiSystemStatus.neon` (D872): `off` without NEON_PLAN (nothing noted or shown); `error` when D1 couldn't be read;
  * `on` with the month's row (null before the month's first wake-up) and the admin runs' last records.
@@ -126,7 +151,7 @@ export type NeonStatus =
       /** When the API read it (ms). */
       readAt: number;
       month: string;
-      row: { closedMs: number; winStart: number; winEnd: number; windows: number; alerted: number; updatedAt: number } | null;
+      row: { firstAt: number; closedMs: number; winStart: number; winEnd: number; windows: number; alerted: number; updatedAt: number } | null;
       /** The admin runs' records, as their runs handed them (`value` is the run's JSON). */
       runs: Partial<Record<NeonRunKey, { value: string; updatedAt: number }>>;
     };

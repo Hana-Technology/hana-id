@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NEON_SUSPEND_MS, addWake, alertLevel, allowancePct, awakeMsAt, computeHours, neonMonth, neonPlanOf, neonWakeInput, nextMonthStart } from '../src/neon-compute.ts';
+import { NEON_SUSPEND_MS, addWake, alertLevel, countedPartly, allowancePct, awakeMsAt, computeHours, neonMonth, neonPlanOf, neonWakeInput, nextMonthStart } from '../src/neon-compute.ts';
 
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 10, 19, 10, 0);
@@ -13,7 +13,7 @@ describe('Neon compute estimate (D872)', () => {
 
   it('a wake-up keeps the compute awake until 5 minutes after the connection closed', () => {
     const r = addWake(null, '2026-11', T0, T0 + 10_000);
-    expect(r).toEqual({ month: '2026-11', closedMs: 0, winStart: T0, winEnd: T0 + 10_000 + NEON_SUSPEND_MS, windows: 1, alerted: 0 });
+    expect(r).toEqual({ month: '2026-11', firstAt: T0, closedMs: 0, winStart: T0, winEnd: T0 + 10_000 + NEON_SUSPEND_MS, windows: 1, alerted: 0 });
     expect(awakeMsAt(r, T0 + 2 * MIN)).toBe(2 * MIN);
     expect(awakeMsAt(r, T0 + 60 * MIN)).toBe(10_000 + 5 * MIN);
   });
@@ -28,10 +28,17 @@ describe('Neon compute estimate (D872)', () => {
     expect(r.windows).toBe(2);
     expect(r.closedMs).toBe(7 * MIN + 500);
     expect(awakeMsAt(r, T0 + 30 * MIN)).toBe(7 * MIN + 500 + 10_000 + 5 * MIN);
-    // A late note (starting before the open window) only extends it.
+    // A late report (starting before the open window, which began at :15) moves the window's start back: no new window,
+    // nothing closed, the gap counted (the estimate errs high).
     const late = addWake(r, '2026-11', T0 + 14 * MIN, T0 + 14 * MIN + 1);
     expect(late.windows).toBe(2);
     expect(late.closedMs).toBe(r.closedMs);
+    expect(late.winStart).toBe(T0 + 14 * MIN);
+    expect(awakeMsAt(late, T0 + 30 * MIN)).toBe(awakeMsAt(r, T0 + 30 * MIN) + MIN);
+    expect(late.firstAt).toBe(T0);
+    // One that ended before the open window began (a report an hour late) adds its own length, the window untouched.
+    const older = addWake(r, '2026-11', T0 + 3 * MIN, T0 + 3 * MIN + 1000);
+    expect(older).toMatchObject({ winStart: r.winStart, winEnd: r.winEnd, windows: r.windows, closedMs: r.closedMs + 1000 + NEON_SUSPEND_MS });
   });
 
   it('the free plan: 96 runs a day 15 minutes apart, 10 s each, is about 2.1 compute-hours a day (0.25 CU)', () => {
@@ -53,6 +60,23 @@ describe('Neon compute estimate (D872)', () => {
     expect(neonMonth(Date.UTC(2026, 11, 1, 0, 0))).toBe('2026-12');
     expect(nextMonthStart('2026-11')).toBe(Date.UTC(2026, 11, 1));
     expect(nextMonthStart('2026-12')).toBe(Date.UTC(2027, 0, 1));
+  });
+
+  it('counting that began after the 1st is partial (the deploy’s month); from 00:00 on the 1st it is the whole month', () => {
+    expect(countedPartly('2026-11', Date.UTC(2026, 10, 1, 0, 0, 3))).toBe(false);
+    expect(countedPartly('2026-11', Date.UTC(2026, 10, 1, 0, 29))).toBe(false);
+    expect(countedPartly('2026-11', Date.UTC(2026, 10, 1, 0, 31))).toBe(true);
+    expect(countedPartly('2026-11', Date.UTC(2026, 10, 27, 9, 0))).toBe(true);
+    expect(countedPartly('2026-12', Date.UTC(2026, 11, 1, 0, 0))).toBe(false);
+  });
+
+  it('a window across midnight on the 1st counts in the month it began; the next month starts its own row', () => {
+    const nov = addWake(null, neonMonth(Date.UTC(2026, 10, 30, 23, 58)), Date.UTC(2026, 10, 30, 23, 58), Date.UTC(2026, 10, 30, 23, 58, 10));
+    expect(nov.month).toBe('2026-11');
+    expect(nov.winEnd).toBeGreaterThan(Date.UTC(2026, 11, 1));
+    const dec = addWake(null, neonMonth(Date.UTC(2026, 11, 1, 0, 0)), Date.UTC(2026, 11, 1, 0, 0), Date.UTC(2026, 11, 1, 0, 0, 10));
+    expect(dec).toMatchObject({ month: '2026-12', closedMs: 0, windows: 1 });
+    expect(countedPartly(dec.month, dec.firstAt)).toBe(false);
   });
 
   it('the alert levels: 70 and 90 of the allowance', () => {

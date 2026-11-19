@@ -96,6 +96,8 @@ export interface AdminRpcClient {
   purgeAudit(c: unknown): Answer<ApiPurgeAuditResult>;
   /** D872: this Worker had the usage ledger open (a wake-up of the Neon compute estimate), with a cron run's records. */
   neonWake(c: unknown): Answer<{ noted: boolean }>;
+  /** D872: one admin run's last record as `neonWake` stored it (the 5-minute run's catch-up decision). */
+  neonAdminRun(c: unknown): Answer<{ run: { value: string; updatedAt: number } | null }>;
   /** The System status page (D425): the API's build, hot DB, crons, notice backlog, pool keys and governance. */
   systemStatus(c: unknown): Answer<ApiSystemStatus>;
   /** "Free network fees" (D843): one sponsored chain's relayer, its waiting transactions and staff log. */

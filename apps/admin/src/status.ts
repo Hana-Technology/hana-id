@@ -27,7 +27,7 @@ import { type WatchdogStatusView, findingsOf, statusView } from './monitoring.ts
 import { arr, num, obj, plainString, str } from './plain.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
 import { MIN_PARTITIONS_AHEAD } from './security.ts';
-import { NEON_ALERT_PCTS, type NeonStatus, allowancePct, awakeMsAt, computeHours, nextMonthStart } from '@hana-id/console-core';
+import { NEON_ALERT_PCTS, type NeonStatus, allowancePct, awakeMsAt, computeHours, countedPartly, nextMonthStart } from '@hana-id/console-core';
 import { opsEveryMinutesOf, tracksNeon } from './neon.ts';
 import { type ChainPlain, LINE_LABELS, STATE_LABELS, evmRelayPath, evmRelayTitle, explainChain } from './evm-relay.ts';
 import { type BuildRead, CallCount, type NearEndpoint, type NearRead, SLOW_MS, buildTargets, nearEndpoints, readBuild, readNear } from './status-probes.ts';
@@ -853,7 +853,12 @@ function jobTiles(r: Report, env: Env, s: Sources): void {
   }
   const fifteen = parseRun(s.ledger.state.get(LEDGER_LAST_RUN)?.value);
   const fifBase: TileInput = { id: 'cron-admin-15', group: 'jobs', name: 'Admin every 15 min (ledger)', affects: 'Gas settlement, the ledger’s alerts, statement notices, and the daily checks and rate', detail: '', link: L.feed };
-  if (ledgerDown) r.add({ ...fifBase, detail: 'Unknown: its record is in the usage ledger, which can’t be read' }, [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
+  // D872: the run reported after its record (the ledger's health) and couldn't reach the database: it ran.
+  const healthAt = s.ledger.fromRun?.at ?? null;
+  const fifAt = fifteen ? num(fifteen.at) : null;
+  if (s.ledger.fromRun && !s.ledger.ok && healthAt !== null && (fifAt === null || healthAt > fifAt)) {
+    r.add({ ...fifBase, detail: `Last ran ${ago(now - healthAt)} ago but couldn’t reach the usage database` }, [...cronProblems('The admin’s 15-minute cron', healthAt, CRON_INTERVALS.adminFifteen, now), { severity: 'warning', title: 'n/a', action: '', issue: false }]);
+  } else if (ledgerDown) r.add({ ...fifBase, detail: 'Unknown: its record is in the usage ledger, which can’t be read' }, [{ severity: 'unknown', title: 'n/a', action: '', issue: false }]);
   else if (!fifteen || num(fifteen.at) === null) r.add({ ...fifBase, detail: 'No run recorded yet' }, [{ severity: 'unknown', title: 'The admin’s 15-minute cron has no recorded run', action: 'It records each run from this release on: wait 15 minutes, else check this Worker’s logs (`ledger_cron`).', key: 'never' }]);
   else {
     const at = num(fifteen.at)!;
@@ -1029,6 +1034,23 @@ function neonComputeTile(r: Report, env: Env, s: Sources): void {
   const awake = n.row ? awakeMsAt(n.row, now) : 0;
   const hours = computeHours(awake, n.plan.computeUnits);
   const pct = allowancePct(hours, n.plan);
+  const [amber, red] = NEON_ALERT_PCTS;
+  // D872 after review: counting began after the 1st (the deploy's month): Neon counted hours this tile never saw, so no
+  // projection and no share of the allowance; amber all month, and the alerts only know what was counted.
+  if (n.row && countedPartly(n.month, n.row.firstAt)) {
+    const since = new Date(n.row.firstAt);
+    const sinceText = `${since.getUTCDate()} ${MONTH_NAMES[since.getUTCMonth()]!.slice(0, 3)}`;
+    const problems: Problem[] = [
+      {
+        severity: pct >= red ? 'critical' : 'warning',
+        title: `This month’s Neon estimate only counts from ${sinceText}: check Neon’s console for the month’s figure`,
+        action: 'The estimate started at the deploy that turned it on, so the month’s earlier hours are missing here, and its alerts only know what was counted. Read Neon’s console (the project, then Usage); from the 1st the tile counts the whole month.',
+        playbook: 'neon-compute-high',
+        key: 'partial',
+      },
+    ];
+    return r.add({ ...base, detail: `Counted since ${sinceText}: about ${hoursText(hours)} compute-hours since then. Neon’s own figure for the month is higher: check Neon’s console.` }, problems);
+  }
   const start = Date.UTC(Number(n.month.slice(0, 4)), Number(n.month.slice(5, 7)) - 1, 1);
   const end = nextMonthStart(n.month);
   const elapsed = Math.max(now - start, 60 * MIN);
@@ -1037,7 +1059,6 @@ function neonComputeTile(r: Report, env: Env, s: Sources): void {
   const used = `about ${hoursText(hours)} of ${n.plan.computeHoursPerMonth} compute-hours used this month (estimate)`;
   const detail = `${used[0]!.toUpperCase()}${used.slice(1)} · ${n.row?.windows ?? 0} wake-up${n.row?.windows === 1 ? '' : 's'} · on course for about ${hoursText(projected)} · starts again on ${resets}`;
   const problems: Problem[] = [];
-  const [amber, red] = NEON_ALERT_PCTS;
   if (pct >= amber) {
     problems.push({
       severity: pct >= red ? 'critical' : 'warning',

@@ -43,7 +43,7 @@ import {
 import { errorResponse, json } from './http.ts';
 import { type LedgerStore, ledgerSource } from './ledger.ts';
 import { errorName, log } from './log.ts';
-import { trackedStore } from './neon.ts';
+import { openTracked } from './neon.ts';
 import type { RouteCtx } from './routes.ts';
 import { staffCtx } from './rpc.ts';
 import { budgetAlert, staffCall } from './users.ts';
@@ -183,7 +183,7 @@ export async function supportLookupRoute(c: RouteCtx): Promise<Response> {
   let unavailable = `${LEDGER_UNAVAILABLE}: USAGE_DB is not bound in this environment (usage capture is off)`;
   const emailsPart = lookupEmails(c, result, body.ticket);
   try {
-    store = trackedStore(c.env, await ledgerSource.open(c.env.USAGE_DB), Date.now());
+    store = await openTracked(c.env, () => ledgerSource.open(c.env.USAGE_DB));
   } catch (err) {
     unavailable = `${LEDGER_UNAVAILABLE}: no connection`;
     log({ event: 'bff', route: ROUTE, requestId: c.staff.requestId, outcome: 'error', code: 'ledger_unavailable', error: errorName(err) }, 'warn');

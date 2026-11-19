@@ -287,14 +287,18 @@ export const DEFAULT_OPS_EVERY_MINUTES = 5;
 export const opsEveryMinutesOf = (admin: { opsEveryMinutes?: 5 | 15 | undefined }): 5 | 15 => admin.opsEveryMinutes ?? DEFAULT_OPS_EVERY_MINUTES;
 
 /**
- * Why this env's `admin.opsEveryMinutes` isn't allowed, or null (D872): 15 only on testnet, refused outright elsewhere
+ * Why this env's `admin.opsEveryMinutes` isn't allowed, or null (D872): 15 only on testnet and with `usage.neonPlan`,
+ * refused outright elsewhere
  * (no acknowledgement field: the looser interval is for Neon's free plan, and a production network gets 5-minute
  * monitoring whatever its plan; changing that needs its own decision).
  */
-export function opsEveryMinutesProblem(m: { network: string; admin?: { opsEveryMinutes?: 5 | 15 | undefined } | undefined }): string | null {
+export function opsEveryMinutesProblem(m: { network: string; admin?: { opsEveryMinutes?: 5 | 15 | undefined } | undefined; usage?: { neonPlan?: unknown } | undefined }): string | null {
   const v = opsEveryMinutesOf(m.admin ?? {});
-  if (v === DEFAULT_OPS_EVERY_MINUTES || m.network === 'testnet') return null;
-  return `admin.opsEveryMinutes ${v} is for testnet only (D872): on ${m.network} the security feed and the on-chain watcher run every ${DEFAULT_OPS_EVERY_MINUTES} minutes`;
+  if (v === DEFAULT_OPS_EVERY_MINUTES) return null;
+  if (m.network !== 'testnet') return `admin.opsEveryMinutes ${v} is for testnet only (D872): on ${m.network} the security feed and the on-chain watcher run every ${DEFAULT_OPS_EVERY_MINUTES} minutes`;
+  // The catch-up of a missed quarter hour reads the run's record the API keeps, which it keeps only with the plan.
+  if (m.usage?.neonPlan === undefined) return `admin.opsEveryMinutes ${v} needs usage.neonPlan (D872): it exists for a Neon plan with a monthly allowance, and its catch-up of a missed run reads what the plan's tracking keeps`;
+  return null;
 }
 
 /** The admin console's Cloudflare Access session when the manifest sets none, and the only value a production env may have (D409, D437). */

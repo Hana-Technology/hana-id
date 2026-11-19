@@ -312,12 +312,12 @@ describe('across Workers (config snapshots)', () => {
 });
 
 describe('source checks', () => {
-  it('every ledger connection is reported as a Neon wake-up (D872): the crons report at their end, every staff page through trackedStore, the status page opens none with NEON_PLAN', () => {
+  it('every ledger connection is reported as a Neon wake-up (D872): the crons report at their end, every staff page through openTracked (the clock read before the connection), the status page opens none with NEON_PLAN', () => {
     const opens = sources.flatMap(({ f, text }) => text.split('\n').filter((l) => /(ledgerSource|opsSource)\.open\(/u.test(l) && !/async open\(/u.test(l)).map((l) => ({ f: f.slice(srcDir.length), l: l.trim() })));
     for (const o of opens) {
       if (o.f === 'cron.ts' || o.f === 'ledger-cron.ts') continue;
       if (o.f === 'status.ts') continue;
-      expect(o.l, o.f).toMatch(/trackedStore\((c\.)?env, await (ledgerSource|opsSource)\.open\(/u);
+      expect(o.l, o.f).toMatch(/await openTracked\((c\.)?env, \(\) => (ledgerSource|opsSource)\.open\(/u);
     }
     expect(opens.map((o) => o.f).sort()).toEqual(['cron.ts', 'ledger-cron.ts', 'report-routes.ts', 'security.ts', 'security.ts', 'status.ts', 'support.ts']);
     const cron = sources.find(({ f }) => f.endsWith('/cron.ts'))!.text;

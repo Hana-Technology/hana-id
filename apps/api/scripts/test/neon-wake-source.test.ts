@@ -20,12 +20,16 @@ describe('Neon wake-ups (D872)', () => {
           seen++;
           // The usage event's write is inside `send` (its retry), whose one call is wrapped (the rule below).
           const inSend = /usage\/record\.ts$/u.test(f) && /usageTransport\.query\(binding, RECORD_EVENT_SQL/u.test(l);
-          if (!inSend && !/withNeonWake\(env, \(\) => (usageTransport\.query|reportTransport\.rows)\(/u.test(l)) offenders.push(`${f}:${i + 1}`);
+          if (!inSend && !/withNeonWake(After\(env, exec, |\(env, )\(\) => (usageTransport\.query|reportTransport\.rows)\(/u.test(l)) offenders.push(`${f}:${i + 1}`);
         }
         if (/await send\(binding/u.test(l) && !/withNeonWake\(env, \(\) => send\(/u.test(l)) offenders.push(`${f}:${i + 1} send`);
       });
     }
     expect(offenders).toEqual([]);
+    // The console's reports note their wake-up after the answer (D872 after review), never on the partner's wait.
+    const reports = readFileSync(`${dir}usage/reports.ts`, 'utf8');
+    expect(reports.match(/withNeonWakeAfter\(env, exec, /gu)).toHaveLength(3);
+    expect(readFileSync(`${dir}rpc/console.ts`, 'utf8').match(/Date\.now\(\), this\.ctx\)/gu)).toHaveLength(3);
     expect(seen).toBeGreaterThanOrEqual(9);
   });
 });

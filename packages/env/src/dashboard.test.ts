@@ -214,7 +214,11 @@ describe('dashboard blocks', () => {
     expect(opsEveryMinutesOf({})).toBe(DEFAULT_OPS_EVERY_MINUTES);
     expect(DEFAULT_OPS_EVERY_MINUTES).toBe(5);
     expect(manifestSchema.parse(withDashboard()).admin!.opsEveryMinutes).toBeUndefined();
-    for (const v of [5, 15]) expect(messages(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = v))), String(v)).toEqual([]);
+    const plan = { computeHoursPerMonth: 100, computeUnits: 0.25 };
+    for (const v of [5, 15]) expect(messages(withDashboard((d) => ((block(d, 'admin').opsEveryMinutes = v), (block(d, 'usage').neonPlan = plan)))), String(v)).toEqual([]);
+    // 15 needs usage.neonPlan (its catch-up reads what the plan's tracking keeps); 5 doesn't.
+    expect(messages(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = 15))).join('\n')).toContain('admin.opsEveryMinutes 15 needs usage.neonPlan');
+    expect(messages(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = 5)))).toEqual([]);
     for (const bad of [0, 1, 10, 30, 60, '15', 15.5, null]) expect(messages(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = bad))), String(bad)).not.toEqual([]);
   });
 
@@ -225,16 +229,17 @@ describe('dashboard blocks', () => {
       expect(opsEveryMinutesProblem({ network, admin: {} }), network).toBeNull();
     }
     // Any testnet env may (a staging env too): the founder's rule is testnet and staging, never production.
-    expect(opsEveryMinutesProblem({ network: 'testnet', admin: { opsEveryMinutes: 15 } })).toBeNull();
+    expect(opsEveryMinutesProblem({ network: 'testnet', admin: { opsEveryMinutes: 15 }, usage: { neonPlan: {} } })).toBeNull();
     // The schema runs it (dashboardRules): today the manifest's network is testnet only, so a mainnet manifest fails
     // on its network first; the rule is what refuses 15 once a production network is admitted.
     const mainnet = withDashboard((d) => (block(d, 'admin').opsEveryMinutes = 15));
     mainnet.network = 'mainnet';
     expect(messages(mainnet)).not.toEqual([]);
     const issues: string[] = [];
-    dashboardRules(manifestSchema.parse(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = 15))) as never, { addIssue: (i: { message?: string }) => issues.push(String(i.message)) } as never);
+    const fifteen = (d: Raw) => ((block(d, 'admin').opsEveryMinutes = 15), (block(d, 'usage').neonPlan = { computeHoursPerMonth: 100, computeUnits: 0.25 }));
+    dashboardRules(manifestSchema.parse(withDashboard(fifteen)) as never, { addIssue: (i: { message?: string }) => issues.push(String(i.message)) } as never);
     expect(issues).toEqual([]);
-    const parsed = { ...manifestSchema.parse(withDashboard((d) => (block(d, 'admin').opsEveryMinutes = 15))), network: 'mainnet' };
+    const parsed = { ...manifestSchema.parse(withDashboard(fifteen)), network: 'mainnet' };
     dashboardRules(parsed as never, { addIssue: (i: { message?: string }) => issues.push(String(i.message)) } as never);
     expect(issues.join('\n')).toContain('admin.opsEveryMinutes 15 is for testnet only');
     // An unknown acknowledgement field is refused too (the block is strict).

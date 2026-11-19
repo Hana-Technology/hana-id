@@ -74,9 +74,13 @@ test('reviewed NEAR calls: the screens', async ({ page, browserName }) => {
   // A first request opens the window; each shot then replaces what it shows.
   await runAction(page, 'opener', 'nearSignDelegate', base64Encode(relayed(E2E_STAMPS, [fn('collect', { stamp: 'arrival' })])));
   const popup = await clickLauncher(page, 'Review in Journear Passport');
+  await expect(popup.locator('h2.summary-headline')).toBeVisible();
   await popup.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   for (const s of shots) {
+    // The screen on show is marked: the injected request replaces it with a new one.
+    await popup.evaluate(() => document.querySelector('div.request')?.setAttribute('data-shown', 'old'));
     await inject(popup, s, near);
+    await expect(popup.locator('div.request:not([data-shown])')).toHaveCount(1);
     await expect(popup.locator('.app-name').first()).toHaveText(s.app);
     await expect(popup.locator('.summary-failed')).toHaveCount(0);
     for (const [size, viewport] of Object.entries(SIZES)) {

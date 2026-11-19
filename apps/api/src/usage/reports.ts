@@ -26,6 +26,7 @@ import pg from 'pg';
 import { refuse } from '../changes/cas.ts';
 import type { Env } from '../env.ts';
 import type { Limit } from '../rate-limiter.ts';
+import { withNeonWakeAfter } from './neon-compute.ts';
 
 export const REPORT_CONNECT_TIMEOUT_MS = 5_000;
 /** The writer role's statement_timeout is 5 s too (migrations-usage 0001). */
@@ -53,6 +54,10 @@ export const reportTransport = {
   },
 };
 
+/**
+ * Each report's ledger connection is a Neon wake-up (D872), noted after the answer through `exec` (the RPC's
+ * `waitUntil`), so the partner's page isn't kept waiting for it.
+ */
 /** The checks every report method makes before Neon: not the legacy org, the ledger bound, the member's limit. */
 async function admit(env: Env, orgId: string, memberId: string, now: number): Promise<Hyperdrive> {
   if (orgId === LEGACY_ORG_ID) refuse('forbidden', `The console can't read ${LEGACY_ORG_ID}`);
@@ -64,15 +69,15 @@ async function admit(env: Env, orgId: string, memberId: string, now: number): Pr
   return binding;
 }
 
-export async function orgUsage(env: Env, i: UsageInput, now = Date.now()): Promise<UsageRow[]> {
+export async function orgUsage(env: Env, i: UsageInput, now = Date.now(), exec?: Pick<ExecutionContext, 'waitUntil'>): Promise<UsageRow[]> {
   const binding = await admit(env, i.orgId, i.actor.id, now);
-  const rows = await reportTransport.rows(binding, ORG_REPORT_SQL, [i.orgId, i.from, i.to, i.by, i.appIds ?? null]);
+  const rows = await withNeonWakeAfter(env, exec, () => reportTransport.rows(binding, ORG_REPORT_SQL, [i.orgId, i.from, i.to, i.by, i.appIds ?? null]));
   return rows.map((r) => usageRowOf(i.orgId, r as unknown as ReportSqlRow));
 }
 
-export async function orgStatements(env: Env, i: StatementsInput, now = Date.now()): Promise<StatementWithTotals[]> {
+export async function orgStatements(env: Env, i: StatementsInput, now = Date.now(), exec?: Pick<ExecutionContext, 'waitUntil'>): Promise<StatementWithTotals[]> {
   const binding = await admit(env, i.orgId, i.actor.id, now);
-  const rows = await reportTransport.rows(binding, ORG_STATEMENTS_SQL, [i.orgId]);
+  const rows = await withNeonWakeAfter(env, exec, () => reportTransport.rows(binding, ORG_STATEMENTS_SQL, [i.orgId]));
   return rows.map((r) => statementOf(i.orgId, r as unknown as StatementSqlRow));
 }
 
@@ -80,10 +85,10 @@ export async function orgStatements(env: Env, i: StatementsInput, now = Date.now
  * One page of the org's ledger for a month, bounded by `asOf` (received_at ≤ as_of). Without one, the call's own time
  * is used and answered, so the caller passes it back with `next` and every page of one CSV has the same bound.
  */
-export async function orgLedger(env: Env, i: LedgerInput, now = Date.now()): Promise<{ rows: LedgerRow[]; next?: string; asOf: number }> {
+export async function orgLedger(env: Env, i: LedgerInput, now = Date.now(), exec?: Pick<ExecutionContext, 'waitUntil'>): Promise<{ rows: LedgerRow[]; next?: string; asOf: number }> {
   const binding = await admit(env, i.orgId, i.actor.id, now);
   const asOf = i.asOf ?? now;
-  const rows = (await reportTransport.rows(binding, ORG_LEDGER_SQL, [i.orgId, `${i.month}-01`, new Date(asOf).toISOString(), i.after ?? null, LEDGER_PAGE])).map((r) => ledgerRowOf(r as unknown as LedgerSqlRow));
+  const rows = (await withNeonWakeAfter(env, exec, () => reportTransport.rows(binding, ORG_LEDGER_SQL, [i.orgId, `${i.month}-01`, new Date(asOf).toISOString(), i.after ?? null, LEDGER_PAGE]))).map((r) => ledgerRowOf(r as unknown as LedgerSqlRow));
   const last = rows[rows.length - 1];
   return { rows, ...(rows.length === LEDGER_PAGE && last ? { next: ledgerCursor(last) } : {}), asOf };
 }

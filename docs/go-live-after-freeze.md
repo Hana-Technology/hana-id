@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -13,8 +13,11 @@ follow it literally, one step at a time. For the reasons behind a step, follow i
 on their free plans. Nothing here touches a mainnet, ever. If a screen asks for a card, a paid plan or an upgrade:
 stop and ask.
 
-**Not before 2026-11-26, and only on your go-ahead.** Both public demos (the stamps site and the hosted demo) must keep
-working exactly as they are until the end of 2026-11-25. Phase 0 changes nothing of sandbox-dev and can be done any
+**Not before Neon's allowance resets (expected 1 Dec 2026), and only on your go-ahead.** Your decision of 2026-11-19
+(D872): the first deploy of `next` happens on or after the day Neon's monthly allowance resets (expected 2026-12-01;
+confirm the date in Neon's console), not in the last days of November, and the ledger migrations are not applied
+ahead of time. Both public demos (the stamps site and the hosted demo) must keep working exactly as they are until the
+end of 2026-11-25 in any case. The NEAR relay's limits go back on 2026-11-26 as a separate step, without Neon (5.3). Phase 0 changes nothing of sandbox-dev and can be done any
 time. Phases 1 to 5 wait for you to say "go ahead deploy".
 
 ## Overview
@@ -22,11 +25,11 @@ time. Phases 1 to 5 wait for you to say "go ahead deploy".
 | Phase | What | When | Time | Who |
 |---|---|---|---|---|
 | 0 | Get ready: a deployer key, test ETH, the deploy plan, a free read endpoint, GitHub settings | any time before the day | 1–2 h of your time, spread over a few days (faucets give a little a day) | **You** |
-| 1 | Merge `next` into `develop`, update the deploy checkout, run every check, write down what runs now, take a restore point | the day, after 2026-11-25 | about 1 h | the assistant merges and checks; **you** say go and take the restore point |
+| 1 | Merge `next` into `develop`, update the deploy checkout, run every check, write down what runs now, take a restore point | the day: on or after Neon's reset (expected 2026-12-01) | about 1 h | the assistant merges and checks; **you** say go and take the restore point |
 | 2 | Database changes: two D1 migrations, two ledger migrations | the same day, right after phase 1 | 15 min | **You** |
 | 3 | Deploy the new code, sponsorship still off; check both demos | the same day, right after phase 2 | about 1 h | the assistant deploys on "go ahead deploy"; **you** check the sites |
 | 4 | Switch gas-free actions (EVM sponsorship) on: contracts, the relayer key, secrets, deploy | a later day: **recommended only once the admin portal's sponsorship page and a way to try a gas-free action on a real site exist** (neither does yet) | half a day, with a review in the middle | **you**: keys, passwords, funding, secrets, the hand test; the assistant: the PR, the deploy, the checks |
-| 5 | Afterwards: CI on, the NEAR relay's limits back, the email budget, the docs, a week of watching | 2026-11-26 and the week after | 30–60 min, then a look each day | **you**: CI and the email budget; the assistant: the PRs and the deploy |
+| 5 | Afterwards: CI on, the email budget, the docs, a week of watching; the NEAR relay's limits back (5.3) is its own step from 2026-11-26, before the deploy | the week after the deploy; 5.3 on 2026-11-26, to plan with you | 30–60 min, then a look each day | **you**: CI and the email budget; the assistant: the PRs and the deploy |
 
 The rule for who does what: anything with a password, a private key, a faucet, a third-party dashboard, a remote
 database migration, a secret upload or a contract deploy is **yours** (the assistant never handles those). Merges, local checks, Worker
@@ -182,16 +185,17 @@ If it is missing or not $0: stop and ask before CI goes on (phase 5).
 
 ### 0.9 Decide two things for 2026-11-26 (optional now)
 
-These can ride along with phase 3 if the deploy is on or after 2026-11-26 (one deploy fewer):
-
-- the NEAR relay's limits go back to their normal values (5.3; the values are fixed by D793);
-- the email budget: keep it, or lower it (5.4 has the choices).
+- the NEAR relay's limits go back to their normal values on 2026-11-26 (5.3; the values are fixed by D793). The
+  deploy now waits for Neon's reset (expected 2026-12-01), so this can't ride along with phase 3: it is its own small
+  deploy of the API, planned with you (5.3);
+- the email budget: keep it, or lower it (5.4 has the choices); it can ride along with phase 3.
 
 Tell the assistant your choice; it prepares the PR. Nothing changes until it is merged and deployed.
 
 ## Phase 1: the day's preparation
 
-Start only after 2026-11-25, and only after you have said "go ahead deploy".
+Start only on or after the day Neon's allowance resets (expected 2026-12-01: check the date in Neon's console, 1.11),
+and only after you have said "go ahead deploy".
 
 ### 1.1 `next` holds everything that goes live (the assistant)
 
@@ -319,7 +323,32 @@ Use a fresh email address and a private browser window.
 Note what the approval windows say: phase 3 changes their wording, and you compare after.
 If a demo doesn't work **before** you deployed anything: stop. Don't deploy on top of a broken demo.
 
+### 1.11 Neon's compute, before (D872)
+
+Open Neon's console: the project, then **Usage** (or **Billing**). Write down the compute-hours used this period, the
+allowance (100) and the date it resets. The deploy waits for that date (your decision, D872): on it the usage is near
+0. Also open the project's compute (Edit) and check its autoscaling minimum and maximum are both 0.25 CU (if it can
+grow, the System status estimate is only a floor). Phase 2 starts with its own check (2.0).
+
 ## Phase 2: database changes
+
+### 2.0 Pre-flight: Neon reachable, and how much allowance is left
+
+The ledger migrations (2.4 to 2.6) and the Neon checks after the deploy (3.11a) are the only steps that need Neon;
+D1's migrations, every Worker deploy and `deploy-check --d1` don't touch it. So check Neon first:
+
+1. Neon's console, the project: the compute is not suspended for its allowance, and **Usage** shows what is left of
+   this period's 100 compute-hours.
+2. Run 2.4 (it only lists, it changes nothing): it connects to the ledger.
+
+What to do:
+
+- **It connects and the period has just reset (the plan):** go on with 2.1.
+- **It can't connect, or the allowance is used up:** stop; don't start phase 2. Wait for the reset (your decision:
+  the deploy happens on or after it). Starting anyway would leave a half-done deploy: D1 migrated and the new code
+  running, but the ledger migrations not applied ([If Neon's allowance is used up](#if-neons-allowance-is-used-up)).
+- **It connects, but little is left (under about 10 compute-hours):** the deploy and its checks use well under one
+  hour of compute; go on, or wait for the reset if the reset is within a day or two.
 
 You run these, from the main checkout, right after phase 1. Runbook: [Checking a deploy](operations.md#checking-a-deploy-deploy-check-d384-d406)
 ("Migrations: apply from the deployed commit") and
@@ -368,7 +397,8 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev
 
 You see: `pending on sandbox-dev: 0009_evm_sponsored.sql, 0010_near_relayed.sql (run again with --yes to apply)`.
 If it lists other files, says the database and the repo disagree, or that a file changed after it was applied: stop
-and ask.
+and ask. If it can't connect, whatever the error says: stop here, before 2.1 if you haven't run it (2.0;
+[If Neon's allowance is used up](#if-neons-allowance-is-used-up)).
 
 ### 2.5 Apply them
 
@@ -391,7 +421,7 @@ You see: `sandbox-dev is up to date (10 applied)`.
 **This phase changes what both demos look like.** The approval windows get their plain-language summary and wording,
 the sign-in gets its new screens, and the stamps site's messages change (for example "It was free for you." where the
 hackathon site said "You paid no gas."). The README's judge steps quote the old words. That is why it waits until
-after 2026-11-25 and your go-ahead.
+until Neon's reset (expected 2026-12-01) and your go-ahead.
 
 Sponsorship stays off: the manifest has no `evm.sponsor` block yet, so no EVM relayer is created and the new
 sponsorship routes answer "not configured".
@@ -408,7 +438,7 @@ the database and ledger ids already in that app's config.
 | 4 | Email issuer | `corepack pnpm --filter @hana-id/email-issuer gen sandbox-dev` then `corepack pnpm --filter @hana-id/email-issuer run deploy` | `wrote …` with no placeholder, then `Deployed …` |
 | 5 | Partner console | `corepack pnpm --filter @hana-id/console gen sandbox-dev` then `corepack pnpm --filter @hana-id/console run deploy` | `wrote …` with no placeholder; the console build; `Deployed …` |
 | 6 | Console sign-in | `corepack pnpm --filter @hana-id/console-auth gen sandbox-dev` then `corepack pnpm --filter @hana-id/console-auth run deploy` | `wrote …`, `Deployed …` |
-| 7 | Admin portal | `corepack pnpm --filter @hana-id/admin gen sandbox-dev` then `corepack pnpm --filter @hana-id/admin run deploy` | `wrote …` then `feed and watcher: on (…)`, then `Deployed …` |
+| 7 | Admin portal | `corepack pnpm --filter @hana-id/admin gen sandbox-dev` then `corepack pnpm --filter @hana-id/admin run deploy` | `wrote …` then `feed and watcher: on (…)`, then `Deployed …`. This deploy also puts the admin's triggers back to `*/5` + `*/15` (undoing the hand change of 2026-11-19); with the manifest's `admin.opsEveryMinutes` 15 the feed and the watcher then run every 15 minutes, the notices every 5 (D872) |
 | 8 | Watchdog | `corepack pnpm --filter @hana-id/watchdog gen sandbox-dev` then `corepack pnpm --filter @hana-id/watchdog run deploy` | `wrote …` with no placeholder, `Deployed …` |
 | 9 | Hosted demo | `corepack pnpm --filter @hana-id/demo run deploy` | its build, then `Deployed …` |
 | 10 | Stamps site | `HANA_STAMPS_PUBLISHABLE_KEY=pk_test_Krd4BctwkZYeHB2yTqnV3HgAGX6huXXWZ corepack pnpm --filter @hana-id/stamps run deploy` | its build, then `Deployed …` (the key is Stamp Trail's public key, "Hosted stamps demo") |
@@ -426,6 +456,25 @@ corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --only watc
 You see: the first ends `OK: every piece of sandbox-dev runs <commit> (this checkout); not read: watchdog`, with
 `every migration of this checkout is applied (hana-id-sandbox-dev)` among its lines. The second ends with the same
 commit. Any `FAIL:` line: stop and ask. (The two demo sites aren't stamped, so `deploy-check` doesn't read them.)
+
+### 3.11a Neon's compute, after (D872)
+
+1. `apps/admin/wrangler.jsonc` (just generated) has `"OPS_EVERY_MINUTES": "15"` and
+   `"NEON_PLAN": "{\"computeHoursPerMonth\":100,\"computeUnits\":0.25}"` among its vars, and the triggers
+   `*/5 * * * *` and `*/15 * * * *`; `apps/api/wrangler.jsonc` has the same `NEON_PLAN`. In Cloudflare: the admin
+   Worker, Settings, Triggers shows both (a trigger change can take up to 15 minutes to reach every location, and a run
+   can be missed meanwhile).
+2. An hour later, open **System status**: **Neon compute this month** reads "About N of 100 compute-hours used this
+   month (estimate) (counting began on 1 Dec; the hours before are assumed awake)", green below 70%. A deploy within
+   48 hours of the reset counts the month as whole, the hours before the deploy taken as fully awake (at most 12
+   compute-hours), so the figure errs high. Deployed later than that, it reads in amber "Counted since <date>: about N
+   compute-hours since then. Neon's own figure for the month is higher: check Neon's console." for that month: read
+   Neon's own figure then.
+3. In Neon's console the compute's activity, over a quiet hour, should show it suspended for about 10 minutes of
+   every 15. If it never suspends: tell the assistant (something still opens the database every few minutes, or
+   Hyperdrive's pool keeps it awake: [Neon compute on the free plan](operations.md#neon-compute-on-the-free-plan-d872)
+   "Hyperdrive").
+4. Write down Neon's figure again. A day later it should have grown by about 2 to 2.5.
 
 ### 3.12 Hand check on the real sites
 
@@ -727,7 +776,12 @@ To switch CI off again: `gh workflow disable CI -R Hana-Technology/hana-id`.
 
 ### 5.3 The NEAR relay's limits back to normal (on 2026-11-26; D793)
 
-If 0.9 folded this into phase 3, skip it. Otherwise the assistant opens a PR that changes `envs/sandbox-dev.json`,
+**To plan with you: this comes before the deploy now** (the deploy waits for Neon's reset, 2026-12-01). It needs no
+Neon and no migration: only the **API Worker**, deployed with the four `near.relay` values below changed in
+`envs/sandbox-dev.json`, **from the commit the API runs today** (its `GET /v1/health` `build`), not from `next`: `next`'s
+API needs D1 migrations 0022 and 0023 first and would differ from every other piece. Which branch carries the change
+(a branch from that commit, or `develop` if it still matches what runs) and when, you decide with the assistant; the
+pieces then show two commits on `deploy-check` until the first deploy of `next`. The change, on that branch,
 `near.relay`:
 
 | Setting | Judging week | Back to |
@@ -823,6 +877,34 @@ It exports the damaged state first, restores in place, and lists what to re-run 
   user's erasure; they hold no name or email).
 - Mail already sent.
 
+## If Neon's allowance is used up
+
+Neon's free plan stops the usage database until its next period, and nothing can connect to it, whatever the error
+says. During a deploy, only these steps fail:
+
+- **2.4 to 2.6, the ledger migrations** (`usage-migrate`: 0009 and 0010).
+- **3.11a, the Neon checks after the deploy.**
+
+Everything else works: D1's migrations (2.1 to 2.3), every Worker deploy, `deploy-check --d1`, sign-ins, wallets, the
+demos, the blocking notices and the watchdog. What stops while it lasts, deploy or not: usage records (each one lost),
+the security feed and the watcher emails, gas settlement, the ledger's alerts, statements, reports and exports, the
+partner console's Usage and Statements pages. The new API keeps every NEAR relay and sponsored-action billing record
+in D1 and copies them once the ledger is back and migrated ("billing record is late" alerts meanwhile).
+
+Two clean ways to avoid a half-done deploy (D1 and the code new, the ledger not migrated):
+
+- **(a) Do the first deploy on or after the day the allowance resets.** **Your choice (2026-11-19, D872)**: expected
+  2026-12-01, the date from Neon's console.
+- **(b) Apply ledger migrations 0009 and 0010 ahead of time, while allowance remains** (2.4 to 2.6 on an earlier day).
+  Not chosen, kept as the fallback. They only add tables and views, and the running code doesn't use them, so nothing
+  changes for it. **But from then on those two files are frozen**: `usage-migrate` refuses a file changed after it was
+  applied, so any later change to them must be a new migration (0011 and on), and the branch that changes them must be
+  fixed before the deploy.
+
+If you find it used up in the middle of a deploy anyway: finish phase 3 (it doesn't need Neon), skip 3.11a, and run
+2.4 to 2.6 and then 3.11a on the day it resets; until then expect "Usage ledger (Neon)" red on System status and the
+"billing record is late" alerts.
+
 ## Things that cost money (none expected)
 
 Everything here runs on free plans. These would cost money; each needs your explicit yes first:
@@ -841,7 +923,7 @@ Free: faucets, Blockscout and Basescan verification, standard GitHub runners on 
 1. **Which RPC provider for the Base Sepolia read endpoint (0.6)?** Recommended: whichever of Alchemy or QuickNode
    offers Base Sepolia on a free plan with no card and refuses requests at the limit instead of billing them.
 2. **What do we call the deploy tag (1.3)?** Recommended: `sandbox-dev-<the deploy date>`, for example
-   `sandbox-dev-2026-11-26`.
+   `sandbox-dev-2026-12-01`.
 3. **What is the Sodax sample site's address, to check it before and after (1.10, 3.12)?** Recommended: check it in
    both places; the address isn't in this repository.
 4. **If faucets are slow, may the assistant give you a `cast send` command that moves 0.1 test ETH from the deployer

@@ -53,8 +53,19 @@ Batch C fields (`docs/batch-c-spec.md` "Manifest", `packages/env/src/dashboard.t
     `<team>.cloudflareaccess.com`, `accessAud` the Access application's 64-hex AUD tag (or `UNSET`), `staffEmails`
     the admin Worker's own lowercased allowlist behind the Access policy (D88), and the exact emails that policy
     includes: `access-setup <env>` creates the application and policies from this block, prints the team domain and
-    AUD tag (`--yes --write-manifest` writes both here) and `--check` reports drift (D409).
-  - `usage`: `{neonRegion: "aws-ap-southeast-2", writerHyperdrive, adminHyperdrive}` (D73).
+    AUD tag (`--yes --write-manifest` writes both here) and `--check` reports drift (D409). `opsEveryMinutes?` (D872):
+    how often the admin's 5-minute trigger opens the usage ledger for the security feed and the on-chain watcher, `5`
+    (the default: every run) or `15` (only the runs at `:00`, `:15`, `:30`, `:45`, beside the 15-minute ledger run, so
+    Neon's free plan is woken four times an hour instead of twelve); the blocking notices go every 5 minutes either
+    way, and a quarter hour that didn't run or failed is caught up once by the next run. `15` is refused on any network
+    but testnet, with no override, and without `usage.neonPlan` (the catch-up reads the record the plan's tracking
+    keeps). It becomes the admin's `OPS_EVERY_MINUTES` var
+    (absent at 5; the triggers are the same). sandbox-dev sets `15`.
+  - `usage`: `{neonRegion: "aws-ap-southeast-2", writerHyperdrive, adminHyperdrive, neonPlan?}` (D73). `neonPlan`
+    (D872): `{computeHoursPerMonth, computeUnits}`, for a Neon plan with a monthly compute allowance (the free plan:
+    sandbox-dev sets `100` and `0.25`): both the API and the admin get it as `NEON_PLAN`, note each ledger wake-up and
+    show "Neon compute this month" on System status with alerts at 70% and 90% (docs/operations.md "Neon compute on
+    the free plan"). Leave it out on a paid plan: nothing is noted or shown.
   - `email`: `{from, securityAlias}`: `from` is `Name <address>` or an address on the sending subdomain (D87), a sender
     SendGrid has verified for the admin Worker's key (D401), with no
     line break, quote or second address; `securityAlias` gets every blocking notice and direct alert.

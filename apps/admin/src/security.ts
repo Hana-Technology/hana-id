@@ -12,6 +12,7 @@ import { CRON_LAST_RUN } from './cron.ts';
 import { FEED_CURSORS } from './feed.ts';
 import { json } from './http.ts';
 import { errorName, log } from './log.ts';
+import { openTracked } from './neon.ts';
 import { type LedgerStore, ledgerSource } from './ledger.ts';
 import { opsSource } from './ops.ts';
 import { type StaffRequest, staffCtx } from './rpc.ts';
@@ -34,6 +35,8 @@ export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object
   evm_billing_late: 'evm-billing-late',
   evm_relay_closed_slot_mined: 'evm-relay-closed-slot-mined',
   near_billing_late: 'near-billing-late',
+  // D872: the usage database's free monthly compute allowance.
+  neon_compute_high: 'neon-compute-high',
 });
 
 export function withWords(e: SecurityEvent): SecurityEvent & { title: string; playbook: { id: string; title: string } | null } {
@@ -69,7 +72,8 @@ export async function securityView(env: Env, staff: StaffRequest): Promise<Respo
   let lastRun: unknown = null;
   let opsError: string | null = null;
   try {
-    const ops = await opsSource.open(env.USAGE_DB);
+    // D872: the screen opens the ledger (a Neon wake-up), reported when each connection closes (NEON_PLAN only).
+    const ops = await openTracked(env, () => opsSource.open(env.USAGE_DB));
     if (!ops) opsError = 'USAGE_DB is not bound: the feed and the watcher are off';
     else {
       try {
@@ -132,7 +136,7 @@ export const MIN_PARTITIONS_AHEAD = 2;
 async function ledgerPart(env: Env, staff: StaffRequest): Promise<Record<string, unknown>> {
   let store: LedgerStore | null;
   try {
-    store = await ledgerSource.open(env.USAGE_DB);
+    store = await openTracked(env, () => ledgerSource.open(env.USAGE_DB));
   } catch (err) {
     log({ event: 'bff', route: 'GET /api/security', requestId: staff.requestId, outcome: 'error', code: 'ledger_unavailable', error: errorName(err) }, 'warn');
     return { error: 'The usage ledger is unavailable' };

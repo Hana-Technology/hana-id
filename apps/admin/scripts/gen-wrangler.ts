@@ -20,7 +20,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type Manifest, accountIdFields, apiRpcFallbacksOf, emailIssuerUrl, envAlertLabel, isDevEnv, isLoopbackHost, loadEnv } from '@hana-id/env';
+import { DEFAULT_OPS_EVERY_MINUTES, type Manifest, accountIdFields, apiRpcFallbacksOf, emailIssuerUrl, envAlertLabel, isDevEnv, isLoopbackHost, loadEnv, neonPlanVar, opsEveryMinutesOf } from '@hana-id/env';
 import { workersDevHost } from '../../api/scripts/pages-wrangler.ts';
 import { TEST_MANIFEST as CONSOLE_TEST_MANIFEST } from '../../console/scripts/gen-wrangler.ts';
 import { CRONS, FIVE_MINUTES } from '../src/crons.ts';
@@ -149,6 +149,11 @@ export function wranglerConfig(m: Manifest, opts: { adminHyperdriveId?: string |
       // the exact scope:register command. The Worker never signs or sends it.
       SCOPE_REGISTRATION: JSON.stringify(scopeRegistrationVar(m)),
       ...(watchdogUrl ? { WATCHDOG_URL: watchdogUrl } : {}),
+      // D872: the feed and the watcher every 15 minutes (testnet only; the manifest refuses it elsewhere). Absent at the
+      // default 5, so an env that sets nothing has the config it had.
+      ...(opsEveryMinutesOf(a) !== DEFAULT_OPS_EVERY_MINUTES ? { OPS_EVERY_MINUTES: String(opsEveryMinutesOf(a)) } : {}),
+      // D872: the Neon plan's monthly compute allowance (a free plan): this Worker notes its ledger wake-ups to the API.
+      ...(m.usage.neonPlan ? { NEON_PLAN: neonPlanVar(m.usage.neonPlan) } : {}),
     },
     // AdminRpc on the API, StaffRpc on the console and (C8b, D275) DirectoryRpc on the email issuer: the admin Worker
     // is the only caller of each. An env without an email issuer has no directory: no ISSUER, and the Users screen says so.

@@ -76,6 +76,7 @@ export default {
   // from the 1st 01:00 UTC the monthly retention job until a run of the month completes (C13).
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     if (controller.cron === FIFTEEN_MINUTES) await everyFifteenMinutes(env, controller.scheduledTime);
-    else await everyFiveMinutes(env);
+    // Any other trigger runs the five-minute job (by exclusion: the `*/15` trigger must never be edited by hand, D872).
+    else await everyFiveMinutes(env, Date.now(), controller.scheduledTime);
   },
 } satisfies ExportedHandler<Env>;

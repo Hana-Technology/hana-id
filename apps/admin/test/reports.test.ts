@@ -10,7 +10,8 @@ import worker from '../src/index.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
 import { FIFTEEN_MINUTES } from '../src/crons.ts';
 import { isDailyTick } from '../src/ledger-cron.ts';
-import { adminRequest, envWith, json, stubNetwork, useFakeEmail } from './helpers.ts';
+import { adminRequest, envWith, json, stubNetwork, useFakeEmail, useMemoryOps } from './helpers.ts';
+import { opsSource } from '../src/ops.ts';
 import { retentionStub } from './retention-stub.ts';
 
 /** A ledger store that answers empty, with `over` replacing methods; every call is recorded. */
@@ -187,6 +188,26 @@ describe('the C12 crons', () => {
       // The run's budget line: nothing taken (no connection, no ledger, so no step ran).
       expect(lines.find((l) => l.event === 'ledger_cron' && l.step === 'budget')).toMatchObject({ count: 0, calls: {} });
     }
+  });
+
+  it('the dispatch hands the 5-minute job its trigger’s minute (D872): with OPS_EVERY_MINUTES 15 only :00/:15/:30/:45 open the ledger; any trigger but */15 is the 5-minute job', async () => {
+    useFakeEmail();
+    useMemoryOps();
+    const opens = vi.spyOn(opsSource, 'open');
+    const e = envWith({ OPS_EVERY_MINUTES: '15', USAGE_DB: { connectionString: 'postgresql://stub' } as unknown as Hyperdrive }) as unknown as Env;
+    let lines = await run('*/5 * * * *', e, Date.UTC(2026, 10, 5, 3, 10));
+    expect(opens).not.toHaveBeenCalled();
+    expect(lines.find((l) => l.event === 'cron' && l.step === 'ops')).toMatchObject({ outcome: 'skipped', code: 'ops_not_due' });
+    // A scheduledTime a little before its minute still counts as the :15 tick.
+    lines = await run('*/5 * * * *', e, Date.UTC(2026, 10, 5, 3, 14, 59));
+    expect(opens).toHaveBeenCalledTimes(1);
+    // The hand-set interim trigger (every 30 minutes, D872) is the 5-minute job too: its :30 run opens the ledger.
+    lines = await run('*/30 * * * *', e, Date.UTC(2026, 10, 5, 3, 30));
+    expect(opens).toHaveBeenCalledTimes(2);
+    // The month boundary: the run at 00:00 on the 1st is a quarter hour (and a */30 tick).
+    lines = await run('*/30 * * * *', e, Date.UTC(2026, 11, 1, 0, 0));
+    expect(opens).toHaveBeenCalledTimes(3);
+    expect(lines.some((l) => l.event === 'ledger_cron')).toBe(false);
   });
 
   it('the daily work runs in the 00:30 UTC tick only', () => {

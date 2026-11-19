@@ -6,6 +6,7 @@
 import { z } from '@hana-id/env/zod';
 import { staffCall } from './directory.ts';
 import type { EvmRelayStatus } from './evm-relay.ts';
+import type { NeonStatus } from './neon-compute.ts';
 import { ctx } from './types.ts';
 
 /** `AdminRpc.systemStatus` and `StaffRpc.health`: no fields beyond the call's context. */
@@ -58,6 +59,12 @@ export interface ApiSystemStatus {
    * `evm.sponsor`, nothing read); missing only from an API older than this field; see evm-relay.ts.
    */
   evmRelay?: EvmRelayStatus;
+  /**
+   * Neon compute on a plan with a monthly allowance (D872): the month's wake-ups (the estimate's input) and the admin
+   * runs' last records, so the System status page reads the ledger's state without opening Neon. `off` without
+   * NEON_PLAN; missing only from an API older than this field.
+   */
+  neon?: NeonStatus;
 }
 
 /**

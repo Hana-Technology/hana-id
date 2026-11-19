@@ -241,6 +241,19 @@ describe('wrangler.jsonc', () => {
     expect(() => vars({ ...manifest, homeDerivesPerDay: 1.5 })).toThrow();
   });
 
+  it('writes NEON_PLAN only when the manifest sets usage.neonPlan (D872): sandbox-dev’s config gains exactly that var', () => {
+    const real = loadEnv('sandbox-dev');
+    const sandbox = wranglerConfig(real, LOCAL_D1_ID) as { vars: Record<string, string> };
+    expect(sandbox.vars.NEON_PLAN).toBe('{"computeHoursPerMonth":100,"computeUnits":0.25}');
+    // The same manifest without the setting: everything else identical, no NEON_PLAN (a default env is unchanged).
+    const without = wranglerConfig({ ...real, usage: { ...real.usage!, neonPlan: undefined } } as Manifest, LOCAL_D1_ID) as { vars: Record<string, string> };
+    expect(without.vars.NEON_PLAN).toBeUndefined();
+    const { NEON_PLAN: _plan, ...rest } = sandbox.vars;
+    expect(rest).toEqual(without.vars);
+    expect({ ...sandbox, vars: rest }).toEqual(without);
+    expect((wranglerConfig(manifestSchema.parse(manifest), LOCAL_D1_ID) as { vars: Record<string, string> }).vars.NEON_PLAN).toBeUndefined();
+  });
+
   it('writes HANA_ORG_ID only when the manifest names Hana’s own org', () => {
     const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
     expect(vars(manifest).HANA_ORG_ID).toBeUndefined();

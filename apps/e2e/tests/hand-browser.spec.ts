@@ -120,7 +120,8 @@ async function homeList(h: Hand, a: HandAccount, by: 'google' | 'email' = 'googl
     await home.getByRole('button', { name: 'Continue with email' }).click();
     await emailCode(h, home, a);
   }
-  await home.getByRole('button', { name: 'View Journear demo' }).click();
+  // The card that lists the demo (the stack's test apps share one scope, so the card's name is its first app's), its View.
+  await home.locator('.home-card', { hasText: 'Journear demo' }).getByRole('button', { name: /^View / }).click();
   await expect(home.getByRole('heading', { name: 'Ways to sign in' })).toBeVisible();
   await home.getByRole('button', { name: 'Show ways to sign in' }).click();
   return home;

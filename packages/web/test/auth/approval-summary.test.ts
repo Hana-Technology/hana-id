@@ -24,7 +24,7 @@ import { ZERO_COST } from '../../../core/test/plain-words.ts';
 import { dom } from '../../src/auth/dom.ts';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
-import { ACCOUNT_CONTROL_BANNER, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
+import { ACCOUNT_CONTROL_BANNER, COUNTERPARTY_GROUPS, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, fullId, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { idProblems, jargonWatch, shownText } from './plain-words.ts';
 import { shortId } from '@hana-id/core/decode';
@@ -73,7 +73,7 @@ describe('the summary first, the details folded', () => {
     }
     const fee = [...el.querySelectorAll('dt')].find((x) => x.textContent === 'Network fee');
     expect(folded(fee ?? null)).toBe(false);
-    expect(fee?.nextElementSibling?.textContent).toBe('less than 0.000001 ETH');
+    expect(fee?.nextElementSibling?.textContent).toBe('Less than 0.000001 ETH');
   });
 
   it('the user opens and closes the details; the label follows', () => {
@@ -486,13 +486,25 @@ describe('D859: addresses and keys in sentences: short there, whole once in thei
   const data = (sig: string, ...args: (string | bigint)[]) => `${parseFunctionSignature(sig).selector}${args.map(word).join('')}`;
   const idRows = (el: Element) => [...(el.matches('dl.id-rows') ? [el] : []), ...el.querySelectorAll('dl.id-rows')].flatMap((dl) => [...dl.querySelectorAll('dt')].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]));
 
-  it('one recipient: its short form in the sentence, the whole value in a "To" row right under it, grouped in fours', () => {
+  it('one recipient: its short form in the sentence, the whole value in a "To" row right under it, in one piece (D876)', () => {
     const el = render(evm({ to: TOKEN, value: '0x0', data: data('transfer(address,uint256)', SPENDER, 5n) }));
     expect(shownText(el.querySelector('h2.summary-headline'))).toBe(`Partner App wants to send 5 units of an unlisted token to ${shortId(SPENDER)}`);
     expect(el.children[1]?.matches('dl.id-rows')).toBe(true);
     expect(idRows(el.children[1]!)).toEqual([['To', SPENDER]]);
-    // The groups: "0x" then fours, spaced by CSS so the text is the value exactly.
-    expect([...el.children[1]!.querySelectorAll('.grp')].map((g) => g.textContent)).toEqual(['0x', ...SPENDER.slice(2).match(/.{4}/gu)!]);
+    // D876 (it replaced D859's groups of four): the exact text, four-character spans with a line-break opportunity
+    // between them and nothing else, unspaced (the counterparty groups are off), so a copy of it is the value exactly.
+    const whole = el.children[1]!.querySelector('dd > code.mono.id-full')!;
+    expect(whole.textContent).toBe(SPENDER);
+    expect([...whole.querySelectorAll('.grp')].map((g) => g.textContent)).toEqual(['0x', ...SPENDER.slice(2).match(/.{4}/gu)!]);
+    expect(whole.querySelectorAll('wbr')).toHaveLength(10);
+    expect(whole.classList.contains('grouped')).toBe(false);
+    expect(COUNTERPARTY_GROUPS).toBe(false);
+    // Off by the founder's decision (D876); switched on, the same text: only the class (CSS spacing) changes.
+    const grouped = fullId(dom(document), SPENDER, true);
+    expect(grouped.textContent).toBe(SPENDER);
+    expect(grouped.className).toBe('mono id-full grouped');
+    // No Copy above the fold: the user's own account has one, in the details.
+    expect(el.children[1]!.querySelector('button')).toBeNull();
     // The short form and the row come from the same value; the short form is hidden from screen readers.
     const short = el.querySelector('h2 code.short-id')!;
     expect(short.textContent).toBe(shortId(SPENDER));

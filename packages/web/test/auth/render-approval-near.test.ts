@@ -233,7 +233,7 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
 
   it('D858: the stamps demo’s relayed call for a test app: network, the fee row, the acts-as-you risk in amber, the test-app note only', () => {
     const el = relayed([call('{"text":"hi"}')], true);
-    expect(factRows(el)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: free for you. Someone else pays it.']);
+    expect(factRows(el)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: Free for you. Someone else pays it.']);
     // No "NEAR leaving your account" row, no blue note: "someone else pays" is said once, and only about the fee.
     const shown = aboveFold(el);
     expect(shown).not.toContain('NEAR leaving your account');
@@ -256,6 +256,19 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(details.textContent).toContain('Valid until block277000600');
   });
 
+  it('D877: the relayed fee row has the free fee’s look (bold “Free for you.” after a check mark); a plain NEAR transaction’s doesn’t', () => {
+    const el = relayed([call('{"text":"hi"}')], true);
+    const fee = [...el.querySelectorAll('dl.summary-facts dt')].find((dt) => dt.textContent === 'Network fee')?.nextElementSibling;
+    expect(fee?.classList.contains('fee-free')).toBe(true);
+    expect(fee?.querySelector('strong')?.textContent).toBe('Free for you.');
+    expect(fee?.querySelector('svg.fee-free-mark')?.getAttribute('aria-hidden')).toBe('true');
+    const own = tx([{ type: 'transfer', deposit: 10n ** 24n }], 'bob.testnet');
+    const ownFee = [...own.querySelectorAll('dl.summary-facts dt')].find((dt) => dt.textContent === 'Network fee')?.nextElementSibling;
+    expect(ownFee?.textContent).toBe('A small amount of NEAR, from your account');
+    expect(ownFee?.classList.contains('fee-free')).toBe(false);
+    expect(ownFee?.querySelector('svg')).toBeNull();
+  });
+
   it('D858: a live app’s relayed call also says, in amber, that it could be used on the other NEAR network', () => {
     const el = relayed([call('{"text":"hi"}')], false);
     const amber = el.querySelector('.warning-box')!;
@@ -264,16 +277,16 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(NEAR_DELEGATE_NOTES.network('mainnet')).toBe('This approval could also be used on the NEAR test network if your account exists there.');
     // Not a blue box: a risk is never in an information box (D853).
     expect(el.textContent).not.toContain('doesn’t name a network');
-    expect(factRows(el)).toEqual(['Network: NEAR test network. Only the app says so; Journear couldn’t check.', 'Network fee: free for you. Someone else pays it.']);
+    expect(factRows(el)).toEqual(['Network: NEAR test network. Only the app says so; Journear couldn’t check.', 'Network fee: Free for you. Someone else pays it.']);
   });
 
   it('D858: NEAR attached to a free call is someone else’s, in its own row; tokens or NEAR of the user’s keep the fee and total rows', () => {
     const attached = relayed([{ type: 'functionCall', methodName: 'collect', args: utf8('{}'), gas: 30_000_000_000_000n, deposit: 10n ** 24n }], true);
-    expect(factRows(attached)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: free for you. Someone else pays it.']);
+    expect(factRows(attached)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: Free for you. Someone else pays it.']);
     expect(aboveFold(attached)).toContain('NEAR it sends, paid by someone else1 NEAR');
     // A token transfer: the fee row and the NEAR-leaving row as decided (D723, D729).
     const tokens = relayed([{ type: 'functionCall', methodName: 'ft_transfer', args: utf8('{"receiver_id":"bob.testnet","amount":"5"}'), gas: 30_000_000_000_000n, deposit: 1n }], true, 'usdc.testnet');
-    expect(factRows(tokens)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: free for you. Someone else pays it.']);
+    expect(factRows(tokens)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: Free for you. Someone else pays it.']);
     expect(aboveFold(tokens)).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
     expect(aboveFold(tokens)).not.toMatch(/nothing\.|cost to you/iu);
     // Every relayed call keeps the amber acts-as-you line in view.

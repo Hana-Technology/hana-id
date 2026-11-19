@@ -31,6 +31,7 @@ import {
   displayUnits,
   nearDisplay,
   MAX_GROUP_LINES,
+  rowValue,
   nearMayMoveValue,
   summaryString,
   utf8,
@@ -75,7 +76,7 @@ it('the jargon check (the one shared list) catches the brief’s words and spare
 });
 it('the zero-cost check catches any claim that a request costs nothing (D858 as corrected); a fee statement passes', () => {
   for (const w of ['Cost to you: nothing.', 'This costs you nothing.', 'nothing. Someone else pays the fee.'.replace('nothing.', 'It costs nothing.'), 'It doesn’t move any money.']) expect(ZERO_COST.test(w), w).toBe(true);
-  for (const w of ['free for you. Someone else pays it.', 'none. Journear pays it for you.']) expect(ZERO_COST.test(w), w).toBe(false);
+  for (const w of ['Free for you. Someone else pays it.', 'Free. Journear pays it for you.']) expect(ZERO_COST.test(w), w).toBe(false);
 });
 afterAll(() => {
   expect(fallbackHits).toEqual([]);
@@ -118,17 +119,27 @@ describe('EVM transactions', () => {
   it('a plain send: the amount and recipient, the fee, the network; details closed', () => {
     const s = evmSummary({});
     expect(headline(s)).toBe(`${APP} wants to send 1 ETH to ${TO}`);
-    expect(text(s.fee!)).toBe('up to 0.000042 ETH');
+    expect(text(s.fee!)).toBe('Up to 0.000042 ETH');
+    // D877: the fee row's value starts with a capital; the amount stays exact, in bold; the user pays it.
+    expect(s.fee).toEqual(['Up to ', { kind: 'strong', text: '0.000042 ETH' }]);
+    expect(s.freeFee).toBeUndefined();
     expect(text(s.network!)).toBe('Sepolia (test network)');
     expect(s.warnings).toEqual([]);
     expect(s.explainable).toBe(true);
+  });
+
+  it('D877: rowValue capitalises a row value’s first letter only, in text or bold, and leaves code alone', () => {
+    expect(rowValue(['up to ', { kind: 'strong', text: '1 ETH' }])).toEqual(['Up to ', { kind: 'strong', text: '1 ETH' }]);
+    expect(rowValue([{ kind: 'strong', text: 'less than 0.000001 ETH' }])).toEqual([{ kind: 'strong', text: 'Less than 0.000001 ETH' }]);
+    expect(rowValue([{ kind: 'code', text: 'abc' }])).toEqual([{ kind: 'code', text: 'abc' }]);
+    expect(rowValue([])).toEqual([]);
   });
 
   it('a send to the user’s own address says so; a chain Journear can’t name is said plainly, never given a coin', () => {
     expect(headline(evmSummary({ to: ME }))).toBe(`${APP} wants to send 1 ETH to your account`);
     const s = evmSummary({}, 987654321);
     expect(headline(s)).toBe(`${APP} wants to send 1 of this network’s coin to ${TO}`);
-    expect(text(s.network!)).toBe('a network Journear doesn’t know (no. 987654321)');
+    expect(text(s.network!)).toBe('A network Journear doesn’t know (no. 987654321)');
   });
 
   it('an ERC-20 transfer of a token Journear doesn’t know: "units of an unlisted token", what to do, never a guessed symbol', () => {
@@ -145,7 +156,7 @@ describe('EVM transactions', () => {
     expect(headline(s)).toBe(`${APP} wants to send 5 USDC to ${TO}`);
     // The contract stays in view next to the symbol.
     expect(s.lines.map(text)).toEqual([`This is the real USDC token (${BASE_USDC}).`]);
-    expect(text(s.fee!)).toBe('up to 0.000042 ETH');
+    expect(text(s.fee!)).toBe('Up to 0.000042 ETH');
   });
 
   it('approve of a bounded amount: an amber warning naming the unverified spender and the amount (or an NFT’s item)', () => {
@@ -445,7 +456,7 @@ describe('Stellar', () => {
   it('a native payment: amount, recipient, fee and network', () => {
     const s = stellar([paymentOp()]);
     expect(headline(s)).toBe(`${APP} wants to send 1 XLM to ${OTHER}`);
-    expect(text(s.fee!)).toBe('up to 0.00001 XLM');
+    expect(text(s.fee!)).toBe('Up to 0.00001 XLM');
     expect(text(s.network!)).toBe('Stellar (test network)');
     expect(s.explainable).toBe(true);
   });
@@ -532,14 +543,16 @@ describe('NEAR', () => {
   it('a transfer, and several: the total', () => {
     expect(headline(near([{ type: 'transfer', deposit: 10n ** 23n }], 'bob.testnet'))).toBe(`${APP} wants to send 0.1 NEAR to bob.testnet`);
     expect(headline(near([{ type: 'transfer', deposit: 10n ** 24n }, { type: 'transfer', deposit: 5n * 10n ** 23n }], 'bob.testnet'))).toBe(`${APP} wants to send 1.5 NEAR to bob.testnet in 2 transfers`);
-    expect(text(near([{ type: 'transfer', deposit: 1n }]).fee!)).toBe('a small amount of NEAR, from your account');
+    expect(text(near([{ type: 'transfer', deposit: 1n }]).fee!)).toBe('A small amount of NEAR, from your account');
+    expect(near([{ type: 'transfer', deposit: 1n }]).freeFee).toBeUndefined();
   });
 
   it('a relayed contract call (the stamps): contract and method; the fee row speaks of the fee only; it acts as the user, in amber (D858)', () => {
     const s = delegate([call('collect', '{"stamp":"arrival"}')]);
     expect(headline(s)).toBe(`${APP} wants to use stamps.testnet (collect)`);
     // Never "Journear pays" (a partner may relay it), never "costs nothing" (a call can use what the user keeps there).
-    expect(text(s.fee!)).toBe('free for you. Someone else pays it.');
+    expect(text(s.fee!)).toBe('Free for you. Someone else pays it.');
+    expect(s.freeFee).toBe(true);
     expect(s.noNearLeaves).toBe(true);
     expect(s.explainable).toBe(true);
     expect(warnings(s)).toEqual([['warning', 'acts_as_you', 'This acts as you: stamps.testnet can use anything you keep with it.']]);
@@ -561,7 +574,7 @@ describe('NEAR', () => {
 
   it('D858: the repeated "None of your NEAR" row goes only when no NEAR or tokens of the user’s can leave; the fee row always stays', () => {
     const free = (s: ApprovalSummary) => [s.noNearLeaves === true, s.fee === null ? null : text(s.fee)];
-    const fee = 'free for you. Someone else pays it.';
+    const fee = 'Free for you. Someone else pays it.';
     // A transfer in a delegate action is the relayer's NEAR (nearcore); no call, so no acts-as-you.
     const t = delegate([{ type: 'transfer', deposit: 10n ** 24n }], 'bob.testnet');
     expect(free(t)).toEqual([true, fee]);
@@ -1064,7 +1077,7 @@ describe('D814: amounts as shown', () => {
   });
 
   it('the EVM fee and a NEAR transfer follow it', () => {
-    expect(text(evmSummary({}).fee!)).toBe('up to 0.000042 ETH');
+    expect(text(evmSummary({}).fee!)).toBe('Up to 0.000042 ETH');
     expect(displayUnits(42_000_000_000n, 18)).toBe('less than 0.000001');
     expect(headline(near([{ type: 'transfer', deposit: 5n }], 'bob.testnet'))).toBe(`${APP} wants to send less than 0.000001 NEAR to bob.testnet`);
   });

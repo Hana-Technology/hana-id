@@ -90,20 +90,80 @@ dl.id-rows {
   font-weight: var(--jp-weight-regular);
 }
 
-/* The whole value, in groups of four for comparing: spaced by CSS (the text is the value exactly), wrapped between
-   groups, never folded or cut. */
+/* The whole value (D876): its four-character spans (`.grp`) unspaced, so it reads as one piece; a line breaks only
+   between two spans (`<wbr>`), balanced, so a long one takes nearly even lines and never leaves a lone character. The
+   text is the value exactly. `grouped` (render-approval.ts COUNTERPARTY_GROUPS) spaces the spans by CSS only. */
 code.id-full {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: 0.45em;
-  row-gap: 2px;
+  display: block;
   font-size: var(--jp-text-sm);
   color: var(--jp-fg);
   word-break: normal;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
 }
 
-code.id-full > .grp {
-  white-space: nowrap;
+code.id-full.grouped > .grp:not(:last-child) {
+  margin-inline-end: 0.45em;
+}
+
+/* The rows of whole values (D876): the label on its own line, the value under it across the whole width, as the
+   user's own account's row: an EVM address is one line at 390 px, a Stellar or NEAR one two nearly even lines. */
+dl.id-rows,
+dl.your-account {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--jp-space-1);
+}
+
+dl.id-rows dd + dt {
+  margin-top: var(--jp-space-2);
+}
+
+/* The facts' faces (D877): words and sentences (a network's name, the fee line, a date, a permission) in the text
+   face; only what is read character by character is mono: addresses, keys, hashes, raw data and exact amounts or
+   numbers, each as `code.mono` (or a `strong` amount). A `strong.words` is a sentence in bold, in the text face. */
+.request dl.jp-kv dd {
+  font-family: var(--jp-font-body);
+}
+
+.request dl.jp-kv dd strong.words,
+.request dl.jp-kv dd.fee-free strong {
+  font-family: var(--jp-font-body);
+}
+
+/* A fee the user doesn't pay (D877): a check mark in the success colour, then "Free." in bold; the row, no box. */
+.request dl.jp-kv dd.fee-free .fee-free-mark {
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  color: var(--jp-success);
+  stroke-width: 2.25;
+}
+
+/* The mark speaks of the fee only: beside a red box it takes the text colour, so it never reads as "safe". */
+.request dl.jp-kv dd.fee-free.beside-danger .fee-free-mark {
+  color: var(--jp-fg);
+}
+
+/* The user's own account in the details (D876): as the rows above, then Copy and what it did. */
+.copy-line {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--jp-space-1);
+  margin-top: var(--jp-space-2);
+  font-family: var(--jp-font-body);
+}
+
+/* What Copy did, under it: its space is always the refusal's (ui.ts reservedLine), so nothing below moves. */
+.copy-line .copy-said {
+  align-self: stretch;
+}
+
+.copy-line .copy-said > * {
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+  line-height: var(--jp-leading-body);
 }
 
 /* Read to screen readers instead of a short form, which they skip (the row says the whole value). */

@@ -12,11 +12,13 @@
 // is the published package's variant (`build:lib`, docs/operations.md "Releasing the SDK packages"): the same file, and
 // it also fails unless at least one env is included and none is a loopback `local*` env, since a partner's install
 // must carry exactly the deployed envs.
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, type PinnedSponsorDelegates, emailIssuerUrl, evmSponsorDelegateProblems, evmSponsorPageChains, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
+import { REVIEWED_NEAR_DEPLOYS } from '@hana-id/core';
 import type { HanaEnv } from '../src/hana-env.ts';
 import { ckdKeyProblem } from './ckd-key.ts';
 
@@ -43,7 +45,33 @@ export function hanaEnv(m: Manifest): HanaEnv | null {
     ...(m.files ? { filesOrigin: m.files.origin } : {}),
     // EVM gas sponsorship (D834): per chain, the delegate the vault may authorize and the relayer batches name.
     ...(m.evm?.sponsor ? { evmSponsor: evmSponsorPageChains(m.evm.sponsor) } : {}),
+    // Journear's reviewed NEAR contracts (D885): only those core records as deployed and locked on this env.
+    ...nearReviewedOf(m),
   };
+}
+
+/**
+ * `{ nearReviewed }` for the env's manifest (D885): each reviewed contract that core's REVIEWED_NEAR_DEPLOYS records
+ * for this env by name, at the account its manifest names; `{}` when there is none. The build enforces the record:
+ * the env must be on testnet, and each account's sha256 must be the one the record was checked against (a manifest
+ * that names another account, a redeploy to a new one, throws until that account is reviewed). The record names no
+ * account (CLAUDE.md); test/gen-envs.test.ts pins the names too.
+ */
+export function nearReviewedOf(m: Manifest): { nearReviewed?: NonNullable<HanaEnv['nearReviewed']> } {
+  const record = Object.hasOwn(REVIEWED_NEAR_DEPLOYS, m.name) ? REVIEWED_NEAR_DEPLOYS[m.name] : undefined;
+  if (!record) return {};
+  if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json has reviewed NEAR contracts (core's REVIEWED_NEAR_DEPLOYS) but its network is ${String(m.network)}: reviewed calls are testnet only (D885).`);
+  const pinned = (field: 'demoStamps' | 'demoGuestbook', account: string | undefined, accountSha256: string | undefined): string | undefined => {
+    if (account === undefined || accountSha256 === undefined) return undefined;
+    if (createHash('sha256').update(account, 'utf8').digest('hex') !== accountSha256) {
+      throw new Error(`envs/${m.name}.json near.${field} ${account} is not the account core's REVIEWED_NEAR_DEPLOYS was checked against: review the new account first (docs/operations.md "Reviewed NEAR calls: adding one", D885).`);
+    }
+    return account;
+  };
+  const stamps = pinned('demoStamps', m.near?.demoStamps, record.stamps?.accountSha256);
+  const guestbook = pinned('demoGuestbook', m.near?.demoGuestbook, record.guestbook?.accountSha256);
+  const accounts = { ...(stamps ? { stamps } : {}), ...(guestbook ? { guestbook } : {}) };
+  return Object.keys(accounts).length > 0 ? { nearReviewed: accounts } : {};
 }
 
 /**

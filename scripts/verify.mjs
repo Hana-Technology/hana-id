@@ -10,7 +10,8 @@
 //                           sponsorship on a real node, D868) if sponsorship code changed and anvil is installed (CI's
 //                           pushes after a merge add Playwright on Firefox and WebKit, as --full does)
 //   pnpm verify --full    everything whatever changed: all packages, the Rust jobs, the pack check, Playwright on
-//                           Chromium, Firefox and WebKit
+//                           Chromium, Firefox and WebKit, and the reviewed NEAR rebuild (D885: each reviewed contract
+//                           rebuilt with the deploy tool's command against every recorded code hash)
 //
 //   --all          ignore the diff: every package and job of the chosen tier (--full implies it)
 //   --base <ref>   measure the change from merge-base(<ref>, HEAD) instead of origin/develop (the working tree and
@@ -21,7 +22,8 @@
 // Phases run one after another; a phase's lanes run side by side, a lane's steps one after another (D423):
 //
 //   0  lockfile
-//   1  gitleaks | typecheck | contract (cargo test + wasm) | EVM delegate (forge) | dependency advisories (--full)
+//   1  gitleaks | typecheck | contract (cargo test + wasm, then the reviewed NEAR rebuild in --full) | EVM delegate (forge)
+//      | dependency advisories (--full)
 //   2  unit tests | docs checks                          (alone: see below)
 //   3  sandbox e2e | anvil lane | SDK pack check         (local nodes beside a short build)
 //   4  Playwright                                        (alone: browsers beside 8 sandbox nodes made Firefox's
@@ -357,6 +359,11 @@ export function plan({ mode, files, pkgs, reads, dirty = false, cpus = available
       cmd('cargo', ['test', '--locked'], dir),
       cmd('cargo', ['near', 'build', 'non-reproducible-wasm'], dir),
     ]), notQuick ?? (jobs.rust ? null : 'no Rust change')),
+    // Journear's reviewed NEAR calls (D885): rebuild each reviewed contract with the deploy tool's command and compare
+    // with every recorded deploy's code hash. In the contract lane, after its cargo builds (never beside the unit
+    // tests, D140), into its own target directory. Before a deploy, not each merge. Skips (passing) without cargo-near
+    // or Rust at the recorded versions, and says so in its log.
+    step('reviewed-near', 'reviewed NEAR rebuild (code hashes)', 1, [cmd('pnpm', ['--filter', '@hana-id/scripts', 'run', 'reviewed-near-rebuild'])], mode === 'full' ? null : 'only in --full', 'contract'),
     // The EVM delegate (D841): the formatting, its Foundry tests, then the checked-in artifacts and test vector against the build. An
     // optional toolchain, as the browsers are: without forge, or before `pnpm install`, it skips and says why.
     step('evm', 'EVM delegate (forge fmt, test + artifacts check)', 1, [

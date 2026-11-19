@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-19 (a free fee in Show details; message requests' note; the sign-in window's link notice), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-19 (reviewed NEAR calls; free fees in Show details; message notes; link notice), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -868,6 +868,11 @@ are yours.
   address stays the same, and that they still approve every action ([Gas-free actions](#gas-free-actions-not-live)).
 - **A test app** says, on every request, that Journear Passport signs only for test networks; on a message, raw
   signing or typed data that names no network, it says instead that the signature isn't limited to test money.
+- **Journear's own demo contracts** read in plain words when a request is exactly one of their reviewed calls (the
+  stamps contract's `collect`, the demo guestbook's `add_message`, on the environment's locked accounts): "Your App
+  wants to collect the Arrival stamp for you", "It uses **Journear demo stamps** (…, checked by Journear)." Any other
+  call, to your contracts too, reads as described above: the contract and the method, and for a relayed call the amber
+  "This acts as you" line. Your own words for a call never reach the window.
 - **When something fails** inside a Journear Passport window, it says what happened and what to do, with "Error code
   (for support): …" at the end. Your page gets the same `code` in the error.
 
@@ -1294,7 +1299,8 @@ on the user's own account (it decides what it moves: the popup says "Unknown") a
 key the action adds (up to its allowance). The actions run as the user's account, so a contract they call acts in the
 user's name (it can move tokens the user holds there). The approval window says so: no fee row in view, and behind
 **Show details** "Network fee: Free. Sponsored by {your app's name}." (whoever relays it: the window can't tell who);
-for every call an amber "This acts as you: {contract} can use anything you keep with it."; NEAR the action attaches
+for every call an amber "This acts as you: {contract} can use anything you keep with it." (except Journear's own
+reviewed demo calls, which say in plain words that they move no money or tokens); NEAR the action attaches
 or sends is in its own row, "NEAR it sends, not from your account"; a "NEAR leaving your account" row says what it
 costs: "None of your NEAR." for a plain call, "None of your NEAR. It can move tokens you hold." when a call can move
 tokens the user holds, or the NEAR that leaves. For a live app it also says, in amber, that the approval could be used on the other NEAR

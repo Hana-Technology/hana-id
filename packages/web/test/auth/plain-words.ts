@@ -1,14 +1,14 @@
 // The plain-wording rule's check for the rendered window (D853): no chain jargon above the fold, in Journear's own
 // words. Left out: the folded details (technical on purpose), code values (addresses, account ids, methods, the raw
-// bytes of a message), a message's own text and the values a request names in bold (an asset code, a recipient).
+// bytes of a message), a message's own text (and a reviewed call's quoted words) and the values a request names in bold (an asset code, a recipient).
 import { afterAll, expect } from 'vitest';
 import { shortId } from '@hana-id/core/decode';
-import { ZERO_COST, ZERO_COST_ALLOWED, jargonWords } from '../../../core/test/plain-words.ts';
+import { ZERO_COST, ZERO_COST_ALLOWED, ZERO_COST_ALLOWED_REVIEWED, jargonWords } from '../../../core/test/plain-words.ts';
 
 /** The window's own words above the fold. */
 export function plainAboveFold(el: Element): string {
   const copy = el.cloneNode(true) as Element;
-  for (const n of Array.from(copy.querySelectorAll('details, code, pre, dd strong'))) n.remove();
+  for (const n of Array.from(copy.querySelectorAll('details, code, pre, dd strong, div.summary-quote'))) n.remove();
   return (copy.textContent ?? '').replace(/\s+/gu, ' ');
 }
 
@@ -22,7 +22,9 @@ export function jargonWatch(): (el: Element) => Element {
     if (m.length > 0) hits.push(`“${m.join('”, “')}” in: ${words}`);
     // The renderer's own fixed rows and notes too (review of PR 80): no claim that the request costs nothing, outside
     // the allowlist (the demo check-in's sentences).
-    const z = ZERO_COST.exec(ZERO_COST_ALLOWED.reduce((t, a) => t.split(a).join(' '), words));
+    // A reviewed call's own sentences only on a reviewed screen (D885: the page marks it `data-reviewed`).
+    const allowed = [...ZERO_COST_ALLOWED, ...(el.matches('[data-reviewed]') || el.querySelector('[data-reviewed]') ? ZERO_COST_ALLOWED_REVIEWED : [])];
+    const z = ZERO_COST.exec(allowed.reduce((t, a) => t.split(a).join(' '), words));
     if (z) hits.push(`zero-cost claim “${z[0]}” in: ${words}`);
     hits.push(...idProblems(el));
     return el;

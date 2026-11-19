@@ -5,8 +5,10 @@
 // the public passport. Nothing of another chain is ever on the page. The page is configured at build time like the
 // deployed one (src/build.ts STAMPS_CONFIG), so its app has a fixed key (STAMPS_PK).
 import { type Page, type TestInfo } from '@playwright/test';
+import { REVIEWED_STAMP_TITLES, type ReviewedStampId } from '@hana-id/core';
 import { routeNearRelayer } from '../src/near-relay.ts';
 import { E2E_STAMPS, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, STAMPS_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { expectPlainWindow } from './plain-checks.ts';
 import { STAMPS_APP, approve, clickClosing, clickUntilTaken, expect, newApp, test } from './fixtures.ts';
 
 /** Records every CSP violation on the site's own document (the page CSP must allow everything the page does). */
@@ -97,14 +99,36 @@ async function expectNearOnly(page: Page): Promise<void> {
  * Clicks a stamp's collect button and approves the request it opens: in a new Journear Passport window, or in the one
  * still open from the previous approval (a request while it is open goes to it). Returns the window.
  */
-async function collectWith(page: Page, id: string, open: Page | null): Promise<Page> {
+async function collectWith(page: Page, id: ReviewedStampId, open: Page | null, note?: string): Promise<Page> {
   const popup = page.waitForEvent('popup', { timeout: 8_000 }).catch(() => null);
   await stampEl(page, id).locator('[data-action="collect"]').click();
   const reused = open !== null && !open.isClosed() ? open : null;
   const window = reused ?? (await popup);
   if (!window) throw new Error(`no approval window for ${id}`);
+  await expectReviewedStamp(window, id, note);
   await approve(window);
   return window;
+}
+
+/**
+ * D885: each stamp's approval is a reviewed call: the stamp by its slot's title, the contract named as checked by
+ * Journear, no amber "acts as you" line; the raw account and method in the folded details.
+ */
+async function expectReviewedStamp(window: Page, id: ReviewedStampId, note?: string): Promise<void> {
+  await expect(window.locator('h2.summary-headline')).toHaveText(`Stamp Trail wants to collect the ${REVIEWED_STAMP_TITLES[id]} stamp for you`);
+  if (note !== undefined) await expect(window.locator('div.summary-quote')).toHaveText(note);
+  await expect(window.locator('p.summary-line').last()).toHaveText(`It uses Journear demo stamps (${E2E_STAMPS}, checked by Journear).`);
+  await expect(window.locator('.warning-box')).toHaveCount(0);
+  await expect(window.locator('details.request-details')).toContainText('collect');
+  await expectPlainWindow(window);
+}
+
+/** D885: the Signature stamp's first approval, its NEP-413 message, read as the reviewed one. */
+async function expectReviewedSignatureMessage(window: Page): Promise<void> {
+  await expect(window.locator('h2.summary-headline')).toHaveText('Stamp Trail wants you to sign a message for your Signature stamp');
+  await expect(window.locator('p.summary-line').last()).toHaveText(`It’s for Journear demo stamps (${E2E_STAMPS}, checked by Journear).`);
+  await expect(window.locator('.warning-box')).toHaveCount(0);
+  await expectPlainWindow(window);
 }
 
 test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature with zero NEAR, then the public passport', async ({ page }, info) => {
@@ -154,7 +178,7 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
 
   const note = `Greetings from the e2e stack (${info.project.name})`;
   await stampEl(page, 'postcard').locator('[data-field="note"]').fill(note);
-  window = await collectWith(page, 'postcard', window);
+  window = await collectWith(page, 'postcard', window, note);
   await expect(stampEl(page, 'postcard')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });
   await expect(stampEl(page, 'postcard')).toContainText(note);
 
@@ -169,13 +193,14 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   if (!sigWindow) throw new Error('no approval window for the signature');
   await expect(sigWindow.getByText(`Stamp my passport: ${account}`).first()).toBeVisible();
   await expect(sigWindow.getByText(E2E_STAMPS).first()).toBeVisible();
+  await expectReviewedSignatureMessage(sigWindow);
   await expect(stampEl(page, 'signature')).toContainText('Approval 1 of 2: sign the message');
   const extra = page.waitForEvent('popup', { timeout: 6_000 }).then(
     () => true,
     () => false,
   );
   await approve(sigWindow);
-  await expect(sigWindow.getByText('collect').first()).toBeVisible();
+  await expectReviewedStamp(sigWindow, 'signature');
   await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the stamps program');
   expect(sigWindow.isClosed()).toBe(false);
   await approve(sigWindow);
@@ -241,6 +266,7 @@ test('the Signature stamp’s second step after its window was closed in between
   await stampEl(page, 'signature').locator('[data-action="collect"]').click();
   const sigWindow = await sigP;
   await expect(sigWindow.getByText(`Stamp my passport: ${account}`).first()).toBeVisible();
+  await expectReviewedSignatureMessage(sigWindow);
   // Past the click's transient activation (5 s in Chromium and Firefox, less in WebKit): from here the page can't open
   // a window by itself, as after any await in a real session.
   await page.waitForTimeout(6_000);
@@ -264,7 +290,7 @@ test('the Signature stamp’s second step after its window was closed in between
   await stampEl(page, 'signature').locator('[data-action="collect"]', { hasText: 'Continue' }).click();
   const next = await nextP;
   // The waiting request, the relayed collect (its args carry the signed proof): not the message to sign again.
-  await expect(next.getByText('collect').first()).toBeVisible();
+  await expectReviewedStamp(next, 'signature');
   await expect(stampEl(page, 'signature')).toContainText('Approval 2 of 2: send it to the stamps program');
   await approve(next);
   await expect(stampEl(page, 'signature')).toHaveAttribute('data-status', 'collected', { timeout: 30_000 });

@@ -13554,6 +13554,8 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Why not add `checkIn()` to the known selectors: a selector names a standard's function, and any contract can have a
   `checkIn()` that does anything; the plain reading is earned by the reviewed contract, not the name.
 - Address impact: none.
+- Note 2026-11-19 (D885): its shape is reused for NEAR: Journear's own demo contracts' exact calls read in plain words,
+  "It uses **{name}** ({account}, checked by Journear).", the same claim as the check-in's.
 
 ## EVM gas sponsorship: the vault and the SDK (branch `feat/evm-sponsor-vault`), 2026-11-18
 
@@ -13644,6 +13646,8 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   check, each nonce once), the Execute and authorization signatures, nonces; a made-up hash for `executed`; per app and
   account state, a hold switch for the concurrency test. Never in a deployed Worker.
 - Address impact: none.
+- Note 2026-11-19 (D885): not affected. D885's reviewed NEAR calls add no vault check, API call or network read; the
+  sponsor allowlist still decides only what Journear pays for, never what the window says.
 
 ### D856. The sponsorship calls prove the user's session: a new identityMessage payload with the body's hash and the wallet proof
 - Date 2026-11-18 · Status: required before sponsorship is enabled anywhere (the API review's open item, D847 M2);
@@ -13672,6 +13676,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Rejected: a header (`x-hana-session-proof`) with a hash of the raw body (a CORS change on every route, and the other
   proofs are in bodies); a separate signature per field; the EVM key signing each request (a key use per call).
 - Address impact: none.
+- Note 2026-11-19 (D885): not affected (no new route or proof).
 
 ## CI back on for `next`, at no cost (branch `chore/ci-on-next`), 2026-11-18
 
@@ -13823,6 +13828,10 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
   yours." is "None of your NEAR. It can move tokens you hold." when the action holds a contract call, "None of your
   NEAR." otherwise. With the fee row gone from the main view, a plain relayed call gets its cost row back as "NEAR
   leaving your account: None of your NEAR." (D858 had dropped it only because it repeated the fee row).
+- Amended 2026-11-19 by D885: for exactly Journear's reviewed NEAR calls (the stamps contract's `collect`, the demo
+  guestbook's `add_message`, on the build's locked accounts, in the reviewed shape) the amber acts-as-you line goes, and so does D884's "NEAR leaving your account: None of your NEAR." row (their own lines say no money or tokens move):
+  their reviewed code can't use anything the user keeps there. Every other relayed call keeps it. The rule above (no
+  zero-cost claim unless Journear fully knows the effect) now names these calls beside the check-in.
 
 ### D859. Addresses and keys in sentences: a name or a short form there, the whole value once in its own row
 - Date 2026-11-18 · Status: **decided by the user 2026-11-18**; details decided while building, **confirmed by the user 2026-11-18** (PR 80 approved); the review amendments of PR 80 amended while building, to confirm · Amends
@@ -13914,6 +13923,8 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
   power of ten, so they come from the issuer or the standard, with the source beside each entry. The "real" line names
   the id it vouches for, whole in its row, so a user comparing with their app sees the same contract.
 - Address impact: none.
+- Note 2026-11-19 (D885): the reviewed NEAR calls follow the same rule: plain words are earned by the exact account on
+  the exact network (and the exact call), never by a name; NEAR's token readings are unchanged.
 
 ## Plain words outside the approval window (branch `feat/plain-wording-other`), 2026-11-18
 
@@ -16001,8 +16012,9 @@ From `next` @ 032711e8; not merged, not deployed.
   leaving your account" ("None of your NEAR. It can move tokens you hold.", an amount, "All of it", "Unknown", "NEAR
   locked up for staking", tested); NEAR the action attaches reads "NEAR it sends, not from your account". Two kinds
   said nothing about cost once the fee row left; after the review of PR 107 (decided while building, to confirm) each
-  gets one line, only where nothing stronger answers cost: a plain relayed NEAR call (the stamps' collect, the
-  guestbook: `noNearLeaves`) the row "NEAR leaving your account: None of your NEAR." (nothing about tokens: the summary
+  gets one line, only where nothing stronger answers cost: a plain relayed NEAR call (`noNearLeaves`; since D885 not
+  the stamps' collect and the guestbook on their reviewed accounts, whose own line "… doesn’t move any money or
+  tokens." answers it) the row "NEAR leaving your account: None of your NEAR." (nothing about tokens: the summary
   sees none move, and the amber "acts as you" line says the call can use what the user keeps with that contract); a
   sponsored EVM action Journear reads whose calls move nothing it can see (a generic call such as `deposit()`, taking a
   permission back, `withdraw`; alone or batched with the check-in; no warning but the setup note) the line "None of
@@ -16035,7 +16047,8 @@ From `next` @ 032711e8; not merged, not deployed.
   D877's colour rule; (3) "the app" when there is no name; (4) "NEAR it sends, not from your account", "None of your
   NEAR. It can move tokens you hold." (an action with a contract call) and "None of your NEAR." (without); (5) the
   details' "EVM action, sent for you by Journear", "Sent by" and "NEAR transaction, sent for you", and the relayed
-  note's words; (6) the two cost lines built after the review, "NEAR leaving your account: None of your NEAR." and
+  note's words; (6) the two cost lines built after the review, "NEAR leaving your account: None of your NEAR." (since
+  D885 not on Journear's reviewed NEAR calls: the stamps and guestbook on their reviewed accounts) and
   "None of your ETH is used.", and where they show; proposed, not built: after "None of your ETH is used." a short
   true warning "It may still use tokens you've already let this program use."; (7) "Sponsored by {App}" while partner
   billing is off (Journear pays today; the records name the app): see below; (8) a
@@ -16126,3 +16139,262 @@ From `next` @ 032711e8; not merged, not deployed.
 - To confirm: (1) the order and the label "The message"; (2) the sentences above, exactly; (3) blue rather than amber
   for a test app's message (amber would say a harmless sign-in is a risk; the advice covers the case); (4) one merged
   box for a test app's message instead of the plain note; (5) the amber box staying before the message on NEP-413.
+- Amended 2026-11-19 by D885: the Signature stamp's own message, exactly (for the build's reviewed stamps account,
+  naming the user's account, no callback), has neither the NEP-413 amber lines nor the "counts on every network" note:
+  in its place, blue, "This signature names your account and the stamps program. The program accepts it only from your
+  account, to collect this one stamp." (a test app: "This app is a test version, so don’t keep real money in this
+  account. This signature names your account and the stamps program, which accepts it only from your account, to
+  collect this one stamp.").
+
+## Journear's reviewed NEAR calls (branch `feat/near-reviewed-calls`), 2026-11-19
+
+From `next` @ 032711e8, not merged, not deployed. Step 1 of a longer plan the founder agreed to on 2026-11-19 ("yes"):
+hand-reviewed entries for NEAR contract calls, Journear's own demos first. A later step (not this branch) may let
+partners declare structured labels of their own, attributed to them.
+
+### D885. Journear's own demo contracts' calls read in plain words, as checked by Journear; anything else reads as before
+- Date 2026-11-19 · Status: step 1 **decided by the user 2026-11-19**; the binding, the match rule, the readings and
+  the amber decisions decided while building, **to confirm** (list at the end) · Amends D858 (the acts-as-you line, for
+  these calls only) · Built on `feat/near-reviewed-calls`: `packages/core/src/reviewed-near-calls.ts`
+  (`REVIEWED_NEAR_CONTRACTS`, `REVIEWED_NEAR_DEPLOYS`, `REVIEWED_STAMP_TITLES`, `REVIEWED_NEAR_MAX_GAS`,
+  `reviewedNearCall`, `reviewedNearMessage`), `decode/summary.ts` (`SummaryContext.reviewedNear`,
+  `ApprovalSummary.reviewed`, the `quote` part, `reviewedNearReading`, `reviewedNearSummary`, `nearActions` over
+  `nearActionsGeneric`, the NEP-413 case), `packages/web/src/hana-env.ts` (`nearReviewed`), `scripts/gen-envs.ts`
+  (`nearReviewedOf`), `auth/render-approval.ts` (`summaryNodes`' `q.summary-quote`, `nearMessage`, `reviewedNear` in
+  the render context), `auth/approve-page.ts` (passes `env.nearReviewed`), `apps/e2e/src/stack.ts` (`E2E_ENV.nearReviewed`);
+  tests `packages/core/test/reviewed-near-calls.test.ts`, `packages/web/test/auth/render-approval-near-reviewed.test.ts`,
+  `packages/web/test/gen-envs.test.ts` (the account pin), `core/test/plain-words.ts` (the zero-cost allowlist),
+  `apps/e2e/tests/stamps.spec.ts`, `demo.spec.ts`, `demo-near-shots.spec.ts`, the screens
+  `apps/e2e/tests/approval-near-reviewed-shots.spec.ts`. After the independent review of PR 106 (2026-11-19, which
+  supported dropping the amber line for exactly these calls; its items amended while building, to confirm):
+  `scripts/check-reviewed-near.ts` and `lib/reviewed-near-check.ts` (the on-chain check, also deploy-check's
+  `near-reviewed` group), `scripts/reviewed-near-rebuild.ts` and `lib/reviewed-near-rebuild.ts` (in `verify --full`),
+  core's `REVIEWED_NEAR_BUILD`, `files`, `accountSha256`, `reviewedText`, `COMBINING_RUN`, `QUOTE_LIKE`, the verified
+  proof, `gen-envs`' enforced pin, `div.summary-quote` (approval.css), `ZERO_COST_ALLOWED_REVIEWED`; tests
+  `scripts/test/reviewed-near-check.test.ts`, `deploy-check.test.ts`, `verify.test.ts`.
+- Cause (the founder's hand test of the stamps demo, 2026-11-19): collecting a stamp read "Stamp Trail wants to use
+  `e2e-stamps.testnet` (`collect`)" with the amber "This acts as you: `e2e-stamps.testnet` can use anything you keep
+  with it.": a contract account and a method name, and a risk that isn't there, where the gas-free EVM check-in reads
+  "Journear demo wants to check you in … It uses **Journear demo check-in** (0xa84B…a39e, checked by Journear)".
+- **How the existing reviewed mechanisms work** (read for this decision; reused, no parallel system):
+  - The EVM demo check-in (D854): `packages/core/src/demo-check-in.ts:21` pins, per chain id, the contract's
+    deterministic CREATE2 address and runtime code hash, both from the checked-in artifact
+    `contracts/evm-delegate/artifacts/CheckIn.json` (a test ties them; the code hash is checked on chain by a person
+    before a chain is added, never at approval time). `isDemoCheckInCall` (`:29`) matches chain, address (any case),
+    calldata exactly `0x183ff085` and value 0. `verified-contracts.ts:138` lists it as "Journear demo check-in"
+    (`DEMO_CHECK_IN_NAME`, `:68`). `decode/summary.ts` `demoCheckIn` (next's `:450`, used at `:473`, `:633`, `:664`)
+    gives the headline "{App} wants to check you in" and the lines "This is Journear’s demo check-in. It doesn’t move
+    any money or tokens." and "It uses **Journear demo check-in** ({address}, checked by Journear).". `CheckIn.sol` has
+    no owner, no upgrade and nothing payable, so the address is the code. The sponsor allowlist (`evm.sponsor`, D855's
+    vault checks, the API's `exactCalldata`) decides what Journear *pays for*; it plays no part in what the window says.
+  - The verified list's other entries (Sodax, D44): pinned data in the bundle, by chain and exact address, each from
+    the protocol's own sources; "(checked by Journear)" after a spender's name asserts that identity.
+  - The reviewed token list (D860): `known-tokens.ts:83`, by network and exact id, each from the issuer's own page;
+    the token's own metadata is never read.
+  - The NEAR network row (D726, D729): `render-approval.ts:850` `nearNetworkLine`, "NEAR test network (checked by
+    Journear)" when the vault checked the claim (`:856`: a transaction's block hash on the env's RPC, a test app's
+    delegate key, nonce and expiry on both providers, D263's rule).
+  - D858's relayed-NEAR summary: `nearActions` (next's `summary.ts:1664`) builds the lines; `noNearLeaves` (`:1701`)
+    drops the repeated "None of your NEAR" row when every action is a transfer or a plain "use {contract} ({method})"
+    and nothing warns; `actsAsYou` (`:1657`, code `acts_as_you`) is pushed for every relayed call to another account
+    (`:1707`); the fee row is `RELAYED_FEE` (`:1651`).
+  - So "checked by Journear" means one thing on every surface: Journear itself checked the fact in front of it (which
+    contract or token this is, which network), from its own sources, never the app's word. On the check-in and now on
+    these NEAR entries it also stands for a contract whose code a person read and that can't change.
+- **What makes a NEAR entry safe to trust.** A NEAR account's code changes only through a `DeployContract` (or
+  `UseGlobalContract`) action the account itself sends: a transaction signed by one of its access keys, or a receipt
+  its own code creates. So an account with **no access key** whose code **creates no such action** can never change its
+  code or be deleted. Per contract, from the source in this repository and the docs:
+  - `contracts/hana-stamps/src/lib.rs`: no owner, no admin or upgrade method, no `#[payable]` method (near-sdk refuses
+    a deposit on `collect`), no promise of any kind (no transfer, no cross-contract call, no deploy). sandbox-dev's
+    `near.demoStamps` was deployed 2026-11-13 by `deploy-stamps` (deploy and `new()` in one transaction, the code hash
+    checked against its build: `9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA`) and **locked** the same day after the
+    founder's hand check (lock transaction `wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU`, `view_access_key_list` `[]`;
+    `docs/operations.md` "Hosted stamps demo", `docs/hackathon.md`).
+  - `contracts/hana-guestbook/src/lib.rs`: the same (no owner, no upgrade, nothing payable, no promise). sandbox-dev's
+    `near.demoGuestbook`: code hash `2cGY7mcQevAjB5nssu8VNYkkSiqSiSdimB98QYXbKJxb`, **locked** 2026-11-12 (lock
+    transaction `HqnP7FRupTXdAUkKwVspAwRsY2ov3AWpwJLs4rR3VqDr`, no key left; `docs/operations.md` "Hackathon demo
+    guestbook (NEAR)", D743).
+  - The local e2e stack: its own models of both contracts (`apps/e2e/src/server/stamps-contract.ts`, `chain.ts`, held
+    against the real wasm call by call, D805), on a mocked testnet; test only, never deployed.
+- **The binding chosen: (a), a reviewed record beside each entry, no new network read.** Pinned data in core
+  (`REVIEWED_NEAR_DEPLOYS`, by env name): the code hash, the lock date and the lock transaction, as recorded when a
+  person checked them, and the sha256 of the account id checked (never its name). The account itself comes only from
+  the env's manifest (`near.demoStamps`, `near.demoGuestbook`, CLAUDE.md), into the popup only through the build
+  (`HanaEnv.nearReviewed`, generated by `gen-envs` only for an env with a record; the e2e stack sets its own for its
+  models). **The build enforces the record** (after the review of PR 106: CI is off, so a test alone wasn't enough):
+  `gen-envs` (`nearReviewedOf`) throws when the env isn't on testnet or when a manifest account's sha256 isn't the
+  record's, so a manifest that names another account can't build pages until that account is reviewed;
+  `packages/web/test/gen-envs.test.ts` pins the names too (`hana-id-stamps-dev1.testnet`,
+  `hana-id-guestbook-dev1.testnet`). `reviewed-near-calls.test.ts` pins the sha256 of every file that decides each
+  build (`src/lib.rs`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`) and the lines the readings rest on
+  (verbatim), and fails on a `#[payable]`, a `Promise`, a transfer, a deploy or a removal appearing: an entry can't
+  outlive its review (as PR 98 did for `links.rs`). What those files can't hold (cargo-near's version, the host) the
+  rebuild carries: `scripts/reviewed-near-rebuild.ts`, in `pnpm verify --full`'s contract lane, rebuilds each contract
+  with the deploy tool's command and compares with every record's code hash (`REVIEWED_NEAR_BUILD`: the command, Rust
+  1.85.1, cargo-near 0.22.0; it skips, passing and saying why, without those tools).
+- **On chain, as a tool and a go-live gate** (after the review of PR 106; not run while building: no chain reads were
+  made): `scripts/check-reviewed-near.ts <env>` (also `deploy-check <env> --only near-reviewed`, an opt-in group like
+  the watchdog's: deploy-check reads builds by default, this reads a chain) reads, for every record of the env, on both
+  the manifest's `rpc` and `rpcFallback`: the chain id, `view_access_key_list` empty, `view_account`.code_hash the
+  record's, no `global_contract_hash` or `global_contract_account_id`, both endpoints agreeing; it prints the time and
+  every read's block height and hash and exits 1 on any mismatch, disagreement, endpoint down or missing, or a
+  manifest account other than the one checked. `docs/go-live-after-freeze.md` 1.6a runs it before the first pages
+  deploy that carries this change; `docs/operations.md` "Reviewed NEAR calls: adding one" has it run before each later
+  pages deploy and monthly. **Last on-chain check:** not run yet; its output goes here and in operations.
+  - Rejected: (b) a code-hash read at approval time: a new network read in the approval path (latency on every NEAR
+    approval, a second provider by D263's rule, a failure mode to decide: fail to today's screen or refuse), and it
+    buys nothing for a locked account whose code can't change; it would matter only for an unlocked or upgradable
+    contract, which this list doesn't take. (c) both: the same cost for the same nothing. An entry per account without
+    the lock (a contract with a key or an upgrade method): "this account + this method" would not be a stable fact.
+  - The code hashes rebuild from this checkout (corrected after the review of PR 106; the first build of this branch
+    said the builds weren't reproducible, which was wrong): the reviewer, offline, and this branch's build on an
+    Apple-silicon Mac (macOS, 2026-11-19), both with Rust 1.85.1 from rust-toolchain.toml and cargo-near 0.22.0, ran the
+    deploy tool's command, `cargo near build non-reproducible-wasm --no-abi` (`scripts/lib/demo-deploy.ts`), and got
+    exactly the recorded hashes: stamps `9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA` (wasm sha256 83179964…),
+    guestbook `2cGY7mcQevAjB5nssu8VNYkkSiqSiSdimB98QYXbKJxb` (17e49519…); into another target directory too. A
+    build without `--no-abi` gives other hashes. Other machines and toolchains are unverified: that is what the
+    rebuild step checks each time. So the deployed code is the code of these files, as far as these two builds go;
+    which commit each deploy itself built was not recorded (the files are unchanged since: `git log`, stamps' `lib.rs`
+    last changed in 884ae566, 2026-11-13, the guestbook's in c7926aee, 2026-11-11; only the guestbook's
+    `Cargo.toml` licence field after, and the rebuild with it still matches).
+- **Per contract, not per app.** The reading says what the contract's code does with this exact call, which is the
+  same whoever asks; the window names the asking app from the vault (`{App}`), never from the request, and the EVM
+  check-in is per contract too. A per-app list would need app ids in the build (D1 data, not the manifest) and would
+  add no safety: an unreviewed app making the exact reviewed call has exactly the reviewed effect (tested: "Some Other
+  App wants to collect the Arrival stamp for you").
+- **The match rule** (`reviewedNearCall`, `reviewedNearMessage`); anything outside it is not a match, and the summary
+  is the one the request gets with no entry at all (tested field for field, and the rendered page byte for byte):
+  - the NEAR test network (`network: 'testnet'`: the only network a build has; the vault checks the claim as D726,
+    D729 say, and a live app's amber "could also be used on the real NEAR network" line stays);
+  - the receiver exactly the build's account for that contract (no case folding, no prefix or suffix: look-alikes such
+    as `stamps-reviewed.testnet.evil.testnet` don't match), never the user's own account, and not two contracts named
+    the same account;
+  - exactly one action, a function call of the contract's one reviewed method (`collect`, `add_message`), deposit
+    exactly 0, gas above 0 and at most 30 Tgas (`REVIEWED_NEAR_MAX_GAS`: the sites attach 10, a call burns under 2);
+  - the arguments strict JSON (UTF-8, no duplicate key, no lone surrogate) of exactly the reviewed shape, no other key:
+    `collect` `{stamp}` for `arrival`, `sponsored`, `own_fare`, `layover`; `{stamp: 'postcard', note}`; `{stamp:
+    'signature', proof: {message, nonce, recipient, signature}}` with `message` exactly "Stamp my passport: " + the
+    sender, `recipient` exactly the contract's account, `nonce` and `signature` standard padded base64 of 32 and 64
+    bytes in their one canonical form, and the signature **verified** (ed25519, strict) by the sender's own key (an
+    implicit account: the key is the account id) over the NEP-413 payload, as the contract's `proof_is_valid` checks
+    it (after the review of PR 106: a shape-only check made "the message you signed" untrue for a forged proof; the
+    check is math on the request's bytes, no new trust); `add_message` `{text}`;
+  - relayed or direct as the site sends it: Own fare only as the user's own transaction (the contract refuses it
+    relayed), every other stamp only relayed; the guestbook either way (the hosted demo has both);
+  - typed slots only: the stamp is one of the contract's six (a string: a number, boolean or null is no match), shown
+    by the title the stamps site gives its slot (`REVIEWED_STAMP_TITLES`, tested against
+    `apps/stamps/src/ui/labels.ts`); a note or a message is shown (`reviewedText`) only when it is exactly what the
+    contract stores (already trimmed as Rust's `str::trim` trims, 1 to 140 or 200 Unicode scalar values) and one
+    display-safe line (no control, format, bidi or invisible character, no variation selector or zero-width joiner, so
+    no emoji sequence), with **no run of more than two combining marks** (`COMBINING_RUN`: two cover every accent one
+    letter takes, e.g. Vietnamese) and **no quotation mark** (`QUOTE_LIKE`: every Unicode Quotation_Mark and look-alikes
+    such as double primes, ditto and ornaments, except the single quotes U+0027, U+2018, U+2019, U+201B, U+FF07, which
+    are also the apostrophe in "don't"); otherwise not a match. After the review of PR 106 (a note of 40 combining
+    marks painted ~330 px down over "It uses … checked by Journear"; a note `hi” It uses Journear demo stamps (checked
+    by Journear). Approve to continue. “ok` closed the quotation and went on in Journear's voice): the words are no
+    longer inline in a sentence in quotation marks but in **a box of their own** under a label ("The note", "The
+    message", as D886 labels a message being signed: `p.message-label`), the grey box a signed message uses (`div.summary-quote`: its own line, `max-width: 100%`, `overflow:
+    hidden`, `contain: paint`, mono, `dir="auto"` with its direction isolated, set as text), so neither the app's nor the
+    user's words sit in the flow of Journear's sentences and nothing drawn in them paints outside the box; the window
+    draws no quotation marks, so an apostrophe can close nothing, and the quotation marks are refused as well;
+  - the Signature stamp's message (NEP-413): the recipient exactly the build's stamps account, the text exactly "Stamp
+    my passport: " + the user's own account (the vault's address), readable, no callback URL.
+- **Per entry: old screen → new** (after the merge of D884 and D886, 2026-11-19: no fee row in a free action's main
+  view, "Network fee: Free. Sponsored by {App}." first in the details, which a reviewed call keeps; D884's "NEAR
+  leaving your account: None of your NEAR." row is **not** shown on a reviewed call, whose own line already says it
+  moves no money or tokens (it attaches no NEAR, so no "sent" row either); a fee the user pays, Own fare's and the
+  guestbook's own transaction's, stays in the main view; the network row, the details and every other note stay as
+  they were; the raw account stays in the "It uses" line and in the details' "To" row, the method and arguments in the
+  details' call):
+
+  | Entry | Old headline | New headline | New lines | Amber |
+  |---|---|---|---|---|
+  | Arrival, Fare paid, Layover (relayed) | "Stamp Trail wants to use {account} (collect)" | "Stamp Trail wants to collect the Arrival stamp for you" (the slot's title) | "Collecting a stamp doesn’t move any money or tokens." · "It uses **Journear demo stamps** ({account}, checked by Journear)." | acts-as-you goes |
+  | Postcard (relayed) | as above | "… the Postcard stamp for you" | "The note" and the note in its own box · "It’s posted under your account. Anyone can see it, and you can’t delete it." · then the two above | goes |
+  | Signature, step 2 (relayed, with the proof) | as above | "… the Signature stamp for you" | "It includes the message you signed for this stamp." (the signature verified) · then the two above | goes |
+  | Signature, step 1 (NEP-413 message) | "Stamp Trail wants you to sign a message for {account}" | "Stamp Trail wants you to sign a message for your Signature stamp" | "Signing it doesn’t move any money or tokens. The stamp uses it to check that this account is yours." · "It’s for **Journear demo stamps** ({account}, checked by Journear)." | the "This proves to {account} that this account is yours. Only sign if you trust {account}." and "This app is at {host}, but the proof is for {account}. …" lines go; the message box, the "For" row and the no-network note stay |
+  | Own fare (the user's own transaction) | "Stamp Trail wants to use {account} (collect)" | "… the Own fare stamp for you" | "The stamp itself doesn’t move any money or tokens." · "It uses …" | none before (direct calls get no acts-as-you line); the fee row "A small amount of NEAR, from your account" stays |
+  | Guestbook (relayed) | "Journear demo wants to use {account} (add_message)" | "Journear demo wants to add a message to the demo guestbook" | "The message" and the text in its own box · "It’s posted under your account. Anyone can see it, and you can’t delete it." · "Adding it doesn’t move any money or tokens." · "It uses **Journear demo guestbook** ({account}, checked by Journear)." | goes |
+  | Guestbook (the user's own transaction) | as above | as above | as above, with "The message itself doesn’t move any money or tokens." | none before |
+
+- **Review notes, the amber line per entry** (D858's default: it stays; it may go only where the method can't move or
+  spend anything of the user's and the binding guarantees the code). It goes for every entry here:
+  - `collect`: not payable (a deposit is refused; the rule also requires 0); no promise, so it can't move NEAR or any
+    token anywhere; the only thing a user "keeps with it" is their passport, and `collect` only ever appends one stamp
+    to the caller's own passport after checking it isn't there (`stamps.iter().all(|s| s.stamp != id)`, then
+    `passports.insert(caller…)`); it never removes or changes a stamp, and nothing else in the contract does. Storage is
+    the contract's own balance. Locked, no upgrade: the code is the code read.
+  - `add_message`: not payable, no promise; it appends one message attributed to the predecessor; no method removes
+    or edits one (the ring drops the oldest beyond 50, whoever wrote it, which the guestbook's README says). Locked.
+  - The Signature message: its signature only lets the stamps contract check, inside `collect`, that the caller owns
+    the account (the message names that account and the recipient is the contract: useless for anything else Journear
+    knows of, and it moves nothing). The two NEP-413 amber lines asked the user to judge a recipient; for this exact
+    message Journear has judged it.
+  - What the new lines claim, each from the source: no money or tokens move (relayed: the relayer pays the fee and no
+    deposit is attached; direct: the user pays the fee, which the fee row says, and the call itself moves nothing); the
+    note and the message are public and can't be deleted (stored on a public contract with no delete method); the
+    stamp checks the signed message. D858's rule (no zero-cost claim unless Journear fully knows the effect) holds:
+    these are the only NEAR requests whose effect it fully knows; the test allowlist names each sentence.
+- **What "checked by Journear" asserts here**, the same as everywhere: Journear itself checked that the account is its
+  reviewed contract (on this env, from its manifest, deployed from the reviewed source and locked), not the app's word.
+  It asserts no more than on the EVM check-in (whose address is its reviewed, ownerless code) and no less; the plain
+  lines are Journear's reading of that code for this exact call. No wording had to change.
+- **The Signature stamp's message after D886** (merged 2026-11-19: headline, amber box, "For" row, "The message" label,
+  the message, a blue note that a signature counts on every network): for the reviewed message the two NEP-413 amber
+  lines stay out, and the "counts on every network" note, which would sit beside "Signing it doesn’t move any money or
+  tokens." as a mixed signal, is replaced by a blue note true for this signature: "This signature names your account
+  and the stamps program. The program accepts it only from your account, to collect this one stamp." For a test app
+  (whose own note the page leaves out on a message): "This app is a test version, so don’t keep real money in this
+  account. This signature names your account and the stamps program, which accepts it only from your account, to
+  collect this one stamp." Why true: the message names the account and the recipient is the program; its reviewed
+  `proof_is_valid` checks the caller is that account and the recipient itself, and `collect` stores each stamp once
+  per account. It says nothing about other verifiers, which Journear can't know.
+- **Whose words** (after the review of PR 106): entries are per contract, so any app, a hostile one too, gets the
+  reading, and the app chooses the note or the message (the hosted demo pre-fills it). So the window never says "your
+  note" or "your message": "The note", "The message", the headline "… wants to add a message to the demo guestbook",
+  and "It’s posted under your account. Anyone can see it, and you can’t delete it.", true whoever wrote the words.
+- **Near-misses** (each tested: summary equal to the no-entry one; the page byte for byte for a set of them):
+  mainnet; no entries in the build; the other contract's account; look-alike and different accounts; the user's own
+  account; another method or another case of it; any deposit (1 yocto, 1 NEAR); gas above 30 Tgas; the call twice;
+  the call with a transfer or a token transfer in one batch; an extra or misplaced argument, a duplicate key, another
+  or differently cased stamp, an array, a BOM, non-UTF-8 bytes; a note or text missing, empty, padded, too long,
+  with a line break, a bidi override, a zero-width character, a control character, a run of three or more combining
+  marks, any quotation mark (straight, curly, low, guillemets, primes, ditto, fullwidth), an emoji with a variation
+  selector or a joiner; a numeric, boolean or null stamp; a proof for another account or recipient, of the wrong
+  length, in non-canonical base64, with an extra or missing field, or of the right shape but not the user's signature
+  (random bytes, another key's, over another nonce or recipient); Own fare relayed, any other stamp direct; a
+  signature message for another account, with extra spaces, for another recipient, with a callback URL, or for another
+  user. An unreviewed app calling a reviewed contract exactly gets the reviewed reading (per contract, above).
+- Not changed: what is signed, how requests are decoded, any guard, the vault, the API, the contracts, the fee rows and
+  the details' fee and cost sentences (D884's), the stamps site and the hosted demo. Mainnet: no entry, and
+  the record test refuses an env name that looks like one.
+- How staff add an entry: `docs/operations.md` "Reviewed NEAR calls: adding one".
+- Address impact: none (no path, key or derivation input changes).
+- To confirm: (1) the binding (a), with no approval-time code-hash read; (2) per contract, not per app; (3) the
+  headlines "{App} wants to collect the {stamp} stamp for you", "{App} wants you to sign a message for your Signature
+  stamp", "{App} wants to add a message to the demo guestbook"; (4) the lines "Collecting a stamp doesn’t move any
+  money or tokens.", "The stamp itself doesn’t move any money or tokens.", "Adding it doesn’t move any money or
+  tokens.", "The message itself doesn’t move any money or tokens.", "Signing it doesn’t move any money or tokens. The
+  stamp uses it to check that this account is yours.", "It includes the message you signed for this stamp.", "The
+  note", "The message" (labels, each with the words in their own box), "It’s posted under your account. Anyone can see it,
+  and you can’t delete it."; (5) the names "Journear demo stamps" and "Journear demo guestbook", and "It uses …" / "It’s for …"
+  ("It’s for" on the message, which uses nothing); (6) the amber acts-as-you line going for these calls, and the two
+  NEP-413 amber lines going for the Signature message; (7) the 30 Tgas bound; (8) Own fare only direct, the other
+  stamps only relayed; (9) a note or message outside the contract's own stored form, or with more than two combining
+  marks in a row, a quotation mark, an emoji sequence (variation selector or joiner), reading as today's screen rather
+  than being shown, and the box style (no quotation marks drawn; apostrophes allowed); (10) the Signature proof
+  verified in the window (strict ed25519) rather than the weaker "It includes a signed message for this stamp."; (11)
+  **a further option for later**: give the free-text entries (Postcard, the guestbook) their friendly reading only to
+  Journear's own apps (per app + contract), so a hostile app can't put its words under "checked by Journear"; the
+  trade-off: app ids would have to reach the build (they are D1 data, per env, not manifest data), a partner's app
+  making the same call would read as today's screen although its effect is identical, and the other entries (no
+  free text) gain nothing from it; (12) **for the founder, facts only the chain or the deploy history can tell**:
+  that `hana-id-stamps-dev1.testnet` and `hana-id-guestbook-dev1.testnet` still have no access key, use no global
+  contract and run the code hashes above (`check-reviewed-near sandbox-dev`, go-live 1.6a), and which commit each
+  deploy built (the files are unchanged since both, and they rebuild to the recorded hashes); (13) after D884 and
+  D886: no "NEAR leaving your account: None of your NEAR." row on a reviewed call, and the Signature message's note
+  "This signature names your account and the stamps program. The program accepts it only from your account, to
+  collect this one stamp." (test app: "This app is a test version, so don’t keep real money in this account. This
+  signature names your account and the stamps program, which accepts it only from your account, to collect this one
+  stamp."); the labels "The note" and "The message" in the style of D886's message label.

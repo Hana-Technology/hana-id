@@ -43,7 +43,7 @@ import {
   stellarAccountControl,
   stellarFlagNames,
 } from '@hana-id/core/decode';
-import { DEMO_CHECK_IN_CALLDATA, type NearAction, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
+import { DEMO_CHECK_IN_CALLDATA, type NearAction, type ReviewedNearAccounts, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
 import { BRAND } from '@hana-id/brand';
 import { type Child, type Dom, dom, row, rows } from './dom.ts';
 import { alert, icon } from './ui.ts';
@@ -939,7 +939,11 @@ function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_de
     // D884 (as amended by its review): with the fee row gone from the main view, a plain relayed call still says what
     // it costs: "None of your NEAR." (no word about tokens: the summary sees none move; the amber line says the call
     // can use what the user keeps with the contract).
-    visible: summary.noNearLeaves
+    // D885: a reviewed call's own lines say it moves no money or tokens: no "None of your NEAR" row to repeat it (it
+    // attaches no NEAR, so there is no "sent for you" row either).
+    visible: summary.reviewed
+      ? []
+      : summary.noNearLeaves
       ? [facts(d, [row(d, 'NEAR leaving your account', d.h('strong', { class: 'words' }, NEAR_DELEGATE_NONE)), sent > 0n && row(d, NEAR_SENT_FOR_YOU, mono(d, nearDisplay(sent)))])]
       : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
     details: [
@@ -975,7 +979,13 @@ export const nearRecipientLookalike = (escaped: string): string => `The name it�
 
 const asciiEscaped = (s: string): string => Array.from(s, (ch) => (/^[\x20-\x7e]$/u.test(ch) ? ch : Array.from({ length: ch.length }, (_, i) => `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join(''))).join('');
 
-function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: ApprovalRenderContext): Parts {
+/**
+ * A NEP-413 message. The signature stamp's own message, exactly (`summary.reviewed`, D885: for the build's reviewed
+ * stamps account, naming the user's own account, no callback), has no "proves to" or recipient lines and, in place of
+ * the note that a signature counts on every network, one that says what this one is bound to: the reviewed contract
+ * only checks it to collect that stamp, and the summary names it as checked by Journear.
+ */
+function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: ApprovalRenderContext, summary: ApprovalSummary): Parts {
   const p = decoded.payload;
   const host = originHost(ctx.parentOrigin);
   const sameSite = host !== null && (p.recipient === host || p.recipient === ctx.parentOrigin);
@@ -984,7 +994,7 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
     alerts: {
       banners: [],
       dangers: lookalike ? [risk(5, 'danger lookalike', [nearRecipientLookalike(asciiEscaped(p.recipient))], ['The name it’s for can imitate another name'])] : [],
-      warnings: [
+      warnings: summary.reviewed ? [] : [
         risk(4, 'warn nep413', [nearMessageWarning(p.recipient)], ['Proves to ', p.recipient, ' that this account is yours']),
         // Any recipient that isn't exactly this page's host or origin, whatever its shape (a page picks the recipient, so
         // no shape may soften this): one factual line in the warning style.
@@ -993,7 +1003,11 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
     },
     network: null,
     // D886: the message first, then the blue note about networks.
-    visible: [facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]), ...message(d, decoded.message), noNetworkNote(d, decoded.message.text === null ? 'unreadable' : 'message', ctx)],
+    visible: [
+      facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]),
+      ...message(d, decoded.message),
+      summary.reviewed ? noteLine(d, ctx.testAppNoteHere === true ? 'note reviewed-signature test-app' : 'note reviewed-signature', ctx.testAppNoteHere === true ? REVIEWED_SIGNATURE_TEST_APP_NOTE : REVIEWED_SIGNATURE_NOTE) : noNetworkNote(d, decoded.message.text === null ? 'unreadable' : 'message', ctx),
+    ],
     details: [d.h('h3', {}, 'Prove this NEAR account is yours (NEP-413)'), facts(d, [row(d, 'Recipient', mono(d, p.recipient)), row(d, 'Nonce', mono(d, toHex(p.nonce)))])],
   };
 }
@@ -1022,6 +1036,15 @@ export const UNREADABLE_NO_NETWORK_TEST_APP_NOTE =
 /** Raw signing's (no message to agree with; its red line says to reject it unless the user is sure). */
 export const RAW_NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included.';
 export const RAW_NO_NETWORK_TEST_APP_NOTE = 'This app is a test version, but your signature counts on every network, real-money ones included. Don’t keep real money in this account.';
+/**
+ * The Signature stamp's own message, exactly (D885): in place of the "counts on every network" note, what this signature
+ * is bound to. It names the user's account and Journear's reviewed stamps program as its recipient, and that program
+ * accepts it only from this account and only to collect this stamp, once (its reviewed code). For a test app the
+ * test-app note's advice too (the page leaves its own note out on a message).
+ */
+export const REVIEWED_SIGNATURE_NOTE = 'This signature names your account and the stamps program. The program accepts it only from your account, to collect this one stamp.';
+export const REVIEWED_SIGNATURE_TEST_APP_NOTE =
+  'This app is a test version, so don’t keep real money in this account. This signature names your account and the stamps program, which accepts it only from your account, to collect this one stamp.';
 
 function noNetworkNote(d: Dom, kind: 'message' | 'unreadable' | 'raw', ctx: ApprovalRenderContext): HTMLElement {
   const test = ctx.testAppNoteHere === true;
@@ -1271,6 +1294,8 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string, book?: IdBook, re
     if (typeof p === 'string') return [p];
     if (p.kind === 'app') return [d.h('strong', { class: 'app-name' }, appName)];
     if (p.kind === 'strong') return [d.h('strong', {}, p.text)];
+    // A reviewed call's quoted words (D885): never inline; renderApproval puts each in its own box (quoteBox).
+    if (p.kind === 'quote') return [quoteBox(d, p.text)];
     if (!p.role || !book || !isLongId(p.text)) return [mono(d, p.text)];
     refs?.push({ role: p.role, full: p.text });
     const n = book.number(p.text);
@@ -1279,6 +1304,12 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string, book?: IdBook, re
     return [d.h('code', { class: 'mono short-id', attrs: { 'aria-hidden': 'true' } }, shortId(p.text)), ...(hint ? [d.h('span', { class: 'sr-only' }, hint)] : [])];
   });
 }
+
+/**
+ * A reviewed call's quoted words (D885): the text alone, in a box of its own under its label, apart from Journear's
+ * sentences, clipped to the box (approval.css `div.summary-quote`), its direction isolated. Set as text, never markup.
+ */
+const quoteBox = (d: Dom, text: string): HTMLElement => d.h('div', { class: 'summary-quote', attrs: { dir: 'auto' } }, text);
 
 /** What a sentence that names the app as its sponsor says when the app has no name to show (D884). */
 export const NO_APP_NAME = 'the app';
@@ -1370,6 +1401,8 @@ function detailsSection(d: Dom, body: readonly Child[]): HTMLElement {
 export interface ApprovalRenderContext extends NearRenderContext {
   /** The user's address on the request's chain (the vault's), so the summary can say "your account". */
   readonly address?: string;
+  /** The build's accounts of Journear's reviewed NEAR contracts (HanaEnv.nearReviewed): their exact calls read in plain words. */
+  readonly reviewedNear?: ReviewedNearAccounts;
   /** The page's own notices (the test-app note or the mainnet demo's banner, the out-of-policy line): after the request's. */
   readonly notes?: readonly (HTMLElement | null)[];
   /** First in the details (the Support ID). */
@@ -1452,7 +1485,7 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Appr
     case 'near_delegate':
       return nearDelegate(d, decoded, near, summary, appName);
     case 'near_message':
-      return nearMessage(d, decoded, near);
+      return nearMessage(d, decoded, near, summary);
   }
 }
 
@@ -1461,7 +1494,7 @@ export const TYPED_DATA_NO_CHAIN = 'This signature names no network, so it may w
 
 /** The body of the approval screen for a decoded request. */
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
-  const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}) });
+  const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}), ...(ctx.reviewedNear ? { reviewedNear: ctx.reviewedNear } : {}) });
   const k = kindParts(d, decoded, appName, ctx, summary, ctx.nowMs);
   // A control change's bullet repeats nothing: when its step's own line is in view (the headline of a single step, or a
   // grouped line, which names the whole key, signer or address), the bullet is dropped. The banner always stays, and
@@ -1492,13 +1525,20 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   const keyFacts = [network && row(d, 'Network', ...network), paid];
   const lines = summary.lines.flatMap((l) => {
     const refs: IdRef[] = [];
+    // A line with quoted words (D885): its label as a message's label is shown ("The note", "The message", as D886's
+    // "The message"), then the words in their own box, never inside a sentence.
+    const quoted = l.filter((part): part is { kind: 'quote'; text: string } => typeof part !== 'string' && part.kind === 'quote');
+    if (quoted.length > 0) {
+      const label = l.filter((part) => typeof part === 'string' || part.kind !== 'quote');
+      return [d.h('p', { class: 'message-label' }, ...summaryNodes(d, label, appName)), ...quoted.map((q) => quoteBox(d, q.text))];
+    }
     const p = d.h('p', { class: 'summary-line' }, ...summaryNodes(d, l, appName, book, refs));
     return withRows(d, book, p, refs);
   });
   const amberBox = riskBox(d, 'warning', amber, appName, book);
   return d.h(
     'div',
-    { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable) } },
+    { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable), ...(summary.reviewed ? { 'data-reviewed': 'true' } : {}) } },
     headlineEl,
     // The red banners and lines right under the headline: nothing a partner sizes (the summary's lines, the number of
     // operations) can push them down (review M2).

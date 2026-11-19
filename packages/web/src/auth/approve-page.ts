@@ -589,7 +589,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
         // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, testAppNoteHere: msg.testApp === true && !demo && !demoOn(msg), parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [accountRow(msg.address), supportId], nowMs: now() })
+          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, testAppNoteHere: msg.testApp === true && !demo && !demoOn(msg), parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [accountRow(msg.address), supportId], nowMs: now(), ...(env.nearReviewed ? { reviewedNear: env.nearReviewed } : {}) })
           : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem, msg.appName, msg.address)),
         buttons('Approve', decoded !== null, msg.id),
         auto?.active ? stopAutoApproveButton(auto.label) : null,

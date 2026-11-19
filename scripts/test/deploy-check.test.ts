@@ -415,18 +415,20 @@ describe('selectGroups, --only and --skip', () => {
   it('by default reads every group the manifest has but the watchdog, and says how to check that', () => {
     const s = selectGroups(full, all, [], []);
     expect(s.groups).toEqual(['api', 'pages', 'issuer', 'console', 'console-auth', 'files', 'admin']);
-    expect(s.notRead).toEqual(['watchdog']);
+    // D885: sandbox-dev's reviewed NEAR contracts are read only with --only near-reviewed.
+    expect(s.notRead).toEqual(['watchdog', 'near-reviewed']);
     expect(s.notes.join('\n')).toMatch(new RegExp(`watchdog \\(${WATCHDOG.workerName}\\) is on its own Cloudflare account .*deploy-check sandbox-dev --only watchdog`, 'u'));
+    expect(s.notes.join('\n')).toContain('deploy-check sandbox-dev --only near-reviewed');
   });
 
   it('--only reads just those (the watchdog too); --skip all but those', () => {
     expect(selectGroups(full, all, ['watchdog'], []).groups).toEqual(['watchdog']);
     const some = selectGroups(full, all, ['files', 'admin'], []);
     expect(some.groups).toEqual(['files', 'admin']);
-    expect(some.notes).toEqual(['not read (--only): api, pages, issuer, console, console-auth, watchdog']);
-    const skipped = selectGroups(full, all, [], ['admin', 'watchdog']);
+    expect(some.notes).toEqual(['not read (--only): api, pages, issuer, console, console-auth, watchdog, near-reviewed']);
+    const skipped = selectGroups(full, all, [], ['admin', 'watchdog', 'near-reviewed']);
     expect(skipped.groups).toEqual(['api', 'pages', 'issuer', 'console', 'console-auth', 'files']);
-    expect(skipped.notes).toEqual(['not read (--skip): admin, watchdog']);
+    expect(skipped.notes).toEqual(['not read (--skip): admin, watchdog, near-reviewed']);
   });
 
   it('refuses both flags, an --only group the manifest lacks, skipping everything, and an unknown name', () => {
@@ -685,8 +687,8 @@ describe('usage capture and Hana’s own org (Hana Home’s billing, D596, D597)
 describe('deployCheck and EVM sponsorship', () => {
   // This file's runs, word for word, as they printed before the `evm` group existed (captured from the code of `next`
   // @ d14607a6): an env without evm.sponsor prints exactly the same and sends no JSON-RPC.
-  const BEFORE_BARE = `sandbox-dev: this checkout is ${ID} (HEAD ${HEAD})\n  api           ${ID}        https://api.example.test/v1/health\n  vault worker  ${ID}        https://vault.example.test/.well-known/hana-build\n  vault bundle  ${ID}        https://vault.example.test/vault.js\n  auth worker   ${ID}        https://auth.example.test/.well-known/hana-build\n  auth pages    ${ID}        https://auth.example.test/login\n  email issuer  ${ID}        https://issuer.example.test/v1/email/health\nnote: the watchdog (hana-id-watchdog-sandbox-dev) is on its own Cloudflare account (D86) and not read by default: check it with \`deploy-check sandbox-dev --only watchdog\`, logged in to that account\nOK: every piece of sandbox-dev runs ${ID} (this checkout); not read: watchdog`;
-  const BEFORE_FULL = `sandbox-dev: this checkout is ${ID} (HEAD ${HEAD})\n  api                  ${ID}        https://api.example.test/v1/health\n  vault worker         ${ID}        https://vault.example.test/.well-known/hana-build\n  vault bundle         ${ID}        https://vault.example.test/vault.js\n  auth worker          ${ID}        https://auth.example.test/.well-known/hana-build\n  auth pages           ${ID}        https://auth.example.test/login\n  email issuer         ${ID}        https://issuer.example.test/v1/email/health\n  console worker       ${ID}        https://console.example.test/.well-known/hana-build\n  console spa          ${ID}        https://console.example.test/\n  console-auth worker  ${ID}        https://console-auth.example.test/.well-known/hana-build\n  files worker         ${ID}        https://files.example.test/.well-known/hana-build\n  admin worker         ${ID}        wrangler: hana-id-admin-x\nnote: the watchdog (hana-id-watchdog-sandbox-dev) is on its own Cloudflare account (D86) and not read by default: check it with \`deploy-check sandbox-dev --only watchdog\`, logged in to that account\nOK: every piece of sandbox-dev runs ${ID} (this checkout); not read: watchdog`;
+  const BEFORE_BARE = `sandbox-dev: this checkout is ${ID} (HEAD ${HEAD})\n  api           ${ID}        https://api.example.test/v1/health\n  vault worker  ${ID}        https://vault.example.test/.well-known/hana-build\n  vault bundle  ${ID}        https://vault.example.test/vault.js\n  auth worker   ${ID}        https://auth.example.test/.well-known/hana-build\n  auth pages    ${ID}        https://auth.example.test/login\n  email issuer  ${ID}        https://issuer.example.test/v1/email/health\nnote: the watchdog (hana-id-watchdog-sandbox-dev) is on its own Cloudflare account (D86) and not read by default: check it with \`deploy-check sandbox-dev --only watchdog\`, logged in to that account\nnote: sandbox-dev's reviewed NEAR contracts (D885) are not read by default: check them with \`deploy-check sandbox-dev --only near-reviewed\` (or \`check-reviewed-near sandbox-dev\`)\nOK: every piece of sandbox-dev runs ${ID} (this checkout); not read: watchdog, near-reviewed`;
+  const BEFORE_FULL = `sandbox-dev: this checkout is ${ID} (HEAD ${HEAD})\n  api                  ${ID}        https://api.example.test/v1/health\n  vault worker         ${ID}        https://vault.example.test/.well-known/hana-build\n  vault bundle         ${ID}        https://vault.example.test/vault.js\n  auth worker          ${ID}        https://auth.example.test/.well-known/hana-build\n  auth pages           ${ID}        https://auth.example.test/login\n  email issuer         ${ID}        https://issuer.example.test/v1/email/health\n  console worker       ${ID}        https://console.example.test/.well-known/hana-build\n  console spa          ${ID}        https://console.example.test/\n  console-auth worker  ${ID}        https://console-auth.example.test/.well-known/hana-build\n  files worker         ${ID}        https://files.example.test/.well-known/hana-build\n  admin worker         ${ID}        wrangler: hana-id-admin-x\nnote: the watchdog (hana-id-watchdog-sandbox-dev) is on its own Cloudflare account (D86) and not read by default: check it with \`deploy-check sandbox-dev --only watchdog\`, logged in to that account\nnote: sandbox-dev's reviewed NEAR contracts (D885) are not read by default: check them with \`deploy-check sandbox-dev --only near-reviewed\` (or \`check-reviewed-near sandbox-dev\`)\nOK: every piece of sandbox-dev runs ${ID} (this checkout); not read: watchdog, near-reviewed`;
 
   it('an env without evm.sponsor: the output is unchanged and no RPC is asked', async () => {
     const bare = server(ID);

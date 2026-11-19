@@ -250,7 +250,8 @@ test('D884: a relayed NEAR call’s free fee is only in the details, naming the 
   const key = { type: 'ed25519' as const, bytes: nearImplicitPublicKey(near) };
   await nearRpc('e2e_near_activate', { account_id: near });
   const collect: NearAction = { type: 'functionCall', methodName: 'collect', args: new TextEncoder().encode('{"stamp":"arrival"}'), gas: 30_000_000_000_000n, deposit: 0n };
-  const delegate = encodeNearDelegateAction({ senderId: near, receiverId: E2E_STAMPS, actions: [collect], nonce: (NEAR_HEIGHT - 1n) * 1_000_000n + 6n, maxBlockHeight: NEAR_HEIGHT + 100n, publicKey: key });
+  // A contract that isn't one of Journear's reviewed ones (D885): the stamps contract's collect reads as reviewed, below.
+  const delegate = encodeNearDelegateAction({ senderId: near, receiverId: 'plain-contract.testnet', actions: [collect], nonce: (NEAR_HEIGHT - 1n) * 1_000_000n + 6n, maxBlockHeight: NEAR_HEIGHT + 100n, publicKey: key });
   let popup = await popupFor(page, 'delegate', 'nearSignDelegate', base64Encode(delegate));
   const mainFee = (p: Page) => p.locator('.summary-facts dt', { hasText: 'Network fee' });
   const detailsFee = details(popup).locator('dl.fee-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]');
@@ -265,6 +266,18 @@ test('D884: a relayed NEAR call’s free fee is only in the details, naming the 
   await expect(details(popup).locator('p.relayer-note')).toHaveText(/^Someone else sends this for you, sponsored by E2E Partner\. /u);
   await expect(popup.locator('body')).not.toContainText(/Journear pays|Someone else pays|Free for you/u);
   await done(page, popup, 'delegate');
+
+  // D885: the same call to Journear's reviewed stamps contract: no fee row and no "None of your NEAR" row in view, its
+  // own line answering cost; the free fee first in the details all the same.
+  const reviewedCall = encodeNearDelegateAction({ senderId: near, receiverId: E2E_STAMPS, actions: [collect], nonce: (NEAR_HEIGHT - 1n) * 1_000_000n + 7n, maxBlockHeight: NEAR_HEIGHT + 100n, publicKey: key });
+  popup = await popupFor(page, 'reviewed', 'nearSignDelegate', base64Encode(reviewedCall));
+  await expect(popup.locator('h2.summary-headline')).toHaveText('E2E Partner wants to collect the Arrival stamp for you');
+  await expect(mainFee(popup)).toHaveCount(0);
+  await expect(popup.locator('div.request > dl.facts:not(.summary-facts)')).toHaveCount(0);
+  await expect(popup.locator('p.summary-line').first()).toHaveText('Collecting a stamp doesn’t move any money or tokens.');
+  await popup.getByText('Show details', { exact: true }).click();
+  await expect(details(popup).locator('dl.fee-facts dt', { hasText: 'Network fee' }).locator('xpath=following-sibling::dd[1]')).toHaveText('Free. Sponsored by E2E Partner.');
+  await done(page, popup, 'reviewed');
 
   const transfer = encodeNearTransaction({ signerId: near, publicKey: key, nonce: 13n, receiverId: 'bob.testnet', blockHash: NEAR_BLOCK, actions: [{ type: 'transfer', deposit: 10n ** 23n }] });
   popup = await popupFor(page, 'neartx', 'nearSignTx', base64Encode(transfer));

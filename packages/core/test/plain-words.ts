@@ -21,17 +21,26 @@ export const plainWords = (t: SummaryText): string => t.map((p) => (typeof p ===
 
 /**
  * A claim that a request costs the user nothing, or moves none of their money (D858 as corrected 2026-11-18): only a
- * request whose effect Journear fully knows may say so. Today that is Journear's pinned demo check-in alone (D854).
+ * request whose effect Journear fully knows may say so: Journear's pinned demo check-in (D854) and its reviewed NEAR
+ * calls (D885), each sentence of theirs listed here.
  */
 export const ZERO_COST = /\b(costs? (you )?nothing|cost to you|nothing (of yours )?leaves|free of charge|doesn’t (move|cost) any|won’t cost|no cost)\b/iu;
 export const ZERO_COST_ALLOWED: readonly string[] = [
   'This is Journear’s demo check-in. It doesn’t move any money or tokens.',
   'This is Journear’s demo check-in. The check-in itself doesn’t move any money or tokens.',
 ];
+/** D885: Journear's reviewed NEAR calls' sentences, allowed only in a summary marked `reviewed` (a page with `data-reviewed`). */
+export const ZERO_COST_ALLOWED_REVIEWED: readonly string[] = [
+  'Collecting a stamp doesn’t move any money or tokens.',
+  'The stamp itself doesn’t move any money or tokens.',
+  'Adding it doesn’t move any money or tokens.',
+  'The message itself doesn’t move any money or tokens.',
+  'Signing it doesn’t move any money or tokens.',
+];
 
 /** Every text of a summary that claims zero cost outside the allowlist (an allowed sentence may sit inside a longer line). */
 export const zeroCostIn = (s: ApprovalSummary): string[] =>
-  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => ZERO_COST.test(ZERO_COST_ALLOWED.reduce((t, a) => t.split(a).join(' '), w)));
+  [s.headline, ...s.lines, ...(s.fee ? [s.fee] : []), ...s.warnings.flatMap((w) => [w.text, ...(w.short ? [w.short] : [])])].map(plainWords).filter((w) => ZERO_COST.test([...ZERO_COST_ALLOWED, ...(s.reviewed ? ZERO_COST_ALLOWED_REVIEWED : [])].reduce((t, a) => t.split(a).join(' '), w)));
 
 /**
  * Every text of a summary a user reads above the fold (headline, lines, a fee the user pays, network, warnings and

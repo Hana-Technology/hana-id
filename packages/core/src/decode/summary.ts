@@ -15,6 +15,10 @@
 // lists them, wrapped NEAR, the Stellar asset contracts) gets a symbol and decimals, with a line saying it is the real
 // one. Any other token's amount is "N units of an unlisted token" with a line saying Journear can't tell what that is
 // worth: a contract's own symbol() or decimals() is the contract's claim, never read.
+//
+// Journear's reviewed NEAR calls (reviewed-near-calls.ts, D885): a request that is exactly one of them (the build's
+// account for a reviewed contract, its method, the reviewed argument shape) reads in plain words, the contract named
+// as checked by Journear, as the EVM demo check-in does (D854). Anything else reads as before.
 import { isDisplaySafeLine } from '../display-safe.ts';
 import { toHex } from '../bytes.ts';
 import { KNOWN_TOKENS, type KnownTokenList, type TokenNetwork, imitatedSymbolOn, knownToken } from '../known-tokens.ts';
@@ -23,6 +27,7 @@ import type { NearAction } from '../near/codec.ts';
 import { isNearAccountId } from '../addresses.ts';
 import { type ContractChain, DEMO_CHECK_IN_NAME, STELLAR_TESTNET_PASSPHRASE, verifiedContract } from '../verified-contracts.ts';
 import { isDemoCheckInCall } from '../demo-check-in.ts';
+import { type ReviewedNearAccounts, type ReviewedNearCall, REVIEWED_NEAR_CONTRACTS, REVIEWED_STAMP_TITLES, reviewedNearCall, reviewedNearMessage } from '../reviewed-near-calls.ts';
 import type { AbiValue } from './abi.ts';
 import type { DecodedApproval } from './request.ts';
 import type { DecodedEvmCall, DecodedEvmCallSite, DecodedEvmTx } from './evm.ts';
@@ -34,9 +39,16 @@ import type { TypedDataStruct, TypedDataValue } from '../typed-data.ts';
 
 /**
  * One piece of a summary's text: plain words, the requesting app's name (filled in by the page from the vault's app
- * name), a value shown as code (an address, an account id, a contract), or a value in bold (a verified contract's name).
+ * name), a value shown as code (an address, an account id, a contract), a value in bold (a verified contract's name),
+ * or a user's own words quoted as they are stored (a reviewed call's message: one display-safe line, its length
+ * bounded; the page sets it as text, isolated from the sentence's direction).
  */
-export type SummaryPart = string | { readonly kind: 'app' } | { readonly kind: 'code'; readonly text: string; readonly role?: IdRole } | { readonly kind: 'strong'; readonly text: string };
+export type SummaryPart =
+  | string
+  | { readonly kind: 'app' }
+  | { readonly kind: 'code'; readonly text: string; readonly role?: IdRole }
+  | { readonly kind: 'strong'; readonly text: string }
+  | { readonly kind: 'quote'; readonly text: string };
 
 /**
  * What an address, key or id in a sentence is: the page shows a long one by its short form in the sentence and
@@ -114,6 +126,11 @@ export interface ApprovalSummary {
    * amber acts-as-you line does); the window never says such a request costs nothing.
    */
   readonly noNearLeaves?: true;
+  /**
+   * The request is exactly one of Journear's reviewed NEAR calls: its headline and lines are the reviewed reading, and
+   * the page leaves out the warnings that reading answers (a signed message's "proves to" lines).
+   */
+  readonly reviewed?: true;
   readonly warnings: readonly SummaryWarning[];
   /** False when Journear can't say what the request does: a risk warning says so (the details still start folded). */
   readonly explainable: boolean;
@@ -129,6 +146,8 @@ export interface SummaryContext {
   readonly address: string;
   /** The partner page's origin, as the vault pinned it (a sign-in message's domain is compared with its host). */
   readonly parentOrigin?: string;
+  /** The build's accounts of Journear's reviewed NEAR contracts (none: no NEAR request reads as reviewed). */
+  readonly reviewedNear?: ReviewedNearAccounts;
 }
 
 const APP = { kind: 'app' } as const;
@@ -1717,7 +1736,61 @@ export const actsAsYou = (receiver: string): SummaryWarning => ({
   short: ['Acts as you with ', code(receiver, 'program')],
 });
 
-function nearActions(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean, network: 'testnet' | 'mainnet'): ApprovalSummary {
+// ---- Journear's reviewed NEAR calls (D885) ----
+
+const quote = (text: string): SummaryPart => ({ kind: 'quote', text });
+
+/** "It uses {name} ({account}, checked by Journear).": the same form as the EVM demo check-in's line. */
+const reviewedUses = (r: ReviewedNearCall, verb: 'It uses ' | 'It’s for ' = 'It uses '): SummaryText => [verb, strong(REVIEWED_NEAR_CONTRACTS[r.contract].name), ' (', code(r.account, 'program'), ', checked by Journear).'];
+
+/** Said of a note or message a reviewed call stores: true whoever wrote the words (the app chose them). */
+const POSTED = 'It’s posted under your account. Anyone can see it, and you can’t delete it.';
+
+/**
+ * A reviewed call's headline and lines. Every fact in them comes from the contract's reviewed source (no deposit, no
+ * call to anything else, nothing it holds of the user's to use) and from the request's values in their reviewed slots:
+ * the stamp from the contract's six (by its site's title), a note or message as quoted words (a line of a label and
+ * one `quote` part, which the page shows in a box of its own, apart from Journear's sentences). Only a relayed
+ * call says it moves no money; the user's own transaction pays its fee, so it says the stamp or message itself moves none.
+ */
+function reviewedNearReading(r: ReviewedNearCall, relayed: boolean): { headline: SummaryText; lines: SummaryText[] } {
+  switch (r.kind) {
+    case 'signature_message':
+      return { headline: [APP, ' wants you to sign a message for your Signature stamp'], lines: [['Signing it doesn’t move any money or tokens. The stamp uses it to check that this account is yours.'], reviewedUses(r, 'It’s for ')] };
+    case 'collect': {
+      const lines: SummaryText[] = [];
+      // The app chose the note (entries are per contract): "The note", never "your note".
+      if (r.note !== undefined) lines.push(['The note', quote(r.note)], [POSTED]);
+      if (r.stamp === 'signature') lines.push(['It includes the message you signed for this stamp.']);
+      lines.push(relayed ? ['Collecting a stamp doesn’t move any money or tokens.'] : ['The stamp itself doesn’t move any money or tokens.'], reviewedUses(r));
+      return { headline: [APP, ` wants to collect the ${REVIEWED_STAMP_TITLES[r.stamp]} stamp for you`], lines };
+    }
+    case 'add_message':
+      return {
+        headline: [APP, ' wants to add a message to the demo guestbook'],
+        lines: [['The message', quote(r.text)], [POSTED], relayed ? ['Adding it doesn’t move any money or tokens.'] : ['The message itself doesn’t move any money or tokens.'], reviewedUses(r)],
+      };
+  }
+}
+
+/**
+ * The summary of a request that is exactly a reviewed call: the generic one with the reviewed headline and lines.
+ * The fee, the network and the total rows stay the generic summary's. The amber acts-as-you line goes: the reviewed
+ * method can't use anything of the user's (D885's review notes). Any other warning means it isn't the reviewed call
+ * after all: then the generic summary, unchanged.
+ */
+function reviewedNearSummary(r: ReviewedNearCall | null, relayed: boolean, generic: ApprovalSummary): ApprovalSummary {
+  if (r === null || !generic.explainable || generic.warnings.some((w) => w.code !== 'acts_as_you')) return generic;
+  const { headline, lines } = reviewedNearReading(r, relayed);
+  return { ...generic, headline, lines, warnings: [], reviewed: true, shownSteps: [0] };
+}
+
+function nearActions(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean, network: 'testnet' | 'mainnet', reviewed?: ReviewedNearAccounts): ApprovalSummary {
+  const generic = nearActionsGeneric(actions, receiver, me, relayed, network);
+  return reviewedNearSummary(reviewedNearCall({ network, sender: me, receiver, actions, relayed }, reviewed), relayed, generic);
+}
+
+function nearActionsGeneric(actions: readonly NearAction[], receiver: string, me: string, relayed: boolean, network: 'testnet' | 'mainnet'): ApprovalSummary {
   const warnings: SummaryWarning[] = [];
   const notes: SummaryText[] = [];
   // How many token transfers the request makes (a NEAR transaction has one receiver: the token, for ft_transfer).
@@ -1824,12 +1897,12 @@ function summarize(decoded: DecodedApproval, ctx: SummaryContext): ApprovalSumma
         explainable: false,
       };
     case 'near_tx':
-      return nearActions(decoded.tx.actions, decoded.tx.receiverId, decoded.tx.signerId, false, decoded.network);
+      return nearActions(decoded.tx.actions, decoded.tx.receiverId, decoded.tx.signerId, false, decoded.network, ctx.reviewedNear);
     case 'near_delegate':
-      return nearActions(decoded.delegate.actions, decoded.delegate.receiverId, decoded.delegate.senderId, true, decoded.network);
+      return nearActions(decoded.delegate.actions, decoded.delegate.receiverId, decoded.delegate.senderId, true, decoded.network, ctx.reviewedNear);
     case 'near_message': {
       const readable = decoded.message.text !== null;
-      return {
+      const generic: ApprovalSummary = {
         headline: [APP, ' wants you to sign a message for ', code(decoded.payload.recipient)],
         lines: [],
         fee: null,
@@ -1837,6 +1910,11 @@ function summarize(decoded: DecodedApproval, ctx: SummaryContext): ApprovalSumma
         warnings: readable ? [] : [unreadableMessage()],
         explainable: readable,
       };
+      // The signature stamp's message, exactly (a readable one: the window shows it as text).
+      const r = readable ? reviewedNearMessage({ message: decoded.payload.message, recipient: decoded.payload.recipient, callbackUrl: decoded.payload.callbackUrl }, ctx.address, ctx.reviewedNear) : null;
+      if (r === null) return generic;
+      const { headline, lines } = reviewedNearReading(r, false);
+      return { ...generic, headline, lines, reviewed: true };
     }
   }
 }

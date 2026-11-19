@@ -48,4 +48,11 @@ export interface HanaEnv {
    * Absent: no chain is sponsored in this env.
    */
   readonly evmSponsor?: Readonly<Record<string, { readonly delegate: string; readonly relayer: string; readonly rpc?: string; readonly rpcFallback?: string }>>;
+  /**
+   * Journear's reviewed NEAR contracts in this env, by contract: the manifest's `near.demoStamps` and
+   * `near.demoGuestbook`, generated only for an env where core records them as deployed from the reviewed source and
+   * locked (`REVIEWED_NEAR_DEPLOYS`). The approval window reads exactly their reviewed calls in plain words, naming
+   * the contract as checked by Journear. Absent: every NEAR call reads as any other.
+   */
+  readonly nearReviewed?: Readonly<{ readonly stamps?: string; readonly guestbook?: string }>;
 }

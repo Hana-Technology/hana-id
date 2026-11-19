@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: 3.12's stamps check and 5.5's quoted heading after D884); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-19 (branch `feat/near-reviewed-calls`, from `next`, not merged, not deployed: 1.6a, the reviewed NEAR contracts checked on chain before the pages deploy, and 3.12's stamps approval reads as reviewed, D885); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: 3.12's stamps check and 5.5's quoted heading after D884); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -277,6 +277,23 @@ You see: `whoami` names the personal Cloudflare account you always deploy with. 
 the commit it runs today (`OK: every piece of sandbox-dev runs <commit>`, or a list of pieces on different commits).
 Copy that output into your notes: it is what a rollback goes back to. It changes nothing.
 
+### 1.6a The reviewed NEAR contracts, on chain (D885), before the pages deploy
+
+This deploy's vault and sign-in pages (phase 3, step 3) carry Journear's reviewed NEAR calls: the stamps and guestbook
+approvals read in plain words, "checked by Journear". That is true only while both contracts are still locked and run
+the reviewed code. Check it first (read-only, both of the manifest's NEAR endpoints):
+
+```sh
+corepack pnpm --filter @hana-id/scripts run check-reviewed-near sandbox-dev
+```
+
+You see: the time, then for each contract and each endpoint "code_hash … (block …), 0 access keys (block …), no global
+contract", and last `OK: sandbox-dev's reviewed NEAR contracts are locked and run the reviewed code on both endpoints`.
+Copy the whole output into D885 ("Last on-chain check") and `docs/operations.md` "Reviewed NEAR calls: adding one"
+(same heading), in the branch that records the deploy. Any `FAIL` line: stop, don't deploy the pages; ask. (The
+same check is `deploy-check sandbox-dev --only near-reviewed`. 1.5's `verify --full` has already rebuilt both
+contracts and compared their code hashes with the records, or said it skipped for want of cargo-near 0.22.0.)
+
 ### 1.7 The API config for this commit
 
 ```sh
@@ -486,11 +503,12 @@ commit. Any `FAIL:` line: stop and ask. (The two demo sites aren't stamped, so `
 
 A fresh email address, a private window. Give each site a minute after the deploy (cold Workers).
 
-1. Stamps site: sign in by email. Collect **Arrival**. In the approval window you see a plain summary at the top, the
-   network row, the row "NEAR leaving your account: None of your NEAR." (no fee row: D884), an amber line "This acts as you: … can use anything you keep with it." (naming the
-   stamps program), and the technical part folded behind **Show details**, which starts with "Network fee: Free.
-   Sponsored by {the stamps app's name}." After you approve: "It was free for you." Keep the tab open: item 5 uses your
-   next stamp.
+1. Stamps site: sign in by email. Collect **Arrival**. In the approval window you see a plain summary at the top,
+   "Stamp Trail wants to collect the Arrival stamp for you", "Collecting a stamp doesn’t move any money or tokens."
+   and "It uses **Journear demo stamps** (hana-id-stamps-dev1.testnet, checked by Journear)." (D885: a reviewed call,
+   so no amber line and no "NEAR leaving your account" row), the network row (no fee row: D884), and the technical
+   part folded behind **Show details**, which starts with "Network fee: Free. Sponsored by {the stamps app's name}."
+   After you approve: "It was free for you." Keep the tab open: item 5 uses your next stamp.
 2. Hosted demo: sign in by email; the addresses show; one signature: the window starts with a plain summary and
    **Show details** is folded; the NEAR card's guestbook write goes through with 0 NEAR.
 3. The Sodax sample site still signs in and signs (question 3).

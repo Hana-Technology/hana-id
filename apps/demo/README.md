@@ -230,8 +230,8 @@ guestbook end to end: the stack's mocked NEAR RPC serves `view_access_key`, `vie
 guestbook's `get_messages`, and `POST /v1/near/activate` and `/v1/near/relay` are mocked at the network layer (the
 stack runs no relay account). The mocks answer `409 near_account_unrecorded` until the stack's real wallet directory
 holds the user's NEAR account (the vault records it after login), and a second test clicks before the record lands
-and checks the card waits and retries. The approval popup leads with "… wants to use the guestbook (add_message)", the call itself under Show details
-(D808). What keeps the page and the API from drifting is `apps/api/test/near-demo-page.test.ts`: the
+and checks the card waits and retries. The approval popup leads with "… wants to add a message to the demo guestbook" and names the guestbook as
+checked by Journear (a reviewed call, D885), the call itself under Show details (D808). What keeps the page and the API from drifting is `apps/api/test/near-demo-page.test.ts`: the
 page's own builders and nonce (`src/near.ts`) and the SDK's own `activate` and `relay` requests, through the real
 routes with the fake NEAR RPC and sandbox-dev's 10 Tgas cap. The gas-free card: `tests/demo-gas-free.spec.ts` (the
 first check-in with its setup note, the second without, the count, a rejection, the day's budget used up, paused, no

@@ -126,6 +126,12 @@ const G2 = bls.G2.ProjectivePoint;
 
 export const TEST_CKD_NETWORK_KEY = `bls12381g2:${base58.encode(G2.BASE.multiply(TEST_MPC_MSK).toRawBytes(true))}`;
 
+/** The demo guestbook's account on the mocked testnet (the demo's `near.guestbook`, src/server/chain.ts). */
+export const E2E_GUESTBOOK = 'e2e-guestbook.testnet';
+
+/** The stamps contract's account on the mocked testnet (the site's `near.stamps`, src/server/stamps-contract.ts). */
+export const E2E_STAMPS = 'e2e-stamps.testnet';
+
 export const E2E_ENV: HanaEnv = Object.freeze({
   name: ENV_NAME,
   network: 'testnet',
@@ -140,6 +146,10 @@ export const E2E_ENV: HanaEnv = Object.freeze({
   devEnv: true,
   emailIssuerUrl: ISSUER_URL,
   emailIss: EMAIL_ISS,
+  // Journear's reviewed NEAR contracts (D885) on the mocked testnet: the stack's models of the two contracts
+  // (src/server/stamps-contract.ts, src/server/chain.ts, held against the real wasm, D805), as a reviewed env's build
+  // carries its manifest's locked accounts. Live mode's env inherits them.
+  nearReviewed: Object.freeze({ stamps: E2E_STAMPS, guestbook: E2E_GUESTBOOK }),
 });
 
 // ---- live mode: a pk_live_ app end to end ----
@@ -214,14 +224,8 @@ export const EXIT_CLIENT_ID = 'e2e-exit.apps.googleusercontent.com';
  */
 export const DEMO_PK = 'pk_test_DemoE2eDemoE2eDemoE2e';
 
-/** The demo guestbook's account on the mocked testnet (the demo's `near.guestbook`, src/server/chain.ts). */
-export const E2E_GUESTBOOK = 'e2e-guestbook.testnet';
-
 /** The stamps site's app key, baked in at build time as the deployed site's is (POST /__e2e/apps creates it once). */
 export const STAMPS_PK = 'pk_test_StampsE2eStampsE2eStamps';
-
-/** The stamps contract's account on the mocked testnet (the site's `near.stamps`, src/server/stamps-contract.ts). */
-export const E2E_STAMPS = 'e2e-stamps.testnet';
 
 /** Where src/build.ts writes the bundles, and the servers read them. */
 export const BUILD_DIR = new URL('../.build/', import.meta.url);

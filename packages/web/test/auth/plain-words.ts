@@ -1,6 +1,6 @@
 // The plain-wording rule's check for the rendered window (D853): no chain jargon above the fold, in Journear's own
 // words. Left out: the folded details (technical on purpose), code values (addresses, account ids, methods, the raw
-// bytes of a message), a message's own text and the values a request names in bold (an asset code, a recipient).
+// bytes of a message), a message's own text (and a reviewed call's quoted words) and the values a request names in bold (an asset code, a recipient).
 import { afterAll, expect } from 'vitest';
 import { shortId } from '@hana-id/core/decode';
 import { ZERO_COST, ZERO_COST_ALLOWED, jargonWords } from '../../../core/test/plain-words.ts';
@@ -8,7 +8,7 @@ import { ZERO_COST, ZERO_COST_ALLOWED, jargonWords } from '../../../core/test/pl
 /** The window's own words above the fold. */
 export function plainAboveFold(el: Element): string {
   const copy = el.cloneNode(true) as Element;
-  for (const n of Array.from(copy.querySelectorAll('details, code, pre, dd strong'))) n.remove();
+  for (const n of Array.from(copy.querySelectorAll('details, code, pre, dd strong, q.summary-quote'))) n.remove();
   return (copy.textContent ?? '').replace(/\s+/gu, ' ');
 }
 

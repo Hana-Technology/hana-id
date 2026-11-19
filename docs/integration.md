@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-19 (the approval window's fee row and guard line), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-19 (Journear's reviewed NEAR calls, D885), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -862,6 +862,11 @@ are yours.
   turns on free network fees for their account, that their address stays the same, and that they still approve every
   action ([Gas-free actions](#gas-free-actions-not-live)).
 - **A test app** says, on every request, that Journear Passport signs only for test networks.
+- **Journear's own demo contracts** read in plain words when a request is exactly one of their reviewed calls (the
+  stamps contract's `collect`, the demo guestbook's `add_message`, on the environment's locked accounts): "Your App
+  wants to collect the Arrival stamp for you", "It uses **Journear demo stamps** (…, checked by Journear)." Any other
+  call, to your contracts too, reads as described above: the contract and the method, and for a relayed call the amber
+  "This acts as you" line. Your own words for a call never reach the window.
 - **When something fails** inside a Journear Passport window, it says what happened and what to do, with "Error code
   (for support): …" at the end. Your page gets the same `code` in the error.
 

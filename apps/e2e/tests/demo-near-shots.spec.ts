@@ -98,7 +98,9 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
   await shots(page, '04-stage-approving');
   // D808: the plain summary leads; the request's kind heading is in the details.
-  await expect(approval.locator('h2.summary-headline')).toHaveText(new RegExp(`wants to use ${E2E_GUESTBOOK.replace(/[.]/gu, '\\.')} \\(add_message\\)$`, 'u'));
+  // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.
+  await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add your message to the demo guestbook$/u);
+  await expect(approval.locator('p.summary-line').last()).toHaveText(`It uses Journear demo guestbook (${E2E_GUESTBOOK}, checked by Journear).`);
   for (const scheme of ['light', 'dark'] as const) {
     await approval.emulateMedia({ colorScheme: scheme });
     await approval.screenshot({ path: `${SHOTS}/04-approval-window-${scheme}.png`, fullPage: true, animations: 'disabled' });

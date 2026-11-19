@@ -125,9 +125,14 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' })).toHaveCount(0);
   await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
   // D808: the plain summary leads; the request's kind heading is in the details.
-  await expect(approval.locator('h2.summary-headline')).toHaveText(new RegExp(`wants to use ${E2E_GUESTBOOK.replace(/[.]/gu, '\\.')} \\(add_message\\)$`, 'u'));
-  await expect(approval.getByText('add_message').first()).toBeVisible();
+  // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.
+  await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add your message to the demo guestbook$/u);
+  await expect(approval.locator('p.summary-line').last()).toHaveText(`It uses Journear demo guestbook (${E2E_GUESTBOOK}, checked by Journear).`);
+  // The user's words, quoted; the raw method stays in the folded details.
+  await expect(approval.locator('q.summary-quote')).toHaveText(text);
+  await expect(approval.locator('details.request-details')).toContainText('add_message');
   await expect(approval.getByText(E2E_GUESTBOOK).first()).toBeVisible();
+  await expect(approval.locator('.warning-box')).toHaveCount(0);
   await approve(approval);
 
   await expect(page.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. You paid no gas.');
@@ -156,7 +161,9 @@ test('the demo writes to the guestbook when clicked before Hana recorded the NEA
   await page.getByRole('button', { name: 'Write to the guestbook (no NEAR needed)' }).click();
   const approval = await approvalP;
   // D808: the plain summary leads; the request's kind heading is in the details.
-  await expect(approval.locator('h2.summary-headline')).toHaveText(new RegExp(`wants to use ${E2E_GUESTBOOK.replace(/[.]/gu, '\\.')} \\(add_message\\)$`, 'u'));
+  // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.
+  await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add your message to the demo guestbook$/u);
+  await expect(approval.locator('p.summary-line').last()).toHaveText(`It uses Journear demo guestbook (${E2E_GUESTBOOK}, checked by Journear).`);
   await approve(approval);
   await expect(page.locator('#near-done')).toBeVisible();
   expect(relayer.refused.length).toBeGreaterThanOrEqual(2);

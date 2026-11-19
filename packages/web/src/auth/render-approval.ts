@@ -43,7 +43,7 @@ import {
   stellarAccountControl,
   stellarFlagNames,
 } from '@hana-id/core/decode';
-import { DEMO_CHECK_IN_CALLDATA, type NearAction, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
+import { DEMO_CHECK_IN_CALLDATA, type NearAction, type ReviewedNearAccounts, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
 import { BRAND } from '@hana-id/brand';
 import { type Child, type Dom, dom, row, rows } from './dom.ts';
 import { alert, icon } from './ui.ts';
@@ -946,7 +946,12 @@ export const nearRecipientLookalike = (escaped: string): string => `The name it�
 
 const asciiEscaped = (s: string): string => Array.from(s, (ch) => (/^[\x20-\x7e]$/u.test(ch) ? ch : Array.from({ length: ch.length }, (_, i) => `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join(''))).join('');
 
-function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: NearRenderContext): Parts {
+/**
+ * A NEP-413 message. The signature stamp's own message, exactly (`summary.reviewed`, D885: for the build's reviewed
+ * stamps account, naming the user's own account, no callback), has no "proves to" or recipient lines: the reviewed
+ * contract only checks it to collect that stamp, and the summary names it as checked by Journear.
+ */
+function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: NearRenderContext, summary: ApprovalSummary): Parts {
   const p = decoded.payload;
   const host = originHost(ctx.parentOrigin);
   const sameSite = host !== null && (p.recipient === host || p.recipient === ctx.parentOrigin);
@@ -955,7 +960,7 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
     alerts: {
       banners: [],
       dangers: lookalike ? [risk(5, 'danger lookalike', [nearRecipientLookalike(asciiEscaped(p.recipient))], ['The name it’s for can imitate another name'])] : [],
-      warnings: [
+      warnings: summary.reviewed ? [] : [
         risk(4, 'warn nep413', [nearMessageWarning(p.recipient)], ['Proves to ', p.recipient, ' that this account is yours']),
         // Any recipient that isn't exactly this page's host or origin, whatever its shape (a page picks the recipient, so
         // no shape may soften this): one factual line in the warning style.
@@ -1197,6 +1202,8 @@ function summaryNodes(d: Dom, t: SummaryText, appName: string, book?: IdBook, re
     if (typeof p === 'string') return [p];
     if (p.kind === 'app') return [d.h('strong', { class: 'app-name' }, appName)];
     if (p.kind === 'strong') return [d.h('strong', {}, p.text)];
+    // A reviewed call's quoted words (D885): text, in quotation marks, its direction isolated from the sentence's.
+    if (p.kind === 'quote') return [d.h('q', { class: 'summary-quote', attrs: { dir: 'auto' } }, p.text)];
     if (!p.role || !book || !isLongId(p.text)) return [mono(d, p.text)];
     refs?.push({ role: p.role, full: p.text });
     const n = book.number(p.text);
@@ -1285,6 +1292,8 @@ function detailsSection(d: Dom, body: readonly Child[]): HTMLElement {
 export interface ApprovalRenderContext extends NearRenderContext {
   /** The user's address on the request's chain (the vault's), so the summary can say "your account". */
   readonly address?: string;
+  /** The build's accounts of Journear's reviewed NEAR contracts (HanaEnv.nearReviewed): their exact calls read in plain words. */
+  readonly reviewedNear?: ReviewedNearAccounts;
   /** The page's own notices (the test-app note or the mainnet demo's banner, the out-of-policy line): after the request's. */
   readonly notes?: readonly (HTMLElement | null)[];
   /** First in the details (the Support ID). */
@@ -1361,7 +1370,7 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
     case 'near_delegate':
       return nearDelegate(d, decoded, near, summary);
     case 'near_message':
-      return nearMessage(d, decoded, near);
+      return nearMessage(d, decoded, near, summary);
   }
 }
 
@@ -1370,7 +1379,7 @@ export const TYPED_DATA_NO_CHAIN = 'This signature isn’t tied to one network. 
 
 /** The body of the approval screen for a decoded request. */
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
-  const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}) });
+  const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}), ...(ctx.reviewedNear ? { reviewedNear: ctx.reviewedNear } : {}) });
   const k = kindParts(d, decoded, appName, ctx, summary, ctx.nowMs);
   // A control change's bullet repeats nothing: when its step's own line is in view (the headline of a single step, or a
   // grouped line, which names the whole key, signer or address), the bullet is dropped. The banner always stays, and

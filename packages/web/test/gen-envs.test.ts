@@ -6,7 +6,8 @@ import { TEST_EVM_CHAINS } from '@hana-id/core';
 import { type Manifest, LOCAL_EVM_CHAIN_IDS, loadEnv, manifestSchema, OP_STACK_TEST_CHAIN_IDS, SPONSOR_TEST_EVM_CHAIN_IDS } from '@hana-id/env';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ckdKeyProblem } from '../scripts/ckd-key.ts';
-import { GENERATED_PATH, envsModule, hanaEnv, loadManifests, main, packageEnvsProblem, placeholderProblems, sponsorProblems, writeAtomically } from '../scripts/gen-envs.ts';
+import { GENERATED_PATH, envsModule, hanaEnv, loadManifests, main, nearReviewedOf, packageEnvsProblem, placeholderProblems, sponsorProblems, writeAtomically } from '../scripts/gen-envs.ts';
+import { REVIEWED_NEAR_DEPLOYS } from '@hana-id/core';
 import { FIXTURE_DELEGATE, FIXTURE_PINNED_DELEGATES, FIXTURE_RELAYER, fixtureAddress, sponsorFixture } from '../../env/src/evm-sponsor.fixture.ts';
 import type { HanaEnv } from '../src/hana-env.ts';
 
@@ -56,6 +57,8 @@ describe('hanaEnv', () => {
       ...(sandbox.emailIssuer ? { emailIssuerUrl: sandbox.emailIssuer.url, emailIss: sandbox.emailIssuer.iss } : {}),
       // Present exactly when the manifest has the dashboard blocks (batch C11).
       ...(sandbox.files ? { filesOrigin: sandbox.files.origin } : {}),
+      // D885: the reviewed, locked demo contracts core records for sandbox-dev.
+      nearReviewed: { stamps: sandbox.near?.demoStamps, guestbook: sandbox.near?.demoGuestbook },
     });
   });
 
@@ -218,5 +221,32 @@ describe('EVM gas sponsorship in the vault build (D834)', () => {
     expect(sponsorProblems(noPages, undefined)).toEqual([]);
     expect(sponsorProblems(manifest({ name: 'sandbox-ph', evm: { sponsor: sponsorFixture() } }), { 84532: { address: FIXTURE_DELEGATE, placeholder: true } })).toEqual([`envs/sandbox-ph.json evm.sponsor.chains.84532.delegate ${FIXTURE_DELEGATE} is a placeholder entry of the pinned table, only for local* envs.`]);
     expect(sponsorProblems(sponsored, FIXTURE_PINNED_DELEGATES)).toEqual([]);
+  });
+});
+
+describe('Journear’s reviewed NEAR contracts in the build (D885)', () => {
+  // Each deployment record in core was checked by a person against exactly these accounts: deployed from the reviewed
+  // source and locked (no access key left). A manifest that names another account fails here until that account is
+  // reviewed (docs/operations.md "Adding a reviewed NEAR call"): never move a record to an account nobody checked.
+  const REVIEWED_ACCOUNTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+    'sandbox-dev': { stamps: 'hana-id-stamps-dev1.testnet', guestbook: 'hana-id-guestbook-dev1.testnet' },
+  };
+
+  it('every record is pinned to the account its manifest names, which is the one that was checked', () => {
+    expect(Object.keys(REVIEWED_NEAR_DEPLOYS).sort()).toEqual(Object.keys(REVIEWED_ACCOUNTS).sort());
+    for (const [env, record] of Object.entries(REVIEWED_NEAR_DEPLOYS)) {
+      const m = loadEnv(env);
+      expect(m.near?.demoStamps, `${env} near.demoStamps`).toBe(record.stamps ? REVIEWED_ACCOUNTS[env]?.stamps : undefined);
+      expect(m.near?.demoGuestbook, `${env} near.demoGuestbook`).toBe(record.guestbook ? REVIEWED_ACCOUNTS[env]?.guestbook : undefined);
+      expect(hanaEnv(m)?.nearReviewed).toEqual(REVIEWED_ACCOUNTS[env]);
+    }
+  });
+
+  it('only an env with a record gets them, and only the contracts its record names that its manifest has', () => {
+    expect(nearReviewedOf(manifest({ name: 'sandbox-other' }))).toEqual({});
+    expect(hanaEnv(prod)).not.toHaveProperty('nearReviewed');
+    const near = sandbox.near!;
+    expect(nearReviewedOf({ ...sandbox, near: { ...near, demoStamps: undefined } })).toEqual({ nearReviewed: { guestbook: near.demoGuestbook } });
+    expect(nearReviewedOf({ ...sandbox, near: undefined })).toEqual({});
   });
 });

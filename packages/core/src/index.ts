@@ -43,6 +43,7 @@ export * from './typed-data.ts';
 export * from './demo-check-in.ts';
 export * from './verified-contracts.ts';
 export * from './known-tokens.ts';
+export * from './reviewed-near-calls.ts';
 export * from './decode/errors.ts';
 export * from './decode/json.ts';
 // EIP-712: typed-data.ts is the single parser and hasher. signTypedData signs its hashTypedData over normalizeTypedData's

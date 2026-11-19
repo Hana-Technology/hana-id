@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, type PinnedSponsorDelegates, emailIssuerUrl, evmSponsorDelegateProblems, evmSponsorPageChains, isDevEnv, isLocalEnv, loadEnv, repoRoot } from '@hana-id/env';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
+import { REVIEWED_NEAR_DEPLOYS } from '@hana-id/core';
 import type { HanaEnv } from '../src/hana-env.ts';
 import { ckdKeyProblem } from './ckd-key.ts';
 
@@ -43,7 +44,24 @@ export function hanaEnv(m: Manifest): HanaEnv | null {
     ...(m.files ? { filesOrigin: m.files.origin } : {}),
     // EVM gas sponsorship (D834): per chain, the delegate the vault may authorize and the relayer batches name.
     ...(m.evm?.sponsor ? { evmSponsor: evmSponsorPageChains(m.evm.sponsor) } : {}),
+    // Journear's reviewed NEAR contracts (D885): only those core records as deployed and locked on this env.
+    ...nearReviewedOf(m),
   };
+}
+
+/**
+ * `{ nearReviewed }` for the env's manifest (D885): each reviewed contract that core's REVIEWED_NEAR_DEPLOYS records
+ * for this env by name, at the account its manifest names; `{}` when there is none. A manifest account the record
+ * wasn't checked against is caught by test/gen-envs.test.ts, which pins each record to its account.
+ */
+export function nearReviewedOf(m: Manifest): { nearReviewed?: NonNullable<HanaEnv['nearReviewed']> } {
+  const record = Object.hasOwn(REVIEWED_NEAR_DEPLOYS, m.name) ? REVIEWED_NEAR_DEPLOYS[m.name] : undefined;
+  if (!record) return {};
+  const accounts = {
+    ...(record.stamps && m.near?.demoStamps ? { stamps: m.near.demoStamps } : {}),
+    ...(record.guestbook && m.near?.demoGuestbook ? { guestbook: m.near.demoGuestbook } : {}),
+  };
+  return Object.keys(accounts).length > 0 ? { nearReviewed: accounts } : {};
 }
 
 /**

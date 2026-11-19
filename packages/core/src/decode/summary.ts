@@ -94,11 +94,11 @@ export interface ApprovalSummary {
   /** More plain lines (an amount in smallest units, what else a call sends, what a list of actions does). */
   readonly lines: readonly SummaryText[];
   /**
-   * The network fee, as a row's value that starts with a capital (D877): the most it can be ("Up to 0.000042 ETH"), or
+   * The network fee, as a row's value that starts with a capital: the most it can be ("Up to 0.000042 ETH"), or
    * that the user pays none ("Free. Journear pays it for you."); null when the request costs no fee itself.
    */
   readonly fee: SummaryText | null;
-  /** The fee row says the user pays no network fee: a sponsored action (Journear's relayer) or a relayed NEAR action (D877). */
+  /** The fee row says the user pays no network fee: a sponsored action (Journear's relayer) or a relayed NEAR action. */
   readonly freeFee?: true;
   /** The network the request is bound to, as a value ("Sepolia (test network)"), when the request names one. NEAR's line is the page's. */
   readonly network: SummaryText | null;
@@ -252,7 +252,7 @@ export function upTo(shown: string): SummaryText {
   return ['up to ', strong(shown.startsWith('about ') ? shown.slice('about '.length) : shown)];
 }
 
-/** A text as a row's value (D877): its first letter a capital ("up to 0.1 ETH" → "Up to 0.1 ETH"). */
+/** A text as a row's value: its first letter a capital ("up to 0.1 ETH" → "Up to 0.1 ETH"). */
 export function rowValue(t: SummaryText): SummaryText {
   const [first, ...rest] = t;
   if (first === undefined) return t;
@@ -586,7 +586,7 @@ function evmTx(chainId: number, tx: DecodedEvmTx, me: string): ApprovalSummary {
 // The calls carry no value (the subject decoder refuses any), so nothing is said about ETH leaving.
 
 /**
- * The fee line of a sponsored action (D877, after the founder's "none. Journear pays it for you."): "Network fee: Free.
+ * The fee line of a sponsored action: "Network fee: Free.
  * Journear pays it for you." True for every sponsored action: the decoder takes only this build's own relayer (its
  * sponsor chains), so the fee is always Journear's. "Free." is the row's first word, in bold.
  */

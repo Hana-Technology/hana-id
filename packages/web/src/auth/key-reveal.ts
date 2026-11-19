@@ -24,7 +24,7 @@ import { exportStringOf } from '@hana-id/core';
 import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { BRAND } from '@hana-id/brand';
 import { type Dom, dom } from './dom.ts';
-import { GuardHint, coarsePointer } from './guard-hint.ts';
+import { GuardHint, coarsePointer, quietly } from './guard-hint.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
 import { BTN } from './ui.ts';
 
@@ -99,9 +99,9 @@ export interface ScreenGuard {
   click(e: Event): boolean;
   /**
    * The line that says what to do while the guard holds this screen's buttons (D878): one element, placed by the caller
-   * right under them. `label` names the button in the keyboard line. Display only.
+   * right under them; it names each guarded button as it reads at the time. Display only.
    */
-  hint(label: string): HTMLElement;
+  hint(): HTMLElement;
 }
 
 export interface ScreenGuardDeps {
@@ -132,24 +132,26 @@ export function screenGuard(deps: ScreenGuardDeps): ScreenGuard {
   const sync = (): void => {
     const armed = guard.armed();
     for (const g of guarded) g.el.disabled = !(armed && g.ready());
-    guardHint.active(guarded.some((g) => g.ready()));
-    guardHint.armed(armed);
+    quietly(() => {
+      guardHint.armed(armed);
+      guardHint.active(guarded.some((g) => g.ready()));
+    });
   };
   const guard = new ApproveGuard(now, focusedAtStart, () => sync());
   const onGesture = (type: GuardInput['type']) => (e: Event) => {
     if (!isGesture(e)) return;
     const input = guardInputOf(type, e);
     guard.gesture(input);
-    guardHint.input(input);
+    quietly(() => guardHint.input(input, e));
   };
-  // The hint first, so its words follow the guard's state change that comes with each of these.
+  // The guard first, always; then the hint, which can't throw past `quietly`.
   const onFocus = () => {
-    guardHint.focused();
     guard.focused();
+    quietly(() => guardHint.focused());
   };
   const onBlur = () => {
-    guardHint.blurred();
     guard.blurred();
+    quietly(() => guardHint.blurred());
   };
   win.addEventListener('pointermove', onGesture('pointermove'));
   win.addEventListener('pointerdown', onGesture('pointerdown'));
@@ -160,27 +162,23 @@ export function screenGuard(deps: ScreenGuardDeps): ScreenGuard {
   return {
     button(el, ready = () => true) {
       guarded.push({ el, ready });
-      el.setAttribute('aria-describedby', 'guard-hint');
+      quietly(() => guardHint.describe(el));
       el.addEventListener('focus', () => guard.primaryFocused());
       el.addEventListener('blur', () => guard.primaryBlurred());
       el.disabled = true;
     },
     newScreen() {
       guarded = [];
-      guardHint.cleared();
+      quietly(() => guardHint.cleared());
     },
     rendered() {
-      guardHint.rendered(guarded.some((g) => g.ready()));
       guard.rendered();
+      quietly(() => guardHint.rendered(guarded.some((g) => g.ready())));
       sync();
     },
     sync,
     click: (e) => isGesture(e) && guard.mayActivate((e as MouseEvent).detail === 0),
-    hint(label) {
-      const b = guarded[0]?.el;
-      if (b) guardHint.describe(b, label);
-      return guardHint.el;
-    },
+    hint: () => guardHint.el,
   };
 }
 
@@ -364,7 +362,7 @@ export function keyReveal(deps: KeyRevealDeps): KeyReveal {
     ack,
     actions: d.h('div', { class: 'actions reveal' }, toggle, copy),
     status,
-    hint: guard.hint('Show key'),
+    hint: guard.hint(),
     get shown() {
       return shown;
     },

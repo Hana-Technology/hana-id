@@ -885,7 +885,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           nearNotes(picked),
           d.h('div', { class: 'jp-field' }, d.h('label', { class: 'jp-label', attrs: { for: 'home-export-confirm' } }, `Type ${EXPORT_CONFIRMATION} to continue`), input),
           d.h('div', { class: 'actions start' }, go, button('Back', 'home-export-back', back)),
-          guard.hint('Continue'),
+          guard.hint(),
         );
         guard.rendered();
         return;

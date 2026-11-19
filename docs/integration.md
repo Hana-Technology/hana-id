@@ -855,7 +855,8 @@ are yours.
   tell what a request does, it says so and advises: "If you're not sure, reject it."
 - **Reject** and **Approve** sit at the bottom. Approve works only after the window has been on screen and in focus for
   a moment, then a mouse move, a tap or a key press, so a stray double-click can't approve. Until then a line under
-  the buttons says what to do ("Move your mouse to continue.", "Tap the screen once to continue."). After an answer the window
+  the buttons says what turns Approve on ("Approve turns on when you move your mouse.", "Approve turns on after one tap
+  on the screen."). After an answer the window
   says "Approved" or "Rejected" and stays open 15 seconds for a follow-up request.
 - **A gas-free action** reads "Network fee: Free. Journear pays it for you." The user's first one also says that it
   turns on free network fees for their account, that their address stays the same, and that they still approve every

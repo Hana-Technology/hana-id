@@ -532,7 +532,7 @@ describe('/export', () => {
     const input = document.querySelector('input') as HTMLInputElement;
     // D878: the line under Continue says nothing while Continue waits for the typed word (another reason).
     const hint = () => document.querySelector('p.guard-hint');
-    expect(hint()?.previousElementSibling?.contains(cont)).toBe(true);
+    expect(hint()?.closest('.guard-hint-box')?.previousElementSibling?.contains(cont)).toBe(true);
     expect(cont.getAttribute('aria-describedby')).toBe('guard-hint');
     expect(hint()?.textContent).toBe('');
     expect(cont.disabled).toBe(true);
@@ -544,7 +544,10 @@ describe('/export', () => {
     input.dispatchEvent(new Event('input'));
     // Typed, but the guard (D430) waits for the pointer to move in this window first: the line says so (D878).
     expect(cont.disabled).toBe(true);
-    expect(hint()?.textContent).toBe('Move your mouse to continue.');
+    expect(hint()?.textContent).toBe('Continue turns on when you move your mouse.');
+    // Typing the word, a phone's on-screen keyboard's Enter included, is not keyboard use: the line stays the mouse's.
+    for (const k of [...EXPORT_CONFIRMATION, 'Enter', 'Unidentified', 'Process']) r.win.dispatch('keydown', { key: k, target: input });
+    expect(hint()?.textContent).toBe('Continue turns on when you move your mouse.');
     stillClick(cont);
     expect(r.page.state).toBe('confirm');
     r.win.dispatch('pointermove', { pointerType: 'mouse', movementX: 2, movementY: 0, clientX: 1, clientY: 1 });
@@ -556,9 +559,11 @@ describe('/export', () => {
     // Show key / Hide key (D268): a click shows it, selectable, and a second click hides it, once the box is ticked.
     // D878: on the new screen, nothing to say until the box is ticked; then the line under Show key and Copy key.
     expect(hint()?.textContent).toBe('');
-    expect(hint()?.previousElementSibling?.matches('.actions.reveal')).toBe(true);
+    expect(hint()?.closest('.guard-hint-box')?.previousElementSibling?.matches('.actions.reveal')).toBe(true);
     tick();
     const { toggle, secret } = revealControls();
+    // Ticked, the guard holds Show key and Copy key: the line names both, as they read.
+    expect(hint()?.textContent).toBe('Show key and Copy key turn on when you move your mouse.');
     expect(secret.textContent).toBe('••••••••');
     expect(secret.hasAttribute('data-shown')).toBe(false);
     expect(toggle.getAttribute('aria-pressed')).toBe('false');

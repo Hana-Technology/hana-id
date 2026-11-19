@@ -866,11 +866,13 @@ otherwise. A token's symbol and decimals come only from Journear's reviewed list
 D860: Circle's USDC and EURC where Circle lists them, wrapped NEAR, the Stellar asset contracts), with the line "This
 is the real USDC token (…)."; any other amount reads "N units of an unlisted token" with a line that
 Journear can't tell what it is worth. Addresses and keys in sentences are short, each written out once in its own
-labelled row (D859), in one piece (D876); the details' first row is the user's whole account with a Copy button (D876).
+labelled row (D859), the label above it, in one piece on nearly even lines (D876; spacing them in groups of four
+for the counterparty rows is one constant, `COUNTERPARTY_GROUPS`, the founder's open decision); the details' first row
+is the user's whole account with a Copy button (D876).
 The facts' values are words in the text face, only exact values (addresses, keys, hashes, amounts, numbers) in mono;
 a fee the user doesn't pay reads "Free." in bold after a check mark (D877); the relayed NEAR approval says "someone
 else pays" once, in the fee row (D858). Reject (secondary) and Approve (primary) side by side, with the guard's line
-under them (D878). Opening or closing the details doesn't
+under them that says what turns the button on (D878; the guard is called first, the hint after it in a try/catch). Opening or closing the details doesn't
 touch the guard; the overflow note is measured again when they toggle.
 The guard, its timings and the facts decoded didn't change. The vault recomputes the digest from the queued request
 and signs only on a match, deriving the chain key from PRK per signature and zeroing it (`withChainKey`,

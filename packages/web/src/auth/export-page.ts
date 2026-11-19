@@ -658,7 +658,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
         d.h('div', { class: 'jp-field' }, d.h('label', { class: 'jp-label', attrs: { for: 'export-confirm' } }, `Type ${EXPORT_CONFIRMATION} to continue`), input),
         d.h('div', { class: 'actions' }, go),
-        guard.hint('Continue'),
+        guard.hint(),
       ),
     );
     guard.rendered();

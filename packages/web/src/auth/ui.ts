@@ -78,3 +78,29 @@ export const BTN = Object.freeze({
   ghost: 'jp-btn jp-btn-ghost',
   danger: 'jp-btn jp-btn-danger',
 });
+
+/**
+ * A line whose space is always that of the longest words it may say (D876, D878): the line and, in the same grid
+ * cell, hidden copies of each possible sentence (auth.css `.reserved`), so its height never changes when its words do
+ * and nothing under it moves, at any width or text size. The copies are hidden from screen readers.
+ */
+export interface ReservedLine {
+  readonly box: HTMLElement;
+  readonly line: HTMLElement;
+  /** The sentences the line may say: the space kept is the tallest of them at the current width. */
+  sizes(texts: readonly string[]): void;
+}
+
+export function reservedLine(d: Dom, line: HTMLElement, boxClass: string, texts: readonly string[] = []): ReservedLine {
+  const box = d.h('div', { class: `reserved ${boxClass}` }, line);
+  let shown = '';
+  const sizes = (next: readonly string[]): void => {
+    const key = next.join('\n');
+    if (key === shown) return;
+    shown = key;
+    for (const old of Array.from(box.querySelectorAll(':scope > .sizer'))) old.remove();
+    for (const t of next) box.append(d.h('span', { class: 'sizer', attrs: { 'aria-hidden': 'true' } }, t));
+  };
+  sizes(texts);
+  return { box, line, sizes };
+}

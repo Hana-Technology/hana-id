@@ -24,7 +24,7 @@ import { ZERO_COST } from '../../../core/test/plain-words.ts';
 import { dom } from '../../src/auth/dom.ts';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
-import { ACCOUNT_CONTROL_BANNER, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
+import { ACCOUNT_CONTROL_BANNER, COUNTERPARTY_GROUPS, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, fullId, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { idProblems, jargonWatch, shownText } from './plain-words.ts';
 import { shortId } from '@hana-id/core/decode';
@@ -491,12 +491,18 @@ describe('D859: addresses and keys in sentences: short there, whole once in thei
     expect(shownText(el.querySelector('h2.summary-headline'))).toBe(`Partner App wants to send 5 units of an unlisted token to ${shortId(SPENDER)}`);
     expect(el.children[1]?.matches('dl.id-rows')).toBe(true);
     expect(idRows(el.children[1]!)).toEqual([['To', SPENDER]]);
-    // D876 (it replaced D859's groups of four): one text node, nothing inside it, so a copy of it is the value exactly.
+    // D876 (it replaced D859's groups of four): the exact text, four-character spans with a line-break opportunity
+    // between them and nothing else, unspaced (the counterparty groups are off), so a copy of it is the value exactly.
     const whole = el.children[1]!.querySelector('dd > code.mono.id-full')!;
     expect(whole.textContent).toBe(SPENDER);
-    expect(whole.childNodes).toHaveLength(1);
-    expect(whole.firstChild?.nodeType).toBe(3);
-    expect(el.querySelector('.grp')).toBeNull();
+    expect([...whole.querySelectorAll('.grp')].map((g) => g.textContent)).toEqual(['0x', ...SPENDER.slice(2).match(/.{4}/gu)!]);
+    expect(whole.querySelectorAll('wbr')).toHaveLength(10);
+    expect(whole.classList.contains('grouped')).toBe(false);
+    expect(COUNTERPARTY_GROUPS).toBe(false);
+    // Switched on (the founder's open decision), the same text: only the class (CSS spacing) changes.
+    const grouped = fullId(dom(document), SPENDER, true);
+    expect(grouped.textContent).toBe(SPENDER);
+    expect(grouped.className).toBe('mono id-full grouped');
     // No Copy above the fold: the user's own account has one, in the details.
     expect(el.children[1]!.querySelector('button')).toBeNull();
     // The short form and the row come from the same value; the short form is hidden from screen readers.

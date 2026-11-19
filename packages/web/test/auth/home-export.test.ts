@@ -1139,11 +1139,11 @@ describe('the guard and the auto-hide', () => {
     expect(go.disabled).toBe(true);
     // D878: the line under Continue, empty until the word is typed, then what to do while the guard holds it.
     const hint = () => document.querySelector('#home-export p.guard-hint') ?? document.querySelector('p.guard-hint');
-    expect(hint()?.previousElementSibling?.contains(go)).toBe(true);
+    expect(hint()?.closest('.guard-hint-box')?.previousElementSibling?.contains(go)).toBe(true);
     expect(hint()?.textContent).toBe('');
     h.type(EXPORT_CONFIRMATION);
     expect(go.disabled).toBe(true);
-    expect(hint()?.textContent).toBe('Move your mouse to continue.');
+    expect(hint()?.textContent).toBe('Continue turns on when you move your mouse.');
     // Typed, but no arming gesture yet: a click in place doesn't act.
     h.still('home-export-continue');
     expect(h.page.moving.state).toBe('confirm');

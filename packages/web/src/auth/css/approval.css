@@ -90,13 +90,32 @@ dl.id-rows {
   font-weight: var(--jp-weight-regular);
 }
 
-/* The whole value in one piece (D876): no spaces or groups inside it. One wider than its box wraps at the box's edge,
-   at any character, so the page never scrolls sideways; never folded or cut. A copy of it is the value exactly. */
+/* The whole value (D876): its four-character spans (`.grp`) unspaced, so it reads as one piece; a line breaks only
+   between two spans (`<wbr>`), balanced, so a long one takes nearly even lines and never leaves a lone character. The
+   text is the value exactly. `grouped` (render-approval.ts COUNTERPARTY_GROUPS) spaces the spans by CSS only. */
 code.id-full {
+  display: block;
   font-size: var(--jp-text-sm);
   color: var(--jp-fg);
-  overflow-wrap: anywhere;
   word-break: normal;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+code.id-full.grouped > .grp:not(:last-child) {
+  margin-inline-end: 0.45em;
+}
+
+/* The rows of whole values (D876): the label on its own line, the value under it across the whole width, as the
+   user's own account's row: an EVM address is one line at 390 px, a Stellar or NEAR one two nearly even lines. */
+dl.id-rows,
+dl.your-account {
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--jp-space-1);
+}
+
+dl.id-rows dd + dt {
+  margin-top: var(--jp-space-2);
 }
 
 /* The facts' faces (D877): words and sentences (a network's name, the fee line, a date, a permission) in the text
@@ -121,30 +140,30 @@ code.id-full {
   stroke-width: 2.25;
 }
 
-/* The user's own account in the details (D876): the label on its line, the account under it across the whole width
-   (fewer lines on a phone), then Copy and what it did. */
-dl.your-account {
-  grid-template-columns: minmax(0, 1fr);
-  row-gap: var(--jp-space-1);
+/* The mark speaks of the fee only: beside a red box it takes the text colour, so it never reads as "safe". */
+.request dl.jp-kv dd.fee-free.beside-danger .fee-free-mark {
+  color: var(--jp-fg);
 }
 
+/* The user's own account in the details (D876): as the rows above, then Copy and what it did. */
 .copy-line {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--jp-space-1) var(--jp-space-3);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--jp-space-1);
   margin-top: var(--jp-space-2);
   font-family: var(--jp-font-body);
 }
 
-.copy-line .copy-status {
-  margin: 0;
-  color: var(--jp-fg-muted);
-  font-size: var(--jp-text-sm);
+/* What Copy did, under it: its space is always the refusal's (ui.ts reservedLine), so nothing below moves. */
+.copy-line .copy-said {
+  align-self: stretch;
 }
 
-.copy-line .copy-status:empty {
-  display: none;
+.copy-line .copy-said > * {
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+  line-height: var(--jp-leading-body);
 }
 
 /* Read to screen readers instead of a short form, which they skip (the row says the whole value). */

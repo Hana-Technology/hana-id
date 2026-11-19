@@ -38,12 +38,12 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView, originText, row, rows } from './dom.ts';
-import { GuardHint, coarsePointer } from './guard-hint.ts';
+import { GuardHint, coarsePointer, quietly } from './guard-hint.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 import { fullId, renderApproval, watchOverflowing } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
-import { BTN, alert, icon } from './ui.ts';
+import { BTN, alert, icon, reservedLine } from './ui.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
 import { type DemoBridge, type DemoNetwork, type DemoSwap, MAINNET_DEMO, assessMainnetDemo, demoNetworkOf, fixedMainnetDemoPrices, formatUsd, parseMainnetDemoPrices } from '@hana-id/core/mainnet-demo';
 
@@ -228,7 +228,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   const hint = new GuardHint({ d, now, focusedAtStart, coarse: coarsePointer(win as unknown as Parameters<typeof coarsePointer>[0]), id: 'guard-hint' });
   const guard = new ApproveGuard(now, focusedAtStart, (armed) => {
     if (primary) primary.disabled = !armed;
-    hint.armed(armed);
+    quietly(() => hint.armed(armed));
   });
 
   /** The vault window: the opener, or the partner page's vault frame (looked up each time, as the login popup does). */
@@ -255,16 +255,16 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     if (!isGesture(e)) return;
     const input = guardInputOf(type, e);
     guard.gesture(input);
-    hint.input(input);
+    quietly(() => hint.input(input, e));
   };
-  // The hint first, so its words follow the guard's state change that comes with each of these.
+  // The guard first, always; then the hint, which can't throw past `quietly`.
   const onFocus = () => {
-    hint.focused();
     guard.focused();
+    quietly(() => hint.focused());
   };
   const onBlur = () => {
-    hint.blurred();
     guard.blurred();
+    quietly(() => hint.blurred());
   };
   const listeners: [string, (e: Event) => void][] = [
     ['message', onMessage],
@@ -364,7 +364,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       if (isGesture(e) && enabled && onShow() && guard.mayActivate((e as MouseEvent).detail === 0)) answer(true);
     });
     primary = enabled ? ok : null;
-    if (enabled) hint.describe(ok, primaryLabel);
+    if (enabled) quietly(() => hint.describe(ok));
     const row = d.h('div', { class: 'actions decide' }, reject, enabled ? ok : null);
     // D878: right under the decision row, its space kept, so neither button moves when it appears or goes.
     return enabled ? d.h('div', { class: 'decide-group' }, row, hint.el) : row;
@@ -374,11 +374,12 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
    * The details' "Your account" row (D876): the whole account in one piece, then Copy. Copy only writes the account to
    * the clipboard and says so beside it; it is ordinary content for the Approve guard (a press of it is a gesture like
    * any other in the window, and it never answers anything). It sits in the folded details, at the start of the line,
-   * away from the decision row, small and with its own words, so it can't be taken for Reject or Approve. "Copied" fits
-   * beside it on the same line; only the refusal's sentence can take another line, and it stays until the next press.
+   * away from the decision row, small and with its own words, so it can't be taken for Reject or Approve. What it did
+   * is said under it, in a line that always keeps the space of its longest sentence (the refusal), so a press never
+   * moves anything below it, Reject and Approve included.
    */
   function accountRow(address: string): HTMLElement {
-    const status = d.h('span', { class: 'copy-status', attrs: { role: 'status' } });
+    const status = d.h('p', { class: 'account-copy-status', attrs: { role: 'status' } });
     const btn = d.h('button', { class: `${BTN.secondary} jp-btn-sm copy-account`, attrs: { type: 'button', 'aria-label': COPY_ACCOUNT_TEXT.name } }, icon(d, 'copy'), COPY_ACCOUNT_TEXT.button);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const say = (text: string, fade: boolean) => {
@@ -404,7 +405,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         () => say(COPY_ACCOUNT_TEXT.failed, false),
       );
     });
-    return rows(d, [row(d, 'Your account', fullId(d, address), d.h('div', { class: 'copy-line' }, btn, status))], 'jp-kv facts your-account');
+    const said = reservedLine(d, status, 'copy-said', [COPY_ACCOUNT_TEXT.copied, COPY_ACCOUNT_TEXT.failed]);
+    return rows(d, [row(d, 'Your account', fullId(d, address), d.h('div', { class: 'copy-line' }, btn, said.box))], 'jp-kv facts your-account');
   }
 
   /** The user's Support ID (batch C15), as the vault sent it: the code an app's support may ask for. Text only. */
@@ -583,8 +585,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     current = { kind: 'request', msg, input, decodable: approvable };
     state = 'request';
     d.show(screen);
-    hint.rendered(primary !== null);
     guard.rendered();
+    quietly(() => hint.rendered(primary !== null));
     // Boxes that hold more than they show say so, now that they are laid out, and again whenever their size changes.
     stopWatching?.();
     stopWatching = watchOverflowing(win.document, win as unknown as Parameters<typeof watchOverflowing>[1]);
@@ -626,8 +628,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     current = { kind: 'consent', msg, valid };
     state = 'consent';
     d.show(screen);
-    hint.rendered(primary !== null);
     guard.rendered();
+    quietly(() => hint.rendered(primary !== null));
   }
 
   /** Says bye, so the vault stops reusing this window, and closes it. */
@@ -716,8 +718,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     current = null;
     primary = null;
     post(result(c, approved));
-    hint.cleared();
     guard.cleared();
+    quietly(() => hint.cleared());
     if (stopped) return;
     state = 'waiting';
     const countdown = d.h('p', { class: 'countdown muted' });

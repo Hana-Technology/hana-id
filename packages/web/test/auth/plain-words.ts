@@ -57,10 +57,13 @@ export function idProblems(el: Element): string[] {
       if (hint !== (below ? ' (written out below)' : ' (written out above)')) out.push(`short form ${short} says “${hint}” but its row is ${below ? 'below' : 'above'}`);
     }
   }
-  // D876: each whole value is in one piece: one text node, no spaces, groups or other elements inside it.
+  // D876: each whole value is its exact text in four-character spans with a line-break opportunity between them and
+  // nothing else (no space, no other element), unspaced unless the counterparty groups are switched on.
   for (const c of q('code.id-full')) {
     const v = c.textContent ?? '';
-    if (c.childNodes.length !== 1 || c.firstChild?.nodeType !== 3 || /\s/u.test(v)) out.push(`${v} isn’t shown in one piece`);
+    const kids = [...c.childNodes];
+    const shape = kids.every((k, i) => (i % 2 === 0 ? (k as Element).matches?.('span.grp') && (k.textContent ?? '').length <= 12 : (k as Element).tagName === 'WBR'));
+    if (!shape || kids.length % 2 === 0 || /\s/u.test(v) || c.classList.contains('grouped')) out.push(`${v} isn’t shown in one piece`);
   }
   const labels = q('dl.id-rows dt').map((dt) => dt.textContent ?? '');
   for (const n of q('.id-number')) if (!labels.some((l) => l.endsWith(`(${n.textContent})`))) out.push(`${n.textContent} has no row`);

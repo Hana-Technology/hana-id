@@ -173,6 +173,22 @@ describe('renderApproval: other Stellar classic operations', () => {
     expect(text(plainClassicOps.liquidityPoolWithdraw?.() as xdr.Operation)).toContain('At least0.1 of asset A and 0.2 of asset B');
   });
 
+  it('D877: exact values inside a row’s words are mono (price, offer id, flag bits, signer weight, pool amounts); the words are not', () => {
+    const monos = (op: xdr.Operation, label: string) => {
+      const el = render([op]);
+      const dt = [...el.querySelectorAll('details dt')].find((x) => x.textContent === label);
+      return [...(dt?.nextElementSibling?.querySelectorAll('code.mono') ?? [])].map((c) => c.textContent);
+    };
+    expect(monos(plainClassicOps.manageSellOffer?.() as xdr.Operation, 'Price')).toEqual(['1/2']);
+    expect(monos(plainClassicOps.manageSellOffer?.() as xdr.Operation, 'Offer')).toEqual(['7']);
+    expect(monos(Operation.setOptions({ setFlags: 9 as never }), 'Sets flags')).toEqual(['9']);
+    expect(monos(plainClassicOps.allowTrust?.() as xdr.Operation, 'Authorization')).toEqual(['1']);
+    expect(monos(plainClassicOps.liquidityPoolWithdraw?.() as xdr.Operation, 'At least')).toEqual(['0.1', '0.2']);
+    expect(monos(plainClassicOps.liquidityPoolDeposit?.() as xdr.Operation, 'Price between')).toHaveLength(2);
+    const signer = monos(addSignerOp(5) as xdr.Operation, 'Adds signer');
+    expect(signer).toEqual([ATTACKER, '5']);
+  });
+
   it('renders partner-chosen strings as text, never markup, and invisible characters as hex', () => {
     const el = render([Operation.manageData({ name: '<img src=x onerror=alert(1)>', value: null }), Operation.setOptions({ homeDomain: `a${String.fromCodePoint(0x202e)}b` })]);
     expect(el.querySelector('img')).toBeNull();

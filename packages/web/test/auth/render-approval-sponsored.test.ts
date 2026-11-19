@@ -378,7 +378,22 @@ describe('D877: words in the text face, exact values in mono; the free fee in bo
     const d = details(el);
     for (const label of ['Chain ID', 'From', 'Action nonce', 'Gas floor']) expect(wordsOf(valueOf(d, label)!).trim(), label).toBe('');
     expect(wordsOf(valueOf(d, 'Paid by')!)).toBe('Journear’s relayer ');
-    expect(valueOf(d, 'Valid until')?.querySelector('.mono')).toBeNull();
+    // The time in words; its unix seconds exact, in mono; the same text as validUntil.
+    const until = valueOf(d, 'Valid until')!;
+    expect(until.textContent).toBe(validUntil(sponsorSubject({}).deadline, SPONSOR_NOW_MS));
+    expect(until.querySelector('code.mono')?.textContent).toBe(String(sponsorSubject({}).deadline));
+    expect(wordsOf(until)).toMatch(/^\d{2}:\d{2}.* \(your time; unix \)$/u);
+  });
+
+  it('the check mark speaks of the fee only: beside a red box it is in the text colour, never the success green', () => {
+    const el = render(decodeSponsored({ calls: [sponsoredCall(TOKEN, APPROVE_MAX)] }));
+    expect(el.querySelector('.danger-box')).not.toBeNull();
+    const fee = valueOf(el, 'Network fee')!;
+    expect(fee.textContent).toBe('Free. Journear pays it for you.');
+    expect(fee.className).toBe('fee-free beside-danger');
+    const calm = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
+    expect(calm.querySelector('.danger-box')).toBeNull();
+    expect(valueOf(calm, 'Network fee')?.className).toBe('fee-free');
   });
 
   it('the stylesheet: the approval’s values in the text face, mono only for code, the free fee’s mark in the success colour', () => {
@@ -386,5 +401,6 @@ describe('D877: words in the text face, exact values in mono; the free fee in bo
     expect(css).toMatch(/\.request dl\.jp-kv dd \{\s*font-family: var\(--jp-font-body\);/u);
     expect(css).toMatch(/\.request dl\.jp-kv dd\.fee-free strong \{\s*font-family: var\(--jp-font-body\);/u);
     expect(css).toMatch(/\.fee-free-mark \{[^}]*color: var\(--jp-success\);/u);
+    expect(css).toMatch(/dd\.fee-free\.beside-danger \.fee-free-mark \{\s*color: var\(--jp-fg\);/u);
   });
 });

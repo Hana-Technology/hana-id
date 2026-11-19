@@ -1099,7 +1099,8 @@ describe('D875: the wallet’s own sign-in is offered Remove for an added sign-i
     expect(reply.error).toBeUndefined();
     expect(done.banners[0]?.action?.kind).toBe('unlink');
     await t.waitUntil(() => relayReads(t, run, 3) > 0, 'the vault waits for slot 3');
-    // The popup has nothing to show (this device saw the line before): it answers keep, and the vault stops reading.
+    // The popup has nothing more to show (Done, or a line this browser dismissed before): it answers keep, and the
+    // vault stops reading.
     await answer(t, run, 2, { choice: 'keep' });
     const { id } = followSlot(run.params.followKey as Uint8Array, 3);
     await t.waitUntil(() => b.backend.relay.get(id) === 'consumed', 'the keep read');
@@ -1115,8 +1116,15 @@ describe('D875: the wallet’s own sign-in is offered Remove for an added sign-i
   it('no answer at all (the window closed): the wait ends at AFTERWORD_MS as before, nothing relayed, no runaway read', async () => {
     const { b, t, run } = await rootLogin(START_MS - 30 * DAY);
     await t.waitUntil(() => relayReads(t, run, 3) > 0, 'the vault waits for slot 3');
+    // Still reading before the limit.
+    const early = relayReads(t, run, 3);
+    await t.waitUntil(() => relayReads(t, run, 3) > early, 'another read of slot 3');
     t.browser.timers.advance(AFTERWORD_MS);
     await new Promise((r) => setTimeout(r, 100));
+    // At the limit the reads stop: none more after it.
+    const after = relayReads(t, run, 3);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(relayReads(t, run, 3)).toBe(after);
     expect(b.backend.abortedRelayReads).toBe(0);
     expect(b.backend.count('/v1/link/unlink')).toBe(0);
   });

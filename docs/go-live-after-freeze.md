@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -445,6 +445,12 @@ the database and ledger ids already in that app's config.
 
 If any `gen` says "local D1 placeholder id" or "off", or any deploy fails: stop there. The pieces already deployed keep
 working with the old ones for a few minutes; see "Rollback" below.
+
+Step 3 deploys the vault, then the sign-in pages, from one web build, seconds apart: keep them together. If this
+deploy includes D875 (Remove at any age), a new vault behind old sign-in pages makes the old window show an added
+sign-in older than 7 days as a full banner at every sign-in of the wallet's own sign-in. That is louder, not broken,
+and stops once the sign-in pages are deployed. Rolling back only the sign-in pages does the same. Rolling back only
+the vault is harmless.
 
 ### 3.11 Check the deploy
 

@@ -256,7 +256,7 @@ describe('notices: the designed HTML part', () => {
     );
     const active = linkNoticeMail({ to: 'a@example.com', appName: 'Sodax Demo', pending: false, look: LOOK });
     expect(active.text).toContain('This email and a Google account now both open the same Journear wallet in “Sodax Demo”.');
-    expect(active.text).toContain('Not you? Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Sign in to “Sodax Demo” the way you first signed in to this wallet: the Journear Passport sign-in window shows the new sign-in with a button to remove it. Then move what’s in this wallet to a new one.');
+    expect(active.text).toContain('Not you? Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Sign in to “Sodax Demo” the way you first signed in to this wallet. The Journear Passport sign-in window usually shows the new sign-in with a button to remove it. If it doesn’t, “Ways to sign in” in Passport Home tells you how to remove it. Then move what’s in this wallet to a new one.');
     // D875: Remove is no longer limited to 7 days, so the mail promises no deadline.
     expect(active.text).not.toMatch(/7 days|seven days/iu);
     for (const n of [m, active]) {

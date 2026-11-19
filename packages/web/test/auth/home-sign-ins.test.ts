@@ -11,6 +11,7 @@ import { jargonIn } from '@hana-id/brand/plain-words';
 import { dom } from '../../src/auth/dom.ts';
 import type { HomeScope } from '../../src/auth/home-api.ts';
 import {
+  HOME_SIGN_INS_TITLE,
   type HomeSignIns,
   type HomeSignInsWho,
   SIGN_INS_READ_LIMIT_MS,
@@ -367,8 +368,9 @@ describe('what it shows', () => {
     const h = start(chain, asEmail);
     await shown(h);
     expect(rows()[1]!.text).toContain(SIGN_IN_TEXT.autoGoogle);
-    // The email wallet's own sign-in may remove it: in the banner's 7 days.
-    expect(rows()[1]!.text).toContain('Didn’t add it? Sign in to this app the way you signed in here, before');
+    // The email wallet's own sign-in may remove it: in the banner's 7 days, with no deadline named (D875).
+    expect(rows()[1]!.text).toContain('Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.');
+    expect(rows()[1]!.text).not.toContain('before');
   });
 
   it('a link made by hand says so', () => {
@@ -385,13 +387,38 @@ describe('what it shows', () => {
       const how = [...other.querySelectorAll('.home-sign-in-how p')].map((p) => p.textContent);
       expect(how, `${age}`).toEqual([
         'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.',
-        'The sign-in window offers this once on each device. Not offered? Try signing in in a private window.',
+        'Once you press Done in the sign-in window, that browser stops offering Remove. Not offered? Try signing in in a private window.',
       ]);
       expect(other.textContent).not.toContain('Nothing can remove it');
       expect(other.textContent).not.toContain('before');
       // It sends the user to sign in, so the section says once to sign out of the app first.
       expect(document.getElementById('home-sign-ins-sign-out-first')?.textContent).toBe(SIGN_IN_TEXT.signOutFirst);
     }
+  });
+
+  it('D875: an older automatic same-address Google link doesn’t push its removal (D865’s softer words); a hand-made one does', async () => {
+    const auto: Chain = { opened: new Set([key(E)]), accounts: [{ root: E, members: [{ who: G, effectiveAtMs: T0 - 30 * DAY, active: true, auto: true }], epoch: 1 }] };
+    const h = start(auto, asEmail);
+    await shown(h);
+    const how = () => [...document.querySelectorAll('#home-sign-ins-list > li[data-role="member"] .home-sign-in-how p')].map((p) => p.textContent);
+    expect(how()).toEqual([
+      'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose Remove.',
+      'Once you press Done in the sign-in window, that browser stops offering Remove. Not offered? Try signing in in a private window.',
+    ]);
+    expect(how().join(' ')).not.toContain('If you’re not sure, remove it.');
+    resetDom();
+    const byHand: Chain = { opened: new Set([key(E)]), accounts: [{ root: E, members: [{ who: G, effectiveAtMs: T0 - 30 * DAY, active: true, auto: false }], epoch: 1 }] };
+    await shown(start(byHand, asEmail));
+    expect(how()[0]).toBe(SIGN_IN_TEXT.removeAtSignIn);
+    // An email added at a sign-in (always a code and "Link and continue": chosen, D865) keeps the firmer words.
+    resetDom();
+    await shown(start(googleWithEmail(T0 - 30 * DAY, true), asGoogle));
+    expect(how()[0]).toBe(SIGN_IN_TEXT.removeAtSignIn);
+  });
+
+  it('the notice mail names this section as Home shows it (apps/email-issuer mail.ts)', () => {
+    const mail = readFileSync(resolve(process.cwd(), '../../apps/email-issuer/src/mail.ts'), 'utf8');
+    expect(mail).toContain(`“${HOME_SIGN_INS_TITLE}” in \${BRAND.home}`);
   });
 
   it('the signed-in address is text only, and masked once the sign-in ends', async () => {
@@ -464,7 +491,7 @@ describe('who may cancel or remove whom (links.rs; tests/email.rs “Cancel and 
     expect(pointerFor(viewer('waiting', 'g', 'google'), row('waiting', 'g', { kind: 'google', you: true }), T0)).toEqual({ kind: 'cancel_own_none' });
     expect(pointerFor(viewer('first', 'g'), row('waiting', 'e'), T0)).toEqual({ kind: 'cancel_at_sign_in' });
     expect(pointerFor(viewer('member', 'e', 'email'), row('member', 'e', { you: true }), T0)).toEqual({ kind: 'remove_own' });
-    expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - DAY }), T0)).toEqual({ kind: 'remove_at_sign_in', untilMs: T0 - DAY + RECENT_LINK_MS });
+    expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - DAY }), T0)).toEqual({ kind: 'remove_at_sign_in' });
     // D875: past the 7 days (the sign-in window's own boundary, core relay.ts), still a place to remove it, at any age.
     expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - RECENT_LINK_MS + 1 }), T0)).toMatchObject({ kind: 'remove_at_sign_in' });
     for (const age of [RECENT_LINK_MS, 8 * DAY, 365 * DAY, T0]) expect(pointerFor(viewer('first', 'g'), row('member', 'e', { sinceMs: T0 - age }), T0), `${age}`).toEqual({ kind: 'remove_at_sign_in_once' });
@@ -680,7 +707,7 @@ describe('the model', () => {
 describe('words (D853)', () => {
   it('no banned word in any sentence the section can show', () => {
     const samples: string[] = [...Object.values(SIGN_IN_TEXT)];
-    for (const p of [{ kind: 'remove_own' }, { kind: 'remove_at_sign_in', untilMs: T0 }, { kind: 'remove_at_sign_in_once' }] as const) for (const kind of ['email', 'google'] as const) samples.push(...pointerText(p, row('member', 'e', { kind })).lines);
+    for (const p of [{ kind: 'remove_own' }, { kind: 'remove_at_sign_in' }, { kind: 'remove_at_sign_in_once' }] as const) for (const kind of ['email', 'google'] as const) for (const auto of [true, false]) samples.push(...pointerText(p, row('member', 'e', { kind, auto })).lines);
     samples.push(...rowFacts(row('member', 'e')), ...rowFacts(row('waiting', 'e')));
     for (const s of samples) expect(jargonIn(s), s).toEqual([]);
   });

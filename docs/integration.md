@@ -848,7 +848,7 @@ are yours.
   someone's wallet is first asked whether to keep the link (**Not now**, **Don't ask again on this device**, or
   **Remove this …**, which names the email or the Google sign-in); a pending link shows a banner with **Cancel this
   link**. The sign-in a wallet was made with sees each other sign-in with **Remove**: as a banner at every sign-in for
-  7 days after it was added, then as one quiet line, once on each device.
+  7 days after it was added, then as one quiet line until the user presses Done on it in that browser.
 - **The approval window** starts with one plain sentence about what your app asks for ("Your App wants to send 0.1
   NEAR to bob.testnet"), the network, and the most the network fee can be. A risk is always in view, in red or amber,
   right under that sentence. The technical details are folded under **Show details**. When Journear Passport can't

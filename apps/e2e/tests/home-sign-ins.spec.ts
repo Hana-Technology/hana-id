@@ -282,7 +282,8 @@ test('a link that took effect: listed with where to remove it; removed from its 
   await expect(member).toContainText('Another email address');
   await expect(member).toContainText('Opens this wallet since');
   await expect(member).toContainText('Added at a sign-in, after a code was sent to this email address.');
-  await expect(member).toContainText('Didn’t add it? Sign in to this app the way you signed in here, before');
+  await expect(member).toContainText('Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.');
+  await expect(member).not.toContainText('before');
   await expect(home.locator('#home-sign-ins-sign-out-first')).toHaveText('If you’re already signed in to this app, sign out of it first.');
   expect(await sectionButtons(home)).toEqual(['Show again']);
   await shot(home, 'home-sign-ins-member', browserName);
@@ -330,7 +331,7 @@ test('a link that took effect: listed with where to remove it; removed from its 
   expect(problems()).toEqual([]);
 });
 
-test('D875: an added sign-in past its first 7 days: Home says where Remove is; the wallet’s own sign-in shows it as one quiet line, once on this device, and removes it there', async ({ page, context, google, browserName }, info) => {
+test('D875: an added sign-in past its first 7 days: Home says where Remove is; the wallet’s own sign-in shows it as one quiet line until Done in this browser, and removes it there', async ({ page, context, google, browserName }, info) => {
   test.setTimeout(240_000);
   const problems = await watchAuthPages(context);
   const { scopeId, name, sub } = await waitingEmail(page, google, info, browserName, 'o');
@@ -347,7 +348,7 @@ test('D875: an added sign-in past its first 7 days: Home says where Remove is; t
   const member = home.locator('#home-sign-ins-list > li[data-role="member"]');
   await expect(member).toContainText('Opens this wallet since');
   await expect(member.locator('.home-sign-in-how')).toHaveText(
-    'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.The sign-in window offers this once on each device. Not offered? Try signing in in a private window.',
+    'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.Once you press Done in the sign-in window, that browser stops offering Remove. Not offered? Try signing in in a private window.',
   );
   await expect(member.locator('.home-sign-in-risk')).toHaveCount(0);
   await expect(home.locator('#home-sign-ins')).not.toContainText('Nothing can remove it');
@@ -360,20 +361,20 @@ test('D875: an added sign-in past its first 7 days: Home says where Remove is; t
   await expect(popup.locator('#link-older .older-link')).toContainText('An email address also opens this wallet, since');
   await expect(popup.locator('#banner-unlink-0')).toHaveText('Remove');
   await expect(popup.locator('#link-banners')).toHaveCount(0);
-  await expect(popup.locator('#link-older')).toContainText('This is shown once on each device. You can see the ways to sign in to your wallet in Passport Home.');
+  await expect(popup.locator('#link-older')).toContainText('After you press Done, this browser won’t show this again. Passport Home lists the ways to sign in to your wallet.');
   // No delay for the app: its sign-in has finished while the window still shows the line.
   await expect.poll(() => peek(page, 'old1')).toMatchObject({ state: 'ok' });
   await shot(popup, 'sign-in-older-line', browserName);
   await clickClosing(popup, '#banner-done');
   await logout(page, 'out-old1');
 
-  // The next sign-in on this device: the window closes by itself, as with nothing to show.
+  // Done used it up in this browser: the next sign-in's window closes by itself, as with nothing to show.
   const second = await googleStart(page, 'old2');
   await closeOf(second);
   await okValue(page, 'old2');
   await logout(page, 'out-old2');
 
-  // A private window keeps nothing: as there, the line is shown again (this device's memory of it cleared), and
+  // A private window keeps nothing: as there, the line is shown again (this browser's memory of it cleared), and
   // its Remove removes the email.
   await home.evaluate(() => {
     for (const k of Object.keys(localStorage)) if (k.startsWith('hana.ol.')) localStorage.removeItem(k);

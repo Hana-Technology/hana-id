@@ -54,10 +54,11 @@
 // - `use_email` (case A that can't link): only "Sign in with email";
 // - `prove`: a link method's proof (Google: the vault's nonce and account; email: a code over its commitment);
 // - `done`: "Signed in", or the link banners first (a pending method with Cancel, one just added); a banner's action
-//   is a proof, then the vault's answer. D875: for the wallet's own sign-in, an active method past its first 7 days
-//   (`RECENT_LINK_MS`, on the API's time from the read) is one plain line with Remove, shown once on each device
-//   (`localStorage` on authOrigin, `hana.ol.<id>`, an opaque hash of the line's kind and date). When nothing is left
-//   to show, the window answers `{choice: 'keep'}` (so the vault stops waiting) and closes as with no banners;
+//   is a proof, then the vault's answer; Done answers `{choice: 'keep'}` when an action was offered (the vault stops
+//   waiting). D875: for the wallet's own sign-in, an active method past its first 7 days (`RECENT_LINK_MS`, on the
+//   API's time from the read) is one plain line with Remove, shown until the user presses Done on it in this browser
+//   (`localStorage` on authOrigin, `hana.ol.<sha256 of the line's kind and date>`). When only such dismissed lines are
+//   left, the window answers `{choice: 'keep'}` and closes as with no banners;
 // - `stop`: why the login ended (a pending link: when it activates).
 // - `link_waiting` (D864): this email sign-in was refused because the email itself waits to join a wallet (someone
 //   linked it to a Google account with one code to this address): the screen says so, with the date the link starts
@@ -219,11 +220,12 @@ export const LINK_DELAY_TEXT =
 
 /**
  * D875: the wallet's own sign-in sees its older ways to sign in (past their first 7 days) as plain lines with Remove,
- * once on each device. What a line says (by kind only, as the banners do), and the note under them.
+ * until Done is pressed on them in this browser. What a line says (by kind only, as the banners do), and the note
+ * under them.
  */
 export const olderLinkText = (provider: string, since: string): string => `${provider === 'email' ? 'An email address' : 'A Google account'} also opens this wallet, since ${since}.`;
-export const OLDER_LINK_NOTE = `This is shown once on each device. You can see the ways to sign in to your wallet in ${BRAND.home}.`;
-/** How long a window that shows nothing waits for its `{choice: 'keep'}` write before it closes anyway (D875). */
+export const OLDER_LINK_NOTE = `After you press Done, this browser won’t show this again. ${BRAND.home} lists the ways to sign in to your wallet.`;
+/** How long a window waits for its `{choice: 'keep'}` write before it closes anyway (D875). */
 export const KEEP_WRITE_MS = 1_500;
 
 /** D341: the line the screen after a cancel on Google's sign-in screen shows. */
@@ -1269,7 +1271,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   /** The vault's last word: "Signed in", or the link banners first. */
   function showDone(banners: LinkBanner[], slot: number, serverTimeMs: number): void {
-    // D875: an older link this device has already shown is no reason to keep the window open.
+    // D875: an older link this browser has already dismissed (Done) is no reason to keep the window open.
     const worth = banners.filter((b) => !olderLink(b, serverTimeMs) || !olderSeenHere(b));
     if (worth.length === 0) {
       // Something was offered (only an older link's Remove, already shown here): tell the vault not to wait for it.
@@ -1302,7 +1304,10 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   // ---- D875: the older ways to sign in, offered quietly to the wallet's own sign-in ----
 
-  /** The device remembers the older links it has shown: authOrigin's localStorage, an opaque id of the link only. */
+  /**
+   * The browser remembers the older lines the user pressed Done on: authOrigin's localStorage, keyed by a hash of the
+   * line's kind and date (public chain facts: the hash hides them from a casual look, nothing more).
+   */
   const OLDER_SEEN_PREFIX = 'hana.ol.';
   const olderId = (b: LinkBanner): string => toHex(sha256(utf8(`hana-id/older-link/v1|${b.provider}|${b.effectiveAtMs}`)));
   /**
@@ -1355,12 +1360,13 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     };
     const items: HTMLElement[] = [];
     const older: HTMLElement[] = [];
+    const shownOlder: LinkBanner[] = [];
     banners.forEach((b, i) => {
       const remove = button(b, i);
       if (olderLink(b, serverTimeMs)) {
         // D875: one plain line, no box, no colour: who else opens this wallet, and Remove.
         older.push(d.h('p', { class: 'older-link', attrs: { 'data-provider': b.provider } }, olderLinkText(b.provider, dateText(b.effectiveAtMs)), remove ? ' ' : null, remove));
-        olderShownHere(b);
+        shownOlder.push(b);
         return;
       }
       const what =
@@ -1373,10 +1379,20 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     });
     const done = d.h('button', { class: `primary ${BTN.primary} jp-btn-lg`, attrs: { type: 'button', id: 'banner-done' } }, 'Done');
     done.addEventListener('click', () => {
+      // D875: only Done uses up an older line in this browser. Remove (which may still fail or be abandoned), the
+      // window's own close button, or the app closing the window leaves it to be shown at the next sign-in.
+      for (const b of shownOlder) olderShownHere(b);
+      // Done means no Remove or Cancel from this screen: tell the vault so it stops waiting. Safe: a Remove or Cancel
+      // takes this window away to its proof, so a Done here means nothing was written to this slot's answer (and the
+      // relay takes one write per slot anyway).
+      const told = banners.some((b) => b.action) ? keepAnswer(slot) : null;
       endFollow();
       settle('done');
-      if (title === 'Signed in') closeOrShare(win, rid, now());
-      else win.close();
+      const leave = (): void => (title === 'Signed in' ? closeOrShare(win, rid, now()) : win.close());
+      if (told) {
+        done.setAttribute('disabled', '');
+        void told.then(leave);
+      } else leave();
     });
     d.show(
       d.h(

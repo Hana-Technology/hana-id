@@ -1918,10 +1918,10 @@ interface OfferedAction {
  * Step 11: the link banners of the logged-in wallet (spec "Notices"), from `get_account` on the vault's own RPC: a
  * pending method (Cancel, by any active identity), the method this login added, methods added in the last 7 days
  * (`RECENT_LINK_MS`; Remove, by the root), and for the root its older methods too (Remove, D875: the popup shows them
- * quietly, once on each device). A Cancel or Remove is proved by a fresh sign-in of this login's method over the
- * `link_change` nonce, then relayed. The login has already returned: this runs beside it and never delays it. With an
- * action offered it waits for the popup's answer at most AFTERWORD_MS; any answer that isn't a proof ends the wait at
- * once (the popup's `{choice: 'keep'}` when it closes without showing anything, D875).
+ * quietly, until Done is pressed on them in that browser). A Cancel or Remove is proved by a fresh sign-in of this
+ * login's method over the `link_change` nonce, then relayed. The login has already returned: this runs beside it and
+ * never delays it. With an action offered it waits for the popup's answer at most AFTERWORD_MS; any answer that isn't
+ * a proof ends the wait at once (the popup's `{choice: 'keep'}` on Done, or when it closes showing nothing, D875).
  */
 class Afterword {
   private readonly signal = new AbortController();
@@ -1976,7 +1976,8 @@ class Afterword {
     const out: LinkBanner[] = [];
     // D875: an active member older than RECENT_LINK_MS is sent to the root only (its Remove, which the contract allows
     // at any age), after every other banner, so the cap of 4 drops one of them first. The popup shows it as one quiet
-    // line, once on each device (auth/email-page.ts). Nobody else is sent one: the contract would refuse their Remove.
+    // line, until Done is pressed on it in that browser (auth/email-page.ts). Nobody else is sent one: the contract
+    // would refuse their Remove.
     const isFresh = (m: { provider: string }): boolean => this.linked?.provider === m.provider;
     const older = (m: { active: boolean; provider: string; effectiveAtMs: number }): boolean => m.active && !isFresh(m) && !isRecentLink(m.effectiveAtMs, now);
     const members = [...account.members.filter((m) => !older(m)), ...(whoIsRoot ? account.members.filter(older) : [])];

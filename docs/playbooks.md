@@ -1,7 +1,7 @@
 # Recovery playbooks
 
 Generated from `packages/playbooks` (D126) by `corepack pnpm --filter @hana-id/playbooks gen-docs`: edit the package,
-not this file (a test fails when it is stale). Last verified against code: 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: the seven EVM relayer playbooks name the feature “Gas sponsorship” for staff, D879); 2026-11-18 (branch `feat/admin-evm-sponsor` after its re-check: `evm-relay-paused` checks the wallet for a thief before a refill); 2026-11-18 (branch `feat/admin-evm-sponsor`, after its independent review: `evm-relay-paused` sends a possibly leaked key to an engineer first, no refill, Resume only on the engineer’s word, D843); 2026-11-18 (branch `feat/admin-evm-sponsor`, not merged, not deployed: the six free-network-fee playbooks `evm-relay-paused`, `evm-relay-balance-low`, `evm-relay-budget-high`, `evm-relay-receipt-odd`, `evm-billing-late` and `evm-relay-slot-taken` for the sponsorship’s events as merged (the stuck alert at 2 minutes, `quarantined`), and `near-billing-late` (its five counts), D843); 2026-11-18 (branch `fix/evm-sponsor-consumed-elsewhere-not-charged`, not merged, not deployed: the new `evm-relay-closed-slot-mined`, D869); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: `near-relay-budget-high` and `near-relay-balance-low` quote sandbox-dev's 6 NEAR and 9 NEAR, D793); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: `exit-client-unpinned`: the combined alarm, unreadable pins, the alarm's limits and the threshold, D493); 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
+not this file (a test fails when it is stale). Last verified against code: 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, after its review: `evm-relay-balance-low` is “Gas sponsorship: the relayer wallet is running low”, `near-billing-late` is “NEAR relay: a billing record is late”, D879); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: the seven EVM relayer playbooks name the feature “Gas sponsorship” for staff, D879); 2026-11-18 (branch `feat/admin-evm-sponsor` after its re-check: `evm-relay-paused` checks the wallet for a thief before a refill); 2026-11-18 (branch `feat/admin-evm-sponsor`, after its independent review: `evm-relay-paused` sends a possibly leaked key to an engineer first, no refill, Resume only on the engineer’s word, D843); 2026-11-18 (branch `feat/admin-evm-sponsor`, not merged, not deployed: the six free-network-fee playbooks `evm-relay-paused`, `evm-relay-balance-low`, `evm-relay-budget-high`, `evm-relay-receipt-odd`, `evm-billing-late` and `evm-relay-slot-taken` for the sponsorship’s events as merged (the stuck alert at 2 minutes, `quarantined`), and `near-billing-late` (its five counts), D843); 2026-11-18 (branch `fix/evm-sponsor-consumed-elsewhere-not-charged`, not merged, not deployed: the new `evm-relay-closed-slot-mined`, D869); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: `near-relay-budget-high` and `near-relay-balance-low` quote sandbox-dev's 6 NEAR and 9 NEAR, D793); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: `exit-client-unpinned`: the combined alarm, unreadable pins, the alarm's limits and the threshold, D493); 2026-11-09 (branch `feat/test-page-command`: `watchdog-first-run` with the test page, `watchdog-compromised` with what the status token can do, D449, D450); 2026-11-06 (branch `feat/api-near-rpc-fallback`: `near-rpc-outage` with the API-side RPC failover, `apiRpcFallbacks`, D435); 2026-11-06 (branch `fix/watchdog-new-key-grace`: `unseen-key-change`, and `forged-key-change` with the new-kid grace, D432); 2026-11-06 (branch `fix/google-key-hysteresis`: `retired-key-change`, `key-sync-stalled` and `updater-key-stolen` with the rollout hysteresis, D422); 2026-11-05 (branch `feat/deploy-check-all-workers`: the watchdog deploys through `run deploy`, stamped with the build id, D406); 2026-11-05 (branch `chore/ci-cost`: CI and the outside identity-JWKS probe turned off on testnet, D387); 2026-11-05 (branch `feat/coop-canary`: the `google-enforces-coop` incident, D386); 2026-11-05 (branch `chore/ci-cost`: the outside identity-JWKS probe runs every 3 hours, D383); 2026-11-05 (branch `chore/identity-probe-hourly`: the outside identity-JWKS probe runs hourly, D382); 2026-11-03 (branch `feat/email-login-8b`: `near-rpc-outage` impact, member paths confirmed on both RPCs, D263; before it branch `docs/consistency-pass`).
 
 One step-by-step guide for every watchdog alert kind and for every incident the watchdog does not raise. The admin
 portal's "Security & monitoring" view renders the same playbooks (`docs/batch-c-spec.md`), and every watchdog
@@ -53,12 +53,12 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [The NEAR relay's daily budget reached 80%](#near-relay-budget-high) | warning | — |
 | [The NEAR relay account is running low](#near-relay-balance-low) | warning | — |
 | [Gas sponsorship is paused or slow](#evm-relay-paused) | critical | — |
-| [The wallet that pays the gas is running low](#evm-relay-balance-low) | warning | — |
+| [Gas sponsorship: the relayer wallet is running low](#evm-relay-balance-low) | warning | — |
 | [Gas sponsorship: today's budget is nearly used up](#evm-relay-budget-high) | warning | — |
 | [Gas sponsorship: a payment looked wrong](#evm-relay-receipt-odd) | warning | — |
 | [Gas sponsorship: a billing record is late](#evm-billing-late) | warning | — |
 | [Gas sponsorship: a payment slot was used by another transaction](#evm-relay-slot-taken) | critical | — |
-| [Free NEAR transactions: a billing record is late](#near-billing-late) | warning | — |
+| [NEAR relay: a billing record is late](#near-billing-late) | warning | — |
 | [The usage database’s free monthly allowance is running low](#neon-compute-high) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
@@ -1598,7 +1598,7 @@ An `evm_relay_stuck` security event, or the System status tile “Gas sponsorshi
 
 <a id="evm-relay-balance-low"></a>
 
-### The wallet that pays the gas is running low
+### Gas sponsorship: the relayer wallet is running low
 
 `evm-relay-balance-low` · warning
 
@@ -1767,7 +1767,7 @@ An `evm_relay_nonce_taken` security event: a slot (the relayer's transaction num
 
 <a id="near-billing-late"></a>
 
-### Free NEAR transactions: a billing record is late
+### NEAR relay: a billing record is late
 
 `near-billing-late` · warning
 

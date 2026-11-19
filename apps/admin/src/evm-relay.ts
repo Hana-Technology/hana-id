@@ -118,7 +118,7 @@ function haltReasonExplained(h: HaltWords, w: Words): Explained {
       if (h.code === 'fee_cap_too_low')
         return {
           why: 'Gas prices are higher right now than the relayer is allowed to pay, so it can’t even send its own cancel.',
-          steps: ['Wait: gas prices usually fall again within an hour.', 'Then press Resume on the Gas sponsorship page.', 'If it is still paused after a few hours, ask an engineer to raise the relayer’s fee limit (maxFeePerGasGwei in the settings).'],
+          steps: ['Wait: gas prices usually fall again within an hour.', 'Then press Resume on the Gas sponsorship page.', 'If it is still paused after a few hours, ask an engineer to raise the relayer’s gas price limit (maxFeePerGasGwei in the settings).'],
         };
       if (h.code === 'replacement_underpriced' || h.code === 'sender_restricted') return { why: `Another transaction is using the relayer wallet’s ${n}: the relayer’s key is being used somewhere else.`, steps: leakSteps(null) };
       if (h.code === 'nonce_too_low' || h.code === 'nonce_too_high')
@@ -145,7 +145,7 @@ function haltReasonExplained(h: HaltWords, w: Words): Explained {
         steps: [
           'Check the wallet’s balance below. If it is low, send test ETH to the relayer wallet.',
           `If the balance is fine, press Cancel on ${n} to send a cancel with a higher fee.`,
-          'If Cancel is refused because gas prices are above the relayer’s limit, ask an engineer to raise the fee limit.',
+          'If Cancel is refused because gas prices are above the relayer’s gas price limit, ask an engineer to raise that limit.',
           `If ${n} has no Cancel button, it already has 8 copies and the relayer can’t send another: ask an engineer.`,
           'Once the slot shows as on the network, press Resume.',
         ],
@@ -491,8 +491,8 @@ export function refusalWords(refused: string, slot: number | null, w: Words): st
     receipt_found: `${cap(n)}’s own transaction did reach the network. There is nothing to do: it finishes by itself.`,
     key_mismatch: 'The relayer’s key doesn’t match the one these transactions were signed with, so it can’t sign anything.',
     nonce_mined: `${cap(n)} is already used on the network. Wait: it finishes by itself.`,
-    no_valid_replacement: 'It can’t send another copy: it has already sent 8, or its fee limit leaves no room for a higher fee. Ask an engineer.',
-    fee_cap_too_low: 'Gas prices are above the relayer’s limit right now. Try again later, or ask an engineer to raise the fee limit.',
+    no_valid_replacement: 'It can’t send another copy: it has already sent 8, or its gas price limit leaves no room for a higher fee. Ask an engineer.',
+    fee_cap_too_low: 'Gas prices are above the relayer’s gas price limit right now. Try again later, or ask an engineer to raise that limit.',
     record_exists: `${cap(n)} already has a transaction. Use Cancel on that slot instead.`,
     not_below_next_nonce: `${cap(n)} isn’t one of the relayer’s earlier slots, so there is no gap there.`,
     not_the_chains_next_nonce: `The network’s next slot for the relayer isn’t ${slot ?? 'that number'}. Fill the lowest empty slot first.`,

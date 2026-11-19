@@ -381,7 +381,7 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
     await expect(fill.locator('[name="slot"]')).toHaveValue('0');
     await expect(fill).toContainText('The empty slot the relayer found: 0.');
     const note = n('Slot 0 is empty after a transaction we did not send');
-    await useTool(fill, { button: 'Fill the gap', note, confirm: 'Fill slot 0 with a harmless empty transfer? It costs a little gas, paid from the relayer wallet.' });
+    await useTool(fill, { button: 'Fill the gap', note, confirm: 'Fill slot 0 with a harmless empty transfer? It costs a little ETH for gas, from the relayer wallet.' });
     await expectAnswer(page, 'Fill a gap: done', 'A harmless empty transfer was sent for slot 0.');
     // Time passes: the filler and the check-in behind it are on the network.
     await laneRun(lane, 2);
@@ -426,7 +426,7 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
       const events = eventsOf(heading);
       for (const [kind, words, playbook] of [
         ['evm_relay_stuck', 'Gas sponsorship: paused or slow, needs a look', 'Gas sponsorship is paused or slow'],
-        ['evm_relay_balance_low', 'Gas sponsorship: the wallet that pays the gas is running low', 'The wallet that pays the gas is running low'],
+        ['evm_relay_balance_low', 'Gas sponsorship: the relayer wallet is running low', 'Gas sponsorship: the relayer wallet is running low'],
       ] as const) {
         const row = events.filter({ hasText: kind }).first();
         await expect(row, `${path} ${kind}`).toContainText(words);

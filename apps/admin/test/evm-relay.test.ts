@@ -7,10 +7,17 @@ import { type EvmRelayChainView, type EvmRelayDetail, type EvmRelayRecordView, S
 import { PLAYBOOKS } from '@hana-id/playbooks';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { STATE_LABELS, actWords, evmRelayActRoute, evmRelayDetailRoute, explainChain, haltExplained, recordPlain, testEth, toolsOffered } from '../src/evm-relay.ts';
+import { STATE_LABELS, actWords, evmRelayActRoute, evmRelayDetailRoute, explainChain, haltExplained, recordPlain, refusalWords, testEth, toolsOffered } from '../src/evm-relay.ts';
 import type { RouteCtx } from '../src/routes.ts';
 import { SECURITY_EVENT_PLAYBOOKS, withWords } from '../src/security.ts';
 import { STAFF_EMAIL, STAFF_SUB, adminRequest, downBinding, envWith, overrideBinding, stubNetwork, uid } from './helpers.ts';
+
+/**
+ * Protocol words kept out of the staff sentences (the code for engineers apart). "Gas" is staff's word since D879, but
+ * only in the agreed phrases ("gas sponsorship", "gas price(s)", "gas price limit"): a bare "gas" is refused, so the
+ * jargon doesn't spread beyond the term. The users' term ("free network fees") is refused here too.
+ */
+const STAFF_JARGON = /\bnonce\b|\bRPC\b|\bmempool\b|\bEVM\b|halted|EIP|delegate|_|free network fee|\bgas\b(?! (?:sponsorship|prices?)\b)/iu;
 
 const NOW = Date.UTC(2026, 10, 18, 9, 0);
 const MILLI = 10n ** 15n;
@@ -89,6 +96,9 @@ describe('the words of each state', () => {
   });
 
   it('every halt reason and refusal code has its own sentence and steps, and none uses a protocol word outside the code', () => {
+    // A refusal's words keep to the same rule.
+    for (const code of ['not_halted', 'incomplete_check', 'rpc_unavailable', 'no_record', 'nonce_not_consumed_at_confirmed_depth', 'receipt_found', 'key_mismatch', 'nonce_mined', 'no_valid_replacement', 'fee_cap_too_low', 'record_exists', 'not_below_next_nonce', 'not_the_chains_next_nonce', 'below_next_nonce', 'unmined_records', 'chain_count_differs', 'no_state', 'not_past_deadline', 'key_confirmation_required', 'invalid_request', 'relayer_unbound', 'relayer_unavailable', 'relayer_timeout', 'internal'])
+      expect(refusalWords(code, 7, { chain: 'Base Sepolia', faucet: 'a faucet', explorer: 'Basescan', refill: '0.07 test ETH' }), code).not.toMatch(STAFF_JARGON);
     const w = { chain: 'Base Sepolia', faucet: 'a faucet', explorer: 'Basescan', refill: '0.07 test ETH' };
     const cases: [string, string | null][] = [
       ['relayer_cannot_send', 'insufficient_funds'],
@@ -111,8 +121,7 @@ describe('the words of each state', () => {
       whys.add(e.why);
       expect(e.steps.length, reason).toBeGreaterThan(0);
       for (const t of [e.why, ...e.steps]) {
-        // "Gas" is staff's own word since D879 ("gas sponsorship", "gas prices"); the other protocol words stay out.
-        expect(t, `${reason} ${code}`).not.toMatch(/\bnonce\b|\bRPC\b|\bmempool\b|\bEVM\b|halted|EIP|delegate|_|free network fee/iu);
+        expect(t, `${reason} ${code}`).not.toMatch(STAFF_JARGON);
         expect(t.length, t).toBeLessThan(260);
       }
     }
@@ -120,7 +129,7 @@ describe('the words of each state', () => {
     expect(whys.size).toBe(cases.length - 1);
     expect(haltExplained({ reason: 'relayer_cannot_send', slot: 7, code: 'fee_cap_too_low' }, w)).toEqual({
       why: 'Gas prices are higher right now than the relayer is allowed to pay, so it can’t even send its own cancel.',
-      steps: ['Wait: gas prices usually fall again within an hour.', 'Then press Resume on the Gas sponsorship page.', 'If it is still paused after a few hours, ask an engineer to raise the relayer’s fee limit (maxFeePerGasGwei in the settings).'],
+      steps: ['Wait: gas prices usually fall again within an hour.', 'Then press Resume on the Gas sponsorship page.', 'If it is still paused after a few hours, ask an engineer to raise the relayer’s gas price limit (maxFeePerGasGwei in the settings).'],
     });
     expect(haltExplained({ reason: 'nonce_gap', slot: 41, code: null }, w).why).toBe('Slot 41 is empty and nothing is waiting to fill it, so every transaction after it is stuck. Only someone else using the relayer’s key leaves a gap like this.');
   });
@@ -144,9 +153,9 @@ describe('the words of each state', () => {
     // The relayer can tell its key was replaced since the stop: its records' signer isn't the settings' wallet.
     const replaced = explainChain(view({}, { ...halt('nonce_consumed_elsewhere', 7), signerAddress: '0x1111111111111111111111111111111111111111' }), NOW);
     expect(replaced.explained!.why).toMatch(/The relayer’s key has been replaced since it stopped \(its transactions were signed by 0x1111…1111; the settings now name the wallet below\)\.$/u);
-    // stuck_past_deadline: the fee limit and the 8-copies case said.
+    // stuck_past_deadline: the gas price limit and the 8-copies case said.
     const stuck = haltExplained({ reason: 'stuck_past_deadline', slot: 7, code: null }, w).steps;
-    expect(stuck).toContain('If Cancel is refused because gas prices are above the relayer’s limit, ask an engineer to raise the fee limit.');
+    expect(stuck).toContain('If Cancel is refused because gas prices are above the relayer’s gas price limit, ask an engineer to raise that limit.');
     expect(stuck).toContain('If slot 7 has no Cancel button, it already has 8 copies and the relayer can’t send another: ask an engineer.');
   });
 

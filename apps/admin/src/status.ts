@@ -29,7 +29,7 @@ import { type StaffRequest, staffCtx } from './rpc.ts';
 import { MIN_PARTITIONS_AHEAD } from './security.ts';
 import { NEON_ALERT_PCTS, NEON_PARTIAL_AFTER_MS, type NeonStatus, allowancePct, assumedAwakeMs, awakeMsAt, computeHours, countedPartly, estimateAwakeMs, nextMonthStart } from '@hana-id/console-core';
 import { opsEveryMinutesOf, tracksNeon } from './neon.ts';
-import { type ChainPlain, LINE_LABELS, STATE_LABELS, evmRelayPath, evmRelayTitle, explainChain } from './evm-relay.ts';
+import { type ChainPlain, LINE_LABELS, STATE_LABELS, chainInfo, evmRelayPath, evmRelayTitle, explainChain } from './evm-relay.ts';
 import { type BuildRead, CallCount, type NearEndpoint, type NearRead, SLOW_MS, buildTargets, nearEndpoints, readBuild, readNear } from './status-probes.ts';
 import { callWatchdog, watchdogConfigured } from './watchdog.ts';
 
@@ -692,7 +692,11 @@ function nearRelayTile(r: Report, s: Sources): void {
  * up; when it isn't working, why in a sentence and what to do as numbered steps, with the code for engineers.
  */
 function evmRelayTiles(r: Report, s: Sources): void {
-  const affects = 'Users’ actions on EVM test networks whose gas Journear pays: while it is paused, Journear pays nobody’s gas';
+  // What a stop affects, scoped (D879 review): only new actions on that one network; logins, the NEAR relay and other
+  // networks go on, and the relayer still looks after what it already sent. The same line shows on a low balance or a
+  // budget issue, where nothing is paused yet: it says what happens if it stops, not that it has.
+  const affects = 'Users’ actions on EVM test networks whose gas Journear pays: while it is paused or switched off, no new action gets its gas paid';
+  const chainAffects = (id: number): string => `Users’ actions on ${chainInfo(id).name} whose gas Journear pays: while it is paused or switched off, no new action there gets its gas paid`;
   const base: TileInput = { id: 'evm-relay', group: 'funds', name: 'Gas sponsorship', affects, detail: '' };
   if (!s.api.ok) return r.add({ ...base, detail: 'Can’t check right now: the API didn’t answer' }, [{ ...apiRpcProblem(s.api.code), issue: false }]);
   const evm = obj(s.api.value.evmRelay);
@@ -715,11 +719,12 @@ function evmRelayTiles(r: Report, s: Sources): void {
   for (const v of chains) {
     const id = `evm-relay-${v.chainId}`;
     const link = { path: evmRelayPath(v.chainId), label: 'Gas sponsorship' };
+    const chainBase: TileInput = { ...base, affects: chainAffects(v.chainId) };
     let p: ChainPlain;
     try {
       p = explainChain(v, r.now);
     } catch {
-      r.add({ ...base, id, name: evmRelayTitle(v.chainId), link, detail: 'Can’t check right now: the API’s answer can’t be read.' }, [{ severity: 'unknown', title: 'The API’s answer about gas sponsorship can’t be read', action: 'Deploy the API and this console from the same checkout.', key: 'unparsed' }]);
+      r.add({ ...chainBase, id, name: evmRelayTitle(v.chainId), link, detail: 'Can’t check right now: the API’s answer can’t be read.' }, [{ severity: 'unknown', title: 'The API’s answer about gas sponsorship can’t be read', action: 'Deploy the API and this console from the same checkout.', key: 'unparsed' }]);
       continue;
     }
     const problems: Problem[] = [];
@@ -730,7 +735,7 @@ function evmRelayTiles(r: Report, s: Sources): void {
     // The plain label names the main state; a second problem that is worse says so instead of hiding behind it.
     const top = problems.reduce<TileState>((a, x) => (RANK[x.severity] > RANK[a] ? x.severity : a), p.severity);
     const label = RANK[top] > RANK[p.severity] ? (top === 'critical' ? STATE_LABELS.needs_person : 'Needs a look') : p.label;
-    r.add({ ...base, id, name: p.title, link, detail: p.detail, stateLabel: label, ...(p.explained ? { explain: { why: p.explained.why, steps: p.explained.steps, code: p.code } } : {}), lines: p.lines.map((l) => ({ label: l.label, state: l.state, detail: l.detail, ...(Object.hasOwn(LINE_LABELS, l.state) ? { stateLabel: LINE_LABELS[l.state] } : {}) })) }, problems);
+    r.add({ ...chainBase, id, name: p.title, link, detail: p.detail, stateLabel: label, ...(p.explained ? { explain: { why: p.explained.why, steps: p.explained.steps, code: p.code } } : {}), lines: p.lines.map((l) => ({ label: l.label, state: l.state, detail: l.detail, ...(Object.hasOwn(LINE_LABELS, l.state) ? { stateLabel: LINE_LABELS[l.state] } : {}) })) }, problems);
   }
 }
 

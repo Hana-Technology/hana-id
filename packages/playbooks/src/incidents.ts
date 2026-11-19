@@ -148,7 +148,7 @@ const evmRelayPaused: Playbook = {
 
 const evmRelayBalanceLow: Playbook = {
   id: 'evm-relay-balance-low',
-  title: "The wallet that pays the gas is running low",
+  title: "Gas sponsorship: the relayer wallet is running low",
   kind: 'incident',
   severity: 'warning',
   status: 'live',
@@ -243,7 +243,7 @@ const evmRelaySlotTaken: Playbook = {
 
 const nearBillingLate: Playbook = {
   id: 'near-billing-late',
-  title: 'Free NEAR transactions: a billing record is late',
+  title: 'NEAR relay: a billing record is late',
   kind: 'incident',
   severity: 'warning',
   status: 'live',

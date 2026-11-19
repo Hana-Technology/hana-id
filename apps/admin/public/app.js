@@ -2680,9 +2680,9 @@ function evmToolsPanel(d) {
       'div',
       { class: 'tool' },
       h('h3', {}, 'Fill a gap'),
-      h('p', {}, 'Puts a harmless empty transfer into an empty slot so the slots after it can go through. It costs a little gas, paid from the relayer wallet. Use it only when the relayer is paused because a slot is empty.'),
+      h('p', {}, 'Puts a harmless empty transfer into an empty slot so the slots after it can go through. It costs a little ETH for gas, from the relayer wallet. Use it only when the relayer is paused because a slot is empty.'),
       t.fill
-        ? evmToolForm(d, 'fill', 'Fill the gap', [slotField({ max: t.fill.max, value: t.fill.suggested ?? '', help: t.fill.suggested !== null ? `The empty slot the relayer found: ${t.fill.suggested}.` : 'The empty slot, from the box above.' }), noteField('Slot 41 is empty after a transaction we did not send')], (n) => `Fill slot ${n} with a harmless empty transfer? It costs a little gas, paid from the relayer wallet.`, { danger: true })
+        ? evmToolForm(d, 'fill', 'Fill the gap', [slotField({ max: t.fill.max, value: t.fill.suggested ?? '', help: t.fill.suggested !== null ? `The empty slot the relayer found: ${t.fill.suggested}.` : 'The empty slot, from the box above.' }), noteField('Slot 41 is empty after a transaction we did not send')], (n) => `Fill slot ${n} with a harmless empty transfer? It costs a little ETH for gas, from the relayer wallet.`, { danger: true })
         : h('p', { class: 'hint' }, 'Not possible now: the relayer has no earlier slot, or its key isn’t loaded.'),
     ),
     h(

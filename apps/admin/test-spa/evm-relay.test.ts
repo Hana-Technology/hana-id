@@ -277,7 +277,7 @@ describe('the Gas sponsorship page', () => {
     (fill.querySelector('input[name=slot]') as unknown as HTMLInputElement).value = '41';
     (fill.querySelector('input[name=note]') as unknown as HTMLInputElement).value = 'Slot 41 is empty after a transaction we did not send';
     p.submit(fill.querySelector('form'));
-    expect(fill.querySelector('.confirm')!.textContent).toContain('Fill slot 41 with a harmless empty transfer? It costs a little gas, paid from the relayer wallet.');
+    expect(fill.querySelector('.confirm')!.textContent).toContain('Fill slot 41 with a harmless empty transfer? It costs a little ETH for gas, from the relayer wallet.');
   });
 
   it('text only: a hostile note or app name stays text', async () => {
@@ -306,5 +306,49 @@ describe('the Gas sponsorship page', () => {
     const p = openDetail('green');
     await vi.waitFor(() => expect(p.main().querySelector('.jp-alert-danger')).not.toBeNull());
     expect(p.text()).toContain('Not found');
+  });
+});
+
+// ---- the users' term stays on the users' side (D879) ----
+
+describe('no "free network fees" on the staff side (D879)', () => {
+  const OLD = /free.network.fee/iu;
+  it('every preview scenario: the status answer, the detail answer and the rendered status and detail pages', async () => {
+    const m = (await import(MODULE)) as { SCENARIOS: readonly string[]; previewStatus: (s: string) => Promise<Record<string, unknown>>; previewEvmDetail: (s: string) => Promise<Fake> };
+    expect(m.SCENARIOS.length).toBeGreaterThan(10);
+    for (const s of m.SCENARIOS) {
+      const st = await m.previewStatus(s);
+      const de = await m.previewEvmDetail(s);
+      expect(JSON.stringify(st), s).not.toMatch(OLD);
+      expect(JSON.stringify(de.body), s).not.toMatch(OLD);
+      const sp = boot('/', (c: Call): Answer => (c.path === '/api/status' ? { body: st } : { status: 404, body: { error: { code: 'not_found' } } }));
+      await vi.waitFor(() => expect(sp.main().querySelector('.verdict')).not.toBeNull());
+      expect(sp.text(), s).not.toMatch(OLD);
+      await closeWindow();
+      if (de.status !== 200) continue;
+      const dp = boot('/gas-sponsorship/84532', (c: Call): Answer => (c.path === '/api/evm-relay/84532' ? (de as Answer) : { status: 404, body: { error: { code: 'not_found' } } }));
+      await vi.waitFor(() => expect(dp.main().querySelector('h1')?.textContent).toBe('Gas sponsorship (Base Sepolia)'));
+      // The text includes the folded Advanced tools and every confirmation's words (in the page's source below).
+      expect(dp.text(), s).not.toMatch(OLD);
+      await closeWindow();
+    }
+  });
+
+  it('the seven gas sponsorship playbooks and event titles, and the page’s own code', async () => {
+    const { PLAYBOOKS } = await import('@hana-id/playbooks');
+    const { SECURITY_EVENT_TITLES } = await import('@hana-id/console-core');
+    const evmPlaybooks = PLAYBOOKS.filter((p) => p.id.startsWith('evm-'));
+    const evmTitles = Object.entries(SECURITY_EVENT_TITLES).filter(([k]) => k.startsWith('evm_'));
+    expect([evmPlaybooks.length, evmTitles.length]).toEqual([7, 7]);
+    for (const p of evmPlaybooks) {
+      expect(JSON.stringify(p), p.id).not.toMatch(OLD);
+      expect(p.title, p.id).toMatch(/^Gas sponsorship/u);
+    }
+    for (const [k, t] of evmTitles) expect(t, k).toMatch(/^Gas sponsorship: /u);
+    // The page's code (tool texts, confirmations shown only on a press): the term only in the comment that names D879.
+    const { SRC } = await import('./boot.ts');
+    const page = SRC.slice(SRC.indexOf('// ---- Gas sponsorship (D843'), SRC.indexOf('async function evmRelayPage'));
+    expect(page.length).toBeGreaterThan(1000);
+    expect(page).not.toMatch(OLD);
   });
 });

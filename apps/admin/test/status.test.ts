@@ -1028,6 +1028,33 @@ describe('Gas sponsorship (D843)', () => {
     expect(low).toMatchObject({ severity: 'critical', playbook: { id: 'evm-relay-balance-low' } });
   });
 
+  it('what it affects is scoped to its own network and to new actions, on the tile and on every issue (paused, low, budget; D879 review)', async () => {
+    const local = (over: Record<string, unknown>, relayer: Record<string, unknown> = {}) => ({ ...chain(relayer, over), chainId: 31337 });
+    const cases: [string, ReturnType<typeof chain>[]][] = [
+      ['paused', [chain({ halted: { reason: 'relayer_cannot_send', since: NOW - 600_000, slot: 42, code: 'insufficient_funds' } }, { balance: { ok: true, wei: '1000' } })]],
+      ['low', [chain({}, { balance: { ok: true, wei: (31n * MILLI).toString() } })]],
+      ['budget', [chain({}, { budget: { ok: true, spentWei: (17n * MILLI).toString() } })]],
+      ['two networks', [chain({}, { balance: { ok: true, wei: (31n * MILLI).toString() } }), local({ budget: { ok: true, spentWei: (20n * MILLI).toString() } })]],
+    ];
+    const want = (name: string) => `Users’ actions on ${name} whose gas Journear pays: while it is paused or switched off, no new action there gets its gas paid`;
+    for (const [what, chains] of cases) {
+      world.api = apiAnswer({ evmRelay: { state: 'on', chains } });
+      const a = await read();
+      for (const c of chains) {
+        const id = `evm-relay-${c.chainId}`;
+        const name = c.chainId === 84532 ? 'Base Sepolia' : 'the local test network';
+        expect(tile(a, id).affects, what).toBe(want(name));
+        const issues = issuesOf(a, id);
+        expect(issues.length, what).toBeGreaterThan(0);
+        for (const i of issues) expect(i.affects, `${what} ${i.title}`).toBe(want(name));
+      }
+    }
+    // No network known (not set up anywhere): the general line.
+    world.api = apiAnswer({ evmRelay: { state: 'bad_config', chains: [] } });
+    const a = await read();
+    expect(tile(a, 'evm-relay').affects).toBe('Users’ actions on EVM test networks whose gas Journear pays: while it is paused or switched off, no new action gets its gas paid');
+  });
+
   it('low on money, the key used elsewhere, not set up, refused settings, an unreadable answer', async () => {
     world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { balance: { ok: true, wei: (31n * MILLI).toString() } })] } });
     let a = await read();

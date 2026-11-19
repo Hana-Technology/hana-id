@@ -104,7 +104,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
     await approval.screenshot({ path: `${SHOTS}/04-approval-window-${scheme}.png`, fullPage: true, animations: 'disabled' });
   }
   await approve(approval);
-  await expect(page.locator('#near-stage')).toHaveText('Sending it through Journear’s relayer, which pays the fee…');
+  await expect(page.locator('#near-stage')).toHaveText('Sending it. Journear pays the network fee…');
   await shots(page, '05-stage-relaying');
   relaying.open();
   await expect(page.locator('#near-done')).toBeVisible();

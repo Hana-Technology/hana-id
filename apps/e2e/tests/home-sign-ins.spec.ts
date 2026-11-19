@@ -252,7 +252,10 @@ test('a waiting link shows as waiting with where to cancel it; cancelled there (
   // Where the line points: a sign-in to the app with this Google account, and its banner's Cancel this link.
   const popup = await googleStart(page, 'g2');
   await expect(popup.locator('#banner-cancel-0')).toHaveText('Cancel this link');
-  await clickClosing(popup, '#banner-cancel-0');
+  // D881: no confirmation for a cancel; the window says what became of it.
+  await popup.click('#banner-cancel-0');
+  await expect(popup.locator('h1')).toHaveText('Link cancelled');
+  await clickClosing(popup, '#link-change-close');
   await expect.poll(() => linkEvents(page)).toContainEqual({ provider: 'email', status: 'removed', effectiveAtMs: null });
   expect(google.requests.filter((r) => r.ok && r.request.kind === 'proof').map((r) => r.ok && r.request.loginHint)).toEqual([sub]);
 
@@ -381,7 +384,15 @@ test('D875: an added sign-in past its first 7 days: Home says where Remove is; t
   });
   const third = await googleStart(page, 'old3');
   await expect(third.locator('#banner-unlink-0')).toHaveText('Remove');
-  await clickClosing(third, '#banner-unlink-0');
+  // D881: Remove asks first, then says what became of it.
+  await third.click('#banner-unlink-0');
+  await expect(third.locator('h1')).toHaveText('Remove the email address from this wallet?');
+  await shot(third, 'sign-in-remove-confirm', browserName);
+  await third.click('#banner-remove-confirm');
+  await expect(third.locator('h1')).toHaveText('The email address was removed');
+  await expect(third.locator('#link-change-what')).toHaveText('The email address no longer opens this wallet. Removing it didn’t move any money.');
+  await shot(third, 'sign-in-removed', browserName);
+  await clickClosing(third, '#link-change-close');
   await expect.poll(() => linkEvents(page)).toContainEqual({ provider: 'email', status: 'removed', effectiveAtMs: null });
   expect(google.requests.filter((r) => r.ok && r.request.kind === 'proof').map((r) => r.ok && r.request.loginHint)).toEqual([sub]);
 

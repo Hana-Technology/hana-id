@@ -30,7 +30,7 @@
 import { type LoginMethod, type WindowMessage, homeNonce, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import { BRAND } from '@hana-id/brand';
-import { type Dom, dom, errorView, originText } from './dom.ts';
+import { type Dom, SIGN_IN_WINDOW, dom, errorView, originText } from './dom.ts';
 import { PageError, STORAGE_BLOCKED, safetyStop, uncheckedStop } from './errors.ts';
 
 /** Where a partner sign-in starts again (D853's stop sentences). */
@@ -115,7 +115,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
   const { win, env } = deps;
   const now = deps.now ?? (() => Date.now());
   const perfNow = deps.perfNow ?? (() => performance.now());
-  const d: Dom = dom(win.document);
+  const d: Dom = dom(win.document, SIGN_IN_WINDOW);
   let state: LoginPageState = { stage: 'error', code: 'config_mismatch' };
   let finish: (s: LoginPageState) => void = () => {};
   const done = new Promise<LoginPageState>((resolve) => {

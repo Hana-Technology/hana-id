@@ -734,14 +734,14 @@ describe('the NEAR card', () => {
     expect(d.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'gm from Hana' })), gas: 10_000_000_000_000n, deposit: 0n }]);
     sign.resolve({ signature: 'c2ln', signedDelegateAction: 'U0RB' });
     await settle();
-    expect($('near-stage').textContent).toBe('Sending it through Journear’s relayer, which pays the fee…');
+    expect($('near-stage').textContent).toBe('Sending it. Journear pays the network fee…');
     expect(fake.near.relay).toHaveBeenCalledWith({ network: 'testnet', signedDelegateAction: 'U0RB' });
     rpc.messages = [message(1, NEAR_ACCOUNT, 'gm from Hana'), ...rpc.messages];
     relay.resolve({ transactionHash: TX_HASH, status: 'executed' });
     await settle();
     expect($('near-stage').hidden).toBe(true);
     expect($('near-done').hidden).toBe(false);
-    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. You paid no gas.');
+    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. Journear paid the network fee, so it cost you nothing.');
     expect(($('near-tx-link') as HTMLAnchorElement).href).toBe(`https://testnet.nearblocks.io/txns/${TX_HASH}`);
     const items = [...$('near-messages').querySelectorAll('li')];
     expect(items).toHaveLength(2);
@@ -802,7 +802,7 @@ describe('the NEAR card', () => {
     expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
     // The key's nonce is far below testnet's window: the nonce is the floor, (height − 100) × 10^6 (core’s nearDelegateNonce).
     expect(signedDelegate().nonce).toBe(199_999_900_000_000n);
-    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. You paid no gas.');
+    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
     // Cached for the session: the next write doesn't activate again.
     type('second');
     click('near-write-button');

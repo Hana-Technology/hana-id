@@ -78,8 +78,8 @@ const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
   near_delegate_nonce_stale: 'That NEAR request was prepared too long ago (its nonce is behind testnet’s current block). Try again: the demo reads a fresh one.',
   near_relayed_delegate: 'Refused: Journear doesn’t sign a transaction that relays someone else’s delegate action.',
   // A test app's delegate actions: only calls and transfers (…_action), to a .testnet account other than the user's (…_receiver).
-  near_delegate_test_app_action: 'Refused: a test app’s gasless request may only call a contract or send NEAR, never change your account.',
-  near_delegate_test_app_receiver: 'Refused: a test app’s gasless request may only go to a testnet account other than your own.',
+  near_delegate_test_app_action: 'Refused: a test app’s request that Journear pays for may only call a contract or send NEAR, never change your account.',
+  near_delegate_test_app_receiver: 'Refused: a test app’s request that Journear pays for may only go to a testnet account other than your own.',
 };
 
 /**
@@ -97,7 +97,7 @@ const RELAYER_REASONS: Readonly<Record<string, string>> = {
   receiver_not_allowed: 'Journear’s relayer pays only for calls to the demo guestbook, and refused this one.',
   action_not_allowed: 'Journear’s relayer pays only for function calls, and refused this request.',
   deposit_not_allowed: 'Journear’s relayer refused a request that attaches NEAR: the guestbook needs none.',
-  gas_too_high: 'Journear’s relayer refused the request’s gas: it pays for at most what the guestbook needs.',
+  gas_too_high: 'Journear refused this request: its network fee could be more than the guestbook needs, and Journear pays only up to that.',
   sender_not_implicit: 'Journear’s relayer acts only for Journear’s own NEAR accounts, and refused this one.',
   bad_delegate: 'Journear’s relayer could not read the signed request. Try again.',
   bad_delegate_signature: 'Journear’s relayer found the request’s signature invalid. Try again.',
@@ -124,7 +124,8 @@ const RELAYER_REASONS: Readonly<Record<string, string>> = {
   relayer_busy: 'Journear’s relayer is busy. Try again in a moment.',
   not_enough_balance: 'Journear’s relayer is low on testnet NEAR right now. Tell the Journear team.',
   relayer_unavailable: 'Journear’s relayer is unavailable right now. Try again in a minute.',
-  relayer_unconfigured: 'Journear’s relayer isn’t set up on this environment yet. Tell the Journear team.',
+  // Only a tester on a test version set up without the NEAR relay sees this (D881: plain words).
+  relayer_unconfigured: 'The demo’s free NEAR transactions aren’t set up on this test version yet. Tell the Journear team.',
   rate_limiter_unavailable: 'Journear’s relayer is unavailable right now. Try again in a minute.',
 };
 const RELAYER_REFUSED = 'Journear’s relayer refused this request';
@@ -135,7 +136,7 @@ function nearMessage(e: unknown, code: string | number | null, reason: string | 
   if (code === 'near_page_rpc_failed') return 'This page couldn’t read NEAR testnet (its RPC didn’t answer). Check your connection and try again.';
   if (code === 'near_account_pending') return 'Journear’s relayer is still creating your NEAR account. Wait a few seconds and try again.';
   if (code === 'near_nonce_wait') return 'NEAR testnet needs a new block before this request. Wait a few seconds and try again.';
-  if (code === 'near_send_failed') return 'NEAR testnet refused or failed the transaction. Use the gasless write instead.';
+  if (code === 'near_send_failed') return `NEAR testnet refused or failed the transaction. Use ${GASLESS} instead.`;
   if (code === 4100 && reason !== null && Object.hasOwn(NEAR_VAULT_REASONS, reason)) return NEAR_VAULT_REASONS[reason]!;
   if (code === 'api_unavailable' && reason === 'near_rpc_unavailable') return 'Journear couldn’t reach NEAR testnet to check this request. Try again in a minute.';
   if (code === 'api_unavailable' && reason === 'near_rpc_single_provider') return `This Journear environment has only one NEAR provider, so Journear can’t check a test app’s NEAR request. ${REPORT}`;
@@ -181,6 +182,10 @@ export function plainMessage(e: unknown, action: DemoAction): string {
       return 'Sign-in stopped after a wrong code. Click “Sign in with email” to get a new one.';
     case 'challenge_expired':
       return 'The sign-in code expired. Click “Sign in with email” to get a new one.';
+    case 'link_pending':
+      // D864/D881: an email (or a Google account) that is still waiting to join another wallet; the sign-in window
+      // shows what to do (cancel or keep the link) or when it starts working.
+      return 'This sign-in is waiting to be linked to a wallet, so it can’t open one yet. The Journear sign-in window says what to do.';
     case 'coop_blocks_popup':
       return 'The Journear sign-in window closed before it finished loading. Try again and keep the window open.';
     case 'login_timeout':

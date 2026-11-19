@@ -157,7 +157,7 @@ test('case B: Cancel at Google goes back to case B’s own choices; Link and con
   await popup.waitForURL(`${GOOGLE_AUTH_URL}**`);
   await popup.click('#account-0');
   expect(await okValue(page, 'email')).toEqual(wallet);
-  await expect(popup.locator('#link-banners')).toContainText('email sign-in now opens this wallet too');
+  await expect(popup.locator('#link-banners')).toContainText('You chose to link your email address, so signing in with it now opens the same wallet.');
   await clickClosing(popup, '#banner-done');
 });
 

@@ -130,7 +130,7 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   await expect(approval.getByText(E2E_GUESTBOOK).first()).toBeVisible();
   await approve(approval);
 
-  await expect(page.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. You paid no gas.');
+  await expect(page.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
   expect(relayer.guestbook).toEqual([text]);
   const first = page.locator('#near-messages li', { hasText: text });
   await expect(first.locator('.text')).toHaveText(text);

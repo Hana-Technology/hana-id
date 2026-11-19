@@ -33,6 +33,8 @@ describe('plainMessage', () => {
     expect(plainMessage(new HanaError('login_method_unavailable', 'x'), 'login')).toMatch(/Email login isn’t turned on/u);
     expect(plainMessage(new HanaError('code_invalid', 'x'), 'login')).toMatch(/wrong code/u);
     expect(plainMessage(new HanaError('challenge_expired', 'x'), 'login')).toMatch(/expired/u);
+    // D881: a sign-in still waiting to join another wallet (D864): a plain, true sentence, not "Something went wrong".
+    expect(plainMessage(new HanaError('link_pending', 'x', { effectiveAtMs: 1 }), 'login')).toBe('This sign-in is waiting to be added to another wallet, so it can’t open one yet. The Journear sign-in window says what to do.');
     // login_timeout: the window never connected, or the sign-in was left unfinished past the vault's 5 minutes.
     expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'connect' }), 'login')).toBe('The Journear sign-in window did not respond in time. Try again.');
     expect(plainMessage(new HanaError('login_timeout', 'x', { stage: 'pending' }), 'login')).toMatch(/wasn’t finished within 5 minutes/u);
@@ -93,7 +95,7 @@ describe('plainMessage', () => {
     // The page's own reads.
     expect(plainMessage({ code: 'near_page_rpc_failed', message: 'x' }, 'near')).toMatch(/couldn’t read NEAR testnet/u);
     expect(plainMessage({ code: 'near_account_pending', message: 'x' }, 'near')).toMatch(/still creating your NEAR account/u);
-    expect(plainMessage({ code: 'near_send_failed', message: 'x' }, 'sign')).toMatch(/gasless write/u);
+    expect(plainMessage({ code: 'near_send_failed', message: 'x' }, 'sign')).toBe('NEAR testnet refused or failed the transaction. Use “Write to the guestbook (no NEAR needed)” instead.');
     expect(plainMessage({ code: 'near_nonce_wait', message: 'x' }, 'near')).toMatch(/needs a new block/u);
     expect(plainMessage(new HanaError('api_unavailable', 'x', { reason: 'near_rpc_single_provider' }), 'near')).toMatch(/only one NEAR provider/u);
   });
@@ -108,6 +110,8 @@ describe('plainMessage', () => {
     expect(plainMessage(relayer('api_unavailable', 504, 'timeout'), 'near')).toMatch(/may still land/u);
     expect(plainMessage(relayer(4100, 403, 'receiver_not_allowed'), 'near')).toMatch(/only for calls to the demo guestbook/u);
     expect(plainMessage(relayer('api_unavailable', 503, 'relay_budget_exhausted'), 'near')).toBe('The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).');
+    // D881: no "relayer" or "environment" in what only a tester on a misconfigured test version sees.
+    expect(plainMessage(relayer('api_unavailable', 503, 'relayer_unconfigured'), 'near')).toBe('The demo’s free NEAR transactions aren’t set up on this test version yet. Tell the Journear team.');
     expect(plainMessage(relayer(4100, 400, 'something_new'), 'near')).toMatch(/^Journear’s relayer refused this request \(something_new\)\. /u);
     expect(plainMessage(relayer(4100, 400), 'near')).toMatch(/^Journear’s relayer refused this request\. /u);
     expect(plainMessage(relayer('api_unavailable', 502, 'whatever'), 'near')).toBe('Journear’s relayer is unavailable right now. Try again in a minute. (whatever)');

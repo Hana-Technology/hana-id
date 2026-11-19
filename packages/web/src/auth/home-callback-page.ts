@@ -18,7 +18,7 @@
 // shown, and dropped once encrypted; the relay key is zeroed after use.
 import { RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
-import { dom, errorView } from './dom.ts';
+import { SIGN_IN_WINDOW, dom, errorView } from './dom.ts';
 import { parseCallbackFragment, unverifiedClaims } from './google.ts';
 import { takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, isFramed } from './page-window.ts';
@@ -59,7 +59,7 @@ const STOP = 'Sign-in stopped';
 export async function runHomeCallbackPage(deps: HomeCallbackDeps): Promise<HomeCallbackOutcome> {
   const { win } = deps;
   const now = deps.now ?? (() => Date.now());
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   // First: read the fragment and drop it from the URL and history entry.
   const fragment = parseCallbackFragment(win.location.hash);
   try {

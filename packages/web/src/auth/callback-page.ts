@@ -41,7 +41,7 @@
 import { ApiError, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
 import { BRAND } from '@hana-id/brand';
-import { dom, errorView } from './dom.ts';
+import { SIGN_IN_WINDOW, dom, errorView } from './dom.ts';
 import { readEmailContext } from './email-storage.ts';
 import {
   type AccessTokenSub,
@@ -153,7 +153,7 @@ export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<Callb
   /** Google's redirect URI for a second request: this page's own origin (the env's authOrigin). */
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
   const scriptStart = perfNow();
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   // First: read the fragment and drop it from the URL and history entry.
   const fragment = parseCallbackFragment(win.location.hash);
   try {
@@ -253,7 +253,7 @@ function goBack(deps: CallbackRun, taken: TakenLogin, slot: string, loginHint: s
     return relayLeg(deps, { kind: 'error', state: slot, error: 'storage_unavailable' }, taken, scriptStart);
   }
   zeroTaken(taken);
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), d.h('p', { class: 'muted' }, 'Google sign-in was cancelled.')));
   // `back` may not be acked yet (nothing awaited since it went out).
   return deps.signals.leave(() => win.location.assign(`${FOLLOW_PATH}#${slot}`)).then(() => 'cancelled' as const);
@@ -274,7 +274,7 @@ export type CallbackStopCode = keyof typeof STOPS;
  * effort), shows why, zeroes the entry's keys: the login ends here.
  */
 async function stopLogin(deps: CallbackRun, taken: TakenLogin, slot: string, code: CallbackStopCode, claim?: string): Promise<CallbackOutcome> {
-  const d = dom(deps.win.document);
+  const d = dom(deps.win.document, SIGN_IN_WINDOW);
   try {
     const named = claim !== undefined && RELAY_CLAIM_NAME.test(claim) ? { claim } : {};
     await deps.api.writeRelay(slot, await encryptRelayPayload(taken.relayKey, slot, { error: code, ...named }));
@@ -296,7 +296,7 @@ async function tokenFirstAccess(deps: CallbackRun, fragment: Exclude<CallbackFra
   const { win, api } = deps;
   const now = deps.now ?? (() => Date.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   /** This attempt's OAuth `state` (its next leg's too), and the relay slot it answers (D341: they differ after a cancel). */
   const state = fragment.state;
   const slot = taken.slot ?? state;
@@ -451,7 +451,7 @@ async function relayLeg(deps: CallbackRun, fragment: Exclude<CallbackFragment, {
   const now = deps.now ?? (() => Date.now());
   const perfNow = deps.perfNow ?? (() => performance.now());
   const authOrigin = deps.authOrigin ?? (typeof location === 'undefined' ? '' : location.origin);
-  const d = dom(win.document);
+  const d = dom(win.document, SIGN_IN_WINDOW);
   const { relayKey } = taken;
   const followKey = taken.followKey ?? null;
   const home = taken.home ?? fragment.state;

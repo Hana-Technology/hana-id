@@ -8,9 +8,10 @@
 // `x-hana-parent-origin`), which Home has neither of, and the email issuer's Home route mints only Home's own
 // `identity` and `derive` codes, never a `link_change` one. Doing it here needs an API and an issuer change (a Home
 // route behind Home's gate for both), which D874 left to the founder. So each line says where the change can be made
-// today: the sign-in window's banners (D259: Cancel by any active sign-in; Remove by the wallet's own sign-in within 7
-// days), the waiting email's own sign-in (D864), and the member's own sign-in (D865). A line never points to a change
-// the contract would refuse (`mayCancel`, `mayRemove`: links.rs `cancel_link`, `unlink_identity`).
+// today: the sign-in window's banners (D259: Cancel by any active sign-in; Remove by the wallet's own sign-in, at every
+// sign-in for 7 days, then until Done is pressed on it in that browser, D875), the waiting email's own sign-in (D864), and the member's own
+// sign-in (D865). A line never points to a change the contract would refuse (`mayCancel`, `mayRemove`: links.rs
+// `cancel_link`, `unlink_identity`).
 //
 // The chain is read only when the user asks ("Show ways to sign in"): `get_identity` and `get_account` of the signed-in
 // identity in that app's scope, on each of the env's two NEAR providers alone (`rpc` and `rpcFallback`, D263's
@@ -29,7 +30,7 @@
 // SECURITY: every text is a text node (dom.ts). The views are checked against each other and against the identity key
 // computed here, so an answer about another identity or a half-made account reads as a failed read, never as a list;
 // dates past the year 9999 too (a date the page can't write would break it). Both providers must agree on the list.
-import { type AccountView, type IdentityView, ViewShapeError, identityKeyHex, parseAccountView, parseIdentityView } from '@hana-id/core';
+import { type AccountView, type IdentityView, ViewShapeError, identityKeyHex, isRecentLink, parseAccountView, parseIdentityView } from '@hana-id/core';
 import { type Child, type Dom, addressText, maskedAddress, supportCode } from './dom.ts';
 import { plainProblem } from './home-problems.ts';
 import type { HomeScope } from './home-api.ts';
@@ -40,11 +41,6 @@ import { BTN, alert, icon } from './ui.ts';
 export const HOME_SIGN_INS_TITLE = 'Ways to sign in';
 /** The whole read (both views, a fallback included) ends within this, else it reads as failed. */
 export const SIGN_INS_READ_LIMIT_MS = 20_000;
-/**
- * How long after a sign-in starts opening a wallet the sign-in window's banner offers the wallet's own sign-in Remove
- * (vault/login.ts `RECENT_LINK_MS`, D259; a test holds the two equal).
- */
-export const BANNER_REMOVE_MS = 7 * 24 * 3_600_000;
 /** A failed read's codes, for support: a provider didn't answer in time (or there is no second one); the answers disagree or don't hold together. */
 export const SIGN_INS_UNREADABLE = 'sign_ins_unreadable';
 export const SIGN_INS_DISPUTED = 'sign_ins_disputed';
@@ -143,10 +139,10 @@ export type SignInPointer =
   | { readonly kind: 'cancel_at_sign_in' }
   /** D865: the member's own sign-in asks first, with "Remove this email" / "Remove this Google account". */
   | { readonly kind: 'remove_own' }
-  /** D259: the banner offers the wallet's own sign-in "Remove" for 7 days after it started. */
-  | { readonly kind: 'remove_at_sign_in'; readonly untilMs: number }
-  /** The contract allows the wallet's own sign-in to remove it, but the banner's 7 days are over. */
-  | { readonly kind: 'remove_none' }
+  /** D259: the banner offers the wallet's own sign-in "Remove" at every sign-in for 7 days after it started. */
+  | { readonly kind: 'remove_at_sign_in' }
+  /** D875: after those 7 days, a quiet line with "Remove", until Done is pressed on it in that browser. */
+  | { readonly kind: 'remove_at_sign_in_once' }
   /** The contract refuses this viewer (another added sign-in). */
   | { readonly kind: 'not_yours' };
 
@@ -161,8 +157,8 @@ export function pointerFor(viewer: SignInViewer, row: SignInRow, nowMs: number):
   if (viewer.role === 'waiting') return null;
   if (!mayRemove(viewer, row)) return { kind: 'not_yours' };
   if (row.key === viewer.key) return { kind: 'remove_own' };
-  const untilMs = (row.sinceMs ?? 0) + BANNER_REMOVE_MS;
-  return nowMs < untilMs ? { kind: 'remove_at_sign_in', untilMs } : { kind: 'remove_none' };
+  // The same 7 days, on the same rule, as the sign-in window's (core relay.ts).
+  return isRecentLink(row.sinceMs ?? 0, nowMs) ? { kind: 'remove_at_sign_in' } : { kind: 'remove_at_sign_in_once' };
 }
 
 // ---- what the page says (D853: plain words) ----
@@ -192,7 +188,10 @@ export const SIGN_IN_TEXT = Object.freeze({
   cancelOwnEmail: 'Didn’t set this up? Sign in to this app with this email and choose Cancel this link. If you’re not sure, cancel it.',
   cancelOwnNone: 'Only the email this wallet was made with can cancel this. If you didn’t set this up, don’t add money to that wallet.',
   cancelAtSignIn: 'Didn’t add it? Sign in to this app the way you signed in here, and choose Cancel this link. If you’re not sure, cancel it.',
-  removeNone: 'Nothing can remove it now. If you don’t recognise it, move your money to a different wallet that only you can open. Moving this wallet to another wallet app won’t help.',
+  removeAtSignIn: 'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.',
+  /** An automatic same-address Google link (D865's softer words: nothing pushes its removal). */
+  removeAtSignInAuto: 'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose Remove.',
+  removeAtSignInOnceNotOffered: 'Once you press Done in the sign-in window, that browser stops offering Remove. Not offered? Try signing in in a private window.',
   notYours: 'Only the sign-in this wallet was made with, or this sign-in itself, can remove it.',
   removeOwnNotAsked: 'Not asked? Try signing in in a private window. If this was added automatically because both use the same address, you won’t be asked.',
   signOutFirst: 'If you’re already signed in to this app, sign out of it first.',
@@ -247,16 +246,16 @@ export function pointerText(p: SignInPointer, row: SignInRow): { lines: string[]
         risk: false,
       };
     case 'remove_at_sign_in':
-      return { lines: [`Didn’t add it? Sign in to this app the way you signed in here, before ${signInDate(p.untilMs)}, and choose Remove. If you’re not sure, remove it.`], risk: false };
-    case 'remove_none':
-      return { lines: [SIGN_IN_TEXT.removeNone], risk: true };
+      return { lines: [SIGN_IN_TEXT.removeAtSignIn], risk: false };
+    case 'remove_at_sign_in_once':
+      return { lines: [row.kind === 'google' && row.auto === true ? SIGN_IN_TEXT.removeAtSignInAuto : SIGN_IN_TEXT.removeAtSignIn, SIGN_IN_TEXT.removeAtSignInOnceNotOffered], risk: false };
     case 'not_yours':
       return { lines: [SIGN_IN_TEXT.notYours], risk: false };
   }
 }
 
 /** Whether a pointer tells the user to sign in to the app (then the section says once to sign out of it first). */
-export const pointerSignsIn = (p: SignInPointer | null): boolean => p !== null && ['cancel_own_email', 'cancel_at_sign_in', 'remove_own', 'remove_at_sign_in'].includes(p.kind);
+export const pointerSignsIn = (p: SignInPointer | null): boolean => p !== null && ['cancel_own_email', 'cancel_at_sign_in', 'remove_own', 'remove_at_sign_in', 'remove_at_sign_in_once'].includes(p.kind);
 
 // ---- the section ----
 

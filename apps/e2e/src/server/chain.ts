@@ -133,6 +133,23 @@ export class Chain {
     return moved;
   }
 
+  /**
+   * Tests only (`POST /__e2e/links/age`): every member of the accounts whose root is `rootSub` started opening the
+   * wallet `ageMs` ago (so it is active, and past the sign-in window's 7 days when `ageMs` says so, D875). Returns how
+   * many members it moved.
+   */
+  ageMembers(rootSub: string, ageMs: number): number {
+    let moved = 0;
+    for (const a of this.accounts.values()) {
+      if (a.root.sub !== rootSub) continue;
+      for (const m of a.members) {
+        m.effective_at_ms = Date.now() - ageMs;
+        moved += 1;
+      }
+    }
+    return moved;
+  }
+
   /** Adds `member` to `root`'s account (creating it), bumping its epoch. */
   link(scopeId: string, root: IdentityRef, member: IdentityRef, o: { active: boolean; effectiveAtMs: number; auto: boolean }): void {
     const rootKey = identityKeyHex(scopeId, root.provider, root.sub);

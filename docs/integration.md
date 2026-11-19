@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-18 (0.5.0: reason types, `userMessage` by source, `sponsorship()` waits for ready), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-19 (the sign-in window's Remove for a wallet's first sign-in, at any age), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -847,7 +847,8 @@ are yours.
 - **The sign-in window** asks how to sign in (Google or email), then shows its progress. A sign-in method linked to
   someone's wallet is first asked whether to keep the link (**Not now**, **Don't ask again on this device**, or
   **Remove this …**, which names the email or the Google sign-in); a pending link shows a banner with **Cancel this
-  link**.
+  link**. The sign-in a wallet was made with sees each other sign-in with **Remove**: as a banner at every sign-in for
+  7 days after it was added, then as one quiet line until the user presses Done on it in that browser.
 - **The approval window** starts with one plain sentence about what your app asks for ("Your App wants to send 0.1
   NEAR to bob.testnet"), the network, and the most the network fee can be. A risk is always in view, in red or amber,
   right under that sentence. The technical details are folded under **Show details**. When Journear Passport can't

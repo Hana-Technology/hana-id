@@ -60,7 +60,8 @@
 //     no watch for the rest of it (the 5-minute limit, and the post-cancel screen's own close report, D341, remain).
 //     No answer in time is taken as the close it most likely was: `login_cancelled` (`popup_closed`) as above.
 // 11. With the follow-up channel, the vault's last word to the popup: `done` (close, or link banners first: a pending
-//     method with Cancel, a method this login added, recent ones, from `get_account`), or `stop` with the error.
+//     method with Cancel, a method this login added, recent ones, and for the root older ones too, D875, from
+//     `get_account`), or `stop` with the error.
 //     A banner's Cancel or Remove is a fresh sign-in of this login's method over a `link_change` nonce, relayed as
 //     `cancel_link` / `unlink_identity` (POST /v1/link/cancel, /unlink).
 //
@@ -103,6 +104,7 @@ import {
   identityKey,
   identityKeyHex,
   isJsonFormToken,
+  isRecentLink,
   isServerTimings,
   judgeAutoLink,
   linkAccountNonce,
@@ -179,8 +181,8 @@ export const KEY_PENDING_MAX_WAIT_S = 30;
 export const KEY_PENDING_DEFAULT_WAIT_S = 30;
 /** After a login, how long the vault waits for a banner's Cancel or Remove in the popup. */
 export const AFTERWORD_MS = 5 * 60_000;
-/** An active sign-in method added this recently still gets a banner at login (spec "Notices"). */
-export const RECENT_LINK_MS = 7 * 24 * 3_600_000;
+/** An active sign-in method added this recently still gets a full banner at login (spec "Notices"; core relay.ts). */
+export { RECENT_LINK_MS } from '@hana-id/core';
 /** google-match answered 429 or 503: the longest one wait (its `retry-after`, else a backoff), and all waits together. */
 export const MATCH_RETRY_MAX_WAIT_MS = 20_000;
 export const MATCH_RETRY_BUDGET_MS = 45_000;
@@ -1914,9 +1916,12 @@ interface OfferedAction {
 
 /**
  * Step 11: the link banners of the logged-in wallet (spec "Notices"), from `get_account` on the vault's own RPC: a
- * pending method (Cancel, by any active identity), the method this login added, and methods added in the last 7 days
- * (Remove, by the root). A Cancel or Remove is proved by a fresh sign-in of this login's method over the
- * `link_change` nonce, then relayed.
+ * pending method (Cancel, by any active identity), the method this login added, methods added in the last 7 days
+ * (`RECENT_LINK_MS`; Remove, by the root), and for the root its older methods too (Remove, D875: the popup shows them
+ * quietly, until Done is pressed on them in that browser). A Cancel or Remove is proved by a fresh sign-in of this
+ * login's method over the `link_change` nonce, then relayed. The login has already returned: this runs beside it and
+ * never delays it. With an action offered it waits for the popup's answer at most AFTERWORD_MS; any answer that isn't
+ * a proof ends the wait at once (the popup's `{choice: 'keep'}` on Done, or when it closes showing nothing, D875).
  */
 class Afterword {
   private readonly signal = new AbortController();
@@ -1969,11 +1974,16 @@ class Afterword {
     const whoKey = identityKeyHex(scopeId, who.ref.provider, who.ref.sub);
     const whoIsRoot = account.root.provider === who.ref.provider && account.root.sub === who.ref.sub;
     const out: LinkBanner[] = [];
-    for (const m of account.members) {
+    // D875: an active member older than RECENT_LINK_MS is sent to the root only (its Remove, which the contract allows
+    // at any age), after every other banner, so the cap of 4 drops one of them first. The popup shows it as one quiet
+    // line, until Done is pressed on it in that browser (auth/email-page.ts). Nobody else is sent one: the contract
+    // would refuse their Remove.
+    const isFresh = (m: { provider: string }): boolean => this.linked?.provider === m.provider;
+    const older = (m: { active: boolean; provider: string; effectiveAtMs: number }): boolean => m.active && !isFresh(m) && !isRecentLink(m.effectiveAtMs, now);
+    const members = [...account.members.filter((m) => !older(m)), ...(whoIsRoot ? account.members.filter(older) : [])];
+    for (const m of members) {
       if (m.provider !== 'google' && m.provider !== 'email') continue;
-      const fresh = !!this.linked && this.linked.provider === m.provider;
-      const recent = m.active && m.effectiveAtMs > now - RECENT_LINK_MS;
-      if (m.active && !fresh && !recent) continue;
+      const fresh = isFresh(m);
       // The method this login used is named only when this login added it ("your Google sign-in now opens this wallet").
       const self = m.key === whoKey;
       if (self && !fresh) continue;

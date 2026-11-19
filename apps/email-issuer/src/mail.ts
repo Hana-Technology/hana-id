@@ -175,8 +175,10 @@ export function codeMail(input: { to: string; code: string; appName: string; aut
  * (one more code to this address; `vault/login.ts` `LinkWaiting`). Once the waiting period is over that sign-in would
  * open the Google account's wallet, but it asks first and offers to remove this email (D865), so the mail sends the
  * reader there in both cases (the issuer doesn't know the link's date: "during the waiting period"). An active link is removed
- * by the wallet's first sign-in method, its root, from the sign-in window's link banners (D259, `Afterword`), within the
- * 7 days the banner offers it (`RECENT_LINK_MS`). An active link may already have let another sign-in open the wallet
+ * by the wallet's first sign-in method, its root, from the sign-in window's link banners (D259, `Afterword`): at every
+ * sign-in for 7 days (`RECENT_LINK_MS`), then as a quiet line until Done is pressed on it in that browser (D875, which
+ * dropped the mail's old "Within 7 days"). So the mail says what to do when the window doesn't show it: Passport
+ * Home's "Ways to sign in" says where to remove it (a private window). An active link may already have let another sign-in open the wallet
  * (and show its key), and removing it only stops it from now on: so "Not you?" also says to move what the wallet holds.
  * "Google password" only as a Gmail or Workspace address's own: otherwise the Google account may be someone else's.
  */
@@ -188,7 +190,7 @@ export function linkNoticeMail(input: { to: string; appName: string; pending: bo
     : `This email and a Google account now both open the same ${BRAND.company} wallet in ${appText}.`;
   const notYou = input.pending
     ? `Change your email password, then sign in to ${appText} with this email. During the waiting period you can cancel the link there. After it, the ${BRAND.product} sign-in window lets you remove this email from that wallet. Don’t add money to that wallet.`
-    : `Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Within 7 days, sign in to ${appText} the way you first signed in to this wallet: the ${BRAND.product} sign-in window shows the new sign-in with a button to remove it. Then move what’s in this wallet to a new one.`;
+    : `Then someone else may have been able to open this wallet. Change your email password, and your Google password if this is a Gmail or Google Workspace address. Sign in to ${appText} the way you first signed in to this wallet. The ${BRAND.product} sign-in window usually shows the new sign-in with a button to remove it. If it doesn’t, “Ways to sign in” in ${BRAND.home} tells you how to remove it. Then move what’s in this wallet to a new one.`;
   const subject = app ? `A sign-in method was added in ${app}` : 'A sign-in method was added';
   return {
     to: input.to,

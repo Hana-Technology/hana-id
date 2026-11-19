@@ -4625,8 +4625,9 @@ Open Passport Home beside any flow and read its list before, during and after.
 1. On the start page, open **Passport Home** (http://127.0.0.1:4430/home).
 2. Press **Continue with Google**. In "Choose an account", press the flow's account (Ben, Cleo, Dev or Eve). For Ada,
    press **Continue with email** instead and sign in with Ada's address and a code: her wallet was made by email.
-3. On the card that lists **Journear demo**, press **View**. (The stack's test apps share one wallet, so that card may
-   list Stamp Trail and other test apps too.) Under **Ways to sign in**, press **Show ways to sign in**.
+3. There is one card: press its **View**. (All the stack's test apps share one wallet, so the card lists Journear demo
+   with Stamp Trail; on a stack that has also run the automated tests it may list only "E2E Partner" apps: it is still
+   the same wallet.) Under **Ways to sign in**, press **Show ways to sign in**.
 4. What it lists:
    - before the link: one line, "You’re signed in with this now" (Ada: her address, and "The wallet was made with this
      sign-in, so it can’t be removed.");

@@ -515,10 +515,15 @@ function typedNode(d: Dom, n: TypedDataNode): HTMLElement {
   return d.h('li', {}, `${n.name} (${n.type}): `, n.value === null ? mono(d, `shown as hex ${n.hex ?? ''}`) : mono(d, n.value));
 }
 
+/** The words above a message being signed (D886): what the box below is. */
+export const MESSAGE_LABEL = 'The message';
+
+/** A message being signed: its label, then the message itself (D886: right after the headline and the facts). */
 function message(d: Dom, m: DecodedMessage): HTMLElement[] {
+  const label = d.h('p', { class: 'message-label' }, MESSAGE_LABEL);
   return m.text === null
-    ? [warnLine(d, 'warn', 'This message isn’t readable text, so it’s shown in its raw form.'), mono(d, m.hex)]
-    : [d.h('pre', { class: 'message' }, m.text)];
+    ? [label, warnLine(d, 'warn', 'This message isn’t readable text, so it’s shown in its raw form.'), mono(d, m.hex)]
+    : [label, d.h('pre', { class: 'message' }, m.text)];
 }
 
 // ---- NEAR (D723) ----
@@ -960,7 +965,7 @@ export const nearRecipientLookalike = (escaped: string): string => `The name it�
 
 const asciiEscaped = (s: string): string => Array.from(s, (ch) => (/^[\x20-\x7e]$/u.test(ch) ? ch : Array.from({ length: ch.length }, (_, i) => `\\u${ch.charCodeAt(i).toString(16).padStart(4, '0')}`).join(''))).join('');
 
-function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: NearRenderContext): Parts {
+function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_message' }>, ctx: ApprovalRenderContext): Parts {
   const p = decoded.payload;
   const host = originHost(ctx.parentOrigin);
   const sameSite = host !== null && (p.recipient === host || p.recipient === ctx.parentOrigin);
@@ -977,7 +982,8 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
       ],
     },
     network: null,
-    visible: [facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]), noteLine(d, 'note', NO_NETWORK_NOTE), ...message(d, decoded.message)],
+    // D886: the message first, then the blue note about networks.
+    visible: [facts(d, [row(d, 'For', d.h('strong', {}, p.recipient)), p.callbackUrl !== null && row(d, 'Then returns to', mono(d, p.callbackUrl))]), ...message(d, decoded.message), noNetworkNote(d, 'message', ctx)],
     details: [d.h('h3', {}, 'Prove this NEAR account is yours (NEP-413)'), facts(d, [row(d, 'Recipient', mono(d, p.recipient)), row(d, 'Nonce', mono(d, toHex(p.nonce)))])],
   };
 }
@@ -987,7 +993,42 @@ function nearMessage(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_mes
  * Shown on message and raw requests: their approval binds no network (an empty context in the approval digest; user
  * decision 2026-10-28, docs/decisions.md). Typed data shows its domain's chain instead.
  */
-export const NO_NETWORK_NOTE = 'This signature isn’t tied to one network.';
+/**
+ * A signature that names no network (a message or raw signing, D35) counts on every network the key is used on, test
+ * or real (D886). Said after the message, in blue: what it means for the user and what to do, never "isn't tied to one
+ * network" alone. For a test app (without the real-money demo) one box says it with the test-app note's advice, which
+ * would otherwise read "works only with test money", untrue for such a signature: the page leaves its own note out.
+ */
+export const NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included. Sign only if you agree with what the message says.';
+export const NO_NETWORK_TEST_APP_NOTE =
+  'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you agree with what the message says, and don’t keep real money in this account.';
+/** Raw signing's (no message to agree with; its red line says to reject it unless the user is sure). */
+export const RAW_NO_NETWORK_NOTE = 'Your signature counts on every network, real-money ones included.';
+export const RAW_NO_NETWORK_TEST_APP_NOTE = 'This app is a test version, but your signature counts on every network, real-money ones included. Don’t keep real money in this account.';
+
+function noNetworkNote(d: Dom, kind: 'message' | 'raw', ctx: ApprovalRenderContext): HTMLElement {
+  const test = ctx.testAppNoteHere === true;
+  return noteLine(d, test ? 'note no-network test-app' : 'note no-network', kind === 'message' ? (test ? NO_NETWORK_TEST_APP_NOTE : NO_NETWORK_NOTE) : test ? RAW_NO_NETWORK_TEST_APP_NOTE : RAW_NO_NETWORK_NOTE);
+}
+
+/**
+ * Which test-app note a request gets (D886): `here`, the window's own network note says it (a message or raw signing);
+ * `not_only_test`, typed data that names no network (its amber line says it may work anywhere), so the plain note's
+ * "works only with test money" would be untrue; `plain` otherwise.
+ */
+export function testAppNoteKind(decoded: DecodedApproval): 'here' | 'not_only_test' | 'plain' {
+  switch (decoded.kind) {
+    case 'personal_sign':
+    case 'stellar_message':
+    case 'near_message':
+    case 'raw':
+      return 'here';
+    case 'eip712':
+      return decoded.chainId === null ? 'not_only_test' : 'plain';
+    default:
+      return 'plain';
+  }
+}
 
 /** The confirm and sign pattern's headline (D765): what a plain transfer sends, in one number and its unit. */
 export interface AmountHeadline {
@@ -1316,9 +1357,14 @@ export interface ApprovalRenderContext extends NearRenderContext {
   readonly detailsExtra?: readonly (HTMLElement | null)[];
   /** The page's clock (ms): a sponsored action's "Valid until" names its date when it isn't today. */
   readonly nowMs?: number;
+  /**
+   * A test app's note is the plain one (no real-money demo): a message or raw signing then says it in its own network
+   * note, and the page leaves its note out (D886, `testAppNoteKind`).
+   */
+  readonly testAppNoteHere?: boolean;
 }
 
-function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: NearRenderContext, summary: ApprovalSummary, nowMs?: number): Parts {
+function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: ApprovalRenderContext, summary: ApprovalSummary, nowMs?: number): Parts {
   switch (decoded.kind) {
     case 'stellar_tx': {
       const memo = decoded.envelope.tx.memo;
@@ -1351,7 +1397,8 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
       return {
         alerts: NO_ALERTS,
         network: null,
-        visible: [noteLine(d, 'note', NO_NETWORK_NOTE), ...message(d, decoded.message)],
+        // D886: the message right after the headline, then the blue note about networks.
+        visible: [...message(d, decoded.message), noNetworkNote(d, 'message', near)],
         details: [d.h('h3', {}, decoded.kind === 'personal_sign' ? 'Sign a message' : 'Sign a Stellar message'), facts(d, [row(d, 'Size', `${decoded.message.length} bytes`)]), d.h('p', {}, 'The message’s bytes:'), mono(d, decoded.message.hex)],
       };
     case 'evm_tx':
@@ -1378,7 +1425,7 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
         // The red risk line is the summary's (raw_signing).
         alerts: NO_ALERTS,
         network: null,
-        visible: [noteLine(d, 'note', NO_NETWORK_NOTE)],
+        visible: [noNetworkNote(d, 'raw', near)],
         details: [d.h('h3', {}, 'Raw signature'), mono(d, decoded.hex)],
       };
     case 'near_tx':
@@ -1391,7 +1438,7 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
 }
 
 /** Typed data whose domain names no chain (D35). */
-export const TYPED_DATA_NO_CHAIN = 'This signature isn’t tied to one network. It may work on any of them.';
+export const TYPED_DATA_NO_CHAIN = 'This signature names no network, so it may work on any of them, real-money ones included.';
 
 /** The body of the approval screen for a decoded request. */
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {

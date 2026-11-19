@@ -30,11 +30,12 @@ import {
   SUPPORT_ID_HINT,
   TEST_APP_DEMO_NOTE,
   TEST_APP_NOTE,
+  TEST_APP_NOT_ONLY_TEST_NOTE,
   approveOpenerMode,
   autoApproveReasonText,
   startApprovePage,
 } from '../../src/auth/approve-page.ts';
-import { NO_NETWORK_NOTE } from '../../src/auth/render-approval.ts';
+import { MESSAGE_LABEL, NO_NETWORK_NOTE, NO_NETWORK_TEST_APP_NOTE, RAW_NO_NETWORK_NOTE, RAW_NO_NETWORK_TEST_APP_NOTE, TYPED_DATA_NO_CHAIN } from '../../src/auth/render-approval.ts';
 import { formatEndTime, lingeringSignaturesNote } from '../../src/auth/render-consent.ts';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
 import { PASSPHRASE, USER, invocation, paymentOp, sorobanData, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
@@ -715,15 +716,15 @@ describe('/approve', () => {
     expect(pageText()).not.toContain('pay‮evil');
   });
 
-  it('says a message or raw signature is not tied to one network; transactions and typed data name theirs', () => {
-    const shown = (r: Req) => {
+  it('says a message or raw signature counts on every network; transactions and typed data name theirs', () => {
+    const shown = (r: Req, note = NO_NETWORK_NOTE) => {
       send(r);
-      return pageText().includes(NO_NETWORK_NOTE);
+      return pageText().includes(note);
     };
     expect(shown(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('Sign in to Partner') }))).toBe(true);
     expect(shown(stellarRequest({ kind: 'stellar_message', context: {}, bytes: utf8('Sign in to Partner') }))).toBe(true);
-    expect(shown(stellarRequest({ kind: 'raw', context: {}, bytes: txBytes([paymentOp()]) }))).toBe(true);
-    expect(shown(evmRequest({ kind: 'raw', context: {}, bytes: new Uint8Array(32).fill(7) }))).toBe(true);
+    expect(shown(stellarRequest({ kind: 'raw', context: {}, bytes: txBytes([paymentOp()]) }), RAW_NO_NETWORK_NOTE)).toBe(true);
+    expect(shown(evmRequest({ kind: 'raw', context: {}, bytes: new Uint8Array(32).fill(7) }), RAW_NO_NETWORK_NOTE)).toBe(true);
     expect(shown(evmRequest())).toBe(false);
     expect(shown(stellarRequest())).toBe(false);
     const typed = JSON.stringify({
@@ -734,6 +735,79 @@ describe('/approve', () => {
     });
     expect(shown(evmRequest({ kind: 'eip712', context: {}, bytes: utf8(typed) }))).toBe(false);
     expect(pageText()).toContain('Chain ID 11155111');
+  });
+
+  describe('D886: a message comes right after the headline; one note about networks, true for a test app and a live app', () => {
+    const message = (over: Record<string, unknown> = {}) => evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('Sign in to Partner'), ...over });
+    const stellarMessage = (over: Record<string, unknown> = {}) => stellarRequest({ kind: 'stellar_message', context: {}, bytes: utf8('Sign in to Partner'), ...over });
+    const typed = (chainId: number | null, over: Record<string, unknown> = {}) =>
+      evmRequest({
+        kind: 'eip712',
+        context: {},
+        bytes: utf8(
+          JSON.stringify({
+            types: { EIP712Domain: chainId === null ? [{ name: 'name', type: 'string' }] : [{ name: 'chainId', type: 'uint256' }], Hello: [{ name: 'text', type: 'string' }] },
+            primaryType: 'Hello',
+            domain: chainId === null ? { name: 'Partner' } : { chainId },
+            message: { text: 'hi' },
+          }),
+        ),
+        ...over,
+      });
+    const blue = () => [...document.querySelectorAll('.request .jp-alert-info')].map((n) => n.textContent);
+    /** The main view's blocks, in order: the headline, the message's label and box, and every box. */
+    const order = () =>
+      [...document.querySelectorAll('.request > h2.summary-headline, .request > p.message-label, .request > pre.message, .request > .jp-alert, .request > .risk-box')].map((n) =>
+        n.matches('h2') ? 'headline' : n.matches('p.message-label') ? 'label' : n.matches('pre') ? 'message' : n.classList.contains('test-app') ? 'test-app' : n.matches('.risk-box') ? 'warning' : 'note',
+      );
+
+    it('a live app: headline, the message, then the note', () => {
+      for (const r of [message(), stellarMessage()]) {
+        send(r);
+        expect(order()).toEqual(['headline', 'label', 'message', 'note']);
+        expect(document.querySelector('.request > p.message-label')?.textContent).toBe(MESSAGE_LABEL);
+        expect(blue()).toEqual([NO_NETWORK_NOTE]);
+      }
+      expect(NO_NETWORK_NOTE).toBe('Your signature counts on every network, real-money ones included. Sign only if you agree with what the message says.');
+    });
+
+    it('a test app: one note, after the message, that says both (never "works only with test money")', () => {
+      for (const r of [message({ testApp: true }), stellarMessage({ testApp: true })]) {
+        send(r);
+        expect(order()).toEqual(['headline', 'label', 'message', 'test-app']);
+        expect(blue()).toEqual([NO_NETWORK_TEST_APP_NOTE]);
+        expect(pageText()).not.toContain(TEST_APP_NOTE);
+      }
+      expect(NO_NETWORK_TEST_APP_NOTE).toBe(
+        'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you agree with what the message says, and don’t keep real money in this account.',
+      );
+    });
+
+    it('raw signing: the red line first (D809), then the note; a test app’s in one note', () => {
+      send(evmRequest({ kind: 'raw', context: {}, bytes: new Uint8Array(32).fill(7) }));
+      expect(order()).toEqual(['headline', 'warning', 'note']);
+      expect(blue()).toEqual([RAW_NO_NETWORK_NOTE]);
+      send(evmRequest({ kind: 'raw', context: {}, bytes: new Uint8Array(32).fill(7), testApp: true }));
+      expect(order()).toEqual(['headline', 'warning', 'test-app']);
+      expect(blue()).toEqual([RAW_NO_NETWORK_TEST_APP_NOTE]);
+    });
+
+    it('typed data: its content stays in the details; with no network, the amber line and a test app’s note that agrees with it', () => {
+      send(typed(null, { testApp: true }));
+      expect(document.querySelector('.warning-box')?.textContent).toContain(TYPED_DATA_NO_CHAIN);
+      expect(TYPED_DATA_NO_CHAIN).toBe('This signature names no network, so it may work on any of them, real-money ones included.');
+      expect(blue()).toEqual([TEST_APP_NOT_ONLY_TEST_NOTE]);
+      send(typed(null));
+      expect(blue()).toEqual([]);
+      // With its network named, the plain note: the signature is bound to that network.
+      send(typed(11155111, { testApp: true }));
+      expect(blue()).toEqual([TEST_APP_NOTE]);
+    });
+
+    it('the real-money demo on: its own note, unchanged, and the live app’s note about networks', () => {
+      send(message({ testApp: true, mainnetDemo: true }));
+      expect(blue()).toEqual([NO_NETWORK_NOTE, TEST_APP_DEMO_NOTE]);
+    });
   });
 
   it('says a test app signs only for test networks (D39), on requests and the consent screen; nothing for a live app', () => {

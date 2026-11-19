@@ -232,6 +232,42 @@ test.describe('plain-wording screens', () => {
     await done(page, popup, 'pay');
   });
 
+  // D886: a message signature's window, for a test app and a live app, at a phone's width (390 px), folded:
+  // `msg-{kind}-{test|live}-phone.png`.
+  for (const live of [false, true]) {
+    test(`message signatures, ${live ? 'a live app' : 'a test app'} (D886)`, async ({ page }) => {
+      await openPartner(page, live ? await newLiveApp() : await newApp(), live ? { live: true } : {});
+      await login(page);
+      const tag = live ? 'live' : 'test';
+      const phone = async (popup: Page, name: string) => {
+        await popup.setViewportSize(SIZES.phone);
+        await popup.screenshot({ path: `${SHOTS}/msg-${name}-${tag}-phone.png`, fullPage: true, animations: 'disabled' });
+      };
+      let popup = await popupFor(page, 'stellar', 'stellarSignMessage', 'Journear Passport testnet demo: this signature proves nothing and moves nothing.');
+      await phone(popup, 'stellar');
+      await done(page, popup, 'stellar');
+      popup = await popupFor(page, 'evm', 'personalSign', 'Welcome to Stamp Trail!\n\nSign this message to prove you own this wallet.');
+      await phone(popup, 'personal-sign');
+      await done(page, popup, 'evm');
+      const typed = (chainId?: number) =>
+        JSON.stringify({
+          types: { EIP712Domain: [{ name: 'name', type: 'string' }, ...(chainId ? [{ name: 'chainId', type: 'uint256' }] : [])], Hello: [{ name: 'text', type: 'string' }] },
+          primaryType: 'Hello',
+          domain: { name: 'Stamp Trail', ...(chainId ? { chainId } : {}) },
+          message: { text: 'Hello from Stamp Trail' },
+        });
+      popup = await popupFor(page, 'typed', 'ethSignTypedData', typed(EVM_CHAIN_ID));
+      await phone(popup, 'typed-data');
+      await done(page, popup, 'typed');
+      popup = await popupFor(page, 'typed0', 'ethSignTypedData', typed());
+      await phone(popup, 'typed-data-no-network');
+      await done(page, popup, 'typed0');
+      popup = await popupFor(page, 'nep413', 'nearSignMessage', 'Sign in to Stamp Trail', 'localhost');
+      await phone(popup, 'near');
+      await done(page, popup, 'nep413');
+    });
+  }
+
   test('a live app', async ({ page }) => {
     await openPartner(page, await newLiveApp(), { live: true });
     await login(page);

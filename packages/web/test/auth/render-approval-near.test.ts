@@ -15,6 +15,8 @@ import {
   type NearRenderContext,
   NEAR_DELEGATE_NONE,
   NEAR_SENT_FOR_YOU,
+  NO_NETWORK_NOTE,
+  NO_NETWORK_TEST_APP_NOTE,
   NEAR_OWN_CONTRACT_TOTAL,
   markOverflowing,
   overflowNote,
@@ -337,6 +339,12 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(el.textContent).toContain('Forguestbook.example');
     expect(el.textContent).toContain('Then returns tohttps://guestbook.example/cb');
     expect(el.querySelector('pre.message')?.textContent).toBe('Sign in to Guestbook');
+    // D886: the amber recipient line (a warning, D813) and the recipient row, then the message, then the blue note.
+    const order = [...el.children].filter((c) => !c.matches('details, h2')).map((c) => (c.matches('.warning-box') ? 'warning' : c.matches('dl') ? 'for' : c.matches('p.message-label') ? 'label' : c.matches('pre') ? 'message' : c.matches('.jp-alert-info') ? 'note' : c.tagName));
+    expect(order).toEqual(['warning', 'for', 'label', 'message', 'note']);
+    expect(el.querySelector('.jp-alert-info')?.textContent).toBe(NO_NETWORK_NOTE);
+    const test = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'Partner App', { envNetwork: 'testnet', testApp: true, testAppNoteHere: true });
+    expect(test.querySelector('.jp-alert-info')?.textContent).toBe(NO_NETWORK_TEST_APP_NOTE);
   });
 
   it('NEP-413: a recipient that isn’t the requesting page’s host is flagged; look-alike characters are written out', () => {

@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-19 (a free fee only behind Show details), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-19 (a free fee only behind Show details; message requests' note), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -832,9 +832,10 @@ signButton.addEventListener('click', () => {
 The Approve button arms only after the request has been on screen for 1 s and the window has had focus for 1 s, then
 a mouse move, a tap, or Tab or an arrow key. The gesture that arms it doesn't approve, so a tap-only user taps twice;
 clicking in place without moving the mouse, Enter and Space never arm it. That stops clickjacking and double-click
-tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) carry a line that the signature
-isn't tied to one network: they are valid wherever the key is. For a test app every request and consent screen also
-says that Journear Passport signs only for test networks (for a test app with Journear's mainnet demo on, it says what the demo signs
+tricks. Message and raw requests (`personal_sign`, `stellar_signMessage`, `signRaw`) show the message first, then a
+line that the signature counts on every network, real-money ones included: they are valid wherever the key is. For a
+test app that line also carries the test-app advice; every other request and consent screen of a test app says that
+Journear Passport signs only for test networks (for a test app with Journear's mainnet demo on, it says what the demo signs
 instead). The consent screen names the EVM chains Journear Passport knows ("Sepolia (test network)", with "network no.
 11155111" beside it) and gives native amounts their unit ("0.001 ETH"); a chain it doesn't know shows as its number.
 

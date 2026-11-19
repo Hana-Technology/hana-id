@@ -270,6 +270,23 @@ test('D884: a relayed NEAR call’s free fee is only in the details, naming the 
   await done(page, popup, 'neartx');
 });
 
+test('D886: a message comes right after the headline, then one note about networks that is true for a test app', async ({ page }) => {
+  await openPartner(page, await newApp());
+  await login(page);
+  for (const [name, action] of [['evm', 'personalSign'], ['stellar', 'stellarSignMessage']] as const) {
+    const popup = await popupFor(page, name, action, 'Sign in to Stamp Trail');
+    const blocks = popup.locator('div.request > h2.summary-headline, div.request > p.message-label, div.request > pre.message, div.request > .jp-alert');
+    await expect(blocks).toHaveText([
+      'E2E Partner wants you to sign a message',
+      'The message',
+      'Sign in to Stamp Trail',
+      'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you agree with what the message says, and don’t keep real money in this account.',
+    ]);
+    await expect(popup.getByText('works only with test money', { exact: false })).toHaveCount(0);
+    await done(page, popup, name);
+  }
+});
+
 test('screens for review', async ({ page, browserName }) => {
   test.skip(!SHOTS || browserName !== 'chromium', 'HANA_SHOTS_DIR, Chromium only');
   test.setTimeout(300_000);

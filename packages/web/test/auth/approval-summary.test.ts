@@ -24,7 +24,7 @@ import { ZERO_COST } from '../../../core/test/plain-words.ts';
 import { dom } from '../../src/auth/dom.ts';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
-import { ACCOUNT_CONTROL_BANNER, COUNTERPARTY_GROUPS, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_HEADING, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_SENT_FOR_YOU, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, fullId, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
+import { ACCOUNT_CONTROL_BANNER, COUNTERPARTY_GROUPS, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_HEADING, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_SENT_FOR_YOU, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, RAW_NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, fullId, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { idProblems, jargonWatch, shownText } from './plain-words.ts';
 import { shortId, summaryString } from '@hana-id/core/decode';
@@ -107,7 +107,7 @@ describe('the summary first, the details folded', () => {
     expect(red?.textContent).toBe('Signing this could hand over your whole account and everything in it. Reject it unless you know exactly why you’re signing.');
     expect(red?.closest('.danger-box')?.classList.contains('jp-alert-danger')).toBe(true);
     expect(folded(red)).toBe(false);
-    expect(el.textContent).toContain(NO_NETWORK_NOTE);
+    expect(el.textContent).toContain(RAW_NO_NETWORK_NOTE);
   });
 
   it('every case that used to open the details renders them folded, its risk line in view (D810)', () => {

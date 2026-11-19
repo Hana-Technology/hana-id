@@ -579,3 +579,10 @@ p.countdown {
   /* The digits don't shift the line as they change. */
   font-variant-numeric: tabular-nums;
 }
+
+/* The words above a message being signed (D886): small and quiet, the message's box right under them. */
+.request p.message-label {
+  margin: 0 0 calc(-1 * var(--jp-space-2));
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+}

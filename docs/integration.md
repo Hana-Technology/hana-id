@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-19 (the sign-in window's Remove for a wallet's first sign-in, at any age), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-19 (the approval window's fee row and guard line), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -854,9 +854,11 @@ are yours.
   right under that sentence. The technical details are folded under **Show details**. When Journear Passport can't
   tell what a request does, it says so and advises: "If you're not sure, reject it."
 - **Reject** and **Approve** sit at the bottom. Approve works only after the window has been on screen and in focus for
-  a moment, then a mouse move, a tap or a key press, so a stray double-click can't approve. After an answer the window
+  a moment, then a mouse move, a tap or a key press, so a stray double-click can't approve. Until then a line under
+  the buttons says what turns Approve on ("Approve turns on when you move your mouse.", "Approve turns on after one tap
+  on the screen."). After an answer the window
   says "Approved" or "Rejected" and stays open 15 seconds for a follow-up request.
-- **A gas-free action** reads "Network fee: none. Journear pays it for you." The user's first one also says that it
+- **A gas-free action** reads "Network fee: Free. Journear pays it for you." The user's first one also says that it
   turns on free network fees for their account, that their address stays the same, and that they still approve every
   action ([Gas-free actions](#gas-free-actions-not-live)).
 - **A test app** says, on every request, that Journear Passport signs only for test networks.
@@ -1028,7 +1030,7 @@ first ends), and a daily budget per app and per environment (`app_budget_exhaust
 is reached, send the user's action the usual way, or ask them to try later.
 
 **What users see:** Journear Passport's usual approval window, with the calls' own summary and warnings, "Network fee:
-none. Journear pays it for you." and, the first time only, "One-time setup: this also turns on free network fees for
+Free. Journear pays it for you." and, the first time only, "One-time setup: this also turns on free network fees for
 your account on Base Sepolia. Your address stays the same and you still approve every action." The details (folded)
 name the account helper, the relayer and the time the approval is valid until.
 

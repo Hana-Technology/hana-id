@@ -23,7 +23,8 @@
 import { exportStringOf } from '@hana-id/core';
 import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { BRAND } from '@hana-id/brand';
-import type { Dom } from './dom.ts';
+import { type Dom, dom } from './dom.ts';
+import { GuardHint, coarsePointer, quietly } from './guard-hint.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
 import { BTN } from './ui.ts';
 
@@ -96,6 +97,11 @@ export interface ScreenGuard {
   sync(): void;
   /** Whether a click on a guarded button acts: a real gesture, the guard armed, the click started after it. */
   click(e: Event): boolean;
+  /**
+   * The line that says what to do while the guard holds this screen's buttons (D878): one element, placed by the caller
+   * right under them; it names each guarded button as it reads at the time. Display only.
+   */
+  hint(): HTMLElement;
 }
 
 export interface ScreenGuardDeps {
@@ -120,36 +126,59 @@ export function screenGuard(deps: ScreenGuardDeps): ScreenGuard {
       return false;
     }
   };
+  const focusedAtStart = visibleNow() && focusedNow() ? now() : null;
+  // D878: told what the guard is told; shown only while a guarded button is otherwise ready (typed, ticked).
+  const guardHint = new GuardHint({ d: dom(win.document), now, focusedAtStart, coarse: coarsePointer(win as unknown as Parameters<typeof coarsePointer>[0]), id: 'guard-hint' });
   const sync = (): void => {
     const armed = guard.armed();
     for (const g of guarded) g.el.disabled = !(armed && g.ready());
+    quietly(() => {
+      guardHint.armed(armed);
+      guardHint.active(guarded.some((g) => g.ready()));
+    });
   };
-  const guard = new ApproveGuard(now, visibleNow() && focusedNow() ? now() : null, () => sync());
+  const guard = new ApproveGuard(now, focusedAtStart, () => sync());
   const onGesture = (type: GuardInput['type']) => (e: Event) => {
-    if (isGesture(e)) guard.gesture(guardInputOf(type, e));
+    if (!isGesture(e)) return;
+    const input = guardInputOf(type, e);
+    guard.gesture(input);
+    quietly(() => guardHint.input(input, e));
+  };
+  // The guard first, always; then the hint, which can't throw past `quietly`.
+  const onFocus = () => {
+    guard.focused();
+    quietly(() => guardHint.focused());
+  };
+  const onBlur = () => {
+    guard.blurred();
+    quietly(() => guardHint.blurred());
   };
   win.addEventListener('pointermove', onGesture('pointermove'));
   win.addEventListener('pointerdown', onGesture('pointerdown'));
   win.addEventListener('keydown', onGesture('keydown'));
-  win.addEventListener('focus', () => guard.focused());
-  win.addEventListener('blur', () => guard.blurred());
-  win.document.addEventListener('visibilitychange', () => (visibleNow() ? guard.focused() : guard.blurred()));
+  win.addEventListener('focus', onFocus);
+  win.addEventListener('blur', onBlur);
+  win.document.addEventListener('visibilitychange', () => (visibleNow() ? onFocus() : onBlur()));
   return {
     button(el, ready = () => true) {
       guarded.push({ el, ready });
+      quietly(() => guardHint.describe(el));
       el.addEventListener('focus', () => guard.primaryFocused());
       el.addEventListener('blur', () => guard.primaryBlurred());
       el.disabled = true;
     },
     newScreen() {
       guarded = [];
+      quietly(() => guardHint.cleared());
     },
     rendered() {
       guard.rendered();
+      quietly(() => guardHint.rendered(guarded.some((g) => g.ready())));
       sync();
     },
     sync,
     click: (e) => isGesture(e) && guard.mayActivate((e as MouseEvent).detail === 0),
+    hint: () => guardHint.el,
   };
 }
 
@@ -177,6 +206,8 @@ export interface KeyReveal {
   readonly actions: HTMLElement;
   /** The copy's outcome when it failed; never the key. */
   readonly status: HTMLElement;
+  /** What to do while the guard holds Show key and Copy key (D878); placed right under `actions`. */
+  readonly hint: HTMLElement;
   readonly shown: boolean;
   hide(): void;
   /** The key is gone: takes it off the screen for good, stops the timers, tries to blank a copy, lets go of the window. */
@@ -331,6 +362,7 @@ export function keyReveal(deps: KeyRevealDeps): KeyReveal {
     ack,
     actions: d.h('div', { class: 'actions reveal' }, toggle, copy),
     status,
+    hint: guard.hint(),
     get shown() {
       return shown;
     },

@@ -28,6 +28,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
 import { type Dom, dom, errorView, originText } from './dom.ts';
+import { GuardHint, coarsePointer, quietly } from './guard-hint.ts';
 import { appLogo } from './logo.ts';
 import { BTN, alert } from './ui.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
@@ -102,8 +103,12 @@ export function startSharePage(deps: SharePageDeps): SharePage {
   let current: WindowMessage<'hana:email-share-request'> | null = null;
   const visible = () => win.document.visibilityState !== 'hidden';
   const hasFocus = () => (typeof win.document.hasFocus === 'function' ? win.document.hasFocus() : true);
-  const guard = new ApproveGuard(now, visible() && hasFocus() ? now() : null, (armed) => {
+  const focusedAtStart = visible() && hasFocus() ? now() : null;
+  // D878: the line under Share email while the guard holds it (display only, told what the guard is told).
+  const hint = new GuardHint({ d, now, focusedAtStart, coarse: coarsePointer(win as unknown as Parameters<typeof coarsePointer>[0]), id: 'guard-hint', setTimer: timers.setTimeout, clearTimer: timers.clearTimeout });
+  const guard = new ApproveGuard(now, focusedAtStart, (armed) => {
     if (primary) primary.disabled = !armed;
+    quietly(() => hint.armed(armed));
   });
 
   /** The windows that may be the vault, for the opener mode (read each time, as the other popups do). */
@@ -137,13 +142,25 @@ export function startSharePage(deps: SharePageDeps): SharePage {
   };
 
   const onGesture = (type: GuardInput['type']) => (e: Event) => {
-    if (isGesture(e)) guard.gesture(guardInputOf(type, e));
+    if (!isGesture(e)) return;
+    const input = guardInputOf(type, e);
+    guard.gesture(input);
+    quietly(() => hint.input(input, e));
   };
-  const onVisibility = () => (visible() ? guard.focused() : guard.blurred());
+  // The guard first, always; then the hint, which can't throw past `quietly`.
+  const onFocus = () => {
+    guard.focused();
+    quietly(() => hint.focused());
+  };
+  const onBlur = () => {
+    guard.blurred();
+    quietly(() => hint.blurred());
+  };
+  const onVisibility = () => (visible() ? onFocus() : onBlur());
   const listeners: [string, (e: Event) => void][] = [
     ['message', onMessage],
-    ['focus', () => guard.focused()],
-    ['blur', () => guard.blurred()],
+    ['focus', onFocus],
+    ['blur', onBlur],
     ['pointermove', onGesture('pointermove')],
     ['pointerdown', onGesture('pointerdown')],
     ['keydown', onGesture('keydown')],
@@ -187,6 +204,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
     state = 'saving';
     primary = null;
     guard.cleared();
+    quietly(() => hint.cleared());
     try {
       vault.postMessage({ v: 1, t: 'hana:email-share-answer', answer: a }, env.vaultOrigin);
     } catch {
@@ -211,6 +229,7 @@ export function startSharePage(deps: SharePageDeps): SharePage {
       if (isGesture(e) && guard.mayActivate((e as MouseEvent).detail === 0)) answer('granted');
     });
     primary = yes;
+    quietly(() => hint.describe(yes));
     d.show(
       d.h(
         'section',
@@ -222,14 +241,17 @@ export function startSharePage(deps: SharePageDeps): SharePage {
         d.h('p', { class: 'muted' }, SHARE_TEXT.use(m.appName)),
         m.ownGoogleClient ? alert(d, 'info', { class: 'note' }, SHARE_TEXT.ownGoogle(m.appName)) : null,
         d.h('div', { class: 'actions' }, no, yes),
+        hint.el,
       ),
     );
     guard.rendered();
+    quietly(() => hint.rendered(true));
   }
 
   function showShared(m: WindowMessage<'hana:email-share-request'>, email: string): void {
     state = 'shared';
     primary = null;
+    quietly(() => hint.cleared());
     const stopBtn = d.h('button', { class: `secondary ${BTN.secondary} jp-btn-lg`, attrs: { type: 'button', id: 'share-stop' } }, 'Stop sharing');
     stopBtn.addEventListener('click', (e) => {
       if (isGesture(e)) answer('revoke');

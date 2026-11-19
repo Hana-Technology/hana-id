@@ -46,7 +46,7 @@ import {
 import { DEMO_CHECK_IN_CALLDATA, type NearAction, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
 import { BRAND } from '@hana-id/brand';
 import { type Child, type Dom, dom, row, rows } from './dom.ts';
-import { alert } from './ui.ts';
+import { alert, icon } from './ui.ts';
 
 /** `value` with `decimals` decimal places, trailing zeros trimmed: formatUnits(1500000000000000000n, 18) = "1.5". */
 export function formatUnits(value: bigint | string, decimals: number): string {
@@ -63,14 +63,14 @@ const stroops = (s: string) => `${formatUnits(s, 7)} XLM (${s} stroops)`;
 const wei = (v: bigint) => `${formatUnits(v, 18)} (${v} wei)`;
 const gwei = (v: bigint) => `${formatUnits(v, 9)} gwei`;
 
-/** Unix seconds (decimal) as an ISO date, or the raw value if it is out of range. */
-function unixTime(s: string): string {
-  const n = Number(s);
-  if (!Number.isSafeInteger(n) || n < 0 || n > 8.64e12) return `${s} (unix seconds)`;
-  return `${new Date(n * 1000).toISOString()} (${s})`;
-}
-
 const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);
+
+/** Unix seconds (decimal) as an ISO date and the raw value, or the raw value alone when out of range; the raw value in mono (D877). */
+function unixView(d: Dom, s: string): Child[] {
+  const n = Number(s);
+  if (!Number.isSafeInteger(n) || n < 0 || n > 8.64e12) return [mono(d, s), ' (unix seconds)'];
+  return [`${new Date(n * 1000).toISOString()} (`, mono(d, s), ')'];
+}
 
 /** A network passphrase (a request may name any): as text when display-safe, else its UTF-8 bytes as hex. */
 const passphraseText = (d: Dom, p: string): HTMLElement => (isDisplaySafeLine(p) ? mono(d, p) : mono(d, `(shown as hex) ${toHex(new TextEncoder().encode(p))}`));
@@ -170,12 +170,13 @@ function ledgerKey(d: Dom, k: StellarLedgerKey): HTMLElement {
 }
 
 /** An amount of `asset` (`native` or `CODE:ISSUER`) in stroops: "1.5 USDC:G… (15000000 stroops)". */
-const assetAmount = (d: Dom, s: string, asset: string) => d.h('span', {}, `${formatUnits(s, 7)} `, mono(d, asset === 'native' ? 'XLM' : asset), ` (${s} stroops)`);
-const price = (p: StellarPrice) => `${p.n}/${p.d}`;
-const flags = (bits: number, names: Parameters<typeof stellarFlagNames>[1]) => (bits === 0 ? 'none' : `${stellarFlagNames(bits, names).join(', ')} (${bits})`);
+const assetAmount = (d: Dom, s: string, asset: string) => d.h('span', { class: 'mono' }, `${formatUnits(s, 7)} `, mono(d, asset === 'native' ? 'XLM' : asset), ` (${s} stroops)`);
+const price = (d: Dom, p: StellarPrice) => mono(d, `${p.n}/${p.d}`);
+/** Flag names in words, their bits as an exact number (D877). */
+const flags = (d: Dom, bits: number, names: Parameters<typeof stellarFlagNames>[1]): Child[] => (bits === 0 ? ['none'] : [`${stellarFlagNames(bits, names).join(', ')} (`, mono(d, String(bits)), ')']);
 const shortText = (d: Dom, t: StellarText) => (t.value === null ? mono(d, `(shown as hex) ${t.hex}`) : t.value === '' ? d.h('span', { class: 'muted' }, '(empty: clears it)') : mono(d, t.value));
 const path = (d: Dom, p: readonly string[]) => (p.length === 0 ? 'direct' : d.h('span', {}, ...p.flatMap((a, i) => [i > 0 ? ' → ' : '', mono(d, a)])));
-const offer = (id: string, amount: string) => (id === '0' ? 'new offer' : amount === '0' ? `deletes offer ${id}` : `changes offer ${id}`);
+const offer = (d: Dom, id: string, amount: string): Child[] => (id === '0' ? ['new offer'] : [amount === '0' ? 'deletes offer ' : 'changes offer ', mono(d, id)]);
 
 /**
  * The account-control warnings (docs/decisions.md D110): shown on every setOptions signer, threshold or master-weight
@@ -245,26 +246,26 @@ function classic(d: Dom, op: StellarOperation): Child[] {
       return [facts(d, [row(d, 'To', mono(d, op.destination)), row(d, 'Pays exactly', assetAmount(d, op.sendAmount, op.sendAsset)), row(d, 'Receives at least', assetAmount(d, op.destMin, op.destAsset)), row(d, 'Through', path(d, op.path))])];
     case 'manageSellOffer':
     case 'createPassiveSellOffer':
-      return [facts(d, [row(d, 'Sells', assetAmount(d, op.amount, op.selling)), row(d, 'For', mono(d, op.buying === 'native' ? 'XLM' : op.buying)), row(d, 'Price', `${price(op.price)} per unit sold`), row(d, 'Offer', op.type === 'createPassiveSellOffer' ? 'new passive offer' : offer(op.offerId, op.amount))])];
+      return [facts(d, [row(d, 'Sells', assetAmount(d, op.amount, op.selling)), row(d, 'For', mono(d, op.buying === 'native' ? 'XLM' : op.buying)), row(d, 'Price', price(d, op.price), ' per unit sold'), row(d, 'Offer', ...(op.type === 'createPassiveSellOffer' ? ['new passive offer'] : offer(d, op.offerId, op.amount)))])];
     case 'manageBuyOffer':
-      return [facts(d, [row(d, 'Buys', assetAmount(d, op.buyAmount, op.buying)), row(d, 'Paying with', mono(d, op.selling === 'native' ? 'XLM' : op.selling)), row(d, 'Price', `${price(op.price)} per unit bought`), row(d, 'Offer', offer(op.offerId, op.buyAmount))])];
+      return [facts(d, [row(d, 'Buys', assetAmount(d, op.buyAmount, op.buying)), row(d, 'Paying with', mono(d, op.selling === 'native' ? 'XLM' : op.selling)), row(d, 'Price', price(d, op.price), ' per unit bought'), row(d, 'Offer', ...offer(d, op.offerId, op.buyAmount))])];
     case 'setOptions': {
       const s = op.signer;
       const r = [
-        s && row(d, s.weight === 0 ? 'Removes signer' : 'Adds signer', mono(d, s.key), ` (${s.keyType}${s.weight === 0 ? '' : `, weight ${s.weight}`})`),
-        op.masterWeight !== null && row(d, 'Own key weight', String(op.masterWeight)),
-        op.lowThreshold !== null && row(d, 'Low threshold', String(op.lowThreshold)),
-        op.medThreshold !== null && row(d, 'Medium threshold', String(op.medThreshold)),
-        op.highThreshold !== null && row(d, 'High threshold', String(op.highThreshold)),
-        op.setFlags !== null && row(d, 'Sets flags', flags(op.setFlags, STELLAR_ACCOUNT_FLAGS)),
-        op.clearFlags !== null && row(d, 'Clears flags', flags(op.clearFlags, STELLAR_ACCOUNT_FLAGS)),
+        s && row(d, s.weight === 0 ? 'Removes signer' : 'Adds signer', mono(d, s.key), ` (${s.keyType}`, ...(s.weight === 0 ? [] : [', weight ', mono(d, String(s.weight))]), ')'),
+        op.masterWeight !== null && row(d, 'Own key weight', mono(d, String(op.masterWeight))),
+        op.lowThreshold !== null && row(d, 'Low threshold', mono(d, String(op.lowThreshold))),
+        op.medThreshold !== null && row(d, 'Medium threshold', mono(d, String(op.medThreshold))),
+        op.highThreshold !== null && row(d, 'High threshold', mono(d, String(op.highThreshold))),
+        op.setFlags !== null && row(d, 'Sets flags', ...flags(d, op.setFlags, STELLAR_ACCOUNT_FLAGS)),
+        op.clearFlags !== null && row(d, 'Clears flags', ...flags(d, op.clearFlags, STELLAR_ACCOUNT_FLAGS)),
         op.homeDomain && row(d, 'Home domain', shortText(d, op.homeDomain)),
         op.inflationDest !== null && row(d, 'Inflation destination', mono(d, op.inflationDest)),
       ];
       return r.some(Boolean) ? [facts(d, r)] : [d.h('p', { class: 'muted' }, 'Changes nothing')];
     }
     case 'allowTrust':
-      return [facts(d, [row(d, 'Trustor', mono(d, op.trustor)), row(d, 'Asset code', mono(d, op.assetCode)), row(d, 'Authorization', op.authorize === 0 ? 'revoked' : flags(op.authorize, STELLAR_TRUSTLINE_FLAGS))])];
+      return [facts(d, [row(d, 'Trustor', mono(d, op.trustor)), row(d, 'Asset code', mono(d, op.assetCode)), row(d, 'Authorization', ...(op.authorize === 0 ? ['revoked'] : flags(d, op.authorize, STELLAR_TRUSTLINE_FLAGS)))])];
     case 'accountMerge':
       return [facts(d, [row(d, 'Sends all XLM to', mono(d, op.destination))])];
     case 'inflation':
@@ -293,11 +294,11 @@ function classic(d: Dom, op: StellarOperation): Child[] {
     case 'clawback':
       return [facts(d, [row(d, 'Takes back from', mono(d, op.from)), row(d, 'Amount', assetAmount(d, op.amount, op.asset))])];
     case 'setTrustLineFlags':
-      return [facts(d, [row(d, 'Trustor', mono(d, op.trustor)), row(d, 'Asset', mono(d, op.asset)), row(d, 'Sets flags', flags(op.setFlags, STELLAR_TRUSTLINE_FLAGS)), row(d, 'Clears flags', flags(op.clearFlags, STELLAR_TRUSTLINE_FLAGS))])];
+      return [facts(d, [row(d, 'Trustor', mono(d, op.trustor)), row(d, 'Asset', mono(d, op.asset)), row(d, 'Sets flags', ...flags(d, op.setFlags, STELLAR_TRUSTLINE_FLAGS)), row(d, 'Clears flags', ...flags(d, op.clearFlags, STELLAR_TRUSTLINE_FLAGS))])];
     case 'liquidityPoolDeposit':
-      return [facts(d, [row(d, 'Pool', mono(d, op.poolId)), row(d, 'At most', `${formatUnits(op.maxAmountA, 7)} of asset A and ${formatUnits(op.maxAmountB, 7)} of asset B`), row(d, 'Price between', `${price(op.minPrice)} and ${price(op.maxPrice)}`)])];
+      return [facts(d, [row(d, 'Pool', mono(d, op.poolId)), row(d, 'At most', mono(d, formatUnits(op.maxAmountA, 7)), ' of asset A and ', mono(d, formatUnits(op.maxAmountB, 7)), ' of asset B'), row(d, 'Price between', price(d, op.minPrice), ' and ', price(d, op.maxPrice))])];
     case 'liquidityPoolWithdraw':
-      return [facts(d, [row(d, 'Pool', mono(d, op.poolId)), row(d, 'Pool shares', formatUnits(op.amount, 7)), row(d, 'At least', `${formatUnits(op.minAmountA, 7)} of asset A and ${formatUnits(op.minAmountB, 7)} of asset B`)])];
+      return [facts(d, [row(d, 'Pool', mono(d, op.poolId)), row(d, 'Pool shares', mono(d, formatUnits(op.amount, 7))), row(d, 'At least', mono(d, formatUnits(op.minAmountA, 7)), ' of asset A and ', mono(d, formatUnits(op.minAmountB, 7)), ' of asset B')])];
     default:
       // Never reached: every operation type the XDR defines is decoded (the decoder refuses unknown ones).
       return [warnLine(d, 'warn', `${BRAND.product} doesn’t decode this operation. Its raw XDR:`), mono(d, op.xdr)];
@@ -319,13 +320,13 @@ function operation(d: Dom, op: StellarOperation, index: number): HTMLElement {
       body.push(d.h('p', {}, 'Restore archived contract data in the footprint'));
       break;
     case 'changeTrust':
-      body.push(facts(d, [row(d, 'Asset', mono(d, op.asset)), row(d, 'Limit', stroops(op.limit))]));
+      body.push(facts(d, [row(d, 'Asset', mono(d, op.asset)), row(d, 'Limit', mono(d, stroops(op.limit)))]));
       break;
     case 'payment':
-      body.push(facts(d, [row(d, 'To', mono(d, op.destination)), row(d, 'Asset', mono(d, op.asset)), row(d, 'Amount', `${formatUnits(op.amount, 7)} (${op.amount} stroops)`)]));
+      body.push(facts(d, [row(d, 'To', mono(d, op.destination)), row(d, 'Asset', mono(d, op.asset)), row(d, 'Amount', mono(d, `${formatUnits(op.amount, 7)} (${op.amount} stroops)`))]));
       break;
     case 'createAccount':
-      body.push(facts(d, [row(d, 'New account', mono(d, op.destination)), row(d, 'Starting balance', stroops(op.startingBalance))]));
+      body.push(facts(d, [row(d, 'New account', mono(d, op.destination)), row(d, 'Starting balance', mono(d, stroops(op.startingBalance)))]));
       break;
     default:
       body.push(...classic(d, op));
@@ -347,11 +348,11 @@ function stellarTx(d: Dom, passphrase: string, tx: StellarTransaction): HTMLElem
       row(d, 'Network', passphraseText(d, passphrase)),
       row(d, 'Source', mono(d, tx.source)),
       row(d, 'Sequence', mono(d, tx.sequence)),
-      row(d, 'Maximum fee', stroops(tx.fee)),
-      row(d, 'Valid', tx.timeBounds ? `from ${unixTime(tx.timeBounds.minTime)} until ${tx.timeBounds.maxTime === '0' ? 'no limit' : unixTime(tx.timeBounds.maxTime)}` : 'no time limit'),
-      tx.ledgerBounds && row(d, 'Ledgers', `${tx.ledgerBounds.minLedger} to ${tx.ledgerBounds.maxLedger === 0 ? 'no limit' : tx.ledgerBounds.maxLedger}`),
-      row(d, 'Memo', memoText),
-      tx.soroban && row(d, 'Resource fee', stroops(tx.soroban.resourceFee)),
+      row(d, 'Maximum fee', mono(d, stroops(tx.fee))),
+      row(d, 'Valid', ...(tx.timeBounds ? ['from ', ...unixView(d, tx.timeBounds.minTime), ' until ', ...(tx.timeBounds.maxTime === '0' ? ['no limit'] : unixView(d, tx.timeBounds.maxTime))] : ['no time limit'])),
+      tx.ledgerBounds && row(d, 'Ledgers', mono(d, String(tx.ledgerBounds.minLedger)), ' to ', tx.ledgerBounds.maxLedger === 0 ? 'no limit' : mono(d, String(tx.ledgerBounds.maxLedger))),
+      row(d, 'Memo', memo.type === 'none' ? 'none' : mono(d, memoText)),
+      tx.soroban && row(d, 'Resource fee', mono(d, stroops(tx.soroban.resourceFee))),
     ]),
     d.h('h2', {}, tx.operations.length === 1 ? '1 operation' : `${tx.operations.length} operations`),
     d.h('ol', { class: 'ops' }, ...tx.operations.map((op, i) => operation(d, op, i))),
@@ -383,7 +384,7 @@ export function accountControlShorts(op: StellarOperation): string[][] {
 function envelopeBody(d: Dom, passphrase: string, env: DecodedStellarEnvelope): HTMLElement[] {
   if (env.envelope === 'fee_bump') {
     return [
-      facts(d, [row(d, 'Fee paid by', mono(d, env.feeSource)), row(d, 'Fee-bump fee', stroops(env.fee))]),
+      facts(d, [row(d, 'Fee paid by', mono(d, env.feeSource)), row(d, 'Fee-bump fee', mono(d, stroops(env.fee)))]),
       d.h('h2', {}, 'Inner transaction'),
       ...stellarTx(d, passphrase, env.tx),
     ];
@@ -432,20 +433,20 @@ function evmCallData(d: Dom, chainId: number, c: Pick<DecodedEvmCallSite, 'to' |
 function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
   const fees =
     tx.type === 'eip1559'
-      ? [row(d, 'Max fee per gas', gwei(tx.maxFeePerGas)), row(d, 'Priority fee per gas', gwei(tx.maxPriorityFeePerGas))]
-      : [row(d, 'Gas price', gwei(tx.gasPrice))];
+      ? [row(d, 'Max fee per gas', mono(d, gwei(tx.maxFeePerGas))), row(d, 'Priority fee per gas', mono(d, gwei(tx.maxPriorityFeePerGas)))]
+      : [row(d, 'Gas price', mono(d, gwei(tx.gasPrice)))];
   const data: Child[] = [];
   if (tx.to === null) data.push(d.h('p', {}, 'Creates a contract from this code:'), mono(d, tx.data));
   else data.push(...evmCallData(d, chainId, tx));
   return [
     facts(d, [
-      row(d, 'Chain ID', String(chainId)),
+      row(d, 'Chain ID', mono(d, String(chainId))),
       row(d, 'To', tx.to === null ? 'New contract' : mono(d, tx.to)),
-      row(d, 'Value', wei(tx.value)),
-      row(d, 'Gas limit', String(tx.gasLimit)),
+      row(d, 'Value', mono(d, wei(tx.value))),
+      row(d, 'Gas limit', mono(d, String(tx.gasLimit))),
       ...fees,
-      row(d, 'Maximum network fee', wei(tx.maxFeeWei)),
-      row(d, 'Nonce', String(tx.nonce)),
+      row(d, 'Maximum network fee', mono(d, wei(tx.maxFeeWei))),
+      row(d, 'Nonce', mono(d, String(tx.nonce))),
       tx.type === 'eip1559' && tx.accessList.length > 0 && row(d, 'Access list', `${tx.accessList.length} entries`),
     ]),
     ...(data.filter(Boolean) as HTMLElement[]),
@@ -469,6 +470,15 @@ export function validUntil(deadline: bigint, nowMs?: number): string {
   return `${pad2(t.getHours())}:${pad2(t.getMinutes())}${day} (your time; unix ${deadline})`;
 }
 
+/** `validUntil` as nodes: the time in words, the unix seconds exact, in mono (D877). The same text. */
+function validUntilView(d: Dom, deadline: bigint, nowMs?: number): Child[] {
+  const text = validUntil(deadline, nowMs);
+  const raw = String(deadline);
+  if (text === `${raw} (unix seconds)`) return [mono(d, raw), ' (unix seconds)'];
+  const cut = text.lastIndexOf(`unix ${raw})`);
+  return [text.slice(0, cut + 'unix '.length), mono(d, raw), ')'];
+}
+
 /**
  * A sponsored action's details: the request's own facts (chain, account, the account helper it uses or sets up, the
  * relayer that pays, until when it can run, its nonce and gas floor), then every call as an EVM transaction's details
@@ -480,21 +490,21 @@ function sponsoredDetails(d: Dom, decoded: Extract<DecodedApproval, { kind: 'evm
   return [
     d.h('h3', {}, `EVM action, network fee paid by ${BRAND.company}`),
     facts(d, [
-      row(d, 'Chain ID', String(decoded.chainId)),
+      row(d, 'Chain ID', mono(d, String(decoded.chainId))),
       row(d, 'From', mono(d, s.account)),
       s.authNonce !== null
-        ? row(d, 'Account setup (EIP-7702)', 'account helper ', mono(d, s.delegate), ` ✓ ${helper}, chain ${decoded.chainId}, account nonce ${s.authNonce}`)
+        ? row(d, 'Account setup (EIP-7702)', 'account helper ', mono(d, s.delegate), ` ✓ ${helper}, chain `, mono(d, String(decoded.chainId)), ', account nonce ', mono(d, String(s.authNonce)))
         : row(d, 'Account helper (EIP-7702)', mono(d, s.delegate), ` ✓ ${helper} (no setup in this approval)`),
       row(d, 'Paid by', `${BRAND.company}’s relayer `, mono(d, s.relayer)),
-      row(d, 'Valid until', validUntil(s.deadline, nowMs)),
-      row(d, 'Action nonce', String(s.executeNonce)),
-      row(d, 'Gas floor', `${s.minGas} gas`),
+      row(d, 'Valid until', ...validUntilView(d, s.deadline, nowMs)),
+      row(d, 'Action nonce', mono(d, String(s.executeNonce))),
+      row(d, 'Gas floor', mono(d, `${s.minGas} gas`)),
     ]),
     d.h('h2', {}, decoded.calls.length === 1 ? '1 call' : `${decoded.calls.length} calls`),
     d.h(
       'ol',
       { class: 'ops' },
-      ...decoded.calls.map((c, i) => d.h('li', { class: 'op' }, d.h('h3', {}, `${i + 1}. Call`), facts(d, [row(d, 'To', mono(d, c.to)), row(d, 'Value', wei(c.value))]), ...evmCallData(d, decoded.chainId, c))),
+      ...decoded.calls.map((c, i) => d.h('li', { class: 'op' }, d.h('h3', {}, `${i + 1}. Call`), facts(d, [row(d, 'To', mono(d, c.to)), row(d, 'Value', mono(d, wei(c.value)))]), ...evmCallData(d, decoded.chainId, c))),
     ),
   ];
 }
@@ -657,7 +667,8 @@ function nearPermission(d: Dom, p: Extract<NearAction, { type: 'addKey' }>['acce
     p.methodNames.length === 0 ? 'any method' : d.h('span', {}, ...p.methodNames.flatMap((n, i) => [i > 0 ? ', ' : '', nearMethod(d, n)])),
     ' on ',
     mono(d, p.receiverId),
-    `, fee allowance ${p.allowance === null ? 'unlimited' : formatNear(p.allowance)}`,
+    ', fee allowance ',
+    p.allowance === null ? 'unlimited' : mono(d, formatNear(p.allowance)),
   );
 }
 
@@ -666,16 +677,16 @@ function nearActionBody(d: Dom, a: NearAction, receiver: string, me: string, nes
     case 'createAccount':
       return [d.h('p', {}, 'Creates the account ', mono(d, receiver))];
     case 'deployContract':
-      return [facts(d, [row(d, 'Deploys a contract to', mono(d, receiver)), row(d, 'Code', `${a.code.length} bytes, hash ${nearCodeHash(a.code)}`)])];
+      return [facts(d, [row(d, 'Deploys a contract to', mono(d, receiver)), row(d, 'Code', `${a.code.length} bytes, hash `, mono(d, nearCodeHash(a.code)))])];
     case 'functionCall':
       return [
-        facts(d, [row(d, 'Calls', nearMethod(d, a.methodName), ' on ', mono(d, receiver)), row(d, 'Attached deposit', formatNear(a.deposit)), row(d, 'Gas', formatGas(a.gas))]),
+        facts(d, [row(d, 'Calls', nearMethod(d, a.methodName), ' on ', mono(d, receiver)), row(d, 'Attached deposit', mono(d, formatNear(a.deposit))), row(d, 'Gas', mono(d, formatGas(a.gas)))]),
         nearArgs(d, a.args),
       ];
     case 'transfer':
-      return [facts(d, [row(d, 'Sends', formatNear(a.deposit)), row(d, 'To', mono(d, receiver))])];
+      return [facts(d, [row(d, 'Sends', mono(d, formatNear(a.deposit))), row(d, 'To', mono(d, receiver))])];
     case 'stake':
-      return [facts(d, [row(d, 'Stakes (locks)', formatNear(a.stake)), row(d, 'Validator key', mono(d, nearKeyText(a.publicKey)))])];
+      return [facts(d, [row(d, 'Stakes (locks)', mono(d, formatNear(a.stake))), row(d, 'Validator key', mono(d, nearKeyText(a.publicKey)))])];
     case 'addKey':
       return [facts(d, [row(d, 'Adds key', mono(d, nearKeyText(a.publicKey))), row(d, 'To account', mono(d, receiver)), row(d, 'Permission', nearPermission(d, a.accessKey.permission))])];
     case 'deleteKey':
@@ -686,12 +697,12 @@ function nearActionBody(d: Dom, a: NearAction, receiver: string, me: string, nes
       const inner = a.signedDelegate.delegateAction;
       return [
         warnLine(d, 'warn', 'Relays a meta transaction signed by ', mono(d, inner.senderId), ': your account pays its network fee.'),
-        facts(d, [row(d, 'Sender', mono(d, inner.senderId)), row(d, 'Receiver', mono(d, inner.receiverId)), row(d, 'Valid until block', String(inner.maxBlockHeight))]),
+        facts(d, [row(d, 'Sender', mono(d, inner.senderId)), row(d, 'Receiver', mono(d, inner.receiverId)), row(d, 'Valid until block', mono(d, String(inner.maxBlockHeight)))]),
         nested ? null : nearActionList(d, inner.actions, inner.receiverId, inner.senderId, true),
       ];
     }
     case 'deployGlobalContract':
-      return [facts(d, [row(d, 'Publishes a global contract', a.deployMode === 'codeHash' ? 'identified by its code hash' : `identified by the account ${receiver}`), row(d, 'Code', `${a.code.length} bytes, hash ${nearCodeHash(a.code)}`)])];
+      return [facts(d, [row(d, 'Publishes a global contract', ...(a.deployMode === 'codeHash' ? ['identified by its code hash'] : ['identified by the account ', mono(d, receiver)])), row(d, 'Code', `${a.code.length} bytes, hash `, mono(d, nearCodeHash(a.code)))])];
     case 'useGlobalContract':
       return [facts(d, [row(d, 'Sets the contract of', mono(d, receiver)), row(d, 'To the global contract', a.contract.type === 'codeHash' ? mono(d, nearHash58(a.contract.hash)) : mono(d, a.contract.accountId))])];
   }
@@ -782,12 +793,12 @@ function nearTotal(d: Dom, actions: readonly NearAction[], receiver: string, me:
     row(
       d,
       'NEAR leaving your account',
-      t.deletesAccount ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)') : own ? d.h('strong', { class: 'danger' }, NEAR_OWN_CONTRACT_TOTAL) : d.h('strong', {}, nearDisplay(leaving)),
+      t.deletesAccount ? d.h('strong', { class: 'danger words' }, 'All of it (the account is deleted)') : own ? d.h('strong', { class: 'danger words' }, NEAR_OWN_CONTRACT_TOTAL) : d.h('strong', {}, nearDisplay(leaving)),
       ' (plus the network fee)',
     ),
-    own && leaving > 0n && row(d, 'NEAR it sends', nearDisplay(leaving)),
+    own && leaving > 0n && row(d, 'NEAR it sends', mono(d, nearDisplay(leaving))),
     t.burned > 0n && row(d, 'NEAR destroyed', d.h('strong', { class: 'danger' }, nearDisplay(t.burned)), ' (gone for good: publishing a shared program)'),
-    t.staked > 0n && row(d, 'NEAR locked up for staking', nearDisplay(t.staked)),
+    t.staked > 0n && row(d, 'NEAR locked up for staking', mono(d, nearDisplay(t.staked))),
   ]);
 }
 
@@ -804,17 +815,17 @@ function nearDelegateTotal(d: Dom, actions: readonly NearAction[], receiver: str
   const t = nearDeposits(actions);
   const own = nearCallsOwnContract(actions, receiver, me);
   const leaving = t.deletesAccount
-    ? d.h('strong', { class: 'danger' }, 'All of it (the account is deleted)')
+    ? d.h('strong', { class: 'danger words' }, 'All of it (the account is deleted)')
     : own
-      ? d.h('strong', { class: 'danger' }, NEAR_OWN_CONTRACT_TOTAL)
+      ? d.h('strong', { class: 'danger words' }, NEAR_OWN_CONTRACT_TOTAL)
       : t.burned > 0n
         ? d.h('strong', {}, nearDisplay(t.burned))
-        : d.h('strong', {}, NEAR_DELEGATE_NONE);
+        : d.h('strong', { class: 'words' }, NEAR_DELEGATE_NONE);
   return facts(d, [
     row(d, 'NEAR leaving your account', leaving),
-    t.total > 0n && row(d, 'NEAR it sends, paid by someone else', nearDisplay(t.total)),
+    t.total > 0n && row(d, 'NEAR it sends, paid by someone else', mono(d, nearDisplay(t.total))),
     t.burned > 0n && row(d, 'NEAR destroyed', d.h('strong', { class: 'danger' }, nearDisplay(t.burned)), ' (gone for good: publishing a shared program)'),
-    t.staked > 0n && row(d, 'NEAR locked up for staking', nearDisplay(t.staked)),
+    t.staked > 0n && row(d, 'NEAR locked up for staking', mono(d, nearDisplay(t.staked))),
   ]);
 }
 
@@ -901,7 +912,7 @@ function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_de
   return {
     alerts: ctx.testApp ? alerts : { ...alerts, warnings: [...alerts.warnings, risk(5, 'warn no-network', [NEAR_DELEGATE_NOTES.network(decoded.network)], [])] },
     network: nearNetworkLine('near_delegate', decoded.network, ctx),
-    visible: summary.noNearLeaves ? (sent > 0n ? [facts(d, [row(d, 'NEAR it sends, paid by someone else', nearDisplay(sent))])] : []) : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
+    visible: summary.noNearLeaves ? (sent > 0n ? [facts(d, [row(d, 'NEAR it sends, paid by someone else', mono(d, nearDisplay(sent)))])] : []) : [nearDelegateTotal(d, da.actions, da.receiverId, da.senderId)],
     details: [
       d.h('h3', {}, 'NEAR transaction, fee paid by a relayer'),
       d.h('p', { class: 'muted relayer-note' }, NEAR_DELEGATE_NOTES.relayer),
@@ -909,7 +920,7 @@ function nearDelegate(d: Dom, decoded: Extract<DecodedApproval, { kind: 'near_de
         row(d, 'Network', nearNetworkDetail('near_delegate', decoded.network, ctx)),
         row(d, 'From', mono(d, da.senderId)),
         row(d, 'To', mono(d, da.receiverId)),
-        row(d, 'Valid until block', String(da.maxBlockHeight)),
+        row(d, 'Valid until block', mono(d, String(da.maxBlockHeight))),
         row(d, 'Nonce', mono(d, String(da.nonce))),
       ]),
       nearActionList(d, da.actions, da.receiverId, da.senderId, false),
@@ -1144,7 +1155,7 @@ class IdBook {
       d,
       fresh.map((r) => {
         const n = this.number(r.full);
-        return row(d, n ? `${ID_LABELS[r.role]} (${n})` : ID_LABELS[r.role], fullId(d, r.full));
+        return row(d, n ? `${ID_LABELS[r.role]} (${n})` : ID_LABELS[r.role], fullId(d, r.full, COUNTERPARTY_GROUPS));
       }),
       'jp-kv id-rows',
     );
@@ -1152,15 +1163,28 @@ class IdBook {
 }
 
 /**
- * A value whole, as code, in groups of four characters for comparing (after its "0x" or "ed25519:"-style prefix). The
- * groups are spans spaced by CSS, so the text (and a copy of it) is the value exactly; never folded or cut.
+ * Whether the rows under the sentences ("To", "Key", "Program", …) space their whole values in groups of four (D876:
+ * off: the founder chose one piece for them too, 2026-11-19; kept as a switch). The user's own account never is.
  */
-export function fullId(d: Dom, full: string): HTMLElement {
+export const COUNTERPARTY_GROUPS = false;
+
+/**
+ * A value whole, as code (D876): nothing added to its text, so its text (and a selection or copy of it) is the value
+ * exactly. It is built of four-character spans (`.grp`, after a "0x" or "ed25519:"-style prefix) with a line-break
+ * opportunity (`<wbr>`) between them, so a line breaks only between two of them and the lines come out nearly even
+ * (auth.css `code.id-full`, `text-wrap: balance`): never a lone character on a line. The spans are never spaced unless
+ * `grouped` (class `grouped`: CSS spacing between spans, the text unchanged), which is how the groups of four come back.
+ */
+export function fullId(d: Dom, full: string, grouped = false): HTMLElement {
   const m = /^(0x|[A-Za-z0-9]{1,12}:)/u.exec(full);
-  const head = m ? m[1] as string : '';
-  const rest = full.slice(head.length);
-  const groups = rest.match(/.{1,4}/gsu) ?? [];
-  return d.h('code', { class: 'mono id-full' }, ...(head ? [d.h('span', { class: 'grp' }, head)] : []), ...groups.map((g) => d.h('span', { class: 'grp' }, g)));
+  const head = m ? (m[1] as string) : '';
+  const parts = [...(head ? [head] : []), ...(full.slice(head.length).match(/.{1,4}/gsu) ?? [])];
+  const el = d.h('code', { class: grouped ? 'mono id-full grouped' : 'mono id-full' });
+  parts.forEach((p, i) => {
+    if (i > 0) el.append(d.h('wbr'));
+    el.append(d.h('span', { class: 'grp' }, p));
+  });
+  return el;
 }
 
 /**
@@ -1292,7 +1316,7 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Near
             row(d, 'Network', passphraseText(d, decoded.networkPassphrase)),
             row(d, 'Network ID', mono(d, decoded.preimage.networkId)),
             row(d, 'Nonce', mono(d, decoded.preimage.nonce)),
-            row(d, 'Valid until ledger', String(decoded.preimage.signatureExpirationLedger)),
+            row(d, 'Valid until ledger', mono(d, String(decoded.preimage.signatureExpirationLedger))),
           ]),
           invocation(d, decoded.preimage.invocation),
         ],
@@ -1367,7 +1391,12 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   book.place(headRefs);
   const network = summary.network ? summaryNodes(d, summary.network, appName) : k.network ? [k.network] : null;
   const headline = amountHeadline(decoded);
-  const keyFacts = [network && row(d, 'Network', ...network), summary.fee && row(d, 'Network fee', ...summaryNodes(d, summary.fee, appName))];
+  // D877: a fee the user doesn't pay reads "Free." in bold after a check mark, in the same row (no box of its own). The
+  // mark is about the fee only, never a sign the request is safe: on a window with a red box it is in the plain text
+  // colour, not the success green (colour matches meaning, D853).
+  const fee = summary.fee && row(d, 'Network fee', ...(summary.freeFee ? [icon(d, 'check', 'fee-free-mark')] : []), ...summaryNodes(d, summary.fee, appName));
+  if (fee && summary.freeFee) fee[1]?.classList.add(...(red.length > 0 ? ['fee-free', 'beside-danger'] : ['fee-free']));
+  const keyFacts = [network && row(d, 'Network', ...network), fee];
   const lines = summary.lines.flatMap((l) => {
     const refs: IdRef[] = [];
     const p = d.h('p', { class: 'summary-line' }, ...summaryNodes(d, l, appName, book, refs));

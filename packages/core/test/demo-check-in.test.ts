@@ -99,13 +99,13 @@ describe('the summary of a check-in', () => {
     expect(s.lines.map(text)).toEqual(LINES);
     expect(s.warnings).toEqual([]);
     expect(s.explainable).toBe(true);
-    expect(text(s.fee!)).toBe('less than 0.000001 ETH');
+    expect(text(s.fee!)).toBe('Less than 0.000001 ETH');
   });
 
   it('sponsored: the same, the fee line Journear’s; the one-time setup note still the first time', () => {
     const later = sponsored([sponsoredCall(CHECK_IN, '0x183ff085')]);
     expect([text(later.headline), later.lines.map(text), later.warnings, later.explainable]).toEqual([HEADLINE, LINES, [], true]);
-    expect(text(later.fee!)).toBe('none. Journear pays it for you.');
+    expect(text(later.fee!)).toBe('Free. Journear pays it for you.');
     const first = sponsored([sponsoredCall(CHECK_IN, '0x183ff085')], 0n);
     expect(first.warnings.map((w) => [w.level, w.code])).toEqual([['warning', 'account_setup']]);
     expect(text(first.headline)).toBe(HEADLINE);
@@ -152,11 +152,11 @@ describe('the summary of a check-in', () => {
 
 describe('punctuation and rounded amounts in composed texts (review of PR 73)', () => {
   it('a fee below the shown precision reads "less than …", never "up to less than"; a rounded one "up to" its rounded-up figure', () => {
-    expect(text(plain(OTHER, '0x', 0n).fee!)).toBe('less than 0.000001 ETH');
+    expect(text(plain(OTHER, '0x', 0n).fee!)).toBe('Less than 0.000001 ETH');
     // 21 000 gas × 1 234 567 000 wei = 0.000025925907 ETH: rounded up, so "up to" stays true without "about".
     const tx = parseEvmTxRequest({ chainId: '0x7a69', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x4995ff58', maxPriorityFeePerGas: '0x1', to: OTHER, value: '0x0', data: '0x' });
     const s = summarizeApproval(decodeApprovalRequest({ kind: 'evm_tx', chain: 'evm', address: SPONSOR_ME, context: { chainId: 31337 }, bytes: evmTxSigningPayload(tx) }), { address: SPONSOR_ME });
-    expect(text(s.fee!)).toBe('up to 0.000026 ETH');
+    expect(text(s.fee!)).toBe('Up to 0.000026 ETH');
   });
 
   it('a left-out step whose line ends with a full stop gets one, not two', () => {

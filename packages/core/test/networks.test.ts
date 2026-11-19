@@ -77,7 +77,7 @@ describe('chain names and native coins, from Hana’s own tables', () => {
     expect(evmChainInfo(84532)).toEqual({ label: 'Base Sepolia (test network)', name: 'Base Sepolia', testnet: true, nativeSymbol: 'ETH' });
     expect(evmChainInfo(57054)).toEqual({ label: 'Sonic Blaze (test network)', name: 'Sonic Blaze', testnet: true, nativeSymbol: 'S' });
     expect(evmChainInfo(97)).toEqual({ label: 'BNB Smart Chain (test network)', name: 'BNB Smart Chain', testnet: true, nativeSymbol: 'tBNB' });
-    expect(evmChainInfo(31337)).toEqual({ label: 'Local test network (Hardhat, Anvil)', name: 'the local test network', testnet: true, nativeSymbol: 'ETH' });
+    expect(evmChainInfo(31337)).toEqual({ label: 'Local test network', name: 'the local test network', testnet: true, nativeSymbol: 'ETH' });
     expect(evmChainInfo(8453)).toEqual({ label: 'Base (real money)', name: 'Base', testnet: false, nativeSymbol: 'ETH' });
     expect(evmChainInfo(137)).toEqual({ label: 'Polygon (real money)', name: 'Polygon', testnet: false, nativeSymbol: 'POL' });
     for (const id of [...Object.keys(TEST_EVM_CHAINS), ...Object.keys(KNOWN_EVM_MAINNETS)]) expect(evmChainInfo(Number(id))?.label).not.toMatch(/testnet|\d{3,}/iu);

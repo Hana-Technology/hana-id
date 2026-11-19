@@ -5,10 +5,12 @@
 // page decodes the subject against the build's own sponsor chains and offers no Approve when they don't match.
 // Also: a Stellar setOptions that sets the user's own key to weight 0 keeps its "you lose control" bullet (PR 65's
 // leftover Low).
-import { approvalDigest, encodeNearTransaction, nearImplicitAccountId, newRequestId, toHex, utf8 } from '@hana-id/core';
+import { approvalDigest, encodeNearTransaction, evmTxSigningPayload, nearImplicitAccountId, newRequestId, parseEvmTxRequest, toHex, utf8 } from '@hana-id/core';
 import { type DecodedApproval, decodeApprovalRequest } from '@hana-id/core/decode';
 import { encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
 import { Keypair, Operation } from '@stellar/stellar-base';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
 import { startApprovePage } from '../../src/auth/approve-page.ts';
@@ -73,8 +75,8 @@ describe('a sponsored action’s window', () => {
     expect(el.querySelector('.danger-box')).toBeNull();
     expect(el.querySelectorAll('.warning-box')).toHaveLength(1);
     expect(el.querySelector('.warning-box p.risk-lead.summary-warning.account-setup')?.textContent).toBe(SETUP);
-    expect(fact(el, 'Network fee')).toBe('none. Journear pays it for you.');
-    expect(fact(el, 'Network')).toBe('Local test network (Hardhat, Anvil)');
+    expect(fact(el, 'Network fee')).toBe('Free. Journear pays it for you.');
+    expect(fact(el, 'Network')).toBe('Local test network');
     // The technical facts are in the details, which start folded.
     const d = details(el);
     expect(d.open).toBe(false);
@@ -321,4 +323,84 @@ describe('NEAR calls: a malformed standard call is red, a value-like name amber 
 
 it('the sponsor fixture’s chain is the pinned local chain', () => {
   expect(SPONSOR_CHAIN).toBe(31337);
+});
+
+// ---- D877: the facts' faces, the free fee and the network's name ----
+describe('D877: words in the text face, exact values in mono; the free fee in bold with a check mark', () => {
+  const valueOf = (el: ParentNode, label: string) => [...el.querySelectorAll('dt')].find((x) => x.textContent === label)?.nextElementSibling as HTMLElement | undefined;
+  /** The text a row's value holds outside any mono element (what the text face shows). */
+  const wordsOf = (dd: Element) => {
+    const c = dd.cloneNode(true) as Element;
+    for (const m of Array.from(c.querySelectorAll('.mono, strong:not(.words)'))) m.remove();
+    return c.textContent ?? '';
+  };
+
+  it('the sponsored fee: “Free. Journear pays it for you.”, “Free.” in bold after a decorative check mark; the network one line’s worth', () => {
+    const el = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
+    const fee = valueOf(el, 'Network fee')!;
+    expect(fee.textContent).toBe('Free. Journear pays it for you.');
+    expect(fee.classList.contains('fee-free')).toBe(true);
+    expect(fee.querySelector('strong')?.textContent).toBe('Free.');
+    const mark = fee.firstElementChild!;
+    expect(mark.matches('svg.ic.fee-free-mark')).toBe(true);
+    expect(mark.getAttribute('aria-hidden')).toBe('true');
+    // Still one row in the summary's facts, no box of its own.
+    expect(fee.closest('dl.jp-kv.summary-facts')).not.toBeNull();
+    expect(fee.closest('.jp-alert')).toBeNull();
+    // Words, not code: nothing in mono in the network or the fee row.
+    expect(valueOf(el, 'Network')?.textContent).toBe('Local test network');
+    expect(valueOf(el, 'Network')?.querySelector('.mono')).toBeNull();
+    expect(fee.querySelector('.mono')).toBeNull();
+  });
+
+  it('an ordinary EVM fee starts with a capital and keeps its exact amount in bold mono; no check mark', () => {
+    const r = { kind: 'evm_tx' as const, chain: 'evm' as const, address: SPONSOR_ME, context: { chainId: 84532 } };
+    const tx = { chainId: '0x14a34', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x3b9aca00', maxPriorityFeePerGas: '0x1', to: RECIPIENT, value: '0x2386f26fc10000', data: '0x' };
+    const decoded = decodeApprovalRequest({ ...r, bytes: evmTxSigningPayload(parseEvmTxRequest(tx)) });
+    const el = render(decoded);
+    const fee = valueOf(el, 'Network fee')!;
+    expect(fee.textContent).toBe('Up to 0.000021 ETH');
+    expect(fee.classList.contains('fee-free')).toBe(false);
+    expect(fee.querySelector('svg')).toBeNull();
+    expect(fee.querySelector('strong')?.textContent).toBe('0.000021 ETH');
+    expect(valueOf(el, 'Network')?.textContent).toBe('Base Sepolia (test network)');
+    // The details: numbers and amounts read exactly are mono; words are not.
+    const d = details(el);
+    for (const label of ['Chain ID', 'To', 'Value', 'Gas limit', 'Maximum network fee', 'Nonce', 'Max fee per gas', 'Priority fee per gas']) {
+      const dd = valueOf(d, label)!;
+      expect(dd.querySelector('.mono'), label).not.toBeNull();
+      expect(wordsOf(dd).trim(), label).toBe('');
+    }
+  });
+
+  it('the sponsored details: the deadline and the relayer’s words in the text face, numbers and addresses in mono', () => {
+    const el = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }), SPONSOR_NOW_MS);
+    const d = details(el);
+    for (const label of ['Chain ID', 'From', 'Action nonce', 'Gas floor']) expect(wordsOf(valueOf(d, label)!).trim(), label).toBe('');
+    expect(wordsOf(valueOf(d, 'Paid by')!)).toBe('Journear’s relayer ');
+    // The time in words; its unix seconds exact, in mono; the same text as validUntil.
+    const until = valueOf(d, 'Valid until')!;
+    expect(until.textContent).toBe(validUntil(sponsorSubject({}).deadline, SPONSOR_NOW_MS));
+    expect(until.querySelector('code.mono')?.textContent).toBe(String(sponsorSubject({}).deadline));
+    expect(wordsOf(until)).toMatch(/^\d{2}:\d{2}.* \(your time; unix \)$/u);
+  });
+
+  it('the check mark speaks of the fee only: beside a red box it is in the text colour, never the success green', () => {
+    const el = render(decodeSponsored({ calls: [sponsoredCall(TOKEN, APPROVE_MAX)] }));
+    expect(el.querySelector('.danger-box')).not.toBeNull();
+    const fee = valueOf(el, 'Network fee')!;
+    expect(fee.textContent).toBe('Free. Journear pays it for you.');
+    expect(fee.className).toBe('fee-free beside-danger');
+    const calm = render(decodeSponsored({ calls: [sponsoredCall(CHECK_IN, CHECK_IN_DATA)] }));
+    expect(calm.querySelector('.danger-box')).toBeNull();
+    expect(valueOf(calm, 'Network fee')?.className).toBe('fee-free');
+  });
+
+  it('the stylesheet: the approval’s values in the text face, mono only for code, the free fee’s mark in the success colour', () => {
+    const css = readFileSync(join(process.cwd(), 'src', 'auth', 'css', 'approval.css'), 'utf8');
+    expect(css).toMatch(/\.request dl\.jp-kv dd \{\s*font-family: var\(--jp-font-body\);/u);
+    expect(css).toMatch(/\.request dl\.jp-kv dd\.fee-free strong \{\s*font-family: var\(--jp-font-body\);/u);
+    expect(css).toMatch(/\.fee-free-mark \{[^}]*color: var\(--jp-success\);/u);
+    expect(css).toMatch(/dd\.fee-free\.beside-danger \.fee-free-mark \{\s*color: var\(--jp-fg\);/u);
+  });
 });

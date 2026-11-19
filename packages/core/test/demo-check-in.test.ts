@@ -102,10 +102,10 @@ describe('the summary of a check-in', () => {
     expect(text(s.fee!)).toBe('Less than 0.000001 ETH');
   });
 
-  it('sponsored: the same, the fee line Journear’s; the one-time setup note still the first time', () => {
+  it('sponsored: the same, the fee free and sponsored by the app (D884); the one-time setup note still the first time', () => {
     const later = sponsored([sponsoredCall(CHECK_IN, '0x183ff085')]);
     expect([text(later.headline), later.lines.map(text), later.warnings, later.explainable]).toEqual([HEADLINE, LINES, [], true]);
-    expect(text(later.fee!)).toBe('Free. Journear pays it for you.');
+    expect(text(later.fee!)).toBe(`Free. Sponsored by ${APP}.`);
     const first = sponsored([sponsoredCall(CHECK_IN, '0x183ff085')], 0n);
     expect(first.warnings.map((w) => [w.level, w.code])).toEqual([['warning', 'account_setup']]);
     expect(text(first.headline)).toBe(HEADLINE);

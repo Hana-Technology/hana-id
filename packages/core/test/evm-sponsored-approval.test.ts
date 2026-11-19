@@ -355,10 +355,11 @@ describe('the sponsored action’s summary (D831, D850)', () => {
     const s = sponsored([sponsoredCall(TOKEN, TRANSFER)]);
     expect(text(s.headline)).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${RECIPIENT}`);
     expect(s.lines.map(text)).toEqual([`Journear doesn’t know this token (${TOKEN}), so it can’t tell what 5,000,000 units are worth. Check the amount in ${APP} first.`]);
-    expect(text(s.fee!)).toBe('Free. Journear pays it for you.');
+    // D884: the app named as the sponsor, as its own part (the page shows the header's name there).
+    expect(text(s.fee!)).toBe(`Free. Sponsored by ${APP}.`);
     expect(s.fee).toBe(SPONSORED_FEE);
-    // D877: "Free." is the row's bold first word, and the page is told the fee is free (its check mark).
-    expect(s.fee![0]).toEqual({ kind: 'strong', text: 'Free.' });
+    expect(s.fee).toEqual([{ kind: 'strong', text: 'Free.' }, ' Sponsored by ', { kind: 'app' }, '.']);
+    // D877: "Free." is the row's bold first word, and the page is told the fee is free (shown only in the details, D884).
     expect(s.freeFee).toBe(true);
     expect(text(s.network!)).toBe('Local test network');
     expect(s.warnings).toEqual([]);
@@ -404,7 +405,7 @@ describe('the sponsored action’s summary (D831, D850)', () => {
     expect(warnings(s).filter((w) => w[1] !== 'account_setup')).toEqual(warnings(p));
     expect(warnings(s)[0]).toEqual(['danger', 'unlimited_spend', `This lets ${SPENDER} (not checked by Journear) take all your tokens from ${TOKEN} (an unlisted token), now or later, with no limit. Approve only if you trust them completely.`]);
     expect(warnings(s)[1]).toEqual(['warning', 'account_setup', SETUP]);
-    expect(text(s.fee!)).toBe('Free. Journear pays it for you.');
+    expect(text(s.fee!)).toBe(`Free. Sponsored by ${APP}.`);
   });
 
   it('every known call reads as it does unsponsored (headline, lines, warnings, explainable)', () => {

@@ -3,16 +3,18 @@
 // words; amounts in NEAR, gas in Tgas, arguments as escaped JSON or hex; the NEAR leaving the account; the
 // account-control banner and warnings; the network line says what Hana checked; NEP-413's recipient up front.
 import { type NearAction, encodeNearDelegateAction, encodeNearTransaction, encodeNep413Message, nearImplicitAccountId, nearPublicKeyString, sha256, utf8 } from '@hana-id/core';
-import { decodeApprovalRequest } from '@hana-id/core/decode';
+import { decodeApprovalRequest, summaryString } from '@hana-id/core/decode';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dom } from '../../src/auth/dom.ts';
 import {
   NEAR_ACCOUNT_CONTROL_BANNER,
+  NEAR_DELEGATE_HEADING,
   NEAR_DELEGATE_NOTES,
   type NearRenderContext,
   NEAR_DELEGATE_NONE,
+  NEAR_SENT_FOR_YOU,
   NEAR_OWN_CONTRACT_TOTAL,
   markOverflowing,
   overflowNote,
@@ -230,17 +232,25 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
   };
   const factRows = (el: Element) => [...el.querySelectorAll('dl.summary-facts dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`);
   const aboveFold = (el: Element) => [...el.children].filter((c) => !c.matches('details')).map((c) => c.textContent).join('\n');
+  /** D884: the free fee's row, first in the details. */
+  const detailsFee = (el: Element) => {
+    const first = el.querySelector('details.request-details > .details-body')?.firstElementChild;
+    return first?.matches('dl.jp-kv.fee-facts') ? [...first.querySelectorAll('dt')].map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`) : [];
+  };
+  const FEE = 'Network fee: Free. Sponsored by Partner App.';
 
-  it('D858: the stamps demo’s relayed call for a test app: network, the fee row, the acts-as-you risk in amber, the test-app note only', () => {
+  it('D858, D884: the stamps demo’s relayed call for a test app: network, the acts-as-you risk in amber, the test-app note only; the free fee in the details', () => {
     const el = relayed([call('{"text":"hi"}')], true);
-    expect(factRows(el)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: Free for you. Someone else pays it.']);
-    // No "NEAR leaving your account" row, no blue note: "someone else pays" is said once, and only about the fee.
+    // D884: no fee row in the main view (the user doesn't pay it); the network row stays.
+    expect(factRows(el)).toEqual(['Network: NEAR test network (checked by Journear)']);
+    expect(detailsFee(el)).toEqual([FEE]);
+    // No "NEAR leaving your account" row, no blue note, nothing about who pays above the fold.
     const shown = aboveFold(el);
     expect(shown).not.toContain('NEAR leaving your account');
+    expect(shown).not.toMatch(/fee|sponsor|pays/iu);
     // Never a claim that it costs nothing (as corrected 2026-11-18): a call can use what the user keeps there.
     expect(shown).not.toMatch(/nothing|cost to you|costs? you/iu);
     expect(el.querySelector('.request > .jp-alert-info, .request > .note')).toBeNull();
-    expect(shown.split('Someone else pays').length - 1).toBe(1);
     // The one real risk, amber, naming the contract; the network sentence is dropped (the vault binds a test app's).
     const amber = el.querySelector('.warning-box');
     expect(amber?.querySelector('.risk-lead')?.textContent).toBe('This acts as you: guestbook.testnet can use anything you keep with it.');
@@ -248,19 +258,22 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(el.querySelector('.danger-box')).toBeNull();
     expect(el.textContent).not.toContain('could also be used');
     // Never "Journear pays": a partner may relay it itself.
-    expect(shown).not.toMatch(/Journear pays/u);
-    // Who pays, in technical words, and the expiry: in the details.
+    expect(el.textContent).not.toMatch(/Journear pays/u);
+    // Who sends and pays, the refund rule and the expiry: in the details, the app named as the sponsor (D884).
     const details = el.querySelector('details.request-details')!;
-    expect(details.textContent).toContain('NEAR transaction, fee paid by a relayer');
-    expect(details.textContent).toContain(NEAR_DELEGATE_NOTES.relayer);
+    expect(details.querySelector('h3')?.textContent).toBe(NEAR_DELEGATE_HEADING);
+    expect(NEAR_DELEGATE_HEADING).toBe('NEAR transaction, sent for you');
+    expect(details.querySelector('p.relayer-note')?.textContent).toBe(summaryString(NEAR_DELEGATE_NOTES.relayer, 'Partner App'));
+    expect(details.querySelector('p.relayer-note strong.app-name')?.textContent).toBe('Partner App');
     expect(details.textContent).toContain('Valid until block277000600');
   });
 
-  it('D877: the relayed fee row has the free fee’s look (bold “Free for you.” after a check mark); a plain NEAR transaction’s doesn’t', () => {
+  it('D877, D884: the relayed fee row, in the details, has the free fee’s look (bold “Free.” after a check mark, the app’s name as the header’s); a plain NEAR transaction’s is in the main view and doesn’t', () => {
     const el = relayed([call('{"text":"hi"}')], true);
-    const fee = [...el.querySelectorAll('dl.summary-facts dt')].find((dt) => dt.textContent === 'Network fee')?.nextElementSibling;
+    const fee = el.querySelector('details dl.fee-facts dd');
     expect(fee?.classList.contains('fee-free')).toBe(true);
-    expect(fee?.querySelector('strong')?.textContent).toBe('Free for you.');
+    expect(fee?.querySelector('strong')?.textContent).toBe('Free.');
+    expect(fee?.querySelector('strong.app-name')?.textContent).toBe('Partner App');
     expect(fee?.querySelector('svg.fee-free-mark')?.getAttribute('aria-hidden')).toBe('true');
     const own = tx([{ type: 'transfer', deposit: 10n ** 24n }], 'bob.testnet');
     const ownFee = [...own.querySelectorAll('dl.summary-facts dt')].find((dt) => dt.textContent === 'Network fee')?.nextElementSibling;
@@ -277,21 +290,25 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     expect(NEAR_DELEGATE_NOTES.network('mainnet')).toBe('This approval could also be used on the NEAR test network if your account exists there.');
     // Not a blue box: a risk is never in an information box (D853).
     expect(el.textContent).not.toContain('doesn’t name a network');
-    expect(factRows(el)).toEqual(['Network: NEAR test network. Only the app says so; Journear couldn’t check.', 'Network fee: Free for you. Someone else pays it.']);
+    expect(factRows(el)).toEqual(['Network: NEAR test network. Only the app says so; Journear couldn’t check.']);
+    expect(detailsFee(el)).toEqual([FEE]);
   });
 
-  it('D858: NEAR attached to a free call is someone else’s, in its own row; tokens or NEAR of the user’s keep the fee and total rows', () => {
+  it('D858, D884: NEAR attached to a free call is someone else’s, in its own row; tokens or NEAR of the user’s keep the total row; the fee is in the details', () => {
     const attached = relayed([{ type: 'functionCall', methodName: 'collect', args: utf8('{}'), gas: 30_000_000_000_000n, deposit: 10n ** 24n }], true);
-    expect(factRows(attached)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: Free for you. Someone else pays it.']);
-    expect(aboveFold(attached)).toContain('NEAR it sends, paid by someone else1 NEAR');
-    // A token transfer: the fee row and the NEAR-leaving row as decided (D723, D729).
+    expect(factRows(attached)).toEqual(['Network: NEAR test network (checked by Journear)']);
+    expect(detailsFee(attached)).toEqual([FEE]);
+    expect(aboveFold(attached)).toContain(`${NEAR_SENT_FOR_YOU}1 NEAR`);
+    expect(NEAR_SENT_FOR_YOU).toBe('NEAR it sends, not from you');
+    // A token transfer: the NEAR-leaving row as decided (D723, D729).
     const tokens = relayed([{ type: 'functionCall', methodName: 'ft_transfer', args: utf8('{"receiver_id":"bob.testnet","amount":"5"}'), gas: 30_000_000_000_000n, deposit: 1n }], true, 'usdc.testnet');
-    expect(factRows(tokens)).toEqual(['Network: NEAR test network (checked by Journear)', 'Network fee: Free for you. Someone else pays it.']);
+    expect(factRows(tokens)).toEqual(['Network: NEAR test network (checked by Journear)']);
+    expect(detailsFee(tokens)).toEqual([FEE]);
     expect(aboveFold(tokens)).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
     expect(aboveFold(tokens)).not.toMatch(/nothing\.|cost to you/iu);
     // Every relayed call keeps the amber acts-as-you line in view.
     for (const el of [attached, tokens]) expect(el.querySelector('.warning-box')?.textContent).toContain('This acts as you:');
-    expect(NEAR_DELEGATE_NONE).toBe('None of your NEAR (someone else pays the fee and any NEAR it sends). Tokens it moves are yours.');
+    expect(NEAR_DELEGATE_NONE).toBe('None of your NEAR. Tokens it moves are yours.');
   });
 
   it('a delegate action: what it sends is the relayer’s; a burn or a deleted account still leaves the user’s', () => {
@@ -299,8 +316,8 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
       const bytes = encodeNearDelegateAction({ senderId: ME, receiverId: ME, actions, nonce: 7n, maxBlockHeight: 9n, publicKey: { type: 'ed25519', bytes: PUB } });
       return renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_delegate', chain: 'near', address: ME, context: { nearNetwork: 'testnet' }, bytes }), 'P', TESTNET).textContent!;
     };
-    expect(NEAR_DELEGATE_NOTES.relayer).toBe(
-      'Someone else (a relayer) sends this for you. They pay the network fee and prepay any NEAR it attaches or sends; if an action fails, that NEAR comes back to your account. The actions run as your account.',
+    expect(summaryString(NEAR_DELEGATE_NOTES.relayer, 'P')).toBe(
+      'Someone else sends this for you, sponsored by P. They pay the network fee and any NEAR it attaches or sends. If an action fails, that NEAR comes back to your account. The actions run as your account.',
     );
     const sends = render([{ type: 'transfer', deposit: 2n * 10n ** 24n }]);
     expect(sends).toContain(`NEAR leaving your account${NEAR_DELEGATE_NONE}`);
@@ -308,7 +325,7 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
     const own = render([{ type: 'functionCall', methodName: 'm', args: new Uint8Array(0), gas: 1n, deposit: 0n }]);
     expect(own).toContain(`NEAR leaving your account${NEAR_OWN_CONTRACT_TOTAL}`);
     expect(own).toContain(NEAR_ACCOUNT_CONTROL_BANNER);
-    expect(sends).toContain('NEAR it sends, paid by someone else2 NEAR');
+    expect(sends).toContain(`${NEAR_SENT_FOR_YOU}2 NEAR`);
     expect(render([{ type: 'deployGlobalContract', code: new Uint8Array(10), deployMode: 'accountId' }])).toContain('NEAR leaving your account0.001 NEAR');
     expect(render([{ type: 'deleteAccount', beneficiaryId: 'bob.testnet' }])).toContain('All of it (the account is deleted)');
   });

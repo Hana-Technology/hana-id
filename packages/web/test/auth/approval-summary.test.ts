@@ -24,10 +24,10 @@ import { ZERO_COST } from '../../../core/test/plain-words.ts';
 import { dom } from '../../src/auth/dom.ts';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { policyJson } from '../../../core/test/policy-fixtures.ts';
-import { ACCOUNT_CONTROL_BANNER, COUNTERPARTY_GROUPS, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, fullId, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
+import { ACCOUNT_CONTROL_BANNER, COUNTERPARTY_GROUPS, DETAILS_LABELS, NEAR_ACCOUNT_CONTROL_BANNER, NEAR_DELEGATE_HEADING, NEAR_DELEGATE_NONE, NEAR_DELEGATE_NOTES, NEAR_SENT_FOR_YOU, NEAR_OWN_CONTRACT_TOTAL, NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, fullId, overflowNote, markOverflowing, nearMessageWarning, renderApproval, watchOverflowing } from '../../src/auth/render-approval.ts';
 import { PASSPHRASE, USER, addSignerOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { idProblems, jargonWatch, shownText } from './plain-words.ts';
-import { shortId } from '@hana-id/core/decode';
+import { shortId, summaryString } from '@hana-id/core/decode';
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
 
 /** A public key computed here (never a literal in the source), for the full-key assertions. */
@@ -570,7 +570,7 @@ describe('D859: addresses and keys in sentences: short there, whole once in thei
 
 describe('the renderer’s own fixed texts claim no zero cost (review of PR 80)', () => {
   it('every fixed note, row and banner passes the zero-cost scan', () => {
-    const fixed = [NEAR_DELEGATE_NONE, NEAR_OWN_CONTRACT_TOTAL, NEAR_DELEGATE_NOTES.relayer, NEAR_DELEGATE_NOTES.network('testnet'), NEAR_DELEGATE_NOTES.network('mainnet'), NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, ACCOUNT_CONTROL_BANNER, NEAR_ACCOUNT_CONTROL_BANNER, TEST_APP_NOTE, TEST_APP_DEMO_NOTE, MAINNET_DEMO_BANNER, MAINNET_DEMO_WHY, OUT_OF_POLICY_TEXT, overflowNote(10)];
+    const fixed = [NEAR_DELEGATE_NONE, NEAR_OWN_CONTRACT_TOTAL, NEAR_SENT_FOR_YOU, NEAR_DELEGATE_HEADING, summaryString(NEAR_DELEGATE_NOTES.relayer, 'Partner App'), NEAR_DELEGATE_NOTES.network('testnet'), NEAR_DELEGATE_NOTES.network('mainnet'), NO_NETWORK_NOTE, TYPED_DATA_NO_CHAIN, ACCOUNT_CONTROL_BANNER, NEAR_ACCOUNT_CONTROL_BANNER, TEST_APP_NOTE, TEST_APP_DEMO_NOTE, MAINNET_DEMO_BANNER, MAINNET_DEMO_WHY, OUT_OF_POLICY_TEXT, overflowNote(10)];
     for (const t of fixed) expect(ZERO_COST.test(t), t).toBe(false);
     // The test-app note claims no more than holds: it doesn't promise nothing is approved on a real network.
     expect(TEST_APP_NOTE).toBe('This app is a test version, so it works only with test money. Don’t keep real money in this account.');

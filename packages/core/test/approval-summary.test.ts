@@ -9,7 +9,10 @@ import {
   type DecodedApproval,
   type NearAction,
   PERMIT2_ADDRESS,
+  FREE_FEE,
   PRACTICALLY_UNLIMITED,
+  RELAYED_FEE,
+  SPONSORED_FEE,
   UNEXPLAINED_SUMMARY,
   STELLAR_MAINNET_PASSPHRASE,
   type StellarOperation,
@@ -60,8 +63,19 @@ const summarizeApproval: typeof summarizeApprovalRaw = (d, ctx) => {
   // No chain jargon in what the user reads (D853), in Journear's own words (codes, the values a request names, are
   // left out: an account may be "bob.testnet").
   if (!allowFallback) jargonHits.push(...jargonIn(s), ...zeroCostIn(s));
+  // D884: the page shows a fee in the main view only when the user pays it (`freeFee` absent). A free fee is always
+  // FREE_FEE ("Free. Sponsored by {App}."), only on the two kinds whose fee the user never pays; any other fee is
+  // what the user pays and never reads as free.
+  const free = s.fee === FREE_FEE;
+  if (free !== (s.freeFee === true) || (free && d.kind !== 'evm_sponsored' && d.kind !== 'near_delegate') || (!free && s.fee && /free|sponsor/iu.test(summaryString(s.fee, APP))))
+    freeFeeHits.push(`${d.kind}: ${s.fee ? summaryString(s.fee, APP) : 'no fee'} (freeFee ${String(s.freeFee)})`);
+  if ((d.kind === 'evm_sponsored' || d.kind === 'near_delegate') && s !== UNEXPLAINED_SUMMARY && !free) freeFeeHits.push(`${d.kind} without the free fee`);
   return s;
 };
+const freeFeeHits: string[] = [];
+afterAll(() => {
+  expect(freeFeeHits).toEqual([]);
+});
 const punctuationHits: string[] = [];
 const jargonHits: string[] = [];
 afterAll(() => {
@@ -76,7 +90,7 @@ it('the jargon check (the one shared list) catches the brief’s words and spare
 });
 it('the zero-cost check catches any claim that a request costs nothing (D858 as corrected); a fee statement passes', () => {
   for (const w of ['Cost to you: nothing.', 'This costs you nothing.', 'nothing. Someone else pays the fee.'.replace('nothing.', 'It costs nothing.'), 'It doesn’t move any money.']) expect(ZERO_COST.test(w), w).toBe(true);
-  for (const w of ['Free for you. Someone else pays it.', 'Free. Journear pays it for you.']) expect(ZERO_COST.test(w), w).toBe(false);
+  for (const w of ['Free for you. Someone else pays it.', 'Free. Journear pays it for you.', 'Free. Sponsored by Journear demo.']) expect(ZERO_COST.test(w), w).toBe(false);
 });
 afterAll(() => {
   expect(fallbackHits).toEqual([]);
@@ -551,7 +565,10 @@ describe('NEAR', () => {
     const s = delegate([call('collect', '{"stamp":"arrival"}')]);
     expect(headline(s)).toBe(`${APP} wants to use stamps.testnet (collect)`);
     // Never "Journear pays" (a partner may relay it), never "costs nothing" (a call can use what the user keeps there).
-    expect(text(s.fee!)).toBe('Free for you. Someone else pays it.');
+    // D884: the app named as the sponsor, the same words as a sponsored EVM action's.
+    expect(text(s.fee!)).toBe(`Free. Sponsored by ${APP}.`);
+    expect(s.fee).toBe(RELAYED_FEE);
+    expect(RELAYED_FEE).toBe(SPONSORED_FEE);
     expect(s.freeFee).toBe(true);
     expect(s.noNearLeaves).toBe(true);
     expect(s.explainable).toBe(true);
@@ -574,7 +591,7 @@ describe('NEAR', () => {
 
   it('D858: the repeated "None of your NEAR" row goes only when no NEAR or tokens of the user’s can leave; the fee row always stays', () => {
     const free = (s: ApprovalSummary) => [s.noNearLeaves === true, s.fee === null ? null : text(s.fee)];
-    const fee = 'Free for you. Someone else pays it.';
+    const fee = `Free. Sponsored by ${APP}.`;
     // A transfer in a delegate action is the relayer's NEAR (nearcore); no call, so no acts-as-you.
     const t = delegate([{ type: 'transfer', deposit: 10n ** 24n }], 'bob.testnet');
     expect(free(t)).toEqual([true, fee]);

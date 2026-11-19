@@ -145,6 +145,11 @@ dl.id-rows dd + dt {
   color: var(--jp-fg);
 }
 
+/* A free fee is only in the details, first (D884): one rule above it; the "Your account" row's own rule is under it. */
+.request-details > .details-body > dl.fee-facts {
+  border-bottom: 0;
+}
+
 /* The user's own account in the details (D876): as the rows above, then Copy and what it did. */
 .copy-line {
   display: flex;
@@ -573,4 +578,11 @@ p.countdown {
   font-size: var(--jp-text-sm);
   /* The digits don't shift the line as they change. */
   font-variant-numeric: tabular-nums;
+}
+
+/* The words above a message being signed (D886): small and quiet, the message's box right under them. */
+.request p.message-label {
+  margin: 0 0 calc(-1 * var(--jp-space-2));
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
 }

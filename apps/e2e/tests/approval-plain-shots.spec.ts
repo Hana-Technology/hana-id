@@ -1,5 +1,6 @@
 // The approval window's screens for the plain-wording review (D853, D858–D860), saved for the founder at the real
-// popup's size (420 × 680, the whole page). Runs only with HANA_SHOTS_DIR set, in Chromium:
+// popup's size (420 × 680, the whole page); D884's (where the network fee is) also at 390 px and with the details
+// open. Runs only with HANA_SHOTS_DIR set, in Chromium:
 //
 //   HANA_SHOTS_DIR=<dir> corepack pnpm exec playwright test --project=chromium tests/approval-plain-shots.spec.ts
 //
@@ -48,6 +49,21 @@ async function popupFor(page: Page, name: string, action: string, ...args: unkno
 async function shot(popup: Page, name: string): Promise<void> {
   await popup.setViewportSize(POPUP);
   await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
+}
+
+const SIZES = { phone: { width: 390, height: 844 }, popup: POPUP } as const;
+
+/** A screen at both sizes, folded and then with the details open (D884). */
+async function feeShots(popup: Page, name: string): Promise<void> {
+  const details = popup.locator('details.request-details');
+  for (const open of [false, true]) {
+    if (open) await popup.locator('summary.details-toggle').click();
+    await expect(details).toHaveJSProperty('open', open);
+    for (const [size, viewport] of Object.entries(SIZES)) {
+      await popup.setViewportSize(viewport);
+      await popup.screenshot({ path: `${SHOTS}/${name}-${open ? 'details' : 'main'}-${size}.png`, fullPage: true, animations: 'disabled' });
+    }
+  }
 }
 
 async function done(page: Page, popup: Page, name: string): Promise<void> {
@@ -150,6 +166,115 @@ test.describe('plain-wording screens', () => {
     await expect(popup.locator('h1.outcome')).toBeVisible();
     await shot(popup, 'rejected-result');
   });
+
+  // D884: where the network fee is, free or not. Each screen at a phone's width (390 px) and at the popup's size, the
+  // main view and then the details open: `{name}-{main|details}-{phone|popup}.png`.
+  test('the network fee, free and not (D884)', async ({ page }) => {
+    await openPartner(page, await newApp());
+    const { stellar } = await login(page);
+    const near = (await page.evaluate(() => (window as any).e2e.addresses().near)) as string;
+    const me = (await page.evaluate(() => (window as any).e2e.addresses().evm)) as `0x${string}`;
+    const key = { type: 'ed25519' as const, bytes: nearImplicitPublicKey(near) };
+    await nearRpc('e2e_near_activate', { account_id: near });
+
+    // Not free: an EVM send the user pays for.
+    let popup = await popupFor(page, 'send', 'ethSignTx', evmTx());
+    await feeShots(popup, 'fee-evm-send');
+
+    // Free: the sponsored check-in, first time (the amber setup box) and later; an unlimited permission (a red box).
+    const subject = (over: Partial<EvmSponsorSubject>): EvmSponsorSubject => ({
+      chainId: EVM_CHAIN_ID,
+      account: me,
+      delegate: (SPONSOR_DELEGATES[EVM_CHAIN_ID] as { address: `0x${string}` }).address,
+      authNonce: null,
+      calls: [{ to: (DEMO_CHECK_IN[EVM_CHAIN_ID] as { address: `0x${string}` }).address, value: 0n, data: '0x183ff085' }],
+      executeNonce: 1n,
+      deadline: BigInt(Math.floor(Date.now() / 1000) + 600),
+      relayer: e2eRelayer().address,
+      minGas: 100_000n,
+      ...over,
+    });
+    await inject(popup, 'evm_sponsored', encodeSponsorSubject(subject({ authNonce: 0n, executeNonce: 0n })), me, EVM_CHAIN_ID);
+    await expect(popup.locator('.warning-box p.risk-lead.account-setup')).toBeVisible();
+    await feeShots(popup, 'fee-sponsored-check-in-first');
+    await inject(popup, 'evm_sponsored', encodeSponsorSubject(subject({})), me, EVM_CHAIN_ID);
+    await expect(popup.locator('.risk-box')).toHaveCount(0);
+    await feeShots(popup, 'fee-sponsored-check-in-later');
+    await inject(popup, 'evm_sponsored', encodeSponsorSubject(subject({ calls: [{ to: UNLISTED, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) as `0x${string}` }] })), me, EVM_CHAIN_ID);
+    await expect(popup.locator('.danger-box')).toBeVisible();
+    await feeShots(popup, 'fee-sponsored-unlimited-permission');
+    await inject(popup, 'evm_sponsored', encodeSponsorSubject(subject({ calls: [{ to: UNLISTED, value: 0n, data: call('deposit()') as `0x${string}` }] })), me, EVM_CHAIN_ID);
+    await expect(popup.getByText('None of your ETH is used.')).toBeVisible();
+    await feeShots(popup, 'fee-sponsored-quiet-call');
+    await popup.close();
+    await okValue(page, 'send').catch(() => undefined);
+
+    // Free: the stamps demo's relayed call (D858), and one that attaches NEAR (someone else's, nearcore).
+    const delegate = (actions: NearAction[], n: bigint) =>
+      base64Encode(encodeNearDelegateAction({ senderId: near, receiverId: E2E_STAMPS, actions, nonce: (NEAR_HEIGHT - 1n) * 1_000_000n + n, maxBlockHeight: NEAR_HEIGHT + 100n, publicKey: key }));
+    popup = await popupFor(page, 'delegate', 'nearSignDelegate', delegate([collect], 7n));
+    await feeShots(popup, 'fee-near-relayed');
+    await done(page, popup, 'delegate');
+    popup = await popupFor(page, 'attached', 'nearSignDelegate', delegate([{ ...collect, deposit: 10n ** 24n }], 8n));
+    await feeShots(popup, 'fee-near-relayed-attaches-near');
+    await done(page, popup, 'attached');
+
+    // Not free: a NEAR transfer the user signs and pays for.
+    popup = await popupFor(page, 'near', 'nearSignTx', base64Encode(encodeNearTransaction({ signerId: near, publicKey: key, nonce: 12n, receiverId: E2E_STAMPS, blockHash: NEAR_BLOCK, actions: [{ type: 'transfer', deposit: 10n ** 24n }] })));
+    await feeShots(popup, 'fee-near-transfer');
+    await done(page, popup, 'near');
+
+    // Not free: a Stellar payment.
+    const xdr = new TransactionBuilder(new Account(stellar, '100'), { fee: '100', networkPassphrase: Networks.TESTNET })
+      .addOperation(Operation.payment({ destination: Keypair.random().publicKey(), asset: Asset.native(), amount: '1.5' }))
+      .setTimeout(300)
+      .build()
+      .toXDR();
+    popup = await popupFor(page, 'pay', 'stellarSignXdr', xdr);
+    await feeShots(popup, 'fee-stellar-payment');
+    await done(page, popup, 'pay');
+  });
+
+  // D886: a message signature's window, for a test app and a live app, at a phone's width (390 px), folded:
+  // `msg-{kind}-{test|live}-phone.png`.
+  for (const live of [false, true]) {
+    test(`message signatures, ${live ? 'a live app' : 'a test app'} (D886)`, async ({ page }) => {
+      await openPartner(page, live ? await newLiveApp() : await newApp(), live ? { live: true } : {});
+      await login(page);
+      const tag = live ? 'live' : 'test';
+      const phone = async (popup: Page, name: string) => {
+        await popup.setViewportSize(SIZES.phone);
+        await popup.screenshot({ path: `${SHOTS}/msg-${name}-${tag}-phone.png`, fullPage: true, animations: 'disabled' });
+      };
+      let popup = await popupFor(page, 'stellar', 'stellarSignMessage', 'Journear Passport testnet demo: this signature proves nothing and moves nothing.');
+      await phone(popup, 'stellar');
+      await done(page, popup, 'stellar');
+      popup = await popupFor(page, 'evm', 'personalSign', 'Welcome to Stamp Trail!\n\nSign this message to prove you own this wallet.');
+      await phone(popup, 'personal-sign');
+      await done(page, popup, 'evm');
+      const typed = (chainId?: number) =>
+        JSON.stringify({
+          types: { EIP712Domain: [{ name: 'name', type: 'string' }, ...(chainId ? [{ name: 'chainId', type: 'uint256' }] : [])], Hello: [{ name: 'text', type: 'string' }] },
+          primaryType: 'Hello',
+          domain: { name: 'Stamp Trail', ...(chainId ? { chainId } : {}) },
+          message: { text: 'Hello from Stamp Trail' },
+        });
+      // Text with a hidden direction-changing character: Journear can't show it as text (D884's review).
+      popup = await popupFor(page, 'hex', 'personalSign', 'pay\u202eevil');
+      await expect(popup.getByText('Sign only if you know why you’re signing it', { exact: false })).toBeVisible();
+      await phone(popup, 'personal-sign-unreadable');
+      await done(page, popup, 'hex');
+      popup = await popupFor(page, 'typed', 'ethSignTypedData', typed(EVM_CHAIN_ID));
+      await phone(popup, 'typed-data');
+      await done(page, popup, 'typed');
+      popup = await popupFor(page, 'typed0', 'ethSignTypedData', typed());
+      await phone(popup, 'typed-data-no-network');
+      await done(page, popup, 'typed0');
+      popup = await popupFor(page, 'nep413', 'nearSignMessage', 'Sign in to Stamp Trail', 'localhost');
+      await phone(popup, 'near');
+      await done(page, popup, 'nep413');
+    });
+  }
 
   test('a live app', async ({ page }) => {
     await openPartner(page, await newLiveApp(), { live: true });

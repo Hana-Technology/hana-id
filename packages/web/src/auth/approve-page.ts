@@ -41,7 +41,7 @@ import { type Dom, dom, errorView, originText, row, rows } from './dom.ts';
 import { GuardHint, coarsePointer, quietly } from './guard-hint.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
-import { fullId, renderApproval, watchOverflowing } from './render-approval.ts';
+import { fullId, renderApproval, testAppNoteKind, watchOverflowing } from './render-approval.ts';
 import { renderConsent } from './render-consent.ts';
 import { BTN, alert, icon, reservedLine } from './ui.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
@@ -158,6 +158,12 @@ export const MAINNET_DEMO_WHY = `This test app uses real money with keys from ${
 // It claims no more than holds (review of PR 80): a test app's relayed NEAR approval could still run on the real
 // network if the account exists there with the same key (D729's accepted residual), and the advice covers that case.
 export const TEST_APP_NOTE = 'This app is a test version, so it works only with test money. Don’t keep real money in this account.';
+/**
+ * The note for a test app's typed data that names no network (D886): the plain note's "works only with test money"
+ * would be untrue next to the amber line saying the signature may work on any network. (A message or raw signing says
+ * it in the window's own network note: `NO_NETWORK_TEST_APP_NOTE`.)
+ */
+export const TEST_APP_NOT_ONLY_TEST_NOTE = 'This app is a test version, but this signature isn’t limited to test money. Don’t keep real money in this account.';
 /**
  * The same note for a test app with the mainnet demo on (D428), where the first one would be false: what the demo
  * signs, that it always asks, and that the custody is still test custody.
@@ -325,10 +331,20 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
   }
 
   /** A test app's note: what the mainnet demo allows when the vault says it is on (a dev testnet build only). */
-  function testAppNote(msg: { testApp?: true; mainnetDemo?: true }): HTMLElement | null {
+  /** Whether the mainnet demo is on for this test app (D428): its own note then. */
+  const demoOn = (msg: { mainnetDemo?: true }): boolean => msg.mainnetDemo === true && env.devEnv && env.network === 'testnet';
+
+  /**
+   * The test-app note. For a request (`decoded`) whose signature names no network (D886): a message or raw signing gets
+   * it inside the window's own network note (none here); typed data with no network gets the "not limited to test
+   * money" form. The real-money demo's note is unchanged.
+   */
+  function testAppNote(msg: { testApp?: true; mainnetDemo?: true }, decoded?: DecodedApproval | null): HTMLElement | null {
     if (!msg.testApp) return null;
-    const demoOn = msg.mainnetDemo === true && env.devEnv && env.network === 'testnet';
-    return alert(d, 'info', { class: 'note test-app' }, demoOn ? TEST_APP_DEMO_NOTE : TEST_APP_NOTE);
+    if (demoOn(msg)) return alert(d, 'info', { class: 'note test-app' }, TEST_APP_DEMO_NOTE);
+    const kind = decoded ? testAppNoteKind(decoded) : 'plain';
+    if (kind === 'here') return null;
+    return alert(d, 'info', { class: 'note test-app' }, kind === 'not_only_test' ? TEST_APP_NOT_ONLY_TEST_NOTE : TEST_APP_NOTE);
   }
 
   function header(msg: { appName: string; parentOrigin: string; logoUrl?: string }, extra?: string): HTMLElement {
@@ -560,7 +576,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
       // A test app's request the popup itself reads as for a demo mainnet (the vault signs those only under the demo).
       const demo = msg.testApp && decoded ? demoNetworkOf(decoded) : null;
       const notes = [
-        demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg),
+        demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg, decoded),
         // The out-of-policy case (the confirm pattern's warning alert): why the app's rules didn't sign this one.
         auto?.reason ? alert(d, 'warning', { class: 'note out-of-policy' }, d.h('span', {}, d.h('strong', {}, msg.appName), OUT_OF_POLICY_TEXT), ' ', d.h('span', {}, `Why: ${autoApproveReasonText(auto.reason)}.`)) : null,
       ];
@@ -573,7 +589,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
         // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [accountRow(msg.address), supportId], nowMs: now() })
+          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, testAppNoteHere: msg.testApp === true && !demo && !demoOn(msg), parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [accountRow(msg.address), supportId], nowMs: now() })
           : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem, msg.appName, msg.address)),
         buttons('Approve', decoded !== null, msg.id),
         auto?.active ? stopAutoApproveButton(auto.label) : null,

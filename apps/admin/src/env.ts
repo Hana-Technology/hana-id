@@ -94,6 +94,8 @@ export interface AdminRpcClient {
   pendingUpgrades(c: unknown): Answer<{ pendingUpgrades: PendingUpgradesView }>;
   /** Retention (C13, the monthly job, a system actor): app_changes and guarded_changes past 60 months. */
   purgeAudit(c: unknown): Answer<ApiPurgeAuditResult>;
+  /** D872: this Worker had the usage ledger open (a wake-up of the Neon compute estimate), with a cron run's records. */
+  neonWake(c: unknown): Answer<{ noted: boolean }>;
   /** The System status page (D425): the API's build, hot DB, crons, notice backlog, pool keys and governance. */
   systemStatus(c: unknown): Answer<ApiSystemStatus>;
   /** "Free network fees" (D843): one sponsored chain's relayer, its waiting transactions and staff log. */
@@ -248,6 +250,13 @@ export interface Env {
    * only in the `Authorization` header of this Worker's calls to WATCHDOG_URL, never logged, never in a response.
    */
   WATCHDOG_STATUS_TOKEN?: string;
+  /**
+   * D872: `admin.opsEveryMinutes` when it isn't the default 5: `15` opens the ledger for the feed and the watcher only
+   * in the 5-minute run at :00, :15, :30 and :45 (src/neon.ts). Anything but `15` is 5.
+   */
+  OPS_EVERY_MINUTES?: string;
+  /** D872: `usage.neonPlan` (JSON `{computeHoursPerMonth, computeUnits}`): report each ledger wake-up to the API. */
+  NEON_PLAN?: string;
   /** The API Worker's `AdminRpc` (the admin Worker is its only caller). */
   API: Fetcher & AdminRpcClient;
   /** The console Worker's `StaffRpc` (the admin Worker is its only caller). */

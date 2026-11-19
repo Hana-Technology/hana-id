@@ -57,13 +57,38 @@ CREATE INDEX near_relay_billing_todo ON near_relay_billing (next_try_at) WHERE m
 -- The daily nonce check: the records of one relay key between two of its nonces.
 CREATE INDEX near_relay_billing_nonce ON near_relay_billing (relayer_pk, relayer_nonce);
 
+-- Neon compute on the free plan (D872; edited into this file in place before it was applied anywhere, as 0022 and 0023
+-- were before): only with the `NEON_PLAN` var. One row per UTC month of the usage ledger's wake-ups as our Workers
+-- noted them (the estimate of the month's compute-hours: packages/console-core/src/neon-compute.ts): the closed
+-- windows' total, the open window, how many windows, the highest alert raised (0, 70, 90). One small UPSERT per
+-- wake-up (a login's usage write, a cron run that opened the ledger, a staff page that did). No user data. Kept (one
+-- row a month).
+CREATE TABLE neon_compute (
+  month      TEXT PRIMARY KEY CHECK (length(month) = 7 AND month GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'),
+  closed_ms  INTEGER NOT NULL CHECK (closed_ms >= 0),
+  win_start  INTEGER NOT NULL,
+  win_end    INTEGER NOT NULL CHECK (win_end >= win_start),
+  windows    INTEGER NOT NULL CHECK (windows >= 1),
+  alerted    INTEGER NOT NULL DEFAULT 0 CHECK (alerted IN (0, 70, 90)),
+  updated_at INTEGER NOT NULL
+) WITHOUT ROWID;
+-- The admin Worker's runs as each last saw the ledger (D872): its records `cron.last_run` and `ledger_cron.last_run`
+-- and `ledger.health` (reachable, partitions ahead, settlement backlog), handed over with the run's wake-up so the
+-- System status page shows them without waking Neon. Counts and timestamps only.
+CREATE TABLE neon_admin_runs (
+  key        TEXT PRIMARY KEY CHECK (key IN ('cron.last_run', 'ledger_cron.last_run', 'ledger.health')),
+  value_json TEXT NOT NULL CHECK (json_valid(value_json) AND length(value_json) <= 4096),
+  updated_at INTEGER NOT NULL
+) WITHOUT ROWID;
+
 -- `security_events` gains `near_billing_late` (NEAR relay billing records missed or parked, not final past the give-up
 -- time, not copied to the usage ledger an hour on, or the relay key's nonces showing transactions without a record; once
--- a UTC day, with the counts).
+-- a UTC day, with the counts) and `neon_compute_high` (D872: the month's Neon compute estimate reached 70% or 90% of
+-- the free plan's allowance; once per threshold a month).
 CREATE TABLE security_events_new (
   id          TEXT PRIMARY KEY,
   detected_at INTEGER NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'evm_relay_closed_slot_mined', 'near_billing_late')),
+  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'evm_relay_closed_slot_mined', 'near_billing_late', 'neon_compute_high')),
   org_id      TEXT,
   app_id      TEXT,
   scope_id    TEXT,

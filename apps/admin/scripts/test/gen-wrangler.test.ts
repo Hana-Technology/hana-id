@@ -127,6 +127,21 @@ describe('the admin config', () => {
     expect(LOCAL_ADMIN_CONNECTION_STRING).toMatch(/\.invalid:/u);
   });
 
+  it('OPS_EVERY_MINUTES and NEON_PLAN (D872): sandbox-dev’s config gains exactly those two vars, the triggers unchanged', () => {
+    const real = loadEnv('sandbox-dev');
+    const sandbox = wranglerConfig(real) as Config;
+    expect(sandbox.vars!.OPS_EVERY_MINUTES).toBe('15');
+    expect(sandbox.vars!.NEON_PLAN).toBe('{"computeHoursPerMonth":100,"computeUnits":0.25}');
+    // Both triggers stay: the 5-minute one still sends the blocking notices every run.
+    expect((sandbox as { triggers?: unknown }).triggers).toEqual({ crons: ['*/5 * * * *', '*/15 * * * *'] });
+    const without = wranglerConfig({ ...real, admin: { ...real.admin!, opsEveryMinutes: undefined }, usage: { ...real.usage!, neonPlan: undefined } } as Manifest) as Config;
+    const { OPS_EVERY_MINUTES: _ops, NEON_PLAN: _plan, ...rest } = sandbox.vars!;
+    expect({ ...sandbox, vars: rest }).toEqual(without);
+    // The default (5, or nothing set) writes no var: a default env's config is what it was.
+    expect(wranglerConfig(withAdmin({ opsEveryMinutes: 5 }), { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID })).toEqual(wranglerConfig(TEST_MANIFEST, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }));
+    expect((wranglerConfig(withAdmin({ opsEveryMinutes: 15 }), { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }) as Config).vars!.OPS_EVERY_MINUTES).toBe('15');
+  });
+
   it('writes the subjects\' env label from the manifest (D419), the same labels as @hana-id/env', () => {
     expect((wranglerConfig(TEST_MANIFEST, { adminHyperdriveId: TEST_ADMIN_HYPERDRIVE_ID }).vars as Record<string, string>).ENV_LABEL).toBe(envAlertLabel(TEST_MANIFEST));
     expect(envAlertLabel(TEST_MANIFEST)).not.toBe('');
@@ -297,6 +312,21 @@ describe('across Workers (config snapshots)', () => {
 });
 
 describe('source checks', () => {
+  it('every ledger connection is reported as a Neon wake-up (D872): the crons report at their end, every staff page through trackedStore, the status page opens none with NEON_PLAN', () => {
+    const opens = sources.flatMap(({ f, text }) => text.split('\n').filter((l) => /(ledgerSource|opsSource)\.open\(/u.test(l) && !/async open\(/u.test(l)).map((l) => ({ f: f.slice(srcDir.length), l: l.trim() })));
+    for (const o of opens) {
+      if (o.f === 'cron.ts' || o.f === 'ledger-cron.ts') continue;
+      if (o.f === 'status.ts') continue;
+      expect(o.l, o.f).toMatch(/trackedStore\((c\.)?env, await (ledgerSource|opsSource)\.open\(/u);
+    }
+    expect(opens.map((o) => o.f).sort()).toEqual(['cron.ts', 'ledger-cron.ts', 'report-routes.ts', 'security.ts', 'security.ts', 'status.ts', 'support.ts']);
+    const cron = sources.find(({ f }) => f.endsWith('/cron.ts'))!.text;
+    const ledgerCron = sources.find(({ f }) => f.endsWith('/ledger-cron.ts'))!.text;
+    expect(cron).toContain('reportNeonWake(env, openedAt');
+    expect(ledgerCron).toContain('reportNeonWake(env, openedAt');
+    expect(sources.find(({ f }) => f.endsWith('/status.ts'))!.text).toContain('tracksNeon(env) ? Promise.resolve(null) : ledgerPart(env, staff, calls)');
+  });
+
   it('the admin Worker runs no SQL on a D1 (it has none: every hot-DB and console read goes through an RPC)', () => {
     for (const { f, text } of sources) {
       expect(text, f).not.toMatch(/\.prepare\(|D1Database/u);

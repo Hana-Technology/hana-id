@@ -14,6 +14,7 @@
 // a user's erasure on purpose: they are Journear's books, not the user's profile (D852).
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
+import { withNeonWake } from '../usage/neon-compute.ts';
 import { classifyWriteError, usageTransport } from '../usage/record.ts';
 import type { Hex } from './sponsor-ports.ts';
 
@@ -218,7 +219,7 @@ export async function mirrorEvmBilling(env: Env, now: number = Date.now()): Prom
     }
     if (rows.length === 0) break;
     try {
-      await usageTransport.query(binding, RECORD_EVM_SPONSORED_SQL, [JSON.stringify(rows.map(ledgerRow))]);
+      await withNeonWake(env, () => usageTransport.query(binding, RECORD_EVM_SPONSORED_SQL, [JSON.stringify(rows.map(ledgerRow))]));
     } catch (err) {
       const why = classifyWriteError(err);
       log({ event: 'evm_billing_mirror_failed', code: why.code, synced: sent }, 'error');
@@ -249,7 +250,7 @@ async function mirrorOneByOne(env: Env, binding: Hyperdrive, rows: BillingColumn
   let sent = 0;
   for (const r of rows) {
     try {
-      await usageTransport.query(binding, RECORD_EVM_SPONSORED_SQL, [JSON.stringify([ledgerRow(r)])]);
+      await withNeonWake(env, () => usageTransport.query(binding, RECORD_EVM_SPONSORED_SQL, [JSON.stringify([ledgerRow(r)])]));
       await env.DB.prepare('UPDATE evm_sponsor_billing SET mirrored_at = ?3 WHERE chain_id = ?1 AND record_key = ?2').bind(r.chain_id, r.record_key, now).run();
       sent++;
     } catch (err) {

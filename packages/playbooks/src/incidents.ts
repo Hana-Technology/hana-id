@@ -261,6 +261,51 @@ const nearBillingLate: Playbook = {
   related: ['near-relay-balance-low'],
 };
 
+const neonComputeHigh: Playbook = {
+  id: 'neon-compute-high',
+  title: 'The usage database’s free monthly allowance is running low',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary: "A `neon_compute_high` security event (once at 70% and once at 90% a month), or the amber or red “Neon compute this month” tile on System status: by our estimate the usage database (Neon's free plan) has used most of its monthly compute-hours.",
+  signals: [
+    "A `neon_compute_high` row in the admin's security events, emailed by the feed, with `threshold` (70 or 90), `hoursUsed` and `allowanceHours`.",
+    'The “Neon compute this month” tile on System status amber (70%) or red (90%).',
+    "Neon's own email saying the project has used most of its compute allowance.",
+  ],
+  impact: [
+    "At 100% Neon pauses the database until its next monthly period starts. Logins, wallets and partner apps keep working: they never wait for it. The blocking notices keep going out.",
+    "What stops while it is paused: usage records (each login's record is lost, not kept for later), the security feed and the on-chain watcher emails, gas settlement, the ledger's alerts, statements, reports and exports, the partner console's Usage and Statements pages, and the ledger part of the Support ID lookup.",
+    'How urgent: at 70% within a day or two; at 90% today.',
+  ],
+  steps: [
+    {
+      title: 'Read the real figure',
+      who: 'anyone',
+      detail: "Open Neon's console, the project, then Usage (or Billing): it shows the compute-hours used this period and when the period resets. The tile is our own estimate from the times our Workers opened the database; Neon's figure is the one that counts. If they differ by more than a few hours, tell an engineer.",
+    },
+    {
+      title: 'Check what keeps it awake',
+      who: 'anyone',
+      detail: "The tile says how many wake-ups there were this month. In Neon's console the compute's graph shows when it ran. Activity every 5 minutes means the admin console is on its 5-minute setting: check that the manifest's `admin.opsEveryMinutes` is 15 (testnet only) and that the admin Worker's triggers are `*/5` and `*/15` (Cloudflare: the admin Worker, Settings, Triggers).",
+    },
+    {
+      title: 'Slow it down for the rest of the month, by hand',
+      who: 'a founder',
+      detail: "If it would run out before the period resets: change the admin Worker's 5-minute trigger to every 30 minutes, from apps/admin (or in Cloudflare's dashboard). Never change the `*/15` trigger: the Worker runs every other trigger as the 5-minute job, so the ledger work would stop. Notices, the feed and the watcher then run every 30 minutes until the next deploy of the admin Worker puts the triggers back.",
+      commands: ['corepack pnpm exec wrangler triggers deploy --triggers "*/30 * * * *" "*/15 * * * *"'],
+    },
+    {
+      title: 'If it runs out',
+      who: 'a founder',
+      detail: "Nothing to repair: logins keep working. Wait for the next period (the database starts again by itself), or ask the user about Neon's paid plan: a decision (D417 keeps personal accounts on free tiers). Once it is back, the feed, the watcher and settlement catch up by themselves; the usage records of the paused days are lost.",
+    },
+  ],
+  verify: ["Neon's console shows the compute running again, and System status shows the “Usage ledger (Neon)” tile green.", 'The month’s estimate grows by about 2 compute-hours a day or less on a quiet testnet.'],
+  followUps: ["Reading Neon's exact figure through its API needs a Neon API key held by the admin Worker: a decision, not built (docs/operations.md \"Neon compute on the free plan\")."],
+  refs: ['docs/operations.md#neon-compute-on-the-free-plan-d872', 'D872', 'D417'],
+};
+
 const relayerKeyStolen: Playbook = {
   id: 'relayer-key-stolen',
   title: 'A relayer key stolen (session pool or owner pool)',
@@ -1141,6 +1186,7 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   evmBillingLate,
   evmRelaySlotTaken,
   nearBillingLate,
+  neonComputeHigh,
   updaterKeyStolen,
   relayerKeyStolen,
   vaultKekLeaked,

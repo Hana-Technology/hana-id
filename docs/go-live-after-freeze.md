@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -319,6 +319,15 @@ Use a fresh email address and a private browser window.
 Note what the approval windows say: phase 3 changes their wording, and you compare after.
 If a demo doesn't work **before** you deployed anything: stop. Don't deploy on top of a broken demo.
 
+### 1.11 Neon's compute, before (D872)
+
+Open Neon's console: the project, then **Usage** (or **Billing**). Write down the compute-hours used this period, the
+allowance (100) and the date it resets. On 2026-11-19 it was about 80 on about day 18, and since that day's hand change
+of the admin's triggers (`*/30` + `*/15`, [Neon compute on the free plan](operations.md#neon-compute-on-the-free-plan-d872))
+it grows by about 2 to 2.5 a day, so in a period that resets on the 1st it can be used up before 2026-12-01.
+If it is used up, or above about 95: read [If Neon's allowance is used up](#if-neons-allowance-is-used-up) before
+phase 2.
+
 ## Phase 2: database changes
 
 You run these, from the main checkout, right after phase 1. Runbook: [Checking a deploy](operations.md#checking-a-deploy-deploy-check-d384-d406)
@@ -368,7 +377,8 @@ corepack pnpm --filter @hana-id/scripts usage-migrate sandbox-dev
 
 You see: `pending on sandbox-dev: 0009_evm_sponsored.sql, 0010_near_relayed.sql (run again with --yes to apply)`.
 If it lists other files, says the database and the repo disagree, or that a file changed after it was applied: stop
-and ask.
+and ask. If it can't connect (Neon's allowance used up: SQLSTATE `53000`): skip 2.4 to 2.6 and see
+[If Neon's allowance is used up](#if-neons-allowance-is-used-up).
 
 ### 2.5 Apply them
 
@@ -408,7 +418,7 @@ the database and ledger ids already in that app's config.
 | 4 | Email issuer | `corepack pnpm --filter @hana-id/email-issuer gen sandbox-dev` then `corepack pnpm --filter @hana-id/email-issuer run deploy` | `wrote …` with no placeholder, then `Deployed …` |
 | 5 | Partner console | `corepack pnpm --filter @hana-id/console gen sandbox-dev` then `corepack pnpm --filter @hana-id/console run deploy` | `wrote …` with no placeholder; the console build; `Deployed …` |
 | 6 | Console sign-in | `corepack pnpm --filter @hana-id/console-auth gen sandbox-dev` then `corepack pnpm --filter @hana-id/console-auth run deploy` | `wrote …`, `Deployed …` |
-| 7 | Admin portal | `corepack pnpm --filter @hana-id/admin gen sandbox-dev` then `corepack pnpm --filter @hana-id/admin run deploy` | `wrote …` then `feed and watcher: on (…)`, then `Deployed …` |
+| 7 | Admin portal | `corepack pnpm --filter @hana-id/admin gen sandbox-dev` then `corepack pnpm --filter @hana-id/admin run deploy` | `wrote …` then `feed and watcher: on (…)`, then `Deployed …`. This deploy also puts the admin's triggers back to `*/5` + `*/15` (undoing the hand change of 2026-11-19); with the manifest's `admin.opsEveryMinutes` 15 the feed and the watcher then run every 15 minutes, the notices every 5 (D872) |
 | 8 | Watchdog | `corepack pnpm --filter @hana-id/watchdog gen sandbox-dev` then `corepack pnpm --filter @hana-id/watchdog run deploy` | `wrote …` with no placeholder, `Deployed …` |
 | 9 | Hosted demo | `corepack pnpm --filter @hana-id/demo run deploy` | its build, then `Deployed …` |
 | 10 | Stamps site | `HANA_STAMPS_PUBLISHABLE_KEY=pk_test_Krd4BctwkZYeHB2yTqnV3HgAGX6huXXWZ corepack pnpm --filter @hana-id/stamps run deploy` | its build, then `Deployed …` (the key is Stamp Trail's public key, "Hosted stamps demo") |
@@ -426,6 +436,22 @@ corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --only watc
 You see: the first ends `OK: every piece of sandbox-dev runs <commit> (this checkout); not read: watchdog`, with
 `every migration of this checkout is applied (hana-id-sandbox-dev)` among its lines. The second ends with the same
 commit. Any `FAIL:` line: stop and ask. (The two demo sites aren't stamped, so `deploy-check` doesn't read them.)
+
+### 3.11a Neon's compute, after (D872)
+
+1. `apps/admin/wrangler.jsonc` (just generated) has `"OPS_EVERY_MINUTES": "15"` and
+   `"NEON_PLAN": "{\"computeHoursPerMonth\":100,\"computeUnits\":0.25}"` among its vars, and the triggers
+   `*/5 * * * *` and `*/15 * * * *`; `apps/api/wrangler.jsonc` has the same `NEON_PLAN`. In Cloudflare: the admin
+   Worker, Settings, Triggers shows both (a trigger change can take up to 15 minutes to reach every location, and a run
+   can be missed meanwhile).
+2. An hour later, open **System status**: **Neon compute this month** shows "About N of 100 compute-hours used this
+   month (estimate)". It counts only from this deploy, so for this month Neon's own figure is the one to read; from
+   the 1st the tile counts the whole period.
+3. In Neon's console the compute's activity, over a quiet hour, should show it suspended for about 10 minutes of
+   every 15. If it never suspends: tell the assistant (something still opens the database every few minutes, or
+   Hyperdrive's pool keeps it awake: [Neon compute on the free plan](operations.md#neon-compute-on-the-free-plan-d872)
+   "Hyperdrive").
+4. Write down Neon's figure again. A day later it should have grown by about 2 to 2.5.
 
 ### 3.12 Hand check on the real sites
 
@@ -822,6 +848,25 @@ It exports the damaged state first, restores in place, and lists what to re-run 
 - Any sponsored or relayed transaction already on the chain, and the billing records (kept for good, also after a
   user's erasure; they hold no name or email).
 - Mail already sent.
+
+## If Neon's allowance is used up
+
+Neon's free plan stops the usage database until its next period (the 1st, if the period is the calendar month: Neon's
+console says). The deploy can still go ahead; this is what to expect:
+
+- **Keeps working:** every sign-in, wallet, the two demos, partner apps, the admin portal and the partner console's
+  other pages, the blocking notices, the watchdog and its alerts, and D1's migrations (phase 2.1 to 2.3).
+- **Can't be done until it is back:** phase 2.4 to 2.6 (the ledger's migrations): run them on the day it resets, then
+  `usage-migrate sandbox-dev` once more (`up to date (10 applied)`).
+- **Stops until it is back:** usage records (each sign-in's record is lost), the security feed and the on-chain
+  watcher emails, gas settlement, the ledger's alerts, statements, reports and exports, the partner console's Usage and
+  Statements pages. The new API keeps every NEAR relay and sponsored-action billing record in D1 and copies them once
+  the ledger is back; until then "billing record is late" alerts (`near_billing_late` once a day,
+  `evm_billing_late` hourly with sponsorship on) are expected, not a fault.
+- **On System status:** "Usage ledger (Neon)" shows "Unknown: no report from the 15-minute run yet" until the first
+  15-minute run after the deploy has reported, then "Unreachable at the last 15-minute run" in red; "Neon compute this
+  month" counts from the deploy, so it can read far below 100 while Neon says 100.
+- **Don't** upgrade Neon's plan to get it back without asking: it costs money (below).
 
 ## Things that cost money (none expected)
 

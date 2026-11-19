@@ -35,6 +35,15 @@ afterEach(() => {
 
 const MIN = 60_000;
 const NEAR_RPC = 'https://rpc.budget.test';
+/** D872: a free plan, so the runs report their wake-ups (`AdminRpc.neonWake`), each recorded here. */
+const PLAN = '{"computeHoursPerMonth":100,"computeUnits":0.25}';
+interface Wake {
+  actor: unknown;
+  startMs: number;
+  endMs: number;
+  runs?: { key: string; value: string }[];
+}
+const wakes: Wake[] = [];
 const KEY32 = (b: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(b)));
 const OWNER = { Oidc: { provider: 'google', sub: 'owner-sub-1' } };
 
@@ -175,6 +184,11 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
         purgeDirectory: async () => ({ ok: true as const, scopes: 0, users: 0, wallets: 0, identities: 0 }),
         purgeUserEvents: async () => ({ ok: true as const, expired: 0, deadScopes: 0 }),
         purgeAudit: async () => ({ ok: true as const, appChanges: 0, guardedChanges: 0 }),
+        // D872: the run's wake-up report (only with NEON_PLAN).
+        neonWake: async (c: unknown) => {
+          wakes.push(c as Wake);
+          return { ok: true as const, noted: true };
+        },
       },
       rpc,
       'api',
@@ -190,8 +204,9 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
     );
   let apiFake: ReturnType<typeof api>;
   let consoleFake: ReturnType<typeof consoleRpc>;
-  const env = () =>
+  const env = (over: Partial<Env> = {}) =>
     ({
+      ...over,
       ENV_NAME: 'sandbox-test',
       CONSOLE_ORIGIN: 'https://console.test',
       SECURITY_ALIAS: ALIAS,
@@ -206,9 +221,9 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
     }) as unknown as Env;
 
   /** One tick, every outbound call counted twice: by the budget (the summary) and by the fakes (independently). */
-  async function tick(t: number) {
+  async function tick(t: number, over: Partial<Env> = {}) {
     const before = { rpc: rpc.length, sent: email.sent.length, tx: net.tx, key: net.key, rate: net.rate, opens };
-    const sum = (await everyFifteenMinutes(env(), t))!;
+    const sum = (await everyFifteenMinutes(env(over), t))!;
     const mine = rpc.slice(before.rpc);
     const sent = email.sent.slice(before.sent);
     const counted = {
@@ -286,6 +301,39 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
     expect(daily.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, nonce_check: 3, link_jump: 1, rates: 10 });
     expect((await store.ratesBetween('2031-02-22', '2031-03-03')).length).toBe(10);
     expect(email.sent.filter((m) => ALERT_SUBJECT.test(m.subject))).toHaveLength(2);
+  });
+
+  it('with NEON_PLAN (D872): one call set aside with the connection’s, one report at the end with the run’s record and the ledger’s health, inside the 40', async () => {
+    apiFake = api();
+    consoleFake = consoleRpc();
+    deletedPages = 100;
+    wakes.length = 0;
+    const t = Date.UTC(2031, 2, 2, 5, 15);
+    const run = await tick(t, { NEON_PLAN: PLAN } as Partial<Env>);
+    expect(run.sum.calls.ledger).toBe(1);
+    expect(run.sum.calls.neon_mark).toBe(1);
+    expect(run.total).toBeLessThanOrEqual(RUN_BUDGET);
+    // Sent once, last, unmetered (its call was taken when the run started), as the system actor.
+    expect(wakes).toHaveLength(1);
+    expect(rpc[rpc.length - 1]).toBe('api.neonWake');
+    const w = wakes[0]!;
+    expect(w.actor).toEqual({ kind: 'system', id: 'admin-cron' });
+    expect(w.endMs).toBeGreaterThanOrEqual(w.startMs);
+    const runs = Object.fromEntries(w.runs!.map((r) => [r.key, JSON.parse(r.value) as Record<string, unknown>]));
+    expect(Object.keys(runs).sort()).toEqual(['ledger.health', 'ledger_cron.last_run']);
+    expect(runs['ledger.health']).toEqual({ at: t, ok: true, partitionsAhead: await store.partitionsAhead(), settlement: JSON.parse(JSON.stringify(await store.settlementBacklog())) as unknown });
+    expect(runs['ledger_cron.last_run']).toMatchObject({ at: t, calls: run.sum.calls });
+    // Without NEON_PLAN (every test above): no call set aside, no report.
+    wakes.length = 0;
+    const plain = await tick(t + 15 * MIN);
+    expect(plain.sum.calls.neon_mark).toBeUndefined();
+    expect(wakes).toEqual([]);
+    // A ledger that refuses the connection: still reported (the estimate errs high), its health not ok.
+    vi.spyOn(ledgerSource, 'open').mockRejectedValue(new Error('connect ECONNREFUSED'));
+    const down = await everyFifteenMinutes(env({ NEON_PLAN: PLAN } as Partial<Env>), t + 30 * MIN);
+    expect(down).toBeNull();
+    expect(wakes).toHaveLength(1);
+    expect(wakes[0]!.runs).toEqual([{ key: 'ledger.health', value: JSON.stringify({ at: t + 30 * MIN, ok: false }) }]);
   });
 });
 
@@ -436,8 +484,9 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
   // Every fifth scope's pending change turns on shared login, so its notice reads the scope's apps (listApps, getApp).
   const sharedOn = (i: number) => i % 5 === 0;
 
-  const env = () =>
+  const env = (over: Partial<Env> = {}) =>
     ({
+      ...over,
       ENV_NAME: 'sandbox-test',
       CONSOLE_ORIGIN: 'https://console.test',
       SECURITY_ALIAS: ALIAS,
@@ -469,6 +518,10 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
           },
           listApps: async (c: { orgId: string }) => ({ ok: true as const, apps: scopes.filter((s) => s.orgId === c.orgId).flatMap((s) => [1, 2].map((k) => ({ id: `app_${s.scopeId}_${k}`, name: `App ${k}`, scopeId: s.scopeId }))) }),
           getApp: async (c: { appId: string }) => ({ ok: true as const, app: { id: c.appId, name: c.appId, scopeId: 's', origins: [{ origin: `https://${c.appId}.example`, display: '', idn: false, activeFrom: 1 }] } }),
+          neonWake: async (c: unknown) => {
+            wakes.push(c as Wake);
+            return { ok: true as const, noted: true };
+          },
         },
         rpc,
         'api',
@@ -548,6 +601,53 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
     // was sent twice, though every run started with an empty memo (as a fresh isolate does; D401).
     for (const n of invites) expect(email.sent.filter((m) => m.to === n.invite.email), n.invite.id).toHaveLength(1);
     expect(new Set(email.sent.map((m) => m.messageKey)).size).toBe(email.sent.length);
+  });
+
+  it('OPS_EVERY_MINUTES 15 (D872): the :05 and :10 runs send the notices and never open the ledger; the :15 run opens it once for the feed and the watcher', async () => {
+    const at = (m: number) => Date.UTC(2031, 2, 2, 12, m);
+    const run = async (m: number, over: Partial<Env>) => {
+      forgetAccepted();
+      const before = { rpc: rpc.length, sent: email.sent.length, scope: net.scope, opens, wakes: wakes.length };
+      const sum = await everyFiveMinutes(env(over), at(m) + 4_000, at(m));
+      const total = rpc.length - before.rpc + (email.sent.length - before.sent) + (net.scope - before.scope) + (opens - before.opens);
+      expect(total).toBe(RUN_BUDGET - sum.budgetLeft);
+      expect(Object.values(sum.calls).reduce((a, b) => a + b, 0)).toBe(total);
+      return { sum, opens: opens - before.opens, wakes: wakes.slice(before.wakes), rpcs: rpc.slice(before.rpc) };
+    };
+    const fifteen = { OPS_EVERY_MINUTES: '15', NEON_PLAN: PLAN } as Partial<Env>;
+    for (const m of [5, 10, 20, 25, 35, 40, 50, 55]) {
+      const r = await run(m, fifteen);
+      expect(r.opens, `:${m}`).toBe(0);
+      expect(r.wakes, `:${m}`).toEqual([]);
+      expect(r.sum.calls.ops, `:${m}`).toBeUndefined();
+      expect(r.sum.calls.neon_mark, `:${m}`).toBeUndefined();
+      expect(r.sum).toMatchObject({ feed: false, watcher: false });
+      // The notices still ran (their page reads).
+      expect(r.rpcs).toEqual(expect.arrayContaining(['api.pendingNotices', 'console.pendingMemberNotices']));
+    }
+    for (const m of [0, 15, 30, 45]) {
+      const r = await run(m, fifteen);
+      expect(r.opens, `:${m}`).toBe(1);
+      expect(r.sum).toMatchObject({ feed: true, watcher: true });
+      expect(r.sum.calls.ops).toBe(1);
+      expect(r.sum.calls.neon_mark).toBe(1);
+      expect(r.wakes).toHaveLength(1);
+      expect(r.wakes[0]!.runs!.map((x) => x.key)).toEqual(['cron.last_run']);
+      expect(JSON.parse(r.wakes[0]!.runs![0]!.value)).toMatchObject({ feed: true, watcher: true, calls: r.sum.calls });
+      expect(r.rpcs[r.rpcs.length - 1]).toBe('api.neonWake');
+    }
+    // The default (no var, or anything but 15): every run opens the ledger, as before; without NEON_PLAN no report.
+    for (const over of [{}, { OPS_EVERY_MINUTES: '5' }, { OPS_EVERY_MINUTES: '30' }] as Partial<Env>[]) {
+      for (const m of [5, 10]) {
+        const r = await run(m, over);
+        expect(r.opens, JSON.stringify(over)).toBe(1);
+        expect(r.sum).toMatchObject({ feed: true, watcher: true });
+        expect(r.wakes).toEqual([]);
+        expect(r.sum.calls.neon_mark).toBeUndefined();
+      }
+    }
+    // NEON_PLAN at the default 5: every run reports.
+    expect((await run(5, { NEON_PLAN: PLAN } as Partial<Env>)).wakes).toHaveLength(1);
   });
 
   it('a job given too little for a page reads nothing and moves no cursor', async () => {

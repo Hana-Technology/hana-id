@@ -5,6 +5,7 @@
 // and the next hour tries again: it never fails the cron run.
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
+import { withNeonWake } from './neon-compute.ts';
 import { classifyWriteError, usageTransport } from './record.ts';
 
 /** Months kept ahead of the current one (the function allows 0..24); 0003 created this many. */
@@ -16,7 +17,7 @@ export async function ensureUsagePartitions(env: Env): Promise<boolean> {
   const binding = env.USAGE_DB;
   if (!binding) return true;
   try {
-    await usageTransport.query(binding, ENSURE_PARTITIONS_SQL, [USAGE_PARTITION_MONTHS]);
+    await withNeonWake(env, () => usageTransport.query(binding, ENSURE_PARTITIONS_SQL, [USAGE_PARTITION_MONTHS]));
     return true;
   } catch (err) {
     log({ event: 'usage_partitions_failed', code: classifyWriteError(err).code }, 'error');

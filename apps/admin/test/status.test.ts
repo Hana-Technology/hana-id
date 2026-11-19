@@ -267,8 +267,9 @@ describe('all green', () => {
     expect(a.issues).toEqual([]);
     expect(a.verdict).toEqual({ state: 'ok', title: 'All systems operational', critical: 0, warning: 0 });
     const notOk = tiles(a).filter((t) => t.state !== 'ok');
-    // Free network fees aren't set up in this env (no `evmRelay` in the API's answer): grey, never an issue (D843).
-    expect(notOk.map((t) => [t.id, t.state])).toEqual([['evm-relay', 'not_measured'], ['usage-limits', 'not_measured']]);
+    // Free network fees aren't set up in this env (no `evmRelay` in the API's answer): grey, never an issue (D843); nor is
+    // a Neon plan with a monthly allowance (no NEON_PLAN, D872).
+    expect(notOk.map((t) => [t.id, t.state])).toEqual([['evm-relay', 'not_measured'], ['neon-compute', 'not_measured'], ['usage-limits', 'not_measured']]);
     expect(tile(a, 'evm-relay')).toMatchObject({ name: 'Free network fees', stateLabel: 'Not set up' });
     expect(a.builds).toMatchObject({ majority: BUILD, mixed: false });
     expect(tile(a, 'builds').detail).toContain(`All 12 stamped pieces on ${BUILD}`);
@@ -1061,5 +1062,106 @@ describe('Free network fees (D843)', () => {
     world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({}, { budget: { ok: true, spentWei: (20n * MILLI).toString() } })] } });
     a = await read();
     expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'critical', stateLabel: 'Needs a person' });
+  });
+});
+
+describe('Neon compute on the free plan (D872)', () => {
+  const PLAN = '{"computeHoursPerMonth":100,"computeUnits":0.25}';
+  const HOUR = 60 * MIN;
+  const month = () => new Date(NOW).toISOString().slice(0, 7);
+  /** The month's row with `awakeH` hours awake so far (closed), its open window just ended. */
+  const neon = (awakeH: number | null, over: Record<string, unknown> = {}) => ({
+    state: 'on',
+    plan: { computeHoursPerMonth: 100, computeUnits: 0.25 },
+    readAt: NOW,
+    month: month(),
+    row: awakeH === null ? null : { closedMs: awakeH * HOUR, winStart: NOW - MIN, winEnd: NOW - MIN, windows: 340, alerted: 0, updatedAt: NOW - MIN },
+    runs: {
+      'cron.last_run': { value: JSON.stringify(fiveRun({ at: NOW - 4 * MIN })), updatedAt: NOW - 4 * MIN },
+      'ledger_cron.last_run': { value: JSON.stringify(fifteenRun({ at: NOW - 4 * MIN })), updatedAt: NOW - 4 * MIN },
+      'ledger.health': { value: JSON.stringify({ at: NOW - 4 * MIN, ok: true, partitionsAhead: 12, settlement: { pending: 2, oldestAt: NOW - 30 * MIN } }), updatedAt: NOW - 4 * MIN },
+    },
+    ...over,
+  });
+  const tracked = () => {
+    world.over = { NEON_PLAN: PLAN, OPS_EVERY_MINUTES: '15' };
+  };
+
+  it('without NEON_PLAN: not measured, and the page opens the ledger as before (one connection)', async () => {
+    const a = await read();
+    expect(tile(a, 'neon-compute')).toMatchObject({ state: 'not_measured', detail: 'Not tracked here: this env’s Neon plan has no monthly allowance in its manifest (usage.neonPlan)' });
+    expect(counts.hyperdrive).toBe(1);
+    expect(tile(a, 'cron-admin-5').name).toBe('Admin every 5 min (notices, feed, watcher)');
+  });
+
+  it('with it the page never opens the ledger: its tiles come from the crons’ report to the API', async () => {
+    tracked();
+    world.api = apiAnswer({ neon: neon(40) });
+    const a = await read();
+    invariants(a);
+    expect(counts.hyperdrive).toBe(0);
+    expect(a.calls.byKind.hyperdrive ?? 0).toBe(0);
+    expect(tile(a, 'ledger')).toMatchObject({ state: 'ok', detail: 'Reachable at the 15-minute run 4 min ago · 12 months ahead · 2 events to settle' });
+    // The 5-minute tile: its name says the feed and the watcher run every 15 minutes, its lateness is judged on 15.
+    expect(tile(a, 'cron-admin-5')).toMatchObject({ state: 'ok', name: 'Admin every 5 min (notices; feed and watcher every 15 min)' });
+    expect(tile(a, 'cron-admin-15').state).toBe('ok');
+    expect(tile(a, 'call-budget').detail).toBe('Last runs: 5-minute 5 and 15-minute 3 of 40 calls');
+    // 32 minutes since the feed and watcher ran: within 2 × 15 + 5 at 15 (red at 5: past 6 × 5).
+    const late = apiAnswer({ neon: neon(40, { runs: { ...neon(40).runs, 'cron.last_run': { value: JSON.stringify(fiveRun({ at: NOW - 32 * MIN })), updatedAt: NOW - 32 * MIN } } }) });
+    world.api = late;
+    expect(tile(await read(), 'cron-admin-5').state).toBe('ok');
+    world.over = { NEON_PLAN: PLAN };
+    expect(tile(await read(), 'cron-admin-5').state).toBe('critical');
+  });
+
+  it('the tile’s words: green below 70%, amber from 70%, red from 90%, each with the playbook', async () => {
+    tracked();
+    world.api = apiAnswer({ neon: neon(160) }); // 160 h awake × 0.25 CU = 40 compute-hours
+    let a = await read();
+    const t = tile(a, 'neon-compute');
+    expect(t.state).toBe('ok');
+    expect(t.name).toBe('Neon compute this month');
+    expect(t.detail).toMatch(/^About 40 of 100 compute-hours used this month \(estimate\) · 340 wake-ups · on course for about \d+ · starts again on 1 [A-Z][a-z]{2}$/u);
+    expect(t.affects).toBe('The usage database on Neon’s free plan: at 100% Neon pauses it until the 1st (usage records, the security feed and alerts stop; logins keep working)');
+    expect(issuesOf(a, 'neon-compute')).toEqual([]);
+    world.api = apiAnswer({ neon: neon(288) }); // 72 compute-hours
+    a = await read();
+    expect(tile(a, 'neon-compute').state).toBe('warning');
+    expect(issuesOf(a, 'neon-compute').map((i) => [i.severity, i.title, i.action, i.playbook?.id])).toEqual([
+      ['warning', 'The usage database has used about 72 of its 100 free compute-hours this month (estimate, 72%)', 'At 100% Neon pauses it until the 1st: logins keep working, but usage records, the security feed and the alerts stop. Check the real figure in Neon’s console, then follow the playbook.', 'neon-compute-high'],
+    ]);
+    world.api = apiAnswer({ neon: neon(364) }); // 91 compute-hours
+    a = await read();
+    expect(tile(a, 'neon-compute').state).toBe('critical');
+    expect(issuesOf(a, 'neon-compute')[0]!.title).toBe('The usage database has used about 91 of its 100 free compute-hours this month (estimate, 91%)');
+    // Small figures keep a decimal; no wake-up yet this month is 0.
+    world.api = apiAnswer({ neon: neon(17) });
+    expect(tile(await read(), 'neon-compute').detail).toMatch(/^About 4\.3 of 100 /u);
+    world.api = apiAnswer({ neon: neon(null) });
+    expect(tile(await read(), 'neon-compute').detail).toMatch(/^About 0 of 100 compute-hours used this month \(estimate\) · 0 wake-ups/u);
+  });
+
+  it('unknown, never green: an older API, an API without the plan, a D1 failure, no report yet, a stale or failed report', async () => {
+    tracked();
+    // An API older than D872 sends no `neon` at all (apiAnswer() has none).
+    world.api = apiAnswer();
+    let a = await read();
+    invariants(a);
+    expect(tile(a, 'neon-compute')).toMatchObject({ state: 'unknown', detail: 'Unknown: the API doesn’t count it yet' });
+    expect(tile(a, 'ledger')).toMatchObject({ state: 'unknown' });
+    expect(counts.hyperdrive).toBe(0);
+    world.api = apiAnswer({ neon: { state: 'off' } });
+    expect(tile(await read(), 'neon-compute')).toMatchObject({ state: 'unknown', detail: 'Not tracked: the API has no Neon plan set (NEON_PLAN)' });
+    world.api = apiAnswer({ neon: { state: 'error' } });
+    expect(tile(await read(), 'neon-compute').state).toBe('unknown');
+    world.api = apiAnswer({ neon: neon(10, { runs: {} }) });
+    a = await read();
+    expect(tile(a, 'ledger')).toMatchObject({ state: 'unknown', detail: 'Not read from here (opening it would wake the database): no report from the 15-minute run yet' });
+    world.api = apiAnswer({ neon: neon(10, { runs: { 'ledger.health': { value: JSON.stringify({ at: NOW - 50 * MIN, ok: true, partitionsAhead: 12, settlement: null }), updatedAt: NOW - 50 * MIN } } }) });
+    expect(tile(await read(), 'ledger')).toMatchObject({ state: 'unknown', detail: 'Last checked 50 min ago by the 15-minute run' });
+    world.api = apiAnswer({ neon: neon(10, { runs: { 'ledger.health': { value: JSON.stringify({ at: NOW - 3 * MIN, ok: false }), updatedAt: NOW - 3 * MIN } } }) });
+    a = await read();
+    expect(tile(a, 'ledger')).toMatchObject({ state: 'critical', detail: 'Unreachable at the last 15-minute run' });
+    expect(issuesOf(a, 'ledger')[0]!.playbook?.id).toBe('neon-compute-high');
   });
 });

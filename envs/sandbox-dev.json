@@ -129,12 +129,14 @@
     "accessTeamDomain": "bitter-hill-fe6f.cloudflareaccess.com",
     "accessAud": "d9adcde619f581fabd9a89079b3ee3239fa577df4a9ba05866d69bdb231e7634",
     "staffEmails": ["hello@ting.rocks", "mark@hanawallet.io"],
-    "accessSessionDuration": "8h"
+    "accessSessionDuration": "8h",
+    "opsEveryMinutes": 15
   },
   "usage": {
     "neonRegion": "aws-ap-southeast-2",
     "writerHyperdrive": "hana-id-usage-writer-sandbox-dev",
-    "adminHyperdrive": "hana-id-usage-admin-sandbox-dev"
+    "adminHyperdrive": "hana-id-usage-admin-sandbox-dev",
+    "neonPlan": { "computeHoursPerMonth": 100, "computeUnits": 0.25 }
   },
   "email": { "from": "Journear Passport <team@hanawallet.io>", "securityAlias": "hello@ting.rocks" },
   "ownerGrantDelayMs": 60000,

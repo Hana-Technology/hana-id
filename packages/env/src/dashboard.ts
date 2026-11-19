@@ -79,8 +79,32 @@ export const adminSchema = z
      * is refused outside a dev env on testnet (`accessSessionDurationProblem`): production is always 1 h (D409).
      */
     accessSessionDuration: z.string().regex(/^[1-8]h$/u, 'admin.accessSessionDuration is a whole number of hours from 1h to 8h').optional(),
+    /**
+     * How often the admin's 5-minute trigger runs the security feed and the on-chain watcher, whose state is in the
+     * usage ledger (Neon): 5 (every run, the default) or 15 (only the run at :00, :15, :30 and :45, beside the 15-minute
+     * ledger run, so one Neon wake-up serves both; D872). The blocking notices run every 5 minutes either way. 15 is for
+     * testnet only (`opsEveryMinutesProblem`): it exists for Neon's free plan, which production doesn't run on.
+     */
+    opsEveryMinutes: z.union([z.literal(5), z.literal(15)], { message: 'admin.opsEveryMinutes is 5 or 15' }).optional(),
   })
   .strict();
+
+/**
+ * The env's Neon plan, when it is a plan with a monthly compute allowance (the free plan: D417, D872): the compute-hours
+ * a month it allows and the compute's fixed size. With it, the Workers note each time they open the ledger and the
+ * admin's System status page shows an estimate of the month's use against the allowance, with alerts at 70% and 90%.
+ * Without it (a paid plan) nothing is noted or shown.
+ */
+export const neonPlanSchema = z
+  .object({
+    computeHoursPerMonth: z.number().int().min(1).max(100_000),
+    /** Compute units (CU): 0.25 to 56, in quarter units. */
+    computeUnits: z.number().min(0.25).max(56).refine((v) => Number.isInteger(v * 4), 'usage.neonPlan.computeUnits is a multiple of 0.25'),
+  })
+  .strict();
+
+/** The `NEON_PLAN` var both the API and the admin Worker get from `usage.neonPlan` (D872): its two numbers, as JSON. */
+export const neonPlanVar = (p: z.infer<typeof neonPlanSchema>): string => JSON.stringify({ computeHoursPerMonth: p.computeHoursPerMonth, computeUnits: p.computeUnits });
 
 export const usageSchema = z
   .object({
@@ -89,6 +113,7 @@ export const usageSchema = z
     /** Hyperdrive config names: the API's (role `usage_writer`) and the admin Worker's (role `usage_admin`). */
     writerHyperdrive: resourceName,
     adminHyperdrive: resourceName,
+    neonPlan: neonPlanSchema.optional(),
   })
   .strict();
 
@@ -251,6 +276,25 @@ export function dashboardRules(m: DashboardFields, ctx: z.RefinementCtx): void {
   if (new Set(a.staffEmails).size !== a.staffEmails.length) issue(['admin', 'staffEmails'], 'Duplicate staff email');
   const sessionProblem = accessSessionDurationProblem(m);
   if (sessionProblem) issue(['admin', 'accessSessionDuration'], sessionProblem);
+  const opsProblem = opsEveryMinutesProblem(m);
+  if (opsProblem) issue(['admin', 'opsEveryMinutes'], opsProblem);
+}
+
+/** The admin's feed and watcher interval when the manifest sets none, and the only one off testnet (D872). */
+export const DEFAULT_OPS_EVERY_MINUTES = 5;
+
+/** The admin's feed and watcher interval in minutes: the manifest's `admin.opsEveryMinutes`, default 5 (D872). */
+export const opsEveryMinutesOf = (admin: { opsEveryMinutes?: 5 | 15 | undefined }): 5 | 15 => admin.opsEveryMinutes ?? DEFAULT_OPS_EVERY_MINUTES;
+
+/**
+ * Why this env's `admin.opsEveryMinutes` isn't allowed, or null (D872): 15 only on testnet, refused outright elsewhere
+ * (no acknowledgement field: the looser interval is for Neon's free plan, and a production network gets 5-minute
+ * monitoring whatever its plan; changing that needs its own decision).
+ */
+export function opsEveryMinutesProblem(m: { network: string; admin?: { opsEveryMinutes?: 5 | 15 | undefined } | undefined }): string | null {
+  const v = opsEveryMinutesOf(m.admin ?? {});
+  if (v === DEFAULT_OPS_EVERY_MINUTES || m.network === 'testnet') return null;
+  return `admin.opsEveryMinutes ${v} is for testnet only (D872): on ${m.network} the security feed and the on-chain watcher run every ${DEFAULT_OPS_EVERY_MINUTES} minutes`;
 }
 
 /** The admin console's Cloudflare Access session when the manifest sets none, and the only value a production env may have (D409, D437). */

@@ -292,7 +292,11 @@ first request, with:
 - `USAGE_DB`: PGlite with apps/api's `migrations-usage`, behind a loopback Postgres wire-protocol listener
   (`src/server/pglite-wire.ts`) that the admin's own `pg` client connects to as role `usage_admin`, as through
   Hyperdrive. One connection at a time (PGlite is one session). Empty: the stack's API writes no usage events.
-- A clock of its own (`src/server/lane-clock.ts`, the thread's `Date`), moved only forward by a control.
+  Both lane Workers have `NEON_PLAN` (D872, testnet's free plan): System status never opens the ledger (the spec
+  counts the listener's connections, `ledgerConnections` in the lane's state), and the pages that do report their
+  wake-ups for the "Neon compute this month" tile.
+- A clock of its own (`src/server/lane-clock.ts`, the thread's `Date`), moved only forward by a control (up to 62
+  days at a time: the Neon spec moves it to the next month). Access tokens expire 24 hours after the lane's clock.
 
 Each binding is called as a service binding: arguments and answers are structured clones. Not in the stack: the
 partner console and files Workers, the watchdog, the contract's governance views, R2, SendGrid and the admin's crons;
@@ -322,6 +326,8 @@ and Cancel only past its time limit; out of money, refill, Resume; someone else 
 (Close, Set the next slot number, Fill a gap, each confirmed, and Resume only with the engineer's word, refused by the
 page and by the Worker without it); a stale page and a second tab; the audit log's rows with who, when and the note;
 the sponsorship's events with their playbooks on Feed and notices and Security & monitoring; the ledger's pages; the
+"Neon compute this month" tile (nothing yet, a whole month, counting began late) with no ledger connection from System
+status; the
 staff unlock and unsuppress (the issuer's routes, no admin page) in the audit log. Every page is watched: a console
 error, an uncaught error, a CSP violation or a cookie set by the Worker fails it, except WebKit's own `<select>` CSP
 report (D873 item 8). With `HANA_SHOTS_DIR=<dir>` (Chromium) it saves the founder's screens (desktop, light).

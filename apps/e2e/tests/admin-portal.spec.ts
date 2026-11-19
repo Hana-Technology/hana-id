@@ -140,6 +140,7 @@ test.describe('every page', () => {
     const links = await page.locator('#nav a').evaluateAll((as) => as.map((a) => [a.getAttribute('href'), (a.textContent ?? '').trim()]));
     expect(links.length).toBeGreaterThanOrEqual(15);
     for (const [href, label] of links) {
+      const connections = (await laneState(lane)).ledgerConnections;
       await page.goto(`${lane}${href}`);
       if (href === '/security/upgrades') {
         await expect(page.locator('main'), label!).toContainText('NEAR didn’t answer');
@@ -147,6 +148,12 @@ test.describe('every page', () => {
       }
       await expect(page.locator('main h1'), label!).toBeVisible();
       await expect(page.locator('main .skeleton'), label!).toHaveCount(0);
+      if (href === '/status' || href === '/') {
+        // D872: System status reads the ledger from the admin runs' reports, never from the database itself.
+        expect((await laneState(lane)).ledgerConnections, 'System status opened the ledger').toBe(connections);
+        const neon = page.locator('li.tile').filter({ has: page.getByRole('heading', { name: 'Neon compute this month', exact: true }) });
+        await expect(neon.locator('.tile-detail').first()).toHaveText(/^(About [\d.]+ of 100 compute-hours used this month \(estimate\)|Counted since \d{1,2} \w{3}: about [\d.]+ compute-hours since then)/u);
+      }
     }
   });
 });
@@ -161,6 +168,8 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await expect(tile).toContainText('Money in the wallet1 test ETH · low below 0.01 test ETH');
     await expect(tile).toContainText('Account helper programThe checked version');
     await expect(tile).toContainText('Waiting to go throughNone');
+    // Neon's tile renders (usage.neonPlan set): whole month or counted since a late start, by what this lane saw.
+    await expect(page.locator('li.tile').filter({ has: page.getByRole('heading', { name: 'Neon compute this month', exact: true }) }).locator('.tile-detail').first()).toHaveText(/compute-hours/u);
     await tile.scrollIntoViewIfNeeded();
     await shot(page, info, 'status-tile-working');
     await tile.getByRole('link', { name: 'Free network fees' }).click();
@@ -240,6 +249,9 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await expect(now.locator('.explain-why')).toHaveText('The relayer’s wallet can’t send transactions: it is out of money.');
     const steps = now.locator('.explain-steps li');
     await expect(steps).toHaveCount(5);
+    // The local chain has no block explorer: no step names one (D873, after review).
+    await expect(steps.nth(0)).toHaveText('Check the relayer wallet’s recent transactions (ask an engineer if you can’t). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.');
+    await expect(now).not.toContainText('explorer');
     await expect(steps.nth(2)).toHaveText('Send at least 1.01 test ETH to the relayer wallet (its address is below) from the local node’s funded test account.');
     await expect(steps.nth(3)).toHaveText('When the balance below shows the new amount, press Resume on the Free network fees page.');
     await expect(now).toContainText('relayer_cannot_send · insufficient_funds · slot 0');
@@ -448,6 +460,68 @@ test.describe('the usage ledger (PGlite, as role usage_admin)', () => {
       await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible();
       await expect(page.locator('main')).not.toContainText('The usage ledger isn’t available');
     }
+  });
+});
+
+test.describe('Neon compute on the free plan (D872): System status never opens the ledger', () => {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /** The first of the month after `ms` (UTC). */
+  const nextMonth = (ms: number): number => {
+    const d = new Date(ms);
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+  };
+  const label = (ms: number): string => `${new Date(ms).getUTCDate()} ${MONTHS[new Date(ms).getUTCMonth()]}`;
+
+  test('the tile counts the wake-ups the pages report: nothing yet, then a whole month, then a month whose counting began late', async ({ page, lane }, info) => {
+    const tile = page.locator('li.tile').filter({ has: page.getByRole('heading', { name: 'Neon compute this month', exact: true }) });
+    const ledgerTile = page.locator('li.tile').filter({ has: page.getByRole('heading', { name: 'Usage ledger (Neon)', exact: true }) });
+    /** Opens System status as a fresh reading and checks it made no ledger connection. */
+    const status = async () => {
+      const before = (await laneState(lane)).ledgerConnections;
+      await page.goto(`${lane}/status`);
+      await expect(tile.locator('.tile-detail').first()).toBeVisible();
+      expect((await laneState(lane)).ledgerConnections, 'System status opened the ledger').toBe(before);
+    };
+    /** A page that does open the ledger (Feed and notices): its wake-up is reported to the API. */
+    const wake = async () => {
+      const before = (await laneState(lane)).ledgerConnections;
+      await page.goto(`${lane}/security`);
+      await expect(page.locator('.panel', { has: page.getByRole('heading', { name: 'Feeds', exact: true }) })).toContainText('Caught up');
+      expect((await laneState(lane)).ledgerConnections).toBeGreaterThan(before);
+    };
+
+    // A new month, 10 minutes in, before any wake-up in it: nothing counted, no warning.
+    let now = (await laneState(lane)).nowMs;
+    let month = nextMonth(now);
+    await laneClock(lane, month + 10 * 60_000 - now);
+    await signIn(page, lane, 'staff', '/status');
+    await status();
+    const resets = label(nextMonth(month));
+    await expect(tile.locator('.tile-detail').first()).toHaveText(`About 0 of 100 compute-hours used this month (estimate) · 0 wake-ups · on course for about 0 · starts again on ${resets}`);
+    await expect(tile.locator('.tile-head')).toContainText('OK');
+    // The ledger's tile is the 15-minute run's report (no run in the stack), never a read from here.
+    await expect(ledgerTile.locator('.tile-detail').first()).toHaveText('Not read from here (opening it would wake the database): no report from the 15-minute run yet');
+
+    // A page opens the ledger: one wake-up, counted from the month's start (whole month), no warning.
+    await wake();
+    await laneClock(lane, 31_000);
+    await status();
+    await expect(tile.locator('.tile-detail').first()).toHaveText(new RegExp(`^About [\\d.]+ of 100 compute-hours used this month \\(estimate\\) · 1 wake-up · on course for about [\\d.]+ · starts again on ${resets}$`, 'u'));
+    await expect(tile.locator('.tile-head')).toContainText('OK');
+    if (SHOTS && info.project.name === 'chromium') await tile.screenshot({ path: join(SHOTS, 'status-tile-neon-normal.png'), animations: 'disabled' });
+
+    // The next month, 3 days in, before any wake-up: then one. Counting began late: no share of the allowance, amber.
+    now = (await laneState(lane)).nowMs;
+    month = nextMonth(now);
+    await laneClock(lane, month + 3 * 24 * 3_600_000 - now);
+    await signIn(page, lane, 'staff', '/status');
+    await wake();
+    await laneClock(lane, 31_000);
+    await status();
+    await expect(tile.locator('.tile-detail').first()).toHaveText(new RegExp(`^Counted since ${label(month + 3 * 24 * 3_600_000)}: about [\\d.]+ compute-hours since then\\. Neon’s own figure for the month is higher: check Neon’s console\\.$`, 'u'));
+    await expect(tile.locator('.tile-head')).toContainText('Warning');
+    await expect(page.getByText(`This month’s Neon estimate only counts from ${label(month + 3 * 24 * 3_600_000)}: check Neon’s console for the month’s figure`).first()).toBeVisible();
+    if (SHOTS && info.project.name === 'chromium') await tile.screenshot({ path: join(SHOTS, 'status-tile-neon-counting-began-late.png'), animations: 'disabled' });
   });
 });
 

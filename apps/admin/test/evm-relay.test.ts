@@ -74,6 +74,20 @@ describe('the words of each state', () => {
     expect(paused.walletUrl).toBe(`https://sepolia.basescan.org/address/${RELAYER}`);
   });
 
+  it('a chain with no block explorer (the local one): no step names an explorer; the wallet’s recent transactions instead (D873 finding)', () => {
+    const local = { ...view({ balance: { ok: true, wei: '1000' } }, halt('relayer_cannot_send', 0, 'insufficient_funds')), chainId: 31337 };
+    const paused = explainChain(local, NOW);
+    expect(paused.explained!.steps[0]).toBe('Check the relayer wallet’s recent transactions (ask an engineer if you can’t). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.');
+    expect(paused.walletUrl).toBeNull();
+    const none = { chain: 'the local test network', faucet: 'a faucet', explorer: null, refill: '0.07 test ETH' };
+    const all = [haltExplained({ reason: 'relayer_cannot_send', slot: 3, code: 'nonce_too_low' }, none), haltExplained({ reason: 'relayer_cannot_send', slot: 3, code: 'insufficient_funds', leakSeen: true }, none)];
+    expect(all[0]!.steps).toContain('After that, the engineer checks the relayer wallet’s recent transactions for any nobody at Journear sent.');
+    for (const e of all) for (const step of e.steps) expect(step).not.toMatch(/explorer/iu);
+    // With an explorer, as before.
+    const base = explainChain(view({ balance: { ok: true, wei: '1000' } }, halt('relayer_cannot_send', 0, 'insufficient_funds')), NOW);
+    expect(base.explained!.steps[0]).toMatch(/^Open the relayer wallet on Basescan/u);
+  });
+
   it('every halt reason and refusal code has its own sentence and steps, and none uses a protocol word outside the code', () => {
     const w = { chain: 'Base Sepolia', faucet: 'a faucet', explorer: 'Basescan', refill: '0.07 test ETH' };
     const cases: [string, string | null][] = [

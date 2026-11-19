@@ -11,7 +11,9 @@
 //   NEAR     the stack's mocked NEAR chain (chain.ts), a copy of its own (the users' sessions on chain).
 //   USAGE_DB the usage ledger: PGlite with apps/api's ledger migrations, reached by the admin's own `pg` client over a
 //            loopback wire-protocol listener as role usage_admin (pglite-wire.ts), as through Hyperdrive. Empty: the
-//            stack's API writes no usage events.
+//            stack's API writes no usage events. Both Workers have NEON_PLAN (Neon's free plan, D872), as testnet's
+//            manifest sets it: System status never opens the ledger (it reads what the admin's runs reported), the
+//            pages that do report their wake-up to the API, and the "Neon compute this month" tile counts them.
 //
 // Each binding is called as workerd calls a service binding: arguments and answers are structured clones.
 // Calls between the lane's parts that would cross the network (the API's chain reads, the Access certs) are answered
@@ -111,13 +113,16 @@ const { StaffRpc } = (await import(SRC('console', 'staff-rpc.ts'))) as { StaffRp
 const { PGlite } = (await import('@electric-sql/pglite')) as unknown as { PGlite: new () => PGliteLike };
 
 /** The lane's usage ledger: every migration of apps/api's migrations-usage, then the admin role's connection string. */
-async function startLedger(): Promise<string> {
+async function startLedger(): Promise<{ wire: LedgerWire; url: string }> {
   const db = new PGlite();
   const dir = new URL('../../../api/migrations-usage/', import.meta.url);
   for (const f of readdirSync(dir).filter((x) => x.endsWith('.sql')).sort()) await db.exec(readFileSync(new URL(f, dir), 'utf8'));
-  return new LedgerWire(db, 'usage_admin').listen();
+  const wire = new LedgerWire(db, 'usage_admin');
+  return { wire, url: await wire.listen() };
 }
-const ledgerUrl = await startLedger();
+const ledger = await startLedger();
+/** `usage.neonPlan` as testnet's manifest has it (the free plan: 100 compute-hours a month at 0.25 CU), D872. */
+const NEON_PLAN = JSON.stringify({ computeHoursPerMonth: 100, computeUnits: 0.25 });
 
 /** The relayer's staff status (apps/api evm-relayer.ts EvmRelayerStaffStatus), the fields the controls read. */
 interface RelayerStatus {
@@ -214,6 +219,7 @@ class Lane {
 
   constructor() {
     this.api = new MockApi(this.d1, this.chain, modules, { nearRpc: LANE_NEAR, fingerprint: `admin-lane-${data.name}` });
+    this.api.env.NEON_PLAN = NEON_PLAN;
     const apiRpc = binding(new AdminRpc(new ExecContext(), this.api.env));
     const staffRpc = binding(new StaffRpc(new ExecContext(), this.consoleEnv));
     this.adminEnv = {
@@ -246,7 +252,8 @@ class Lane {
       CONSOLE: staffRpc,
       ISSUER: issuerBridge,
       ASSETS: assets,
-      USAGE_DB: { connectionString: ledgerUrl },
+      USAGE_DB: { connectionString: ledger.url },
+      NEON_PLAN,
     };
     this.fresh();
   }
@@ -346,6 +353,8 @@ class Lane {
       staffLog: s.staffLog.map((e) => ({ seq: e.seq, tool: e.action, done: e.done, refused: e.refused, who: e.who, note: e.note })),
       chain: this.evm.view(),
       clockOffsetMs: laneClockOffset(),
+      nowMs: Date.now(),
+      ledgerConnections: ledger.wire.connections,
     };
   }
 
@@ -521,9 +530,9 @@ async function control(request: Request, url: URL): Promise<Response> {
     if (!who) return json(400, { error: 'as: staff or outsider' });
     const to = url.searchParams.get('to') ?? '/';
     const target = /^\/(?!\/)[^\s\\]*$/u.test(to) ? to : '/';
-    // Signed at the real time (the lane's clock may run ahead): the admin's check and the issuer's (the real clock)
-    // both take it while the lane is less than its 24 hours ahead.
-    const token = signAccessJwt(data.access, { email: who, nowMs: realNow() });
+    // Issued at the real time and expiring 24 hours after the lane's (its clock may run ahead): the admin's check (the
+    // lane's clock) and the issuer's (the real one) both take it.
+    const token = signAccessJwt(data.access, { email: who, nowMs: realNow(), expFromMs: Date.now() });
     return new Response(null, { status: 302, headers: { location: target, 'set-cookie': `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`, 'cache-control': 'no-store' } });
   }
   if (url.pathname === '/__e2e/access/sign-out' && request.method === 'GET') {

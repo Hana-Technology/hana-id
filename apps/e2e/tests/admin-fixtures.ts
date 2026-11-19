@@ -28,6 +28,10 @@ export interface LaneState {
   staffLog: { seq: number; tool: string; done: boolean; refused: string | null; who: string; note: string }[];
   chain: { latest: number; pending: number; pooled: { nonce: number; foreign: boolean }[]; hold: boolean; refuse: boolean; balanceWei: string };
   clockOffsetMs: number;
+  /** The lane's "now" (its clock). */
+  nowMs: number;
+  /** Connections the lane's ledger listener has accepted so far. */
+  ledgerConnections: number;
 }
 
 async function control(lane: string, path: string, body?: Record<string, unknown>): Promise<LaneState> {

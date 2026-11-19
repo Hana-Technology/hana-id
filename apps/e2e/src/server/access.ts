@@ -47,11 +47,13 @@ const b64url = (b: Buffer | string): string => Buffer.from(b).toString('base64ur
  * the team key, `iss` the team, `aud` [the AUD tag], `type: 'app'`, the identity's `sub` and `email`, issued at `nowMs`
  * and valid for `ttlS` (Access's default session is 24 hours).
  */
-export function signAccessJwt(keys: Pick<AccessKeys, 'privatePem'>, o: { email: string; nowMs?: number; ttlS?: number; aud?: string }): string {
+export function signAccessJwt(keys: Pick<AccessKeys, 'privatePem'>, o: { email: string; nowMs?: number; ttlS?: number; aud?: string; expFromMs?: number }): string {
   const now = Math.floor((o.nowMs ?? Date.now()) / 1000);
+  // `expFromMs`: the expiry counts from this time instead (an admin lane whose clock runs ahead: still valid there).
+  const expFrom = o.expFromMs !== undefined ? Math.max(now, Math.floor(o.expFromMs / 1000)) : now;
   const head = b64url(JSON.stringify({ alg: 'RS256', kid: ACCESS_KID, typ: 'JWT' }));
   const sub = ACCESS_SUBS[o.email] ?? `00000000-0000-4000-8000-${Buffer.from(o.email).toString('hex').slice(0, 12).padEnd(12, '0')}`;
-  const body = b64url(JSON.stringify({ iss: `https://${ACCESS_TEAM}`, aud: [o.aud ?? ACCESS_AUD], sub, email: o.email, type: 'app', identity_nonce: 'e2e', iat: now, nbf: now, exp: now + (o.ttlS ?? 24 * 3600) }));
+  const body = b64url(JSON.stringify({ iss: `https://${ACCESS_TEAM}`, aud: [o.aud ?? ACCESS_AUD], sub, email: o.email, type: 'app', identity_nonce: 'e2e', iat: now, nbf: now, exp: expFrom + (o.ttlS ?? 24 * 3600) }));
   return `${head}.${body}.${b64url(sign('sha256', Buffer.from(`${head}.${body}`), createPrivateKey(keys.privatePem)))}`;
 }
 

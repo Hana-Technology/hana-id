@@ -48,6 +48,8 @@ function startupAnswer(): Buffer {
 export class LedgerWire {
   private server: Server | null = null;
   private turn: Promise<void> = Promise.resolve();
+  /** Connections accepted so far (the tests: a page that must not open the ledger opens none). */
+  connections = 0;
 
   constructor(
     private readonly db: PGliteLike,
@@ -71,6 +73,7 @@ export class LedgerWire {
   }
 
   private accept(socket: Socket): void {
+    this.connections += 1;
     socket.setNoDelay(true);
     let release!: () => void;
     const mine = new Promise<void>((r) => (release = r));

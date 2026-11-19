@@ -15136,8 +15136,14 @@ new tests found (item 7).
      answered without a password, the session as role `usage_admin` with its real grants, every other message handed to
      PGlite's `execProtocolRaw`, which is Postgres's own protocol code; one connection at a time, since PGlite is one
      session). The admin's own `pg` client connects to it as to Hyperdrive: Feed and notices (the feeds, the ledger's
-     part), Rates, Retention, Reports, Statements (issuing refuses: no R2) and the status page's ledger tiles work, on
-     an empty ledger (the stack's API writes no usage events). About an hour's work, so no degraded mode was needed.
+     part), Rates, Retention, Reports and Statements (issuing refuses: no R2) work, on an empty ledger (the stack's API
+     writes no usage events). About an hour's work, so no degraded mode was needed. After D872 (merged from `next`)
+     both lane Workers have `NEON_PLAN` (testnet's free plan, 100 compute-hours at 0.25 CU): System status never opens
+     the ledger (a spec counts the listener's connections around each load), its ledger tile says it wasn't read from
+     here (no 15-minute run reports in the stack), and the pages that open the ledger report their wake-ups, which the
+     "Neon compute this month" tile counts; a spec moves the lane's clock to a month's start (nothing counted, then a
+     whole month) and to 3 days into the next (counting began late, amber). The lane's Access tokens expire 24 hours
+     after the lane's clock, so a month ahead still signs in.
   5. **The hand test.** `pnpm --filter @hana-id/e2e serve`, then the sign-in URL and `pnpm --filter @hana-id/e2e
      staff-demo <state>` for each state (`docs/operations.md` "Trying the staff admin portal by hand on the local
      stack"), mirroring the demo card's hand test.
@@ -15168,5 +15174,9 @@ new tests found (item 7).
      violation for every `<select>`, on the admin's pages and on a bare test page with the same CSP: its own control,
      not the SPA (the selects render and work). The suite lets exactly that violation through in WebKit only. A fresh
      visit without any Access token shows the expired-sign-in banner over a page that stays "Loading…" (behind real
-     Access unreachable: Access answers before the page). On the local chain (no block explorer) the out-of-money
-     steps still say "Open the relayer wallet on the block explorer"; on Base Sepolia they name Basescan.
+     Access unreachable: Access answers before the page; noted in `apps/admin/README.md`).
+  9. **Fixed after review** (the coordinator, 2026-11-19): on a chain with no block explorer (the local one) the
+     out-of-money steps said "Open the relayer wallet on the block explorer", and the engineer's leak step "checks the
+     relayer wallet on the block explorer". With no explorer they now say "Check the relayer wallet’s recent
+     transactions (ask an engineer if you can’t)." and "checks the relayer wallet’s recent transactions for any nobody
+     at Journear sent."; with one (Basescan) as before (`test/evm-relay.test.ts`).

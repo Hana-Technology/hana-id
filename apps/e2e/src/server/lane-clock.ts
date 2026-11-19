@@ -13,7 +13,7 @@ export const realNow = (): number => RealDate.now();
 
 /** Moves the lane's time forward by `ms` (never back: a clock that runs backwards is no real clock). */
 export function advanceLaneClock(ms: number): number {
-  if (!Number.isSafeInteger(ms) || ms < 0 || ms > 7 * 24 * 3_600_000) throw new Error('advance: 0 to 7 days, in whole ms');
+  if (!Number.isSafeInteger(ms) || ms < 0 || ms > 62 * 24 * 3_600_000) throw new Error('advance: 0 to 62 days, in whole ms');
   offsetMs += ms;
   return offsetMs;
 }

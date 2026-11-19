@@ -4510,7 +4510,9 @@ is the stack's.
     monitoring** list the free-network-fee events ("Free network fees: paused or slow, needs a look", "…the paying
     account is running low") with "What to do:" and the playbook's link.
 11. Also there, from the stack: **Users** (the email issuer's directory of the stack's email sign-ins), **Rates**,
-    **Retention**, **Reports** and **Statements** (an empty ledger). Not there: the watchdog (Security & monitoring
+    **Retention**, **Reports** and **Statements** (an empty ledger), and on System status **Neon compute this month**
+    (each page that opens the ledger counts as a wake-up; System status itself never opens it, so its "Usage ledger"
+    tile says it wasn't read from here: the stack runs no 15-minute job to report it). Not there: the watchdog (Security & monitoring
     says it isn't set up), the contract's governance (Pending upgrades says "NEAR didn’t answer"), the partner
     console, statements' files (R2) and email: System status marks each, which is expected here.
 12. Stop the stack with Ctrl+C. Its state lives in memory only.

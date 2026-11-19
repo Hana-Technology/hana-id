@@ -366,7 +366,9 @@ tool), then as deployed (the relayer's own 15 s, or its backoff up to 5 minutes)
 with a transaction no node took, that is every 15 s).
 
 **What the spec covers**, in every browser: sign-in and the refusals (no token, a forged one, a client's own header,
-someone not on the list); every page in the sidebar opens; System status's tile in each state; a waiting transaction
+someone not on the list); every page in the sidebar opens; System status's tile **Gas sponsorship (local test network)**
+in each state, and its link to the page `/gas-sponsorship/31337` (staff's name for the feature since D879; users still
+read "free network fees"; `staff-demo` prints that address); a waiting transaction
 and Cancel only past its time limit; out of money, refill, Resume; someone else using the relayer's key three ways
 (Close, Set the next slot number, Fill a gap, each confirmed, and Resume only with the engineer's word, refused by the
 page and by the Worker without it); a stale page and a second tab; the audit log's rows with who, when and the note;

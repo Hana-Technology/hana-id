@@ -126,8 +126,8 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'rate.overridden': 'Rate overridden',
   'support.lookup': 'Support ID looked up',
   'users.find': 'Wallet directory searched',
-  'evm_relay.staff_action': 'Network fee relayer tool used',
-  'evm_relay.staff_result': 'Network fee relayer tool result',
+  'evm_relay.staff_action': 'Gas sponsorship tool used',
+  'evm_relay.staff_result': 'Gas sponsorship tool result',
 };
 
 /** An action or change code in words: its title from `ACTION_TITLES`, else its own words (`some_new.kind` → "Some new kind"). */
@@ -147,15 +147,15 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   home_budget_high: 'Passport Home daily budget running high',
   near_relay_budget_high: 'NEAR relay daily budget running high',
   near_relay_balance_low: 'NEAR relay account running low',
-  evm_relay_budget_high: "Free network fees: today's budget is nearly used up",
-  evm_relay_balance_low: 'Free network fees: the paying account is running low',
-  evm_relay_stuck: 'Free network fees: paused or slow, needs a look',
-  evm_relay_receipt_odd: 'Free network fees: a payment looked wrong and was counted at the most it could cost',
-  evm_billing_late: 'Free network fees: a billing record is late',
-  near_billing_late: 'Free NEAR transactions: a billing record is late',
+  evm_relay_budget_high: "Gas sponsorship: today's budget is nearly used up",
+  evm_relay_balance_low: 'Gas sponsorship: the relayer wallet is running low',
+  evm_relay_stuck: 'Gas sponsorship: paused or slow, needs a look',
+  evm_relay_receipt_odd: 'Gas sponsorship: a payment looked wrong and was counted at the most it could cost',
+  evm_billing_late: 'Gas sponsorship: a billing record is late',
+  near_billing_late: 'NEAR relay: a billing record is late',
   neon_compute_high: 'The usage database’s free monthly allowance is running low',
-  evm_relay_nonce_taken: 'Free network fees: a payment slot was used by another transaction',
-  evm_relay_closed_slot_mined: 'Free network fees: a slot staff closed went through after all',
+  evm_relay_nonce_taken: 'Gas sponsorship: a payment slot was used by another transaction',
+  evm_relay_closed_slot_mined: 'Gas sponsorship: a slot staff closed went through after all',
 };
 
 /** A security event's kind in words; an unknown kind reads as its own words. */

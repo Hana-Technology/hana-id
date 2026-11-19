@@ -51,4 +51,4 @@ const eth = (wei: string) => `${Number(BigInt(wei) / 10n ** 14n) / 10_000} test 
 console.log(s.halted ? `Paused: ${s.halted.reason}${s.halted.code ? ` (${s.halted.code})` : ''}${s.halted.nonce !== undefined ? `, slot ${s.halted.nonce}` : ''}` : 'Not paused');
 console.log(`Waiting transactions: ${s.waiting} · next slot: ${s.nextSlot ?? 'none yet'} · the network counts ${s.chain.latest} (${s.chain.pending} with the waiting ones) · wallet: ${eth(s.chain.balanceWei)}`);
 if (s.clockOffsetMs) console.log(`The lane's clock is ${Math.round(s.clockOffsetMs / 1000)} s ahead of real time.`);
-console.log(`Open ${lane}/free-network-fees/31337 (sign in first: ${lane}/__e2e/access/sign-in?as=staff)`);
+console.log(`Open ${lane}/gas-sponsorship/31337 (sign in first: ${lane}/__e2e/access/sign-in?as=staff)`);

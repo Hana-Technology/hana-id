@@ -533,6 +533,6 @@ describe('GET /api/monitoring: the security events in words (D873 finding)', () 
     const staff = { actor: { kind: 'hana' as const, id: STAFF_SUB, email: STAFF_EMAIL }, requestId: 'req_monitoring_words', clientIp: '198.51.100.9' };
     const d = (await (await monitoringRoute({ ...env, API: api } as never, staff, NOW)).json()) as Record<string, any>;
     expect(d.events.ok).toBe(true);
-    expect(d.events.events[0]).toMatchObject({ kind: 'evm_relay_stuck', title: expect.stringMatching(/^Free network fees/u), playbook: { id: 'evm-relay-paused' } });
+    expect(d.events.events[0]).toMatchObject({ kind: 'evm_relay_stuck', title: expect.stringMatching(/^Gas sponsorship/u), playbook: { id: 'evm-relay-paused' } });
   });
 });

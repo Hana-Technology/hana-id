@@ -1,4 +1,4 @@
-// "Free network fees" (D843) in the admin Worker: the plain words of every relayer state and halt reason (the tile's
+// "Gas sponsorship" (D843) in the admin Worker: the plain words of every relayer state and halt reason (the tile's
 // and the page's), the detail route (records in words, explorer links only for well-formed hashes, never a tool the
 // relayer would certainly refuse), and the staff tools' route over the real console (the audit row before the tool, no
 // row no action, the result's row after, the input checked first, a stale page, a refusal and an unknown answer in
@@ -7,10 +7,17 @@ import { type EvmRelayChainView, type EvmRelayDetail, type EvmRelayRecordView, S
 import { PLAYBOOKS } from '@hana-id/playbooks';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { STATE_LABELS, actWords, evmRelayActRoute, evmRelayDetailRoute, explainChain, haltExplained, recordPlain, testEth, toolsOffered } from '../src/evm-relay.ts';
+import { STATE_LABELS, actWords, evmRelayActRoute, evmRelayDetailRoute, explainChain, haltExplained, recordPlain, refusalWords, testEth, toolsOffered } from '../src/evm-relay.ts';
 import type { RouteCtx } from '../src/routes.ts';
 import { SECURITY_EVENT_PLAYBOOKS, withWords } from '../src/security.ts';
 import { STAFF_EMAIL, STAFF_SUB, adminRequest, downBinding, envWith, overrideBinding, stubNetwork, uid } from './helpers.ts';
+
+/**
+ * Protocol words kept out of the staff sentences (the code for engineers apart). "Gas" is staff's word since D879, but
+ * only in the agreed phrases ("gas sponsorship", "gas price(s)", "gas price limit"): a bare "gas" is refused, so the
+ * jargon doesn't spread beyond the term. The users' term ("free network fees") is refused here too.
+ */
+const STAFF_JARGON = /\bnonce\b|\bRPC\b|\bmempool\b|\bEVM\b|halted|EIP|delegate|_|free network fee|\bgas\b(?! (?:sponsorship|prices?)\b)/iu;
 
 const NOW = Date.UTC(2026, 10, 18, 9, 0);
 const MILLI = 10n ** 15n;
@@ -41,7 +48,7 @@ describe('the words of each state', () => {
   it('working, not set up, low on money, paused: a plain label, a sentence and numbered steps, the code for engineers apart', () => {
     const working = explainChain(view(), NOW);
     expect([working.label, working.severity, working.explained, working.code]).toEqual(['Working', 'ok', null, null]);
-    expect(working.title).toBe('Free network fees (Base Sepolia)');
+    expect(working.title).toBe('Gas sponsorship (Base Sepolia)');
     expect(working.lines.map((l) => [l.label, l.detail])).toEqual([
       ['Relayer wallet', RELAYER],
       ['Money in the wallet', '0.112 test ETH · low below 0.05 test ETH'],
@@ -64,11 +71,11 @@ describe('the words of each state', () => {
         'Open the relayer wallet on Basescan (its address is below). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.',
         'Check the wallet’s balance below.',
         'Send at least 0.07 test ETH to the relayer wallet (its address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”).',
-        'When the balance below shows the new amount, press Resume on the Free network fees page.',
+        'When the balance below shows the new amount, press Resume on the Gas sponsorship page.',
         'If it pauses again for the same reason, it still needs more money: send more, then press Resume again.',
       ],
     });
-    expect(paused.detail).toBe('Paused since 08:50 UTC (10 min). Nobody gets free network fees until a person fixes it. Nothing is lost.');
+    expect(paused.detail).toBe('Paused since 08:50 UTC (10 min). Gas sponsorship is stopped for everyone until a person fixes it. Nothing is lost.');
     // The low balance is its own problem besides the pause.
     expect(paused.extra.map((x) => x.key)).toEqual(['low']);
     expect(paused.walletUrl).toBe(`https://sepolia.basescan.org/address/${RELAYER}`);
@@ -89,6 +96,9 @@ describe('the words of each state', () => {
   });
 
   it('every halt reason and refusal code has its own sentence and steps, and none uses a protocol word outside the code', () => {
+    // A refusal's words keep to the same rule.
+    for (const code of ['not_halted', 'incomplete_check', 'rpc_unavailable', 'no_record', 'nonce_not_consumed_at_confirmed_depth', 'receipt_found', 'key_mismatch', 'nonce_mined', 'no_valid_replacement', 'fee_cap_too_low', 'record_exists', 'not_below_next_nonce', 'not_the_chains_next_nonce', 'below_next_nonce', 'unmined_records', 'chain_count_differs', 'no_state', 'not_past_deadline', 'key_confirmation_required', 'invalid_request', 'relayer_unbound', 'relayer_unavailable', 'relayer_timeout', 'internal'])
+      expect(refusalWords(code, 7, { chain: 'Base Sepolia', faucet: 'a faucet', explorer: 'Basescan', refill: '0.07 test ETH' }), code).not.toMatch(STAFF_JARGON);
     const w = { chain: 'Base Sepolia', faucet: 'a faucet', explorer: 'Basescan', refill: '0.07 test ETH' };
     const cases: [string, string | null][] = [
       ['relayer_cannot_send', 'insufficient_funds'],
@@ -111,12 +121,16 @@ describe('the words of each state', () => {
       whys.add(e.why);
       expect(e.steps.length, reason).toBeGreaterThan(0);
       for (const t of [e.why, ...e.steps]) {
-        expect(t, `${reason} ${code}`).not.toMatch(/\bnonce\b|\bgas\b|\bRPC\b|\bmempool\b|\bEVM\b|halted|EIP|delegate|_/u);
+        expect(t, `${reason} ${code}`).not.toMatch(STAFF_JARGON);
         expect(t.length, t).toBeLessThan(260);
       }
     }
     // The two ways the key shows as used elsewhere share their words; every other case says something of its own.
     expect(whys.size).toBe(cases.length - 1);
+    expect(haltExplained({ reason: 'relayer_cannot_send', slot: 7, code: 'fee_cap_too_low' }, w)).toEqual({
+      why: 'Gas prices are higher right now than the relayer is allowed to pay, so it can’t even send its own cancel.',
+      steps: ['Wait: gas prices usually fall again within an hour.', 'Then press Resume on the Gas sponsorship page.', 'If it is still paused after a few hours, ask an engineer to raise the relayer’s gas price limit (maxFeePerGasGwei in the settings).'],
+    });
     expect(haltExplained({ reason: 'nonce_gap', slot: 41, code: null }, w).why).toBe('Slot 41 is empty and nothing is waiting to fill it, so every transaction after it is stuck. Only someone else using the relayer’s key leaves a gap like this.');
   });
 
@@ -130,7 +144,7 @@ describe('the words of each state', () => {
       expect(e.steps.at(-1), reason).toBe('Don’t press Resume until the engineer says the key is safe or replaced. Resume then asks you to confirm that.');
       expect(e.steps.join(' '), reason).not.toMatch(/faucet|Send at least|press Resume on the Free/u);
     }
-    expect(haltExplained({ reason: 'nonce_consumed_elsewhere', slot: 7, code: null }, w).steps[2]).toBe('After that, the engineer closes slot 7 as “used by something else” on the Free network fees page (under Advanced).');
+    expect(haltExplained({ reason: 'nonce_consumed_elsewhere', slot: 7, code: null }, w).steps[2]).toBe('After that, the engineer closes slot 7 as “used by something else” on the Gas sponsorship page (under Advanced).');
     expect(haltExplained({ reason: 'nonce_gap', slot: 7, code: null }, w).steps[2]).toBe('After that, the engineer uses “Fill a gap” (under Advanced) for each empty slot, lowest first; the box above updates after each.');
     expect(haltExplained({ reason: 'foreign_transactions', slot: null, code: null }, w).steps[2]).toMatch(/“Set the next slot number” .* with the number the network gives/u);
     // A leak pause with a low wallet: no refill problem is raised beside it.
@@ -139,9 +153,9 @@ describe('the words of each state', () => {
     // The relayer can tell its key was replaced since the stop: its records' signer isn't the settings' wallet.
     const replaced = explainChain(view({}, { ...halt('nonce_consumed_elsewhere', 7), signerAddress: '0x1111111111111111111111111111111111111111' }), NOW);
     expect(replaced.explained!.why).toMatch(/The relayer’s key has been replaced since it stopped \(its transactions were signed by 0x1111…1111; the settings now name the wallet below\)\.$/u);
-    // stuck_past_deadline: the fee limit and the 8-copies case said.
+    // stuck_past_deadline: the gas price limit and the 8-copies case said.
     const stuck = haltExplained({ reason: 'stuck_past_deadline', slot: 7, code: null }, w).steps;
-    expect(stuck).toContain('If Cancel is refused because network fees are above the relayer’s limit, ask an engineer to raise the fee limit.');
+    expect(stuck).toContain('If Cancel is refused because gas prices are above the relayer’s gas price limit, ask an engineer to raise that limit.');
     expect(stuck).toContain('If slot 7 has no Cancel button, it already has 8 copies and the relayer can’t send another: ask an engineer.');
   });
 
@@ -151,7 +165,7 @@ describe('the words of each state', () => {
     expect(marked.explained!.why).toBe('The relayer’s wallet can’t send transactions: it is out of money. Since it stopped, the relayer has seen something that may mean someone else is using its key (or a slot was changed by hand on this page).');
     expect(marked.explained!.steps).toEqual([
       'Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.',
-      'The engineer follows “A relayer key leaked” in docs/operations.md: free network fees are switched off, the money left in the wallet is moved out, and the key is replaced.',
+      'The engineer follows “A relayer key leaked” in docs/operations.md: gas sponsorship is switched off, the money left in the wallet is moved out, and the key is replaced.',
       'After that, the engineer checks the relayer wallet on Basescan for transactions nobody at Journear sent.',
       'Don’t press Resume until the engineer says the key is safe or replaced. Resume then asks you to confirm that.',
     ]);
@@ -193,7 +207,7 @@ describe('the words of each state', () => {
     // The API's stuck alert fires at 2 minutes: so does the line, for the oldest waiting or the oldest not taken.
     expect(explainChain(view({}, { waiting: 1, oldestWaitingMs: 150_000, oldestNotTakenMs: null }), NOW).lines.find((l) => l.label === 'Waiting to go through')!.state).toBe('warning');
     expect(explainChain(view({}, { waiting: 1, oldestWaitingMs: 90_000, oldestNotTakenMs: 90_000 }), NOW).lines.find((l) => l.label === 'Waiting to go through')!.state).toBe('ok');
-    expect(used.extra[0]).toMatchObject({ severity: 'critical', title: 'Free network fees have used up today’s budget (0.02 test ETH): new requests are turned away until 00:00 UTC' });
+    expect(used.extra[0]).toMatchObject({ severity: 'critical', title: 'Gas sponsorship has used up today’s budget (0.02 test ETH): new requests are turned away until 00:00 UTC' });
   });
 
   it('amounts in test ETH, small ones not hidden', () => {
@@ -253,7 +267,7 @@ describe('the waiting transactions and the tools offered', () => {
   });
 
   it('every answer in words: done, each refusal, unknown', () => {
-    expect(actWords('resume', null, { done: true, refused: null }, 84532)).toEqual({ tone: 'ok', title: 'Resume: done', text: 'Free network fees are running again.', steps: [], code: null });
+    expect(actWords('resume', null, { done: true, refused: null }, 84532)).toEqual({ tone: 'ok', title: 'Resume: done', text: 'Gas sponsorship is running again.', steps: [], code: null });
     expect(actWords('cancel', 42, { done: false, refused: 'nonce_mined' }, 84532)).toEqual({ tone: 'warn', title: 'Cancel this slot: the relayer said no. Nothing was changed.', text: 'Slot 42 is already used on the network. Wait: it finishes by itself.', steps: [], code: 'nonce_mined' });
     expect(actWords('resume', null, { done: false, refused: 'relayer_cannot_send' }, 84532).text).toMatch(/^The problem is still there: the relayer’s wallet still can’t send transactions\./u);
     // After a refused Resume, the relayer's latest condition and its steps (not the first halt's).
@@ -306,7 +320,7 @@ describe('GET /api/evm-relay/:chain', () => {
     const d = (await res.json()) as Record<string, unknown> & { records: { slot: number; canCancel: boolean }[]; plain: { label: string } };
     expect(res.status).toBe(200);
     expect(calls).toEqual([expect.objectContaining({ chainId: 84532, actor: expect.objectContaining({ kind: 'hana' }) })]);
-    expect(d).toMatchObject({ chainId: 84532, title: 'Free network fees (Base Sepolia)', seen: { haltSince: NOW - 600_000, lastStaffSeq: 0 }, tools: { resume: true }, apps: 'recorded', token: expect.stringMatching(/^evmact_[A-Za-z0-9_-]{22}$/u) });
+    expect(d).toMatchObject({ chainId: 84532, title: 'Gas sponsorship (Base Sepolia)', seen: { haltSince: NOW - 600_000, lastStaffSeq: 0 }, tools: { resume: true }, apps: 'recorded', token: expect.stringMatching(/^evmact_[A-Za-z0-9_-]{22}$/u) });
     expect(d.plain.label).toBe('Paused: needs a person');
     expect(d.records.map((r) => [r.slot, r.canCancel])).toEqual([
       [42, true],
@@ -337,7 +351,7 @@ describe('POST /api/evm-relay/:chain/act', () => {
     const b = body();
     const res = await evmRelayActRoute(ctx({ API: api }, b, '84532', s));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ result: { done: true, refused: null }, words: { tone: 'ok', title: 'Resume: done', text: 'Free network fees are running again.', steps: [], code: null } });
+    expect(await res.json()).toEqual({ result: { done: true, refused: null }, words: { tone: 'ok', title: 'Resume: done', text: 'Gas sponsorship is running again.', steps: [], code: null } });
     expect(calls).toEqual([{ ...s, requestId: b.token, chainId: 84532, tool: 'resume', note: b.note, seen: b.seen }]);
     expect(await audit(b.token)).toEqual([
       { action: 'evm_relay.staff_action', org_id: null, actor_kind: 'hana', actor_email: STAFF_EMAIL, target: '84532', details_json: JSON.stringify({ tool: 'resume', chainId: 84532, slot: null, note: b.note }) },
@@ -448,7 +462,7 @@ describe('POST /api/evm-relay/:chain/act', () => {
 });
 
 describe('the security page’s events', () => {
-  it('every free-network-fees and billing-late event kind links to a playbook that exists (D843; D869’s evm_relay_closed_slot_mined included)', () => {
+  it('every gas sponsorship and billing-late event kind links to a playbook that exists (D843; D869’s evm_relay_closed_slot_mined included)', () => {
     const kinds = SECURITY_EVENT_KINDS.filter((k) => k.startsWith('evm_') || k.endsWith('_billing_late'));
     expect(kinds).toEqual(expect.arrayContaining(['evm_relay_nonce_taken', 'evm_relay_closed_slot_mined', 'evm_billing_late', 'near_billing_late']));
     const ids = new Set(PLAYBOOKS.map((p) => p.id));
@@ -457,6 +471,6 @@ describe('the security page’s events', () => {
       expect(ids.has(SECURITY_EVENT_PLAYBOOKS[k]!), k).toBe(true);
       expect(withWords({ kind: k } as never).playbook?.id, k).toBe(SECURITY_EVENT_PLAYBOOKS[k]);
     }
-    expect(withWords({ kind: 'evm_relay_closed_slot_mined' } as never)).toMatchObject({ title: 'Free network fees: a slot staff closed went through after all', playbook: { id: 'evm-relay-closed-slot-mined' } });
+    expect(withWords({ kind: 'evm_relay_closed_slot_mined' } as never)).toMatchObject({ title: 'Gas sponsorship: a slot staff closed went through after all', playbook: { id: 'evm-relay-closed-slot-mined' } });
   });
 });

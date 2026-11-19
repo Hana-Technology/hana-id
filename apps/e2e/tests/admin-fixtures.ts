@@ -127,10 +127,10 @@ export const test = base.extend<{ lane: string; watch: PageWatch }>({
   ],
 });
 
-// ---- the "Free network fees" page ----
+// ---- the "Gas sponsorship" page ----
 
 export const CHAIN = 31337;
-export const DETAIL = `/free-network-fees/${CHAIN}`;
+export const DETAIL = `/gas-sponsorship/${CHAIN}`;
 
 /** A staff tool's section on the page (its heading). */
 export const tool = (page: Page, name: string): Locator => page.locator('.tool').filter({ has: page.getByRole('heading', { name, exact: true }) });

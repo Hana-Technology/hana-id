@@ -7,7 +7,7 @@
 // control moves it.
 //
 // Covered: sign-in as staff, and the refusals (no token, a forged one, someone not on the staff list); System status's
-// "Free network fees" tile; the sponsorship page against the relayer's real state: a waiting transaction, Cancel only
+// "Gas sponsorship" tile; the sponsorship page against the relayer's real state: a waiting transaction, Cancel only
 // past its time limit; out of money (the steps, refill, Resume); someone else using the relayer's key three ways (the
 // leak steps, no refill asked, Resume refused without the engineer's word, then Close, Set the next slot number and
 // Fill a gap, each with its confirmation); a stale page and a second tab; every action in the audit log with who, when
@@ -35,7 +35,7 @@ async function shot(page: Page, info: TestInfo, name: string): Promise<void> {
   await page.screenshot({ path: join(SHOTS, `${name}.png`), fullPage: true, animations: 'disabled' });
 }
 
-const TITLE = 'Free network fees (local test network)';
+const TITLE = 'Gas sponsorship (local test network)';
 /** A note of this run (the lane's audit log lives as long as the stack): the text and a short tag. */
 const RUN = crypto.randomUUID().slice(0, 6);
 const n = (text: string): string => `${text} (run ${RUN})`;
@@ -158,7 +158,7 @@ test.describe('every page', () => {
   });
 });
 
-test.describe('free network fees (the relayer on chain 31337)', () => {
+test.describe('gas sponsorship (the relayer on chain 31337)', () => {
   test('System status: the tile is Working, with the wallet, the money, the helper program; it links to the page', async ({ page, lane }, info) => {
     await scenario(lane, 'working');
     await signIn(page, lane, 'staff', '/status');
@@ -172,8 +172,11 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await expect(page.locator('li.tile').filter({ has: page.getByRole('heading', { name: 'Neon compute this month', exact: true }) }).locator('.tile-detail').first()).toHaveText(/compute-hours/u);
     await tile.scrollIntoViewIfNeeded();
     await shot(page, info, 'status-tile-working');
-    await tile.getByRole('link', { name: 'Free network fees' }).click();
+    await tile.getByRole('link', { name: 'Gas sponsorship' }).click();
     await expect(page.getByRole('heading', { name: TITLE, level: 1 })).toBeVisible();
+    // Staff's name for it and its address since D879; the page says who pays the gas.
+    expect(new URL(page.url()).pathname).toBe(DETAIL);
+    await expect(page.getByText('Journear pays users’ gas on the local test network through its relayer.', { exact: false })).toBeVisible();
     await expect(nowPanel(page)).toContainText('Working');
     await expect(page.getByText('No tool is offered now')).toHaveCount(0);
   });
@@ -185,7 +188,7 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
       ['working', 'Working', 'Sending normally · the next transaction gets slot 1'],
       ['waiting', 'Working', 'Sending normally · the next transaction gets slot 1'],
       ['low-money', 'Low on money', '0.005 test ETH left in the relayer wallet.'],
-      ['out-of-money', 'Paused: needs a person', /^Paused since \d{2}:\d{2} UTC \(\d+ s\)\. Nobody gets free network fees until a person fixes it\. Nothing is lost\.$/u],
+      ['out-of-money', 'Paused: needs a person', /^Paused since \d{2}:\d{2} UTC \(\d+ s\)\. Gas sponsorship is stopped for everyone until a person fixes it\. Nothing is lost\.$/u],
       ['key-used-elsewhere', 'Paused: needs a person', /^Paused since /u],
     ];
     await signIn(page, lane, 'staff', '/status');
@@ -253,7 +256,7 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await expect(steps.nth(0)).toHaveText('Check the relayer wallet’s recent transactions (ask an engineer if you can’t). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.');
     await expect(now).not.toContainText('explorer');
     await expect(steps.nth(2)).toHaveText('Send at least 1.01 test ETH to the relayer wallet (its address is below) from the local node’s funded test account.');
-    await expect(steps.nth(3)).toHaveText('When the balance below shows the new amount, press Resume on the Free network fees page.');
+    await expect(steps.nth(3)).toHaveText('When the balance below shows the new amount, press Resume on the Gas sponsorship page.');
     await expect(now).toContainText('relayer_cannot_send · insufficient_funds · slot 0');
     await expect(now).toContainText('Money in the walletProblem 0.0001 test ETH · low below 0.01 test ETH');
     // Not a leak: Resume is the plain one (no engineer's confirmation).
@@ -261,15 +264,15 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await expect(resume.locator('[name="keyConfirmed"]')).toHaveCount(0);
     await shot(page, info, 'detail-paused-out-of-money');
 
-    await useTool(resume, { button: 'Resume', note: n('Pressed before the refill to see what it says'), confirm: 'Resume free network fees? The relayer checks the network first' });
+    await useTool(resume, { button: 'Resume', note: n('Pressed before the refill to see what it says'), confirm: 'Resume gas sponsorship? The relayer checks the network first' });
     await expectAnswer(page, 'Resume: the relayer said no. Nothing was changed.', 'The problem is still there: the relayer’s wallet can’t send transactions: it is out of money.');
 
     await scenario(lane, 'refill');
     await page.reload();
     await expect(nowPanel(page)).toContainText('Money in the wallet1 test ETH · low below 0.01 test ETH');
     const note = n('Sent 1.01 test ETH from the local node account; balance now 1');
-    await useTool(tool(page, 'Resume'), { button: 'Resume', note, confirm: 'Resume free network fees?' });
-    await expectAnswer(page, 'Resume: done', 'Free network fees are running again.');
+    await useTool(tool(page, 'Resume'), { button: 'Resume', note, confirm: 'Resume gas sponsorship?' });
+    await expectAnswer(page, 'Resume: done', 'Gas sponsorship is running again.');
     await expect(nowPanel(page)).toContainText('Working');
     await shot(page, info, 'detail-resumed');
     await expectStaffLog(lane, [
@@ -299,7 +302,7 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await shot(page, info, 'detail-paused-leak');
 
     // Without the engineer's confirmation the page sends nothing; nor does the Worker act on a request without it.
-    await useTool(resume, { button: 'Resume', note: n('Trying without the engineer first'), confirm: 'Resume free network fees on the engineer’s word' });
+    await useTool(resume, { button: 'Resume', note: n('Trying without the engineer first'), confirm: 'Resume gas sponsorship on the engineer’s word' });
     await expect(resume.locator('.jp-alert').last()).toContainText('Confirm what the engineer said first');
     await expectStaffLog(lane, []);
     const refused = await page.evaluate(async (note) => {
@@ -326,7 +329,7 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
 
     const resumeNote = n('Engineer replaced the key and moved the money out at 14:20 UTC');
     await useTool(tool(page, 'Resume'), { button: 'Resume', note: resumeNote, confirm: 'on the engineer’s word', fill: (f) => f.locator('[name="keyConfirmed"]').check() });
-    await expectAnswer(page, 'Resume: done', 'Free network fees are running again.');
+    await expectAnswer(page, 'Resume: done', 'Gas sponsorship is running again.');
     await expect(nowPanel(page)).toContainText('Working');
     await expectStaffLog(lane, [
       ['resume', true, null],
@@ -357,7 +360,7 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await expectAnswer(page, 'Set the next slot number: done', 'The relayer’s next slot is now 2. Press Resume when the engineer says so.');
     await shot(page, info, 'tool-set-number-result');
     await useTool(tool(page, 'Resume'), { button: 'Resume', note: n('Engineer says the key is replaced'), confirm: 'on the engineer’s word', fill: (f) => f.locator('[name="keyConfirmed"]').check() });
-    await expectAnswer(page, 'Resume: done', 'Free network fees are running again.');
+    await expectAnswer(page, 'Resume: done', 'Gas sponsorship is running again.');
     await expectStaffLog(lane, [
       ['resume', true, null],
       ['adopt_nonce', true, null],
@@ -378,14 +381,14 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await expect(fill.locator('[name="slot"]')).toHaveValue('0');
     await expect(fill).toContainText('The empty slot the relayer found: 0.');
     const note = n('Slot 0 is empty after a transaction we did not send');
-    await useTool(fill, { button: 'Fill the gap', note, confirm: 'Fill slot 0 with a harmless empty transfer? It costs a small network fee from the relayer wallet.' });
+    await useTool(fill, { button: 'Fill the gap', note, confirm: 'Fill slot 0 with a harmless empty transfer? It costs a little ETH for gas, from the relayer wallet.' });
     await expectAnswer(page, 'Fill a gap: done', 'A harmless empty transfer was sent for slot 0.');
     // Time passes: the filler and the check-in behind it are on the network.
     await laneRun(lane, 2);
     await page.reload();
     await expect(page.locator('main')).toContainText('Nothing is waiting: every transaction is on the network.');
     await useTool(tool(page, 'Resume'), { button: 'Resume', note: n('Gap filled; engineer checked the key'), confirm: 'on the engineer’s word', fill: (f) => f.locator('[name="keyConfirmed"]').check() });
-    await expectAnswer(page, 'Resume: done', 'Free network fees are running again.');
+    await expectAnswer(page, 'Resume: done', 'Gas sponsorship is running again.');
     await expectStaffLog(lane, [
       ['resume', true, null],
       ['fill', true, null],
@@ -400,10 +403,10 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
     await signIn(page, lane, 'staff', DETAIL);
     const other = await context.newPage();
     await other.goto(`${lane}${DETAIL}`);
-    await useTool(tool(other, 'Resume'), { button: 'Resume', note: n('Resumed from the second tab after the refill'), confirm: 'Resume free network fees?' });
-    await expectAnswer(other, 'Resume: done', 'Free network fees are running again.');
+    await useTool(tool(other, 'Resume'), { button: 'Resume', note: n('Resumed from the second tab after the refill'), confirm: 'Resume gas sponsorship?' });
+    await expectAnswer(other, 'Resume: done', 'Gas sponsorship is running again.');
     // The first tab still shows the pause it read: its Resume reaches the relayer, which refuses it unseen.
-    await useTool(tool(page, 'Resume'), { button: 'Resume', note: n('Resumed from the first tab, which is out of date'), confirm: 'Resume free network fees?' });
+    await useTool(tool(page, 'Resume'), { button: 'Resume', note: n('Resumed from the first tab, which is out of date'), confirm: 'Resume gas sponsorship?' });
     await expectAnswer(page, 'Resume: Someone changed this first', 'Reload the page to see the latest version, then try again. The page has been read again.');
     await expect(nowPanel(page)).toContainText('Working');
     await expectStaffLog(lane, [['resume', true, null]]);
@@ -422,8 +425,8 @@ test.describe('free network fees (the relayer on chain 31337)', () => {
       await signIn(page, lane, 'staff', path);
       const events = eventsOf(heading);
       for (const [kind, words, playbook] of [
-        ['evm_relay_stuck', 'Free network fees: paused or slow, needs a look', 'Free network fees are paused or slow'],
-        ['evm_relay_balance_low', 'Free network fees: the paying account is running low', 'The free network fees wallet is running low'],
+        ['evm_relay_stuck', 'Gas sponsorship: paused or slow, needs a look', 'Gas sponsorship is paused or slow'],
+        ['evm_relay_balance_low', 'Gas sponsorship: the relayer wallet is running low', 'Gas sponsorship: the relayer wallet is running low'],
       ] as const) {
         const row = events.filter({ hasText: kind }).first();
         await expect(row, `${path} ${kind}`).toContainText(words);

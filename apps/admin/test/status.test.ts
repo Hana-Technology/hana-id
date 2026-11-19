@@ -267,10 +267,10 @@ describe('all green', () => {
     expect(a.issues).toEqual([]);
     expect(a.verdict).toEqual({ state: 'ok', title: 'All systems operational', critical: 0, warning: 0 });
     const notOk = tiles(a).filter((t) => t.state !== 'ok');
-    // Free network fees aren't set up in this env (no `evmRelay` in the API's answer): grey, never an issue (D843); nor is
+    // Gas sponsorship isn't set up in this env (no `evmRelay` in the API's answer): grey, never an issue (D843); nor is
     // a Neon plan with a monthly allowance (no NEON_PLAN, D872).
     expect(notOk.map((t) => [t.id, t.state])).toEqual([['evm-relay', 'not_measured'], ['neon-compute', 'not_measured'], ['usage-limits', 'not_measured']]);
-    expect(tile(a, 'evm-relay')).toMatchObject({ name: 'Free network fees', stateLabel: 'Not set up' });
+    expect(tile(a, 'evm-relay')).toMatchObject({ name: 'Gas sponsorship', stateLabel: 'Not set up' });
     expect(a.builds).toMatchObject({ majority: BUILD, mixed: false });
     expect(tile(a, 'builds').detail).toContain(`All 12 stamped pieces on ${BUILD}`);
     expect(tile(a, 'cron-triggers').detail).toContain('5 of 5 (full');
@@ -984,7 +984,7 @@ describe('the route', () => {
   });
 });
 
-describe('Free network fees (D843)', () => {
+describe('Gas sponsorship (D843)', () => {
   const MILLI = 10n ** 15n;
   const HASH = `0x${'ab'.repeat(32)}`;
   const chain = (relayer: Record<string, unknown> = {}, over: Record<string, unknown> = {}) => ({
@@ -1009,7 +1009,7 @@ describe('Free network fees (D843)', () => {
     invariants(a);
     const funds = a.groups.find((g) => g.id === 'funds')!.tiles.map((t) => t.id);
     expect(funds.indexOf('evm-relay-84532')).toBe(funds.indexOf('near-relay') + 1);
-    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'ok', name: 'Free network fees (Base Sepolia)', stateLabel: 'Working', link: { path: '/free-network-fees/84532', label: 'Free network fees' } });
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'ok', name: 'Gas sponsorship (Base Sepolia)', stateLabel: 'Working', link: { path: '/gas-sponsorship/84532', label: 'Gas sponsorship' } });
     expect(issuesOf(a, 'evm-relay-84532')).toEqual([]);
   });
 
@@ -1026,6 +1026,33 @@ describe('Free network fees (D843)', () => {
     expect(main).toMatchObject({ severity: 'critical', title: 'The relayer’s wallet can’t send transactions: it is out of money.', since: NOW - 600_000, sinceSource: 'source', code: 'relayer_cannot_send · insufficient_funds · slot 42', playbook: { id: 'evm-relay-paused' } });
     expect(main!.steps).toEqual(t.explain!.steps);
     expect(low).toMatchObject({ severity: 'critical', playbook: { id: 'evm-relay-balance-low' } });
+  });
+
+  it('what it affects is scoped to its own network and to new actions, on the tile and on every issue (paused, low, budget; D879 review)', async () => {
+    const local = (over: Record<string, unknown>, relayer: Record<string, unknown> = {}) => ({ ...chain(relayer, over), chainId: 31337 });
+    const cases: [string, ReturnType<typeof chain>[]][] = [
+      ['paused', [chain({ halted: { reason: 'relayer_cannot_send', since: NOW - 600_000, slot: 42, code: 'insufficient_funds' } }, { balance: { ok: true, wei: '1000' } })]],
+      ['low', [chain({}, { balance: { ok: true, wei: (31n * MILLI).toString() } })]],
+      ['budget', [chain({}, { budget: { ok: true, spentWei: (17n * MILLI).toString() } })]],
+      ['two networks', [chain({}, { balance: { ok: true, wei: (31n * MILLI).toString() } }), local({ budget: { ok: true, spentWei: (20n * MILLI).toString() } })]],
+    ];
+    const want = (name: string) => `Users’ actions on ${name} whose gas Journear pays: while it is paused or switched off, no new action there gets its gas paid`;
+    for (const [what, chains] of cases) {
+      world.api = apiAnswer({ evmRelay: { state: 'on', chains } });
+      const a = await read();
+      for (const c of chains) {
+        const id = `evm-relay-${c.chainId}`;
+        const name = c.chainId === 84532 ? 'Base Sepolia' : 'the local test network';
+        expect(tile(a, id).affects, what).toBe(want(name));
+        const issues = issuesOf(a, id);
+        expect(issues.length, what).toBeGreaterThan(0);
+        for (const i of issues) expect(i.affects, `${what} ${i.title}`).toBe(want(name));
+      }
+    }
+    // No network known (not set up anywhere): the general line.
+    world.api = apiAnswer({ evmRelay: { state: 'bad_config', chains: [] } });
+    const a = await read();
+    expect(tile(a, 'evm-relay').affects).toBe('Users’ actions on EVM test networks whose gas Journear pays: while it is paused or switched off, no new action gets its gas paid');
   });
 
   it('low on money, the key used elsewhere, not set up, refused settings, an unreadable answer', async () => {

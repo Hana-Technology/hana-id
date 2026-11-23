@@ -16,9 +16,10 @@ const MAX_APP_NAME = 64;
 
 /**
  * The app's name as mails show it, or null when it isn't safe to display: control, bidi or invisible characters, or a
- * name the app-name rule refuses (D686 as extended by D765: one that looks like a web address or holds "Hana",
- * "Journear" or "Passport Home"). The API refuses such names
- * when an app is named; a name stored before the rule lands here and the mail says "an app".
+ * name the app-name rule refuses (D686 as extended by D765 and D891: one that looks like a web address, holds "Hana",
+ * "Journear" or "Passport Home", is "Passport" alone or as the wallet, or has a claim word beside sentence
+ * punctuation). The API refuses such names when an app is named; a name stored before the rule lands here and the
+ * mail says "an app".
  */
 export function displayAppName(name: string): string | null {
   const n = name.trim();

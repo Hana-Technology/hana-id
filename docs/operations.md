@@ -4615,10 +4615,13 @@ live** (the founder's option 1). What staff can do, each with a one-line note th
 | Tool | Where | What it does |
 |---|---|---|
 | Block this change | a change's page | It never takes effect, or, if live, stops showing at once. Final: the partner proposes again and waits again. The partner's security contacts get "Journear blocked a change to request labels for {app}" with the note and how to ask why (the feed's own mail, within about 5 minutes). |
-| Allow | a change's page, while staff review is on | Lifts the review hold only: the change still waits its own time. |
+| Allow | a change's page, while staff review is on | Lifts the review hold only: the change still waits its own time. A held change nobody allows lapses 7 days after its time, and the partner is mailed. |
 | Switch these labels off / Turn these labels back on | a change's page | One set of labels (every version) off at once; back on shows only a version that already passed its wait. |
 | Switch every partner label off / Turn every partner label back on | Switches | The same for every partner's labels. The status page's "Partner labels" tile shows a warning while any switch is off. |
-| Require review for everyone / Turn review off for everyone; one organisation's switches by its id | Switches | With review on, no change goes live until staff press Allow; one nobody allows lapses 7 days after its time. Turning review off lets held changes whose time has passed go live at once, never sooner than their time. |
+| Require review for everyone / Turn review off for everyone; one organisation's switches by its id | Switches | With review on, no change whose time comes after it was turned on goes live until staff press Allow (one already live stays live); one nobody allows lapses 7 days after its time. Turning review off lets held changes whose time has passed go live at once, never sooner than their time. While an organisation's (or everyone's) labels are switched off, its owners can't propose new ones. |
+
+Staff never cancel a label change (the old Cancel on an app's guarded changes refuses one): Block it, with a note. A block
+is final; if it was a mistake, tell the partner (reply to the blocked mail): they propose again and wait again.
 
 When to block: the words would mislead a user about what the request does (it moves money but reads as harmless, it
 names something the call doesn't do). The real amounts, recipients and warnings still show beside a partner's words,

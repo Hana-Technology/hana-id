@@ -1789,12 +1789,16 @@ handshake removes the frame and closes its port, as `destroy()` does.
   before piece 3 may show anything; (5) labels travel only on the vault's own `GET /v1/app` read, from D1 on every
   request (no cache), `no-store`, and only with `PARTNER_LABELS = "on"` (off in every deployed env); a staff switch
   or block is in the next read, and piece 3 must hold labels to a fresh read as policies are (`POLICY_FRESH_MS`, D62);
-  (6) staff switches only turn labels off; turning back on re-serves only versions already in force, and Allow only
-  lifts a review hold, never a version's time; every staff act is in the staff audit log first and in the API's ledger.
+  (6) staff switches only turn labels off; turning back on re-serves only versions that passed the guarded path, Allow
+  only lifts a review hold, never a version's time, and review turned on holds only versions due after it (so no press
+  depends on the hourly job's timing); staff never cancel a label change (they Block, with a note), and no proposal is
+  taken while an org's or everyone's labels are switched off; every staff act is in the staff audit log first and in
+  the API's ledger.
   Accepted (founder, option 1): a mildly misleading phrase that passes the text rules can go live if nobody looks during
   the wait; it is always the partner's attributed words beside the request's true values and every warning. Residual,
   as for origins and policies: a D1 write can skip all of it; drift (`labels/drift.ts`) reports it within the hour
-  unless the ledger and the switch log are forged too. The four attackers' table is in D894.
+  unless the ledger and the switch log are forged too (the vault's own parser and text rules, not its re-hash, bound
+  what such a write could ever show). The four attackers' table is in D894.
 - **Wording (D853, standing rule).** Every user-visible text is in plain, everyday words for people who don't know
   Web3: what happens to their money, tokens or account first; chain jargon only in the folded details; never a wording
   that makes a risk sound smaller. Outside the approval window too (D861): the SDK's errors carry `userMessage`, a

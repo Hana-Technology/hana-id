@@ -269,8 +269,8 @@ const MINE_MANY_QUESTION = 'Does this wallet need these apps?';
 const COVERAGE_WORDS: Readonly<Record<'mine' | 'mineMany' | 'other', Readonly<Record<CoverageKind, CoverageText>>>> = Object.freeze({
   // The user's wallet that two or more apps use (PR 122's review): the same answers, about "these apps".
   mineMany: {
-    yes: { badge: 'Safe if the app closes', tone: 'ok', question: MINE_MANY_QUESTION, detail: 'No. If these apps shut down, you can still sign in to this wallet through Journear.' },
-    maybe: { badge: 'Needs the app', tone: 'warn', question: MINE_MANY_QUESTION, detail: 'Yes. These apps run their own Google sign-in. If they shut down, you can no longer sign in to this wallet.' },
+    yes: { badge: 'Safe if the apps close', tone: 'ok', question: MINE_MANY_QUESTION, detail: 'No. If these apps shut down, you can still sign in to this wallet through Journear.' },
+    maybe: { badge: 'Needs the apps', tone: 'warn', question: MINE_MANY_QUESTION, detail: 'Yes. These apps run their own Google sign-in. If they shut down, you can no longer sign in to this wallet.' },
     no: { badge: 'Can’t be opened here', tone: 'off', question: MINE_MANY_QUESTION, detail: 'Journear can no longer sign you in to this wallet: the sign-in these apps used is gone. If they still run, use them.' },
     unknown: { badge: 'Not checked yet', tone: 'muted', question: MINE_MANY_QUESTION, detail: 'Journear hasn’t checked these apps yet.' },
   },
@@ -303,6 +303,15 @@ export function coverageText(coverage: HomeCoverage, mine: boolean, canMove = fa
   const words = COVERAGE_WORDS[mine ? (apps > 1 ? 'mineMany' : 'mine') : 'other'][kind];
   const more = mine && canMove ? MOVE_WORDS[kind] : undefined;
   return more ? { ...words, detail: `${words.detail}${more}` } : words;
+}
+
+/**
+ * The sentence under the badge (D897): its "Yes." or "No." answers the question only screen readers hear, so it is read
+ * to them too and not shown (beside "Safe if the apps close", a bare "No." read as a contradiction).
+ */
+function coverageDetail(d: Dom, detail: string): Child[] {
+  const m = /^(Yes|No)\. /u.exec(detail);
+  return m ? [d.h('span', { class: 'sr-only' }, m[0]), detail.slice(m[0].length)] : [detail];
 }
 
 export { type HomeProblem, homeProblem } from './home-problems.ts';
@@ -804,6 +813,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     onSignedOut: () => endSession(),
     track,
     appName: (appId) => allScopes().flatMap((s) => s.apps).find((a) => a.appId === appId)?.name ?? null,
+    now: () => clock.now(),
   });
 
   // ---- the user's name (home-profile.ts) ----
@@ -1330,6 +1340,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const v: HomeView = { kind: 'wallet', scope: viewing.scope, tab };
     showView(v, 'tab');
     addStep(v);
+    // D897: opening Security is the person asking about it: one read of this wallet's devices (never on Back or Forward,
+    // never a second time while the wallet's page is open), so its line can say where the wallet is signed in.
+    if (tab === 'security') devices.openApp();
   }
 
   /**
@@ -1948,7 +1961,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    * of it partner-supplied text, except the badges.
    */
   function scopeRow(scope: HomeScope): HTMLElement {
-    const cover = coverageText(scope.coverage, scope.mine);
+    // D897: a wallet two or more apps share reads "the apps" in its badge too.
+    const cover = coverageText(scope.coverage, scope.mine, false, scope.apps.length);
     const origins = scope.apps.flatMap((a) => a.origins);
     const first = origins[0];
     // What a screen reader names the row (PR 116's review): the apps, each with its state, then the badge, in words with
@@ -2263,7 +2277,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         ),
         // Whether it needs them: the badge on its own line, then the answer; the question is read to a screen reader
         // only (the answer starts "No." or "Yes.").
-        d.h('p', { attrs: { id: 'home-coverage' } }, d.h('span', { class: 'sr-only' }, `${cover.question} `), badge(cover.badge, cover.tone), d.h('span', { class: 'home-coverage-text' }, busy === 'check' ? 'Checking…' : cover.detail)),
+        d.h('p', { attrs: { id: 'home-coverage' } }, d.h('span', { class: 'sr-only' }, `${cover.question} `), badge(cover.badge, cover.tone), d.h('span', { class: 'home-coverage-text' }, ...(busy === 'check' ? ['Checking…'] : coverageDetail(d, cover.detail)))),
         scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
       ),
       walletTabs(scope, tab),

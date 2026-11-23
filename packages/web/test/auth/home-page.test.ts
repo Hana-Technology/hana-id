@@ -484,12 +484,12 @@ describe('your apps', () => {
     // A row names every app that shares the wallet, with their state, and where the first runs (quieter, D893).
     expect([...(cards[0]?.querySelectorAll('.home-row-name') ?? [])].map((x) => x.textContent)).toEqual(['Sodax', 'Sodax Earn']);
     expect(cards[0]?.querySelector('.home-row-sub')?.textContent).toBe('https://app.example and 1 more website');
-    expect(cards[0]?.getAttribute('aria-label')).toBe('Sodax, Sodax Earn (Paused), Safe if the app closes');
+    expect(cards[0]?.getAttribute('aria-label')).toBe('Sodax, Sodax Earn (Paused), Safe if the apps close');
     expect(cards[5]?.getAttribute('aria-label')).toBe('Sandbox (Test app), Safe if the app closes');
     // Every row has a tile: a neutral placeholder where the app has no logo.
     expect(cards.every((c) => c.querySelector('.home-tile > svg.ic') !== null && c.querySelector('.home-tile')?.getAttribute('aria-hidden') === 'true')).toBe(true);
     const badgeOf = (id: string) => document.querySelector(`.home-row[data-scope="${id}"] > .badge`)?.textContent;
-    expect(badgeOf('s1')).toBe('Safe if the app closes');
+    expect(badgeOf('s1')).toBe('Safe if the apps close');
     expect(badgeOf('s2')).toBe('Safe if the app closes');
     expect(badgeOf('s3')).toBe('Needs the app');
     expect(badgeOf('s4')).toBe('Can’t be opened here');
@@ -909,11 +909,11 @@ describe('the views and their words (D893)', () => {
     expect(r.closest('li')?.parentElement?.id).toBe('home-mine-list');
     // Nothing else in the row can take focus or a click.
     expect(r.querySelectorAll('button, a, input, [tabindex]')).toHaveLength(0);
-    expect(r.querySelector(':scope > .badge')?.textContent).toBe('Safe if the app closes');
+    expect(r.querySelector(':scope > .badge')?.textContent).toBe('Safe if the apps close');
     // A screen reader names the row by the apps, with pauses, and its badge; where the first app runs is its
     // description, not its name (PR 116's review).
-    expect(r.textContent).toBe('Sodax · Sodax Earnhttps://app.example and 1 more websiteSafe if the app closes');
-    expect(r.getAttribute('aria-label')).toBe('Sodax, Sodax Earn, Safe if the app closes');
+    expect(r.textContent).toBe('Sodax · Sodax Earnhttps://app.example and 1 more websiteSafe if the apps close');
+    expect(r.getAttribute('aria-label')).toBe('Sodax, Sodax Earn, Safe if the apps close');
     expect(document.getElementById(r.getAttribute('aria-describedby') ?? '')?.textContent).toBe('https://app.example and 1 more website');
     const account = document.getElementById('home-open-devices') as HTMLElement;
     expect(account.getAttribute('aria-label')).toBeNull();
@@ -1653,6 +1653,56 @@ describe('PR 122’s review: Back between tabs and the tab stop', () => {
     expect(tab('addresses').getAttribute('tabindex')).toBe('0');
     expect(tab('security').getAttribute('tabindex')).toBe('-1');
     expect(tab('move').getAttribute('tabindex')).toBe('-1');
+  });
+});
+
+describe('D897: the Security tab’s reads, and the badges of a shared wallet', () => {
+  const LIST = () => json(200, { scopes: [mine('s1', { apps: [app('Sodax'), app('Sodax Earn')] }), mine('s2')], nextCursor: null });
+
+  it('opening Security reads the wallet’s devices once; Back and Forward to it read nothing; another visit reads again', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    h.devicesAnswer = () => json(200, { scopes: [{ scopeId: 's1', apps: [{ appId: 'app_Sodax', name: 'Sodax', status: 'active' }], devices: [], consents: [], email: [], more: false, canStop: true }], nextCursor: null });
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(h.deviceCalls()).toHaveLength(0);
+    h.click('home-tab-security');
+    await h.page.idle();
+    expect(h.deviceCalls().map((c) => c.url.search)).toEqual(['?scopeId=s1']);
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe('No device is signed in to this wallet right now.');
+    // The other sections read nothing until asked.
+    expect(h.nameCalls()).toHaveLength(0);
+    h.click('home-tab-addresses');
+    h.click('home-tab-security');
+    await h.page.idle();
+    h.win.history.back();
+    await flush();
+    h.win.history.forward();
+    await flush();
+    await h.page.idle();
+    expect(h.page.tab).toBe('security');
+    expect(h.deviceCalls()).toHaveLength(1);
+    h.click('home-back');
+    await flush();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    h.click('home-tab-security');
+    await h.page.idle();
+    expect(h.deviceCalls()).toHaveLength(2);
+  });
+
+  it('a wallet two apps share reads "the apps" in its badge and its answer; one app keeps "the app"', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    expect(document.querySelector('.home-row[data-scope="s1"] > .badge')?.textContent).toBe('Safe if the apps close');
+    expect(document.querySelector('.home-row[data-scope="s2"] > .badge')?.textContent).toBe('Safe if the app closes');
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Safe if the apps close');
+    // The answer's "No." is read with the question, not shown beside the badge.
+    expect(document.querySelector('#home-coverage .home-coverage-text > .sr-only')?.textContent).toBe('No. ');
+    expect(document.querySelector('#home-coverage .home-coverage-text')?.textContent).toBe('No. If these apps shut down, you can still sign in to this wallet through Journear.');
+    expect(coverageText('partner_client', true, false, 2).badge).toBe('Needs the apps');
+    expect(coverageText('partner_client', true, false, 1).badge).toBe('Needs the app');
   });
 });
 

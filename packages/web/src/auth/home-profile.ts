@@ -658,7 +658,8 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     const root = where === 'front' ? frontRoot : appRoot;
     // The view's own heading (D893: the page's `h1` names the view); a section of a wallet's page.
     const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE) : d.h('h2', { attrs: { id: 'home-app-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE);
-    const about = d.h('p', {}, where === 'front' ? HOME_NAME_TEXT.frontAbout : HOME_NAME_TEXT.appAbout);
+    // D897: on a wallet's page, the section's one line in the Security tab's pattern (a read only when asked).
+    const about = d.h('p', where === 'front' ? {} : { class: 'home-set-summary', attrs: { id: 'home-app-profile-summary' } }, where === 'front' ? HOME_NAME_TEXT.frontAbout : HOME_NAME_TEXT.appAbout);
     root.replaceChildren();
     for (const c of [heading, about, ...(where === 'front' ? frontBody() : appBody())]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
   }

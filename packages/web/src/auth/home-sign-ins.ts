@@ -200,6 +200,12 @@ export const SIGN_IN_TEXT = Object.freeze({
   removeOwnMoney: 'If you added money to this wallet, move it out first. It stays in this wallet.',
 });
 
+/** The Security tab's line for the ways to sign in, once read (D897): how many open the wallet, how many wait. */
+export function signInSummary(open: number, waiting: number): string {
+  const first = open === 1 ? 'One sign-in opens this wallet.' : `${open} sign-ins open this wallet.`;
+  return waiting === 0 ? first : `${first} ${waiting === 1 ? 'One more is' : `${waiting} more are`} waiting to start.`;
+}
+
 /** Dates as the device's locale writes them, with the time (a link waits 24 hours). */
 export function signInDate(ms: number): string {
   try {
@@ -456,9 +462,19 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     return out;
   }
 
+  /**
+   * The section's one line (D897): once the ways to sign in are read (in this sign-in), how many open the wallet and how
+   * many wait; before that, what the section is about.
+   */
+  function summary(): string {
+    const entry = scope && state === 'ready' ? cache.get(scope.scopeId) : undefined;
+    if (!entry || entry.model.state === 'no_wallet') return scope?.mine === false ? SIGN_IN_TEXT.introApp : SIGN_IN_TEXT.intro;
+    return signInSummary(entry.model.rows.filter((r) => r.role !== 'waiting').length, entry.model.rows.filter((r) => r.role === 'waiting').length);
+  }
+
   function render(): void {
     root.replaceChildren();
-    for (const c of [d.h('h2', { attrs: { id: 'home-sign-ins-title', tabindex: '-1' } }, HOME_SIGN_INS_TITLE), d.h('p', {}, scope?.mine === false ? SIGN_IN_TEXT.introApp : SIGN_IN_TEXT.intro), ...body()]) {
+    for (const c of [d.h('h2', { attrs: { id: 'home-sign-ins-title', tabindex: '-1' } }, HOME_SIGN_INS_TITLE), d.h('p', { class: 'home-set-summary', attrs: { id: 'home-sign-ins-summary', ...(state === 'ready' && scope && cache.get(scope.scopeId)?.model.state !== 'no_wallet' ? { 'data-read': '' } : {}) } }, summary()), ...body()]) {
       if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
     }
   }

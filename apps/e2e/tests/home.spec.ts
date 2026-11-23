@@ -125,7 +125,7 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
   await expect(page).toHaveTitle('Your wallets – Passport Home');
   await expect(page.locator('.home-row[data-scope]')).toHaveCount(6);
-  await expect(page.locator('.home-row[data-scope] > .badge')).toHaveText(['Safe if the app closes', 'Safe if the app closes', 'Needs the app', 'Can’t be opened here', 'Not checked yet', 'Safe if the app closes']);
+  await expect(page.locator('.home-row[data-scope] > .badge')).toHaveText(['Safe if the apps close', 'Safe if the app closes', 'Needs the app', 'Can’t be opened here', 'Not checked yet', 'Safe if the app closes']);
   await shots(page, '03-app-list', browserName);
 
   // A wallet's page: the row is one button, opened by the keyboard here.
@@ -408,7 +408,7 @@ test('rows: a screen reader’s name and description; the placeholders stand sti
   expect(await page.locator('.home-skeleton-line').first().evaluate((el) => getComputedStyle(el).animationName)).not.toBe('none');
   (hold as unknown as (v: unknown) => void)(null);
   const s1 = page.locator('.home-row[data-scope="s1"]');
-  await expect(s1).toHaveAccessibleName('Sodax, Sodax Earn (Paused), Safe if the app closes');
+  await expect(s1).toHaveAccessibleName('Sodax, Sodax Earn (Paused), Safe if the apps close');
   await expect(s1).toHaveAccessibleDescription('https://sodax.example and 1 more website');
   await expect(page.locator('.home-row[data-scope="s2"]')).toHaveAccessibleName('Lumen Pay (Closed), Safe if the app closes');
   await expect(page.locator('#home-open-devices')).toHaveAccessibleName('Devices and auto-approve');
@@ -576,8 +576,7 @@ test('the chip never shows on a desktop, and a 390 px phone at 200 % zoom (195 p
   // 200 % zoom of a 390 px phone: a 195 px wide layout.
   await page.setViewportSize({ width: 195, height: 422 });
   await page.evaluate(() => window.scrollTo(0, 0));
-  // The tab list stays inside the window: it scrolls within itself at this width (the page's own bar, with the lockup
-  // and Sign out, is wider than 195 px: not part of this check, see D895's "not verified").
+  // The tab list stays inside the window (the page's own bar is checked at this width by D897's test below).
   const list = await page.locator('.home-tabs').boundingBox();
   expect(list && list.x >= 0 && list.x + list.width <= 195, 'the tab list is within the window').toBe(true);
   for (const name of ['Addresses', 'Security', 'Move wallet'] as const) {
@@ -591,4 +590,144 @@ test('the chip never shows on a desktop, and a 390 px phone at 200 % zoom (195 p
   await expect(chip).toBeVisible();
   const c = await chip.boundingBox();
   expect(c && c.x >= 0 && c.x + c.width <= 195 && c.y + c.height <= 422, 'the chip is in the window').toBe(true);
+});
+
+// ---- D897: polish across Home (the list, a wallet's tabs, "Your account"'s views) ----
+
+/** Every view of Home, opened from the front page: the name it is checked under, and how to get there. */
+const VIEWS: readonly { name: string; open: (page: import('@playwright/test').Page) => Promise<void> }[] = [
+  { name: 'front', open: async () => {} },
+  { name: 'addresses', open: async (page) => page.locator('.home-row[data-scope="s1"]').click() },
+  { name: 'security', open: async (page) => { await page.locator('.home-row[data-scope="s1"]').click(); await homeTab(page, 'Security'); await expect(page.locator('#home-app-devices-summary')).toHaveText(/./u); } },
+  { name: 'move', open: async (page) => { await page.locator('.home-row[data-scope="s1"]').click(); await homeTab(page, 'Move wallet'); } },
+  { name: 'devices', open: async (page) => { await page.locator('#home-open-devices').click(); await expect(page.locator('#home-devices [role="status"]')).toHaveCount(0); } },
+  { name: 'name', open: async (page) => page.locator('#home-open-profile').click() },
+];
+
+/** Devices answered as the API would for the routed wallets: none signed in (the real API doesn't know `s1`). */
+async function routeNoDevices(context: import('@playwright/test').BrowserContext): Promise<void> {
+  await context.route(new RegExp(`^${API_URL.replace(/[.]/gu, '\\.')}/v1/home/devices`, 'u'), async (route) => {
+    const req = route.request();
+    const cors = { 'access-control-allow-origin': AUTH_ORIGIN, 'access-control-allow-headers': 'content-type, x-hana-home', 'access-control-allow-methods': 'GET, POST, OPTIONS', vary: 'Origin' };
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    const scopeId = new URL(req.url()).searchParams.get('scopeId');
+    const scopes = scopeId ? [{ scopeId, apps: [], devices: [], consents: [], email: [], more: false, canStop: true }] : [];
+    return route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ scopes, nextCursor: null }) });
+  });
+}
+
+/** Back to the front page from any view (one press of the way back). */
+async function toFront(page: import('@playwright/test').Page): Promise<void> {
+  const back = page.locator('#home-back');
+  if (await back.isVisible()) await back.click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+}
+
+test('D897: at 195 px (a 390 px phone at 200 % zoom) no view scrolls sideways, the top bar included', async ({ page, context }) => {
+  await routeApps(context, () => ({ status: 200, body: LIST }));
+  await routeNoDevices(context);
+  await page.setViewportSize({ width: 195, height: 422 });
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  for (const view of VIEWS) {
+    await view.open(page);
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      const wide = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, window: window.innerWidth, wider: [...document.querySelectorAll('.home-top > *, .home-top #home-sign-out')].filter((el) => el.getBoundingClientRect().right > window.innerWidth + 0.5).map((el) => el.id || el.className) }));
+      expect(wide.page, `${view.name}: no sideways scroll`).toBeLessThanOrEqual(wide.window);
+      expect(wide.wider, `${view.name}: the top bar within the window`).toEqual([]);
+    }
+    await page.emulateMedia({ colorScheme: 'light' });
+    await toFront(page);
+  }
+  await expect(page.locator('#home-sign-out')).toBeVisible();
+});
+
+for (const width of [320, 360, 390, 430] as const) {
+  test(`D897: at ${width} px every control on every view is at least 44 px tall (links inside a sentence aside)`, async ({ page, context }) => {
+    await routeApps(context, () => ({ status: 200, body: LIST }));
+    await routeNoDevices(context);
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`${AUTH_ORIGIN}/home`);
+    await signIn(page);
+    for (const view of VIEWS) {
+      await view.open(page);
+      const small = await page.evaluate(() =>
+        [...document.querySelectorAll('button, a[href], [role="tab"], input:not([type="hidden"]), summary, select')]
+          .filter((el) => {
+            const r = el.getBoundingClientRect();
+            if (r.width === 0 || r.height === 0 || el.closest('.sr-only, [hidden]') || getComputedStyle(el).visibility === 'hidden') return false;
+            // A link inside a sentence is exempt (WCAG 2.5.8's inline exception), as is the skip link (off screen until focused).
+            if (el.tagName === 'A' && getComputedStyle(el).display === 'inline') return false;
+            return el.id !== 'home-skip' && !el.classList.contains('home-skip');
+          })
+          .filter((el) => el.getBoundingClientRect().height < 43.5)
+          .map((el) => `${el.tagName.toLowerCase()}#${el.id}.${[...el.classList].join('.')} ${Math.round(el.getBoundingClientRect().height)}px "${(el.textContent ?? '').trim().slice(0, 30)}"`),
+      );
+      expect(small, `${view.name} at ${width} px`).toEqual([]);
+      await toFront(page);
+    }
+  });
+}
+
+test('D897: the focus ring shows on every control the keyboard reaches, in both themes', async ({ page, context, browserName }) => {
+  // WebKit, as Safari, reaches links and buttons with Option-Tab.
+  const tab = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
+  await routeApps(context, () => ({ status: 200, body: LIST }));
+  await routeNoDevices(context);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  for (const view of VIEWS) {
+    await view.open(page);
+    for (const scheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      // From the page's start: the skip link is the first stop.
+      await page.evaluate(() => {
+        (document.activeElement as HTMLElement | null)?.blur();
+        window.scrollTo(0, 0);
+        (document.querySelector('.home-skip') as HTMLElement).focus();
+      });
+      const seen = new Set<string>();
+      for (let i = 0; i < 40; i++) {
+        await page.keyboard.press(tab);
+        const ring = await page.evaluate(() => {
+          const el = document.activeElement as HTMLElement | null;
+          if (!el || el === document.body) return null;
+          const cs = getComputedStyle(el);
+          const bg = getComputedStyle(document.body).backgroundColor;
+          return {
+            what: `${el.tagName.toLowerCase()}#${el.id}.${[...el.classList].join('.')} "${(el.textContent ?? '').trim().slice(0, 24)}"`,
+            // A heading that took focus as its view finished loading (tabindex -1, never a tab stop) shows no ring on purpose.
+            visible: el.matches(':focus-visible') && el.getAttribute('tabindex') !== '-1',
+            ring: (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) >= 2 && cs.outlineColor !== bg && cs.outlineColor !== 'rgba(0, 0, 0, 0)') || /rgb/u.test(cs.boxShadow),
+          };
+        });
+        if (!ring || seen.has(ring.what)) break;
+        seen.add(ring.what);
+        if (ring.visible) expect(ring.ring, `${view.name} ${scheme}: ${ring.what}`).toBe(true);
+      }
+      // Sign out and the way back at least (the name view may show only its sentence when the read is slow).
+      expect(seen.size, `${view.name} ${scheme}: the keyboard reaches its controls`).toBeGreaterThanOrEqual(view.name === 'front' ? 4 : 2);
+    }
+    await page.emulateMedia({ colorScheme: 'light' });
+    await toFront(page);
+  }
+});
+
+test('D897: a wallet’s head at 1280 px: the apps start under their label; the answer’s “No.” is read, not shown', async ({ page, context }) => {
+  await routeApps(context, () => ({ status: 200, body: LIST }));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  await page.locator('.home-row[data-scope="s1"]').click();
+  const label = await page.locator('#home-app-label').boundingBox();
+  const first = await page.locator('.home-app-all > .home-app').first().boundingBox();
+  expect(label && first && first.y >= label.y + label.height - 1, 'the first app under the label').toBe(true);
+  const text = page.locator('#home-coverage .home-coverage-text');
+  await expect(text).toHaveText('No. If these apps shut down, you can still sign in to this wallet through Journear.');
+  // The answer word is in the screen-reader-only text, clipped to nothing on screen.
+  await expect(text.locator('.sr-only')).toHaveText('No.');
+  expect(await text.locator('.sr-only').evaluate((el) => { const r = el.getBoundingClientRect(); return r.width <= 1 && r.height <= 1; })).toBe(true);
+  await expect(page.locator('#home-coverage .jp-badge')).toHaveText('Safe if the apps close');
 });

@@ -99,6 +99,8 @@ export interface HomeDevicesDeps {
   track: (p: Promise<unknown>) => void;
   /** An app's name from the page's own listings, for an app the answer didn't name. */
   appName?: (appId: string) => string | null;
+  /** The clock "today" and "tomorrow" are told by (default: the device's). */
+  now?: () => number;
 }
 
 export type HomeDevicesState = 'closed' | 'loading' | 'ready';
@@ -120,6 +122,13 @@ export interface HomeDevices {
   leaveFront(): void;
   /** The section of `scope`'s page. Another app's page starts it closed again; the same app keeps what it shows. */
   appView(scope: HomeScope): HTMLElement;
+  /**
+   * D897: the person opened the wallet's Security tab: one read for this wallet, unless it is read already or on its
+   * way, so the section's one line can say where the wallet is signed in. The details stay behind "Show devices".
+   */
+  openApp(): void;
+  /** Whether the wallet's page shows the details (true once "Show devices" is pressed). */
+  readonly appExpanded: boolean;
   /** The user left an app's page: its section closes, and opening the page again reads it again. */
   leaveApp(): void;
   /** Another account, or signed out: everything is dropped and both views close. */
@@ -136,9 +145,11 @@ interface View {
   busy: 'load' | 'more' | null;
   /** Sentences after a stop, by scope. */
   notes: Map<string, string>;
+  /** The details are on screen (the front view always; a wallet's page once "Show devices" is pressed, D897). */
+  expanded: boolean;
 }
 
-const newView = (): View => ({ state: 'closed', scopes: [], nextCursor: null, problem: null, busy: null, notes: new Map() });
+const newView = (): View => ({ state: 'closed', scopes: [], nextCursor: null, problem: null, busy: null, notes: new Map(), expanded: true });
 
 const stopKey = (s: HomeStop, scopeId: string): string => (s.kind === 'consent' ? `consent:${s.consentId}` : s.kind === 'share' ? `share:${s.shareId}` : `email:${scopeId}:${s.appId}`);
 
@@ -150,8 +161,62 @@ function when(ms: number): string {
   }
 }
 
+/** The full date and time, for a screen reader and a tooltip (D897). */
+function whenFull(ms: number): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'full', timeStyle: 'short' }).format(ms);
+  } catch {
+    return when(ms);
+  }
+}
+
+/**
+ * A date and time in a few plain words (D897): "today at 2:20 PM", "tomorrow at 2:20 AM", "yesterday at 9:05 AM", "on
+ * Nov 25 at 2:20 AM" (this year), else "on Nov 25, 2027 at 2:20 AM", in the device's own language for the date and time.
+ */
+export function whenWords(ms: number, nowMs: number): string {
+  try {
+    const day = (t: number): number => {
+      const x = new Date(t);
+      return Date.UTC(x.getFullYear(), x.getMonth(), x.getDate()) / 86_400_000;
+    };
+    const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(ms);
+    const diff = day(ms) - day(nowMs);
+    if (diff === 0) return `today at ${time}`;
+    if (diff === 1) return `tomorrow at ${time}`;
+    if (diff === -1) return `yesterday at ${time}`;
+    const sameYear = new Date(ms).getFullYear() === new Date(nowMs).getFullYear();
+    const date = new Intl.DateTimeFormat(undefined, sameYear ? { month: 'short', day: 'numeric' } : { dateStyle: 'medium' }).format(ms);
+    return `on ${date} at ${time}`;
+  } catch {
+    return when(ms);
+  }
+}
+
+/**
+ * The section's one line on a wallet's page (D897), from its one read: where the wallet is signed in, what may sign
+ * without asking, whether the email is shared.
+ */
+export function devicesSummary(s: { devices: readonly { consent: unknown }[]; consents: readonly unknown[]; email: readonly unknown[] | null }): string {
+  const n = s.devices.length;
+  const k = s.devices.filter((x) => x.consent !== null).length;
+  const parts: string[] = [];
+  if (n === 0) parts.push('No device is signed in to this wallet right now.');
+  else if (n === 1) parts.push('Signed in on 1 device.', k === 1 ? 'It may sign without asking.' : 'It asks you before signing.');
+  else parts.push(`Signed in on ${n} devices.`, k === 0 ? 'Each asks you before signing.' : `${k} may sign without asking.`);
+  const t = s.consents.length;
+  if (t > 0) parts.push(t === 1 ? 'An open tab may sign without asking.' : `${t} open tabs may sign without asking.`);
+  const e = s.email?.length ?? 0;
+  if (e > 0) parts.push(e === 1 ? 'Your email is shared with the app.' : `Your email is shared with ${e} apps.`);
+  return parts.join(' ');
+}
+
 export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
   const { d, isGesture } = deps;
+  const now = deps.now ?? (() => Date.now());
+  /** A date as a few plain words, with the full date for a tooltip and a screen reader (D897). */
+  const at = (ms: number): HTMLElement =>
+    d.h('span', { class: 'home-when' }, d.h('time', { attrs: { datetime: new Date(ms).toISOString(), title: whenFull(ms), 'aria-hidden': 'true' } }, whenWords(ms, now())), d.h('span', { class: 'sr-only' }, `${whenFull(ms)}`));
   let epoch = 0;
   let requests = 0;
   const views: Record<Where, View> = { front: newView(), app: newView() };
@@ -216,7 +281,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     }
   }
 
-  async function load(where: Where, more = false): Promise<void> {
+  /** `quiet`: read because the Security tab opened (D897), so the focus stays where the person left it. */
+  async function load(where: Where, more = false, quiet = false): Promise<void> {
     const view = views[where];
     if (view.busy) return;
     const scopeId = appScope?.scopeId;
@@ -238,7 +304,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       if (!more) view.notes.clear();
     } else if (view.state === 'loading') view.state = 'closed';
     render(where);
-    if (page && !more) focus(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
+    if (page && !more && !quiet) focus(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
   }
 
   /** Applies a stop to whatever either view shows of it. */
@@ -331,9 +397,10 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
 
   function consentLines(c: HomeConsent): Child[] {
     return [
-      d.h('p', { class: 'home-consent-state' }, badge('Auto-approve on', 'ok'), ` until ${when(c.expiresAtMs)}`),
-      // The app's own words, in quotes and labelled as the app's: never Journear's description.
-      d.h('p', { class: 'home-policy' }, 'The app describes what it may sign without asking as: ', d.h('q', { class: 'home-policy-label' }, c.label)),
+      d.h('p', { class: 'home-consent-state' }, badge('Auto-approve on', 'ok'), ' until ', at(c.expiresAtMs)),
+      // The app's own words, in quotes and labelled as the app's: never Journear's description. On their own line, so
+      // they read at a phone's width (D897).
+      d.h('p', { class: 'home-policy' }, 'In the app’s words, it may sign without asking:', d.h('q', { class: 'home-policy-label' }, c.label)),
     ];
   }
 
@@ -348,7 +415,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
 
   function deviceItem(where: Where, s: HomeDeviceScope, x: HomeDevice, showApp: boolean): HTMLElement {
     const nameId = `home-device-${where}-${x.shareId}`;
-    const ends = x.idleUntilMs < x.expiresAtMs ? `${when(x.idleUntilMs)} if it isn’t used before then, ${when(x.expiresAtMs)} at the latest` : when(x.expiresAtMs);
+    // D897: one plain line each, a short date with the full one for a tooltip and a screen reader.
+    const ends: Child[] = x.idleUntilMs < x.expiresAtMs ? ['Signs out by itself ', at(x.idleUntilMs), ' if it isn’t used, and ', at(x.expiresAtMs), ' at the latest.'] : ['Signs out by itself ', at(x.expiresAtMs), '.'];
     const share: HomeStop = { kind: 'share', shareId: x.shareId };
     const shareId = `home-stop-share-${where}-${x.shareId}`;
     // A card of setting rows: the device (where, when, "Sign out this device"), then its auto-approve.
@@ -358,17 +426,15 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       settingRow(
         'home-device-row',
         [
-          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, x.label ?? UNNAMED_DEVICE), ' on ', originText(d, x.partnerOrigin)),
+          // The device, then where (the site on its own line, broken only where it must be: D897).
+          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, x.label ?? UNNAMED_DEVICE), d.h('span', { class: 'sr-only' }, ' on '), originText(d, x.partnerOrigin)),
           showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, x.appId))) : null,
           d.h(
-            'dl',
-            { class: 'home-device-facts jp-kv' },
-            d.h('dt', {}, 'Signed in'),
-            d.h('dd', {}, when(x.signedInAtMs)),
-            x.lastUsedAtMs !== null ? d.h('dt', {}, 'Last opened or approved here') : null,
-            x.lastUsedAtMs !== null ? d.h('dd', {}, when(x.lastUsedAtMs)) : null,
-            d.h('dt', {}, 'Signs out by itself'),
-            d.h('dd', {}, ends),
+            'div',
+            { class: 'home-device-facts' },
+            d.h('p', {}, 'Signed in ', at(x.signedInAtMs), '.'),
+            x.lastUsedAtMs !== null ? d.h('p', {}, 'Last opened or approved here ', at(x.lastUsedAtMs), '.') : null,
+            d.h('p', {}, ...ends),
           ),
         ],
         s.canStop ? stopButton(where, share, s.scopeId, 'Sign out this device', shareId, nameId) : null,
@@ -387,7 +453,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       settingRow(
         'home-device-row',
         [
-          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), ' on ', originText(d, c.partnerOrigin)),
+          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), d.h('span', { class: 'sr-only' }, ' on '), originText(d, c.partnerOrigin)),
           showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, c.appId))) : null,
           d.h('p', { class: 'muted' }, 'This app keeps no sign-in on the device: the tab is signed out when it closes, and Journear can’t tell whether it still is open.'),
         ],
@@ -474,11 +540,40 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     const ids = where === 'front' ? { show: 'home-devices-show', again: 'home-devices-refresh' } : { show: 'home-app-devices-show', again: 'home-app-devices-refresh' };
     const out: Child[] = [view.problem ? problemView(where, view.problem) : null];
     if (view.state === 'closed') {
-      out.push(d.h('div', { class: 'actions start' }, button(view.busy ? 'Loading…' : 'Show devices', ids.show, () => deps.track(load(where)), { disabled: view.busy !== null })));
+      out.push(
+        d.h(
+          'div',
+          { class: 'actions start' },
+          button(
+            view.busy ? 'Loading…' : 'Show devices',
+            ids.show,
+            () => {
+              view.expanded = true;
+              deps.track(load(where));
+            },
+            { disabled: view.busy !== null },
+          ),
+        ),
+      );
       return out;
     }
     if (view.state === 'loading') {
       out.push(d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Loading your devices…'));
+      return out;
+    }
+    // D897: on a wallet's page, read when the Security tab opened, the details wait for "Show devices" (no second read).
+    if (!view.expanded) {
+      out.push(
+        d.h(
+          'div',
+          { class: 'actions start' },
+          button('Show devices', ids.show, () => {
+            view.expanded = true;
+            render(where);
+            focus(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
+          }),
+        ),
+      );
       return out;
     }
     // On the front page an app with nothing left is left out, unless a stop just emptied it (its sentence stays).
@@ -511,8 +606,11 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
           : HOME_DEVICES_WALLET_INTRO(appScope?.apps.length ?? 1);
     // The view's own heading for every wallet (D893: the page's `h1` names the view); a section of a wallet's page.
     const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE) : d.h('h2', { attrs: { id: 'home-app-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE);
+    // D897: on a wallet's page, once read, the one line says where the wallet is signed in (in place of the intro).
+    const scope = where === 'app' && views.app.state === 'ready' ? views.app.scopes[0] : undefined;
+    const line = scope ? devicesSummary(scope) : intro;
     root.replaceChildren();
-    for (const c of [heading, d.h('p', {}, intro), ...body(where)]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
+    for (const c of [heading, d.h('p', { class: 'home-set-summary', attrs: { id: where === 'front' ? 'home-devices-about' : 'home-app-devices-summary', ...(scope ? { 'data-read': '' } : {}) } }, line), ...body(where)]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
   }
 
   render('front');
@@ -547,6 +645,14 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       if (confirm?.where !== 'front' || stopping !== null) return;
       confirm = null;
       render('front');
+    },
+    get appExpanded() {
+      return views.app.expanded;
+    },
+    openApp() {
+      if (!appScope || views.app.state !== 'closed' || views.app.busy !== null || !deps.session()) return;
+      views.app.expanded = false;
+      deps.track(load('app', false, true));
     },
     appView(scope) {
       if (appScope?.scopeId !== scope.scopeId) {

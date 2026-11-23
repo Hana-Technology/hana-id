@@ -79,6 +79,14 @@ notice back with focus on its "Sign in again"; never on a desktop; at 195 px (20
 to sign in and name on "Security". `home-shell.spec.ts` measures the guarded Continue on NEAR's confirmation (the
 longest, so the Move tab alone scrolls) and the email account's notice with a Security tab button in view.
 
+The Security tab and Home's polish (D897): `tests/home-devices.spec.ts` checks that opening Security makes one devices
+read (none on Back or Forward, one more on the wallet's next visit) with the focus left on the tab, each section's line,
+"Show devices" with no second read, and the device card at 320, 360, 390 and 430 px (each site and date on one line, the
+app's words on their own line, the full date as the tooltip and the screen reader's text). `tests/home.spec.ts` checks
+every view at 195 px (no sideways scroll, the top bar included, light and dark), every control at least 44 px tall at
+320, 360, 390 and 430 px, the focus ring on every control the keyboard reaches in both themes (WebKit with Option-Tab,
+as Safari), and the wallet's head at 1280 px (the apps under their label, the answer's "No." read and not shown).
+
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
 sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,
 can't be removed, no other button); a waiting email linked to a Google wallet (case B) listed as waiting by kind only,

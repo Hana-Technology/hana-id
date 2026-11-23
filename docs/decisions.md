@@ -18841,3 +18841,81 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   195 px wide layout, for the tab bar and the chip; there the page's own top bar, the lockup and Sign out, is wider
   than the window and the page scrolls sideways: not fixed here), landscape phones (a 640 × 360 window is covered only
   by D888's bar checks).
+
+### D897. Passport Home steps 4 and 5: the Security tab's sections each with a line that says what it holds, a tighter device card, and polish across Home
+
+- **Status**: built 2026-11-23 on `feat/home-step4-security-polish` (from `next`), not merged, not deployed; the details
+  below decided while building, **to confirm** (the list at the end). Files: `packages/web/src/auth/home-devices.ts`
+  (`whenWords`, `devicesSummary`, `openApp`, `appExpanded`, the device card), `home-sign-ins.ts` (`signInSummary`),
+  `home-profile.ts` (the section's line), `home-page.ts` (the Security tab's read, the shared wallet's badges, the
+  answer word), `css/home.css`; tests `packages/web/test/auth/home-devices.test.ts` ("D897: the Security tab’s
+  devices"), `home-sign-ins.test.ts` ("D897: the line of “Ways to sign in”"), `home-page.test.ts` ("D897: the Security
+  tab’s reads, and the badges of a shared wallet"); e2e `apps/e2e/tests/home-devices.spec.ts` ("the Security tab
+  (D897)…") and `home.spec.ts` (the four "D897: …" tests), three browsers. `home-export.ts`, `key-reveal.ts`,
+  `approve-guard.ts` and `guard-hint.ts` are unchanged. No API, vault, issuer or contract change.
+- **The Security tab (option A's a3)**: three settings cards, each a title (`h2`, at a3's 18 px), **one line under it
+  that is always visible**, and its details behind the button it had: "Ways to sign in" (how do I sign in to this
+  wallet?), "Devices and auto-approve" (where am I signed in, and what may apps do without asking?), "Your name". The
+  line says what the section is about until something is read, then what was read, in the text colour:
+  - "Devices and auto-approve": **opening the Security tab is asking** (as D893 took opening an account view): it makes
+    **one** read, `GET /v1/home/devices?scopeId=…` for this wallet, when the tab is opened by a press (the tab, or the
+    keyboard on the tab list); never on Back or Forward to the tab, never a second time while the wallet's page stays
+    open, never without a usable sign-in. The focus stays on the tab. The line then reads, for example, "Signed in on 2
+    devices. 1 may sign without asking. Your email is shared with the app." (or "No device is signed in to this wallet
+    right now.", "Signed in on 1 device. It asks you before signing.", "Each asks you before signing.", "An open tab may
+    sign without asking.", "Your email is shared with 2 apps."). The cards stay behind "Show devices", which now shows
+    what was read without a second request; "Show again" reads again. A failed read leaves the refusal's box and "Show
+    devices", which reads and shows the cards at once. Leaving the wallet's page drops what was read (as before), so
+    the next visit's Security tab reads once more.
+  - "Ways to sign in": nothing more is read (two NEAR reads on two providers is not cheap); once shown in this sign-in
+    the line says "One sign-in opens this wallet." / "2 sign-ins open this wallet." and "One more is waiting to start."
+    / "2 more are waiting to start."; before, "The sign-ins that open this wallet.".
+  - "Your name": its sentence as before, as the section's line (its read stays on "Show name sharing").
+  - So the tab makes at most one read by itself, the devices', when it is opened; every other read is a press.
+- **The device card**: the device's name, then the site on a line of its own (muted, 12 px), so a web address wraps
+  only when it is wider than the line, and then at its own break points (D853's `originText`); "App: …" where the
+  section lists several apps; then one short sentence per fact instead of three label/value pairs: "Signed in today at
+  2:20 PM.", "Last opened or approved here today at 5:00 PM.", "Signs out by itself today at 7:00 PM if it isn’t used,
+  and tomorrow at 2:20 AM at the latest." Dates in a few plain words (`whenWords`: "today at", "tomorrow at",
+  "yesterday at", "on Nov 25 at", "on Nov 25, 2027 at" in another year; the device's own language for the date and the
+  time), each kept on one line, the full date and time ("Monday, November 23, 2026 at 2:20 PM") in the `time`
+  element's `title` (a tooltip) and as the screen reader's text in its place. Auto-approve: "Auto-approve on until today
+  at 6:20 PM", then "In the app’s words, it may sign without asking:" with the app's own words (quoted, unchanged) on a
+  line of their own (was "The app describes what it may sign without asking as: “…”", which ran on at 390 px). No
+  button does anything new: "Sign out this device", "Stop auto-approving", "Stop sharing email" and the name's sharing
+  keep their confirmations and requests.
+- **Polish across Home (step 5)**:
+  1. **A wallet two or more apps share**: its badge says "Safe if the apps close" / "Needs the apps" (on the row, in its
+     accessible name, and on its page), matching "If these apps shut down…"; one app keeps "the app". "Can’t be opened
+     here" and "Not checked yet" read the same for one or several.
+  2. **The answer word**: the sentence under the badge started with "No." or "Yes.", answering a question only screen
+     readers hear; beside "Safe if the apps close" a bare "No." read like a contradiction. The word is now read with the
+     question and not shown.
+  3. **The chip floats**: a 3 px ring of the page's own background and the system's deepest shadow, so it reads as above
+     the page in both themes and stays apart from a teal button or badge under it. Its colours are the primary
+     button's (dark: #06201D on #2E9C90, about 5.1 : 1).
+  4. **195 px wide (a 390 px phone at 200 % zoom)**: the top bar no longer scrolls sideways: under 300 px Sign out goes
+     under "Signed in with …", at the start (D895 had left this open). No view of Home scrolls sideways there (checked
+     on all six views, light and dark).
+  5. **Tap targets**: in a window up to 640 px wide every button, tab, field and the explorer link is at least 44 px
+     tall (the design system did so only for a coarse pointer); links inside a sentence keep their size (WCAG 2.5.8's
+     inline exception).
+  6. **Focus rings**: checked on every control the keyboard reaches on all six views in both themes (the system's 2 px
+     ring, #D95F0C, about 3.7 : 1 on the light page and 4.9 : 1 on the dark one); no change was needed.
+  7. **The wallet's head at a desktop width**: the apps' box put the first app beside its label (the reading measure
+     had stopped the label short); the label now takes the whole row and the apps start under it.
+- **Not changed**: the move flow and its guard; Cancel and Remove of a waiting sign-in inside Home (decided, later, its
+  own security-reviewed change); the states' words of D893 (loading, empty, error: already one pattern); email sharing
+  stays inside "Devices and auto-approve" (a3 moves it, with the name, into "What these apps get from you": that moves a
+  stop's confirmation, so it waits for a decision).
+- Address impact: none (no path, key or derivation input changes).
+- **To confirm (the founder)**: (1) opening the Security tab reads the devices once by itself (D893's "opening the view
+  is asking"), the cards still behind "Show devices"; (2) the lines' words above; (3) "Ways to sign in" not read on
+  opening; (4) the device card's sentences and the dates as "today at …"; (5) "In the app’s words, it may sign without
+  asking:"; (6) the plural badges "Safe if the apps close" / "Needs the apps"; (7) the bare "Yes." / "No." no longer
+  shown; (8) the chip's ring; (9) Sign out under the signed-in line below 300 px; (10) 44 px controls on any narrow
+  window, not only touch screens.
+- **For the founder to decide**: whether email sharing and the name move into one card "What these apps get from you"
+  (a3), leaving "Devices and auto-approve" to devices and auto-approve alone.
+- **Not verified**: real iOS Safari and Android browsers, real screen readers (names and descriptions checked in the
+  browsers' accessibility trees), browser text-only zoom, landscape phones.

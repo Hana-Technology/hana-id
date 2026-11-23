@@ -1221,12 +1221,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     return el;
   }
 
+  /** The most lines the who line has taken in this sign-in's bar: it keeps at least that many. */
+  let keptLines = 0;
   /**
    * Puts the who line in again (the sign-in ended, or the same account signed in again). Its line keeps at least the
    * lines it took (D888): a masked address is shorter, and the top bar's height must not change under the page.
    */
-  /** The most lines the who line has taken in this sign-in's bar: it keeps at least that many. */
-  let keptLines = 0;
   function replaceWho(): void {
     const old = byId('home-who');
     if (!old) return;

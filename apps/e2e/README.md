@@ -49,7 +49,7 @@ can't be removed, no other button); a waiting email linked to a Google wallet (c
 cancelled where its line points (the banner's "Cancel this link" at a Google sign-in), then one line again; a link past
 its waiting period (`POST /__e2e/links/expire`) removed by the email's own sign-in (D865), then one line, and that email's
 next sign-in a new wallet, alone in its own Home list; D875, a link 8 days old (`POST /__e2e/links/age`, every member of
-that root started `ageMs` ago): Home's plain "choose Remove" line, the Google sign-in's one quiet line with Remove (the
+that root started `ageMs` ago): Home's plain "choose “Remove it”" line, the Google sign-in's one quiet line with "Don’t recognise it?" and a small Remove it (D887; the
 app's result in before Done), after Done the next sign-in's window closing by itself, then, the browser's `hana.ol.` keys cleared
 as a private window would have them, Remove from that line, and one line in Home; a failed read (both NEAR endpoints answering a JSON-RPC error,
 then only the second: Home needs both to agree) and Try again. Every page on the sign-in origin (Home and the sign-in
@@ -166,7 +166,9 @@ violations and page errors are printed in the terminal instead of failing. The b
 closed (or Ctrl+C, or the browser goes away), then the command ends with 0. It warns, and still runs, when the stack's
 fingerprint isn't this checkout's. `--headless` is for checks only. The steps a person follows: `docs/operations.md`
 "Trying sign-ins and NEAR actions by hand on the local stack". `tests/hand-browser.spec.ts` (Chromium) runs those flows
-headless through `openHandSession` by the pages' labels; `test/hand-browser.test.ts` checks the hand browser's route
+headless through `openHandSession` by the pages' labels (flow D goes on to the email's next sign-in: "Don’t recognise
+it?" and Remove it under the Google account's banner, which asks first, D887; with `HANA_SHOTS_DIR` it saves
+`sign-in-auto-link-recent-390` and `-popup-480x640`); `test/hand-browser.test.ts` checks the hand browser's route
 set equals `routeStubs` + `routeNearRelayer` plus only its start page, that no spec routes Google or `/v1/near/*`
 itself, the accounts and the start page's Origin check; `test/near-relay.test.ts` the relay's answers.
 

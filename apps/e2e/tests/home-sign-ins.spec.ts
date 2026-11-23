@@ -16,7 +16,7 @@ import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { API_URL, AUTH_ORIGIN, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { type App, clickAction, clickClosing, clickMayClose, actionUnderSentence, clickUntilTaken, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, seenText, test, waitPersisted, walletDirectory } from './fixtures.ts';
-import { signIn } from './home-steps.ts';
+import { homeTab, signIn } from './home-steps.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const PHONE = { width: 390, height: 844 };
@@ -177,6 +177,7 @@ async function homeEmailSignIn(home: Page, to: string): Promise<void> {
 
 async function openApp(home: Page, scopeId: string, name: string): Promise<void> {
   await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
+  await homeTab(home, 'Security');
   await expect(home.locator('#home-sign-ins-title')).toHaveText('Ways to sign in');
 }
 

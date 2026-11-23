@@ -13,7 +13,7 @@
 import type { BrowserContext, Page } from '@playwright/test';
 import { API_URL, AUTH_ORIGIN, EVM_CHAIN_ID } from '../src/stack.ts';
 import { approve, clickAction, closeOf, errorCode, errorOf, expect, login, newApp, okValue, openPartner, runAction, status, test, waitPersisted, waitReady, walletDirectory } from './fixtures.ts';
-import { HOME_CORS, routeApps, shots, signIn } from './home-steps.ts';
+import { HOME_CORS, homeTab, routeApps, shots, signIn } from './home-steps.ts';
 
 /** Where the screenshots go (Chromium only), as in home-steps.ts. */
 const SHOTS = process.env.HANA_SHOTS_DIR;
@@ -403,6 +403,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   data = devicesFixture(now);
   await page.getByRole('button', { name: 'Your wallets' }).click();
   await page.locator('.home-row[data-scope="s1"]').click();
+  await homeTab(page, 'Security');
   await page.locator('#home-app-devices-show').click();
   const appSection = page.locator('#home-app-devices');
   await expect(appSection.locator('.home-device')).toHaveCount(3);
@@ -413,6 +414,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
 
   // An app with email sharing off and only an open tab's auto-approve.
   await page.locator('.home-row[data-scope="s2"]').click();
+  await homeTab(page, 'Security');
   await page.locator('#home-app-devices-show').click();
   await expect(page.locator('#home-email-none')).toHaveText('You aren’t sharing your email address with this app.');
   await expect(page.locator('#home-app-devices')).toContainText('A tab (may be closed) on https://lumenpay.example');
@@ -428,6 +430,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await shots(page, 'h9-11-front-empty', browserName);
   await page.getByRole('button', { name: 'Your wallets' }).click();
   await page.locator('.home-row[data-scope="s2"]').click();
+  await homeTab(page, 'Security');
   await page.locator('#home-app-devices-show').click();
   await expect(page.locator('#home-app-devices-empty')).toContainText('No device is signed in to this wallet right now.');
   await shots(page, 'h9-12-app-page-empty', browserName);

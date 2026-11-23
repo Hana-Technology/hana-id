@@ -127,6 +127,8 @@ async function homeList(h: Hand, a: HandAccount, by: 'google' | 'email' = 'googl
   // site, every spec's partner app) share scope `e2e`, and Home lists a scope's first apps only, so on a stack that ran
   // the suite the demo may not be named.
   await home.locator('#home-mine .home-row[data-scope="e2e"]').click();
+  // D895: "Ways to sign in" is on the wallet's Security tab.
+  await home.getByRole('tab', { name: 'Security' }).click();
   await expect(home.getByRole('heading', { name: 'Ways to sign in' })).toBeVisible();
   await home.getByRole('button', { name: 'Show ways to sign in' }).click();
   return home;

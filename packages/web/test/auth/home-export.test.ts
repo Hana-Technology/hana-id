@@ -367,6 +367,8 @@ function start(o: Opts = {}): H {
       await page.idle();
       if (page.openScope === null) (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
       expect(page.openScope).toBe(SCOPE);
+      // D895: the move flow is on the wallet's "Move wallet" tab.
+      document.getElementById('home-tab-move')?.click();
     },
     async begin(sub = SUB, claims = {}) {
       h.click('home-export-open');
@@ -405,6 +407,7 @@ function start(o: Opts = {}): H {
       await page.idle();
       if (page.openScope === null) (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
       expect(page.openScope).toBe(SCOPE);
+      document.getElementById('home-tab-move')?.click();
     },
     async openByEmail() {
       // Read through a function: the state changes under the awaits below.
@@ -551,7 +554,7 @@ describe('golden: Hana Home opens the vault’s address', () => {
   it('says so when the address on record differs from the wallet’s own, and shows the wallet’s', async () => {
     const h = start({ scopes: [mineScope({ addresses: [{ chain: 'stellar', address: vector(ROOT).accounts[0]!.stellar.address }] })] });
     await h.unlock();
-    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from this wallet’s');
+    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('record shows a different address for this wallet');
     expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(vector(OWN).accounts[0]!.stellar.address);
   });
 
@@ -571,7 +574,7 @@ describe('golden: Hana Home opens the vault’s address', () => {
     resetDom();
     const other = start({ scopes: [mineScope({ addresses: [...records, { chain: 'near', address: 'ab'.repeat(32) }] })] });
     await other.unlock();
-    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from this wallet’s');
+    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('record shows a different address for this wallet');
     // What is shown is the wallet's own NEAR account and key, never the record's.
     expect(document.getElementById('home-export-address-near')?.textContent).toBe(near);
     // The app's page above lists the record (the API's word); the section never shows it.
@@ -1061,7 +1064,9 @@ describe('the secret’s life', () => {
     expect(r.secret.textContent).toBe(key);
     h.win.history.back();
     await flush();
-    expect(h.page.view).toBe('front');
+    // D895: "Move wallet" is a tab with its own entry: Back returns to Addresses, and leaving the tab locks the wallet.
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('addresses');
     expect(h.page.moving.holdsSecret).toBe(false);
     expect(zeroed.has(prkOf(OWN))).toBe(true);
     expect(h.page.moving.state).toBe('closed');
@@ -1071,6 +1076,7 @@ describe('the secret’s life', () => {
     h.win.history.forward();
     await flush();
     expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('move');
     expect(h.page.openScope).toBe(SCOPE);
     expect(h.page.moving.state).toBe('closed');
     expect(h.page.moving.holdsSecret).toBe(false);
@@ -1079,7 +1085,7 @@ describe('the secret’s life', () => {
     // No timer of the old wallet is left to fire, and the history entries hold nothing of it.
     advance(HOME_PRK_LIFETIME_MS + 1000);
     expect(h.page.moving.state).toBe('closed');
-    for (const e of h.win.history.entries) expect(JSON.stringify(e.state ?? null)).toMatch(/^(null|"home:[A-Za-z0-9_-]{16}:1")$/u);
+    for (const e of h.win.history.entries) expect(JSON.stringify(e.state ?? null)).toMatch(/^(null|"home:[A-Za-z0-9_-]{16}:[12]")$/u);
   });
 
   it('D893: the browser’s Back while the per-app sign-in is on its way drops it; an answer that comes after opens nothing', async () => {
@@ -1099,7 +1105,7 @@ describe('the secret’s life', () => {
     expect(h.page.moving.state).toBe('opening');
     h.win.history.back();
     await flush();
-    expect(h.page.view).toBe('front');
+    expect(h.page.tab).toBe('addresses');
     const { response } = simulateMpc(pk1 as unknown as string, ckdAppId(HOME_ENV.signer, OWN), NET);
     release(json(200, { result: response, session: { scope_id: SCOPE, expires_at_ms: T0 + 1, max_uses: 1, used: 1 }, nearTx: 'tx', requestId: 'req_1' }));
     await h.page.idle();
@@ -1109,8 +1115,49 @@ describe('the secret’s life', () => {
     h.win.history.forward();
     await flush();
     expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('move');
     expect(h.page.moving.holdsSecret).toBe(false);
     expectCollapsed();
+  });
+
+  it.each([
+    ['another tab', async (h: H) => h.click('home-tab-addresses')],
+    ['the browser’s Back', async (h: H) => {
+      h.win.history.back();
+      await flush();
+    }],
+    ['“Your wallets”', async (h: H) => {
+      h.click('home-back');
+      await flush();
+    }],
+    ['the browser’s Forward to a tab opened after it', async (h: H) => {
+      h.win.history.forward();
+      await flush();
+    }],
+  ] as const)('D895: leaving “Move wallet” by %s erases the opened key, from the page and from memory', async (name, leave) => {
+    const h = start();
+    if (name.startsWith('the browser’s Forward')) {
+      // Move wallet, then Security, then Back to Move wallet: Forward from there leaves it for Security.
+      await h.toApp();
+      h.click('home-tab-security');
+      h.win.history.back();
+      await flush();
+      expect(h.page.tab).toBe('move');
+      await h.open();
+    } else await h.unlock();
+    expect(h.page.tab).toBe('move');
+    const r = h.reveal('evm');
+    pressEl(h, r.toggle);
+    const key = vector(OWN).accounts[0]!.evm.export;
+    expect(r.secret.textContent).toBe(key);
+    await leave(h);
+    expect(h.page.tab).not.toBe('move');
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(prkOf(OWN))).toBe(true);
+    expect(h.page.moving.state).toBe('closed');
+    expect(r.secret.textContent).toBe('••••••••');
+    expect(document.documentElement.outerHTML).not.toContain(key);
+    expect(document.querySelector('#home-export .secret')).toBeNull();
   });
 
   it('collapsed, the section has the devices section’s shape; Close collapses it and gives focus back to its button', async () => {
@@ -1264,11 +1311,11 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     expect(document.documentElement.style.getPropertyValue('--home-bar-h')).toBe('140px');
   });
 
-  it('a tool above the move flow changes height (devices loading, a section opening): the same', async () => {
+  it('a part above the move flow changes height (D895: the wallet’s tabs, the head above them): the same', async () => {
     const h = start();
     await h.unlock();
     armedAtContinue(h);
-    resize(document.getElementById('home-app-devices') as HTMLElement, 480);
+    resize(document.querySelector('.home-tabs') as HTMLElement, 96);
     land(h, 'home-export-continue');
     expect(h.page.moving.state).toBe('confirm');
     h.press('home-export-continue');
@@ -1618,7 +1665,7 @@ describe('the guard and the auto-hide', () => {
 describe('words and source', () => {
   it('the availability sentence mentions the move only where the page offers it', () => {
     expect(coverageText('shared', true, true).detail).toContain('You can also move it to another wallet app');
-    expect(coverageText('partner_client', true, true).detail).toContain('To avoid that, you can move it to another wallet app below.');
+    expect(coverageText('partner_client', true, true).detail).toContain('To avoid that, you can move it to another wallet app, under “Move wallet”.');
     for (const [coverage, mine, canMove] of [['shared', true, false], ['exit', true, false], ['shared', false, true], ['none', true, true], ['unknown', true, true]] as const) {
       expect(coverageText(coverage, mine, canMove).detail, `${coverage} ${mine} ${canMove}`).not.toMatch(/move/u);
     }

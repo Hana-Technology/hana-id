@@ -10,6 +10,10 @@ export const ID_PREFIXES = {
   action: 'act',
   key: 'key',
   guardedChange: 'gc',
+  /** A partner label document's version (D894): a guarded change of its own table, `label_changes`. */
+  labelChange: 'lc',
+  /** A partner label entry (D894): one document's place, owned by one org in one scope. */
+  partnerLabel: 'pl',
   securityEvent: 'se',
   app: 'app',
 } as const;

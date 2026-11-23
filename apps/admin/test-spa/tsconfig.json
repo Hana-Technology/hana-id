@@ -22,6 +22,7 @@
     "../vitest.spa.config.ts"
   ],
   "exclude": [
-    "preview-status.ts"
+    "preview-status.ts",
+    "preview-labels.ts"
   ]
 }

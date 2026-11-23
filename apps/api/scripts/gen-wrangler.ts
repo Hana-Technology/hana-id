@@ -198,6 +198,8 @@ export function wranglerConfig(m: Manifest, d1Id: string, opts: { usageHyperdriv
       // Hana's own org for the Home derives no partner pays for, only when the manifest names one.
       ...(m.hanaOrgId !== undefined ? { HANA_ORG_ID: m.hanaOrgId } : {}),
       NETWORK: m.network,
+      // D894: partner labels (proposals and their delivery in GET /v1/app), only when the manifest turns them on.
+      ...(m.partnerLabels?.enabled === true ? { PARTNER_LABELS: 'on' } : {}),
       REFUSED_ORIGINS: JSON.stringify(hanaOwnOrigins(m)),
       // The logo origin for `GET /v1/app`'s logoUrl (batch C11); only with the dashboard blocks.
       ...(m.files ? { FILES_ORIGIN: m.files.origin } : {}),

@@ -731,7 +731,7 @@ const chainOf = (c: RouteCtx): number | null => (CHAIN_PARAM.test(c.params.chain
 const TOKEN = /^evmact_[A-Za-z0-9_-]{22}$/u;
 const newActToken = (): string => `evmact_${btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))).replace(/\+/gu, '-').replace(/\//gu, '_').replace(/=+$/u, '')}`;
 /** An RPC method the other Worker doesn't have yet (it is older than this one). */
-const missingMethod = (err: unknown): boolean => /does not implement|is not a function|not a function|no such method|does not exist/iu.test(err instanceof Error ? err.message : String(err));
+export const missingMethod = (err: unknown): boolean => /does not implement|is not a function|not a function|no such method|does not exist/iu.test(err instanceof Error ? err.message : String(err));
 export const API_OUTDATED = 'This page is newer than the API: deploy the API first (then this admin console). Nothing was done.';
 export const CONSOLE_OUTDATED = 'This page is newer than the partner console’s Worker, which keeps the audit log: deploy it first. Nothing was done.';
 

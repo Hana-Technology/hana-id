@@ -94,6 +94,19 @@ describe('AdminRpc.purgeAudit (5 years, D90)', () => {
     expect([await changeExists(b2), await changeExists(e2)]).toEqual([false, false]);
   });
 
+  it('keeps a partner labels ledger row while its entry exists (D894): label drift reads them; a row of no entry goes', async () => {
+    const app = await orgApp();
+    const labelId = `pl_${uid().replace(/[^A-Za-z0-9]/gu, 'x')}`;
+    await db().prepare('INSERT INTO partner_labels (id, org_id, scope_id, created_at, created_by) VALUES (?1, ?2, ?3, ?4, ?5)').bind(labelId, app.org, app.scope, now() - 70 * MONTH, 'usr_x').run();
+    const proposed = await change({ ...app, id: null as never }, now() - 70 * MONTH, 'labels.proposed', { changeId: 'lc_a', labelId });
+    const announced = await change({ ...app, id: null as never }, now() - 70 * MONTH, 'change.announced', { changeId: 'lc_a', kind: 'label_set', labelId });
+    const blocked = await change({ ...app, id: null as never }, now() - 69 * MONTH, 'labels.blocked', { changeId: 'lc_a', labelId });
+    const orphan = await change({ ...app, id: null as never }, now() - 69 * MONTH, 'labels.blocked', { changeId: 'lc_b', labelId: 'pl_none' });
+    const guardedAnnounce = await change(app, now() - 69 * MONTH, 'change.announced', { changeId: 'gc_x', kind: 'origin_add' });
+    await adminRpc().purgeAudit({ ...system(), before: now(), limit: 500 });
+    expect([await changeExists(proposed), await changeExists(announced), await changeExists(blocked), await changeExists(orphan), await changeExists(guardedAnnounce)]).toEqual([true, true, true, false, false]);
+  });
+
   it('deletes guarded changes closed more than 60 months ago and every change of an app deleted that long ago; open ones stay', async () => {
     const app = await orgApp();
     const cancelled = await guarded(app.id, { status: 'cancelled', proposedAt: now() - 70 * MONTH, closedAt: now() - 69 * MONTH });

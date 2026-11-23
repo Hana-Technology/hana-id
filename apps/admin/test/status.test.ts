@@ -36,6 +36,8 @@ interface World {
   api: Record<string, unknown> | (() => unknown);
   console: Record<string, unknown> | (() => unknown);
   issuer: Record<string, unknown> | (() => unknown);
+  /** D894: AdminRpc.labelControls's answer (partner-labels.test.ts tests the tile's states). */
+  labels: Record<string, unknown> | (() => unknown);
   builds: Record<string, string | null>;
   /** Per URL: an answer instead of the healthy one. */
   http: Map<string, () => Response | Promise<Response>>;
@@ -158,6 +160,7 @@ function healthyWorld(): World {
     api: apiAnswer(),
     console: consoleAnswer(),
     issuer: issuerAnswer(),
+    labels: { ok: true, controls: { all: { labelsOff: false, reviewRequired: false, version: 0, updatedAt: null, updatedBy: null, note: null }, orgs: [], entries: [] } },
     builds: Object.fromEntries(Object.keys(BUILD_URLS).map((k) => [k, BUILD])),
     http: new Map(),
     near: { primary: NOW - 1000, fallback: NOW - 1000, backup: NOW - 1000 },
@@ -219,7 +222,7 @@ function worldEnv(): typeof env {
     NEAR_RPC_FALLBACK: FALLBACK,
     NEAR_RPC_FALLBACKS: JSON.stringify([FALLBACK, BACKUP]),
     USAGE_DB: { connectionString: 'postgresql://stub' } as unknown as Hyperdrive,
-    API: overrideBinding(env.API, { systemStatus: () => answerOf(world.api) }),
+    API: overrideBinding(env.API, { systemStatus: () => answerOf(world.api), labelControls: () => answerOf(world.labels) }),
     CONSOLE: overrideBinding(env.CONSOLE, { health: () => answerOf(world.console) }),
     ISSUER: overrideBinding(env.ISSUER!, { health: () => answerOf(world.issuer) }),
     STATEMENTS: countedBucket(env.STATEMENTS),
@@ -922,17 +925,17 @@ describe('the subrequest budget and the cache (Workers Free: 50 a request)', () 
     for (const u of ['https://b.test.invalid', 'https://c.test.invalid']) world.http.set(u, () => nearBlock(NOW - 1000));
     const a = await read();
     expect(a.calls.byKind.fetch).toBe(10 + 5); // the build reads and the NEAR reads
-    expect(a.calls.total).toBe(22);
+    expect(a.calls.total).toBe(23);
     expect(a.calls.total + 1).toBeLessThanOrEqual(25);
   });
 
-  it('a cold load makes 20 outbound calls (sandbox-dev’s three NEAR endpoints), counted the same inside and out; a warm one none, for 30 s', async () => {
+  it('a cold load makes 21 outbound calls (sandbox-dev’s three NEAR endpoints; the partner labels’ switches, D894), counted the same inside and out; a warm one none, for 30 s', async () => {
     const req = new Request(`${ADMIN}/api/status`, { headers: { 'cf-access-jwt-assertion': await staffJwt() } });
     const res = await statusRoute(worldEnv(), staff, req, NOW);
     const a = await json<StatusAnswer & { cached: boolean }>(res);
     const outside = counts.fetch + counts.rpc + counts.hyperdrive + counts.r2;
-    expect({ ...counts }).toEqual({ fetch: 14, rpc: 3, hyperdrive: 1, r2: 2 });
-    expect(a.calls).toEqual({ total: 20, byKind: { watchdog: 1, rpc: 3, fetch: 13, hyperdrive: 1, r2: 2 } });
+    expect({ ...counts }).toEqual({ fetch: 14, rpc: 4, hyperdrive: 1, r2: 2 });
+    expect(a.calls).toEqual({ total: 21, byKind: { watchdog: 1, rpc: 4, fetch: 13, hyperdrive: 1, r2: 2 } });
     expect(outside).toBe(a.calls.total);
     // With the Access certs fetch of a cold isolate (before the route), far under 50; and 3 Worker invocations of 32.
     expect(a.calls.total + 1).toBeLessThanOrEqual(25);
@@ -972,7 +975,7 @@ describe('the subrequest budget and the cache (Workers Free: 50 a request)', () 
     const req = new Request(`${ADMIN}/api/status`);
     const [a, b, c] = await Promise.all([statusRoute(worldEnv(), staff, req, NOW), statusRoute(worldEnv(), staff, req, NOW), statusRoute(worldEnv(), staff, req, NOW)]);
     expect([a.status, b.status, c.status]).toEqual([200, 200, 200]);
-    expect(counts.rpc).toBe(3);
+    expect(counts.rpc).toBe(4);
     expect(counts.fetch).toBe(14);
   });
 });

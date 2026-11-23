@@ -309,6 +309,12 @@ function nearRelayRules(m: { network: string; signer: string; relayer: string; o
   }
 }
 
+/** D894: partner labels on is for testnet only until piece 3 and a go-live decision (the same rule as D702's Users screen). */
+export function partnerLabelsProblem(m: { network: string; partnerLabels?: { enabled: boolean } | undefined }): string | null {
+  if (m.partnerLabels?.enabled !== true || m.network === 'testnet') return null;
+  return `partnerLabels.enabled is for testnet only (D894): turning partner labels on for ${m.network} needs its own decision first`;
+}
+
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 export const manifestSchema = z
   .object({
@@ -381,6 +387,13 @@ export const manifestSchema = z
      * "Manifest"). It replaces batch B's raw-sign/policy delay rule for the API and the CLI (from batch C3).
      */
     appChangeDelayMs: delayMs,
+    /**
+     * D894: partner labels (D892). `enabled: true` writes the API var `PARTNER_LABELS = "on"`: owners may propose label
+     * documents and `GET /v1/app` delivers the ones in force to the vault. Absent or false (every env until piece 3 and
+     * a go-live step): proposals are refused and nothing is delivered; staff blocks and switches work either way.
+     * Refused on any network but testnet until that decision (`partnerLabelsProblem`).
+     */
+    partnerLabels: z.object({ enabled: z.boolean() }).strict().optional(),
     /** Hana Home derives per UTC day across the env; 0 turns them off. Absent: the API's default (500). */
     homeDerivesPerDay: z.number().int().min(0).max(9_999_999).optional(),
     /**
@@ -511,6 +524,8 @@ export const manifestSchema = z
     governance(m, ctx);
     if (m.near) nearRules(m, m.near, ctx);
     dashboardRules(m, ctx);
+    const labels = partnerLabelsProblem(m);
+    if (labels) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['partnerLabels', 'enabled'], message: labels });
     if (m.rpcFallback !== undefined && m.rpcFallback === m.rpc) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'rpcFallback must be a different endpoint from rpc' });
     } else if (m.rpcFallback !== undefined && !isLocalEnv(m.name) && safeSite(m.rpcFallback) !== null && safeSite(m.rpcFallback) === safeSite(m.rpc)) {

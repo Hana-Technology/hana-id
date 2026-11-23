@@ -22,7 +22,7 @@ The left nav groups the screens by task (D420):
 | Overview | **Status** (D425): the landing page (`/`), every part of the env at a glance, below |
 | Partners | **Organisations**: the list, "Invite a new partner" (a new organisation's first owner) and **Pending invites** (below); an organisation's members, invites, owner grants, "Register a scope for this organisation" (below), apps ("Create an app", "Move a legacy scope here"), security contacts, recent app changes and its danger zone (freeze, suspend every app); an app's suspension switches, allowed origins, guarded changes, signing settings, publishable keys and danger zone. **Legacy apps** (`org_legacy`) has its own page: its scopes, each with "Move to an organisation" |
 | Support | **Users** (C8b), **Support ID lookup** (C15) |
-| Security | **Security & monitoring**, **Feed and notices**, **Pending upgrades**, **Playbooks** (C14), **Audit log** (the console's rows, an org's app changes, the issuer's directory reads) |
+| Security | **Security & monitoring**, **Feed and notices**, **Partner labels** (D894, below), **Pending upgrades**, **Playbooks** (C14), **Audit log** (the console's rows, an org's app changes, the issuer's directory reads) |
 | Email login | **Email issuer**: the window's totals in a stats strip, then tokens, mail with bounce and complaint rates, refusals by limit, alert occurrences per app and day, and the signer policy against the pins (batch 10's KMS figures say so). **Account links**: the totals in a stats strip, links per app and day, today against the 7-day median (build plan batch 9, D446, D448). Both pick their window (7, 14 or 31 days) with a segmented control (D765) |
 | Money | **Reports**, **Statements**, **Rates** (C12) |
 | System | **Retention** (C13) |
@@ -139,7 +139,7 @@ warnings, unknown and not measured (D765). Then the **issues**, critical first: 
 what it affects (logins, the partner console, alerts, billing…), since when (from the source when it has a time: an
 alert's, a proposal's, a cron's last run plus one interval, the oldest waiting notice; else **first seen** by this
 isolate), which component, what to do, and the screen or playbook that resolves it. Then one **tile** per component,
-grouped (Workers; Contract and watchdog; Relayer funds; Data; Scheduled jobs; External services; Free-tier
+grouped (Workers; Contract and watchdog; Relayer funds; Data; Partners; Scheduled jobs; External services; Free-tier
 headroom): **OK** (green), **Warning** (amber), **Critical** (red), **Unknown** (grey, dashed: a check that should have
 answered and didn't; always behind an issue, never green) or **Not measured** (outlined: nothing measures it yet, or the
 piece isn't part of this env; not an issue), each with a line of detail (latency, build id, counts, ages) and "checked
@@ -162,6 +162,7 @@ its own; when a source fails, the tiles it feeds are Unknown and the failure is 
 | Data | Hot D1 (API), console D1, email issuer D1 | `AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`: one timed `SELECT 1` each | slower than 1 s; the Worker didn't answer its status call (Unknown, with an issue: often a Worker deployed before D425) | the query failed |
 | | Usage ledger (Neon) | one Hyperdrive connection: `ops.state`, `partitionsAhead`, the settlement backlog; with `usage.neonPlan` (D872) none: the 15-minute run's `ledger.health` and the crons' records from `systemStatus`'s `neon` | not bound; fewer than 2 partitions ahead; settlement's oldest event older than 2 h; (`neonPlan`) no report yet or older than 35 min (Unknown) | unreachable (at the last 15-minute run with `neonPlan`); 0 partitions ahead |
 | | R2: statements, exports, logos | a `get` of a key nothing writes (Class B; the console's `StaffRpc.health` reads LOGOS) | the read threw | — |
+| Partners | Partner labels (D894; lines: each switch that is off, Off, who and when; Staff review when it is on) | `AdminRpc.labelControls` | a switch off: **Switched off for everyone**, **Switched off for N organisations**, **N sets switched off**, with one issue ("Partner labels are switched off …": "Users of those apps see the plain approval window, without the partner’s words. To turn a switch back on, open Partner labels.", linking `/labels`); the read failed, or an API without the method ("the API deployed here is older than this page": Unknown, with an issue) | — (OK: **No switch is off**, with "Staff review required for every change" or "for N organisations" when on) |
 | Scheduled jobs | API every 15 min (Google key sync), admin every 5 min (with `admin.opsEveryMinutes` 15: "notices; feed and watcher every 15 min", judged on 15 min, D872), admin every 15 min, console hourly, watchdog every 5 min | the run each records: `issuer_key_sync_runs`, `ops.state` `cron.last_run` and `ledger_cron.last_run` (new, D425), the console's `cron_runs` (console migration 0003, D425), the watchdog's `last_run` and silence rule | later than 2 intervals + 5 min; the last run `skipped`/`error` or a step failed; the console's table missing (migration 0003 not applied); no run recorded (Unknown) | later than 6 intervals (30 min for the 5-minute admin cron, 90 min for the 15-minute ones, 6 h hourly); the watchdog silent (no run in 2 intervals) |
 | External services | Google signing keys (JWKS) | the API's own fetch (`issuers[].jwksKids` in the snapshot) and the watchdog's `jwks_fetch` check | the watchdog's check failed | the API can't fetch them |
 | | NEAR RPC (one tile, one line per endpoint: Primary, Backup 1…, labels only, no URL) | one `block` (`finality: final`) on every endpoint the API can use (`rpc`, `apiRpcFallbacks`, else `rpcFallback`), and on `rpcFallback` when that list doesn't include it (line "Vault's fallback") | an endpoint slower than 2 s or 2–10 min behind; a backup down or stuck; the primary down while a backup serves | none of the API's endpoints answers; the one serving the API over 10 min behind (an answer isn't failed over, D435); `rpc` and `rpcFallback` both down (the vault and the watchdog have only those) |
@@ -171,11 +172,12 @@ its own; when a source fails, the tiles it feeds are Unknown and the failure is 
 | | Neon compute this month (D872) | `systemStatus`'s `neon`: the month's wake-ups as the API noted them, estimated compute-hours = awake hours × `computeUnits`, against `computeHoursPerMonth` ("About N of 100 compute-hours used this month (estimate) · W wake-ups · on course for about P · starts again on 1 Mmm") | from 70%; all month when counting began more than 48 h into the month ("Counted since <date>: about N compute-hours since then. Neon's own figure for the month is higher: check Neon's console.", no projection or share) | from 90%; Not measured without `usage.neonPlan`; Unknown with an older API, an API without `NEON_PLAN` or its D1 failing |
 | | Requests, D1, Hyperdrive, R2 and SendGrid against free limits | — | Not measured: Cloudflare's GraphQL Analytics needs an API token this Worker doesn't hold, SendGrid's stats a key beyond Mail Send (`docs/mainnet-readiness.md` 5.12) | |
 
-**Budget per page load** (Workers Free: 50 subrequests, 10 ms CPU): a cold read makes **20** outbound calls on
-sandbox-dev, at most **22** with the most endpoints the manifest allows (1 watchdog `/status`; 3 RPCs:
-`AdminRpc.systemStatus`, `StaffRpc.health`, `DirectoryRpc.health`; 10 public build reads; one NEAR `block` per
+**Budget per page load** (Workers Free: 50 subrequests, 10 ms CPU): a cold read makes **21** outbound calls on
+sandbox-dev, at most **23** with the most endpoints the manifest allows (1 watchdog `/status`; 4 RPCs:
+`AdminRpc.systemStatus`, `AdminRpc.labelControls` (the Partner labels tile, D894), `StaffRpc.health`,
+`DirectoryRpc.health`; 10 public build reads; one NEAR `block` per
 endpoint, 3 on sandbox-dev and at most 5; 1 Hyperdrive connection, none with `usage.neonPlan` (D872); 2 R2 reads), plus the Access check's certs fetch on
-a cold isolate (cached ≤ 10 min): **23** at most, and 3 of the 32 Worker invocations a request may make. The answer is kept in the isolate for **30 s**
+a cold isolate (cached ≤ 10 min): **24** at most, and 4 of the 32 Worker invocations a request may make. The answer is kept in the isolate for **30 s**
 and concurrent misses share one read, so a refresh, a second tab or the other staff member costs **0** calls within that
 window (the page says when it shows a kept read). `test/status.test.ts` counts a cold and a warm load from outside (the
 stubs) and inside (the answer's `calls`). The admin's crons gain no call for it: the 15-minute run writes its record on its
@@ -206,6 +208,86 @@ itself 4 s ago), `fees-money-limit` and `fees-money-limit-refilled` (3 restarts 
 presses Resume), `fees-paused-money-leak`, `fees-paused-key` (the key used elsewhere) and `fees-low` (every other
 scenario: Not set up); their "Gas sponsorship" page (`/gas-sponsorship/84532`) and its tools
 answer through the Worker's own routes over the same fake views, and a done Resume there switches the page to working.
+The Partner labels tile (D894): `labels-off` (one organisation's switched off and one set on its own: amber, with its
+issue) and `labels-review` (review required for every change: OK, with the line); every other scenario: no switch off.
+
+## Partner labels (D894)
+
+Partners write the words the approval window shows for their apps' requests ("{App} says: collect the stamp “Fare
+paid”"; partners call them **request labels**, staff **partner labels**). An on-chain owner proposes a set in the
+console; it is a guarded change: the admin's 5-minute job emails the org's security contacts and the alias, and the
+change goes live `appChangeDelayMs` after that email. **Every change shows here for its whole wait. Nothing is needed
+for it to go live**; staff stop one that would mislead users (the founder's "go with 1": a staff veto, not a staff
+approval), unless the required-review switch is on.
+
+**The screen** (nav **Security → Partner labels**, `/labels`; `GET /api/labels`: `AdminRpc.labelQueue`, the orgs'
+names from one `StaffRpc.listOrgs`, and a one-time token). **Waiting** first, soonest live first, each in words:
+**Waiting for the notice email** (lapses 7 days after the proposal if it can't be sent), **Goes live {time} (in
+{countdown})** (", once staff press Allow" while review holds it), **Waiting for a staff Allow (lapses {time})**; then
+**Decided in the last 14 days**: **Live**, **Blocked by staff**, **Cancelled by the partner** (in the console or by the
+emailed link), **Lapsed** (never emailed in time, or nobody allowed it in time), **Replaced by a newer change**,
+**Removed by the partner**. Each change: the organisation (its name, the id under it), the apps, when it was proposed,
+whether review holds it, **What users would see (example values)** (each line and its rows, from the API's own
+parser), **Compared with what users see now** (each line new, changed with before and after, removed or unchanged,
+what the document describes first), and a link to its page `/labels/<lc_ id>` (`GET /api/labels/:changeId`:
+`AdminRpc.labelDetail` and a token), which adds when the notice went out, its time, when it lapses, whether users see
+it now, a block's note, and the tools. The partner's words are always written as text (never markup; a test feeds the
+page markup and finds text).
+
+**The tools** (`POST /api/labels/:changeId/act` `{token, tool, note, seen}`, `seen` = the change's `labelsVersion` and
+state as the page read them):
+
+- **Block this change** (any change waiting or in force; a note of 10 to 300 characters, "Why (the partner is sent this
+  note; it is kept in the audit log)"; confirmed in the page: "Block this change? Users will never see it, and the
+  partner is told Journear blocked it.", or for one in force "Block this change? Users stop seeing it at once, and the
+  partner is told Journear blocked it."). It never takes effect, or stops being served at once.
+- **Allow** (only while review is required and the change hasn't been allowed; a note; "Allow this change? It goes live
+  at its time, or at once if its time has passed."). The page's one primary action when it is offered.
+
+**The switches** (`POST /api/labels/controls` `{token, target, what, note, seenVersion}`; target `{kind: 'all'}`,
+`{kind: 'org', orgId}` or `{kind: 'entry', labelId}`; what `off`, `on`, `review_on`, `review_off`, review never for one
+entry): **Every partner label** (Switch off / Turn back on), **Staff review for everyone** (Require / Turn off),
+**Organisations with a switch** (their state, who set it and when, the note; "Turn back on…" and "Review off…"), **Sets
+of labels switched off** ("Turn back on…") and **One organisation** (an org id and the switch). "Back on" only serves
+versions that already passed their wait; nothing makes a change go live sooner. An org's or a set's switch is in the
+org's `app_changes` (so the partner's activity digest has it, with the note); every switch is in the API's
+`label_control_log`.
+
+**Each tool**, as the Gas sponsorship tools (`src/partner-labels.ts`): checked here with console-core's own schema
+(`labelStaffActInput`, `labelControlInput`: a bad token, tool, note, `seen` or an extra field is refused before
+anything is recorded); then the API is asked for `labelControls` (an older API: "This page is newer than the API…",
+nothing recorded or done); then the audit row `labels.staff_action` (org-less; the target the change id, `all`, the
+org id or the entry id; details `{tool, target, note}`), keyed by the page's one-time token `lblact_…`, so a re-sent
+form is `already_applied` ("This form was already sent once. Reload the page to see what happened, then act again if
+it is still needed."); no row, no action (the console down, refusing, or older: "deploy it first"); then the API; then
+`labels.staff_result` (`done`, `unchanged`, `stale_page`, `rpc_<code>`, `unknown`). A change that moved: "This change
+moved since you opened the page (someone may have acted, or it went live). Nothing was done. Reload the page and look
+again." (a switch: "This switch moved since you opened the page (someone else may have changed it). …"). An answer that
+never came: "The API didn’t answer, so it isn’t clear whether this was done. Reload the page and look before you try
+again." Nothing is retried. After any answer the page reads again (a fresh view and token) with the answer on top.
+
+**The notice** (`label_pending`, `src/notices.ts` `runLabelNotices`, after the change notices in the 5-minute run, each
+step on its own): `AdminRpc.labelNotices` → one message to the alias and each security contact → `AdminRpc.ackLabelNotice`
+with sha256 of the cancel link's token, only after every send was accepted (the change's clock starts at the ack). The
+link is the console's cancel page, `/cancel/<lc_ id>#t=<HMAC(CANCEL_LINK_KEY, "hana-id/cancel-link/v1" ‖ id)>`, as a
+guarded change's. The same budget rules (a notice is started only with room for every email and its ack). The mail
+(the designed partner notice, D699/D765; subject "Request labels proposed for {first app}"): who proposed it and what
+it is, that it goes live {the wait in words} after the email unless someone cancels it and that Journear may block it,
+the apps, organisation, scope, what it describes and the change id, **What users would see (example values):** each
+line and its rows ("label: value"), **What changes:** the lines that aren't unchanged ("Added: …", "Changed: … → …",
+"Removed: …"), and one button, **Cancel this change**. Every partner text is one line and unlinked. The feed leaves
+`labels.proposed` (and its `change.announced`) out of the digest: the notice covers them.
+
+**The blocked mail** (`labels_blocked`, from the feed's walk of `app_changes`, like the login-methods mail: its cursor,
+budget and retries): a `labels.blocked` row gets a mail of its own to the alias and the org's contacts, subject
+"Journear blocked a change to request labels for {app}": "Journear blocked a change to the request labels of {apps}
+({change id}). Your users will never see it." (or, blocked while in force, "Your users no longer see it, from now."),
+"Journear’s note: “{note}”", and "To ask why, reply to this email or write to your Journear contact. To try again,
+change the labels in the console; the new change waits {the wait} again." The app names come from
+`AdminRpc.labelDetail` (one call; unreadable: "your app"). The row is left out of the digest.
+
+**Feed and notices** has a short **Partner label changes waiting** section: how many, how many wait for a staff Allow,
+how many aren't emailed yet, and the link (from `AdminRpc.labelQueue` in `GET /api/security`'s `labels`).
 
 ## UI principles
 
@@ -345,7 +427,10 @@ the warning at once and the expired banner 4 minutes later; `0.4` the expired ba
 `test-spa/preview-data.ts`: fake organisations (Legacy apps with its scopes, pending invites to new organisations in each state (D696), partners with members, invites and
 grants, a frozen one, one without a security contact, and for the scope-registration panel Orbit Labs (an owner invite
 not accepted) and Corvid Pay (two owners, one in the grant period, an open owner invite, no app)), apps, users, a Support ID lookup, the feed, monitoring,
-upgrades, the real playbooks, reports, statements, rates and retention. Writes succeed, except the refusals the real
+upgrades, the real playbooks, reports, statements, rates and retention. The Partner labels screen (`/labels`, D894)
+answers from `test-spa/preview-labels.ts` through the Worker's own routes: a change in each state (announced, held for
+review, waiting for its notice, live, blocked, cancelled) and the switches; Block, Allow and the switches change that
+set in memory, and `/preview/labels/reset` puts it back. Writes succeed, except the refusals the real
 services give for `org_legacy`. It binds to the loopback address, has no Access, secret or network, and is not part
 of the Worker (wrangler serves `public/` alone; a source check keeps `public/` to the SPA's three files and the brand
 fonts, D426).
@@ -364,12 +449,13 @@ fonts, D426).
 | `src/neon.ts` | Neon's free plan (D872): the feed and watcher interval (`OPS_EVERY_MINUTES`), the wake-up reports to the API (`NEON_PLAN`) |
 | `src/ledger*.ts`, `src/settlement.ts`, `src/statement*.ts`, `src/rates.ts`, `src/report-routes.ts`, `src/alerts.ts` | C12's ledger work and routes |
 | `src/monitoring*.ts`, `src/watchdog.ts`, `src/playbooks.ts`, `src/plain.ts` | C14's Security & monitoring |
+| `src/partner-labels.ts` | Partner labels (D894): the screen's routes, its tools and switches (the audit rows before and after), their words |
 | `src/status.ts`, `src/status-probes.ts` | the System status page (D425): the sources, every check, the verdict, the 30 s cache; the counted build and NEAR reads |
 | `src/retention*.ts` | C13's monthly job and screen |
 | `src/email/` | the `EmailSender` (SendGrid, `sendgridSender`) and every message; `src/mail.ts` `sendToAll` skips a message this isolate saw accepted (SendGrid has no idempotency key, D401). `render.ts` writes a text part and plain HTML; a message that passes `design` (today only the partner invite, `inviteLink`, D672) gets the shared designed layout from `@hana-id/brand/email` instead, built from the same blocks, its link a button with the URL again as text, its paragraphs written so clients don't link a name, and the logo from `FILES_ORIGIN` (D685, D687). The operational mails stay plain (D674) |
 | `public/` | the SPA (no build, text only: a source check forbids HTML sinks and browser dialogs) and `fonts/`, the brand's fonts and licences (copied from `packages/brand`, D426, D765) |
 | `scripts/sync-brand.ts` | copies `packages/brand`'s fonts, tokens, components and white lockup into `public/` (`sync-brand`) |
-| `test-spa/` | the SPA's DOM tests (`boot.ts` runs `public/app.js` in happy-dom) and the local preview (`preview.ts`, `preview-data.ts`, `preview-status.ts`: the status page's scenarios over the real `buildStatus`, typechecked with `test-ops/`) |
+| `test-spa/` | the SPA's DOM tests (`boot.ts` runs `public/app.js` in happy-dom) and the local preview (`preview.ts`, `preview-data.ts`, `preview-status.ts`: the status page's scenarios over the real `buildStatus`; `preview-labels.ts`: the Partner labels set over the real routes; both typechecked with `test-ops/`) |
 | `scripts/gen-wrangler.ts` | `wrangler.jsonc` from the manifest's dashboard blocks (`ISSUER` when the env has an email issuer) |
 
 ## Commands
@@ -402,7 +488,7 @@ ledger. To click through it by hand: `docs/operations.md` "Trying the staff admi
 A visit with no Access token at all shows the expired-sign-in banner over a page that stays "Loading…": unreachable
 behind real Access, which answers before the page (seen only on the local stack, D873; left as it is).
 
-Last verified: 2026-11-23 (branch `feat/evm-relayer-auto-resume`, from `next`, not merged, not deployed: the Gas sponsorship tile's pause for money that restarts by itself, its Check again (`GET /api/status?fresh=1`, at most once per 10 s), the old-reading note, the preview's new scenarios, D890); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: the System status row and the preview's "Gas sponsorship" page at `/gas-sponsorship/84532`, D879); 2026-11-19 (branch `test/e2e-admin-portal`, not merged, not deployed: Security & monitoring's security events in words with their playbooks; the waiting-transactions row of a slot used by someone else's transaction; the portal in the local e2e stack, D873); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the partial-month tile; from `next`, not merged, not deployed: the Neon compute tile, the ledger and 5-minute tiles with `usage.neonPlan` and `admin.opsEveryMinutes`, the page's Hyperdrive call, D872); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: the Free network fees tile in the checks table and the preview's fee scenarios, D843); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed, after its security review: the NEAR relay row's Unknown for an unparsable balance, a malformed missing key counted); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: the NEAR relay tile in the checks table, the budget's note, the preview's relay scenarios, D784–D786); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark in the nav's white lockup, synced by `sync-brand`, outlined, D789); 2026-11-12 (branch `feat/journear-design-admin`, not merged, not deployed: the SPA on the Journear Passport design system and names, "Design", `sync-brand` with `components.css` and the lockup, `test-spa/design.test.ts`, the usage report's columns lined up with their headers, D765); 2026-11-12 (branch `feat/journear-design-email`, not merged, not deployed: the mails' names and the subject prefix, the Journear look from `@hana-id/brand/email`, D765); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: the feed's digests designed, the `rows` block and `rowTime`, D704; after review: the row count, the HTML budget, `cut`, the error-level log; the rows in plain words); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: the Organisations page's "Pending invites" panel, `GET /api/invites/new-orgs`, `test-spa/pending-invites.test.ts`, D696; after the dry run: "Create an app" refreshes the Apps table in place, the Invites panel's Revoke on open invites only, `passkeys_required`'s words, readable times in email sentences, `test-spa/onboarding.test.ts`, D697; the gate's words for a network that keeps it, D698; the designed partner security notices, D699, D700); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's logo and unlinked paragraphs, D685, D687); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's designed HTML part, D672, D674); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: "Register a scope for this organisation", the staff "Propose origins" help, `ux.test.ts`'s `scope:register` rule changed, D651, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: an alert's "Details and deliveries" shows the latest result per channel above the last 20 rows, D570); 2026-11-09 (branch `feat/email-login-9`, not merged: the Email login screens, D446, D448); 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
+Last verified: 2026-11-23 (branch `feat/partner-labels-storage`, not merged, not deployed: "Partner labels", D894: the screen, its tools and switches, the label notice, the blocked mail, the System status tile, the Feed and notices count, the preview set); 2026-11-23 (branch `feat/evm-relayer-auto-resume`, from `next`, not merged, not deployed: the Gas sponsorship tile's pause for money that restarts by itself, its Check again (`GET /api/status?fresh=1`, at most once per 10 s), the old-reading note, the preview's new scenarios, D890); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: the System status row and the preview's "Gas sponsorship" page at `/gas-sponsorship/84532`, D879); 2026-11-19 (branch `test/e2e-admin-portal`, not merged, not deployed: Security & monitoring's security events in words with their playbooks; the waiting-transactions row of a slot used by someone else's transaction; the portal in the local e2e stack, D873); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the partial-month tile; from `next`, not merged, not deployed: the Neon compute tile, the ledger and 5-minute tiles with `usage.neonPlan` and `admin.opsEveryMinutes`, the page's Hyperdrive call, D872); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: the Free network fees tile in the checks table and the preview's fee scenarios, D843); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed, after its security review: the NEAR relay row's Unknown for an unparsable balance, a malformed missing key counted); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: the NEAR relay tile in the checks table, the budget's note, the preview's relay scenarios, D784–D786); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark in the nav's white lockup, synced by `sync-brand`, outlined, D789); 2026-11-12 (branch `feat/journear-design-admin`, not merged, not deployed: the SPA on the Journear Passport design system and names, "Design", `sync-brand` with `components.css` and the lockup, `test-spa/design.test.ts`, the usage report's columns lined up with their headers, D765); 2026-11-12 (branch `feat/journear-design-email`, not merged, not deployed: the mails' names and the subject prefix, the Journear look from `@hana-id/brand/email`, D765); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: the feed's digests designed, the `rows` block and `rowTime`, D704; after review: the row count, the HTML budget, `cut`, the error-level log; the rows in plain words); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: the Organisations page's "Pending invites" panel, `GET /api/invites/new-orgs`, `test-spa/pending-invites.test.ts`, D696; after the dry run: "Create an app" refreshes the Apps table in place, the Invites panel's Revoke on open invites only, `passkeys_required`'s words, readable times in email sentences, `test-spa/onboarding.test.ts`, D697; the gate's words for a network that keeps it, D698; the designed partner security notices, D699, D700); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's logo and unlinked paragraphs, D685, D687); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: the invite's designed HTML part, D672, D674); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: "Register a scope for this organisation", the staff "Propose origins" help, `ux.test.ts`'s `scope:register` rule changed, D651, D652); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: an alert's "Details and deliveries" shows the latest result per channel above the last 20 rows, D570); 2026-11-09 (branch `feat/email-login-9`, not merged: the Email login screens, D446, D448); 2026-11-09 (branch `chore/status-access-followups`: System status's NEAR RPC tile, one line per endpoint the API can use, the calls per load and the preview's `critical`, D435's note; the Access session's length, D437); 2026-11-06 (branch `feat/user-events-retention`: the Users detail and Support ID lookup's events kept 24 months and their empty state, the Retention screen's user events rows, D433); 2026-11-06 (branch `feat/hana-brand`: "Brand", the SPA in Hana's brand, `public/fonts`, `sync-brand`, the amended source check, D426); 2026-11-06 (branch `feat/admin-system-status`: the System status page, its checks, budget and preview scenarios, D425); 2026-11-06 (branch `fix/session-expiry-ux`: the sign-in's end said as such, Try again, the warning
 before `exp`, `GET /api/me` `accessExp`, `/signed-in`, the preview's `PREVIEW_SESSION_MIN`, `session.test.ts`, D424);
 2026-11-06 (branch `feat/admin-ux-redesign`: the grouped nav and screens, "UI principles", the local preview, `ux.test.ts`, D420); 2026-11-05 (branch `feat/sandbox-dev-dashboard-blocks`: email through SendGrid, D401); 2026-11-05 (branch `feat/deploy-check-all-workers`: `run deploy`, stamped with the build id, read by `deploy-check` from the deployed version, D406); 2026-11-05 (branch `feat/batch-c-15-screen`: the Support ID lookup screen, `src/support.ts`'s email join,
 the SPA tests, D399); 2026-11-05 (branch `feat/batch-c-8b`: written with the Users screen, D388–D392).

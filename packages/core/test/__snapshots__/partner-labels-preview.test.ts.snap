@@ -1,0 +1,38 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`previewLabelDocument > a Soroban format: "your account" for an isSelf argument, an amount within its bounds; a payment: the order as code 1`] = `
+[
+  [
+    "deposit",
+    "Pool says: deposit 25,000,000 units, which Pool says are 2.5 USDC from your account",
+    [
+      {
+        "label": "Amount",
+        "value": "25,000,000 units, which Pool says are 2.5 USDC",
+      },
+      {
+        "label": "From",
+        "value": "your account",
+      },
+    ],
+  ],
+  [
+    "pay_to",
+    "Pool says: pay 25 units of the unlisted token GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF, as Pool describes it to “Club treasury” (GD6ROJBYLKQMOW3E7N4M2YBPUHMZD7PL65VRHRMO24BOVSBV5H3BQRSL)",
+    [
+      {
+        "label": "Amount",
+        "value": "25 units of the unlisted token GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF, as Pool describes it",
+      },
+      {
+        "label": "To",
+        "value": "“Club treasury” (GD6ROJBYLKQMOW3E7N4M2YBPUHMZD7PL65VRHRMO24BOVSBV5H3BQRSL)",
+      },
+      {
+        "label": "Token",
+        "value": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      },
+    ],
+  ],
+]
+`;

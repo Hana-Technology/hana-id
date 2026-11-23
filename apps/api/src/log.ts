@@ -44,6 +44,8 @@ export interface LogFields {
   problems?: string[];
   /** The hourly guarded-change job (guarded/cron.ts): a change id (`gc_…`), what failed, and the run's counts. */
   guardedChangeId?: string;
+  /** D894: a partner label version (`lc_…`). */
+  labelChangeId?: string;
   what?: string;
   activated?: number;
   superseded?: number;

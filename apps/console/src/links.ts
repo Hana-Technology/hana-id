@@ -1,5 +1,5 @@
-// The emailed links' POST confirms (docs/batch-c-spec.md "Console BFF routes"): `POST /api/cancel` (a guarded change,
-// checked by the API: `ConsoleRpc.cancelChangeByLink`) and `POST /api/owner-grants/cancel` (an owner grant, checked
+// The emailed links' POST confirms (docs/batch-c-spec.md "Console BFF routes"): `POST /api/cancel` (a guarded change or a
+// partner label version, D894, checked by the API: `ConsoleRpc.cancelChangeByLink`) and `POST /api/owner-grants/cancel` (an owner grant, checked
 // here). No session: the token is the proof, the actor is `link`. The pages that post them (`/cancel/:changeId`,
 // `/cancel-owner/:grantId`, the token in the fragment) are SPA routes (C10); a GET never cancels, so a mail scanner
 // fetching the link changes nothing. Both are rate-limited per IP before the body is read, and run under the CSRF
@@ -55,7 +55,12 @@ export async function cancelChangeLink(request: Request, env: Env, info: Request
   if (answer.ok || AUDITED_FAILURES.has(code!)) {
     const w: Writer = { actor: { kind: 'link', id: changeId }, requestId: info.requestId, now: Date.now(), ipPrefix: ipPrefix(info.clientIp), country: info.country };
     try {
-      await auditInsert(env.CONSOLE_DB, entry(w, 'change.link_cancel', { appId: answer.ok ? answer.change.appId : null, target: changeId, outcome: answer.ok ? 'ok' : 'failed', details: code ? { code } : {} })).run();
+      // A guarded change is on one app; a partner label version (`lc_`, D894) is on an entry of a scope and several apps:
+      // its row names the entry, no app.
+      const change = answer.ok ? (answer.change as { appId?: string; labelId?: string }) : null;
+      const label = changeId.startsWith('lc_');
+      const details = { ...(code ? { code } : {}), ...(label && change?.labelId ? { labelId: change.labelId } : {}) };
+      await auditInsert(env.CONSOLE_DB, entry(w, 'change.link_cancel', { appId: !label && change?.appId ? change.appId : null, target: changeId, outcome: answer.ok ? 'ok' : 'failed', details })).run();
     } catch (err) {
       log({ event: 'audit_write_failed', requestId: info.requestId, error: err instanceof Error ? err.name : 'unknown' }, 'warn');
     }

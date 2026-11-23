@@ -7,8 +7,10 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
-import { afterEach, describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { ACCESS_AUD, ACCESS_TEAM, E2E_OUTSIDER, E2E_STAFF, installAccessCerts, newAccessKeys, signAccessJwt } from '../src/server/access.ts';
+import { AdminLanes } from '../src/server/admin-lane.ts';
 import { LaneEvm, delegateRuntimeCode } from '../src/server/lane-evm.ts';
 import { advanceLaneClock, laneClockOffset, laneNow, resetLaneClock } from '../src/server/lane-clock.ts';
 import { LedgerWire, type PGliteLike } from '../src/server/pglite-wire.ts';
@@ -187,5 +189,179 @@ describe('the Gas sponsorship page’s path (D879)', () => {
       .flatMap((d) => files(join(root, d)))
       .filter((f) => !f.endsWith('admin-lane.test.ts') && readFileSync(f, 'utf8').includes('free-network-fees'));
     expect(old).toEqual([]);
+  });
+});
+
+describe('partner labels in an admin lane (D894, src/server/lane-labels.ts): the controls, through the lane’s own thread', () => {
+  const DAY = 24 * 3_600_000;
+  /** lane-labels.ts LANE_LABELS_CONTACT (not imported: that module loads apps/api's Worker code, the lane thread's job). */
+  const CONTACT = 'security@stamp-rally.e2e.invalid';
+  const ORIGIN = 'http://admin-lane-vitest.localhost';
+  let lanes: AdminLanes;
+  let lane: (request: Request) => Promise<Response>;
+
+  interface Version {
+    changeId: string;
+    labelId: string;
+    state: string;
+    sha256: string;
+    activeFrom: number | null;
+    served: boolean;
+    off: string | null;
+    reviewRequired: boolean;
+    blockNote: string | null;
+    endReason: string | null;
+  }
+  interface State {
+    orgId: string;
+    scopeId: string;
+    appId: string;
+    labelId: string | null;
+    versions: Version[];
+    controls: { all: { labelsOff: boolean; reviewRequired: boolean }; org: { labelsOff: boolean; reviewRequired: boolean } };
+    nowMs: number;
+    clockFrozen: boolean;
+  }
+  interface Delivered {
+    id: string;
+    changeId: string;
+    version: string;
+    sha256: string;
+    text: string;
+    effectiveSince: number;
+    previousEffectiveSince: number | null;
+  }
+
+  beforeAll(() => {
+    lanes = new AdminLanes({ access: newAccessKeys(), issuer: null });
+    const h = lanes.handler('vitest', ORIGIN);
+    lane = async (request) => h(request, new AbortController().signal);
+  });
+  afterAll(async () => lanes.close());
+
+  const post = async (path: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const res = await lane(new Request(`${ORIGIN}/__e2e/lane/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }));
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+  /** A labels action that must succeed: its answer (with the org's state). */
+  const labels = async <T = Record<string, unknown>>(body: Record<string, unknown>): Promise<T & { state: State }> => {
+    const r = await post('labels', body);
+    if (r.status !== 200) throw new Error(`labels ${JSON.stringify(body)}: ${r.status} ${JSON.stringify(r.body)}`);
+    return r.body as T & { state: State };
+  };
+  const served = async (): Promise<Delivered[] | null> => {
+    const r = await post('labels', { action: 'app' });
+    expect(r.body.status).toBe(200);
+    return r.body.partnerLabels as Delivered[] | null;
+  };
+  const clock = async (body: { advanceMs?: number; freeze?: boolean }) => expect((await post('clock', body)).status).toBe(200);
+  const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+
+  it('the controls are the tests’ only: refused with an Origin (any page’s request), and an unknown action is refused', async () => {
+    expect(await post('labels', { action: 'state' }, { origin: ORIGIN })).toEqual({ status: 403, body: { error: 'forbidden' } });
+    const r = await post('labels', { action: 'nope' });
+    expect(r.status).toBe(409);
+    expect(String(r.body.error)).toMatch(/^labels: action is reset, propose/u);
+  }, 120_000);
+
+  it('propose → proposed; announce → announced; in force at its active_from, not a millisecond before; the hourly job records it; Block → served no more', async () => {
+    await labels({ action: 'reset' });
+    await clock({ freeze: true });
+    try {
+      const p = await labels<{ proposed: { changeId: string; labelId: string; sha256: string; document: number } }>({ action: 'propose' });
+      expect(p.proposed.document).toBe(1);
+      expect(p.state.versions).toEqual([expect.objectContaining({ changeId: p.proposed.changeId, labelId: p.proposed.labelId, state: 'proposed', sha256: p.proposed.sha256, activeFrom: null, served: false })]);
+      expect(p.state.orgId).toMatch(/^org_e2elabels\d+x[0-9a-f]{8}$/u);
+      expect(await served()).toEqual([]);
+
+      const a = await labels<{ announced: { changeId: string; activeFrom: number; wouldEmail: string[] }[] }>({ action: 'announce' });
+      expect(a.state.clockFrozen).toBe(true);
+      expect(a.announced).toEqual([{ changeId: p.proposed.changeId, activeFrom: a.state.nowMs + DAY, wouldEmail: ['security@e2e.invalid', CONTACT] }]);
+      expect(a.state.versions[0]).toMatchObject({ state: 'announced', activeFrom: a.state.nowMs + DAY, served: false });
+      // Announced once only (the API refuses a second ack: nothing is left waiting for its notice).
+      expect((await post('labels', { action: 'announce' })).status).toBe(409);
+
+      await clock({ advanceMs: DAY - 1 });
+      expect(await served()).toEqual([]);
+      await clock({ advanceMs: 1 });
+      const s = await served();
+      expect(s).toHaveLength(1);
+      const [d] = s!;
+      expect(d).toEqual({ id: p.proposed.labelId, changeId: p.proposed.changeId, version: 'journear-labels/1', sha256: p.proposed.sha256, text: expect.any(String), effectiveSince: a.announced[0]!.activeFrom, previousEffectiveSince: null });
+      expect(sha(d!.text)).toBe(d!.sha256);
+      expect(JSON.parse(d!.text)).toMatchObject({ schema: 'journear-labels/1', context: { near: { network: 'testnet', account: 'stamp-rally.testnet' } }, metadata: { enums: { stamp: { sponsored: 'Fare paid' } } } });
+
+      const c = await labels<{ run: { activated: number; lapsed: number; drift: { found: number } } }>({ action: 'cron' });
+      expect(c.run).toEqual({ activated: 1, lapsed: 0, drift: { found: 0, recorded: 0 } });
+      expect(c.state.versions[0]).toMatchObject({ state: 'in_force', served: true });
+
+      const b = await labels<{ acted: { changeId: string; state: string } }>({ action: 'block', note: 'Misleading wording about the fare' });
+      expect(b.acted).toEqual({ changeId: p.proposed.changeId, state: 'blocked' });
+      expect(b.state.versions[0]).toMatchObject({ state: 'blocked', served: false, blockNote: 'Misleading wording about the fare' });
+      expect(await served()).toEqual([]);
+    } finally {
+      await clock({ freeze: false });
+    }
+  }, 120_000);
+
+  it('the API’s own refusals come back as 409 with its message: a second entry for the same contract, a version while one waits', async () => {
+    await labels({ action: 'reset' });
+    await labels({ action: 'propose' });
+    const again = await post('labels', { action: 'propose' });
+    expect(again.status).toBe(409);
+    expect(String(again.body.error)).toMatch(/^proposeLabels was refused: conflict \(Other request labels of this scope already describe this contract/u);
+    const next = await post('labels', { action: 'propose', next: true });
+    expect(next.status).toBe(409);
+    expect(String(next.body.error)).toMatch(/conflict \(A change of these request labels is already waiting/u);
+  }, 120_000);
+
+  it('labels-update: a second version replaces the first at its own time, with the first’s date as previousEffectiveSince', async () => {
+    const u = await labels({ action: 'scenario', name: 'labels-update' });
+    const [v1, v2] = u.state.versions;
+    expect([v1!.state, v2!.state]).toEqual(['in_force', 'announced']);
+    expect(v2!.labelId).toBe(v1!.labelId);
+    expect((await served())!.map((x) => x.changeId)).toEqual([v1!.changeId]);
+    await clock({ advanceMs: v2!.activeFrom! - u.state.nowMs + 1_000 });
+    const s = await served();
+    expect(s).toEqual([expect.objectContaining({ changeId: v2!.changeId, previousEffectiveSince: v1!.activeFrom })]);
+    expect(JSON.parse(s![0]!.text)).toMatchObject({ metadata: { enums: { stamp: { summit: 'Summit' } } } });
+  }, 120_000);
+
+  it('labels-review: its time passed, held for Allow (never served before); Allow puts it in force', async () => {
+    const r = await labels({ action: 'scenario', name: 'labels-review' });
+    expect(r.state.controls.org).toEqual({ labelsOff: false, reviewRequired: true });
+    expect(r.state.versions).toEqual([expect.objectContaining({ state: 'waiting_review', reviewRequired: true, served: false })]);
+    expect(r.state.versions[0]!.activeFrom!).toBeLessThan(r.state.nowMs);
+    expect(await served()).toEqual([]);
+    const a = await labels({ action: 'allow' });
+    expect(a.state.versions[0]).toMatchObject({ state: 'in_force', served: true });
+    expect((await served())!.map((x) => x.changeId)).toEqual([r.state.versions[0]!.changeId]);
+  }, 120_000);
+
+  it('labels-off: in force but every partner label switched off; the next reset turns it back on and the owner removes the last org’s entries', async () => {
+    const o = await labels({ action: 'scenario', name: 'labels-off' });
+    expect(o.state.controls.all).toEqual({ labelsOff: true, reviewRequired: false });
+    expect(o.state.versions).toEqual([expect.objectContaining({ state: 'in_force', off: 'all', served: false })]);
+    expect(await served()).toEqual([]);
+    const before = o.state;
+    const w = await labels({ action: 'scenario', name: 'labels-waiting' });
+    expect(w.state.orgId).not.toBe(before.orgId);
+    expect(w.state.controls.all).toEqual({ labelsOff: false, reviewRequired: false });
+    expect(w.state.versions).toEqual([expect.objectContaining({ state: 'announced', served: false })]);
+    // The last org's version ended through its owner's removal (a verified step-up), not a bare write.
+    const all = await post('labels', { action: 'state' });
+    expect((all.body.state as State).orgId).toBe(w.state.orgId);
+  }, 120_000);
+});
+
+describe('staff-demo’s partner labels states (D894)', () => {
+  it('are the lane’s scenarios, by name, and print the staff feed’s paths', () => {
+    const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+    const list = (text: string, name: string): string[] => JSON.parse((new RegExp(`${name} = (\\[[^\\]]*\\])`, 'u').exec(text)?.[1] ?? '[]').replace(/'/gu, '"')) as string[];
+    const lane = list(read('../src/server/lane-labels.ts'), 'LABEL_SCENARIOS');
+    expect(lane).toEqual(['labels-waiting', 'labels-review', 'labels-live', 'labels-update', 'labels-off']);
+    const demo = read('../src/staff-demo.ts');
+    expect(list(demo, 'LABEL_SCENARIOS')).toEqual(lane);
+    for (const path of ['${lane}/labels/${newest.changeId}', '${lane}/labels', '${lane}/status']) expect(demo).toContain(path);
   });
 });

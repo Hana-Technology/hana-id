@@ -11,6 +11,7 @@ cd apps/e2e && corepack pnpm exec playwright test --project=chromium tests/email
 HANA_E2E_PORT_BASE=4510 corepack pnpm --filter @hana-id/e2e e2e   # a base of your choice (a worktree has its own by default; not 5010: see below)
 corepack pnpm --filter @hana-id/e2e test          # unit tests of the stack's mocks (part of `pnpm -r test`)
 corepack pnpm --filter @hana-id/e2e staff-demo out-of-money   # the staff admin portal's hand test: a relayer state (below)
+corepack pnpm --filter @hana-id/e2e staff-demo labels-waiting # … or a partner's request labels in the staff feed (below)
 corepack pnpm --filter @hana-id/e2e hand-browser   # a headed Chromium with the suite's Google stub and NEAR relay, for a person (below)
 ```
 
@@ -376,6 +377,7 @@ first request, with:
   never sent, mined or pooled then dropped, the wallet's balance); the pinned delegate's address answers its real
   runtime code (the checked-in artifact), so the page's "Account helper program" check meets core's pin. Waiting
   transactions are sent through apps/api's own sponsorship routes, with the session proof, as the vault sends them.
+  The same API has partner labels on, and a partner org whose owner proposes them (below).
 - `CONSOLE`: apps/console's real `StaffRpc` on its own D1 (the audit log). `ISSUER`: the stack's email issuer's real
   `DirectoryRpc`, in the main thread (a message bridge): it checks the forwarded staff token itself (the issuer's
   `ADMIN_ACCESS_*` vars are the stand-in's).
@@ -409,13 +411,81 @@ by itself, D890, unless it can't), `out-of-money-again` (after a restart by itse
 empty: that pause waits for a person), `key-used-elsewhere`, `foreign-transactions`, `gap`: each runs the relayer's own
 alarm until the relayer itself is in that state; the lane's EVM settings have a second endpoint, `rpcFallback`, on the
 same chain, which the restart asks), `POST run {times?}` (time passes for the relayer: its alarm, then the API cron's
-relay check, which writes the security events), `POST clock {advanceMs, keepStatusCache?}` (the status page's 30 s
-reading kept with `keepStatusCache`), and `POST acquire` / `release {lease}`: each test holds its lane (`tests/admin-fixtures.ts`),
+relay check, which writes the security events), `POST clock {advanceMs?, freeze?, keepStatusCache?}` (the status
+page's 30 s reading kept with `keepStatusCache`; `freeze: true` stops the lane's clock first so a test steps it to the
+millisecond, `false` lets it run on from real time plus the offset, never backwards), `POST labels {action, …}`
+(partner labels, below), and `POST acquire` / `release {lease}`: each test holds its lane (`tests/admin-fixtures.ts`),
 so two runs on one stack or `--repeat-each` never share a relayer at once. In the suite's lanes the relayer's alarm runs
 only by a control; in the hand-test lane also by itself: 250 ms after a change from outside the alarm (a send, a staff
 tool), then as deployed (the relayer's own 15 s, or its backoff up to 5 minutes), never in a loop (D882; while paused
 with a transaction no node took, that is every 15 s; while paused for money, D890, every 15 s for 10 minutes, then
 every 60 s).
+
+**Partner labels (D894, `src/server/lane-labels.ts`).** Only the lanes' API env turns partner labels on
+(`PARTNER_LABELS = "on"`, with `APP_CHANGE_DELAY_MS` 24 h as the admin env's, and `REFUSED_ORIGINS` the stack's API,
+vault and auth origins, as gen-wrangler sets a real env's); no other env of the stack has them. A lane has a partner org
+of its own (`org_e2elabels…`, scope `stafflabelsN`, app "Stamp Rally" on the stamps origin, security contact
+`security@stamp-rally.e2e.invalid`) whose owner proposes through apps/api's REAL `ConsoleRpc.proposeLabels`, with a
+console step-up the API verifies itself: an RS256 token for the label-change layout over exactly that change, signed by a
+Google key of the lane's own (its JWKS answered in the lane's thread), for a console audience the lane's chain lists in
+`get_config.console_audiences`, from a `sub` the chain lists as an `Owner::Oidc` of the scope (`src/server/chain.ts`
+`consoleAudiences`, `scopeOwners`). The token's single use is apps/api's real `RateLimiter` (in memory); the console's
+budget allows in the lanes (the controls call faster than a person clicks; apps/api's tests hold it). The document is a
+fixed `journear-labels/1` one for `stamp-rally.testnet` (a fresh code hash per version; verb "collect", object "the
+stamp", the enum's "Fare paid"; from the second version on, one more stamp, "Summit"). `POST /__e2e/lane/labels`
+`{action}`: every action but `app` answers `{…, state}` (the org's versions oldest first as staff see them, its switches
+and everyone's, the lane's clock):
+
+- `reset`: a new org, scope and app; the last org's entries are removed by its owner (the same step-up,
+  `labels_remove`) and the switches it or everyone had set are turned back. Every action starts from one if none exists.
+- `propose {next?}`: the entry's first version, or with `next: true` a new version of it → `proposed: {changeId,
+  labelId, sha256, document}`. The API's refusals (one entry per contract, one waiting version) answer 409 with its message.
+- `announce {changeId?}`: what the admin Worker's notice does once every email is accepted: `AdminRpc.labelNotices`, then
+  `ackLabelNotice` as its system actor with sha256 of the cancel link's token (the lane's `CANCEL_LINK_KEY`). No email is
+  sent (no `EMAIL_API_KEY`): `announced: [{changeId, activeFrom, wouldEmail}]` names who would have had it.
+- `cron`: the API's hourly job for labels at the lane's clock (`labelsMaintenance`, then `detectLabelDrift`) →
+  `run: {activated, lapsed, drift}`.
+- `app`: `GET /v1/app` through apps/api's Worker as the vault reads it (Origin the vault's, the app's key and parent
+  origin) → `{status, partnerLabels}` (null when the answer has no such field).
+- `state`; `block` / `allow {changeId?, note?}` (`AdminRpc.labelStaffAct` as `staff@e2e.invalid`, default the newest
+  version; no audit row, which the admin Worker writes before its own call); `switch {target: all|org|entry, what:
+  off|on|review_on|review_off, note?}` (`AdminRpc.labelControl`); `scenario {name}` (below).
+
+Time is the lane's clock (`POST clock`), never a wait. The hand-test states, each from a reset, are
+`pnpm --filter @hana-id/e2e staff-demo <state>`: `labels-waiting` (proposed and announced: goes live in 24 h),
+`labels-review` (review required for the org, its 24 h passed: waiting for Allow), `labels-live` (in force, recorded by
+the hourly job), `labels-update` (one in force and a second version announced: the diff), `labels-off` (one in force and
+every partner label switched off: the status page's switch); `staff-demo labels-later` moves the lane's clock 24 h on
+and runs the hourly job, `staff-demo labels-state` prints the versions. Each prints the versions in plain words and what
+to open: `/labels/<changeId>` (and the feed, `/labels`), or for `labels-off` `/status`, with the sign-in URL.
+`test/admin-lane.test.ts` starts a lane thread of its own and checks the controls: proposed, announced, not served a
+millisecond before `active_from` and served at it (the text's sha256 the delivered one), recorded by the cron, gone after
+Block; the API's refusals; a second version with `previousEffectiveSince`; review and Allow; the kill switch and a reset.
+
+The lane's Google key is made when the lane's thread starts (`crypto.subtle.generateKey`, in memory only, never written
+or printed), and from then on that thread answers Google's endpoints itself: apps/api's JWKS cache there (the step-up's
+check, and the governance read System status shows) never holds, or fetches, Google's real keys.
+
+`tests/partner-labels.spec.ts`, in each browser's lane (its lease held, as `tests/admin-portal.spec.ts`): a change
+proposed and announced by the controls is in the staff feed (`/labels`, "Goes live … (in 24 h)", what users would see:
+"Stamp Rally says: collect the stamp “Arrival”") → its page → Block with a note (its confirmation) → "Blocked by staff"
+with the note on the page, never served by `GET /v1/app` even after its time, and under "Decided" in the feed; and, with
+the lane's clock frozen, a change not served a millisecond before its `active_from`, served at it (sha256 of the text
+the delivered one) and "Live" on its page. The browser's `Date` is fixed at the lane's time (`page.clock.setFixedTime`),
+as the pages' "in 24 h" and "Live" are worked out against the reader's clock; the staff member signs in again after
+the lane's clock moves a day (the stand-in's token ends 24 h after the lane's clock). With `HANA_SHOTS_DIR=<dir>`
+(Chromium) its last test saves the founder's screenshots there, light theme, the whole page at 1366 and 390 px wide (the
+viewport made as tall as the page, so the sticky sidebar stays put; each also fails if the page is wider than the
+screen): `01-feed`, `01-change-block` (the confirmation open), `02-blocked` (and `02-blocked-answer-1366`, the answer
+at the top), `03-review-allow` and `03-review-feed` (required review, waiting for Allow), `04-status` and
+`04-status-tile` (System status with every partner label switched off), each `-1366.png` and `-390.png`:
+
+```sh
+HANA_SHOTS_DIR=<dir> corepack pnpm --filter @hana-id/e2e e2e tests/partner-labels.spec.ts --project=chromium
+```
+
+Partner labels' app changes and the Block's audit rows stay in the lane, and the stack runs no admin cron to mail them:
+Feed and notices' Feeds panel may show them behind, which `tests/admin-portal.spec.ts` allows.
 
 **What the spec covers**, in every browser: sign-in and the refusals (no token, a forged one, a client's own header,
 someone not on the list); every page in the sidebar opens; System status's tile **Gas sponsorship (local test network)**

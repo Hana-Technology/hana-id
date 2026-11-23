@@ -19,7 +19,7 @@
 import { createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Page, TestInfo } from '@playwright/test';
+import type { Locator, Page, TestInfo } from '@playwright/test';
 import { ISSUER_URL } from '../src/stack.ts';
 import { DETAIL, STAFF, actResult, expect, laneClock, laneRun, laneState, nowPanel, scenario, signIn, slotRow, test, tool, useTool } from './admin-fixtures.ts';
 
@@ -37,6 +37,15 @@ async function shot(page: Page, info: TestInfo, name: string): Promise<void> {
 }
 
 const TITLE = 'Gas sponsorship (local test network)';
+
+/**
+ * Feed and notices' Feeds panel read the ledger: each source with its position, "Caught up" or behind by its oldest
+ * unsent row's age. The lane has app changes and audit rows its admin feed never mails (the stack runs no admin cron):
+ * partner labels' (partner-labels.spec.ts, D894) share the lane, so either may be behind.
+ */
+async function expectFeedsRead(feeds: Locator): Promise<void> {
+  for (const source of ['App changes', 'audit_log']) await expect(feeds.locator('tbody tr').filter({ hasText: source })).toContainText(/Caught up|\d+ (min|h|d)\b/u);
+}
 /** A note of this run (the lane's audit log lives as long as the stack): the text and a short tag. */
 const RUN = crypto.randomUUID().slice(0, 6);
 const n = (text: string): string => `${text} (run ${RUN})`;
@@ -510,7 +519,7 @@ test.describe('the usage ledger (PGlite, as role usage_admin)', () => {
     await expect(page.getByText('The admin’s own state couldn’t be read')).toHaveCount(0);
     const feeds = page.locator('.panel', { has: page.getByRole('heading', { name: 'Feeds', exact: true }) });
     await expect(feeds.locator('tbody tr')).toHaveCount(2);
-    await expect(feeds).toContainText('Caught up');
+    await expectFeedsRead(feeds);
     await page.goto(`${lane}/rates`);
     await expect(page.getByRole('heading', { name: 'NEAR/USD rates', level: 1 })).toBeVisible();
     await expect(page.locator('main')).toContainText('Days without a rate');
@@ -551,7 +560,7 @@ test.describe('Neon compute on the free plan (D872): System status never opens t
     const wake = async () => {
       const before = (await laneState(lane)).ledgerConnections;
       await page.goto(`${lane}/security`);
-      await expect(page.locator('.panel', { has: page.getByRole('heading', { name: 'Feeds', exact: true }) })).toContainText('Caught up');
+      await expectFeedsRead(page.locator('.panel', { has: page.getByRole('heading', { name: 'Feeds', exact: true }) }));
       expect((await laneState(lane)).ledgerConnections).toBeGreaterThan(before);
     };
 

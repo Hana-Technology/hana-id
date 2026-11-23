@@ -18,6 +18,7 @@
   },
   "include": [
     ".",
-    "../test-spa/preview-status.ts"
+    "../test-spa/preview-status.ts",
+    "../test-spa/preview-labels.ts"
   ]
 }

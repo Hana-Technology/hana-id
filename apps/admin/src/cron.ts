@@ -54,9 +54,9 @@ export async function everyFiveMinutes(env: Env, now = Date.now(), scheduledTime
     if (tracksNeon(env)) await budget.as('neon_mark', async () => budget.takeRpc());
   }
   const notices = await budget.as('notices', () => runNotices(menv, sender, budget));
-  const acked = (notices.changes?.acked ?? 0) + (notices.members?.acked ?? 0);
-  const failed = (notices.changes?.failed ?? 0) + (notices.members?.failed ?? 0);
-  const summary: RunSummary = { at: now, notices: notices.changes || notices.members ? { acked, failed } : null, feed: false, watcher: false, budgetLeft: 0, ...(catchUp ? { catchUp: true as const } : {}), calls: {} };
+  const acked = (notices.changes?.acked ?? 0) + (notices.labels?.acked ?? 0) + (notices.members?.acked ?? 0);
+  const failed = (notices.changes?.failed ?? 0) + (notices.labels?.failed ?? 0) + (notices.members?.failed ?? 0);
+  const summary: RunSummary = { at: now, notices: notices.changes || notices.labels || notices.members ? { acked, failed } : null, feed: false, watcher: false, budgetLeft: 0, ...(catchUp ? { catchUp: true as const } : {}), calls: {} };
   if (!opsDue) {
     // D872: not this run's turn: the ledger stays closed, so Neon isn't woken for the notices (they don't need it).
     summary.budgetLeft = budget.remaining;

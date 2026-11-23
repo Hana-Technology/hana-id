@@ -18220,8 +18220,9 @@ while building, **to confirm**:
   (D586 bills derives only). Not verified: stable-channel browsers' caching of `no-store` pages outside Playwright,
   real screen readers (names checked by the browsers' accessibility trees only), and iOS.
 - Address impact: none (no path, key or derivation input changes).
-- Tests: unit 323 in the five files (home-page 104, home-export 140, home-devices 32, home-profile 44, plain-words
-  3): rows by pointer and keyboard, each state, the heading and title pattern, the old → new strings, Back and Forward
+- Tests (after PR 116's review: home-page 108, home-export 142, home-sign-ins 37; the shell spec 20 separate runs × 18
+  tests in three browsers under six CPU-busy processes, 360 of 360 passed): unit 323 at first in the five files
+  (home-page 104, home-export 140, home-devices 32, home-profile 44, plain-words 3): rows by pointer and keyboard, each state, the heading and title pattern, the old → new strings, Back and Forward
   (entries carry only the marker, URL unchanged, nothing read, focus and the list's own entry, a view opened during the
   way back, session ended, sign-out, another account, a reload's leftover entries, a refused entry, the move flow on
   Back and Forward, the guard's watched elements, the bar's compensation with and without anchoring). E2e: the Home

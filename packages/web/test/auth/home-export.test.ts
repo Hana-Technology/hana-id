@@ -39,7 +39,7 @@ import { HOME_EXPORT_NEAR_NOTES_TITLE, HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, 
 import { type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
 import { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_SHOW_MS, EXPORT_WARNING } from '../../src/auth/key-reveal.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
-import { CLIENT_ID, ENV, FakeWindow, type RemoteWindow, type TokenSigner, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
+import { CLIENT_ID, ENV, FakeWindow, type RemoteWindow, type TokenSigner, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
 
 /**
  * The chain keys home-export.ts hands to `exportString` (each Show or Copy), kept by reference so a test can check the
@@ -365,7 +365,7 @@ function start(o: Opts = {}): H {
       await until(() => page.awaitingChild, 'the Home sign-in to be prepared');
       await answer({}, CLIENT_ID);
       await page.idle();
-      if (page.openScope === null) (document.querySelector('.home-open') as HTMLElement).click();
+      if (page.openScope === null) (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
       expect(page.openScope).toBe(SCOPE);
     },
     async begin(sub = SUB, claims = {}) {
@@ -403,7 +403,7 @@ function start(o: Opts = {}): H {
       h.submit('home-email-code');
       await until(() => page.stage === 'signed_in', 'the email sign-in');
       await page.idle();
-      if (page.openScope === null) (document.querySelector('.home-open') as HTMLElement).click();
+      if (page.openScope === null) (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
       expect(page.openScope).toBe(SCOPE);
     },
     async openByEmail() {
@@ -680,7 +680,7 @@ describe('nothing starts from the page’s address', () => {
     expect(pageText()).not.toContain(EXPORT_WARNING);
     // Going back to the list and opening the same app again changes nothing, nor does signing in again.
     g.click('home-back');
-    (document.querySelector('.home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
     g.click('home-export-open');
     expect(document.getElementById('home-export-start')).toBeNull();
     expect(g.win.opened).toHaveLength(1);
@@ -1052,6 +1052,67 @@ describe('the secret’s life', () => {
     expect(h.page.moving.state).toBe(state);
   });
 
+  it('D893: is erased on the browser’s Back, as on the way back; Forward shows the wallet’s page with the move closed, never the key', async () => {
+    const h = start();
+    await h.unlock();
+    const r = h.reveal('evm');
+    pressEl(h, r.toggle);
+    const key = vector(OWN).accounts[0]!.evm.export;
+    expect(r.secret.textContent).toBe(key);
+    h.win.history.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(prkOf(OWN))).toBe(true);
+    expect(h.page.moving.state).toBe('closed');
+    expect(r.secret.textContent).toBe('••••••••');
+    expect(document.documentElement.outerHTML).not.toContain(key);
+    // Forward: the wallet's page again, from memory, with the move flow collapsed; nothing is derived or read.
+    h.win.history.forward();
+    await flush();
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.openScope).toBe(SCOPE);
+    expect(h.page.moving.state).toBe('closed');
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expectCollapsed();
+    expect(document.documentElement.outerHTML).not.toContain(key);
+    // No timer of the old wallet is left to fire, and the history entries hold nothing of it.
+    advance(HOME_PRK_LIFETIME_MS + 1000);
+    expect(h.page.moving.state).toBe('closed');
+    for (const e of h.win.history.entries) expect(JSON.stringify(e.state ?? null)).toMatch(/^(null|"home:[A-Za-z0-9_-]{16}:1")$/u);
+  });
+
+  it('D893: the browser’s Back while the per-app sign-in is on its way drops it; an answer that comes after opens nothing', async () => {
+    let release: (r: Response) => void = () => {};
+    let pk1: string | null = null;
+    const h = start({
+      login: (body) => {
+        pk1 = body.pk1 as string;
+        return new Promise<Response>((r) => {
+          release = r;
+        });
+      },
+    });
+    await h.toApp();
+    await h.begin();
+    await until(() => pk1 !== null, 'the derive to be sent');
+    expect(h.page.moving.state).toBe('opening');
+    h.win.history.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    const { response } = simulateMpc(pk1 as unknown as string, ckdAppId(HOME_ENV.signer, OWN), NET);
+    release(json(200, { result: response, session: { scope_id: SCOPE, expires_at_ms: T0 + 1, max_uses: 1, used: 1 }, nearTx: 'tx', requestId: 'req_1' }));
+    await h.page.idle();
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(h.page.moving.state).toBe('closed');
+    // Forward after the answer: the page, collapsed, with nothing opened.
+    h.win.history.forward();
+    await flush();
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expectCollapsed();
+  });
+
   it('collapsed, the section has the devices section’s shape; Close collapses it and gives focus back to its button', async () => {
     const h = start();
     await h.toApp();
@@ -1073,7 +1134,7 @@ describe('the secret’s life', () => {
     const h = start();
     await h.unlock();
     h.click('home-back');
-    (document.querySelector('.home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
     expect(h.page.moving.state).toBe('closed');
     expectCollapsed();
   });
@@ -1214,6 +1275,67 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     expect(h.page.moving.state).toBe('reveal');
   });
 
+  it('D893: a resize of another height than the page’s change noted is handled by step 1’s rule, never with the note', async () => {
+    const h = start();
+    await h.unlock();
+    const header = document.querySelector('header.home-top') as HTMLElement;
+    resize(header, 125);
+    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 600 });
+    window.dispatchEvent(new Event('scroll'));
+    header.getBoundingClientRect = () => ({ height: 281, width: 0, top: 0, left: 0, right: 0, bottom: 281, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    advance(13 * 60_000 + 1000);
+    // The browser anchored (+156) and reported it; the resize then reports another height (a font swap meanwhile).
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 756 });
+    window.dispatchEvent(new Event('scroll'));
+    resize(header, 290);
+    expect(scrollBy).toHaveBeenCalledWith(0, 165);
+  });
+
+  it('D893: everything above the move flow is watched, whatever it is (the way back, the details, a part added later)', async () => {
+    const h = start();
+    await h.unlock();
+    armedAtContinue(h);
+    resize(document.getElementById('home-back') as HTMLElement, 60);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    arm(h);
+    resize(document.querySelector('.home-app-details') as HTMLElement, 900);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    // The move flow's own section isn't watched (its screens start the guard themselves).
+    arm(h);
+    resize(document.getElementById('home-export') as HTMLElement, 700);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  it.each([
+    ['a browser that anchors (Chromium, Firefox): its own scroll event comes before the resize, and the page adds nothing', true, null],
+    ['a browser that doesn’t (WebKit): the page scrolls by the whole change', false, 156],
+    ['a person who scrolled before a late resize (PR 116’s review): the page never undoes their scroll', 'person', null],
+  ] as const)('D893: the notice grows a bar that scrolls with the page, with %s', async (_, anchors, scrolled) => {
+    const h = start();
+    await h.unlock();
+    const header = document.querySelector('header.home-top') as HTMLElement;
+    resize(header, 125);
+    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+    const scrollTo = (y: number): void => {
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: y });
+      window.dispatchEvent(new Event('scroll'));
+    };
+    scrollTo(600);
+    // The notice comes; laid out, the bar is 281 px.
+    header.getBoundingClientRect = () => ({ height: 281, width: 0, top: 0, left: 0, right: 0, bottom: 281, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    advance(13 * 60_000 + 1000);
+    expect(document.getElementById('home-ending')).not.toBeNull();
+    if (anchors === true) scrollTo(756);
+    if (anchors === 'person') scrollTo(700);
+    resize(header, 281);
+    if (scrolled === null) expect(scrollBy).not.toHaveBeenCalled();
+    else expect(scrollBy).toHaveBeenCalledWith(0, scrolled);
+  });
+
   /** Puts `el` at `top` in the window (with the page scrolled `scrollY`), as layout would. */
   const placeAt = (el: Element, top: number, scrollY = 0): void => {
     Object.defineProperty(window, 'scrollY', { configurable: true, value: scrollY });
@@ -1316,7 +1438,7 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     await until(() => h.page.awaitingChild, 'the Home sign-in to be prepared');
     await h.answer({ exp: Math.floor(now / 1000) + 150 }, CLIENT_ID);
     await h.page.idle();
-    (document.querySelector('.home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
   };
 
   it('the sign-in’s notice appears while Show key is armed (no ResizeObserver: the page’s own trigger): a press that lands shows nothing', async () => {

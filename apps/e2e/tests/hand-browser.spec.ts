@@ -123,9 +123,10 @@ async function homeList(h: Hand, a: HandAccount, by: 'google' | 'email' = 'googl
     await home.getByRole('button', { name: 'Continue with email' }).click();
     await emailCode(h, home, a);
   }
-  // The one card these accounts have: the stack's test apps (the demo, the stamps site, every spec's partner app) share
-  // scope `e2e`, and Home lists a scope's first apps only, so on a stack that ran the suite the demo may not be named.
-  await home.locator('.home-card[data-scope="e2e"]').getByRole('button', { name: /^View / }).click();
+  // The one wallet these accounts have (D893: a row under "Your wallets"): the stack's test apps (the demo, the stamps
+  // site, every spec's partner app) share scope `e2e`, and Home lists a scope's first apps only, so on a stack that ran
+  // the suite the demo may not be named.
+  await home.locator('#home-mine .home-row[data-scope="e2e"]').click();
   await expect(home.getByRole('heading', { name: 'Ways to sign in' })).toBeVisible();
   await home.getByRole('button', { name: 'Show ways to sign in' }).click();
   return home;

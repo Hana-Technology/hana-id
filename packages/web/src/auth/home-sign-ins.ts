@@ -200,6 +200,17 @@ export const SIGN_IN_TEXT = Object.freeze({
   removeOwnMoney: 'If you added money to this wallet, move it out first. It stays in this wallet.',
 });
 
+/**
+ * The Security tab's line for the ways to sign in, once read (D897): how many open the wallet, then, as a warning like
+ * the waiting card's own, how many will start to.
+ */
+export function signInSummary(open: number, waiting: number): { line: string; waiting: string | null } {
+  return {
+    line: `${open} ${open === 1 ? 'sign-in opens' : 'sign-ins open'} this wallet.`,
+    waiting: waiting === 0 ? null : `${waiting} more ${waiting === 1 ? 'starts' : 'start'} opening it soon. Check ${waiting === 1 ? 'it' : 'them'} below.`,
+  };
+}
+
 /** Dates as the device's locale writes them, with the time (a link waits 24 hours). */
 export function signInDate(ms: number): string {
   try {
@@ -456,9 +467,20 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     return out;
   }
 
+  /**
+   * The section's one line (D897): once the ways to sign in are read (in this sign-in), how many open the wallet and how
+   * many wait; before that, what the section is about.
+   */
+  function summary(): Child[] {
+    const entry = scope && state === 'ready' ? cache.get(scope.scopeId) : undefined;
+    if (!entry || entry.model.state === 'no_wallet') return [scope?.mine === false ? SIGN_IN_TEXT.introApp : SIGN_IN_TEXT.intro];
+    const out = signInSummary(entry.model.rows.filter((r) => r.role !== 'waiting').length, entry.model.rows.filter((r) => r.role === 'waiting').length);
+    return out.waiting ? [out.line, ' ', d.h('span', { class: 'home-set-attn', attrs: { id: 'home-sign-ins-waiting-line' } }, icon(d, 'warn'), out.waiting)] : [out.line];
+  }
+
   function render(): void {
     root.replaceChildren();
-    for (const c of [d.h('h2', { attrs: { id: 'home-sign-ins-title', tabindex: '-1' } }, HOME_SIGN_INS_TITLE), d.h('p', {}, scope?.mine === false ? SIGN_IN_TEXT.introApp : SIGN_IN_TEXT.intro), ...body()]) {
+    for (const c of [d.h('h2', { attrs: { id: 'home-sign-ins-title', tabindex: '-1' } }, HOME_SIGN_INS_TITLE), d.h('p', { class: 'home-set-summary', attrs: { id: 'home-sign-ins-summary', ...(state === 'ready' && scope && cache.get(scope.scopeId)?.model.state !== 'no_wallet' ? { 'data-read': '' } : {}) } }, ...summary()), ...body()]) {
       if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
     }
   }

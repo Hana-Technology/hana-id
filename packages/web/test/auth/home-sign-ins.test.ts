@@ -27,6 +27,7 @@ import {
   rowFacts,
   signInDate,
   signInModel,
+  signInSummary,
   startHomeSignIns,
 } from '../../src/auth/home-sign-ins.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
@@ -339,6 +340,13 @@ describe('what it shows', () => {
     expect(waiting?.textContent).toContain('Starts opening this wallet on');
     expect(waiting?.querySelector('.home-sign-in-risk.jp-alert-warning')?.textContent).toContain(SIGN_IN_TEXT.cancelAtSignIn);
     expect(buttons()).toEqual([SIGN_IN_TEXT.again]);
+    // D897: the section's line, once read, says how many open the wallet and how many wait.
+    const line = document.getElementById('home-sign-ins-summary');
+    expect(line?.textContent).toBe('1 sign-in opens this wallet. 1 more starts opening it soon. Check it below.');
+    // The waiting part in the warning style of its card.
+    expect(line?.querySelector('.home-set-attn .ic')).not.toBeNull();
+    expect(line?.querySelector('.home-set-attn')?.textContent).toBe('1 more starts opening it soon. Check it below.');
+    expect(line?.hasAttribute('data-read')).toBe(true);
   });
 
   it('the waiting email itself, signed in: its own address, and where it can cancel the link (D864)', async () => {
@@ -710,5 +718,14 @@ describe('words (D853)', () => {
     for (const p of [{ kind: 'remove_own' }, { kind: 'remove_at_sign_in' }, { kind: 'remove_at_sign_in_once' }] as const) for (const kind of ['email', 'google'] as const) for (const auto of [true, false]) samples.push(...pointerText(p, row('member', 'e', { kind, auto })).lines);
     samples.push(...rowFacts(row('member', 'e')), ...rowFacts(row('waiting', 'e')));
     for (const s of samples) expect(jargonIn(s), s).toEqual([]);
+  });
+});
+
+describe('D897: the line of “Ways to sign in”', () => {
+  it('says how many open the wallet and how many wait, once read', () => {
+    expect(signInSummary(1, 0)).toEqual({ line: '1 sign-in opens this wallet.', waiting: null });
+    expect(signInSummary(2, 0)).toEqual({ line: '2 sign-ins open this wallet.', waiting: null });
+    expect(signInSummary(1, 1)).toEqual({ line: '1 sign-in opens this wallet.', waiting: '1 more starts opening it soon. Check it below.' });
+    expect(signInSummary(3, 2)).toEqual({ line: '3 sign-ins open this wallet.', waiting: '2 more start opening it soon. Check them below.' });
   });
 });

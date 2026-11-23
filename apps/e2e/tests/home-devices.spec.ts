@@ -482,3 +482,72 @@ test('`/home?view=devices` opens the devices view after sign-in, with one read; 
   await expect(page.locator('#home-devices .home-device')).toHaveCount(3);
   expect(reads).toEqual(['']);
 });
+
+test('the Security tab (D897): one read when it opens, each section’s line without a press, the devices on “Show devices” with no second read; the device card at 320 to 430 px', async ({ page, context }) => {
+  const reads: string[] = [];
+  const now = Date.now();
+  await routeApps(context, () => ({ status: 200, body: LIST }));
+  await routeDevices(context, (_m, url) => {
+    reads.push(url.search);
+    return { status: 200, body: { scopes: [devicesFixture(now).s1], nextCursor: null } };
+  });
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  await page.locator('.home-row[data-scope="s1"]').click();
+  expect(reads).toEqual([]);
+  await homeTab(page, 'Security');
+  // The one read, by itself; the focus stays on the tab.
+  const line = page.locator('#home-app-devices-summary');
+  await expect(line).toHaveText('Signed in to this wallet in 3 places. 1 of them may sign without asking. Your email is shared with Sodax.');
+  await expect(line).toBeVisible();
+  expect(reads).toEqual(['?scopeId=s1']);
+  await expect(page.getByRole('tab', { name: 'Security' })).toBeFocused();
+  await expect(page.locator('#home-sign-ins-summary')).toHaveText('The sign-ins that open this wallet.');
+  await expect(page.locator('#home-app-devices .home-device')).toHaveCount(0);
+  await page.locator('#home-app-devices-show').click();
+  await expect(page.locator('#home-app-devices .home-device')).toHaveCount(3);
+  await expect(page.locator('#home-app-devices-title')).toBeFocused();
+  expect(reads).toEqual(['?scopeId=s1']);
+  // A device: its name and site, short dates with the full ones for a screen reader and a tooltip, one line each.
+  const card = page.locator('#home-app-devices .home-device').first();
+  await expect(card.locator('.home-device-name')).toHaveText('Chrome on macOS on https://sodax.example');
+  await expect(card.locator('.home-device-facts > p')).toHaveCount(3);
+  await expect(card.locator('.home-device-facts > p').nth(2)).toContainText(/^Signs out by itself (today|tomorrow) at .+ if it isn’t used, and (today|tomorrow) at .+ at the latest\.$/u);
+  const time = card.locator('.home-device-facts time').first();
+  const full = await time.getAttribute('title');
+  expect(full && full.length > 10).toBe(true);
+  await expect(card.locator('.home-device-facts .home-when .sr-only').first()).toHaveText(full ?? '');
+  await expect(card.locator('.home-policy-label')).toHaveText('Swaps up to 50 USDC a day on Base, to Sodax’s own contracts');
+  for (const width of [320, 360, 390, 430]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width}: no sideways scroll`).toBe(true);
+    // Each site on one line of its own (the fixtures' fit), each date unbroken, the app's words on their own line.
+    const lines = await page.evaluate(() =>
+      [...document.querySelectorAll('#home-app-devices .home-device-name > .origin, #home-app-devices .home-when > time')].map((el) => {
+        const r = el.getClientRects();
+        return { text: el.textContent, lines: new Set([...r].map((x) => Math.round(x.top))).size };
+      }),
+    );
+    expect(lines.filter((l) => l.lines !== 1), `${width}: broken over lines`).toEqual([]);
+    const words = await page.evaluate(() => {
+      const q = document.querySelector('#home-app-devices .home-policy-label') as HTMLElement;
+      const card = q.closest('.home-device') as HTMLElement;
+      const a = q.getBoundingClientRect();
+      const b = card.getBoundingClientRect();
+      return { display: getComputedStyle(q).display, inside: a.left >= b.left && a.right <= b.right };
+    });
+    expect(words, `${width}: the app’s words`).toEqual({ display: 'block', inside: true });
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  // Back and Forward to the tab read nothing; the wallet opened again reads once more when Security opens.
+  await page.goBack();
+  await expect(page.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
+  await page.goForward();
+  await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+  expect(reads).toEqual(['?scopeId=s1']);
+  await page.locator('#home-back').click();
+  await page.locator('.home-row[data-scope="s1"]').click();
+  await homeTab(page, 'Security');
+  await expect(line).toBeVisible();
+  expect(reads).toEqual(['?scopeId=s1', '?scopeId=s1']);
+});

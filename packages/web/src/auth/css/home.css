@@ -279,6 +279,11 @@ body.home-page > main:focus {
   font-size: var(--jp-text-md);
 }
 
+/* D897: the Security tab's settings cards title at a3's size. */
+#home-content #home-panel-security .home-tools h2 {
+  font-size: var(--jp-text-lg);
+}
+
 /* ---- the way back on a view (D893): "Your wallets", a quiet link-like button ---- */
 .home .home-back.jp-btn {
   align-self: flex-start;
@@ -390,6 +395,97 @@ body.home-page > main:focus {
   .home-top .home-top-notice {
     grid-area: notice;
     margin-top: var(--jp-space-2);
+  }
+}
+
+/* D897: a Google sign-in's short line goes back on the bar's first row, between the lockup and Sign out, where it fits
+   (an email address keeps its own line). */
+@media (min-width: 380px) and (max-width: 560px) {
+  .home-top:has(#home-who):has(.home-who:not(.home-who-email)) {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'logo who out' 'notice notice notice';
+    column-gap: var(--jp-space-3);
+  }
+
+  .home-top:has(.home-who:not(.home-who-email)) #home-who {
+    justify-self: end;
+    margin-top: 0;
+    font-size: var(--jp-text-xs);
+    text-align: right;
+  }
+}
+
+/* D897: a very narrow window (a 390 px phone at 200 % zoom is 195 px): the lockup and Sign out no longer fit side by
+   side, so Sign out goes under who is signed in, at the start; nothing is wider than the window. */
+@media (max-width: 300px) {
+  /* D897: a date may wrap here, or an open device card would be wider than the window (above the rule that keeps it
+     whole elsewhere, later in this file). */
+  body.home-page .home-when > time {
+    white-space: normal;
+  }
+
+  /* A setting's control may shrink to the card, and a button's words wrap ("Stop auto-approving" is wider than a card
+     here). */
+  body.home-page .home-setting.jp-setting > .home-setting-control {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+
+  body.home-page .jp-btn:not(#home-sign-out) {
+    max-width: 100%;
+    height: auto;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .home-top:has(#home-who) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'logo' 'who' 'out' 'notice';
+  }
+
+  .home-top #home-sign-out {
+    justify-self: start;
+    margin-top: var(--jp-space-2);
+  }
+
+  .home-top .jp-lockup {
+    max-width: 100%;
+  }
+}
+
+/* D897: on a phone every control is at least 44 px tall (the design system does so for a coarse pointer; a narrow
+   window gets the same, so a phone that reports a fine pointer, or a zoomed page, keeps them). */
+@media (max-width: 640px) {
+  body.home-page :is(.jp-btn, .jp-input, .home-tabs .jp-tab, button.link, .home-address-more > a, .home-confirm-more summary):not(#home-sign-out) {
+    min-height: 44px;
+  }
+
+  body.home-page .home-confirm-more summary {
+    display: flex;
+    align-items: center;
+  }
+
+  /* Sign out keeps the bar compact (as the mock-ups): its 44 px is a tap area around it, inside the bar's own padding,
+     where no other control is. */
+  body.home-page #home-sign-out {
+    position: relative;
+  }
+
+  body.home-page #home-sign-out::before {
+    content: '';
+    position: absolute;
+    top: calc((100% - 44px) / 2);
+    bottom: calc((100% - 44px) / 2);
+    left: -2px;
+    right: -2px;
+  }
+
+  body.home-page .home-address-more > a {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--jp-space-1);
   }
 }
 
@@ -940,44 +1036,82 @@ a.explorer {
   overflow-wrap: anywhere;
 }
 
-/* When, as key/value rows: muted keys, the values in the text face (dates aren't addresses or codes). Scoped above
-   any other page's `dl.jp-kv` rules. */
-.home-device dl.home-device-facts.jp-kv {
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 2px var(--jp-space-3);
-  margin: var(--jp-space-1) 0 0;
-  padding: 0;
-  border: 0;
+/* D897: the site on its own line under the device, so it wraps whole (or at its own break points only when wider
+   than the line); the dates as short plain sentences, each on its own line, muted. */
+.home-device-name > .origin {
+  display: block;
+  margin-top: 2px;
   font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
 }
 
-.home-device dl.home-device-facts.jp-kv dd {
-  display: block;
-  min-width: 0;
-  font-family: var(--jp-font-body);
-  font-size: var(--jp-text-xs);
+.home-device-facts {
+  display: grid;
+  gap: 2px;
+  margin-top: var(--jp-space-1);
+}
+
+/* D897 after review: one secondary size (14 px, muted) for the facts, the cards' asides and the section's footnotes. */
+.home-device-facts > p,
+.home-devices .home-device p.muted,
+.home-devices > p.muted,
+.home-devices-group > p.muted {
+  margin: 0;
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
+}
+
+/* "Show again" beside what it refreshes, under the section's line. */
+.home-devices > .home-devices-again {
+  margin-top: 0;
+}
+
+/* The waiting sign-in in "Ways to sign in"'s line: the warning colour and icon of its card. */
+.home-set-attn {
+  display: inline;
+  color: var(--jp-warning);
+  font-weight: var(--jp-weight-medium);
+}
+
+.home-set-attn .ic {
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.home-when > time {
   color: var(--jp-fg);
+  white-space: nowrap;
 }
 
 .home-consent-state .jp-badge {
   margin-right: var(--jp-space-1);
 }
 
-/* The app's own words for its rule: quoted, set apart, wrapped anywhere. */
+/* D897: the app's own words on a line of their own under the lead-in, so the sentence reads at a phone's width. */
+.home-policy {
+  font-size: var(--jp-text-sm);
+}
+
 .home-policy-label {
+  display: block;
+  margin-top: 2px;
   font-weight: var(--jp-weight-semibold);
   overflow-wrap: anywhere;
   unicode-bidi: isolate;
 }
 
-@media (max-width: 480px) {
-  .home-device dl.home-device-facts.jp-kv {
-    grid-template-columns: 1fr;
-  }
+/* D897: each section's one line, visible without pressing anything, close under its title (as a3's settings cards):
+   quiet while it only says what the section is about, in the text colour once it says what was read. */
+.home-tools > section > .home-set-summary {
+  margin-top: calc(-1 * var(--jp-space-2));
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
+}
 
-  .home-device-facts dd {
-    margin-bottom: var(--jp-space-1);
-  }
+.home-tools > section > .home-set-summary[data-read] {
+  color: var(--jp-fg);
 }
 
 /* ---- "Ways to sign in" (home-sign-ins.ts): the devices' cards, one per sign-in ---- */
@@ -1369,7 +1503,9 @@ a.explorer {
   transform: translateX(-50%);
   z-index: var(--jp-z-sticky);
   visibility: hidden;
-  box-shadow: var(--jp-shadow-md);
+  /* D897: it floats over the page: a ring of the page's own background around it, then a deep shadow, so it reads as
+     above the text in both themes (the ring keeps it apart from a teal button or badge under it). */
+  box-shadow: 0 0 0 3px var(--jp-bg), var(--jp-shadow-lg);
   white-space: nowrap;
 }
 
@@ -1492,6 +1628,8 @@ body.home-page.home-chip-on > main {
 
 #home-content .home-app-details > .home-app-all > .home-app-label {
   flex: 1 1 100%;
+  /* D897: the whole row, so the apps start under it on a wide window (the reading measure had left room beside it). */
+  max-width: none;
 }
 
 #home-content .home-app-details > .home-app-all > .home-app {

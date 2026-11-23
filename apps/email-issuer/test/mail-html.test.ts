@@ -141,6 +141,14 @@ describe('code mails: the designed HTML part', () => {
     // "Passport" itself or as the wallet (D891), or a claim word beside sentence punctuation, is not shown.
     for (const appName of ['Passport', 'My Passport', 'Passport Wallet', 'Verified Passport', 'Passport | Acme', 'Acme. Verified', 'Acme Official', 'Acme ✅', 'ᴘassport']) expect(displayAppName(appName), appName).toBeNull();
     expect(codeMail({ to: 'a@example.com', code: '550046', appName: 'Passport', authOrigin: AUTH, purpose: 'session' }).subject).toBe('Your sign-in code');
+    // A stored name the tier rule refuses now (founder 2026-11-23, D891), such as "Passport Pro", keeps working but its
+    // code mails say "an app" and their subject names no app.
+    for (const appName of ['Passport Pro', 'Passport Plus', 'Passport Online', 'Mobile Passport', 'PassportCard']) {
+      expect(displayAppName(appName), appName).toBeNull();
+      const m = codeMail({ to: 'a@example.com', code: '550046', appName, authOrigin: AUTH, purpose: 'session' });
+      expect(m.subject, appName).toBe('Your sign-in code');
+      expect(m.text, appName).toContain('Your code to sign in to an app with Journear:');
+    }
     expect(displayAppName('Passport Travel')).toBe('Passport Travel');
     expect(codeMail({ to: 'a@example.com', code: '550046', appName: 'Passport Travel', authOrigin: AUTH, purpose: 'session' }).subject).toBe('Your sign-in code for Passport Travel');
   });

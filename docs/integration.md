@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-23 (app names; gas sponsorship; sign-in window buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-23 (app names, incl. "Passport Pro"-style names; gas sponsorship; sign-in window buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -83,8 +83,11 @@ refused (when an app is created or renamed, by Journear staff or on **Branding**
   Wallet, App, Account, Login, Sign-in, Sign-up, Support, Help, Security, Team, Official, Pay, Vault, Verify,
   Recovery, Admin, Staff, Service, Auth, Connect, Key, Relayer, Sponsor, Gas or "by" right before or after it, plurals
   too, or ID or "from" right after it ("Passport ID", "Admin Passport"); a word like "verified", "secure" or "safe"
-  right next to it; or a name that starts with "Passport" followed by a comma, bracket, bar, slash, colon, dash or
-  "by"/"from"/"of" and another name ("Passport | Acme"). Your brand first is fine ("Acme Passport", "Gitcoin
+  right next to it; a word that makes it read as a version of the wallet right before or after it (Plus, Pro, One, Go,
+  Lite, Mini, Max, Ultra, Prime, Premium, Basic, Classic, Beta, Next, Card, Online, Mobile, Web, Cloud, Desktop or
+  Extension, plurals too, or joined to it: "Passport Pro", "Mobile Passport", "PassportPlus"); or a name that starts
+  with "Passport" followed by a comma, bracket, bar, slash, colon, dash or "by"/"from"/"of" and another name
+  ("Passport | Acme"). Your brand first is fine ("Acme Passport", "Gitcoin
   Passport"), and so is "Passport" with words of your own ("Passport Photos Co", "Passport Travel", "Passport Labs");
 - letters that only imitate others: small capitals, phonetic letters, Cherokee, Lisu or Coptic letters, or a word
   that mixes Latin with Greek, Cyrillic or another alphabet. A word written wholly in another alphabet or script is

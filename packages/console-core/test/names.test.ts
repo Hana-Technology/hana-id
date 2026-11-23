@@ -1,9 +1,10 @@
 // D686 (as extended by D765): an app's name may not look like a web address or hold "Hana", "Journear" or "Passport Home"
 // (any case, accents, look-alike letters, letters split by spaces or punctuation); since D891 not "Passport" alone or as
-// the wallet, no imitation letters or badges, no claim word after sentence punctuation, no vouching word at the end.
+// the wallet (since the founder's 2026-11-23 answer, nor as a version of it: "Passport Pro"), no imitation letters or
+// badges, no claim word after sentence punctuation, no vouching word at the end.
 // normalisePartnerAppName is what the API and the CLI apply when an app is named.
 import { describe, expect, it } from 'vitest';
-import { APP_NAME_BADGES, appNameProblem, brandNameIn, hanaWordIn, journearWordIn, lookalikeLettersIn, looksLikeAddress, nameSkeleton, normalisePartnerAppName, passportNameIn, passportProblemIn, sentenceClaimIn, vouchingWordIn } from '../src/names.ts';
+import { APP_NAME_BADGES, APP_NAME_PASSPORT_TIER_WORDS, appNameProblem, brandNameIn, hanaWordIn, journearWordIn, lookalikeLettersIn, looksLikeAddress, nameSkeleton, normalisePartnerAppName, passportNameIn, passportProblemIn, sentenceClaimIn, vouchingWordIn } from '../src/names.ts';
 import { CHECK_MARKS } from '../../core/src/verified-contracts.ts';
 
 const ch = (n: number): string => String.fromCodePoint(n);
@@ -145,6 +146,18 @@ const PASSPORT_REFUSED: readonly (readonly [string, string | null])[] = [
   // a claim word next to it
   ['Passport Verified', 'Verified'], ['Passport Secure', 'Secure'], ['Passport Safe', 'Safe'], ['Verified Passport', 'Verified'], ['Secure Passport', 'Secure'],
   ['Trusted Passport', 'Trusted'], ['Passport Free', 'Free'], ['VerifiedPassport', 'VerifiedPassport'], ['Passport Certified', 'Certified'],
+  // a tier or form word after or before it (founder 2026-11-23), plurals, look-alikes, split and joined letters too
+  ['Passport Plus', 'Plus'], ['Passport Pro', 'Pro'], ['Passport One', 'One'], ['Passport Go', 'Go'], ['Passport Lite', 'Lite'], ['Passport Mini', 'Mini'],
+  ['Passport Max', 'Max'], ['Passport Ultra', 'Ultra'], ['Passport Prime', 'Prime'], ['Passport Premium', 'Premium'], ['Passport Basic', 'Basic'],
+  ['Passport Classic', 'Classic'], ['Passport Beta', 'Beta'], ['Passport Next', 'Next'], ['Passport Card', 'Card'], ['Passport Online', 'Online'],
+  ['Passport Mobile', 'Mobile'], ['Passport Web', 'Web'], ['Passport Cloud', 'Cloud'], ['Passport Desktop', 'Desktop'], ['Passport Extension', 'Extension'],
+  ['Passport Cards', 'Cards'], ['Passport Pros', 'Pros'], ['Passport Pluses', 'Pluses'], ['Passport PRO', 'PRO'], ['passport pro', 'pro'], ['Passport-Pro', 'Pro'],
+  ['Passport Pr0', 'Pr0'], ['Passport 0ne', '0ne'], ['Passport L1te', 'L1te'], ['Passport Ｐｒｏ', 'Pro'], ['Passport P r o', 'Pro'], ['Passport On line', 'On line'],
+  ['Pa55port Plus', 'Plus'], ['My Passport Pro', 'Pro'], ['The Passport Premium', 'Premium'], ['Passport Pro Max', 'Pro'], ['Passport Card Services', 'Card'],
+  ['Acme Passport Plus', 'Plus'], ['Premium Passport', 'Premium'], ['Mobile Passport', 'Mobile'], ['Pro Passport', 'Pro'], ['One Passport', 'One'],
+  ['Cloud Passport', 'Cloud'], ['Next Passport', 'Next'], ['On Line Passport', 'On Line'], ['PassportPlus', 'PassportPlus'], ['PassportCard', 'PassportCard'],
+  ['PassportPro', 'PassportPro'], ['OnePassport', 'OnePassport'], ['MobilePassport', 'MobilePassport'], ['Passport+', null], ['Passport X', null],
+  ['Passport Free', 'Free'],
   // the start of another name
   ['Passport, by Acme', null], ['Passport from Acme', null], ['Passport | Acme', null], ['Passport (Acme)', null], ['Passport - Acme', null], ['Passport – Acme', null],
   ['Passport: Acme', null], ['Passport / Acme', null], ['Passport · Acme', null], ['Passport of Acme', null], ['The Passport | Acme', null],
@@ -156,6 +169,11 @@ const PASSPORT_ALLOWED: readonly string[] = [
   'Passport Byron Bay', 'Passport Payroll', 'Passport 2 Asia', 'Near Passport Office Cafe', 'Pet Passport', 'Culture Passport', 'Gitcoin Passport',
   'Human Passport', 'Holonym Passport', 'World ID Passport', 'Galxe Passport', 'Immutable Passport', 'Passport XYZ', 'WD My Passport', 'Passport Co',
   'Passport-Health', 'Passport & Co', 'Acme Passport', 'Passport Photo Booth', 'Passport Rewards Club',
+  // a tier word only as part of a longer word, or not next to "Passport" (founder 2026-11-23's rule is word for word)
+  'Passport Protocol', 'Passport Proton', 'Passport Golf', 'Passport Webster', 'Passport Maximus', 'Passport Oneida', 'Passport Cardiff', 'Passport Nexus',
+  'Passport Classical Tours', 'Passport Photo Online', 'Passport Photos Online Co', 'Passport Express', 'Passport 365', 'Passport Plumbing', 'Passport Prost',
+  'Passport Webb', 'Passport Gold', 'Passport Kids', 'Acme Pro Shop Passport Photos', 'Passport Office',
+  'Proton Passport', 'Webster Passport', 'Golden Passport', 'Passport 2 Go Travel', 'WD My Passport',
 ];
 
 describe('D891: "Passport" as the wallet', () => {
@@ -174,6 +192,25 @@ describe('D891: "Passport" as the wallet', () => {
     expect(appNameProblem('My NEAR Passport')).toMatch(/^The name must not be "Passport" on its own or with only "My NEAR" around it/u);
     expect(appNameProblem('Passport (Acme)')).toMatch(/^The name must not start with "Passport" followed by another name/u);
     expect(appNameProblem('Verified Passport')).toMatch(/^The name must not put "Verified" next to "Passport"/u);
+  });
+  it('a tier word is refused on either side, run together, with a plural, in any spelling (founder 2026-11-23)', () => {
+    for (const word of APP_NAME_PASSPORT_TIER_WORDS) {
+      const w = word[0]!.toUpperCase() + word.slice(1);
+      for (const name of [`Passport ${w}`, `${w} Passport`, `Passport${w}`, `${w}Passport`, `Passport ${w}s`, `Passport ${w.toUpperCase()}`, `My Passport ${w}`]) {
+        expect(passportProblemIn(name)?.kind, name).toMatch(/^tier_/u);
+        expect(appNameProblem(name), name).toMatch(/version of the wallet/u);
+      }
+      // A tier word away from "Passport", or with the partner's own words between, is fine.
+      for (const name of [`Acme ${w}`, `${w} Acme`, `Passport Acme ${w}`, `${w} Acme Passport`]) allowed(name);
+    }
+  });
+  it('the tier messages name the word, the side, and say what is fine', () => {
+    expect(appNameProblem('Passport Pro')).toBe('The name must not have "Pro" right after "Passport": it reads as a version of the wallet, as "Passport Pro" would. Users call Journear Passport "Passport". Your brand first, as in "Acme Passport", or "Passport" with words of your own, as in "Passport Photos Co", is fine');
+    expect(appNameProblem('Mobile Passport')).toBe('The name must not have "Mobile" right before "Passport": it reads as a version of the wallet, as "Premium Passport" would. Users call Journear Passport "Passport". Your brand first, as in "Acme Passport", or "Passport" with words of your own, as in "Passport Photos Co", is fine');
+    expect(appNameProblem('PassportPlus')).toBe('The name must not be "PassportPlus": "Passport" joined with a word like "Pro", "Plus" or "Online" reads as a version of the wallet. Users call Journear Passport "Passport". Your brand first, as in "Acme Passport", or "Passport" with words of your own, as in "Passport Photos Co", is fine');
+    // A wallet word wins over a tier word when both are there; "Free" stays the claim rule's.
+    expect(passportProblemIn('Passport Wallet Pro')).toEqual({ kind: 'after', word: 'Wallet' });
+    expect(passportProblemIn('Passport Free')).toEqual({ kind: 'claim', word: 'Free' });
   });
   it('the older brand rules still come first', () => {
     for (const name of ['Journear Passport', 'Passport by Journear']) expect(appNameProblem(name), name).toMatch(/"Journear"/u);

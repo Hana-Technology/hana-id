@@ -29,9 +29,9 @@ export function normaliseAppName(input: string): { ok: true; name: string } | { 
 // (D686, D765, D891): a web-address shape; letters that only imitate others (scripts and blocks that exist here only
 // to look like Latin, a word mixing Latin with another alphabet); a check mark, shield or lock; "Hana", "Journear" and
 // "Passport Home"; "Passport" alone or as the wallet (with only a determiner, NEAR or a wallet word around it, a wallet
-// or claim word right before or after it, or as the start of "Passport by/from/| {another name}"); a claim word after
-// sentence punctuation ("Acme. Verified"); and a vouching word as the last word or after a bracket or bar ("Acme
-// Official", "Acme (Verified)"). "{Brand} Passport" and "Passport" with words of the partner's own stay allowed. The
+// or claim word right before or after it, a tier word such as Pro, Plus or Online right before or after it, or as the
+// start of "Passport by/from/| {another name}"); a claim word after sentence punctuation ("Acme. Verified"); and a
+// vouching word as the last word or after a bracket or bar ("Acme Official", "Acme (Verified)"). "{Brand} Passport" and "Passport" with words of the partner's own stay allowed. The
 // rule applies where an app is named or renamed (the API's create and settings paths, the operator CLI); stored names
 // are never rewritten; the email issuer applies it again when it writes a mail, so a stored name it refuses is shown
 // as "an app".
@@ -339,11 +339,33 @@ const PASSPORT_PRODUCT_WORDS = [
 ];
 const PRODUCT = keys(PASSPORT_PRODUCT_WORDS);
 const PRODUCT_AFTER_ONLY = keys(['id', 'from']);
+/** A word of `set`, alone or with a plural s/es. */
+const inWithPlural = (set: (x: string) => boolean, k: string): boolean =>
+  set(k) || (k.endsWith('s') && set(k.slice(0, -1))) || (k.endsWith('es') && set(k.slice(0, -2)));
 /** A product word, alone or with a plural s/es. */
-const productWord = (k: string, after: boolean): boolean => {
-  const set = (x: string) => PRODUCT.has(x) || (after && PRODUCT_AFTER_ONLY.has(x));
-  return set(k) || (k.endsWith('s') && set(k.slice(0, -1))) || (k.endsWith('es') && set(k.slice(0, -2)));
-};
+const productWord = (k: string, after: boolean): boolean => inWithPlural((x) => PRODUCT.has(x) || (after && PRODUCT_AFTER_ONLY.has(x)), k);
+/**
+ * Words that make "Passport" read as a version, tier or form of the wallet itself when right after it ("Passport
+ * Pro", "Passport Online") or right before it ("Premium Passport", "Mobile Passport"), plural too (decided by the
+ * founder 2026-11-23, D891). "Free" is a claim word already; "X" and other single letters are the "alone" rule.
+ */
+export const APP_NAME_PASSPORT_TIER_WORDS: readonly string[] = Object.freeze([
+  'plus', 'pro', 'one', 'go', 'lite', 'mini', 'max', 'ultra', 'prime', 'premium', 'basic', 'classic', 'beta', 'next', 'card', 'online', 'mobile', 'web',
+  'cloud', 'desktop', 'extension',
+]);
+const TIER = keys(APP_NAME_PASSPORT_TIER_WORDS);
+/** A tier word, alone or with a plural s/es. */
+const tierWord = (k: string): boolean => inWithPlural((x) => TIER.has(x), k);
+
+/** A word or two at `i` that pass `test` (joined: "On line", "Sign up"); the span, or null. */
+function spanAt(words: readonly Word[], i: number, test: (k: string) => boolean): { len: number; text: string } | null {
+  const w = words[i];
+  if (!w) return null;
+  if (test(w.key)) return { len: 1, text: w.text };
+  const n = words[i + 1];
+  if (n && test(w.key + n.key)) return { len: 2, text: `${w.text} ${n.text}` };
+  return null;
+}
 
 /** Separators after a leading "Passport" that make the rest another name: "Passport, by Acme", "Passport | Acme". */
 const PASSPORT_THEN_NAME = new RegExp(
@@ -355,6 +377,7 @@ const PASSPORT_THEN_NAME = new RegExp(
 export type PassportProblem =
   | { readonly kind: 'alone'; readonly around: string }
   | { readonly kind: 'after' | 'before'; readonly word: string }
+  | { readonly kind: 'tier_after' | 'tier_before' | 'tier_joined'; readonly word: string }
   | { readonly kind: 'claim'; readonly word: string }
   | { readonly kind: 'then_name' };
 
@@ -365,15 +388,8 @@ function passportSpan(words: readonly Word[], i: number): number {
   return 0;
 }
 
-/** A word or two at `i` that read as a product word (joined: "Sign up", "Sign-on"); the span, or 0. */
-function productSpan(words: readonly Word[], i: number, after: boolean): { len: number; text: string } | null {
-  const w = words[i];
-  if (!w) return null;
-  if (productWord(w.key, after)) return { len: 1, text: w.text };
-  const n = words[i + 1];
-  if (n && productWord(w.key + n.key, after)) return { len: 2, text: `${w.text} ${n.text}` };
-  return null;
-}
+/** A word or two at `i` that read as a product word (joined: "Sign up", "Sign-on"); the span, or null. */
+const productSpan = (words: readonly Word[], i: number, after: boolean) => spanAt(words, i, (k) => productWord(k, after));
 
 /**
  * Whether, and why, the name passes for Journear Passport (D891 after PR 112's review), compared word by word on the
@@ -383,6 +399,9 @@ function productSpan(words: readonly Word[], i: number, after: boolean): { len: 
  *   "Passport 2", "Passport℠");
  * - "after" / "before": a wallet word or "by" right after or before it, plural too ("Passport Wallets", "Admin
  *   Passport", "Wallet by Passport"); ID and from only after it;
+ * - "tier_after" / "tier_before": a tier or form word (`APP_NAME_PASSPORT_TIER_WORDS`) right after or before it,
+ *   plural too ("Passport Pro", "Passport Online", "Premium Passport"), or run together with it ("tier_joined":
+ *   "PassportPlus", "OnePassport"): a version of the wallet itself;
  * - "claim": a claim word right before or after it ("Verified Passport", "Passport Safe");
  * - "then_name": the name starts with "Passport" followed by a separator, "by", "from" or "of" and another name
  *   ("Passport | Acme", "Passport (Acme)", "Passport from Acme"): it reads as "Passport, made by Acme".
@@ -401,21 +420,27 @@ export function passportProblemIn(name: string): PassportProblem | null {
     if (w.key !== PASSPORT && w.key.startsWith(PASSPORT)) {
       const rest = w.key.slice(PASSPORT.length);
       if (productWord(rest, true)) return { kind: 'after', word: w.text };
+      if (tierWord(rest)) return { kind: 'tier_joined', word: w.text };
       if (isClaim(rest)) return { kind: 'claim', word: w.text };
     }
     if (w.key !== PASSPORT && w.key.endsWith(PASSPORT)) {
       const rest = w.key.slice(0, -PASSPORT.length);
       if (productWord(rest, false)) return { kind: 'before', word: w.text };
+      if (tierWord(rest)) return { kind: 'tier_joined', word: w.text };
       if (isClaim(rest)) return { kind: 'claim', word: w.text };
     }
     const span = passportSpan(words, i);
     if (!span) continue;
     const next = productSpan(words, i + span, true);
     if (next) return { kind: 'after', word: next.text };
+    const nextTier = spanAt(words, i + span, tierWord);
+    if (nextTier) return { kind: 'tier_after', word: nextTier.text };
     const p1 = words[i - 1];
     const p2 = words[i - 2];
     if (p1 && productWord(p1.key, false)) return { kind: 'before', word: p1.text };
     if (p1 && p2 && productWord(p2.key + p1.key, false)) return { kind: 'before', word: `${p2.text} ${p1.text}` };
+    if (p1 && tierWord(p1.key)) return { kind: 'tier_before', word: p1.text };
+    if (p1 && p2 && tierWord(p2.key + p1.key)) return { kind: 'tier_before', word: `${p2.text} ${p1.text}` };
     const claimAfter = i + span < words.length ? claimAt(words, i + span) : null;
     if (claimAfter) return { kind: 'claim', word: claimAfter };
     if (p1 && isClaim(p1.key)) return { kind: 'claim', word: p1.text };
@@ -495,6 +520,12 @@ function passportMessage(p: PassportProblem): string {
       return `The name must not have "${p.word}" right after "Passport": it reads as part of the wallet. ${PASSPORT_KEEP}`;
     case 'before':
       return `The name must not have "${p.word}" right before "Passport": it reads as part of the wallet. ${PASSPORT_KEEP}`;
+    case 'tier_after':
+      return `The name must not have "${p.word}" right after "Passport": it reads as a version of the wallet, as "Passport Pro" would. ${PASSPORT_KEEP}`;
+    case 'tier_before':
+      return `The name must not have "${p.word}" right before "Passport": it reads as a version of the wallet, as "Premium Passport" would. ${PASSPORT_KEEP}`;
+    case 'tier_joined':
+      return `The name must not be "${p.word}": "Passport" joined with a word like "Pro", "Plus" or "Online" reads as a version of the wallet. ${PASSPORT_KEEP}`;
     case 'claim':
       return `The name must not put "${p.word}" next to "Passport": it reads as the wallet vouching for itself. ${PASSPORT_KEEP}`;
     case 'then_name':

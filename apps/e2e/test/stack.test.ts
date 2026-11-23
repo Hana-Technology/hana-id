@@ -398,6 +398,26 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     expect(await (await call(api, '/v1/app', { origin: VAULT_ORIGIN, parent: PARTNER_ORIGIN, pk: suspended })).json()).toMatchObject({ code: 'app_suspended' });
   });
 
+  it('D896: a label seeded for an app is served by GET /v1/app on the vault’s read only, to that app only, until removed', async () => {
+    const { api } = setup();
+    const { appId, pk } = api.createApp({ origins: [PARTNER_ORIGIN] });
+    const { pk: otherPk } = api.createApp({ origins: [PARTNER_ORIGIN] });
+    const text = JSON.stringify({ schema: 'journear-labels/1', context: { stellar: { networkPassphrase: 'Test SDF Network ; September 2015' } }, metadata: { addressBook: [{ account: 'GD6ROJBYLKQMOW3E7N4M2YBPUHMZD7PL65VRHRMO24BOVSBV5H3BQRSL', name: 'Coffee Club till' }] }, display: { formats: { payment: { call: { memo: 'none' }, intent: { verb: 'pay', object: 'the coffee' }, sentence: ['verb', 'object'], fields: [] } } } });
+    const seeded = await call(api, '/__e2e/labels', { method: 'POST', body: { appId, text } });
+    expect(seeded.status).toBe(201);
+    const { labelId } = (await seeded.json()) as { labelId: string };
+    const served = (await (await call(api, '/v1/app', { origin: VAULT_ORIGIN, parent: PARTNER_ORIGIN, pk })).json()) as { partnerLabels?: { id: string; text: string; sha256: string }[] };
+    expect(served.partnerLabels).toEqual([expect.objectContaining({ id: labelId, text, version: 'journear-labels/1' })]);
+    expect(served.partnerLabels![0]!.sha256).toMatch(/^[0-9a-f]{64}$/u);
+    // Another app, and the partner page's own read: none.
+    expect(((await (await call(api, '/v1/app', { origin: VAULT_ORIGIN, parent: PARTNER_ORIGIN, pk: otherPk })).json()) as { partnerLabels?: unknown }).partnerLabels).toEqual([]);
+    expect(await (await call(api, '/v1/app', { origin: PARTNER_ORIGIN, pk })).json()).not.toHaveProperty('partnerLabels');
+    // A page can't reach the control (it always sends an Origin).
+    expect((await call(api, '/__e2e/labels', { method: 'POST', origin: PARTNER_ORIGIN, body: { appId, text } })).status).toBe(403);
+    expect(await (await call(api, '/__e2e/labels/remove', { method: 'POST', body: { labelId } })).json()).toEqual({ removed: 1 });
+    expect(((await (await call(api, '/v1/app', { origin: VAULT_ORIGIN, parent: PARTNER_ORIGIN, pk })).json()) as { partnerLabels?: unknown }).partnerLabels).toEqual([]);
+  });
+
   it('gates the mocked /v1/login and /v1/derive with the Worker’s app gate', async () => {
     const { api } = setup();
     const { pk } = api.createApp({ origins: [PARTNER_ORIGIN] });

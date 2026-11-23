@@ -39,6 +39,12 @@
 //                                     now (D864's "too late" path) → {moved}
 //   POST /__e2e/links/age             {rootSub, ageMs}: every member of that root's accounts started opening the wallet
 //                                     ageMs ago (D875's older links) → {moved}
+//   POST /__e2e/labels                {appId, text} → {labelId, changeId}: a partner label document in force for that app
+//                                     now (D896), written straight to D1 as a version the guarded path took effect
+//                                     (status 'active', announced and due in the past). Not the product's path (that is
+//                                     the admin lanes', lane-labels.ts): the approval window's tests need a label that
+//                                     is served, not its lifecycle. PARTNER_LABELS is "on" in this Worker's env only.
+//   POST /__e2e/labels/remove         {labelId}: the entry is removed now (what an owner's removal does to delivery)
 //   GET  /__e2e/wallets?address=<a>   [{userId, supportCode, internalId, scopeId, wallets: [{chain, address}],
 //                                     identities: [{provider, sub, role, status}]}]: the wallet directory's users listing
 //                                     that address (migration 0011, written by the Worker's own POST /v1/wallets/record;
@@ -231,6 +237,9 @@ export class MockApi {
       EVM_SPONSOR: e2eEvmSponsorVar(relayer.address),
       ...(this.control && this.evm ? { EVM_RELAY_KEYS: relayer.keysVar } : {}),
       ...(opts.email ? { EMAIL_ISS: opts.email.iss, EMAIL_PUBLIC_KEYS: JSON.stringify(opts.email.publicKeys) } : {}),
+      // D896: partner labels served by GET /v1/app in the local stack (no checked-in manifest turns them on); an app
+      // has labels only when a test writes some (/__e2e/labels), so every other window is as before.
+      PARTNER_LABELS: 'on',
     };
     env.LOGIN_RELAY = new MemoryNamespace(api.LoginRelay, () => env);
     if (this.control && this.evm) env.EVM_RELAYER = new MemoryNamespace(api.EvmRelayer, () => env, { soonAlarmMs: 250 });
@@ -275,6 +284,37 @@ export class MockApi {
     const insert = this.d1.db.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?, ?, 0)');
     for (const o of spec.origins) insert.run(appId, o);
     return { appId, pk };
+  }
+
+  /**
+   * D896: a partner label document in force for `appId` now: a new entry of the app's org and scope and one version of
+   * it, as the guarded path leaves a version once it took effect (announced, its time passed, recorded active). The
+   * text is stored exactly as given, with its sha256 and size: the vault re-hashes and re-parses it, as for any.
+   */
+  seedLabel(appId: string, text: string): { labelId: string; changeId: string } {
+    const app = this.d1.db.prepare('SELECT org_id, scope_id FROM apps WHERE id = ?').get(appId) as { org_id: string; scope_id: string } | undefined;
+    if (!app) throw new HttpError(404, 'no_app');
+    const doc = JSON.parse(text) as { context?: Record<string, Record<string, string>> };
+    const c = doc.context ?? {};
+    const contextKey = c.near ? `near:${c.near.network}:${c.near.account}` : c.soroban ? `soroban:${c.soroban.networkPassphrase}:${c.soroban.contract}` : `stellar:${c.stellar?.networkPassphrase ?? ''}`;
+    const id = toHex(crypto.getRandomValues(new Uint8Array(8)));
+    const labelId = `pl_e2e${id}`;
+    const changeId = `lc_e2e${id}`;
+    const bytes = Buffer.from(text, 'utf8');
+    const now = Date.now();
+    this.d1.db.prepare("INSERT INTO partner_labels (id, org_id, scope_id, created_at, created_by) VALUES (?, ?, ?, ?, 'e2e')").run(labelId, app.org_id, app.scope_id, now);
+    this.d1.db
+      .prepare(
+        `INSERT INTO label_changes (id, label_id, org_id, scope_id, doc_text, doc_schema, doc_sha256, doc_bytes, context_key, apps_json, status, proposed_by, proposer_sub, proposed_at, notified_at, active_from, activated_recorded_at, request_id)
+         VALUES (?, ?, ?, ?, ?, 'journear-labels/1', ?, ?, ?, ?, 'active', 'e2e', 'e2e', ?, ?, ?, ?, ?)`,
+      )
+      .run(changeId, labelId, app.org_id, app.scope_id, text, createHash('sha256').update(bytes).digest('hex'), bytes.length, contextKey, JSON.stringify([appId]), now - 2_000, now - 1_500, now - 1_000, now - 1_000, `rq_e2e${id}`);
+    return { labelId, changeId };
+  }
+
+  /** D896: removes a seeded entry now (`removed_at`): GET /v1/app stops serving it at once. */
+  removeLabel(labelId: string): number {
+    return Number(this.d1.db.prepare("UPDATE partner_labels SET removed_at = ?, removed_by = 'e2e' WHERE id = ? AND removed_at IS NULL").run(Date.now(), labelId).changes);
   }
 
   /** Revokes every live share of the app (apps/api's vault_shares rows) and returns how many. */
@@ -586,6 +626,20 @@ export class MockApi {
     if (p === '/__e2e/evm-sponsor') return this.sponsorControl(req, url);
     if (p === '/__e2e/wallets' && req.method === 'GET') return json(200, this.walletUsers(url.searchParams.get('address') ?? ''));
     if (p === '/__e2e/apps' && req.method === 'POST') return json(201, this.createApp((await req.json()) as AppSpec));
+    if (p === '/__e2e/labels' && req.method === 'POST') {
+      const { appId, text } = (await req.json()) as { appId?: unknown; text?: unknown };
+      if (typeof appId !== 'string' || typeof text !== 'string') return json(400, { error: 'bad_request' });
+      try {
+        return json(201, this.seedLabel(appId, text));
+      } catch (e) {
+        return e instanceof HttpError ? json(e.status, { error: e.code }) : json(400, { error: 'bad_label' });
+      }
+    }
+    if (p === '/__e2e/labels/remove' && req.method === 'POST') {
+      const { labelId } = (await req.json()) as { labelId?: unknown };
+      if (typeof labelId !== 'string') return json(400, { error: 'bad_request' });
+      return json(200, { removed: this.removeLabel(labelId) });
+    }
     if (p === '/__e2e/links/expire' && req.method === 'POST') {
       const { rootSub } = (await req.json()) as { rootSub?: unknown };
       if (typeof rootSub !== 'string') return json(400, { error: 'bad_request' });

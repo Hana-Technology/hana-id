@@ -83,8 +83,12 @@ refused (when an app is created or renamed, by Journear staff or on **Branding**
   Wallet, App, Account, Login, Sign-in, Sign-up, Support, Help, Security, Team, Official, Pay, Vault, Verify,
   Recovery, Admin, Staff, Service, Auth, Connect, Key, Relayer, Sponsor, Gas or "by" right before or after it, plurals
   too, or ID or "from" right after it ("Passport ID", "Admin Passport"); a word like "verified", "secure" or "safe"
-  right next to it; or a name that starts with "Passport" followed by a comma, bracket, bar, slash, colon, dash or
-  "by"/"from"/"of" and another name ("Passport | Acme"). Your brand first is fine ("Acme Passport", "Gitcoin
+  right next to it; "Passport" followed only by a word that makes it an edition of the wallet (Plus, Pro, Premium,
+  Prime, Max, Ultra, Lite, Mini, Basic, Classic, One or Beta: "Passport Pro", "My Passport Plus", "PassportPlus"), or
+  "Premium", "Pro", "Plus", "Lite", "Ultra" or "Beta" Passport with nothing before it ("Premium Passport"); your brand
+  in front or your own words after it are fine ("Acme Passport Plus", "Passport Mini Golf"); or a name that starts
+  with "Passport" followed by a comma, bracket, bar, slash, colon, dash or "by"/"from"/"of" and another name
+  ("Passport | Acme"). Your brand first is fine ("Acme Passport", "Gitcoin
   Passport"), and so is "Passport" with words of your own ("Passport Photos Co", "Passport Travel", "Passport Labs");
 - letters that only imitate others: small capitals, phonetic letters, Cherokee, Lisu or Coptic letters, or a word
   that mixes Latin with Greek, Cyrillic or another alphabet. A word written wholly in another alphabet or script is

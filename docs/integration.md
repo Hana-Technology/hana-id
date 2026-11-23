@@ -26,7 +26,8 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-23 (request labels for NEAR programs and Soroban contracts, tied to their code, D900); 2026-11-23 (request labels; app names; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-23 (request labels, programs too; app names; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+"SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 

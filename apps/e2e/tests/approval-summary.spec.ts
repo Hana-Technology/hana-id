@@ -23,7 +23,8 @@ import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, Transact
 import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
 import { e2eRelayer } from '../src/relayer-key.ts';
 import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
-import { approve, clickLauncher, expect, login, newApp, newLiveApp, okValue, openPartner, runAction, test } from './fixtures.ts';
+import { approve, clickLauncher, expect, fontsLoaded, login, newApp, newLiveApp, okValue, openPartner, runAction, test } from './fixtures.ts';
+import { expectEvenDividers } from './divider-checks.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 /** The approval popup's window (`popup,width=420,height=680`, D99). */
@@ -60,7 +61,9 @@ async function popupFor(page: Page, name: string, action: string, ...args: unkno
 async function shot(popup: Page, name: string, browserName: string): Promise<void> {
   if (!SHOTS || browserName !== 'chromium') return;
   await popup.setViewportSize(POPUP);
+  await fontsLoaded(popup);
   await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
+  await expectEvenDividers(popup, name, { soft: true });
 }
 
 const details = (popup: Page) => popup.locator('details.request-details');
@@ -288,6 +291,8 @@ test('D884: a relayed NEAR call’s free fee is only in the details, naming the 
 });
 
 test('D886: a message comes right after the headline, then one note about networks that is true for a test app', async ({ page }) => {
+  // Four windows, each waiting for its own close.
+  test.setTimeout(150_000);
   await openPartner(page, await newApp());
   await login(page);
   for (const [name, action] of [['evm', 'personalSign'], ['stellar', 'stellarSignMessage']] as const) {
@@ -300,6 +305,21 @@ test('D886: a message comes right after the headline, then one note about networ
       'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you agree with what the message says, and don’t keep real money in this account.',
     ]);
     await expect(popup.getByText('works only with test money', { exact: false })).toHaveCount(0);
+    await done(page, popup, name);
+  }
+  // D886's note (2026-11-23): a message Journear can't read: the line that says so first, then the label right above
+  // its raw form, then the note.
+  for (const [name, action] of [['evm-raw', 'personalSign'], ['stellar-raw', 'stellarSignMessage']] as const) {
+    const popup = await popupFor(page, name, action, 'pay\u202eevil');
+    const blocks = popup.locator('div.request > h2.summary-headline, div.request > p.message-label, div.request > code.mono, div.request > .jp-alert');
+    await expect(blocks).toHaveText([
+      /Journear can’t read$/u,
+      /can’t check what this does/u,
+      'This message isn’t readable text, so it’s shown in its raw form.',
+      'The message',
+      /^0x[0-9a-f]+$/u,
+      /Sign only if you know why you’re signing it/u,
+    ]);
     await done(page, popup, name);
   }
 });

@@ -822,6 +822,13 @@ describe('/approve', () => {
         for (const testApp of [false, true]) {
           send(make(testApp ? { testApp: true } : {}));
           expect(pageText()).toContain('shown in its raw form');
+          // D886's note (2026-11-23): the line about its form first, then the label right above its raw form, then
+          // the note about networks.
+          const order = [...document.querySelectorAll('.request > p.message-label, .request > code.mono, .request > .jp-alert:not(.risk-box)')].map((n) =>
+            n.matches('p.message-label') ? 'label' : n.matches('code') ? 'raw' : n.classList.contains('no-network') ? 'note' : n.textContent?.includes('shown in its raw form') ? 'not-text' : n.textContent,
+          );
+          expect(order).toEqual(['not-text', 'label', 'raw', 'note']);
+          expect(document.querySelector('.request > p.message-label')?.nextElementSibling?.matches('code.mono')).toBe(true);
           const note = document.querySelector('.request > .no-network');
           expect(note?.textContent).toBe(testApp ? UNREADABLE_NO_NETWORK_TEST_APP_NOTE : UNREADABLE_NO_NETWORK_NOTE);
           expect(note?.classList.contains('jp-alert-warning')).toBe(true);

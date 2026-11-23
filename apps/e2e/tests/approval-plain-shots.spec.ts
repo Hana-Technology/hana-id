@@ -12,7 +12,8 @@ import { Account, Asset, Keypair, Networks, Operation, TransactionBuilder } from
 import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
 import { e2eRelayer } from '../src/relayer-key.ts';
 import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
-import { approve, clickLauncher, expect, login, newApp, newLiveApp, okValue, openPartner, reject, runAction, test } from './fixtures.ts';
+import { approve, clickLauncher, expect, fontsLoaded, login, newApp, newLiveApp, okValue, openPartner, reject, runAction, test } from './fixtures.ts';
+import { dividerProblems, expectEvenDividers } from './divider-checks.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const POPUP = { width: 420, height: 680 } as const;
@@ -48,7 +49,10 @@ async function popupFor(page: Page, name: string, action: string, ...args: unkno
 
 async function shot(popup: Page, name: string): Promise<void> {
   await popup.setViewportSize(POPUP);
+  await fontsLoaded(popup);
   await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
+  // The result screen after an answer has no request or rows to measure.
+  if ((await popup.locator('div.request, div.consent').count()) > 0) await expectEvenDividers(popup, name, { soft: true });
 }
 
 const SIZES = { phone: { width: 390, height: 844 }, popup: POPUP } as const;
@@ -61,7 +65,9 @@ async function feeShots(popup: Page, name: string): Promise<void> {
     await expect(details).toHaveJSProperty('open', open);
     for (const [size, viewport] of Object.entries(SIZES)) {
       await popup.setViewportSize(viewport);
+      await fontsLoaded(popup);
       await popup.screenshot({ path: `${SHOTS}/${name}-${open ? 'details' : 'main'}-${size}.png`, fullPage: true, animations: 'disabled' });
+      expect.soft(await dividerProblems(popup), `${name}-${open ? 'details' : 'main'}-${size}`).toEqual([]);
     }
   }
 }
@@ -244,7 +250,9 @@ test.describe('plain-wording screens', () => {
       const tag = live ? 'live' : 'test';
       const phone = async (popup: Page, name: string) => {
         await popup.setViewportSize(SIZES.phone);
+        await fontsLoaded(popup);
         await popup.screenshot({ path: `${SHOTS}/msg-${name}-${tag}-phone.png`, fullPage: true, animations: 'disabled' });
+        await expectEvenDividers(popup, `msg-${name}-${tag}-phone`, { soft: true });
       };
       let popup = await popupFor(page, 'stellar', 'stellarSignMessage', 'Journear Passport demo (test networks): this signature proves nothing and moves nothing.');
       await phone(popup, 'stellar');

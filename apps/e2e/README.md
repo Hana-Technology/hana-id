@@ -103,7 +103,22 @@ fee is), each of the sponsored check-in (first time and later), a sponsored unli
 (and one that attaches NEAR), an EVM send, a NEAR transfer and a Stellar payment at 390 px and at the popup's size,
 folded and with the details open (`fee-{case}-{main|details}-{phone|popup}.png`); and, for D886, a Stellar message,
 an EVM message (and one Journear can't read), typed data with and without a network and a NEAR message, for a test app and a live app, at 390 px
-(`msg-{kind}-{test|live}-phone.png`). It checks nothing itself.
+(`msg-{kind}-{test|live}-phone.png`). It checks only the dividers (below), softly, so every screen is still saved.
+
+The approval and consent windows' dividers (D884's note): `tests/divider-checks.ts` measures the page as drawn: no two
+lines (a list's rule, a box's edge) close together with nothing between them unless both are box edges, no ruled block
+around nothing, the same space above and below every rule, and a rule between any two consecutive operations or
+consent contract lines (an operation's own rule under a box that ends the one before is that boundary, not a double);
+it fails when it finds no window or no lines. `tests/approval-dividers.spec.ts` runs it as a gate (every browser) on
+an EVM send, the sponsored check-in (later and first time), a sponsored unlimited permission, a sponsored batch whose
+first call Journear can't read, a relayed NEAR postcard with its note, a NEAR transfer, a NEAR call with JSON and
+with non-JSON arguments then a transfer, a message and one Journear can't read, a Stellar payment, two Stellar
+operations, a Soroban call with a nested authorization and the consent screen (two contract lines), at 390 px and
+the popup's size, folded and open (with `HANA_SHOTS_DIR=<dir>`, Chromium, it also saves each as
+`dividers-{name}-{phone|popup}-{main|details}.png` and records a failure without stopping). The screenshot specs
+(`approval-plain-shots`, `approval-near-reviewed-shots`, `approval-summary`, `evm-sponsor`) run it softly on every
+screen they save; no flow test asserts it. Every screenshot in these specs waits for the page's fonts
+(`fontsLoaded`), so two runs draw the same text the same way.
 
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown

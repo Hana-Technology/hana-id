@@ -16135,6 +16135,33 @@ From `next` @ 032711e8; not merged, not deployed.
     ones included. Sign only if you know why you’re signing it, and don’t keep real money in this account."), in amber
     like the line above it that says the message can't be read (never calmer than it). Tested for `personal_sign`, a
     Stellar message and a NEAR message, test and live apps (D886).
+- Note, 2026-11-23 (branch `fix/approval-double-divider`, PR 110, amended after its review the same day; the founder's
+  hand test on `next` @ 0c47747b: "there looks like there's 2 lines between 'Program' and 'Network' rows"): every
+  facts list (`dl.jp-kv`, base.css) drew a rule above and below itself, so wherever two lists met (the sponsored
+  check-in's "Program" row, D876, then its "Network" row, D877, once this decision took the free fee out of the main
+  view) there were two rules 12 px apart; the same happened beside a box (an alert, the note's or message's box, the
+  details, an operation's arguments that start with an amber line) and at a group's edge (inside a red box, at the
+  bottom of the details, before the first operation's rule), and the free fee's one-off (`dl.fee-facts` with no rule
+  under it) left uneven space. Now the rules are drawn by where a list sits, not by its rows (`auth/css/approval.css`
+  "the dividers"): one rule where two lists meet (the first one's); none against a box or a group's edge (the details'
+  first list keeps the rule under "Hide details"); every operation (and consent contract line) after the first keeps
+  its own rule whatever the one before ends with, since where one action ends and the next begins is a safety cue (the
+  review found the first version dropped it after an operation ending in a box, which left an unreadable call in a
+  sponsored batch with no line under it); the group's gap on both sides of a rule (`--rule-space`); a list with no
+  rows is left out (`dom.ts` `withoutEmptyLists`, also on the consent screen). `:has()` is only in rules of its own
+  and only removes a rule, so a browser without it draws an extra line, never loses one. A NEAR transaction's actions
+  heading and list are spaced like the details' other blocks (`.action-list`), and the consent screen's contract lines
+  like a transaction's operations (`ul.contracts`: before, a line's rule sat right under the previous line's text).
+  Nothing shown, hidden, reordered or reworded; the guard is unchanged. Tests: `apps/e2e/tests/divider-checks.ts`
+  measures the drawn page (no two lines with nothing between them, no ruled block around nothing, the same space above
+  and below a rule, a rule between any two operations or contract lines; it fails when it finds no window or no
+  lines), run as a gate by `approval-dividers.spec.ts` (every browser: the check-in, an unlimited permission, a
+  sponsored batch whose first call Journear can't read, NEAR calls with JSON and non-JSON arguments then a transfer,
+  two Stellar operations, a Soroban call with a nested authorization, messages, the consent screen) and softly by the
+  screenshot specs; `packages/web/test/auth/approval-dividers.test.ts` checks the structure the stylesheet relies on.
+  To confirm: a list between two boxes has no rule at all (for example the "Token" row right under the red box of an
+  unlimited permission, 12 px below the box's red border; "NEAR leaving your account" between the amber and blue
+  boxes).
 
 ### D886. A message being signed comes right after the headline; one note about networks, true for test and live apps
 - Date 2026-11-19 · Status: **asked for by the founder 2026-11-19** while hand-testing a Stellar message on the hosted
@@ -16198,6 +16225,18 @@ From `next` @ 032711e8; not merged, not deployed.
   account, to collect this one stamp." (a test app: "This app is a test version, so don’t keep real money in this
   account. This signature names your account and the stamps program, which accepts it only from your account, to
   collect this one stamp.").
+- Note, 2026-11-23 (branch `fix/approval-double-divider`, PR 110's review): a message Journear can't read (an EVM
+  `personal_sign` of bytes that aren't text or hold hidden characters, a Stellar message or a NEAR message likewise)
+  was "The message", then the amber line "This message isn’t readable text, so it’s shown in its raw form.", then the
+  raw form, so the label was cut off from its box. Now: the amber line first, then "The message" right above the raw
+  form, then the note about networks (`render-approval.ts` `message`). No warning dropped or reworded. Tests:
+  `approve-page.test.ts` (each kind, test and live app), `approval-summary.spec.ts` ("D886"). To confirm: with the
+  headline's amber box ("Journear can’t check what this does (the message isn’t readable text). Approve only if you
+  expected this from {App}."), the raw-form line and the amber note about networks, the window shows up to three amber
+  boxes in a row; proposed (not built): one amber box for the first two, "Journear can’t read this message, so it’s
+  shown below in its raw form. Approve only if you expected this from {App}.", the network note kept as it is
+  (screens: `approval-shots/divider-fix/after/msg-personal-sign-unreadable-test-phone.png`,
+  `dividers-personal-sign-unreadable-*`).
 
 ## Journear's reviewed NEAR calls (branch `feat/near-reviewed-calls`), 2026-11-19
 

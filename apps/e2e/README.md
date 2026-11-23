@@ -433,10 +433,12 @@ every 60 s).
 
 **Partner labels in the approval window (D896, `tests/partner-labels-window.spec.ts`).** The main stack's API also has
 `PARTNER_LABELS = "on"`; an app has labels only when a test writes one in force straight to D1 (`POST /__e2e/labels
-{appId, text}` → `{labelId, changeId}`, not the guarded path; `POST /__e2e/labels/remove {labelId}` removes it at once).
+{appId, text}` → `{labelId, changeId}`, not the guarded path; `POST /__e2e/labels/remove {labelId}` removes it at once; `GET /__e2e/app-reads?pk=` lists when the vault's
+`GET /v1/app` reads of an app arrived, so a test waits for the vault's labels read to be older than its 10 s window).
 The spec walks one app's Stellar payments through a matching label, a warning beside one, the amber mismatch, the red
-unlisted account and a request the label doesn't describe (the same window after the label's removal), with the divider
-checks at 390 and 1280 px, light and dark, in every browser; `HANA_SHOTS_DIR` (Chromium) saves each screen.
+line for a payment and a path payment to an unlisted account, the till's muxed (M…) form and a request the label
+doesn't describe (the same window after the label's removal and a fresh read), with the divider checks at 390 and
+1280 px, light and dark, in every browser; `HANA_SHOTS_DIR` (Chromium) saves each screen.
 
 **Partner labels (D894, `src/server/lane-labels.ts`).** The lanes' API env turns partner labels on
 (`PARTNER_LABELS = "on"`, with `APP_CHANGE_DELAY_MS` 24 h as the admin env's, and `REFUSED_ORIGINS` the stack's API,

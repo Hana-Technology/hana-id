@@ -357,7 +357,7 @@ exactly as proposed; `sha256` its UTF-8 bytes' hash; `effectiveSince` when this 
 when the version it replaced did (null for a first one). At most 16; one D1 statement on every read (no cache; phase
 `labels` in `timings`); a failed read leaves the field out (log `partner_labels_unavailable`). Readers re-hash and
 re-parse it (packages/web `verifyDeliveredLabels`); the vault passes the checked texts to the approval window only while
-its read is under 10 s old, and the window parses them again before showing a label for a request that matches one
+its read is under 10 s old (D896), and the window parses them again before showing a label for a request that matches one
 exactly (D896).
 
 `consent` (H4, D465, D511), only for `Origin: VAULT_ORIGIN` with `x-hana-consent: b64url(consentId)` (allowed in the

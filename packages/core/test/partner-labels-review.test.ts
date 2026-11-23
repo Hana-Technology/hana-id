@@ -237,7 +237,7 @@ describe('items 8, 9, 10, 13: the matcher’s inputs and outputs', () => {
 describe('item 13, as amended by D894: exactly two places outside core import the module, through its subpath', () => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   /** An import of the module: the subpath, or a relative path into core's folder. */
-  const IMPORT = /(?:from\s*|import\s*\(\s*)['"]([^'"]*partner-labels[^'"]*)['"]/gu;
+  const IMPORT = /(?:from\s*|import\s*\(\s*)['"]([^'"]*(?:@hana-id\/core\/partner-labels|core\/src\/partner-labels|vault\/partner-labels)[^'"]*)['"]/gu;
   const isTest = (p: string) => /(^|\/)(test|tests|test-[a-z-]+)\//u.test(p) || /\.test\.ts$/u.test(p);
   const importers = (): { file: string; spec: string }[] => {
     const hits: { file: string; spec: string }[] = [];
@@ -261,6 +261,7 @@ describe('item 13, as amended by D894: exactly two places outside core import th
   it('the API’s labels module and the vault’s check are the only sources that import it, by the subpath', () => {
     const sources = importers().filter((h) => !isTest(h.file));
     expect(sources.map((h) => h.file).sort()).toEqual(['apps/api/src/labels/document.ts', 'packages/web/src/vault/partner-labels.ts']);
+    // (Other files named partner-labels, such as the admin portal's own screen module, are not core's module.)
     expect(new Set(sources.map((h) => h.spec))).toEqual(new Set(['@hana-id/core/partner-labels']));
   });
   it('outside core, only those two places’ tests import it (or the helper that wraps it)', () => {

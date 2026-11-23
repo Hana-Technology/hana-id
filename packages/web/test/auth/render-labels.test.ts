@@ -5,9 +5,9 @@
 // nothing Journear says changes (the window without the box is byte for byte the window without labels). A described
 // request that doesn't meet its description gets one line in Journear's voice (amber; red for any value the user's
 // account sends to an account the app hasn't listed), never the partner's words. Anything else, and anything Journear
-// couldn't check (every NEAR and Soroban document until piece 5 reads code hashes; a NEAR network the vault didn't
-// check), is the plain window, byte for byte.
-import { type xdr, Account, Asset, Claimant, Keypair, Memo, MuxedAccount, Operation, TransactionBuilder } from '@stellar/stellar-base';
+// couldn't check (D900: a NEAR code hash the vault didn't agree on; a Soroban transaction whose footprint names no one
+// code; an authorization entry; a NEAR network the vault didn't check), is the plain window, byte for byte.
+import { xdr, Account, Asset, Claimant, Keypair, Memo, MuxedAccount, Operation, TransactionBuilder } from '@stellar/stellar-base';
 import { decodeApprovalRequest } from '@hana-id/core/decode';
 import { type LabelDocument, SOFT_VERBS, partnerAttribution } from '@hana-id/core/partner-labels';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,7 +35,7 @@ import {
   parsed,
   paymentTx,
 } from '../../../core/test/partner-labels-fixtures.ts';
-import { ROUTER, addr, feeBumpBytes, i128, invocation, invokeOp, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
+import { ROUTER, accountKey, addr, authPreimageBytes, callFootprint, dataKeyOf, feeBumpBytes, i128, invocation, invokeOp, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { jargonWatch } from './plain-words.ts';
 
 const watch = jargonWatch();
@@ -53,7 +53,9 @@ const muxedOf = (g: string, id = '7') => new MuxedAccount(new Account(g, '0'), i
 
 const stellar = (bytes: Uint8Array) => decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes });
 const payment = (o: Parameters<typeof paymentTx>[0] = {}) => stellar(paymentTx(o));
-const soroban = (fnName: string, args: xdr.ScVal[], contract = POOL) => stellar(txBytes([invokeOp(contract, fnName, args, [sourceAuth(invocation(contract, fnName, args))])]));
+/** A Soroban call; `code` is the one Wasm hash its footprint declares (D900: the transaction's own code), none by default. */
+const soroban = (fnName: string, args: xdr.ScVal[], contract = POOL, code: string | readonly string[] | null = null, writes: xdr.LedgerKey[] = []) =>
+  stellar(txBytes([invokeOp(contract, fnName, args, [sourceAuth(invocation(contract, fnName, args))])], code === null ? {} : { soroban: callFootprint(contract, code, writes) }));
 
 type Decoded = ReturnType<typeof payment>;
 const render = (decoded: Decoded, labels?: readonly LabelDocument[], ctx: Partial<ApprovalRenderContext> = {}, app = APP): HTMLElement =>
@@ -67,8 +69,8 @@ const without = (el: HTMLElement, remove: string): string => {
   return copy.outerHTML;
 };
 const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/gu, ' ').trim();
-/** The NEAR facts a later piece reads (the code hash), injected. */
-const NEAR_CTX: Partial<ApprovalRenderContext> = { address: ME, labelFacts: { codeHash: STAMPS_HASH } };
+/** The NEAR fact the vault reads (D900: the code hash both providers agreed on), as it sends it. */
+const NEAR_CTX: Partial<ApprovalRenderContext> = { address: ME, labelFacts: { near: { account: STAMPS, codeHash: STAMPS_HASH } } };
 const collect = (stamp = 'sponsored', o: { deposit?: bigint; gas?: bigint; extra?: string } = {}) => nearDecoded([fn('collect', `{"stamp":"${stamp}"${o.extra ?? ''}}`, { ...(o.deposit !== undefined ? { deposit: o.deposit } : {}), ...(o.gas !== undefined ? { gas: o.gas } : {}) })]);
 
 describe('a classic payment exactly as described: the partner’s box', () => {
@@ -166,18 +168,23 @@ describe('the identity: no labels, or labels that describe nothing here, or that
     ['a payment document over a liquidity pool deposit', stellar(txBytes([Operation.liquidityPoolDeposit({ liquidityPoolId: 'ab'.repeat(32), maxAmountA: '10', maxAmountB: '10', minPrice: '0.5', maxPrice: '2' })])), [PAYMENT], {}],
     ['a payment document over setOptions (a signer change)', stellar(txBytes([Operation.setOptions({ signer: { ed25519PublicKey: STRANGER, weight: 10 } })])), [PAYMENT], {}],
     ['a payment document over a Soroban token transfer', stellar(txBytes([invokeOp(TEST_USDC_SAC, 'transfer', [addr(USER), addr(STRANGER), i128(1_000_000n)], [sourceAuth(invocation(TEST_USDC_SAC, 'transfer', [addr(USER), addr(STRANGER), i128(1_000_000n)]))])])), [PAYMENT], {}],
-    ['a router swap on another contract, its authorization reaching the described one', stellar(txBytes([invokeOp(ROUTER, 'swap', args, [sourceAuth(invocation(ROUTER, 'swap', args, [invocation(POOL, 'deposit', args)]))])])), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } }],
-    ['a NEAR call to the described contract, no code hash (every NEAR document until piece 5)', collect(), [STAMPS_DOC], { address: ME }],
+    ['a router swap on another contract, its authorization reaching the described one', stellar(txBytes([invokeOp(ROUTER, 'swap', args, [sourceAuth(invocation(ROUTER, 'swap', args, [invocation(POOL, 'deposit', args)]))])])), [SOROBAN], {}],
+    ['a NEAR call to the described contract, no code hash (the vault’s providers didn’t agree, or couldn’t be read)', collect(), [STAMPS_DOC], { address: ME }],
+    ['a NEAR call to the described contract, the vault’s code hash for another account', collect(), [STAMPS_DOC], { address: ME, labelFacts: { near: { account: 'other.testnet', codeHash: STAMPS_HASH } } }],
     ['a NEAR call with a deposit and two actions, no code hash', nearDecoded([fn('collect', '{"stamp":"gold"}', { deposit: 5n }), fn('collect', '{}')]), [STAMPS_DOC], { address: ME }],
-    ['a NEAR call, a malformed code hash', collect(), [STAMPS_DOC], { address: ME, labelFacts: { codeHash: 'nope' } }],
+    ['a NEAR call, a malformed code hash', collect(), [STAMPS_DOC], { address: ME, labelFacts: { near: { account: STAMPS, codeHash: 'nope' } } }],
     ['a live app’s relayed NEAR call: its network the vault didn’t check', collect(), [STAMPS_DOC], { ...NEAR_CTX, testApp: false }],
     ['a NEAR call on another network than the env’s', nearDecoded([fn('collect', '{"stamp":"sponsored"}')], { network: 'mainnet' }), [STAMPS_DOC], { ...NEAR_CTX, envNetwork: 'mainnet' }],
     ['a NEAR call to another contract', nearDecoded([fn('collect', '{"stamp":"sponsored"}')], { receiver: 'other.testnet' }), [STAMPS_DOC], NEAR_CTX],
     ['a NEAR call of another method', nearDecoded([fn('vote', '{}')]), [STAMPS_DOC], NEAR_CTX],
     ['a NEAR call to a reviewed contract (Journear reads it itself)', collect(), [STAMPS_DOC], { ...NEAR_CTX, reviewedNear: { stamps: STAMPS } }],
-    ['a Soroban call, no Wasm hash (every Soroban document until piece 5)', soroban('deposit', args), [SOROBAN], {}],
+    ['a Soroban call, no footprint (no Wasm hash)', soroban('deposit', args), [SOROBAN], {}],
+    ['a Soroban call whose footprint names no code', stellar(txBytes([invokeOp(POOL, 'deposit', args, [sourceAuth(invocation(POOL, 'deposit', args))])], { soroban: callFootprint(POOL, null) })), [SOROBAN], {}],
+    ['a Soroban call whose footprint names two codes', soroban('deposit', args, POOL, [POOL_WASM, 'cd'.repeat(32)]), [SOROBAN], {}],
+    ['a Soroban authorization entry (no footprint: never tied to code)', decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: authPreimageBytes(invocation(POOL, 'deposit', args)) }), [SOROBAN], {}],
+    ['a Soroban call, the vault’s NEAR fact ignored', soroban('deposit', args), [SOROBAN], { labelFacts: { near: { account: POOL, codeHash: STAMPS_HASH } } }],
     ['a Soroban call of another function with an extra operation, no Wasm hash', stellar(txBytes([invokeOp(POOL, 'withdraw', args), Operation.bumpSequence({ bumpTo: '9' })])), [SOROBAN], {}],
-    ['a Soroban call to another contract', soroban('deposit', args, TEST_USDC_SAC), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } }],
+    ['a Soroban call to another contract', soroban('deposit', args, TEST_USDC_SAC, POOL_WASM), [SOROBAN], {}],
   ];
   it.each(cases)('%s: the same window as without labels', (_, decoded, labels, ctx) => {
     const plain = render(decoded, undefined, ctx).outerHTML;
@@ -303,7 +310,7 @@ describe('a described request that doesn’t meet its description: one line in J
     expect(render(decoded, [PAYMENT]).outerHTML).toBe(render(decoded).outerHTML);
   });
 
-  it('NEAR (with the code hash a later piece reads): every near miss is the amber line, after the acts-as-you line', () => {
+  it('NEAR (with the vault’s code hash): every near miss is the amber line, after the acts-as-you line; a changed code hash too', () => {
     const misses: [string, Decoded][] = [
       ['a deposit', collect('sponsored', { deposit: 1n })],
       ['too much gas', collect('sponsored', { gas: 31n * 1_000_000_000_000n })],
@@ -316,13 +323,13 @@ describe('a described request that doesn’t meet its description: one line in J
       expect(el.querySelector('div.partner-label'), what).toBeNull();
       expect(el.querySelector('.partner-mismatch'), what).not.toBeNull();
     }
-    const changed = render(collect(), [STAMPS_DOC], { ...NEAR_CTX, labelFacts: { codeHash: (parsed(GUESTBOOK_DOC_JSON).context as { codeHash: string }).codeHash } }, 'Stamp Trail');
+    const changed = render(collect(), [STAMPS_DOC], { ...NEAR_CTX, labelFacts: { near: { account: STAMPS, codeHash: (parsed(GUESTBOOK_DOC_JSON).context as { codeHash: string }).codeHash } } }, 'Stamp Trail');
     expect(text(changed.querySelector('.risk-box.warning-box p.risk-lead'))).toMatch(/^This acts as you/u);
     expect(text(changed.querySelector('li.partner-mismatch'))).toBe('Doesn’t match how Stamp Trail describes this kind of request');
   });
 });
 
-describe('NEAR and Soroban rendering, with the facts a later piece reads (code hash) injected', () => {
+describe('NEAR and Soroban rendering, with the code tied (D900: the vault’s NEAR hash; the transaction’s own footprint)', () => {
   it('a relayed NEAR call: “Stamp Trail says: collect the stamp Fare paid”; the stamp is in the sentence, so no row', () => {
     const el = render(collect(), [STAMPS_DOC], NEAR_CTX, 'Stamp Trail');
     const box = el.querySelector('div.partner-label')!;
@@ -333,14 +340,14 @@ describe('NEAR and Soroban rendering, with the facts a later piece reads (code h
   });
 
   it('a Soroban deposit: the amount as the app’s description of the request’s units, the user as “your account”', () => {
-    const el = render(soroban('deposit', [addr(USER), i128(25_000_000n)]), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } });
+    const el = render(soroban('deposit', [addr(USER), i128(25_000_000n)], POOL, POOL_WASM), [SOROBAN]);
     expect(text(el.querySelector('p.partner-says'))).toBe('Coffee Club says: deposit 25,000,000 units, which Coffee Club says are 2.5 USDC from your account');
     expect(el.querySelector('div.partner-label dl')).toBeNull();
-    expect(without(el, 'div.partner-label')).toBe(render(soroban('deposit', [addr(USER), i128(25_000_000n)])).outerHTML);
+    expect(without(el, 'div.partner-label')).toBe(render(soroban('deposit', [addr(USER), i128(25_000_000n)], POOL, POOL_WASM)).outerHTML);
   });
 
   it('a Soroban payment to a listed account: its name set apart in the sentence; the one value not in it is the one row', () => {
-    const el = render(soroban('pay_to', [addr(TEST_USDC_SAC), addr(OTHER), i128(10_000_000n)]), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } });
+    const el = render(soroban('pay_to', [addr(TEST_USDC_SAC), addr(OTHER), i128(10_000_000n)], POOL, POOL_WASM), [SOROBAN]);
     expect(el.querySelector('p.partner-says span.partner-value.partner-words')?.textContent).toBe('Club treasury');
     expect([...el.querySelectorAll('dl.partner-fields dt')].map(text)).toEqual(['Coin']);
     expect(el.querySelector('dl.partner-fields dd code.id-full')?.textContent).toBe(TEST_USDC_SAC);
@@ -468,5 +475,117 @@ describe('plain words (D853) in the module’s own sentences', () => {
     const sentences = sentencesIn(readFileSync(join(process.cwd(), 'src/auth/render-labels.ts'), 'utf8'));
     expect(sentences.length).toBeGreaterThan(0);
     expect(sentences.filter((s) => jargonIn(s).length > 0)).toEqual([]);
+  });
+});
+
+describe('D900: NEAR and Soroban labels in the real window, with their code tied', () => {
+  const VOTE_DOC_JSON = {
+    schema: 'journear-labels/1',
+    context: { soroban: { networkPassphrase: PASSPHRASE, contract: POOL, wasmHash: POOL_WASM } },
+    display: { formats: { vote: { call: { args: [{ name: 'choice', type: 'u32', min: 1, max: 3 }] }, intent: { verb: 'vote', object: 'in the club poll' }, sentence: ['verb', 'object'], fields: [] } } },
+  };
+  const VOTE = parsed(VOTE_DOC_JSON);
+  const u32 = (n: number) => xdr.ScVal.scvU32(n);
+  const vote = (code: string | readonly string[] | null = POOL_WASM, writes: xdr.LedgerKey[] = []) => soroban('vote', [u32(2)], POOL, code, writes);
+
+  it('NEAR, relayed: the box after the amber “acts as you” box, the soft verb shown (the request attaches no NEAR)', () => {
+    const el = render(collect(), [STAMPS_DOC], NEAR_CTX, 'Stamp Trail');
+    const kids = [...el.children];
+    const amber = kids.findIndex((c) => c.matches('.risk-box.warning-box'));
+    const box = kids.findIndex((c) => c.matches('div.partner-label'));
+    expect(amber).toBeGreaterThanOrEqual(0);
+    expect(text(kids[amber])).toMatch(/^This acts as you/u);
+    expect(box).toBeGreaterThan(amber);
+    expect(kids[box + 1]!.matches('details.request-details')).toBe(true);
+    expect(text(el.querySelector('p.partner-says'))).toBe('Stamp Trail says: collect the stamp Fare paid');
+  });
+
+  it('NEAR, the user’s own transaction: the box too, and the window without it is the window without labels', () => {
+    const own = nearDecoded([fn('collect', '{"stamp":"sponsored"}')], { relayed: false });
+    const el = render(own, [STAMPS_DOC], NEAR_CTX, 'Stamp Trail');
+    expect(el.querySelector('div.partner-label')).not.toBeNull();
+    expect(without(el, 'div.partner-label')).toBe(render(own, undefined, NEAR_CTX, 'Stamp Trail').outerHTML);
+  });
+
+  it('Soroban: a soft verb over a call that writes only its own data: the box, after the red box; nothing Journear says changes', () => {
+    const el = render(vote(), [VOTE]);
+    const kids = [...el.children];
+    const red = kids.findIndex((c) => c.matches('.risk-box.danger-box'));
+    const box = kids.findIndex((c) => c.matches('div.partner-label'));
+    expect(red).toBeGreaterThanOrEqual(0);
+    expect(box).toBeGreaterThan(red);
+    expect(text(el.querySelector('p.partner-says'))).toBe('Coffee Club says: vote in the club poll');
+    expect(without(el, 'div.partner-label')).toBe(render(vote()).outerHTML);
+  });
+
+  it('Soroban: the same soft verb over a call that may write elsewhere (a balance, the user’s account): the amber line, no words', () => {
+    for (const w of [dataKeyOf(TEST_USDC_SAC, 'balance'), accountKey(USER)]) {
+      const el = render(vote(POOL_WASM, [w]), [VOTE]);
+      expect(el.querySelector('div.partner-label')).toBeNull();
+      expect(el.querySelector('.partner-mismatch')).not.toBeNull();
+      // The amber box holds only that line (a Soroban call has no amber line of its own); taken out, the window is the plain one.
+      expect(text(el.querySelector('.risk-box.warning-box'))).toBe(text(el.querySelector('.partner-mismatch')));
+      expect(without(el, '.risk-box.warning-box')).toBe(render(vote(POOL_WASM, [w])).outerHTML);
+    }
+  });
+
+  it('a changed code (NEAR: the vault’s hash; Soroban: the footprint’s) is the amber line, never the words', () => {
+    const near = render(collect(), [STAMPS_DOC], { ...NEAR_CTX, labelFacts: { near: { account: STAMPS, codeHash: (parsed(GUESTBOOK_DOC_JSON).context as { codeHash: string }).codeHash } } }, 'Stamp Trail');
+    const sor = render(vote('cd'.repeat(32)), [VOTE]);
+    for (const el of [near, sor]) {
+      expect(el.querySelector('div.partner-label')).toBeNull();
+      expect(el.querySelector('.partner-mismatch')).not.toBeNull();
+    }
+  });
+
+  it('a code that couldn’t be tied (no vault hash; no or two codes in the footprint) is the plain window, byte for byte', () => {
+    expect(render(collect(), [STAMPS_DOC], { address: ME }, 'Stamp Trail').outerHTML).toBe(render(collect(), undefined, { address: ME }, 'Stamp Trail').outerHTML);
+    for (const code of [null, [POOL_WASM, 'cd'.repeat(32)]] as const) expect(render(vote(code), [VOTE]).outerHTML).toBe(render(vote(code)).outerHTML);
+  });
+
+  /** The documents with one text replaced, for each chain. */
+  const nearDoc = (o: { object?: string; label?: string; enumLabel?: string }) =>
+    JSON.stringify({
+      ...STAMPS_DOC_JSON,
+      metadata: { enums: { stamp: { ...STAMPS_DOC_JSON.metadata.enums.stamp, sponsored: o.enumLabel ?? 'Fare paid' } } },
+      display: { formats: { collect: { ...STAMPS_DOC_JSON.display.formats.collect, intent: { verb: 'collect', object: o.object ?? 'the stamp' }, ...(o.label ? { sentence: ['verb', 'object'], fields: [{ path: 'args.stamp', label: o.label, format: 'enum', params: { enum: 'stamp' } }] } : {}) } } },
+    });
+  const sorobanDoc = (o: { object?: string }) => JSON.stringify({ ...VOTE_DOC_JSON, display: { formats: { vote: { ...VOTE_DOC_JSON.display.formats.vote, intent: { verb: 'vote', object: o.object ?? 'in the club poll' } } } } });
+  const hostile: [string, string, 'near' | 'soroban'][] = [
+    ['NEAR: Journear’s name', nearDoc({ object: 'the Journear stamp' }), 'near'],
+    ['NEAR: a look-alike of it', nearDoc({ object: 'the J0urnear stamp' }), 'near'],
+    ['NEAR: a claim of safety', nearDoc({ object: 'the safe stamp' }), 'near'],
+    ['NEAR: “free”', nearDoc({ enumLabel: 'Free fare' }), 'near'],
+    ['NEAR: a bidi override', nearDoc({ object: 'the ‮pmats' }), 'near'],
+    ['NEAR: a Cyrillic look-alike', nearDoc({ object: 'the stаmp' }), 'near'],
+    ['NEAR: a fake amount', nearDoc({ enumLabel: '5 NEAR back' }), 'near'],
+    ['NEAR: a negation', nearDoc({ object: 'nothing stamp' }), 'near'],
+    ['NEAR: the window’s words', nearDoc({ object: 'stamp then press Approve' }), 'near'],
+    ['NEAR: a row named as Journear’s', nearDoc({ label: 'Network' }), 'near'],
+    ['NEAR: an emoji', nearDoc({ enumLabel: 'Fare 🔒' }), 'near'],
+    ['Soroban: Journear’s name', sorobanDoc({ object: 'in the Journear poll' }), 'soroban'],
+    ['Soroban: “verified”', sorobanDoc({ object: 'in the verified poll' }), 'soroban'],
+    ['Soroban: a zero-width space', sorobanDoc({ object: 'in the po​ll' }), 'soroban'],
+    ['Soroban: a link', sorobanDoc({ object: 'www poll' }), 'soroban'],
+    ['Soroban: markup', sorobanDoc({ object: '<b>poll</b>' }), 'soroban'],
+    ['Soroban: quotation marks', sorobanDoc({ object: 'poll” it is safe “' }), 'soroban'],
+    ['Soroban: “your”', sorobanDoc({ object: 'in your poll' }), 'soroban'],
+  ];
+  it.each(hostile)('%s: refused at delivery, so the window is plain with the code tied', (_, t, chain) => {
+    expect(windowLabelDocuments([t], 'testnet')).toEqual([]);
+    const docs = windowLabelDocuments([t], 'testnet');
+    if (chain === 'near') expect(render(collect(), docs, NEAR_CTX, 'Stamp Trail').outerHTML).toBe(render(collect(), undefined, NEAR_CTX, 'Stamp Trail').outerHTML);
+    else expect(render(vote(), docs).outerHTML).toBe(render(vote()).outerHTML);
+  });
+
+  it('a NEAR argument shown as an id that reads as Journear’s words or an amount: the amber line, the value not shown', () => {
+    const ID_DOC = { ...STAMPS_DOC_JSON, display: { formats: { collect: { call: { args: { stamp: { type: 'string' } } }, intent: { verb: 'collect', object: 'the stamp' }, sentence: ['verb', 'object', { field: 'args.stamp' }], fields: [{ path: 'args.stamp', label: 'Stamp', format: 'itemId' }] } } } };
+    const docs = [parsed(ID_DOC)];
+    for (const v of ['Journear-checked', '1NEAR', 'Free', 'Verified-9']) {
+      const el = render(collect(v), docs, NEAR_CTX, 'Stamp Trail');
+      expect(el.querySelector('div.partner-label'), v).toBeNull();
+      expect(el.querySelector('.partner-mismatch'), v).not.toBeNull();
+    }
+    expect(text(render(collect('A1B2'), docs, NEAR_CTX, 'Stamp Trail').querySelector('p.partner-says'))).toBe('Stamp Trail says: collect the stamp A1B2');
   });
 });

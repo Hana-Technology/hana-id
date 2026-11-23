@@ -46,7 +46,7 @@ import {
   parsed,
   paymentTx,
 } from './partner-labels-fixtures.ts';
-import { addr, authPreimageBytes, i128, invocation, invokeOp, sourceAuth, txBytes, changeTrustOp } from './stellar-fixtures.ts';
+import { addr, authPreimageBytes, callFootprint, i128, invocation, invokeOp, sourceAuth, txBytes, changeTrustOp } from './stellar-fixtures.ts';
 import { xdr } from '@stellar/stellar-base';
 
 const STAMPS_DOC = parsed(STAMPS_DOC_JSON);
@@ -301,9 +301,23 @@ describe('NEAR: typed slots', () => {
 
 // ---- Soroban ----
 
-const sorobanTx = (fnName: string, args: xdr.ScVal[], o: { auth?: xdr.SorobanAuthorizationEntry[]; contract?: string; extra?: xdr.Operation[]; source?: string; fee?: string } = {}) =>
+/**
+ * A Soroban transaction calling `contract` (POOL): its footprint declares the code `code` (POOL_WASM; null for none),
+ * which is the transaction's own code hash (D900: the matcher never takes one for a transaction).
+ */
+const sorobanTx = (fnName: string, args: xdr.ScVal[], o: { auth?: xdr.SorobanAuthorizationEntry[]; contract?: string; extra?: xdr.Operation[]; source?: string; fee?: string; code?: string | readonly string[] | null; writes?: xdr.LedgerKey[] } = {}) =>
   labelRequestOf(
-    decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([invokeOp(o.contract ?? POOL, fnName, args, o.auth ?? [sourceAuth(invocation(o.contract ?? POOL, fnName, args))]), ...(o.extra ?? [])], { ...(o.source ? { source: o.source } : {}), ...(o.fee ? { fee: o.fee } : {}) }) }),
+    decodeApprovalRequest({
+      kind: 'stellar_tx',
+      chain: 'stellar',
+      address: USER,
+      context: { networkPassphrase: PASSPHRASE },
+      bytes: txBytes([invokeOp(o.contract ?? POOL, fnName, args, o.auth ?? [sourceAuth(invocation(o.contract ?? POOL, fnName, args))]), ...(o.extra ?? [])], {
+        ...(o.source ? { source: o.source } : {}),
+        ...(o.fee ? { fee: o.fee } : {}),
+        soroban: callFootprint(o.contract ?? POOL, o.code === undefined ? POOL_WASM : o.code, o.writes ?? []),
+      }),
+    }),
     USER,
   );
 const sorobanAuth = (root: xdr.SorobanAuthorizedInvocation) =>
@@ -329,8 +343,10 @@ describe('Soroban: a deposit and a payment to a listed account', () => {
   it('near-misses', () => {
     const args = [addr(USER), i128(25_000_000n)];
     const cases: [string, LabelMatchResult, string][] = [
-      ['no Wasm hash', run(SOROBAN_DOC, sorobanTx('deposit', args), null), 'no_code_hash'],
-      ['another Wasm hash', run(SOROBAN_DOC, sorobanTx('deposit', args), 'cd'.repeat(32)), 'code_hash_mismatch'],
+      ['no Wasm hash in the footprint', run(SOROBAN_DOC, sorobanTx('deposit', args, { code: null }), POOL_WASM), 'no_code_hash'],
+      ['another Wasm hash in the footprint (a caller’s fact is never used for a transaction)', run(SOROBAN_DOC, sorobanTx('deposit', args, { code: 'cd'.repeat(32) }), POOL_WASM), 'code_hash_mismatch'],
+      ['two Wasm hashes in the footprint', run(SOROBAN_DOC, sorobanTx('deposit', args, { code: [POOL_WASM, 'cd'.repeat(32)] }), POOL_WASM), 'no_code_hash'],
+      ['an authorization entry: no footprint, no fact', run(SOROBAN_DOC, sorobanAuth(invocation(POOL, 'deposit', args)), null), 'no_code_hash'],
       ['another contract', run(SOROBAN_DOC, sorobanTx('deposit', args, { contract: UNLISTED }), POOL_WASM), 'wrong_account'],
       ['another function', run(SOROBAN_DOC, sorobanTx('withdraw', args), POOL_WASM), 'wrong_method'],
       ['from someone else', run(SOROBAN_DOC, sorobanTx('deposit', [addr(OTHER), i128(1n)]), POOL_WASM), 'not_self'],

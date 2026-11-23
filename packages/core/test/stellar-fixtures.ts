@@ -100,6 +100,20 @@ export const contractDataKey = (contract: string) =>
 export const contractCodeKey = () =>
   xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash: hash(Buffer.from('wasm')) }));
 
+/** A ContractCode key for a Wasm hash given in hex (D900: the footprint's code). */
+export const codeKeyOf = (wasmHex: string) => xdr.LedgerKey.contractCode(new xdr.LedgerKeyContractCode({ hash: Buffer.from(wasmHex, 'hex') }));
+
+/** A stored-data key of `contract` (a persistent entry under the symbol `key`): what a call to it may write. */
+export const dataKeyOf = (contract: string, key = 'state') =>
+  xdr.LedgerKey.contractData(new xdr.LedgerKeyContractData({ contract: new Address(contract).toScAddress(), key: xdr.ScVal.scvSymbol(key), durability: xdr.ContractDataDurability.persistent() }));
+
+/**
+ * The footprint a call to `contract` running `wasm` has (D900): its instance and its code read, its own data written;
+ * `writes` adds other read-write keys (a balance elsewhere), `code` other or no code keys.
+ */
+export const callFootprint = (contract: string, wasm: string | readonly string[] | null, writes: xdr.LedgerKey[] = []) =>
+  sorobanData([contractDataKey(contract), ...(wasm === null ? [] : (typeof wasm === 'string' ? [wasm] : wasm).map(codeKeyOf))], [dataKeyOf(contract), ...writes]);
+
 export const accountKey = (account: string) =>
   xdr.LedgerKey.account(new xdr.LedgerKeyAccount({ accountId: Keypair.fromPublicKey(account).xdrAccountId() }));
 

@@ -45,6 +45,9 @@
 //                                     the admin lanes', lane-labels.ts): the approval window's tests need a label that
 //                                     is served, not its lifecycle. PARTNER_LABELS is "on" in this Worker's env only.
 //   POST /__e2e/labels/remove         {labelId}: the entry is removed now (what an owner's removal does to delivery)
+//   POST /__e2e/near-code             {account, codeHash, fallbackCodeHash?}: the account's code on the mocked chain as
+//                                     `view_account` answers it on the env's rpc, and on its rpcFallback (the same unless
+//                                     given: D900's two providers agreeing or not); codeHash null forgets the account
 //   GET  /__e2e/app-reads?pk=<pk>     {reads: [ms…]}: when the vault's GET /v1/app reads of that app arrived (D896: a test
 //                                     waits for the vault's labels read to be older than its freshness window)
 //   GET  /__e2e/wallets?address=<a>   [{userId, supportCode, internalId, scopeId, wallets: [{chain, address}],
@@ -643,6 +646,13 @@ export class MockApi {
       } catch (e) {
         return e instanceof HttpError ? json(e.status, { error: e.code }) : json(400, { error: 'bad_label' });
       }
+    }
+    if (p === '/__e2e/near-code' && req.method === 'POST') {
+      const { account, codeHash, fallbackCodeHash } = (await req.json()) as { account?: unknown; codeHash?: unknown; fallbackCodeHash?: unknown };
+      if (typeof account !== 'string' || !(codeHash === null || typeof codeHash === 'string') || !(fallbackCodeHash === undefined || typeof fallbackCodeHash === 'string')) return json(400, { error: 'bad_request' });
+      if (codeHash === null) this.chain.contractCode.delete(account);
+      else this.chain.contractCode.set(account, { primary: codeHash, fallback: fallbackCodeHash ?? codeHash });
+      return json(200, {});
     }
     if (p === '/__e2e/app-reads' && req.method === 'GET') return json(200, { reads: this.appReads.get(url.searchParams.get('pk') ?? '') ?? [] });
     if (p === '/__e2e/labels/remove' && req.method === 'POST') {

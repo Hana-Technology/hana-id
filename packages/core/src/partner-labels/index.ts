@@ -9,3 +9,4 @@ export * from './text-rules.ts';
 export * from './schema.ts';
 export * from './match.ts';
 export * from './context.ts';
+export * from './code.ts';

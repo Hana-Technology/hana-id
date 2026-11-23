@@ -1417,7 +1417,7 @@ export interface ApprovalRenderContext extends NearRenderContext {
    * `windowLabelDocuments`). Absent or empty: the window exactly as without labels.
    */
   readonly partnerLabels?: readonly LabelDocument[];
-  /** D896: what only the chain can tell a label match (a contract's code hash); read by a later piece, none today. */
+  /** D900: what only the chain can tell a label match: a NEAR account's code hash, as the vault read it. */
   readonly labelFacts?: WindowLabelFacts;
 }
 

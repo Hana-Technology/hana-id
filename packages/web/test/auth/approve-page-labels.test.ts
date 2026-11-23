@@ -9,7 +9,8 @@ import { Keypair } from '@stellar/stellar-base';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
 import { startApprovePage } from '../../src/auth/approve-page.ts';
-import { OTHER, PASSPHRASE, PAYMENT_DOC_JSON, STAMPS_DOC_JSON, USER, paymentTx } from '../../../core/test/partner-labels-fixtures.ts';
+import { ME, NEAR_KEY, OTHER, PASSPHRASE, PAYMENT_DOC_JSON, STAMPS, STAMPS_DOC_JSON, STAMPS_HASH, USER, fn, paymentTx } from '../../../core/test/partner-labels-fixtures.ts';
+import { encodeNearDelegateAction } from '@hana-id/core';
 import { ENV, FakeWindow, PARTNER, type RemoteWindow, asWindow, remoteWindow, resetDom } from './helpers.ts';
 
 const T0 = 1_800_000_000_000;
@@ -129,5 +130,17 @@ describe('the approval page with partner labels (D896)', () => {
     expect(document.querySelector('h2.summary-headline')).toBeNull();
     send(request({ partnerLabels: 'x' }));
     expect(document.querySelector('h2.summary-headline')).toBeNull();
+  });
+
+  it('D900: a NEAR call with the vault’s code hash for its receiver: the box; without it, or for another account, the plain page', () => {
+    const bytes = encodeNearDelegateAction({ senderId: ME, receiverId: STAMPS, actions: [fn('collect', '{"stamp":"sponsored"}')], nonce: 7n, maxBlockHeight: 9n, publicKey: NEAR_KEY });
+    const base = request({ appName: 'Stamp Trail', kind: 'near_delegate', chain: 'near', address: ME, bytes, context: { nearNetwork: 'testnet' } });
+    const plain = screenOf(base);
+    const near = (account: string) => ({ near: { account, codeHash: STAMPS_HASH } });
+    const withHash = screenOf({ ...base, partnerLabels: [JSON.stringify(STAMPS_DOC_JSON)], partnerLabelFacts: near(STAMPS) });
+    expect(withHash).toContain('partner-label');
+    expect(document.querySelector('p.partner-says')?.textContent).toBe('Stamp Trail says: collect the stamp Fare paid');
+    expect(screenOf({ ...base, partnerLabels: [JSON.stringify(STAMPS_DOC_JSON)] })).toBe(plain);
+    expect(screenOf({ ...base, partnerLabels: [JSON.stringify(STAMPS_DOC_JSON)], partnerLabelFacts: near('other.testnet') })).toBe(plain);
   });
 });

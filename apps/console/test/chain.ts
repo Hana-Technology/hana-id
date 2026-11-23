@@ -30,6 +30,13 @@ export async function setChain(google: MockGoogle): Promise<void> {
   await put('jwks', google.jwks.body);
 }
 
+/** D900: an account's `view_account` answer (its code hash, a global contract), or `near_down` for an RPC that fails. */
+export async function setAccountView(account: string, view: { code_hash: string; global_contract_hash?: string | null; global_contract_account_id?: string | null }): Promise<void> {
+  await put(`view_account:${account}`, { amount: '1', locked: '0', storage_usage: 100, global_contract_hash: null, global_contract_account_id: null, block_height: 1, block_hash: '11111111111111111111111111111111', ...view });
+}
+export const setNearDown = () => put('near_down', true);
+export const clearNearDown = () => env.FAKE_UPSTREAM.prepare('DELETE FROM upstream WHERE key = ?').bind('near_down').run();
+
 /** An `Oidc` owner. */
 export const oidc = (sub: string) => ({ Oidc: { provider: 'google', sub } });
 
@@ -43,7 +50,14 @@ export function installChain(): void {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const req = input instanceof Request ? input : new Request(input, init);
     if (new URL(req.url).origin !== RPC) return real(input, init);
-    const body = (await req.json()) as { id: string; params: { method_name: string; args_base64: string } };
+    const body = (await req.json()) as { id: string; params: { method_name: string; args_base64: string; request_type?: string; account_id?: string } };
+    if (body.params.request_type === 'view_account') {
+      // D900: the Request labels form's code read; `near_down` answers 503 for every account.
+      if (await env.FAKE_UPSTREAM.prepare('SELECT 1 FROM upstream WHERE key = ?').bind('near_down').first()) return new Response('down', { status: 503 });
+      const row = await env.FAKE_UPSTREAM.prepare('SELECT json FROM upstream WHERE key = ?').bind(`view_account:${body.params.account_id}`).first<{ json: string }>();
+      if (!row) return Response.json({ jsonrpc: '2.0', id: body.id, error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT' } } });
+      return Response.json({ jsonrpc: '2.0', id: body.id, result: JSON.parse(row.json) as unknown });
+    }
     const args = JSON.parse(atob(body.params.args_base64)) as { scope_id?: string };
     const key = body.params.method_name === 'get_scope' ? `get_scope:${args.scope_id}` : body.params.method_name;
     const row = await env.FAKE_UPSTREAM.prepare('SELECT json FROM upstream WHERE key = ?').bind(key).first<{ json: string }>();

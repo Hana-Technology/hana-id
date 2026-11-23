@@ -63,6 +63,7 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'POST', path: `${o}/owner-grants/og_unknown1/cancel`, body: {} },
     { method: 'GET', path: `${o}/scopes/${app.scope}` },
     { method: 'GET', path: `${o}/scopes/${app.scope}/labels` },
+    { method: 'GET', path: `${o}/near-code/club.testnet` },
     { method: 'GET', path: `${o}/scopes/${app.scope}/client-proof-helper?clientId=123-abc.apps.googleusercontent.com` },
     { method: 'POST', path: `${o}/scopes/${app.scope}/execute`, body: { changeId: 99 } },
     { method: 'GET', path: `${o}/usage?from=2026-10-01&to=2026-10-02` },

@@ -1,10 +1,12 @@
 // The partner label matcher (D892): is this request exactly the call a partner's label describes? A match hands back
 // the format, the sentence's parts and every field's value, each value the request's own and each with where its
 // meaning came from; anything else is a precise reason code. The matcher decides nothing about trust, warnings or
-// colours (the window does, a later piece): a partner label never removes, lowers or rewords a warning.
+// colours (the window does, D896): a partner label never removes, lowers or rewords a warning.
 //
-// It takes the contract's code hash as an input and requires it to equal the document's: who reads it from the chain
-// is a later piece, and a missing hash is no match. Pure: no network, no clock, no randomness.
+// The contract's code hash must equal the document's (D900, piece 5): for NEAR it is an input (the vault reads it from
+// both of its providers); for a Soroban transaction it is the transaction's own footprint (code.ts), never an input. A
+// missing hash is no match. A soft verb (it says no value moves) matches only a request that moves none Journear can
+// see. Pure: no network, no clock, no randomness.
 import { isNearAccountId } from '../addresses.ts';
 import { JsonNumber, type StrictJson, isJsonObject, parseStrictJson } from '../decode/json.ts';
 import { NEAR_ARGS_JSON_MAX_BYTES, formatNear } from '../decode/near.ts';
@@ -18,6 +20,8 @@ import type { NearAction } from '../near/codec.ts';
 import { COMBINING_RUN, QUOTE_LIKE } from '../reviewed-near-calls.ts';
 import { isDisplaySafeLine } from '../display-safe.ts';
 import { isNearCodeHash, isWasmHash } from './schema.ts';
+import { sorobanFootprintCode, sorobanWritesOnlyOwn } from './code.ts';
+import { SOFT_VERBS } from './words.ts';
 import type { ArgSpec, ArgType, LabelDocument, LabelField, LabelFormat, NearCallSpec, NearNetwork, PaymentCallSpec, RelayRule, SorobanCallSpec } from './schema.ts';
 import type { PartnerConnector, PartnerVerb } from './words.ts';
 
@@ -65,9 +69,14 @@ export function labelRequestOf(d: DecodedApproval, user: string): LabelRequest |
   }
 }
 
-/** What only the chain can tell, read by a later piece: the contract's code hash (NEAR base58) or Wasm hash (hex). */
+/** What only the chain can tell: the contract's code hash (NEAR base58) or Wasm hash (hex). */
 export interface LabelChainFacts {
-  /** null or absent: unknown, which is no match for a NEAR or Soroban label. */
+  /**
+   * NEAR: the receiver's code hash as the vault read it (D900: both providers agreeing at a final block). A Soroban
+   * authorization entry: a hash tied to the call by other means (the window has none, so it never matches). Never used
+   * for a Soroban transaction, whose code is its own footprint's (code.ts `sorobanFootprintCode`). null or absent:
+   * unknown, which is no match for a NEAR or Soroban label.
+   */
   readonly codeHash?: string | null;
   /**
    * Soroban only, optional: the function's parameter names from the contract's own spec (SEP-48 `contractspecv0`).
@@ -218,7 +227,12 @@ export type LabelNoMatchCode =
   /** a fee bump's inner transaction (not described in v1: its fee is someone else's envelope's). */
   | 'fee_bump'
   /** a classic transaction that moves value to someone else, but not as the one payment the document describes. */
-  | 'operation_mismatch';
+  | 'operation_mismatch'
+  /**
+   * D900: a soft verb (it says no value moves) over a request that can move value Journear can see: a NEAR deposit, a
+   * Soroban footprint that can write outside the contract's own data, or an authorization entry (no footprint).
+   */
+  | 'value_may_move';
 
 export interface LabelNoMatch {
   readonly ok: false;
@@ -532,6 +546,9 @@ function matchNear(doc: LabelDocument, req: Extract<LabelRequest, { kind: 'near'
   if (relay) return relay;
   if ('exactly' in call.deposit ? a.deposit !== BigInt(call.deposit.exactly) : a.deposit > BigInt(call.deposit.atMost)) return no('deposit_not_allowed', 'deposit');
   if (call.gasAtMost !== undefined && a.gas > BigInt(call.gasAtMost)) return no('gas_too_high', 'gas');
+  // A soft verb says no value moves: only over a call that attaches no NEAR (the parser already requires the document to
+  // say exactly 0; this is the request's own deposit, checked again).
+  if (SOFT_VERBS.has(format.intent.verb) && a.deposit !== 0n) return no('value_may_move', 'deposit');
   const parsed = nearArgs(a.args, call.args.length);
   if (!('args' in parsed)) return parsed;
   const obj = parsed.args;
@@ -590,7 +607,9 @@ function matchSoroban(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
     const f = req.invocation.function;
     if (f.type !== 'contractFn' || f.contract !== ctx.contract) return no('wrong_account', 'contract');
   }
-  const hash = codeHashFails(facts.codeHash, ctx.wasmHash, 'soroban');
+  // A transaction's code is its footprint's one ContractCode (enforced by the network when it runs, D900); an
+  // authorization entry has no footprint, so only a caller's fact can tie it to code (the window passes none).
+  const hash = codeHashFails(req.kind === 'stellar_tx' ? sorobanFootprintCode(req.tx) : facts.codeHash, ctx.wasmHash, 'soroban');
   if (hash) return hash;
   if (req.kind === 'stellar_tx') {
     const tx = req.tx;
@@ -624,6 +643,9 @@ function matchSoroban(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
   const relay = relayFails(spec.relayed, relayed);
   if (relay) return relay;
   if (spec.feeAtMost !== undefined && fee !== null && BigInt(fee) > BigInt(spec.feeAtMost)) return no('fee_too_high', 'fee');
+  // A soft verb says no value moves: only over a transaction that can change nothing but this contract's own data
+  // (its footprint, enforced by the network); never over an authorization entry, which has no footprint.
+  if (SOFT_VERBS.has(format.intent.verb) && (req.kind !== 'stellar_tx' || !sorobanWritesOnlyOwn(req.tx, ctx.contract))) return no('value_may_move', 'footprint');
   if (call.args.length > spec.args.length) return no('undeclared_arg', `args[${spec.args.length}]`);
   if (call.args.length < spec.args.length) return no('missing_arg', `args.${spec.args[call.args.length]!.name}`);
   const book = new Map(doc.metadata.addressBook.map((e) => [e.account, e.name]));
@@ -772,7 +794,7 @@ export function matchLabel(doc: LabelDocument, req: LabelRequest, facts: LabelCh
  * a token amount as the partner's description of the request's units, naming the app ("2,500,000 units, which Stamp
  * Trail says are 2.5 USDC"; "10 units of the unlisted token x.testnet, as Stamp Trail describes it"); NEAR's deposit,
  * dates and numbers as Journear wrote them; "your account" and a bare account as they are. The window renders the
- * structured parts itself (a later piece); this form is for tests and the console's preview.
+ * structured parts itself (D896); this form is for tests and the console's preview.
  */
 export function valuePlainText(v: RenderedValue, appName = 'the app'): string {
   switch (v.format) {
@@ -897,6 +919,44 @@ function exampleArg(spec: ArgSpec, field: LabelField | undefined, c: { doc: Labe
       return { kind: 'int', v: clamp(v, s.atLeast, s.atMost) };
     }
   }
+}
+
+/** D900: one argument of an example call: its declared name and type, and its value in the request's own form. */
+export interface ExampleArg {
+  readonly name: string;
+  readonly type: ArgType;
+  /** A decimal string for a number, the account or text as written, or a boolean. */
+  readonly value: string | boolean;
+}
+
+/**
+ * D900: the arguments of an example call of a NEAR or Soroban format, as `previewLabelDocument` picks them (meeting
+ * the format's own constraints where it can), with `user` as the account an `isSelf` argument names: for the console's
+ * preview to build a real request and show it through the window. Null for a format that isn't a NEAR or Soroban call.
+ * Pure.
+ */
+export function exampleCallArgs(doc: LabelDocument, key: string, user: string): ExampleArg[] | null {
+  const format = formatFor(doc, key);
+  if (!format || (format.chain !== 'near' && format.chain !== 'soroban')) return null;
+  const ctx = doc.context;
+  const near = ctx.chain === 'near' ? ctx.network : null;
+  const tokenNetwork: Parameters<typeof knownToken>[0] = ctx.chain === 'near' ? { kind: 'near', network: ctx.network } : { kind: 'stellar', networkPassphrase: ctx.chain === 'soroban' ? ctx.networkPassphrase : '' };
+  const fieldAt = (path: string) => format.fields.find((f) => f.path === path);
+  const values = new Map<string, ArgValue>();
+  for (const spec of format.call.args) {
+    const v = exampleArg(spec, fieldAt(`args.${spec.name}`), { doc, near, tokenNetwork });
+    values.set(spec.name, v.kind === 'account' && v.v === PREVIEW_USER ? { kind: 'account', v: user } : v);
+  }
+  for (const f of format.fields) {
+    if (f.params.format !== 'tokenAmount' || !('tokenPath' in f.params)) continue;
+    const name = f.params.tokenPath.replace(/^args\./u, '');
+    const spec = format.call.args.find((a) => a.name === name) as { oneOf?: readonly string[] } | undefined;
+    values.set(name, { kind: 'account', v: spec?.oneOf?.[0] ?? (near ? `token.${near}` : PREVIEW_STELLAR) });
+  }
+  return format.call.args.map((spec) => {
+    const v = values.get(spec.name)!;
+    return Object.freeze({ name: spec.name, type: spec.type, value: v.kind === 'bool' ? v.v : valueText(v) });
+  });
 }
 
 /**

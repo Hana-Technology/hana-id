@@ -611,6 +611,32 @@ describe('window messages', () => {
     expect(parseWindowMessage({ ...VALID_WINDOW['hana:consent-request'], partnerLabels: ['{}'] }, ['hana:consent-request'])).toBeNull();
   });
 
+  it('D900: approve-request takes `partnerLabelFacts` only beside labels: {near: {account, codeHash}}, a canonical hash', () => {
+    const H = 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn';
+    const ok = (partnerLabelFacts: unknown, partnerLabels: unknown = ['{}']) => parseWindowMessage({ ...APPROVE_REQUEST, ...(partnerLabels ? { partnerLabels } : {}), partnerLabelFacts }, ['hana:approve-request']) !== null;
+    expect(ok({ near: { account: 'club.testnet', codeHash: H } })).toBe(true);
+    expect(ok({ near: { account: 'club.testnet', codeHash: H } }, null)).toBe(false);
+    for (const bad of [
+      {},
+      { near: { account: 'club.testnet' } },
+      { near: { account: 'club.testnet', codeHash: H, extra: 1 } },
+      { near: { account: 'club.testnet', codeHash: H }, soroban: {} },
+      { near: { account: 'Club.testnet', codeHash: H } },
+      { near: { account: 'club.testnet', codeHash: `${H}1` } },
+      { near: { account: 'club.testnet', codeHash: `1${H}` } },
+      { near: { account: 'club.testnet', codeHash: '0OIl' } },
+      { near: { account: 'club.testnet', codeHash: 7 } },
+      { near: [] },
+      'x',
+      null,
+    ]) {
+      expect(ok(bad), JSON.stringify(bad)).toBe(false);
+    }
+    // The largest request with the most labels still fits with the facts.
+    const big = { ...APPROVE_REQUEST, bytes: new Uint8Array(SIGN_MESSAGE_MAX_BYTES), partnerLabels: ['x'.repeat(APPROVAL_LABELS_MAX_BYTES)] };
+    expect(parseWindowMessage({ ...big, partnerLabelFacts: { near: { account: `${'a'.repeat(56)}.testnet`, codeHash: H } } }, ['hana:approve-request'])).not.toBeNull();
+  });
+
   it('approve-request carries up to 192 KiB, other messages only 8 KiB', () => {
     expect(parseWindowMessage({ ...APPROVE_REQUEST, bytes: new Uint8Array(150_000) }, ['hana:approve-request'])).not.toBeNull();
     expect(parseWindowMessage({ ...AUTH_PARAMS, appName: 'x'.repeat(200) }, ['hana:auth-params'])).not.toBeNull();

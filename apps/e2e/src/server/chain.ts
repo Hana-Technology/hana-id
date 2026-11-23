@@ -293,6 +293,12 @@ export class Chain {
   readonly nearAccounts = new Map<string, bigint>();
   /** The demo guestbook's messages (contracts/hana-guestbook), oldest first. */
   readonly guestbook: { account_id: string; text: string; block_timestamp_ms: number }[] = [];
+  /**
+   * D900: contract accounts a partner label may describe, by account: the code hash `view_account` answers on the env's
+   * `rpc` (`primary`) and on its `rpcFallback` (`fallback`, the same unless a test sets another: two providers that
+   * disagree). Set by tests (`/__e2e/near-code`); test only, never deployed.
+   */
+  readonly contractCode = new Map<string, { primary: string; fallback: string }>();
   /** The stamps site's contract (contracts/hana-stamps). */
   readonly stamps = new StampsContract(E2E_STAMPS);
 
@@ -330,7 +336,7 @@ export class Chain {
   }
 
   /** NEAR JSON-RPC (only what the Hana pages, the API and the demo page call). */
-  rpc(body: unknown): Response {
+  rpc(body: unknown, endpoint: 'primary' | 'fallback' = 'primary'): Response {
     const req = body as { id?: unknown; method?: unknown; params?: Record<string, unknown> } | null;
     const id = req?.id ?? null;
     const ok = (result: unknown) => json(200, { jsonrpc: '2.0', id, result });
@@ -340,6 +346,10 @@ export class Chain {
       // The latest final block, or one by hash (the vault checks a testnet transaction's block hash is known).
       if (req.params?.finality === 'final' || req.params?.block_id === NEAR_BLOCK_HASH) return ok({ header: { height: Number(NEAR_HEIGHT), hash: NEAR_BLOCK_HASH } });
       return err('UNKNOWN_BLOCK');
+    }
+    if (req?.method === 'query' && req.params?.request_type === 'view_account' && this.contractCode.has(String(req.params.account_id))) {
+      const code = this.contractCode.get(String(req.params.account_id))!;
+      return ok({ amount: '0', locked: '0', code_hash: code[endpoint], storage_usage: 500, storage_paid_at: 0, global_contract_hash: null, global_contract_account_id: null, block_height: Number(NEAR_HEIGHT), block_hash: NEAR_BLOCK_HASH });
     }
     if (req?.method === 'query' && (req.params?.request_type === 'view_access_key' || req.params?.request_type === 'view_account')) {
       const nonce = this.nearAccounts.get(String(req.params.account_id));
@@ -384,13 +394,13 @@ export class Chain {
     return json(200, { jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
   }
 
-  /** The RPC over HTTP, with CORS for the pages. */
-  handler(): Handler {
+  /** The RPC over HTTP, with CORS for the pages: `endpoint` says which of the env's two it serves (D900's disagreement). */
+  handler(endpoint: 'primary' | 'fallback' = 'primary'): Handler {
     return async (request) => {
       const cors = { 'access-control-allow-origin': request.headers.get('origin') ?? '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' };
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
       if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
-      const res = this.rpc(await request.json().catch(() => null));
+      const res = this.rpc(await request.json().catch(() => null), endpoint);
       for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
       return res;
     };

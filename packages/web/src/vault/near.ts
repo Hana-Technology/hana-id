@@ -167,11 +167,29 @@ export class NearView {
    * separately (`independent` true, when the env has two; D263's rule for answers a lying provider could forge): every
    * provider must answer, and the caller gets each answer to check them all.
    */
-  private async reads(method: string, params: unknown, usable: (b: Record<string, unknown>) => boolean, independent: boolean): Promise<Record<string, unknown>[]> {
+  private async reads(method: string, params: unknown, usable: (b: Record<string, unknown>) => boolean, independent: boolean, timeoutMs = this.timeoutMs): Promise<Record<string, unknown>[]> {
     const ends = independent ? independentEndpoints(this.endpoints) : null;
-    if (!ends) return [await this.call(method, params, usable)];
-    const o = { id: 'hana-vault', usable, ...(this.timeoutMs ? { timeoutMs: this.timeoutMs } : {}) };
+    if (!ends) return [await nearCall(this.endpoints, this.fetchFn, method, params, { id: 'hana-vault', usable, ...(timeoutMs ? { timeoutMs } : {}) })];
+    const o = { id: 'hana-vault', usable, ...(timeoutMs ? { timeoutMs } : {}) };
     return Promise.all(ends.map((url) => nearCallAt(url, this.fetchFn, method, params, o)));
+  }
+
+  /**
+   * D900: a contract account's code as each of the env's two providers reports it, at final finality, one answer per
+   * provider (each read alone: see `reads`; one provider when the env has only one): its `code_hash` (as sent, checked
+   * by the caller's `agreedCodeHash`) and whether it names a global contract, or null when the account doesn't exist.
+   * Throws when a provider gives neither answer within `timeoutMs`. Only decides whether a partner's words may show.
+   */
+  async contractCode(accountId: string, timeoutMs: number): Promise<({ codeHash: unknown; global: boolean } | null)[]> {
+    const missing = (b: Record<string, unknown>) => isObj(b.error) && isObj(b.error.cause) && b.error.cause.name === 'UNKNOWN_ACCOUNT';
+    const answered = (b: Record<string, unknown>) => b.error === undefined && isObj(b.result) && 'code_hash' in b.result;
+    const bodies = await this.reads('query', { request_type: 'view_account', finality: 'final', account_id: accountId }, (b) => answered(b) || missing(b), true, timeoutMs);
+    return bodies.map((body) => {
+      if (missing(body)) return null;
+      const r = body.result as Record<string, unknown>;
+      const named = (v: unknown) => v !== undefined && v !== null;
+      return { codeHash: r.code_hash, global: named(r.global_contract_hash) || named(r.global_contract_account_id) };
+    });
   }
 
   /**

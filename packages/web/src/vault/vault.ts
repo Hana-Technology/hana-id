@@ -43,6 +43,7 @@ import {
   type AccountMethod,
   type AccountResult,
   type AppConfig,
+  type ApprovalSubject,
   type WalletChain,
   logoUrlOn,
   type LoginMethod,
@@ -105,8 +106,8 @@ import { type ConsentProof, VaultApi } from './api.ts';
 import { SHARE_LAUNCHER_HELLO_MS, type ConsentSigner, type SheetOutcome, ShareSheet, consentProof } from './email-share.ts';
 import { type CachedIdentity, cacheUsable, copyProofs, demoEventBody, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
 import { nearRecordedIn, nearRefusedIn, reportWallets, signWalletRecords } from './wallet-record.ts';
-import { type ApprovalOutcome, Approvals } from './approvals.ts';
-import { PARTNER_LABELS_FRESH_MS, PARTNER_LABELS_WAIT_MS, type VerifiedLabel, verifyDeliveredLabels, windowLabelTexts } from './partner-labels.ts';
+import { type ApprovalOutcome, Approvals, type WindowLabelSet } from './approvals.ts';
+import { NEAR_CODE_FRESH_MS, PARTNER_LABELS_FRESH_MS, PARTNER_LABELS_WAIT_MS, type VerifiedLabel, agreedCodeHash, nearLabelAccounts, verifyDeliveredLabels, windowLabelTexts } from './partner-labels.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, consentNotRecorded, disconnected, isConsentNotRecorded, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
@@ -657,6 +658,13 @@ export class Vault {
    * read is younger than PARTNER_LABELS_FRESH_MS on both clocks (`labelsForWindow`).
    */
   private labels: { docs: VerifiedLabel[]; at: number; sent: number } | null = null;
+  /**
+   * D900: what the vault last read of a labelled NEAR contract's code, by account: the hash both providers agreed on, or
+   * null (couldn't check), with when that read was sent (as `labels`). Used only while younger than NEAR_CODE_FRESH_MS.
+   */
+  private readonly nearCode = new Map<string, { codeHash: string | null; at: number; sent: number }>();
+  /** D900: the code reads in flight, by account (one at a time per account). */
+  private readonly nearCodeReads = new Map<string, Promise<void>>();
   /** Each GET /v1/app answer's round trip on this clock (pk_test_ login timings: `appRtt`). */
   private readonly appRtts = new WeakMap<AppConfig, number>();
   private declinedPolicyId: string | null = null;
@@ -803,8 +811,8 @@ export class Vault {
       onStop: () => void this.revokeAutoApprove(),
       onWindow: (open) => this.emit('approvalWindow', { open }),
       partnerLabels: {
-        forRequest: (subject) => this.labelsForWindow(subject.chain),
-        refresh: () => this.refreshLabels(),
+        forRequest: (subject) => this.labelsForWindow(subject),
+        refresh: (subject) => this.refreshLabels(subject),
       },
     });
     port.onmessage = (m) => void this.onPortMessage(m.data);
@@ -981,26 +989,90 @@ export class Vault {
   }
 
   /**
-   * What a request's window on `chain` gets (D896): the checked documents' texts for that chain while their read is
-   * younger than PARTNER_LABELS_FRESH_MS (on the larger of two clocks, as `policyFresh`); `'stale'` when there are some
-   * but the read is older (the queue reads again, once); none when the last answer had none.
+   * What a request's window gets (D896, D900): the checked documents' texts for its chain while their read is younger
+   * than PARTNER_LABELS_FRESH_MS (on the larger of two clocks, as `policyFresh`), and for a NEAR request to an account a
+   * document describes, that account's code hash while the vault's read of it is younger than NEAR_CODE_FRESH_MS (none
+   * when the providers didn't agree). `'stale'` when there are documents but either read is older (the queue reads
+   * again, once); none when the last answer had none.
    */
-  private labelsForWindow(chain: WalletChain): readonly string[] | 'stale' {
+  private labelsForWindow(subject: ApprovalSubject): WindowLabelSet | 'stale' {
     const l = this.labels;
-    if (!l) return [];
-    const texts = windowLabelTexts(l.docs, chain);
-    if (texts.length === 0) return [];
-    const age = Math.max(this.clock.now() - l.at, this.perfNow() - l.sent);
-    return age < PARTNER_LABELS_FRESH_MS ? texts : 'stale';
+    if (!l) return { texts: [] };
+    const texts = windowLabelTexts(l.docs, subject.chain);
+    if (texts.length === 0) return { texts: [] };
+    if (!this.fresh(l)) return 'stale';
+    const account = this.labelledNearReceiver(subject, l.docs);
+    if (account === null) return { texts };
+    const code = this.nearCode.get(account);
+    if (!code || !this.fresh(code, NEAR_CODE_FRESH_MS)) return 'stale';
+    return code.codeHash === null ? { texts } : { texts, nearCode: { account, codeHash: code.codeHash } };
   }
 
-  /** A fresh GET /v1/app for a window's labels, waited for at most PARTNER_LABELS_WAIT_MS; never rejects. */
-  private refreshLabels(): Promise<void> {
+  /** A read (sent at server-corrected `at`, perfNow `sent`) is younger than `ms` on both clocks. */
+  private fresh(r: { at: number; sent: number }, ms = PARTNER_LABELS_FRESH_MS): boolean {
+    return Math.max(this.clock.now() - r.at, this.perfNow() - r.sent) < ms;
+  }
+
+  /** The receiver of a NEAR request when a checked document describes that account, else null (no code read needed). */
+  private labelledNearReceiver(subject: ApprovalSubject, docs: readonly VerifiedLabel[]): string | null {
+    if (subject.chain !== 'near' || (subject.kind !== 'near_tx' && subject.kind !== 'near_delegate')) return null;
+    let receiver: string;
+    try {
+      receiver = subject.kind === 'near_tx' ? decodeNearTransaction(subject.bytes).receiverId : decodeNearDelegateAction(subject.bytes).receiverId;
+    } catch {
+      return null;
+    }
+    return nearLabelAccounts(docs).has(receiver) ? receiver : null;
+  }
+
+  /**
+   * A fresh GET /v1/app for a window's labels when theirs is due, and the code read of a labelled NEAR receiver when
+   * that is due (D900), side by side, waited for at most PARTNER_LABELS_WAIT_MS together; never rejects.
+   */
+  private refreshLabels(subject?: ApprovalSubject): Promise<void> {
     let timer: unknown = null;
     const late = new Promise<void>((resolve) => {
       timer = this.timers.setTimeout(resolve, PARTNER_LABELS_WAIT_MS);
     });
-    return Promise.race([this.refreshPolicy().catch(() => undefined), late]).finally(() => this.timers.clearTimeout(timer));
+    const l = this.labels;
+    const reads: Promise<unknown>[] = [];
+    if (!l || !this.fresh(l)) reads.push(this.refreshPolicy().catch(() => undefined));
+    // The documents the vault holds now say which account needs its code read; a newer answer that changes them is
+    // read again by the next request.
+    const account = l && subject ? this.labelledNearReceiver(subject, l.docs) : null;
+    if (account !== null) {
+      const code = this.nearCode.get(account);
+      if (!code || !this.fresh(code, NEAR_CODE_FRESH_MS)) reads.push(this.readNearCode(account));
+    }
+    return Promise.race([Promise.all(reads).then(() => undefined), late]).finally(() => this.timers.clearTimeout(timer));
+  }
+
+  /**
+   * D900: reads `account`'s code from both of the env's NEAR providers at final finality (one in a local* env with
+   * one) and keeps what they agree on, or null: a provider down, late (PARTNER_LABELS_WAIT_MS each), in disagreement, a
+   * global contract, a malformed answer, or an env with one provider outside local* envs. Never rejects; one read per
+   * account at a time.
+   */
+  private readNearCode(account: string): Promise<void> {
+    const running = this.nearCodeReads.get(account);
+    if (running) return running;
+    const at = this.clock.now();
+    const sent = this.perfNow();
+    const near = this.near;
+    const p = (async () => {
+      let codeHash: string | null = null;
+      if (near && (nearLocalEnv(this.env) || near.independentProviders())) {
+        try {
+          codeHash = agreedCodeHash(await near.contractCode(account, PARTNER_LABELS_WAIT_MS));
+        } catch {
+          codeHash = null;
+        }
+      }
+      const kept = this.nearCode.get(account);
+      if (!kept || kept.sent <= sent) this.nearCode.set(account, { codeHash, at, sent });
+    })().finally(() => this.nearCodeReads.delete(account));
+    this.nearCodeReads.set(account, p);
+    return p;
   }
 
   // ---- the policy in force ----

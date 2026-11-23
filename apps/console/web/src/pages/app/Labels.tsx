@@ -12,11 +12,14 @@ import type { AppSummary, LabelChangeView, LabelEntryView, LabelListAnswer } fro
 import { type LabelDocument, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
 import { useMemo } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ApiError, postJson } from '../../api.ts';
+import { ApiError, getJson, postJson } from '../../api.ts';
 import { clockTime, relative, useApi, useNow, useStepUp, useWrite, when } from '../../lib.tsx';
 import { Badge, Callout, ConfirmButton, Empty, ErrorNote, Loading, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
 import { DiffList, afterEmail } from '../../labels/Diff.tsx';
-import { LabelsEditor } from '../../labels/Editor.tsx';
+import { LabelsEditor, type NearCodeAnswer } from '../../labels/Editor.tsx';
+
+/** D900: a NEAR or Soroban entry shows only while the program runs the code its labels name. */
+export const CODE_TIED_NOTE = 'Users see these words only while your program runs the code these labels name.';
 import { problemsOfApi } from '../../labels/problems.ts';
 import { clockOffset, useApp, useReloadAt } from '../Apps.tsx';
 import { type ChainOwner, ChainOwnerGate, useChainOwner } from './ChainOwner.tsx';
@@ -139,8 +142,7 @@ function Entry({ e, ctl, chain }: { e: LabelEntryView; ctl: Ctl; chain: ChainOwn
         <span className="badges">
           {removed && <Badge tone="neutral">Removed</Badge>}
           {!removed && e.off && <Badge tone="danger">Switched off by Journear</Badge>}
-          {!removed && !e.off && e.current && <Badge tone="ok">{nearOrSoroban ? 'In force' : 'Live'}</Badge>}
-          {!removed && e.current && nearOrSoroban && <Badge tone="warn">Not shown to users yet</Badge>}
+          {!removed && !e.off && e.current && <Badge tone="ok">Live</Badge>}
           {!removed && e.waiting && <Badge tone="warn">{waitingState(e.waiting, ctl.now, ctl.delayMs).badge}</Badge>}
         </span>
       </div>
@@ -149,10 +151,10 @@ function Entry({ e, ctl, chain }: { e: LabelEntryView; ctl: Ctl; chain: ChainOwn
       {!removed && e.off && <Callout tone="danger">{e.off === 'entry' ? ENTRY_OFF : ORG_OFF[e.off]}</Callout>}
       {e.current && (
         <div className="labels-version">
-          <h4>{nearOrSoroban ? 'In force, not shown to users yet' : 'What users see now'}</h4>
-          {nearOrSoroban && <p className="muted small">Journear doesn’t show labels for this kind of request yet: users see the plain window. When shown, they will read:</p>}
+          <h4>What users see now</h4>
+          {nearOrSoroban && <p className="muted small">{CODE_TIED_NOTE}</p>}
           <Lines v={e.current} />
-          <p className="muted small">{nearOrSoroban ? 'In force' : 'Live'} since {when(e.current.activeFrom)}.</p>
+          <p className="muted small">Live since {when(e.current.activeFrom)}.</p>
         </div>
       )}
       {!e.current && !removed && !e.waiting && <p className="muted">Nothing of these labels is live: your users see the plain approval window for these requests.</p>}
@@ -339,6 +341,7 @@ export function Labels() {
           whyNot={whyNot}
           busy={step.busy}
           onCancel={() => navigate(base)}
+          readNearCode={(account) => getJson<NearCodeAnswer>(`/api/orgs/${org}/near-code/${encodeURIComponent(account)}`)}
           onReview={(text, appIds) => {
             void step.start('labels.set', { scopeId: app.scopeId, ...(entry ? { labelId: entry.id } : {}), document: text, appIds });
           }}

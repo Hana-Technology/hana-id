@@ -1,6 +1,7 @@
 // The request labels editor (D899): one entry's `journear-labels/1` document, built from a form, never written by hand.
-// A form per kind of request (a classic Stellar payment, shown to users today; a NEAR program and a Soroban contract,
-// marked "not shown to users yet"), the verb from Journear's list, the phrase, the values shown, the accounts and the
+// A form per kind of request (a classic Stellar payment; a NEAR program and a Soroban contract, each tied to the
+// program's code, D900, with how an upgrade affects them and, for NEAR, the code read from the network for the partner
+// to confirm), the verb from Journear's list, the phrase, the values shown, the accounts and the
 // limits; and an "Advanced" view of the document's text, which takes edits and round-trips with the form.
 //
 // Every problem is core's parser's and text rules' own answer (@hana-id/core/partner-labels, the code the API and the
@@ -21,7 +22,18 @@ export const WARN_MUXED = 'A muxed form (M…) of a listed account counts as tha
 export const WARN_PAYMENT_RED =
   'With a payment description, every time a user’s money goes to an account that isn’t in your list, Journear shows your users a red warning: paying someone, a swap that pays someone else, creating an account for someone, closing the account into another one, and sending a claimable balance. If your app’s users also pay other people, think twice before adding one.';
 export const SUGGEST_FEE = 'Set a highest network fee. Without one, a payment with an unusually high fee still shows your words (Journear’s own line always shows the fee).';
-export const NOT_SHOWN_YET = 'Not shown to users yet';
+// D900 (to confirm): labels tied to a program's code.
+export const CODE_TIED_TITLE = 'Tied to your program’s code';
+export const CODE_TIED_NEAR =
+  'Your words show only while the program at this account runs exactly the code hash below: Journear checks it with two NEAR providers when a user approves. If you change the program’s code, your users see an amber line instead of your words until new labels with the new code hash go live, after their wait. So propose the new labels first, and upgrade soon after they go live.';
+export const CODE_TIED_SOROBAN =
+  'Your words show only for a transaction your user signs in full that runs only this contract’s Wasm code (Stellar’s built-in token contracts aside), as the transaction itself declares. A call your user only authorizes for someone else to send shows Journear’s plain window. If you change the contract’s code, your users see an amber line instead of your words until new labels with the new Wasm hash go live, after their wait. So propose the new labels first, and upgrade soon after they go live.';
+export const SOROBAN_SOFT_VERBS = 'A verb that says nothing moves (such as join or vote) shows only when the transaction can change nothing but your contract’s own stored data.';
+export const NEAR_CODE_HINT = 'The code deployed at the account now (base58). Read it from the network, check it is the code you deployed, then use it.';
+export const WASM_HASH_HINT = '64 lowercase hex characters: the hash of the Wasm code your contract runs now, as shown when you uploaded it.';
+
+/** What the console's own NEAR endpoint says of an account's code (GET …/near-code/:account, D900). */
+export type NearCodeAnswer = { account: string; exists: false } | { account: string; exists: true; codeHash: string; sharedCode: boolean };
 
 /** What the form needs from the page around it. */
 export interface EditorProps {
@@ -39,6 +51,8 @@ export interface EditorProps {
   busy: boolean;
   onReview: (text: string, appIds: string[]) => void;
   onCancel: () => void;
+  /** D900: reads a NEAR account's code from the console's own endpoint (absent: no read is offered). */
+  readNearCode?: (account: string) => Promise<NearCodeAnswer>;
 }
 
 const FIELD_FORMAT_TEXT: Readonly<Record<FieldFormat, string>> = Object.freeze({
@@ -751,10 +765,60 @@ function FormatEditor({ d, f, fi, env, set, errs, removable, appName }: { d: Dra
   );
 }
 
+/**
+ * D900: "Read it from the network": the console's own NEAR endpoint's answer for the account, shown for the partner to
+ * check; the code hash is filled only when they press "Use this code hash". The approval window's vault reads the code
+ * itself, from two providers, whatever is typed here.
+ */
+function NearCodeRead({ account, env, read, current, use }: { account: string; env: Environment; read: (account: string) => Promise<NearCodeAnswer>; current: string; use: (hash: string) => void }) {
+  const [state, setState] = useState<{ for: string; answer: NearCodeAnswer } | { for: string; failed: true } | { for: string; busy: true } | null>(null);
+  const network = env === 'test' ? 'the NEAR test network' : 'the NEAR main network';
+  const shown = state && state.for === account ? state : null;
+  return (
+    <div className="near-code-read" aria-live="polite">
+      <button
+        type="button"
+        className="jp-btn jp-btn-secondary jp-btn-sm"
+        disabled={account === '' || (shown !== null && 'busy' in shown)}
+        onClick={() => {
+          const a = account;
+          setState({ for: a, busy: true });
+          read(a).then(
+            (answer) => setState({ for: a, answer }),
+            () => setState({ for: a, failed: true }),
+          );
+        }}
+      >
+        Read it from the network
+      </button>
+      {shown && 'failed' in shown && <p className="jp-error">Journear couldn’t read the network just now. Try again, or type the code hash.</p>}
+      {shown && 'answer' in shown && !shown.answer.exists && <p>This account has no program on {network}.</p>}
+      {shown && 'answer' in shown && shown.answer.exists && shown.answer.sharedCode && (
+        <p>This account runs shared code another account publishes, so its code can change without it: Journear doesn’t show labels for it.</p>
+      )}
+      {shown && 'answer' in shown && shown.answer.exists && !shown.answer.sharedCode && (
+        <div className="near-code-answer">
+          <p>
+            On {network} now: <code className="mono">{shown.answer.codeHash}</code>
+          </p>
+          <p className="muted small">Check it is the code you deployed before you use it.</p>
+          {current === shown.answer.codeHash ? (
+            <p className="muted small">The code hash above is this one.</p>
+          ) : (
+            <button type="button" className="jp-btn jp-btn-secondary jp-btn-sm" onClick={() => use((shown.answer as { codeHash: string }).codeHash)}>
+              Use this code hash
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const KIND_CHOICES = [
-  { value: 'stellar' as const, title: 'Payments to your accounts (Stellar)', detail: 'A user pays one of your Stellar accounts. Shown to users today.' },
-  { value: 'near' as const, title: 'A NEAR program', detail: 'Calls to your NEAR program’s methods.', badge: <span className="jp-badge jp-badge-warn">{NOT_SHOWN_YET}</span> },
-  { value: 'soroban' as const, title: 'A Soroban contract', detail: 'Calls to your Stellar smart contract’s functions.', badge: <span className="jp-badge jp-badge-warn">{NOT_SHOWN_YET}</span> },
+  { value: 'stellar' as const, title: 'Payments to your accounts (Stellar)', detail: 'A user pays one of your Stellar accounts.' },
+  { value: 'near' as const, title: 'A NEAR program', detail: 'Calls to your NEAR program’s methods, while it runs the code you name.' },
+  { value: 'soroban' as const, title: 'A Soroban contract', detail: 'Calls to your Stellar smart contract’s functions, in transactions your users sign in full.' },
 ];
 
 /** The scope's network in words (the one every document of this scope describes). */
@@ -845,8 +909,9 @@ export function LabelsEditor(p: EditorProps) {
           />
         )}
         {draft && draft.kind !== 'stellar' && (
-          <Callout tone="warn" title={NOT_SHOWN_YET}>
-            <p>Journear can’t show labels for {draft.kind === 'near' ? 'NEAR programs' : 'Soroban contracts'} until it checks the program’s code, which comes later. You can prepare and propose them now; your users see Journear’s plain window until then.</p>
+          <Callout tone="info" title={CODE_TIED_TITLE}>
+            <p>{draft.kind === 'near' ? CODE_TIED_NEAR : CODE_TIED_SOROBAN}</p>
+            {draft.kind === 'soroban' && <p>{SOROBAN_SOFT_VERBS}</p>}
           </Callout>
         )}
 
@@ -909,10 +974,11 @@ export function LabelsEditor(p: EditorProps) {
                   <Field label="Its account" error={errs('context.account')}>
                     {(c) => <input {...c} className="jp-input mono" value={draft.nearAccount} placeholder={env === 'test' ? 'stamps.example.testnet' : 'stamps.example.near'} onChange={(e) => set((x) => void (x.nearAccount = e.target.value.trim()))} />}
                   </Field>
-                  <Field label="Its code hash" hint="As NEAR shows it for the account (base58)." error={errs('context.hash')}>
+                  <Field label="Its code hash" hint={NEAR_CODE_HINT} error={errs('context.hash')}>
                     {(c) => <input {...c} className="jp-input mono" value={draft.codeHash} onChange={(e) => set((x) => void (x.codeHash = e.target.value.trim()))} />}
                   </Field>
                 </div>
+                {p.readNearCode && <NearCodeRead account={draft.nearAccount} env={env} read={p.readNearCode} current={draft.codeHash} use={(h) => set((x) => void (x.codeHash = h))} />}
               </fieldset>
             )}
             {draft.kind === 'soroban' && (
@@ -922,7 +988,7 @@ export function LabelsEditor(p: EditorProps) {
                   <Field label="Its contract id" error={errs('context.account')}>
                     {(c) => <input {...c} className="jp-input mono" value={draft.contract} placeholder="C…" onChange={(e) => set((x) => void (x.contract = e.target.value.trim()))} />}
                   </Field>
-                  <Field label="Its Wasm hash" hint="64 lowercase hex characters." error={errs('context.hash')}>
+                  <Field label="Its Wasm hash" hint={WASM_HASH_HINT} error={errs('context.hash')}>
                     {(c) => <input {...c} className="jp-input mono" value={draft.wasmHash} onChange={(e) => set((x) => void (x.wasmHash = e.target.value.trim()))} />}
                   </Field>
                 </div>

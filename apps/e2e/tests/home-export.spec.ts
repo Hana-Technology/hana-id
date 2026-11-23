@@ -566,7 +566,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   await openApp();
   await signInAgain(home);
   await expect(s.title).toHaveText('Your wallet is open', { timeout: 20_000 });
-  await expect(home.locator('#home-export-mismatch')).toContainText('different from the wallet’s own');
+  await expect(home.locator('#home-export-mismatch')).toContainText('record shows a different address for this wallet');
   await expect(home.locator('#home-export-address-evm')).toHaveText(wallet.evm);
   await shots(home, 'h8-12-wallet-open-address-mismatch', browserName);
 

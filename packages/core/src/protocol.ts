@@ -1112,6 +1112,12 @@ export interface WindowMessageMap {
      * pages take.
      */
     partnerLabels?: string[];
+    /**
+     * What only the chain can tell a label match, as the vault read it: for a NEAR request to an account a label
+     * describes, that account's code hash (canonical base58 of 32 bytes) when both of the env's providers agreed on it
+     * at a final block. Only beside `partnerLabels`; the popup uses it only when `account` is the request's receiver.
+     */
+    partnerLabelFacts?: { near: { account: string; codeHash: string } };
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -1325,8 +1331,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels', 'partnerLabelFacts'])) return false;
     if (m.partnerLabels !== undefined && !isLabelTexts(m.partnerLabels)) return false;
+    if (m.partnerLabelFacts !== undefined && (m.partnerLabels === undefined || !isLabelFacts(m.partnerLabelFacts))) return false;
     if (m.mainnetDemo !== undefined && (m.mainnetDemo !== true || m.testApp !== true)) return false;
     if (m.demoPrices !== undefined && !isPlainObject(m.demoPrices)) return false;
     if (m.logoUrl !== undefined && !isLogoUrl(m.logoUrl)) return false;
@@ -1412,6 +1419,20 @@ function isLabelTexts(v: unknown): v is string[] {
     if (total > APPROVAL_LABELS_MAX_BYTES) return false;
   }
   return true;
+}
+
+/** D900: `{near: {account, codeHash}}`, a NEAR account id and a canonical base58 hash of 32 bytes, nothing else. */
+function isLabelFacts(v: unknown): boolean {
+  if (!isPlainObject(v) || !exactKeys(v, ['near'])) return false;
+  const n = v.near;
+  if (!isPlainObject(n) || !exactKeys(n, ['account', 'codeHash'])) return false;
+  if (typeof n.account !== 'string' || !isNearAccountId(n.account) || typeof n.codeHash !== 'string' || n.codeHash.length > 44) return false;
+  try {
+    const bytes = base58.decode(n.codeHash);
+    return bytes.length === 32 && base58.encode(bytes) === n.codeHash;
+  } catch {
+    return false;
+  }
 }
 
 function isAutoApproveNote(v: unknown): v is AutoApproveNote {

@@ -7,7 +7,7 @@
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { actionOf, breathe, createAction, getAs, member, postAs, stepUp } from './c10.ts';
-import { installChain, oidc, setChain, setScope, uninstallChain } from './chain.ts';
+import { clearNearDown, installChain, oidc, setAccountView, setChain, setNearDown, setScope, uninstallChain } from './chain.ts';
 import { MockGoogle } from './google.ts';
 import { auditRows, db, hana, linkPair, seedHotApp, system } from './helpers.ts';
 
@@ -209,3 +209,48 @@ describe('after PR 126’s review (D899)', () => {
     expect(await db.prepare("SELECT COUNT(*) AS n FROM pending_actions WHERE org_id = ? AND kind = 'labels.remove'").bind(m.org).first('n')).toBe(1);
   });
 });
+
+describe('D900: the NEAR form’s code read (GET …/near-code/:account)', () => {
+  const H = 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn';
+  it('any member reads an account’s code as the console’s endpoint has it now; unknown and shared code say so', async () => {
+    const m = await member('viewer');
+    await setAccountView('club-d900.testnet', { code_hash: H });
+    await setAccountView('shared-d900.testnet', { code_hash: H, global_contract_account_id: 'publisher.testnet' });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/club-d900.testnet`)).body).toEqual({ account: 'club-d900.testnet', exists: true, codeHash: H, sharedCode: false });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/shared-d900.testnet`)).body).toEqual({ account: 'shared-d900.testnet', exists: true, codeHash: H, sharedCode: true });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/nobody-d900.testnet`)).body).toEqual({ account: 'nobody-d900.testnet', exists: false });
+    // After PR 128's review: nearcore's real shapes. An account with no program, and a global contract's account (all 1s,
+    // the field set), and a node that omits the global fields: never a hash to use.
+    await setAccountView('plain-d900.testnet', { code_hash: '11111111111111111111111111111111' });
+    await setAccountView('global-d900.testnet', { code_hash: '11111111111111111111111111111111', global_contract_account_id: 'publisher.testnet' });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/plain-d900.testnet`)).body).toEqual({ account: 'plain-d900.testnet', exists: true, codeHash: null, sharedCode: false });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/global-d900.testnet`)).body).toEqual({ account: 'global-d900.testnet', exists: true, codeHash: null, sharedCode: true });
+    await setAccountView('old-node-d900.testnet', { code_hash: '11111111111111111111111111111111' }, { omitGlobal: true });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/old-node-d900.testnet`)).body).toEqual({ account: 'old-node-d900.testnet', exists: true, codeHash: null, sharedCode: false });
+  });
+
+  it('a malformed account is refused; an RPC that fails is near_unavailable, never a guess', async () => {
+    const m = await member('owner');
+    const bad = await getAs(m, `/api/orgs/${m.org}/near-code/Club.testnet`);
+    expect(bad.status).toBe(404);
+    const dots = await getAs<{ error: { code: string } }>(m, `/api/orgs/${m.org}/near-code/a..b`);
+    expect(dots.status).toBe(400);
+    expect(dots.body.error.code).toBe('bad_request');
+    await setNearDown();
+    try {
+      const down = await getAs<{ error: { code: string } }>(m, `/api/orgs/${m.org}/near-code/club-d900.testnet`);
+      expect(down.status).toBe(503);
+      expect(down.body.error.code).toBe('near_unavailable');
+    } finally {
+      await clearNearDown();
+    }
+  });
+
+  it('another org’s member path, or none signed in: not answered', async () => {
+    const m = await member('viewer');
+    const other = await member('viewer');
+    expect((await getAs(m, `/api/orgs/${other.org}/near-code/club-d900.testnet`)).status).toBeGreaterThanOrEqual(400);
+    expect((await getAs({ cs: '' }, `/api/orgs/${m.org}/near-code/club-d900.testnet`)).status).toBeGreaterThanOrEqual(400);
+  });
+});
+

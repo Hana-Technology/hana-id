@@ -262,6 +262,8 @@ export class FakeBackend {
   /** NEAR access keys the fake RPC knows (`view_access_key`): `account|ed25519:…` → nonce, read at `nearHeight`. */
   readonly nearKeys = new Map<string, number>();
   nearHeight = 277_000_000;
+  /** D900: contract accounts the fake RPC knows (`view_account`): their code hash, and a global contract if any. */
+  readonly nearCode = new Map<string, { codeHash: string; globalAccount?: string; globalHash?: string; omitGlobal?: true }>();
   readonly relay = new Map<string, { iv: string; ct: string } | 'consumed'>();
   readonly calls: ApiCall[] = [];
   readonly rpcCalls: { method: string; params: Record<string, unknown>; endpoint: string }[] = [];
@@ -273,6 +275,8 @@ export class FakeBackend {
   sharedClients: [string, string][] = [['google', CLIENT_ID]];
   /** RPC endpoints (origins) that fail every call with a network error. */
   readonly rpcDown = new Set<string>();
+  /** D900: RPC endpoints (origins) that never answer (until the caller's own timeout aborts the request). */
+  readonly rpcHang = new Set<string>();
   /**
    * A lying (or stale) provider: per endpoint (origin), a view answer that differs from the chain's; `undefined` from
    * the function gives the honest answer.
@@ -495,6 +499,10 @@ export class FakeBackend {
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as unknown) : undefined;
     if (url.origin === ENV.rpc || url.origin === RPC_FALLBACK) {
       if (this.rpcDown.has(url.origin)) throw new TypeError('Failed to fetch');
+      if (this.rpcHang.has(url.origin)) {
+        const signal = init?.signal;
+        return new Promise<Response>((_, reject) => signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+      }
       return this.rpc(body as { method: string; params: Record<string, unknown> }, url.origin);
     }
     if (url.href === 'https://www.googleapis.com/oauth2/v3/certs') return json(200, { keys: [] });
@@ -799,6 +807,14 @@ export class FakeBackend {
     this.rpcCalls.push({ ...body, endpoint });
     const lied = this.rpcLies.get(endpoint)?.(body);
     if (lied !== undefined) return json(200, { jsonrpc: '2.0', id: 'x', ...lied });
+    if (body.method === 'query' && body.params.request_type === 'view_account') {
+      const c = this.nearCode.get(body.params.account_id as string);
+      if (c === undefined) return json(200, { jsonrpc: '2.0', id: 'x', error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT', info: {} } } });
+      // nearcore's AccountView: a global contract's account reports code_hash all 1s (the default) with the global field set;
+      // an older node omits the global fields altogether (`omitGlobal`).
+      const global = c.omitGlobal ? {} : { global_contract_hash: c.globalHash ?? null, global_contract_account_id: c.globalAccount ?? null };
+      return json(200, { jsonrpc: '2.0', id: 'x', result: { amount: '1', locked: '0', code_hash: c.codeHash, storage_usage: 100, storage_paid_at: 0, ...global, block_height: this.nearHeight, block_hash: '11111111111111111111111111111111' } });
+    }
     if (body.method === 'query' && body.params.request_type === 'view_access_key') {
       const nonce = this.nearKeys.get(`${body.params.account_id as string}|${body.params.public_key as string}`);
       if (nonce === undefined) return json(200, { jsonrpc: '2.0', id: 'x', error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCESS_KEY', info: {} } } });

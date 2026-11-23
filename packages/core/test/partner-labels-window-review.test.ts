@@ -63,11 +63,13 @@ describe('item 3: what the request is comes first; a request the document doesn�
     const auth = labelRequestOf(decodeApprovalRequest({ kind: 'stellar_auth_entry', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: authPreimageBytes(invocation(ROUTER, 'swap', args, [invocation(POOL, 'deposit', args)])) }), USER)!;
     expect(kind(matchLabel(SOROBAN, auth, { codeHash: POOL_WASM }))).toBe('not_described');
   });
-  it('a Soroban call to the described contract with no code hash is couldn’t-check whatever its shape (nothing until piece 5)', () => {
+  it('a Soroban call to the described contract with no code hash (no footprint: D900) is couldn’t-check whatever its shape', () => {
     const args = [addr(USER), i128(5n)];
-    for (const req of [ops([invokeOp(POOL, 'deposit', args, [sourceAuth(invocation(POOL, 'deposit', args))]), Operation.bumpSequence({ bumpTo: '9' })]), ops([invokeOp(POOL, 'deposit', args, [sourceAuth(invocation(POOL, 'deposit', args, [invocation(ROUTER, 'x', [])]))])]), ops([invokeOp(POOL, 'withdraw', args)])]) {
+    for (const req of [ops([invokeOp(POOL, 'deposit', args, [sourceAuth(invocation(POOL, 'deposit', args))]), Operation.bumpSequence({ bumpTo: '9' })]), ops([invokeOp(POOL, 'deposit', args, [sourceAuth(invocation(POOL, 'deposit', args, [invocation(ROUTER, 'x', [])]))])])]) {
       expect(kind(matchLabel(SOROBAN, req, {}))).toBe('couldnt_check');
     }
+    // A function the document doesn't describe is not described, before any code (D900, after PR 128's review).
+    expect(kind(matchLabel(SOROBAN, ops([invokeOp(POOL, 'withdraw', args)]), {}))).toBe('not_described');
   });
 });
 

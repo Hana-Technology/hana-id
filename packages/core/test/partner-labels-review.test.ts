@@ -231,7 +231,8 @@ describe('items 8, 9, 10, 13: the matcher’s inputs and outputs', () => {
   });
   it('classifies every no-match', () => {
     const all: LabelNoMatchCode[] = ['wrong_chain', 'wrong_network', 'wrong_account', 'wrong_method', 'wrong_operation', 'calls_own_account', 'journear_reads_this', 'not_a_function_call', 'no_code_hash', 'bad_code_hash_input', 'network_not_checked', 'code_hash_mismatch', 'no_contract_code', 'deposit_not_allowed', 'undeclared_arg', 'enum_value_not_listed', 'spec_mismatch'];
-    expect(all.map(noMatchKind)).toEqual(['not_described', 'not_described', 'not_described', 'not_described', 'not_described', 'not_described', 'not_described', 'not_described', 'couldnt_check', 'couldnt_check', 'couldnt_check', 'described_mismatch', 'described_mismatch', 'described_mismatch', 'described_mismatch', 'described_mismatch', 'described_mismatch']);
+    expect(all.map(noMatchKind)).toEqual(['not_described', 'not_described', 'not_described', 'not_described', 'not_described', 'not_described', 'not_described', 'not_described', 'couldnt_check', 'couldnt_check', 'couldnt_check', 'described_mismatch', 'couldnt_check', 'described_mismatch', 'described_mismatch', 'described_mismatch', 'described_mismatch']);
+    // D900, after PR 128's review: an account with no code of its own (all 1s) is couldn't check, the plain window.
   });
 });
 

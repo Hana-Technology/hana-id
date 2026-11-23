@@ -9,8 +9,10 @@
 // A request a document describes but that doesn't meet its description adds one line in Journear's voice instead, and
 // never the partner's words: amber ("{App} describes this kind of request, but this one doesn’t match…"), or red for
 // a classic payment to an account the app hasn't listed. A request no document describes, or one Journear couldn't
-// check (a NEAR or Soroban contract's code hash is read by a later piece, so today those never match), is the plain
-// window, exactly as without labels.
+// check, is the plain window, exactly as without labels. D900: a NEAR document matches only with the vault's code hash
+// for its account (both of its providers agreeing at a final block); a Soroban document only a transaction whose own
+// footprint names the document's Wasm hash as its one code (the matcher reads it; nothing is read for it), never an
+// authorization entry. A code hash that differs is the amber line; one that couldn't be read is the plain window.
 //
 // Where the documents come from: the vault's own fresh `GET /v1/app` read (vault.ts `labelsForWindow`), checked there,
 // sent with the request (hana:approve-request `partnerLabels`), and parsed here again with this page's own parser.
@@ -66,8 +68,17 @@ export type LabelOutcome =
 
 const NONE: LabelOutcome = Object.freeze({ kind: 'none' });
 
-/** What only the chain can tell, read by a later piece (D892's piece 5): none is passed today. */
-export type WindowLabelFacts = Pick<LabelChainFacts, 'codeHash' | 'sorobanParams'>;
+/**
+ * What only the chain can tell, as the vault sent it (D900, hana:approve-request `partnerLabelFacts`): a NEAR account's
+ * code hash both of its providers agreed on. Used only for a NEAR request whose receiver is that account; a Soroban
+ * transaction's code is its own footprint's, never a fact from outside.
+ */
+export interface WindowLabelFacts {
+  readonly near?: { readonly account: string; readonly codeHash: string };
+}
+
+/** The receiver of a decoded NEAR request, or null for any other kind. */
+const nearReceiver = (d: DecodedApproval): string | null => (d.kind === 'near_tx' ? d.tx.receiverId : d.kind === 'near_delegate' ? d.delegate.receiverId : null);
 
 /**
  * The outcome for `decoded` (the page's own decode) against `docs`. `user` is the vault's address on the request's
@@ -80,7 +91,10 @@ export function labelOutcome(decoded: DecodedApproval, docs: readonly LabelDocum
   if (docs.length === 0) return NONE;
   const req = labelRequestOf(decoded, o.user);
   if (!req) return NONE;
-  const facts: LabelChainFacts = { ...(o.facts ?? {}), networkChecked: o.networkChecked, reviewedNear: o.reviewedNear };
+  // The vault's code hash counts only for the account it was read for, and only on a NEAR request to it.
+  const near = o.facts?.near;
+  const codeHash = near && nearReceiver(decoded) === near.account ? near.codeHash : null;
+  const facts: LabelChainFacts = { codeHash, networkChecked: o.networkChecked, reviewedNear: o.reviewedNear };
   let match: LabelMatch | null = null;
   let mismatch = false;
   let notListed = false;

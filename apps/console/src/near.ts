@@ -101,3 +101,55 @@ export async function viewScope(env: { NEAR_RPC: string; SIGNER_ACCOUNT: string 
 
 /** The scope's `Owner::Oidc` owners as `{provider, sub}`. */
 export const oidcOwners = (s: ScopeView): { provider: string; sub: string }[] => s.owners.flatMap((o) => ('Oidc' in o ? [o.Oidc] : []));
+
+/** The code hash of an account with no program of its own: 32 zero bytes in base58. */
+const NO_PROGRAM = '11111111111111111111111111111111';
+
+/** What `view_account` says of a NEAR account's code (D900): its code hash, and whether it runs code another account publishes. */
+export interface ContractCodeView {
+  /**
+   * Base58, as the node sent it (the console shows it for the partner to confirm; nothing trusts it), or null when it is
+   * the all-1s hash NEAR reports for an account with no program of its own (and for a global contract's account).
+   */
+  codeHash: string | null;
+  /** A global contract (`global_contract_hash` or `global_contract_account_id` set): its code can change without it. */
+  sharedCode: boolean;
+}
+
+/**
+ * D900: `view_account` of `account` at final finality on the manifest's read-only RPC, uncached: its code, or null when
+ * the account doesn't exist. For the Request labels form's "Read it from the network": the value is shown to the
+ * partner, who confirms it; the approval window's vault reads the code itself from both of its providers.
+ * `NearUnavailable` for a node that doesn't answer, answers late or answers something else.
+ */
+export async function viewContractCode(env: { NEAR_RPC: string }, account: string): Promise<ContractCodeView | null> {
+  let res: Response;
+  try {
+    res = await fetch(env.NEAR_RPC, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'console', method: 'query', params: { request_type: 'view_account', finality: 'final', account_id: account } }),
+      signal: AbortSignal.timeout(NEAR_VIEW_TIMEOUT_MS),
+      redirect: 'manual',
+    });
+  } catch {
+    throw new NearUnavailable('NEAR RPC could not be reached');
+  }
+  if (res.status !== 200 || Number(res.headers.get('content-length') ?? 0) > MAX_VIEW_BYTES) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new NearUnavailable(`NEAR RPC answered ${res.status}`);
+  }
+  const text = await res.text();
+  if (text.length > MAX_VIEW_BYTES) throw new NearUnavailable('NEAR RPC answer too large');
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new NearUnavailable('NEAR RPC answer is not JSON');
+  }
+  if (isObj(body) && isObj(body.error) && isObj(body.error.cause) && body.error.cause.name === 'UNKNOWN_ACCOUNT') return null;
+  const r = isObj(body) ? body.result : undefined;
+  if (!isObj(r) || typeof r.code_hash !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(r.code_hash)) throw new NearUnavailable('view_account answered no code hash');
+  const named = (v: unknown) => v !== undefined && v !== null;
+  return { codeHash: r.code_hash === NO_PROGRAM ? null : r.code_hash, sharedCode: named(r.global_contract_hash) || named(r.global_contract_account_id) };
+}

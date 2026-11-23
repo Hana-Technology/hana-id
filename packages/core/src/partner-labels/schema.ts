@@ -342,6 +342,14 @@ const nullProto = <T>(entries: readonly (readonly [string, T])[]): Readonly<Reco
   return Object.freeze(o);
 };
 
+/**
+ * The code hash NEAR reports for an account with no program of its own (32 zero bytes, base58: all 1s), which is also what
+ * it reports for an account that uses a global contract; and the all-zero Wasm hash. A label naming either could never
+ * match, so the parser refuses them.
+ */
+export const NEAR_NO_CODE_HASH = '11111111111111111111111111111111';
+export const WASM_NO_CODE_HASH = '0'.repeat(64);
+
 /** A NEAR code hash: base58 of 32 bytes, in its one canonical form. */
 export function isNearCodeHash(v: unknown): v is string {
   if (typeof v !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(v)) return false;
@@ -358,12 +366,23 @@ export function isNearCodeHash(v: unknown): v is string {
  * permission methods, which Journear reads itself or will, and whose meaning a partner's words must never replace.
  * NEAR: NEP-141 (ft_*), NEP-171/177/178/181 (nft_*), NEP-245 multi-token (mt_*), NEP-145 storage (storage_*), the
  * wrapped-NEAR contract's near_deposit and near_withdraw, and the staking pool's distinctive deposit_and_stake,
- * unstake_all and withdraw_all. Soroban: SEP-41's transfer, transfer_from, approve, burn, burn_from and mint, the Stellar
- * asset contract's admin set (set_admin, clawback, set_authorized), and upgrade (the common name for replacing code).
+ * unstake_all and withdraw_all. Soroban: SEP-41's transfer, transfer_from, approve, burn, burn_from and mint, upgrade
+ * (the common name for replacing code), and EVERY function of the Stellar asset contract that changes anything
+ * (`SAC_STATE_CHANGING`).
  */
 const NEAR_RESERVED_PREFIXES = ['ft_', 'nft_', 'mt_', 'storage_'];
 const NEAR_RESERVED = new Set(['near_deposit', 'near_withdraw', 'deposit_and_stake', 'unstake_all', 'withdraw_all']);
-const SOROBAN_RESERVED = new Set(['transfer', 'transfer_from', 'approve', 'burn', 'burn_from', 'mint', 'set_admin', 'clawback', 'set_authorized', 'upgrade']);
+/**
+ * The Stellar asset contract's functions that change anything, checked against soroban-env-host's
+ * `builtin_contracts/stellar_asset_contract/contract.rs` on `main`, 2026-11-23 (protocol 26: `trust`, CAP-73, creates a
+ * trust line for an address and needs its authorization): init_asset, approve, transfer, transfer_from, burn, burn_from,
+ * clawback, set_authorized, mint, set_admin, trust. The rest (allowance, balance, authorized, admin, decimals, name,
+ * symbol) only read (and extend the contract's own time to live). A Stellar asset contract runs built-in code, not a
+ * Wasm, so a transaction's footprint can't tie a label to it: reserving these is what keeps a label off every
+ * call of one that changes anything.
+ */
+export const SAC_STATE_CHANGING: readonly string[] = Object.freeze(['init_asset', 'approve', 'transfer', 'transfer_from', 'burn', 'burn_from', 'clawback', 'set_authorized', 'mint', 'set_admin', 'trust']);
+const SOROBAN_RESERVED = new Set(['transfer', 'transfer_from', 'approve', 'burn', 'burn_from', 'mint', 'upgrade', ...SAC_STATE_CHANGING]);
 export const reservedMethod = (chain: 'near' | 'soroban' | 'stellar', key: string): boolean =>
   chain === 'near' ? NEAR_RESERVED_PREFIXES.some((p) => key.startsWith(p)) || NEAR_RESERVED.has(key) : chain === 'soroban' ? SOROBAN_RESERVED.has(key) : false;
 
@@ -455,8 +474,9 @@ function readContext(r: Reader, v: StrictJson | undefined): LabelContext | null 
     if (network === null && Object.hasOwn(n, 'network')) r.add('bad_network', 'context.near.network', 'Use "testnet" or "mainnet".');
     const account = typeof n.account === 'string' && isNearAccountId(n.account) ? n.account : null;
     if (account === null && Object.hasOwn(n, 'account')) r.add('bad_account', 'context.near.account', 'This must be a NEAR account id, as in "stamps.example.testnet".');
-    const codeHash = isNearCodeHash(n.codeHash) ? n.codeHash : null;
-    if (codeHash === null && Object.hasOwn(n, 'codeHash')) r.add('bad_code_hash', 'context.near.codeHash', 'This must be the contract’s code hash as NEAR shows it (base58, 32 bytes).');
+    const codeHash = isNearCodeHash(n.codeHash) && n.codeHash !== NEAR_NO_CODE_HASH ? n.codeHash : null;
+    if (n.codeHash === NEAR_NO_CODE_HASH) r.add('bad_code_hash', 'context.near.codeHash', 'This is the code hash of an account with no program (all 1s): use the code hash of the program you deployed.');
+    else if (codeHash === null && Object.hasOwn(n, 'codeHash')) r.add('bad_code_hash', 'context.near.codeHash', 'This must be the contract’s code hash as NEAR shows it (base58, 32 bytes).');
     return network && account && codeHash ? { chain: 'near', network, account, codeHash } : null;
   }
   if (key === 'soroban') {
@@ -466,8 +486,9 @@ function readContext(r: Reader, v: StrictJson | undefined): LabelContext | null 
     if (networkPassphrase === null && Object.hasOwn(s, 'networkPassphrase')) r.add('bad_network', 'context.soroban.networkPassphrase', 'Use the Stellar test network’s or the public network’s passphrase.');
     const contract = typeof s.contract === 'string' && isContractId(s.contract) ? s.contract : null;
     if (contract === null && Object.hasOwn(s, 'contract')) r.add('bad_account', 'context.soroban.contract', 'This must be a contract id (C…).');
-    const wasmHash = isWasmHash(s.wasmHash) ? s.wasmHash : null;
-    if (wasmHash === null && Object.hasOwn(s, 'wasmHash')) r.add('bad_code_hash', 'context.soroban.wasmHash', 'This must be the contract’s Wasm hash: 64 lowercase hex characters.');
+    const wasmHash = isWasmHash(s.wasmHash) && s.wasmHash !== WASM_NO_CODE_HASH ? s.wasmHash : null;
+    if (s.wasmHash === WASM_NO_CODE_HASH) r.add('bad_code_hash', 'context.soroban.wasmHash', 'This is all zeros, which is no program’s code: use the Wasm hash of the code your contract runs.');
+    else if (wasmHash === null && Object.hasOwn(s, 'wasmHash')) r.add('bad_code_hash', 'context.soroban.wasmHash', 'This must be the contract’s Wasm hash: 64 lowercase hex characters.');
     return networkPassphrase && contract && wasmHash ? { chain: 'soroban', networkPassphrase, contract, wasmHash } : null;
   }
   const c = r.object(o.stellar, 'context.stellar', ['networkPassphrase'], ['networkPassphrase']);

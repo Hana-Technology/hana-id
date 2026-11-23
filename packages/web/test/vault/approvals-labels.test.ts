@@ -3,7 +3,7 @@
 // with what is fresh or with none; cancelled, expired or with its window closed while it waits, nothing is sent.
 import { type ApprovalSubject, utf8 } from '@hana-id/core';
 import { describe, expect, it } from 'vitest';
-import { APPROVAL_TTL_MS, Approvals, type WindowLabels } from '../../src/vault/approvals.ts';
+import { APPROVAL_TTL_MS, Approvals, type WindowLabelSet, type WindowLabels } from '../../src/vault/approvals.ts';
 import { Launcher } from '../../src/vault/launcher.ts';
 import { ENV, FakeLauncherView, FakeWindow, PARTNER, TestTimers, sleepReal } from './harness.ts';
 
@@ -13,15 +13,17 @@ const subject = (): ApprovalSubject => ({ kind: 'personal_sign', chain: 'evm', a
 /** The vault's labels, controlled: `state` is what forRequest answers; each refresh waits for `settle`. */
 function labels() {
   const l = {
-    state: 'stale' as readonly string[] | 'stale',
+    state: 'stale' as WindowLabelSet | 'stale',
     refreshes: 0,
+    refreshedFor: [] as ApprovalSubject[],
     settle: (_fail?: boolean) => undefined as void,
     source: null as unknown as WindowLabels,
   };
   l.source = {
     forRequest: () => l.state,
-    refresh: () => {
+    refresh: (subject) => {
       l.refreshes += 1;
+      l.refreshedFor.push(subject);
       return new Promise<void>((resolve, reject) => {
         l.settle = (fail) => (fail ? reject(new Error('read failed')) : resolve());
       });
@@ -71,7 +73,7 @@ describe('the queue’s hold for a fresh labels read', () => {
     await tick();
     expect(requests(popup)).toHaveLength(0);
     expect(l.refreshes).toBe(1);
-    l.state = ['{"doc":1}'];
+    l.state = { texts: ['{"doc":1}'] };
     l.settle();
     await tick();
     expect(requests(popup)).toHaveLength(1);
@@ -100,7 +102,7 @@ describe('the queue’s hold for a fresh labels read', () => {
     await tick();
     approvals.cancelAll();
     expect(await done).toBe('cancelled');
-    l.state = ['{"doc":1}'];
+    l.state = { texts: ['{"doc":1}'] };
     l.settle();
     await tick();
     expect(requests(popup)).toHaveLength(0);
@@ -115,7 +117,7 @@ describe('the queue’s hold for a fresh labels read', () => {
     const second = approvals.requestApproval(subject());
     timers.advance(APPROVAL_TTL_MS);
     expect(await first).toBe('rejected');
-    l.state = [];
+    l.state = { texts: [] };
     l.settle();
     await tick();
     // The second request was queued before the first expired, so its own TTL ended too: nothing is left to send.
@@ -134,6 +136,32 @@ describe('the queue’s hold for a fresh labels read', () => {
     await tick();
     expect(requests(popup)).toHaveLength(0);
     expect(view.label).not.toBeNull();
+    approvals.cancelAll();
+  });
+
+  it('D900: a NEAR code hash goes beside its labels only (`partnerLabelFacts`); the read is asked for the request’s subject', async () => {
+    const { approvals, l, connect, requests } = make();
+    const s = subject();
+    void approvals.requestApproval(s);
+    const popup = connect();
+    await tick();
+    expect(l.refreshedFor).toEqual([s]);
+    l.state = { texts: ['{"doc":1}'], nearCode: { account: 'club.testnet', codeHash: '9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA' } };
+    l.settle();
+    await tick();
+    expect(requests(popup)[0]).toMatchObject({ partnerLabels: ['{"doc":1}'], partnerLabelFacts: { near: { account: 'club.testnet', codeHash: '9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA' } } });
+    approvals.cancelAll();
+  });
+
+  it('D900: a code hash with no texts is never sent', async () => {
+    const { approvals, l, connect, requests } = make();
+    l.state = { texts: [], nearCode: { account: 'club.testnet', codeHash: '9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA' } };
+    void approvals.requestApproval(subject());
+    const popup = connect();
+    await tick();
+    expect(requests(popup)).toHaveLength(1);
+    expect(requests(popup)[0]).not.toHaveProperty('partnerLabelFacts');
+    expect(requests(popup)[0]).not.toHaveProperty('partnerLabels');
     approvals.cancelAll();
   });
 });

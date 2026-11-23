@@ -26,7 +26,8 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-23 (request labels; app names; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-23 (request labels, programs too; app names; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+"SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -928,9 +929,25 @@ and any owner can cancel a waiting change.
 "Request labels aren’t switched on here yet. You can prepare and preview them." You can fill in the form and see the
 preview; proposing waits until they are on.
 
-**What the approval window shows today.** Labels for **payments to your Stellar accounts** (classic payments) show now.
-Labels for a **NEAR program** or a **Soroban contract** can be prepared and proposed, but are **not shown to users yet**:
-Journear first has to check the program's code, which comes later. Until then users see the plain window for them.
+**Labels for programs are tied to their code.** Labels for **payments to your Stellar accounts** (classic payments)
+need nothing more. Labels for a **NEAR program** or a **Soroban contract** name the code they describe, and show only
+while the request runs exactly that code:
+
+- **A NEAR program**: when a user approves a call to it, Journear reads the program's code hash on the NEAR network itself
+  and shows your words only if it is the code hash your labels name. If it can't be read, users see Journear's plain
+  window (no line about your labels). From a live app, a call someone else sends for your user always shows Journear's
+  plain window: your words show only on the user's own transactions. The form's **Read it from the network**
+  shows the code deployed at the account now, for you to check before **Use this code hash**.
+- **A Soroban contract**: your words show only for a transaction your user signs in full whose own list of what it
+  reads and writes (its footprint, from your simulation) names your Wasm hash as its only code; the network won't run
+  such a transaction on other code. It must be sent from your user's own account (not an account you pay from, and not
+  wrapped in a fee bump). A call your user only authorizes for someone else to send (an authorization entry), or one
+  that also runs another contract's Wasm, shows Journear's plain window. Functions of Stellar's built-in asset
+  contracts that change anything can't be labelled. A verb that says nothing moves
+  (such as join or vote) shows only when the transaction can change nothing but your contract's own stored data.
+- **Upgrading your program**: once the code changes, your users see an amber line instead of your words ("Coffee Club
+  describes this kind of request, but this one doesn't match, …") until new labels with the new code hash go live after
+  their wait. Propose the new labels first, and upgrade soon after they go live.
 
 **Writing them: a form, not JSON.** The editor is a form; you never have to write the document by hand.
 
@@ -956,7 +973,9 @@ in short: plain Latin letters, digits, spaces and a few marks; no links, no amou
 plain-words list.
 
 **The preview.** Beside the form (under it on a phone) is the approval window itself, drawn by Journear's own window
-code with made-up values, in light or dark, at a phone's width, marked "Example: not a real request". Switch between **A payment that matches** (your box),
+code with made-up values, in light or dark, at a phone's width, marked "Example: not a real request". For a NEAR
+program or a Soroban contract: **A call that matches** (your box) and **The same call after a code change** (the amber
+line). For payments: **A payment that matches** (your box),
 **A payment that doesn't match** (no words from you, and an amber line: "Coffee Club describes this kind of request,
 but this one doesn't match, so Journear isn't showing Coffee Club's description. If you're not sure what this does,
 reject it.") and **A payment to an account not in your list** (a red line: "This isn't one of the accounts Coffee Club

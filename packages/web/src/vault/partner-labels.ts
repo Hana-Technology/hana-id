@@ -8,7 +8,7 @@
 // younger than PARTNER_LABELS_FRESH_MS (vault.ts `labelsForWindow`), so a staff switch or block reaches users within
 // seconds and a failed read means no labels.
 import { type WalletChain, sha256, toHex } from '@hana-id/core';
-import { LABEL_SCHEMA, type LabelDocument, labelOnNetwork, parseLabelDocument, withoutSharedContracts } from '@hana-id/core/partner-labels';
+import { LABEL_SCHEMA, type LabelDocument, isNearCodeHash, labelOnNetwork, parseLabelDocument, withoutSharedContracts } from '@hana-id/core/partner-labels';
 
 /** One document as `GET /v1/app` sends it (apps/api src/labels/deliver.ts DeliveredLabel). */
 export interface DeliveredLabel {
@@ -100,4 +100,37 @@ export function windowLabelTexts(labels: readonly VerifiedLabel[], chain: Wallet
   const texts = labels.filter((l) => forChain(l.document, chain)).map((l) => l.text);
   const total = texts.reduce((n, t) => n + utf8.encode(t).length, 0);
   return total > MAX_WINDOW_LABEL_BYTES ? [] : texts;
+}
+
+// ---- D900 (piece 5): a NEAR contract's code hash, for a label tied to it ----
+
+/**
+ * How long the vault keeps what it read of a contract's code (the agreed hash, or that it couldn't check): the labels'
+ * own freshness, so a contract upgraded seconds ago keeps its old label in a new window no longer than a staff
+ * switch-off would (plus the final block's lag). A test holds the two equal.
+ */
+export const NEAR_CODE_FRESH_MS = PARTNER_LABELS_FRESH_MS;
+
+/** One provider's answer about an account's code (vault/near.ts `contractCode`): null when the account doesn't exist. */
+export type NearCodeAnswer = { readonly codeHash: unknown; readonly global: boolean } | null;
+
+/**
+ * The code hash every provider asked agrees on, or null (D900): each answered, for an account that exists, with a
+ * canonical base58 hash of 32 bytes, none of them a global contract (code another account publishes can change without
+ * this account's own action), all the same. No answers at all is null. Pure.
+ */
+export function agreedCodeHash(answers: readonly NearCodeAnswer[]): string | null {
+  if (answers.length === 0) return null;
+  let hash: string | null = null;
+  for (const a of answers) {
+    if (a === null || a.global || typeof a.codeHash !== 'string' || !isNearCodeHash(a.codeHash)) return null;
+    if (hash !== null && a.codeHash !== hash) return null;
+    hash = a.codeHash;
+  }
+  return hash;
+}
+
+/** The NEAR accounts the checked documents describe (no two documents describe one: verifyDeliveredLabels). */
+export function nearLabelAccounts(labels: readonly VerifiedLabel[]): Set<string> {
+  return new Set(labels.flatMap((l) => (l.document.context.chain === 'near' ? [l.document.context.account] : [])));
 }

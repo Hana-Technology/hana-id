@@ -10,9 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseLabelDocument } from '@hana-id/core/partner-labels';
 import { nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
-import { NOT_SHOWN_YET, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
+import { CODE_TIED_NEAR, CODE_TIED_SOROBAN, NEAR_LIVE_RELAYED, CODE_TIED_TITLE, SOROBAN_SOFT_VERBS, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
 import { labelsWait, labelsWaitReview } from '../src/pages/Action.tsx';
-import { ENTRY_OFF, NOT_ENABLED, NOT_ENABLED_PROPOSE, ORG_OFF, guardedWait, reviewOn, waitingState } from '../src/pages/app/Labels.tsx';
+import { CODE_TIED_NOTE, ENTRY_OFF, NOT_ENABLED, NOT_ENABLED_PROPOSE, ORG_OFF, guardedWait, reviewOn, waitingState } from '../src/pages/app/Labels.tsx';
 import { EXAMPLE_MARK } from '../src/window/frame.ts';
 
 type Answer = { status?: number; body: unknown };
@@ -291,19 +291,48 @@ describe('the editor', () => {
     expect(await screen.findByText('A change of these request labels is already waiting (lc_1): cancel it first.')).toBeTruthy();
   });
 
-  it('a NEAR program: marked not shown to users yet, its sentences from core’s preview', async () => {
+  it('a NEAR program (D900): tied to its code, the code read from the network to confirm, the real window for a match and after a code change', async () => {
     signedIn();
+    const H = 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn';
+    routes['/api/orgs/org_a/near-code/stamp-rally.testnet'] = { body: { account: 'stamp-rally.testnet', exists: true, codeHash: H, sharedCode: false } };
+    routes['/api/orgs/org_a/near-code/shared.testnet'] = { body: { account: 'shared.testnet', exists: true, codeHash: H, sharedCode: true } };
+    routes['/api/orgs/org_a/near-code/nobody.testnet'] = { body: { account: 'nobody.testnet', exists: false } };
+    routes['/api/orgs/org_a/near-code/noprogram.testnet'] = { body: { account: 'noprogram.testnet', exists: true, codeHash: null, sharedCode: false } };
     await newEditor();
     fireEvent.click(screen.getByLabelText(/A NEAR program/u));
-    expect(screen.getAllByText(NOT_SHOWN_YET).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Not shown to users yet/u)).toBeNull();
+    expect(screen.getByText(CODE_TIED_TITLE)).toBeTruthy();
+    expect(screen.getByText(CODE_TIED_NEAR)).toBeTruthy();
+    // The read: what the network says for the account, shown; filled only on "Use this code hash".
+    for (const [account, says] of [
+      ['nobody.testnet', 'This account has no program on the NEAR test network.'],
+      ['noprogram.testnet', 'This account has no program on the NEAR test network.'],
+      ['shared.testnet', 'This account runs shared code another account publishes, so its code can change without it: Journear doesn’t show labels for it.'],
+    ] as const) {
+      fireEvent.change(screen.getByLabelText('Its account'), { target: { value: account } });
+      fireEvent.click(screen.getByRole('button', { name: 'Read it from the network' }));
+      expect(await screen.findByText(says)).toBeTruthy();
+      expect(screen.queryByRole('button', { name: 'Use this code hash' })).toBeNull();
+    }
     fireEvent.change(screen.getByLabelText('Its account'), { target: { value: 'stamp-rally.testnet' } });
-    fireEvent.change(screen.getByLabelText(/Its code hash/u), { target: { value: 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Read it from the network' }));
+    expect(await screen.findByText(H)).toBeTruthy();
+    expect((screen.getByLabelText(/Its code hash/u) as HTMLInputElement).value).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'Use this code hash' }));
+    expect((screen.getByLabelText(/Its code hash/u) as HTMLInputElement).value).toBe(H);
+    expect(calls.filter((c) => c.url.includes('/near-code/')).map((c) => c.url)).toEqual(['/api/orgs/org_a/near-code/nobody.testnet', '/api/orgs/org_a/near-code/noprogram.testnet', '/api/orgs/org_a/near-code/shared.testnet', '/api/orgs/org_a/near-code/stamp-rally.testnet']);
+    // A test app: no live-app sentence about relayed calls.
+    expect(screen.queryByText(NEAR_LIVE_RELAYED)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Describe a request' }));
     fireEvent.change(screen.getByLabelText('The method’s exact name'), { target: { value: 'join' } });
     fireEvent.change(screen.getByLabelText(/^The verb/u), { target: { value: 'join' } });
     fireEvent.change(phrase(), { target: { value: 'the club' } });
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('No problems: ready to review.'));
-    expect(screen.getAllByText('Coffee Club says: join the club')).toHaveLength(2); // the form's line and the preview's
+    // The preview is the window itself: the partner's box for the call that matches; the amber line after a code change.
+    await waitFor(() => expect(inWin('p.partner-says')?.textContent).toBe('Coffee Club says: join the club'));
+    fireEvent.click(screen.getByLabelText('The same call after a code change'));
+    await waitFor(() => expect(inWin('.partner-mismatch')).not.toBeNull());
+    expect(inWin('div.partner-label')).toBeNull();
     // A "no value moves" verb is refused on a request that attaches NEAR: offered as not for this request.
     fireEvent.change(screen.getByLabelText(/^The NEAR it attaches/u), { target: { value: 'atMost' } });
     fireEvent.change(screen.getByLabelText('Amount'), { target: { value: '1' } });
@@ -425,11 +454,12 @@ describe('after PR 126’s review', () => {
     expect(w.querySelector('[data-change="changed"] .diff-before')?.textContent).toContain('pay for order');
     expect(w.querySelector('[data-change="changed"] .diff-after')?.textContent).toContain('pay for the order');
     const n = document.querySelector('[data-entry="pl_2"]') as HTMLElement;
-    expect(within(n).getByText('In force')).toBeTruthy();
-    expect(within(n).getByText('In force, not shown to users yet')).toBeTruthy();
-    expect(within(n).queryByText('What users see now')).toBeNull();
-    expect(n.textContent).toMatch(/In force since /u);
-    expect(n.textContent).not.toMatch(/Live since/u);
+    // D900: a NEAR entry in force is live like a payment's, with the note that it follows the program's code.
+    expect(within(n).getByText('Live')).toBeTruthy();
+    expect(within(n).getByText('What users see now')).toBeTruthy();
+    expect(within(n).getByText(CODE_TIED_NOTE)).toBeTruthy();
+    expect(n.textContent).toMatch(/Live since /u);
+    expect(n.textContent).not.toMatch(/not shown to users/iu);
   });
 
   it('the preview frame carries the example mark first, in both themes; the apps hint names the app users use', async () => {
@@ -461,5 +491,40 @@ describe('after PR 126’s review', () => {
     const body = JSON.parse(String(calls.find((c) => c.url === '/api/orgs/org_a/actions')!.init!.body)) as { params: { document: string } };
     expect(body.params.document).toContain('Test SDF Network ; September 2015');
     expect(body.params.document).not.toContain('Public Global');
+  });
+});
+
+describe('D900: a Soroban contract in the editor', () => {
+  it('tied to the transaction’s own code, the soft-verb rule said; the real window for a match and after a code change', async () => {
+    signedIn();
+    await newEditor();
+    fireEvent.click(screen.getByLabelText(/A Soroban contract/u));
+    expect(screen.getByText(CODE_TIED_SOROBAN)).toBeTruthy();
+    expect(screen.getByText(SOROBAN_SOFT_VERBS)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Read it from the network' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Its contract id'), { target: { value: 'CACQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUCQLC2U' } });
+    fireEvent.change(screen.getByLabelText(/Its Wasm hash/u), { target: { value: 'ab'.repeat(32) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Describe a request' }));
+    fireEvent.change(screen.getByLabelText('The function’s exact name'), { target: { value: 'join' } });
+    fireEvent.change(screen.getByLabelText(/^The verb/u), { target: { value: 'join' } });
+    fireEvent.change(phrase(), { target: { value: 'the club' } });
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('No problems: ready to review.'));
+    await waitFor(() => expect(inWin('p.partner-says')?.textContent).toBe('Coffee Club says: join the club'));
+    fireEvent.click(screen.getByLabelText('The same call after a code change'));
+    await waitFor(() => expect(inWin('.partner-mismatch')).not.toBeNull());
+  });
+});
+
+
+describe('after PR 128’s review: a live app’s NEAR form', () => {
+  it('says once that a relayed call from a live app shows the plain window', async () => {
+    signedIn();
+    const live = { ...APP, environment: 'live' };
+    routes['/api/orgs/org_a/apps/app_1'] = { body: { app: live, now: NOW } };
+    routes['/api/orgs/org_a/apps'] = { body: { apps: [live] } };
+    await newEditor();
+    fireEvent.click(screen.getByLabelText(/A NEAR program/u));
+    expect(screen.getAllByText(NEAR_LIVE_RELAYED)).toHaveLength(1);
+    expect(screen.getByText(CODE_TIED_NEAR)).toBeTruthy();
   });
 });

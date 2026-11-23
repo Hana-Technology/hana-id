@@ -91,7 +91,7 @@ export async function startStack(fingerprint: string): Promise<void> {
   await serve(PORTS.liveApi, loopback, servedAt(LIVE_API_URL, (req) => liveApi.handle(req)));
   await serve(PORTS.near, loopback, chain.handler());
   // The env's rpcFallback: another endpoint on the same chain (a member's path is confirmed on both, D263).
-  await serve(PORTS.nearFallback, loopback, chain.handler());
+  await serve(PORTS.nearFallback, loopback, chain.handler('fallback'));
   await serve(PORTS.evm, loopback, evm.handler());
 }
 

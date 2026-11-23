@@ -26,6 +26,7 @@ import { revokeInvite } from './invites.ts';
 import { ipPrefix } from './ip.ts';
 import type { RequestInfo } from './links.ts';
 import { log } from './log.ts';
+import { NearUnavailable, viewContractCode } from './near.ts';
 import { logoRemoveRoute, logoUploadRoute } from './logo.ts';
 import { policyCheckRoute } from './policy.ts';
 import { pendingUpgradesRoute } from './governance.ts';
@@ -100,6 +101,27 @@ async function labelsRoute(c: RouteCall): Promise<Response> {
   const { ok: _ok, ...answer } = r;
   return json(200, { ...answer, now: Date.now() });
 }
+/** A NEAR account id (`isNearAccountId`'s rule: 2–64 characters, lowercase parts joined by dots). */
+const NEAR_ACCOUNT = /^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/u;
+
+/**
+ * `GET /api/orgs/:org/near-code/:account` (D900): the account's code as the console's own NEAR endpoint reads it now
+ * (final finality), for the Request labels form to show; the partner confirms it before it fills the code hash. Any
+ * member; nothing is stored, and nothing trusts the answer (the approval window's vault reads the code itself).
+ */
+async function nearCodeRoute(c: RouteCall): Promise<Response> {
+  const account = c.m[1]!;
+  if (!NEAR_ACCOUNT.test(account)) return errorResponse('bad_request', 'Expected a NEAR account id');
+  try {
+    const view = await viewContractCode(c.env, account);
+    return json(200, view === null ? { account, exists: false } : { account, exists: true, codeHash: view.codeHash, sharedCode: view.sharedCode });
+  } catch (err) {
+    if (!(err instanceof NearUnavailable)) throw err;
+    log({ event: 'near_code_unavailable', requestId: c.info.requestId, orgId: c.caller.orgId }, 'warn');
+    return errorResponse('near_unavailable', 'NEAR RPC is unavailable: try again');
+  }
+}
+
 const reportCaller = (c: RouteCall) => ({ orgId: c.caller.orgId, actor: actorOf(c.caller.session) });
 
 const ROUTES: OrgRouteDef[] = [
@@ -266,6 +288,7 @@ const ROUTES: OrgRouteDef[] = [
 
   // ---- request labels (D899): a scope's entries, any member; proposing and removing are step-ups (actions.ts) ----
   { method: 'GET', re: /^\/scopes\/(global|s[0-9a-z]{1,32})\/labels$/u, role: 'viewer', frozenOk: true, run: (c) => labelsRoute(c) },
+  { method: 'GET', re: /^\/near-code\/([a-z0-9._-]{2,64})$/u, role: 'viewer', frozenOk: true, run: (c) => nearCodeRoute(c) },
 
   // ---- on chain ----
   { method: 'GET', re: /^\/scopes\/(global|s[0-9a-z]{1,32})$/u, role: 'viewer', frozenOk: true, run: (c) => scopeRoute(c.env, ctxOf(c), c.caller.orgId, c.m[1]!, c.caller.session.sub) },

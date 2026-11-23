@@ -261,10 +261,30 @@ test('the founder’s screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, la
     await openTab(page, origin, blocked.state);
     await expect(page.locator('.labels-recent').first()).toBeVisible();
   });
-  // 6. A NEAR program's form: not shown to users yet.
+  // 6. A NEAR program's form (D900): tied to the program's code, with the read from the network.
   await shoot('06-editor-near', async () => {
     await openTab(page, origin, blocked.state, '/new');
     await page.getByLabel(/A NEAR program/u).check();
-    await expect(page.getByText('Not shown to users yet').first()).toBeVisible();
+    await expect(page.getByText('Tied to your program’s code').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Read it from the network' })).toBeVisible();
+    await expect(page.getByText('Not shown to users yet')).toHaveCount(0);
   });
+  // 7. A NEAR program filled in (D900): the preview is the real window, a call that matches and after a code change.
+  for (const [example, label] of [
+    ['match', null],
+    ['code-changed', 'The same call after a code change'],
+  ] as const) {
+    await shoot(`07-editor-near-${example}`, async () => {
+      await openTab(page, origin, blocked.state, '/new');
+      await page.getByLabel(/A NEAR program/u).check();
+      await page.getByLabel('Its account').fill('stamp-rally.testnet');
+      await page.getByLabel(/Its code hash/u).fill('GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn');
+      await page.getByRole('button', { name: 'Describe a request' }).click();
+      await page.getByLabel('The method’s exact name').fill('join');
+      await page.getByLabel(/^The verb/u).selectOption('join');
+      await page.getByLabel(/Your phrase/u).fill('the club');
+      if (label) await page.getByLabel(label).check();
+      await expect(page.locator(example === 'match' ? '.window-host p.partner-says' : '.window-host .partner-mismatch').first()).toBeVisible();
+    });
+  }
 });

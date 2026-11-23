@@ -28,7 +28,9 @@
 // Partner labels (D896): a sign request's message carries the app's checked label documents for its chain only while
 // the vault's read of them is fresh (`partnerLabels`). When they are stale at the moment the request goes to the popup,
 // the request waits for one fresh read (at most the vault's PARTNER_LABELS_WAIT_MS), once, and then goes with what is
-// fresh by then, or with none: never with a stale label, and never blocked or failed because of labels.
+// fresh by then, or with none: never with a stale label, and never blocked or failed because of labels. D900: for a
+// NEAR request to a contract a label describes, the same one wait also covers the vault's read of that contract's code
+// hash (both providers agreeing), sent beside the texts as `partnerLabelFacts`.
 import {
   type ApprovalSubject,
   type AutoApproveNote,
@@ -63,6 +65,8 @@ export const POPUP_WAIT_MS = 3_000;
  */
 export const LATE_CLOSE_MS = 8_000;
 const CLOSED_POLL_MS = 500;
+/** No partner labels for a window (D896). */
+const NO_LABELS: WindowLabelSet = Object.freeze({ texts: Object.freeze([]) as readonly string[] });
 /** The launcher's label for a waiting approval (D765's names; a literal, so the vault bundle imports nothing of the brand's). */
 export const APPROVE_LABEL = 'Review in Journear Passport';
 export const APPROVE_FEATURES = 'popup,width=420,height=680';
@@ -98,13 +102,23 @@ interface ConsentItem extends BaseItem {
 type Item = SignItem | ConsentItem;
 
 /**
- * D896: the vault's partner labels for a request's window. `forRequest` answers the checked documents' texts for the
- * request's chain while the read they came from is fresh, `'stale'` when there are some but that read is too old, and
- * none otherwise; `refresh` reads `GET /v1/app` again (settling within the vault's wait, whatever the read does).
+ * D896, D900: the vault's partner labels for a request's window. `forRequest` answers the checked documents' texts for
+ * the request's chain while the read they came from is fresh (with a NEAR receiver's agreed code hash, when a document
+ * describes it and that read is fresh too), `'stale'` when there are documents but a read is too old, and none
+ * otherwise; `refresh` reads what is due again (settling within the vault's wait, whatever the reads do).
  */
+/**
+ * What one approval window gets for a request (D896, D900): the texts, and for a NEAR request to an account a document
+ * describes, that account's code hash as both of the vault's providers agreed on it, when they did.
+ */
+export interface WindowLabelSet {
+  readonly texts: readonly string[];
+  readonly nearCode?: { readonly account: string; readonly codeHash: string };
+}
+
 export interface WindowLabels {
-  forRequest(subject: ApprovalSubject): readonly string[] | 'stale';
-  refresh(): Promise<void>;
+  forRequest(subject: ApprovalSubject): WindowLabelSet | 'stale';
+  refresh(subject: ApprovalSubject): Promise<void>;
 }
 
 /** A request flagged `popupOpened`, from its arrival until it ends (vault.ts). */
@@ -445,7 +459,7 @@ export class Approvals {
     const position = Math.min(this.batchDone + 1, queued);
     let m = this.message(item, position, queued, true, labels);
     // The labels never cost the request: should the popup's validator refuse the message with them, it goes without.
-    if (labels.length > 0 && !parseWindowMessage(m, [m.t])) m = this.message(item, position, queued, true);
+    if (labels.texts.length > 0 && !parseWindowMessage(m, [m.t])) m = this.message(item, position, queued, true);
     popup.postMessage(m, this.d.authOrigin);
   }
 
@@ -453,21 +467,22 @@ export class Approvals {
    * D896: the partner label texts `item`'s message carries, or `'wait'` when they are stale and this is the first time:
    * one fresh read is asked for, and the request is sent when it settles (with what is fresh then, or none).
    */
-  private labelsFor(item: Item): readonly string[] | 'wait' {
+  private labelsFor(item: Item): WindowLabelSet | 'wait' {
     const source = this.d.partnerLabels;
-    if (item.type !== 'sign' || !source) return [];
-    let l: readonly string[] | 'stale';
+    if (item.type !== 'sign' || !source) return NO_LABELS;
+    let l: WindowLabelSet | 'stale';
     try {
       l = source.forRequest(item.subject);
     } catch {
-      return [];
+      return NO_LABELS;
     }
     if (l !== 'stale') return l;
-    if (item.labelsRead) return [];
+    if (item.labelsRead) return NO_LABELS;
     item.labelsRead = true;
     this.labelWait = item;
+    const subject = item.subject;
     void Promise.resolve()
-      .then(() => source.refresh())
+      .then(() => source.refresh(subject))
       .catch(() => undefined)
       .then(() => {
         if (this.labelWait !== item) return;
@@ -478,7 +493,7 @@ export class Approvals {
   }
 
   /** The hana:approve-request or hana:consent-request for `item`; `copy` gives the popup its own bytes and policy. */
-  private message(item: Item, position: number, queued: number, copy: boolean, labels: readonly string[] = []): { t: 'hana:approve-request' | 'hana:consent-request' } & Record<string, unknown> {
+  private message(item: Item, position: number, queued: number, copy: boolean, labels: WindowLabelSet = NO_LABELS): { t: 'hana:approve-request' | 'hana:consent-request' } & Record<string, unknown> {
     const logoUrl = this.d.logoUrl?.() ?? null;
     const common = {
       v: 1,
@@ -508,7 +523,9 @@ export class Approvals {
       ...(this.d.emailShared?.() ? { emailShared: true } : {}),
       ...(item.demoPrices ? { demoPrices: item.demoPrices } : {}),
       // D896: only when there are fresh labels for this request's chain, so every other request is the older message.
-      ...(labels.length > 0 ? { partnerLabels: [...labels] } : {}),
+      ...(labels.texts.length > 0 ? { partnerLabels: [...labels.texts] } : {}),
+      // D900: a NEAR receiver's code hash as both of the vault's providers agreed on it, only beside its labels.
+      ...(labels.texts.length > 0 && labels.nearCode ? { partnerLabelFacts: { near: { account: labels.nearCode.account, codeHash: labels.nearCode.codeHash } } } : {}),
     };
   }
 

@@ -6,17 +6,24 @@
 // to an account its list doesn't have (the red line), in light and dark, at a phone's width. Its DOM is built with
 // text nodes only (packages/web dom.ts), mounted into a container React owns.
 //
-// NEAR programs and Soroban contracts aren't shown to users yet (D896: the window needs the contract's code hash, a
-// later piece): their preview says so and shows the sentences as core's own preview writes them.
-import { type LabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
+// D900: NEAR programs and Soroban contracts too, through the same renderer: a call that matches (the program runs the
+// code the labels name) and the same call after a code change (the amber line), built and decoded as the window does,
+// with the code hash as the vault would read it (NEAR) or as the transaction's footprint names it (Soroban).
+import type { LabelDocument } from '@hana-id/core/partner-labels';
 import { useEffect, useId, useRef, useState } from 'react';
 import { dom } from '../../../../../packages/web/src/auth/dom.ts';
 import { renderApproval } from '../../../../../packages/web/src/auth/render-approval.ts';
-import { Callout } from '../ui.tsx';
-import { EXAMPLE_TITLES, EXAMPLE_USER, type ExampleKind, paymentExample } from './examples.ts';
+import { CONTRACT_EXAMPLE_TITLES, type ContractExampleKind, EXAMPLE_TITLES, EXAMPLE_USER, type ExampleKind, contractExample, paymentExample } from './examples.ts';
 import { EXAMPLE_MARK, windowRoot } from '../window/frame.ts';
 
 const KINDS: readonly ExampleKind[] = ['match', 'mismatch', 'not_listed'];
+const CONTRACT_KINDS: readonly ContractExampleKind[] = ['match', 'code_changed'];
+
+/** What each contract example shows (D900). */
+const CONTRACT_NOTES: Readonly<Record<ContractExampleKind, string>> = Object.freeze({
+  match: 'Your words show in their own box, under everything Journear says, while the program runs the code your labels name.',
+  code_changed: 'After a code change Journear doesn’t show your words, and adds an amber line: the request doesn’t match your description.',
+});
 
 /** What each example shows, in a line under the switch. */
 const EXAMPLE_NOTES: Readonly<Record<ExampleKind, string>> = Object.freeze({
@@ -46,14 +53,14 @@ function Segmented<T extends string>({ legend, name, value, options, onChange }:
  * The window for one example request, built by the window's own renderer, inside a shadow root with the popup's
  * stylesheet (window/frame.ts): the frame in the chosen scheme, the example mark first, then the window's body.
  */
-function WindowFrame({ doc, appName, example, environment, theme }: { doc: LabelDocument; appName: string; example: ExampleKind; environment: 'test' | 'live'; theme: 'light' | 'dark' }) {
+function WindowFrame({ doc, appName, example, environment, theme }: { doc: LabelDocument; appName: string; example: ExampleKind | ContractExampleKind; environment: 'test' | 'live'; theme: 'light' | 'dark' }) {
   const ref = useRef<HTMLDivElement>(null);
   const [why, setWhy] = useState<string | null>(null);
   useEffect(() => {
     const host = ref.current;
     if (!host) return;
     const root = windowRoot(host);
-    const ex = paymentExample(doc, example);
+    const ex = doc.context.chain === 'stellar' ? paymentExample(doc, example as ExampleKind) : contractExample(doc, example as ContractExampleKind, environment);
     if (!ex.ok) {
       setWhy(ex.why);
       root.replaceChildren();
@@ -62,7 +69,9 @@ function WindowFrame({ doc, appName, example, environment, theme }: { doc: Label
     setWhy(null);
     const d = dom(document);
     try {
-      const body = renderApproval(d, ex.decoded, appName, { envNetwork: environment === 'test' ? 'testnet' : 'mainnet', testApp: environment === 'test', address: EXAMPLE_USER, partnerLabels: [doc], nowMs: Date.now() });
+      const user = 'user' in ex ? ex.user : EXAMPLE_USER;
+      const facts = 'labelFacts' in ex && ex.labelFacts ? { labelFacts: ex.labelFacts } : {};
+      const body = renderApproval(d, ex.decoded, appName, { envNetwork: environment === 'test' ? 'testnet' : 'mainnet', testApp: environment === 'test', address: user, partnerLabels: [doc], ...facts, nowMs: Date.now() });
       root.replaceChildren(d.h('div', { class: `window-frame ${theme === 'dark' ? 'jp-dark' : 'jp-light'}`, attrs: { 'data-example': example } }, d.h('p', { class: 'example-mark' }, EXAMPLE_MARK), d.h('div', { class: 'window-preview' }, body)));
     } catch {
       setWhy('This example can’t be shown yet: fix the problems in the form.');
@@ -91,35 +100,7 @@ export function LabelsPreview({ doc, appName, environment, problems }: { doc: La
       </section>
     );
   }
-  if (doc.context.chain !== 'stellar') {
-    const lines = previewLabelDocument(doc, appName);
-    return (
-      <section className="labels-preview" aria-labelledby={`${id}-h`}>
-        <h3 id={`${id}-h`}>What users see</h3>
-        <Callout tone="warn" title="Not shown to users yet">
-          <p>Journear doesn’t show labels for {doc.context.chain === 'near' ? 'NEAR programs' : 'Soroban contracts'} yet: it first needs to check the program’s code, which comes later. Until then your users see Journear’s plain approval window for these requests. You can still prepare and propose them.</p>
-        </Callout>
-        <p className="muted small">When they are shown, they will read (example values):</p>
-        <ul className="labels-lines">
-          {lines.map((f) => (
-            <li key={f.key}>
-              <span className="labels-line">{f.line}</span>
-              {f.fields.length > 0 && (
-                <dl className="jp-kv labels-rows">
-                  {f.fields.map((x) => (
-                    <div key={x.label} className="labels-row">
-                      <dt>{x.label}</dt>
-                      <dd>{x.value}</dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
-    );
-  }
+  if (doc.context.chain !== 'stellar') return <ContractPreview doc={doc} appName={appName} environment={environment} />;
   return (
     <section className="labels-preview" aria-labelledby={`${id}-h`}>
       <h3 id={`${id}-h`}>What users see</h3>
@@ -139,6 +120,37 @@ export function LabelsPreview({ doc, appName, environment, problems }: { doc: La
       </div>
       <p className="muted small" aria-live="polite">
         {EXAMPLE_NOTES[example]}
+      </p>
+      <WindowFrame doc={doc} appName={appName} example={example} environment={environment} theme={theme} />
+    </section>
+  );
+}
+
+/** D900: the window for a NEAR program's or a Soroban contract's first described request, matching or after a code change. */
+function ContractPreview({ doc, appName, environment }: { doc: LabelDocument; appName: string; environment: 'test' | 'live' }) {
+  const [example, setExample] = useState<ContractExampleKind>('match');
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const id = useId();
+  const first = Object.keys(doc.formats)[0];
+  return (
+    <section className="labels-preview" aria-labelledby={`${id}-h`}>
+      <h3 id={`${id}-h`}>What users see</h3>
+      <p className="muted small">The approval window as it shows your words{first ? ` for ${first}` : ''}, with made-up values, at a phone’s width.</p>
+      <div className="preview-switches">
+        <Segmented legend="Example" name={`${id}-example`} value={example} options={CONTRACT_KINDS.map((k) => ({ value: k, label: CONTRACT_EXAMPLE_TITLES[k] }))} onChange={setExample} />
+        <Segmented
+          legend="Theme"
+          name={`${id}-theme`}
+          value={theme}
+          options={[
+            { value: 'light', label: 'Light' },
+            { value: 'dark', label: 'Dark' },
+          ]}
+          onChange={setTheme}
+        />
+      </div>
+      <p className="muted small" aria-live="polite">
+        {CONTRACT_NOTES[example]}
       </p>
       <WindowFrame doc={doc} appName={appName} example={example} environment={environment} theme={theme} />
     </section>

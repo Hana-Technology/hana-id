@@ -31,6 +31,8 @@ export const HOME_NAME_TEXT = Object.freeze({
   frontAbout: 'Add a first and last name for your apps if you like: no app gets it until you turn on sharing for that app.',
   frontShow: 'Show my name',
   appAbout: 'Choose whether this app gets the name you set in Passport Home: it doesn’t unless you share it.',
+  /** D897: a wallet two or more apps share. */
+  appAboutMany: 'Choose whether these apps get the name you set in Passport Home: they don’t unless you share it.',
   appShow: 'Show name sharing',
   loading: 'Loading your name…',
   given: 'First name',
@@ -235,6 +237,11 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
       // Focus is a convenience.
     }
   };
+  /** D897: a finished read takes the focus to the heading only if nobody moved it meanwhile (on the heading, or nowhere). */
+  const focusHeading = (id: string): void => {
+    const a = deps.win.document.activeElement;
+    if (a === null || a === deps.win.document.body || a.id === id) focus(id);
+  };
 
   // ---- requests: one at a time, never repeated by the page ----
 
@@ -301,7 +308,7 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
       front.state = 'ready';
     } else if (front.state === 'loading') front.state = 'closed';
     render('front');
-    if (out) focus('home-profile-title');
+    if (out) focusHeading('home-profile-title');
   }
 
   async function loadApp(): Promise<void> {
@@ -341,7 +348,7 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     app.state = 'ready';
     render('app');
     render('front');
-    focus('home-app-profile-title');
+    focusHeading('home-app-profile-title');
   }
 
   async function save(): Promise<void> {
@@ -658,7 +665,8 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     const root = where === 'front' ? frontRoot : appRoot;
     // The view's own heading (D893: the page's `h1` names the view); a section of a wallet's page.
     const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE) : d.h('h2', { attrs: { id: 'home-app-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE);
-    const about = d.h('p', {}, where === 'front' ? HOME_NAME_TEXT.frontAbout : HOME_NAME_TEXT.appAbout);
+    // D897: on a wallet's page, the section's one line in the Security tab's pattern (a read only when asked).
+    const about = d.h('p', where === 'front' ? {} : { class: 'home-set-summary', attrs: { id: 'home-app-profile-summary' } }, where === 'front' ? HOME_NAME_TEXT.frontAbout : (appScope?.apps.length ?? 1) > 1 ? HOME_NAME_TEXT.appAboutMany : HOME_NAME_TEXT.appAbout);
     root.replaceChildren();
     for (const c of [heading, about, ...(where === 'front' ? frontBody() : appBody())]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
   }

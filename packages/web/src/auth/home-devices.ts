@@ -3,9 +3,13 @@
 // devices may sign without asking, and the apps they share their email with, each with a way to stop it
 // (docs/hana-home-spec.md F5, D45, D98 item 9, D411 point 6).
 //
-// It reads `GET /v1/home/devices` only when the user asks: "Show devices", or opening the view from "Your account"
+// It reads `GET /v1/home/devices` only when the user asks: "Show devices", opening the view from "Your account"
 // (`openFront`), which the page also does once after sign-in when it was opened at `/home?view=devices` (the address
-// Journear's own "Manage in Passport Home" links will use; nothing links to it yet). Back and Forward never read. A stop
+// Journear's own "Manage in Passport Home" links will use; nothing links to it yet), or opening a wallet's Security tab
+// by a press (`openApp`, D897: that wallet only, once while its page is open, quietly: no focus move, no alert; the
+// cards wait for "Show devices", which reads again when that read is over a minute old). Back and Forward never read.
+// What is on screen is drawn again, with no request, when the page becomes visible, at midnight and when a date on it
+// passes, so "today", "Auto-approve on" and "may sign without asking" never stay false. A stop
 // asks first, on the page itself, saying what stopping does and doesn't do, and is sent once, on a real click:
 //   - "Stop auto-approving": that device's consent; auto-signing stops there within about 10 seconds (D465);
 //   - "Sign out this device": its share, and its consent with it;
@@ -99,6 +103,10 @@ export interface HomeDevicesDeps {
   track: (p: Promise<unknown>) => void;
   /** An app's name from the page's own listings, for an app the answer didn't name. */
   appName?: (appId: string) => string | null;
+  /** The clock "today" and "tomorrow" are told by (default: the device's). */
+  now?: () => number;
+  /** A timer (default: the window's); returns its cancel. */
+  setTimer?: (run: () => void, ms: number) => () => void;
 }
 
 export type HomeDevicesState = 'closed' | 'loading' | 'ready';
@@ -120,6 +128,13 @@ export interface HomeDevices {
   leaveFront(): void;
   /** The section of `scope`'s page. Another app's page starts it closed again; the same app keeps what it shows. */
   appView(scope: HomeScope): HTMLElement;
+  /**
+   * D897: the person opened the wallet's Security tab: one read for this wallet, unless it is read already or on its
+   * way, so the section's one line can say where the wallet is signed in. The details stay behind "Show devices".
+   */
+  openApp(): void;
+  /** Whether the wallet's page shows the details (true once "Show devices" is pressed). */
+  readonly appExpanded: boolean;
   /** The user left an app's page: its section closes, and opening the page again reads it again. */
   leaveApp(): void;
   /** Another account, or signed out: everything is dropped and both views close. */
@@ -136,9 +151,18 @@ interface View {
   busy: 'load' | 'more' | null;
   /** Sentences after a stop, by scope. */
   notes: Map<string, string>;
+  /** The details are on screen (the front view always; a wallet's page once "Show devices" is pressed, D897). */
+  expanded: boolean;
+  /** When the shown answer was read (D897: "Show devices" reads again when the tab's own read is over a minute old). */
+  readAtMs: number | null;
+  /** The Security tab's own read failed (D897): said quietly, never as an alert nobody asked for. */
+  quietFailed: boolean;
 }
 
-const newView = (): View => ({ state: 'closed', scopes: [], nextCursor: null, problem: null, busy: null, notes: new Map() });
+const newView = (): View => ({ state: 'closed', scopes: [], nextCursor: null, problem: null, busy: null, notes: new Map(), expanded: true, readAtMs: null, quietFailed: false });
+
+/** D897: "Show devices" shows the Security tab's read only while it is at most this old; older, the press reads again. */
+export const DEVICES_FRESH_MS = 60_000;
 
 const stopKey = (s: HomeStop, scopeId: string): string => (s.kind === 'consent' ? `consent:${s.consentId}` : s.kind === 'share' ? `share:${s.shareId}` : `email:${scopeId}:${s.appId}`);
 
@@ -150,8 +174,120 @@ function when(ms: number): string {
   }
 }
 
+/** The device's 12- or 24-hour preference, for times written in English (D897). */
+function hourCycle(): 'h12' | 'h23' {
+  try {
+    const c = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hourCycle;
+    return c === 'h23' || c === 'h24' ? 'h23' : 'h12';
+  } catch {
+    return 'h12';
+  }
+}
+
+/** A time in English, as the device prefers its hours ("2:20 PM" or "14:20"). */
+function timeOf(ms: number): string {
+  return new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit', hourCycle: hourCycle() }).format(ms);
+}
+
+/** The full date and time, for a screen reader and a tooltip (D897): "Monday, November 23, 2026 at 2:20 PM". */
+export function whenFull(ms: number): string {
+  try {
+    return `${new Intl.DateTimeFormat('en', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }).format(ms)} at ${timeOf(ms)}`;
+  } catch {
+    return when(ms);
+  }
+}
+
+/**
+ * A date and time in a few plain words (D897): "today at 2:20 PM", "tomorrow at 2:20 AM", "yesterday at 9:05 AM", "on
+ * Nov 25 at 2:20 AM" (this year), else "on Nov 25, 2027 at 2:20 AM". In English like the sentence around it (never
+ * "on 2027年1月2日 at"), with the device's 12- or 24-hour preference.
+ */
+export function whenWords(ms: number, nowMs: number): string {
+  try {
+    const day = (t: number): number => {
+      const x = new Date(t);
+      return Date.UTC(x.getFullYear(), x.getMonth(), x.getDate()) / 86_400_000;
+    };
+    const time = timeOf(ms);
+    const diff = day(ms) - day(nowMs);
+    if (diff === 0) return `today at ${time}`;
+    if (diff === 1) return `tomorrow at ${time}`;
+    if (diff === -1) return `yesterday at ${time}`;
+    const sameYear = new Date(ms).getFullYear() === new Date(nowMs).getFullYear();
+    const date = new Intl.DateTimeFormat('en', sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' }).format(ms);
+    return `on ${date} at ${time}`;
+  } catch {
+    return when(ms);
+  }
+}
+
+/** What `devicesSummary` needs of a scope's answer. */
+export interface DevicesSummaryScope {
+  readonly apps: readonly { readonly appId: string; readonly name: string }[];
+  readonly devices: readonly { readonly consent: unknown }[];
+  readonly consents: readonly unknown[];
+  readonly email: readonly { readonly appId: string }[] | null;
+}
+
+/**
+ * The section's one line on a wallet's page (D897), from its one read: where the wallet is signed in (a "place" is one
+ * sign-in: one browser on one site for one app, so one laptop in two apps is two places), what may sign without asking,
+ * and which app gets the email. `mine`: the person's own wallet ("this wallet"), else an app's page ("this app").
+ * `nameOf`: an app's name (partner text, only ever set as text).
+ */
+export function devicesSummary(s: DevicesSummaryScope, mine = true, nameOf: (appId: string) => string = (id) => s.apps.find((a) => a.appId === id)?.name ?? 'an app'): string {
+  const thing = mine ? 'this wallet' : 'this app';
+  const n = s.devices.length;
+  const k = s.devices.filter((x) => x.consent !== null).length;
+  const t = s.consents.length;
+  const parts: string[] = [];
+  if (n === 0) parts.push(t === 0 ? `Not signed in to ${thing} anywhere right now.` : `Not kept signed in to ${thing} anywhere.`);
+  else {
+    parts.push(`Signed in to ${thing} in ${n} ${n === 1 ? 'place' : 'places'}.`);
+    if (n === 1) parts.push(k === 1 ? 'It may sign without asking.' : 'It asks you before signing.');
+    else parts.push(k === 0 ? 'Each asks you before signing.' : `${k} of them may sign without asking.`);
+  }
+  if (t > 0) parts.push(`${t === 1 ? 'A tab' : `${t} tabs`} that may still be open can${n > 0 ? ' also' : ''} sign without asking.`);
+  const shared = s.email ?? [];
+  if (shared.length > 0) {
+    const names = shared.map((e) => nameOf(e.appId));
+    const to = s.apps.length <= 1 && mine ? 'the app' : s.apps.length <= 1 ? 'this app' : names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.length} apps`;
+    parts.push(`Your email is shared with ${to}.`);
+  }
+  return parts.join(' ');
+}
+
+/**
+ * What of an answer is still true at `nowMs` (D897): an auto-approve past its end is off; a sign-in past its last
+ * moment, and a tab's auto-approve past its end, are gone. Nothing is read: the page draws what it has again.
+ */
+export function stillTrue<S extends HomeDeviceScope>(s: S, nowMs: number): S {
+  return {
+    ...s,
+    devices: s.devices.filter((x) => x.expiresAtMs > nowMs).map((x) => (x.consent && x.consent.expiresAtMs <= nowMs ? { ...x, consent: null } : x)),
+    consents: s.consents.filter((c) => c.expiresAtMs > nowMs),
+  };
+}
+
+/** The next moment something on screen stops being true (an end or a sign-out), or null. */
+export function nextChange(scopes: readonly HomeDeviceScope[], nowMs: number): number | null {
+  const times = scopes.flatMap((s) => [...s.devices.flatMap((x) => [x.idleUntilMs, x.expiresAtMs, ...(x.consent ? [x.consent.expiresAtMs] : [])]), ...s.consents.map((c) => c.expiresAtMs)]).filter((t) => t > nowMs);
+  return times.length > 0 ? Math.min(...times) : null;
+}
+
+/** The next local midnight after `nowMs` ("today" becomes "yesterday"). */
+export function nextMidnight(nowMs: number): number {
+  const x = new Date(nowMs);
+  return new Date(x.getFullYear(), x.getMonth(), x.getDate() + 1).getTime();
+}
+
 export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
   const { d, isGesture } = deps;
+  const now = deps.now ?? (() => Date.now());
+  /** A date as a few plain words, with the full date for a tooltip and a screen reader (D897). */
+  const at = (ms: number): HTMLElement =>
+    d.h('span', { class: 'home-when' }, d.h('time', { attrs: { datetime: new Date(ms).toISOString(), title: whenFull(ms), 'aria-hidden': 'true' } }, whenWords(ms, now())), d.h('span', { class: 'sr-only' }, `${whenFull(ms)}`));
   let epoch = 0;
   let requests = 0;
   const views: Record<Where, View> = { front: newView(), app: newView() };
@@ -185,6 +321,14 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       // Focus is a convenience.
     }
   };
+  /**
+   * D897: a read that finished takes the focus to the section's heading only if nobody moved it meanwhile: it is still
+   * on that heading, or nowhere (the pressed button was drawn over by "Loading…").
+   */
+  const focusHeading = (id: string): void => {
+    const a = deps.win.document.activeElement;
+    if (a === null || a === deps.win.document.body || a.id === id) focus(id);
+  };
 
   // ---- requests: one at a time per view, never repeated by the page ----
 
@@ -216,7 +360,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     }
   }
 
-  async function load(where: Where, more = false): Promise<void> {
+  /** `quiet`: read because the Security tab opened (D897), so the focus stays where the person left it. */
+  async function load(where: Where, more = false, quiet = false): Promise<void> {
     const view = views[where];
     if (view.busy) return;
     const scopeId = appScope?.scopeId;
@@ -224,6 +369,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     if (!query) return;
     view.busy = more ? 'more' : 'load';
     view.problem = null;
+    view.quietFailed = false;
     if (!more && view.state === 'closed') view.state = 'loading';
     confirm = null;
     render(where);
@@ -235,10 +381,20 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       view.scopes = more ? [...view.scopes, ...page.scopes.filter((s) => !view.scopes.some((x) => x.scopeId === s.scopeId))] : page.scopes;
       view.nextCursor = where === 'front' ? page.nextCursor : null;
       view.state = 'ready';
-      if (!more) view.notes.clear();
-    } else if (view.state === 'loading') view.state = 'closed';
+      if (!more) {
+        view.notes.clear();
+        view.readAtMs = now();
+      }
+    } else {
+      if (view.state === 'loading') view.state = 'closed';
+      // D897: the tab's own read failed: a quiet note, not an alert nobody asked for (the alert comes with a press).
+      if (quiet) {
+        view.problem = null;
+        view.quietFailed = true;
+      }
+    }
     render(where);
-    if (page && !more) focus(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
+    if (page && !more && !quiet) focusHeading(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
   }
 
   /** Applies a stop to whatever either view shows of it. */
@@ -331,9 +487,10 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
 
   function consentLines(c: HomeConsent): Child[] {
     return [
-      d.h('p', { class: 'home-consent-state' }, badge('Auto-approve on', 'ok'), ` until ${when(c.expiresAtMs)}`),
-      // The app's own words, in quotes and labelled as the app's: never Journear's description.
-      d.h('p', { class: 'home-policy' }, 'The app describes what it may sign without asking as: ', d.h('q', { class: 'home-policy-label' }, c.label)),
+      d.h('p', { class: 'home-consent-state' }, badge('Auto-approve on', 'ok'), ' until ', at(c.expiresAtMs)),
+      // The app's own words, in quotes and labelled as the app's: never Journear's description. On their own line, so
+      // they read at a phone's width (D897).
+      d.h('p', { class: 'home-policy' }, 'In the app’s words, it may sign without asking:', d.h('q', { class: 'home-policy-label' }, c.label)),
     ];
   }
 
@@ -348,7 +505,15 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
 
   function deviceItem(where: Where, s: HomeDeviceScope, x: HomeDevice, showApp: boolean): HTMLElement {
     const nameId = `home-device-${where}-${x.shareId}`;
-    const ends = x.idleUntilMs < x.expiresAtMs ? `${when(x.idleUntilMs)} if it isn’t used before then, ${when(x.expiresAtMs)} at the latest` : when(x.expiresAtMs);
+    // D897: one plain line each, a short date with the full one for a tooltip and a screen reader.
+    // Once the idle moment has passed, the sentence says what may have happened (Journear can't tell whether it was used).
+    const idlePassed = x.idleUntilMs <= now();
+    const ends: Child[] =
+      x.idleUntilMs >= x.expiresAtMs
+        ? ['Signs out by itself ', at(x.expiresAtMs), '.']
+        : idlePassed
+          ? ['If it wasn’t used, it signed out by itself ', at(x.idleUntilMs), '; if it was, it signs out ', at(x.expiresAtMs), ' at the latest.']
+          : ['Signs out by itself ', at(x.idleUntilMs), ' if it isn’t used, and ', at(x.expiresAtMs), ' at the latest.'];
     const share: HomeStop = { kind: 'share', shareId: x.shareId };
     const shareId = `home-stop-share-${where}-${x.shareId}`;
     // A card of setting rows: the device (where, when, "Sign out this device"), then its auto-approve.
@@ -358,17 +523,15 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       settingRow(
         'home-device-row',
         [
-          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, x.label ?? UNNAMED_DEVICE), ' on ', originText(d, x.partnerOrigin)),
+          // The device, then where (the site on its own line, broken only where it must be: D897).
+          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, x.label ?? UNNAMED_DEVICE), d.h('span', { class: 'sr-only' }, ' on '), originText(d, x.partnerOrigin)),
           showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, x.appId))) : null,
           d.h(
-            'dl',
-            { class: 'home-device-facts jp-kv' },
-            d.h('dt', {}, 'Signed in'),
-            d.h('dd', {}, when(x.signedInAtMs)),
-            x.lastUsedAtMs !== null ? d.h('dt', {}, 'Last opened or approved here') : null,
-            x.lastUsedAtMs !== null ? d.h('dd', {}, when(x.lastUsedAtMs)) : null,
-            d.h('dt', {}, 'Signs out by itself'),
-            d.h('dd', {}, ends),
+            'div',
+            { class: 'home-device-facts' },
+            d.h('p', {}, 'Signed in ', at(x.signedInAtMs), '.'),
+            x.lastUsedAtMs !== null ? d.h('p', {}, 'Last opened or approved here ', at(x.lastUsedAtMs), '.') : null,
+            d.h('p', {}, ...ends),
           ),
         ],
         s.canStop ? stopButton(where, share, s.scopeId, 'Sign out this device', shareId, nameId) : null,
@@ -387,7 +550,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       settingRow(
         'home-device-row',
         [
-          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), ' on ', originText(d, c.partnerOrigin)),
+          d.h('p', { class: 'home-device-name', attrs: { id: nameId } }, d.h('strong', {}, 'A tab (may be closed)'), d.h('span', { class: 'sr-only' }, ' on '), originText(d, c.partnerOrigin)),
           showApp ? d.h('p', { class: 'muted' }, 'App: ', d.h('span', { class: 'home-device-app' }, nameOf(s, c.appId))) : null,
           d.h('p', { class: 'muted' }, 'This app keeps no sign-in on the device: the tab is signed out when it closes, and Journear can’t tell whether it still is open.'),
         ],
@@ -429,7 +592,9 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
 
   const isEmpty = (s: HomeDeviceScope): boolean => s.devices.length === 0 && s.consents.length === 0 && (s.email?.length ?? 0) === 0;
 
-  function scopeGroup(where: Where, s: HomeDeviceScope): HTMLElement {
+  function scopeGroup(where: Where, read: HomeDeviceScope): HTMLElement {
+    // D897: only what is still true now (an ended auto-approve is off, an ended sign-in gone); nothing is read for it.
+    const s = stillTrue(read, now());
     const showApp = where === 'front' || s.apps.length > 1;
     const note = views[where].notes.get(s.scopeId);
     const items = [...s.devices.map((x) => deviceItem(where, s, x, showApp)), ...s.consents.map((c) => tabConsentItem(where, s, c, showApp))];
@@ -473,14 +638,51 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     const view = views[where];
     const ids = where === 'front' ? { show: 'home-devices-show', again: 'home-devices-refresh' } : { show: 'home-app-devices-show', again: 'home-app-devices-refresh' };
     const out: Child[] = [view.problem ? problemView(where, view.problem) : null];
+    if (view.state === 'closed' && view.quietFailed) out.push(d.h('p', { class: 'muted', attrs: { id: `home-devices-quiet-${where}` } }, 'Passport Home couldn’t check this just now. “Show devices” tries again.'));
     if (view.state === 'closed') {
-      out.push(d.h('div', { class: 'actions start' }, button(view.busy ? 'Loading…' : 'Show devices', ids.show, () => deps.track(load(where)), { disabled: view.busy !== null })));
+      out.push(
+        d.h(
+          'div',
+          { class: 'actions start' },
+          button(
+            view.busy ? 'Loading…' : 'Show devices',
+            ids.show,
+            () => {
+              view.expanded = true;
+              deps.track(load(where));
+            },
+            { disabled: view.busy !== null },
+          ),
+        ),
+      );
       return out;
     }
     if (view.state === 'loading') {
       out.push(d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Loading your devices…'));
       return out;
     }
+    // D897: on a wallet's page, read when the Security tab opened, the details wait for "Show devices" (no second read).
+    if (!view.expanded) {
+      out.push(
+        d.h(
+          'div',
+          { class: 'actions start' },
+          button('Show devices', ids.show, () => {
+            view.expanded = true;
+            // D897: the tab's read is shown while it is fresh; older than a minute, the press reads again.
+            if (view.readAtMs === null || now() - view.readAtMs > DEVICES_FRESH_MS) {
+              deps.track(load(where));
+              return;
+            }
+            render(where);
+            focus(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
+          }),
+        ),
+      );
+      return out;
+    }
+    // D897: "Show again" beside what it refreshes, at the top, as small as the cards' own buttons.
+    out.push(d.h('div', { class: 'actions start home-devices-again' }, button(view.busy === 'load' ? 'Loading…' : 'Show again', ids.again, () => deps.track(load(where)), { disabled: view.busy !== null || stopping !== null, sm: true })));
     // On the front page an app with nothing left is left out, unless a stop just emptied it (its sentence stays).
     const shown = where === 'front' ? view.scopes.filter((s) => !isEmpty(s) || view.notes.has(s.scopeId)) : view.scopes;
     if (where === 'front' && shown.length === 0) {
@@ -490,14 +692,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     }
     if (where === 'front' && view.scopes.some((s) => s.email === null)) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-email-unknown-front' } }, 'Passport Home can’t tell right now which apps you share your email with.'));
     if (where === 'front') out.push(d.h('p', { class: 'muted' }, 'Only apps Journear has on record for you are listed here. For any other app, find it on “Your wallets”, under “Other apps”, and open it.'));
-    out.push(
-      d.h(
-        'div',
-        { class: 'actions start' },
-        where === 'front' && view.nextCursor ? button(view.busy === 'more' ? 'Loading…' : 'Show more', 'home-devices-more', () => deps.track(load(where, true)), { disabled: view.busy !== null }) : null,
-        button(view.busy === 'load' ? 'Loading…' : 'Show again', ids.again, () => deps.track(load(where)), { disabled: view.busy !== null || stopping !== null }),
-      ),
-    );
+    if (where === 'front' && view.nextCursor) out.push(d.h('div', { class: 'actions start' }, button(view.busy === 'more' ? 'Loading…' : 'Show more', 'home-devices-more', () => deps.track(load(where, true)), { disabled: view.busy !== null })));
     return out;
   }
 
@@ -511,9 +706,51 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
           : HOME_DEVICES_WALLET_INTRO(appScope?.apps.length ?? 1);
     // The view's own heading for every wallet (D893: the page's `h1` names the view); a section of a wallet's page.
     const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE) : d.h('h2', { attrs: { id: 'home-app-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE);
+    // D897: on a wallet's page, once read, the one line says where the wallet is signed in (in place of the intro).
+    const scope = where === 'app' && views.app.state === 'ready' ? views.app.scopes[0] : undefined;
+    const line = scope ? devicesSummary(stillTrue(scope, now()), appScope?.mine !== false, (appId) => nameOf(scope, appId)) : intro;
     root.replaceChildren();
-    for (const c of [heading, d.h('p', {}, intro), ...body(where)]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
+    schedule();
+    for (const c of [heading, d.h('p', { class: 'home-set-summary', attrs: { id: where === 'front' ? 'home-devices-about' : 'home-app-devices-summary', ...(scope ? { 'data-read': '' } : {}) } }, line), ...body(where)]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
   }
+
+  // ---- D897: what is on screen stays true: drawn again (no request) when the page is seen again, at midnight, and when
+  // a date on it passes ----
+  const setTimer = deps.setTimer ?? ((run: () => void, ms: number) => {
+    const t = setTimeout(run, ms);
+    return () => clearTimeout(t);
+  });
+  let cancelTimer: (() => void) | null = null;
+
+  /** Draws both views again from what they hold, keeping the focus on the same control when it is still there. */
+  function refresh(): void {
+    for (const where of ['front', 'app'] as const) {
+      const view = views[where];
+      if (view.state !== 'ready' || view.busy !== null || stopping !== null) continue;
+      const root = where === 'front' ? frontRoot : appRoot;
+      const had = deps.win.document.activeElement;
+      const keep = had && root.contains(had) && had.id ? had.id : null;
+      render(where);
+      if (keep && !root.contains(deps.win.document.activeElement)) focus(keep);
+    }
+    schedule();
+  }
+
+  function schedule(): void {
+    cancelTimer?.();
+    cancelTimer = null;
+    const t = now();
+    const shown = [...(views.front.state === 'ready' ? views.front.scopes : []), ...(views.app.state === 'ready' ? views.app.scopes : [])];
+    if (shown.length === 0) return;
+    const change = nextChange(shown, t);
+    const next = Math.min(nextMidnight(t), change ?? Number.POSITIVE_INFINITY);
+    // A little after the moment, so the date has passed; long waits are re-checked within a day (timers drift).
+    cancelTimer = setTimer(refresh, Math.min(Math.max(next - t + 500, 500), 86_400_000));
+  }
+
+  deps.win.document.addEventListener('visibilitychange', () => {
+    if (deps.win.document.visibilityState === 'visible') refresh();
+  });
 
   render('front');
   render('app');
@@ -547,6 +784,14 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       if (confirm?.where !== 'front' || stopping !== null) return;
       confirm = null;
       render('front');
+    },
+    get appExpanded() {
+      return views.app.expanded;
+    },
+    openApp() {
+      if (!appScope || views.app.state !== 'closed' || views.app.busy !== null || !deps.session()) return;
+      views.app.expanded = false;
+      deps.track(load('app', false, true));
     },
     appView(scope) {
       if (appScope?.scopeId !== scope.scopeId) {

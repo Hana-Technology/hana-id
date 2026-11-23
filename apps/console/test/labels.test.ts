@@ -55,7 +55,7 @@ const list = (m: Parameters<typeof getAs>[0], org: string, scope: string) => get
 async function propose(m: Awaited<ReturnType<typeof member>>, app: { id: string; scope: string }, doc = paymentDoc(), labelId?: string) {
   const a = await createAction(m, 'labels.set', { scopeId: app.scope, ...(labelId ? { labelId } : {}), document: doc, appIds: [app.id] });
   await stepUp(google, m, a.id);
-  const out = (await actionOf(m, a.id)).body as { status: string; outcome: { changeId: string; labelId: string } };
+  const out = (await actionOf(m, a.id)).body as unknown as { status: string; outcome: { changeId: string; labelId: string } };
   expect(out.status).toBe('ok');
   return { action: a, changeId: out.outcome.changeId, labelId: out.outcome.labelId };
 }
@@ -80,7 +80,7 @@ describe('GET /api/orgs/:org/scopes/:scope/labels', () => {
     const p = await propose(m, app);
     const ack = await env.API_ADMIN.ackLabelNotice({ ...system(), changeId: p.changeId, cancelTokenHash: (await linkPair()).hashB64 });
     expect(ack.ok, JSON.stringify(ack)).toBe(true);
-    const detail = (await env.API_ADMIN.labelDetail({ ...hana(), changeId: p.changeId })) as { ok: true; item: { labelsVersion: number; change: { state: string } } };
+    const detail = (await env.API_ADMIN.labelDetail({ ...hana(), changeId: p.changeId })) as unknown as { ok: true; item: { labelsVersion: number; change: { state: string } } };
     const note = 'The words would mislead users about the fare';
     const b = await env.API_ADMIN.labelStaffAct({ ...hana(), changeId: p.changeId, tool: 'block', note, seen: { labelsVersion: detail.item.labelsVersion, state: detail.item.change.state } });
     expect(b.ok, JSON.stringify(b)).toBe(true);
@@ -100,7 +100,7 @@ describe('GET /api/orgs/:org/scopes/:scope/labels', () => {
 
   it('says when Journear reviews the org’s changes, and when it has switched the org’s labels off', async () => {
     const { m, app } = await ownerWithApp();
-    const controls = (await env.API_ADMIN.labelControls({ ...hana() })) as { ok: true; controls: { orgs: { orgId: string; version: number }[] } };
+    const controls = (await env.API_ADMIN.labelControls({ ...hana() })) as unknown as { ok: true; controls: { orgs: { orgId: string; version: number }[] } };
     const v = controls.controls.orgs.find((o) => o.orgId === m.org)?.version ?? 0;
     const on = await env.API_ADMIN.labelControl({ ...hana(), target: { kind: 'org', orgId: m.org }, what: 'review_on', note: 'Reviewing this partner for now', seenVersion: v });
     expect(on.ok, JSON.stringify(on)).toBe(true);
@@ -180,7 +180,7 @@ describe('labels.set and labels.remove: the review the confirmation page shows',
     const diff = a.decoded.diff as { key: string; change: string; before: string | null; after: string | null }[];
     expect(diff.find((x) => x.key === '(contract)')).toMatchObject({ change: 'same' });
     expect(diff.find((x) => x.key === 'payment')).toMatchObject({ change: 'changed', before: expect.stringContaining('pay for order'), after: expect.stringContaining('pay for the order') });
-    const controls = (await env.API_ADMIN.labelControls({ ...hana() })) as { ok: true; controls: { orgs: { orgId: string; version: number }[] } };
+    const controls = (await env.API_ADMIN.labelControls({ ...hana() })) as unknown as { ok: true; controls: { orgs: { orgId: string; version: number }[] } };
     const v = controls.controls.orgs.find((o) => o.orgId === m.org)?.version ?? 0;
     expect((await env.API_ADMIN.labelControl({ ...hana(), target: { kind: 'org', orgId: m.org }, what: 'review_on', note: 'Reviewing this partner for now', seenVersion: v })).ok).toBe(true);
     const b = await createAction(m, 'labels.set', { scopeId: app.scope, labelId: p.labelId, document: paymentDoc('the order'), appIds: [app.id] });

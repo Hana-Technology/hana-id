@@ -22,7 +22,7 @@
 // Each reset makes a new org (`org_e2elabels…`, with a security contact), scope (`stafflabelsN`) and app, and first
 // ends the last one's through the product: its owner removes its entries (the same step-up, `labels_remove`) and the
 // switches it set are turned back. So a scenario starts clean and the feed's waiting list is the scenario's own.
-// Partner labels are on (PARTNER_LABELS = "on") only in the lanes' API env: the local e2e stack's staff portal.
+// Partner labels are on (PARTNER_LABELS = "on") in the lanes' API env (the local e2e stack's staff portal) and in the main stack's API (D896: /__e2e/labels).
 import { createHash } from 'node:crypto';
 import { base58 } from '@scure/base';
 import { API_URL, E2E_ENV, STAMPS_ORIGIN, VAULT_ORIGIN } from '../stack.ts';

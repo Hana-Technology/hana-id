@@ -421,9 +421,16 @@ tool), then as deployed (the relayer's own 15 s, or its backoff up to 5 minutes)
 with a transaction no node took, that is every 15 s; while paused for money, D890, every 15 s for 10 minutes, then
 every 60 s).
 
-**Partner labels (D894, `src/server/lane-labels.ts`).** Only the lanes' API env turns partner labels on
+**Partner labels in the approval window (D896, `tests/partner-labels-window.spec.ts`).** The main stack's API also has
+`PARTNER_LABELS = "on"`; an app has labels only when a test writes one in force straight to D1 (`POST /__e2e/labels
+{appId, text}` → `{labelId, changeId}`, not the guarded path; `POST /__e2e/labels/remove {labelId}` removes it at once).
+The spec walks one app's Stellar payments through a matching label, a warning beside one, the amber mismatch, the red
+unlisted account and a request the label doesn't describe (the same window after the label's removal), with the divider
+checks at 390 and 1280 px, light and dark, in every browser; `HANA_SHOTS_DIR` (Chromium) saves each screen.
+
+**Partner labels (D894, `src/server/lane-labels.ts`).** The lanes' API env turns partner labels on
 (`PARTNER_LABELS = "on"`, with `APP_CHANGE_DELAY_MS` 24 h as the admin env's, and `REFUSED_ORIGINS` the stack's API,
-vault and auth origins, as gen-wrangler sets a real env's); no other env of the stack has them. A lane has a partner org
+vault and auth origins, as gen-wrangler sets a real env’s); the main stack’s API has them on too (above). A lane has a partner org
 of its own (`org_e2elabels…`, scope `stafflabelsN`, app "Stamp Rally" on the stamps origin, security contact
 `security@stamp-rally.e2e.invalid`) whose owner proposes through apps/api's REAL `ConsoleRpc.proposeLabels`, with a
 console step-up the API verifies itself: an RS256 token for the label-change layout over exactly that change, signed by a

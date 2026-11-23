@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { repoRoot } from '@hana-id/env';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { testTempDir } from './temp.ts';
 
 type Pkg = { name: string; dir: string; deps: string[] };
@@ -465,6 +465,21 @@ describe('the summary', () => {
 });
 
 describe('the run: phases in order, lanes side by side, a lane one step at a time, stopping at the first failure', () => {
+  // On fake timers (setTimeout, setInterval and Date together): on real ones a loaded machine reordered the steps'
+  // ends and fired a 10 ms timer less than 10 ms after the Date.now() read before it (libuv times a timer from the
+  // loop's cached time), so these tests depended on the machine's load. Now every step ends at its exact time.
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  /** Runs the schedule to its end on the fake clock (2 s: past every fake step, well short of the 60 s heartbeat). */
+  const scheduled = async (...args: Parameters<VerifyModule['schedule']>) => {
+    const out = V.schedule(...args);
+    await vi.advanceTimersByTimeAsync(2_000);
+    return out;
+  };
   const st = (id: string, phase: number, lane = id, skip: string | null = null): Step => ({ id, title: `step ${id}`, phase, lane, run: [], skip });
   /** A stand-in for runStep: step `id` takes `ms[id]` ms (default 5) and fails when listed in `fail`; stop() ends it
    * at once, failed, as a killed command does. Records the start, end and stop events in order. */
@@ -498,23 +513,20 @@ describe('the run: phases in order, lanes side by side, a lane one step at a tim
 
   it('runs the lanes of a phase side by side and a lane in order; the next phase waits for every lane', async () => {
     const f = fake({ sandbox: 80, pack: 10, e2e: 10 });
-    const out = await V.schedule({ steps }, { ...quiet, run: f.run });
+    const out = await scheduled({ steps }, { ...quiet, run: f.run });
     expect(out.failed).toBeNull();
-    // The first two phases, then the third phase's two lanes starting together. How the lanes then interleave depends on
-    // real timers (on a loaded machine the 80 ms sandbox can end before the web lane's two 10 ms steps), so the rest is
-    // checked as what must hold: the web lane runs in order, and every step of the phase ends.
-    expect(f.events.slice(0, 8)).toEqual(['start install', 'end install', 'start unit', 'start docs', 'end unit', 'end docs', 'start sandbox', 'start pack']);
-    const rest = f.events.slice(8);
-    expect([...rest].sort()).toEqual(['end e2e', 'end pack', 'end sandbox', 'start e2e']);
-    expect(rest.filter((e) => e !== 'end sandbox')).toEqual(['end pack', 'start e2e', 'end e2e']);
+    // The first two phases, then the third phase's two lanes starting together; the web lane's two 10 ms steps run one
+    // after the other while the 80 ms sandbox runs beside them, and the phase ends with it.
+    expect(f.events).toEqual(['start install', 'end install', 'start unit', 'start docs', 'end unit', 'end docs', 'start sandbox', 'start pack', 'end pack', 'start e2e', 'end e2e', 'end sandbox']);
     expect([...out.results.keys()].sort()).toEqual(['docs', 'e2e', 'install', 'pack', 'sandbox', 'unit']);
     for (const r of out.results.values()) expect(r.result).toBe('pass');
-    expect(out.results.get('e2e')!.start).toBeGreaterThanOrEqual(out.results.get('pack')!.start + 10);
+    expect(Object.fromEntries([...out.results].map(([id, r]) => [id, r.start]))).toEqual({ install: 0, unit: 5, docs: 5, sandbox: 10, pack: 10, e2e: 20 });
+    expect(out.ms).toBe(90);
   });
 
   it('a failure stops the running siblings, starts nothing after it in their lanes, and runs no later phase', async () => {
     const f = fake({ sandbox: 5, pack: 1_000 }, ['sandbox']);
-    const out = await V.schedule({ steps: [...steps, st('later', 3)] }, { ...quiet, run: f.run });
+    const out = await scheduled({ steps: [...steps, st('later', 3)] }, { ...quiet, run: f.run });
     expect(out.failed?.s.id).toBe('sandbox');
     expect(f.events.slice(-3)).toEqual(['end sandbox', 'stop pack', 'end pack']);
     expect(out.results.get('sandbox')!.result).toBe('FAIL');
@@ -525,7 +537,7 @@ describe('the run: phases in order, lanes side by side, a lane one step at a tim
 
   it('a failure in an early phase starts nothing after it', async () => {
     const f = fake({ docs: 1_000 }, ['unit']);
-    const out = await V.schedule({ steps }, { ...quiet, run: f.run });
+    const out = await scheduled({ steps }, { ...quiet, run: f.run });
     expect(out.failed?.s.id).toBe('unit');
     expect(f.events.filter((e) => e.startsWith('start'))).toEqual(['start install', 'start unit', 'start docs']);
     expect(out.results.get('docs')!.result).toBe('stopped');

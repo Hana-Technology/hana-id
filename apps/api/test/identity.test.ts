@@ -216,11 +216,16 @@ describe('POST /v1/identity/token: refusals, in order', () => {
 
   it('400 stale_proof for a proof more than 60 s old or ahead, with the server time', async () => {
     const { app, spk } = await sessionSetup();
-    for (const skew of [-61_000, 61_000]) {
-      const b = await expectCode(await mint(app, spk, { issuedAtMs: Date.now() + skew }), 400, 'stale_proof');
-      expect(typeof b.serverTimeMs).toBe('number');
+    // The clock held still, so the limits are exact: on the running clock a proof 61 s ahead when made was within the
+    // window again if the mint took more than a second to reach the check (verify's load).
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    for (const skew of [-60_001, 60_001]) {
+      const b = await expectCode(await mint(app, spk, { issuedAtMs: now + skew }), 400, 'stale_proof');
+      expect(b.serverTimeMs).toBe(now);
     }
-    expect((await mint(app, spk, { issuedAtMs: Date.now() - 55_000 })).status).toBe(200);
+    expect((await mint(app, spk, { issuedAtMs: now - 60_000 })).status).toBe(200);
+    expect((await mint(app, spk, { issuedAtMs: now + 60_000 })).status).toBe(200);
   });
 
   it('401 invalid_signature: another app, another signer, another parent, another key', async () => {

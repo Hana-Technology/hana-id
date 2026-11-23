@@ -846,11 +846,16 @@ describe('POST /v1/evm/sponsor/prepare', () => {
     const s = await setup();
     s.chain.executeNonce.set(s.user.address.toLowerCase(), 4n);
     s.chain.pending.set(s.user.address.toLowerCase(), 9n);
+    // serverNow is the server's second during the request: between the clock's second before it and after it (a
+    // fixed ±1 s around a read after the response failed whenever the request took more than a second).
+    const beforeS = Math.floor(Date.now() / 1000);
     const res = await prepare(s, { chainId: LOCAL_CHAIN, account: s.user.address, calls: [{ to: CHECK_IN, value: '0', data: CHECK_IN_DATA }] });
+    const afterS = Math.floor(Date.now() / 1000);
     const b = await body(res);
     expect(res.status).toBe(200);
     expect(b).toMatchObject({ delegation: 'journear', accountNonce: '9', executeNonce: '4', relayer: RELAYER, implementation: DELEGATE, minGasFloor: '100000', deadlineMaxS: 300, allowed: true });
-    expect(Math.abs((b.serverNow as number) - Math.floor(Date.now() / 1000))).toBeLessThanOrEqual(1);
+    expect(b.serverNow as number).toBeGreaterThanOrEqual(beforeS);
+    expect(b.serverNow as number).toBeLessThanOrEqual(afterS);
     expect(isEvmSponsorPrepareResponse(b)).toBe(true);
     // maxMinGas: a send at it fits maxGasPerTx, one above doesn't.
     const at = await send(s, signedSend(s.user, { executeNonce: 4n, minGas: BigInt(b.maxMinGas as string) }).body);
@@ -1617,11 +1622,15 @@ describe('the session proof of prepare and send (D856)', () => {
 
       it('a stale or future proof: 400 stale_session_proof with serverTimeMs (±60 s)', async () => {
         const s = await setup();
-        for (const issuedAtMs of [Date.now() - 61_000, Date.now() + 61_000]) {
+        // The clock held still: on the running clock the future proof (61 s ahead when made) was within the window
+        // again once the stale case's request took more than a second, as it can under verify's load.
+        const now = Date.now();
+        vi.spyOn(Date, 'now').mockReturnValue(now);
+        for (const issuedAtMs of [now - 61_000, now + 61_000]) {
           const r = await go(s, withProof(s.app, make(s), method, { issuedAtMs }));
           const b = await body(r);
           expect([r.status, b.code]).toEqual([400, 'stale_session_proof']);
-          expect(typeof b.serverTimeMs).toBe('number');
+          expect(b.serverTimeMs).toBe(now);
         }
         await untouched(s);
       });

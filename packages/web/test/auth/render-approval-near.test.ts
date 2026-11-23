@@ -375,7 +375,16 @@ describe('renderApproval: NEAR delegate actions and messages', () => {
 
   it('a message with invisible characters is shown as hex', () => {
     const bytes = encodeNep413Message({ message: 'a‮b', nonce: new Uint8Array(32), recipient: 'r', callbackUrl: null });
-    const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'Partner App');
-    expect(el.textContent).toContain('shown in its raw form');
+    const el = plain(renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), 'Partner App'));
+    // One amber box (D886's note of 2026-11-23): the unreadable line leads, NEP-413's "proves to" line is its bullet;
+    // the window says nothing else about the message's form.
+    const box = el.querySelector('.warning-box');
+    expect(box?.querySelector('p.risk-lead')?.textContent).toBe('Journear can’t read this message, so it’s shown below in its raw form. Approve only if you expected this from Partner App.');
+    expect([...(box?.querySelectorAll('ul.risk-more > li') ?? [])].map((li) => li.textContent)).toEqual(['Proves to r that this account is yours']);
+    expect(el.textContent?.split('raw form').length).toBe(2);
+    expect([...el.querySelectorAll('.request > .risk-box, .request > dl, .request > p.message-label, .request > code.mono, .request > .no-network')].map((n) => n.className.split(' ')[0] || n.tagName)).toEqual(['risk-box', 'jp-kv', 'message-label', 'mono', 'note']);
+    // With no name to show, the sentence stays whole: "the app", as the fee sentence says it (D884).
+    const unnamed = plain(renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_message', chain: 'near', address: ME, context: {}, bytes }), ''));
+    expect(unnamed.querySelector('.warning-box p.risk-lead')?.textContent).toBe('Journear can’t read this message, so it’s shown below in its raw form. Approve only if you expected this from the app.');
   });
 });

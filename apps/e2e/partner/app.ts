@@ -221,6 +221,12 @@ const actions: Record<string, (...args: never[]) => Promise<unknown>> = {
     const signature = (await hana.ethereum.request({ method: 'personal_sign', params: [toHex(message), address] })) as `0x${string}`;
     return { signature, valid: await verifyMessage({ address, message, signature }) };
   },
+  /** personal_sign of bytes the test gives as hex (bytes that aren't text: Journear shows them in their raw form). */
+  personalSignHex: async (hex: `0x${string}`) => {
+    const address = hana.addresses?.evm as `0x${string}`;
+    const signature = (await hana.ethereum.request({ method: 'personal_sign', params: [hex, address] })) as `0x${string}`;
+    return { signature, valid: await verifyMessage({ address, message: { raw: hex }, signature }) };
+  },
   viemSignMessage: async (message: string) => {
     const [account] = await wallet.requestAddresses();
     const signature = await wallet.signMessage({ account: account as `0x${string}`, message });

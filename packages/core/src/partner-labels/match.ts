@@ -72,7 +72,7 @@ export function labelRequestOf(d: DecodedApproval, user: string): LabelRequest |
 /** What only the chain can tell: the contract's code hash (NEAR base58) or Wasm hash (hex). */
 export interface LabelChainFacts {
   /**
-   * NEAR: the receiver's code hash as the vault read it (D900: both providers agreeing at a final block). A Soroban
+   * NEAR: the receiver's code hash as the vault read it (both of its providers agreeing at a final block). A Soroban
    * authorization entry: a hash tied to the call by other means (the window has none, so it never matches). Never used
    * for a Soroban transaction, whose code is its own footprint's (code.ts `sorobanFootprintCode`). null or absent:
    * unknown, which is no match for a NEAR or Soroban label.
@@ -229,7 +229,7 @@ export type LabelNoMatchCode =
   /** a classic transaction that moves value to someone else, but not as the one payment the document describes. */
   | 'operation_mismatch'
   /**
-   * D900: a soft verb (it says no value moves) over a request that can move value Journear can see: a NEAR deposit, a
+   * A soft verb (it says no value moves) over a request that can move value Journear can see: a NEAR deposit, a
    * Soroban footprint that can write outside the contract's own data, or an authorization entry (no footprint).
    */
   | 'value_may_move';
@@ -794,7 +794,7 @@ export function matchLabel(doc: LabelDocument, req: LabelRequest, facts: LabelCh
  * a token amount as the partner's description of the request's units, naming the app ("2,500,000 units, which Stamp
  * Trail says are 2.5 USDC"; "10 units of the unlisted token x.testnet, as Stamp Trail describes it"); NEAR's deposit,
  * dates and numbers as Journear wrote them; "your account" and a bare account as they are. The window renders the
- * structured parts itself (D896); this form is for tests and the console's preview.
+ * structured parts itself; this form is for tests and the console's preview.
  */
 export function valuePlainText(v: RenderedValue, appName = 'the app'): string {
   switch (v.format) {
@@ -921,7 +921,7 @@ function exampleArg(spec: ArgSpec, field: LabelField | undefined, c: { doc: Labe
   }
 }
 
-/** D900: one argument of an example call: its declared name and type, and its value in the request's own form. */
+/** One argument of an example call: its declared name and type, and its value in the request's own form. */
 export interface ExampleArg {
   readonly name: string;
   readonly type: ArgType;
@@ -930,7 +930,7 @@ export interface ExampleArg {
 }
 
 /**
- * D900: the arguments of an example call of a NEAR or Soroban format, as `previewLabelDocument` picks them (meeting
+ * The arguments of an example call of a NEAR or Soroban format, as `previewLabelDocument` picks them (meeting
  * the format's own constraints where it can), with `user` as the account an `isSelf` argument names: for the console's
  * preview to build a real request and show it through the window. Null for a format that isn't a NEAR or Soroban call.
  * Pure.

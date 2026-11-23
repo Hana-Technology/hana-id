@@ -1113,7 +1113,7 @@ export interface WindowMessageMap {
      */
     partnerLabels?: string[];
     /**
-     * D900: what only the chain can tell a label match, as the vault read it: for a NEAR request to an account a label
+     * What only the chain can tell a label match, as the vault read it: for a NEAR request to an account a label
      * describes, that account's code hash (canonical base58 of 32 bytes) when both of the env's providers agreed on it
      * at a final block. Only beside `partnerLabels`; the popup uses it only when `account` is the request's receiver.
      */

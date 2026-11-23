@@ -75,6 +75,8 @@ export default defineConfig(async () => {
                 REFUSED_ORIGINS: JSON.stringify(['https://api.test', 'https://vault.test', 'https://auth.test', 'https://console.test', 'https://console-auth.test', 'https://files.test', 'https://admin.test']),
                 FILES_ORIGIN: TEST_MANIFEST.files!.origin,
                 RELAYER_KEYS: '[]',
+                // D894: partner labels on in this test API, for the `labels.set` / `labels.remove` step-ups.
+                PARTNER_LABELS: 'on',
               },
             },
             { name: UPSTREAM_WORKER, modules: true, scriptPath: here('./test/fake-upstream.js'), compatibilityDate: COMPATIBILITY_DATE, d1Databases: { FAKE_UPSTREAM: UPSTREAM_DB_ID } },

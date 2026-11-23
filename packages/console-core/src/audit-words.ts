@@ -156,6 +156,7 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   neon_compute_high: 'The usage database’s free monthly allowance is running low',
   evm_relay_nonce_taken: 'Gas sponsorship: a payment slot was used by another transaction',
   evm_relay_closed_slot_mined: 'Gas sponsorship: a slot staff closed went through after all',
+  evm_relay_auto_resumed: 'Gas sponsorship: restarted by itself after the relayer wallet was refilled',
 };
 
 /** A security event's kind in words; an unknown kind reads as its own words. */

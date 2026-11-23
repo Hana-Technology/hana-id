@@ -3,7 +3,8 @@
 // and use each tool in the browser. The stack must be running (`pnpm --filter @hana-id/e2e serve`).
 //
 //   pnpm --filter @hana-id/e2e staff-demo <state>      ready | working | low-money | waiting | past-deadline |
-//                                                      out-of-money | refill | key-used-elsewhere |
+//                                                      out-of-money | money-arrives | refill |
+//                                                      out-of-money-again | key-used-elsewhere |
 //                                                      foreign-transactions | gap
 //   pnpm --filter @hana-id/e2e staff-demo run          time passes for the relayer (it checks the network once)
 //   pnpm --filter @hana-id/e2e staff-demo state        what the relayer holds now
@@ -12,7 +13,7 @@
 import './port-env.ts';
 import { ADMIN_LANES } from './stack.ts';
 
-const SCENARIOS = ['ready', 'working', 'low-money', 'waiting', 'past-deadline', 'out-of-money', 'refill', 'key-used-elsewhere', 'foreign-transactions', 'gap'];
+const SCENARIOS = ['ready', 'working', 'low-money', 'waiting', 'past-deadline', 'out-of-money', 'money-arrives', 'refill', 'out-of-money-again', 'key-used-elsewhere', 'foreign-transactions', 'gap'];
 const lane = ADMIN_LANES.demo;
 const [what] = process.argv.slice(2);
 

@@ -16,8 +16,9 @@ import { type Page } from '@playwright/test';
 import { parseFunctionSignature, shortId } from '@hana-id/core/decode';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { API_URL, EVM_CHAIN_ID } from '../src/stack.ts';
-import { approve, clickAction, expect, login, newApp, okValue, openPartner, reject, settled, test } from './fixtures.ts';
+import { approve, clickAction, expect, fontsLoaded, login, newApp, okValue, openPartner, reject, settled, test } from './fixtures.ts';
 import { expectPlainWindow } from './plain-checks.ts';
+import { expectEvenDividers } from './divider-checks.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const POPUP = { width: 420, height: 680 } as const;
@@ -48,7 +49,9 @@ async function sponsorLog(appId: string): Promise<{ prepares: number; sends: num
 async function shot(popup: Page, name: string, browserName: string): Promise<void> {
   if (!SHOTS || browserName !== 'chromium') return;
   await popup.setViewportSize(POPUP);
+  await fontsLoaded(popup);
   await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
+  await expectEvenDividers(popup, name, { soft: true });
 }
 
 /** The action in a real click: the approval window opens in it (D99). */

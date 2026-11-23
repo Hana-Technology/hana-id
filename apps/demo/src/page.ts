@@ -4,6 +4,7 @@
 // persistence, the signatures the user approves and, for pk_test_ apps, the login's per-stage timings.
 //
 // The client is injected (startDemo), so the tests drive the page against a fake one.
+import { evmChainInfo } from '@hana-id/core';
 import type { HanaAddresses, HanaClient, HanaConfig, HanaStatus } from '@hana-id/web';
 import type { DemoConfig } from './config.ts';
 import { type ErrorRecord, type LoginTiming, diagnosticsJson } from './diagnostics.ts';
@@ -80,11 +81,14 @@ export function signInMs(stages: Readonly<Record<string, number>>): number | und
   return EMAIL_SIGN_IN_STAGES.reduce((sum, k) => sum + (stages[k] ?? 0), 0);
 }
 
+/** D889: Stellar's test network on a label, as the approval window names it ("Stellar (test network)" there). */
+export const STELLAR_NETWORK_LABEL = 'Stellar test network';
+
 const PROGRESS: Record<string, string> = {
   popup_connected: 'The Journear sign-in window is open.',
   google: 'Choose your Google account in the sign-in window…',
   token: 'Google sign-in done. Checking it…',
-  chain: 'Creating your wallet key on NEAR testnet (a few seconds)…',
+  chain: 'Creating your wallet key on NEAR’s test network (a few seconds)…',
   key_pending: 'Google just rotated its signing key; Journear Passport is activating it. Retrying in up to 30 seconds…',
   done: 'Done.',
 };
@@ -373,9 +377,12 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
 
   // ---- client ----
 
-  el('env-badge').textContent = `${config.environment} · testnet`;
+  // D889: networks named as the approval window names them ("Base Sepolia (test network)"); an EVM chain Journear
+  // doesn't know keeps the manifest's name.
+  const evmNetworkLabel = evmChainInfo(config.evm.id)?.label ?? config.evm.name;
+  el('env-badge').textContent = `${config.environment} · test network`;
   el('footer-env').textContent = `Environment ${config.environment} · app ${config.publishableKey.slice(0, 12)}… · @hana-id/web ${deps.sdkVersion} · EVM: ${config.evm.name} (${config.evm.id}) · NEAR: testnet${config.near.guestbook ? `, guestbook ${config.near.guestbook}` : ''}`;
-  el('evm-label').textContent = `EVM (${config.evm.name})`;
+  el('evm-label').textContent = `EVM · ${evmNetworkLabel}`;
   el('sign-evm-tx').textContent = `Sign a test transaction (${config.evm.name})`;
   const evmLink = el('evm-link');
   if (config.evm.explorer) evmLink.textContent = `View on ${new URL(config.evm.explorer).hostname} ↗`;
@@ -496,7 +503,7 @@ export function startDemo(deps: DemoDeps): { client: DemoClient | null } {
   }
 
   type SignChain = 'stellar' | 'evm';
-  const CHAIN_NAME: Record<SignChain, string> = { stellar: 'Stellar testnet', evm: config.evm.name };
+  const CHAIN_NAME: Record<SignChain, string> = { stellar: STELLAR_NETWORK_LABEL, evm: evmNetworkLabel };
 
   /** A signing result, newest first: what was signed and the signature, or why not (result.ts). */
   function result(chain: SignChain, label: string, fact: ResultFact | null, failure: string | null): void {

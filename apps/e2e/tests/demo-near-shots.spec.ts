@@ -95,7 +95,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await page.bringToFront();
   await shots(page, '03-stage-preparing');
   activation.open();
-  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
+  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear Passport window…');
   await shots(page, '04-stage-approving');
   // D808: the plain summary leads; the request's kind heading is in the details.
   // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.
@@ -118,6 +118,8 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await page.locator('#near-text').fill('this one is refused');
   await approveNext(page, approval, () => page.getByRole('button', { name: 'Write to the guestbook (no NEAR needed)' }).click());
   await expect(page.locator('#near-error')).toBeVisible();
+  // D889: plain words, before anything was sent.
+  await expect(page.locator('#near-error-text')).toHaveText('Journear isn’t set up to pay for this guestbook, so it refused this request. Nothing was sent. Tell the Journear team.');
   await page.bringToFront();
   await shots(page, '07-error');
 

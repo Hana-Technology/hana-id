@@ -168,7 +168,8 @@ export function addMessageTransaction(p: { accountId: string; guestbook: string;
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
 /** A failure of the page's own NEAR read, with a code errors.ts maps to plain words. */
-export const nearPageError = (code: 'near_page_rpc_failed' | 'near_account_pending' | 'near_send_failed' | 'near_nonce_wait', message: string): Error => Object.assign(new Error(message), { code });
+export type NearPageErrorCode = 'near_page_rpc_failed' | 'near_account_pending' | 'near_send_failed' | 'near_send_unconfirmed' | 'near_nonce_wait';
+export const nearPageError = (code: NearPageErrorCode, message: string): Error => Object.assign(new Error(message), { code });
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const causeName = (b: Record<string, unknown>): unknown => (isObj(b.error) && isObj(b.error.cause) ? b.error.cause.name : undefined);
@@ -192,29 +193,35 @@ export class NearRpc {
     this.#timeoutMs = timeoutMs;
   }
 
+  /** One endpoint's JSON body, or null for no answer (a network error, the timeout, a non-200, a body that isn't an object). */
+  async #post(url: string, method: string, params: unknown): Promise<Record<string, unknown> | null> {
+    const ctl = new AbortController();
+    const timer = globalThis.setTimeout(() => ctl.abort(), this.#timeoutMs);
+    try {
+      const res = await this.#fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'hana-demo', method, params }),
+        credentials: 'omit',
+        cache: 'no-store',
+        referrerPolicy: 'no-referrer',
+        signal: ctl.signal,
+      });
+      if (!res.ok) return null;
+      const body: unknown = await res.json();
+      return isObj(body) ? body : null;
+    } catch {
+      return null;
+    } finally {
+      globalThis.clearTimeout(timer);
+    }
+  }
+
   /** The first endpoint's body that `answered` accepts; a network error, a non-200 or another body tries the next. */
   async call(method: string, params: unknown, answered: (b: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> {
     for (const url of this.#urls) {
-      const ctl = new AbortController();
-      const timer = globalThis.setTimeout(() => ctl.abort(), this.#timeoutMs);
-      try {
-        const res = await this.#fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 'hana-demo', method, params }),
-          credentials: 'omit',
-          cache: 'no-store',
-          referrerPolicy: 'no-referrer',
-          signal: ctl.signal,
-        });
-        if (!res.ok) continue;
-        const body: unknown = await res.json();
-        if (isObj(body) && answered(body)) return body;
-      } catch {
-        // next endpoint
-      } finally {
-        globalThis.clearTimeout(timer);
-      }
+      const body = await this.#post(url, method, params);
+      if (body !== null && answered(body)) return body;
     }
     throw nearPageError('near_page_rpc_failed', `NEAR testnet's RPC gave no usable answer to ${method}`);
   }
@@ -260,10 +267,32 @@ export class NearRpc {
     }
   }
 
-  /** Sends a signed transaction (`send_tx`) and waits for its execution. Throws when NEAR refuses it or it fails. */
+  /**
+   * Sends a signed transaction (`send_tx`) and waits for its execution, as the API's Rpc does (apps/api/src/near/rpc.ts,
+   * D435; D889 here). It moves to the next endpoint only when one gave no JSON-RPC answer, with the same signed bytes
+   * (one hash, one nonce: included at most once). `near_send_failed`, definitely not stored by this transaction: an
+   * outcome whose status is `Failure`, or an invalid transaction from the first endpoint asked, before any failover.
+   * `near_send_unconfirmed`, it may have run: every other error (TIMEOUT_ERROR, anything after a failover, where the
+   * first endpoint may have forwarded it and a later one answers InvalidNonce because it landed), no endpoint
+   * answering, or an outcome without a status.
+   */
   async sendTx(signedTxBase64: string): Promise<void> {
-    const body = await this.call('send_tx', { signed_tx_base64: signedTxBase64, wait_until: 'EXECUTED_OPTIMISTIC' }, (b) => isObj(b.result) || isObj(b.error));
-    const status = isObj(body.result) ? body.result.status : undefined;
-    if (!isObj(status) || 'Failure' in status) throw nearPageError('near_send_failed', 'NEAR testnet refused or failed the transaction');
+    let failedOver = false;
+    for (const url of this.#urls) {
+      const body = await this.#post(url, 'send_tx', { signed_tx_base64: signedTxBase64, wait_until: 'EXECUTED_OPTIMISTIC' });
+      if (body === null || (!isObj(body.result) && !isObj(body.error))) {
+        failedOver = true;
+        continue;
+      }
+      if (isObj(body.result)) {
+        const status = body.result.status;
+        if (isObj(status) && 'Failure' in status) throw nearPageError('near_send_failed', 'NEAR testnet failed the transaction');
+        if (isObj(status)) return;
+        throw nearPageError('near_send_unconfirmed', 'NEAR testnet gave no outcome for the transaction');
+      }
+      if (!failedOver && causeName(body) === 'INVALID_TRANSACTION') throw nearPageError('near_send_failed', 'NEAR testnet refused the transaction');
+      throw nearPageError('near_send_unconfirmed', failedOver ? 'An error after a failover: the transaction may have been sent' : 'NEAR testnet did not confirm the transaction');
+    }
+    throw nearPageError('near_send_unconfirmed', 'No NEAR endpoint answered send_tx');
   }
 }

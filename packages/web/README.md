@@ -122,9 +122,10 @@ click (or when Safari blocks the popup after an `await`) the vault shows a revie
 transactions; Journear Passport only signs (`eth_sendTransaction` fills and
 broadcasts through your `evm.chains` RPC).
 
-### Gas-free actions (0.5.0, not live yet)
+### Gas sponsorship (0.5.0, not live yet)
 
-Journear pays the network fee for contract calls the user approves: the user needs no ETH. Off by default, Base
+Sponsored actions: Journear pays the network fee for contract calls the user approves, so the user needs no ETH. You
+and Journear's staff call this gas sponsorship; your users see a free network fee. Off by default, Base
 Sepolia only, and no environment offers it yet (`hana.evm.sponsoredChains` is `[]`). Ask Journear to turn it on for
 your app and to add each contract and function you call; a call that isn't on that list is refused.
 
@@ -139,7 +140,7 @@ button.onclick = () =>                                            // in the clic
 Every action shows Journear Passport's window (no fee row in view; under "Show details", first, "Network fee: Free.
 Sponsored by {your app's name}."); none is approved automatically. The first one also sets the account up (an EIP-7702 authorization: the address stays the same).
 EIP-5792 `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` on `hana.ethereum` do the same for
-viem and wagmi (`5710` on a chain without it, where 0.4.x answered `4200`). `eth_sendTransaction` is never gas-free.
+viem and wagmi (`5710` on a chain without it, where 0.4.x answered `4200`). `eth_sendTransaction` is never sponsored.
 Refusals are `HanaSponsorError` with `data.reason` (type `SponsorReason`: the known reasons, or any string, so a new
 one never breaks your build). `SPONSOR_REASON_NAMES`, `SPONSORSHIP_REASON_NAMES` and `NEAR_RELAY_REASON_NAMES` list
 the known names to branch on; the sentences come only through `userMessage` and `userMessageFor`, and may be reworded
@@ -245,12 +246,12 @@ To show an error to your user, use `error.userMessage` (SDK 0.5.0) on a `HanaErr
 `ProviderRpcError`: a plain sentence worked out from `code` and `data.reason` alone ("You rejected this in Journear
 Passport, or closed it. Nothing was approved."), safe to show as text. `message` is for you and your logs. viem,
 wagmi and ethers keep the provider's error as `cause`; for a code read elsewhere (SWK's `ext[0]`), call
-`userMessageFor(code, data)` (a third argument, `'near_relay'`, for a NEAR relay reason that a gas-free action
+`userMessageFor(code, data)` (a third argument, `'near_relay'`, for a NEAR relay reason that a sponsored action
 shares). Match on `code` and `data.reason`, never on either text.
 
 ## More
 
 The Journear Passport partner guide (ask Journear for the current copy) covers the partner portal, events, sessions, key export,
-auto-approve policies, your own Google client, NEAR and Journear Passport's relay, gas-free actions, what your users see
+auto-approve policies, your own Google client, NEAR and Journear Passport's relay, gas sponsorship, what your users see
 in Journear Passport's windows, the identity token's verification and every error code. React bindings:
 `@hana-id/react`. Sodax wallet providers: `@hana-id/sodax`.

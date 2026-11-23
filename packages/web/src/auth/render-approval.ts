@@ -47,7 +47,7 @@ import { DEMO_CHECK_IN_CALLDATA, type NearAction, type ReviewedNearAccounts, evm
 import { BRAND } from '@hana-id/brand';
 import type { LabelDocument } from '@hana-id/core/partner-labels';
 import { type Child, type Dom, dom, row, rows, withoutEmptyLists } from './dom.ts';
-import { LABEL_MISMATCH, LABEL_NOT_LISTED, type WindowLabelFacts, labelBox, labelOutcome } from './render-labels.ts';
+import { LABEL_MISMATCH, LABEL_NOT_LISTED, type LabelOutcome, type WindowLabelFacts, labelBox, labelOutcome } from './render-labels.ts';
 import { alert, icon } from './ui.ts';
 
 /** `value` with `decimals` decimal places, trailing zeros trimmed: formatUnits(1500000000000000000n, 18) = "1.5". */
@@ -1501,6 +1501,31 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Appr
   }
 }
 
+/** The request's own facts and the page's notes: what follows the amber box, before the partner's box (D896). */
+const journearAfterWarnings = (k: Parts, ctx: ApprovalRenderContext): (HTMLElement | null)[] => [...k.visible, ...(ctx.notes ?? [])];
+
+/**
+ * The app's labels for this request (D896). Whatever goes wrong in reading them (a document or a matcher that throws)
+ * means no label: the plain window, never "can't be shown" and never a missing Approve. Logged without any text.
+ */
+function windowLabel(decoded: DecodedApproval, ctx: ApprovalRenderContext): LabelOutcome {
+  try {
+    return labelOutcome(decoded, ctx.partnerLabels ?? [], {
+      user: ctx.address ?? '',
+      networkChecked: (decoded.kind === 'near_tx' || decoded.kind === 'near_delegate') && nearNetworkChecked(decoded.kind, decoded.network, ctx),
+      reviewedNear: Object.values(ctx.reviewedNear ?? {}).filter((a): a is string => typeof a === 'string'),
+      ...(ctx.labelFacts ? { facts: ctx.labelFacts } : {}),
+    });
+  } catch {
+    try {
+      console.warn('partner label skipped: it could not be read');
+    } catch {
+      // No console: nothing to say.
+    }
+    return { kind: 'none' };
+  }
+}
+
 /** Typed data whose domain names no chain (D35). */
 export const TYPED_DATA_NO_CHAIN = 'This signature names no network, so it may work on any of them, real-money ones included.';
 
@@ -1511,12 +1536,7 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   // D896: the app's labels. A match adds the partner's box after every warning box; a request that doesn't meet its
   // description adds one line in Journear's voice to the box of its colour, last (the box's lead never changes);
   // anything else changes nothing.
-  const label = labelOutcome(decoded, ctx.partnerLabels ?? [], {
-    user: ctx.address ?? '',
-    networkChecked: (decoded.kind === 'near_tx' || decoded.kind === 'near_delegate') && nearNetworkChecked(decoded.kind, decoded.network, ctx),
-    reviewedNear: Object.values(ctx.reviewedNear ?? {}).filter((a): a is string => typeof a === 'string'),
-    ...(ctx.labelFacts ? { facts: ctx.labelFacts } : {}),
-  });
+  const label = windowLabel(decoded, ctx);
   // A control change's bullet repeats nothing: when its step's own line is in view (the headline of a single step, or a
   // grouped line, which names the whole key, signer or address), the bullet is dropped. The banner always stays, and
   // steps left out of the lines keep their bullets (the summary's step_left_out).
@@ -1582,10 +1602,12 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
     ...lines,
     keyFacts.some(Boolean) ? rows(d, keyFacts, 'jp-kv facts summary-facts') : null,
     amberBox,
-    // D896: the partner's own description of this exact request, attributed, after every warning box.
+    // Everything of Journear's, in its own order: the request's facts, then the page's notes (the test-app note, the
+    // mainnet demo's banner, the out-of-policy line: alerts of every source the window has).
+    ...journearAfterWarnings(k, ctx),
+    // D896: the partner's own description of this exact request, attributed: after everything Journear says, every
+    // warning of any source included, and only the folded details below it. Its one place, for every request.
     label.kind === 'match' ? labelBox(d, label.match, appName) : null,
-    ...k.visible,
-    ...(ctx.notes ?? []),
     detailsSection(d, [free ? rows(d, [free], 'jp-kv facts fee-facts') : null, ...(ctx.detailsExtra ?? []), ...k.details]),
   );
   // No list without rows: its rules would be drawn around nothing (approval.css "the dividers").

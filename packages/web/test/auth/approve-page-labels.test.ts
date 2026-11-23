@@ -95,6 +95,21 @@ describe('the approval page with partner labels (D896)', () => {
     }
   });
 
+  it('item 1, through the real page: the out-of-policy line and the test-app note come before the partner’s box; only the details after it', () => {
+    send(request({ partnerLabels: [PAYMENT_TEXT], autoApprove: { label: 'Coffee runs', active: true, reason: 'value_too_high' } }));
+    const kids = [...document.querySelector('div.request')!.children];
+    const box = kids.findIndex((c) => c.matches('div.partner-label'));
+    expect(box).toBeGreaterThan(-1);
+    expect(kids.findIndex((c) => c.matches('.note.out-of-policy'))).toBeLessThan(box);
+    expect(kids.findIndex((c) => c.matches('.note.test-app'))).toBeLessThan(box);
+    expect(kids.slice(box + 1).map((c) => c.tagName.toLowerCase())).toEqual(['details']);
+    // No alert of any kind, anywhere in the page, after the box (the buttons, their hint and the auto-approve stop
+    // line are not alerts).
+    const all = [...app().querySelectorAll('*')];
+    const at = all.indexOf(kids[box]!);
+    expect(all.slice(at + 1).filter((e) => e.matches('.jp-alert, [role="alert"]') && !e.closest('details'))).toEqual([]);
+  });
+
   it('a payment to an account the app hasn’t listed: the red lines and no partner words', () => {
     send(request({ bytes: paymentTx({ destination: STRANGER }), partnerLabels: [PAYMENT_TEXT] }));
     expect(document.querySelector('.risk-box.danger-box p.risk-lead')?.textContent).toBe('This isn’t one of the accounts Coffee Club has listed for payments. If you expected to pay Coffee Club, don’t approve.');

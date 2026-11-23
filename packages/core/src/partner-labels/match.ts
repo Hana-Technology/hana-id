@@ -710,6 +710,10 @@ function matchPayment(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
   if (tx.operations.length !== 1) return no('more_than_one_action');
   const op = tx.operations[0]!;
   if (op.type !== 'payment') return no('operation_mismatch');
+  // The user's own transaction only: its source and the operation's (each read as its base account, so the user's M…
+  // form is the user). Another source's payment isn't one the document describes (not_described); one that sends the
+  // user's value to an unlisted account was already the red line above.
+  if (baseOf(tx.source) !== user || (op.source !== null && baseOf(op.source) !== user)) return no('source_not_user');
   if (call.assets !== undefined && !call.assets.includes(op.asset)) return no('token_not_allowed', 'asset');
   if (call.amountAtMost !== undefined && BigInt(op.amount) > BigInt(call.amountAtMost)) return no('out_of_bounds', 'amount');
   if (call.feeAtMost !== undefined && BigInt(tx.fee) > BigInt(call.feeAtMost)) return no('fee_too_high', 'fee');
@@ -719,7 +723,12 @@ function matchPayment(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
     if (tx.memo.value === null || !MEMO_TEXT_OK(tx.memo.value)) return no('value_not_displayable', 'memo');
     memo = { kind: 'text', v: tx.memo.value };
   } else if (tx.memo.type === 'id') memo = { kind: 'int', v: BigInt(tx.memo.value) };
-  const destination = [...book.keys()].find((a) => baseOf(a) === baseOf(op.destination)) ?? op.destination;
+  // The destination as the request has it (an M… address stays M…, with its id): the book's base account decides only
+  // that it is listed, and gives its name; the account shown is never swapped for the book's G… (PR 123's review).
+  const listedAs = doc.metadata.addressBook.find((e) => baseOf(e.account) === baseOf(op.destination));
+  const destination: RenderedValue & { format: 'account' } = listedAs
+    ? Object.freeze({ format: 'account', value: op.destination, text: listedAs.name, source: 'partner_address_book' })
+    : accountValue(op.destination, req.user, book);
   return build(
     'payment',
     format,
@@ -737,7 +746,7 @@ function matchPayment(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
       { path: 'memo', type: 'memo', value: memo === undefined ? null : `${tx.memo.type}:${valueText(memo)}` },
       { path: 'fee', type: 'fee', value: tx.fee },
     ],
-    accountValue(destination, req.user, book),
+    destination,
   );
 }
 
@@ -799,7 +808,7 @@ export type NoMatchKind =
   /** Journear couldn't check what the match needs (the code hash, the network): today's screen, no mismatch claim. */
   | 'couldnt_check';
 
-const NOT_DESCRIBED: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['wrong_chain', 'wrong_network', 'wrong_account', 'wrong_method', 'wrong_operation', 'calls_own_account', 'journear_reads_this', 'not_a_function_call', 'fee_bump']);
+const NOT_DESCRIBED: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['wrong_chain', 'wrong_network', 'wrong_account', 'wrong_method', 'wrong_operation', 'calls_own_account', 'journear_reads_this', 'not_a_function_call', 'fee_bump', 'source_not_user']);
 const COULDNT_CHECK: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['no_code_hash', 'bad_code_hash_input', 'network_not_checked']);
 
 /** The kind of a no-match (`NoMatchKind`), so a renderer never infers it from the codes itself. */

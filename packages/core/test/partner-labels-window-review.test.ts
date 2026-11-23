@@ -17,6 +17,7 @@ const STRANGER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 41)).publicKey();
 const stellarReq = (bytes: Uint8Array): LabelRequest => labelRequestOf(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes }), USER)!;
 const reason = (r: LabelMatchResult) => (r.ok ? 'match' : r.reason);
 const kind = (r: LabelMatchResult) => (r.ok ? 'match' : noMatchKind(r.reason));
+const muxedOf = (g: string, id = '7') => new MuxedAccount(new Account(g, '0'), id).accountId();
 const ops = (list: xdr.Operation[], o: Parameters<typeof txBytes>[1] = {}) => stellarReq(txBytes(list, o));
 
 describe('item 2: every classic operation that moves the user’s value to an account the app hasn’t listed is the red line', () => {
@@ -84,11 +85,16 @@ describe('item 5: a fee bump is not described yet (its fee is another envelope�
 });
 
 describe('item 6: muxed accounts are their base accounts', () => {
-  const muxedOf = (g: string, id = '7') => new MuxedAccount(new Account(g, '0'), id).accountId();
   it('a payment to the M… form of the listed till matches (the book names its base account)', () => {
     const r = matchLabel(PAYMENT, stellarReq(paymentTx({ destination: muxedOf(OTHER) })), {});
     expect(reason(r)).toBe('match');
     if (r.ok) expect(r.destination?.text).toBe('Coffee Club till');
+  });
+  it('the destination is shown as the request has it: the M… address, with the book’s name; never the book’s G…', () => {
+    const m = muxedOf(OTHER);
+    const r = matchLabel(PAYMENT, stellarReq(paymentTx({ destination: m })), {});
+    expect(r.ok && r.destination).toEqual({ format: 'account', value: m, text: 'Coffee Club till', source: 'partner_address_book' });
+    expect(r.ok && r.values.find((v) => v.path === 'destination')?.value).toBe(m);
   });
   it('a payment to the M… form of an unlisted account is still red', () => {
     expect(reason(matchLabel(PAYMENT, stellarReq(paymentTx({ destination: muxedOf(STRANGER) })), {}))).toBe('not_in_address_book');
@@ -100,6 +106,37 @@ describe('item 6: muxed accounts are their base accounts', () => {
       .setTimebounds(10, 2000)
       .build();
     expect(reason(matchLabel(PAYMENT, stellarReq(new Uint8Array(b.toEnvelope().toXDR())), {}))).toBe('match');
+  });
+});
+
+describe('the commit review: a payment from another source than the user’s never matches', () => {
+  const paymentFrom = (o: { txSource?: string; opSource?: string }) => {
+    const b = new TransactionBuilder(new Account(o.txSource ?? USER, '41'), { fee: '100', networkPassphrase: PASSPHRASE })
+      .addOperation(Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '25', ...(o.opSource ? { source: o.opSource } : {}) }))
+      .addMemo(Memo.text('1042'))
+      .setTimebounds(10, 2000)
+      .build();
+    return stellarReq(new Uint8Array(b.toEnvelope().toXDR()));
+  };
+  it('the transaction’s source isn’t the user (the operation’s is): source_not_user, not described (the plain window)', () => {
+    const r = matchLabel(PAYMENT, paymentFrom({ txSource: STRANGER, opSource: USER }), {});
+    expect(reason(r)).toBe('source_not_user');
+    expect(kind(r)).toBe('not_described');
+  });
+  it('the operation’s source isn’t the user: not described (none of the user’s value moves)', () => {
+    expect(kind(matchLabel(PAYMENT, paymentFrom({ opSource: STRANGER }), {}))).toBe('not_described');
+  });
+  it('another source that sends the user’s value to an unlisted account is still red', () => {
+    const b = new TransactionBuilder(new Account(STRANGER, '41'), { fee: '100', networkPassphrase: PASSPHRASE })
+      .addOperation(Operation.payment({ destination: STRANGER, asset: Asset.native(), amount: '25', source: USER }))
+      .addMemo(Memo.text('1042'))
+      .setTimebounds(10, 2000)
+      .build();
+    expect(reason(matchLabel(PAYMENT, stellarReq(new Uint8Array(b.toEnvelope().toXDR())), {}))).toBe('not_in_address_book');
+  });
+  it('the user’s M… form as both sources still matches (base accounts)', () => {
+    const m = muxedOf(USER, '5');
+    expect(reason(matchLabel(PAYMENT, paymentFrom({ opSource: m }), {}))).toBe('match');
   });
 });
 

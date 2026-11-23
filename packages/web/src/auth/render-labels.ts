@@ -105,7 +105,7 @@ const APP = { kind: 'app' } as const;
 
 /** The amber line for a request that doesn't match its app's description (proposal A4), and its bullet. */
 export const LABEL_MISMATCH: { readonly full: SummaryText; readonly short: SummaryText } = Object.freeze({
-  full: Object.freeze([APP, ` describes this kind of request, but this one doesn’t match its description, so ${BRAND.company} isn’t showing it. Check it in `, APP, ' first.']) as SummaryText,
+  full: Object.freeze([APP, ` describes this kind of request, but this one doesn’t match, so ${BRAND.company} isn’t showing `, APP, '’s description. If you’re not sure what this does, reject it.']) as SummaryText,
   short: Object.freeze(['Doesn’t match how ', APP, ' describes this kind of request']) as SummaryText,
 });
 
@@ -117,8 +117,8 @@ export const LABEL_NOT_LISTED: { readonly full: SummaryText; readonly short: Sum
 
 /** The headline's words after the app's name. */
 export const LABEL_SAYS = ' says: ';
-/** The row naming a classic payment's destination by the app's address book (its label is Journear's word). */
-export const LABEL_DESTINATION_ROW = 'To';
+/** The box's name for screen readers (role group). */
+export const labelBoxName = (app: string): string => `What ${app} says`;
 
 // ---- the box ----
 
@@ -168,22 +168,24 @@ function sentenceNodes(d: Dom, parts: readonly SentencePart[], app: string): Chi
 }
 
 /**
- * The partner's box: "{App} says: {sentence}", the attribution under it, then a row for each of the format's fields
- * (the partner's row label, the request's own value) and, for a classic payment, the destination as the app's address
- * book names it, with the account whole. Normal text colour, no mark of any kind (approval.css `div.partner-label`).
+ * The partner's box: "{App} says: {sentence}", the attribution under it, then a row for each of the format's fields the
+ * sentence doesn't already show (the partner's row label, the request's own value; at most 3, the parser's
+ * LABEL_LIMITS.rows). Nothing of Journear's facts is repeated in it: a classic payment's destination is Journear's "To"
+ * row alone (D896 after PR 123's review: a partner "To" row beside it could be read as Journear's). A group with its
+ * own name for screen readers; normal text colour, no mark of any kind (approval.css `div.partner-label`).
  */
 export function labelBox(d: Dom, m: LabelMatch, app: string): HTMLElement {
   const name = app.trim() === '' ? 'The app' : app;
   const says = d.h('p', { class: 'partner-says' }, appName(d, name), LABEL_SAYS, ...sentenceNodes(d, m.parts, name));
   // core's partnerAttribution, word for word (a test holds them equal), with the name as everywhere else in the window.
   const attribution = d.h('p', { class: 'partner-attribution' }, 'These are ', appName(d, name), `’s words. ${BRAND.company} hasn’t checked them.`);
-  const fieldRows = m.fields.map((f) => row(d, f.label, valueNode(d, f.value, name, true)));
-  const destination = m.destination ? row(d, LABEL_DESTINATION_ROW, valueNode(d, m.destination, name, true)) : null;
+  const inSentence = new Set(m.parts.flatMap((p) => (p.kind === 'value' ? [p.path] : [])));
+  const fieldRows = m.fields.filter((f) => !inSentence.has(f.path)).map((f) => row(d, f.label, valueNode(d, f.value, name, true)));
   return d.h(
     'div',
-    { class: 'partner-label', attrs: { 'data-format': m.format } },
+    { class: 'partner-label', attrs: { role: 'group', 'aria-label': labelBoxName(name), 'data-format': m.format } },
     says,
     attribution,
-    fieldRows.length > 0 || destination ? rows(d, [...fieldRows, destination], 'jp-kv partner-fields') : null,
+    fieldRows.length > 0 ? rows(d, fieldRows, 'jp-kv partner-fields') : null,
   );
 }

@@ -1,17 +1,20 @@
 // @vitest-environment happy-dom
-// D896: a partner's label in the approval window (render-labels.ts, render-approval.ts). A request exactly as the
-// app's label describes it gets the partner's box, after every warning box; nothing Journear says changes (the window
-// without the box is byte for byte the window without labels). A described request that doesn't meet its description
-// gets one line in Journear's voice (amber; red for a payment to an account the app hasn't listed), never the partner's
-// words. Anything else, and anything Journear couldn't check (a NEAR or Soroban code hash, unread until a later piece;
-// a NEAR network the vault didn't check), is the plain window, byte for byte.
-import { type xdr, Asset, Keypair, Memo, Operation } from '@stellar/stellar-base';
+// D896 (as amended after PR 123's review): a partner's label in the approval window (render-labels.ts,
+// render-approval.ts). A request exactly as the app's label describes it gets the partner's box after everything
+// Journear says (its facts, every warning box and every note of any source), with only the folded details below it;
+// nothing Journear says changes (the window without the box is byte for byte the window without labels). A described
+// request that doesn't meet its description gets one line in Journear's voice (amber; red for any value the user's
+// account sends to an account the app hasn't listed), never the partner's words. Anything else, and anything Journear
+// couldn't check (every NEAR and Soroban document until piece 5 reads code hashes; a NEAR network the vault didn't
+// check), is the plain window, byte for byte.
+import { type xdr, Account, Asset, Claimant, Keypair, Memo, MuxedAccount, Operation, TransactionBuilder } from '@stellar/stellar-base';
 import { decodeApprovalRequest } from '@hana-id/core/decode';
 import { type LabelDocument, SOFT_VERBS, partnerAttribution } from '@hana-id/core/partner-labels';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dom } from '../../src/auth/dom.ts';
+import { alert } from '../../src/auth/ui.ts';
 import { type ApprovalRenderContext, renderApproval } from '../../src/auth/render-approval.ts';
-import { LABEL_DESTINATION_ROW, LABEL_MISMATCH, LABEL_NOT_LISTED, labelOutcome, windowLabelDocuments } from '../../src/auth/render-labels.ts';
+import { LABEL_MISMATCH, LABEL_NOT_LISTED, labelBoxName, labelOutcome, windowLabelDocuments } from '../../src/auth/render-labels.ts';
 import {
   GUESTBOOK_DOC_JSON,
   ISSUER,
@@ -32,11 +35,12 @@ import {
   parsed,
   paymentTx,
 } from '../../../core/test/partner-labels-fixtures.ts';
-import { addr, i128, invocation, invokeOp, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
+import { ROUTER, addr, feeBumpBytes, i128, invocation, invokeOp, sourceAuth, txBytes } from '../../../core/test/stellar-fixtures.ts';
 import { jargonWatch } from './plain-words.ts';
 
 const watch = jargonWatch();
 beforeEach(() => document.body.replaceChildren());
+afterEach(() => vi.restoreAllMocks());
 
 const APP = 'Coffee Club';
 const CTX: ApprovalRenderContext = { envNetwork: 'testnet', testApp: true, address: USER };
@@ -45,10 +49,11 @@ const STAMPS_DOC = parsed(STAMPS_DOC_JSON);
 const SOROBAN = parsed(SOROBAN_DOC_JSON);
 const USDC_LOOKALIKE = new Asset('USDC', ISSUER);
 const STRANGER = Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(21) as never).publicKey();
+const muxedOf = (g: string, id = '7') => new MuxedAccount(new Account(g, '0'), id).accountId();
 
-const payment = (o: Parameters<typeof paymentTx>[0] = {}) => decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: paymentTx(o) });
-const soroban = (fnName: string, args: xdr.ScVal[], contract = POOL) =>
-  decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([invokeOp(contract, fnName, args, [sourceAuth(invocation(contract, fnName, args))])]) });
+const stellar = (bytes: Uint8Array) => decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes });
+const payment = (o: Parameters<typeof paymentTx>[0] = {}) => stellar(paymentTx(o));
+const soroban = (fnName: string, args: xdr.ScVal[], contract = POOL) => stellar(txBytes([invokeOp(contract, fnName, args, [sourceAuth(invocation(contract, fnName, args))])]));
 
 type Decoded = ReturnType<typeof payment>;
 const render = (decoded: Decoded, labels?: readonly LabelDocument[], ctx: Partial<ApprovalRenderContext> = {}, app = APP): HTMLElement =>
@@ -57,18 +62,23 @@ const render = (decoded: Decoded, labels?: readonly LabelDocument[], ctx: Partia
 const without = (el: HTMLElement, remove: string): string => {
   const copy = el.cloneNode(true) as HTMLElement;
   for (const n of Array.from(copy.querySelectorAll(remove))) n.remove();
+  // A box's list of bullets that held only the removed one goes with it.
+  for (const ul of Array.from(copy.querySelectorAll('ul.risk-more'))) if (!ul.firstElementChild) ul.remove();
   return copy.outerHTML;
 };
 const text = (el: Element | null | undefined) => (el?.textContent ?? '').replace(/\s+/gu, ' ').trim();
-/** The NEAR facts the vault checks itself: a test app's relayed call on the env's network. */
+/** The NEAR facts a later piece reads (the code hash), injected. */
 const NEAR_CTX: Partial<ApprovalRenderContext> = { address: ME, labelFacts: { codeHash: STAMPS_HASH } };
 const collect = (stamp = 'sponsored', o: { deposit?: bigint; gas?: bigint; extra?: string } = {}) => nearDecoded([fn('collect', `{"stamp":"${stamp}"${o.extra ?? ''}}`, { ...(o.deposit !== undefined ? { deposit: o.deposit } : {}), ...(o.gas !== undefined ? { gas: o.gas } : {}) })]);
 
 describe('a classic payment exactly as described: the partner’s box', () => {
-  it('“{App} says: …”, the attribution, the app’s rows; Journear’s verb and joining words plain, the rest set apart', () => {
+  it('“{App} says: …” and the attribution, a group named for screen readers; no row repeats a value the sentence shows', () => {
     const el = render(payment(), [PAYMENT]);
     const box = el.querySelectorAll('div.partner-label');
     expect(box).toHaveLength(1);
+    expect(box[0]!.getAttribute('role')).toBe('group');
+    expect(box[0]!.getAttribute('aria-label')).toBe(labelBoxName(APP));
+    expect(labelBoxName(APP)).toBe('What Coffee Club says');
     const says = box[0]!.querySelector('p.partner-says')!;
     expect(text(says)).toBe('Coffee Club says: pay for order 1042');
     expect(says.querySelector('strong.app-name')?.textContent).toBe(APP);
@@ -77,60 +87,60 @@ describe('a classic payment exactly as described: the partner’s box', () => {
     expect(says.querySelector('span.partner-words')?.textContent).toBe('order');
     expect(says.querySelector('code.partner-value')?.textContent).toBe('1042');
     expect(text(box[0]!.querySelector('p.partner-attribution'))).toBe(partnerAttribution(APP));
-    expect(box[0]!.querySelector('p.partner-attribution strong.app-name')?.textContent).toBe(APP);
-    // The app's rows: its field (the memo, the request's own value), and the destination as its address book names it,
-    // with the account whole.
-    const dts = [...box[0]!.querySelectorAll('dl.partner-fields dt')].map(text);
-    const dds = [...box[0]!.querySelectorAll('dl.partner-fields dd')];
-    expect(dts).toEqual(['Order', LABEL_DESTINATION_ROW]);
-    expect(text(dds[0])).toBe('1042');
-    expect(dds[1]!.querySelector('span.partner-words')?.textContent).toBe('Coffee Club till');
-    expect(dds[1]!.querySelector('code.id-full')?.textContent).toBe(OTHER);
+    // The memo is in the sentence: no "Order" row; and no partner "To" row beside Journear's own (the address book's
+    // name isn't shown at all).
+    expect(box[0]!.querySelector('dl')).toBeNull();
+    expect(el.outerHTML).not.toContain('Coffee Club till');
   });
 
   it('only adds: the window without the box is byte for byte the window without labels', () => {
-    for (const o of [{}, { asset: USDC_LOOKALIKE }, { amount: '1', memo: Memo.text('A-77_x') }]) {
+    for (const o of [{}, { asset: USDC_LOOKALIKE }, { amount: '1', memo: Memo.text('A-77_x') }, { destination: muxedOf(OTHER) }]) {
       const el = render(payment(o), [PAYMENT]);
       expect(el.querySelector('div.partner-label')).not.toBeNull();
       expect(without(el, 'div.partner-label')).toBe(render(payment(o)).outerHTML);
     }
   });
 
-  it('comes after every warning box and Journear’s lines, before the request’s own facts (the memo row)', () => {
-    // The look-alike USDC: Journear's amber line about the token stays where it is, above the partner's box.
-    const el = render(payment({ asset: USDC_LOOKALIKE }), [PAYMENT]);
+  it('item 1: after everything Journear says, every alert of every source included; only the details below it', () => {
+    // Every alert source the window has: the red box and the amber box (the request's), an alert among the request's own
+    // facts, and the page's notes: the test-app note (blue), the mainnet demo's banner (red), the out-of-policy line
+    // (amber). (A box that overflows gets its line beside its message, among the request's facts, after rendering.)
+    const d = dom(document);
+    const notes = [alert(d, 'info', { class: 'note test-app' }, 'test app'), alert(d, 'danger', { tag: 'div', class: 'mainnet-demo' }, 'demo'), alert(d, 'warning', { class: 'note out-of-policy' }, 'out of policy')];
+    const el = render(payment({ asset: USDC_LOOKALIKE }), [PAYMENT], { notes });
     const kids = [...el.children];
     const box = kids.findIndex((c) => c.matches('div.partner-label'));
-    const amber = kids.findIndex((c) => c.matches('.risk-box'));
-    expect(amber).toBeGreaterThan(-1);
-    expect(box).toBeGreaterThan(amber);
-    expect(box).toBeGreaterThan(kids.findIndex((c) => c.matches('h2.summary-headline')));
-    expect(box).toBeGreaterThan(kids.findIndex((c) => c.matches('dl.summary-facts')));
-    expect(kids[box + 1]?.textContent).toBe('Memo1042');
-    expect(text(kids[amber])).toMatch(/^This is not the USDC Journear knows/u);
-  });
-
-  it('the partner’s words are only inside the box', () => {
-    const el = render(payment(), [PAYMENT]);
-    const outside = without(el, 'div.partner-label');
-    for (const w of ['Coffee Club till', '>order<', 'says:', 'These are']) expect(outside).not.toContain(w);
+    expect(box).toBe(kids.length - 2);
+    expect(kids[box + 1]!.matches('details.request-details')).toBe(true);
+    for (const n of notes) expect(kids.indexOf(n)).toBeLessThan(box);
+    expect(kids.findIndex((c) => c.matches('.risk-box'))).toBeLessThan(box);
+    // Journear's facts for the request (the memo row) are above the box too.
+    expect(kids.findIndex((c) => c.textContent === 'Memo1042')).toBeLessThan(box);
   });
 });
 
 describe('the identity: no labels, or labels that describe nothing here, or that Journear couldn’t check', () => {
+  const args = [addr(USER), i128(25_000_000n)];
   const cases: [string, Decoded, readonly LabelDocument[], Partial<ApprovalRenderContext>][] = [
-    ['a payment, a NEAR document (not described: another chain)', payment(), [STAMPS_DOC], {}],
-    ['a payment, a Soroban document (not described: not a call)', payment(), [SOROBAN], {}],
-    ['an account creation (not described: another operation)', decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([Operation.createAccount({ destination: OTHER, startingBalance: '5' })]) }), [PAYMENT], {}],
-    ['a NEAR call to the described contract, no code hash (couldn’t check, the only state today)', collect(), [STAMPS_DOC], { address: ME }],
-    ['a NEAR call, a malformed code hash (couldn’t check)', collect(), [STAMPS_DOC], { address: ME, labelFacts: { codeHash: 'nope' } }],
-    ['a live app’s relayed NEAR call: its network the vault didn’t check (couldn’t check)', collect(), [STAMPS_DOC], { ...NEAR_CTX, testApp: false }],
-    ['a NEAR call on another network than the env’s (not described)', nearDecoded([fn('collect', '{"stamp":"sponsored"}')], { network: 'mainnet' }), [STAMPS_DOC], { ...NEAR_CTX, envNetwork: 'mainnet' }],
-    ['a NEAR call to another contract (not described)', nearDecoded([fn('collect', '{"stamp":"sponsored"}')], { receiver: 'other.testnet' }), [STAMPS_DOC], NEAR_CTX],
-    ['a NEAR call of another method (not described)', nearDecoded([fn('vote', '{}')]), [STAMPS_DOC], NEAR_CTX],
+    ['a payment, a NEAR document (another chain)', payment(), [STAMPS_DOC], {}],
+    ['a payment, a Soroban document (not this contract)', payment(), [SOROBAN], {}],
+    ['a trust line and a sequence bump, a payment and a Soroban document (nothing moves to anyone)', stellar(txBytes([Operation.changeTrust({ asset: USDC_LOOKALIKE }), Operation.bumpSequence({ bumpTo: '9' })])), [PAYMENT, SOROBAN], {}],
+    ['a swap back to the user’s own account', stellar(txBytes([Operation.pathPaymentStrictSend({ sendAsset: Asset.native(), sendAmount: '1', destination: USER, destAsset: USDC_LOOKALIKE, destMin: '1', path: [] })])), [PAYMENT], {}],
+    ['a payment from another account than the user’s', payment({ opSource: STRANGER, destination: STRANGER }), [PAYMENT], {}],
+    ['a fee-bumped payment that would match', stellar(feeBumpBytes(paymentTx())), [PAYMENT], {}],
+    ['a fee-bumped payment to an unlisted account (not described yet)', stellar(feeBumpBytes(paymentTx({ destination: STRANGER }))), [PAYMENT], {}],
+    ['a router swap on another contract, its authorization reaching the described one', stellar(txBytes([invokeOp(ROUTER, 'swap', args, [sourceAuth(invocation(ROUTER, 'swap', args, [invocation(POOL, 'deposit', args)]))])])), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } }],
+    ['a NEAR call to the described contract, no code hash (every NEAR document until piece 5)', collect(), [STAMPS_DOC], { address: ME }],
+    ['a NEAR call with a deposit and two actions, no code hash', nearDecoded([fn('collect', '{"stamp":"gold"}', { deposit: 5n }), fn('collect', '{}')]), [STAMPS_DOC], { address: ME }],
+    ['a NEAR call, a malformed code hash', collect(), [STAMPS_DOC], { address: ME, labelFacts: { codeHash: 'nope' } }],
+    ['a live app’s relayed NEAR call: its network the vault didn’t check', collect(), [STAMPS_DOC], { ...NEAR_CTX, testApp: false }],
+    ['a NEAR call on another network than the env’s', nearDecoded([fn('collect', '{"stamp":"sponsored"}')], { network: 'mainnet' }), [STAMPS_DOC], { ...NEAR_CTX, envNetwork: 'mainnet' }],
+    ['a NEAR call to another contract', nearDecoded([fn('collect', '{"stamp":"sponsored"}')], { receiver: 'other.testnet' }), [STAMPS_DOC], NEAR_CTX],
+    ['a NEAR call of another method', nearDecoded([fn('vote', '{}')]), [STAMPS_DOC], NEAR_CTX],
     ['a NEAR call to a reviewed contract (Journear reads it itself)', collect(), [STAMPS_DOC], { ...NEAR_CTX, reviewedNear: { stamps: STAMPS } }],
-    ['a Soroban call, no Wasm hash (couldn’t check)', soroban('deposit', [addr(USER), i128(25_000_000n)]), [SOROBAN], {}],
-    ['a Soroban call to another contract (not described)', soroban('deposit', [addr(USER), i128(25_000_000n)], TEST_USDC_SAC), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } }],
+    ['a Soroban call, no Wasm hash (every Soroban document until piece 5)', soroban('deposit', args), [SOROBAN], {}],
+    ['a Soroban call of another function with an extra operation, no Wasm hash', stellar(txBytes([invokeOp(POOL, 'withdraw', args), Operation.bumpSequence({ bumpTo: '9' })])), [SOROBAN], {}],
+    ['a Soroban call to another contract', soroban('deposit', args, TEST_USDC_SAC), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } }],
   ];
   it.each(cases)('%s: the same window as without labels', (_, decoded, labels, ctx) => {
     const plain = render(decoded, undefined, ctx).outerHTML;
@@ -139,15 +149,28 @@ describe('the identity: no labels, or labels that describe nothing here, or that
     expect(el.outerHTML).toBe(plain);
   });
 
-  it('an EVM request, a message, typed data: no label can describe them (the plain window)', () => {
+  it('an EVM request, a message: no label can describe them (the plain window)', () => {
     const evm = decodeApprovalRequest({ kind: 'personal_sign', chain: 'evm', address: '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23', context: {}, bytes: new TextEncoder().encode('hello') });
     expect(render(evm, [PAYMENT, STAMPS_DOC]).outerHTML).toBe(render(evm).outerHTML);
     expect(labelOutcome(evm, [PAYMENT], { user: '', networkChecked: false, reviewedNear: [] })).toEqual({ kind: 'none' });
   });
+
+  it('item 8: a document that throws when read is no label: the plain window, a warning without any of its text', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const hostile = {
+      get context(): never {
+        throw new Error('Coffee Club till secret text');
+      },
+    } as unknown as LabelDocument;
+    const el = render(payment(), [hostile]);
+    expect(el.outerHTML).toBe(render(payment()).outerHTML);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/Coffee|secret/u);
+  });
 });
 
 describe('a described request that doesn’t meet its description: one line in Journear’s voice, no partner words', () => {
-  const MISMATCH = `${APP} describes this kind of request, but this one doesn’t match its description, so Journear isn’t showing it. Check it in ${APP} first.`;
+  const MISMATCH = `${APP} describes this kind of request, but this one doesn’t match, so Journear isn’t showing ${APP}’s description. If you’re not sure what this does, reject it.`;
   const NOT_LISTED = `This isn’t one of the accounts ${APP} has listed for payments. If you expected to pay ${APP}, don’t approve.`;
   const kinds: [string, Decoded][] = [
     ['more than the most it describes (out_of_bounds)', payment({ amount: '101' })],
@@ -155,8 +178,11 @@ describe('a described request that doesn’t meet its description: one line in J
     ['another kind of memo (memo_mismatch)', payment({ memo: Memo.id('1042') })],
     ['a memo the window can’t show as an order number (value_not_displayable)', payment({ memo: Memo.text('order 1042') })],
     ['a memo with a hidden direction mark (value_not_displayable)', payment({ memo: Memo.text('‮2401') })],
+    ['a memo that reads as an amount (value_not_displayable)', payment({ memo: Memo.text('1XLM') })],
+    ['a memo that reads as Journear’s words (value_not_displayable)', payment({ memo: Memo.text('Journear-verified') })],
+    ['a memo that reads as a claim (value_not_displayable)', payment({ memo: Memo.text('Free') })],
     ['another operation besides it (more_than_one_action)', payment({ extra: [Operation.bumpSequence({ bumpTo: '99' })] })],
-    ['from an account other than the user’s (source_not_user)', payment({ opSource: STRANGER })],
+    ['a path payment to the listed till (operation_mismatch)', stellar(txBytes([Operation.pathPaymentStrictSend({ sendAsset: Asset.native(), sendAmount: '1', destination: OTHER, destAsset: USDC_LOOKALIKE, destMin: '1', path: [] })]))],
   ];
   it.each(kinds)('%s: the amber line, in full when it is the only one', (_, decoded) => {
     const el = render(decoded, [PAYMENT]);
@@ -164,10 +190,10 @@ describe('a described request that doesn’t meet its description: one line in J
     const line = el.querySelector('.risk-box .partner-mismatch');
     expect(line).not.toBeNull();
     expect(line!.closest('.risk-box')?.classList.contains('warning-box')).toBe(true);
-    expect(text(line)).toBe(MISMATCH);
+    if (line!.matches('p.risk-lead')) expect(text(line)).toBe(MISMATCH);
+    else expect(text(line)).toBe(`Doesn’t match how ${APP} describes this kind of request`);
     expect(el.outerHTML).not.toContain('Coffee Club till');
     expect(el.outerHTML).not.toContain('>order<');
-    // Everything else is the plain window: without its line (or its box, when it is the only line) it is the same.
     const plain = render(decoded).outerHTML;
     expect([without(el, '.risk-box.warning-box:has(> .body > .partner-mismatch:first-child)'), without(el, 'li.partner-mismatch')]).toContain(plain);
   });
@@ -180,15 +206,64 @@ describe('a described request that doesn’t meet its description: one line in J
     expect(without(el, 'ul.risk-more')).toBe(render(payment({ asset: USDC_LOOKALIKE, memo: Memo.id('7') })).outerHTML);
   });
 
-  it('a payment to an account the app hasn’t listed: the red lines, under the headline, announced', () => {
-    const el = render(payment({ destination: STRANGER }), [PAYMENT]);
+  const unlisted: [string, Decoded][] = [
+    ['a payment', payment({ destination: STRANGER })],
+    ['a payment to an unlisted account’s M… form', payment({ destination: muxedOf(STRANGER) })],
+    ['a strict-send path payment', stellar(txBytes([Operation.pathPaymentStrictSend({ sendAsset: Asset.native(), sendAmount: '1', destination: STRANGER, destAsset: USDC_LOOKALIKE, destMin: '1', path: [] })]))],
+    ['a strict-receive path payment', stellar(txBytes([Operation.pathPaymentStrictReceive({ sendAsset: Asset.native(), sendMax: '1', destination: STRANGER, destAsset: USDC_LOOKALIKE, destAmount: '1', path: [] })]))],
+    ['an account creation', stellar(txBytes([Operation.createAccount({ destination: STRANGER, startingBalance: '5' })]))],
+    ['a merge of the account', stellar(txBytes([Operation.accountMerge({ destination: STRANGER })]))],
+    ['a claimable balance', stellar(txBytes([Operation.createClaimableBalance({ asset: Asset.native(), amount: '1', claimants: [new Claimant(STRANGER)] })]))],
+    ['a payment to the till, then one to an unlisted account', stellar(txBytes([Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '1' }), Operation.payment({ destination: STRANGER, asset: Asset.native(), amount: '1' })]))],
+  ];
+  it.each(unlisted)('item 2: %s to an account the app hasn’t listed: the red line, announced, no partner words', (_, decoded) => {
+    const el = render(decoded, [PAYMENT]);
     expect(el.querySelector('div.partner-label')).toBeNull();
     const red = el.querySelector('.risk-box.danger-box');
     expect(red?.getAttribute('role')).toBe('alert');
-    expect(text(red!.querySelector('p.risk-lead'))).toBe(NOT_LISTED);
-    expect(red!.previousElementSibling?.matches('h2.summary-headline')).toBe(true);
+    const line = red!.querySelector('.partner-not-listed');
+    expect(line).not.toBeNull();
+    if (line!.matches('p.risk-lead')) {
+      expect(text(line)).toBe(NOT_LISTED);
+      expect(red!.previousElementSibling?.matches('h2.summary-headline')).toBe(true);
+      expect(without(el, '.risk-box.danger-box')).toBe(render(decoded).outerHTML);
+    } else {
+      // Beside another red line (a merge's own danger line): its bullet, last; the lead stays Journear's.
+      expect(text(line)).toBe(`Not one of the accounts ${APP} has listed for payments`);
+      expect(without(el, 'li.partner-not-listed')).toBe(render(decoded).outerHTML);
+    }
     expect(el.outerHTML).not.toContain('Coffee Club till');
-    expect(without(el, '.risk-box.danger-box')).toBe(render(payment({ destination: STRANGER })).outerHTML);
+  });
+
+  it('item 6: the user’s account as an M… source is the user (the payment matches, the box shows)', () => {
+    const noMemo = parsed({ ...PAYMENT_DOC_JSON, display: { formats: { payment: { call: { memo: 'none', assets: ['native'] }, intent: { verb: 'pay', object: 'order' }, sentence: ['verb', 'object'], fields: [] } } } });
+    const tx = new TransactionBuilder(new MuxedAccount(new Account(USER, '41'), '3'), { fee: '100', networkPassphrase: PASSPHRASE })
+      .addOperation(Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '25' }))
+      .setTimebounds(10, 2000)
+      .build();
+    const el = render(stellar(new Uint8Array(tx.toEnvelope().toXDR())), [noMemo]);
+    expect(text(el.querySelector('p.partner-says'))).toBe('Coffee Club says: pay order');
+  });
+
+  it('the commit review: a listed account’s M… form is not red, and nothing in the box contradicts Journear’s own row', () => {
+    const m = muxedOf(OTHER);
+    const el = render(payment({ destination: m }), [PAYMENT]);
+    expect(el.querySelector('.partner-not-listed, .partner-mismatch')).toBeNull();
+    const box = el.querySelector('div.partner-label')!;
+    expect(text(box)).not.toContain(OTHER);
+    expect(text(box)).not.toContain(m);
+    // Journear's own row shows the request's M… address whole.
+    expect(text(el.querySelector('dl.id-rows'))).toContain(m);
+  });
+
+  it('the commit review: a payment from another source than the user’s is the plain window', () => {
+    const tx = new TransactionBuilder(new Account(STRANGER, '41'), { fee: '100', networkPassphrase: PASSPHRASE })
+      .addOperation(Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '25', source: USER }))
+      .addMemo(Memo.text('1042'))
+      .setTimebounds(10, 2000)
+      .build();
+    const decoded = stellar(new Uint8Array(tx.toEnvelope().toXDR()));
+    expect(render(decoded, [PAYMENT]).outerHTML).toBe(render(decoded).outerHTML);
   });
 
   it('NEAR (with the code hash a later piece reads): every near miss is the amber line, after the acts-as-you line', () => {
@@ -204,47 +279,34 @@ describe('a described request that doesn’t meet its description: one line in J
       expect(el.querySelector('div.partner-label'), what).toBeNull();
       expect(el.querySelector('.partner-mismatch'), what).not.toBeNull();
     }
-    const changed = render(collect(), [STAMPS_DOC], { ...NEAR_CTX, labelFacts: { codeHash: GUESTBOOK_HASH() } }, 'Stamp Trail');
+    const changed = render(collect(), [STAMPS_DOC], { ...NEAR_CTX, labelFacts: { codeHash: (parsed(GUESTBOOK_DOC_JSON).context as { codeHash: string }).codeHash } }, 'Stamp Trail');
     expect(text(changed.querySelector('.risk-box.warning-box p.risk-lead'))).toMatch(/^This acts as you/u);
     expect(text(changed.querySelector('li.partner-mismatch'))).toBe('Doesn’t match how Stamp Trail describes this kind of request');
   });
 });
 
-/** Another contract's code hash (the contract changed since the label was written): the guestbook's. */
-function GUESTBOOK_HASH(): string {
-  return (parsed(GUESTBOOK_DOC_JSON).context as { codeHash: string }).codeHash;
-}
-
 describe('NEAR and Soroban rendering, with the facts a later piece reads (code hash) injected', () => {
-  it('a relayed NEAR call: “Stamp Trail says: collect the stamp Fare paid” after the amber acts-as-you line', () => {
+  it('a relayed NEAR call: “Stamp Trail says: collect the stamp Fare paid”; the stamp is in the sentence, so no row', () => {
     const el = render(collect(), [STAMPS_DOC], NEAR_CTX, 'Stamp Trail');
     const box = el.querySelector('div.partner-label')!;
     expect(text(box.querySelector('p.partner-says'))).toBe('Stamp Trail says: collect the stamp Fare paid');
     expect(box.querySelector('span.partner-value.partner-words')?.textContent).toBe('Fare paid');
-    expect(text(box.querySelector('dl.partner-fields'))).toBe('StampFare paid');
-    const kids = [...el.children];
-    expect(kids.indexOf(box)).toBeGreaterThan(kids.findIndex((c) => c.matches('.risk-box')));
+    expect(box.querySelector('dl')).toBeNull();
     expect(without(el, 'div.partner-label')).toBe(render(collect(), undefined, NEAR_CTX, 'Stamp Trail').outerHTML);
-  });
-
-  it('the user’s own NEAR transaction on the env’s network is checked too (its block hash): the same box', () => {
-    const el = render(nearDecoded([fn('collect', '{"stamp":"arrival"}')], { relayed: false }), [STAMPS_DOC], { ...NEAR_CTX, testApp: false }, 'Stamp Trail');
-    expect(text(el.querySelector('p.partner-says'))).toBe('Stamp Trail says: collect the stamp Arrival');
   });
 
   it('a Soroban deposit: the amount as the app’s description of the request’s units, the user as “your account”', () => {
     const el = render(soroban('deposit', [addr(USER), i128(25_000_000n)]), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } });
-    const says = el.querySelector('p.partner-says')!;
-    expect(text(says)).toBe('Coffee Club says: deposit 25,000,000 units, which Coffee Club says are 2.5 USDC from your account');
-    expect([...el.querySelectorAll('dl.partner-fields dt')].map(text)).toEqual(['Amount', 'From']);
+    expect(text(el.querySelector('p.partner-says'))).toBe('Coffee Club says: deposit 25,000,000 units, which Coffee Club says are 2.5 USDC from your account');
+    expect(el.querySelector('div.partner-label dl')).toBeNull();
     expect(without(el, 'div.partner-label')).toBe(render(soroban('deposit', [addr(USER), i128(25_000_000n)])).outerHTML);
   });
 
-  it('a Soroban payment to a listed account: its name set apart in the sentence, and in its row with the account whole', () => {
+  it('a Soroban payment to a listed account: its name set apart in the sentence; the one value not in it is the one row', () => {
     const el = render(soroban('pay_to', [addr(TEST_USDC_SAC), addr(OTHER), i128(10_000_000n)]), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } });
     expect(el.querySelector('p.partner-says span.partner-value.partner-words')?.textContent).toBe('Club treasury');
-    const to = [...el.querySelectorAll('dl.partner-fields dd')][1]!;
-    expect(to.querySelector('code.id-full')?.textContent).toBe(OTHER);
+    expect([...el.querySelectorAll('dl.partner-fields dt')].map(text)).toEqual(['Coin']);
+    expect(el.querySelector('dl.partner-fields dd code.id-full')?.textContent).toBe(TEST_USDC_SAC);
   });
 });
 
@@ -278,12 +340,12 @@ describe('what the window takes from the vault (windowLabelDocuments)', () => {
 });
 
 describe('hostile text: refused by the parser, or harmless inside the attributed box', () => {
-  /** The payment document with one text replaced. */
+  /** The payment document with one text replaced; the memo as a row (the sentence doesn't show it). */
   const doc = (o: { object?: string; name?: string; label?: string }) =>
     JSON.stringify({
       ...PAYMENT_DOC_JSON,
       metadata: { addressBook: [{ account: OTHER, name: o.name ?? 'Coffee Club till' }] },
-      display: { formats: { payment: { ...PAYMENT_DOC_JSON.display.formats.payment, intent: { verb: 'pay', object: o.object ?? 'order' }, fields: [{ path: 'memo', label: o.label ?? 'Order', format: 'orderNumber' }] } } },
+      display: { formats: { payment: { ...PAYMENT_DOC_JSON.display.formats.payment, intent: { verb: 'pay', object: o.object ?? 'order' }, sentence: ['verb', 'object'], fields: [{ path: 'memo', label: o.label ?? 'Order', format: 'orderNumber' }] } } },
     });
   const refused: [string, string][] = [
     ['a bidi override in the object', doc({ object: 'order ‮redro' })],
@@ -315,6 +377,13 @@ describe('hostile text: refused by the parser, or harmless inside the attributed
     ['a check mark', doc({ name: '✓ Coffee Club' })],
     ['an emoji', doc({ object: 'order 🔒' })],
     ['too long', doc({ object: 'a very long order phrase that goes on and on' })],
+    ['a row named as Journear’s “Total”', doc({ label: 'Total' })],
+    ['a row named as Journear’s “To”', doc({ label: 'To' })],
+    ['a row named as Journear’s “Network”', doc({ label: 'Network' })],
+    ['a row named as Journear’s “Memo”', doc({ label: 'Memo' })],
+    ['a row named “Amount”', doc({ label: 'Amount' })],
+    ['a row named “Sends”', doc({ label: 'Sends' })],
+    ['a row named “From”', doc({ label: 'From' })],
   ];
   it.each(refused)('%s: refused at delivery, so the window is plain', (_, t) => {
     expect(windowLabelDocuments([t], 'testnet')).toEqual([]);
@@ -322,31 +391,31 @@ describe('hostile text: refused by the parser, or harmless inside the attributed
   });
 
   it('a phrase the rules let through renders only inside the box, attributed, in the normal style', () => {
-    const odd = doc({ object: 'the danger zone order', name: 'Riverside Kiosk Coffee Club Till', label: 'Kiosk order reference' });
+    const odd = doc({ object: 'the danger zone order', label: 'Kiosk order reference' });
     const docs = windowLabelDocuments([odd], 'testnet');
     expect(docs).toHaveLength(1);
     const el = render(payment(), docs);
     const box = el.querySelector('div.partner-label')!;
     expect(text(box)).toContain('the danger zone order');
-    expect(text(box)).toContain('Riverside Kiosk Coffee Club Till');
+    expect([...box.querySelectorAll('dl.partner-fields dt')].map(text)).toEqual(['Kiosk order reference']);
     expect(box.closest('.jp-alert')).toBeNull();
     expect(box.querySelector('.jp-alert, svg, [role="alert"]')).toBeNull();
     expect(without(el, 'div.partner-label')).toBe(render(payment()).outerHTML);
   });
 
-  it('a request’s own memo that reads like Journear’s words is the request’s value: in mono inside the box, and in the Memo row as today', () => {
-    const el = render(payment({ memo: Memo.text('Journear-checked') }), [PAYMENT]);
-    const box = el.querySelector('div.partner-label')!;
-    expect(box.querySelector('p.partner-says code.partner-value')?.textContent).toBe('Journear-checked');
-    expect(text(box.querySelector('p.partner-attribution'))).toBe(partnerAttribution(APP));
-    expect(without(el, 'div.partner-label')).toBe(render(payment({ memo: Memo.text('Journear-checked') })).outerHTML);
+  it('a request’s own id that reads as Journear’s words, a claim, a token or an amount is never shown: the amber line', () => {
+    for (const v of ['Journear-checked', '1XLM', 'USDC-25', 'Free', 'Verified-9', 'approve-1']) {
+      const el = render(payment({ memo: Memo.text(v) }), [PAYMENT]);
+      expect(el.querySelector('div.partner-label'), v).toBeNull();
+      expect(el.querySelector('.partner-mismatch'), v).not.toBeNull();
+    }
   });
 });
 
 describe('the window’s own sentences', () => {
   it('as recorded in D896, with the app’s name', () => {
     const app = { kind: 'app' };
-    expect(LABEL_MISMATCH.full).toEqual([app, ' describes this kind of request, but this one doesn’t match its description, so Journear isn’t showing it. Check it in ', app, ' first.']);
+    expect(LABEL_MISMATCH.full).toEqual([app, ' describes this kind of request, but this one doesn’t match, so Journear isn’t showing ', app, '’s description. If you’re not sure what this does, reject it.']);
     expect(LABEL_MISMATCH.short).toEqual(['Doesn’t match how ', app, ' describes this kind of request']);
     expect(LABEL_NOT_LISTED.full).toEqual(['This isn’t one of the accounts ', app, ' has listed for payments. If you expected to pay ', app, ', don’t approve.']);
     expect(LABEL_NOT_LISTED.short).toEqual(['Not one of the accounts ', app, ' has listed for payments']);
@@ -357,10 +426,9 @@ describe('the window’s own sentences', () => {
 describe('plain words (D853) in the module’s own sentences', () => {
   it('no sentence of render-labels.ts holds a banned word', async () => {
     const { readFileSync } = await import('node:fs');
-    const { jargonIn, sentencesIn } = await import('@hana-id/brand/plain-words');
     const { join } = await import('node:path');
-    const src = readFileSync(join(process.cwd(), 'src/auth/render-labels.ts'), 'utf8');
-    const sentences = sentencesIn(src);
+    const { jargonIn, sentencesIn } = await import('@hana-id/brand/plain-words');
+    const sentences = sentencesIn(readFileSync(join(process.cwd(), 'src/auth/render-labels.ts'), 'utf8'));
     expect(sentences.length).toBeGreaterThan(0);
     expect(sentences.filter((s) => jargonIn(s).length > 0)).toEqual([]);
   });

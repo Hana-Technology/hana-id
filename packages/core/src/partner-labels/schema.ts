@@ -378,7 +378,7 @@ const NEAR_RESERVED = new Set(['near_deposit', 'near_withdraw', 'deposit_and_sta
  * trust line for an address and needs its authorization): init_asset, approve, transfer, transfer_from, burn, burn_from,
  * clawback, set_authorized, mint, set_admin, trust. The rest (allowance, balance, authorized, admin, decimals, name,
  * symbol) only read (and extend the contract's own time to live). A Stellar asset contract runs built-in code, not a
- * Wasm, so a transaction's footprint can't tie a label to it (D900): reserving these is what keeps a label off every
+ * Wasm, so a transaction's footprint can't tie a label to it: reserving these is what keeps a label off every
  * call of one that changes anything.
  */
 export const SAC_STATE_CHANGING: readonly string[] = Object.freeze(['init_asset', 'approve', 'transfer', 'transfer_from', 'burn', 'burn_from', 'clawback', 'set_authorized', 'mint', 'set_admin', 'trust']);

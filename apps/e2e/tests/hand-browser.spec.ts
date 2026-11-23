@@ -2,10 +2,12 @@
 // and NEAR actions by hand" gives a person, by the labels a person reads: the same context setup, start page, test
 // accounts and helpers as `pnpm --filter @hana-id/e2e hand-browser`, on the running stack. Each test opens its own hand
 // session (a context of the test's browser) with accounts of its own tag. Chromium only: the hand browser is Chromium.
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Browser, Page } from '@playwright/test';
 import { type HandAccount, type HandAccountId, type HandSession, HAND_START_URL, chooserLabel, latestCode, openHandSession } from '../src/hand-test.ts';
 import { AUTH_ORIGIN, DEMO_ORIGIN, STAMPS_ORIGIN } from '../src/stack.ts';
-import { approve, expect, test } from './fixtures.ts';
+import { approve, expect, seenText, test } from './fixtures.ts';
 
 test.skip(({ browserName }) => browserName !== 'chromium', 'the hand browser is Chromium');
 
@@ -213,13 +215,13 @@ test('case B waiting, cancelled from a Google sign-in (D864), with Passport Home
   await expect(rows(home)).toHaveCount(2);
   await expect(rows(home).nth(1)).toContainText('Another email address');
   await expect(rows(home).nth(1)).toContainText('Waiting');
-  await expect(rows(home).nth(1)).toContainText('choose Cancel this link');
+  await expect(rows(home).nth(1)).toContainText('choose “Cancel this link”');
 
   await demo.bringToFront();
   await signOut(demo);
   const again = await demoGoogle(demo, ben);
-  // D887: "Didn't add it?" and the small Cancel this link under the waiting line.
-  await expect(again.locator('#link-banners .banner-action')).toHaveText('Didn’t add it?Cancel this link');
+  // D887: "Don't recognise it?" and the small Cancel this link under the waiting line.
+  await expect.poll(() => seenText(again.locator('#link-banners .banner-action'))).toBe('Don’t recognise it?Cancel this link');
   await again.getByRole('button', { name: 'Cancel this link for the email address', exact: true }).click();
   // D881: back from Google's check, the window says what became of it.
   await expect(again.getByRole('heading', { name: 'Link cancelled' })).toBeVisible();
@@ -290,8 +292,19 @@ test('a waiting link made to take effect, the shared-wallet question and Remove 
   await h.context.close();
 });
 
-test('the automatic same-address link (case A)', async ({ browser }) => {
-  test.setTimeout(150_000);
+/** With HANA_SHOTS_DIR=<dir>: the window as a phone (390) and as the sign-in popup (480 × 640) show it, light. */
+async function shots(popup: Page, name: string): Promise<void> {
+  const dir = process.env.HANA_SHOTS_DIR;
+  if (!dir) return;
+  mkdirSync(dir, { recursive: true });
+  for (const [size, viewport] of [['390', { width: 390, height: 844 }], ['popup-480x640', { width: 480, height: 640 }]] as const) {
+    await popup.setViewportSize(viewport);
+    await popup.screenshot({ path: join(dir, `${name}-${size}.png`), fullPage: size === '390', animations: 'disabled' });
+  }
+}
+
+test('the automatic same-address link (case A), then the email’s next sign-in: “Don’t recognise it?” and Remove it, which asks first (D887)', async ({ browser }) => {
+  test.setTimeout(200_000);
   const h = await openHand(browser);
   const ada = h.who('ada');
   const demo = await openDemo(h);
@@ -316,6 +329,34 @@ test('the automatic same-address link (case A)', async ({ browser }) => {
   const home = await homeList(h, ada, 'email');
   await expect(rows(home)).toHaveCount(2);
   await expect(rows(home).nth(1)).toContainText('Added automatically at a sign-in, because this Google account uses the same email address as this wallet.');
+
+  // D887: the email's next sign-in (the wallet's own) shows the Google account added in the last 7 days, with the
+  // founder's question, true here too (the person did sign in with Google, but the window can't tell an automatic
+  // link): "Don't recognise it?" and Remove it, which asks first.
+  await demo.bringToFront();
+  await signOut(demo);
+  const next = await popupOf(demo, () => demo.getByRole('button', { name: 'Sign in with email' }).click());
+  await emailCode(h, next, ada);
+  await expect(next.getByRole('heading', { name: 'Signed in' })).toBeVisible();
+  const banner = next.locator('#link-banners li[data-status="active"]');
+  await expect(banner.locator('.banner-what')).toHaveText(/^A sign-in method was added: Google on .+\.$/u);
+  await expect.poll(() => seenText(banner.locator('.banner-action'))).toBe('Don’t recognise it?Remove it');
+  const remove = next.getByRole('button', { name: 'Remove it (the Google account)', exact: true });
+  await expect(remove).toBeVisible();
+  await expect(remove).toHaveAccessibleDescription(/^A sign-in method was added: Google on /u);
+  await expect(demo.locator('#status')).toContainText('Signed in');
+  await shots(next, 'sign-in-auto-link-recent');
+  await remove.click();
+  await expect(next.getByRole('heading', { name: 'Remove the Google account from this wallet?' })).toBeVisible();
+  await expect(next.getByRole('button', { name: 'Remove it', exact: true })).toBeVisible();
+  await next.getByRole('button', { name: 'Go back', exact: true }).click();
+  await expect(remove).toBeVisible();
+  const kept = closes(next);
+  await next.getByRole('button', { name: 'Done' }).click();
+  await kept;
+  await expect(demo.locator('#evm-address')).toHaveText(evm ?? '');
+  await showAgain(home);
+  await expect(rows(home)).toHaveCount(2);
   await h.context.close();
 });
 
@@ -330,16 +371,16 @@ test('an added sign-in 8 days old: Home’s line, the quiet line with Done, not 
   await expect(row.getByRole('status')).toHaveText('Done: the sign-in added to Eve’s wallet now opens it since 8 days ago.');
   const home = await homeList(h, eve);
   await expect(rows(home)).toHaveCount(2);
-  await expect(rows(home).nth(1)).toContainText('and choose Remove it.');
-  await expect(rows(home).nth(1)).toContainText('Once you press Done in the sign-in window, that browser stops offering to remove it.');
+  await expect(rows(home).nth(1)).toContainText('and choose “Remove it”.');
+  await expect(rows(home).nth(1)).toContainText('Once you press “Done” in the sign-in window, that browser stops offering to remove it.');
 
   await demo.bringToFront();
   await signOut(demo);
   const first = await demoGoogle(demo, eve);
   await expect(first.locator('#link-older')).toContainText('An email address also opens this wallet, since');
-  // D887: under the line, "Didn't add it?" and a small Remove it, named for what it removes.
-  await expect(first.locator('#link-older .banner-action')).toHaveText('Didn’t add it?Remove it');
-  await expect(first.getByRole('button', { name: 'Remove the email address from this wallet', exact: true })).toBeVisible();
+  // D887: under the line, "Don't recognise it?" and a small Remove it, named for what it removes.
+  await expect(first.getByRole('button', { name: 'Remove it (the email address)', exact: true })).toBeVisible();
+  await expect.poll(() => seenText(first.locator('#link-older .banner-action'))).toBe('Don’t recognise it?Remove it');
   const done = closes(first);
   await first.getByRole('button', { name: 'Done' }).click();
   await done;
@@ -356,7 +397,7 @@ test('an added sign-in 8 days old: Home’s line, the quiet line with Done, not 
   await expect(h.start.locator('#forget-result')).toHaveText('Done: this browser has forgotten it. The next sign-in shows the line again.');
   const third = await demoGoogle(demo, eve);
   // D881: Remove asks first, then says what became of it.
-  await third.getByRole('button', { name: 'Remove the email address from this wallet', exact: true }).click();
+  await third.getByRole('button', { name: 'Remove it (the email address)', exact: true }).click();
   await expect(third.getByRole('heading', { name: 'Remove the email address from this wallet?' })).toBeVisible();
   await third.getByRole('button', { name: 'Remove it', exact: true }).click();
   await expect(third.getByRole('heading', { name: 'The email address was removed' })).toBeVisible();

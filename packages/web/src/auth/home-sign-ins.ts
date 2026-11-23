@@ -185,13 +185,13 @@ export const SIGN_IN_TEXT = Object.freeze({
   shared: 'Each of these opens the same wallet, or will once it stops waiting. Anyone who can sign in with one of them can use the money in it.',
   readOnly: 'Passport Home can show these, but can’t cancel or remove them yet.',
   privacy: 'Journear doesn’t show the addresses of your other sign-ins, only what kind they are.',
-  cancelOwnEmail: 'Didn’t set this up? Sign in to this app with this email and choose Cancel this link. If you’re not sure, cancel it.',
+  cancelOwnEmail: 'Didn’t set this up? Sign in to this app with this email and choose “Cancel this link”. If you’re not sure, cancel it.',
   cancelOwnNone: 'Only the email this wallet was made with can cancel this. If you didn’t set this up, don’t add money to that wallet.',
-  cancelAtSignIn: 'Didn’t add it? Sign in to this app the way you signed in here, and choose Cancel this link. If you’re not sure, cancel it.',
-  removeAtSignIn: 'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove it. If you’re not sure, remove it.',
+  cancelAtSignIn: 'Don’t recognise it? Sign in to this app the way you signed in here, and choose “Cancel this link”. If you’re not sure, cancel it.',
+  removeAtSignIn: 'Don’t recognise it? Sign in to this app the way you signed in here, and choose “Remove it”. If you’re not sure, remove it.',
   /** An automatic same-address Google link (D865's softer words: nothing pushes its removal). */
-  removeAtSignInAuto: 'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose Remove it.',
-  removeAtSignInOnceNotOffered: 'Once you press Done in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
+  removeAtSignInAuto: 'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose “Remove it”.',
+  removeAtSignInOnceNotOffered: 'Once you press “Done” in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
   notYours: 'Only the sign-in this wallet was made with, or this sign-in itself, can remove it.',
   removeOwnNotAsked: 'Not asked? Try signing in in a private window. If this was added automatically because both use the same address, you won’t be asked.',
   signOutFirst: 'If you’re already signed in to this app, sign out of it first.',
@@ -239,7 +239,7 @@ export function pointerText(p: SignInPointer, row: SignInRow): { lines: string[]
     case 'remove_own':
       return {
         lines: [
-          `To remove it, sign in to this app with it and choose ${removeLabel} when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.`,
+          `To remove it, sign in to this app with it and choose “${removeLabel}” when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.`,
           SIGN_IN_TEXT.removeOwnMoney,
           SIGN_IN_TEXT.removeOwnNotAsked,
         ],

@@ -848,10 +848,11 @@ are yours.
 
 - **The sign-in window** asks how to sign in (Google or email), then shows its progress. A sign-in method linked to
   someone's wallet is first asked whether to keep the link (**Not now**, **Don't ask again on this device**, or
-  **Remove this …**, which names the email or the Google sign-in); a pending link shows a banner with "Didn't add it?"
-  and a small **Cancel this link** button. The sign-in a wallet was made with sees each other sign-in with "Didn't add
-  it?" and a small **Remove it** button, which asks before it removes anything: as a banner at every sign-in for 7
-  days after it was added, then as one quiet line until the user presses Done on it in that browser.
+  **Remove this …**, which names the email or the Google sign-in); a pending link shows a banner with a small **Cancel
+  this link** button (alone on the sign-in that just made the link; at later sign-ins, "Don't recognise it?" before
+  it). The sign-in a wallet was made with sees each other sign-in with "Don't recognise it?" and a small **Remove it**
+  button, which asks before it removes anything: as a banner at every sign-in for 7 days after it was added, then as
+  one quiet line until the user presses Done on it in that browser.
 - **The approval window** starts with one plain sentence about what your app asks for ("Your App wants to send 0.1
   NEAR to bob.testnet"), the network, and the most the network fee can be. A risk is always in view, in red or amber,
   right under that sentence. The technical details are folded under **Show details**. When Journear Passport can't

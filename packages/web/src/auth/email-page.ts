@@ -59,7 +59,7 @@
 //   API's time from the read) is one plain line with Remove, shown until the user presses Done on it in this browser
 //   (`localStorage` on authOrigin, `hana.ol.<sha256 of the line's kind and date>`). When only such dismissed lines are
 //   left, the window answers `{choice: 'keep'}` and closes as with no banners. D887: a banner's or a line's Remove or
-//   Cancel is a small outlined button on its own line under the sentence, after "Didn't add it?";
+//   Cancel is a small outlined button on its own line under the sentence, after "Don't recognise it?";
 // - `stop`: why the login ended (a pending link: when it activates).
 // - `link_waiting` (D864): this email sign-in was refused because the email itself waits to join a wallet (someone
 //   linked it to a Google account with one code to this address): the screen says so, with the date the link starts
@@ -231,20 +231,23 @@ export const olderLinkText = (provider: string, since: string): string => `${pro
 export const OLDER_LINK_NOTE = `After you press Done, this browser won’t show this again. ${BRAND.home} lists the ways to sign in to your wallet.`;
 
 /**
- * D887 (decided by the founder 2026-11-23: "a small button, plus 'Didn't add it?' in front of it"): a banner's or an
- * older line's Remove or Cancel is a small outlined button on its own line under the sentence, after "Didn't add it?"
- * (not on a way to sign in this sign-in just added: the user did add it, so the button stands alone, and a Remove
- * there is the shorter "Remove"). Each button's accessible name says what it changes, so a screen reader's list of
- * buttons tells two lines apart; it starts with the visible words where they allow it (Cancel), and for Remove it is
- * the confirmation's own question (D881) without the question mark.
+ * D887 (decided by the founder 2026-11-23: "a small button, plus 'Didn't add it?' in front of it", then, the same day,
+ * 'Change to "Don't recognise it?"'): a banner's or an older line's Remove or Cancel is a small outlined button on its
+ * own line under the sentence, after "Don't recognise it?", which is true whoever added the sign-in (the user, a
+ * same-address automatic link, or someone else). Not on a way to sign in this sign-in just added: the button stands
+ * alone there, and a Remove is the shorter "Remove". Each button's accessible name is its visible words, then
+ * (`more`, in a visually hidden span inside the button) what it changes, so a voice user's "Remove it" matches (WCAG
+ * 2.5.3) and a screen reader's list of buttons tells two lines apart; the button is described by its sentence
+ * (`aria-describedby`).
  */
 export const BANNER_ACTION_TEXT = Object.freeze({
-  lead: 'Didn’t add it?',
+  lead: 'Don’t recognise it?',
   remove: 'Remove it',
+  removeMore: (kind: string) => ` (the ${kind})`,
   removeFresh: 'Remove',
+  removeFreshMore: (kind: string) => ` the ${kind} from this wallet`,
   cancel: 'Cancel this link',
-  removeName: (kind: string) => `Remove the ${kind} from this wallet`,
-  cancelName: (kind: string) => `Cancel this link for the ${kind}`,
+  cancelMore: (kind: string) => ` for the ${kind}`,
 });
 /** How long a window waits for its `{choice: 'keep'}` write before it closes anyway (D875). */
 export const KEEP_WRITE_MS = 1_500;
@@ -1554,19 +1557,25 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       f();
     };
     /**
-     * D887: the banner's Remove or Cancel, on its own line under the sentence: "Didn't add it?" and a small outlined
+     * D887: the banner's Remove or Cancel, on its own line under the sentence: "Don't recognise it?" and a small outlined
      * button (a way to sign in this sign-in just added: the button alone). Quiet on purpose: no box, colour or icon of
      * its own; Done stays the one primary button.
      */
+    /** The id of banner `i`'s sentence, which describes its button. */
+    const sentenceId = (i: number): string => `banner-sentence-${i}`;
     const actionLine = (b: LinkBanner, i: number): HTMLElement | null => {
       const action = b.action;
       if (!action) return null;
       const provider = b.provider === 'google' ? 'google' : 'email';
       const kind = kindName(provider);
       const T = BANNER_ACTION_TEXT;
-      const label = action.kind === 'cancel' ? T.cancel : b.fresh ? T.removeFresh : T.remove;
-      const name = action.kind === 'cancel' ? T.cancelName(kind) : T.removeName(kind);
-      const el = d.h('button', { class: `${BTN.secondary} jp-btn-sm`, attrs: { type: 'button', id: `banner-${action.kind}-${i}`, 'aria-label': name } }, label);
+      const [label, more] = action.kind === 'cancel' ? [T.cancel, T.cancelMore(kind)] : b.fresh ? [T.removeFresh, T.removeFreshMore(kind)] : [T.remove, T.removeMore(kind)];
+      const el = d.h(
+        'button',
+        { class: `${BTN.secondary} jp-btn-sm`, attrs: { type: 'button', id: `banner-${action.kind}-${i}`, 'aria-describedby': sentenceId(i) } },
+        label,
+        d.h('span', { class: 'sr-only' }, more),
+      );
       const change: BannerAction = { kind: action.kind, provider, method: action.prove.method, slot: slot + 2, signedIn };
       // D881: Remove asks first (what it costs); Cancel, the safe side of a link nobody may have meant, doesn't.
       el.addEventListener(
@@ -1582,8 +1591,8 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     banners.forEach((b, i) => {
       const action = actionLine(b, i);
       if (olderLink(b, serverTimeMs)) {
-        // D875: plain lines, no box, no colour: who else opens this wallet; D887: under it, "Didn't add it?" and Remove.
-        older.push(d.h('div', { class: 'older-link', attrs: { 'data-provider': b.provider } }, d.h('p', { class: 'older-link-text' }, olderLinkText(b.provider, dateText(b.effectiveAtMs))), action));
+        // D875: plain lines, no box, no colour: who else opens this wallet; D887: under it, "Don't recognise it?" and Remove.
+        older.push(d.h('div', { class: 'older-link', attrs: { 'data-provider': b.provider } }, d.h('p', { class: 'older-link-text', attrs: { id: sentenceId(i) } }, olderLinkText(b.provider, dateText(b.effectiveAtMs))), action));
         shownOlder.push(b);
         return;
       }
@@ -1600,7 +1609,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
           'li',
           { class: b.status === 'pending' ? 'banner pending' : 'banner', attrs: { 'data-provider': b.provider, 'data-status': b.status, ...(fresh ? { 'data-fresh': 'true' } : {}) } },
           icon(d, b.status === 'pending' ? 'clock' : 'check-c'),
-          d.h('div', { class: 'banner-text' }, d.h('p', { class: 'banner-what' }, ...what), action),
+          d.h('div', { class: 'banner-text' }, d.h('p', { class: 'banner-what', attrs: { id: sentenceId(i) } }, ...what), action),
         ),
       );
     });

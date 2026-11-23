@@ -15,7 +15,7 @@
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { API_URL, AUTH_ORIGIN, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
-import { type App, clickAction, clickClosing, clickMayClose, clickUntilTaken, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted, walletDirectory } from './fixtures.ts';
+import { type App, clickAction, clickClosing, clickMayClose, actionUnderSentence, clickUntilTaken, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, seenText, test, waitPersisted, walletDirectory } from './fixtures.ts';
 import { signIn } from './home-steps.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
@@ -243,7 +243,7 @@ test('a waiting link shows as waiting with where to cancel it; cancelled there (
   await expect(waiting).toContainText('Another email address');
   await expect(waiting).toContainText('Waiting');
   await expect(waiting).toContainText('Starts opening this wallet on');
-  await expect(waiting.locator('.home-sign-in-risk')).toContainText('Didn’t add it? Sign in to this app the way you signed in here, and choose Cancel this link.');
+  await expect(waiting.locator('.home-sign-in-risk')).toContainText('Don’t recognise it? Sign in to this app the way you signed in here, and choose “Cancel this link”.');
   // The other sign-in's address is never on the page.
   expect(await home.locator('#home-sign-ins').textContent()).not.toContain('@');
   expect(await sectionButtons(home)).toEqual(['Show again']);
@@ -251,10 +251,12 @@ test('a waiting link shows as waiting with where to cancel it; cancelled there (
 
   // Where the line points: a sign-in to the app with this Google account, and its banner's Cancel this link.
   const popup = await googleStart(page, 'g2');
-  await expect(popup.locator('#banner-cancel-0')).toHaveText('Cancel this link');
-  // D887: under its sentence, "Didn't add it?" and a small outlined button named for whose link it cancels.
-  await expect(popup.locator('#link-banners li[data-status="pending"] .banner-action')).toHaveText('Didn’t add it?Cancel this link');
+  // D887: under its sentence, "Don't recognise it?" and a small outlined button whose name starts with its words and
+  // says whose link it cancels.
   await expect(popup.getByRole('button', { name: 'Cancel this link for the email address', exact: true })).toHaveClass('jp-btn jp-btn-secondary jp-btn-sm');
+  await expect.poll(() => seenText(popup.locator('#banner-cancel-0'))).toBe('Cancel this link');
+  await expect.poll(() => seenText(popup.locator('#link-banners li[data-status="pending"] .banner-action'))).toBe('Don’t recognise it?Cancel this link');
+  await actionUnderSentence(popup, popup.locator('#link-banners li[data-status="pending"] .banner-what'), popup.locator('#banner-cancel-0'));
   // D881: no confirmation for a cancel; the window says what became of it.
   await popup.getByRole('button', { name: 'Cancel this link for the email address', exact: true }).click();
   await expect(popup.locator('h1')).toHaveText('Link cancelled');
@@ -288,7 +290,7 @@ test('a link that took effect: listed with where to remove it; removed from its 
   await expect(member).toContainText('Another email address');
   await expect(member).toContainText('Opens this wallet since');
   await expect(member).toContainText('Added at a sign-in, after a code was sent to this email address.');
-  await expect(member).toContainText('Didn’t add it? Sign in to this app the way you signed in here, and choose Remove it. If you’re not sure, remove it.');
+  await expect(member).toContainText('Don’t recognise it? Sign in to this app the way you signed in here, and choose “Remove it”. If you’re not sure, remove it.');
   await expect(member).not.toContainText('before');
   await expect(home.locator('#home-sign-ins-sign-out-first')).toHaveText('If you’re already signed in to this app, sign out of it first.');
   expect(await sectionButtons(home)).toEqual(['Show again']);
@@ -354,7 +356,7 @@ test('D875: an added sign-in past its first 7 days: Home says where Remove is; t
   const member = home.locator('#home-sign-ins-list > li[data-role="member"]');
   await expect(member).toContainText('Opens this wallet since');
   await expect(member.locator('.home-sign-in-how')).toHaveText(
-    'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove it. If you’re not sure, remove it.Once you press Done in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
+    'Don’t recognise it? Sign in to this app the way you signed in here, and choose “Remove it”. If you’re not sure, remove it.Once you press “Done” in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
   );
   await expect(member.locator('.home-sign-in-risk')).toHaveCount(0);
   await expect(home.locator('#home-sign-ins')).not.toContainText('Nothing can remove it');
@@ -365,10 +367,12 @@ test('D875: an added sign-in past its first 7 days: Home says where Remove is; t
   // plain line, and under it "Didn't add it?" and a small outlined Remove it (D887).
   const popup = await googleStart(page, 'old1');
   await expect(popup.locator('#link-older .older-link-text')).toContainText('An email address also opens this wallet, since');
-  await expect(popup.locator('#link-older .older-link .banner-action')).toHaveText('Didn’t add it?Remove it');
-  await expect(popup.locator('#banner-unlink-0')).toHaveText('Remove it');
+  await expect(popup.getByRole('button', { name: 'Remove it (the email address)', exact: true })).toBeVisible();
+  await expect.poll(() => seenText(popup.locator('#link-older .older-link .banner-action'))).toBe('Don’t recognise it?Remove it');
+  await expect.poll(() => seenText(popup.locator('#banner-unlink-0'))).toBe('Remove it');
   await expect(popup.locator('#banner-unlink-0')).toHaveClass('jp-btn jp-btn-secondary jp-btn-sm');
-  await expect(popup.getByRole('button', { name: 'Remove the email address from this wallet', exact: true })).toBeVisible();
+  await expect(popup.locator('#banner-unlink-0')).toHaveAccessibleDescription(/^An email address also opens this wallet, since /u);
+  await actionUnderSentence(popup, popup.locator('#link-older .older-link-text'), popup.locator('#banner-unlink-0'));
   await expect(popup.locator('#link-banners')).toHaveCount(0);
   await expect(popup.locator('#link-older')).toContainText('After you press Done, this browser won’t show this again. Passport Home lists the ways to sign in to your wallet.');
   // No delay for the app: its sign-in has finished while the window still shows the line.
@@ -389,9 +393,9 @@ test('D875: an added sign-in past its first 7 days: Home says where Remove is; t
     for (const k of Object.keys(localStorage)) if (k.startsWith('hana.ol.')) localStorage.removeItem(k);
   });
   const third = await googleStart(page, 'old3');
-  await expect(third.locator('#banner-unlink-0')).toHaveText('Remove it');
+  await expect.poll(() => seenText(third.locator('#banner-unlink-0'))).toBe('Remove it');
   // D881: Remove asks first, then says what became of it.
-  await third.getByRole('button', { name: 'Remove the email address from this wallet', exact: true }).click();
+  await third.getByRole('button', { name: 'Remove it (the email address)', exact: true }).click();
   await expect(third.locator('h1')).toHaveText('Remove the email address from this wallet?');
   await shot(third, 'sign-in-remove-confirm', browserName);
   await third.click('#banner-remove-confirm');

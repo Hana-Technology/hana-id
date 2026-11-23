@@ -38,6 +38,13 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 const click = (id: string) => (document.getElementById(id) as HTMLButtonElement).click();
+/** What the eye reads: an element's text without its visually hidden parts (`.sr-only`, D887's button names). */
+const seen = (el: Element | null | undefined): string | null => {
+  if (!el) return null;
+  const c = el.cloneNode(true) as Element;
+  for (const x of c.querySelectorAll('.sr-only')) x.remove();
+  return c.textContent;
+};
 const submit = (id: string) => (document.getElementById(id) as HTMLButtonElement).closest('form')!.dispatchEvent(new Event('submit', { cancelable: true }));
 const typeInto = (id: string, value: string) => {
   (document.getElementById(id) as HTMLInputElement).value = value;
@@ -736,7 +743,7 @@ describe('D875: the wallet’s own sign-in sees its older ways to sign in quietl
     await vi.waitFor(() => expect(s.win.closed).toBe(true));
   }
 
-  it('8 days and 1 year on: one plain line (no box, no colour), “Didn’t add it?” and Remove it under it, and the note; Remove asks for the same Google proof and uses nothing up', async () => {
+  it('8 days and 1 year on: one plain line (no box, no colour), “Don’t recognise it?” and Remove it under it, and the note; Remove asks for the same Google proof and uses nothing up', async () => {
     for (const age of [8 * DAY, 365 * DAY]) {
       window.localStorage.clear();
       const s = await signedIn([older(NOW - age)]);
@@ -747,13 +754,13 @@ describe('D875: the wallet’s own sign-in sees its older ways to sign in quietl
       expect(line.querySelector('.older-link-text')?.textContent).toBe(olderLinkText('email', new Date(NOW - age).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })));
       expect(line.querySelector('.older-link-text')?.textContent).toMatch(/^An email address also opens this wallet, since .+\.$/u);
       expect(line.querySelector('.older-link-text button')).toBeNull();
-      expect([...line.querySelectorAll(':scope > p.banner-action > *')].map((e) => e.textContent)).toEqual(['Didn’t add it?', 'Remove it']);
+      expect([...line.querySelectorAll(':scope > p.banner-action > *')].map(seen)).toEqual(['Don’t recognise it?', 'Remove it']);
       expect(document.getElementById('link-older')?.textContent).toContain(OLDER_LINK_NOTE);
       expect(OLDER_LINK_NOTE).toBe('After you press Done, this browser won’t show this again. Passport Home lists the ways to sign in to your wallet.');
       // Quiet: not a banner, no alert box, no icon.
       expect(document.getElementById('link-banners')).toBeNull();
       expect(document.querySelector('#link-older .jp-alert, #link-older [role="alert"], #link-older svg')).toBeNull();
-      expect(document.getElementById('banner-unlink-0')?.textContent).toBe('Remove it');
+      expect(seen(document.getElementById('banner-unlink-0'))).toBe('Remove it');
       // Drawing the line uses nothing up.
       expect(seenKeys()).toEqual([]);
       click('banner-unlink-0');
@@ -773,7 +780,7 @@ describe('D875: the wallet’s own sign-in sees its older ways to sign in quietl
   it('a Google account is named by its kind only too', async () => {
     await signedIn([older(NOW - 30 * DAY, { provider: 'google' })]);
     expect(document.querySelector('#link-older .older-link-text')?.textContent).toMatch(/^A Google account also opens this wallet, since .+\.$/u);
-    expect(document.getElementById('banner-unlink-0')?.getAttribute('aria-label')).toBe('Remove the Google account from this wallet');
+    expect(document.getElementById('banner-unlink-0')?.textContent).toBe('Remove it (the Google account)');
     expect(pageText()).not.toContain('@');
   });
 
@@ -815,7 +822,7 @@ describe('D875: the wallet’s own sign-in sees its older ways to sign in quietl
     expect(seenKeys()).toEqual([]);
     const again = await signedIn([older(NOW - 30 * DAY)]);
     expect(again.page.stage).toBe('banners');
-    expect(document.getElementById('banner-unlink-0')?.textContent).toBe('Remove it');
+    expect(seen(document.getElementById('banner-unlink-0'))).toBe('Remove it');
   });
 
   it('the window waits for the keep write before it closes (Done, and the screen that shows nothing), and never longer than KEEP_WRITE_MS', async () => {
@@ -846,13 +853,13 @@ describe('D875: the wallet’s own sign-in sees its older ways to sign in quietl
     expect(Date.now() - start).toBeGreaterThanOrEqual(KEEP_WRITE_MS - 100);
   });
 
-  it('within the first 7 days: the full banner (D887: “Didn’t add it?” and Remove it under its sentence), at every sign-in, nothing remembered', async () => {
+  it('within the first 7 days: the full banner (D887: “Don’t recognise it?” and Remove it under its sentence), at every sign-in, nothing remembered', async () => {
     for (const age of [0, DAY, RECENT_LINK_MS - 60_000]) {
       for (let round = 0; round < 2; round++) {
         const s = await signedIn([older(NOW - age)]);
         expect(s.page.stage, `${age} ${round}`).toBe('banners');
         expect(document.querySelector('#link-banners li[data-status="active"] .banner-what')?.textContent).toMatch(/^A sign-in method was added: email on .+\.$/u);
-        expect(document.querySelector('#link-banners li[data-status="active"] .banner-action')?.textContent).toBe('Didn’t add it?Remove it');
+        expect(seen(document.querySelector('#link-banners li[data-status="active"] .banner-action'))).toBe('Don’t recognise it?Remove it');
         expect(document.getElementById('link-older')).toBeNull();
         await pressDone(s);
         expect(seenKeys()).toEqual([]);
@@ -867,9 +874,9 @@ describe('D875: the wallet’s own sign-in sees its older ways to sign in quietl
     expect(document.querySelectorAll('#link-banners li')).toHaveLength(1);
     expect(document.querySelectorAll('#link-older .older-link')).toHaveLength(1);
     // A waiting link this sign-in just made: its Cancel stands alone (the user did add it).
-    expect(document.getElementById('banner-cancel-0')?.textContent).toBe('Cancel this link');
-    expect(document.getElementById('banner-cancel-0')?.closest('.banner-action')?.textContent).toBe('Cancel this link');
-    expect(document.getElementById('banner-unlink-1')?.textContent).toBe('Remove it');
+    expect(seen(document.getElementById('banner-cancel-0'))).toBe('Cancel this link');
+    expect(seen(document.getElementById('banner-cancel-0')?.closest('.banner-action'))).toBe('Cancel this link');
+    expect(seen(document.getElementById('banner-unlink-1'))).toBe('Remove it');
     expect(slotWrites(s, 3)).toBe(0);
   });
 
@@ -914,7 +921,7 @@ describe('D875: the wallet’s own sign-in sees its older ways to sign in quietl
 });
 
 describe('D881: the screen after a sign-in that added a way to sign in, by case', () => {
-  const said = (): string => document.querySelector('#link-banners li[data-fresh="true"]')?.textContent ?? '';
+  const said = (): string => seen(document.querySelector('#link-banners li[data-fresh="true"]')) ?? '';
 
   it('case A, Google-hosted (joined at once, nothing to decide): says which wallet, why, and that nothing was lost; where to see them', async () => {
     const s = setup({ next: 2 });
@@ -946,12 +953,12 @@ describe('D881: the screen after a sign-in that added a way to sign in, by case'
     expect(said()).toBe(
       'You already have a wallet here, made when you signed in with Google. You chose to link your email address, so signing in with it now opens the same wallet. Nothing was moved or lost, and you can sign in either way.Remove',
     );
-    // D887: a way to sign in this sign-in just added: the small button alone on its own line, no “Didn’t add it?”.
+    // D887: a way to sign in this sign-in just added: the small button alone on its own line, no “Don’t recognise it?”.
     expect(document.querySelector('#link-banners li[data-fresh="true"] .banner-what')?.textContent).toBe(
       'You already have a wallet here, made when you signed in with Google. You chose to link your email address, so signing in with it now opens the same wallet. Nothing was moved or lost, and you can sign in either way.',
     );
     const remove = document.getElementById('banner-unlink-0')!;
-    expect([remove.textContent, remove.getAttribute('aria-label'), remove.parentElement?.textContent]).toEqual(['Remove', 'Remove the email address from this wallet', 'Remove']);
+    expect([seen(remove), remove.textContent, seen(remove.parentElement)]).toEqual(['Remove', 'Remove the email address from this wallet', 'Remove']);
     expect(document.getElementById('link-fresh-home')).not.toBeNull();
   });
 
@@ -1053,7 +1060,7 @@ describe('D881: a banner’s Remove asks first, and a Remove or Cancel ends on w
     expect(document.querySelector('h1')?.textContent).toBe('Remove the email address from this wallet?');
     click('banner-remove-back');
     expect(s.page.stage).toBe('banners');
-    expect(document.getElementById('banner-unlink-0')?.textContent).toBe('Remove it');
+    expect(seen(document.getElementById('banner-unlink-0'))).toBe('Remove it');
     expect(document.getElementById('link-older')).not.toBeNull();
     expect(seenKeys()).toEqual([]);
     expect(slotWrites(s, 3)).toBe(0);
@@ -1329,12 +1336,13 @@ describe('D881: a banner’s Remove asks first, and a Remove or Cancel ends on w
   });
 });
 
-describe('D887: a banner’s Remove or Cancel is findable: “Didn’t add it?” and a small outlined button on its own line, still quiet', () => {
+describe('D887: a banner’s Remove or Cancel is findable: “Don’t recognise it?” and a small outlined button on its own line, still quiet', () => {
   const DAY = 24 * 3_600_000;
   const googleProof = { method: 'google', nonce: 'R'.repeat(43), loginHint: SUBJECT } as const;
   const active = (age: number, o: Partial<LinkBanner> = {}): LinkBanner => ({ provider: 'email', status: 'active', effectiveAtMs: NOW - age, fresh: false, action: { kind: 'unlink', prove: googleProof }, ...o });
   const waiting = (o: Partial<LinkBanner> = {}): LinkBanner => ({ provider: 'email', status: 'pending', effectiveAtMs: NOW + DAY, fresh: false, action: { kind: 'cancel', prove: googleProof }, ...o });
   const SMALL = 'jp-btn jp-btn-secondary jp-btn-sm';
+  const DONE = 'primary jp-btn jp-btn-primary jp-btn-lg';
 
   async function screen(banners: LinkBanner[]): Promise<Setup> {
     const s = setup({ next: 2 });
@@ -1342,43 +1350,63 @@ describe('D887: a banner’s Remove or Cancel is findable: “Didn’t add it?�
     await vi.waitFor(() => expect(s.page.stage).toBe('banners'));
     return s;
   }
-  /** Each button on the screen: id, visible label, accessible name, class. */
-  const buttons = () => [...document.querySelectorAll('#app button')].map((b) => [b.id, b.textContent, b.getAttribute('aria-label'), b.className]);
+  /**
+   * Each button on the screen: id, what the eye reads, its accessible name (no aria-label: its text, the visually
+   * hidden part included), the sentence that describes it, its class.
+   */
+  const buttons = () =>
+    [...document.querySelectorAll('#app button')].map((b) => {
+      const by = b.getAttribute('aria-describedby');
+      return [b.id, seen(b), b.getAttribute('aria-label') ?? b.textContent, by ? (document.getElementById(by)?.textContent ?? 'missing') : null, b.className];
+    });
   /** Done: the one primary button, last, large; nothing else on the screen is primary or red. */
   function doneIsThePrimary(): void {
     const all = [...document.querySelectorAll('#app button')];
     expect(all.filter((b) => b.className.includes('jp-btn-primary')).map((b) => b.id)).toEqual(['banner-done']);
     expect(all.at(-1)?.id).toBe('banner-done');
-    expect(document.getElementById('banner-done')?.className).toBe('primary jp-btn jp-btn-primary jp-btn-lg');
+    expect(document.getElementById('banner-done')?.className).toBe(DONE);
     expect(document.querySelector('#app .jp-btn-danger, #app button.link')).toBeNull();
   }
+  /** WCAG 2.5.3: every button's accessible name starts with the words it shows; the rest is visually hidden only. */
+  function namesStartWithTheirWords(): void {
+    for (const b of document.querySelectorAll('#app button')) {
+      expect(b.getAttribute('aria-label'), b.id).toBeNull();
+      const name = b.textContent ?? '';
+      expect(name.startsWith(seen(b) ?? '\u0000'), `${b.id}: “${name}”`).toBe(true);
+      for (const hidden of b.querySelectorAll('.sr-only')) expect(hidden.parentElement, b.id).toBe(b);
+    }
+  }
 
-  it('the words and names, in one place', () => {
-    expect(BANNER_ACTION_TEXT.lead).toBe('Didn’t add it?');
+  it('the words in one place', () => {
+    expect(BANNER_ACTION_TEXT.lead).toBe('Don’t recognise it?');
     expect([BANNER_ACTION_TEXT.remove, BANNER_ACTION_TEXT.removeFresh, BANNER_ACTION_TEXT.cancel]).toEqual(['Remove it', 'Remove', 'Cancel this link']);
-    expect(BANNER_ACTION_TEXT.removeName(kindName('email'))).toBe('Remove the email address from this wallet');
-    expect(BANNER_ACTION_TEXT.removeName(kindName('google'))).toBe('Remove the Google account from this wallet');
-    // The Remove's name is the confirmation's own question (D881), without its question mark.
-    expect(`${BANNER_ACTION_TEXT.removeName('email address')}?`).toBe(CHANGE_TEXT.confirmTitle('email address'));
-    // Cancel's name starts with its visible words (what a voice user says).
-    expect(BANNER_ACTION_TEXT.cancelName(kindName('email'))).toBe('Cancel this link for the email address');
-    expect(BANNER_ACTION_TEXT.cancelName(kindName('google'))).toBe('Cancel this link for the Google account');
+    expect([BANNER_ACTION_TEXT.removeMore('email address'), BANNER_ACTION_TEXT.removeFreshMore('Google account'), BANNER_ACTION_TEXT.cancelMore('email address')]).toEqual([
+      ' (the email address)',
+      ' the Google account from this wallet',
+      ' for the email address',
+    ]);
+    // The just-added Remove's name is the confirmation's own question (D881), without its question mark.
+    expect(`${BANNER_ACTION_TEXT.removeFresh}${BANNER_ACTION_TEXT.removeFreshMore('email address')}?`).toBe(CHANGE_TEXT.confirmTitle('email address'));
   });
 
-  it('one older line: the sentence plain; under it “Didn’t add it?” and a small outlined “Remove it” that names what it removes; no box, colour or icon; Done the one primary', async () => {
+  it('one older line: the sentence plain; under it “Don’t recognise it?” and a small outlined “Remove it”, named “Remove it (the email address)” and described by its sentence; no box, colour or icon; Done the one primary', async () => {
     await screen([active(30 * DAY)]);
     const line = document.querySelector('#link-older > .older-link')!;
     expect([...line.children].map((e) => `${e.tagName}.${e.className}`)).toEqual(['P.older-link-text', 'P.banner-action']);
     const action = line.querySelector(':scope > p.banner-action')!;
-    expect([...action.children].map((e) => [e.tagName, e.className, e.textContent])).toEqual([
-      ['SPAN', 'banner-action-lead', 'Didn’t add it?'],
+    expect([...action.children].map((e) => [e.tagName, e.className, seen(e)])).toEqual([
+      ['SPAN', 'banner-action-lead', 'Don’t recognise it?'],
       ['BUTTON', SMALL, 'Remove it'],
     ]);
+    const sentence = line.querySelector('.older-link-text')!.textContent!;
+    expect(sentence).toMatch(/^An email address also opens this wallet, since .+\.$/u);
     expect(buttons()).toEqual([
-      ['banner-unlink-0', 'Remove it', 'Remove the email address from this wallet', SMALL],
-      ['banner-done', 'Done', null, 'primary jp-btn jp-btn-primary jp-btn-lg'],
+      ['banner-unlink-0', 'Remove it', 'Remove it (the email address)', sentence, SMALL],
+      ['banner-done', 'Done', 'Done', null, DONE],
     ]);
+    expect(document.querySelector('#banner-unlink-0 > .sr-only')?.textContent).toBe(' (the email address)');
     expect(document.getElementById('banner-unlink-0')?.getAttribute('type')).toBe('button');
+    namesStartWithTheirWords();
     // Still quiet: no banner box, alert, icon or colour class on the line.
     expect(document.getElementById('link-banners')).toBeNull();
     expect(document.querySelector('#link-older .jp-alert, #link-older [role="alert"], #link-older svg, #link-older .banner')).toBeNull();
@@ -1389,18 +1417,19 @@ describe('D887: a banner’s Remove or Cancel is findable: “Didn’t add it?�
     doneIsThePrimary();
   });
 
-  it('two older lines (an email address and a Google account): each its own sentence with its own pair, told apart by name; each goes to its own confirmation', async () => {
+  it('two older lines (an email address and a Google account): each its own sentence with its own pair, told apart by name and description; each goes to its own confirmation', async () => {
     const s = await screen([active(30 * DAY), active(90 * DAY, { provider: 'google' })]);
     const lines = [...document.querySelectorAll('#link-older > .older-link')];
     expect(lines.map((l) => [l.getAttribute('data-provider'), l.querySelector('.older-link-text')?.textContent?.split(',')[0], l.querySelector('button')?.id, l.querySelectorAll('button').length])).toEqual([
       ['email', 'An email address also opens this wallet', 'banner-unlink-0', 1],
       ['google', 'A Google account also opens this wallet', 'banner-unlink-1', 1],
     ]);
-    expect(buttons().map(([id, label, name]) => [id, label, name])).toEqual([
-      ['banner-unlink-0', 'Remove it', 'Remove the email address from this wallet'],
-      ['banner-unlink-1', 'Remove it', 'Remove the Google account from this wallet'],
-      ['banner-done', 'Done', null],
+    expect(buttons().map(([id, label, name, described]) => [id, label, name, String(described).split(',')[0]])).toEqual([
+      ['banner-unlink-0', 'Remove it', 'Remove it (the email address)', 'An email address also opens this wallet'],
+      ['banner-unlink-1', 'Remove it', 'Remove it (the Google account)', 'A Google account also opens this wallet'],
+      ['banner-done', 'Done', 'Done', 'null'],
     ]);
+    namesStartWithTheirWords();
     // The note once, under both lines.
     expect(document.querySelectorAll('#link-older > p.muted')).toHaveLength(1);
     doneIsThePrimary();
@@ -1418,41 +1447,48 @@ describe('D887: a banner’s Remove or Cancel is findable: “Didn’t add it?�
   it('the mixed screen: a recent banner (its pair inside its box, under its sentence) and an older line (its pair under its own); one Done', async () => {
     await screen([active(2 * DAY), active(30 * DAY, { provider: 'google' })]);
     const li = document.querySelector('#link-banners > li.banner[data-status="active"]')!;
-    expect(li.querySelector('.banner-what')?.textContent).toMatch(/^A sign-in method was added: email on .+\.$/u);
+    const said = li.querySelector('.banner-what')?.textContent ?? '';
+    expect(said).toMatch(/^A sign-in method was added: email on .+\.$/u);
     expect(li.querySelector('.banner-what button')).toBeNull();
-    expect([...li.querySelectorAll('.banner-text > p.banner-action > *')].map((e) => e.textContent)).toEqual(['Didn’t add it?', 'Remove it']);
+    expect([...li.querySelectorAll('.banner-text > p.banner-action > *')].map(seen)).toEqual(['Don’t recognise it?', 'Remove it']);
     expect(li.querySelector('button')?.id).toBe('banner-unlink-0');
     expect(document.querySelector('#link-older .older-link button')?.id).toBe('banner-unlink-1');
-    expect(buttons()).toEqual([
-      ['banner-unlink-0', 'Remove it', 'Remove the email address from this wallet', SMALL],
-      ['banner-unlink-1', 'Remove it', 'Remove the Google account from this wallet', SMALL],
-      ['banner-done', 'Done', null, 'primary jp-btn jp-btn-primary jp-btn-lg'],
+    expect(buttons().map((b) => [b[0], b[1], b[2], b[4]])).toEqual([
+      ['banner-unlink-0', 'Remove it', 'Remove it (the email address)', SMALL],
+      ['banner-unlink-1', 'Remove it', 'Remove it (the Google account)', SMALL],
+      ['banner-done', 'Done', 'Done', DONE],
     ]);
+    expect(buttons()[0]![3]).toBe(said);
+    namesStartWithTheirWords();
     doneIsThePrimary();
   });
 
-  it('the waiting banner: “Didn’t add it?” and a small outlined “Cancel this link” that names whose link; no confirmation (D881)', async () => {
+  it('the waiting banner: “Don’t recognise it?” and a small outlined “Cancel this link” named for whose link; no confirmation (D881)', async () => {
     for (const provider of ['email', 'google'] as const) {
       resetDom();
       const s = await screen([waiting({ provider })]);
       const li = document.querySelector('#link-banners > li.banner.pending')!;
-      expect(li.querySelector('.banner-what')?.textContent).toMatch(provider === 'email' ? /^An email will be able to open this wallet from .+\.$/u : /^A Google account will be able to open this wallet from .+\.$/u);
-      expect([...li.querySelectorAll('.banner-text > p.banner-action > *')].map((e) => e.textContent)).toEqual(['Didn’t add it?', 'Cancel this link']);
-      expect(buttons()[0]).toEqual(['banner-cancel-0', 'Cancel this link', `Cancel this link for the ${kindName(provider)}`, SMALL]);
+      const said = li.querySelector('.banner-what')?.textContent ?? '';
+      expect(said).toMatch(provider === 'email' ? /^An email will be able to open this wallet from .+\.$/u : /^A Google account will be able to open this wallet from .+\.$/u);
+      expect([...li.querySelectorAll('.banner-text > p.banner-action > *')].map(seen)).toEqual(['Don’t recognise it?', 'Cancel this link']);
+      expect(buttons()[0]).toEqual(['banner-cancel-0', 'Cancel this link', `Cancel this link for the ${kindName(provider)}`, said, SMALL]);
+      namesStartWithTheirWords();
       doneIsThePrimary();
       click('banner-cancel-0');
       expect(s.page.stage).not.toBe('banner_confirm');
     }
   });
 
-  it('a way to sign in this sign-in just added: the small button alone (no “Didn’t add it?”), Remove or Cancel, with the same names', async () => {
+  it('a way to sign in this sign-in just added: the small button alone (no question), “Remove” or “Cancel this link”, named for what it changes', async () => {
     await screen([active(0, { fresh: true })]);
-    expect([...document.querySelectorAll('.banner-action > *')].map((e) => [e.tagName, e.textContent])).toEqual([['BUTTON', 'Remove']]);
-    expect(buttons()[0]).toEqual(['banner-unlink-0', 'Remove', 'Remove the email address from this wallet', SMALL]);
+    expect([...document.querySelectorAll('.banner-action > *')].map((e) => [e.tagName, seen(e)])).toEqual([['BUTTON', 'Remove']]);
+    expect(buttons()[0]!.slice(0, 3).concat([buttons()[0]![4]])).toEqual(['banner-unlink-0', 'Remove', 'Remove the email address from this wallet', SMALL]);
+    namesStartWithTheirWords();
     resetDom();
     await screen([waiting({ fresh: true })]);
-    expect([...document.querySelectorAll('.banner-action > *')].map((e) => [e.tagName, e.textContent])).toEqual([['BUTTON', 'Cancel this link']]);
-    expect(buttons()[0]).toEqual(['banner-cancel-0', 'Cancel this link', 'Cancel this link for the email address', SMALL]);
+    expect([...document.querySelectorAll('.banner-action > *')].map((e) => [e.tagName, seen(e)])).toEqual([['BUTTON', 'Cancel this link']]);
+    expect(buttons()[0]!.slice(0, 3)).toEqual(['banner-cancel-0', 'Cancel this link', 'Cancel this link for the email address']);
+    namesStartWithTheirWords();
     expect(pageText()).not.toContain(BANNER_ACTION_TEXT.lead);
   });
 
@@ -1462,13 +1498,16 @@ describe('D887: a banner’s Remove or Cancel is findable: “Didn’t add it?�
     expect(pageText()).not.toContain(BANNER_ACTION_TEXT.lead);
   });
 
-  it('what other pages tell people to press is the window’s own label, word for word', () => {
-    // Passport Home's "Ways to sign in" (home-sign-ins.ts) starts with the same question and names the same buttons.
-    expect(SIGN_IN_TEXT.removeAtSignIn).toBe(`${BANNER_ACTION_TEXT.lead} Sign in to this app the way you signed in here, and choose ${BANNER_ACTION_TEXT.remove}. If you’re not sure, remove it.`);
-    expect(SIGN_IN_TEXT.removeAtSignInAuto).toContain(`and choose ${BANNER_ACTION_TEXT.remove}.`);
-    expect(SIGN_IN_TEXT.cancelAtSignIn).toBe(`${BANNER_ACTION_TEXT.lead} Sign in to this app the way you signed in here, and choose ${BANNER_ACTION_TEXT.cancel}. If you’re not sure, cancel it.`);
-    expect(SIGN_IN_TEXT.removeAtSignInOnceNotOffered).toBe('Once you press Done in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.');
-    // No sentence names the old bare "Remove" as a button any more.
-    for (const t of Object.values(SIGN_IN_TEXT)) expect(t).not.toMatch(/choose Remove(?! it| this)/u);
+  it('what Passport Home tells people to press is the window’s own label, word for word, in quotation marks, after the same question', () => {
+    expect(SIGN_IN_TEXT.removeAtSignIn).toBe(`${BANNER_ACTION_TEXT.lead} Sign in to this app the way you signed in here, and choose “${BANNER_ACTION_TEXT.remove}”. If you’re not sure, remove it.`);
+    // An automatic same-address Google link: Home's softer, more specific question (D865); the same button.
+    expect(SIGN_IN_TEXT.removeAtSignInAuto).toBe(`Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose “${BANNER_ACTION_TEXT.remove}”.`);
+    expect(SIGN_IN_TEXT.cancelAtSignIn).toBe(`${BANNER_ACTION_TEXT.lead} Sign in to this app the way you signed in here, and choose “${BANNER_ACTION_TEXT.cancel}”. If you’re not sure, cancel it.`);
+    expect(SIGN_IN_TEXT.removeAtSignInOnceNotOffered).toBe('Once you press “Done” in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.');
+    // Every button Home names is in quotation marks, and none is the old bare "Remove".
+    for (const t of Object.values(SIGN_IN_TEXT)) {
+      expect(t).not.toMatch(/(choose|press) (?!“)/u);
+      expect(t).not.toMatch(/Didn’t add it\?/u);
+    }
   });
 });

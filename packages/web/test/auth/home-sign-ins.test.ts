@@ -358,7 +358,7 @@ describe('what it shows', () => {
     await shown(h);
     const me = rows()[0]!;
     expect([me.kind, me.role, me.you]).toEqual(['email', 'member', true]);
-    expect(me.text).toContain('choose Remove this email when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.');
+    expect(me.text).toContain('choose “Remove this email” when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.');
     expect(me.text).toContain(SIGN_IN_TEXT.removeOwnMoney);
     expect(me.text).toContain(SIGN_IN_TEXT.removeOwnNotAsked);
   });
@@ -369,7 +369,7 @@ describe('what it shows', () => {
     await shown(h);
     expect(rows()[1]!.text).toContain(SIGN_IN_TEXT.autoGoogle);
     // The email wallet's own sign-in may remove it: in the banner's 7 days, with no deadline named (D875).
-    expect(rows()[1]!.text).toContain('Didn’t add it? Sign in to this app the way you signed in here, and choose Remove it. If you’re not sure, remove it.');
+    expect(rows()[1]!.text).toContain('Don’t recognise it? Sign in to this app the way you signed in here, and choose “Remove it”. If you’re not sure, remove it.');
     expect(rows()[1]!.text).not.toContain('before');
   });
 
@@ -386,8 +386,8 @@ describe('what it shows', () => {
       expect(other.querySelector('.home-sign-in-risk'), `${age}`).toBeNull();
       const how = [...other.querySelectorAll('.home-sign-in-how p')].map((p) => p.textContent);
       expect(how, `${age}`).toEqual([
-        'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove it. If you’re not sure, remove it.',
-        'Once you press Done in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
+        'Don’t recognise it? Sign in to this app the way you signed in here, and choose “Remove it”. If you’re not sure, remove it.',
+        'Once you press “Done” in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
       ]);
       expect(other.textContent).not.toContain('Nothing can remove it');
       expect(other.textContent).not.toContain('before');
@@ -402,8 +402,8 @@ describe('what it shows', () => {
     await shown(h);
     const how = () => [...document.querySelectorAll('#home-sign-ins-list > li[data-role="member"] .home-sign-in-how p')].map((p) => p.textContent);
     expect(how()).toEqual([
-      'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose Remove it.',
-      'Once you press Done in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
+      'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose “Remove it”.',
+      'Once you press “Done” in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
     ]);
     expect(how().join(' ')).not.toContain('If you’re not sure, remove it.');
     resetDom();
@@ -660,7 +660,7 @@ describe('the lines that send the user to sign in (D874 as amended)', () => {
     for (const kind of ['email', 'google'] as const) {
       const lines = pointerText({ kind: 'remove_own' }, row('member', 'e', { kind, you: true })).lines;
       const label = kind === 'email' ? 'Remove this email' : 'Remove this Google account';
-      expect(lines[0]).toBe(`To remove it, sign in to this app with it and choose ${label} when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.`);
+      expect(lines[0]).toBe(`To remove it, sign in to this app with it and choose “${label}” when asked. After that, it no longer opens this wallet, and signing in with it opens a new, empty wallet.`);
       for (const sentence of lines[0]!.split(/(?<=\.) /u)) expect(sentence.split(' ').length, sentence).toBeLessThanOrEqual(22);
       expect(lines).toContain(SIGN_IN_TEXT.removeOwnMoney);
       expect(lines).toContain('Not asked? Try signing in in a private window. If this was added automatically because both use the same address, you won’t be asked.');

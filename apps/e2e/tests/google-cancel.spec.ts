@@ -6,7 +6,7 @@
 import type { Page, TestInfo } from '@playwright/test';
 import { GOOGLE_AUTH_URL } from '../src/google-stub.ts';
 import { ISSUER_URL } from '../src/stack.ts';
-import { LOGIN_ENDPOINT, clickAction, clickClosing, clickMayClose, clickUntilTaken, errorOf, expect, newApp, okValue, openPartner, peek, runAction, test, waitPersisted } from './fixtures.ts';
+import { LOGIN_ENDPOINT, clickAction, clickClosing, clickMayClose, clickUntilTaken, errorOf, expect, newApp, okValue, openPartner, peek, runAction, seenText, test, waitPersisted } from './fixtures.ts';
 
 const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
 /** A fresh Google `sub` (21 digits, as Google's). */
@@ -159,7 +159,7 @@ test('case B: Cancel at Google goes back to case B’s own choices; Link and con
   expect(await okValue(page, 'email')).toEqual(wallet);
   await expect(popup.locator('#link-banners')).toContainText('You chose to link your email address, so signing in with it now opens the same wallet.');
   // D887: the email this sign-in just linked: its Remove is the small outlined button alone, named for what it removes.
-  await expect(popup.locator('#link-banners .banner-action')).toHaveText('Remove');
+  await expect.poll(() => seenText(popup.locator('#link-banners .banner-action'))).toBe('Remove');
   await expect(popup.getByRole('button', { name: 'Remove the email address from this wallet', exact: true })).toHaveClass('jp-btn jp-btn-secondary jp-btn-sm');
   await clickClosing(popup, '#banner-done');
 });

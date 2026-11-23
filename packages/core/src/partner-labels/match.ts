@@ -15,6 +15,7 @@ import { knownToken } from '../known-tokens.ts';
 import type { NearAction } from '../near/codec.ts';
 import { COMBINING_RUN, QUOTE_LIKE } from '../reviewed-near-calls.ts';
 import { isDisplaySafeLine } from '../display-safe.ts';
+import { isNearCodeHash, isWasmHash } from './schema.ts';
 import type { ArgSpec, ArgType, LabelDocument, LabelField, LabelFormat, NearCallSpec, NearNetwork, PaymentCallSpec, RelayRule, SorobanCallSpec } from './schema.ts';
 import type { PartnerConnector, PartnerVerb } from './words.ts';
 
@@ -64,6 +65,14 @@ export interface LabelChainFacts {
    * When given, the declared names must be exactly these.
    */
   readonly sorobanParams?: readonly string[] | null;
+  /**
+   * NEAR only: whether the vault checked the request's network itself (a transaction's block hash on the env's
+   * endpoint; a delegate action's key, nonce and expiry on both providers). Unchecked or absent is no match: an
+   * implicit account exists on both networks, and the window says "Only the app says so" for such a request.
+   */
+  readonly networkChecked?: boolean;
+  /** The build's reviewed NEAR accounts (`HanaEnv.nearReviewed`): Journear reads their calls itself; a label never does. */
+  readonly reviewedNear?: readonly string[];
 }
 
 // ---- what a match hands back ----
@@ -96,8 +105,17 @@ export type RenderedValue =
       readonly symbol: string | null;
       readonly decimals: number | null;
       readonly source: 'journear_known_tokens' | 'unlisted_token';
+      /** A listed token's kind: a collectible's numbers are item ids, never amounts. */
+      readonly kind: 'token' | 'collectible' | null;
+      /**
+       * Always `partner`: which token a call moves, and that this argument is its amount, is the partner's
+       * description (the contract decides); only the symbol and decimals are Journear's. A renderer must never style
+       * it as checked.
+       */
+      readonly binding: 'partner';
     }
-  | { readonly format: 'nativeAmount'; readonly raw: string; readonly text: string; readonly source: 'request' }
+  /** The request's own attached NEAR (the deposit): the chain's value, not a description. */
+  | { readonly format: 'nativeAmount'; readonly raw: string; readonly text: string; readonly source: 'request'; readonly binding: 'request' }
   | {
       readonly format: 'account';
       /** The account, whole. */
@@ -134,6 +152,21 @@ export interface LabelMatch {
   readonly fields: readonly RenderedField[];
   /** A classic payment's destination, as the address book names it. */
   readonly destination?: RenderedValue & { readonly format: 'account' };
+  /**
+   * Every true value of the request, shown in a field or not: each declared argument (null when an optional one is
+   * absent), NEAR's deposit and gas, a Soroban transaction's fee, a payment's amount, asset, destination, memo and fee.
+   * A later renderer can show all of them; two requests that differ in any of them never give the same list.
+   */
+  readonly values: readonly TrueValue[];
+}
+
+/** One true value of the request, as the request holds it (decimal for numbers, the account or text as written). */
+export interface TrueValue {
+  readonly path: string;
+  readonly type: ArgType | 'deposit' | 'gas' | 'fee' | 'amount' | 'asset' | 'destination' | 'memo';
+  readonly value: string | null;
+  /** Whether a field of the format shows it. */
+  readonly shown: boolean;
 }
 
 /** Why a request is not the declared thing. Stable codes, safe to log and count (they carry no request value). */
@@ -168,7 +201,11 @@ export type LabelNoMatchCode =
   | 'source_not_user'
   | 'wrong_operation'
   | 'token_not_allowed'
-  | 'memo_mismatch';
+  | 'memo_mismatch'
+  | 'journear_reads_this'
+  | 'network_not_checked'
+  | 'bad_code_hash_input'
+  | 'no_contract_code';
 
 export interface LabelNoMatch {
   readonly ok: false;
@@ -203,7 +240,8 @@ function nearValue(v: StrictJson, type: ArgType): ArgValue | null {
       return n <= MAX[type]! ? { kind: 'int', v: n } : null;
     }
     case 'integer':
-      if (!(v instanceof JsonNumber) || !/^-?(?:0|[1-9][0-9]*)$/u.test(v.raw)) return null;
+      // "-0" is refused: one value, one form.
+      if (!(v instanceof JsonNumber) || !/^(?:0|-?[1-9][0-9]*)$/u.test(v.raw)) return null;
       return Number.isSafeInteger(Number(v.raw)) ? { kind: 'int', v: BigInt(v.raw) } : null;
     case 'boolean':
       return typeof v === 'boolean' ? { kind: 'bool', v } : null;
@@ -236,6 +274,25 @@ function sorobanValue(v: StellarScVal, type: ArgType): ArgValue | null {
     default:
       return null;
   }
+}
+
+/** An argument's value as `TrueValue` writes it. */
+const valueText = (v: ArgValue): string => (v.kind === 'int' ? v.v.toString() : v.kind === 'bool' ? String(v.v) : v.v);
+
+/** A key the no-match may name: an argument name of plain characters, else `args.*` (a request key is the request's text). */
+const SAFE_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/u;
+const argAt = (k: string): string => (SAFE_KEY.test(k) ? `args.${k}` : 'args.*');
+
+/** The all-zero code hash: an account or contract with no code. */
+const NEAR_NO_CODE = '11111111111111111111111111111111';
+const WASM_NO_CODE = '0'.repeat(64);
+
+/** The code hash fact: absent, malformed, the no-code hash, other than the document's, or the same (null). */
+function codeHashFails(given: string | null | undefined, want: string, kind: 'near' | 'soroban'): LabelNoMatch | null {
+  if (given === undefined || given === null) return no('no_code_hash');
+  if (kind === 'near' ? !isNearCodeHash(given) : !isWasmHash(given)) return no('bad_code_hash_input');
+  if (given === (kind === 'near' ? NEAR_NO_CODE : WASM_NO_CODE)) return no('no_contract_code');
+  return given === want ? null : no('code_hash_mismatch');
 }
 
 /** Whether an argument's value meets its declared constraints, or the no-match it is. */
@@ -346,13 +403,16 @@ function renderField(f: LabelField, c: RenderContext): RenderedValue | LabelNoMa
       const listed = knownToken(c.tokenNetwork, token);
       const raw = value.v.toString();
       if (listed && listed.kind === 'token') {
-        return Object.freeze({ format: 'tokenAmount', raw, token, text: `${groupDigits(formatTokenUnits(value.v, listed.decimals))} ${listed.symbol}`, symbol: listed.symbol, decimals: listed.decimals, source: 'journear_known_tokens' });
+        return Object.freeze({ format: 'tokenAmount', raw, token, text: `${groupDigits(formatTokenUnits(value.v, listed.decimals))} ${listed.symbol}`, symbol: listed.symbol, decimals: listed.decimals, source: 'journear_known_tokens', kind: 'token', binding: 'partner' });
       }
-      return Object.freeze({ format: 'tokenAmount', raw, token, text: `${groupDigits(raw)} units of an unlisted token`, symbol: null, decimals: null, source: 'unlisted_token' });
+      if (listed) {
+        return Object.freeze({ format: 'tokenAmount', raw, token, text: `item ${raw} of ${listed.symbol}`, symbol: listed.symbol, decimals: null, source: 'journear_known_tokens', kind: 'collectible', binding: 'partner' });
+      }
+      return Object.freeze({ format: 'tokenAmount', raw, token, text: `${groupDigits(raw)} units of the unlisted token ${token}`, symbol: null, decimals: null, source: 'unlisted_token', kind: null, binding: 'partner' });
     }
     case 'nativeAmount': {
       if (value.kind !== 'int' || value.v < 0n) return no('type_mismatch', f.path);
-      return Object.freeze({ format: 'nativeAmount', raw: value.v.toString(), text: groupDigits(formatNear(value.v)), source: 'request' });
+      return Object.freeze({ format: 'nativeAmount', raw: value.v.toString(), text: groupDigits(formatNear(value.v)), source: 'request', binding: 'request' });
     }
     case 'account':
       if (value.kind !== 'account') return no('type_mismatch', f.path);
@@ -386,7 +446,7 @@ function renderField(f: LabelField, c: RenderContext): RenderedValue | LabelNoMa
 }
 
 /** The fields and the sentence of a format whose call matched, or the first field that doesn't. */
-function build(key: string, format: LabelFormat, c: RenderContext, destination?: RenderedValue & { format: 'account' }): LabelMatchResult {
+function build(key: string, format: LabelFormat, c: RenderContext, raw: readonly Omit<TrueValue, 'shown'>[], destination?: RenderedValue & { format: 'account' }): LabelMatchResult {
   const rendered = new Map<string, RenderedField>();
   for (const f of format.fields) {
     const v = renderField(f, c);
@@ -412,6 +472,7 @@ function build(key: string, format: LabelFormat, c: RenderContext, destination?:
     parts: Object.freeze(parts),
     fields: Object.freeze(format.fields.map((f) => rendered.get(f.path)!)),
     ...(destination ? { destination } : {}),
+    values: Object.freeze(raw.map((v) => Object.freeze({ ...v, shown: rendered.has(v.path) }))),
   });
 }
 
@@ -442,8 +503,10 @@ function matchNear(doc: LabelDocument, req: Extract<LabelRequest, { kind: 'near'
   if (req.network !== ctx.network) return no('wrong_network');
   if (req.receiver !== ctx.account) return no('wrong_account', 'receiver');
   if (req.receiver === req.user) return no('calls_own_account', 'receiver');
-  if (facts.codeHash === undefined || facts.codeHash === null) return no('no_code_hash');
-  if (facts.codeHash !== ctx.codeHash) return no('code_hash_mismatch');
+  if (facts.reviewedNear?.includes(req.receiver)) return no('journear_reads_this', 'receiver');
+  if (facts.networkChecked !== true) return no('network_not_checked');
+  const hash = codeHashFails(facts.codeHash, ctx.codeHash, 'near');
+  if (hash) return hash;
   if (req.actions.length !== 1) return no('more_than_one_action');
   const a = req.actions[0]!;
   if (a.type !== 'functionCall') return no('not_a_function_call');
@@ -458,7 +521,7 @@ function matchNear(doc: LabelDocument, req: Extract<LabelRequest, { kind: 'near'
   if (!('args' in parsed)) return parsed;
   const obj = parsed.args;
   const declared = new Map(call.args.map((s) => [s.name, s]));
-  for (const k of Object.keys(obj)) if (!declared.has(k)) return no('undeclared_arg', `args.${k.slice(0, 64)}`);
+  for (const k of Object.keys(obj)) if (!declared.has(k)) return no('undeclared_arg', argAt(k));
   const book = new Map(doc.metadata.addressBook.map((e) => [e.account, e.name]));
   const bookSet = new Set(book.keys());
   const values = new Map<string, ArgValue>();
@@ -475,13 +538,18 @@ function matchNear(doc: LabelDocument, req: Extract<LabelRequest, { kind: 'near'
     values.set(path, v);
   }
   values.set('deposit', { kind: 'int', v: a.deposit });
+  const raw: Omit<TrueValue, 'shown'>[] = [
+    ...call.args.map((spec) => ({ path: `args.${spec.name}`, type: spec.type, value: values.has(`args.${spec.name}`) ? valueText(values.get(`args.${spec.name}`)!) : null })),
+    { path: 'deposit', type: 'deposit' as const, value: a.deposit.toString() },
+    { path: 'gas', type: 'gas' as const, value: a.gas.toString() },
+  ];
   return build(a.methodName, format, {
     doc,
     user: req.user,
     book,
     tokenNetwork: { kind: 'near', network: ctx.network },
     valueAt: (p) => values.get(p),
-  });
+  }, raw);
 }
 
 /** Two decoded Soroban values are the same value (the auth entry authorizes exactly the call). */
@@ -519,8 +587,8 @@ function matchSoroban(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
     relayed = true;
   }
   if (call.contract !== ctx.contract) return no('wrong_account', 'contract');
-  if (facts.codeHash === undefined || facts.codeHash === null) return no('no_code_hash');
-  if (facts.codeHash !== ctx.wasmHash) return no('code_hash_mismatch');
+  const hash = codeHashFails(facts.codeHash, ctx.wasmHash, 'soroban');
+  if (hash) return hash;
   const format = formatFor(doc, call.function);
   if (format === undefined || format.chain !== 'soroban') return no('wrong_method', 'function');
   const spec: SorobanCallSpec = format.call;
@@ -545,13 +613,22 @@ function matchSoroban(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
     if (fails) return fails;
     values.set(path, v);
   }
-  return build(call.function, format, {
-    doc,
-    user: req.user,
-    book,
-    tokenNetwork: { kind: 'stellar', networkPassphrase: ctx.networkPassphrase },
-    valueAt: (p) => values.get(p),
-  });
+  const raw: Omit<TrueValue, 'shown'>[] = [
+    ...spec.args.map((x) => ({ path: `args.${x.name}`, type: x.type, value: valueText(values.get(`args.${x.name}`)!) })),
+    { path: 'fee', type: 'fee' as const, value: fee },
+  ];
+  return build(
+    call.function,
+    format,
+    {
+      doc,
+      user: req.user,
+      book,
+      tokenNetwork: { kind: 'stellar', networkPassphrase: ctx.networkPassphrase },
+      valueAt: (p) => values.get(p),
+    },
+    raw,
+  );
 }
 
 const MEMO_TEXT_OK = (s: string): boolean => isDisplaySafeLine(s) && !COMBINING_RUN.test(s) && !QUOTE_LIKE.test(s);
@@ -589,6 +666,13 @@ function matchPayment(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
       tokenNetwork: { kind: 'stellar', networkPassphrase: ctx.networkPassphrase },
       valueAt: (p) => (p === 'memo' ? memo : undefined),
     },
+    [
+      { path: 'amount', type: 'amount', value: op.amount },
+      { path: 'asset', type: 'asset', value: op.asset },
+      { path: 'destination', type: 'destination', value: op.destination },
+      { path: 'memo', type: 'memo', value: memo === undefined ? null : `${tx.memo.type}:${valueText(memo)}` },
+      { path: 'fee', type: 'fee', value: tx.fee },
+    ],
     accountValue(op.destination, req.user, book),
   );
 }
@@ -612,9 +696,12 @@ export function matchLabel(doc: LabelDocument, req: LabelRequest, facts: LabelCh
 /**
  * A value as the plain-text form writes it: partner words (an enumeration label, an address book name) and ids in
  * quotation marks (partner text can hold none, and an id is plain ASCII), so they never run into Journear's words;
- * amounts, dates and numbers as Journear wrote them; "your account" and a bare account as they are.
+ * a token amount as the partner's description of the request's units, naming the app ("2,500,000 units, which Stamp
+ * Trail says are 2.5 USDC"; "10 units of the unlisted token x.testnet, as Stamp Trail describes it"); NEAR's deposit,
+ * dates and numbers as Journear wrote them; "your account" and a bare account as they are. The window renders the
+ * structured parts itself (a later piece); this form is for tests and the console's preview.
  */
-export function valuePlainText(v: RenderedValue): string {
+export function valuePlainText(v: RenderedValue, appName = 'the app'): string {
   switch (v.format) {
     case 'enum':
     case 'itemId':
@@ -622,6 +709,9 @@ export function valuePlainText(v: RenderedValue): string {
       return `“${v.text}”`;
     case 'account':
       return v.source === 'partner_address_book' ? `“${v.text}” (${v.value})` : v.text;
+    case 'tokenAmount':
+      if (v.kind === 'token') return `${groupDigits(v.raw)} units, which ${appName} says are ${v.text}`;
+      return `${v.text}, as ${appName} describes it`;
     default:
       return v.text;
   }
@@ -631,7 +721,22 @@ export function valuePlainText(v: RenderedValue): string {
  * The sentence as plain text, deterministically, for tests and the console's preview: the parts joined by single
  * spaces ("collect the stamp “Fare paid”"). The window renders `parts` itself, with its own markup.
  */
-export const sentencePlainText = (parts: readonly SentencePart[]): string => parts.map((p) => (p.kind === 'value' ? valuePlainText(p.value) : p.text)).join(' ');
+export const sentencePlainText = (parts: readonly SentencePart[], appName = 'the app'): string => parts.map((p) => (p.kind === 'value' ? valuePlainText(p.value, appName) : p.text)).join(' ');
 
 /** The whole line as the console previews it: "{App} says: {sentence}". */
-export const labelLinePlainText = (appName: string, m: LabelMatch): string => `${appName} says: ${sentencePlainText(m.parts)}`;
+export const labelLinePlainText = (appName: string, m: LabelMatch): string => `${appName} says: ${sentencePlainText(m.parts, appName)}`;
+
+/** What a no-match means for the window's later mismatch line. */
+export type NoMatchKind =
+  /** The request isn't one the document describes at all: show today's screen, say nothing about a description. */
+  | 'not_described'
+  /** A described call, but this request doesn't meet its description: the mismatch line ("doesn't match its description"). */
+  | 'described_mismatch'
+  /** Journear couldn't check what the match needs (the code hash, the network): today's screen, no mismatch claim. */
+  | 'couldnt_check';
+
+const NOT_DESCRIBED: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['wrong_chain', 'wrong_network', 'wrong_account', 'wrong_method', 'wrong_operation', 'calls_own_account', 'journear_reads_this', 'not_a_function_call']);
+const COULDNT_CHECK: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['no_code_hash', 'bad_code_hash_input', 'network_not_checked']);
+
+/** The kind of a no-match (`NoMatchKind`), so a renderer never infers it from the codes itself. */
+export const noMatchKind = (reason: LabelNoMatchCode): NoMatchKind => (NOT_DESCRIBED.has(reason) ? 'not_described' : COULDNT_CHECK.has(reason) ? 'couldnt_check' : 'described_mismatch');

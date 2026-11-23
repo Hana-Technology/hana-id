@@ -20,7 +20,6 @@ describe('partner text: what passes', () => {
       'Gate 3',
       'Stamp',
       'Order',
-      'Main till',
       'Rock & Roll',
       'check-in desk',
       'Members’ lounge',
@@ -42,7 +41,10 @@ describe('partner text: what passes', () => {
   });
 
   it('every verb and joining word on Journear’s lists passes the rules too, and the attribution names the app', () => {
-    for (const w of [...PARTNER_VERBS, ...PARTNER_CONNECTORS]) expect(partnerTextProblem(w, 'object'), w).toBeNull();
+    // The verbs are Journear's words, written by the window; as partner text two of them are the window's own words.
+    for (const w of PARTNER_VERBS) expect(['text_ui_word', undefined], w).toContain(partnerTextProblem(w, 'object')?.code);
+    expect(PARTNER_VERBS.filter((w) => partnerTextProblem(w, 'object') !== null)).toEqual(['cancel', 'sign up']);
+    for (const w of PARTNER_CONNECTORS) expect(partnerTextProblem(w, 'object'), w).toBeNull();
     expect(partnerAttribution('Stamp Trail')).toBe('These are Stamp Trail’s words. Journear hasn’t checked them.');
   });
 
@@ -190,7 +192,7 @@ describe('partner text: links, Journear’s names, the reviewed lists', () => {
     }
     // Journear's own reviewed contracts are caught as Journear's name first.
     expect(code('Journear demo stamps')).toBe('text_brand');
-    for (const t of ['Methods', 'together', 'nearly', 'Coin toss']) expect(code(t), t).toBeNull();
+    for (const t of ['Methods', 'together', 'nearly', 'Coin toss', 'Token']) expect(code(t), t).toBeNull();
   });
 });
 
@@ -310,5 +312,88 @@ describe('partner text: one rule for every role', () => {
       expect(p!.message.length).toBeGreaterThan(10);
       expect(p!.message).not.toMatch(/\n/u);
     }
+  });
+});
+
+describe('partner text: meaning (D892 after PR 114’s review)', () => {
+  it.each([
+    ['nothing leaves the account', 'text_negation'],
+    ['no tokens are moved at all', 'text_negation'],
+    ['nothing to pay ever', 'text_negation'],
+    ['never charged', 'text_negation'],
+    ['without a charge', 'text_negation'],
+    ['it can’t move funds', 'text_negation'],
+    ['it won’t cost', 'text_claim'],
+    ['only the stamp', 'text_negation'],
+    ['just a stamp', 'text_negation'],
+    ['tap approve below', 'text_claim'],
+    ['tap the button below', 'text_ui_word'],
+    ['press continue', 'text_ui_word'],
+    ['ignore the warning', 'text_ui_word'],
+    ['skip the red box', 'text_ui_word'],
+    ['read the details', 'text_ui_word'],
+    ['sign to continue', 'text_ui_word'],
+    ['all of it', 'text_number_word'],
+    ['one hundred tickets', 'text_number_word'],
+    ['half the pot', 'text_number_word'],
+    ['every stamp', 'text_number_word'],
+    ['a million points', 'text_number_word'],
+    ['the cash prize', 'text_money_word'],
+    ['the reward', 'text_money_word'],
+    ['airdrop pass', 'text_money_word'],
+    ['the bonus', 'text_money_word'],
+    ['the funds', 'text_money_word'],
+    ['the balance', 'text_money_word'],
+    ['a gift', 'text_money_word'],
+    ['the seed phrase', 'text_phishing'],
+    ['the password', 'text_phishing'],
+    ['the private key', 'text_phishing'],
+    ['sync the account', 'text_phishing'],
+    ['migrate the account', 'text_phishing'],
+    ['restore access', 'text_phishing'],
+    ['upgrade wallet', 'text_phishing'],
+    ['support desk', 'text_phishing'],
+    ['the main account', 'text_ownership'],
+    ['savings', 'text_ownership'],
+    ['my stamp', 'text_ownership'],
+    ['own fare', 'text_ownership'],
+    ['personal till', 'text_ownership'],
+  ])('refuses %j as %s', (t, c) => {
+    expect(code(t), t).toBe(c);
+  });
+  it.each([
+    'nofee', 'nocost', 'costfree', 'feefree', 'zerofee', 'norisk', 'sa-fe', 'sa fe', 'fr-ee', 'tru sted', 'secu re', '1egit', 'Iegit', 'trvsted', 'real',
+    'authorised', 'vetted', 'validated', 'reviewed', 'inspected', 'tested', 'whitelisted', 'licensed', 'regulated', 'compliant', 'KYC', 'FDIC', 'bank-grade',
+    'assured', 'covered', 'backed', 'money back', 'unchecked', 'auditor', 'Nofeestamp',
+  ])('refuses the claim %j', (t) => {
+    expect(code(t), t).toBe('text_claim');
+  });
+  it.each(['USDT', 'USD', 'dollars', 'bnUSD', 'SODA', 'Ethereum', 'Stellar', 'Lumen', 'stablecoin', 'Satoshi', 'tether', 'Circle', 'Coinbase', 'MetaMask', 'Google', 'Apple', 'bank', 'Binance', 'PayPal', 'Visa', 'Trezor', 'Stripe', 'Trust Wallet', 'Maybank'])(
+    'refuses the name %j',
+    (t) => {
+      expect(['text_other_name', 'text_reviewed_name', 'text_claim', 'text_jargon']).toContain(code(t));
+    },
+  );
+
+  // Fifty plausible honest labels (object phrases, field labels, enum labels, address names) through the same rule; the
+  // ones now refused are listed in D892 with the reason, and kept refused unless the refusal is clearly wrong.
+  const HONEST_OK = [
+    'the stamp', 'a message to the guestbook', 'Fare paid', 'Arrival', 'Layover', 'Postcard', 'Ticket fare', 'a ticket', 'tickets', 'a seat', 'the raffle',
+    'a membership', 'the club', 'the poll', 'a vote', 'the event', 'a booking', 'a table for dinner', 'the course', 'a lesson', 'the order', 'Order',
+    'Amount', 'Price', 'Paid to', 'Sale ends', 'Held for', 'Tickets', 'Stamp', 'Gate 3', 'Row 12', 'Season 2024', 'Coffee Club till', 'Club treasury',
+    'Shop till', 'the newsletter', 'a parking spot', 'the locker', 'a bike', 'the deposit box', 'Gold', 'Silver', 'Bronze', 'Early bird', 'VIP', 'Workshop',
+  ];
+  const HONEST_REFUSED: [string, PartnerTextCode][] = [
+    ['Own fare', 'text_ownership'],
+    ['Main till', 'text_ownership'],
+    ['the reward points', 'text_money_word'],
+    ['a free coffee', 'text_claim'],
+    ['one ticket', 'text_number_word'],
+  ];
+  it('the honest labels: these pass', () => {
+    for (const t of HONEST_OK) expect(partnerTextProblem(t, 'enumLabel'), t).toBeNull();
+  });
+  it('the honest labels now refused, each for its stated reason', () => {
+    for (const [t, c] of HONEST_REFUSED) expect(code(t, 'enumLabel'), t).toBe(c);
   });
 });

@@ -6,7 +6,8 @@
 /**
  * The verbs a partner's label may use, lower case, as the window writes them after "{App} says: ". Chosen for plain
  * words a non-crypto user reads without help, and against abuse. Left out on purpose: "approve", "burn", "mint",
- * "bridge", "sign", "verify", "allow", "connect", "unlock", "get", "earn", "win", "receive", "refund", "protect".
+ * "bridge", "sign", "verify", "allow", "connect", "unlock", "get", "earn", "win", "receive", "refund", "protect",
+ * "claim" (the classic drainer lure), "update" and "transfer" (as "send").
  */
 export const PARTNER_VERBS = Object.freeze([
   'add',
@@ -16,7 +17,6 @@ export const PARTNER_VERBS = Object.freeze([
   'buy',
   'cancel',
   'check in',
-  'claim',
   'collect',
   'create',
   'deposit',
@@ -37,10 +37,8 @@ export const PARTNER_VERBS = Object.freeze([
   'stake',
   'subscribe',
   'swap',
-  'transfer',
   'unstake',
   'unsubscribe',
-  'update',
   'vote',
   'withdraw',
 ] as const);
@@ -50,11 +48,17 @@ export type PartnerVerb = (typeof PARTNER_VERBS)[number];
 export const isPartnerVerb = (v: unknown): v is PartnerVerb => typeof v === 'string' && (PARTNER_VERBS as readonly string[]).includes(v);
 
 /**
- * The joining words a sentence may put between its parts ("pay for order 1042", "swap 10 USDC for at least 9.95
- * EURC", "send 5 USDC to your account"). Journear's words, from this list only, so a partner can't write a sentence of
- * its own between the true values.
+ * Verbs that say nothing of value moving: a format may use one only when its request can move no value (a NEAR
+ * deposit of exactly 0, no amount field, not a payment). Any other verb says value moves ("pay", "send", "deposit").
  */
-export const PARTNER_CONNECTORS = Object.freeze(['and', 'at least', 'at most', 'for', 'from', 'in', 'of', 'on', 'to', 'until', 'with'] as const);
+export const SOFT_VERBS: ReadonlySet<PartnerVerb> = new Set<PartnerVerb>(['add', 'book', 'cancel', 'check in', 'collect', 'create', 'join', 'leave', 'list', 'redeem', 'register', 'remove', 'renew', 'sign up', 'subscribe', 'unsubscribe', 'vote']);
+
+/**
+ * The joining words a sentence may put between its parts ("pay for order 1042", "send 5 USDC to your account").
+ * Journear's words, from this list only, so a partner can't write a sentence of its own between the true values. No
+ * "at least" or "at most": they assert a bound Journear can't check.
+ */
+export const PARTNER_CONNECTORS = Object.freeze(['and', 'for', 'from', 'in', 'of', 'on', 'to', 'until', 'with'] as const);
 
 export type PartnerConnector = (typeof PARTNER_CONNECTORS)[number];
 

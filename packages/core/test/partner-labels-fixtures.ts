@@ -34,7 +34,7 @@ export { ISSUER, OTHER, PASSPHRASE, POOL, USER, UNLISTED };
 export const STAMPS_DOC_JSON = {
   schema: 'journear-labels/1',
   context: { near: { network: 'testnet', account: STAMPS, codeHash: STAMPS_HASH } },
-  metadata: { enums: { stamp: { arrival: 'Arrival', sponsored: 'Fare paid', layover: 'Layover', postcard: 'Postcard', own_fare: 'Own fare' } } },
+  metadata: { enums: { stamp: { arrival: 'Arrival', sponsored: 'Fare paid', layover: 'Layover', postcard: 'Postcard', own_fare: 'Ticket fare' } } },
   display: {
     formats: {
       collect: {
@@ -84,6 +84,7 @@ export const SOROBAN_DOC_JSON = {
         fields: [
           { path: 'args.amount', label: 'Amount', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
           { path: 'args.to', label: 'To', format: 'account' },
+          { path: 'args.token', label: 'Token', format: 'account' },
         ],
       },
     },

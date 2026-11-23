@@ -1746,7 +1746,7 @@ handshake removes the frame and closes its port, as `destroy()` does.
   rules partner-written text and partner-declared calls will be held to; no page, vault, API or console uses it yet,
   so nothing users see changed. What it guarantees once wired: partner text is one short line of Latin letters,
   digits and five punctuation marks (no other script, look-alike, combining mark, bidi or invisible character, emoji,
-  check mark, quotation mark, markup, `@`, `.` or `:`), with no claim word (checked, verified, official, safe, secure,
+  check mark, quotation mark, markup, `@`, `.` or `:`), refusing the listed claim words (checked, verified, official, safe, secure,
   guaranteed, risk, free, fee, refund, insured, approved, recommended, trusted, … with inflections, digits for letters
   and split letters, and common Spanish, French, German, Portuguese, Italian and Malay forms), no Journear, Passport
   or Hana, no name on Journear's reviewed lists (protocols, contracts, tokens, network coins), no "you"/"your", nothing
@@ -1758,8 +1758,14 @@ handshake removes the frame and closes its port, as `destroy()` does.
   undeclared argument, strict JSON for NEAR (D885's parser), every value showable; token symbols and decimals only from
   Journear's known-token list (an unlisted token is raw units with its id), "your account" only for the user, an
   address book name only for an exact entry. It never removes or lowers a warning: it decides nothing about trust or
-  colours. Open until later pieces: who reads the code hash, storage behind the guarded-change delay, kill switches,
-  the rendering and the mismatch line.
+  colours. After PR 114's review it also refuses contexts and standard methods Journear reads itself (a partner label
+  never replaces Journear's reading), requires every account, amount or token argument and a non-zero deposit to be a
+  shown field, returns every true value (`values`), marks token amounts as the partner's description, allows one
+  short partner phrase per sentence, and adds deny-lists for negations, the window's own words, amounts in words,
+  money, phishing, ownership and other currency, wallet and bank names; it requires the vault to have checked the
+  NEAR network and validates the code hash it is given. A word filter is a first filter, not a guarantee (whether a
+  person reviews each text is open). Open until later pieces: who reads the code hash, storage behind the
+  guarded-change delay, kill switches, the rendering and the mismatch line.
 - **Wording (D853, standing rule).** Every user-visible text is in plain, everyday words for people who don't know
   Web3: what happens to their money, tokens or account first; chain jargon only in the folded details; never a wording
   that makes a risk sound smaller. Outside the approval window too (D861): the SDK's errors carry `userMessage`, a

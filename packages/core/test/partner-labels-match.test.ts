@@ -59,7 +59,7 @@ const seen: { doc: LabelDocument; req: LabelRequest; m: LabelMatch }[] = [];
 
 function run(doc: LabelDocument, req: LabelRequest | null, codeHash: string | null | undefined): LabelMatchResult {
   if (req === null) throw new Error('no request');
-  const r = matchLabel(doc, req, { codeHash });
+  const r = matchLabel(doc, req, { codeHash, networkChecked: true });
   if (r.ok) seen.push({ doc, req, m: r });
   return r;
 }
@@ -72,7 +72,7 @@ const reason = (r: LabelMatchResult) => (r.ok ? 'match' : r.reason);
 
 describe('NEAR: the stamps’ collect, as a partner label', () => {
   it('matches each listed stamp, relayed or direct, and builds the window’s sentence', () => {
-    for (const [stamp, title] of [['arrival', 'Arrival'], ['sponsored', 'Fare paid'], ['layover', 'Layover'], ['own_fare', 'Own fare']] as const) {
+    for (const [stamp, title] of [['arrival', 'Arrival'], ['sponsored', 'Fare paid'], ['layover', 'Layover'], ['own_fare', 'Ticket fare']] as const) {
       for (const relayed of [true, false]) {
         const r = stamps([collect({ stamp })], { relayed });
         expect(r.ok, `${stamp} ${relayed}`).toBe(true);
@@ -215,6 +215,7 @@ describe('NEAR: typed slots', () => {
             { path: 'args.quantity', label: 'Tickets', format: 'count', params: { min: 1, max: 10 } },
             { path: 'args.amount', label: 'Price', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
             { path: 'args.to', label: 'Paid to', format: 'account' },
+            { path: 'args.token', label: 'Token', format: 'account' },
             { path: 'deposit', label: 'Attached', format: 'nativeAmount' },
             { path: 'args.ends', label: 'Sale ends', format: 'date', params: { unit: 'nanoseconds' } },
             { path: 'args.lock', label: 'Held for', format: 'duration', params: { unit: 'seconds' } },
@@ -234,18 +235,19 @@ describe('NEAR: typed slots', () => {
     expect(r.ok).toBe(true);
     expect(value(r, 'args.quantity')).toEqual({ format: 'count', raw: '2', text: '2', source: 'request' });
     // An unlisted token: raw units with the token's id, never a symbol the partner claims.
-    expect(value(r, 'args.amount')).toEqual({ format: 'tokenAmount', raw: '2500000', token: 'usdc.fakes.testnet', text: '2,500,000 units of an unlisted token', symbol: null, decimals: null, source: 'unlisted_token' });
+    expect(value(r, 'args.amount')).toEqual({ format: 'tokenAmount', raw: '2500000', token: 'usdc.fakes.testnet', text: '2,500,000 units of the unlisted token usdc.fakes.testnet', symbol: null, decimals: null, source: 'unlisted_token', kind: null, binding: 'partner' });
     expect(value(r, 'args.to')).toEqual({ format: 'account', value: 'till.testnet', text: 'Shop till', source: 'partner_address_book' });
-    expect(value(r, 'deposit')).toEqual({ format: 'nativeAmount', raw: '1500000000000000000000000', text: '1.5 NEAR', source: 'request' });
+    expect(value(r, 'deposit')).toEqual({ format: 'nativeAmount', raw: '1500000000000000000000000', text: '1.5 NEAR', source: 'request', binding: 'request' });
     expect(value(r, 'args.ends')).toEqual({ format: 'date', raw: '1795000000000000000', text: '18 November 2026, 11:06:40 UTC', source: 'request' });
     expect(value(r, 'args.lock')).toEqual({ format: 'duration', raw: '90061', text: '1 day 1 hour 1 minute 1 second', source: 'request' });
     expect(value(r, 'args.order')).toEqual({ format: 'orderNumber', raw: 'A-1042', text: 'A-1042', source: 'request' });
-    expect(sentencePlainText((r as LabelMatch).parts)).toBe('buy 2 tickets for 2,500,000 units of an unlisted token');
+    expect(sentencePlainText((r as LabelMatch).parts, 'Shop')).toBe('buy 2 tickets for 2,500,000 units of the unlisted token usdc.fakes.testnet, as Shop describes it');
   });
 
   it('a listed token gets its symbol and decimals from Journear’s list only; an account is "your account", a listed name or itself', () => {
     const r = buy({ token: 'wrap.testnet', amount: '1250000000000000000000000', to: ME });
-    expect(value(r, 'args.amount')).toEqual({ format: 'tokenAmount', raw: '1250000000000000000000000', token: 'wrap.testnet', text: '1.25 wNEAR', symbol: 'wNEAR', decimals: 24, source: 'journear_known_tokens' });
+    expect(value(r, 'args.amount')).toEqual({ format: 'tokenAmount', raw: '1250000000000000000000000', token: 'wrap.testnet', text: '1.25 wNEAR', symbol: 'wNEAR', decimals: 24, source: 'journear_known_tokens', kind: 'token', binding: 'partner' });
+    expect(sentencePlainText((r as LabelMatch).parts, 'Shop')).toBe('buy 2 tickets for 1,250,000,000,000,000,000,000,000 units, which Shop says are 1.25 wNEAR');
     expect(value(r, 'args.to')).toEqual({ format: 'account', value: ME, text: 'your account', source: 'computed_self' });
     // Not in the book, and only an exact entry counts.
     expect(value(buy({ to: 'till.testnet.x.testnet' }), 'args.to')).toEqual({ format: 'account', value: 'till.testnet.x.testnet', text: 'till.testnet.x.testnet', source: 'request' });
@@ -297,15 +299,15 @@ describe('Soroban: a deposit and a payment to a listed account', () => {
     for (const req of [sorobanTx('deposit', args), sorobanAuth(invocation(POOL, 'deposit', args))]) {
       const r = run(SOROBAN_DOC, req, POOL_WASM);
       expect(r.ok).toBe(true);
-      expect(sentencePlainText((r as LabelMatch).parts)).toBe('deposit 2.5 USDC from your account');
+      expect(sentencePlainText((r as LabelMatch).parts, 'Club')).toBe('deposit 25,000,000 units, which Club says are 2.5 USDC from your account');
       expect((r as LabelMatch).fields[0]!.value).toMatchObject({ format: 'tokenAmount', token: TEST_USDC_SAC, symbol: 'USDC', decimals: 7, source: 'journear_known_tokens' });
     }
   });
   it('a token named by an argument: listed or not; a recipient that must be in the address book', () => {
     const listed = run(SOROBAN_DOC, sorobanTx('pay_to', [addr(TEST_USDC_SAC), addr(OTHER), i128(10_000_000n)]), POOL_WASM);
-    expect(sentencePlainText((listed as LabelMatch).parts)).toBe(`pay 1 USDC to “Club treasury” (${OTHER})`);
+    expect(sentencePlainText((listed as LabelMatch).parts, 'Club')).toBe(`pay 10,000,000 units, which Club says are 1 USDC to “Club treasury” (${OTHER})`);
     const unlisted = run(SOROBAN_DOC, sorobanTx('pay_to', [addr(UNLISTED), addr(OTHER), i128(10_000_000n)]), POOL_WASM);
-    expect(sentencePlainText((unlisted as LabelMatch).parts)).toBe(`pay 10,000,000 units of an unlisted token to “Club treasury” (${OTHER})`);
+    expect(sentencePlainText((unlisted as LabelMatch).parts, 'Club')).toBe(`pay 10,000,000 units of the unlisted token ${UNLISTED}, as Club describes it to “Club treasury” (${OTHER})`);
     expect(reason(run(SOROBAN_DOC, sorobanTx('pay_to', [addr(TEST_USDC_SAC), addr(USER), i128(1n)]), POOL_WASM))).toBe('not_in_address_book');
   });
   it('near-misses', () => {
@@ -424,7 +426,8 @@ describe('(a) a match’s sentence holds only Journear’s words, validated part
           }
           if (v.format === 'account') expect([v.value, 'your account', ...doc.metadata.addressBook.filter((e) => e.account === v.value).map((e) => e.name)]).toContain(v.text);
           if (v.format === 'account' && v.text === 'your account') expect(v.value).toBe(req.user);
-          if (v.format === 'tokenAmount' && v.symbol === null) expect(v.text).toBe(`${BigInt(v.raw).toLocaleString('en-US')} units of an unlisted token`);
+          if (v.format === 'tokenAmount' && v.symbol === null) expect(v.text).toBe(`${BigInt(v.raw).toLocaleString('en-US')} units of the unlisted token ${v.token}`);
+          if (v.format === 'tokenAmount') expect(v.binding).toBe('partner');
         }
       }
       // The plain text is exactly the parts: nothing between them but single spaces.
@@ -465,7 +468,7 @@ describe('(b) changing any byte of the request keeps the shown values true, or g
       else if (which === 1) req = { ...base, actions: [{ ...a0, args: flip(a0.args) }] };
       else if (which === 2) req = { ...base, actions: [{ ...a0, deposit: a0.deposit + BigInt(1 + Math.floor(rand() * 1000)) }] };
       else req = { ...base, receiver: new TextDecoder().decode(flip(utf8(base.receiver))) };
-      const r = matchLabel(STAMPS_DOC, req, { codeHash: STAMPS_HASH });
+      const r = matchLabel(STAMPS_DOC, req, { codeHash: STAMPS_HASH, networkChecked: true });
       if (!r.ok) continue;
       matched++;
       // A match after a change: still exactly the declared call, and the shown stamp is the new request's own.

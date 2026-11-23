@@ -15,8 +15,12 @@ import { JsonNumber, type StrictJson, isJsonObject, parseStrictJson } from '../d
 import { STELLAR_MAINNET_PASSPHRASE } from '../networks.ts';
 import { STELLAR_TESTNET_PASSPHRASE } from '../verified-contracts.ts';
 import { StrKey } from '@stellar/stellar-base';
-import { type PartnerTextCode, type PartnerTextRole, partnerTextProblem } from './text-rules.ts';
-import { type PartnerConnector, type PartnerVerb, isPartnerConnector, isPartnerVerb } from './words.ts';
+import { type PartnerTextCode, type PartnerTextRole, foldLetters, partnerTextProblem } from './text-rules.ts';
+import { KNOWN_TOKENS } from '../known-tokens.ts';
+import { VERIFIED_CONTRACTS } from '../verified-contracts.ts';
+import { REVIEWED_NEAR_DEPLOYS } from '../reviewed-near-calls.ts';
+import { sha256, toHex, utf8 } from '../bytes.ts';
+import { type PartnerConnector, type PartnerVerb, PARTNER_CONNECTORS, SOFT_VERBS, isPartnerConnector, isPartnerVerb } from './words.ts';
 
 export const LABEL_SCHEMA = 'journear-labels/1';
 
@@ -188,6 +192,10 @@ export type LabelErrorCode =
   | 'bad_params'
   | 'unknown_enum'
   | 'duplicate'
+  | 'journear_reads_this'
+  | 'reserved_method'
+  | 'field_required'
+  | 'sentence_text'
   | PartnerTextCode;
 
 export interface LabelError {
@@ -340,6 +348,40 @@ export function isNearCodeHash(v: unknown): v is string {
   }
 }
 
+/**
+ * Methods a label may never describe, on any contract: the standards' value-moving and
+ * permission methods, which Journear reads itself or will, and whose meaning a partner's words must never replace.
+ * NEAR: NEP-141 (ft_*), NEP-171/177/178/181 (nft_*), NEP-245 multi-token (mt_*), NEP-145 storage (storage_*), the
+ * wrapped-NEAR contract's near_deposit and near_withdraw, and the staking pool's distinctive deposit_and_stake,
+ * unstake_all and withdraw_all. Soroban: SEP-41's transfer, transfer_from, approve, burn, burn_from and mint, the Stellar
+ * asset contract's admin set (set_admin, clawback, set_authorized), and upgrade (the common name for replacing code).
+ */
+const NEAR_RESERVED_PREFIXES = ['ft_', 'nft_', 'mt_', 'storage_'];
+const NEAR_RESERVED = new Set(['near_deposit', 'near_withdraw', 'deposit_and_stake', 'unstake_all', 'withdraw_all']);
+const SOROBAN_RESERVED = new Set(['transfer', 'transfer_from', 'approve', 'burn', 'burn_from', 'mint', 'set_admin', 'clawback', 'set_authorized', 'upgrade']);
+export const reservedMethod = (chain: 'near' | 'soroban' | 'stellar', key: string): boolean =>
+  chain === 'near' ? NEAR_RESERVED_PREFIXES.some((p) => key.startsWith(p)) || NEAR_RESERVED.has(key) : chain === 'soroban' ? SOROBAN_RESERVED.has(key) : false;
+
+/**
+ * Whether Journear already reads the context's contract itself: a token on the known-token list, a contract on the
+ * verified list, or a reviewed NEAR contract recorded for an env (compared by its sha256, as the record holds it). A
+ * label never competes with Journear's own reading (Journear's reading always wins). The matcher also refuses the build's reviewed
+ * NEAR accounts (`LabelChainFacts.reviewedNear`), which the record may not hold (the local stack's).
+ */
+export function journearReads(context: LabelContext): boolean {
+  if (context.chain === 'near') {
+    if (Object.hasOwn(KNOWN_TOKENS.near[context.network], context.account)) return true;
+    const sha = toHex(sha256(utf8(context.account)));
+    return Object.values(REVIEWED_NEAR_DEPLOYS).some((env) => Object.values(env).some((d) => d?.accountSha256 === sha));
+  }
+  if (context.chain === 'soroban') {
+    const tokens = Object.hasOwn(KNOWN_TOKENS.stellar, context.networkPassphrase) ? KNOWN_TOKENS.stellar[context.networkPassphrase]! : {};
+    if (Object.hasOwn(tokens, context.contract)) return true;
+    return VERIFIED_CONTRACTS.some((c) => c.chain.kind === 'stellar' && c.chain.networkPassphrase === context.networkPassphrase && c.address === context.contract);
+  }
+  return false;
+}
+
 /** A Soroban Wasm hash: 64 lowercase hex characters. */
 export const isWasmHash = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/u.test(v);
 
@@ -363,7 +405,7 @@ const SOROBAN_ARG_TYPES: readonly ArgType[] = ['string', 'symbol', 'address', 'i
 export const FORMAT_ARG_TYPES: Readonly<Record<FieldFormat, readonly ArgType[]>> = Object.freeze({
   enum: ['string', 'symbol', 'integer', 'u32', 'i32', 'u64', 'u128'],
   tokenAmount: ['u128', 'u64', 'integer', 'i128', 'i64', 'u32'],
-  nativeAmount: ['u128'],
+  nativeAmount: [],
   account: ['accountId', 'address'],
   date: ['u64', 'integer', 'timepoint'],
   duration: ['u64', 'integer', 'duration', 'u32'],
@@ -468,7 +510,7 @@ function readMetadata(r: Reader, v: StrictJson | undefined, chain: LabelContext[
           }
           const label = r.text(values[raw], p, 'enumLabel');
           if (label === null) continue;
-          const fold = label.toLowerCase();
+          const fold = foldLetters(label);
           if (seen.has(fold)) {
             r.add('duplicate', p, `Two values have the label “${label}”: each value needs its own.`);
             continue;
@@ -497,9 +539,9 @@ function readMetadata(r: Reader, v: StrictJson | undefined, chain: LabelContext[
       }
       if (account === null || name === null) return;
       if (accounts.has(account)) return r.add('duplicate', join(path, 'account'), 'This account is listed twice.');
-      if (names.has(name.toLowerCase())) return r.add('duplicate', join(path, 'name'), `Two accounts are named “${name}”: each needs its own name.`);
+      if (names.has(foldLetters(name))) return r.add('duplicate', join(path, 'name'), `Two accounts are named “${name}”: each needs its own name.`);
       accounts.add(account);
-      names.add(name.toLowerCase());
+      names.add(foldLetters(name));
       book.push(Object.freeze({ account, name }));
     });
   }
@@ -793,7 +835,7 @@ function readSentence(r: Reader, v: StrictJson | undefined, path: string, fields
       used.add(item.field);
       parts.push({ kind: 'field', path: item.field });
     } else if (isJsonObject(item) && Object.keys(item).length === 1 && typeof item.word === 'string') {
-      if (!isPartnerConnector(item.word)) return bad(p, `A joining word is one of: and, at least, at most, for, from, in, of, on, to, until, with.`);
+      if (!isPartnerConnector(item.word)) return bad(p, `A joining word is one of: ${PARTNER_CONNECTORS.join(', ')}.`);
       parts.push({ kind: 'word', word: item.word });
     } else bad(p, 'A part is "verb", "object", { "field": "<path>" } or { "word": "<joining word>" }.');
   });
@@ -812,6 +854,67 @@ function readSentence(r: Reader, v: StrictJson | undefined, path: string, fields
   return ok ? parts.map((x) => Object.freeze(x)) : null;
 }
 
+/** Argument types that can carry an account, an amount or a token: each declared one must be a shown field. */
+const MUST_SHOW: ReadonlySet<ArgType> = new Set<ArgType>(['accountId', 'address', 'u128', 'i128']);
+
+/** Whether a NEAR call's deposit can be above 0. */
+const depositCanMove = (call: NearCallSpec): boolean => ('exactly' in call.deposit ? call.deposit.exactly !== '0' : call.deposit.atMost !== '0');
+
+/**
+ * Every declared argument that can carry an account, an amount or a token is a shown field, and so is a NEAR deposit
+ * that can be above 0: a partner chooses words, never which true values the window may leave out (others, such as a
+ * string or a count, may stay in the details).
+ */
+function requiredFieldsShown(r: Reader, path: string, chain: LabelContext['chain'], call: NearCallSpec | SorobanCallSpec | PaymentCallSpec, fields: readonly LabelField[]): boolean {
+  if (chain === 'stellar') return true;
+  const shown = new Set(fields.map((f) => f.path));
+  let ok = true;
+  for (const a of (call as NearCallSpec | SorobanCallSpec).args) {
+    if (MUST_SHOW.has(a.type) && !shown.has(`args.${a.name}`)) {
+      r.add('field_required', join(path, 'fields'), `"${a.name}" (${a.type}) can carry an account, an amount or a token: show it as a field.`);
+      ok = false;
+    }
+  }
+  if (chain === 'near' && depositCanMove(call as NearCallSpec) && !shown.has('deposit')) {
+    r.add('field_required', join(path, 'fields'), 'The deposit can be above 0: show it as a field ({ "path": "deposit", "format": "nativeAmount" }).');
+    ok = false;
+  }
+  return ok;
+}
+
+/** Whether a format's request can move value: a NEAR deposit above 0, any amount field, or a payment. */
+const valueCanMove = (chain: LabelContext['chain'], call: NearCallSpec | SorobanCallSpec | PaymentCallSpec, fields: readonly LabelField[]): boolean =>
+  chain === 'stellar' || (chain === 'near' && depositCanMove(call as NearCallSpec)) || fields.some((f) => f.params.format === 'tokenAmount' || f.params.format === 'nativeAmount');
+
+/** The most partner-written characters a sentence may hold: the object phrase and its one partner-worded value. */
+export const SENTENCE_PARTNER_CHARS = 40;
+
+/** The longest text a field may put in the sentence in the partner's words: an enum label or an address book name. */
+function partnerWordsOf(f: LabelField, metadata: LabelMetadata): number | null {
+  if (f.params.format === 'enum') return Math.max(...Object.values(metadata.enums[f.params.enum] ?? {}).map((l) => [...l].length));
+  if (f.params.format === 'account') return metadata.addressBook.length ? Math.max(...metadata.addressBook.map((e) => [...e.name].length)) : null;
+  return null;
+}
+
+/**
+ * At most one value in the sentence may be in the partner's words (an enumeration label, or an account the address
+ * book may name), and the object phrase plus that value's longest text is at most SENTENCE_PARTNER_CHARS: one short
+ * partner phrase, never several strung together in Journear's sentence. Other such fields are rows of their own.
+ */
+function sentenceTextFits(r: Reader, path: string, sentence: readonly SentencePartSpec[], fields: readonly LabelField[], metadata: LabelMetadata, object: string | undefined): boolean {
+  const worded = sentence.flatMap((p) => (p.kind === 'field' ? [fields.find((f) => f.path === p.path)!] : [])).filter((f) => f.params.format === 'enum' || f.params.format === 'account');
+  if (worded.length > 1) {
+    r.add('sentence_text', path, 'At most one enumeration or account field in the sentence: show the others as rows.');
+    return false;
+  }
+  const longest = worded.length ? (partnerWordsOf(worded[0]!, metadata) ?? 0) : 0;
+  if ([...(object ?? '')].length + longest > SENTENCE_PARTNER_CHARS) {
+    r.add('sentence_text', path, `The object and the longest label the sentence can show come to more than ${SENTENCE_PARTNER_CHARS} characters: shorten them.`);
+    return false;
+  }
+  return true;
+}
+
 function readFormat(r: Reader, v: StrictJson | undefined, path: string, context: LabelContext, metadata: LabelMetadata): LabelFormat | null {
   const o = r.object(v, path, ['call', 'intent', 'sentence', 'fields'], ['call', 'intent', 'sentence', 'fields']);
   if (!o) return null;
@@ -821,7 +924,7 @@ function readFormat(r: Reader, v: StrictJson | undefined, path: string, context:
   let object: string | undefined;
   if (i) {
     if (isPartnerVerb(i.verb)) verb = i.verb;
-    else if (i.verb !== undefined) r.add('bad_verb', join(join(path, 'intent'), 'verb'), 'The verb is one of Journear’s list (collect, claim, join, vote, swap, buy, sell, pay, send, …), in lower case.');
+    else if (i.verb !== undefined) r.add('bad_verb', join(join(path, 'intent'), 'verb'), 'The verb is one of Journear’s list (collect, join, vote, swap, buy, sell, pay, send, …), in lower case.');
     if (i.object !== undefined) object = r.text(i.object, join(join(path, 'intent'), 'object'), 'object') ?? undefined;
     if (i.object !== undefined && object === undefined) verb = null;
   }
@@ -838,8 +941,19 @@ function readFormat(r: Reader, v: StrictJson | undefined, path: string, context:
     fields.push(f);
   });
   if (fields.length !== list.length) return null;
+  const labels = new Set<string>();
+  fields.forEach((f, n) => {
+    if (labels.has(foldLetters(f.label))) r.add('duplicate', join(join(join(path, 'fields'), n), 'label'), `Two fields are labelled “${f.label}”: each row needs its own label.`);
+    labels.add(foldLetters(f.label));
+  });
+  if (!requiredFieldsShown(r, path, context.chain, call, fields)) return null;
   const sentence = readSentence(r, o.sentence, join(path, 'sentence'), fields, object !== undefined);
   if (sentence === null) return null;
+  if (!sentenceTextFits(r, join(path, 'sentence'), sentence, fields, metadata, object)) return null;
+  if (SOFT_VERBS.has(verb) && valueCanMove(context.chain, call, fields)) {
+    r.add('bad_verb', join(join(path, 'intent'), 'verb'), `"${verb}" says no value moves, but this request can move value (a deposit, an amount or a payment): use a verb that says so, such as pay, send, buy, deposit or donate.`);
+    return null;
+  }
   const base = { intent: Object.freeze({ verb, ...(object !== undefined ? { object } : {}) }), sentence: Object.freeze(sentence), fields: Object.freeze(fields) };
   if (context.chain === 'near') return Object.freeze({ chain: 'near', call: call as NearCallSpec, ...base });
   if (context.chain === 'soroban') return Object.freeze({ chain: 'soroban', call: call as SorobanCallSpec, ...base });
@@ -870,6 +984,7 @@ export function parseLabelDocument(text: string): LabelParseResult {
   if (!top) return { ok: false, errors: r.errors };
   if (top.schema !== undefined && top.schema !== LABEL_SCHEMA) r.add('bad_schema', 'schema', `"schema" is "${LABEL_SCHEMA}".`);
   const context = Object.hasOwn(top, 'context') ? readContext(r, top.context) : null;
+  if (context && journearReads(context)) r.add('journear_reads_this', 'context', 'Journear already reads this program itself (a token, a program on its checked list, or one of its own): a label can’t describe it.');
   const metadata = readMetadata(r, top.metadata, context?.chain ?? null);
   const formats: [string, LabelFormat][] = [];
   if (Object.hasOwn(top, 'display')) {
@@ -883,6 +998,10 @@ export function parseLabelDocument(text: string): LabelParseResult {
         const path = join('display.formats', key);
         if (context.chain === 'stellar' ? key !== 'payment' : !METHOD_NAME.test(key) || key.length > (context.chain === 'soroban' ? 32 : LABEL_LIMITS.methodChars)) {
           r.add(context.chain === 'stellar' ? 'not_in_v1' : 'bad_method', path, context.chain === 'stellar' ? 'For a classic Stellar transaction only "payment" can be described in v1.' : 'The key is the method’s exact name: letters, digits and underscores.');
+          continue;
+        }
+        if (reservedMethod(context.chain, key)) {
+          r.add('reserved_method', path, `"${key}" is a standard method that moves value or grants a permission: Journear reads those itself, so a label can’t describe it.`);
           continue;
         }
         const format = readFormat(r, f[key], path, context, metadata);

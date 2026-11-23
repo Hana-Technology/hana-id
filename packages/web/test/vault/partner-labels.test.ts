@@ -1,12 +1,12 @@
-// D894: the vault's check of the partner labels `GET /v1/app` delivers (a pure helper nothing calls yet, piece 3 will).
+// D894: the vault's check of the partner labels `GET /v1/app` delivers; D896: what one request's window gets of them.
 import { sha256, toHex } from '@hana-id/core';
 import { describe, expect, it } from 'vitest';
-import { MAX_DELIVERED_LABELS, verifyDeliveredLabels } from '../../src/vault/partner-labels.ts';
+import { MAX_DELIVERED_LABELS, MAX_WINDOW_LABEL_BYTES, verifyDeliveredLabels, windowLabelTexts } from '../../src/vault/partner-labels.ts';
 
-const doc = (network = 'testnet', object = 'the stamp') =>
+const doc = (network = 'testnet', object = 'the stamp', account = network === 'testnet' ? 'club.testnet' : 'club.near') =>
   JSON.stringify({
     schema: 'journear-labels/1',
-    context: { near: { network, account: network === 'testnet' ? 'club.testnet' : 'club.near', codeHash: 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn' } },
+    context: { near: { network, account, codeHash: 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn' } },
     display: { formats: { join: { call: { args: {} }, intent: { verb: 'join', object }, sentence: ['verb', 'object'], fields: [] } } },
   });
 const hash = (t: string) => toHex(sha256(new TextEncoder().encode(t)));
@@ -35,10 +35,31 @@ describe('verifyDeliveredLabels', () => {
     for (const v of [undefined, null, {}, 'x', 3]) expect(verifyDeliveredLabels(v, TESTNET)).toEqual([]);
     expect(verifyDeliveredLabels(Array.from({ length: MAX_DELIVERED_LABELS + 1 }, (_, i) => delivered(doc(), { id: `pl_${i}x` })), TESTNET)).toEqual([]);
     expect(verifyDeliveredLabels([delivered(doc()), delivered(doc())], TESTNET)).toEqual([]);
-    expect(verifyDeliveredLabels([delivered(doc()), delivered(doc(), { id: 'pl_C3' })], TESTNET).map((v) => v.id)).toEqual(['pl_A1', 'pl_C3']);
+    expect(verifyDeliveredLabels([delivered(doc()), delivered(doc('testnet', 'the stamp', 'other.testnet'), { id: 'pl_C3' })], TESTNET).map((v) => v.id)).toEqual(['pl_A1', 'pl_C3']);
   });
 
-  it('nothing in the vault or the window calls it yet (piece 3)', async () => {
+  it('D896: two entries describing the same contract (chain, network and account) are both dropped; the rest stay', () => {
+    const same = [delivered(doc()), delivered(doc('testnet', 'the club'), { id: 'pl_C3' }), delivered(doc('testnet', 'the stamp', 'other.testnet'), { id: 'pl_D4' })];
+    expect(verifyDeliveredLabels(same, TESTNET).map((v) => v.id)).toEqual(['pl_D4']);
+  });
+
+  it('keeps each document’s text exactly as delivered (what the window parses again)', () => {
+    const t = doc();
+    expect(verifyDeliveredLabels([delivered(t)], TESTNET)[0]!.text).toBe(t);
+  });
+
+  it('D896: what the window gets for a request: only its chain’s documents, none over the window’s cap', async () => {
+    const near = verifyDeliveredLabels([delivered(doc())], TESTNET);
+    expect(windowLabelTexts(near, 'near')).toEqual([doc()]);
+    expect(windowLabelTexts(near, 'stellar')).toEqual([]);
+    expect(windowLabelTexts(near, 'evm')).toEqual([]);
+    // Over the cap together (a malformed answer): none at all.
+    const many = Array.from({ length: 3 }, (_, i) => ({ ...near[0]!, text: 'x'.repeat(MAX_WINDOW_LABEL_BYTES / 2 - i) }));
+    expect(windowLabelTexts(many, 'near')).toEqual([]);
+    expect(windowLabelTexts(many.slice(0, 2), 'near')).toHaveLength(2);
+  });
+
+  it('D896: the vault is the only caller in the vault; the window has its own parse (auth/render-labels.ts)', async () => {
     const { readdirSync, readFileSync, statSync } = await import('node:fs');
     const { join } = await import('node:path');
     const root = new URL('../../src/', import.meta.url).pathname;
@@ -47,10 +68,10 @@ describe('verifyDeliveredLabels', () => {
       for (const n of readdirSync(d)) {
         const p = join(d, n);
         if (statSync(p).isDirectory()) walk(p);
-        else if (/\.ts$/u.test(n) && !p.endsWith('vault/partner-labels.ts') && /partner-labels/u.test(readFileSync(p, 'utf8'))) hits.push(p.slice(root.length));
+        else if (/\.ts$/u.test(n) && /vault\/partner-labels|['"]\.\/partner-labels/u.test(readFileSync(p, 'utf8'))) hits.push(p.slice(root.length));
       }
     };
     walk(root);
-    expect(hits).toEqual([]);
+    expect(hits).toEqual(['vault/vault.ts']);
   });
 });

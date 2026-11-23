@@ -37,8 +37,13 @@ export const LABEL_LIMITS = Object.freeze({
   formats: 16,
   /** Declared arguments per format. */
   args: 16,
-  /** Fields per format: each is a row the window shows. */
+  /** Fields per format: each is a value the window shows, in the sentence or as a row. */
   fields: 8,
+  /**
+   * fields that aren't in the sentence, each a row in the partner's box. Three, so the box
+   * stays short enough on a phone that Approve isn't pushed far down.
+   */
+  rows: 3,
   /** Sentence parts, of which at most `sentenceFields` slots and `connectors` joining words. */
   sentenceParts: 8,
   sentenceFields: 4,
@@ -952,6 +957,11 @@ function readFormat(r: Reader, v: StrictJson | undefined, path: string, context:
   const sentence = readSentence(r, o.sentence, join(path, 'sentence'), fields, object !== undefined);
   if (sentence === null) return null;
   if (!sentenceTextFits(r, join(path, 'sentence'), sentence, fields, metadata, object)) return null;
+  const inSentence = new Set(sentence.flatMap((p) => (p.kind === 'field' ? [p.path] : [])));
+  if (fields.filter((f) => !inSentence.has(f.path)).length > LABEL_LIMITS.rows) {
+    r.add('too_many', join(path, 'fields'), `At most ${LABEL_LIMITS.rows} fields can be shown as rows besides the sentence's values: put one in the sentence, or leave out a value that can stay in the details (a text or a count).`);
+    return null;
+  }
   if (SOFT_VERBS.has(verb) && valueCanMove(context.chain, call, fields)) {
     r.add('bad_verb', join(join(path, 'intent'), 'verb'), `"${verb}" says no value moves, but this request can move value (a deposit, an amount or a payment): use a verb that says so, such as pay, send, buy, deposit or donate.`);
     return null;

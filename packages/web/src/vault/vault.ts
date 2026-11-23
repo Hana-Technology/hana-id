@@ -43,6 +43,7 @@ import {
   type AccountMethod,
   type AccountResult,
   type AppConfig,
+  type WalletChain,
   logoUrlOn,
   type LoginMethod,
   ErrorCode,
@@ -105,6 +106,7 @@ import { SHARE_LAUNCHER_HELLO_MS, type ConsentSigner, type SheetOutcome, ShareSh
 import { type CachedIdentity, cacheUsable, copyProofs, demoEventBody, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
 import { nearRecordedIn, nearRefusedIn, reportWallets, signWalletRecords } from './wallet-record.ts';
 import { type ApprovalOutcome, Approvals } from './approvals.ts';
+import { PARTNER_LABELS_FRESH_MS, PARTNER_LABELS_WAIT_MS, type VerifiedLabel, verifyDeliveredLabels, windowLabelTexts } from './partner-labels.ts';
 import { autoApproveStatus, consentActive, consentEnd, newConsent, withUsage } from './auto-approve.ts';
 import { type Persistence, type PolicyInForce, type RawSign, type VaultConfig, parentAllowed, policyInForce } from './config.ts';
 import { VaultError, apiErrorToVault, consentNotRecorded, disconnected, isConsentNotRecorded, notLoggedIn, toProtocolError, userRejected } from './errors.ts';
@@ -649,6 +651,12 @@ export class Vault {
    * logoUrlOn), for the approval and export windows; null until an answer, or without a logo.
    */
   private logoUrl: string | null = null;
+  /**
+   * D896: the partner labels of the latest GET /v1/app answer, as the vault checked them (verifyDeliveredLabels), with
+   * when that read was sent (server-corrected `at`, and `sent` on perfNow); null until an answer. Used only while that
+   * read is younger than PARTNER_LABELS_FRESH_MS on both clocks (`labelsForWindow`).
+   */
+  private labels: { docs: VerifiedLabel[]; at: number; sent: number } | null = null;
   /** Each GET /v1/app answer's round trip on this clock (pk_test_ login timings: `appRtt`). */
   private readonly appRtts = new WeakMap<AppConfig, number>();
   private declinedPolicyId: string | null = null;
@@ -794,6 +802,10 @@ export class Vault {
       mainnetDemo: () => this.demoBuild && this.mainnetDemo,
       onStop: () => void this.revokeAutoApprove(),
       onWindow: (open) => this.emit('approvalWindow', { open }),
+      partnerLabels: {
+        forRequest: (subject) => this.labelsForWindow(subject.chain),
+        refresh: () => this.refreshLabels(),
+      },
     });
     port.onmessage = (m) => void this.onPortMessage(m.data);
     // Before storage and the unlock: the SDK's answer deadline only covers the frame's load and this hello.
@@ -930,6 +942,7 @@ export class Vault {
         this.noteStatusMark(at, sent);
         this.statusFailures = 0;
         this.logoUrl = logoUrlOn(this.env.filesOrigin, app.logoUrl, this.config.appId);
+        this.applyServedLabels(app, at, sent);
         this.applyServedPolicy(app, at, sent);
         this.applyServedRawSign(app, at);
         this.applyServedConsent(app, consentId, at, sent);
@@ -948,6 +961,46 @@ export class Vault {
       });
     }
     return this.appConfigPromise;
+  }
+
+  // ---- partner labels (D896) ----
+
+  /**
+   * Keeps the partner labels GET /v1/app (sent at `at`) served, as the vault's own check passes them (a missing field,
+   * a switch off or a refused document is none). A read sent before the one already kept changes nothing.
+   */
+  private applyServedLabels(app: AppConfig, at: number, sent: number): void {
+    if (this.labels && this.labels.sent > sent) return;
+    let docs: VerifiedLabel[];
+    try {
+      docs = verifyDeliveredLabels(app.partnerLabels, { network: this.env.network });
+    } catch {
+      docs = [];
+    }
+    this.labels = { docs, at, sent };
+  }
+
+  /**
+   * What a request's window on `chain` gets (D896): the checked documents' texts for that chain while their read is
+   * younger than PARTNER_LABELS_FRESH_MS (on the larger of two clocks, as `policyFresh`); `'stale'` when there are some
+   * but the read is older (the queue reads again, once); none when the last answer had none.
+   */
+  private labelsForWindow(chain: WalletChain): readonly string[] | 'stale' {
+    const l = this.labels;
+    if (!l) return [];
+    const texts = windowLabelTexts(l.docs, chain);
+    if (texts.length === 0) return [];
+    const age = Math.max(this.clock.now() - l.at, this.perfNow() - l.sent);
+    return age < PARTNER_LABELS_FRESH_MS ? texts : 'stale';
+  }
+
+  /** A fresh GET /v1/app for a window's labels, waited for at most PARTNER_LABELS_WAIT_MS; never rejects. */
+  private refreshLabels(): Promise<void> {
+    let timer: unknown = null;
+    const late = new Promise<void>((resolve) => {
+      timer = this.timers.setTimeout(resolve, PARTNER_LABELS_WAIT_MS);
+    });
+    return Promise.race([this.refreshPolicy().catch(() => undefined), late]).finally(() => this.timers.clearTimeout(timer));
   }
 
   // ---- the policy in force ----

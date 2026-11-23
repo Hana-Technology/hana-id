@@ -291,6 +291,8 @@ test('D884: a relayed NEAR call’s free fee is only in the details, naming the 
 });
 
 test('D886: a message comes right after the headline, then one note about networks that is true for a test app', async ({ page }) => {
+  // Four windows, each waiting for its own close.
+  test.setTimeout(150_000);
   await openPartner(page, await newApp());
   await login(page);
   for (const [name, action] of [['evm', 'personalSign'], ['stellar', 'stellarSignMessage']] as const) {

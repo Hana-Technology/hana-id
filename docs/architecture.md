@@ -898,7 +898,9 @@ the app the same way (D884). Every free action's main view still says what it co
 leaving your account: None of your NEAR.", a sponsored call that moves nothing Journear sees "None of your ETH is
 used." (`noCoinUsed`), the others their amount, check-in line, red or amber line or total row (D884's review).
 Rows come and go without doubling a line: one rule where two lists of rows meet, none against a box or a group's
-edge, the same space on each side, and no list without rows (`auth/css/approval.css` "the dividers", D884's note). Reject (secondary) and Approve (primary) side by side, with the guard's line
+edge, the same space on each side, no list without rows, and every operation after the first its own rule
+(`auth/css/approval.css` "the dividers", D884's note). A message Journear can't read: the amber line that says so,
+then "The message" right above its raw form (D886's note). Reject (secondary) and Approve (primary) side by side, with the guard's line
 under them that says what turns the button on (D878; the guard is called first, the hint after it in a try/catch). Opening or closing the details doesn't
 touch the guard; the overflow note is measured again when they toggle.
 The guard, its timings and the facts decoded didn't change. The vault recomputes the digest from the queued request

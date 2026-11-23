@@ -19587,6 +19587,8 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 - **Trust: nothing new.** No API change, no new provider, no simulation service, no paid dependency. NEAR: the vault reads
   the code hash from the two NEAR providers it already reads and already requires to agree for a test app's delegate
   action (the manifest's `rpc` and `rpcFallback`, D263, D729), and only decides whether the partner's box may show.
+  (After PR 128's review: "two providers" protects only when the two endpoints are independently operated; sandbox-dev's
+  are one operator today, a must-fix and a founder decision, below.)
   Soroban: no read at all; the code comes from the transaction the user signs, and the network refuses to run it on
   other code. The partner console gains one read-only route on its existing NEAR endpoint (a convenience the partner
   confirms; nothing trusts it).
@@ -19604,8 +19606,10 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   anywhere else with one provider, no read (no code hash).
 - **The agreement rule** (`agreedCodeHash`, pure): every provider asked answered; each answer has a `code_hash` that is
   canonical base58 of 32 bytes; none names a global contract (`global_contract_hash` or `global_contract_account_id`
-  present and not null: code shared by another account can change without this account's own action, and how
-  `code_hash` reports it is unverified, as the proposal noted); all the hashes equal. Anything else (a provider down,
+  present and not null: code shared by another account can change without this account's own action; verified after
+  PR 128's review: nearcore's `AccountView` reports such an account's `code_hash` as the all-1s default, which the
+  matcher refuses anyway, and a provider that omits the global fields gives that all-1s hash, `no_contract_code`, now
+  couldn't check, the plain window); all the hashes equal. Anything else (a provider down,
   late, answering an error, an unknown account, two different hashes, a global contract, a malformed answer) is **no
   code hash**: the matcher's `no_code_hash`, `couldnt_check`, the plain window, silently, exactly as without labels.
   Never an error, never a blocked approval.
@@ -19655,8 +19659,10 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   beyond the described one); a described function; its arguments in order, of their types, within their bounds, no
   more and no fewer; the fee within `feeAtMost`.
 - Outcomes as D896: a match is the box; a described request that doesn't match (a code-hash mismatch included) is the
-  amber line; `couldnt_check` (no code hash, a malformed one, the NEAR network unchecked) and `not_described` are the
-  plain window, byte for byte.
+  amber line; `couldnt_check` (no code hash, a malformed one, an account with no code of its own, the NEAR network
+  unchecked) and `not_described` are the plain window, byte for byte. Everything that decides whether the document
+  speaks about the request (the account or contract, the source, a call of a described method or function) comes before
+  the code (after PR 128's review).
 
 #### Q3. Contracts their owner can upgrade
 - Accepted for v1, as the format already says: a label pins one code hash, so an upgrade turns the partner's words off
@@ -19687,6 +19693,15 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   contract: no account, trust line or other contract's data, so no balance in XLM, a classic asset or another
   contract's token can change). Otherwise `value_may_move`, a described mismatch: the amber line, never the soft words.
   An authorization entry has no footprint, so a soft verb never matches one (and it has no code hash anyway).
+- **Soroban allowances (residual, after PR 128's review):** under a value verb, the labelled contract can spend a SEP-41
+  allowance the user granted it earlier: `transfer_from` needs only the spender's authorization, and the contract
+  calling the token directly is authorized implicitly, so no authorization entry of the user's shows it; the
+  transaction's footprint then declares the user's balance read-write. Soft verbs are protected (the footprint may
+  write only the contract's own data). What the user sees of such a write: Journear's red box for any unknown
+  contract call ("Journear can’t check what this does. It could take your money or tokens. If you’re not sure, reject
+  it."), above the partner's box; and, only in the folded details, under "Ledger entries it may change": "account G…"
+  for XLM, a trust line as its raw XDR, or "contract data (persistent) of C…: {key}" for another contract's token. No
+  line in the main view names the balance.
 - What that does not cover (residual, the same as today without labels): what the user keeps **with the labelled
   contract itself** (NEAR: the amber "This acts as you" line stays on a relayed call; Soroban: the red "can't tell" line
   stays); NEAR NFT approvals the user gave that contract earlier.
@@ -19704,15 +19719,17 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 | A hostile partner with a label in force | What D896 says, now for NEAR and Soroban calls too: its words in the box for exactly the described call to the code it pinned, under its name, after everything Journear says; a soft verb over a call that moves nothing Journear can see (deposit 0; a Soroban call that changes only its contract's own data) while its own code does what it does with what the user keeps there (the amber or red line stays) | Show its words for another contract, another code, a batch, a nested authorization, a deposit or a write outside its contract the document doesn't allow; remove or lower a warning; make the vault read a hash from anywhere but the env's two providers |
 | A hijacked partner page | Send forged requests, as today; deploy nothing it doesn't already control | Make a request match a label unless it is exactly the described call to the pinned code; a forged Soroban footprint naming the right hash but running other code fails on the network |
 | A compromised API or D1 | Serve any document (D896), so any account, hash and words within the text rules | Choose the code hash the vault reads (it comes from the two providers); show words for code other than what the document pins; block or fail an approval |
-| One malicious or compromised NEAR provider | Make the code hash unreadable (a denial: the plain window) | Make a label match: both providers must answer the same hash |
-| Both NEAR providers colluding (or one in a `local*` env) | Report the document's hash for an account running other code, so the box shows over a call the partner didn't describe | Change what is signed or shown by Journear: the request's own values, every warning and the amber acts-as-you line stay. The same trust a test app's delegate check already puts in them |
+| One malicious or compromised NEAR provider | Make the code hash unreadable (a denial: the plain window); **if the env's two endpoints are run by one operator, everything the next row says** | Make a label match: both providers must answer the same hash, **but only when the two endpoints are independently operated. sandbox-dev's are not today** (`rpc` test.rpc.fastnear.com and `rpcFallback` rpc.testnet.near.org, both run by FastNear; `independentEndpoints` compares URLs only). This weakens the existing two-provider checks (D263, D729) the same way. A must-fix before any env turns labels on, and a founder decision (below) |
+| Both NEAR providers colluding (or one operator behind both, or one endpoint in a `local*` env) | Report the document's hash for an account running other code, so the box shows over a call the partner didn't describe | Change what is signed or shown by Journear: the request's own values, every warning and the amber acts-as-you line stay. The same trust a test app's delegate check already puts in them |
 | A contract upgraded between the read and the signature (TOCTOU) | NEAR: the user's signature authorises the call to whatever code runs when it executes (a relayed action until its `maxBlockHeight`), as it does today without labels; labels change nothing signed. The old words could be on screen up to ~10 s + finality after the upgrade (new windows) or 5 min (an open window) | Soroban: run the call on other code: the footprint names the hash, so the transaction fails |
 | A look-alike account name | Nothing: the document names one exact account (no folding), the matcher compares exactly, and the hash read is for the request's own receiver | Match `stamps.example.testnet.evil.testnet` to a label for `stamps.example.testnet` |
+| A hostile partner whose Soroban contract holds the user's allowance (after PR 128's review) | Under a value verb, a call that spends a SEP-41 allowance the user granted the contract earlier (`transfer_from` needs only the spender's authorization; the contract is the direct invoker), the box beside Journear's red box; the balance write is only in the folded details | Do it under a soft verb (the footprint may write only the contract's own data) |
+| A Stellar asset contract address labelled (after PR 128's review) | Nothing that changes anything: the code binding is empty for it (it runs built-in code, not a Wasm, so a footprint can declare any `ContractCode` and still run it), and every function of it that changes anything is reserved; what remains are its read-only functions | Label `trust`, `transfer`, `approve`, `mint` or any other of its state-changing functions |
 
 #### What the console gains (built in this branch)
 - The NEAR and Soroban forms lose "Not shown to users yet" (the tab's "not switched on here" stays where labels are
   off); the list's badges read "Live" for them like payments. The NEAR form's code hash can be read from the network
-  (`GET /api/near-code?account=`, the console Worker's own `NEAR_RPC`, final finality, any member), shown for the partner
+  (`GET /api/orgs/:org/near-code/:account`, the console Worker's own `NEAR_RPC`, final finality, any member), shown for the partner
   to confirm, and filled only when they press **Use this code hash**. The Soroban form says where the Wasm hash comes
   from (no Stellar endpoint exists in any manifest: reading it would be a new dependency, not built). Both explain
   upgrades. The preview draws the real window for both: an example call that matches, one that doesn't (another code),
@@ -19752,10 +19769,11 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 
 #### Every new sentence (exact; partner-facing, plain words; the window gains none)
 - Editor: "Tied to your program’s code" (the callout's title); NEAR: "Your words show only while the program at this
-  account runs exactly the code hash below: Journear checks it with two NEAR providers when a user approves. If you
+  account runs exactly the code hash below: Journear checks the code on the NEAR network when a user approves. If you
   change the program’s code, your users see an amber line instead of your words until new labels with the new code hash
   go live, after their wait. So propose the new labels first, and upgrade soon after they go live."; Soroban: "Your
-  words show only for a transaction your user signs in full that runs only this contract’s Wasm code (Stellar’s
+  words show only for a transaction your user signs in full, sent from their own account (not an account you pay from,
+  and not wrapped in a fee bump), that runs only this contract’s Wasm code (Stellar’s
   built-in token contracts aside), as the transaction itself declares. A call your user only authorizes for someone
   else to send shows Journear’s plain window. If you change the contract’s code, your users see an amber line instead
   of your words until new labels with the new Wasm hash go live, after their wait. So propose the new labels first, and
@@ -19817,3 +19835,58 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 8. "Live" for NEAR and Soroban entries in force, with the code-tied note.
 9. The preview's two contract examples, built from the first described request only.
 10. A live app's relayed NEAR call stays plain (its network isn't checked, D896), and the preview says so.
+
+#### After PR 128's review (2026-11-23): what changed, each decided while fixing, **to confirm**
+The review found the Soroban footprint argument sound ("the only Wasm this transaction can run is H", checked against
+soroban-env-host's footprint-enforced storage, `instantiate_vm` and Stellar's authorization docs) and the NEAR logic
+sound, and asked for these:
+1. **One operator behind both NEAR providers.** The two-provider guarantee holds only when the endpoints are run by
+   different operators; sandbox-dev's are not (both FastNear). The threat table, security.md and
+   `docs/go-live-after-freeze.md` (question 7) say so; it also weakens D263's and D729's checks. **A must-fix before
+   any env turns labels on, and a founder decision:** (a) a second, independently operated testnet RPC provider
+   (recommended); (b) a self-hosted node; (c) accept it for testnet with the wording softened. `envs/` is unchanged.
+   The console now says "Journear checks the code on the NEAR network when a user approves." (true whatever the
+   providers).
+2. **Stellar asset contracts.** A Stellar asset contract runs built-in code with no `ContractCode`, so the footprint
+   binding means nothing for such an address (any declared hash passes). It can't be told apart from the request
+   robustly (its instance entry's key is every contract's; its address comes from an asset the request doesn't name),
+   so it isn't refused by address. Instead every one of its functions that changes anything is reserved
+   (`SAC_STATE_CHANGING`, checked against soroban-env-host `main` on 2026-11-23, protocol 26: init_asset, approve,
+   transfer, transfer_from, burn, burn_from, clawback, set_authorized, mint, set_admin, and `trust`, CAP-73, which
+   needs the address's authorization and creates a trust line); what remains are its read-only functions (allowance,
+   balance, authorized, admin, decimals, name, symbol), which change nothing but its own time to live. A test
+   enumerates the list. security.md's earlier "few non-token functions (all views)" was wrong about `trust`; corrected.
+3. **Allowances** (above: the threat row and the residual).
+4. **What the request is, before its code.** `matchSoroban` now checks the source (the transaction's and every call
+   here) and that a described function is called before the footprint's code; `matchNear` checks that a described
+   method is called before the code. So a request from another source, or of an undescribed function or method, is the
+   plain window with either code (it gave amber with another code). Tested in core and in the window, byte for byte.
+5. **No-code hashes.** The parser refuses the all-1s NEAR hash ("This is the code hash of an account with no program
+   (all 1s): use the code hash of the program you deployed.") and the all-zero Wasm hash ("This is all zeros, which is
+   no program’s code: use the Wasm hash of the code your contract runs."); the console's read answers `codeHash: null`
+   for the all-1s hash and the editor says "This account has no program on the NEAR test network.", never offering it.
+6. **No code read where no label can match:** the vault reads nothing for a request whose network it doesn't check
+   (a live app's delegate action, another network). Tested: no RPC call.
+7. **Console wording.** NEAR, live apps only, once: "From a live app, a call someone else sends for your user always
+   shows Journear’s plain window: your words show only on the user’s own transactions." (the rule: a live app's
+   delegate action names no network the vault checks, D726, D729). Soroban: "…signs in full, sent from their own
+   account (not an account you pay from, and not wrapped in a fee bump), that runs only…". The preview's note for a
+   live app's relayed example: "This example is a call someone else sends for the user, which shows Journear’s plain
+   window from a live app (see above). Set “Who sends it” to “Only when the user sends it” to see one."
+8. **`no_contract_code` is couldn't check** (the plain window, not amber): an account with no code of its own (or a
+   global contract on a node that omits the fields) ties the label to nothing. The vault's and the console's tests now
+   use nearcore's real shapes (all-1s with the global field set; the fields omitted).
+9. **For the founder** (added to the list below).
+10. The partner-labels module's header no longer counts its importers (core's dormancy test lists them).
+
+#### To confirm (added after PR 128's review)
+11. **The NEAR provider decision** (item 1): a second independently operated testnet provider, a self-hosted node, or
+    accept one operator for testnet with softened wording. A must-fix before labels are on anywhere.
+12. **NEAR time of check and time of use**, as the reviewer framed it: if the program's deployer key is compromised and
+    the code upgraded, new windows keep the old words for about 10 s plus the final block's lag, open windows up to
+    5 minutes, and a relayed delegate action the user already approved stays executable until its max block height; a
+    soft verb still guarantees a deposit of 0, but what the contract holds for the user, and any approvals the user gave
+    it, are exposed to the new code. Recommended: acceptable for testnet; confirm before mainnet.
+13. Stellar asset contracts handled by reserving their state-changing functions rather than refused by address.
+14. The Soroban allowance residual under value verbs.
+

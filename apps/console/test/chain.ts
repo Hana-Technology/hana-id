@@ -31,8 +31,9 @@ export async function setChain(google: MockGoogle): Promise<void> {
 }
 
 /** D900: an account's `view_account` answer (its code hash, a global contract), or `near_down` for an RPC that fails. */
-export async function setAccountView(account: string, view: { code_hash: string; global_contract_hash?: string | null; global_contract_account_id?: string | null }): Promise<void> {
-  await put(`view_account:${account}`, { amount: '1', locked: '0', storage_usage: 100, global_contract_hash: null, global_contract_account_id: null, block_height: 1, block_hash: '11111111111111111111111111111111', ...view });
+export async function setAccountView(account: string, view: { code_hash: string; global_contract_hash?: string | null; global_contract_account_id?: string | null }, o: { omitGlobal?: true } = {}): Promise<void> {
+  const global = o.omitGlobal ? {} : { global_contract_hash: null, global_contract_account_id: null };
+  await put(`view_account:${account}`, { amount: '1', locked: '0', storage_usage: 100, ...global, block_height: 1, block_hash: '11111111111111111111111111111111', ...view });
 }
 export const setNearDown = () => put('near_down', true);
 export const clearNearDown = () => env.FAKE_UPSTREAM.prepare('DELETE FROM upstream WHERE key = ?').bind('near_down').run();

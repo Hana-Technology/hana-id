@@ -933,14 +933,17 @@ preview; proposing waits until they are on.
 need nothing more. Labels for a **NEAR program** or a **Soroban contract** name the code they describe, and show only
 while the request runs exactly that code:
 
-- **A NEAR program**: when a user approves a call to it, Journear reads the program's code hash from two NEAR providers
-  of its own and shows your words only if both say it is the code hash your labels name. If they can't be read, or
-  don't agree, users see Journear's plain window (no line about your labels). The form's **Read it from the network**
+- **A NEAR program**: when a user approves a call to it, Journear reads the program's code hash on the NEAR network itself
+  and shows your words only if it is the code hash your labels name. If it can't be read, users see Journear's plain
+  window (no line about your labels). From a live app, a call someone else sends for your user always shows Journear's
+  plain window: your words show only on the user's own transactions. The form's **Read it from the network**
   shows the code deployed at the account now, for you to check before **Use this code hash**.
 - **A Soroban contract**: your words show only for a transaction your user signs in full whose own list of what it
   reads and writes (its footprint, from your simulation) names your Wasm hash as its only code; the network won't run
-  such a transaction on other code. A call your user only authorizes for someone else to send (an authorization
-  entry), or one that also runs another contract's Wasm, shows Journear's plain window. A verb that says nothing moves
+  such a transaction on other code. It must be sent from your user's own account (not an account you pay from, and not
+  wrapped in a fee bump). A call your user only authorizes for someone else to send (an authorization entry), or one
+  that also runs another contract's Wasm, shows Journear's plain window. Functions of Stellar's built-in asset
+  contracts that change anything can't be labelled. A verb that says nothing moves
   (such as join or vote) shows only when the transaction can change nothing but your contract's own stored data.
 - **Upgrading your program**: once the code changes, your users see an amber line instead of your words ("Coffee Club
   describes this kind of request, but this one doesn't match, …") until new labels with the new code hash go live after

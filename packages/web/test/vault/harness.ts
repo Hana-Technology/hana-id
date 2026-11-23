@@ -263,7 +263,7 @@ export class FakeBackend {
   readonly nearKeys = new Map<string, number>();
   nearHeight = 277_000_000;
   /** D900: contract accounts the fake RPC knows (`view_account`): their code hash, and a global contract if any. */
-  readonly nearCode = new Map<string, { codeHash: string; globalAccount?: string }>();
+  readonly nearCode = new Map<string, { codeHash: string; globalAccount?: string; globalHash?: string; omitGlobal?: true }>();
   readonly relay = new Map<string, { iv: string; ct: string } | 'consumed'>();
   readonly calls: ApiCall[] = [];
   readonly rpcCalls: { method: string; params: Record<string, unknown>; endpoint: string }[] = [];
@@ -810,7 +810,10 @@ export class FakeBackend {
     if (body.method === 'query' && body.params.request_type === 'view_account') {
       const c = this.nearCode.get(body.params.account_id as string);
       if (c === undefined) return json(200, { jsonrpc: '2.0', id: 'x', error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_ACCOUNT', info: {} } } });
-      return json(200, { jsonrpc: '2.0', id: 'x', result: { amount: '1', locked: '0', code_hash: c.codeHash, storage_usage: 100, storage_paid_at: 0, global_contract_hash: null, global_contract_account_id: c.globalAccount ?? null, block_height: this.nearHeight, block_hash: '11111111111111111111111111111111' } });
+      // nearcore's AccountView: a global contract's account reports code_hash all 1s (the default) with the global field set;
+      // an older node omits the global fields altogether (`omitGlobal`).
+      const global = c.omitGlobal ? {} : { global_contract_hash: c.globalHash ?? null, global_contract_account_id: c.globalAccount ?? null };
+      return json(200, { jsonrpc: '2.0', id: 'x', result: { amount: '1', locked: '0', code_hash: c.codeHash, storage_usage: 100, storage_paid_at: 0, ...global, block_height: this.nearHeight, block_hash: '11111111111111111111111111111111' } });
     }
     if (body.method === 'query' && body.params.request_type === 'view_access_key') {
       const nonce = this.nearKeys.get(`${body.params.account_id as string}|${body.params.public_key as string}`);

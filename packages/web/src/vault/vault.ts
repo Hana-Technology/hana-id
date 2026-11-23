@@ -1013,9 +1013,15 @@ export class Vault {
     return Math.max(this.clock.now() - r.at, this.perfNow() - r.sent) < ms;
   }
 
-  /** The receiver of a NEAR request when a checked document describes that account, else null (no code read needed). */
+  /**
+   * The receiver of a NEAR request when a checked document describes that account, else null (no code read needed). Also
+   * null when the vault doesn't check the request's network itself (a live app's delegate action, a network other than
+   * the env's: the window's `nearNetworkChecked`), since no label can match then (D900, after PR 128's review).
+   */
   private labelledNearReceiver(subject: ApprovalSubject, docs: readonly VerifiedLabel[]): string | null {
     if (subject.chain !== 'near' || (subject.kind !== 'near_tx' && subject.kind !== 'near_delegate')) return null;
+    const network = 'nearNetwork' in subject.context ? subject.context.nearNetwork : null;
+    if (network !== this.env.network || (subject.kind === 'near_delegate' && !this.testApp)) return null;
     let receiver: string;
     try {
       receiver = subject.kind === 'near_tx' ? decodeNearTransaction(subject.bytes).receiverId : decodeNearDelegateAction(subject.bytes).receiverId;

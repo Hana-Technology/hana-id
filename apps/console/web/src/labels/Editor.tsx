@@ -25,15 +25,17 @@ export const SUGGEST_FEE = 'Set a highest network fee. Without one, a payment wi
 // D900 (to confirm): labels tied to a program's code.
 export const CODE_TIED_TITLE = 'Tied to your program’s code';
 export const CODE_TIED_NEAR =
-  'Your words show only while the program at this account runs exactly the code hash below: Journear checks it with two NEAR providers when a user approves. If you change the program’s code, your users see an amber line instead of your words until new labels with the new code hash go live, after their wait. So propose the new labels first, and upgrade soon after they go live.';
+  'Your words show only while the program at this account runs exactly the code hash below: Journear checks the code on the NEAR network when a user approves. If you change the program’s code, your users see an amber line instead of your words until new labels with the new code hash go live, after their wait. So propose the new labels first, and upgrade soon after they go live.';
 export const CODE_TIED_SOROBAN =
-  'Your words show only for a transaction your user signs in full that runs only this contract’s Wasm code (Stellar’s built-in token contracts aside), as the transaction itself declares. A call your user only authorizes for someone else to send shows Journear’s plain window. If you change the contract’s code, your users see an amber line instead of your words until new labels with the new Wasm hash go live, after their wait. So propose the new labels first, and upgrade soon after they go live.';
+  'Your words show only for a transaction your user signs in full, sent from their own account (not an account you pay from, and not wrapped in a fee bump), that runs only this contract’s Wasm code (Stellar’s built-in token contracts aside), as the transaction itself declares. A call your user only authorizes for someone else to send shows Journear’s plain window. If you change the contract’s code, your users see an amber line instead of your words until new labels with the new Wasm hash go live, after their wait. So propose the new labels first, and upgrade soon after they go live.';
+/** Live apps only: a delegate action names no network the vault checks (D726, D729), so no label can match it. */
+export const NEAR_LIVE_RELAYED = 'From a live app, a call someone else sends for your user always shows Journear’s plain window: your words show only on the user’s own transactions.';
 export const SOROBAN_SOFT_VERBS = 'A verb that says nothing moves (such as join or vote) shows only when the transaction can change nothing but your contract’s own stored data.';
 export const NEAR_CODE_HINT = 'The code deployed at the account now (base58). Read it from the network, check it is the code you deployed, then use it.';
 export const WASM_HASH_HINT = '64 lowercase hex characters: the hash of the Wasm code your contract runs now, as shown when you uploaded it.';
 
 /** What the console's own NEAR endpoint says of an account's code (GET …/near-code/:account, D900). */
-export type NearCodeAnswer = { account: string; exists: false } | { account: string; exists: true; codeHash: string; sharedCode: boolean };
+export type NearCodeAnswer = { account: string; exists: false } | { account: string; exists: true; codeHash: string | null; sharedCode: boolean };
 
 /** What the form needs from the page around it. */
 export interface EditorProps {
@@ -792,11 +794,11 @@ function NearCodeRead({ account, env, read, current, use }: { account: string; e
         Read it from the network
       </button>
       {shown && 'failed' in shown && <p className="jp-error">Journear couldn’t read the network just now. Try again, or type the code hash.</p>}
-      {shown && 'answer' in shown && !shown.answer.exists && <p>This account has no program on {network}.</p>}
+      {shown && 'answer' in shown && (!shown.answer.exists || (!shown.answer.sharedCode && shown.answer.codeHash === null)) && <p>This account has no program on {network}.</p>}
       {shown && 'answer' in shown && shown.answer.exists && shown.answer.sharedCode && (
         <p>This account runs shared code another account publishes, so its code can change without it: Journear doesn’t show labels for it.</p>
       )}
-      {shown && 'answer' in shown && shown.answer.exists && !shown.answer.sharedCode && (
+      {shown && 'answer' in shown && shown.answer.exists && !shown.answer.sharedCode && shown.answer.codeHash !== null && (
         <div className="near-code-answer">
           <p>
             On {network} now: <code className="mono">{shown.answer.codeHash}</code>
@@ -911,6 +913,7 @@ export function LabelsEditor(p: EditorProps) {
         {draft && draft.kind !== 'stellar' && (
           <Callout tone="info" title={CODE_TIED_TITLE}>
             <p>{draft.kind === 'near' ? CODE_TIED_NEAR : CODE_TIED_SOROBAN}</p>
+            {draft.kind === 'near' && env === 'live' && <p>{NEAR_LIVE_RELAYED}</p>}
             {draft.kind === 'soroban' && <p>{SOROBAN_SOFT_VERBS}</p>}
           </Callout>
         )}

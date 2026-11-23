@@ -219,6 +219,14 @@ describe('D900: the NEAR form’s code read (GET …/near-code/:account)', () =>
     expect((await getAs(m, `/api/orgs/${m.org}/near-code/club-d900.testnet`)).body).toEqual({ account: 'club-d900.testnet', exists: true, codeHash: H, sharedCode: false });
     expect((await getAs(m, `/api/orgs/${m.org}/near-code/shared-d900.testnet`)).body).toEqual({ account: 'shared-d900.testnet', exists: true, codeHash: H, sharedCode: true });
     expect((await getAs(m, `/api/orgs/${m.org}/near-code/nobody-d900.testnet`)).body).toEqual({ account: 'nobody-d900.testnet', exists: false });
+    // After PR 128's review: nearcore's real shapes. An account with no program, and a global contract's account (all 1s,
+    // the field set), and a node that omits the global fields: never a hash to use.
+    await setAccountView('plain-d900.testnet', { code_hash: '11111111111111111111111111111111' });
+    await setAccountView('global-d900.testnet', { code_hash: '11111111111111111111111111111111', global_contract_account_id: 'publisher.testnet' });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/plain-d900.testnet`)).body).toEqual({ account: 'plain-d900.testnet', exists: true, codeHash: null, sharedCode: false });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/global-d900.testnet`)).body).toEqual({ account: 'global-d900.testnet', exists: true, codeHash: null, sharedCode: true });
+    await setAccountView('old-node-d900.testnet', { code_hash: '11111111111111111111111111111111' }, { omitGlobal: true });
+    expect((await getAs(m, `/api/orgs/${m.org}/near-code/old-node-d900.testnet`)).body).toEqual({ account: 'old-node-d900.testnet', exists: true, codeHash: null, sharedCode: false });
   });
 
   it('a malformed account is refused; an RPC that fails is near_unavailable, never a guess', async () => {

@@ -4,7 +4,7 @@
 // (one down, late, in disagreement, a global contract, an unknown account, one provider outside a local env) sends no
 // code hash, so the window is plain. Never an error or a blocked request; at most PARTNER_LABELS_WAIT_MS once; kept
 // NEAR_CODE_FRESH_MS (failures too).
-import { type NearAction, base64Encode, encodeNearTransaction, nearHashString, nearImplicitPublicKey, sha256, toHex, utf8 } from '@hana-id/core';
+import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearHashString, nearImplicitPublicKey, sha256, toHex, utf8 } from '@hana-id/core';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { NEAR_CODE_FRESH_MS, PARTNER_LABELS_FRESH_MS, PARTNER_LABELS_WAIT_MS, agreedCodeHash } from '../../src/vault/partner-labels.ts';
 import { Browser, ENV, type Google, RPC_FALLBACK, type Tab, answer, google, login, makeConfig, openApproval, readyTab, waitLauncher } from './harness.ts';
@@ -25,6 +25,8 @@ afterEach(() => {
 const CLUB = 'club.testnet';
 const H = 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn';
 const H2 = '9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA';
+/** What NEAR reports for an account with no program of its own (and for a global contract): 32 zero bytes. */
+const NO_CODE = '11111111111111111111111111111111';
 const NEAR_DOC = JSON.stringify({
   schema: 'journear-labels/1',
   context: { near: { network: 'testnet', account: CLUB, codeHash: H } },
@@ -119,7 +121,9 @@ describe('the vault’s read', () => {
   it.each([
     ['the providers disagree', (s: S) => s.t.browser.backend.rpcLies.set(RPC_FALLBACK, (b) => (b.params.request_type === 'view_account' ? { result: { code_hash: H2, global_contract_hash: null, global_contract_account_id: null } } : undefined))],
     ['one provider is down', (s: S) => s.t.browser.backend.rpcLies.set(RPC_FALLBACK, (b) => (b.params.request_type === 'view_account' ? { error: { name: 'INTERNAL_ERROR', cause: { name: 'INTERNAL_ERROR' } } } : undefined))],
-    ['a global contract', (s: S) => s.t.browser.backend.nearCode.set(CLUB, { codeHash: H, globalAccount: 'publisher.testnet' })],
+    ['a global contract by account (nearcore’s shape: code_hash all 1s, the field set)', (s: S) => s.t.browser.backend.nearCode.set(CLUB, { codeHash: NO_CODE, globalAccount: 'publisher.testnet' })],
+    ['a global contract by hash (code_hash all 1s, the field set)', (s: S) => s.t.browser.backend.nearCode.set(CLUB, { codeHash: NO_CODE, globalHash: H })],
+    ['a global field beside a real hash', (s: S) => s.t.browser.backend.nearCode.set(CLUB, { codeHash: H, globalAccount: 'publisher.testnet' })],
     ['an account that doesn’t exist', (s: S) => s.t.browser.backend.nearCode.delete(CLUB)],
   ])('%s: labels but no code hash (the window is plain), never an error', async (_, set) => {
     const s = await session();
@@ -208,5 +212,28 @@ describe('the vault’s read', () => {
     expect(m).not.toHaveProperty('partnerLabelFacts');
     expect(codeReads(s)).toHaveLength(0);
     answer(s.t, popup, m, false);
+  });
+
+  it('a node that omits the global fields: the all-1s hash is sent as read (the window then shows the plain window: no code of its own)', async () => {
+    const s = await session();
+    s.t.browser.backend.nearCode.set(CLUB, { codeHash: NO_CODE, omitGlobal: true });
+    const { popup, m } = await shown(s);
+    expect(m.partnerLabelFacts).toEqual({ near: { account: CLUB, codeHash: NO_CODE } });
+    answer(s.t, popup, m, false);
+  });
+
+  it('a live app’s delegate action (its network not checked by the vault): no read at all', async () => {
+    const s = await session({ live: true });
+    s.t.browser.backend.nearCode.set(CLUB, { codeHash: H });
+    const da = encodeNearDelegateAction({ senderId: s.near, receiverId: CLUB, actions: [JOIN], nonce: 276_000_000_000_001n, maxBlockHeight: BigInt(s.t.browser.backend.nearHeight + 600), publicKey: { type: 'ed25519', bytes: nearImplicitPublicKey(s.near) } });
+    const reply = s.t.request('near_signDelegateAction', { network: 'testnet', delegateAction: base64Encode(da) });
+    await waitLauncher(s.t, 'Review in Journear Passport');
+    const popup = openApproval(s.t);
+    const m = await popup.next('hana:approve-request');
+    expect(m.partnerLabels).toEqual([NEAR_DOC]);
+    expect(m).not.toHaveProperty('partnerLabelFacts');
+    expect(codeReads(s)).toHaveLength(0);
+    answer(s.t, popup, m, false);
+    await reply;
   });
 });

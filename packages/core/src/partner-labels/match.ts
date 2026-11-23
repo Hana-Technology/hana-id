@@ -534,6 +534,11 @@ function matchNear(doc: LabelDocument, req: Extract<LabelRequest, { kind: 'near'
   if (req.receiver === req.user) return no('calls_own_account', 'receiver');
   if (facts.reviewedNear?.includes(req.receiver)) return no('journear_reads_this', 'receiver');
   if (facts.networkChecked !== true) return no('network_not_checked');
+  // What the request is, before its code (D900, after PR 128's review): a request with no call of a described method is
+  // not one the document speaks about, whatever code the account runs.
+  const calls = req.actions.filter((x): x is Extract<NearAction, { type: 'functionCall' }> => x.type === 'functionCall');
+  if (calls.length === 0) return no('not_a_function_call');
+  if (!calls.some((x) => formatFor(doc, x.methodName)?.chain === 'near')) return no('wrong_method', 'method');
   const hash = codeHashFails(facts.codeHash, ctx.codeHash, 'near');
   if (hash) return hash;
   if (req.actions.length !== 1) return no('more_than_one_action');
@@ -600,12 +605,19 @@ function matchSoroban(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
   // is described; anything else (another contract, a router whose nested authorization reaches this one, a classic
   // transaction) is not, whatever its shape. Then the code hash: unread or different, nothing is said about the call.
   const callsHere = (op: StellarOperation): boolean => op.type === 'invokeHostFunction' && op.hostFunction.type === 'invokeContract' && op.hostFunction.contract === ctx.contract;
+  const described = (fn: string): boolean => formatFor(doc, fn)?.chain === 'soroban';
   if (req.kind === 'stellar_tx') {
     if (req.feeBump) return no('fee_bump');
-    if (!req.tx.operations.some(callsHere)) return no('wrong_account', 'contract');
+    const here = req.tx.operations.filter(callsHere);
+    if (here.length === 0) return no('wrong_account', 'contract');
+    // Every check of what the request is comes before its code (D900, after PR 128's review): the user's own
+    // transaction (its source and every source of a call here), and a call of a described function.
+    if (stellarBaseAccount(req.tx.source).base !== req.user || here.some((op) => op.source !== null && stellarBaseAccount(op.source).base !== req.user)) return no('source_not_user');
+    if (!here.some((op) => op.type === 'invokeHostFunction' && op.hostFunction.type === 'invokeContract' && described(op.hostFunction.function))) return no('wrong_method', 'function');
   } else {
     const f = req.invocation.function;
     if (f.type !== 'contractFn' || f.contract !== ctx.contract) return no('wrong_account', 'contract');
+    if (!described(f.function)) return no('wrong_method', 'function');
   }
   // A transaction's code is its footprint's one ContractCode (enforced by the network when it runs, D900); an
   // authorization entry has no footprint, so only a caller's fact can tie it to code (the window passes none).
@@ -831,7 +843,9 @@ export type NoMatchKind =
   | 'couldnt_check';
 
 const NOT_DESCRIBED: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['wrong_chain', 'wrong_network', 'wrong_account', 'wrong_method', 'wrong_operation', 'calls_own_account', 'journear_reads_this', 'not_a_function_call', 'fee_bump', 'source_not_user']);
-const COULDNT_CHECK: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['no_code_hash', 'bad_code_hash_input', 'network_not_checked']);
+// D900 (after PR 128's review): an account or contract with no code of its own (the all-1s NEAR hash, also what a global
+// contract reports) is couldn't check, the plain window: nothing ties the label to code there.
+const COULDNT_CHECK: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['no_code_hash', 'bad_code_hash_input', 'network_not_checked', 'no_contract_code']);
 
 /** The kind of a no-match (`NoMatchKind`), so a renderer never infers it from the codes itself. */
 export const noMatchKind = (reason: LabelNoMatchCode): NoMatchKind => (NOT_DESCRIBED.has(reason) ? 'not_described' : COULDNT_CHECK.has(reason) ? 'couldnt_check' : 'described_mismatch');

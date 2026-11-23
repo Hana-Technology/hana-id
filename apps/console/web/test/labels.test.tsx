@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseLabelDocument } from '@hana-id/core/partner-labels';
 import { nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
-import { CODE_TIED_NEAR, CODE_TIED_SOROBAN, CODE_TIED_TITLE, SOROBAN_SOFT_VERBS, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
+import { CODE_TIED_NEAR, CODE_TIED_SOROBAN, NEAR_LIVE_RELAYED, CODE_TIED_TITLE, SOROBAN_SOFT_VERBS, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
 import { labelsWait, labelsWaitReview } from '../src/pages/Action.tsx';
 import { CODE_TIED_NOTE, ENTRY_OFF, NOT_ENABLED, NOT_ENABLED_PROPOSE, ORG_OFF, guardedWait, reviewOn, waitingState } from '../src/pages/app/Labels.tsx';
 import { EXAMPLE_MARK } from '../src/window/frame.ts';
@@ -297,6 +297,7 @@ describe('the editor', () => {
     routes['/api/orgs/org_a/near-code/stamp-rally.testnet'] = { body: { account: 'stamp-rally.testnet', exists: true, codeHash: H, sharedCode: false } };
     routes['/api/orgs/org_a/near-code/shared.testnet'] = { body: { account: 'shared.testnet', exists: true, codeHash: H, sharedCode: true } };
     routes['/api/orgs/org_a/near-code/nobody.testnet'] = { body: { account: 'nobody.testnet', exists: false } };
+    routes['/api/orgs/org_a/near-code/noprogram.testnet'] = { body: { account: 'noprogram.testnet', exists: true, codeHash: null, sharedCode: false } };
     await newEditor();
     fireEvent.click(screen.getByLabelText(/A NEAR program/u));
     expect(screen.queryByText(/Not shown to users yet/u)).toBeNull();
@@ -305,6 +306,7 @@ describe('the editor', () => {
     // The read: what the network says for the account, shown; filled only on "Use this code hash".
     for (const [account, says] of [
       ['nobody.testnet', 'This account has no program on the NEAR test network.'],
+      ['noprogram.testnet', 'This account has no program on the NEAR test network.'],
       ['shared.testnet', 'This account runs shared code another account publishes, so its code can change without it: Journear doesn’t show labels for it.'],
     ] as const) {
       fireEvent.change(screen.getByLabelText('Its account'), { target: { value: account } });
@@ -318,7 +320,9 @@ describe('the editor', () => {
     expect((screen.getByLabelText(/Its code hash/u) as HTMLInputElement).value).toBe('');
     fireEvent.click(screen.getByRole('button', { name: 'Use this code hash' }));
     expect((screen.getByLabelText(/Its code hash/u) as HTMLInputElement).value).toBe(H);
-    expect(calls.filter((c) => c.url.includes('/near-code/')).map((c) => c.url)).toEqual(['/api/orgs/org_a/near-code/nobody.testnet', '/api/orgs/org_a/near-code/shared.testnet', '/api/orgs/org_a/near-code/stamp-rally.testnet']);
+    expect(calls.filter((c) => c.url.includes('/near-code/')).map((c) => c.url)).toEqual(['/api/orgs/org_a/near-code/nobody.testnet', '/api/orgs/org_a/near-code/noprogram.testnet', '/api/orgs/org_a/near-code/shared.testnet', '/api/orgs/org_a/near-code/stamp-rally.testnet']);
+    // A test app: no live-app sentence about relayed calls.
+    expect(screen.queryByText(NEAR_LIVE_RELAYED)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Describe a request' }));
     fireEvent.change(screen.getByLabelText('The method’s exact name'), { target: { value: 'join' } });
     fireEvent.change(screen.getByLabelText(/^The verb/u), { target: { value: 'join' } });
@@ -511,3 +515,16 @@ describe('D900: a Soroban contract in the editor', () => {
   });
 });
 
+
+describe('after PR 128’s review: a live app’s NEAR form', () => {
+  it('says once that a relayed call from a live app shows the plain window', async () => {
+    signedIn();
+    const live = { ...APP, environment: 'live' };
+    routes['/api/orgs/org_a/apps/app_1'] = { body: { app: live, now: NOW } };
+    routes['/api/orgs/org_a/apps'] = { body: { apps: [live] } };
+    await newEditor();
+    fireEvent.click(screen.getByLabelText(/A NEAR program/u));
+    expect(screen.getAllByText(NEAR_LIVE_RELAYED)).toHaveLength(1);
+    expect(screen.getByText(CODE_TIED_NEAR)).toBeTruthy();
+  });
+});

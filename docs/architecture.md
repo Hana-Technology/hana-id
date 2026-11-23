@@ -1025,7 +1025,13 @@ Soroban: nothing is read; `matchSoroban` takes the code from the transaction's f
 entry, which the network enforces), never from outside, and an authorization entry has none. A different code is the
 amber line; none is the plain window. A soft verb matches only a request that moves no value Journear can see (NEAR: no
 deposit; Soroban: a footprint writing only the contract's own data), else `value_may_move`, amber. Nothing else in the
-API or the vault's trust changed.
+API or the vault's trust changed. After PR 128's review: whether a document speaks about a request (the source, a
+described function or method) is decided before the code; the parser refuses the no-code hashes (NEAR all 1s, Wasm all
+zeros) and reserves every state-changing Stellar asset contract function (`SAC_STATE_CHANGING`, protocol 26's `trust`
+included), since the footprint can't tie a label to such a contract's built-in code; an account with no code of its own
+is couldn't check; the vault reads no code for a request whose network it doesn't check. The two-provider read protects
+only when the two endpoints are independently operated (sandbox-dev's are one operator today: D900, a founder
+decision).
 
 Piece 4 (D899): the partner console's **Request labels** tab on each app (`apps/console/web/src/pages/app/Labels.tsx`,
 its own lazily loaded chunk) lists the app's scope's entries from `GET /api/orgs/:org/scopes/:scope/labels`

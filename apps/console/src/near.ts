@@ -102,10 +102,16 @@ export async function viewScope(env: { NEAR_RPC: string; SIGNER_ACCOUNT: string 
 /** The scope's `Owner::Oidc` owners as `{provider, sub}`. */
 export const oidcOwners = (s: ScopeView): { provider: string; sub: string }[] => s.owners.flatMap((o) => ('Oidc' in o ? [o.Oidc] : []));
 
+/** The code hash of an account with no program of its own: 32 zero bytes in base58. */
+const NO_PROGRAM = '11111111111111111111111111111111';
+
 /** What `view_account` says of a NEAR account's code (D900): its code hash, and whether it runs code another account publishes. */
 export interface ContractCodeView {
-  /** Base58, as the node sent it (the console shows it for the partner to confirm; nothing trusts it). */
-  codeHash: string;
+  /**
+   * Base58, as the node sent it (the console shows it for the partner to confirm; nothing trusts it), or null when it is
+   * the all-1s hash NEAR reports for an account with no program of its own (and for a global contract's account).
+   */
+  codeHash: string | null;
   /** A global contract (`global_contract_hash` or `global_contract_account_id` set): its code can change without it. */
   sharedCode: boolean;
 }
@@ -145,5 +151,5 @@ export async function viewContractCode(env: { NEAR_RPC: string }, account: strin
   const r = isObj(body) ? body.result : undefined;
   if (!isObj(r) || typeof r.code_hash !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(r.code_hash)) throw new NearUnavailable('view_account answered no code hash');
   const named = (v: unknown) => v !== undefined && v !== null;
-  return { codeHash: r.code_hash, sharedCode: named(r.global_contract_hash) || named(r.global_contract_account_id) };
+  return { codeHash: r.code_hash === NO_PROGRAM ? null : r.code_hash, sharedCode: named(r.global_contract_hash) || named(r.global_contract_account_id) };
 }

@@ -1837,11 +1837,17 @@ handshake removes the frame and closes its port, as `destroy()` does.
   routes around the red line listed in (4).
 - **Partner labels for NEAR programs and Soroban contracts: the code they are tied to (D900).** No new trust: no API
   change, no new provider, no simulation. Invariants: (1) a NEAR document matches only with the code hash the vault
-  read for that exact account from **each** of the env's two NEAR providers (`rpc`, `rpcFallback`, the pair a test
+  read for that exact account from **each** of the env's two NEAR endpoints (`rpc`, `rpcFallback`, the pair a test
   app's delegate check already requires to agree) at **final** finality, both answering the same canonical hash and
-  neither naming a global contract (`agreedCodeHash`); one provider outside `local*` envs, a provider down, late (3 s),
-  in disagreement, an unknown account or a malformed answer is no code hash, the plain window, silently; the read is
-  made only for a request whose receiver a fresh label document names, inside the labels' one wait (at most
+  neither naming a global contract (`agreedCodeHash`); one endpoint outside `local*` envs, one down, late (3 s),
+  in disagreement, an unknown account, an account with no code of its own (all 1s) or a malformed answer is no code
+  hash, the plain window, silently. **This protects against one bad provider only when the two endpoints are
+  independently operated; sandbox-dev's are not today** (`rpc` test.rpc.fastnear.com and `rpcFallback`
+  rpc.testnet.near.org are both run by FastNear; `independentEndpoints` compares URLs only), which weakens D263's and
+  D729's two-provider checks the same way: a must-fix before any env turns labels on, and a founder decision (a second,
+  independently operated provider; a self-hosted node; or accept one operator for testnet; D900,
+  `docs/go-live-after-freeze.md` question 7). The read is made only for a request whose receiver a fresh label document
+  names and whose network the vault checks itself (never for a live app's delegate action), inside the labels' one wait (at most
   `PARTNER_LABELS_WAIT_MS` = 3 s, once per request), and its outcome (a failure too) is kept `NEAR_CODE_FRESH_MS` = 10 s,
   so after an upgrade a NEW window can show the old label for at most about 10 s plus the final block's lag, an open one
   until its request ends (5 min), as after a staff switch-off; the vault sends the hash beside the texts
@@ -1849,8 +1855,10 @@ handshake removes the frame and closes its port, as `destroy()` does.
   that account; (2) a Soroban document matches only a transaction whose footprint declares exactly one `ContractCode`
   entry, the document's Wasm hash (`sorobanFootprintCode`): the network runs a transaction only within its footprint
   and loads a Wasm contract's code through it, so the transaction can't run other code; no outside fact is ever used
-  for a Soroban transaction, and an authorization entry (no footprint) never matches; (3) a different code hash is a
-  described mismatch, the amber line, never the partner's words; (4) a soft verb (one that says no value moves)
+  for a Soroban transaction, and an authorization entry (no footprint) never matches; whether the document speaks about
+  the request (the contract, the user's own source, a described function or method) is decided before the code, so a
+  request it doesn't describe is plain whatever its code; (3) a different code hash is a described mismatch, the amber
+  line, never the partner's words; the parser refuses the no-code hashes (NEAR all 1s, Wasm all zeros); (4) a soft verb (one that says no value moves)
   matches only a request that moves none Journear can see, checked on the request itself: NEAR, an attached deposit of
   0; Soroban, a footprint that writes nothing but the labelled contract's own data, and every authorization entry
   exactly the call with nothing under it (already required); otherwise `value_may_move`, the amber line; (5) Journear's
@@ -1859,9 +1867,19 @@ handshake removes the frame and closes its port, as `destroy()` does.
   when it executes, as without labels (Soroban's footprint makes such a transaction fail); both NEAR providers
   colluding could make the box show over other code (Journear's own lines and warnings, and the amber "acts as you"
   line, stay); a partner's soft verb over a call that moves nothing Journear can see while its own code uses what the
-  user keeps with that contract (the amber or red line stays); a Stellar asset contract's few non-token functions (all
-  views) could match a document that names a Wasm hash its footprint declares without running it; Soroban
-  authorization entries and calls into a second Wasm contract never show labels. The six threats' table is in D900.
+  user keeps with that contract (the amber or red line stays). **Stellar asset contracts:** the footprint binding is
+  empty for one (it runs built-in code with no `ContractCode`, so any declared hash passes), and it can't be told apart
+  from the request; instead EVERY function of it that changes anything is reserved (`SAC_STATE_CHANGING`, checked
+  against soroban-env-host at protocol 26: init_asset, approve, transfer, transfer_from, burn, burn_from, clawback,
+  set_authorized, mint, set_admin and `trust`, CAP-73, which needs the address's authorization and creates a trust
+  line); what remains are its read-only functions (allowance, balance, authorized, admin, decimals, name, symbol).
+  **Soroban allowances:** under a value verb, the labelled contract can spend a SEP-41 allowance the user granted it
+  earlier (`transfer_from` needs only the spender's authorization, and the contract calling the token is authorized
+  implicitly), the footprint declaring the user's balance read-write; soft verbs are protected. The user then sees
+  Journear's red box for the unknown contract call above the partner's box, and the balance only in the folded
+  details' "Ledger entries it may change" ("account G…", a trust line as raw XDR, or another contract's "contract
+  data"); no main-view line names it. Soroban authorization entries and calls into a second Wasm contract never show
+  labels. The six threats' table is in D900.
   The console's "Read it from the network" (`GET /api/orgs/:org/near-code/:account`, the console Worker's own
   `NEAR_RPC`, final finality, any member) only shows the partner a value to confirm: nothing trusts it.
 - **Partner labels in the partner console (D899).** No new authority: proposing, removing and cancelling are D894's

@@ -160,7 +160,7 @@ export function contractExample(doc: LabelDocument, kind: ContractExampleKind, e
         call.relayed === 'direct'
           ? decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: EXAMPLE_NEAR_USER, context, bytes: encodeNearTransaction({ signerId: EXAMPLE_NEAR_USER, publicKey, nonce: 1n, receiverId: ctx.account, blockHash: new Uint8Array(32).fill(1), actions: [action] }) })
           : decodeApprovalRequest({ kind: 'near_delegate', chain: 'near', address: EXAMPLE_NEAR_USER, context, bytes: encodeNearDelegateAction({ senderId: EXAMPLE_NEAR_USER, receiverId: ctx.account, actions: [action], nonce: 1n, maxBlockHeight: 2n, publicKey }) });
-      if (environment === 'live' && call.relayed !== 'direct') return { ok: false, why: 'A relayed NEAR call from a live app names no network Journear can check, so it shows the plain window: describe the user’s own transaction to see one.' };
+      if (environment === 'live' && call.relayed !== 'direct') return { ok: false, why: 'This example is a call someone else sends for the user, which shows Journear’s plain window from a live app (see above). Set “Who sends it” to “Only when the user sends it” to see one.' };
       return { ok: true, decoded, user: EXAMPLE_NEAR_USER, labelFacts: { near: { account: ctx.account, codeHash: kind === 'match' ? ctx.codeHash : OTHER_NEAR_CODE } } };
     }
     if (ctx.chain === 'soroban' && format.chain === 'soroban') {

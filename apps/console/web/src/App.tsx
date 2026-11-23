@@ -1,6 +1,7 @@
 // The partner console's routes (docs/batch-c-spec.md "Console BFF routes"). Client-only: the Worker serves index.html
 // for every path that isn't an asset or `/api/*`. An app's sections are nested routes under `/orgs/:org/apps/:app`
 // (its overview is the app's own URL, as before). Every page shares one toast stack (toast.tsx).
+import { Suspense, lazy } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { ActionPage } from './pages/Action.tsx';
 import { AppLayout, AppsList } from './pages/Apps.tsx';
@@ -24,6 +25,18 @@ import { Upgrades } from './pages/Upgrades.tsx';
 import { Usage } from './pages/Usage.tsx';
 import { Users } from './pages/Users.tsx';
 import { ToastProvider } from './toast.tsx';
+import { Loading } from './ui.tsx';
+
+/**
+ * The Request labels tab (D899) is its own chunk: it carries Journear's decoder, the Stellar SDK and the approval
+ * window's renderer for its preview, which no other page needs.
+ */
+const Labels = lazy(() => import('./pages/app/Labels.tsx').then((m) => ({ default: m.Labels })));
+const labels = (
+  <Suspense fallback={<Loading />}>
+    <Labels />
+  </Suspense>
+);
 
 export function App() {
   return (
@@ -44,6 +57,8 @@ export function App() {
           <Route path="sessions" element={<Sessions />} />
           <Route path="email" element={<EmailLogin />} />
           <Route path="signing" element={<Signing />} />
+          <Route path="labels" element={labels} />
+          <Route path="labels/:labelId" element={labels} />
           <Route path="branding" element={<Branding />} />
           <Route path="suspend" element={<Suspend />} />
           <Route path="*" element={<NotFound />} />

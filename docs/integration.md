@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-23 (app names; gas sponsorship; sign-in window buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-23 (request labels; app names; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -174,6 +174,7 @@ changes are waiting. An app's page shows the **App ID** and the **Publishable ke
 | **Keys** | **Create a key** (at most 5 active), **Rotate** (you get a new key now; the old one keeps working 24 hours), **Revoke** (at once; a page already open notices within 30 s) |
 | **Login & sessions** | persistence, the session and idle limits and the Google web client ([section 7](#7-app-settings)), confirmed with Google and in force at once; a link to your scope's page ("Google clients and on-chain owners") for your own Google client ([section 6](#6-google-client-shared-or-your-own)) |
 | **Signing** | the auto-approve policy ([section 9](#9-auto-approve-policies)) and raw signing ([Raw signing](#raw-signing)) |
+| **Request labels** | your own words for your app's requests in the approval window ([Request labels](#request-labels-your-words-in-the-approval-window)): what users see now, changes waiting, **Cancel**, **Remove**, and the editor with its preview |
 | **Branding** | the name users see in Journear Passport's popups and sign-in emails (up to 64 characters; see "App names" below), and your logo: PNG, JPEG or WebP, at most 512 KiB, 128 to 2048 px a side, nearly square, not animated; Journear Passport re-encodes it to a 256 × 256 PNG and shows it next to the name in its popups |
 | **Suspend** | **Suspend the app** stops logins at once; **Resume** (confirmed with Google). A suspension by Journear only Journear can lift |
 
@@ -899,9 +900,127 @@ are yours.
   stamps contract's `collect`, the demo guestbook's `add_message`, on the environment's locked accounts): "Your App
   wants to collect the Arrival stamp for you", "It uses **Journear demo stamps** (…, checked by Journear)." Any other
   call, to your contracts too, reads as described above: the contract and the method, and for a relayed call the amber
-  "This acts as you" line. Your own words for a call never reach the window.
+  "This acts as you" line. Your own words reach the window only as request labels ([below](#request-labels-your-words-in-the-approval-window)),
+  in a box of their own after everything Journear says.
 - **When something fails** inside a Journear Passport window, it says what happened and what to do, with "Error code
   (for support): …" at the end. Your page gets the same `code` in the error.
+
+### Request labels: your words in the approval window
+
+**What they are.** Request labels are your own words for your app's requests. When a user approves a request that is
+exactly one you described, the approval window adds a box under everything Journear says:
+
+```
+Coffee Club says: pay for [order] [1042]
+These are Coffee Club's words. Journear hasn't checked them.
+```
+
+Journear writes the sentence: the verb and the joining words are Journear's, your phrase and the request's own values
+are set apart. Your words never replace, soften or move Journear's lines or warnings; amounts, recipients and the fee
+always come from the request itself. A request that doesn't match your description never shows your words.
+
+**Where.** Open your app, then the **Request labels** tab. Labels belong to the app's scope (the apps that share your
+users' wallets); each set is attached to the apps you choose, and users see your words under the name of the app they're using. Anyone in your
+organisation can read the tab; only an owner who is also an on-chain owner of the scope can propose or remove labels,
+and any owner can cancel a waiting change.
+
+**Not switched on yet.** Journear hasn't switched request labels on in any environment yet. Until it does, the tab says
+"Request labels aren’t switched on here yet. You can prepare and preview them." You can fill in the form and see the
+preview; proposing waits until they are on.
+
+**What the approval window shows today.** Labels for **payments to your Stellar accounts** (classic payments) show now.
+Labels for a **NEAR program** or a **Soroban contract** can be prepared and proposed, but are **not shown to users yet**:
+Journear first has to check the program's code, which comes later. Until then users see the plain window for them.
+
+**Writing them: a form, not JSON.** The editor is a form; you never have to write the document by hand.
+
+1. **What your labels describe**: payments to your Stellar accounts, a NEAR program (its account and code hash) or a
+   Soroban contract (its contract id and Wasm hash). The network is your app's: test apps describe the test networks.
+2. **Apps**: the apps these labels are for (1 to 8).
+3. **Your accounts**: the accounts your requests pay or name, each with the name users see for it. A payment shows
+   your words only when it goes to one of them.
+4. **For each request**: the verb, from Journear's list (add, bid, book, borrow, buy, cancel, check in, collect, create,
+   deposit, donate, join, leave, lend, list, pay, redeem, register, remove, renew, repay, sell, send, sign up, stake,
+   subscribe, swap, unstake, unsubscribe, vote, withdraw; a verb that says nothing moves, such as "collect", can't
+   describe a request that moves money); your phrase (up to 30 characters, plain words, as "order" or "the stamp");
+   when it matches (for a payment: the memo it carries, the assets, the highest amount and the highest network fee;
+   for a program: the NEAR it attaches, the most gas, every argument and its limits); the values users see (in the
+   sentence, or as up to 3 rows under it); and the sentence's order.
+5. **Advanced**: the document's text (`journear-labels/1`), if you'd rather edit it. The form follows when it can show
+   what you wrote, and says so when it can't.
+
+Every problem shows beside the field that caused it as you type, in the same words Journear's servers use. The rules,
+in short: plain Latin letters, digits, spaces and a few marks; no links, no amounts or account-like text, no "you" or
+"your", no claims ("free", "safe", "verified", "official", "guaranteed", "refund", …), no negations ("no", "never",
+"nothing", …), no names of Journear or of tokens, networks, wallets and exchanges, and no crypto jargon from Journear's
+plain-words list.
+
+**The preview.** Beside the form (under it on a phone) is the approval window itself, drawn by Journear's own window
+code with made-up values, in light or dark, at a phone's width, marked "Example: not a real request". Switch between **A payment that matches** (your box),
+**A payment that doesn't match** (no words from you, and an amber line: "Coffee Club describes this kind of request,
+but this one doesn't match, so Journear isn't showing Coffee Club's description. If you're not sure what this does,
+reject it.") and **A payment to an account not in your list** (a red line: "This isn't one of the accounts Coffee Club
+has listed for payments. If you expected to pay Coffee Club, don't approve.").
+
+**Before you describe payments.** The editor shows these where they apply; read them:
+
+- **List only accounts that only you control, never a shared deposit address.** An exchange's or anchor's deposit
+  address, where the memo picks who is credited, would let a tampered page get your words on a payment that credits
+  someone else.
+- **A payment description turns money to anyone else red.** With one, every time a user's money goes to an account that
+  isn't in your list, Journear shows your users a red warning: paying someone, a swap that pays someone else, creating
+  an account for someone, closing the account into another one, and sending a claimable balance. If your app's users
+  also pay other people, think twice before adding one.
+- **A muxed form (M…) of a listed account counts as that account.**
+- **Set a highest network fee.** Without one, a payment with an unusually high fee still shows your words (Journear's
+  own line always shows the fee). The editor offers 0.01 XLM.
+
+**Proposing.** **Review the change** shows what changes for users (lines added, changed or removed against what they
+see now) and what they would see; **Confirm with Google** (a fresh sign-in, bound to exactly this document) proposes
+it. Journear then emails your organisation's security contacts, and the change **goes live after the security delay
+that follows the email (24 hours on production deployments) unless someone cancels it; Journear may block it if it
+would mislead users.** The page and the email name your environment's delay. If Journear reviews your organisation's
+changes, the page says so: a change then goes live only after Journear allows it, at the earliest the security delay
+after the email, and lapses if it isn't allowed within 7 days of that time.
+
+**On the tab**, each set of labels shows its state: **Live** (and what users see now), **Waiting for the email**,
+**Goes live {time}**, **Held for Journear's review** (a waiting change shows what it changes for users), and for the last 14 days the changes that ended: **Blocked by
+Journear** with Journear's note, **Cancelled**, **Lapsed**, **Replaced**, **Removed**. **Switched off by Journear**
+means your users see the plain window for those requests; ask Journear security before changing them. While Journear
+has switched your organisation's labels off, nothing can be proposed.
+
+- **Cancel this change** stops a waiting change at once (no fresh sign-in); what users see now stays.
+- **Remove these labels** (a fresh sign-in) is immediate and final: users see the plain window from then on. To use
+  labels again, propose new ones, which wait again.
+
+**Refusals**, in the page's words: labels not switched on here; switched off by Journear ("ask Journear security
+before proposing new ones"); a change already waiting ("cancel it first"); the limits (at most 16 sets of labels per
+organisation, 64 KiB of documents, 32 KiB per app, 10 proposals a day); a version conflict ("Your request labels changed
+while you were working … Reload"); an owner who isn't an on-chain owner of the scope.
+
+**An example** (what the form writes for the box above, on a test app):
+
+```json
+{
+  "schema": "journear-labels/1",
+  "context": { "stellar": { "networkPassphrase": "Test SDF Network ; September 2015" } },
+  "metadata": { "addressBook": [{ "account": "GBBQ…5TZP", "name": "Coffee Club till" }] },
+  "display": {
+    "formats": {
+      "payment": {
+        "call": { "memo": "text", "feeAtMost": "100000" },
+        "intent": { "verb": "pay", "object": "order" },
+        "sentence": ["verb", { "word": "for" }, "object", { "field": "memo" }],
+        "fields": [{ "path": "memo", "label": "Order", "format": "orderNumber" }]
+      }
+    }
+  }
+}
+```
+
+(`GBBQ…5TZP` stands for your account's full G… address.) A NEAR program's labels describe a method, for example
+`collect` with a `stamp` argument and a list of values ("fare_paid" → "Fare paid"), read as "Stamp Trail says: collect
+the stamp “Fare paid”" once Journear shows NEAR labels.
 
 ### Stellar
 

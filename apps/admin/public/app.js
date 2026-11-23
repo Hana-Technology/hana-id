@@ -3117,11 +3117,11 @@ function labelToolsPanel(d, where, seen) {
         'div',
         { class: 'tool' },
         h('h3', {}, 'Block this change'),
-        h('p', {}, ch.state === 'in_force' ? 'Users see these words now. Blocking stops them at once, and the partner is told, with your note.' : 'Stops this change: users never see it, and the partner is told, with your note. Use it when the words would mislead users.'),
+        h('p', {}, ch.state === 'in_force' ? 'Users see these words now. Blocking stops them at once, and the partner is told, with your note: their security contacts by email, and everyone in their organisation on the console’s Request labels tab for 14 days.' : 'Stops this change: users never see it, and the partner is told, with your note: their security contacts by email, and everyone in their organisation on the console’s Request labels tab for 14 days. Use it when the words would mislead users.'),
         labelToolForm(
           where,
           'Block this change',
-          [labelNoteField('Why (the partner is sent this note; it is kept in the audit log)', 'The words say “collect a stamp” but the call moves money')],
+          [labelNoteField('Why (everyone in the partner’s organisation can read this note; it is kept in the audit log)', 'The words say “collect a stamp” but the call moves money')],
           path,
           (v) => ({ token: d.token, tool: 'block', note: v.note, seen }),
           ch.state === 'in_force' ? 'Block this change? Users stop seeing it at once, and the partner is told Journear blocked it.' : 'Block this change? Users will never see it, and the partner is told Journear blocked it.',

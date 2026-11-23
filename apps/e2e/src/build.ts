@@ -7,6 +7,8 @@
 //                                                 with the two e2e envs as its only known environments
 //   demo/                                         the hosted demo (apps/demo): its page and src/main.ts, configured
 //                                                 for the e2e env (DEMO_PK, the mocked EVM chain, its sponsorship)
+//   console/                                      the partner console's SPA (apps/console/web), built by its own Vite
+//                                                 config into this folder (D899: the lanes serve it)
 //   stamps/                                       the stamps site (apps/stamps): its page and src/main.ts, configured
 //                                                 for the e2e env (STAMPS_PK, the mocked stamps contract)
 //
@@ -14,6 +16,7 @@
 //
 // src/server/main.ts (Playwright's webServer) runs it before serving, unless --no-build.
 import './port-env.ts'; // first: this checkout's port base, before stack.ts reads it (`pnpm build` alone)
+import { execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Plugin, build } from 'esbuild';
@@ -23,7 +26,7 @@ import { buildVault } from '../../../packages/web/scripts/build-vault.ts';
 import { DEFAULT_STELLAR, type DemoConfig, demoEvmSponsor, validateDemoConfig } from '../../demo/src/config.ts';
 import { type StampsConfig, validateStampsConfig } from '../../stamps/src/config.ts';
 import { e2eRelayer } from './relayer-key.ts';
-import { BUILD_DIR, DEMO_PK, E2E_ENV as E2E_ENV_BASE, E2E_GUESTBOOK, E2E_STAMPS, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV as LIVE_ENV_BASE, STAMPS_PK, VAULT_ORIGIN, e2eEvmSponsor, e2eEvmSponsorVar, portBase } from './stack.ts';
+import { BUILD_DIR, CONSOLE_DIR, DEMO_PK, E2E_ENV as E2E_ENV_BASE, E2E_GUESTBOOK, E2E_STAMPS, ENV_NAME, EVM_CHAIN_ID, EVM_RPC, LIVE_ENV as LIVE_ENV_BASE, STAMPS_PK, VAULT_ORIGIN, e2eEvmSponsor, e2eEvmSponsorVar, portBase } from './stack.ts';
 
 /** An env with gas sponsorship on the mocked chain, its relayer the stack's own (src/relayer-key.ts, D834). */
 const sponsored = (e: HanaEnv): HanaEnv => Object.freeze({ ...e, evmSponsor: e2eEvmSponsor(e2eRelayer().address) });
@@ -36,6 +39,14 @@ export const PARTNER_DIR = fileURLToPath(new URL('partner/', BUILD_DIR));
 export const DEMO_DIR = fileURLToPath(new URL('demo/', BUILD_DIR));
 const demoRoot = fileURLToPath(new URL('../../demo/', import.meta.url));
 export const STAMPS_DIR = fileURLToPath(new URL('stamps/', BUILD_DIR));
+const CONSOLE_OUT = fileURLToPath(CONSOLE_DIR);
+const consoleRoot = fileURLToPath(new URL('../../console/', import.meta.url));
+
+/** The partner console's SPA (D899), by its own Vite config (as `pnpm --filter @hana-id/console build`), into stack.ts CONSOLE_DIR. */
+function buildConsole(): void {
+  const vite = fileURLToPath(new URL('node_modules/vite/bin/vite.js', `file://${consoleRoot}`));
+  execFileSync(process.execPath, [vite, 'build', '--outDir', CONSOLE_OUT, '--emptyOutDir', '--logLevel', 'warn'], { cwd: consoleRoot, stdio: ['ignore', 'ignore', 'inherit'] });
+}
 const stampsRoot = fileURLToPath(new URL('../../stamps/', import.meta.url));
 
 /**
@@ -170,6 +181,7 @@ export async function buildAll(): Promise<void> {
   await buildPartner();
   await buildDemo();
   await buildStamps();
+  buildConsole();
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -163,7 +163,9 @@ describe('one change’s page', () => {
     const tool = toolOf(p, 'Block this change');
     expect(toolOf(p, 'Allow')).toBeUndefined();
     const label = tool.querySelector('label')!.textContent;
-    expect(label).toBe('Why (the partner is sent this note; it is kept in the audit log)');
+    expect(label).toBe('Why (everyone in the partner’s organisation can read this note; it is kept in the audit log)');
+    // D899: the note is visible to every member of the partner's organisation, on the console, for 14 days.
+    expect(tool.textContent).toContain('everyone in their organisation on the console’s Request labels tab for 14 days');
     const input = tool.querySelector('input[name=note]') as unknown as HTMLInputElement;
     expect([input.getAttribute('minlength'), input.getAttribute('maxlength'), input.hasAttribute('required')]).toEqual(['10', '300', true]);
     input.value = 'too short';

@@ -74,7 +74,10 @@ export function stateOf(r: Pick<LabelRow, 'status' | 'notified_at' | 'active_fro
   }
 }
 
-/** A version as the console (`staff: false`) or staff read it. The block note is staff's (the partner gets it by email). */
+/**
+ * A version as the console (`staff: false`) or staff read it. Staff see every note; the partner sees Journear's note on
+ * a blocked version only (the note the blocked mail sends its security contacts, D899).
+ */
 export function labelView(r: LabelRow, now: number, staff = false): LabelChangeView {
   const state = stateOf(r, now);
   const lapsesAt = state === 'proposed' ? r.proposed_at + LABEL_LAPSE_MS : (state === 'waiting_review' || (state === 'announced' && r.held)) && r.active_from !== null ? r.active_from + LABEL_LAPSE_MS : null;
@@ -96,7 +99,7 @@ export function labelView(r: LabelRow, now: number, staff = false): LabelChangeV
     reviewRequired: r.allowed_at === null && !!r.review_required && (state === 'proposed' || state === 'announced' || state === 'waiting_review'),
     allowedAt: r.allowed_at,
     blockedAt: r.blocked_at,
-    ...(staff ? { blockNote: r.block_note } : {}),
+    ...(staff || state === 'blocked' ? { blockNote: r.block_note } : {}),
     endedAt: r.ended_at ?? r.cancelled_at,
     endReason: r.end_reason,
     previousId: r.previous_id,
@@ -129,6 +132,8 @@ export interface LabelPlan {
   same_context: number;
   /** Which staff switch has the org's labels off ('org', 'all'), or null. */
   org_off: 'org' | 'all' | null;
+  /** Journear reviews this org's changes before they go live (its switch or everyone's): what the preview tells the console. */
+  review_required: number;
 }
 
 export async function planLabels(db: HotDb, w: Writer, i: { orgId: string; scopeId: string; labelId: string | null; appIds: readonly string[]; contextKey: string | null }): Promise<LabelPlan> {
@@ -150,12 +155,16 @@ export async function planLabels(db: HotDb, w: Writer, i: { orgId: string; scope
              (SELECT COUNT(*) FROM label_changes c JOIN partner_labels pl ON pl.id = c.label_id WHERE pl.scope_id = ${i.scopeId} AND pl.org_id = ${i.orgId} AND ${live} AND ${other} AND c.context_key = ${i.contextKey ?? ''}) AS same_context
              , (CASE WHEN EXISTS (SELECT 1 FROM label_controls k WHERE k.target = ${i.orgId} AND k.labels_off = 1) THEN 'org'
                      WHEN EXISTS (SELECT 1 FROM label_controls k WHERE k.target = '*' AND k.labels_off = 1) THEN 'all' END) AS org_off
+             , ${REVIEW_ON(i.orgId)} AS review_required
         FROM (SELECT 1) LEFT JOIN scopes s ON s.scope_id = ${i.scopeId} AND s.org_id = ${i.orgId}
         LEFT JOIN partner_labels l ON l.id = ${i.labelId} AND l.org_id = s.org_id AND l.scope_id = s.scope_id
         LEFT JOIN label_changes cur ON cur.id = ${CURRENT('l', now)}`,
   );
   return r!;
 }
+
+/** Review is required for the org's changes: its own switch or everyone's. */
+export const REVIEW_ON = (orgId: string): Q => q`EXISTS (SELECT 1 FROM label_controls rv WHERE rv.target IN ('*', ${orgId}) AND rv.review_required = 1)`;
 
 /** The limits a proposal must fit (LABEL_STORE_LIMITS): the first one it doesn't, in words, or null. */
 export function limitProblem(p: LabelPlan, i: { newEntry: boolean; bytes: number; appIds: readonly string[] }): string | null {

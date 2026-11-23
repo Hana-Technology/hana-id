@@ -25,3 +25,4 @@ export * from './usage-event.ts';
 export * from './users.ts';
 export * from './email-views.ts';
 export * from './audit-words.ts';
+export * from './duration-words.ts';

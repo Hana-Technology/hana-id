@@ -235,7 +235,7 @@ describe('items 8, 9, 10, 13: the matcher’s inputs and outputs', () => {
   });
 });
 
-describe('item 13, as amended by D894 and D896: exactly three places outside core import the module, through its subpath', () => {
+describe('item 13, as amended by D894, D896 and D899: exactly four places outside core import the module, through its subpath', () => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   /** An import of the module: the subpath, or a relative path into core's folder. */
   const IMPORT = /(?:from\s*|import\s*\(\s*)['"]([^'"]*(?:@hana-id\/core\/partner-labels|core\/src\/partner-labels|vault\/partner-labels)[^'"]*)['"]/gu;
@@ -259,15 +259,27 @@ describe('item 13, as amended by D894 and D896: exactly three places outside cor
     expect(Object.entries(pkg.exports).filter(([, v]) => v.includes('partner-labels'))).toEqual([['./partner-labels', './src/partner-labels/index.ts']]);
     expect(readFileSync(join(root, 'packages/core/src/index.ts'), 'utf8')).not.toMatch(/partner-labels/u);
   });
-  it('the API’s labels module, the vault’s check and the window’s rendering are the only sources that import it, by the subpath', () => {
+  it('the API’s labels module, the vault’s check, the window’s rendering and the console’s editor are the only sources that import it, by the subpath', () => {
     const sources = importers().filter((h) => !isTest(h.file));
-    // render-approval.ts imports only the document's type, for its render context (erased from the bundle).
-    expect(sources.map((h) => h.file).sort()).toEqual(['apps/api/src/labels/document.ts', 'packages/web/src/auth/render-approval.ts', 'packages/web/src/auth/render-labels.ts', 'packages/web/src/vault/partner-labels.ts']);
+    // render-approval.ts imports only the document's type, for its render context (erased from the bundle). D899: the
+    // console's Request labels tab parses, checks and previews with the same module (in the browser, never a copy).
+    expect(sources.map((h) => h.file).sort()).toEqual([
+      'apps/api/src/labels/document.ts',
+      'apps/console/web/src/labels/Editor.tsx',
+      'apps/console/web/src/labels/Preview.tsx',
+      'apps/console/web/src/labels/examples.ts',
+      'apps/console/web/src/labels/model.ts',
+      'apps/console/web/src/labels/problems.ts',
+      'apps/console/web/src/pages/app/Labels.tsx',
+      'packages/web/src/auth/render-approval.ts',
+      'packages/web/src/auth/render-labels.ts',
+      'packages/web/src/vault/partner-labels.ts',
+    ]);
     // (Other files named partner-labels, such as the admin portal's own screen module, are not core's module.)
     expect(new Set(sources.map((h) => h.spec))).toEqual(new Set(['@hana-id/core/partner-labels']));
   });
   it('outside core, only those places’ tests import it (or the helper that wraps it)', () => {
     const tests = importers().filter((h) => isTest(h.file));
-    for (const t of tests) expect(t.file, t.spec).toMatch(/^(apps\/api\/test\/|packages\/web\/test\/)/u);
+    for (const t of tests) expect(t.file, t.spec).toMatch(/^(apps\/api\/test\/|packages\/web\/test\/|apps\/console\/web\/test\/)/u);
   });
 });

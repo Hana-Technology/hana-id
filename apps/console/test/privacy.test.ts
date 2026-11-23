@@ -48,6 +48,7 @@ describe('audit details', () => {
         ],
         "change.cancelled": [
           "code",
+          "changeId",
         ],
         "change.link_cancel": [
           "code",

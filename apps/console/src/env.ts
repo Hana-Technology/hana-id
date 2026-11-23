@@ -35,8 +35,9 @@ import type {
   UsageInput,
   UsageRow,
   LabelChangeView,
-  LabelEntryView,
+  LabelListAnswer,
   LabelPreview,
+  LabelPreviewAnswer,
   ListLabelsInput,
   PreviewLabelsInput,
   ProposeLabelsInput,
@@ -65,7 +66,8 @@ export interface ConsoleRpcClient {
   removeOrigins(c: RemoveOriginsInput): Answer<{ version: number }>;
   turnOff(c: TurnOffInput): Answer<{ version: number }>;
   updateSettings(c: UpdateSettingsInput): Answer<{ version: number }>;
-  cancelChange(c: CancelChangeInput): Answer<{ change: GuardedChange }>;
+  /** A guarded change (`gc_`) or a request labels version (`lc_`, D894): the answer is that change's own view. */
+  cancelChange(c: CancelChangeInput): Answer<{ change: GuardedChange | LabelChangeView }>;
   setSuspended(c: ConsoleSetSuspendedInput): Answer<{ suspendedBy: number }>;
   createKey(c: CreateKeyInput): Answer<{ key: KeyView }>;
   rotateKey(c: RotateKeyInput): Answer<{ key: KeyView; oldKeyRevokedAt: number }>;
@@ -78,9 +80,9 @@ export interface ConsoleRpcClient {
   usage(c: UsageInput): Answer<{ rows: UsageRow[] }>;
   statements(c: StatementsInput): Answer<{ statements: StatementWithTotals[] }>;
   ledger(c: LedgerInput): Answer<{ rows: LedgerRow[]; next?: string; asOf: number }>;
-  // D894: partner labels (the step-up kinds `labels.set` and `labels.remove`, actions.ts; no screen yet, piece 4).
-  listLabels(c: ListLabelsInput): Answer<{ labelsVersion: number; entries: LabelEntryView[] }>;
-  previewLabels(c: PreviewLabelsInput): Answer<{ preview: LabelPreview; sha256: string; bytes: number; labelsVersion: number; noChange: boolean }>;
+  // D894: partner labels (the step-up kinds `labels.set` and `labels.remove`, actions.ts); D899: the Request labels page.
+  listLabels(c: ListLabelsInput): Answer<LabelListAnswer>;
+  previewLabels(c: PreviewLabelsInput): Answer<LabelPreviewAnswer>;
   proposeLabels(c: ProposeLabelsInput): Answer<{ version: number; change: LabelChangeView | null; preview: LabelPreview; noChange: boolean }>;
   removeLabels(c: RemoveLabelsInput): Answer<{ version: number }>;
 }

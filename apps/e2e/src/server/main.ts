@@ -15,6 +15,9 @@
 //                                          stack's Access stand-in, its own API copy and relayer: admin-lane.ts); sign in
 //                                          at /__e2e/access/sign-in?as=staff
 //   http://127.0.0.1:4444, :4445, :4446    the same, one lane per browser project (chromium, firefox, webkit)
+//   http://127.0.0.1:4447, :4448, :4449    the partner console in those lanes (apps/console's Worker and SPA over the
+//                                          lane's API, D899: lane-console.ts); sign in at /__e2e/console/sign-in
+//   http://127.0.0.1:4452, :4453, :4454    the console's auth origin in those lanes (the fresh sign-in)
 //   http://127.0.0.1:4450                  the mocked NEAR RPC
 //   http://127.0.0.1:4451                  the same chain, as the env's rpcFallback (D263)
 //   http://127.0.0.1:4460                  the mocked EVM chain RPC
@@ -29,7 +32,7 @@
 import '../port-env.ts'; // first: this checkout's port base, before stack.ts reads it
 import { buildAll } from '../build.ts';
 import { stackFingerprint } from '../fingerprint.ts';
-import { ADMIN_LANES, EMAIL_ISS, LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';
+import { ADMIN_LANES, CONSOLE_LANES, EMAIL_ISS, LIVE_API_URL, LIVE_AUTH_ORIGIN, LIVE_ENV_NAME, LIVE_NEAR_RPC, LIVE_VAULT_ORIGIN, PORTS } from '../stack.ts';
 import { MockApi } from './api.ts';
 import { GoogleBackend } from './google-backend.ts';
 import { newAccessKeys } from './access.ts';
@@ -77,6 +80,9 @@ export async function startStack(fingerprint: string): Promise<void> {
   const lanes = new AdminLanes({ access, issuer: issuer.directoryRpc });
   const lanePorts = { demo: PORTS.admin, chromium: PORTS.adminChromium, firefox: PORTS.adminFirefox, webkit: PORTS.adminWebkit } as const;
   for (const [name, origin] of Object.entries(ADMIN_LANES)) await serve(lanePorts[name as keyof typeof lanePorts], loopback, lanes.handler(name, origin));
+  // The partner console in the browser lanes (D899): the same lane thread answers its two origins.
+  const consolePorts = { chromium: [PORTS.consoleChromium, PORTS.consoleAuthChromium], firefox: [PORTS.consoleFirefox, PORTS.consoleAuthFirefox], webkit: [PORTS.consoleWebkit, PORTS.consoleAuthWebkit] } as const;
+  for (const name of Object.keys(CONSOLE_LANES) as (keyof typeof CONSOLE_LANES)[]) for (const port of consolePorts[name]) await serve(port, loopback, lanes.handler(name, ADMIN_LANES[name]));
   // Live mode (LIVE_ENV): a second Worker and pair of page hosts for the https origins, on the same D1 and chain.
   const live: PagesEnv = { envName: LIVE_ENV_NAME, vaultOrigin: LIVE_VAULT_ORIGIN, authOrigin: LIVE_AUTH_ORIGIN, apiUrl: LIVE_API_URL, nearRpc: LIVE_NEAR_RPC };
   const liveApi = new MockApi(d1, chain, modules, { serves: live });

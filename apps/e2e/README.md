@@ -512,6 +512,24 @@ at the top), `03-review-allow` and `03-review-feed` (required review, waiting fo
 HANA_SHOTS_DIR=<dir> corepack pnpm --filter @hana-id/e2e e2e tests/partner-labels.spec.ts --project=chromium
 ```
 
+**The partner console in the lanes (D899, `src/server/lane-console.ts`).** Each browser lane also serves apps/console's
+real Worker and its SPA (built by `src/build.ts` into `.build/console/`) on an origin of its own
+(`http://127.0.0.1:<base+37 | +38 | +39>`, chromium, firefox, webkit) and its auth origin (`<base+42 | +43 | +44>`),
+over the lane's own API and console D1. Two stand-ins sit at its edge, as the Access stand-in does for the admin
+portal: `GET /__e2e/console/sign-in?to=/path` makes the lane labels org's owner (the scope's on-chain owner on the lane's
+chain) a console owner and gives it a session made by the console's own `createSession`; and the fresh sign-in's Google
+step is answered at once by the edge (the console's real `/start` and `/callback`, and its own code exchange, answered
+in the lane thread's fetch with an ID token from the lane's Google key for exactly that flow's nonce, after its PKCE
+verifier checks out). Browsers keep `Secure` cookies only from https (WebKit not even on loopback), so the edge renames
+the console's `__Host-…; Secure` cookies to `e2e-host-…` without `Secure` on the way out and back on the way in.
+`tests/partner-labels-console.spec.ts`, in each browser's lane (its lease held): the Request labels tab's form filled
+(an account, the phrase, the memo, the sentence's order by its buttons, the suggested fee), the window's own preview
+(the partner's box; the amber and red lines), a claim word refused beside its field, Review → the confirmation's diff →
+Confirm with Google → proposed, the change waiting with its time once the lane announces it, Cancel; and a change
+staff blocked, listed with its note. With `HANA_SHOTS_DIR=<dir>` (Chromium) its last test saves the founder's
+screenshots, at 1280 and 390 px, light and dark: `01-editor-match`, `01-editor-mismatch`, `01-editor-not-listed`,
+`02-editor-problem`, `03-review`, `04-list`, `05-list-blocked`, `06-editor-near`.
+
 Partner labels' app changes and the Block's audit rows stay in the lane, and the stack runs no admin cron to mail them:
 Feed and notices' Feeds panel may show them behind, which `tests/admin-portal.spec.ts` allows.
 

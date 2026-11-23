@@ -145,8 +145,14 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     at('/orgs/org_a/apps/app_1/signing');
     fireEvent.change(await screen.findByLabelText(/Policy \(JSON/u), { target: { value: JSON.stringify(policyJson()) } });
     fireEvent.click(screen.getByRole('button', { name: 'Check and preview' }));
-    expect(await screen.findByText('Allow automatic approvals?')).toBeTruthy();
-    expect(screen.getByText('“Swaps on Example”')).toBeTruthy();
+    // The consent screen is drawn in the preview's shadow root, with the popup's stylesheet (D899).
+    const consent = await waitFor(() => {
+      const root = (document.querySelector('.consent-preview .window-host') as HTMLElement | null)?.shadowRoot;
+      expect(root?.textContent).toContain('Allow automatic approvals?');
+      return root!;
+    });
+    expect(consent.textContent).toContain('“Swaps on Example”');
+    expect(consent.querySelector('.consent-frame .example-mark')?.textContent).toBe('Example: not a real request');
     expect(bodyOf('/api/orgs/org_a/apps/app_1/policy/check')).toEqual({ policy: policyJson() });
     fireEvent.click(screen.getByRole('button', { name: /Propose this policy/u }));
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_3'));
@@ -164,7 +170,7 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     expect(alert.textContent).toContain('The policy has problems');
     expect(within(alert).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['label: required', 'v: must be 1']);
     expect(alert.textContent).toContain('policy_invalid');
-    expect(screen.queryByText('Allow automatic approvals?')).toBeNull();
+    expect(document.querySelector('.consent-preview')).toBeNull();
   });
 });
 

@@ -84,6 +84,22 @@ async function answered<T extends object>(c: RouteCall, method: string, action: 
 }
 
 const appOf = (c: RouteCall): string => c.m[1]!;
+
+/**
+ * `GET /api/orgs/:org/scopes/:scope/labels` (D899): ConsoleRpc.listLabels as it answers (the entries, whether labels are
+ * on here, Journear's switch over the org's labels, whether Journear reviews changes) and `now`, the server's clock, so
+ * the page judges what is still waiting by it (D701).
+ */
+async function labelsRoute(c: RouteCall): Promise<Response> {
+  const scopeId = scopeIdInput.parse(c.m[1]);
+  const r = await c.env.API.listLabels({ ...ctxOf(c), orgId: c.caller.orgId, scopeId });
+  if (!r.ok) {
+    log({ event: 'console_rpc', method: 'listLabels', requestId: c.info.requestId, orgId: c.caller.orgId, outcome: 'rejected', code: r.code });
+    return errorResponse(r.code);
+  }
+  const { ok: _ok, ...answer } = r;
+  return json(200, { ...answer, now: Date.now() });
+}
 const reportCaller = (c: RouteCall) => ({ orgId: c.caller.orgId, actor: actorOf(c.caller.session) });
 
 const ROUTES: OrgRouteDef[] = [
@@ -116,8 +132,9 @@ const ROUTES: OrgRouteDef[] = [
     },
   },
   {
+    // A guarded change (`gc_`) or a request labels version (`lc_`, D894, D899): cancelled at once, no fresh sign-in.
     method: 'POST',
-    re: /^\/changes\/(gc_[A-Za-z0-9]{1,64})\/cancel$/u,
+    re: /^\/changes\/((?:gc|lc)_[A-Za-z0-9]{1,64})\/cancel$/u,
     role: 'owner',
     frozenOk: true,
     run: async (c) => {
@@ -125,7 +142,8 @@ const ROUTES: OrgRouteDef[] = [
       if (!b.ok) return b.res;
       const changeId = changeIdInput.parse(c.m[1]);
       const r = await c.env.API.cancelChange({ ...ctxOf(c), orgId: c.caller.orgId, changeId });
-      return answered(c, 'cancelChange', 'change.cancelled', r.ok ? r.change.appId : null, r, () => ({}), (x) => x.change);
+      const appId = r.ok && 'appId' in r.change ? r.change.appId : null;
+      return answered(c, 'cancelChange', 'change.cancelled', appId, r, (): Record<string, string> => (changeId.startsWith('lc_') ? { changeId } : {}), (x) => x.change);
     },
   },
   {
@@ -245,6 +263,9 @@ const ROUTES: OrgRouteDef[] = [
       return json(200, {});
     },
   },
+
+  // ---- request labels (D899): a scope's entries, any member; proposing and removing are step-ups (actions.ts) ----
+  { method: 'GET', re: /^\/scopes\/(global|s[0-9a-z]{1,32})\/labels$/u, role: 'viewer', frozenOk: true, run: (c) => labelsRoute(c) },
 
   // ---- on chain ----
   { method: 'GET', re: /^\/scopes\/(global|s[0-9a-z]{1,32})$/u, role: 'viewer', frozenOk: true, run: (c) => scopeRoute(c.env, ctxOf(c), c.caller.orgId, c.m[1]!, c.caller.session.sub) },

@@ -4,6 +4,7 @@
 import { type AppChange, type AuditRow, type InviteView, type LabelDiffLine, type LabelNotice, type MemberNotice, type SecurityEvent, actionLabel, detailFields, securityEventLabel } from '@hana-id/console-core';
 import type { ChangeNotice } from '../env.ts';
 import { log } from '../log.ts';
+import { durationWords } from '@hana-id/console-core/duration-words';
 import { type Block, type Design, type LogRow, type Rendered, cut, duration, oneLine, readableTime, render, rowTime } from './render.ts';
 
 export interface MailContext {
@@ -208,23 +209,8 @@ export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?:
 
 // ---- request labels (D894; staff call them partner labels) ----
 
-/** A wait in words for a partner: "24 hours", "1 hour 30 minutes", "7 days", "1 minute" (the two largest units). */
-export function durationWords(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 60_000) return 'less than a minute';
-  const units: [number, string][] = [
-    [86_400_000, 'day'],
-    [3_600_000, 'hour'],
-    [60_000, 'minute'],
-  ];
-  const parts: string[] = [];
-  let left = ms;
-  for (const [size, name] of units) {
-    const n = Math.floor(left / size);
-    left -= n * size;
-    if (n > 0) parts.push(`${n} ${name}${n === 1 ? '' : 's'}`);
-  }
-  return parts.slice(0, 2).join(' ');
-}
+/** A wait in words for a partner (console-core, shared with the partner console's Request labels tab, D899). */
+export { durationWords };
 
 /** Names as a sentence lists them: "A", "A and B", "A, B and C". */
 export const nameList = (names: readonly string[]): string => (names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);

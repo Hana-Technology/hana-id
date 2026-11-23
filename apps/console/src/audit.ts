@@ -54,7 +54,7 @@ export const AUDIT_DETAIL_KEYS = {
   'org.policy': ['requiredHd'],
   'origins.removed': ['code', 'version', 'removed'],
   'app.turned_off': ['code', 'version', 'what'],
-  'change.cancelled': ['code'],
+  'change.cancelled': ['code', 'changeId'],
   'app.suspended': ['code', 'suspendedBy'],
   'app.renamed': ['code', 'version'],
   'key.created': ['code', 'keyId'],

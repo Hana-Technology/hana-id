@@ -125,6 +125,7 @@ const SECTIONS = [
   ['sessions', 'Login & sessions'],
   ['email', 'Email login'],
   ['signing', 'Signing'],
+  ['labels', 'Request labels'],
   ['branding', 'Branding'],
   ['suspend', 'Suspend'],
 ] as const;

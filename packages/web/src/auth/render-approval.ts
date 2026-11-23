@@ -50,16 +50,9 @@ import { type Child, type Dom, dom, row, rows, withoutEmptyLists } from './dom.t
 import { LABEL_MISMATCH, LABEL_NOT_LISTED, type LabelOutcome, type WindowLabelFacts, labelBox, labelOutcome } from './render-labels.ts';
 import { alert, icon } from './ui.ts';
 
-/** `value` with `decimals` decimal places, trailing zeros trimmed: formatUnits(1500000000000000000n, 18) = "1.5". */
-export function formatUnits(value: bigint | string, decimals: number): string {
-  const v = typeof value === 'bigint' ? value : BigInt(value);
-  const neg = v < 0n;
-  const abs = neg ? -v : v;
-  const base = 10n ** BigInt(decimals);
-  const whole = abs / base;
-  const frac = (abs % base).toString().padStart(decimals, '0').replace(/0+$/u, '');
-  return `${neg ? '-' : ''}${whole}${frac ? `.${frac}` : ''}`;
-}
+import { formatUnits } from './format-units.ts';
+
+export { formatUnits };
 
 const stroops = (s: string) => `${formatUnits(s, 7)} XLM (${s} stroops)`;
 const wei = (v: bigint) => `${formatUnits(v, 18)} (${v} wei)`;

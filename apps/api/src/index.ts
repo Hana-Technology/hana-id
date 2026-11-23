@@ -281,17 +281,22 @@ export default {
     // Every run (D863): the NEAR relay's billing records read at FINAL, copied to the usage ledger, lateness checked.
     // Also outside `jobs`; never fails the run (nothing to do before migration 0023).
     const nearBilling = nearBillingMaintenance(env).catch(() => undefined);
-    const [issuerKeys, vault, identity, guarded, drift] = await Promise.allSettled(jobs);
+    const [issuerKeys, vault, identity, guarded, drift, labels, labelDrift] = await Promise.allSettled(jobs);
     await evmRelayCheck;
     await nearBilling;
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (identity?.status === 'rejected') log({ event: 'identity_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (guarded?.status === 'rejected') log({ event: 'guarded_change_cron', outcome: 'error', code: 'internal' }, 'error');
     if (drift?.status === 'rejected') log({ event: 'drift_detection', outcome: 'error', code: 'internal' }, 'error');
+    // D894: partner labels' hourly job and drift check, logged and thrown as the guarded changes' are.
+    if (labels?.status === 'rejected') log({ event: 'labels_cron', outcome: 'error', code: 'internal' }, 'error');
+    if (labelDrift?.status === 'rejected') log({ event: 'label_drift_detection', outcome: 'error', code: 'internal' }, 'error');
     if (issuerKeys?.status === 'rejected') throw issuerKeys.reason;
     if (vault?.status === 'rejected') throw vault.reason;
     if (identity?.status === 'rejected') throw identity.reason;
     if (guarded?.status === 'rejected') throw guarded.reason;
     if (drift?.status === 'rejected') throw drift.reason;
+    if (labels?.status === 'rejected') throw labels.reason;
+    if (labelDrift?.status === 'rejected') throw labelDrift.reason;
   },
 } satisfies ExportedHandler<Env>;

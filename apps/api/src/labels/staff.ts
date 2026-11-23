@@ -93,14 +93,16 @@ export async function labelStaffAct(db: HotDb, w: Writer, i: { changeId: string;
     if (!['proposed', 'announced', 'waiting_review', 'in_force'].includes(state)) refuse('not_pending', `The change is ${state.replace('_', ' ')}: there is nothing to block`);
     const wasLive = state === 'in_force';
     stmts = [
-      commitOn(w, { kind: 'labels.blocked', detail: { changeId: r.id, labelId: r.label_id, wasLive, note } }, ids, q`${version} AND EXISTS (SELECT 1 FROM label_changes WHERE id = ${r.id} AND status IN ('pending', 'active'))`),
+      commitOn(w, { kind: 'labels.blocked', detail: { changeId: r.id, labelId: r.label_id, wasLive, offBy: r.off_by, note } }, ids, q`${version} AND EXISTS (SELECT 1 FROM label_changes WHERE id = ${r.id} AND status IN ('pending', 'active'))`),
       q`UPDATE scopes SET labels_version = labels_version + 1 WHERE scope_id = ${r.scope_id} AND ${committed(w.requestId)}`,
       q`UPDATE label_changes SET status = 'blocked', blocked_at = ${w.now}, blocked_by = ${by}, block_note = ${note}, was_live = ${wasLive ? 1 : 0} WHERE id = ${r.id} AND status IN ('pending', 'active') AND ${committed(w.requestId)}`,
       await labelEvent(w, 'label_blocked', { id: r.id, labelId: r.label_id, orgId: r.org_id, scopeId: r.scope_id }, { wasLive }),
     ];
     if (wasLive) {
       stmts.push(
-        q`UPDATE label_changes SET status = 'ended', end_reason = 'replaced', ended_at = ${w.now}
+        // The older versions still in force end with it (`blocked_successor`): users then see the plain window, never
+        // the earlier labels again.
+        q`UPDATE label_changes SET status = 'ended', end_reason = 'blocked_successor', ended_at = ${w.now}
            WHERE label_id = ${r.label_id} AND id != ${r.id} AND ${IN_FORCE('label_changes', w.now)} AND ${committed(w.requestId)}`,
       );
     }
@@ -172,8 +174,11 @@ export async function labelControl(db: HotDb, w: Writer, i: { target: LabelContr
   const pred = q`COALESCE((SELECT version FROM label_controls WHERE target = ${target}), 0) = ${i.seenVersion}`;
   const stmts: Q[] = [
     q`INSERT INTO label_control_log (at, target, labels_off, review_required, actor_id, note, request_id) SELECT ${w.now}, ${target}, ${off ? 1 : 0}, ${review ? 1 : 0}, ${by}, ${note}, ${w.requestId} WHERE ${pred}`,
-    q`INSERT INTO label_controls (target, labels_off, review_required, updated_at, updated_by, note, version) SELECT ${target}, ${off ? 1 : 0}, ${review ? 1 : 0}, ${w.now}, ${by}, ${note}, 1 WHERE ${logged}
-      ON CONFLICT (target) DO UPDATE SET labels_off = excluded.labels_off, review_required = excluded.review_required, updated_at = excluded.updated_at, updated_by = excluded.updated_by, note = excluded.note, version = label_controls.version + 1`,
+    // review_since: when review was turned on (kept while it stays on; cleared when off): it holds only versions due after it.
+    q`INSERT INTO label_controls (target, labels_off, review_required, review_since, updated_at, updated_by, note, version) SELECT ${target}, ${off ? 1 : 0}, ${review ? 1 : 0}, ${review ? w.now : null}, ${w.now}, ${by}, ${note}, 1 WHERE ${logged}
+      ON CONFLICT (target) DO UPDATE SET labels_off = excluded.labels_off, review_required = excluded.review_required,
+        review_since = CASE WHEN excluded.review_required = 1 THEN COALESCE(CASE WHEN label_controls.review_required = 1 THEN label_controls.review_since END, excluded.review_since) END,
+        updated_at = excluded.updated_at, updated_by = excluded.updated_by, note = excluded.note, version = label_controls.version + 1`,
   ];
   if (i.target.kind === 'org') stmts.push(appChangeRow(w, KIND_OF[i.what], { orgId: i.target.orgId }, { target: 'org', note }, logged));
   await runControl(db, w, stmts);

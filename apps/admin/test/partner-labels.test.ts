@@ -8,7 +8,7 @@
 import { type LabelControls, type LabelFeedItem, linkToken } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { durationWords, labelsBlocked, labelsProposed, nameList } from '../src/email/messages.ts';
+import { durationWords, labelsBlocked, labelsLapsed, labelsProposed, nameList } from '../src/email/messages.ts';
 import { SKIPPED_CHANGE_KINDS, runFeed } from '../src/feed.ts';
 import { Budget } from '../src/mail.ts';
 import { runLabelNotices } from '../src/notices.ts';
@@ -43,7 +43,7 @@ describe('the request labels notice', () => {
     expect(mine.map((m) => m.to).sort()).toEqual([ALIAS, ...contacts].sort());
     for (const m of mine) {
       expect(m.subject).toMatch(new RegExp(`\\[Journear Passport sandbox-test\\] Request labels proposed for Test ${app.id}$`, 'u'));
-      expect(m.text).toContain(`Someone with owner rights in your organisation proposed request labels for Test ${app.id}: the words the approval window will show your users for your app’s requests, in your app’s name. Unless someone cancels it, it goes live 1 minute after this email. Journear may block it if it would mislead users.`);
+      expect(m.text).toContain(`Someone with owner rights in your organisation proposed request labels for Test ${app.id}: the words the approval window will show your users for your app’s requests, in your app’s name. Unless someone cancels them, they go live 1 minute after this email. Journear may block them if they would mislead users.`);
       expect(m.text).toContain('What users would see (example values):');
       expect(m.text).toContain(`Test ${app.id} says: collect the stamp “Arrival”`);
       expect(m.text).toContain('- Stamp: “Arrival”');
@@ -131,7 +131,7 @@ describe('the request labels notice', () => {
     const m = labelsProposed({ env: 'sandbox-test', consoleOrigin: CONSOLE }, notice, { cancelUrl: `${CONSOLE}/cancel/lc_x1#t=${'A'.repeat(43)}`, delayMs: 86_400_000 });
     expect(m.subject).toBe('[Journear Passport sandbox-test] Request labels proposed for Stamps');
     expect(m.text).toContain('proposed request labels for Stamps and Club:');
-    expect(m.text).toContain('it goes live 1 day after this email');
+    expect(m.text).toContain('they go live 1 day after this email');
     expect(m.text).toContain('- Changed: Stamps says: collect the stamp “Arrival” → Stamps says: claim the stamp “Arrival”\n- Removed: Stamps says: old words');
     expect(m.text).not.toContain('redeem');
     expect([durationWords(60_000), durationWords(86_400_000), durationWords(90 * 60_000), durationWords(7 * 86_400_000), durationWords(1000)]).toEqual(['1 minute', '1 day', '1 hour 30 minutes', '7 days', 'less than a minute']);
@@ -175,13 +175,15 @@ describe('the feed: the proposal is the notice’s; a block gets its own mail', 
     expect(mine.map((m) => m.to).sort()).toEqual([ALIAS, c.app.contact].sort());
     for (const m of mine) {
       expect(m.subject).toMatch(new RegExp(`\\[Journear Passport sandbox-test\\] Journear blocked a change to request labels for Test ${c.app.id}$`, 'u'));
-      expect(m.text).toContain(`Journear blocked a change to the request labels of Test ${c.app.id} (${c.id}). Your users will never see it.`);
+      expect(m.text).toContain(`Journear blocked a change to the request labels of Test ${c.app.id} (${c.id}): the words the approval window shows your users for your app’s requests. Your users will never see it.`);
       expect(m.text).toContain('Journear’s note: “The words hide that the call moves money”');
       expect(m.text).toContain('To ask why, reply to this email or write to your Journear contact. To try again, change the labels in the console; the new change waits 1 minute again.');
       expect(m.html).not.toMatch(/href=/u);
     }
     // The digest of the org's other rows carries no line for the block.
-    for (const m of fake.to(c.app.contact).filter((x) => x.subject.includes('app change'))) expect(m.text).not.toContain('labels.blocked');
+    for (const m of fake.to(c.app.contact).filter((x) => x.subject.includes('app change'))) expect(m.text).not.toContain('labels.blocked');    // One message for one block: the `label_blocked` security event goes to the security alias only, never the partner.
+    expect(fake.sent.filter((m) => m.to === c.app.contact && m.subject.includes('Security event'))).toEqual([]);
+    expect(fake.sent.some((m) => m.to === ALIAS && m.subject.includes('Security event: label_blocked'))).toBe(true);
   });
 
   it('a block of labels in force says users stop seeing them now; without the app names (the lookup refused) it says “your app”', async () => {
@@ -190,13 +192,37 @@ describe('the feed: the proposal is the notice’s; a block gets its own mail', 
     const { fake } = await drain(envWith({ API: overrideBinding(env.API, { labelDetail: async () => ({ ok: false, code: 'forbidden' }) }) }), data);
     const m = fake.sent.find((x) => x.to === c.app.contact && x.subject.includes('Journear blocked'))!;
     expect(m.subject).toContain('Journear blocked a change to request labels for your app');
-    expect(m.text).toContain(`Journear blocked a change to the request labels of your app (${c.id}). Your users no longer see it, from now.`);
+    expect(m.text).toContain(`Journear blocked a change to the request labels of your app (${c.id}): the words the approval window shows your users for your app’s requests. Your users see the plain approval window for these requests from now, without your earlier labels either.`);
+  });
+
+  it('the notice when staff review is on: it goes live only once Journear allows it, at the earliest after the wait; it lapses after 7 days; the org’s name', () => {
+    const notice = {
+      change: { id: 'lc_r1', labelId: 'pl_x', orgId: 'org_x', scopeId: 'sx', environment: 'test', apps: [{ id: 'app_a', name: 'Stamps' }], proposedAt: Date.UTC(2026, 10, 23, 9, 0), reviewRequired: true },
+      contacts: [],
+      preview: null,
+      diff: [],
+    } as never;
+    const m = labelsProposed({ env: 'sandbox-test', consoleOrigin: CONSOLE }, notice, { cancelUrl: `${CONSOLE}/cancel/lc_r1#t=${'A'.repeat(43)}`, delayMs: 86_400_000, orgName: 'Stamp Rally Ltd' });
+    expect(m.text).toContain('Journear reviews them first: they go live only after Journear allows them, at the earliest 1 day after this email, unless someone cancels them. If Journear hasn’t allowed them within 7 days of that time, they lapse and nothing changes.');
+    expect(m.text).not.toContain('Unless someone cancels them, they go live');
+    expect(m.text).toContain('Stamp Rally Ltd (org_x)');
+  });
+
+  it('a change held for review that lapsed: its own mail', () => {
+    const m = labelsLapsed({ env: 'sandbox-test', consoleOrigin: CONSOLE }, { seq: 2, at: Date.UTC(2026, 10, 30, 9, 0), kind: 'change.cancelled', orgId: 'org_x', scopeId: 'sx', appId: null, actorKind: 'system', actorId: 'cron', detail: { changeId: 'lc_7', kind: 'label_set', reason: 'not_reviewed' } } as never, { apps: ['Stamps'] });
+    expect(m.subject).toBe('[Journear Passport sandbox-test] A change to request labels lapsed for Stamps');
+    expect(m.text).toContain('A change to the request labels of Stamps (lc_7) lapsed: Journear didn’t allow it within 7 days of its time, so your users never see it. Nothing else changed.');
+  });
+
+  it('a block of a live change while Journear had the labels switched off says what is true', () => {
+    const m = labelsBlocked({ env: 'sandbox-test', consoleOrigin: CONSOLE }, { seq: 3, at: Date.UTC(2026, 10, 23, 9, 0), kind: 'labels.blocked', orgId: 'org_x', scopeId: 'sx', appId: null, actorKind: 'hana', actorId: 'staff', detail: { changeId: 'lc_8', wasLive: true, offBy: 'org', note: 'x' } } as never, { apps: ['Stamps'], delayMs: 86_400_000 });
+    expect(m.text).toContain('Your users weren’t seeing it: Journear had already switched these labels off. When they are switched back on, neither these nor your earlier labels will show.');
   });
 
   it('the mail’s words on their own', () => {
     const m = labelsBlocked({ env: 'sandbox-test', consoleOrigin: CONSOLE }, { seq: 1, at: Date.UTC(2026, 10, 23, 9, 0), kind: 'labels.blocked', orgId: 'org_x', scopeId: 'sx', appId: null, actorKind: 'hana', actorId: 'staff', detail: { changeId: 'lc_9', wasLive: false, note: 'Misleading' } } as never, { apps: ['Stamps', 'Club'], delayMs: 86_400_000 });
     expect(m.subject).toBe('[Journear Passport sandbox-test] Journear blocked a change to request labels for Stamps');
-    expect(m.text).toContain('Journear blocked a change to the request labels of Stamps and Club (lc_9). Your users will never see it.');
+    expect(m.text).toContain('Journear blocked a change to the request labels of Stamps and Club (lc_9): the words the approval window shows your users for your app’s requests. Your users will never see it.');
     expect(m.text).toContain('the new change waits 1 day again.');
   });
 });
@@ -510,5 +536,23 @@ describe('plain staff words (D853, D879)', () => {
       expect(s, s).not.toMatch(STAFF_JARGON);
       expect(s.length, s).toBeLessThan(260);
     }
+  });
+});
+
+describe('staff Block a label change, never cancel it (D894 after review)', () => {
+  it('the old guarded-change cancel route refuses an lc_ id, in plain words, and the API refuses it too; nothing changes', async () => {
+    const c = await seedLabelChange({});
+    const res = await adminRequest(`/api/changes/${c.id}/cancel`, { body: { orgId: c.app.org } });
+    expect(res.status).toBe(403);
+    expect(await json(res)).toMatchObject({ error: { code: 'forbidden', message: 'Staff don’t cancel request label changes. Open it on Partner labels and use Block this change, with a note.' } });
+    const api = await env.API.cancelChange({ ...staffReq(), orgId: c.app.org, changeId: c.id });
+    expect(api).toMatchObject({ ok: false, code: 'forbidden' });
+    expect((await labelChangeRow(c.id))!.status).toBe('pending');
+  });
+
+  it('expedite and the guarded notice’s ack take a guarded change only, never a label version', async () => {
+    const c = await seedLabelChange({});
+    expect(await env.API.expediteChange({ ...staffReq(), changeId: c.id, reason: 'The security contact confirmed it by phone today' })).toMatchObject({ ok: false, code: 'bad_request' });
+    expect((await labelChangeRow(c.id))!.status).toBe('pending');
   });
 });

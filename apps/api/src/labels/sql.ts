@@ -17,9 +17,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** A version not announced within this long of its proposal lapses; so does one held for review this long after its time. */
 export const LABEL_LAPSE_MS = 7 * DAY_MS;
 
-/** Review is required for the org of version `c` (its org's switch or everyone's) and no staff member allowed it. */
+/**
+ * Review holds version `c`: review is required for its org (its org's switch or everyone's), it was turned on before
+ * the version's time came (a version due, or not yet announced, when review was turned on; one whose time had passed
+ * stays in force whether or not the hourly job had recorded it: the outcome never depends on the job's timing, D894
+ * after review), and no staff member allowed it.
+ */
 export const REVIEW_HELD = (c: string): Q =>
-  raw(`(${c}.allowed_at IS NULL AND EXISTS (SELECT 1 FROM label_controls rr WHERE rr.target IN ('*', ${c}.org_id) AND rr.review_required = 1))`);
+  raw(`(${c}.allowed_at IS NULL AND EXISTS (SELECT 1 FROM label_controls rr WHERE rr.target IN ('*', ${c}.org_id) AND rr.review_required = 1
+        AND (${c}.active_from IS NULL OR ${c}.active_from > rr.review_since)))`);
 
 /** Version `c` is in force at `now`. */
 export const IN_FORCE = (c: string, now: number): Q =>
@@ -40,3 +46,12 @@ export const OFF_BY = (l: string): Q =>
   raw(`(CASE WHEN ${l}.off_at IS NOT NULL THEN 'entry'
              WHEN EXISTS (SELECT 1 FROM label_controls ko WHERE ko.target = ${l}.org_id AND ko.labels_off = 1) THEN 'org'
              WHEN EXISTS (SELECT 1 FROM label_controls ka WHERE ka.target = '*' AND ka.labels_off = 1) THEN 'all' END)`);
+
+/**
+ * Whether migration 0025's tables exist (an API deployed before the migration was applied): the hourly job and drift
+ * check skip with one warning line rather than fail every hour (D894 after review).
+ */
+export async function labelTablesExist(db: D1Database): Promise<boolean> {
+  const r = await db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name IN ('label_changes', 'label_controls', 'label_control_log', 'partner_labels')").first<{ n: number }>();
+  return (r?.n ?? 0) === 4;
+}

@@ -16,6 +16,8 @@ export const orgIdInput = z.string().regex(/^org_[A-Za-z0-9]{1,64}$/u);
 export const appIdInput = z.string().regex(/^app_[A-Za-z0-9]{1,64}$/u);
 /** A guarded change (`gc_`) or a partner label version (`lc_`, D894): the cancel paths take either. */
 export const changeIdInput = z.string().regex(/^(?:gc|lc)_[A-Za-z0-9]{1,64}$/u);
+/** A guarded change only (`gc_`): the expedite and the guarded notice's ack never take a label version (D894). */
+export const guardedChangeIdInput = z.string().regex(/^gc_[A-Za-z0-9]{1,64}$/u);
 export const keyIdInput = z.string().regex(/^key_[A-Za-z0-9_]{1,96}$/u);
 export const securityEventIdInput = z.string().regex(/^se_[A-Za-z0-9]{1,64}$/u);
 /** Scope ids: "global" or the contract's "s" + base36. */
@@ -109,9 +111,9 @@ export const adminProposeChangeInput = ctx
   .strict();
 /** The reason names the security contact, other than the proposer, who confirmed the change out of band, and how. */
 export const EXPEDITE_REASON_MIN = 20;
-export const expediteChangeInput = ctx.extend({ changeId: changeIdInput, reason: z.string().trim().min(EXPEDITE_REASON_MIN).max(1000) }).strict();
+export const expediteChangeInput = ctx.extend({ changeId: guardedChangeIdInput, reason: z.string().trim().min(EXPEDITE_REASON_MIN).max(1000) }).strict();
 export const pendingNoticesInput = ctx.extend({ limit: limit(100) }).strict();
-export const ackNoticeInput = ctx.extend({ changeId: changeIdInput, cancelTokenHash: b64url32 }).strict();
+export const ackNoticeInput = ctx.extend({ changeId: guardedChangeIdInput, cancelTokenHash: b64url32 }).strict();
 export const SECURITY_CONTACTS_MAX = 10;
 export const setSecurityContactsInput = ctx
   .extend({ ...org, emails: z.array(z.string().email().max(254).refine((e) => e === e.toLowerCase(), 'lowercase')).min(1).max(SECURITY_CONTACTS_MAX) })

@@ -2818,6 +2818,8 @@ function labelStateText(ch) {
   if (ch.state === 'announced' && typeof ch.activeFrom === 'number') return `Goes live ${time(ch.activeFrom)} (${labelCountdown(ch.activeFrom)})${ch.reviewRequired && !ch.allowedAt ? ', once staff press Allow' : ''}`;
   if (ch.state === 'waiting_review') return `Waiting for a staff Allow${typeof ch.lapsesAt === 'number' ? ` (lapses ${time(ch.lapsesAt)})` : ''}`;
   if (ch.state === 'proposed') return `Waiting for the notice email${typeof ch.lapsesAt === 'number' ? ` (lapses ${time(ch.lapsesAt)} if it can’t be sent)` : ''}`;
+  // D894 after review: an older version that ended because its live successor was blocked (users then see the plain window).
+  if (ch.state === 'replaced' && ch.endReason === 'blocked_successor') return 'Ended when the newer version was blocked: neither shows';
   if (ch.state === 'lapsed') return ch.endReason === 'not_reviewed' ? 'Lapsed: nobody allowed it in time' : ch.endReason === 'not_announced' ? 'Lapsed: the notice email couldn’t be sent in time' : 'Lapsed';
   return (LABEL_STATE[ch.state] || [ch.state])[0];
 }

@@ -58,7 +58,7 @@ CREATE TABLE label_changes (
   was_live              INTEGER CHECK (was_live IN (0, 1)), -- blocked while in force
   cancelled_at          INTEGER,
   cancelled_by          TEXT,
-  end_reason            TEXT CHECK (end_reason IN ('owner', 'link', 'removed', 'not_announced', 'not_reviewed', 'replaced')),
+  end_reason            TEXT CHECK (end_reason IN ('owner', 'link', 'removed', 'not_announced', 'not_reviewed', 'replaced', 'blocked_successor')),
   ended_at              INTEGER,
   request_id            TEXT NOT NULL,
   CHECK ((status = 'blocked') = (blocked_at IS NOT NULL))
@@ -68,10 +68,12 @@ CREATE TABLE label_controls (
   target          TEXT PRIMARY KEY CHECK (target = '*' OR target GLOB 'org_*'), -- every org, or one org
   labels_off      INTEGER NOT NULL DEFAULT 0 CHECK (labels_off IN (0, 1)),
   review_required INTEGER NOT NULL DEFAULT 0 CHECK (review_required IN (0, 1)),
+  review_since    INTEGER,                           -- when review was turned on: it holds only versions due after it
   updated_at      INTEGER NOT NULL,
   updated_by      TEXT NOT NULL,
   note            TEXT,
-  version         INTEGER NOT NULL DEFAULT 0
+  version         INTEGER NOT NULL DEFAULT 0,
+  CHECK ((review_required = 1) = (review_since IS NOT NULL))
 );
 
 -- Append-only: every staff control change (an entry's, an org's, every org's), the state it set. Drift detection

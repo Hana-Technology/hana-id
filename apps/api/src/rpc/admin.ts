@@ -99,7 +99,10 @@ import { linkStats } from '../link-usage.ts';
 import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
 import { isLabelChange } from '../labels/sql.ts';
-import { ackLabelNotice, cancelLabelChange, labelNotices } from '../labels/lifecycle.ts';
+import { ackLabelNotice, labelNotices } from '../labels/lifecycle.ts';
+
+/** Why staff can't cancel a label change (D894 after review): Block is the staff tool, with its note and audit row. */
+export const STAFF_NO_LABEL_CANCEL = 'Staff don’t cancel request label changes: open it on Partner labels and use Block this change, with a note';
 import { labelControl, labelControls, labelDetail, labelQueue, labelStaffAct } from '../labels/staff.ts';
 import { refuse } from '../changes/cas.ts';
 import { adminRun, noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
@@ -148,9 +151,12 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.setLogo', setLogoInput, c, { actors: HANA }, ({ input, db, w }) => setLogo(db, w, input));
   }
 
-  /** A guarded change (`gc_`) or a partner label version (`lc_`, D894). */
+  /** A guarded change only. Staff never cancel a partner label version (`lc_`, D894): they Block it, with a note. */
   cancelChange(c: unknown) {
-    return runRpc(this.env, 'admin.cancelChange', cancelChangeInput, c, { actors: HANA }, ({ input, db, w }): Promise<{ change: object }> => (isLabelChange(input.changeId) ? cancelLabelChange(db, w, input) : cancelChange(db, w, input)));
+    return runRpc(this.env, 'admin.cancelChange', cancelChangeInput, c, { actors: HANA }, async ({ input, db, w }) => {
+      if (isLabelChange(input.changeId)) refuse('forbidden', STAFF_NO_LABEL_CANCEL);
+      return cancelChange(db, w, input);
+    });
   }
 
   createKey(c: unknown) {

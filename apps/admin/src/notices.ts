@@ -126,19 +126,23 @@ export async function runLabelNotices(rawEnv: Env, sender: EmailSender, budget: 
     return out;
   }
   const delayMs = delay(env.APP_CHANGE_DELAY_MS, 86_400_000);
+  const orgs = new OrgLookups(env);
   for (const n of page.notices) {
     const id = n.change.id;
     const orgId = n.change.orgId;
     const token = await linkToken('cancelLink', key, id);
     const to = recipients(env.SECURITY_ALIAS, n.contacts);
-    // Every recipient's email and the ack, or the notice waits whole for the next run (D280, D380).
-    if (!budget.fits(to.length + 1, 1)) {
+    // The org's name (one RPC, once a run), every recipient's email and the ack, or the notice waits whole for the
+    // next run (D280, D380).
+    const lookup = orgs.nameUncached(orgId) ? 1 : 0;
+    if (!budget.fits(lookup + to.length + 1, lookup + 1)) {
       out.skipped++;
       break;
     }
+    const orgName = await orgs.name(orgId);
     let message;
     try {
-      message = labelsProposed(mailContext(env), n, { cancelUrl: consoleLink(env.CONSOLE_ORIGIN, `/cancel/${encodeURIComponent(id)}#t=${b64url(token)}`), delayMs });
+      message = labelsProposed(mailContext(env), n, { cancelUrl: consoleLink(env.CONSOLE_ORIGIN, `/cancel/${encodeURIComponent(id)}#t=${b64url(token)}`), delayMs, orgName });
     } catch (err) {
       // A view this Worker can't put in words (a bad time, say): nothing sent, nothing acked; the next run tries again.
       out.failed++;
@@ -172,6 +176,11 @@ class OrgLookups {
   private readonly names = new Map<string, string | undefined>();
   private readonly contacts = new Map<string, string[] | null>();
   constructor(private readonly env: Env) {}
+
+  /** Whether `name` would still make its RPC for the org (it is read once a run). */
+  nameUncached(orgId: string | undefined): boolean {
+    return !!orgId && !this.names.has(orgId);
+  }
 
   /** The RPCs `name` and `securityContacts` would still make for the org (0 to 2: each is read once a run). */
   uncached(orgId: string | undefined): number {

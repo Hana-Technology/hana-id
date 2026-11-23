@@ -96,7 +96,9 @@ export type LabelControlInput = z.infer<typeof labelControlInput>;
  * A version's state as people read it (computed by the API from its row, the clock and the controls):
  * proposed (no notice yet), announced (notice sent, waiting for its time), waiting_review (its time passed, held for a
  * staff "Allow"), in_force, and the ends: cancelled (by an owner or the emailed link), lapsed (not announced within 7
- * days, or not reviewed within 7 days of its time), blocked (by staff), replaced (a newer version took over), removed.
+ * days, or not reviewed within 7 days of its time), blocked (by staff), replaced (a newer version took over; with
+ * `endReason: 'blocked_successor'` when it ended because that newer, live version was blocked: then neither shows),
+ * removed.
  */
 export const LABEL_STATES = ['proposed', 'announced', 'waiting_review', 'in_force', 'cancelled', 'lapsed', 'blocked', 'replaced', 'removed'] as const;
 export type LabelState = (typeof LABEL_STATES)[number];

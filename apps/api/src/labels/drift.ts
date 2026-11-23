@@ -17,7 +17,7 @@ import { eventId } from '../changes/guard.ts';
 import { DRIFT_BATCH } from '../changes/drift.ts';
 import { log } from '../log.ts';
 import { sha256Hex } from '../owner-actions.ts';
-import { IN_FORCE } from './sql.ts';
+import { IN_FORCE, labelTablesExist } from './sql.ts';
 
 /** At most this many versions in force are hashed per run (the newest first). */
 export const LABEL_HASH_BATCH = 500;
@@ -36,6 +36,10 @@ const ledger = (kind: string, extra = '') =>
 
 export async function detectLabelDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promise<{ found: number; recorded: number }> {
   const db = env.DB;
+  if (!(await labelTablesExist(db))) {
+    log({ event: 'label_drift_detection', outcome: 'rejected', code: 'migration_0025_not_applied' }, 'warn');
+    return { found: 0, recorded: 0 };
+  }
   const f = IN_FORCE('c', now);
   const inForce = f.sql.replaceAll('?', String(Number(now)));
   // D1 caps a compound SELECT's terms: each finding is its own statement, in one batch of reads.

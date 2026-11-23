@@ -38,7 +38,7 @@
 import type { AppChange, AuditRow, SecurityEvent } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { mailLabel } from './env.ts';
-import { auditDigest, changesDigest, labelsBlocked, loginMethodsChanged, type MailContext, securityDigest } from './email/messages.ts';
+import { auditDigest, changesDigest, labelsBlocked, labelsLapsed, loginMethodsChanged, type MailContext, securityDigest } from './email/messages.ts';
 import { consoleLink, type Rendered } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
@@ -222,6 +222,8 @@ async function appNameOf(env: Env, r: AppChange): Promise<string | undefined> {
 
 /** A row that gets the request labels' "Journear blocked" mail (D894), and only that (it is left out of the digest). */
 export const isLabelsBlocked = (r: AppChange): boolean => r.kind === 'labels.blocked';
+/** A label change held for review that lapsed (`change.cancelled`, kind `label_set`, reason `not_reviewed`): its own mail. */
+export const isLabelsLapsed = (r: AppChange): boolean => r.kind === 'change.cancelled' && r.detail.kind === 'label_set' && r.detail.reason === 'not_reviewed';
 
 /**
  * The blocked change's app names (AdminRpc.labelDetail by its change id), one RPC of the run's budget; null when
@@ -269,7 +271,14 @@ export function feedChanges(rawEnv: Env, ops: OpsStore, sender: EmailSender, bud
         const outcome = await sendGroup(env, sender, budget, contacts, g.orgId, [], notice, `labels_blocked:${r.seq}`, true);
         if (outcome !== 'sent') return outcome;
       }
-      const rows = g.rows.filter((r) => !onlyLoginMethods(r) && !isLabelsBlocked(r));
+      // A change held for review that lapsed gets its own mail too (D894 after review): the partner learns it never went live.
+      for (const r of g.rows.filter(isLabelsLapsed)) {
+        if (!budget.fits(1, 1)) return 'budget';
+        const notice = labelsLapsed(mail(env), r, { apps: await labelAppsOf(env, r) });
+        const outcome = await sendGroup(env, sender, budget, contacts, g.orgId, [], notice, `labels_lapsed:${r.seq}`, true);
+        if (outcome !== 'sent') return outcome;
+      }
+      const rows = g.rows.filter((r) => !onlyLoginMethods(r) && !isLabelsBlocked(r) && !isLabelsLapsed(r));
       if (rows.length === 0) return 'sent';
       // A contacts change goes to the old contacts as well as the new ones (spec "Email").
       const extra = rows.flatMap((r) => (r.kind === 'org.security_contacts' ? [...((r.detail.old as string[] | undefined) ?? []), ...((r.detail.new as string[] | undefined) ?? [])] : [])).filter((e) => typeof e === 'string');
@@ -313,7 +322,9 @@ export async function feedSecurityEvents(rawEnv: Env, sender: EmailSender, budge
   if (!r.ok) throw new Error(`securityEvents: ${r.code}`);
   const contacts = new Contacts(env);
   const result: FeedStepResult = { read: r.events.length, emailedGroups: 0, failedGroups: 0 };
-  for (const g of groupByOrg<SecurityEvent>(r.events, (e) => e.orgId ?? null)) {
+  // D894 after review: a `label_blocked` event goes to the security alias only; the partner already gets the blocked
+  // mail (feedChanges), so they get one message for one block.
+  for (const g of groupByOrg<SecurityEvent>(r.events, (e) => (e.kind === 'label_blocked' ? null : (e.orgId ?? null)))) {
     const outcome = await sendGroup(env, sender, budget, contacts, g.orgId, [], securityDigest(mail(env), g.orgId, g.rows), `feed:security_events:${g.rows.map((e) => e.id).join(',')}`, true, 1);
     if (outcome === 'budget') break;
     if (outcome === 'failed') {

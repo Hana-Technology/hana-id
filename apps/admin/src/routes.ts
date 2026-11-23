@@ -251,7 +251,15 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/apps/:app/keys/:key/revoke', handler: (c) => answer('POST /api/apps/:app/keys/:key/revoke', c.staff, () => c.env.API.revokeKey({ ...staffCtx(c.staff), appId: c.params.app, keyId: c.params.key, ...pick(c.body, 'orgId') })) },
 
   // ---- guarded changes ----
-  { method: 'POST', pattern: '/api/changes/:id/cancel', handler: (c) => answer('POST /api/changes/:id/cancel', c.staff, () => c.env.API.cancelChange({ ...staffCtx(c.staff), changeId: c.params.id, ...pick(c.body, 'orgId') })) },
+  {
+    method: 'POST',
+    pattern: '/api/changes/:id/cancel',
+    // D894 after review: a partner label change is never cancelled by staff here; Block it on Partner labels, with a note.
+    handler: (c) =>
+      c.params.id?.startsWith('lc_')
+        ? Promise.resolve(errorResponse('forbidden', 'Staff don’t cancel request label changes. Open it on Partner labels and use Block this change, with a note.'))
+        : answer('POST /api/changes/:id/cancel', c.staff, () => c.env.API.cancelChange({ ...staffCtx(c.staff), changeId: c.params.id, ...pick(c.body, 'orgId') })),
+  },
   { method: 'POST', pattern: '/api/changes/:id/expedite', handler: (c) => answer('POST /api/changes/:id/expedite', c.staff, () => c.env.API.expediteChange({ ...staffCtx(c.staff), changeId: c.params.id, ...pick(c.body, 'reason') })) },
 
   // ---- audit ----

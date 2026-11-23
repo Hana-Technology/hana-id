@@ -9,7 +9,7 @@
 import type { Env } from '../env.ts';
 import { eventId } from '../changes/guard.ts';
 import { log } from '../log.ts';
-import { IN_FORCE, LABEL_LAPSE_MS, REVIEW_HELD } from './sql.ts';
+import { IN_FORCE, LABEL_LAPSE_MS, REVIEW_HELD, labelTablesExist } from './sql.ts';
 import { prepare } from '../changes/sql.ts';
 
 export const LABEL_CRON_BATCH = 100;
@@ -40,6 +40,10 @@ async function apply(db: D1Database, stmts: D1PreparedStatement[], id: string, w
 export async function labelsMaintenance(env: Pick<Env, 'DB'>, now = Date.now()): Promise<LabelsRun> {
   const db = env.DB;
   const run: LabelsRun = { activated: 0, lapsed: 0 };
+  if (!(await labelTablesExist(db))) {
+    log({ event: 'labels_cron', outcome: 'rejected', code: 'migration_0025_not_applied' }, 'warn');
+    return run;
+  }
   const inForce = IN_FORCE('c', now);
   const { results: due } = await prepare(
     db,
@@ -49,7 +53,9 @@ export async function labelsMaintenance(env: Pick<Env, 'DB'>, now = Date.now()):
     const recorded = `EXISTS (SELECT 1 FROM label_changes WHERE id = ?1 AND status = 'active' AND activated_recorded_at = ?2)`;
     const live = await eventId('label_live', c.id);
     const stmts = [
-      db.prepare("UPDATE label_changes SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1 AND status = 'pending' AND active_from <= ?2").bind(c.id, now),
+      // The review hold is checked again in the statement itself: a review_on or an Allow landing between the job's read
+      // and this batch is never overridden.
+      db.prepare(`UPDATE label_changes SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1 AND status = 'pending' AND notified_at IS NOT NULL AND active_from <= ?2 AND NOT ${REVIEW_HELD('label_changes').sql}`).bind(c.id, now),
       // The entry's older versions in force end: this one replaced them.
       db.prepare(`UPDATE label_changes SET status = 'ended', end_reason = 'replaced', ended_at = ?2 WHERE label_id = ?3 AND id != ?1 AND status = 'active' AND active_from <= ?4 AND ${recorded}`).bind(c.id, now, c.label_id, c.active_from),
       db
@@ -76,7 +82,13 @@ export async function labelsMaintenance(env: Pick<Env, 'DB'>, now = Date.now()):
   for (const c of stale) {
     const lapsed = `EXISTS (SELECT 1 FROM label_changes WHERE id = ?1 AND status = 'lapsed' AND cancelled_at = ?2 AND cancelled_by = 'system')`;
     const stmts = [
-      db.prepare("UPDATE label_changes SET status = 'lapsed', end_reason = ?3, cancelled_at = ?2, cancelled_by = 'system' WHERE id = ?1 AND status = 'pending'").bind(c.id, now, c.reason),
+      // Re-checked in the statement: an Allow (or review turned off) landing after the read keeps the version.
+      db
+        .prepare(
+          `UPDATE label_changes SET status = 'lapsed', end_reason = ?3, cancelled_at = ?2, cancelled_by = 'system'
+            WHERE id = ?1 AND status = 'pending' AND ((?3 = 'not_announced' AND notified_at IS NULL AND proposed_at <= ?4) OR (?3 = 'not_reviewed' AND notified_at IS NOT NULL AND active_from <= ?4 AND ${REVIEW_HELD('label_changes').sql}))`,
+        )
+        .bind(c.id, now, c.reason, now - LABEL_LAPSE_MS),
       db.prepare(`UPDATE scopes SET labels_version = labels_version + 1 WHERE scope_id = ?3 AND ${lapsed}`).bind(c.id, now, c.scope_id),
       db
         .prepare(

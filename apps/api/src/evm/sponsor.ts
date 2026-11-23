@@ -1281,10 +1281,17 @@ async function anythingLeft(env: Env): Promise<boolean> {
   }
 }
 
+/** The relayer's automatic restarts (D890) of the last day, as its status reports them (bounded, well-formed times only). */
+function autoRestarts(s: { autoRestartedAt?: unknown }, now: number): number[] {
+  const a = Array.isArray(s.autoRestartedAt) ? s.autoRestartedAt.slice(0, 5) : [];
+  return a.filter((t): t is number => typeof t === 'number' && Number.isSafeInteger(t) && t > now - DAY && t <= now + 60_000);
+}
+
 /**
  * Every cron run, per sponsored chain: the relayer's balance below `lowBalanceEth` writes `evm_relay_balance_low`
  * (once a UTC day); the relayer halted (it takes no new sends until staff resume it, D851), or its oldest unmined
- * (or unaccepted) transaction older than 2 minutes, writes `evm_relay_stuck` (once an hour); then the reconciler (sponsor-settle.ts)
+ * (or unaccepted) transaction older than 2 minutes, writes `evm_relay_stuck` (once an hour); each automatic restart after a refill the relayer reports writes
+ * `evm_relay_auto_resumed` (once per restart, D890); then the reconciler (sponsor-settle.ts)
  * settles what requests couldn't. The audit rows' 24-month retention runs with or without the config. Never throws;
  * logs what it couldn't read.
  */
@@ -1319,6 +1326,10 @@ export async function checkEvmSponsorRelay(env: Env, now: number = Date.now()): 
         const code = halted ? haltCode(s.halted) : null;
         await noteEvent(env, null, 'evm_relay_stuck', [String(chain.chainId), hour], { chainId: chain.chainId, pending: s.unmined, oldestPendingMs: age, ...(unaccepted !== null ? { oldestUnacceptedMs: unaccepted } : {}), ...(halted ? { halted } : {}), ...(code ? { haltCode: code } : {}) }, now);
       }
+      // D890: each time it restarted by itself after a refill (the last few it reports), one event, so staff aren't
+      // surprised; its id is the restart's time, so a later run never raises it twice.
+      const restarts = s ? autoRestarts(s, now) : [];
+      for (const at of restarts) await noteEvent(env, null, 'evm_relay_auto_resumed', [String(chain.chainId), String(at)], { chainId: chain.chainId, at, today: restarts.filter((t) => Math.floor(t / DAY) === Math.floor(now / DAY)).length }, now);
     } catch {
       log({ event: 'evm_sponsor_relay_check', outcome: 'error', code: 'relayer_unavailable' }, 'warn');
     }

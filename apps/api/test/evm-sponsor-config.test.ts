@@ -53,6 +53,7 @@ describe('parseEvmSponsorConfig', () => {
       sendsPerDay: 5000,
       sendsPerMinute: 60,
       requireKnownAccount: true,
+      autoRestart: false,
     });
     expect(r.config.apps[FIXTURE_APP]?.['84532']).toEqual([{ address: FIXTURE_CHECK_IN, selectors: [CHECK_IN_SELECTOR], exactCalldata: [CHECK_IN_SELECTOR], maxDataBytes: 4, label: 'Journear demo check-in' }]);
   });
@@ -80,6 +81,12 @@ describe('parseEvmSponsorConfig', () => {
     }).toThrow(TypeError);
     expect(sponsorChain(c, 1)).toBeNull();
     expect(sponsorChain(c, Number.NaN)).toBeNull();
+  });
+
+  it('D890: autoRestart defaults to false, takes a boolean, and is passed through by evmSponsorVar', () => {
+    const on = parse(evmSponsorVar(chain({ autoRestart: true })));
+    expect(on.status === 'configured' && sponsorChain(on.config, 84532)).toMatchObject({ autoRestart: true });
+    expect(problem(chain({ autoRestart: 'yes' as never }))).toBe('chains.84532.autoRestart is not a boolean');
   });
 
   it('defaults requireKnownAccount to true; rpcFallback is required outside local* envs (D855), none in a local env', () => {

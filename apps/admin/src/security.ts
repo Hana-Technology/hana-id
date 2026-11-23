@@ -34,6 +34,8 @@ export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object
   evm_relay_nonce_taken: 'evm-relay-slot-taken',
   evm_billing_late: 'evm-billing-late',
   evm_relay_closed_slot_mined: 'evm-relay-closed-slot-mined',
+  // D890: the relayer's pause for money ended by itself after a refill.
+  evm_relay_auto_resumed: 'evm-relay-auto-resumed',
   near_billing_late: 'near-billing-late',
   // D872: the usage database's free monthly compute allowance.
   neon_compute_high: 'neon-compute-high',

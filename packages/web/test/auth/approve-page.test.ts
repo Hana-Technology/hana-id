@@ -722,7 +722,7 @@ describe('/approve', () => {
     send(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('Sign in to Partner') }));
     expect(pageText()).toContain('Sign in to Partner');
     send(evmRequest({ kind: 'personal_sign', context: {}, bytes: utf8('pay‮evil') }));
-    expect(pageText()).toContain('shown in its raw form');
+    expect(pageText()).toContain('Journear can’t read this message, so it’s shown below in its raw form.');
     expect(pageText()).not.toContain('pay‮evil');
   });
 
@@ -814,29 +814,53 @@ describe('/approve', () => {
       expect(blue()).toEqual([TEST_APP_NOTE]);
     });
 
-    it('a message Journear can’t read (D884 review): never "agree with what the message says"; amber like the line that says it can’t be read', () => {
+    it('a message Journear can’t read: one amber box above it, then the label, the raw form and the amber note about networks (D886 note of 2026-11-23)', () => {
       const nep413 = (over: Record<string, unknown> = {}) =>
         evmRequest({ kind: 'near_message', chain: 'near', address: 'a'.repeat(64), context: {}, bytes: encodeNep413Message({ message: 'pay\u202eevil', nonce: new Uint8Array(32), recipient: 'localhost', callbackUrl: null }), ...over });
-      const unreadable = [(o: Record<string, unknown>) => message({ bytes: new Uint8Array(32).fill(0xff), ...o }), (o: Record<string, unknown>) => stellarMessage({ bytes: utf8('pay\u202eevil'), ...o }), nep413];
-      for (const make of unreadable) {
+      const unreadable = {
+        'personal_sign bytes': (o: Record<string, unknown>) => message({ bytes: new Uint8Array(32).fill(0xff), ...o }),
+        'personal_sign hidden character': (o: Record<string, unknown>) => message({ bytes: utf8('pay\u202eevil'), ...o }),
+        'stellar message': (o: Record<string, unknown>) => stellarMessage({ bytes: utf8('pay\u202eevil'), ...o }),
+        'near message': nep413,
+      };
+      for (const [kind, make] of Object.entries(unreadable)) {
         for (const testApp of [false, true]) {
           send(make(testApp ? { testApp: true } : {}));
-          expect(pageText()).toContain('shown in its raw form');
-          // D886's note (2026-11-23): the line about its form first, then the label right above its raw form, then
-          // the note about networks.
-          const order = [...document.querySelectorAll('.request > p.message-label, .request > code.mono, .request > .jp-alert:not(.risk-box)')].map((n) =>
-            n.matches('p.message-label') ? 'label' : n.matches('code') ? 'raw' : n.classList.contains('no-network') ? 'note' : n.textContent?.includes('shown in its raw form') ? 'not-text' : n.textContent,
+          const at = `${kind}, ${testApp ? 'test' : 'live'} app`;
+          // The founder's decision (2026-11-23): the amber box's lead says it once, naming the app as the window does.
+          const box = document.querySelector('.request > .risk-box.warning-box');
+          const lead = box?.querySelector('p.risk-lead');
+          expect(lead?.textContent, at).toBe('Journear can’t read this message, so it’s shown below in its raw form. Approve only if you expected this from Partner App.');
+          expect(lead?.querySelector('strong.app-name')?.textContent, at).toBe('Partner App');
+          expect(pageText().split('raw form').length - 1, at).toBe(1);
+          expect(pageText(), at).not.toContain('isn’t readable text');
+          // Then the label right above the raw form, then the note about networks; the box comes before all of them
+          // (D809, D813: a warning before what it warns about).
+          const order = [...document.querySelectorAll('.request > .risk-box, .request > p.message-label, .request > code.mono, .request > .jp-alert:not(.risk-box)')].map((n) =>
+            n.matches('.risk-box') ? 'box' : n.matches('p.message-label') ? 'label' : n.matches('code') ? 'raw' : n.classList.contains('no-network') ? 'note' : n.textContent,
           );
-          expect(order).toEqual(['not-text', 'label', 'raw', 'note']);
-          expect(document.querySelector('.request > p.message-label')?.nextElementSibling?.matches('code.mono')).toBe(true);
+          expect(order, at).toEqual(['box', 'label', 'raw', 'note']);
+          expect(document.querySelector('.request > p.message-label')?.nextElementSibling?.matches('code.mono'), at).toBe(true);
+          // Two amber boxes in all: the one above the message and the note about networks, kept word for word.
+          expect(document.querySelectorAll('.request .jp-alert-warning').length, at).toBe(2);
           const note = document.querySelector('.request > .no-network');
-          expect(note?.textContent).toBe(testApp ? UNREADABLE_NO_NETWORK_TEST_APP_NOTE : UNREADABLE_NO_NETWORK_NOTE);
-          expect(note?.classList.contains('jp-alert-warning')).toBe(true);
-          expect(pageText()).not.toContain('agree with what the message says');
-          if (testApp) expect(pageText()).not.toContain(TEST_APP_NOTE);
+          expect(note?.textContent, at).toBe(testApp ? UNREADABLE_NO_NETWORK_TEST_APP_NOTE : UNREADABLE_NO_NETWORK_NOTE);
+          expect(note?.classList.contains('jp-alert-warning'), at).toBe(true);
+          expect(pageText(), at).not.toContain('agree with what the message says');
+          if (testApp) expect(pageText(), at).not.toContain(TEST_APP_NOTE);
         }
       }
       expect(UNREADABLE_NO_NETWORK_NOTE).toBe('Your signature counts on every network, real-money ones included. Sign only if you know why you’re signing it.');
+      expect(UNREADABLE_NO_NETWORK_TEST_APP_NOTE).toBe('This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you know why you’re signing it, and don’t keep real money in this account.');
+    });
+
+    it('a readable message has no amber box and no raw form (unchanged)', () => {
+      for (const testApp of [false, true]) {
+        send(message(testApp ? { testApp: true } : {}));
+        expect(document.querySelector('.request .jp-alert-warning')).toBeNull();
+        expect(pageText()).not.toContain('raw form');
+        expect([...document.querySelectorAll('.request > p.message-label, .request > pre.message')].map((n) => n.tagName)).toEqual(['P', 'PRE']);
+      }
     });
 
     it('the real-money demo on: its own note, unchanged, and the live app’s note about networks', () => {

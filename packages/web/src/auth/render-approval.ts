@@ -520,13 +520,13 @@ export const MESSAGE_LABEL = 'The message';
 
 /**
  * A message being signed: its label, then the message itself (D886: right after the headline and the facts). One that
- * isn't readable text: first the line that says so, then the label right above its raw form (D886's note).
+ * isn't readable text: the label right above its raw form. That it isn't readable is said once, in the amber box
+ * above (the summary's line, "Journear can’t read this message, so it’s shown below in its raw form. …"; the
+ * founder's decision 2026-11-23, D886's note: it replaced a second amber line here).
  */
 function message(d: Dom, m: DecodedMessage): HTMLElement[] {
   const label = d.h('p', { class: 'message-label' }, MESSAGE_LABEL);
-  return m.text === null
-    ? [warnLine(d, 'warn', 'This message isn’t readable text, so it’s shown in its raw form.'), label, mono(d, m.hex)]
-    : [label, d.h('pre', { class: 'message' }, m.text)];
+  return m.text === null ? [label, mono(d, m.hex)] : [label, d.h('pre', { class: 'message' }, m.text)];
 }
 
 // ---- NEAR (D723) ----
@@ -1505,7 +1505,13 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
   const shown = new Set(summary.shownSteps ?? []);
   const dangers = k.alerts.dangers.filter((it) => it.step === undefined || !shown.has(it.step));
   const red = [...k.alerts.banners, ...dangers, ...summary.warnings.filter((w) => w.level === 'danger').map(summaryItem)];
-  const amber = [...summary.warnings.filter((w) => w.level === 'warning').map(summaryItem), ...k.alerts.warnings];
+  // A message Journear can't read: its amber line names the app, as "the app" when there is no name to show (D886's
+  // note of 2026-11-23, as D884's fee sentence does).
+  const unreadableMessage = (decoded.kind === 'personal_sign' || decoded.kind === 'stellar_message' || decoded.kind === 'near_message') && decoded.message.text === null;
+  const amber = [
+    ...summary.warnings.filter((w) => w.level === 'warning').map((w) => summaryItem(unreadableMessage && w.code === 'cannot_explain' ? { ...w, text: sponsorText(w.text, appName) } : w)),
+    ...k.alerts.warnings,
+  ];
   // D859: every long value the window names, numbered where two share a short form (or one shares the user's own).
   const book = new IdBook([summary.headline, ...summary.lines, ...[...red, ...amber].flatMap((it) => [it.full, it.short])], ctx.address ?? '');
   // The headline's values are the first to get their rows, which come right after the red box (D809: nothing comes

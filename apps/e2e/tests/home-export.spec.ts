@@ -16,7 +16,7 @@ import type { BrowserContext, Page, Route, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { API_URL, AUTH_ORIGIN, GOOGLE_CLIENT_ID, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { type RequestLog, chainView, chooseAccount, clickAction, clickClosing, clickMayClose, clickUntilTaken, closeOf, expect, guardedClick, login, newApp, okValue, openPartner, runAction, test, waitPersisted, walletDirectory } from './fixtures.ts';
-import { HOME_CORS, routeApps, shots, signIn } from './home-steps.ts';
+import { HOME_CORS, homeRow, routeApps, shots, signIn } from './home-steps.ts';
 
 const HOME_LOGIN = `${API_URL}/v1/home/login`;
 const HIDDEN = '••••••••';
@@ -114,7 +114,7 @@ test('a wallet made by a partner login is opened in Passport Home and its Stella
   });
   await home.goto(`${AUTH_ORIGIN}/home`);
   await signIn(home);
-  await home.locator(`.home-card[data-scope="${scopeId}"]`).getByRole('button', { name: `View ${name}` }).click();
+  await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
   const s = section(home);
   // Collapsed: the section's heading, its sentence and one button, as the devices section.
   await expect(s.title).toHaveText('Move this wallet to another wallet app');
@@ -146,7 +146,7 @@ test('a wallet made by a partner login is opened in Passport Home and its Stella
   await home.goto(`${AUTH_ORIGIN}/home`);
   popups = 0;
   await signIn(home);
-  await home.locator(`.home-card[data-scope="${scopeId}"]`).getByRole('button', { name: `View ${name}` }).click();
+  await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
 
   // Expanded: the warning, and still nothing sent until the click.
   await s.open.click();
@@ -204,6 +204,53 @@ test('a wallet made by a partner login is opened in Passport Home and its Stella
   // Nothing was stored, and nothing more was sent.
   expect(await home.evaluate(() => ({ session: sessionStorage.length, local: localStorage.length }))).toEqual({ session: 0, local: 0 });
   expect(homeLogins(requests)).toBe(1);
+});
+
+test('D893: the browser’s Back out of an open wallet locks it and erases the key; Forward shows the page with the move closed, never the key', async ({ page, context, google, requests, browserName }) => {
+  test.setTimeout(120_000);
+  freshAccounts(google);
+  const scopeId = newScope(browserName);
+  const app = await newApp({ name: 'Back E2E App', scopeId });
+  await openPartner(page, app);
+  const wallet = await login(page);
+  await expect.poll(async () => (await walletDirectory(wallet.stellar)).length, { timeout: 15_000 }).toBe(1);
+  const home = await context.newPage();
+  await home.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(home);
+  await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
+  const s = section(home);
+  await s.open.click();
+  await signInAgain(home);
+  await expect(s.title).toHaveText('Your wallet is open', { timeout: 20_000 });
+  await home.locator('#home-export-evm').click();
+  await confirm(home);
+  await home.locator('#home-export .reveal-ack input').check();
+  await guardedClick(home, 'Show key');
+  await expect(s.secret).toHaveText(EVM_KEY);
+  const key = (await s.secret.textContent()) ?? '';
+  expect(addressOfExport('evm', key)).toBe(wallet.evm);
+
+  // Back: the list, and nothing of the opened wallet left in the page.
+  await home.goBack();
+  await expect(home.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await expect(home.locator(`.home-row[data-scope="${scopeId}"]`)).toBeFocused();
+  await expect(s.root).toHaveCount(0);
+  await expectNoKey(home, key);
+  // Forward: the wallet's page again, the move collapsed; no key, no derive, nothing opened.
+  await home.goForward();
+  await expect(home.getByRole('heading', { level: 1, name: 'Wallet details' })).toBeFocused();
+  await expect(s.open).toBeVisible();
+  await expect(s.title).toHaveText('Move this wallet to another wallet app');
+  await expect(s.secret).toHaveCount(0);
+  await expectNoKey(home, key);
+  expect(homeLogins(requests)).toBe(1);
+  // Opening it again needs a new sign-in, as after "Lock now".
+  await s.open.click();
+  await expect(s.start).toHaveText('Sign in again to continue');
+  await home.goBack();
+  await expect(home.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await expectNoKey(home, key);
+  expect(await home.evaluate(() => ({ session: sessionStorage.length, local: localStorage.length, url: location.href, state: history.state as unknown }))).toEqual({ session: 0, local: 0, url: `${AUTH_ORIGIN}/home`, state: null });
 });
 
 // ---- a linked sign-in method ----
@@ -270,9 +317,9 @@ test('a linked sign-in method: Google, a member of an email wallet, opens that w
   });
   await home.goto(`${AUTH_ORIGIN}/home`);
   await signIn(home);
-  await home.getByLabel('App name').fill(name);
-  await home.getByLabel('App name').press('Enter');
-  await home.locator(`#home-results .home-card[data-scope="${scopeId}"]`).getByRole('button', { name: `View ${name}` }).click();
+  await home.getByLabel('Find an app by name').fill(name);
+  await home.getByLabel('Find an app by name').press('Enter');
+  await home.locator(`#home-results .home-row[data-scope="${scopeId}"]`).click();
   await expect(home.locator('#home-no-address')).toBeVisible();
   const s = section(home);
   await s.open.click();
@@ -307,9 +354,9 @@ test('a linked sign-in method: Google, a member of an email wallet, opens that w
   // The derive recorded the member (the Worker's own directory write): Hana Home now lists the app as the user's own.
   await home.reload();
   await signIn(home);
-  const card = home.locator(`.home-card[data-scope="${scopeId}"]`);
+  const card = home.locator(`.home-row[data-scope="${scopeId}"]`);
   await expect(card).toBeVisible();
-  expect(await card.evaluate((el) => el.closest('ul')?.previousElementSibling?.textContent)).toBe('Your apps');
+  expect(await card.evaluate((el) => el.closest('section')?.id)).toBe('home-mine');
 });
 
 // ---- every screen ----
@@ -376,7 +423,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   const openApp = async (): Promise<void> => {
     await home.goto(`${AUTH_ORIGIN}/home`);
     await signIn(home);
-    await home.getByRole('button', { name: 'View Sodax', exact: true }).click();
+    await homeRow(home, 'Sodax').click();
     await s.open.click();
   };
 
@@ -518,11 +565,11 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
   await signIn(home);
   await expect(home.locator('#home-linked')).toBeVisible();
   const view = async (name: string): Promise<void> => {
-    await home.getByRole('button', { name: `View ${name}`, exact: true }).click();
-    await expect(home.getByRole('heading', { name: 'App details' })).toBeVisible();
+    await homeRow(home, name).click();
+    await expect(home.getByRole('heading', { level: 1, name: /^(Wallet|App) details$/u })).toBeVisible();
     await expect(s.open).toBeVisible();
   };
-  const back = (): Promise<void> => home.getByRole('button', { name: 'Back to all apps' }).click();
+  const back = (): Promise<void> => home.getByRole('button', { name: 'Your wallets' }).click();
 
   // Where the move can't be offered: one sentence, and no way to start it.
   const off: readonly [string, string, string][] = [

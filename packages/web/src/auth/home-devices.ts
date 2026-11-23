@@ -1,9 +1,11 @@
-// Hana Home's "Devices and auto-approve" (home-page.ts mounts it on the front page and on each app's page): where the
-// user is signed in to their apps with Hana, which of those devices may sign without asking, and the apps they share
-// their email with, each with a way to stop it (docs/hana-home-spec.md F5, D45, D98 item 9, D411 point 6).
+// Passport Home's "Devices and auto-approve" (home-page.ts mounts it as its own view under "Your account", for every
+// wallet, and on each wallet's page, D893): where the user is signed in to their apps with Journear, which of those
+// devices may sign without asking, and the apps they share their email with, each with a way to stop it
+// (docs/hana-home-spec.md F5, D45, D98 item 9, D411 point 6).
 //
-// It reads `GET /v1/home/devices` only when the user asks ("Show devices"), or once after sign-in when the page was opened
-// at `/home?view=devices` (the address Hana's own "Manage in Hana Home" links will use; nothing links to it yet). A stop
+// It reads `GET /v1/home/devices` only when the user asks: "Show devices", or opening the view from "Your account"
+// (`openFront`), which the page also does once after sign-in when it was opened at `/home?view=devices` (the address
+// Journear's own "Manage in Passport Home" links will use; nothing links to it yet). Back and Forward never read. A stop
 // asks first, on the page itself, saying what stopping does and doesn't do, and is sent once, on a real click:
 //   - "Stop auto-approving": that device's consent; auto-signing stops there within about 10 seconds (D465);
 //   - "Sign out this device": its share, and its consent with it;
@@ -20,6 +22,11 @@ import type { GestureCheck, PageWindow } from './page-window.ts';
 import { BTN, alert, icon } from './ui.ts';
 
 export const HOME_DEVICES_TITLE = 'Devices and auto-approve';
+/** What the section says on an app's page where Journear has no wallet of the user's on record (no wallet called theirs). */
+export const HOME_DEVICES_APP_INTRO = 'Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it.';
+/** What the section says on a wallet's page (D893: "this wallet", and the app or apps that use it). */
+export const HOME_DEVICES_WALLET_INTRO = (apps: number): string =>
+  `Where you’re signed in to this wallet, what those devices may sign without asking, and whether you share your email with ${apps > 1 ? 'these apps' : 'the app'}.`;
 /** The one query `/home` takes for this section (exactly it): open it after sign-in. */
 export const HOME_DEVICES_VIEW = 'devices';
 
@@ -105,8 +112,12 @@ export interface HomeDevices {
   readonly errorCode: string | null;
   /** How many requests this section has sent. */
   readonly requests: number;
-  /** The front page's section. The same element each time. */
+  /** The section of the "Devices and auto-approve" view (every wallet; its heading is the view's `h1`). The same element each time. */
   frontView(): HTMLElement;
+  /** The user opened that view (its row under "Your account", or `?view=devices`): reads once if it hasn't yet. */
+  openFront(): void;
+  /** The user left that view: an open confirmation closes (one on its way is left to finish). What it shows stays. */
+  leaveFront(): void;
   /** The section of `scope`'s page. Another app's page starts it closed again; the same app keeps what it shows. */
   appView(scope: HomeScope): HTMLElement;
   /** The user left an app's page: its section closes, and opening the page again reads it again. */
@@ -141,10 +152,8 @@ function when(ms: number): string {
 
 export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
   const { d, isGesture } = deps;
-  const linked = devicesLinked(deps.win.location.search);
   let epoch = 0;
   let requests = 0;
-  let autoLoaded = false;
   const views: Record<Where, View> = { front: newView(), app: newView() };
   let appScope: HomeScope | null = null;
   let confirm: { where: Where; key: string } | null = null;
@@ -442,7 +451,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       items.length > 0
         ? d.h('ul', { class: 'home-device-list' }, ...items)
         : where === 'app'
-          ? empty('home-app-devices-empty', 'Nothing signed in', 'No device is signed in to this app with Journear right now.')
+          ? empty('home-app-devices-empty', 'Nothing signed in', appScope?.mine === false ? 'No device is signed in to this app with Journear right now.' : 'No device is signed in to this wallet right now.')
           : null,
       s.more ? d.h('p', { class: 'muted' }, `Passport Home shows the ${HOME_DEVICES_MAX} most recent here; others are signed in too. Sign out the ones you don’t use, then show your devices again.`) : null,
       s.devices.some((x) => x.lastUsedAtMs !== null) ? d.h('p', { class: 'muted home-last-used-note' }, '“Last opened or approved here” doesn’t count requests the app signed by itself.') : null,
@@ -480,7 +489,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       out.push(...shown.map((s) => scopeGroup(where, s)));
     }
     if (where === 'front' && view.scopes.some((s) => s.email === null)) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-email-unknown-front' } }, 'Passport Home can’t tell right now which apps you share your email with.'));
-    if (where === 'front') out.push(d.h('p', { class: 'muted' }, 'Only apps Journear has on record for you are listed here. For any other app, find it and open its page.'));
+    if (where === 'front') out.push(d.h('p', { class: 'muted' }, 'Only apps Journear has on record for you are listed here. For any other app, find it on “Your wallets”, under “Other apps”, and open it.'));
     out.push(
       d.h(
         'div',
@@ -497,8 +506,11 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     const intro =
       where === 'front'
         ? 'Where you’re signed in to your apps with Journear, which of those devices may sign for you without asking, and the apps you share your email with.'
-        : 'Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it.';
-    const heading = where === 'front' ? d.h('h2', { attrs: { id: 'home-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE) : d.h('h3', { attrs: { id: 'home-app-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE);
+        : appScope?.mine === false
+          ? HOME_DEVICES_APP_INTRO
+          : HOME_DEVICES_WALLET_INTRO(appScope?.apps.length ?? 1);
+    // The view's own heading for every wallet (D893: the page's `h1` names the view); a section of a wallet's page.
+    const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE) : d.h('h2', { attrs: { id: 'home-app-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE);
     root.replaceChildren();
     for (const c of [heading, d.h('p', {}, intro), ...body(where)]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
   }
@@ -523,12 +535,18 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       return requests;
     },
     frontView() {
-      // `/home?view=devices`: the user came to see their devices, so they load once, after the sign-in.
-      if (linked && !autoLoaded && deps.session()) {
-        autoLoaded = true;
-        queueMicrotask(() => deps.track(load('front')));
-      }
       return frontRoot;
+    },
+    openFront() {
+      // Opening the view is the user asking to see their devices: one read, unless it is shown already or on its way.
+      // Without a usable sign-in nothing is sent: the view shows "Show devices", whose press says to sign in again.
+      if (views.front.state !== 'closed' || views.front.busy !== null || !deps.session()) return;
+      deps.track(load('front'));
+    },
+    leaveFront() {
+      if (confirm?.where !== 'front' || stopping !== null) return;
+      confirm = null;
+      render('front');
     },
     appView(scope) {
       if (appScope?.scopeId !== scope.scopeId) {
@@ -552,7 +570,6 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       appScope = null;
       confirm = null;
       stopping = null;
-      autoLoaded = false;
       render('front');
       render('app');
     },

@@ -130,9 +130,10 @@ test('stopping auto-approve in Hana Home stops auto-signing in the open partner 
   const home = await context.newPage();
   await home.goto(`${AUTH_ORIGIN}/home`);
   await signIn(home);
-  await expect(home.getByRole('heading', { name: 'Devices and auto-approve' })).toBeVisible();
+  // D893: "Devices and auto-approve" is a row under "Your account"; opening its view reads the devices once.
   const devicesRead = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/devices` && r.request().method() === 'GET');
-  await home.locator('#home-devices-show').click();
+  await home.locator('#home-open-devices').click();
+  await expect(home.getByRole('heading', { level: 1, name: 'Devices and auto-approve' })).toBeVisible();
   expect((await devicesRead).status()).toBe(200);
   const group = home.locator(`#home-devices .home-devices-group[data-scope="${scopeId}"]`);
   const item = group.locator('.home-device');
@@ -213,7 +214,7 @@ test('signing a device out in Hana Home ends an open tab of an app with no polic
   await home.goto(`${AUTH_ORIGIN}/home`);
   await signIn(home);
   const devicesRead = home.waitForResponse((r) => r.url() === `${API_URL}/v1/home/devices` && r.request().method() === 'GET');
-  await home.locator('#home-devices-show').click();
+  await home.locator('#home-open-devices').click();
   expect((await devicesRead).status()).toBe(200);
   const group = home.locator(`#home-devices .home-devices-group[data-scope="${scopeId}"]`);
   const item = group.locator('.home-device');
@@ -339,13 +340,16 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await context.clock.install();
   await page.goto(`${AUTH_ORIGIN}/home`);
   await signIn(page);
-  const section = page.locator('#home-devices');
-  await expect(section.getByRole('heading', { name: 'Devices and auto-approve' })).toBeVisible();
-  await section.scrollIntoViewIfNeeded();
+  // D893: on the front page, "Devices and auto-approve" is a row under "Your account"; its view is its own page.
+  await expect(page.locator('#home-open-devices')).toContainText('Devices and auto-approve');
+  await page.locator('#home-your-account').scrollIntoViewIfNeeded();
   await shots(page, 'h9-01-front-closed', browserName);
 
   // Several devices in two apps: labels, origins, times, a consent with the app's own words, an open tab, email shared.
-  await page.locator('#home-devices-show').click();
+  // Opening the view reads them (once).
+  await page.locator('#home-open-devices').click();
+  const section = page.locator('#home-devices');
+  await expect(section.getByRole('heading', { level: 1, name: 'Devices and auto-approve' })).toBeFocused();
   await expect(section.locator('.home-device')).toHaveCount(4);
   await expect(section.locator('.home-device-name strong')).toHaveText(['Chrome on macOS', 'Safari on iOS', 'A browser (not named)', 'A tab (may be closed)']);
   await expect(section.locator('.home-policy-label').first()).toHaveText('Swaps up to 50 USDC a day on Base, to Sodax’s own contracts');
@@ -395,39 +399,43 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await shots(page, 'h9-08-stop-refused', browserName);
   stopAnswer = null;
 
-  // An app's page: its own devices, its email sharing on, and below them the move.
+  // A wallet's page: its own devices, its email sharing on, and below them the move.
   data = devicesFixture(now);
-  await page.getByRole('button', { name: 'View Sodax', exact: true }).click();
+  await page.getByRole('button', { name: 'Your wallets' }).click();
+  await page.locator('.home-row[data-scope="s1"]').click();
   await page.locator('#home-app-devices-show').click();
   const appSection = page.locator('#home-app-devices');
   await expect(appSection.locator('.home-device')).toHaveCount(3);
   await expect(appSection.locator('.home-device-app')).toHaveText(['Sodax', 'Sodax Earn', 'Sodax']);
   await appSection.scrollIntoViewIfNeeded();
   await shots(page, 'h9-09-app-page-devices-email-on', browserName);
-  await page.getByRole('button', { name: 'Back to all apps' }).click();
+  await page.getByRole('button', { name: 'Your wallets' }).click();
 
   // An app with email sharing off and only an open tab's auto-approve.
-  await page.getByRole('button', { name: 'View Lumen Pay', exact: true }).click();
+  await page.locator('.home-row[data-scope="s2"]').click();
   await page.locator('#home-app-devices-show').click();
   await expect(page.locator('#home-email-none')).toHaveText('You aren’t sharing your email address with this app.');
   await expect(page.locator('#home-app-devices')).toContainText('A tab (may be closed) on https://lumenpay.example');
   await page.locator('#home-app-devices').scrollIntoViewIfNeeded();
   await shots(page, 'h9-10-app-page-tab-consent-email-off', browserName);
-  await page.getByRole('button', { name: 'Back to all apps' }).click();
+  await page.getByRole('button', { name: 'Your wallets' }).click();
 
-  // Nothing signed in anywhere.
+  // Nothing signed in anywhere (the view again: what it showed stays until "Show again").
   mode = 'empty';
+  await page.locator('#home-open-devices').click();
   await page.locator('#home-devices-refresh').click();
   await expect(page.locator('#home-devices-empty')).toContainText('No device is signed in to your apps with Journear right now');
   await shots(page, 'h9-11-front-empty', browserName);
-  await page.getByRole('button', { name: 'View Lumen Pay', exact: true }).click();
+  await page.getByRole('button', { name: 'Your wallets' }).click();
+  await page.locator('.home-row[data-scope="s2"]').click();
   await page.locator('#home-app-devices-show').click();
-  await expect(page.locator('#home-app-devices-empty')).toBeVisible();
+  await expect(page.locator('#home-app-devices-empty')).toContainText('No device is signed in to this wallet right now.');
   await shots(page, 'h9-12-app-page-empty', browserName);
-  await page.getByRole('button', { name: 'Back to all apps' }).click();
+  await page.getByRole('button', { name: 'Your wallets' }).click();
 
   // A linked account Hana couldn't confirm on NEAR: the devices, no stop, no addresses, and why.
   mode = 'unconfirmed';
+  await page.locator('#home-open-devices').click();
   await page.locator('#home-devices-refresh').click();
   await expect(page.locator('#home-devices-unconfirmed-front-s1')).toContainText('couldn’t confirm that this sign-in');
   await expect(page.locator('#home-devices button[id^="home-stop-"]')).toHaveCount(0);
@@ -450,7 +458,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await shots(page, 'h9-14-signed-out-click', browserName);
 });
 
-test('`/home?view=devices` opens the devices section after sign-in, with one read', async ({ page, context }) => {
+test('`/home?view=devices` opens the devices view after sign-in, with one read; Back goes to “Your wallets” (D893)', async ({ page, context }) => {
   const reads: string[] = [];
   await routeApps(context, () => ({ status: 200, body: LIST }));
   await routeDevices(context, (_m, url) => {
@@ -462,4 +470,12 @@ test('`/home?view=devices` opens the devices section after sign-in, with one rea
   await expect(page.locator('#home-devices .home-device')).toHaveCount(3);
   expect(reads).toEqual(['']);
   await expect(page.locator('#home-devices-title')).toBeFocused();
+  await expect(page).toHaveTitle('Devices and auto-approve – Passport Home');
+  expect(page.url()).toBe(`${AUTH_ORIGIN}/home?view=devices`);
+  await page.goBack();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  expect(page.url()).toBe(`${AUTH_ORIGIN}/home?view=devices`);
+  await page.goForward();
+  await expect(page.locator('#home-devices .home-device')).toHaveCount(3);
+  expect(reads).toEqual(['']);
 });

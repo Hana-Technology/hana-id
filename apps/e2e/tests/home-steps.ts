@@ -1,6 +1,6 @@
 // Steps the Hana Home specs share (home.spec.ts, home-export.spec.ts): the sign-in through the child, a routed
 // `GET /v1/home/apps`, and the screenshots of a screen at desktop and phone width, light and dark.
-import type { BrowserContext, Page } from '@playwright/test';
+import type { BrowserContext, Locator, Page } from '@playwright/test';
 import { API_URL, AUTH_ORIGIN } from '../src/stack.ts';
 import { chooseAccount, expect } from './fixtures.ts';
 
@@ -25,6 +25,16 @@ export async function shots(page: Page, name: string, browserName: string): Prom
   }
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ colorScheme: 'light' });
+}
+
+/**
+ * A wallet's (or an app's) row on Passport Home's front page (D893: one button per row), by the exact name of one of its
+ * apps.
+ */
+export function homeRow(page: Page, name: string): Locator {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const exact = new RegExp(`^${escaped}$`, 'u');
+  return page.locator('.home-row[data-scope]').filter({ has: page.locator('.home-row-name', { hasText: exact }) });
 }
 
 /** The click, the child at `/login?mode=home`, the Google stub's chooser. */

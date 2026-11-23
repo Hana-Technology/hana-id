@@ -57,6 +57,18 @@ address is masked), a sign-in again by code in the bar (its controls reachable a
 forward. The page has one `header`, no `nav`, and a skip link that moves focus to `main#app` without changing the
 page's address.
 
+Passport Home's views and Back (D893): `tests/home.spec.ts` walks the front page as rows (opened with a click, Enter and
+Space), the headings and the window's title of each view ("Your wallets", "Wallet details", "App details", "Devices and
+auto-approve"), each group's empty and failed state, and, in all three browsers, Back and Forward: one entry per view
+at the same address holding only `home:{tag}:{step}`, Back to the list with focus on the row, Forward to the view,
+"Your wallets" back to the list's own entry, Back from the list leaving Home, nothing read by Back or Forward, no
+storage; after the sign-in ends Back and Forward still move between what is on screen, and after Sign out they show the
+signed-out page only. `tests/home-export.spec.ts` "D893: the browser’s Back out of an open wallet" shows a derived key,
+goes Back (the key is erased from the page), then Forward (the page with the move flow collapsed, no key, no new derive).
+`tests/home-devices.spec.ts` opens Devices from its row under "Your account" (one read) and at `/home?view=devices`
+(one read, then Back to the list and Forward without a read). The rows' locator is `homeRow(page, appName)`
+(`tests/home-steps.ts`) or `.home-row[data-scope="…"]`.
+
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
 sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,
 can't be removed, no other button); a waiting email linked to a Google wallet (case B) listed as waiting by kind only,

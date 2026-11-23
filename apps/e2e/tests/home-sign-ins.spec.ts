@@ -176,7 +176,7 @@ async function homeEmailSignIn(home: Page, to: string): Promise<void> {
 }
 
 async function openApp(home: Page, scopeId: string, name: string): Promise<void> {
-  await home.locator(`.home-card[data-scope="${scopeId}"]`).getByRole('button', { name: `View ${name}` }).click();
+  await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
   await expect(home.locator('#home-sign-ins-title')).toHaveText('Ways to sign in');
 }
 

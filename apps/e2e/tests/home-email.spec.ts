@@ -115,11 +115,11 @@ test('an email user signs in to Hana Home with a code and sees their app and add
   await homeEmailSignIn(home, to, browserName, 'h10-02');
   // No window: the code screens are on the page.
   expect(popups).toBe(0);
-  const card = home.locator(`.home-card[data-scope="${scopeId}"]`);
+  const card = home.locator(`.home-row[data-scope="${scopeId}"]`);
   await expect(card).toContainText(name);
-  await expect(card.locator('.home-card-foot .badge')).toHaveText('Safe if the app closes');
+  await expect(card.locator('> .badge')).toHaveText('Safe if the app closes');
   await shots(home, 'h10-04-signed-in-list', browserName);
-  await card.getByRole('button', { name: `View ${name}` }).click();
+  await card.click();
   await expect(home.locator('#home-address-stellar')).toHaveText(wallet.stellar);
   await expect(home.locator('#home-address-evm')).toHaveText(wallet.evm);
   // Memory only: Hana Home added nothing to storage (no device ticket either) and nothing to its address.
@@ -259,7 +259,7 @@ test('export for an app whose coverage is exit: the per-app sign-in goes through
   const home = await context.newPage();
   await home.goto(`${AUTH_ORIGIN}/home`);
   await signIn(home);
-  await home.locator(`.home-card[data-scope="${scopeId}"]`).getByRole('button', { name: `View ${name}` }).click();
+  await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
   await home.locator('#home-export-open').click();
   await expect(home.locator('#home-export-start')).toHaveText('Sign in again to continue');
   await shots(home, 'h10-15-move-intro-exit', browserName);

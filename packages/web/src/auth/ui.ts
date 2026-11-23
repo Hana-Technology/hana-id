@@ -15,6 +15,12 @@ const ICONS = {
   warn: ['0 0 20 20', [['path', { d: 'M10 3l8 14H2z' }], ['path', { d: 'M10 8v4M10 14.5v.1' }]]],
   arrow: ['0 0 16 16', [['path', { d: 'M3 8h10M9 4l4 4-4 4' }]]],
   'chev-r': ['0 0 16 16', [['path', { d: 'M6 4l4 4-4 4' }]]],
+  'chev-l': ['0 0 16 16', [['path', { d: 'M10 4L6 8l4 4' }]]],
+  /** A screen: Passport Home's "Devices and auto-approve" row (D893). */
+  device: ['0 0 16 16', [['rect', { x: '2', y: '3', width: '12', height: '8', rx: '1' }], ['path', { d: 'M5.5 13.5h5M8 11v2.5' }]]],
+  /** A person: Passport Home's "Your name" row (D893). */
+  person: ['0 0 16 16', [['circle', { cx: '8', cy: '5.5', r: '2.5' }], ['path', { d: 'M3 13.5c.8-2.4 2.8-3.5 5-3.5s4.2 1.1 5 3.5' }]]],
+  search: ['0 0 16 16', [['circle', { cx: '7', cy: '7', r: '4.5' }], ['path', { d: 'M10.5 10.5L14 14' }]]],
   copy: ['0 0 16 16', [['rect', { x: '5.5', y: '5.5', width: '8', height: '8', rx: '1.5' }], ['path', { d: 'M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2' }]]],
   key: ['0 0 20 20', [['circle', { cx: '7', cy: '12', r: '4' }], ['path', { d: 'M10 9l7-7M14 5l2 2M12 7l2 2' }]]],
   mail: ['0 0 20 20', [['rect', { x: '2.5', y: '4.5', width: '15', height: '11', rx: '2' }], ['path', { d: 'M3 6l7 5 7-5' }]]],

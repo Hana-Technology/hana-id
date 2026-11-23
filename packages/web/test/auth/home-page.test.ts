@@ -5,8 +5,8 @@
 import { ApiError, type RelayPayload, type RelayReadResponse, decodeHomeIdentity, encryptRelayPayload, homeMessage, homeNonce, identityKeyHex, parseWindowMessage } from '@hana-id/core';
 import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOME_UNNAMED_APP, homeApi, homeAppName, parseHomeApps, parseHomeConfig } from '../../src/auth/home-api.ts';
-import { HOME_EXPIRY_WARN_MS, coverageText, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
-import { CLIENT_ID, ENV, EVIL, FakeWindow, type RemoteWindow, type TokenSigner, asWindow, crossOriginWindow, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
+import { HOME_EXPIRY_WARN_MS, HOME_TEXT, coverageText, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, homeViewTitle, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
+import { CLIENT_ID, ENV, EVIL, FakeWindow, type RemoteWindow, type TokenSigner, asWindow, crossOriginWindow, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
 
 const FILES = 'https://files.hana.test';
 const HOME_ENV = { ...ENV, filesOrigin: FILES };
@@ -63,6 +63,9 @@ interface Harness {
   nameCalls(): Call[];
   /** What those calls answer. */
   nameAnswer: (url: URL, body: string | null) => Response | Promise<Response>;
+  /** Calls to `/v1/home/devices` ("Devices and auto-approve", home-devices.ts), and what they answer. */
+  deviceCalls(): Call[];
+  devicesAnswer: (url: URL) => Response | Promise<Response>;
   /** What the next `/v1/home/apps` calls answer, by the request's query. */
   answer: (url: URL) => Response | Promise<Response>;
   config: () => Response | Promise<Response>;
@@ -104,6 +107,7 @@ function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; o
     config: opts.config ?? ((): Response | Promise<Response> => json(200, { serverTimeMs: now, signer: ENV.signer, sharedGoogleClientId: CLIENT_ID, exitGoogleClientId: null })),
     clipboard: { writeText: vi.fn(async (_text: string) => {}) },
     nameAnswer: (): Response => json(200, { name: null, shares: [], more: false, app: null }),
+    devicesAnswer: (): Response => json(200, { scopes: [], nextCursor: null }),
   } as unknown as Harness;
   Object.defineProperty(h, 'child', { get: () => child });
   const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -113,10 +117,12 @@ function start(opts: { search?: string; isGesture?: boolean; framed?: boolean; o
     if (url.pathname === '/v1/home/config') return h.config();
     if (url.pathname === '/v1/home/apps') return h.answer(url);
     if (url.pathname === '/v1/home/profile' || url.pathname === '/v1/home/name-sharing') return h.nameAnswer(url, init?.body ? new TextDecoder().decode(init.body as Uint8Array) : null);
+    if (url.pathname === '/v1/home/devices') return h.devicesAnswer(url);
     throw new Error(`Unexpected fetch ${url.pathname}`);
   });
   h.appCalls = () => calls.filter((c) => c.url.pathname === '/v1/home/apps');
   h.nameCalls = () => calls.filter((c) => c.url.pathname === '/v1/home/profile' || c.url.pathname === '/v1/home/name-sharing');
+  h.deviceCalls = () => calls.filter((c) => c.url.pathname === '/v1/home/devices');
   h.page = startHomePage({
     win,
     env: HOME_ENV,
@@ -467,11 +473,22 @@ describe('your apps', () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    const sections = [...document.querySelectorAll('#home-content h2')].map((x) => x.textContent);
-    expect(sections).toEqual(['Your apps', 'Devices and auto-approve', 'Your name', 'Find an app', 'Other apps that use Journear']);
-    const cards = [...document.querySelectorAll('.home-card')];
+    // D893: the view's h1 is "Your wallets"; "Your account" and "Other apps" follow it.
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => `${x.tagName} ${x.textContent}`)).toEqual(['H1 Your wallets', 'H2 Your account', 'H2 Other apps']);
+    expect(document.title).toBe('Your wallets – Passport Home');
+    // The user's own wallets under "Your wallets", the others under "Other apps" (after the search).
+    expect([...document.querySelectorAll('#home-mine .home-row')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2']);
+    expect([...document.querySelectorAll('#home-others .home-row')].map((c) => c.getAttribute('data-scope'))).toEqual(['s3', 's4', 's5', 's6']);
+    const cards = [...document.querySelectorAll('.home-row[data-scope]')];
     expect(cards.map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
-    const badgeOf = (id: string) => document.querySelector(`.home-card[data-scope="${id}"] .home-card-foot .badge`)?.textContent;
+    // A row names every app that shares the wallet, with their state, and where the first runs (quieter, D893).
+    expect([...(cards[0]?.querySelectorAll('.home-row-name') ?? [])].map((x) => x.textContent)).toEqual(['Sodax', 'Sodax Earn']);
+    expect(cards[0]?.querySelector('.home-row-sub')?.textContent).toBe('https://app.example and 1 more website');
+    expect(cards[0]?.getAttribute('aria-label')).toBe('Sodax, Sodax Earn (Paused), Safe if the app closes');
+    expect(cards[5]?.getAttribute('aria-label')).toBe('Sandbox (Test app), Safe if the app closes');
+    // Every row has a tile: a neutral placeholder where the app has no logo.
+    expect(cards.every((c) => c.querySelector('.home-tile > svg.ic') !== null && c.querySelector('.home-tile')?.getAttribute('aria-hidden') === 'true')).toBe(true);
+    const badgeOf = (id: string) => document.querySelector(`.home-row[data-scope="${id}"] > .badge`)?.textContent;
     expect(badgeOf('s1')).toBe('Safe if the app closes');
     expect(badgeOf('s2')).toBe('Safe if the app closes');
     expect(badgeOf('s3')).toBe('Needs the app');
@@ -505,20 +522,26 @@ describe('your apps', () => {
   it('says so when the account has no app yet, and still lets the user search', async () => {
     const h = await ready();
     await h.signIn();
-    expect(document.getElementById('home-empty')?.textContent).toContain('No apps yet for this Google account');
-    expect(document.querySelectorAll('.home-card')).toHaveLength(0);
+    expect(document.getElementById('home-empty')?.textContent).toBe('No wallets yetYou don’t have a wallet with this Google account yet. A wallet appears here after you sign in to an app with Journear.');
+    expect(document.querySelectorAll('.home-row[data-scope]')).toHaveLength(0);
     expect(document.getElementById('home-search')).not.toBeNull();
-    expect(document.getElementById('home-others-title')).toBeNull();
+    // D893: "Other apps" says it has none to list, in the same pattern.
+    expect(document.getElementById('home-others-empty')?.textContent).toBe('No other apps listedSome apps appear only when you search for their whole name.');
+    expect(document.getElementById('home-others-empty')?.classList.contains('jp-empty')).toBe(true);
   });
 
   it('opens an app’s page: addresses, an explorer link for Stellar only, the Support ID, copy', async () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     expect(h.page.openScope).toBe('s1');
-    expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
-    expect(document.getElementById('home-app-label')?.textContent).toBe('Apps that share one wallet');
+    expect(h.page.view).toBe('wallet');
+    expect(document.getElementById('home-app-title')?.tagName).toBe('H1');
+    expect(document.getElementById('home-app-title')?.textContent).toBe('Wallet details');
+    expect(document.title).toBe('Wallet details – Passport Home');
+    expect(document.activeElement?.id).toBe('home-app-title');
+    expect(document.getElementById('home-app-label')?.textContent).toBe('Apps that use this wallet');
     expect([...document.querySelectorAll('.home-app-all .home-app-name strong')].map((x) => x.textContent)).toEqual(['Sodax', 'Sodax Earn']);
     expect(document.getElementById('home-address-stellar')?.textContent).toBe(G);
     expect(document.getElementById('home-address-evm')?.textContent).toBe(EVM);
@@ -543,14 +566,17 @@ describe('your apps', () => {
 
     h.click('home-back');
     expect(h.page.openScope).toBeNull();
-    expect(document.querySelectorAll('.home-card')).toHaveLength(6);
+    expect(h.page.view).toBe('front');
+    expect(document.querySelectorAll('.home-row[data-scope]')).toHaveLength(6);
+    // Back on the front page, focus is on the row the user opened.
+    expect(document.activeElement?.getAttribute('data-scope')).toBe('s1');
   });
 
   it('D765: a copy the browser refuses stays on the page (the user must copy by hand), never as a toast; sign-out clears the toasts', async () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     h.clipboard.writeText.mockRejectedValueOnce(new Error('denied'));
     h.click('home-copy-stellar');
     await h.page.idle();
@@ -585,7 +611,7 @@ describe('your apps', () => {
         nextCursor: null,
       });
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     expect([...document.querySelectorAll('.home-address-label')].map((x) => x.textContent)).toEqual(['Stellar', 'Ethereum-style (Ethereum and similar networks)', 'NEAR']);
     expect(document.getElementById('home-address-near')?.textContent).toBe(NEAR);
     expect(document.getElementById('home-no-near')).toBeNull();
@@ -596,7 +622,7 @@ describe('your apps', () => {
     expect(h.clipboard.writeText).toHaveBeenCalledWith(NEAR);
     expect([...document.querySelectorAll('.home-toasts .jp-toast')].at(-1)?.textContent).toBe('Copied the NEAR account.');
     h.click('home-back');
-    (document.querySelector('.home-card[data-scope="s2"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s2"]') as HTMLElement).click();
     expect(document.getElementById('home-address-near')).toBeNull();
     expect(document.getElementById('home-no-near')?.textContent).toBe('No NEAR account on record here yet. It appears after you next sign in to this app, if the app uses NEAR.');
     expect(pageText()).not.toContain('alice.testnet');
@@ -606,15 +632,19 @@ describe('your apps', () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s2"] .home-open') as HTMLElement).click();
-    expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
-    expect(document.getElementById('home-app-label')?.textContent).toBe('App');
+    (document.querySelector('.home-row[data-scope="s2"]') as HTMLElement).click();
+    expect(document.getElementById('home-app-title')?.textContent).toBe('Wallet details');
+    expect(document.getElementById('home-app-label')?.textContent).toBe('App that uses this wallet');
     expect(document.querySelector('.home-app-all')?.textContent).toBe('Old ExchangeClosed');
     expect(document.getElementById('home-support-id')).toBeNull();
     expect(pageText()).not.toContain('Support ID');
-    expect(document.getElementById('home-no-address')?.textContent).toBe('Journear has no address on record for you in this app yet.');
+    expect(document.getElementById('home-no-address')?.textContent).toBe('Journear has no address on record for this wallet yet.');
     h.click('home-back');
-    (document.querySelector('.home-card[data-scope="s4"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s4"]') as HTMLElement).click();
+    // An app where the user has no wallet keeps "App details" and its label (D893: "wallet" only for the user's own).
+    expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
+    expect(document.title).toBe('App details – Passport Home');
+    expect(document.getElementById('home-app-label')?.textContent).toBe('App');
     expect(document.getElementById('home-no-address')?.textContent).toBe('Journear has no wallet on record for this Google account in this app.');
     expect(pageText()).toContain('If the app still runs, use the app itself.');
   });
@@ -624,12 +654,12 @@ describe('your apps', () => {
     h.answer = () => json(200, { scopes: [mine('s1', { coverage: 'unknown' }), scope('s5', { coverage: 'unknown' })], nextCursor: null });
     await h.signIn();
     h.answer = (url) => json(200, { scopes: [url.searchParams.has('scopeId') ? mine('s1', { coverage: 'shared' }) : scope('s5', { coverage: 'none' })], nextCursor: null });
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     await h.page.idle();
     expect(h.appCalls().at(-1)?.url.search).toBe('?scopeId=s1');
     expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Safe if the app closes');
     h.click('home-back');
-    (document.querySelector('.home-card[data-scope="s5"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s5"]') as HTMLElement).click();
     await h.page.idle();
     expect(h.appCalls().at(-1)?.url.search).toBe('?appId=app_Apps5');
     expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Can’t be opened here');
@@ -656,12 +686,14 @@ describe('your apps', () => {
     await h.page.idle();
     expect(h.appCalls().at(-1)?.url.search).toBe('?q=Quiet+Bank');
     expect(document.getElementById('home-results-title')?.textContent).toBe('Results for Quiet Bank');
-    expect(document.querySelector('#home-results .home-card')?.getAttribute('data-scope')).toBe('s9');
-    expect(document.getElementById('home-others-title')).toBeNull();
+    expect(document.querySelector('#home-results .home-row')?.getAttribute('data-scope')).toBe('s9');
+    // The results take the list's place under "Other apps" until cleared.
+    expect(document.getElementById('home-results')?.closest('#home-others')).not.toBeNull();
+    expect(document.getElementById('home-others-list')).toBeNull();
 
     h.click('home-search-clear');
     expect(document.getElementById('home-results')).toBeNull();
-    expect(document.getElementById('home-others-title')).not.toBeNull();
+    expect(document.getElementById('home-others-list')).not.toBeNull();
     expect((document.getElementById('home-search') as HTMLInputElement).value).toBe('');
   });
 
@@ -673,7 +705,7 @@ describe('your apps', () => {
     h.click('home-more');
     await h.page.idle();
     expect(h.appCalls().at(-1)?.url.search).toBe('?cursor=s6');
-    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6', 's7']);
+    expect([...document.querySelectorAll('.home-row[data-scope]')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6', 's7']);
     expect(document.getElementById('home-more')).toBeNull();
     const counters = await Promise.all(h.appCalls().map(async (c) => (await verifiedHeader(c)).header.counter));
     expect(counters).toEqual([1, 2]);
@@ -688,10 +720,10 @@ describe('your apps', () => {
     expect(h.appCalls().map((c) => c.url.search)).toEqual(['', '?appId=app_quiet1']);
     // The partner's words are never the landing screen: the user's own apps come first, nothing is opened.
     expect(h.page.openScope).toBeNull();
-    expect([...document.querySelectorAll('#home-content h2')].map((x) => x.textContent)).toEqual(['Your apps', 'The app from your link', 'Devices and auto-approve', 'Your name', 'Find an app']);
+    expect([...document.querySelectorAll('#home-content h1, #home-content h2')].map((x) => x.textContent)).toEqual(['Your wallets', 'The app from your link', 'Your account', 'Other apps']);
     expect(document.querySelector('#home-linked .note')?.textContent).toContain('Journear has no wallet on record for this Google account in it.');
-    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's8']);
-    expect(document.querySelector('#home-linked .home-card-foot .badge')?.textContent).toBe('Safe if the app closes');
+    expect([...document.querySelectorAll('.home-row[data-scope]')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's8']);
+    expect(document.querySelector('#home-linked .home-row > .badge')?.textContent).toBe('Safe if the app closes');
     // The link's parameter is an app id, never anything of the user's; the page changed no URL.
     expect(h.win.replaced).toEqual([]);
     expect(h.win.location.assigned).toEqual([]);
@@ -732,10 +764,10 @@ describe('partner strings are text only', () => {
     };
     check();
     // The name shows exactly as sent, as characters.
-    expect(root.querySelector('.home-app-name strong')?.textContent).toBe(XSS);
+    expect(root.querySelector('.home-row-name')?.textContent).toBe(XSS);
     expect(root.textContent).toContain('https://ok.example');
     expect(root.textContent).not.toContain('javascript:');
-    (root.querySelector('.home-open') as HTMLElement).click();
+    (root.querySelector('.home-row[data-scope]') as HTMLElement).click();
     check();
     expect(root.querySelector('.home-app-all .home-app-name strong')?.textContent).toBe(XSS);
     // A malformed address or Support ID is left out, never shown.
@@ -758,8 +790,8 @@ describe('partner strings are text only', () => {
     await other.signIn();
     expect(other.page.openScope).toBeNull();
     expect(other.appCalls()).toHaveLength(1);
-    expect(document.querySelector('#home-linked .home-card')?.getAttribute('data-scope')).toBe('s3');
-    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's3', 's4']);
+    expect(document.querySelector('#home-linked .home-row')?.getAttribute('data-scope')).toBe('s3');
+    expect([...document.querySelectorAll('.home-row[data-scope]')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's3', 's4']);
   });
 
   it.each([
@@ -779,9 +811,12 @@ describe('partner strings are text only', () => {
     h.answer = () => json(200, { scopes: [mine('s1', { apps: [{ ...app('x', { appId: 'app_x1' }), name }] })], nextCursor: null });
     await h.signIn();
     // The app stays listed (a user's wallet is never hidden by its app's name).
-    expect(document.querySelector('.home-app-name strong')?.textContent).toBe('Unnamed app');
-    const open = document.querySelector('.home-open') as HTMLElement;
-    expect(open.getAttribute('aria-label')).toBe('View Unnamed app');
+    expect(document.querySelector('.home-row-name')?.textContent).toBe('Unnamed app');
+    // The row is one button named by its own words (no label of the partner's beyond them).
+    const open = document.querySelector('.home-row[data-scope]') as HTMLElement;
+    expect(open.tagName).toBe('BUTTON');
+    expect(open.getAttribute('aria-label')).toBe('Unnamed app, Safe if the app closes');
+    expect(open.textContent).toContain('Unnamed app');
     open.click();
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe('Unnamed app');
     if (typeof name === 'string' && name.trim() !== '') expect(document.documentElement.outerHTML).not.toContain(name.slice(0, 5) === 'xxxxx' ? 'x'.repeat(100) : name);
@@ -797,8 +832,8 @@ describe('partner strings are text only', () => {
     const h = await ready();
     h.answer = () => json(200, { scopes: [scope('s1', { apps: [app(long, { appId: 'app_x1' })] })], nextCursor: null });
     await h.signIn();
-    const open = document.querySelector('.home-open') as HTMLElement;
-    expect(open.getAttribute('aria-label')).toBe(`View ${shown}`);
+    const open = document.querySelector('.home-row[data-scope]') as HTMLElement;
+    expect(open.querySelector('.home-row-name')?.textContent).toBe(shown);
     open.click();
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe(shown);
     expect(pageText()).not.toContain('before Friday');
@@ -809,10 +844,22 @@ describe('partner strings are text only', () => {
     const h = await ready();
     h.answer = () => json(200, { scopes: [scope('s1', { apps: [app(XSS, { appId: 'app_x1', status: 'deleted' })] })], nextCursor: null });
     await h.signIn();
-    const open = document.querySelector('.home-open') as HTMLElement;
-    expect(open.getAttribute('aria-label')).toBe(`View ${XSS}`);
+    const open = document.querySelector('.home-row[data-scope]') as HTMLElement;
+    expect(open.querySelector('.home-row-name')?.textContent).toBe(XSS);
     open.click();
-    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => x.textContent)).toEqual(['Passport Home', 'App details', 'App', 'Would a wallet here need the app?', 'Your addresses', 'Devices and auto-approve', 'Ways to sign in', 'Your name', 'Move this wallet to another wallet app']);
+    // D893: the view's h1 is Journear's words ("App details" here: no wallet of the user's); the move flow's screens
+    // keep their h3 (home-export.ts unchanged).
+    expect([...document.querySelectorAll('#app h1, #app h2, #app h3')].map((x) => `${x.tagName} ${x.textContent}`)).toEqual([
+      'H1 App details',
+      'H2 App',
+      'H2 Would a wallet here need the app?',
+      'H2 Your addresses',
+      'H2 Devices and auto-approve',
+      'H2 Ways to sign in',
+      'H2 Your name',
+      'H3 Move this wallet to another wallet app',
+    ]);
+    expect(document.title).toBe('App details – Passport Home');
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe(XSS);
     expect(document.querySelector('#app script')).toBeNull();
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
@@ -842,6 +889,513 @@ describe('partner strings are text only', () => {
     expect(() => parseHomeApps({ scopes: 'x' })).toThrow(ApiError);
     expect(() => parseHomeApps({ scopes: [], nextCursor: '<b>' })).toThrow(ApiError);
     expect(() => parseHomeConfig({ serverTimeMs: 1, signer: 'Not An Account', sharedGoogleClientId: null })).toThrow(ApiError);
+  });
+});
+
+describe('the views and their words (D893)', () => {
+  const LIST = () => json(200, { scopes: [mine('s1', { apps: [app('Sodax'), app('Sodax Earn')] }), scope('s3')], nextCursor: null });
+  const row = (id: string): HTMLElement => document.querySelector(`.home-row[data-scope="${id}"]`) as HTMLElement;
+
+  it('a row is one button: a click and the keyboard (a button’s Enter and Space are its click) open it; the badge and the names are in it', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const r = row('s1');
+    expect(r.tagName).toBe('BUTTON');
+    expect(r.getAttribute('type')).toBe('button');
+    expect(r.closest('li')?.parentElement?.id).toBe('home-mine-list');
+    // Nothing else in the row can take focus or a click.
+    expect(r.querySelectorAll('button, a, input, [tabindex]')).toHaveLength(0);
+    expect(r.querySelector(':scope > .badge')?.textContent).toBe('Safe if the app closes');
+    // A screen reader names the row by the apps, with pauses, and its badge; where the first app runs is its
+    // description, not its name (PR 116's review).
+    expect(r.textContent).toBe('Sodax · Sodax Earnhttps://app.example and 1 more websiteSafe if the app closes');
+    expect(r.getAttribute('aria-label')).toBe('Sodax, Sodax Earn, Safe if the app closes');
+    expect(document.getElementById(r.getAttribute('aria-describedby') ?? '')?.textContent).toBe('https://app.example and 1 more website');
+    const account = document.getElementById('home-open-devices') as HTMLElement;
+    expect(account.getAttribute('aria-label')).toBeNull();
+    expect(document.getElementById(account.getAttribute('aria-describedby') ?? '')?.textContent).toBe(HOME_TEXT.devicesRow);
+    r.focus();
+    expect(document.activeElement).toBe(r);
+    r.click();
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.openScope).toBe('s1');
+  });
+
+  it('the headings and the window’s title name the view; the product’s name is in the bar only', async () => {
+    const h = await ready();
+    expect(document.title).toBe('Passport Home');
+    h.answer = LIST;
+    await h.signIn();
+    const outline = (): string[] => [...document.querySelectorAll('#app h1, #app h2')].map((x) => `${x.tagName} ${x.textContent}`);
+    expect(outline()).toEqual(['H1 Your wallets', 'H2 Your account', 'H2 Other apps']);
+    expect(document.querySelectorAll('#app h1')).toHaveLength(1);
+    expect(document.title).toBe(homeViewTitle('Your wallets'));
+    expect(document.title).toBe('Your wallets – Passport Home');
+    expect(pageText()).not.toContain('Passport Home');
+    h.click('home-open-devices');
+    await h.page.idle();
+    expect(outline()[0]).toBe('H1 Devices and auto-approve');
+    expect(document.querySelectorAll('#app h1')).toHaveLength(1);
+    expect(document.title).toBe('Devices and auto-approve – Passport Home');
+    expect(document.activeElement?.id).toBe('home-devices-title');
+    h.click('home-back');
+    row('s1').click();
+    expect(document.querySelectorAll('#app h1')).toHaveLength(1);
+    expect(document.title).toBe('Wallet details – Passport Home');
+    h.click('home-back');
+    row('s3').click();
+    expect(document.title).toBe('App details – Passport Home');
+    // Signed out: the page's name again.
+    h.click('home-sign-out');
+    expect(document.title).toBe('Passport Home');
+    expect(document.getElementById('home-title')?.textContent).toBe('Passport Home');
+  });
+
+  it('the bar’s Sign out is named apart from “Sign out this device”', async () => {
+    const h = await ready();
+    await h.signIn();
+    const out = document.getElementById('home-sign-out') as HTMLElement;
+    expect(out.textContent).toBe('Sign out');
+    expect(out.getAttribute('aria-label')).toBe('Sign out of Passport Home');
+    expect(out.getAttribute('title')).toBe('Sign out of Passport Home');
+    expect(HOME_TEXT.signOutName).toBe('Sign out of Passport Home');
+  });
+
+  it('“Your account” has the two rows, each its own view; the all-wallets sections are no longer on the front page', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    expect([...document.querySelectorAll('#home-your-account .home-row')].map((r) => [r.id, r.querySelector('.home-row-title')?.textContent, r.querySelector('.home-row-sub')?.textContent])).toEqual([
+      ['home-open-devices', 'Devices and auto-approve', 'Where you’re signed in to your apps, and what may sign without asking'],
+      ['home-open-profile', 'Your name', 'A name for your apps, if you want one. No app gets it until you share it.'],
+    ]);
+    expect(document.getElementById('home-devices')).toBeNull();
+    expect(document.getElementById('home-profile')).toBeNull();
+    // Nothing is read until a row is pressed; the row reads once.
+    expect(h.deviceCalls()).toEqual([]);
+    h.click('home-open-devices');
+    expect(h.page.view).toBe('devices');
+    expect(document.getElementById('home-back')?.textContent).toBe('Your wallets');
+    await h.page.idle();
+    expect(h.deviceCalls()).toHaveLength(1);
+    expect(h.page.devices.front).toBe('ready');
+    h.click('home-back');
+    expect(document.activeElement?.id).toBe('home-open-devices');
+    h.click('home-open-devices');
+    await h.page.idle();
+    expect(h.deviceCalls()).toHaveLength(1);
+  });
+
+  it('each group’s loading, empty and failed states', async () => {
+    const h = await ready();
+    let answer: ((r: Response) => void) | null = null;
+    h.answer = () => new Promise<Response>((r) => (answer = r));
+    await h.signInStart();
+    await until(() => answer !== null, 'the list to be asked for');
+    expect(h.page.list).toBe('loading');
+    const loading = document.getElementById('home-loading');
+    expect(loading?.querySelector('[role="status"]')?.textContent).toBe('Loading your wallets…');
+    // Placeholder rows, hidden from screen readers, in "Your wallets" and "Other apps"; "Your account" is ready.
+    expect(loading?.querySelector('.home-rows')?.getAttribute('aria-hidden')).toBe('true');
+    expect(document.getElementById('home-others-loading')?.querySelector('.home-rows')?.getAttribute('aria-hidden')).toBe('true');
+    expect(document.getElementById('home-open-devices')).not.toBeNull();
+    // The search can be typed in while the list loads; the list's arrival keeps the field's focus and words.
+    const typing = document.getElementById('home-search') as HTMLInputElement;
+    typing.focus();
+    typing.value = 'Sod';
+    typing.dispatchEvent(new Event('input'));
+    (answer as unknown as (r: Response) => void)(json(200, { scopes: [], nextCursor: null }));
+    await h.page.idle();
+    expect(document.getElementById('home-search')).not.toBe(typing);
+    expect(document.activeElement?.id).toBe('home-search');
+    expect((document.getElementById('home-search') as HTMLInputElement).value).toBe('Sod');
+    (document.getElementById('home-search') as HTMLInputElement).value = '';
+    document.getElementById('home-search')?.dispatchEvent(new Event('input'));
+    expect(document.getElementById('home-empty')?.querySelector('strong')?.textContent).toBe('No wallets yet');
+    expect(document.getElementById('home-others-empty')?.querySelector('strong')?.textContent).toBe('No other apps listed');
+    // A search with no result says so in the same pattern.
+    const input = document.getElementById('home-search') as HTMLInputElement;
+    input.value = 'Nothing Here';
+    input.dispatchEvent(new Event('input'));
+    h.answer = () => json(200, { scopes: [], nextCursor: null });
+    h.click('home-search-go');
+    await h.page.idle();
+    expect(document.getElementById('home-no-results')?.textContent).toBe('No app found with that nameCheck the spelling, or type the app’s whole name.');
+    expect(document.getElementById('home-no-results')?.classList.contains('jp-empty')).toBe(true);
+    // A refusal of the search shows under the search, where the user acted, not at the top of the page.
+    h.answer = () => refusal(429, 'rate_limited');
+    h.click('home-search-go');
+    await h.page.idle();
+    expect(document.getElementById('home-problem')?.closest('#home-others')).not.toBeNull();
+    expect(document.getElementById('home-notice')?.previousElementSibling?.classList.contains('home-search-field')).toBe(true);
+  });
+
+  it('the old words are gone from every Home view, the new ones are there', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const every: string[] = [pageText()];
+    row('s1').click();
+    every.push(pageText());
+    h.click('home-back');
+    row('s3').click();
+    every.push(pageText());
+    h.click('home-back');
+    h.click('home-open-devices');
+    await h.page.idle();
+    every.push(pageText());
+    h.click('home-back');
+    h.click('home-open-profile');
+    await h.page.idle();
+    every.push(pageText());
+    const all = every.join('\n');
+    for (const old of ['Your apps', 'Back to all apps', 'Find an app\n', 'App name', 'Other apps that use Journear', 'Nothing here yet', 'No apps yet for this', 'Journear has no address on record for you in this app yet.', 'The sign-ins that open your wallet in this app.', 'No device is signed in to this app with Journear', 'go back to all apps', 'open the app’s page from']) {
+      expect(all).not.toContain(old);
+    }
+    for (const now of ['Your wallets', 'Your account', 'Other apps', 'Find an app by name', 'Wallet details', 'App details', 'Apps that use this wallet', 'The sign-ins that open this wallet.', 'Where you’re signed in to this wallet']) expect(all).toContain(now);
+  });
+});
+
+describe('Back and Forward inside Home (D893)', () => {
+  const LIST = () => json(200, { scopes: [mine('s1'), mine('s2', { coverage: 'unknown' }), scope('s3')], nextCursor: null });
+  const MARK = /^home:[A-Za-z0-9_-]{16}:1$/u;
+  const row = (id: string): HTMLElement => document.querySelector(`.home-row[data-scope="${id}"]`) as HTMLElement;
+
+  it('opening a wallet adds one entry at the same address holding only an opaque marker; Back returns to the list, Forward to the wallet; neither reads', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    expect(hist.scrollRestoration).toBe('manual');
+    expect(hist.entries).toHaveLength(1);
+    row('s1').click();
+    expect(h.page.view).toBe('wallet');
+    expect(hist.entries).toHaveLength(2);
+    expect(hist.pushState).toHaveBeenCalledTimes(1);
+    // No URL argument: the address never changes (D555), and nothing is assigned or replaced.
+    expect(hist.pushState.mock.calls[0]).toHaveLength(2);
+    expect(h.win.replaced).toEqual([]);
+    expect(h.win.location.assigned).toEqual([]);
+    // The marker: a random tag and the step's number; nothing of the person, the wallet or the app.
+    const state = hist.state as string;
+    expect(state).toMatch(MARK);
+    for (const word of ['s1', 'App s1', 'sub-1', 'app_', G, EVM, 'HANA-', 'google']) expect(state).not.toContain(word);
+    const calls = h.calls.length;
+
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(document.getElementById('home-title')?.textContent).toBe('Your wallets');
+    expect(document.title).toBe('Your wallets – Passport Home');
+    // Focus returns to the row the user opened.
+    expect(document.activeElement?.getAttribute('data-scope')).toBe('s1');
+
+    hist.forward();
+    await flush();
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.openScope).toBe('s1');
+    expect(document.getElementById('home-address-stellar')?.textContent).toBe(G);
+    expect(document.activeElement?.id).toBe('home-app-title');
+    expect(hist.entries).toHaveLength(2);
+    expect(h.calls).toHaveLength(calls);
+
+    // An unchecked wallet is checked when the user opens it, never when Back or Forward shows it again.
+    hist.back();
+    await flush();
+    row('s2').click();
+    await h.page.idle();
+    expect(h.appCalls().at(-1)?.url.search).toBe('?scopeId=s2');
+    const after = h.calls.length;
+    hist.back();
+    await flush();
+    hist.forward();
+    await flush();
+    await h.page.idle();
+    expect(h.page.openScope).toBe('s2');
+    expect(h.calls).toHaveLength(after);
+
+    // Back to the list, then Back from the list leaves Home, as before.
+    hist.back();
+    await flush();
+    expect(hist.left).toBe(0);
+    hist.back();
+    expect(hist.left).toBe(1);
+  });
+
+  it('“Your wallets” goes back to the list’s own entry, so the list stays the first entry and Forward still reaches the view', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    row('s1').click();
+    h.click('home-back');
+    expect(hist.go).toHaveBeenLastCalledWith(-1);
+    // The list is drawn at once; the browser's own popstate comes after and changes nothing.
+    expect(h.page.view).toBe('front');
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(hist.index).toBe(0);
+    expect(hist.entries).toHaveLength(2);
+    hist.forward();
+    await flush();
+    expect(h.page.openScope).toBe('s1');
+    // A view opened right after the way back, before the browser's popstate, waits for it and then takes the entry after
+    // the list's: still one entry past the list.
+    h.click('home-back');
+    row('s3').click();
+    expect(h.page.openScope).toBe('s3');
+    expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
+    await flush();
+    expect(hist.index).toBe(1);
+    expect(hist.entries).toHaveLength(2);
+    expect(hist.state).toMatch(MARK);
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    hist.forward();
+    await flush();
+    expect(h.page.openScope).toBe('s3');
+  });
+
+  it('the account views: Back returns to the list, Forward shows them again without a read; `?view=devices` opens Devices with one read and an entry', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    h.click('home-open-devices');
+    await h.page.idle();
+    expect(h.deviceCalls()).toHaveLength(1);
+    expect(hist.state).toMatch(MARK);
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(document.activeElement?.id).toBe('home-open-devices');
+    hist.forward();
+    await flush();
+    await h.page.idle();
+    expect(h.page.view).toBe('devices');
+    expect(h.deviceCalls()).toHaveLength(1);
+
+    resetDom();
+    const l = await ready({ search: '?view=devices' });
+    l.answer = LIST;
+    await l.signIn();
+    expect(l.page.view).toBe('devices');
+    expect(l.deviceCalls()).toHaveLength(1);
+    expect(l.win.history.entries).toHaveLength(2);
+    expect(document.activeElement?.id).toBe('home-devices-title');
+    l.win.history.back();
+    await flush();
+    expect(l.page.view).toBe('front');
+    expect(l.page.list).toBe('ready');
+    // The link is the page's address: it never changed.
+    expect(l.win.replaced).toEqual([]);
+  });
+
+  it('after the sign-in ends, Back and Forward move between what is on screen and read nothing; after Sign out they show nothing of the account', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    row('s1').click();
+    advance(15 * MIN);
+    expect(h.page.session).toBe('ended');
+    const calls = h.calls.length;
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(row('s1')).not.toBeNull();
+    hist.forward();
+    await flush();
+    expect(h.page.openScope).toBe('s1');
+    expect(h.calls).toHaveLength(calls);
+
+    // Sign out: everything goes, and the browser goes back to the page's first entry.
+    h.click('home-sign-out');
+    expect(hist.go).toHaveBeenLastCalledWith(-1);
+    await flush();
+    expect(hist.index).toBe(0);
+    expect(h.page.stage).toBe('signed_out');
+    for (const move of [() => hist.forward(), () => hist.back()]) {
+      move();
+      await flush();
+      expect(h.page.stage).toBe('signed_out');
+      expect(document.getElementById('home-sign-in')).not.toBeNull();
+      expect(document.querySelector('.home-row')).toBeNull();
+      expect(document.getElementById('home-address-stellar')).toBeNull();
+      expect(document.documentElement.outerHTML).not.toContain(G);
+    }
+    expect(h.calls).toHaveLength(calls);
+  });
+
+  it('another account’s sign-in: the entries left by the one before show nothing of it', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn('sub-1');
+    const hist = h.win.history;
+    row('s1').click();
+    advance(15 * MIN);
+    h.answer = () => json(200, { scopes: [mine('s9')], nextCursor: null });
+    await h.signIn('sub-2', 'home-sign-in-again');
+    expect(h.page.view).toBe('front');
+    expect(hist.go).toHaveBeenLastCalledWith(-1);
+    await flush();
+    expect(hist.index).toBe(0);
+    // Forward reaches the first account's entry: it shows this account's list, nothing of the other's wallet.
+    hist.forward();
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(row('s9')).not.toBeNull();
+    expect(document.querySelector('[data-scope="s1"]')).toBeNull();
+    expect(document.getElementById('home-address-stellar')).toBeNull();
+  });
+
+  it('a reload signs out (D553): the entries the page before left show the signed-out page, and after a sign-in only the list', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    row('s1').click();
+    const old = h.win.history.state;
+    expect(old).toMatch(MARK);
+    // The reloaded page: a new page on the same entries, with nothing in memory.
+    resetDom();
+    const r = start();
+    r.win.history.entries.push({ state: old });
+    r.win.history.index = 1;
+    await r.page.idle();
+    for (const move of [() => r.win.history.back(), () => r.win.history.forward()]) {
+      move();
+      await flush();
+      expect(r.page.stage).toBe('signed_out');
+    }
+    r.answer = LIST;
+    await r.signIn();
+    r.win.history.back();
+    await flush();
+    expect(r.page.view).toBe('front');
+    r.win.history.forward();
+    await flush();
+    // The old entry's tag isn't this sign-in's: it is the list, never the wallet it was.
+    expect(r.page.view).toBe('front');
+    expect(r.page.openScope).toBeNull();
+  });
+
+  it('a browser that refuses a new entry: the view still opens, and the way back draws the list without going back in history', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    hist.pushState.mockImplementationOnce(() => {
+      throw new DOMException('Too many calls', 'SecurityError');
+    });
+    row('s1').click();
+    expect(h.page.view).toBe('wallet');
+    expect(hist.entries).toHaveLength(1);
+    h.click('home-back');
+    expect(hist.go).not.toHaveBeenCalled();
+    expect(h.page.view).toBe('front');
+  });
+
+  it('keeps nothing: no storage, and the history entries hold only the marker', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    row('s1').click();
+    h.click('home-back');
+    await flush();
+    h.click('home-open-profile');
+    await h.page.idle();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(h.win.history.entries.map((e) => e.state)).toEqual([null, expect.stringMatching(MARK)]);
+    expect(h.win.history.pushState.mock.calls.every((c) => c.length === 2 && typeof c[0] === 'string' && MARK.test(c[0] as string))).toBe(true);
+  });
+});
+
+
+describe('PR 116’s review (D893)', () => {
+  const row = (id: string): HTMLElement => document.querySelector(`.home-row[data-scope="${id}"]`) as HTMLElement;
+
+  it('the link’s wallet never pulls the person out of a view they opened while the list loaded; it stays a row', async () => {
+    const h = await ready({ search: '?appId=app_mine1' });
+    let answer: ((r: Response) => void) | null = null;
+    h.answer = () => new Promise<Response>((r) => (answer = r));
+    await h.signInStart();
+    await until(() => answer !== null, 'the list to be asked for');
+    h.click('home-open-devices');
+    expect(h.page.view).toBe('devices');
+    (answer as unknown as (r: Response) => void)(json(200, { scopes: [mine('s1', { apps: [app('Mine', { appId: 'app_mine1' })] })], nextCursor: null }));
+    await h.page.idle();
+    expect(h.page.view).toBe('devices');
+    expect(h.win.history.entries).toHaveLength(2);
+    expect(h.win.history.state).toMatch(/^home:[A-Za-z0-9_-]{16}:1$/u);
+    h.win.history.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(row('s1')).not.toBeNull();
+    // On the front page, the link's wallet opens as before (one entry over the list).
+    resetDom();
+    const f = await ready({ search: '?appId=app_mine1' });
+    f.answer = () => json(200, { scopes: [mine('s1', { apps: [app('Mine', { appId: 'app_mine1' })] })], nextCursor: null });
+    await f.signIn();
+    expect(f.page.openScope).toBe('s1');
+    expect(f.win.history.entries).toHaveLength(2);
+  });
+
+  it('an app where the person has no wallet keeps the app’s words in its tools: no wallet is called theirs', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
+    await h.signIn();
+    row('s3').click();
+    expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
+    expect(document.querySelector('#home-app-devices > p')?.textContent).toBe('Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it.');
+    expect(document.querySelector('#home-sign-ins > p')?.textContent).toBe('The sign-ins that open a wallet in this app, if you have one.');
+    h.click('home-back');
+    row('s1').click();
+    expect(document.querySelector('#home-app-devices > p')?.textContent).toContain('signed in to this wallet');
+    expect(document.querySelector('#home-sign-ins > p')?.textContent).toBe('The sign-ins that open this wallet.');
+  });
+
+  it('a view opened while the page’s own Back is on its way waits for it, however late: no flip back to the list', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
+    await h.signIn();
+    const hist = h.win.history;
+    row('s1').click();
+    hist.hold = true;
+    h.click('home-back');
+    row('s3').click();
+    // The browser is slow: well past a second, the traversal hasn't landed and no entry was added during it.
+    advance(5_000);
+    expect(hist.entries).toHaveLength(2);
+    expect(hist.index).toBe(0);
+    hist.hold = false;
+    hist.release();
+    await flush();
+    expect(h.page.openScope).toBe('s3');
+    expect(hist.index).toBe(1);
+    expect(hist.state).toMatch(/^home:[A-Za-z0-9_-]{16}:1$/u);
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+  });
+
+  it('a traversal that never lands: after 10 s the view keeps no entry, and a popstate that comes even later changes nothing', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
+    await h.signIn();
+    const hist = h.win.history;
+    row('s1').click();
+    hist.hold = true;
+    h.click('home-back');
+    row('s3').click();
+    advance(11_000);
+    hist.hold = false;
+    hist.release();
+    await flush();
+    expect(h.page.openScope).toBe('s3');
+    expect(hist.index).toBe(0);
   });
 });
 
@@ -940,7 +1494,7 @@ describe('the shell (D888)', () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     const line = document.getElementById('home-copied') as HTMLElement;
     const box = line.parentElement as HTMLElement;
     expect(box.classList.contains('reserved')).toBe(true);
@@ -966,7 +1520,7 @@ describe('the sign-in’s end', () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     const before = document.getElementById('home-content')?.innerHTML;
     advance(15 * MIN - HOME_EXPIRY_WARN_MS - 1000);
     expect(h.page.session).toBe('active');
@@ -993,7 +1547,7 @@ describe('the sign-in’s end', () => {
     await h.page.idle();
     expect(h.appCalls()).toHaveLength(1);
     expect(h.page.requests).toBe(1);
-    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's3']);
+    expect([...document.querySelectorAll('.home-row[data-scope]')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's3']);
   });
 
   it('notices the end when the page is shown again after its timers slept', async () => {
@@ -1016,7 +1570,7 @@ describe('the sign-in’s end', () => {
     await h.page.idle();
     expect(h.page.session).toBe('ended');
     expect(h.appCalls()).toHaveLength(2);
-    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's3']);
+    expect([...document.querySelectorAll('.home-row[data-scope]')].map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's3']);
     expect(document.getElementById('home-ended')).not.toBeNull();
     expect(document.getElementById('home-problem')).toBeNull();
     advance(30 * MIN);
@@ -1029,7 +1583,7 @@ describe('the sign-in’s end', () => {
     h.answer = LIST;
     await h.signIn();
     const first = (await verifiedHeader(h.appCalls()[0] as Call)).header;
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     advance(15 * MIN);
     expect(h.page.session).toBe('ended');
     const before = document.getElementById('home-content')?.innerHTML;
@@ -1072,7 +1626,7 @@ describe('the sign-in’s end', () => {
     await h.signIn('sub-2', 'home-sign-in-again');
     expect(h.page.session).toBe('active');
     expect(h.appCalls()).toHaveLength(2);
-    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
+    expect([...document.querySelectorAll('.home-row[data-scope]')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
     expect(pageText()).not.toContain('App s1');
   });
 
@@ -1088,14 +1642,14 @@ describe('the sign-in’s end', () => {
     // Account B signs in while A's request is still on its way.
     h.answer = () => json(200, { scopes: [mine('s2', { apps: [app('B only')] })], nextCursor: null });
     await h.signInStart('sub-2', 'home-sign-in-again');
-    await until(() => document.querySelector('.home-card[data-scope="s2"]') !== null, 'account B’s list');
-    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
+    await until(() => document.querySelector('.home-row[data-scope="s2"]') !== null, 'account B’s list');
+    expect([...document.querySelectorAll('.home-row[data-scope]')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
     release(json(200, { scopes: [mine('s7', { apps: [app('A secret app')], supportId: 'HANA-ZZZZ-ZZZZ' })], nextCursor: null }));
     await h.page.idle();
     await tick();
     expect(pageText()).not.toContain('A secret app');
     expect(document.documentElement.outerHTML).not.toContain('HANA-ZZZZ-ZZZZ');
-    expect([...document.querySelectorAll('.home-card')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
+    expect([...document.querySelectorAll('.home-row[data-scope]')].map((c) => c.getAttribute('data-scope'))).toEqual(['s2']);
     expect(h.page.errorCode).toBeNull();
   });
 
@@ -1116,7 +1670,7 @@ describe('the sign-in’s end', () => {
     expect(h.page.errorCode).toBeNull();
     expect(document.getElementById('home-problem')).toBeNull();
     expect(pageText()).not.toContain('not reachable');
-    expect([...document.querySelectorAll('.home-card')]).toHaveLength(2);
+    expect([...document.querySelectorAll('.home-row[data-scope]')]).toHaveLength(2);
     expect(document.getElementById('home-more')?.hasAttribute('disabled')).toBe(false);
     advance(MIN);
     await h.page.idle();
@@ -1136,7 +1690,7 @@ describe('the sign-in’s end', () => {
     expect(h.page.session).toBe('ended');
     expect(h.page.errorCode).toBe('login_cancelled');
     expect(document.getElementById('home-ended')).not.toBeNull();
-    expect([...document.querySelectorAll('.home-card')]).toHaveLength(2);
+    expect([...document.querySelectorAll('.home-row[data-scope]')]).toHaveLength(2);
   });
 
   it('keeps the sign-in in memory only: no storage, no URL, no log', async () => {
@@ -1144,7 +1698,7 @@ describe('the sign-in’s end', () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     advance(15 * MIN);
     await h.signIn('sub-1', 'home-sign-in-again');
     expect(setItem).not.toHaveBeenCalled();
@@ -1213,10 +1767,17 @@ describe('API refusals', () => {
     expect(h.page.stage).toBe('signed_in');
     expect(h.page.list).toBe('error');
     expect(h.page.errorCode).toBe('home_directory_unavailable');
-    const alert = document.getElementById('home-problem');
+    // D893: the group says what failed, with the refusal and "Try again" together, never a lone button.
+    const alert = document.getElementById('home-list-failed');
     expect(alert?.getAttribute('role')).toBe('alert');
+    expect(alert?.closest('#home-mine')).not.toBeNull();
+    expect(alert?.querySelector('strong')?.textContent).toBe('Your wallets didn’t load');
     expect(alert?.textContent).toContain('Passport Home is not reachable right now.');
     expect([...(alert?.querySelectorAll('.code') ?? [])].map((x) => x.textContent)).toEqual(['Error code (for support): home_directory_unavailable', 'Request ID (for support): req_9']);
+    expect(document.getElementById('home-reload')?.closest('#home-list-failed')).toBe(alert);
+    // "Other apps" says its list didn't load either; the search still works.
+    expect(document.getElementById('home-others-failed')?.textContent).toBe('The list of other apps didn’t load either. You can still find an app by name.');
+    expect(document.getElementById('home-search')).not.toBeNull();
     expect(pageText()).not.toContain('D1 is down');
     advance(5 * MIN);
     await h.page.idle();
@@ -1237,7 +1798,7 @@ describe('API refusals', () => {
     h.click('home-more');
     await h.page.idle();
     expect(document.getElementById('home-problem')?.textContent).toContain('Too many requests.');
-    expect([...document.querySelectorAll('.home-card')]).toHaveLength(2);
+    expect([...document.querySelectorAll('.home-row[data-scope]')]).toHaveLength(2);
     expect(h.page.session).toBe('active');
     advance(2 * MIN);
     await h.page.idle();
@@ -1261,17 +1822,29 @@ describe('“Your name” on the page (home-profile.ts)', () => {
   const LIST = () => json(200, { scopes: [mine('s1')], nextCursor: null });
   const ADA = { givenName: 'Ada', familyName: 'Lovelace' };
 
-  it('sits on the front page after the devices, reads nothing at sign-in, and reads once on a click', async () => {
+  it('D893: its own view under “Your account”; nothing is read at sign-in, opening the view reads once', async () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    expect(document.getElementById('home-profile-show')).not.toBeNull();
+    expect(document.getElementById('home-profile')).toBeNull();
+    expect(document.getElementById('home-open-profile')?.closest('#home-your-account')).not.toBeNull();
     expect(h.nameCalls()).toEqual([]);
     h.nameAnswer = () => json(200, { name: ADA, shares: [], more: false, app: null });
-    h.click('home-profile-show');
+    h.click('home-open-profile');
+    expect(h.page.view).toBe('profile');
     await h.page.idle();
     expect(h.nameCalls().map((c) => c.url.pathname + c.url.search)).toEqual(['/v1/home/profile']);
     expect(h.page.profile.front).toBe('ready');
+    expect((document.getElementById('home-name-given') as HTMLInputElement).value).toBe('Ada');
+    expect([...document.querySelectorAll('#app h1, #app h2')].map((x) => `${x.tagName} ${x.textContent}`)).toEqual(['H1 Your name', 'H2 Apps you share your name with']);
+    expect(document.title).toBe('Your name – Passport Home');
+    expect(document.getElementById('home-back')?.textContent).toBe('Your wallets');
+    // Back on the front page and in again: what it shows stays, and nothing is read again.
+    h.click('home-back');
+    expect(document.activeElement?.id).toBe('home-open-profile');
+    h.click('home-open-profile');
+    await h.page.idle();
+    expect(h.nameCalls()).toHaveLength(1);
     expect((document.getElementById('home-name-given') as HTMLInputElement).value).toBe('Ada');
   });
 
@@ -1279,7 +1852,7 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     const extras = [...(document.getElementById('home-app-extras')?.children ?? [])].map((c) => c.id);
     // D874: the ways to sign in sit between the devices and the name.
     expect(extras.slice(0, 3)).toEqual(['home-app-devices', 'home-sign-ins', 'home-app-profile']);
@@ -1291,7 +1864,7 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     expect(document.getElementById('home-app-name-share-app_Apps1')?.textContent).toBe('Share my name with App s1');
     // Leaving the page closes it: back on it, it reads again only when asked.
     h.click('home-back');
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     expect(document.getElementById('home-app-profile-show')).not.toBeNull();
     expect(h.nameCalls()).toHaveLength(1);
   });
@@ -1301,7 +1874,7 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     h.answer = LIST;
     await h.signIn();
     h.nameAnswer = () => json(200, { name: ADA, shares: [], more: false, app: null });
-    h.click('home-profile-show');
+    h.click('home-open-profile');
     await h.page.idle();
     advance(15 * MIN);
     expect(h.page.session).toBe('ended');
@@ -1317,7 +1890,7 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     h.answer = LIST;
     await h.signIn();
     h.nameAnswer = () => json(200, { name: ADA, shares: [], more: false, app: null });
-    h.click('home-profile-show');
+    h.click('home-open-profile');
     await h.page.idle();
     const given = document.getElementById('home-name-given') as HTMLInputElement;
     given.value = 'Typed, never saved';
@@ -1326,8 +1899,8 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     expect(document.documentElement.outerHTML).not.toContain('Lovelace');
     await h.signIn('sub-2');
     expect(h.page.profile.front).toBe('closed');
+    expect(h.page.view).toBe('front');
     expect(document.getElementById('home-name-given')).toBeNull();
-    expect(document.getElementById('home-profile-show')).not.toBeNull();
     expect(document.documentElement.outerHTML).not.toContain('Typed, never saved');
     expect(document.documentElement.outerHTML).not.toContain('Lovelace');
   });
@@ -1346,7 +1919,7 @@ describe('“Ways to sign in” on the page (home-sign-ins.ts, D874)', () => {
     });
     h.answer = () => json(200, { scopes: [mine('s1')], nextCursor: null });
     await h.signIn();
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     await h.page.idle();
     expect(document.getElementById('home-sign-ins-title')?.textContent).toBe('Ways to sign in');
     expect(views).toEqual([]);
@@ -1364,13 +1937,13 @@ describe('“Ways to sign in” on the page (home-sign-ins.ts, D874)', () => {
     expect(document.querySelector('#home-sign-ins-list > li')?.textContent).toContain('Your Google account');
     // Back and in again: what was read is shown again, nothing is read.
     h.click('home-back');
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     expect(h.page.signIns.state).toBe('ready');
     expect(views).toHaveLength(4);
     // Signed out, then another account: nothing of the first one's stays.
     h.click('home-sign-out');
     await h.signIn('sub-2');
-    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     expect(h.page.signIns.state).toBe('closed');
     expect(views).toHaveLength(4);
   });

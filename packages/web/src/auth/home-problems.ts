@@ -67,7 +67,7 @@ const PROBLEM_TEXT: Readonly<Record<string, string>> = Object.freeze({
   email_sharing_unavailable: 'Passport Home can’t change email sharing right now. Try again later.',
   // The user's name and who gets it (home-profile.ts).
   bad_name: 'Passport Home couldn’t save that name. Each name can be up to 50 characters on one line, with no hidden or control characters.',
-  no_profile_name: 'Set your name first: go back to all apps, open “Your name”, and save a first or last name. Then share it from here.',
+  no_profile_name: 'Set your name first: go back to “Your wallets”, open “Your name”, and save a first or last name. Then share it from here.',
   unknown_app: 'Passport Home can’t share your name with this app: Journear doesn’t list it now.',
   name_sharing_unavailable: 'Passport Home can’t change name sharing right now. Try again later.',
   profile_unavailable: 'Names aren’t available in Passport Home yet. Try again later.',

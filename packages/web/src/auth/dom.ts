@@ -128,3 +128,13 @@ export function rows(d: Dom, entries: (HTMLElement[] | null | undefined | false)
   for (const e of entries) if (e) dl.append(...e);
   return dl;
 }
+
+/**
+ * Leaves out every list with no rows (D884's note, 2026-11-23): a list's rules are drawn by where it sits
+ * (css/approval.css "the dividers"), so an empty one would draw lines around nothing and hide its neighbours from
+ * each other.
+ */
+export function withoutEmptyLists<T extends HTMLElement>(el: T): T {
+  for (const dl of Array.from(el.querySelectorAll('dl'))) if (!dl.firstElementChild) dl.remove();
+  return el;
+}

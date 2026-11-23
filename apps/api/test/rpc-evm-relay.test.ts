@@ -227,6 +227,19 @@ describe('AdminRpc.systemStatus evmRelay', () => {
     expect(relayer.calls).toEqual([]);
   });
 
+  it('D890: the relayer’s automatic restart and an automatic staff entry come through; an object older than D890 gives none', async () => {
+    governanceViews(ownerChain());
+    fakeChain();
+    const auto = { limit: 3, today: 1, recent: [NOW - 4_000], pause: { blocked: null, restartWei: '50021000000000000', resumeWei: '21000000000000', check: { at: NOW - 5_000, blocked: 'balance_short', balanceWei: '1000' } } };
+    const restarted = { ...entry(1), who: 'relayer (automatic)', auto: true as const };
+    const relayer = fakeRelayer({ ...staffStatus({ staffLog: [restarted] }), autoRestart: auto } as EvmRelayerStaffStatus);
+    const v = (await status(sponsorEnv(relayer))).evmRelay!.chains[0]!.relayer as { autoRestart?: unknown; staffLog: { auto?: boolean }[] };
+    expect(v.autoRestart).toEqual(auto);
+    expect(v.staffLog[0]).toMatchObject({ who: 'relayer (automatic)', auto: true });
+    const old = (await status(sponsorEnv(fakeRelayer(staffStatus())))).evmRelay!.chains[0]!.relayer as { autoRestart?: unknown };
+    expect(old.autoRestart).toBeUndefined();
+  });
+
   it('a block the API refuses is bad_config, and nothing is read', async () => {
     governanceViews(ownerChain());
     const chain = fakeChain();

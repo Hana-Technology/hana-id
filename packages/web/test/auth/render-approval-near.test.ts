@@ -137,7 +137,7 @@ describe('renderApproval: NEAR transactions', () => {
     const el = tx([call('{}', 0n), { type: 'transfer', deposit: 1n }], 'guestbook.testnet');
     expect([...el.querySelectorAll('ol.ops > li > h3')].map((h) => h.textContent)).toEqual(['1. Call a contract', '2. Send NEAR']);
     const css = readFileSync(join(process.cwd(), 'src', 'auth', 'css', 'approval.css'), 'utf8');
-    expect(css).toMatch(/ol\.ops \{\n  list-style: none;/u);
+    expect(css).toMatch(/ol\.ops,\nul\.contracts \{\n  list-style: none;/u);
   });
 
   it('a call to a contract on the user’s own account: the total is unknown and the red banner is up', () => {

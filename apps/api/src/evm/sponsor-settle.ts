@@ -45,7 +45,7 @@ export const failureSubject = (chainId: number, account: string, userId: string 
 /** The statuses of a send still in flight: an app's count of these is its share of the relayer (D847, derived from D1). */
 export const INFLIGHT_STATUSES = ['sending', 'sent', 'timeout', 'unknown', 'rejected'] as const;
 
-export type EventKind = 'evm_relay_budget_high' | 'evm_relay_balance_low' | 'evm_relay_stuck' | 'evm_relay_receipt_odd' | 'evm_relay_nonce_taken' | 'evm_billing_late' | 'evm_relay_closed_slot_mined';
+export type EventKind = 'evm_relay_budget_high' | 'evm_relay_balance_low' | 'evm_relay_stuck' | 'evm_relay_receipt_odd' | 'evm_relay_nonce_taken' | 'evm_billing_late' | 'evm_relay_closed_slot_mined' | 'evm_relay_auto_resumed';
 
 /** One security event per fixed id (`kind` and `idParts`). Amounts, counts and chain ids only. Never throws. */
 export async function noteEvent(env: Env, ctx: { requestId?: string; endpoint?: string } | null, kind: EventKind, idParts: string[], detail: Record<string, unknown>, now: number): Promise<void> {

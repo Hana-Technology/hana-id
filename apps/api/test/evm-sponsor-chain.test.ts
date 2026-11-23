@@ -81,7 +81,7 @@ describe('reads: the trusted endpoint only', () => {
     const key = new Uint8Array(32).fill(7);
     const raw = signSponsorTx(key, { type: 'eip1559', chainId: 31337n, nonce: 0n, maxFeePerGas: 2n, maxPriorityFeePerGas: 1n, gas: 21_000n, to: new Uint8Array(20).fill(1), value: 0n, data: new Uint8Array(), accessList: [] });
     const c = client();
-    expect(await c.broadcast(raw)).toMatchObject({ kind: 'accepted' });
+    expect(await c.broadcast(raw)).toMatchObject({ kind: 'accepted', byRead: true });
     const [tx] = chain.mine(chain.broadcasts[0]!.tx.from);
     chain.receiptExtras = { l1Fee: '0x64', operatorFeeScalar: '0xf4240', operatorFeeConstant: '0x5' };
     const r = (await client().receipt(tx!.hash))!;
@@ -114,7 +114,8 @@ describe('broadcast', () => {
     const r = await raw();
     chain.onSend = (_tx, endpoint) => (endpoint === 0 ? 'network' : undefined);
     const out = await client().broadcast(r);
-    expect(out).toMatchObject({ kind: 'accepted', hash: chain.broadcasts[1]!.tx.hash });
+    // Taken by the fallback, not the trusted read endpoint (D890 review: `byRead` false).
+    expect(out).toEqual({ kind: 'accepted', hash: chain.broadcasts[1]!.tx.hash, byRead: false });
     expect(chain.broadcasts.map((b) => [b.endpoint, b.tx.raw])).toEqual([
       [0, r.toLowerCase()],
       [1, r.toLowerCase()],

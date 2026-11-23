@@ -97,7 +97,10 @@ export function relayerViewOf(s: EvmRelayerStaffStatus, now: number, logLimit: n
     spentTodayWei: s.day === today ? s.dayWei.toString() : '0',
     unconfirmedRefusals: u ? { count: u.count, lastAt: u.lastAt, slot: u.nonce, code: u.code } : null,
     lastStaffSeq: s.staffLog[0]?.seq ?? 0,
-    staffLog: s.staffLog.slice(0, logLimit).map((e) => ({ seq: e.seq, at: e.at, who: e.who, tool: e.action, slot: e.nonce, note: e.note, done: e.done, refused: e.refused })),
+    staffLog: s.staffLog.slice(0, logLimit).map((e) => ({ seq: e.seq, at: e.at, who: e.who, tool: e.action, slot: e.nonce, note: e.note, done: e.done, refused: e.refused, ...(e.auto ? { auto: true } : {}) })),
+    // D890: the automatic restart after a refill (storage and settings only).
+    // (absent from an object older than D890: the view then has none, and the admin says it can't restart by itself)
+    ...(s.autoRestart ? { autoRestart: { limit: s.autoRestart.limit, today: s.autoRestart.today, recent: [...s.autoRestart.recent], pause: s.autoRestart.pause ? { ...s.autoRestart.pause, check: s.autoRestart.pause.check ? { ...s.autoRestart.pause.check } : null } : null } } : {}),
   };
 }
 

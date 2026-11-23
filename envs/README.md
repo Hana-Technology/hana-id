@@ -254,7 +254,9 @@ with the same bounds (`apps/api/src/evm/sponsor-config.ts`) and treats anything 
   `sendsPerDay` (to 10 000 000), `sendsPerMinute` (to 100 000). One transaction's worst case, `maxGasPerTx` ×
   `maxFeePerGasGwei`, must fit in `appDailyBudgetEth`. `requireKnownAccount` (default true): sponsor only accounts the
   wallet directory holds for the app's users; `false` only in `local*` envs (the relayer would otherwise pay for
-  anyone holding a publishable key; D836 as amended).
+  anyone holding a publishable key; D836 as amended). `autoRestart` (optional, default false, D890): a pause because the
+  relayer wallet ran out of money may end by itself after a refill, on the relayer's own checks; leave it off until the
+  six "Checks on Base Sepolia before switching on" (docs/go-live-after-freeze.md) are recorded; staff Resume always works.
 - `apps`: the staff-only allowlist (D835), at most 8 apps (`app_…` ids), each naming at least one configured chain
   with 1 to 8 targets in all. A target is a contract `address`, its allowed function `selectors` (1 to 8 distinct,
   `0x` + 8 lowercase hex), `maxDataBytes` (required, 4 to 8192: no sponsored call's data is longer), optional

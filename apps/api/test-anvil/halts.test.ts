@@ -3,7 +3,10 @@
 // (`foreign_transactions` → staffAdoptNonce, staffResume); a nonce gap left by someone else's dropped transaction
 // (`nonce_gap` → staffFill, staffResume); the relayer's balance drained between the handler's balance read and the
 // broadcast (`relayer_cannot_send` / `insufficient_funds`: the user told "paused" and not charged a failure; refilled →
-// its cancel lands → staffResume). New sends are refused while halted; nothing restarts it by itself.
+// its cancel lands → staffResume, in a world with no second endpoint, where it never restarts by itself); and D890's one
+// automatic restart: refilled with a second endpoint, it restarts by itself and the next action goes through (9d), but
+// not when a transaction from its key that it didn't send was seen during the pause (9e). New sends are refused while
+// halted.
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../src/env.ts';
@@ -12,7 +15,9 @@ import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { DEFAULT_SPONSOR_PORTS, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { evmSponsorConfig, forgetRelayerBalances, forgetRelayerStatus, sponsorTiming } from '../src/evm/sponsor.ts';
 import { reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
-import { act, auditRows, clockAhead, automine, billingRows, checkInCall, ETH, json, LANE, mine, prepare, rawTx, receipt, relayerRun, rpc, send, setBalance, SKIPPED, txCount, untilPooled, vaultSign, world, type World } from './lane.ts';
+import { act, addressOf, auditRows, balance, CHAIN, clockAhead, clockTo, automine, billingRows, checkInCall, code, DELEGATE, designator, DEV_ACCOUNT, ETH, json, LANE, LANE_FALLBACK, mine, prepare, rawAuthorization, rawTx, rawType4, receipt, relayerRun, rpc, send, setBalance, SKIPPED, txCount, untilPooled, vaultSign, world, type World } from './lane.ts';
+import { testKey } from '../test/evm-sponsor-helpers.ts';
+import { uid } from '../test/helpers.ts';
 
 const WHO = 'anvil-lane';
 const fee = { maxFeePerGas: 100_000_000n, maxPriorityFeePerGas: 1_000_000n };
@@ -149,5 +154,100 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
     clockAhead(2_000);
     const again = await act(w, [checkInCall]);
     expect([again.res.status, again.body.status], JSON.stringify(again.body)).toEqual([200, 'executed']);
+    // No second endpoint in this world: it never restarted by itself (only staff's Resume is in its log).
+    expect((await evmRelayerStaffStatus(w.stub)).staffLog.map((e) => [e.who, e.done, e.auto === true])).toEqual([[WHO, true, false], [WHO, false, false]]);
+  });
+
+  /** A world paused for money at its first action (the handler read 1 test ETH, the node then saw 1000 wei). */
+  async function pausedForMoney(): Promise<{ w: World; since: number }> {
+    const w = await world({ fields: { rpcFallback: LANE_FALLBACK, autoRestart: true } });
+    const p = await prepare(w, [checkInCall]);
+    expect(p.body).toMatchObject({ allowed: true });
+    await setBalance(w.relayer, 1_000n);
+    const res = await send(w, vaultSign(w, [checkInCall], p.body).body);
+    expect([res.status, (await json(res)).code]).toEqual([503, 'sponsorship_paused']);
+    const halted = (await w.stub.status()).halted;
+    expect(halted).toMatchObject({ reason: 'relayer_cannot_send', nonce: 0, code: 'insufficient_funds' });
+    // Still out of money: the run's own verdict holds it.
+    await relayerRun(w);
+    expect((await w.stub.status()).halted).toMatchObject({ reason: 'relayer_cannot_send' });
+    return { w, since: halted!.since };
+  }
+
+  it('9d. out of money, refilled, with a second endpoint (D890): it restarts by itself once its checks pass, recorded with what it saw; its cancel lands and the next action goes through, no Resume', async () => {
+    const { w, since } = await pausedForMoney();
+    await setBalance(w.relayer, ETH);
+    // A minute into the pause (its first 60 s it never restarts by itself), runs as the alarm makes them.
+    clockTo(since + 61_000);
+    for (let i = 0; i < 4 && (await w.stub.status()).halted; i++) await relayerRun(w);
+    expect((await w.stub.status()).halted).toBeNull();
+    const s = await evmRelayerStaffStatus(w.stub);
+    expect(s.staffLog).toHaveLength(1);
+    expect(s.staffLog[0]).toMatchObject({ who: 'relayer (automatic)', action: 'resume', done: true, refused: null, auto: true });
+    expect(s.staffLog[0]!.note).toMatch(/^Restarted by itself after a refill \(D890\)\. Trusted endpoint: balance \d+ wei \(at least \d+ needed\), count 1 \(pending 1, next slot 1\) after block \d+, no code at the wallet\. Second endpoint: count 1 \(pending 1\), balance \d+ wei, no code\.$/u);
+    expect(s.autoRestart).toMatchObject({ limit: 3, today: 1, pause: null });
+    // The cancel that took slot 0 is on the node; the user's first action was never run and not charged.
+    expect(await txCount(w.relayer)).toBe(1);
+    await mine(LANE.safeDepth);
+    await relayerRun(w);
+    await reconcileEvmSends({ ...env, ...w.bindings } as Env, cfgOf(w), Date.now() + 61_000);
+    expect((await auditRows(w.user.address))[0]).toMatchObject({ status: 'not_executed' });
+    forgetRelayerStatus();
+    forgetRelayerBalances();
+    const again = await act(w, [checkInCall]);
+    expect([again.res.status, again.body.status], JSON.stringify(again.body)).toEqual([200, 'executed']);
+    expect((await auditRows(w.user.address)).at(-1)).toMatchObject({ status: 'executed', relayer_nonce: 1 });
+  });
+
+  it('9f. the relayer key signs an EIP-7702 authorization carried by another account during a pause for money: count +1, code at its address, a leak; never restarts by itself; cleared to the zero address, still not (D890 review)', async () => {
+    const { w, since } = await pausedForMoney();
+    const carrier = testKey(`anvil carrier ${uid()}`);
+    await setBalance(addressOf(carrier), ETH);
+    const before = await txCount(w.relayer);
+    const auth = rawAuthorization(w.relayerKey, { chainId: CHAIN, address: DELEGATE, nonce: BigInt(before) });
+    await rpc('eth_sendRawTransaction', [rawType4(carrier, { nonce: 0, to: addressOf(carrier), ...fee, authorizations: [auth] })]);
+    expect(await txCount(w.relayer)).toBe(before + 1);
+    expect((await code(w.relayer)).toLowerCase()).toBe(designator(DELEGATE));
+    await setBalance(w.relayer, ETH);
+    clockTo(since + 61_000);
+    await relayerRun(w);
+    await relayerRun(w);
+    let s = await evmRelayerStaffStatus(w.stub);
+    expect(s.halted).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds', leakSeen: true });
+    expect(s.autoRestart.pause).toMatchObject({ blocked: 'leak_seen' });
+    // Cleared again: an authorization to the zero address (count +1 once more, no code).
+    const clear = rawAuthorization(w.relayerKey, { chainId: CHAIN, address: `0x${'0'.repeat(40)}`, nonce: BigInt(before + 1) });
+    await rpc('eth_sendRawTransaction', [rawType4(carrier, { nonce: 1, to: addressOf(carrier), ...fee, authorizations: [clear] })]);
+    expect(await txCount(w.relayer)).toBe(before + 2);
+    expect(await code(w.relayer)).toBe('0x');
+    await mine(LANE.safeDepth);
+    await relayerRun(w);
+    await relayerRun(w);
+    s = await evmRelayerStaffStatus(w.stub);
+    expect(s.halted).toMatchObject({ leakSeen: true });
+    expect(s.staffLog.filter((e) => e.auto)).toEqual([]);
+    expect((await evmRelayerStaffResume(w.stub, WHO, 'refilled')).refused).toBe('key_confirmation_required');
+  });
+
+  it('9e. out of money, then a transfer from the relayer’s key that it didn’t send takes the refill: no restart by itself; the pause is marked a leak and Resume needs the engineer (D890)', async () => {
+    const { w, since } = await pausedForMoney();
+    await setBalance(w.relayer, ETH);
+    // Someone with the key, quicker than the relayer's next run: half the refill out, at the relayer's slot 0. (The
+    // relayer's cancel for slot 0 went out at send, D890 review, but was refused for funds then, so no pool holds it.)
+    await rpc('eth_sendRawTransaction', [rawTx(w.relayerKey, { nonce: 0, to: DEV_ACCOUNT, value: ETH / 2n, ...fee })]);
+    expect(await txCount(w.relayer)).toBe(1);
+    expect(await balance(w.relayer)).toBeGreaterThan(ETH / 4n);
+    clockTo(since + 61_000);
+    await relayerRun(w);
+    // Not at confirmed depth yet: slot 0 used, no receipt of its own (unexplained), so it waits.
+    expect((await w.stub.status()).halted).toMatchObject({ reason: 'relayer_cannot_send' });
+    await mine(LANE.safeDepth);
+    await relayerRun(w);
+    await relayerRun(w);
+    const s = await evmRelayerStaffStatus(w.stub);
+    expect(s.halted).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds', leakSeen: true });
+    expect(s.staffLog.filter((e) => e.auto)).toEqual([]);
+    expect(s.autoRestart.pause).toMatchObject({ blocked: 'leak_seen' });
+    expect((await evmRelayerStaffResume(w.stub, WHO, 'refilled')).refused).toBe('key_confirmation_required');
   });
 });

@@ -268,7 +268,7 @@ describe.skipIf(SKIPPED !== null)('the relayer against a real pool (anvil, autom
     // anvil: -32003 "transaction already imported", which the classifier reads as already known (taken).
     expect(again.result === first.result || classifyRejection(again.error?.message ?? '') === 'already_known').toBe(true);
     const chain = new SponsorChain(CHAIN, { read: LANE.url!, broadcast: [LANE.url!] });
-    expect(await chain.broadcast(raw)).toEqual({ kind: 'accepted', hash: first.result });
+    expect(await chain.broadcast(raw)).toEqual({ kind: 'accepted', hash: first.result, byRead: true });
     await mine(1);
     expect([await txCount(from, 'latest'), await txCount(from, 'pending')]).toEqual([1, 1]);
   });

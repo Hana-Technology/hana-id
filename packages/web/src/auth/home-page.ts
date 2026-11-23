@@ -1836,6 +1836,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   function renderContent(): void {
     if (stage !== 'signed_in') return;
+    // What has focus in the page, so a redraw doesn't take it away (D893: the search can be typed in while the list
+    // loads, and the list's arrival redraws the page; a Copy pressed again after a check, …).
+    const doc = win.document;
+    const active = doc.activeElement as HTMLElement | null;
+    const keep = active && active.id && byId('home-content')?.contains(active) ? active.id : null;
+    const caret = active instanceof (doc.defaultView?.HTMLInputElement ?? HTMLInputElement) ? [active.selectionStart, active.selectionEnd] : null;
     const v = viewing;
     if (v.kind === 'wallet') {
       // A fresher copy of the listing when the page has one (a "Check now"); else the one it was opened with.
@@ -1844,6 +1850,16 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     } else if (v.kind === 'devices') fill('home-content', backLink(), devices.frontView());
     else if (v.kind === 'profile') fill('home-content', backLink(), profile.frontView());
     else fill('home-content', ...frontPage());
+    if (keep) {
+      const again = byId(keep);
+      if (again && doc.activeElement !== again && !again.hasAttribute('disabled') && focusQuiet(again) && caret && again instanceof (doc.defaultView?.HTMLInputElement ?? HTMLInputElement)) {
+        try {
+          again.setSelectionRange(caret[0], caret[1]);
+        } catch {
+          // Not every input has a caret.
+        }
+      }
+    }
     renderNotice();
     // The window's title follows the view's heading (D893): "Wallet details – Passport Home".
     const h1 = byId('home-content')?.querySelector('h1') ?? null;

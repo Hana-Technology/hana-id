@@ -992,8 +992,18 @@ describe('the views and their words (D893)', () => {
     expect(loading?.querySelector('.home-rows')?.getAttribute('aria-hidden')).toBe('true');
     expect(document.getElementById('home-others-loading')?.querySelector('.home-rows')?.getAttribute('aria-hidden')).toBe('true');
     expect(document.getElementById('home-open-devices')).not.toBeNull();
+    // The search can be typed in while the list loads; the list's arrival keeps the field's focus and words.
+    const typing = document.getElementById('home-search') as HTMLInputElement;
+    typing.focus();
+    typing.value = 'Sod';
+    typing.dispatchEvent(new Event('input'));
     (answer as unknown as (r: Response) => void)(json(200, { scopes: [], nextCursor: null }));
     await h.page.idle();
+    expect(document.getElementById('home-search')).not.toBe(typing);
+    expect(document.activeElement?.id).toBe('home-search');
+    expect((document.getElementById('home-search') as HTMLInputElement).value).toBe('Sod');
+    (document.getElementById('home-search') as HTMLInputElement).value = '';
+    document.getElementById('home-search')?.dispatchEvent(new Event('input'));
     expect(document.getElementById('home-empty')?.querySelector('strong')?.textContent).toBe('No wallets yet');
     expect(document.getElementById('home-others-empty')?.querySelector('strong')?.textContent).toBe('No other apps listed');
     // A search with no result says so in the same pattern.

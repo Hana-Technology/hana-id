@@ -10141,6 +10141,10 @@ below.
 - Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **confirmed by the user 2026-11-10** · Built: `home-page.ts` (`linkedAppId`) · For D502 ("found … by its `appId` (the partner's link)")
 - Decision: `/home?appId=<app id>` (exactly that one parameter, of the app id's form) opens that app's page after sign-in, with one `GET /v1/home/apps?appId=` read. Anything else in the query is ignored. The page never changes its own URL.
 - Why: an app id is public and can't be walked (D502); nothing of the user's is in the link.
+- Note 2026-11-23 (D893, the founder's "Back inside Home" of D888): the page now adds same-URL history entries when a
+  view opens (`pushState` with no URL), each holding only an opaque marker, so the browser's Back returns to "Your
+  wallets"; the URL still never changes, and the link still only chooses the wallet's page (it opens with an entry
+  over the list).
 - Address impact: none.
 
 ### D556. Hana Home links a Stellar address to StellarExpert; an EVM address gets no explorer link
@@ -10417,6 +10421,9 @@ Built on `feat/hana-home-h9` (from `develop` with H7 and H8), not merged, not de
 
 ### D613. `/home?view=devices` is the address the "Manage in Hana Home" links will use; nothing links to it yet
 - Date 2026-11-10 · Status: built on `feat/hana-home-h9`; **confirmed by the user 2026-11-10** · Built: `home-devices.ts` (`devicesLinked`)
+- Note 2026-11-23 (D893): "Devices and auto-approve" is now its own view under "Your account"; `?view=devices` opens that
+  view after each new account's sign-in (one read, focus on its `h1`, a history entry over the list, so Back shows
+  "Your wallets").
 - Decision: exactly `?view=devices` opens the devices section after sign-in, with one read and focus on its heading. It carries no `appId`, so it never names an app whose wallet the page would then refuse to move (D600). The plan's H9 scope lists the links, but its rule ("nothing ships half-wired"; `/home` is linked from nowhere until H12) and H12's scope ("link `/home` from the consent screen and the approval popup") put the links themselves in H12: H9 built only the address.
 - Address impact: none.
 
@@ -15050,6 +15057,9 @@ From `next` @ 675d03a1; not merged, not deployed.
   `startHomeSignIns`), `home-page.ts` (mounted on each app's page, between "Devices and auto-approve" and "Your name"),
   `css/home.css`; tests `packages/web/test/auth/home-sign-ins.test.ts`, `home-page.test.ts`, `plain-words.test.ts`,
   `apps/e2e/tests/home-sign-ins.spec.ts` (three browsers)
+- Note 2026-11-23 (D893): the section is on each wallet's page (its heading an `h2` under "Wallet details"), and its
+  intro reads "The sign-ins that open this wallet." (was "…open your wallet in this app."); the sign-in window's
+  pointer to it ("…in Passport Home, under “Ways to sign in”.") is unchanged and still true.
 - Decision:
   1. **Where and when**: each app's page in Passport Home has a section "Ways to sign in", collapsed behind **Show ways
      to sign in**. Only that press reads the chain: `get_identity` and `get_account` of the signed-in Home identity in
@@ -17102,11 +17112,12 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
      and the move-wallet flow would stay at its bottom.
   2. **"Wallet" is the main noun** in Passport Home in place of "app" ("Your wallets", "Wallet details"): what people own
      is a wallet, and several apps can share one. Applied from step 2 onward, with a plain-wording review of each
-     renamed string. **Not built yet.**
+     renamed string. **Built in step 2, D893** (its old → new table).
   3. **The browser's Back button works inside Home**: it returns to the wallet list instead of leaving Home and losing
      the 15-minute in-memory sign-in. To be built in step 2 or 3 with same-URL history entries that carry no data. This
      amends the spirit of D555 ("the page never changes its own URL": the URL still never changes) and keeps D553
-     (nothing stored: no state in the history entry, no storage). **Not built yet.**
+     (nothing stored: no state in the history entry, no storage). **Built in step 2, D893** (each entry holds one
+     opaque marker, `home:{random tag}:{step}`, nothing of the person, a wallet or an app).
 - **Step 1, built here**: the shell only. No wording changes (one new string, the skip link's, below), nothing moves
   between pages, no button does anything new, no API, vault, issuer or contract change; Home still keeps nothing and
   takes no owner proof (D553, D619); the page never changes its URL (D555); no inline style attribute or handler (the
@@ -17245,6 +17256,20 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   the watched selectors above the move flow revisited for tabs (the catch-all covers what they miss), and
   `history.scrollRestoration = 'manual'` when Back is added (decision 3).
 - Next steps (not in step 1): step 2 onward of structure A, with decisions 2 and 3 above (decided, not built yet).
+- Note 2026-11-23 (step 2, D893): decisions 2 and 3 are built; "to confirm, not built" (c) is done there (every element
+  above the move flow is watched instead of a selector list; `history.scrollRestoration = 'manual'`). Step 2 also fixes a
+  race in item 1's phone compensation: the browser's scroll event (its own anchoring) came before the bar's resize and
+  overwrote the position the resize compares with, so the page scrolled a second time by the bar's change wherever
+  there was room below (hidden in step 1, where the front page was mostly at its end); the position from before the
+  page's own change is now held until the resize is handled.
+- **Open, recorded with step 2 (2026-11-23), not built**: (1) tabs on a wallet's page, Addresses / Security / Move
+  wallet (step 3); (2) the Security tab's contents (step 4: the ways to sign in, the devices for that wallet, the name it
+  gets); (3) Cancel and Remove of a sign-in inside Home (decided, later, as its own security-reviewed change: today Home
+  only says where each can be done, D874); (4) a small "Sign in again" chip for a phone user scrolled down when the
+  sign-in ends (item (a) above): **decided by the founder 2026-11-23 ("Yes"), to be built in step 3**, not in step 2:
+  on phones only, shown only while the bar's notice is not in view, covering no control and never where a guarded
+  button can be, taking the person to the notice and its "Sign in again"; if it changes layout near a guarded button it
+  starts the move flow's guard over, as every other change of layout does; (5) QR codes for the addresses; (6) a timer that shows how long the sign-in has left.
 
 ## "Passport" alone is not an app name (branch `fix/app-name-passport`), 2026-11-23
 
@@ -17741,3 +17766,205 @@ while building, **to confirm**:
   `wrap.testnet`, `nft_approve` labelled "join the club", a label on the reviewed stamps contract, a withdraw that
   hides the beneficiary, the three-phrase sentence; every reserved method; `values` and their property test; the
   network, code-hash, `at`, `-0`, empty-argument and classification cases; dormancy).
+
+### D893. Passport Home step 2: "Your wallets" as rows, "Your account" with two views, "wallet" as the main noun, and the browser's Back inside Home
+- Date 2026-11-23 · Status: structure A, "wallet" as the main noun and Back inside Home **decided by the founder
+  2026-11-23** (D888's decisions 1 to 3); everything below decided while building, **to confirm** (the list at the end)
+  · Built on `feat/home-step2-wallet-list` (from `next`), not merged, not deployed: `packages/web/src/auth/home-page.ts`
+  (`HOME_TEXT`, `homeViewTitle`, `scopeRow`, `accountRow`, `stateBox`, `loadingRows`, `noticeSlot`, `backLink`,
+  `frontPage`, `appPage`, `showView`, `openWallet`, `openAccount`, `goFront`, `addStep`, `onPopState`, `newSteps`,
+  `rewind`, `watchAbove`, `noteBarChange`, `barChanged`), `home-devices.ts` (`HOME_DEVICES_WALLET_INTRO`, `openFront`,
+  `leaveFront`), `home-profile.ts` (`openFront`, `leaveFront`), `home-sign-ins.ts`, `home-problems.ts`, `ui.ts` (four
+  icons: `chev-l`, `device`, `person`, `search`), `css/home.css` (rows, tiles, the view head, the way back, the search
+  row); tests `packages/web/test/auth/home-page.test.ts` ("the views and their words (D893)", "Back and Forward inside
+  Home (D893)"), `home-export.test.ts` ("D893: is erased on the browser’s Back…", "…while the per-app sign-in is on its
+  way…", "everything above the move flow is watched…", "the notice grows a bar that scrolls with the page…"),
+  `home-devices.test.ts`, `home-profile.test.ts`, `helpers.ts` (`FakeHistory`); e2e `apps/e2e/tests/home.spec.ts`,
+  `home-export.spec.ts`, `home-devices.spec.ts` (three browsers), selectors in the other Home specs and
+  `hand-browser.spec.ts`. `home-export.ts`, `key-reveal.ts`, `approve-guard.ts` and `guard-hint.ts` are unchanged. No
+  API, vault, issuer or contract change. Notes on D555, D613, D874 and D888.
+- **What the user sees, view by view** (structure A, `options/a/a1-overview` and `a6-account-devices` of the review):
+  1. **"Your wallets", the front page.** Its `h1` "Your wallets" and one sentence; the user's wallets as **rows**, one per
+     listing, in one card: each row is ONE `button` (a click, a tap, Enter and Space open it), with a tile (the first of
+     its apps' logos this build may show, over a neutral wallet placeholder, so an app with no logo, or one whose logo
+     fails, still has one), the names of every app that shares the wallet ("Sodax · Sodax Earn", each with its "Paused",
+     "Closed" or "Test app" badge), under them, quieter (muted, 12 px), where the first app runs and how many more
+     addresses there are ("https://sodax.example and 2 more"), then the coverage badge exactly as the cards computed it
+     ("Safe if the app closes", "Needs the app", "Can’t be opened here", "Not checked yet") and a chevron. Then "The app
+     from your link" (D557, unchanged, as a row). Then **"Your account"**: two rows, "Devices and auto-approve" and "Your
+     name", each opening its own view. Then **"Other apps"** last: one sentence, "Find an app by name" (the field, Search
+     and, with results, Clear on one line where there is room), the results or the apps where Journear has no wallet on
+     record for the user (rows), "Show more".
+  2. **Each group's states, in one pattern** (the system's empty state: an icon, a bold line, a sentence, and its action
+     where it has one): loading, "Loading your wallets…" over two placeholder rows (hidden from screen readers; "Other
+     apps" shows placeholder rows too; "Your account" is ready at once); no wallet, "No wallets yet"; the list failed,
+     "Your wallets didn’t load" with the refusal's own sentence, its code and request ID, and "Try again" in the same
+     box (never a lone button), and "Other apps" says its list didn't load either and that the search still works; no
+     other app, "No other apps listed"; a search with no result, "No app found with that name". A refusal of the page's
+     own actions shows where the user acted: a search or "Show more" under the search; the first list, a link or "Check
+     now" under the view's heading.
+  3. **A wallet's page**: "Your wallets" (the way back, a quiet link-like button with a left chevron) above the `h1`
+     "Wallet details" ("App details" for an app where the user has no wallet: no "wallet" is called theirs there), then
+     the same sections as before (step 3 adds the tabs): "App that uses this wallet" / "Apps that use this wallet",
+     whether the wallet needs the app, "Your addresses", the Support ID, then "Devices and auto-approve", "Ways to sign
+     in", "Your name" and "Move this wallet to another wallet app".
+  4. **"Devices and auto-approve" and "Your name"** for every wallet, each its own view: "Your wallets", then the
+     section itself, whose heading is the view's `h1` and whose sentence is its lede (not a card any more). Opening the
+     view from its row reads what it shows once (the user asked to see it), unless it already shows it; "Show again"
+     reads again; with no usable sign-in nothing is sent and "Show devices" / "Show my name" stay. Leaving the view
+     closes an open confirmation (a stop on its way finishes); what it shows stays for this sign-in.
+  5. **The top bar** is step 1's. Its "Sign out" keeps its one word and is named "Sign out of Passport Home" (its
+     accessible name and its tooltip), apart from "Sign out this device" under "Devices and auto-approve".
+- **Headings and the window's title.** One `h1` per view, naming it; the product's name ("Journear Passport") is in
+  the bar's lockup, and "Passport Home" no longer heads every view. The signed-out, loading, signing-in and unavailable
+  screens keep `h1` "Passport Home" and the title "Passport Home".
+
+  | View | `h1` | `h2` (in order) | Window title |
+  |---|---|---|---|
+  | Front page | Your wallets | The app from your link (when a link named one), Your account, Other apps (`h3` "Results for …") | Your wallets – Passport Home |
+  | A wallet | Wallet details | App(s) that use(s) this wallet, Does this wallet need the app?, Your addresses, Support ID, Devices and auto-approve, Ways to sign in, Your name (the move flow's screens keep their `h3`) | Wallet details – Passport Home |
+  | An app with no wallet of theirs | App details | App / Apps that share one wallet, Would a wallet here need the app?, Your addresses, then the same tools | App details – Passport Home |
+  | Devices | Devices and auto-approve | none | Devices and auto-approve – Passport Home |
+  | Your name | Your name | Apps you share your name with | Your name – Passport Home |
+
+  A view other than the front page starts with "Your wallets" (a button: the address never changes). A screen reader
+  hears the view's `h1` on every change (focus moves to it), the bar's "Journear Passport" lockup, "Signed in with
+  Google" and "Sign out of Passport Home".
+- **"Wallet" as the main noun: every Home string, old → new.** "Wallet" where the user's wallet is meant; "app" kept
+  where the partner's app is meant (which apps use the wallet, signing in to an app, what an app gets, an app's support
+  team, an app where the user has no wallet). Sentences elsewhere that name Home's headings or buttons were checked: the
+  sign-in window's pointer "…in Passport Home, under “Ways to sign in”." (the section keeps that title; its unit test
+  ties `HOME_SIGN_INS_TITLE`), the notice and code mails (they name Passport Home only), PR 108's quoted sign-in window
+  buttons ("Cancel this link", "Remove it", "Done", unchanged), and the move flow's "Use “Check now” above" (the button
+  is still there); the hand-test steps in `docs/operations.md` (flow F, the H8 deploy check), `README.md` and
+  `apps/e2e/README.md` now name the rows, "Wallet details" and "Your wallets".
+
+  | Where | Old | New |
+  |---|---|---|
+  | Signed-in heading | `h1` "Passport Home" on every view | each view's own `h1` (above) |
+  | Signed out | "See the apps you use with Journear and your wallet addresses in each of them, in one place." | "See your wallets in the apps you use with Journear, and their addresses, in one place." |
+  | Front page | `h2` "Your apps" | `h1` "Your wallets" and "Your wallets in the apps you use with Journear. Apps that share a wallet are listed together. Open a wallet to see its addresses." |
+  | Loading | "Loading your apps…" | "Loading your wallets…" (and placeholder rows) |
+  | Empty | "Nothing here yet" / "No apps yet for this {Google account / email address}. An app appears here once you have signed in to it with Journear." | "No wallets yet" / "You don’t have a wallet with this {Google account / email address} yet. A wallet appears here after you sign in to an app with Journear." |
+  | List failed | the refusal at the page's top, and a lone "Try again" | "Your wallets didn’t load" / the refusal's sentence (or "Passport Home couldn’t load your wallets. Try again in a moment.") / its code / "Try again", in one box |
+  | A wallet or an app | a card with "View" (named "View {App}") | the row itself (one button, named by its own text) |
+  | New | – | `h2` "Your account"; "Devices and auto-approve" / "Where you’re signed in to your apps, and what may sign without asking"; "Your name" / "A name for your apps, if you want one. No app gets it until you share it." |
+  | Search | `h2` "Find an app", label "App name" | under `h2` "Other apps": "Apps that use Journear, where Journear has no wallet on record for you.", label "Find an app by name" (hint unchanged) |
+  | Other apps | `h2` "Other apps that use Journear" | `h2` "Other apps" (the search's section) |
+  | No result | "No app found with that name." | "No app found with that name" / "Check the spelling, or type the app’s whole name." |
+  | New | – | "No other apps listed" / "Some apps appear only when you search for their whole name."; "The list of other apps didn’t load either. You can still find an app by name." |
+  | Way back | "Back to all apps" | "Your wallets" |
+  | Details heading | `h2` "App details" | `h1` "Wallet details" (the user's wallet); `h1` "App details" (no wallet of theirs) |
+  | Apps label | `h3` "App" / "Apps that share one wallet" | `h2` "App that uses this wallet" / "Apps that use this wallet" (the user's wallet); "App" / "Apps that share one wallet" kept otherwise |
+  | No address | "Journear has no address on record for you in this app yet." | "Journear has no address on record for this wallet yet." |
+  | Devices, a wallet's page | "Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it." | "Where you’re signed in to this wallet, what those devices may sign without asking, and whether you share your email with the app." ("…with these apps." for a wallet several apps share) |
+  | Devices, empty | "No device is signed in to this app with Journear right now." | "No device is signed in to this wallet right now." |
+  | Devices, its view | "…For any other app, find it and open its page." | "…For any other app, find it under “Other apps” and open it." |
+  | Ways to sign in | "The sign-ins that open your wallet in this app." | "The sign-ins that open this wallet." |
+  | Your name, its view | "To share your name with an app, open the app’s page from “Your apps” and choose “Share my name”." | "To share your name with an app, open its wallet under “Your wallets” and choose “Share my name”." |
+  | Your name, its view | "…there are others. To stop sharing with one of those, open its page." | "…there are others. To stop sharing with one of those, open its wallet under “Your wallets”." |
+  | Your name, a wallet's page | "You haven’t set a name in Passport Home. To share one, go back to all apps, open “Your name” and save it first." | "…To share one, go back to “Your wallets”, open “Your name” and save it first." |
+  | Refusal `no_profile_name` | "Set your name first: go back to all apps, open “Your name”, …" | "Set your name first: go back to “Your wallets”, open “Your name”, …" |
+  | Top bar | "Sign out" | "Sign out" (named and titled "Sign out of Passport Home") |
+  | Window title | "Passport Home" | "{the view's `h1`} – Passport Home" while signed in |
+
+  Kept as they are ("app" is the partner's app, or the words are the coverage computation's): the coverage questions,
+  badges and sentences; "The app from your link" and its note; "Give this to the app’s support team…"; the NEAR note
+  ("…after you next sign in to this app…"); every "this app" in the devices' confirmations, the sign-ins' lines and the
+  name's per-app rows. Not changed by rule (`home-export.ts`): "The wallet is locked again 5 minutes after you signed in,
+  when you leave this app’s page, and when you close or reload Passport Home." and "…when you leave this app’s page…"
+  under a shown key. They are still true (leaving the page, by "Your wallets" or by Back, locks it) but say "this app’s
+  page" for what is now "Wallet details": to reword with step 3 or 4, when the move flow becomes the "Move wallet" tab.
+- **Back and Forward (D888's decision 3), exactly.**
+  - The front page is the history entry the page was on when the user signed in; it is never added or replaced.
+    Opening a view from it (a row, `?view=devices`, the partner's link to the user's own app) shows the view and then
+    adds ONE entry: `history.pushState(marker, '')`, no URL argument, so the address is unchanged (D555, the query
+    included). `marker` is the string `home:{tag}:{step}`: `tag` is 16 base64url characters from 12 random bytes made
+    at each new account's sign-in (`randomBytes`), `step` the entry's number (1 for a view over the front page). Which
+    view a step is (and, for a wallet, the listing it was opened with) lives only in the page's memory. Nothing of the
+    person, a wallet, an app, a scope id or an address is in the entry; the tag exists only so an entry left by an
+    earlier sign-in (or an earlier load, after a reload) can never be taken for this sign-in's.
+  - **Back** from a view: the browser goes to the front page's entry; the page shows "Your wallets" from memory, puts
+    the scroll where it was (`history.scrollRestoration = 'manual'`, set at load) and focus on the row that opened the
+    view (its `h1` when that row is gone). **Forward**: the view again, from memory, at its top with focus on its `h1`.
+    Neither sends any request (an unchecked coverage, the devices, the name: each is read only when the user opens the
+    view from its row). An entry whose marker isn't this sign-in's shows the front page.
+  - **"Your wallets"** (the way back) shows the front page at once and asks the browser to go back to the front page's
+    entry (`history.go(-step)`, only when the browser is on the page's own entry), so the front page stays the first
+    entry: **Back from the front page leaves Home**, as before, and Forward still reaches the view. A view opened
+    before that popstate arrives waits for it, then adds its entry (one entry past the list, never two).
+  - **Sign out** and **another account's sign-in** take the browser back to the first entry (when it is on the page's
+    own entry) and make a new tag: Forward then reaches the old entries, which show nothing of that account (signed
+    out: the signed-out page stays; another account: its own front page). Signed out or signing in, the page ignores
+    every popstate.
+  - **After the sign-in ends** (D553: everything on screen stays), Back and Forward still move between the views the
+    page holds, showing what was already on screen, and send nothing; the bar's notice stays.
+  - **A reload** signs out as before; the entries it leaves (they keep their old markers) show the signed-out page: in
+    Chromium, Firefox and WebKit, Back from a reloaded view shows the signed-out page once more, then leaves Home.
+  - **A browser that refuses an entry** (Safari's limit on calls): the view still opens; Back then leaves Home from
+    there, as before, and "Your wallets" shows the list without going back in history.
+  - **The move flow**: leaving a wallet's page by Back runs exactly what leaving it by "Your wallets" runs
+    (`moving.leave()`: the secret zeroed, a shown key's box emptied, a sign-in window closed, a derive on its way
+    ignored when it answers; D580's "on leaving the app's page"). Forward shows the wallet's page with the move flow
+    collapsed ("Show how to move it"), never a key: opening it again needs a new sign-in. `home-export.ts` and
+    `key-reveal.ts` needed no change (Back calls the same `leave`).
+- **D553, D555 and D619 kept.** No storage of any kind (unit and e2e tests read `localStorage`, `sessionStorage` and
+  every history entry's state); the address never changes; the history entries hold only the opaque marker; a reload
+  signs out; Home still takes and keeps no device ticket or owner proof (D619): the only requests are the same reads as
+  before, now also when a view is opened from its row.
+- **Step 1's guarantees kept.** The bar, its notice and nothing covered, unchanged (`home-shell.spec.ts`, three
+  browsers). The guard: instead of a selector list, every element before the move flow's section in the page, at each
+  level up to `main`, is watched (the way back, the details with their refusal slot, the other tools, and whatever
+  step 3 puts there); the catch-all is unchanged and covers every guarded button. A step 1 race is fixed (D888's note):
+  on a phone, the page scrolled a second time by a bar change the browser had already anchored for, wherever the page
+  had room below (14–15 px on the longer front page at 320 px, caught by `home-shell.spec.ts`).
+- **Why**: what people own is a wallet and several apps can share one (the founder); a list of rows reads as "my
+  wallets" at a glance where cards with mono origins read as a directory; "Your account" puts what covers every wallet
+  in one place without making the front page long; Back is what people press, and leaving Home lost the 15-minute
+  sign-in.
+- **Rejected**: (a) a hash or query per view (`#wallet`, `?view=wallet&scope=`): the address must never change (D555)
+  and a link could then preselect a wallet; (b) the view or a scope id in `history.state`: the browser keeps entries
+  (and their state) after a reload and in session restore, so it would be data kept outside memory (D553); (c) a
+  counter instead of a random tag: after a reload, a new sign-in's step numbers would match the old entries; (d) "Your
+  wallets" adding an entry of its own: Back from the front page would then go to the view instead of leaving Home;
+  (e) Back and Forward reading again: the page never sends a request by itself (D553), and a press of Back isn't asking
+  for fresh data; (f) keeping an opened wallet across Back and Forward: leaving locks it (D580); (g) the account views
+  starting collapsed behind "Show devices" / "Show my name" (a second press right after opening the view): taken instead
+  as "opening the view is asking" (to confirm); (h) changing the move flow's heading levels: `home-export.ts` changes
+  only for Back or the lock, which needed none.
+- Not built here (D888's open list): tabs (step 3); the Security tab's contents (step 4); Cancel and Remove inside Home;
+  the phone "Sign in again" chip (**decided by the founder 2026-11-23, to be built in step 3**: shown only while the
+  bar's notice is out of view, covering no control and never where a guarded button can be, taking the person to the
+  notice; any change of layout it makes near a guarded button starts the guard over); QR codes; a sign-in timer.
+- Address impact: none (no path, key or derivation input changes).
+- Tests: unit 323 in the five files (home-page 104, home-export 140, home-devices 32, home-profile 44, plain-words
+  3): rows by pointer and keyboard, each state, the heading and title pattern, the old → new strings, Back and Forward
+  (entries carry only the marker, URL unchanged, nothing read, focus and the list's own entry, a view opened during the
+  way back, session ended, sign-out, another account, a reload's leftover entries, a refused entry, the move flow on
+  Back and Forward, the guard's watched elements, the bar's compensation with and without anchoring). E2e: the Home
+  specs in Chromium, Firefox and WebKit (Back and Forward between the list, a wallet and Devices; Back from the list
+  leaving Home; Back after the end and after Sign out; Back out of an opened wallet with its key shown, Forward without
+  it; `?view=devices` with Back and Forward). The plain-words check reads every new string (`HOME_TEXT` included).
+- **To confirm (the founder)**: (1) the rows (one button each; the tile with a placeholder; the apps' names joined by
+  " · "; where the first app runs in a muted mono line with "and N more"; the badge at the right, under the text on a
+  phone); (2) "Your wallets"'s sentence "Your wallets in the apps you use with Journear. Apps that share a wallet are
+  listed together. Open a wallet to see its addresses."; (3) "Your account" and its two rows' lines "Where you’re signed
+  in to your apps, and what may sign without asking" and "A name for your apps, if you want one. No app gets it until
+  you share it." (static: the row doesn't read the name to say "Not set", as the mock-up did, because that would be a
+  read the user didn't ask for); (4) "Other apps" with "Apps that use Journear, where Journear has no wallet on record
+  for you." and "Find an app by name"; (5) every state's words: "Loading your wallets…" with placeholder rows; "No wallets
+  yet" / "You don’t have a wallet with this {Google account} yet. A wallet appears here after you sign in to an app with
+  Journear."; "Your wallets didn’t load" / "Passport Home couldn’t load your wallets. Try again in a moment."; "The list
+  of other apps didn’t load either. You can still find an app by name."; "No other apps listed" / "Some apps appear only
+  when you search for their whole name."; "No app found with that name" / "Check the spelling, or type the app’s whole
+  name."; (6) "Wallet details" and "App details" as the pages' `h1`, "App that uses this wallet" / "Apps that use this
+  wallet"; "Journear has no address on record for this wallet yet."; (7) the way back reading "Your wallets" (a button
+  with a left chevron, as the mock-up's link); (8) the window's titles "{view} – Passport Home"; (9) "Sign out of
+  Passport Home" as the bar's Sign out's name and tooltip (the button still reads "Sign out"; the devices'
+  confirmation's own button also still reads "Sign out"); (10) the devices' and sign-ins' new lines on a wallet's page
+  and the name's three new pointers to "Your wallets"; (11) opening "Devices and auto-approve" or "Your name" from its
+  row reads it at once (one request, as `?view=devices` already did); (12) a refusal under the search for a search or
+  "Show more"; (13) Back and Forward as described (focus back on the row; the scroll restored; Back from the front page
+  leaving Home; after a reload, one more Back showing the signed-out page before leaving); (14) the account views
+  without their card frame (the section is the page); (15) the move flow's two sentences that still say "this app’s
+  page" (reword in step 3 or 4).

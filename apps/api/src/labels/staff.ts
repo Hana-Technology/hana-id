@@ -6,7 +6,7 @@
 // version's own time has come; "back on" only serves versions already in force. Every tool is one batch, applied only
 // while the state is what the staff page showed (`seen`); every one is recorded (`app_changes` for an org's and an
 // entry's, `label_control_log` for every switch), and the admin Worker writes the staff audit row first.
-import type { LabelChangeView, LabelControlAction, LabelControlTarget, LabelDiffLine, LabelPreview, LabelState } from '@hana-id/console-core';
+import type { LabelControlAction, LabelControlTarget, LabelControls, LabelFeedItem, LabelState } from '@hana-id/console-core';
 import { type Writer, actorId, commitOn, committed, expectReplay, refuse, refuseReplay, replayRow, runWrite } from '../changes/cas.ts';
 import type { HotDb } from '../changes/db.ts';
 import { type Q, q } from '../changes/sql.ts';
@@ -17,14 +17,6 @@ import { type LabelRow, VIEW_FROM, VIEW_SELECT, labelEvent, labelView, stateOf }
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** At most this many changes in the feed (waiting first, then the newest decided). */
 export const LABEL_QUEUE_MAX = 200;
-
-export interface LabelFeedItem {
-  change: LabelChangeView;
-  /** The scope's labels version now: a staff tool applies only while it is still this. */
-  labelsVersion: number;
-  preview: LabelPreview | null;
-  diff: LabelDiffLine[];
-}
 
 type Row = LabelRow & { previous_text: string | null };
 
@@ -52,15 +44,6 @@ export async function labelDetail(db: HotDb, changeId: string, now: number): Pro
   const r = await db.first<Row>(q`SELECT ${VIEW_SELECT(now)}, (SELECT p.doc_text FROM label_changes p WHERE p.id = c.previous_id) AS previous_text FROM ${VIEW_FROM} WHERE c.id = ${changeId}`);
   if (!r) return refuse('not_found', 'No such change');
   return itemOf(r, now);
-}
-
-export interface LabelControls {
-  /** Every partner label off, and review required for every org: with who and when. */
-  all: { labelsOff: boolean; reviewRequired: boolean; version: number; updatedAt: number | null; updatedBy: string | null; note: string | null };
-  /** The orgs with a switch set. */
-  orgs: { orgId: string; labelsOff: boolean; reviewRequired: boolean; version: number; updatedAt: number; updatedBy: string; note: string | null }[];
-  /** The entries staff switched off (not removed). */
-  entries: { labelId: string; orgId: string; scopeId: string; offAt: number; offBy: string | null; note: string | null; version: number }[];
 }
 
 /** The switches as they are now (the staff page and the System status page's indicator). */
@@ -97,7 +80,7 @@ const staffId = (w: Writer): string => (w.actor.kind === 'hana' ? w.actor.email 
  * security contacts are told (the admin Worker's feed mails `labels.blocked` on its own). `allow`: lifts the review
  * hold of a version review holds or will hold; its own time still applies.
  */
-export async function labelStaffAct(db: HotDb, w: Writer, i: { changeId: string; tool: 'block' | 'allow'; note: string; seen: { labelsVersion: number; state: string } }): Promise<{ change: LabelChangeView }> {
+export async function labelStaffAct(db: HotDb, w: Writer, i: { changeId: string; tool: 'block' | 'allow'; note: string; seen: { labelsVersion: number; state: string } }): Promise<{ change: LabelFeedItem['change'] }> {
   expectReplay(w, [i.tool === 'block' ? 'labels.blocked' : 'labels.allowed']);
   const r = await planAct(db, w, i.changeId, i.seen);
   const state = stateOf(r, w.now);

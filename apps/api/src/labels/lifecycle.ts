@@ -3,7 +3,7 @@
 // cancel by an owner, by staff or by the emailed link (ConsoleRpc.cancelChange / cancelChangeByLink take an `lc_` id
 // too). No waiver ever: a label version always waits the full `appChangeDelayMs` after its notice. Activation and the
 // 7-day lapses are the hourly job's (labels/cron.ts).
-import { type LabelChangeView, type LabelDiffLine, type LabelPreview, bytesEqual, fromB64url, hex, sha256 } from '@hana-id/console-core';
+import { type LabelDiffLine, type LabelNotice, type LabelPreview, bytesEqual, fromB64url, hex, sha256 } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { type Writer, actorId, commitOn, committed, expectReplay, refuse, refuseReplay, replayRow, runWrite } from '../changes/cas.ts';
 import type { HotDb } from '../changes/db.ts';
@@ -12,14 +12,6 @@ import { type Q, q } from '../changes/sql.ts';
 import { diffOf, previewOf, storedDocument } from './document.ts';
 import { WAITING } from './sql.ts';
 import { type LabelRow, VIEW_FROM, VIEW_SELECT, labelView } from './store.ts';
-
-/** The version's view, a waiting one's preview and its diff against the version it would replace (staff and notices). */
-export interface LabelNotice {
-  change: LabelChangeView;
-  contacts: string[];
-  preview: LabelPreview | null;
-  diff: LabelDiffLine[];
-}
 
 /** The preview and the diff of a version (its stored text parsed again; a text that no longer parses has neither). */
 export function previewAndDiff(r: Pick<LabelRow, 'doc_text' | 'apps_named'>, previousText: string | null): { preview: LabelPreview | null; diff: LabelDiffLine[] } {

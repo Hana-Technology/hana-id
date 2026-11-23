@@ -546,7 +546,9 @@ describe('your apps', () => {
     expect(document.getElementById('home-address-stellar')?.textContent).toBe(G);
     expect(document.getElementById('home-address-evm')?.textContent).toBe(EVM);
     expect(document.getElementById('home-support-id')?.textContent).toBe('HANA-AB12-CD34');
-    expect(pageText()).toContain('If this app shuts down, you can still sign in to this wallet through Journear.');
+    // PR 122's review: a wallet two apps use reads "these apps".
+    expect(pageText()).toContain('If these apps shut down, you can still sign in to this wallet through Journear.');
+    expect(document.querySelector('#home-coverage .sr-only')?.textContent).toBe('Does this wallet need these apps? ');
     const links = [...document.querySelectorAll('#app a')] as HTMLAnchorElement[];
     expect(links.map((a) => a.getAttribute('href'))).toEqual([`https://stellar.expert/explorer/testnet/account/${G}`]);
     expect(links[0]?.getAttribute('rel')).toBe('noopener noreferrer');
@@ -635,7 +637,8 @@ describe('your apps', () => {
     (document.querySelector('.home-row[data-scope="s2"]') as HTMLElement).click();
     expect(document.getElementById('home-app-title')?.textContent).toBe('Wallet details');
     expect(document.getElementById('home-app-label')?.textContent).toBe('App that uses this wallet');
-    expect(document.querySelector('.home-app-all')?.textContent).toBe('Old ExchangeClosed');
+    expect(document.querySelector('.home-app-all')?.textContent).toBe('App that uses this walletOld ExchangeClosed');
+    expect(document.querySelector('#home-coverage .sr-only')?.textContent).toBe('Does this wallet need the app? ');
     expect(document.getElementById('home-support-id')).toBeNull();
     expect(pageText()).not.toContain('Support ID');
     expect(document.getElementById('home-no-address')?.textContent).toBe('Journear has no address on record for this wallet yet.');
@@ -1503,56 +1506,153 @@ describe('a wallet’s tabs (D895)', () => {
   });
 });
 
-describe('the phone’s “Sign in again” chip (D895)', () => {
-  const LIST = () => json(200, { scopes: [mine('s1')], nextCursor: null });
+describe('the phone’s “Sign in again” chip (D895, as revised after PR 122’s review)', () => {
+  const LIST = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
   const rect = (top: number, height: number, left = 0, width = 390): DOMRect => ({ top, bottom: top + height, left, right: left + width, width, height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
   const frame = (): Promise<void> => new Promise((r) => setImmediate(r));
+  const shown = (): boolean => document.getElementById('home-again-chip')?.hasAttribute('data-shown') === true;
 
-  it('shows only while the notice offers "Sign in again" and is out of view, over nothing that can be pressed; it takes the person to the notice', async () => {
+  it('shows once the notice offers "Sign in again" and is out of view, and stays: on the list, Addresses and Security, over controls too; room at the foot while it shows', async () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
     const chip = document.getElementById('home-again-chip') as HTMLElement;
     expect(chip.closest('#app')).toBeNull();
-    expect(chip.hasAttribute('data-shown')).toBe(false);
-    chip.getBoundingClientRect = () => rect(780, 40, 120, 150);
+    chip.getBoundingClientRect = () => rect(window.innerHeight - 60, 44, 120, 150);
     const banner = document.getElementById('home-banner') as HTMLElement;
     banner.getBoundingClientRect = () => rect(-200, 60);
-    // Signed in, no notice: no chip, even scrolled.
+    expect(shown()).toBe(false);
+    expect(document.body.classList.contains('home-chip-on')).toBe(false);
+    advance(13 * MIN + 1000);
+    // The list, mid-page: shown, with room at the page's foot.
+    expect(shown()).toBe(true);
+    expect(document.body.classList.contains('home-chip-on')).toBe(true);
+    expect(document.documentElement.style.getPropertyValue('--home-chip-space')).toBe('76px');
+    // A control under it changes nothing: it stays (no flicker).
+    (document.querySelector('#app button') as HTMLElement).getBoundingClientRect = () => rect(790, 32, 140, 80);
     window.dispatchEvent(new Event('scroll'));
     await frame();
-    expect(chip.hasAttribute('data-shown')).toBe(false);
-    advance(13 * MIN + 1000);
-    expect(document.getElementById('home-ending')).not.toBeNull();
-    expect(chip.hasAttribute('data-shown')).toBe(true);
-    expect(chip.textContent).toContain('Sign in again');
-    expect(document.getElementById(chip.getAttribute('aria-describedby') ?? '')?.textContent?.trim()).toBe('Your sign-in to Passport Home ends soon.');
-    // The notice in view: no chip.
+    expect(shown()).toBe(true);
+    // A wallet's Addresses and Security.
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(h.page.tab).toBe('addresses');
+    expect(shown()).toBe(true);
+    h.click('home-tab-security');
+    expect(shown()).toBe(true);
+    // The notice in view: gone, and so is the room.
     banner.getBoundingClientRect = () => rect(70, 60);
     window.dispatchEvent(new Event('scroll'));
     await frame();
-    expect(chip.hasAttribute('data-shown')).toBe(false);
-    // Out of view again, but a button of the page under the chip: no chip there either.
-    banner.getBoundingClientRect = () => rect(-200, 60);
-    const under = document.querySelector('#app button') as HTMLElement;
-    under.getBoundingClientRect = () => rect(790, 32, 140, 80);
-    window.dispatchEvent(new Event('scroll'));
-    await frame();
-    expect(chip.hasAttribute('data-shown')).toBe(false);
-    under.getBoundingClientRect = () => rect(300, 32, 140, 80);
-    window.dispatchEvent(new Event('scroll'));
-    await frame();
-    expect(chip.hasAttribute('data-shown')).toBe(true);
-    // Pressed: up to the notice, focus on its "Sign in again".
+    expect(shown()).toBe(false);
+    expect(document.body.classList.contains('home-chip-on')).toBe(false);
+    // Hidden, it takes no click or focus: `visibility: hidden` (home.css) unless data-shown; it is a real button only when shown.
+    expect(chip.getAttribute('data-shown')).toBeNull();
+  });
+
+  it('never on “Move wallet”, in any screen of the flow, even when the flow changes screen with no scroll', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    (document.getElementById('home-again-chip') as HTMLElement).getBoundingClientRect = () => rect(780, 44, 120, 150);
+    (document.getElementById('home-banner') as HTMLElement).getBoundingClientRect = () => rect(-200, 60);
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    h.click('home-tab-move');
+    advance(13 * MIN + 1000);
+    expect(document.getElementById('home-ending')).not.toBeNull();
+    expect(shown()).toBe(false);
+    h.click('home-export-open');
+    expect(shown()).toBe(false);
+    // Back to Security: it shows; Forward to Move wallet: it goes, with no scroll event.
+    h.click('home-tab-security');
+    expect(shown()).toBe(true);
+    h.win.history.back();
+    await flush();
+    expect(h.page.tab).toBe('move');
+    expect(shown()).toBe(false);
+  });
+
+  it('pressed: up to the notice, focus on its "Sign in again"; it leaves nothing; signed out it goes', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    (document.getElementById('home-again-chip') as HTMLElement).getBoundingClientRect = () => rect(780, 44, 120, 150);
+    (document.getElementById('home-banner') as HTMLElement).getBoundingClientRect = () => rect(-200, 60);
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    h.click('home-tab-security');
+    advance(13 * MIN + 1000);
+    const chip = document.getElementById('home-again-chip') as HTMLElement;
+    expect(chip.textContent).toContain('Sign in again');
+    expect(document.getElementById(chip.getAttribute('aria-describedby') ?? '')?.textContent?.trim()).toBe('Your sign-in to Passport Home ends soon.');
     const scrolled = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
     chip.click();
     expect(scrolled).toHaveBeenCalledWith(0, 0);
     expect(document.activeElement?.id).toBe('home-sign-in-again');
-    // The end: the chip says so to a screen reader; signed out, it goes.
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('security');
     advance(2 * MIN + 1000);
     expect(document.getElementById('home-again-chip-why')?.textContent?.trim()).toBe('Your sign-in to Passport Home has ended.');
     h.click('home-sign-out');
-    expect(chip.hasAttribute('data-shown')).toBe(false);
+    expect(shown()).toBe(false);
+    expect(document.body.classList.contains('home-chip-on')).toBe(false);
+  });
+});
+
+describe('PR 122’s review: Back between tabs and the tab stop', () => {
+  const LIST = () => json(200, { scopes: [mine('s1')], nextCursor: null });
+  const rect = (top: number, height: number): DOMRect => ({ top, bottom: top + height, left: 0, right: 390, width: 390, height, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+
+  it('Back or Forward to a tab with the tab list above the window brings it back into view (smooth only without reduced motion)', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    document.getElementById('home-tab-security')?.click();
+    const scrolled = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 900 });
+    // Every redraw makes a new list: wherever it is drawn, it is 400 px above the window's top.
+    const orig = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      return this.classList.contains('home-tabs') ? rect(-400, 48) : orig.call(this);
+    };
+    h.win.history.back();
+    await flush();
+    expect(h.page.tab).toBe('addresses');
+    expect(scrolled).toHaveBeenLastCalledWith({ top: 492, behavior: 'smooth' });
+    expect(document.activeElement?.id).toBe('home-tab-addresses');
+    // Reduced motion: no smooth scroll.
+    const realMatch = window.matchMedia;
+    window.matchMedia = ((q: string) => ({ matches: q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
+    h.win.history.forward();
+    await flush();
+    expect(h.page.tab).toBe('security');
+    expect(scrolled).toHaveBeenLastCalledWith({ top: 492, behavior: 'auto' });
+    // A tab opened by a click doesn't scroll (the person is at the tabs).
+    scrolled.mockClear();
+    document.getElementById('home-tab-addresses')?.click();
+    expect(scrolled).not.toHaveBeenCalled();
+    HTMLElement.prototype.getBoundingClientRect = orig;
+    window.matchMedia = realMatch;
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 });
+  });
+
+  it('focus leaving the tab list puts the tab stop back on the open tab', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    const tab = (w: string) => document.getElementById(`home-tab-${w}`) as HTMLElement;
+    tab('addresses').focus();
+    tab('addresses').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(tab('security').getAttribute('tabindex')).toBe('0');
+    expect(tab('addresses').getAttribute('tabindex')).toBe('-1');
+    // Focus moves within the list: nothing resets.
+    tab('security').dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: tab('move') }));
+    expect(tab('security').getAttribute('tabindex')).toBe('0');
+    // Focus leaves the list: the open tab (Addresses) is the stop again.
+    tab('security').dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: document.getElementById('home-back') }));
+    expect(tab('addresses').getAttribute('tabindex')).toBe('0');
+    expect(tab('security').getAttribute('tabindex')).toBe('-1');
+    expect(tab('move').getAttribute('tabindex')).toBe('-1');
   });
 });
 
@@ -1647,20 +1747,16 @@ describe('the shell (D888)', () => {
     expect(document.activeElement).toBe(main);
   });
 
-  it('the copy line keeps the space of every sentence it may say on this page, hidden from screen readers', async () => {
+  it('D895: the copy line takes no space until a copy fails (Copy and the guarded buttons are on different tabs now)', async () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
     (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     const line = document.getElementById('home-copied') as HTMLElement;
     const box = line.parentElement as HTMLElement;
-    expect(box.classList.contains('reserved')).toBe(true);
+    expect(box.classList.contains('reserved')).toBe(false);
     expect(box.classList.contains('home-copied-box')).toBe(true);
-    const sizers = [...box.querySelectorAll(':scope > .sizer')];
-    expect(sizers.every((x) => x.getAttribute('aria-hidden') === 'true')).toBe(true);
-    expect(sizers.map((x) => x.textContent)).toEqual(
-      ['Stellar address', 'Ethereum-style address', 'Support ID'].flatMap((what) => [`This browser can’t copy for you. Select the ${what} and copy it yourself.`, `This browser didn’t allow the copy. Select the ${what} and copy it yourself.`]),
-    );
+    expect(box.querySelectorAll(':scope > .sizer')).toHaveLength(0);
     expect(line.getAttribute('role')).toBe('status');
     expect(line.textContent).toBe('');
     // The addresses and the Support ID sit side by side where there is room; the per-app tools come after the line.

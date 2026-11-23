@@ -139,9 +139,6 @@ export const HOME_TEXT = Object.freeze({
 /** The window's title on a signed-in view (D893): the view's `h1`, then the page's name. */
 export const homeViewTitle = (heading: string): string => `${heading} – ${BRAND.home}`;
 
-/** How close the phone's chip may come to the move flow's guarded buttons (D895): never within this many CSS pixels. */
-export const CHIP_GUARD_CLEARANCE_PX = 48;
-
 /** How long the page waits for the popstate of its own `history.go` before it stops waiting (D893). */
 export const REWIND_GIVE_UP_MS = 10_000;
 
@@ -268,7 +265,15 @@ const OTHER_QUESTION = 'Would a wallet here need the app?';
  * app. For any other app, where Hana knows of no wallet of theirs: the same, as an "if". Nothing here promises an
  * action the page doesn't offer.
  */
-const COVERAGE_WORDS: Readonly<Record<'mine' | 'other', Readonly<Record<CoverageKind, CoverageText>>>> = Object.freeze({
+const MINE_MANY_QUESTION = 'Does this wallet need these apps?';
+const COVERAGE_WORDS: Readonly<Record<'mine' | 'mineMany' | 'other', Readonly<Record<CoverageKind, CoverageText>>>> = Object.freeze({
+  // The user's wallet that two or more apps use (PR 122's review): the same answers, about "these apps".
+  mineMany: {
+    yes: { badge: 'Safe if the app closes', tone: 'ok', question: MINE_MANY_QUESTION, detail: 'No. If these apps shut down, you can still sign in to this wallet through Journear.' },
+    maybe: { badge: 'Needs the app', tone: 'warn', question: MINE_MANY_QUESTION, detail: 'Yes. These apps run their own Google sign-in. If they shut down, you can no longer sign in to this wallet.' },
+    no: { badge: 'Can’t be opened here', tone: 'off', question: MINE_MANY_QUESTION, detail: 'Journear can no longer sign you in to this wallet: the sign-in these apps used is gone. If they still run, use them.' },
+    unknown: { badge: 'Not checked yet', tone: 'muted', question: MINE_MANY_QUESTION, detail: 'Journear hasn’t checked these apps yet.' },
+  },
   mine: {
     yes: { badge: 'Safe if the app closes', tone: 'ok', question: MINE_QUESTION, detail: 'No. If this app shuts down, you can still sign in to this wallet through Journear.' },
     maybe: { badge: 'Needs the app', tone: 'warn', question: MINE_QUESTION, detail: 'Yes. This app runs its own Google sign-in. If this app shuts down, you can no longer sign in to this wallet.' },
@@ -293,9 +298,9 @@ const MOVE_WORDS: Readonly<Partial<Record<CoverageKind, string>>> = Object.freez
  * How a coverage reads to a user: the badge, and the question and sentence on the app's page. `canMove`: the page
  * offers "Move this wallet to another wallet app" for this app, so the sentence may say so; it never does otherwise.
  */
-export function coverageText(coverage: HomeCoverage, mine: boolean, canMove = false): CoverageText {
+export function coverageText(coverage: HomeCoverage, mine: boolean, canMove = false, apps = 1): CoverageText {
   const kind = COVERAGE_KIND[coverage];
-  const words = COVERAGE_WORDS[mine ? 'mine' : 'other'][kind];
+  const words = COVERAGE_WORDS[mine ? (apps > 1 ? 'mineMany' : 'mine') : 'other'][kind];
   const more = mine && canMove ? MOVE_WORDS[kind] : undefined;
   return more ? { ...words, detail: `${words.detail}${more}` } : words;
 }
@@ -665,18 +670,22 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     }
     if (v) lastScrollY = v.scrollY;
     layoutChanged();
-    chipSoon();
+    updateChip();
   })?.observe(bar.header);
   view()?.addEventListener('scroll', onScroll, { passive: true });
   view()?.addEventListener('resize', () => chipSoon(), { passive: true });
 
   // ---- the phone's "Sign in again" chip (D895; decided by the founder 2026-11-23, D888's open list) ----
   // On a phone or a tablet the bar scrolls away with the page, so someone scrolled down sees no sign that the sign-in
-  // is ending or has ended. The chip shows then, and only then: signed in, the bar's notice offering "Sign in again" and
-  // out of view, and nothing that can be pressed under the chip (so it covers no control, and never a guarded button).
-  // It is a fixed button outside the page's content: hidden, it takes no click and no focus. Pressed, it takes the
-  // person up to the notice, with focus on its "Sign in again". Each time it shows or goes, the move flow's guard starts
-  // over, as for any other change around it.
+  // is ending or has ended. The chip shows whenever: signed in, the bar's notice offers "Sign in again", the bar isn't
+  // stuck (a phone or a tablet), the notice is scrolled out of view, and the open view isn't a wallet's "Move wallet"
+  // tab. It then STAYS (no hiding over controls, no flicker); while it shows, the page gets room at its foot (the chip's
+  // height and 16 px) so the last control can always scroll clear of it. It never shows on "Move wallet", in any screen
+  // of the move flow, so it can never be near Continue, Show key or Copy key, by construction (the notice in the bar
+  // stays the way to sign in again there). It is a fixed button outside the page's content: hidden, it takes no click
+  // and no focus. Pressed, it takes the person up to the notice, with focus on its "Sign in again", and leaves nothing
+  // (an opened wallet stays). It is checked on every redraw of the page and the notice, every view or tab change, the
+  // bar's resize, and (once a frame) scroll and resize; when it shows or goes the move flow's guard starts over.
   const chipWhy = d.h('span', { class: 'sr-only', attrs: { id: 'home-again-chip-why' } });
   const chip = d.h('button', { class: `${BTN.primary} jp-btn-sm home-again-chip`, attrs: { type: 'button', id: 'home-again-chip', 'aria-describedby': 'home-again-chip-why' } }, icon(d, 'clock'), HOME_TEXT.chip, chipWhy);
   chip.addEventListener('click', (e) => {
@@ -693,30 +702,34 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     }
   });
   let chipShown = false;
-  /** What a person can press, in the page's content: the chip never sits over one. */
-  const PRESSABLE = ['button:not([disabled])', 'a[href]', 'input:not([type="hidden"])', 'select', 'textarea', 'summary', '[tabindex="0"]'].map((x) => `#app ${x}`).join(', ');
   function updateChip(): void {
     let show = false;
     try {
       const again = byId('home-sign-in-again');
       const banner = byId('home-banner');
-      if (stage === 'signed_in' && again && banner && chip.isConnected && !sticky() && banner.getBoundingClientRect().bottom <= 0) {
-        const c = chip.getBoundingClientRect();
-        const near = (r: DOMRect, margin: number): boolean => r.width > 0 && r.height > 0 && r.left < c.right + margin && r.right > c.left - margin && r.top < c.bottom + margin && r.bottom > c.top - margin;
-        const under = Array.from(win.document.querySelectorAll<HTMLElement>(PRESSABLE)).some((el) => near(el.getBoundingClientRect(), 0));
-        // The move flow's guarded buttons get a margin as well: the chip never comes within CHIP_GUARD_CLEARANCE_PX of
-        // Continue, Show key or Copy key, so a tap meant for the chip can't land on one, nor one meant for them on it.
-        const nearGuarded = Array.from(guardedButtons).some((el) => el.isConnected && near(el.getBoundingClientRect(), CHIP_GUARD_CLEARANCE_PX));
-        show = !under && !nearGuarded;
-      }
+      const onMove = viewing.kind === 'wallet' && viewing.tab === 'move';
+      show = stage === 'signed_in' && again !== null && banner !== null && chip.isConnected && !onMove && !sticky() && banner.getBoundingClientRect().bottom <= 0;
     } catch {
       show = false;
     }
     chipWhy.textContent = ` ${session === 'ended' ? HOME_TEXT.chipEnded : HOME_TEXT.chipEnding}`;
     if (show === chipShown) return;
     chipShown = show;
-    if (show) chip.setAttribute('data-shown', '');
-    else chip.removeAttribute('data-shown');
+    if (show) {
+      // The room at the page's foot: from the chip's top to the window's bottom, and 16 px more.
+      try {
+        const top = chip.getBoundingClientRect().top;
+        const h = view()?.innerHeight ?? 0;
+        if (h > 0 && top > 0 && top < h) rootStyle('--home-chip-space', `${Math.ceil(h - top) + 16}px`);
+      } catch {
+        // The CSS default holds.
+      }
+      chip.setAttribute('data-shown', '');
+      win.document.body?.classList.add('home-chip-on');
+    } else {
+      chip.removeAttribute('data-shown');
+      win.document.body?.classList.remove('home-chip-on');
+    }
     layoutChanged();
   }
   let chipQueued = false;
@@ -1258,6 +1271,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       viewing = next;
       problem = null;
       renderContent();
+      // Back or Forward from further down the page (PR 122's review): the tab list comes back into view, just below the
+      // bar where the bar is stuck, so the focus that lands on the tab is where the person can see it. Smooth only
+      // without reduced motion. A scroll isn't a change of the bar: the bar's scroll compensation isn't involved.
+      if (how === 'history') revealTabs();
       focusQuiet(byId(`home-tab-${next.tab}`));
       return;
     }
@@ -1289,6 +1306,22 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const v: HomeView = { kind: 'wallet', scope, tab: 'addresses' };
     showView(v, 'open');
     addStep(v);
+  }
+
+  /** Scrolls the wallet's tab list into view below the bar, when it is above the window's top (or under a stuck bar). */
+  function revealTabs(): void {
+    const v = view();
+    const list = win.document.querySelector<HTMLElement>('#home-content .home-tabs');
+    if (!v || !list) return;
+    try {
+      const barBottom = sticky() ? bar.header.getBoundingClientRect().bottom : 0;
+      const top = list.getBoundingClientRect().top;
+      if (top >= barBottom) return;
+      const reduce = v.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+      v.scrollTo({ top: Math.max(0, v.scrollY + top - barBottom - 8), behavior: reduce ? 'auto' : 'smooth' });
+    } catch {
+      // Scrolling is a convenience.
+    }
   }
 
   /** A tab of the wallet's page on screen chosen (a click, or Enter or Space on it): its own history entry (D895). */
@@ -2015,7 +2048,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const h1 = byId('home-content')?.querySelector('h1') ?? null;
     setTitle(h1 ? homeViewTitle(headingText(h1)) : BRAND.home);
     watchAbove();
-    chipSoon();
+    updateChip();
   }
 
   function frontPage(): Child[] {
@@ -2163,7 +2196,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     // The app the page's link named, the user's own included: a link can come from anyone ("open this, press Move this
     // wallet, paste the key here"), so the page never offers to open that wallet in this page load.
     const fromLink = linked?.scopeId === scope.scopeId || linkScope === scope.scopeId;
-    const cover = coverageText(scope.coverage, scope.mine, typeof homeExportRoute(scope, config, fromLink, account?.provider ?? 'google', emailApi !== null) !== 'string');
+    // PR 122's review: no "move it … under “Move wallet”" in the line (the tab is right there); plural for a shared wallet.
+    const cover = coverageText(scope.coverage, scope.mine, false, scope.apps.length);
     const stellar = STELLAR_ACCOUNT_URL[env.network];
     const nearExplorer = NEAR_ACCOUNT_URL[env.network];
     // Addresses on record, or, where Hana has none, those of the wallet the user opened here in this page.
@@ -2176,14 +2210,11 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         { class: 'home-address' },
         d.h('p', { class: 'home-address-label' }, ADDRESS_LABEL[a.chain]),
         d.h('p', { class: 'mono home-address-value', attrs: { id: `home-address-${a.chain}` } }, a.address),
-        d.h(
-          'p',
-          { class: 'home-address-actions' },
-          copyButton(name, a.address, `home-copy-${a.chain}`),
-          // The link is built from a fixed address of Hana's choosing and an address of the chain's own form.
-          a.chain === 'stellar' && stellar ? d.h('a', { class: 'explorer', attrs: { href: `${stellar.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${stellar.name}`, icon(d, 'ext')) : null,
-          a.chain === 'near' && nearExplorer ? d.h('a', { class: 'explorer', attrs: { href: `${nearExplorer.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${nearExplorer.name}`, icon(d, 'ext')) : null,
-        ),
+        // Copy at the right of the address (option A's a2); the explorer link on its own line under them.
+        d.h('p', { class: 'home-address-actions' }, copyButton(name, a.address, `home-copy-${a.chain}`)),
+        // The link is built from a fixed address of Hana's choosing and an address of the chain's own form.
+        a.chain === 'stellar' && stellar ? d.h('p', { class: 'home-address-more' }, d.h('a', { class: 'explorer', attrs: { href: `${stellar.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${stellar.name}`, icon(d, 'ext'))) : null,
+        a.chain === 'near' && nearExplorer ? d.h('p', { class: 'home-address-more' }, d.h('a', { class: 'explorer', attrs: { href: `${nearExplorer.url}${encodeURIComponent(a.address)}`, target: '_blank', rel: 'noopener noreferrer' } }, `View on ${nearExplorer.name}`, icon(d, 'ext'))) : null,
       );
     });
     // D755: NEAR is on record only once the user signed in to this app through an SDK of 0.4.0 or later; say so plainly.
@@ -2197,14 +2228,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         ),
       );
     }
-    // What the copy line may say on this page: its space is that of the longest (D888).
-    const copyWhats = [...shown.map((a) => ADDRESS_NAME[a.chain]), ...(scope.supportId ? ['Support ID'] : [])];
-    const copyLine = reservedLine(
-      d,
-      d.h('p', { class: 'copy-status', attrs: { id: 'home-copied', role: 'status' } }, copied),
-      'home-copied-box',
-      copyWhats.flatMap((what) => [COPY_FAILED.none(what), COPY_FAILED.refused(what)]),
-    );
+    // The line a failed copy leaves (D895, PR 122's review: no reserved space any more). D888 kept its space so nothing
+    // moved under the move flow's guarded buttons; Copy and those buttons are on different tabs now, and the line sits
+    // at the foot of the addresses, where it moves nothing above it.
+    const copyLine = { box: d.h('div', { class: 'home-copied-box' }, d.h('p', { class: 'copy-status', attrs: { id: 'home-copied', role: 'status' } }, copied)) };
     // The apps' label: for the user's wallet, the apps that use it (D893); for an app where Journear has no wallet of
     // theirs, as before.
     const appsLabel = scope.mine ? (scope.apps.length > 1 ? HOME_TEXT.walletApps : HOME_TEXT.walletApp) : scope.apps.length > 1 ? 'Apps that share one wallet' : 'App';
@@ -2226,10 +2253,17 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         noticeSlot('top'),
         // D895: the wallet's head, above its tabs (option A's a2): which apps use it, and whether it needs them. Labels,
         // not headings: the tabs' panels hold the page's sections.
-        d.h('p', { class: 'home-app-label', attrs: { id: 'home-app-label' } }, appsLabel),
-        scope.apps.length > 0 ? d.h('div', { class: 'home-card-apps home-app-all', attrs: { 'aria-labelledby': 'home-app-label', role: 'group' } }, ...scope.apps.map((a) => appLine(a, 5))) : d.h('p', { class: 'muted' }, scopeTitle(scope)),
-        d.h('p', { class: 'home-app-label home-app-question' }, cover.question),
-        d.h('p', { attrs: { id: 'home-coverage' } }, badge(cover.badge, cover.tone), ' ', busy === 'check' ? 'Checking…' : cover.detail),
+        // The apps in their box, its label inside it (option A's a2).
+        d.h(
+          'div',
+          { class: 'home-card-apps home-app-all', attrs: { 'aria-labelledby': 'home-app-label', role: 'group' } },
+          d.h('p', { class: 'home-app-label', attrs: { id: 'home-app-label' } }, appsLabel),
+          // Each app with where it runs first ("and N more"), side by side where they fit (PR 122's review: a shorter head).
+          ...(scope.apps.length > 0 ? scope.apps.map((a) => appLine(a, 1)) : [d.h('p', { class: 'muted' }, scopeTitle(scope))]),
+        ),
+        // Whether it needs them: the badge on its own line, then the answer; the question is read to a screen reader
+        // only (the answer starts "No." or "Yes.").
+        d.h('p', { attrs: { id: 'home-coverage' } }, d.h('span', { class: 'sr-only' }, `${cover.question} `), badge(cover.badge, cover.tone), d.h('span', { class: 'home-coverage-text' }, busy === 'check' ? 'Checking…' : cover.detail)),
         scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
       ),
       walletTabs(scope, tab),
@@ -2304,6 +2338,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       e.preventDefault();
       tabs.forEach((t, i) => t.setAttribute('tabindex', i === to ? '0' : '-1'));
       focusQuiet(tabs[to] ?? null);
+    });
+    // Focus leaving the list (PR 122's review): the tab stop goes back to the open tab, so Shift+Tab (or Tab) back into
+    // the list lands on it, not on a tab the arrows only passed over.
+    list.addEventListener('focusout', (e) => {
+      const to = (e as FocusEvent).relatedTarget as Node | null;
+      if (to && list.contains(to)) return;
+      tabs.forEach((t) => t.setAttribute('tabindex', t.getAttribute('aria-selected') === 'true' ? '0' : '-1'));
     });
     return list;
   }

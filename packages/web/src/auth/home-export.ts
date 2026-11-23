@@ -114,7 +114,7 @@ export type HomeExportState =
 export type HomeExportOff = 'link' | 'none' | 'unknown';
 
 export const HOME_EXPORT_OFF_TEXT: Readonly<Record<HomeExportOff, string>> = Object.freeze({
-  link: `You came here through a link. ${BRAND.home} never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open ${BRAND.home} yourself, without the link, and find the wallet under “Your wallets”.`,
+  link: `You came here through a link. ${BRAND.home} never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open ${BRAND.home} yourself, without the link, and find it under “Your wallets”, or by searching for the app’s name.`,
   none: `${BRAND.company} can’t open this wallet from here. If the app still runs, use the app itself.`,
   unknown: `${BRAND.company} hasn’t checked this app yet. Use “Check now” above, then come back here.`,
 });
@@ -129,7 +129,7 @@ export const HOME_EXPORT_NEAR_NOTES_TITLE = 'Before you move a NEAR account';
  */
 export function homeExportNearNotes(network: HanaEnv['network']): readonly string[] {
   return [
-    'This key is the NEAR account itself: the account’s name above is made from it. Whoever imports it into a NEAR wallet app has full control of the account. If that app removes this key from the account, the apps that use this wallet lose it too.',
+    'This key is the NEAR account itself: the account’s name above is made from it. Whoever imports it into a NEAR wallet app has full control of the account. If that app removes this key from the account, Journear and the apps that use this wallet can no longer use this NEAR account.',
     `Choose ${NEAR_NETWORK_NAME[network]} in the other wallet app. An account that was never sent any NEAR doesn’t exist on NEAR yet: until it gets its first NEAR, a wallet app may show it as not found or not import it.`,
     `${BRAND.company} pays NEAR network fees only for a few actions it has approved, such as its demo’s, and only in apps that use ${BRAND.product}. In another wallet app, every network fee is paid from this account’s own NEAR.`,
   ];
@@ -822,7 +822,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
             {},
             s.mine
               ? `${BRAND.home} can show you this wallet’s private key, so that you can add the wallet to another wallet app. The wallet keeps working in its apps as before.`
-              : `${BRAND.company} has no wallet on record for you in this app. If you had one, ${byEmail ? 'confirm with a code' : 'sign in again'} and ${BRAND.home} will look for it. If it finds one, it can show you its private key, so that you can import it into another wallet app.`,
+              : `${BRAND.company} has no wallet on record for you in this app. If you had one, ${byEmail ? 'confirm with a code' : 'sign in again'} and ${BRAND.home} will look for it. If it finds one, it can show you its private key, so that you can add the wallet to another wallet app.`,
           ),
           alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
           d.h(
@@ -854,7 +854,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           title('Your wallet is open'),
           exportSteps(d, 2),
           mismatch
-            ? alert(d, 'warning', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, `The address ${BRAND.company} had on record for this wallet is different from the wallet’s own. The addresses below come from the wallet itself, worked out on this page.`)
+            ? alert(d, 'warning', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, `${BRAND.company}’s record shows a different address for this wallet. The addresses below come from the wallet itself, worked out on this page.`)
             : null,
           addressRows(addresses),
           d.h('p', {}, 'Choose the key to show: the Stellar key for a Stellar wallet app, the Ethereum-style key for an Ethereum wallet app, the NEAR key for a NEAR wallet app.'),

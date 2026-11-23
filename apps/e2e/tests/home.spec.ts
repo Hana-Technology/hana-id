@@ -458,52 +458,137 @@ test('a wallet’s tabs: roles and names, the keyboard, one history entry each, 
   await page.goBack();
   await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
   expect(requests.length).toBe(sent);
-  // A phone: the three tabs fit, nothing scrolls sideways.
-  await page.setViewportSize({ width: 390, height: 844 });
+  // Phones: the three tabs fit, nothing scrolls sideways.
   await page.locator('.home-row[data-scope="s1"]').click();
-  for (const name of ['Addresses', 'Security', 'Move wallet'] as const) {
-    await homeTab(page, name);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), name).toBe(true);
-    const box = await page.getByRole('tab', { name }).boundingBox();
-    expect(box && box.x >= 0 && box.x + box.width <= 390, name).toBe(true);
+  for (const width of [320, 360, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const name of ['Addresses', 'Security', 'Move wallet'] as const) {
+      await homeTab(page, name);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width} ${name}`).toBe(true);
+      const box = await page.getByRole('tab', { name }).boundingBox();
+      expect(box && box.x >= 0 && box.x + box.width <= width, `${width} ${name}`).toBe(true);
+    }
   }
+  // PR 122's review: Back from further down the page brings the tab list into view, with focus on the tab.
+  await page.setViewportSize({ width: 390, height: 360 });
+  await homeTab(page, 'Addresses');
+  await homeTab(page, 'Security');
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(page.getByRole('tab', { name: 'Security' })).not.toBeInViewport();
+  await page.goBack();
+  await expect(page.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Addresses' })).toBeFocused();
+  await expect(page.getByRole('tab', { name: 'Addresses' })).toBeInViewport();
+  // And the tab stop: arrows to "Move wallet" without opening it, Tab out, Shift+Tab back: the open tab has focus.
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Move wallet' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('tab', { name: 'Move wallet' })).not.toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('tab', { name: 'Addresses' })).toBeFocused();
 });
 
-test('the phone’s “Sign in again” chip: only scrolled away from the ending notice, over nothing, and it takes the person to it (D895)', async ({ page, context }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+for (const width of [320, 360, 390, 430] as const) {
+  test(`the phone’s “Sign in again” chip at ${width} px: shown once the ending notice is out of view and kept, the last control clear of it, never on Move wallet (D895)`, async ({ page, context }) => {
+    await page.setViewportSize({ width, height: 740 });
+    await routeApps(context, () => ({ status: 200, body: LIST }));
+    await context.clock.install();
+    await page.goto(`${AUTH_ORIGIN}/home`);
+    await signIn(page);
+    const chip = page.locator('#home-again-chip');
+    await expect(chip).toBeHidden();
+    await context.clock.fastForward(13 * 60_000 + 5_000);
+    await expect(page.locator('#home-ending')).toBeAttached();
+    /** Sweeps the page (top to end, 60 px steps): out of the notice's view, the chip is there at every step. */
+    const sweep = async (label: string): Promise<void> => {
+      const max = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+      const bannerBottom = async () => page.locator('#home-banner').evaluate((el) => el.getBoundingClientRect().bottom);
+      let seen = 0;
+      for (let y = 0; y <= max + 60; y += 60) {
+        await page.evaluate((to) => window.scrollTo(0, to), Math.min(y, max));
+        if ((await bannerBottom()) > 0) {
+          await expect(chip, `${label} y=${y}: the notice in view`).toBeHidden();
+          continue;
+        }
+        await expect(chip, `${label} y=${y}`).toBeVisible();
+        seen += 1;
+      }
+      expect(seen, `${label}: the chip shows mid-page`).toBeGreaterThan(1);
+      // At the page's end, the last control is clear of the chip, above it.
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      await expect(chip).toBeVisible();
+      const clear = await page.evaluate(() => {
+        const c = (document.getElementById('home-again-chip') as HTMLElement).getBoundingClientRect();
+        const all = [...document.querySelectorAll('#app button, #app a[href], #app input')].map((el) => el.getBoundingClientRect()).filter((b) => b.width > 0 && b.height > 0);
+        const last = all.reduce((a, b) => (b.bottom > a.bottom ? b : a));
+        return c.top - last.bottom;
+      });
+      // 16 px, to the sub-pixel (the chip's top isn't a whole pixel).
+      expect(clear, `${label}: the last control is above the chip`).toBeGreaterThanOrEqual(15);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${label}: no sideways scroll`).toBe(true);
+      const box = await chip.boundingBox();
+      expect(box && box.x >= 0 && box.x + box.width <= width && box.y + box.height <= 740, `${label}: the chip is in the window`).toBe(true);
+    };
+    await sweep('the list');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.locator('.home-row[data-scope="s1"]').click();
+    await sweep('Addresses');
+    await homeTab(page, 'Security');
+    await sweep('Security');
+    await expect(chip).toHaveAccessibleName(/^Sign in again/u);
+    await expect(chip).toHaveAccessibleDescription('Your sign-in to Passport Home ends soon.');
+    // Move wallet: never, at any scroll position and on its screens.
+    await homeTab(page, 'Move wallet');
+    for (const step of ['closed', 'intro'] as const) {
+      if (step === 'intro') await page.locator('#home-export-open').click();
+      const max = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+      for (let y = 0; y <= max + 60; y += 60) {
+        await page.evaluate((to) => window.scrollTo(0, to), Math.min(y, max));
+        await expect(chip, `Move wallet (${step}) y=${y}`).toBeHidden();
+      }
+    }
+    // Back to Security: it shows again; pressed, the notice comes into view with focus on its "Sign in again".
+    await homeTab(page, 'Security');
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await expect(chip).toBeVisible();
+    await chip.click();
+    await expect(page.locator('#home-sign-in-again')).toBeFocused();
+    await expect(page.locator('#home-banner')).toBeInViewport();
+    await expect(chip).toBeHidden();
+    await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+    expect(await chip.evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
+  });
+}
+
+test('the chip never shows on a desktop, and a 390 px phone at 200 % zoom (195 px wide) keeps the tabs and the chip in the window (D895)', async ({ page, context }) => {
   await routeApps(context, () => ({ status: 200, body: LIST }));
   await context.clock.install();
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto(`${AUTH_ORIGIN}/home`);
   await signIn(page);
   await page.locator('.home-row[data-scope="s1"]').click();
   await homeTab(page, 'Security');
-  const chip = page.locator('#home-again-chip');
-  await expect(chip).toBeHidden();
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  await expect(chip).toBeHidden();
   await context.clock.fastForward(13 * 60_000 + 5_000);
   await expect(page.locator('#home-ending')).toBeAttached();
-  await page.evaluate(() => window.scrollBy(0, 1));
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(page.locator('#home-again-chip')).toBeHidden();
+  // 200 % zoom of a 390 px phone: a 195 px wide layout.
+  await page.setViewportSize({ width: 195, height: 422 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  // The tab list stays inside the window: it scrolls within itself at this width (the page's own bar, with the lockup
+  // and Sign out, is wider than 195 px: not part of this check, see D895's "not verified").
+  const list = await page.locator('.home-tabs').boundingBox();
+  expect(list && list.x >= 0 && list.x + list.width <= 195, 'the tab list is within the window').toBe(true);
+  for (const name of ['Addresses', 'Security', 'Move wallet'] as const) {
+    const tab = page.getByRole('tab', { name });
+    await tab.focus();
+    const box = await tab.boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= 195 + 1, `${name} reachable within the window`).toBe(true);
+  }
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const chip = page.locator('#home-again-chip');
   await expect(chip).toBeVisible();
-  await expect(chip).toHaveAccessibleName(/^Sign in again/u);
-  await expect(chip).toHaveAccessibleDescription('Your sign-in to Passport Home ends soon.');
-  // Nothing that can be pressed is under it.
   const c = await chip.boundingBox();
-  const under = await page.evaluate((r) => {
-    if (!r) return null;
-    const els = [...document.querySelectorAll('#app button, #app a[href], #app input, #app summary, #app [tabindex="0"]')];
-    return els.filter((el) => {
-      const b = el.getBoundingClientRect();
-      return b.width > 0 && b.height > 0 && b.left < r.x + r.width && b.right > r.x && b.top < r.y + r.height && b.bottom > r.y;
-    }).length;
-  }, c);
-  expect(under).toBe(0);
-  // At the top, with the notice in view: no chip.
-  await chip.click();
-  await expect(page.locator('#home-sign-in-again')).toBeFocused();
-  await expect(page.locator('#home-banner')).toBeInViewport();
-  await expect(chip).toBeHidden();
-  // Reduced motion changes nothing here: the chip has no animation.
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  expect(await chip.evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
+  expect(c && c.x >= 0 && c.x + c.width <= 195 && c.y + c.height <= 422, 'the chip is in the window').toBe(true);
 });

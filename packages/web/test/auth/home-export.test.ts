@@ -36,7 +36,7 @@ import { maskedAddress } from '../../src/auth/dom.ts';
 import { homeApi } from '../../src/auth/home-api.ts';
 import type { HomeEmailApi, HomeIdentityCommitment, HomeSessionCommitment } from '../../src/auth/home-email.ts';
 import { HOME_EXPORT_NEAR_NOTES_TITLE, HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_OPEN, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportNearNotes, homeExportRoute } from '../../src/auth/home-export.ts';
-import { CHIP_GUARD_CLEARANCE_PX, type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
+import { type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
 import { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_SHOW_MS, EXPORT_WARNING } from '../../src/auth/key-reveal.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
 import { CLIENT_ID, ENV, FakeWindow, type RemoteWindow, type TokenSigner, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
@@ -554,7 +554,7 @@ describe('golden: Hana Home opens the vault’s address', () => {
   it('says so when the address on record differs from the wallet’s own, and shows the wallet’s', async () => {
     const h = start({ scopes: [mineScope({ addresses: [{ chain: 'stellar', address: vector(ROOT).accounts[0]!.stellar.address }] })] });
     await h.unlock();
-    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from the wallet’s own');
+    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('record shows a different address for this wallet');
     expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(vector(OWN).accounts[0]!.stellar.address);
   });
 
@@ -574,7 +574,7 @@ describe('golden: Hana Home opens the vault’s address', () => {
     resetDom();
     const other = start({ scopes: [mineScope({ addresses: [...records, { chain: 'near', address: 'ab'.repeat(32) }] })] });
     await other.unlock();
-    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from the wallet’s own');
+    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('record shows a different address for this wallet');
     // What is shown is the wallet's own NEAR account and key, never the record's.
     expect(document.getElementById('home-export-address-near')?.textContent).toBe(near);
     // The app's page above lists the record (the API's word); the section never shows it.
@@ -1160,56 +1160,6 @@ describe('the secret’s life', () => {
     expect(document.querySelector('#home-export .secret')).toBeNull();
   });
 
-  it('D895: the phone’s chip taking the person to the notice is not leaving: the opened wallet stays as it was', async () => {
-    const h = start();
-    await h.toApp();
-    const rect = (top: number, height: number, left = 0, width = 390): DOMRect => ({ top, bottom: top + height, left, right: left + width, width, height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
-    const chip = document.getElementById('home-again-chip') as HTMLElement;
-    chip.getBoundingClientRect = () => rect(780, 40, 120, 150);
-    (document.getElementById('home-banner') as HTMLElement).getBoundingClientRect = () => rect(-200, 60);
-    advance(13 * 60_000 + 1000);
-    await h.open();
-    const r = h.reveal('evm');
-    pressEl(h, r.toggle);
-    const key = vector(OWN).accounts[0]!.evm.export;
-    expect(r.secret.textContent).toBe(key);
-    expect(chip.hasAttribute('data-shown')).toBe(true);
-    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
-    chip.click();
-    expect(document.activeElement?.id).toBe('home-sign-in-again');
-    expect(h.page.tab).toBe('move');
-    expect(h.page.moving.holdsSecret).toBe(true);
-    expect(h.page.moving.state).toBe('reveal');
-    expect(zeroed.has(prkOf(OWN))).toBe(false);
-  });
-
-  it('D895: the chip never comes within 48 px of a guarded button (Continue, Show key, Copy key)', async () => {
-    const h = start();
-    await h.toApp();
-    const rect = (top: number, height: number, left = 0, width = 390): DOMRect => ({ top, bottom: top + height, left, right: left + width, width, height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
-    const chip = document.getElementById('home-again-chip') as HTMLElement;
-    chip.getBoundingClientRect = () => rect(780, 40, 120, 150);
-    (document.getElementById('home-banner') as HTMLElement).getBoundingClientRect = () => rect(-200, 60);
-    advance(13 * 60_000 + 1000);
-    await h.open();
-    h.click('home-export-stellar');
-    const go = document.getElementById('home-export-continue') as HTMLElement;
-    const check = async (top: number, left = 120): Promise<boolean> => {
-      go.getBoundingClientRect = () => rect(top, 40, left, 100);
-      window.dispatchEvent(new Event('scroll'));
-      await new Promise((r) => setImmediate(r));
-      return chip.hasAttribute('data-shown');
-    };
-    // Continue disabled (the word not typed) isn't pressable, but it is guarded: the margin still holds.
-    expect(await check(300)).toBe(true);
-    expect(await check(700)).toBe(false); // 40 px above the chip
-    expect(await check(733)).toBe(false); // 7 px above
-    expect(await check(800, 300)).toBe(false); // 30 px to its right
-    expect(await check(691)).toBe(true); // 49 px above
-    expect(await check(800, 330)).toBe(true); // 60 px to its right
-    expect(CHIP_GUARD_CLEARANCE_PX).toBe(48);
-  });
-
   it('collapsed, the section has the devices section’s shape; Close collapses it and gives focus back to its button', async () => {
     const h = start();
     await h.toApp();
@@ -1387,30 +1337,6 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     window.dispatchEvent(new Event('scroll'));
     resize(header, 290);
     expect(scrollBy).toHaveBeenCalledWith(0, 165);
-  });
-
-  it('D895: the phone’s chip showing or going starts the guard over: a press that lands then does nothing', async () => {
-    const h = start();
-    await h.toApp();
-    const rect = (top: number, height: number, left = 0, width = 390): DOMRect => ({ top, bottom: top + height, left, right: left + width, width, height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
-    const chip = document.getElementById('home-again-chip') as HTMLElement;
-    chip.getBoundingClientRect = () => rect(780, 40, 120, 150);
-    (document.getElementById('home-banner') as HTMLElement).getBoundingClientRect = () => rect(-200, 60);
-    // Near the sign-in's end (its warning shows), the wallet opened (its 5 minutes start now).
-    advance(13 * 60_000 + 1000);
-    expect(chip.hasAttribute('data-shown')).toBe(true);
-    await h.open();
-    expect(h.page.moving.state).toBe('unlocked');
-    armedAtContinue(h);
-    // The page scrolls a button of its own under the chip: the chip goes, and the guard starts over.
-    (document.getElementById('home-back') as HTMLElement).getBoundingClientRect = () => rect(790, 32, 140, 80);
-    window.dispatchEvent(new Event('scroll'));
-    await new Promise((r) => setImmediate(r));
-    expect(chip.hasAttribute('data-shown')).toBe(false);
-    land(h, 'home-export-continue');
-    expect(h.page.moving.state).toBe('confirm');
-    h.press('home-export-continue');
-    expect(h.page.moving.state).toBe('reveal');
   });
 
   it('D893: everything above the move flow is watched, whatever it is (the way back, the details, a part added later)', async () => {

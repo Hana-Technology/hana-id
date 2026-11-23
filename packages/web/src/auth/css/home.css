@@ -1387,3 +1387,113 @@ a.explorer {
     display: none;
   }
 }
+
+/* ---- D895 after PR 122's review: a tighter wallet page (option A's a2–a5) ---- */
+/* The head: the apps' box with its label inside, the badge on its own line above the answer. */
+.home-app-all > .home-app-label {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--jp-text-xs);
+  font-weight: var(--jp-weight-medium);
+}
+
+#home-content .home-app-details {
+  gap: var(--jp-space-3);
+}
+
+#home-content .home-app-details > .home-app-all {
+  margin-bottom: 0;
+}
+
+#home-coverage {
+  display: grid;
+  justify-items: start;
+  gap: var(--jp-space-1);
+  font-size: var(--jp-text-sm);
+}
+
+#home-coverage .jp-badge {
+  margin-right: 0;
+}
+
+.home-tabs {
+  margin-top: var(--jp-space-6);
+}
+
+/* Security: its tools close together, one group. */
+#home-panel-security .home-tools > section + section {
+  margin-top: var(--jp-space-3);
+}
+
+/* Addresses: the address on the left, Copy on the right, the explorer link under both; no empty foot. */
+.home-tabpanel .home-address {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--jp-space-1) var(--jp-space-4);
+  align-items: center;
+}
+
+.home-tabpanel .home-address > .home-address-label,
+.home-tabpanel .home-address > .home-address-more,
+.home-tabpanel .home-address > #home-no-near {
+  grid-column: 1 / -1;
+}
+
+.home .home-tabpanel .home-address-actions {
+  margin-top: 0 !important;
+}
+
+.home-address-more {
+  margin: 0;
+}
+
+.home-copied-box:has(> .copy-status:empty) {
+  display: none;
+}
+
+.home-addresses > .home-copied-box {
+  margin-top: 0;
+}
+
+/* Move wallet: the flow's title larger and the section without a card, as the mock-up's entry screen. */
+#home-panel-move .home-tools > section {
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+
+#home-content #home-panel-move #home-export-title {
+  font-size: var(--jp-text-xl);
+}
+
+/* The chip's room at the page's foot while it shows (home-page.ts writes --home-chip-space). */
+body.home-page.home-chip-on > main {
+  padding-bottom: max(var(--jp-space-16), var(--home-chip-space, 76px));
+}
+
+/* Very narrow (a 390 px phone at 200 % zoom): the tabs wrap onto two lines rather than leave the window. */
+@media (max-width: 300px) {
+  .home-tabs {
+    flex-wrap: wrap;
+  }
+
+  .home-tabs .jp-tab {
+    flex: 1 1 auto;
+  }
+}
+
+#home-content .home-app-details > .home-app-all {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jp-space-2) var(--jp-space-5);
+  padding: var(--jp-space-3) var(--jp-space-4);
+}
+
+#home-content .home-app-details > .home-app-all > .home-app-label {
+  flex: 1 1 100%;
+}
+
+#home-content .home-app-details > .home-app-all > .home-app {
+  flex: 0 1 auto;
+}

@@ -1508,10 +1508,11 @@ titles `h2`). One tab stop; the arrow keys, Home and End move between tabs and E
 activation). Each tab opened adds a history entry (`home:{tag}:{step}`, D893), so Back and Forward move between tabs,
 then to the list; "Your wallets" goes back to the list's own entry. Leaving "Move wallet" (another tab, Back, the way
 back) locks and erases a wallet opened there (`home-export.ts` `leave`); the other tabs keep what they show. On a phone
-or a tablet (the bar scrolls away there), a "Sign in again" chip, fixed at the window's foot, shows only while the
-bar's notice offers "Sign in again", is out of view and nothing that can be pressed is under the chip; pressed, it
-scrolls to the top with focus on the notice's "Sign in again"; each time it shows or goes the move flow's guard starts
-over.
+or a tablet (the bar scrolls away there), a "Sign in again" chip, fixed at the window's foot, shows while the bar's
+notice offers "Sign in again" and is out of view, except on "Move wallet", and stays; while it shows the page gets
+room at its foot; pressed, it scrolls to the top with focus on the notice's "Sign in again"; when it shows or goes the
+move flow's guard starts over. Back or Forward to a tab scrolls the tab list into view; focus leaving the tab list puts
+its tab stop back on the open tab.
 
 **Moving a wallet out (H8, D575–D584; `home-export.ts`, `key-reveal.ts`, `export-path.ts`; live on sandbox-dev since 2026-11-10).** A wallet's "Move wallet" tab (D895)
 holds a collapsed section, "Move this wallet to another wallet app": collapsed, its heading, one sentence and a "Show

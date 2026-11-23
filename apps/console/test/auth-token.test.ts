@@ -14,17 +14,18 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 const NONCE = 'N'.repeat(43);
-const base = () => {
-  const now = Math.floor(Date.now() / 1000);
-  return { iss: 'https://accounts.google.com', azp: CLIENT_ID, aud: CLIENT_ID, sub: '1234567890', nonce: NONCE, iat: now, exp: now + 3600 };
-};
-const check = (scope: 'openid' | 'openid email', accessToken?: string) => ({ clientId: CLIENT_ID, nonce: NONCE, scope, now: Date.now(), ...(accessToken ? { accessToken } : {}) });
+// One fixed clock for every token and every check (verifyConsoleToken takes `now`): the claims were once built from one
+// read of the wall clock and checked against another, so `iat: now + 61` was accepted whenever the check fell in the
+// next second (only 60 s ahead by then), and failed `pnpm verify` under load. A whole second, so the limits are exact.
+const NOW = 1_800_000_000_000;
+const NOW_S = NOW / 1000;
+const base = () => ({ iss: 'https://accounts.google.com', azp: CLIENT_ID, aud: CLIENT_ID, sub: '1234567890', nonce: NONCE, iat: NOW_S, exp: NOW_S + 3600 });
+const check = (scope: 'openid' | 'openid email', accessToken?: string) => ({ clientId: CLIENT_ID, nonce: NONCE, scope, now: NOW, ...(accessToken ? { accessToken } : {}) });
 
 describe('scope openid (step-ups, owner actions)', () => {
   it("accepts exactly the allow-list's claims (Google's openid set: iss azp aud sub iat exp nonce, plus nbf jti auth_time at_hash)", async () => {
-    const now = Math.floor(Date.now() / 1000);
     const access = 'ya29.all';
-    const jwt = await google.idToken({ ...base(), nbf: now - 1, jti: 'j', auth_time: now, at_hash: await atHash(access) });
+    const jwt = await google.idToken({ ...base(), nbf: NOW_S - 1, jti: 'j', auth_time: NOW_S, at_hash: await atHash(access) });
     expect(claimNames(jwt)).toEqual([...TOKEN_CLAIM_ALLOW_LIST].sort());
     expect(await verifyConsoleToken(jwt, check('openid', access))).toEqual({ ok: true, identity: { provider: 'google', sub: '1234567890', email: null, hd: null } });
   });
@@ -83,20 +84,40 @@ describe('scope openid email (sign-in)', () => {
 
 describe('both scopes', () => {
   it('refuse a forged signature, another audience or azp, another nonce, a stale or future iat, an expired token', async () => {
-    const now = Math.floor(Date.now() / 1000);
     const forged = (await google.idToken(base())).replace(/\.[^.]+$/u, '.AAAA');
     expect(await verifyConsoleToken(forged, check('openid'))).toMatchObject({ ok: false, code: 'invalid_token' });
     for (const [edit, code] of [
       [{ aud: 'x.apps' }, 'wrong_audience'],
       [{ azp: 'x.apps' }, 'wrong_audience'],
       [{ nonce: 'other' }, 'wrong_nonce'],
-      [{ iat: now - 121 }, 'stale_iat'],
-      [{ iat: now + 61 }, 'stale_iat'],
-      [{ exp: now - 1 }, 'token_expired'],
+      [{ iat: NOW_S - 121 }, 'stale_iat'],
+      [{ iat: NOW_S + 61 }, 'stale_iat'],
+      [{ exp: NOW_S - 1 }, 'token_expired'],
       [{ iss: 'https://evil.example' }, 'unsupported_issuer'],
     ] as const) {
       expect(await verifyConsoleToken(await google.idToken({ ...base(), ...edit }), check('openid')), JSON.stringify(edit)).toMatchObject({ ok: false, code });
     }
+  });
+
+  it('iat at its limits: 120 s old and 60 s ahead are accepted, a second past either is stale_iat; exp is exclusive', async () => {
+    const accepted = { ok: true, identity: { provider: 'google', sub: '1234567890', email: null, hd: null } };
+    for (const [edit, want] of [
+      [{ iat: NOW_S - 120 }, accepted],
+      [{ iat: NOW_S - 121 }, { ok: false, code: 'stale_iat' }],
+      [{ iat: NOW_S + 60 }, accepted],
+      [{ iat: NOW_S + 61 }, { ok: false, code: 'stale_iat' }],
+      [{ exp: NOW_S + 1 }, accepted],
+      [{ exp: NOW_S }, { ok: false, code: 'token_expired' }],
+    ] as const) {
+      expect(await verifyConsoleToken(await google.idToken({ ...base(), ...edit }), check('openid')), JSON.stringify(edit)).toEqual(want);
+    }
+    // Measured to the millisecond against the check's own clock (the old test's flake, pinned): a token issued 120 s
+    // before NOW is stale a millisecond later; one 61 s ahead of NOW is still refused 999 ms later and accepted at 1000.
+    const at = (ms: number) => ({ ...check('openid'), now: NOW + ms });
+    expect(await verifyConsoleToken(await google.idToken({ ...base(), iat: NOW_S - 120 }), at(1))).toEqual({ ok: false, code: 'stale_iat' });
+    const ahead = await google.idToken({ ...base(), iat: NOW_S + 61 });
+    expect(await verifyConsoleToken(ahead, at(999))).toEqual({ ok: false, code: 'stale_iat' });
+    expect(await verifyConsoleToken(ahead, at(1000))).toEqual(accepted);
   });
 
   it('fail closed when the JWKS is unavailable', async () => {

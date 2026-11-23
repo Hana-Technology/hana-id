@@ -6,6 +6,10 @@ import { base64Encode, toHex } from '../src/bytes.ts';
 import { type ApprovalDigestInput, approvalContextString, approvalDigest } from '../src/approval.ts';
 import {
   APPROVAL_KIND,
+  APPROVAL_LABELS_MAX,
+  APPROVAL_LABELS_MAX_BYTES,
+  APPROVAL_MESSAGE_MAX_BYTES,
+  APPROVE_REQUEST_MAX_BYTES,
   APPROVAL_POPUP_METHODS,
   ErrorCode,
   MESSAGE_MAX_BYTES,
@@ -588,6 +592,23 @@ describe('window messages', () => {
   it('consent-request carries a policy up to the 192 KiB approval cap', () => {
     const big = { ...VALID_WINDOW['hana:consent-request'], policy: { label: 'x'.repeat(20_000) } };
     expect(parseWindowMessage(big, ['hana:consent-request'])).not.toBeNull();
+  });
+
+  it('D896: approve-request takes optional partner label texts: 1 to 16 non-empty strings, at most 32 KiB together', () => {
+    const ok = (partnerLabels: unknown) => parseWindowMessage({ ...APPROVE_REQUEST, partnerLabels }, ['hana:approve-request']) !== null;
+    expect(ok(['{}'])).toBe(true);
+    expect(ok(Array.from({ length: APPROVAL_LABELS_MAX }, () => '{}'))).toBe(true);
+    expect(ok(['x'.repeat(APPROVAL_LABELS_MAX_BYTES)])).toBe(true);
+    for (const bad of [[], [''], [7], ['{}', null], 'x', {}, Array.from({ length: APPROVAL_LABELS_MAX + 1 }, () => '{}'), ['x'.repeat(APPROVAL_LABELS_MAX_BYTES + 1)], ['x'.repeat(APPROVAL_LABELS_MAX_BYTES / 2), 'x'.repeat(APPROVAL_LABELS_MAX_BYTES / 2 + 1)], ['é'.repeat(APPROVAL_LABELS_MAX_BYTES / 2 + 1)]]) {
+      expect(ok(bad), JSON.stringify(bad).slice(0, 40)).toBe(false);
+    }
+    // A request at the approval cap without labels is still taken with the most labels it can carry.
+    const big = { ...APPROVE_REQUEST, bytes: new Uint8Array(SIGN_MESSAGE_MAX_BYTES) };
+    expect(parseWindowMessage(big, ['hana:approve-request'])).not.toBeNull();
+    expect(parseWindowMessage({ ...big, partnerLabels: ['x'.repeat(APPROVAL_LABELS_MAX_BYTES)] }, ['hana:approve-request'])).not.toBeNull();
+    expect(APPROVE_REQUEST_MAX_BYTES).toBe(APPROVAL_MESSAGE_MAX_BYTES + APPROVAL_LABELS_MAX_BYTES + 1024);
+    // The consent request keeps its own cap.
+    expect(parseWindowMessage({ ...VALID_WINDOW['hana:consent-request'], partnerLabels: ['{}'] }, ['hana:consent-request'])).toBeNull();
   });
 
   it('approve-request carries up to 192 KiB, other messages only 8 KiB', () => {

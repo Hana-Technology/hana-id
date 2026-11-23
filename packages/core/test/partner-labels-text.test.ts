@@ -297,13 +297,23 @@ describe('partner text: words for the user, and jargon', () => {
 });
 
 describe('partner text: one rule for every role', () => {
-  it('the same text gets the same answer in every role (only the length limit differs)', () => {
-    const samples = ['Fare paid', 'verified', 'USDC', 'your seat', `F${ch(0x0430)}re`, 'Journear', 'gas', '0x12', '“x”', 'a'.repeat(24)];
+  it('the same text gets the same answer in every role (only the length limit, and a row’s own words, differ)', () => {
+    const samples = ['Fare stamp', 'verified', 'USDC', 'your seat', `F${ch(0x0430)}re`, 'Journear', 'gas', '0x12', '“x”', 'a'.repeat(24)];
     for (const t of samples) {
       const answers = (Object.keys(PARTNER_TEXT_MAX) as PartnerTextRole[]).map((r) => code(t, r));
       expect(new Set(answers).size, t).toBe(1);
     }
   });
+  it('D896: a row’s label may not be one of Journear’s row names or a word for an amount, an account, a fee or a network', () => {
+    for (const t of ['To', 'From', 'Amount', 'Total', 'Network', 'Memo', 'Token', 'Account', 'Price', 'Sends', 'Paid to', 'Order total', 'Club account', 'Recipient', 'Deposit', 'Valid until', 'Program', 'Key']) {
+      expect(code(t, 'fieldLabel'), t).toBe('text_row_word');
+    }
+    // Other roles keep them (an object phrase may say "order total"? no: only rows are Journear-shaped).
+    expect(code('Fare paid', 'enumLabel')).toBeNull();
+    expect(code('Fare paid', 'fieldLabel')).toBe('text_row_word');
+    for (const t of ['Order', 'Stamp', 'Seat', 'Club share', 'Member', 'Treasury', 'Coin', 'Kiosk order reference', 'Ticket fare']) expect(code(t, 'fieldLabel'), t).toBeNull();
+  });
+
   it('every message is plain words for a partner, one line', () => {
     const inputs: unknown[] = [5, '', 'a'.repeat(40), 'Café', ' x', 'Fаre', '-x', '12345 x', '0x1', 'www x', 'Journear', 'USDC', 'free', 'your x', 'gas'];
     for (const t of inputs) {

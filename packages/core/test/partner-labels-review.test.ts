@@ -64,8 +64,8 @@ describe('item 2: every value that matters is shown, and every true value is ret
       withdraw: { call: { args: { owner: { type: 'accountId', isSelf: true }, beneficiary: { type: 'accountId' }, amount: { type: 'u128' } } }, intent: { verb: 'withdraw', object: 'the locker deposit' }, sentence: ['verb', 'object'], fields },
     });
   it('refuses a format that leaves an account, an amount or a non-zero deposit out of its fields', () => {
-    expect(codes(withdraw([{ path: 'args.owner', label: 'From', format: 'account' }]))).toContain('field_required');
-    const ok = codes(withdraw([{ path: 'args.owner', label: 'From', format: 'account' }, { path: 'args.beneficiary', label: 'To', format: 'account' }, { path: 'args.amount', label: 'Amount', format: 'tokenAmount', params: { token: 'shop.testnet' } }]));
+    expect(codes(withdraw([{ path: 'args.owner', label: 'Member', format: 'account' }]))).toContain('field_required');
+    const ok = codes(withdraw([{ path: 'args.owner', label: 'Member', format: 'account' }, { path: 'args.beneficiary', label: 'Treasury', format: 'account' }, { path: 'args.amount', label: 'Club share', format: 'tokenAmount', params: { token: 'shop.testnet' } }]));
     expect(ok).not.toContain('field_required');
     const dep = collectFmt();
     dep.call.deposit = { atMost: '5' };
@@ -78,11 +78,12 @@ describe('item 2: every value that matters is shown, and every true value is ret
       buy: {
         call: { deposit: { atMost: '9' }, gasAtMost: '300000000000000', args: { token: { type: 'accountId' }, amount: { type: 'u128' }, to: { type: 'accountId' }, note: { type: 'string', optional: true }, n: { type: 'integer' } } },
         intent: { verb: 'buy', object: 'tickets' },
-        sentence: ['verb', 'object'],
+        // The amount in the sentence: at most three rows besides it (LABEL_LIMITS.rows, D896).
+        sentence: ['verb', 'object', { word: 'for' }, { field: 'args.amount' }],
         fields: [
-          { path: 'args.token', label: 'Token', format: 'account' },
-          { path: 'args.amount', label: 'Price', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
-          { path: 'args.to', label: 'Paid to', format: 'account' },
+          { path: 'args.token', label: 'Coin', format: 'account' },
+          { path: 'args.amount', label: 'Ticket cover', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
+          { path: 'args.to', label: 'Seller', format: 'account' },
           { path: 'deposit', label: 'Attached', format: 'nativeAmount' },
         ],
       },
@@ -156,7 +157,7 @@ describe('items 6, 7, 11, 14: amounts, joining words, duplicates, verbs', () => 
   it('nativeAmount only on the deposit', () => {
     const f = collectFmt();
     f.call.args.amount = { type: 'u128' };
-    f.fields.push({ path: 'args.amount', label: 'Price', format: 'nativeAmount' });
+    f.fields.push({ path: 'args.amount', label: 'Ticket cover', format: 'nativeAmount' });
     expect(codes(nearDoc(STAMPS, { collect: f }, STAMPS_DOC_JSON.metadata))).toContain('bad_field');
   });
   it('no "at least" or "at most"', () => {
@@ -171,7 +172,7 @@ describe('items 6, 7, 11, 14: amounts, joining words, duplicates, verbs', () => 
     const f = collectFmt();
     f.call.args.a = { type: 'accountId' };
     f.call.args.b = { type: 'accountId' };
-    f.fields.push({ path: 'args.a', label: 'To', format: 'account' }, { path: 'args.b', label: 'To', format: 'account' });
+    f.fields.push({ path: 'args.a', label: 'Treasury', format: 'account' }, { path: 'args.b', label: 'Treasury', format: 'account' });
     expect(codes(nearDoc(STAMPS, { collect: f }, STAMPS_DOC_JSON.metadata))).toContain('duplicate');
   });
   it('the verb list, and soft verbs only where no value can move', () => {
@@ -234,7 +235,7 @@ describe('items 8, 9, 10, 13: the matcher’s inputs and outputs', () => {
   });
 });
 
-describe('item 13, as amended by D894: exactly two places outside core import the module, through its subpath', () => {
+describe('item 13, as amended by D894 and D896: exactly three places outside core import the module, through its subpath', () => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   /** An import of the module: the subpath, or a relative path into core's folder. */
   const IMPORT = /(?:from\s*|import\s*\(\s*)['"]([^'"]*(?:@hana-id\/core\/partner-labels|core\/src\/partner-labels|vault\/partner-labels)[^'"]*)['"]/gu;
@@ -258,13 +259,14 @@ describe('item 13, as amended by D894: exactly two places outside core import th
     expect(Object.entries(pkg.exports).filter(([, v]) => v.includes('partner-labels'))).toEqual([['./partner-labels', './src/partner-labels/index.ts']]);
     expect(readFileSync(join(root, 'packages/core/src/index.ts'), 'utf8')).not.toMatch(/partner-labels/u);
   });
-  it('the API’s labels module and the vault’s check are the only sources that import it, by the subpath', () => {
+  it('the API’s labels module, the vault’s check and the window’s rendering are the only sources that import it, by the subpath', () => {
     const sources = importers().filter((h) => !isTest(h.file));
-    expect(sources.map((h) => h.file).sort()).toEqual(['apps/api/src/labels/document.ts', 'packages/web/src/vault/partner-labels.ts']);
+    // render-approval.ts imports only the document's type, for its render context (erased from the bundle).
+    expect(sources.map((h) => h.file).sort()).toEqual(['apps/api/src/labels/document.ts', 'packages/web/src/auth/render-approval.ts', 'packages/web/src/auth/render-labels.ts', 'packages/web/src/vault/partner-labels.ts']);
     // (Other files named partner-labels, such as the admin portal's own screen module, are not core's module.)
     expect(new Set(sources.map((h) => h.spec))).toEqual(new Set(['@hana-id/core/partner-labels']));
   });
-  it('outside core, only those two places’ tests import it (or the helper that wraps it)', () => {
+  it('outside core, only those places’ tests import it (or the helper that wraps it)', () => {
     const tests = importers().filter((h) => isTest(h.file));
     for (const t of tests) expect(t.file, t.spec).toMatch(/^(apps\/api\/test\/|packages\/web\/test\/)/u);
   });

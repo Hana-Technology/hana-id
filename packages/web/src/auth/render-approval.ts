@@ -45,7 +45,9 @@ import {
 } from '@hana-id/core/decode';
 import { DEMO_CHECK_IN_CALLDATA, type NearAction, type ReviewedNearAccounts, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
 import { BRAND } from '@hana-id/brand';
+import type { LabelDocument } from '@hana-id/core/partner-labels';
 import { type Child, type Dom, dom, row, rows, withoutEmptyLists } from './dom.ts';
+import { LABEL_MISMATCH, LABEL_NOT_LISTED, type LabelOutcome, type WindowLabelFacts, labelBox, labelOutcome } from './render-labels.ts';
 import { alert, icon } from './ui.ts';
 
 /** `value` with `decimals` decimal places, trailing zeros trimmed: formatUnits(1500000000000000000n, 18) = "1.5". */
@@ -1417,6 +1419,13 @@ export interface ApprovalRenderContext extends NearRenderContext {
    * note, and the page leaves its note out (D886, `testAppNoteKind`).
    */
   readonly testAppNoteHere?: boolean;
+  /**
+   * D896: the app's partner label documents, as the page parsed them from what the vault sent (render-labels.ts
+   * `windowLabelDocuments`). Absent or empty: the window exactly as without labels.
+   */
+  readonly partnerLabels?: readonly LabelDocument[];
+  /** D896: what only the chain can tell a label match (a contract's code hash); read by a later piece, none today. */
+  readonly labelFacts?: WindowLabelFacts;
 }
 
 function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: ApprovalRenderContext, summary: ApprovalSummary, nowMs?: number): Parts {
@@ -1492,6 +1501,48 @@ function kindParts(d: Dom, decoded: DecodedApproval, appName: string, near: Appr
   }
 }
 
+/** The request's own facts and the page's notes: what follows the amber box, before the partner's box (D896). */
+const journearAfterWarnings = (k: Parts, ctx: ApprovalRenderContext): (HTMLElement | null)[] => [...k.visible, ...(ctx.notes ?? [])];
+
+/**
+ * The app's labels for this request (D896). Whatever goes wrong in reading them (a document or a matcher that throws)
+ * means no label: the plain window, never "can't be shown" and never a missing Approve. Logged without any text.
+ */
+function windowLabel(decoded: DecodedApproval, ctx: ApprovalRenderContext): LabelOutcome {
+  try {
+    return labelOutcome(decoded, ctx.partnerLabels ?? [], {
+      user: ctx.address ?? '',
+      networkChecked: (decoded.kind === 'near_tx' || decoded.kind === 'near_delegate') && nearNetworkChecked(decoded.kind, decoded.network, ctx),
+      reviewedNear: Object.values(ctx.reviewedNear ?? {}).filter((a): a is string => typeof a === 'string'),
+      ...(ctx.labelFacts ? { facts: ctx.labelFacts } : {}),
+    });
+  } catch {
+    try {
+      console.warn('partner label skipped: it could not be read');
+    } catch {
+      // No console: nothing to say.
+    }
+    return { kind: 'none' };
+  }
+}
+
+/**
+ * The partner's box, built inside its own guard (after PR 123's second review): anything that throws while building it
+ * leaves the window plain (no box), never a window that can't be shown, and logs no label text.
+ */
+export function guardedLabelBox(build: () => HTMLElement): HTMLElement | null {
+  try {
+    return build();
+  } catch {
+    try {
+      console.warn('partner label skipped: it could not be shown');
+    } catch {
+      // No console: nothing to say.
+    }
+    return null;
+  }
+}
+
 /** Typed data whose domain names no chain (D35). */
 export const TYPED_DATA_NO_CHAIN = 'This signature names no network, so it may work on any of them, real-money ones included.';
 
@@ -1499,18 +1550,28 @@ export const TYPED_DATA_NO_CHAIN = 'This signature names no network, so it may w
 export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string, ctx: ApprovalRenderContext = { envNetwork: 'testnet', testApp: false }): HTMLElement {
   const summary: ApprovalSummary = summarizeApproval(decoded, { address: ctx.address ?? '', ...(ctx.parentOrigin ? { parentOrigin: ctx.parentOrigin } : {}), ...(ctx.reviewedNear ? { reviewedNear: ctx.reviewedNear } : {}) });
   const k = kindParts(d, decoded, appName, ctx, summary, ctx.nowMs);
+  // D896: the app's labels. A match adds the partner's box after every warning box; a request that doesn't meet its
+  // description adds one line in Journear's voice to the box of its colour, last (the box's lead never changes);
+  // anything else changes nothing.
+  const label = windowLabel(decoded, ctx);
   // A control change's bullet repeats nothing: when its step's own line is in view (the headline of a single step, or a
   // grouped line, which names the whole key, signer or address), the bullet is dropped. The banner always stays, and
   // steps left out of the lines keep their bullets (the summary's step_left_out).
   const shown = new Set(summary.shownSteps ?? []);
   const dangers = k.alerts.dangers.filter((it) => it.step === undefined || !shown.has(it.step));
-  const red = [...k.alerts.banners, ...dangers, ...summary.warnings.filter((w) => w.level === 'danger').map(summaryItem)];
+  const red = [
+    ...k.alerts.banners,
+    ...dangers,
+    ...summary.warnings.filter((w) => w.level === 'danger').map(summaryItem),
+    ...(label.kind === 'not_listed' ? [risk(5, 'danger takeover partner-not-listed', sponsorText(LABEL_NOT_LISTED.full, appName), sponsorText(LABEL_NOT_LISTED.short, appName))] : []),
+  ];
   // A message Journear can't read: its amber line names the app, as "the app" when there is no name to show (D886's
   // note of 2026-11-23, as D884's fee sentence does).
   const unreadableMessage = (decoded.kind === 'personal_sign' || decoded.kind === 'stellar_message' || decoded.kind === 'near_message') && decoded.message.text === null;
   const amber = [
     ...summary.warnings.filter((w) => w.level === 'warning').map((w) => summaryItem(unreadableMessage && w.code === 'cannot_explain' ? { ...w, text: sponsorText(w.text, appName) } : w)),
     ...k.alerts.warnings,
+    ...(label.kind === 'mismatch' ? [risk(5, 'warn partner-mismatch', sponsorText(LABEL_MISMATCH.full, appName), sponsorText(LABEL_MISMATCH.short, appName))] : []),
   ];
   // D859: every long value the window names, numbered where two share a short form (or one shares the user's own).
   const book = new IdBook([summary.headline, ...summary.lines, ...[...red, ...amber].flatMap((it) => [it.full, it.short])], ctx.address ?? '');
@@ -1558,8 +1619,12 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
     ...lines,
     keyFacts.some(Boolean) ? rows(d, keyFacts, 'jp-kv facts summary-facts') : null,
     amberBox,
-    ...k.visible,
-    ...(ctx.notes ?? []),
+    // Everything of Journear's, in its own order: the request's facts, then the page's notes (the test-app note, the
+    // mainnet demo's banner, the out-of-policy line: alerts of every source the window has).
+    ...journearAfterWarnings(k, ctx),
+    // D896: the partner's own description of this exact request, attributed: after everything Journear says, every
+    // warning of any source included, and only the folded details below it. Its one place, for every request.
+    label.kind === 'match' ? guardedLabelBox(() => labelBox(d, label.match, appName)) : null,
     detailsSection(d, [free ? rows(d, [free], 'jp-kv facts fee-facts') : null, ...(ctx.detailsExtra ?? []), ...k.details]),
   );
   // No list without rows: its rules would be drawn around nothing (approval.css "the dividers").

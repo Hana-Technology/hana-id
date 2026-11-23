@@ -455,7 +455,7 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       ...(consent ? { consent } : {}),
       // H9: only on the vault's read with `x-hana-share`; older vaults never send the header.
       ...(share ? { share } : {}),
-      // D894: only on the vault's read with PARTNER_LABELS on; nothing reads it yet (piece 3 renders it).
+      // D894: only on the vault's read with PARTNER_LABELS on; the vault passes it to the approval window (D896).
       ...(partnerLabels ? { partnerLabels } : {}),
     });
   } catch {

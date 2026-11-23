@@ -62,6 +62,16 @@ export function portsFrom(base: number) {
     adminChromium: base + 34,
     adminFirefox: base + 35,
     adminWebkit: base + 36,
+    /**
+     * The partner console (apps/console's Worker and SPA) in each browser project's admin lane (D899,
+     * src/server/lane-console.ts), and its auth origin (the fresh sign-in's /start and /callback).
+     */
+    consoleChromium: base + 37,
+    consoleFirefox: base + 38,
+    consoleWebkit: base + 39,
+    consoleAuthChromium: base + 42,
+    consoleAuthFirefox: base + 43,
+    consoleAuthWebkit: base + 44,
     near: base + 40,
     /**
      * A second NEAR RPC on the same mocked chain: the env's `rpcFallback`, the independent provider a member's path is

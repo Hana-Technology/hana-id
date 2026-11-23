@@ -156,7 +156,10 @@ export interface LabelChangeView {
   reviewRequired: boolean;
   allowedAt: number | null;
   blockedAt: number | null;
-  /** Staff only (AdminRpc); the partner reads the note in the block notice. */
+  /**
+   * Journear's note on a block: every version in staff's views (AdminRpc); in the partner's (ConsoleRpc) only on a
+   * blocked version, the same note the blocked mail sends the org's security contacts (D899).
+   */
   blockNote?: string | null;
   endedAt: number | null;
   endReason: string | null;
@@ -165,6 +168,11 @@ export interface LabelChangeView {
   off: 'entry' | 'org' | 'all' | null;
   /** Whether `GET /v1/app` serves this version now (in force, the entry's newest, not removed, no switch off). */
   served: boolean;
+  /**
+   * The document exactly as proposed: ConsoleRpc.listLabels only, on an entry's version in force and its waiting one
+   * (the console's "what users see now" and its editor start from it; D899).
+   */
+  text?: string;
 }
 
 /** A scope's entry as its org's console lists it: the version in force and the waiting one. */
@@ -173,6 +181,44 @@ export interface LabelEntryView {
   current: LabelChangeView | null;
   waiting: LabelChangeView | null;
   off: 'entry' | 'org' | 'all' | null;
+  /** When an owner removed the entry (removed entries are listed for LABEL_RECENT_MS after their removal), or null. */
+  removedAt: number | null;
+  /**
+   * The entry's versions that ended in the last LABEL_RECENT_MS (blocked, cancelled, lapsed, replaced, removed),
+   * newest first, at most LABEL_RECENT_PER_ENTRY; without their text (D899).
+   */
+  recent: LabelChangeView[];
+}
+
+/** How long the console lists a version that ended, and an entry that was removed (D899, to confirm). */
+export const LABEL_RECENT_MS = 14 * 24 * 60 * 60 * 1000;
+/** The ended versions listed per entry. */
+export const LABEL_RECENT_PER_ENTRY = 5;
+
+/** ConsoleRpc.listLabels's answer: a scope's entries and what the console needs to say whether it can propose. */
+export interface LabelListAnswer {
+  labelsVersion: number;
+  entries: LabelEntryView[];
+  /** Request labels are switched on in this environment (the manifest's `partnerLabels.enabled`); off, nothing can be proposed or previewed by the API. */
+  enabled: boolean;
+  /** Journear's switch over this org's labels ('org') or every partner's ('all'), or null: while off, proposals are refused. */
+  orgOff: 'org' | 'all' | null;
+  /** Journear reviews this org's changes before they go live (its own switch or everyone's). */
+  reviewRequired: boolean;
+}
+
+/** ConsoleRpc.previewLabels's answer. */
+export interface LabelPreviewAnswer {
+  preview: LabelPreview;
+  sha256: string;
+  bytes: number;
+  labelsVersion: number;
+  /** The same document on the same apps is already in force. */
+  noChange: boolean;
+  /** Against the entry's version in force (every line `added` for a new entry); the apps aren't part of it (D899). */
+  diff: LabelDiffLine[];
+  /** Journear reviews this org's changes before they go live: the console says so before the step-up (D899). */
+  reviewRequired: boolean;
 }
 
 /** One label change in the staff feed (AdminRpc.labelQueue / labelDetail): its view, what users would see, and the diff. */

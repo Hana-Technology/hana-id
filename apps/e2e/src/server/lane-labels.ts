@@ -196,6 +196,11 @@ export class LabelsLane {
     return this.google!;
   }
 
+  /** An ID token over `claims`, signed by the lane's Google key: the console stand-in's code exchange (lane-console.ts). */
+  async idToken(claims: Record<string, unknown>): Promise<string> {
+    return (await this.key()).sign(claims);
+  }
+
   private member() {
     return {
       actor: { kind: 'member' as const, id: 'usr_e2elabelsowner', sub: LANE_OWNER_SUB, email: 'owner@stamp-rally.e2e.invalid', sessionHash: core.b64url(createHash('sha256').update('e2e lane console session').digest()) },

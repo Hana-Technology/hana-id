@@ -837,3 +837,111 @@ describe('after the security review (D894)', () => {
     expect((await rows<{ n: number }>('SELECT COUNT(*) AS n FROM partner_labels WHERE org_id = ?1 AND removed_at IS NULL', org.org))[0]!.n).toBe(16);
   });
 });
+
+describe('D899 (piece 4): what the console reads, no new authority', () => {
+  const block = async (id: string) => {
+    const d = await detail(id);
+    return ok(adminRpc().labelStaffAct({ ...hana(), changeId: id, tool: 'block', note, seen: { labelsVersion: d.labelsVersion, state: d.change.state } }));
+  };
+  const list = (app: OrgApp, e: typeof env = ON) => ok(consoleRpc(e).listLabels({ ...member(), orgId: app.org, scopeId: app.scope }));
+
+  it('listLabels: the version in force and the waiting one with their text; whether labels are on, Journear’s switch and review', async () => {
+    const app = await orgApp();
+    const empty = await list(app);
+    expect(empty).toMatchObject({ labelsVersion: 0, entries: [], enabled: true, orgOff: null, reviewRequired: false });
+    // Off in the environment: still listed (nothing can be proposed), and said.
+    expect((await list(app, env)).enabled).toBe(false);
+    const docA = await nearDoc();
+    const live = await inForce(app, docA);
+    const docB = await nearDoc({ object: 'the badge', account: JSON.parse(docA).context.near.account });
+    const waiting = await ok(propose(app, docB.replace(/"codeHash": ?"[^"]+"/u, `"codeHash":"${JSON.parse(docA).context.near.codeHash}"`), { labelId: live.labelId }));
+    const r = await list(app);
+    expect(r.entries).toEqual([
+      expect.objectContaining({ id: live.labelId, removedAt: null, recent: [], current: expect.objectContaining({ id: live.id, state: 'in_force', text: docA }), waiting: expect.objectContaining({ id: waiting.change!.id, state: 'proposed', text: expect.stringContaining('the badge') }) }),
+    ]);
+    // Review on for the org, then its labels off.
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'org', orgId: app.org }, what: 'review_on', note, seenVersion: 0 }));
+    expect(await list(app)).toMatchObject({ reviewRequired: true, orgOff: null });
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'org', orgId: app.org }, what: 'off', note, seenVersion: 1 }));
+    expect(await list(app)).toMatchObject({ reviewRequired: true, orgOff: 'org' });
+    expect((await list(app)).entries[0]!.off).toBe('org');
+    // Another org's scope is not found; the list reads two statements.
+    expect((await fail(consoleRpc().listLabels({ ...member(), orgId: newOrg(), scopeId: app.scope }))).code).toBe('not_found');
+  });
+
+  it('listLabels: versions that ended in the last 14 days (newest first, at most 5), Journear’s note on a blocked one only; a removed entry for 14 days', async () => {
+    const app = await orgApp();
+    const first = await ok(propose(app, await nearDoc()));
+    const labelId = first.change!.labelId;
+    await ack(first.change!.id);
+    await block(first.change!.id);
+    const ids: string[] = [first.change!.id];
+    for (let i = 0; i < 5; i += 1) {
+      const doc = await nearDoc();
+      const p = await ok(propose(app, doc, { labelId }));
+      await ok(consoleRpc().cancelChange({ ...member(), orgId: app.org, changeId: p.change!.id }));
+      ids.push(p.change!.id);
+    }
+    let r = await list(app);
+    expect(r.entries).toHaveLength(1);
+    const recent = r.entries[0]!.recent;
+    expect(recent.map((x) => x.id)).toEqual(ids.slice(1).reverse());
+    expect(recent.every((x) => x.state === 'cancelled' && x.blockNote === undefined && x.text === undefined)).toBe(true);
+    // Fewer cancels: the blocked one is listed with its note.
+    const app2 = await orgApp();
+    const b = await ok(propose(app2, await nearDoc()));
+    await block(b.change!.id);
+    r = await list(app2);
+    expect(r.entries[0]!.recent).toEqual([expect.objectContaining({ id: b.change!.id, state: 'blocked', blockNote: note })]);
+    expect(r.entries[0]!.recent[0]!.text).toBeUndefined();
+    // 14 days on, nothing of it is listed.
+    clock.advance(14 * DAY + 1);
+    expect((await list(app2)).entries).toEqual([]);
+    // A removed entry: listed with its removal for 14 days, its ended version under it.
+    const app3 = await orgApp();
+    const c = await inForce(app3);
+    const v = await scopeVersion(app3);
+    const jwt = await stepUp(await nonce(app3, { labelId: c.labelId, version: v, remove: true }));
+    await ok(consoleRpc().removeLabels({ ...member(), orgId: app3.org, scopeId: app3.scope, labelId: c.labelId, expectedVersion: v, stepUpJwt: jwt }));
+    r = await list(app3);
+    expect(r.entries).toEqual([expect.objectContaining({ id: c.labelId, removedAt: expect.any(Number), current: null, waiting: null, recent: [expect.objectContaining({ id: c.id, state: 'removed' })] })]);
+    clock.advance(14 * DAY + 1);
+    expect((await list(app3)).entries).toEqual([]);
+  });
+
+  it('previewLabels: the diff against the version in force (every line added for a new entry) and whether Journear reviews it first', async () => {
+    const app = await orgApp();
+    const doc = await nearDoc();
+    const fresh = await ok(consoleRpc().previewLabels({ ...member(), orgId: app.org, scopeId: app.scope, document: doc, appIds: [app.id] }));
+    expect(fresh.reviewRequired).toBe(false);
+    expect(fresh.diff.map((x) => [x.key, x.change])).toEqual([
+      ['(contract)', 'added'],
+      ['collect', 'added'],
+    ]);
+    const live = await inForce(app, doc);
+    const next = doc.replace('"the stamp"', '"the badge"');
+    const changed = await ok(consoleRpc().previewLabels({ ...member(), orgId: app.org, scopeId: app.scope, labelId: live.labelId, document: next, appIds: [app.id] }));
+    expect(changed.diff).toEqual([
+      expect.objectContaining({ key: '(contract)', change: 'same' }),
+      expect.objectContaining({ key: 'collect', change: 'changed', before: expect.stringContaining('collect the stamp'), after: expect.stringContaining('collect the badge') }),
+    ]);
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'all' }, what: 'review_on', note, seenVersion: (await ok(adminRpc().labelControls({ ...hana() }))).controls.all.version }));
+    try {
+      expect((await ok(consoleRpc().previewLabels({ ...member(), orgId: app.org, scopeId: app.scope, labelId: live.labelId, document: next, appIds: [app.id] }))).reviewRequired).toBe(true);
+    } finally {
+      await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'all' }, what: 'review_off', note, seenVersion: (await ok(adminRpc().labelControls({ ...hana() }))).controls.all.version }));
+    }
+    // Nothing was written by any preview: the one version is the one proposed.
+    expect(await rows('SELECT id FROM label_changes WHERE org_id = ?1', app.org)).toEqual([{ id: live.id }]);
+  });
+
+  it('the partner’s view of a version carries Journear’s note only when it is blocked; staff see every note', async () => {
+    const app = await orgApp();
+    const p = await ok(propose(app, await nearDoc()));
+    expect(p.change).not.toHaveProperty('blockNote');
+    await block(p.change!.id);
+    const r = await list(app);
+    expect(r.entries[0]!.recent[0]).toMatchObject({ state: 'blocked', blockNote: note });
+    expect((await detail(p.change!.id)).change.blockNote).toBe(note);
+  });
+});

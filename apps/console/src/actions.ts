@@ -129,7 +129,7 @@ const params = {
   'member.invite': z.object({ email: inviteEmail, role }).strict(),
   'member.role': z.object({ userId: userIdInput, role }).strict(),
   'member.remove': z.object({ userId: userIdInput }).strict(),
-  // D894: partner labels (no console screen yet, piece 4; the BFF route is this one).
+  // D894: partner labels; D899: the Request labels page builds them (a form, never the partner's JSON by hand).
   'labels.set': z.object({ scopeId: scopeIdInput, labelId: labelIdInput.optional(), document: z.string().min(1).max(16 * 1024), appIds: z.array(appIdInput).min(1).max(LABEL_STORE_LIMITS.appsPerDocument) }).strict(),
   'labels.remove': z.object({ scopeId: scopeIdInput, labelId: labelIdInput }).strict(),
   'org.policy': z
@@ -163,13 +163,14 @@ export const RETURN_PAGES = {
   'member.role': ['members'],
   'member.remove': ['members'],
   'org.policy': ['members'],
-  'labels.set': ['scope'],
-  'labels.remove': ['scope'],
+  // D899: an app's Request labels tab (the scope's entries, shown from an app of that scope).
+  'labels.set': ['scope', 'labels'],
+  'labels.remove': ['scope', 'labels'],
 } as const satisfies Record<StepUpKind, readonly string[]>;
 type ReturnPage = (typeof RETURN_PAGES)[StepUpKind][number];
-const APP_PAGES: ReadonlySet<string> = new Set(['origins', 'signing', 'suspend', 'sessions', 'email']);
-/** `returnTo`: a page name and, for an app's page reached from a scope action (the Email login tab), the app. */
-const returnInput = z.object({ page: z.enum(['origins', 'signing', 'suspend', 'sessions', 'email', 'scope', 'members']), appId: appIdInput.optional() }).strict();
+const APP_PAGES: ReadonlySet<string> = new Set(['origins', 'signing', 'suspend', 'sessions', 'email', 'labels']);
+/** `returnTo`: a page name and, for an app's page reached from a scope action (the Email login tab, Request labels), the app. */
+const returnInput = z.object({ page: z.enum(['origins', 'signing', 'suspend', 'sessions', 'email', 'labels', 'scope', 'members']), appId: appIdInput.optional() }).strict();
 
 /** The org and role a session route resolved. */
 export interface OrgCaller {
@@ -342,9 +343,24 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
       if (!r.ok) return no(r.code, r.error ?? r.code);
       if (r.noChange) no('conflict', 'These request labels are already in force on these apps');
       const digest = await labelChangeDigest({ signer: env.SIGNER_ACCOUNT, scopeId: p.scopeId as string, kind: 'labels_set', labelId: (p.labelId as string | undefined) ?? '', docSha256: r.sha256, appIds, labelsVersion: r.labelsVersion });
+      // D899: the confirmation page is the review: what changes against what users see now (the API's diff), the apps
+      // by name, and whether Journear reviews it first (the sentence about when it goes live depends on it).
+      const apps = await env.API.listApps({ ...ctx, orgId: c.orgId });
+      const names = apps.ok ? new Map(apps.apps.map((a) => [a.id, a.name])) : new Map<string, string>();
       return {
         action: { ...base, scope_id: p.scopeId, label_id: p.labelId ?? null, document: p.document, sha256: r.sha256, app_ids: appIds, labels_version: r.labelsVersion },
-        decoded: { scopeId: p.scopeId, labelId: p.labelId ?? null, appIds, sha256: r.sha256, bytes: r.bytes, labelsVersion: r.labelsVersion, preview: r.preview },
+        decoded: {
+          scopeId: p.scopeId,
+          labelId: p.labelId ?? null,
+          appIds,
+          apps: appIds.map((id) => ({ id, name: names.get(id) ?? null })),
+          sha256: r.sha256,
+          bytes: r.bytes,
+          labelsVersion: r.labelsVersion,
+          preview: r.preview,
+          diff: r.diff,
+          reviewRequired: r.reviewRequired,
+        },
         digest,
       };
     }
@@ -355,7 +371,16 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
       const digest = await labelChangeDigest({ signer: env.SIGNER_ACCOUNT, scopeId: p.scopeId as string, kind: 'labels_remove', labelId: entry.id, appIds: [], labelsVersion: r.labelsVersion });
       return {
         action: { ...base, scope_id: p.scopeId, label_id: entry.id, labels_version: r.labelsVersion },
-        decoded: { scopeId: p.scopeId, labelId: entry.id, labelsVersion: r.labelsVersion, immediate: true, current: entry.current?.id ?? null, waiting: entry.waiting?.id ?? null },
+        decoded: {
+          scopeId: p.scopeId,
+          labelId: entry.id,
+          labelsVersion: r.labelsVersion,
+          immediate: true,
+          current: entry.current?.id ?? null,
+          waiting: entry.waiting?.id ?? null,
+          // D899: which apps lose their labels (the version in force's, else the waiting one's), by name.
+          apps: (entry.current ?? entry.waiting)?.apps ?? [],
+        },
         digest,
       };
     }

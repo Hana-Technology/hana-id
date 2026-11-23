@@ -59,7 +59,7 @@ import { evmSponsorSessionMessage } from '@hana-id/core/sponsor-session';
 import { type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAddress } from 'viem/accounts';
 import { ACCESS_AUD, ACCESS_TEAM, type AccessKeys, E2E_OUTSIDER, E2E_STAFF, installAccessCerts, signAccessJwt } from './access.ts';
-import { AUTH_ORIGIN, API_URL, E2E_CHECK_IN, E2E_ENV, E2E_SPONSOR_TARGETS, ENV_NAME, EVM_CHAIN_ID, ISSUER_URL, PARTNER_ORIGIN, VAULT_ORIGIN, e2eEvmSponsorVar } from '../stack.ts';
+import { AUTH_ORIGIN, API_URL, CONSOLE_DIR, CONSOLE_LANES, E2E_CHECK_IN, E2E_ENV, E2E_SPONSOR_TARGETS, ENV_NAME, EVM_CHAIN_ID, ISSUER_URL, PARTNER_ORIGIN, VAULT_ORIGIN, e2eEvmSponsorVar } from '../stack.ts';
 import { MockApi } from './api.ts';
 import { loadApiModules } from './api-modules.ts';
 import { Chain } from './chain.ts';
@@ -113,6 +113,7 @@ const { AdminRpc } = (await import(SRC('api', 'rpc/admin.ts'))) as { AdminRpc: n
 const { ConsoleRpc } = (await import(SRC('api', 'rpc/console.ts'))) as { ConsoleRpc: new (ctx: unknown, env: unknown) => object };
 const { RateLimiter } = (await import(SRC('api', 'rate-limiter.ts'))) as { RateLimiter: new (state: unknown, env: unknown) => object };
 const { LabelsLane, LABEL_SCENARIOS } = await import('./lane-labels.ts');
+const { ConsoleLane, GOOGLE_TOKEN_URL } = await import('./lane-console.ts');
 const sponsor = (await import(SRC('api', 'evm/sponsor.ts'))) as {
   sponsorTiming: { receiptWaitMs: number; receiptPollMs: number };
   checkEvmSponsorRelay(env: unknown, now?: number): Promise<void>;
@@ -249,6 +250,8 @@ class Lane {
   readonly adminEnv: Record<string, unknown>;
   /** Partner labels' org, its owner's proposals and the staff tools (lane-labels.ts). */
   readonly labels: InstanceType<typeof LabelsLane>;
+  /** The partner console on its own origins (D899, lane-console.ts): the browser lanes only. */
+  readonly console: InstanceType<typeof ConsoleLane> | null;
   evm!: LaneEvm;
   relayerAddress!: Hex;
   app!: { appId: string; pk: string };
@@ -316,6 +319,10 @@ class Lane {
       },
       delayMs: CHANGE_DELAY_MS,
     });
+    const origins = (CONSOLE_LANES as Record<string, { origin: string; authOrigin: string } | undefined>)[data.name];
+    this.console = origins
+      ? new ConsoleLane({ ...origins, dist: fileURLToPath(CONSOLE_DIR), db: this.consoleEnv.CONSOLE_DB, api: binding(new ConsoleRpc(new ExecContext(), env)), labels: this.labels, signer: E2E_ENV.signer, nearRpc: LANE_NEAR, envName: ENV_NAME })
+      : null;
     this.fresh();
   }
 
@@ -564,6 +571,8 @@ await lane.labels.start();
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.startsWith(LANE_NEAR)) return near(new Request(input, init), new AbortController().signal);
+    // Google's token endpoint for the partner console's code exchange (lane-console.ts), in this thread only.
+    if (url === GOOGLE_TOKEN_URL && lane.console) return lane.console.token(init?.body === undefined || init.body === null ? '' : String(init.body));
     if (url.startsWith(LANE_EVM) || url.startsWith(LANE_EVM_FALLBACK)) return lane.evm.handler()(new Request(input, init));
     return before(input, init);
   }) as typeof fetch;
@@ -703,6 +712,8 @@ async function control(request: Request, url: URL): Promise<Response> {
 
 async function edge(request: Request): Promise<Response> {
   const url = new URL(request.url);
+  // The partner console's two origins (D899): their own edge (lane-console.ts).
+  if (lane.console?.serves(url)) return lane.console.handle(request);
   if (url.pathname.startsWith('/__e2e/')) return control(request, url);
   // localhost and 127.0.0.1 are different origins: the Worker serves its one origin, so the edge points there.
   if (url.origin !== data.origin && url.hostname === 'localhost') return new Response(null, { status: 308, headers: { location: `${data.origin}${url.pathname}${url.search}` } });

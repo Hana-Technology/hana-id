@@ -50,6 +50,7 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'POST', path: `${o}/apps/${app.id}/off`, body: { what: 'raw_sign', expectedVersion: r.settings_version } },
     { method: 'GET', path: `${o}/apps/${app.id}/email` },
     { method: 'POST', path: `${o}/changes/gc_unknown1/cancel`, body: {} },
+    { method: 'POST', path: `${o}/changes/lc_unknown1/cancel`, body: {} },
     { method: 'POST', path: `${o}/apps/${app.id}/suspend`, body: {} },
     { method: 'POST', path: `${o}/apps/${app.id}/profile`, body: { name: 'Renamed', expectedVersion: r.settings_version } },
     { method: 'POST', path: `${o}/apps/${app.id}/logo?expectedVersion=${r.settings_version}` },
@@ -61,6 +62,7 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'POST', path: `${o}/invites/inv_unknown1/revoke`, body: {} },
     { method: 'POST', path: `${o}/owner-grants/og_unknown1/cancel`, body: {} },
     { method: 'GET', path: `${o}/scopes/${app.scope}` },
+    { method: 'GET', path: `${o}/scopes/${app.scope}/labels` },
     { method: 'GET', path: `${o}/scopes/${app.scope}/client-proof-helper?clientId=123-abc.apps.googleusercontent.com` },
     { method: 'POST', path: `${o}/scopes/${app.scope}/execute`, body: { changeId: 99 } },
     { method: 'GET', path: `${o}/usage?from=2026-10-01&to=2026-10-02` },
@@ -139,7 +141,7 @@ describe('the role matrix (spec "Roles and permissions")', () => {
     }
     const open = ROUTE_TABLE.filter((r) => r.frozenOk && r.method === 'POST').map((r) => r.pattern);
     expect(open.sort()).toEqual(
-      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/(gc_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$'].sort(),
+      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$'].sort(),
     );
   });
 

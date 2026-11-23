@@ -7,7 +7,7 @@ import { Link, useParams } from 'react-router-dom';
 import { confirmWithGoogle } from '../api.ts';
 import { duration, relative, useApi, useNow, useWrite, when } from '../lib.tsx';
 import { explain } from '../messages.ts';
-import { Callout, ErrorNote, IconShield, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
+import { Badge, Callout, ErrorNote, IconShield, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
 import { identityEmailLabel } from './app/Sessions.tsx';
 import { ConsentPreview } from './Consent.tsx';
 
@@ -33,6 +33,8 @@ const TITLES: Record<string, string> = {
   'member.role': 'Change a member’s role',
   'member.remove': 'Remove a member',
   'org.policy': 'Require a Google Workspace domain',
+  'labels.set': 'Propose request labels',
+  'labels.remove': 'Remove request labels',
 };
 
 const GUARDED = new Set(['origin.add', 'policy.set', 'raw_sign.on']);
@@ -70,8 +72,78 @@ function settingText(k: string, v: unknown): string {
 }
 const SETTING_LABEL: Record<string, string> = { loginMethods: 'Email login', persistence: 'Session persistence', sessionTtlMs: 'Session length', idleTtlMs: 'Idle timeout', googleWebClientId: 'Google web client', identityEmail: 'Email sharing' };
 
+type DiffLine = { change: 'added' | 'removed' | 'changed' | 'same'; key: string; before: string | null; after: string | null };
+type PreviewFormat = { key: string; line: string; fields: { label: string; value: string }[] };
+const appList = (v: unknown): string => (Array.isArray(v) ? (v as { id?: unknown; name?: unknown }[]).map((a) => str(a.name ?? a.id)).join(', ') : '');
+
+const DIFF_TEXT: Record<DiffLine['change'], string> = { added: 'Added', removed: 'Removed', changed: 'Changed', same: 'Stays the same' };
+
+/** D899: the review of a request labels change: what changes against what users see now, line by line (as text). */
+export function LabelsReview({ d }: { d: Record<string, unknown> }) {
+  const diff = (Array.isArray(d.diff) ? d.diff : []) as DiffLine[];
+  const formats = ((d.preview as { formats?: unknown } | undefined)?.formats ?? []) as PreviewFormat[];
+  const changed = diff.filter((x) => x.change !== 'same');
+  const first = (Array.isArray(d.apps) ? (d.apps as { id?: unknown; name?: unknown }[]) : []).map((a) => str(a.name ?? a.id)).sort()[0] ?? 'Your app';
+  const name = str((d.preview as { appName?: unknown } | undefined)?.appName ?? first);
+  return (
+    <>
+      <p>
+        For <strong>{appList(d.apps)}</strong>. These are the words the approval window shows your users for your app’s requests, as “{name} says: …”, always with “These are {name}’s words. Journear hasn’t checked them.”
+      </p>
+      <h3 className="h-sub">What changes for users</h3>
+      {changed.length === 0 ? (
+        <p>Nothing users see changes: every line stays as it is now (only the apps change).</p>
+      ) : (
+        <ul className="labels-diff">
+          {changed.map((x) => (
+            <li key={x.key} className={`diff-${x.change}`} data-change={x.change}>
+              <span className="diff-badge">
+                <Badge tone={x.change === 'removed' ? 'danger' : x.change === 'added' ? 'ok' : 'warn'}>{DIFF_TEXT[x.change]}</Badge>
+                {x.key === '(contract)' ? ' What they describe' : ''}
+              </span>
+              {x.before !== null && x.change !== 'added' && (
+                <span className="diff-before">
+                  <span className="visually-hidden">Now: </span>
+                  {x.before}
+                </span>
+              )}
+              {x.after !== null && x.change !== 'removed' && (
+                <span className="diff-after">
+                  <span className="visually-hidden">Becomes: </span>
+                  {x.after}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <h3 className="h-sub">What users would see (example values)</h3>
+      <ul className="labels-lines">
+        {formats.map((f) => (
+          <li key={f.key}>
+            <span className="labels-line">{f.line}</span>
+            {f.fields.map((x) => (
+              <span key={x.label} className="labels-line-row muted small">
+                {x.label}: {x.value}
+              </span>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> }) {
   switch (kind) {
+    case 'labels.set':
+      return <LabelsReview d={d} />;
+    case 'labels.remove':
+      return (
+        <Callout tone="warn">
+          Remove the request labels of <strong>{appList(d.apps) || 'these apps'}</strong>, at once and for good: your users see the plain approval window for these requests from then on.{d.waiting ? ' The change waiting to go live is cancelled too.' : ''}
+        </Callout>
+      );
     case 'origin.add': {
       const add = (d.add as O[]) ?? [];
       const remove = (d.remove as O[]) ?? [];
@@ -194,8 +266,15 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
   }
 }
 
+/** D899: when a request labels change goes live (the notice mail's own terms, D894). */
+export const LABELS_WAIT = 'Not at once. After you confirm, Journear emails your organisation’s security contacts. It goes live 24 hours after the email unless someone cancels it; Journear may block it if it would mislead users. Any owner can cancel it until then, on the Request labels tab or from the email.';
+export const LABELS_WAIT_REVIEW =
+  'Not at once. After you confirm, Journear emails your organisation’s security contacts. Journear reviews it first: it goes live only after Journear allows it, at the earliest 24 hours after the email, unless someone cancels it. If Journear hasn’t allowed it within 7 days of that time, it lapses and nothing changes.';
+
 /** When the change takes effect once confirmed, in one line. */
 function takesEffect(kind: string, d: Record<string, unknown>): string {
+  if (kind === 'labels.set') return d.reviewRequired === true ? LABELS_WAIT_REVIEW : LABELS_WAIT;
+  if (kind === 'labels.remove') return 'At once, when you confirm. Removing is final: to use labels again, propose new ones, which wait again.';
   if (GUARDED.has(kind))
     return 'Not at once. After you confirm, it is announced by email to your organisation’s security contacts and takes effect after the security delay (24 hours on production deployments). Any owner can cancel it until then, from the app’s page or the email.';
   if (kind === 'member.invite') return 'The invite email goes out after every owner and your security contacts have been told. The link works once, for that address only.';
@@ -213,15 +292,21 @@ const OUTCOME_TEXT: Record<string, string> = {
   version_conflict: 'The app changed meanwhile. Nothing was changed: start again from the app’s page.',
 };
 
+/** D899: a request labels change's refusals after Google, in plain words. */
+const LABELS_OUTCOME: Record<string, string> = {
+  version_conflict: 'Your request labels changed meanwhile (another change, or Journear acted). Nothing was changed: go back, look again and propose it again.',
+  env_mismatch: 'Request labels aren’t switched on here yet, so nothing was proposed.',
+};
+
 const APP_TAB: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.settings': 'sessions', 'app.resume': 'suspend' };
-const TAB_LABEL: Record<string, string> = { origins: 'Origins', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login' };
+const TAB_LABEL: Record<string, string> = { origins: 'Origins', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login', labels: 'Request labels' };
 
 /**
  * The server's `returnTo`, only as one of the console's own pages that start actions: an app's tab, a scope's page or
  * the members page. Anything else (another origin, `//host`, a path with `..`, an unknown page) is ignored, so the link
  * can never leave the console whatever the answer says (D711).
  */
-const SAFE_RETURN = /^\/orgs\/[A-Za-z0-9_]{1,128}(?:\/apps\/[A-Za-z0-9_]{1,128}\/(origins|signing|suspend|sessions|email)|\/scopes\/([A-Za-z0-9_]{1,128})|\/(members))$/u;
+const SAFE_RETURN = /^\/orgs\/[A-Za-z0-9_]{1,128}(?:\/apps\/[A-Za-z0-9_]{1,128}\/(origins|signing|suspend|sessions|email|labels)|\/scopes\/([A-Za-z0-9_]{1,128})|\/(members))$/u;
 
 export function safeReturn(v: unknown): { to: string; label: string } | null {
   const m = typeof v === 'string' ? SAFE_RETURN.exec(v) : null;
@@ -309,6 +394,8 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
           Done.{a.outcome?.nearTx ? ` NEAR transaction ${a.outcome.nearTx}.` : ''}
           {a.outcome?.noChange === true ? ' It was already so: nothing changed.' : ''}
           {GUARDED.has(a.kind) && a.outcome?.noChange !== true ? ' It is now announced and takes effect after the security delay; you can follow it, or cancel it, on the app’s page.' : ''}
+          {a.kind === 'labels.set' && a.outcome?.noChange !== true ? ` Proposed. Journear emails your security contacts; ${a.decoded.reviewRequired === true ? 'it goes live only after Journear allows it, at the earliest 24 hours after the email' : 'it goes live 24 hours after the email unless someone cancels it'}. You can follow it, or cancel it, on the Request labels tab.` : ''}
+          {a.kind === 'labels.remove' ? ' Removed: your users see the plain approval window for these requests.' : ''}
         </Callout>
       )}
       {a.status === 'failed' && (
@@ -317,8 +404,8 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
           role="alert"
           title={
             <>
-              {OUTCOME_TEXT[failedCode] ?? `${explain(failedCode, a.outcome?.message ?? '').text} Nothing was changed.`}
-              {a.outcome?.message && !OUTCOME_TEXT[failedCode] && explain(failedCode, a.outcome.message).detail ? ` ${a.outcome.message}` : ''}
+              {(a.kind.startsWith('labels.') ? LABELS_OUTCOME[failedCode] : undefined) ?? OUTCOME_TEXT[failedCode] ?? `${explain(failedCode, a.outcome?.message ?? '').text} Nothing was changed.`}
+              {a.outcome?.message && !OUTCOME_TEXT[failedCode] && !(a.kind.startsWith('labels.') && LABELS_OUTCOME[failedCode]) && explain(failedCode, a.outcome.message).detail ? ` ${a.outcome.message}` : ''}
               {a.outcome?.code === 'rate_limited' && a.kind === 'owner_action' ? ' If this is urgent, send Journear security the action from this page.' : ''}
             </>
           }

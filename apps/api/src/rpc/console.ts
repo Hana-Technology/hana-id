@@ -219,7 +219,7 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   // ---- partner labels (D894): an on-chain owner's proposals and removals, bound to the step-up; no UI yet (piece 4) ----
 
   listLabels(c: unknown) {
-    return runRpc(this.env, 'listLabels', listLabelsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listLabels }, ({ input, db, w }) => listLabels(db, input, w.now));
+    return runRpc(this.env, 'listLabels', listLabelsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listLabels }, ({ input, db, w }) => listLabels(db, this.env, input, w.now));
   }
 
   /** Every check a proposal gets, without the step-up and without writing: the preview, or `label_invalid`. */

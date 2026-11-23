@@ -5,17 +5,17 @@
 // attached apps and the scope's `labels_version`). A proposal is a guarded change: in force only once the admin
 // Worker's notice is accepted and `appChangeDelayMs` later (labels/lifecycle.ts), and staff may block it meanwhile
 // (labels/staff.ts). A removal is immediate.
-import { LABEL_STORE_LIMITS, type LabelChangeView, type LabelEntryView, type LabelPreview, labelChangeDigest, newId, nonceOf } from '@hana-id/console-core';
+import { LABEL_RECENT_MS, LABEL_RECENT_PER_ENTRY, LABEL_STORE_LIMITS, type LabelChangeView, type LabelEntryView, type LabelListAnswer, type LabelPreview, type LabelPreviewAnswer, labelChangeDigest, newId, nonceOf } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { expectVersion } from '../changes/apps.ts';
 import { type Writer, actorId, commitOn, committed, expectReplay, refuse, refuseReplay, runWrite } from '../changes/cas.ts';
 import type { HotDb } from '../changes/db.ts';
 import { requireChangeConfig } from '../changes/origins.ts';
-import { type Q, q } from '../changes/sql.ts';
+import { type Q, q, raw } from '../changes/sql.ts';
 import { type StepUpToken, confirmStepUp, releaseStepUp, verifyStepUpToken } from '../changes/step-up.ts';
-import { type CheckedDocument, type LabelProblem, networkProblem, parseDocument, previewOf } from './document.ts';
+import { type CheckedDocument, type LabelProblem, diffOf, networkProblem, parseDocument, previewOf, storedDocument } from './document.ts';
 import { CURRENT, IN_FORCE, OPEN, labelsOn } from './sql.ts';
-import { type LabelPlan, type LabelRow, VIEW_FROM, VIEW_SELECT, contextKey, labelEvent, labelView, limitProblem, planLabels } from './store.ts';
+import { type LabelPlan, type LabelRow, REVIEW_ON, VIEW_FROM, VIEW_SELECT, contextKey, labelEvent, labelView, limitProblem, planLabels } from './store.ts';
 
 const OFF_MESSAGE = 'Request labels are not turned on in this environment';
 
@@ -26,25 +26,42 @@ function requireOn(env: Env): void {
 /** The problems as one `label_invalid` message: "code at path: message; …" (at most 20, the parser's own cap). */
 const problemText = (ps: readonly LabelProblem[]): string => ps.map((p) => `${p.code} at ${p.path}: ${p.message}`).join('; ');
 
-/** ConsoleRpc.listLabels: the scope's entries (not removed), each with its version in force and its waiting one. */
-export async function listLabels(db: HotDb, i: { orgId: string; scopeId: string }, now: number): Promise<{ labelsVersion: number; entries: LabelEntryView[] }> {
-  const rows = await db.all<LabelRow>(
-    q`SELECT ${VIEW_SELECT(now)} FROM ${VIEW_FROM}
-       WHERE l.scope_id = ${i.scopeId} AND l.org_id = ${i.orgId} AND l.removed_at IS NULL
-         AND (c.id = ${CURRENT('l', now)} OR c.id = ${OPEN('l', now)})
-       ORDER BY l.created_at, l.id, c.proposed_at`,
+/** When a version ended: its end, its cancel (or lapse) or its block, whichever is set. */
+const ENDED_AT = raw('MAX(COALESCE(c.ended_at, 0), COALESCE(c.cancelled_at, 0), COALESCE(c.blocked_at, 0))');
+
+/**
+ * ConsoleRpc.listLabels: the scope's entries, each with its version in force and its waiting one (with their text), and
+ * the versions that ended in the last LABEL_RECENT_MS (with Journear's note on a blocked one); an entry removed in that
+ * time is listed too. And what the console needs to say whether it can propose: whether labels are on in this
+ * environment, Journear's switch over the org's labels, and whether Journear reviews its changes (D899). Two statements.
+ */
+export async function listLabels(db: HotDb, env: Env, i: { orgId: string; scopeId: string }, now: number): Promise<LabelListAnswer> {
+  const cut = now - LABEL_RECENT_MS;
+  const head = await db.first<{ v: number; org_off: 'org' | 'all' | null; review_required: number }>(
+    q`SELECT s.labels_version AS v,
+             (CASE WHEN EXISTS (SELECT 1 FROM label_controls k WHERE k.target = ${i.orgId} AND k.labels_off = 1) THEN 'org'
+                   WHEN EXISTS (SELECT 1 FROM label_controls k WHERE k.target = '*' AND k.labels_off = 1) THEN 'all' END) AS org_off,
+             ${REVIEW_ON(i.orgId)} AS review_required
+        FROM scopes s WHERE s.scope_id = ${i.scopeId} AND s.org_id = ${i.orgId}`,
   );
-  const version = rows[0]?.labels_version ?? (await db.first<{ v: number }>(q`SELECT labels_version AS v FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId}`))?.v;
-  if (version === undefined) return refuse('not_found', 'No such scope in this organisation');
+  if (!head) return refuse('not_found', 'No such scope in this organisation');
+  const rows = await db.all<LabelRow & { is_open: number }>(
+    q`SELECT ${VIEW_SELECT(now)}, (c.id IS ${OPEN('l', now)}) AS is_open FROM ${VIEW_FROM}
+       WHERE l.scope_id = ${i.scopeId} AND l.org_id = ${i.orgId} AND (l.removed_at IS NULL OR l.removed_at > ${cut})
+         AND (c.id = ${CURRENT('l', now)} OR c.id = ${OPEN('l', now)}
+              OR (c.status IN ('cancelled', 'lapsed', 'blocked', 'ended') AND ${ENDED_AT} > ${cut}))
+       ORDER BY l.created_at, l.id, ${ENDED_AT} DESC, c.proposed_at DESC`,
+  );
   const entries = new Map<string, LabelEntryView>();
   for (const r of rows) {
-    const e = entries.get(r.label_id) ?? { id: r.label_id, current: null, waiting: null, off: r.off_by };
+    const e = entries.get(r.label_id) ?? { id: r.label_id, current: null, waiting: null, off: r.off_by, removedAt: r.removed_at, recent: [] };
     const v = labelView(r, now);
-    if (r.is_current) e.current = v;
-    else e.waiting = v;
+    if (r.is_current) e.current = { ...v, text: r.doc_text };
+    else if (r.is_open) e.waiting = { ...v, text: r.doc_text };
+    else if (e.recent.length < LABEL_RECENT_PER_ENTRY) e.recent.push(v);
     entries.set(r.label_id, e);
   }
-  return { labelsVersion: version, entries: [...entries.values()] };
+  return { labelsVersion: head.v, entries: [...entries.values()], enabled: labelsOn(env), orgOff: head.org_off, reviewRequired: !!head.review_required };
 }
 
 interface Checked {
@@ -97,9 +114,19 @@ async function check(db: HotDb, env: Env, w: Writer, i: { orgId: string; scopeId
  * ConsoleRpc.previewLabels: the proposal's checks without the step-up and without writing. Answers the preview (what
  * users would see, with example values) or `label_invalid` with the problems; `noChange` when it is what's in force.
  */
-export async function previewLabels(db: HotDb, env: Env, w: Writer, i: { orgId: string; scopeId: string; labelId?: string | undefined; document: string; appIds: readonly string[] }): Promise<{ preview: LabelPreview; sha256: string; bytes: number; labelsVersion: number; noChange: boolean }> {
+export async function previewLabels(db: HotDb, env: Env, w: Writer, i: { orgId: string; scopeId: string; labelId?: string | undefined; document: string; appIds: readonly string[] }): Promise<LabelPreviewAnswer> {
   const c = await check(db, env, w, i);
-  return { preview: previewOf(c.doc.doc, c.appName), sha256: c.doc.sha256, bytes: c.doc.bytes, labelsVersion: c.plan.labels_version!, noChange: c.same };
+  // D899: what changes against the version in force (none for a new entry: every line added), for the console's review.
+  const before = c.plan.cur_text === null ? null : storedDocument(c.plan.cur_text);
+  return {
+    preview: previewOf(c.doc.doc, c.appName),
+    sha256: c.doc.sha256,
+    bytes: c.doc.bytes,
+    labelsVersion: c.plan.labels_version!,
+    noChange: c.same,
+    diff: diffOf(before, c.doc.doc, c.appName),
+    reviewRequired: !!c.plan.review_required,
+  };
 }
 
 /** ConsoleRpc.proposeLabels: a new entry or a new version, a pending guarded change; the same document again is a no-op. */

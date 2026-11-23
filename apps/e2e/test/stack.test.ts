@@ -123,7 +123,7 @@ describe('the e2e env', () => {
     }
     expect(portBase('')).toBe(DEFAULT_PORT_BASE);
     expect(portBase('4510')).toBe(4510);
-    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, stamps: 4513, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, issuer: 4542, admin: 4543, adminChromium: 4544, adminFirefox: 4545, adminWebkit: 4546, near: 4550, nearFallback: 4551, evm: 4560 });
+    expect(portsFrom(4510)).toEqual({ partner: 4510, siteB: 4511, demo: 4512, stamps: 4513, vault: 4520, liveVault: 4521, auth: 4530, liveAuth: 4531, api: 4540, liveApi: 4541, issuer: 4542, admin: 4543, adminChromium: 4544, adminFirefox: 4545, adminWebkit: 4546, consoleChromium: 4547, consoleFirefox: 4548, consoleWebkit: 4549, consoleAuthChromium: 4552, consoleAuthFirefox: 4553, consoleAuthWebkit: 4554, near: 4550, nearFallback: 4551, evm: 4560 });
     for (const bad of ['80', '65500', '45.5', '4510x', '-1', ' 0x1000']) expect(() => portBase(bad)).toThrow(/HANA_E2E_PORT_BASE/u);
     // A base that puts a port on one browsers refuse (5010 + 50 = 5060, SIP) fails at once, not in the tests.
     expect(() => portBase('5010')).toThrow(/port 5060, which browsers refuse/u);
@@ -136,7 +136,7 @@ describe('the e2e env', () => {
     expect(Number(new URL(STAMPS_ORIGIN).port)).toBe(base + 3);
     // The admin portal's lanes (D873): the hand-test lane, then one per browser project.
     expect(Object.values(ADMIN_LANES).map((o) => Number(new URL(o).port))).toEqual([base + 33, base + 34, base + 35, base + 36]);
-    expect(new Set(Object.values(PORTS)).size).toBe(18);
+    expect(new Set(Object.values(PORTS)).size).toBe(24);
   });
 
   it('gives live mode an env of its own whose every origin is https, not loopback, and routed to the stack', () => {

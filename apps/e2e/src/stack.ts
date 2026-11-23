@@ -50,6 +50,15 @@ export const ADMIN_LANES = Object.freeze({
   webkit: `http://127.0.0.1:${PORTS.adminWebkit}`,
 });
 export type AdminLaneName = keyof typeof ADMIN_LANES;
+/**
+ * The partner console in each browser project's admin lane (D899, src/server/lane-console.ts): its origin and its auth
+ * origin, served by that lane's thread over the lane's API.
+ */
+export const CONSOLE_LANES = Object.freeze({
+  chromium: { origin: `http://127.0.0.1:${PORTS.consoleChromium}`, authOrigin: `http://127.0.0.1:${PORTS.consoleAuthChromium}` },
+  firefox: { origin: `http://127.0.0.1:${PORTS.consoleFirefox}`, authOrigin: `http://127.0.0.1:${PORTS.consoleAuthFirefox}` },
+  webkit: { origin: `http://127.0.0.1:${PORTS.consoleWebkit}`, authOrigin: `http://127.0.0.1:${PORTS.consoleAuthWebkit}` },
+});
 /** A foreign site, served by Playwright routes only (see tests/fixtures.ts): it never runs Hana code. */
 export const EVIL_ORIGIN = 'http://evil.e2e.test';
 
@@ -229,3 +238,5 @@ export const STAMPS_PK = 'pk_test_StampsE2eStampsE2eStamps';
 
 /** Where src/build.ts writes the bundles, and the servers read them. */
 export const BUILD_DIR = new URL('../.build/', import.meta.url);
+/** The partner console's SPA build (src/build.ts, D899): the lanes serve it (src/server/lane-console.ts). */
+export const CONSOLE_DIR = new URL('console/', BUILD_DIR);

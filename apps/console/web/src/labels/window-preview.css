@@ -1,0 +1,84 @@
+/* The approval window inside the console's request labels preview (D899): the window's own stylesheet
+   (packages/web approval.css, imported, so the box, the alerts and the rows look as users see them), and the few rules
+   of the window's base.css its markup needs (icons, alerts, the key/value rows), scoped here to the frame because
+   base.css also styles a whole page (body, headings, links) the console has its own of. The frame is a phone's width
+   and takes the design system's light or dark tokens (.jp-light / .jp-dark, packages/brand tokens.css). */
+@import '../../../../../packages/web/src/auth/css/approval.css';
+
+.window-frame {
+  max-width: 390px;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--jp-border-strong);
+  border-radius: var(--jp-radius-xl);
+  box-shadow: var(--jp-shadow-md);
+  font-family: var(--jp-font-body);
+  font-size: var(--jp-text-md);
+  line-height: var(--jp-leading-body);
+}
+.window-frame .window-why {
+  margin: 0;
+  color: var(--jp-fg-muted);
+}
+.window-preview h2,
+.window-preview h3 {
+  font-family: var(--jp-font-body);
+  color: var(--jp-fg);
+}
+.window-preview p {
+  margin: 0;
+}
+.window-preview .ic {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.window-preview .ic .fill {
+  fill: currentColor;
+  stroke: none;
+}
+.window-preview .jp-alert {
+  margin: 0;
+  line-height: var(--jp-leading-body);
+}
+.window-preview .jp-alert > .body {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.window-preview .jp-alert > .ic {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+.window-preview dl.jp-kv {
+  grid-template-columns: fit-content(42%) minmax(0, 1fr);
+  gap: var(--jp-space-2) var(--jp-space-4);
+  margin: 0;
+  padding: var(--jp-space-3) 0;
+  border-top: 1px solid var(--jp-border);
+  border-bottom: 1px solid var(--jp-border);
+}
+.window-preview dl.jp-kv dt {
+  font-weight: var(--jp-weight-regular);
+}
+.window-preview dl.jp-kv dd {
+  display: block;
+  font-size: var(--jp-text-sm);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.window-preview dl.jp-kv dd strong {
+  font-family: var(--jp-font-mono);
+  font-weight: var(--jp-weight-semibold);
+}
+.window-preview dl.jp-kv code.mono {
+  font-size: inherit;
+}
+.window-preview .mono {
+  font-family: var(--jp-font-mono);
+}

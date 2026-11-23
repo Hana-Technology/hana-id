@@ -82,10 +82,11 @@ const btn = (kind, opts = {}) => ['jp-btn', `jp-btn-${kind}`, opts.small ? 'jp-b
 const time = (ms) => (typeof ms === 'number' ? `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '');
 /** A short span: `4 min`, `3 h 5 min`, `2 d 4 h`. */
 function span(ms) {
-  const abs = Math.abs(ms);
-  const days = Math.floor(abs / 86_400_000);
-  const hours = Math.floor((abs % 86_400_000) / 3_600_000);
-  const mins = Math.round((abs % 3_600_000) / 60_000);
+  // Rounded to the minute first, so 23 h 59 min 40 s reads "24 h 0 min", never "23 h 60 min".
+  const total = Math.round(Math.abs(ms) / 60_000);
+  const days = Math.floor(total / 1440);
+  const hours = Math.floor((total % 1440) / 60);
+  const mins = total % 60;
   return days ? `${days} d ${hours} h` : hours ? `${hours} h ${mins} min` : `${mins} min`;
 }
 /** `4 min ago` / `in 2 d 3 h`, from the reader's clock. */

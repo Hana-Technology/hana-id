@@ -450,6 +450,31 @@ to open: `/labels/<changeId>` (and the feed, `/labels`), or for `labels-off` `/s
 millisecond before `active_from` and served at it (the text's sha256 the delivered one), recorded by the cron, gone after
 Block; the API's refusals; a second version with `previousEffectiveSince`; review and Allow; the kill switch and a reset.
 
+The lane's Google key is made when the lane's thread starts (`crypto.subtle.generateKey`, in memory only, never written
+or printed), and from then on that thread answers Google's endpoints itself: apps/api's JWKS cache there (the step-up's
+check, and the governance read System status shows) never holds, or fetches, Google's real keys.
+
+`tests/partner-labels.spec.ts`, in each browser's lane (its lease held, as `tests/admin-portal.spec.ts`): a change
+proposed and announced by the controls is in the staff feed (`/labels`, "Goes live … (in 24 h)", what users would see:
+"Stamp Rally says: collect the stamp “Arrival”") → its page → Block with a note (its confirmation) → "Blocked by staff"
+with the note on the page, never served by `GET /v1/app` even after its time, and under "Decided" in the feed; and, with
+the lane's clock frozen, a change not served a millisecond before its `active_from`, served at it (sha256 of the text
+the delivered one) and "Live" on its page. The browser's `Date` is fixed at the lane's time (`page.clock.setFixedTime`),
+as the pages' "in 24 h" and "Live" are worked out against the reader's clock; the staff member signs in again after
+the lane's clock moves a day (the stand-in's token ends 24 h after the lane's clock). With `HANA_SHOTS_DIR=<dir>`
+(Chromium) its last test saves the founder's screenshots there, light theme, the whole page at 1366 and 390 px wide (the
+viewport made as tall as the page, so the sticky sidebar stays put; each also fails if the page is wider than the
+screen): `01-feed`, `01-change-block` (the confirmation open), `02-blocked` (and `02-blocked-answer-1366`, the answer
+at the top), `03-review-allow` and `03-review-feed` (required review, waiting for Allow), `04-status` and
+`04-status-tile` (System status with every partner label switched off), each `-1366.png` and `-390.png`:
+
+```sh
+HANA_SHOTS_DIR=<dir> corepack pnpm --filter @hana-id/e2e e2e tests/partner-labels.spec.ts --project=chromium
+```
+
+Partner labels' app changes and the Block's audit rows stay in the lane, and the stack runs no admin cron to mail them:
+Feed and notices' Feeds panel may show them behind, which `tests/admin-portal.spec.ts` allows.
+
 **What the spec covers**, in every browser: sign-in and the refusals (no token, a forged one, a client's own header,
 someone not on the list); every page in the sidebar opens; System status's tile **Gas sponsorship (local test network)**
 in each state, and its link to the page `/gas-sponsorship/31337` (staff's name for the feature since D879; users still

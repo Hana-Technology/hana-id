@@ -701,6 +701,8 @@ a.jp-page { gap: var(--jp-space-1); grid-auto-flow: column; text-decoration: non
 form { margin: 0; }
 .form { display: flex; flex-wrap: wrap; gap: var(--jp-space-4); align-items: flex-start; margin: 0; }
 .form.vertical { flex-direction: column; align-items: stretch; max-width: 40rem; }
+/* In a column the fields' 14rem flex-basis would be a height: each field takes its own height instead. */
+.form.vertical > .jp-field, .form.vertical > .jp-field.narrow { flex: 0 0 auto; max-width: none; }
 .form > .jp-field { flex: 1 1 14rem; min-width: 12rem; max-width: 28rem; }
 .form > .jp-field.wide { max-width: none; flex-basis: 100%; }
 .form > .jp-field.narrow { flex: 0 1 9rem; min-width: 8rem; }

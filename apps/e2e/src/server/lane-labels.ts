@@ -180,13 +180,20 @@ export class LabelsLane {
     d.chain.consoleAudiences = [['google', LANE_CONSOLE_AUD]];
   }
 
-  /** The lane's Google key, its JWKS answered in this thread from the first use on. */
+  /**
+   * Makes the lane's Google key (per lane thread and run, in memory only) and answers Google's endpoints in this thread
+   * from then on. Called when the lane starts, before any request: apps/api's JWKS cache in this thread (the step-up's
+   * check, and the governance read System status shows) then only ever holds this key, never Google's real one.
+   */
+  async start(): Promise<void> {
+    if (this.google) return;
+    this.google = await GoogleBackend.create();
+    this.google.install();
+  }
+
   private async key(): Promise<GoogleBackend> {
-    if (!this.google) {
-      this.google = await GoogleBackend.create();
-      this.google.install();
-    }
-    return this.google;
+    await this.start();
+    return this.google!;
   }
 
   private member() {

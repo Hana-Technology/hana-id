@@ -554,6 +554,8 @@ export const SCENARIOS = ['ready', 'working', 'low-money', 'waiting', 'past-dead
 
 installAccessCerts(data.access.certs);
 const lane = new Lane();
+// The lane's Google key (lane-labels.ts), before anything in this thread reads Google's JWKS.
+await lane.labels.start();
 
 // The lane's chain endpoints, in this thread's fetch (after the certs' interception, which stays in front).
 {

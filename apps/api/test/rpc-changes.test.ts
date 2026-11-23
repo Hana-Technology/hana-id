@@ -666,8 +666,8 @@ describe('settings', () => {
       expect(await s({ name }), name).toMatchObject({ ok: false, code: 'bad_request' });
     }
     // D891: "Passport" itself or as the wallet, and a claim word beside sentence punctuation.
-    for (const name of ['Passport', ' passport ', `P${String.fromCharCode(0x0430)}ssport`, 'My Passport', 'Passport Wallet', 'Acme. Verified', 'Acme: no fees']) {
-      expect(await s({ name }), name).toMatchObject({ ok: false, code: 'bad_request', error: expect.stringMatching(/"Passport" on its own|sentence punctuation/u) });
+    for (const name of ['Passport', ' passport ', `P${String.fromCharCode(0x0430)}ssport`, 'My Passport', 'Passport Wallet', 'Verified Passport', 'Passport | Acme', 'Acme. Verified', 'Acme: no fees']) {
+      expect(await s({ name }), name).toMatchObject({ ok: false, code: 'bad_request', error: expect.stringMatching(/"Passport"|sentence punctuation|imitate/u) });
     }
     scopeChain([], ['web-client.apps.googleusercontent.com']);
     expect(await s({ googleWebClientId: 'other.apps.googleusercontent.com' })).toMatchObject({ ok: false, code: 'bad_request' });

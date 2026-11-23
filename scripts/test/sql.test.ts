@@ -138,8 +138,9 @@ describe('app names (OPER-11)', () => {
     for (const bad of ['Hana Pay', 'Journear', 'J0urnear', 'JOURNEAR', 'journear-pay', `J${String.fromCharCode(0x043e)}urnear`, 'J o u r n e a r', 'Passport Home']) {
       expect(() => assertAppName(bad), bad).toThrow(/App name: The name must not contain/u);
     }
-    for (const bad of ['Passport', 'My Passport', 'Passport Wallet']) expect(() => assertAppName(bad), bad).toThrow(/App name: The name must not be "Passport" on its own/u);
-    expect(() => assertAppName('Acme. Verified')).toThrow(/App name: The name must not use sentence punctuation/u);
+    for (const bad of ['Passport', 'My Passport']) expect(() => assertAppName(bad), bad).toThrow(/App name: The name must not be "Passport" on its own/u);
+    expect(() => assertAppName('Passport Wallet')).toThrow(/App name: The name must not have "Wallet" right after "Passport"/u);
+    expect(() => assertAppName('Acme. Verified')).toThrow(/App name: The name must not have a word like "Verified" after sentence punctuation/u);
     expect(assertAppName('Passport Travel')).toBe('Passport Travel');
     expect(assertAppName('Dr. Martens')).toBe('Dr. Martens');
   });

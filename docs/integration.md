@@ -77,14 +77,28 @@ refused (when an app is created or renamed, by Journear staff or on **Branding**
   with "Hana" (the product's former name), in any case or spelling: accents, full-width letters, look-alike letters
   from other alphabets (a Cyrillic "Н" for H, for example), digits or symbols for letters ("H4na", "J0urnear"), or
   letters split by spaces or dots ("H a n a", "J.o.u.r.n.e.a.r"). "Hana" inside a word ("Johana") is fine;
-- "Passport" on its own (users call Journear Passport "Passport"), in the same forms of spelling, or in a name that
-  reads as the wallet: "My Passport", "Your Passport", "The Passport", "NEAR Passport", or "Passport" followed by
-  Wallet, App, Account, ID, Login, Sign-in, Support, Help, Security, Team, Official, Pay, Vault or "by …". "Passport"
-  with words of your own is fine: "Passport Photos Co", "Passport Travel", "Travel Passport";
-- a word like "verified", "safe", "official", "free", "no fees", "guaranteed", "refund" or "trusted" in a name that
-  also has sentence punctuation (". ", "!", "?", ":", ";" or a dash), as in "Acme. Verified": in the approval window
-  it could read as Journear's own words. Punctuation alone is fine ("Yahoo!", "Dr. Martens"), and so are those words
-  without it ("Safe Wallet");
+- "Passport" as the wallet (users call Journear Passport "Passport"), in the same forms of spelling: "Passport" on its
+  own or with only "the", "a", "my", "your", "our", "NEAR", "Wallet" or "Official" before it (up to two) and a plural,
+  "'s", "TM", one digit or one letter after it ("My NEAR Passport", "Passports", "Passport 2"); "Passport" with one of
+  Wallet, App, Account, Login, Sign-in, Sign-up, Support, Help, Security, Team, Official, Pay, Vault, Verify,
+  Recovery, Admin, Staff, Service, Auth, Connect, Key, Relayer, Sponsor, Gas or "by" right before or after it, plurals
+  too, or ID or "from" right after it ("Passport ID", "Admin Passport"); a word like "verified", "secure" or "safe"
+  right next to it; or a name that starts with "Passport" followed by a comma, bracket, bar, slash, colon, dash or
+  "by"/"from"/"of" and another name ("Passport | Acme"). Your brand first is fine ("Acme Passport", "Gitcoin
+  Passport"), and so is "Passport" with words of your own ("Passport Photos Co", "Passport Travel", "Passport Labs");
+- letters that only imitate others: small capitals, phonetic letters, Cherokee, Lisu or Coptic letters, or a word
+  that mixes Latin with Greek, Cyrillic or another alphabet. A word written wholly in another alphabet or script is
+  fine;
+- a check mark, shield, lock or medal (✓ ✅ ☑ 🛡 🔒 🏅 …): only Journear's own badge carries a check mark;
+- a word like "verified", "safe", "official", "free", "no fees", "guaranteed", "refund" or "trusted" **after**
+  sentence punctuation: a full stop, "!", "?", ":", ";" or "…" (in any script), an en or em dash, or a hyphen or
+  dash with a space beside it, as in "Acme. Verified" or "Acme - Secure": in the approval window it could read as
+  Journear's own words. Words before the punctuation are fine ("Trust: Crypto Wallet", "Stay Safe!"), as are
+  abbreviations ("Dr. Trust") and the words without punctuation ("Safe Wallet");
+- "verified", "official", "certified", "approved", "audited", "endorsed", "authentic", "genuine" or "legit" (and
+  their forms) as the name's last word or right after a bracket, bar, slash or comma ("Acme Official", "Acme
+  (Verified)"): "From Acme Official" reads as an endorsement. At the start of the name they're fine ("Verified
+  Voting");
 - as before, control, bidi, zero-width and other invisible characters, and names over 64 characters.
 
 An app whose name was set before this rule keeps working, but its sign-in emails say "an app" instead of the name

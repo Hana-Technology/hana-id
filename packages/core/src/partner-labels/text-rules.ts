@@ -191,7 +191,7 @@ function denied(words: readonly string[], list: DenyList): string | null {
 }
 
 /**
- * D896 (after PR 123's review): a field's label is a row's name in the partner's box, under Journear's own rows; it may
+ * a field's label is a row's name in the partner's box, under Journear's own rows; it may
  * not be one of Journear's row names or a word for an amount, an account, a fee or a network, which would read as one of
  * Journear's facts ("Total: 1042", "To: Coffee Club till", "Network: …"). Whole words, compared as the other lists.
  */
@@ -337,7 +337,7 @@ export function partnerTextProblem(text: unknown, role: PartnerTextRole): Partne
 }
 
 /**
- * D896 (after PR 123's review): why the request's own text, shown as an order number or item id (1 to 32 of
+ * why the request's own text, shown as an order number or item id (1 to 32 of
  * `A–Z a–z 0–9 _ -`), may not be shown in the partner's box, or null. The request is the page's, so a hijacked page
  * could write "1XLM", "Free" or "Journear-verified" there: refused are Journear's names, claim words, the window's own
  * words, the names on Journear's lists (tokens, coins, programs) and other currencies' names, read in the value's

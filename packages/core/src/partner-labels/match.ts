@@ -40,7 +40,7 @@ export type LabelRequest =
       readonly networkPassphrase: string;
       readonly user: string;
       readonly tx: StellarTransaction;
-      /** D896: the transaction comes inside a fee bump (someone else's envelope): no label describes it yet. */
+      /** the transaction comes inside a fee bump (someone else's envelope): no label describes it yet. */
       readonly feeBump?: true;
     }
   | { readonly kind: 'stellar_auth'; readonly networkPassphrase: string; readonly user: string; readonly invocation: StellarInvocation };
@@ -215,9 +215,9 @@ export type LabelNoMatchCode =
   | 'network_not_checked'
   | 'bad_code_hash_input'
   | 'no_contract_code'
-  /** D896: a fee bump's inner transaction (not described in v1: its fee is someone else's envelope's). */
+  /** a fee bump's inner transaction (not described in v1: its fee is someone else's envelope's). */
   | 'fee_bump'
-  /** D896: a classic transaction that moves value to someone else, but not as the one payment the document describes. */
+  /** a classic transaction that moves value to someone else, but not as the one payment the document describes. */
   | 'operation_mismatch';
 
 export interface LabelNoMatch {

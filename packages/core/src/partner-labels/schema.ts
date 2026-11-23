@@ -40,7 +40,7 @@ export const LABEL_LIMITS = Object.freeze({
   /** Fields per format: each is a value the window shows, in the sentence or as a row. */
   fields: 8,
   /**
-   * D896 (after PR 123's review): fields that aren't in the sentence, each a row in the partner's box. Three, so the box
+   * fields that aren't in the sentence, each a row in the partner's box. Three, so the box
    * stays short enough on a phone that Approve isn't pushed far down.
    */
   rows: 3,

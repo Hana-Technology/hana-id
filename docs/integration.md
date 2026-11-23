@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-19 (reviewed NEAR calls; free fees in Show details; message notes; link notice), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-23 (gas sponsorship named so); 2026-11-19 (reviewed NEAR calls, free fees in Show details), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -243,11 +243,11 @@ at `^0.5.0`).
   the EIP-1193 provider's `ProviderRpcError`, and `userMessageFor(code, data)` for a code read elsewhere
   ([section 13](#user-message)). `message` is unchanged and stays for you and your logs. `userMessageFor` takes an
   optional third argument, `'sponsored_action'` or `'near_relay'`, for a reason name the two share.
-- New, **not live yet**: gas-free EVM actions. `hana.evm.sendSponsored({ chainId, calls })` runs contract calls with
+- New, **not live yet**: gas sponsorship for EVM actions (sponsored actions). `hana.evm.sendSponsored({ chainId, calls })` runs contract calls with
   Journear paying the network fee, after the user approves them; `hana.evm.sponsorship(chainId)` and
   `hana.evm.sponsoredChains` say where and whether it is offered; EIP-5792 `wallet_sendCalls`,
   `wallet_getCallsStatus` and `wallet_getCapabilities` on `hana.ethereum` do the same for viem and wagmi. No environment
-  offers it yet, so `sponsoredChains` is empty ([section 8, Gas-free actions](#gas-free-actions-not-live)). New
+  offers it yet, so `sponsoredChains` is empty ([section 8, Gas sponsorship](#gas-sponsorship-not-live)). New
   exports: `HanaEvm`, `HanaSponsorError`, `isHanaSponsorError`, `EvmSponsorErrorData`, `EvmSponsorProviderErrorData`
   (the EIP-5792 error's `data`), `SendSponsoredParams`, `SendSponsoredResult`, `SponsoredCall`, `SponsorshipStatus`,
   `EIP5792` (its error codes), `CALLS_VERSION`, and the reason names to branch on: `SPONSOR_REASON_NAMES`,
@@ -255,8 +255,8 @@ at `^0.5.0`).
   `SponsorshipReason`, `KnownSponsorshipReason` and `NearRelayReason` (a known reason, or any string, so a new reason
   never breaks your build).
 - `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` are no longer `4200`. On a chain without
-  gas-free actions, `wallet_getCapabilities` answers no capabilities and `wallet_sendCalls` is `5710` (unsupported
-  chain). `eth_sendTransaction` is unchanged (never gas-free).
+  gas sponsorship, `wallet_getCapabilities` answers no capabilities and `wallet_sendCalls` is `5710` (unsupported
+  chain). `eth_sendTransaction` is unchanged (never sponsored).
 - The packages carry a licence: `@hana-id/web`, `@hana-id/react` and `@hana-id/sodax` are under the Apache License 2.0,
   each with the licence text as `LICENSE` in its tarball and `"license": "Apache-2.0"` in its `package.json` (0.4.1 and
   earlier say `UNLICENSED` and ship no licence). `@hana-id/core`'s licence is still being decided; until then its
@@ -277,8 +277,8 @@ at `^0.5.0`).
    [section 13](#user-message)). Keep matching on `code` and `data.reason`, never on either text.
 3. If you call viem's `sendCalls` (or wagmi's, which uses it) with `experimental_fallback: true`: with 0.4.x Journear
    Passport answered `4200`, and viem fell back to one `eth_sendTransaction` per call. With 0.5.0 a chain without
-   gas-free actions answers `5710`, and viem doesn't fall back on it. Ask `getCapabilities` first, and send ordinary
-   transactions when it shows nothing for the chain ([Gas-free actions](#gas-free-actions-not-live)).
+   gas sponsorship answers `5710`, and viem doesn't fall back on it. Ask `getCapabilities` first, and send ordinary
+   transactions when it shows nothing for the chain ([Gas sponsorship](#gas-sponsorship-not-live)).
 4. Handle `login_cancelled` with `data.reason: 'link_remove'` as the user's choice, not a failure
    ([section 4](#when-sign-in-doesnt-finish)). Your 0.4.x code already receives it.
 5. Nothing else: sign-in, Stellar, EVM, NEAR, the policies and the identity token behave as in 0.4.1.
@@ -860,12 +860,12 @@ are yours.
   the buttons says what turns Approve on ("Approve turns on when you move your mouse.", "Approve turns on after one tap
   on the screen."). After an answer the window
   says "Approved" or "Rejected" and stays open 15 seconds for a follow-up request.
-- **A network fee row** in the main view means the user pays it. A fee the user doesn't pay (a gas-free action, a
+- **A network fee row** in the main view means the user pays it. A fee the user doesn't pay (a sponsored action, a
   relayed NEAR action) is only behind **Show details**, first: "Network fee: Free. Sponsored by {your app's name}."
   Who pays today: when Journear's relayer sends it, Journear pays and records the cost against your app, and your app
   isn't charged for it during the pilot; a NEAR action your app relays itself is paid by your app.
-  A gas-free action's first one also says, in view, that it turns on free network fees for their account, that their
-  address stays the same, and that they still approve every action ([Gas-free actions](#gas-free-actions-not-live)).
+  A sponsored action's first one also says, in view, that it turns on free network fees for their account, that their
+  address stays the same, and that they still approve every action ([Gas sponsorship](#gas-sponsorship-not-live)).
 - **A test app** says, on every request, that Journear Passport signs only for test networks; on a message, raw
   signing or typed data that names no network, it says instead that the signature isn't limited to test money.
 - **Journear's own demo contracts** read in plain words when a request is exactly one of their reviewed calls (the
@@ -926,7 +926,7 @@ const provider = new BrowserProvider(hana.ethereum);
 | `eth_sendTransaction` | the SDK fills nonce, gas and fees from your RPC, the user approves, and the SDK broadcasts through the RPC of the chain it was filled on (even if the chain is switched during the approval). Sends run one at a time per chain, and a filled nonce is never below one past the last one this page broadcast, so back-to-back sends get consecutive nonces |
 | `eth_signTransaction` | the SDK fills a missing nonce, gas and fees from your RPC as for `eth_sendTransaction` (fields you set are kept as given; a `chainId` must be the current chain), the user approves, and you get the signed raw transaction; nothing is broadcast. It isn't queued with sends, and its nonce comes from the RPC's `pending` count (never below one past this page's last `eth_sendTransaction`), so set `nonce` yourself when you sign several before broadcasting them |
 | `personal_sign`, `eth_signTypedData_v4` | approval |
-| `wallet_getCapabilities`, `wallet_sendCalls`, `wallet_getCallsStatus` | EIP-5792, for gas-free actions only (SDK 0.5.0; [Gas-free actions](#gas-free-actions-not-live)); `5710` on a chain without them |
+| `wallet_getCapabilities`, `wallet_sendCalls`, `wallet_getCallsStatus` | EIP-5792, for sponsored actions only (SDK 0.5.0; [Gas sponsorship](#gas-sponsorship-not-live)); `5710` on a chain without them |
 | `eth_sign` and other signing or wallet methods | `4200` |
 | read-only methods (`eth_call`, `eth_getBalance`, …) | forwarded to the current chain's `rpcUrl` |
 | `eth_sendRawTransaction` | forwarded to the current chain's `rpcUrl` (it broadcasts a transaction you already hold signed; Journear Passport signs nothing) |
@@ -939,18 +939,22 @@ One key covers every EVM chain. Contract creation (an empty `to`) works with app
 auto-approves it. Errors are `ProviderRpcError` with numeric codes. A sign-in that didn't complete is `4001`, and the
 Journear Passport code is in `error.data.code`. Logging out emits `accountsChanged []`, as wallets do.
 
-**Gas-free actions (not live).** `eth_sendTransaction` is never made gas-free; ask for it by name with
+**Gas sponsorship (not live).** `eth_sendTransaction` is never sponsored; ask for a sponsored action by name with
 `hana.evm.sendSponsored` or EIP-5792 `wallet_sendCalls` (next section).
 
-### Gas-free actions (not live)
+<a id="gas-free-actions-not-live"></a>
+
+### Gas sponsorship (not live)
 
 SDK 0.5.0 or later. **Not live:** no environment offers it yet; Base Sepolia (84532) comes first. Until Journear turns
 it on, `hana.evm.sponsoredChains` is `[]`, `sponsorship()` answers `{ available: false, reason: 'chain_not_enabled' }`
 without asking anyone, and `sendSponsored()` refuses with `4100` (`chain_not_sponsored`) before any window. So you can
 ship the code now, behind `sponsorship()`, and keep your usual path for everyone else.
 
-**What it is.** A gas-free action runs contract calls from the user's own EVM address, and Journear pays the network
-fee (the "gas" a network charges to run a transaction). Your users need no ETH. The first action also sets the account
+**What it is.** A sponsored action runs contract calls from the user's own EVM address, and Journear pays the network
+fee (the "gas" a network charges to run a transaction). Your users need no ETH. You and Journear's staff call this
+gas sponsorship; your users never read "gas": Journear Passport's window and the SDK's `userMessage` say "free
+network fee" ("Network fee: Free. Sponsored by {your app's name}."). The first action also sets the account
 up for it, in the same approval: an EIP-7702 authorization (the account keeps its address and its key, and lets
 Journear's reviewed account helper contract run the batches the user approves).
 
@@ -1045,7 +1049,7 @@ and, the first time only, "One-time setup: this also turns on free network fees 
 Your address stays the same and you still approve every action." The details (folded) start with "Network fee: Free.
 Sponsored by {your app's name}.", then name the account helper, the relayer and the time the approval is valid until.
 
-**EIP-5792 with viem** (or wagmi): `sendCalls` on `hana.ethereum` sends the same gas-free action. Put the chain in
+**EIP-5792 with viem** (or wagmi): `sendCalls` on `hana.ethereum` sends the same sponsored action. Put the chain in
 `createHana({ evm: { chains } })`. `getCapabilities` shows `atomic: supported` on the chains Journear sponsors, and
 nothing elsewhere. It doesn't know about your app's list or today's budget: ask `hana.evm.sponsorship()` for that.
 
@@ -1075,8 +1079,8 @@ sendButton.addEventListener('click', () => {
   kept (`5720` if you send it twice); without one the SDK makes a random one.
 - `getCallsStatus` reads the receipt from your chain's RPC: `100` (pending) until it has it, then `200`, or `500` for a
   failed batch. `5730` for an id this page didn't send (it remembers the last 256).
-- Refused before any window: `5700` for a capability not marked `optional`, `5710` for a chain without gas-free
-  actions, `5740` for more than 8 calls; `-32602` for a call with ETH or a contract creation. A refusal after that is
+- Refused before any window: `5700` for a capability not marked `optional`, `5710` for a chain without gas
+  sponsorship, `5740` for more than 8 calls; `-32602` for a call with ETH or a contract creation. A refusal after that is
   the same error as `sendSponsored`'s, as a `ProviderRpcError` (numeric code; Journear Passport's string code, when it
   has one, in `data.code`). viem wraps it: `userText` in [section 13](#user-message) finds the sentence.
 
@@ -1871,9 +1875,9 @@ arrived, so it is safe to show as text; it holds no code and no chain words. A c
 wrong in Journear Passport. Try again." Match on `code` and `data.reason`, never on either text: both may be reworded.
 Libraries that wrap provider errors (viem, wagmi, ethers) may drop the field, and the SWK module's errors don't carry
 it: there, call `userMessageFor(code, data)` (exported by `@hana-id/web`) with the Journear Passport code (`data.code`,
-or SWK's `ext[0]`). A few reason names are both a NEAR relay's and a gas-free action's (`gas_too_high`,
+or SWK's `ext[0]`). A few reason names are both a NEAR relay's and a sponsored action's (`gas_too_high`,
 `app_budget_exhausted`, `timeout`, `relayer_busy`, …). The errors' own `userMessage` knows which; `userMessageFor`
-reads them as the gas-free action's unless you pass `'near_relay'` as its third argument. The NEAR relay's reasons,
+reads them as the sponsored action's unless you pass `'near_relay'` as its third argument. The NEAR relay's reasons,
 the NEAR refusals and a stopped sign-in have sentences of their own. A NEAR relay refusal that can come after its
 transaction went out (`relayer_unavailable`, `relayer_busy`, `near_unavailable`, `contract_rejected`, `timeout`,
 `near_error`) tells the user to check before trying again: a new signature could run the request twice. Every
@@ -1939,7 +1943,7 @@ window, not returned.
 | `rate_limited`, `app_suspended`, `origin_not_allowed`, `api_unavailable` | From Journear Passport's API (`rate_limited` also after 3 key exports of one account in an hour), or NEAR's RPC couldn't be read. `api_unavailable` with `data.reason`: `mainnet_demo_unconfirmed` (Journear's sandbox mainnet demo couldn't be confirmed on, section 12), `email_match_unavailable` (Journear Passport's email service didn't answer for a new Google user), `path_unconfirmed` (a linked sign-in method's wallet couldn't be confirmed on both of Journear Passport's NEAR providers), `path_disputed` (they disagree: report it), `share_unconfirmed` (a signature or an identity token: Journear Passport's API couldn't confirm for 3 minutes that this device is still signed in, "Signed out from Journear Passport" in section 4) | back off, or contact Journear |
 | `near_*` reasons, and the codes of `hana.near.relay` and `hana.near.activate` | NEAR: refusals before Journear Passport's window, and Journear Passport's relay (`4100`, `rate_limited` or `api_unavailable` with the API's code in `data.reason`) | the table in [section 8, NEAR](#near-errors) |
 | `storage_unavailable` | The Journear Passport popup couldn't store what its next step needs (blocked or full browser storage) | ask the user to allow site data, or try another browser |
-| `busy` | An export is already running, or a gas-free action of the same user (`data.reason: 'sponsor_in_flight'`) | wait |
+| `busy` | An export is already running, or a sponsored action of the same user (`data.reason: 'sponsor_in_flight'`) | wait |
 | `identity_unavailable` | `getIdentityToken()`: Journear Passport's API or signer is unavailable, or this browser couldn't keep the session (`data.reason: 'no_share'`) | retry later |
 | `session_ended` | `getIdentityToken()`: the Journear Passport session is over (`sessionExpired` fires too; `data.reason: 'signed_out'` when Journear Passport signed this device out), or ends within 30 s (`data.reason: 'session_ending'`) | treat as logged out |
 

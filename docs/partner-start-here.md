@@ -10,7 +10,7 @@ and every signature needs the user's Approve in a Journear Passport window. This
 > `hana.*`), error codes, event names and the addresses below keep their old names, so no code change is needed.
 > Match on error codes, never on messages.
 
-Last verified against code: 2026-11-18 (SDK 0.5.0: userMessage, gas-free actions, a stopped sign-in, email codes); 2026-11-17 (the Support ID under Show details).
+Last verified against code: 2026-11-23 (gas sponsorship named so); 2026-11-18 (SDK 0.5.0: userMessage, a stopped sign-in, email codes).
 
 > **This environment, `sandbox-dev`, is testnet only.** Its wallets are test wallets: until Journear Passport's address
 > freeze, Journear may still change how keys are made, which gives every user new addresses. Never keep real funds in them. A test
@@ -66,8 +66,8 @@ Your own Google client is an option for later (guide section 6).
 - **The sample app** (Vite, React, TypeScript), on `http://localhost:5173`: ask for that origin. Its Connect, Wallet,
   Sign and Identity token pages work with your test key. Its mainnet steps (the USDC trustline, the Sodax swap) use a
   demo exception only Journear's own app has, so with your key they stop at "Mainnet signing is off for this app".
-  With SDK 0.5.0 its Sign page also has "Check in with no network fee", shown only once Journear turns free network
-  fees on for your app.
+  With SDK 0.5.0 its Sign page also has "Check in with no network fee", shown only once Journear turns gas
+  sponsorship on for your app.
 
 ## Your first sign-in
 
@@ -93,10 +93,11 @@ is. The guide's section 2 ("Upgrading from 0.4.x to 0.5.0") has the steps.
 - **A stopped sign-in is not a failure.** `login()` rejects with `login_cancelled` when the user closes the window. With
   `data.reason: 'link_remove'`, the user chose to remove a sign-in method that was linked to someone's wallet: show
   `userMessage` as information (guide section 4, "When sign-in doesn't finish").
-- **Gas-free actions** (`hana.evm.sendSponsored`): Journear pays the network fee for contract calls your users approve.
-  Off by default, Base Sepolia only, and not live yet. Ask Journear to turn it on for your app and to add your
-  contract's functions. Check `hana.evm.sponsorship(84532)` before you show a "free" button (guide section 8).
-- **Batches with viem or wagmi** (`sendCalls`): on a network without gas-free actions they now fail with `5710`
+- **Gas sponsorship** (sponsored actions, `hana.evm.sendSponsored`): Journear pays the network fee for contract calls
+  your users approve. Off by default, Base Sepolia only, and not live yet. Ask Journear to turn gas sponsorship on for
+  your app and to add your contract's functions. Your users never read "gas": they see a free network fee. Check
+  `hana.evm.sponsorship(84532)` before you show a "free" button (guide section 8).
+- **Batches with viem or wagmi** (`sendCalls`): on a network without gas sponsorship they now fail with `5710`
   instead of `4200`, so viem's `experimental_fallback` no longer sends ordinary transactions instead. Check
   `getCapabilities` first.
 - **Journear Passport's windows** look the same in every app and you can't change them. The guide's section 8, "What

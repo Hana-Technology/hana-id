@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-19 (branch `feat/near-reviewed-calls`, from `next`, not merged, not deployed: 1.6a, the reviewed NEAR contracts checked on chain before the pages deploy, and 3.12's stamps approval reads as reviewed, D885); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: 3.12's stamps check and 5.5's quoted heading after D884); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-23 (branch `feat/demo-plain-wording-2`, from `next`, not merged, not deployed: 1.1a, the NEAR relay's limits back with this deploy, D793's note; 1.6a run once on 2026-11-23; phase 4 named gas sponsorship); 2026-11-19 (branch `feat/near-reviewed-calls`, from `next`, not merged, not deployed: 1.6a, the reviewed NEAR contracts checked on chain before the pages deploy, and 3.12's stamps approval reads as reviewed, D885); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: 3.12's stamps check and 5.5's quoted heading after D884); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -17,7 +17,8 @@ stop and ask.
 (D872): the first deploy of `next` happens on or after the day Neon's monthly allowance resets (expected 2026-12-01;
 confirm the date in Neon's console), not in the last days of November, and the ledger migrations are not applied
 ahead of time. Both public demos (the stamps site and the hosted demo) must keep working exactly as they are until the
-end of 2026-11-25 in any case. The NEAR relay's limits go back on 2026-11-26 as a separate step, without Neon (5.3). Phase 0 changes nothing of sandbox-dev and can be done any
+end of 2026-11-25 in any case. The NEAR relay's limits go back with this deploy, not as a separate step (your decision of
+2026-11-23, D793): 1.1a puts the values back on `next`, phase 3 deploys them. Phase 0 changes nothing of sandbox-dev and can be done any
 time. Phases 1 to 5 wait for you to say "go ahead deploy".
 
 ## Overview
@@ -25,11 +26,11 @@ time. Phases 1 to 5 wait for you to say "go ahead deploy".
 | Phase | What | When | Time | Who |
 |---|---|---|---|---|
 | 0 | Get ready: a deployer key, test ETH, the deploy plan, a free read endpoint, GitHub settings | any time before the day | 1–2 h of your time, spread over a few days (faucets give a little a day) | **You** |
-| 1 | Merge `next` into `develop`, update the deploy checkout, run every check, write down what runs now, take a restore point | the day: on or after Neon's reset (expected 2026-12-01) | about 1 h | the assistant merges and checks; **you** say go and take the restore point |
+| 1 | The NEAR relay's limits back on `next` (1.1a), merge `next` into `develop`, update the deploy checkout, run every check, write down what runs now, take a restore point | the day: on or after Neon's reset (expected 2026-12-01) | about 1 h | the assistant merges and checks; **you** say go and take the restore point |
 | 2 | Database changes: two D1 migrations, two ledger migrations | the same day, right after phase 1 | 15 min | **You** |
 | 3 | Deploy the new code, sponsorship still off; check both demos | the same day, right after phase 2 | about 1 h | the assistant deploys on "go ahead deploy"; **you** check the sites |
-| 4 | Switch gas-free actions (EVM sponsorship) on: contracts, the relayer key, secrets, deploy | a later day: **recommended only once the admin portal's sponsorship page and a way to try a gas-free action on a real site exist** (neither does yet) | half a day, with a review in the middle | **you**: keys, passwords, funding, secrets, the hand test; the assistant: the PR, the deploy, the checks |
-| 5 | Afterwards: CI on, the email budget, the docs, a week of watching; the NEAR relay's limits back (5.3) is its own step from 2026-11-26, before the deploy | the week after the deploy; 5.3 on 2026-11-26, to plan with you | 30–60 min, then a look each day | **you**: CI and the email budget; the assistant: the PRs and the deploy |
+| 4 | Switch EVM gas sponsorship (gas-free actions) on: contracts, the relayer key, secrets, deploy | a later day: **recommended only once the admin portal's sponsorship page and a way to try a gas-free action on a real site exist** (neither does yet) | half a day, with a review in the middle | **you**: keys, passwords, funding, secrets, the hand test; the assistant: the PR, the deploy, the checks |
+| 5 | Afterwards: CI on, the email budget, the docs, a week of watching | the week after the deploy | 30–60 min, then a look each day | **you**: CI and the email budget; the assistant: the PRs and the deploy |
 
 The rule for who does what: anything with a password, a private key, a faucet, a third-party dashboard, a remote
 database migration, a secret upload or a contract deploy is **yours** (the assistant never handles those). Merges, local checks, Worker
@@ -185,9 +186,8 @@ If it is missing or not $0: stop and ask before CI goes on (phase 5).
 
 ### 0.9 Decide two things for 2026-11-26 (optional now)
 
-- the NEAR relay's limits go back to their normal values on 2026-11-26 (5.3; the values are fixed by D793). The
-  deploy now waits for Neon's reset (expected 2026-12-01), so this can't ride along with phase 3: it is its own small
-  deploy of the API, planned with you (5.3);
+- the NEAR relay's limits: **decided 2026-11-23** (D793): they go back with this deploy, not in a separate small
+  deploy on 2026-11-26 (1.1a; the values are fixed by D793). Until then sandbox-dev keeps the judging-week values;
 - the email budget: keep it, or lower it (5.4 has the choices); it can ride along with phase 3.
 
 Tell the assistant your choice; it prepares the PR. Nothing changes until it is merged and deployed.
@@ -205,6 +205,25 @@ passes on the merged result, anything else you want in this deploy: the PR of 0.
 later PR you name.
 
 You see: on GitHub, no open PR into `next` that you expected to ship.
+
+### 1.1a The NEAR relay's limits back to normal (D793; with this deploy)
+
+Your decision of 2026-11-23: the judging week's NEAR relay limits go back with this deploy of `next`, not as a
+separate deploy. Before 1.2, the assistant opens a PR into `next` that changes the four `near.relay` values in
+`envs/sandbox-dev.json`, with the tests, docs and playbooks that quote the judging-week values, and merges it after
+`pnpm verify` passes:
+
+| Setting | Judging week | Back to |
+|---|---|---|
+| `appDailyBudgetNear` | 3 | 1 |
+| `dailyBudgetNear` | 6 | 5 |
+| `activationsPerAppPerDay` | 300 | 200 |
+| `lowBalanceNear` | 9 | 2 |
+
+Phase 3's API deploy (`gen`, then `deploy`) applies them. The relay account then needs at least 3 + 2 + 5 = 10 NEAR
+(`inFlightNear` + `lowBalanceNear` + `dailyBudgetNear`); the System status tile turns amber below 2.
+
+You see: on GitHub, that PR merged into `next`, and `envs/sandbox-dev.json` on `next` with the four values on the right.
 
 ### 1.2 Merge `next` into `develop` (the assistant opens it, you say go)
 
@@ -289,7 +308,9 @@ corepack pnpm --filter @hana-id/scripts run check-reviewed-near sandbox-dev
 
 You see: the time, then for each contract and each endpoint "code_hash … (block …), 0 access keys (block …), no global
 contract", and last `OK: sandbox-dev's reviewed NEAR contracts are locked and run the reviewed code on both endpoints`.
-Copy the whole output into D885 ("Last on-chain check") and `docs/operations.md` "Reviewed NEAR calls: adding one"
+Run once already, on 2026-11-23 from `next` @ 0c47747b (passed; the output is in D885 and the runbook): that doesn't
+count for the deploy, so run it again here, on the day. Copy the whole output into D885 ("Last on-chain check") and
+`docs/operations.md` "Reviewed NEAR calls: adding one"
 (same heading), in the branch that records the deploy. Any `FAIL` line: stop, don't deploy the pages; ask. (The
 same check is `deploy-check sandbox-dev --only near-reviewed`. 1.5's `verify --full` has already rebuilt both
 contracts and compared their code hashes with the records, or said it skipped for want of cargo-near 0.22.0.)
@@ -323,7 +344,7 @@ near account view-account-summary hana-id-stamps-dev1.testnet network-config tes
 ```
 
 You see: each account's balance. Write them down. The NEAR relay should hold at least 18 NEAR while the judging limits
-are in place (10 once they are reverted, 5.3). Also open the admin portal's **System status** page: the **NEAR relay**
+are in place (10 once phase 3 deploys 1.1a's values). Also open the admin portal's **System status** page: the **NEAR relay**
 tile should read On.
 
 ### 1.10 Hand check of both demos, before
@@ -545,7 +566,7 @@ If a demo is broken after the deploy and you can't wait: "Rollback", phase 3.
 Then the assistant updates [`operations.md`](operations.md) "What sandbox-dev runs" with the commit, the migrations
 and your hand check (docs go with every deploy).
 
-## Phase 4: switching gas-free actions (sponsorship) on
+## Phase 4: switching gas sponsorship on (gas-free actions)
 
 **Recommendation: wait with this phase** until two things exist: the admin portal's sponsorship page (until then,
 if the relayer stops itself, only an engineer can see why and restart it) and a way to try a gas-free action on a real
@@ -799,35 +820,11 @@ or a spending limit: on the $0 Actions budget (0.8), untick "stop usage", keep t
 assistant (it records it in D857).
 To switch CI off again: `gh workflow disable CI -R Hana-Technology/hana-id`.
 
-### 5.3 The NEAR relay's limits back to normal (on 2026-11-26; D793)
+### 5.3 The NEAR relay's limits back to normal (D793): done with the deploy
 
-**To plan with you: this comes before the deploy now** (the deploy waits for Neon's reset, 2026-12-01). It needs no
-Neon and no migration: only the **API Worker**, deployed with the four `near.relay` values below changed in
-`envs/sandbox-dev.json`, **from the commit the API runs today** (its `GET /v1/health` `build`), not from `next`: `next`'s
-API needs D1 migrations 0022 and 0023 first and would differ from every other piece. Which branch carries the change
-(a branch from that commit, or `develop` if it still matches what runs) and when, you decide with the assistant; the
-pieces then show two commits on `deploy-check` until the first deploy of `next`. The change, on that branch,
-`near.relay`:
-
-| Setting | Judging week | Back to |
-|---|---|---|
-| `appDailyBudgetNear` | 3 | 1 |
-| `dailyBudgetNear` | 6 | 5 |
-| `activationsPerAppPerDay` | 300 | 200 |
-| `lowBalanceNear` | 9 | 2 |
-
-It also updates the tests, docs and playbooks that quote the judging-week values. After you merge it, the assistant
-deploys the API on "go ahead deploy":
-
-```sh
-corepack pnpm --filter @hana-id/api gen sandbox-dev
-corepack pnpm --filter @hana-id/api run deploy
-corepack pnpm --filter @hana-id/scripts run deploy-check sandbox-dev --only api
-```
-
-You see: `OK: every piece of sandbox-dev runs <commit> (this checkout); not read: …`. A full `deploy-check` then
-fails until the other pieces are redeployed from the same commit (expected: one commit per env). The relay account
-then needs at least 3 + 2 + 5 = 10 NEAR; the System status tile turns amber below 2.
+Decided 2026-11-23: not a separate step any more. 1.1a put the four `near.relay` values back on `next` and phase 3
+deployed them with the API. Check once, after phase 3: the admin portal's **System status** page, **NEAR relay** tile
+On, and the relay account holding at least 10 NEAR (1.9's command).
 
 ### 5.4 Review the email budget (you decide; D793)
 

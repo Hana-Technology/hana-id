@@ -17389,7 +17389,8 @@ no screen, vault, API, console or manifest reads it, and core's entry points don
 ### D892. Partners describe their own calls in structured labels; piece 1 is the format, the text rules and the matcher
 - Date 2026-11-23 · Status: the direction **decided by the founder 2026-11-23**, who adopted all 12 recommendations of
   the partner-labels proposal ("let's go with your recommendations on this"); this piece's schema, rules, limits and
-  codes decided while building, **to confirm**; the verb list **to confirm by the founder** · Built:
+  codes decided while building, **to confirm**; the verb list **decided by the founder 2026-11-23** ("Keep the jargon
+  verbs"); human review decided 2026-11-23 (D894) · Built:
   `packages/core/src/partner-labels/` (`words.ts` `PARTNER_VERBS`, `PARTNER_CONNECTORS`, `partnerAttribution`;
   `text-rules.ts` `partnerTextProblem`, `PARTNER_TEXT_MAX`, `PARTNER_JARGON`; `schema.ts` `parseLabelDocument`,
   `LABEL_LIMITS`, `LABEL_SCHEMA`, `isNearCodeHash`, `isWasmHash`; `match.ts` `labelRequestOf`, `matchLabel`,
@@ -17515,15 +17516,15 @@ Each rule, with its reason; the first rule a text breaks is its answer, with a s
   combining runs, bidi and zero-width characters, full-width and mixed-script text. Free prose isn't possible: the
   verb and the joining words are Journear's, and the object is one short phrase.
 
-#### The verb list (to confirm by the founder)
+#### The verb list (decided by the founder 2026-11-23: "Keep the jargon verbs", see the open list below)
 - `PARTNER_VERBS` (31, after PR 114's review): add, bid, book, borrow, buy, cancel, check in, collect, create,
   deposit, donate, join, leave, lend, list, pay, redeem, register, remove, renew, repay, sell, send, sign up, stake,
   subscribe, swap, unstake, unsubscribe, vote, withdraw. **Soft verbs** (`SOFT_VERBS`, say no value moves; allowed
   only when the request can move none: a NEAR deposit of exactly 0, no amount field, not a payment): add, book,
   cancel, check in, collect, create, join, leave, list, redeem, register, remove, renew, sign up, subscribe,
   unsubscribe, vote. The others say value moves (pay, send, buy, sell, donate, deposit, bid, stake, unstake, lend,
-  borrow, repay, swap, withdraw). **stake, unstake, swap, lend, borrow, repay**: jargon for non-crypto people, kept
-  for now, **founder to confirm**.
+  borrow, repay, swap, withdraw). **stake, unstake, swap, lend, borrow, repay**: jargon for non-crypto people, **kept,
+  decided by the founder 2026-11-23** ("Keep the jargon verbs").
 - Left out, with the reason: **approve** (the window's own button is "Approve", and token approvals are a warned kind
   of request: "{App} says: approve …" above an Approve button reads as Journear asking), **burn** (on the plain-words
   list), **mint** (crypto jargon; "create" says it), **bridge** (jargon, and its effect is on another network the
@@ -17721,11 +17722,14 @@ while building, **to confirm**:
   value inside a partner sentence, even one Journear formatted. The consent screen's "checked by Journear ({decoder})"
   is the one use that contradicts it (it vouches for Journear's decoder); proposed rewording "read by Journear
   ({decoder})", for a later change.
-- **Open, with the founder (not built)**: (a) whether a person at Journear reviews each new or changed object phrase,
-  enumeration label and address name during the 24-hour delay, with these rules as a first filter (the reviewer's
-  recommendation; it adds a staff step the proposal said wasn't needed), or whether object phrases come from a fixed
-  vocabulary instead; (b) the final verb list; (c) whether to plan the single-transfer sub-invocation rule for
-  Soroban (item 15).
+- **Open, with the founder (not built)**: (c) whether to plan the single-transfer sub-invocation rule for Soroban (item
+  15). Decided since: (a) human review, **decided by the founder 2026-11-23** ("go with 1": a staff veto during the
+  wait, no required review, with a required-review switch per org and for everyone; D894, which records the accepted
+  risk); (b) the verb list, **decided by the founder 2026-11-23**, asked "Partner label verbs: keep 'stake', 'unstake',
+  'swap', 'lend', 'borrow' and 'repay'?", answering "Keep the jargon verbs": the list as merged in PR 114 stands (31
+  verbs; claim, update and transfer dropped; soft verbs only where no value can move; "at least" and "at most"
+  removed). The reason given to the founder: they are the honest words for what those apps do, and dropping them would
+  push partners to vaguer verbs.
 - **Follow-up (from PR 112's review, recorded in D891 too)**: the same idea now has three implementations that will
   drift: the merged D891 rules in `packages/console-core/src/names.ts` (its `nameSkeleton` with core's confusables
   merged in and i/l read as one, `canon` for rn/m and vv/w, `wordsIn`, `APP_NAME_CLAIM_STEMS` and
@@ -17741,3 +17745,183 @@ while building, **to confirm**:
   `wrap.testnet`, `nft_approve` labelled "join the club", a label on the reviewed stamps contract, a withdraw that
   hides the beneficiary, the three-phrase sentence; every reserved method; `values` and their property test; the
   network, code-hash, `at`, `-0`, empty-argument and classification cases; dormancy).
+
+## Partner labels, piece 2 of 5: storage, the guarded change, the staff veto, the switches, delivery (branch `feat/partner-labels-storage`), 2026-11-23
+
+From `next` @ e575d586; not merged, not deployed; migrations 0025 (API) and 0004 (console) applied nowhere. Nothing in a
+deployed env changes: every proposal is refused and `GET /v1/app` carries nothing unless the manifest turns
+`partnerLabels.enabled` on, which no checked-in manifest does (only the local e2e stack's lane runs with it on).
+
+### D894. Partner labels live in D1 as guarded changes of their own table, with a staff veto and no required review; delivered only by a fresh `GET /v1/app`, nothing rendered yet
+- Date 2026-11-23 · Status: the staff veto (option 1) **decided by the founder 2026-11-23** ("go with 1"); the rest of
+  the design decided while building, within D892's adopted recommendations, **to confirm** (the list at the end) ·
+  Built: `apps/api/migrations/0025_partner_labels.sql`; `apps/api/src/labels/` (`sql.ts` the predicates, `store.ts`
+  views and the plan read, `document.ts` parse, network rule, preview and diff, `propose.ts` ConsoleRpc's list,
+  preview, propose and remove, `lifecycle.ts` notices, ack and cancels, `staff.ts` the feed, Block, Allow and the
+  switches, `cron.ts` activation and lapses, `drift.ts`, `deliver.ts`); `rpc/console.ts` and `rpc/admin.ts` (the new
+  methods; `cancelChange` / `cancelChangeByLink` take an `lc_` id); `handlers.ts` (`partnerLabels` in `GET /v1/app`);
+  `index.ts` (the hourly job); `env.ts` `PARTNER_LABELS`; `scripts/gen-wrangler.ts`; `packages/env` (`partnerLabels`,
+  `partnerLabelsProblem`); `packages/console-core/src/labels.ts` (inputs, views, `LABEL_STORE_LIMITS`), `layouts.ts`
+  (`labelChangeDigest`, domain `hana-id/label-change/v1`), `ids.ts` (`lc_`, `pl_`), `types.ts` (two step-up kinds,
+  three security event kinds, the RpcCode `label_invalid`), `rpc.ts` (`changeIdInput` takes `gc_` or `lc_`),
+  `audit-words.ts`, `staff.ts` (two org-less staff actions); `packages/core` (the `./partner-labels` subpath,
+  `previewLabelDocument`, `LABEL_STELLAR_NETWORKS`, `AppConfig.partnerLabels`); `packages/web/src/vault/partner-labels.ts`
+  (the vault's type and pure check, called by nothing); `apps/console` (`actions.ts` kinds `labels.set` and
+  `labels.remove`, `audit.ts`, migration `0004_label_step_ups.sql`); `apps/admin` (the staff screen, its tools, the
+  notices, the blocked mail, the status tile: below); `apps/e2e` (the lane's labels and the hand-test scenarios).
+- **The founder's decision (option 1, "Staff veto, no required review").** Asked whether a person at Journear must review
+  each label change during its 24-hour wait, the founder chose, in their words, "go with 1", of: "1. Staff veto, no
+  required review … Each label change appears in the staff feed during its 24-hour wait, showing exactly what users
+  would see. If nobody objects, it goes live. If someone does, one press blocks it. … It can be tightened later with no
+  rebuild. If a partner abuses it, required review can be switched on for that partner or for everyone." Their reason:
+  "having to review everything is a burden on our time", and other providers (Privy and others) let apps write free text
+  with no review at all. **Accepted risk:** a mildly misleading phrase that passes piece 1's text rules can go live if
+  nobody looks during the wait. What bounds it: the phrase is one short object phrase in a sentence Journear builds,
+  always attributed ("{App} says: …", "These are {App}'s words. Journear hasn't checked them.", piece 3); the real
+  amounts, recipients and every warning still show beside it; the org's security contacts get the notice with a cancel
+  link; staff get a security event when a change is proposed and when it goes live; staff can block it at any time,
+  switch the org's labels off, or require review for that org or for everyone, all without a deploy.
+
+#### Where it lives (option B of the proposal)
+- **`partner_labels`**: an entry, one document's place, owned by one org in one scope (so one environment, D51), never
+  moved (trigger). Removal (`removed_at`) is final; staff's entry switch is `off_at` (+ `off_version`).
+- **`label_changes`**: each version of an entry's document: the TEXT exactly as proposed, its schema version
+  (`journear-labels/1`), its sha256 and size, what it describes (`context_key`), the apps it is attached to (1–8, each a
+  live app of that scope and org, checked by trigger at insert), the version in force when it was proposed
+  (`previous_id`: the diff and piece 3's "changed on {date}"), who proposed it (the member and the API-verified step-up
+  `sub`) and the lifecycle columns. What a version says and where it applies are written once (trigger); rows are kept
+  60 months (trigger, as `app_changes`). No column claims the contract's code was checked: reading the code hash is
+  piece 5, and the matcher still requires it equal at match time.
+- **`label_controls`** (`'*'` or an org: `labels_off`, `review_required`, `version`) and **`label_control_log`**
+  (append-only: every switch of every target, entries included, with the staffer and the note).
+- `scopes.labels_version`: bumped by every label write in the scope (proposal, removal, cancel, block, allow, lapse): the
+  compare-and-swap version and part of the step-up's nonce. `security_events` gains `label_proposed`, `label_blocked`,
+  `label_live` (rebuilt as 0023 and 0024 did). Console `pending_actions.kind` gains `labels.set`, `labels.remove`
+  (console migration 0004, the table rebuilt; rows live 5 minutes).
+- Why a table of its own and not `guarded_changes`: that table's `app_id` is NOT NULL and its kinds are a CHECK, while a
+  label version is on a scope and several apps; widening it means rebuilding the table every guarded change, origin row
+  and drift query reads. The lifecycle is the same one, written for the new table: the same commit-point writes
+  (`app_changes` first, `changes/cas.ts`), the same step-up check (`changes/step-up.ts`), the same notice, ack, cancel
+  link, 7-day lapse and hourly job. No change to the contract, to how owners are proven (the API's step-up check,
+  unchanged, with a new nonce layout for the new change) or to the vault's trust model.
+
+#### States (a version's `state`, computed from its row, the clock and the switches)
+- `proposed` (no notice yet) → `announced` (the admin Worker's notice was accepted; in force at `active_from` = the ack
+  + `appChangeDelayMs`, 24 h in production, 60 s on sandbox-dev; never a waiver) → `in_force`; or, when review is
+  required for its org or for everyone and no staff member allowed it, `waiting_review` once its time came.
+- Ends: `cancelled` (an owner, or the emailed link, while it waits), `lapsed` (not announced within 7 days of its
+  proposal, or still held for review 7 days after its time), `blocked` (staff, before or after it took effect),
+  `replaced` (a newer version of the entry took effect; the hourly job then ends it), `removed` (the owner removed the
+  entry). Switched off is not a state of a version: an entry is served only while no switch (its own, its org's,
+  everyone's) is off; the view says which (`off`) and whether it is served now (`served`).
+- In force (`labels/sql.ts` IN_FORCE): recorded `active` by the hourly job, or pending, announced, its time passed and
+  no review hold. An entry's document is its newest version in force. Nothing waits for the hourly job: delivery uses the
+  predicate (as origins and policies do, D701).
+
+#### Who can do what
+- **Propose** (`ConsoleRpc.proposeLabels`, through the console's step-up kind `labels.set`; no screen yet, piece 4):
+  exactly who may propose an origin or a policy today, an on-chain `Owner::Oidc` of the scope, with a Google step-up the
+  API verifies itself, whose nonce is `labelChangeDigest` over the signer, the scope, the entry (`""` for a new one), the
+  document's sha256, the sorted apps and the scope's `labels_version`. Refused in order (writing nothing, the token not
+  used): the switch off (`env_mismatch`); the parser's and text rules' problems (`label_invalid`, each "code at path:
+  message", the parser's stable codes and plain messages, at most 20); a network other than the scope's environment's
+  (`label_invalid`, `wrong_environment`: test scopes describe the NEAR test network or the Stellar test network, live
+  scopes the main ones); piece 1's refusals of a context Journear reads itself (known tokens, reviewed contracts,
+  standard methods: `journear_reads_this`, `reserved_method`); a scope not of the org; an entry not of the scope, removed,
+  or switched off by staff (`forbidden`: ask Journear first); an app not a live app of the scope in the org, or listed
+  twice; a version already waiting for the entry; another live entry of the scope describing the same contract; the
+  limits (below); the version, the nonce, the owner, the token's single use. The same document on the same apps as the
+  version in force is a no-op (`noChange`, nothing written, the token not used).
+- **Preview** (`ConsoleRpc.previewLabels`): every check above but the step-up and the write; answers the preview (for
+  each format: the line "{App} says: …", the sentence's parts marked whose words they are, the rows; with example
+  values, built by the matcher's own renderer, `previewLabelDocument`), the sha256, the size and the version. The
+  console's `labels.set` builds the step-up from it and shows it on the confirmation page.
+- **Remove** (`ConsoleRpc.removeLabels`, step-up kind `labels.remove`): the same proof (the nonce over the entry and the
+  version, no document), immediate: the version in force ends, a waiting one is cancelled; it only ever returns the window
+  to the plain view.
+- **Cancel** a waiting version: an owner (`ConsoleRpc.cancelChange`, no step-up, as for guarded changes), the emailed link
+  (`cancelChangeByLink`, its token's hash), staff (`AdminRpc.cancelChange`).
+- **Announce**: only the admin Worker's notice cron (`AdminRpc.labelNotices` → email the security alias and every
+  security contact, each with the preview, the diff and the cancel link → `AdminRpc.ackLabelNotice`, `system` actor only,
+  after every send was accepted). No staff expedite exists for labels.
+- **Staff** (`AdminRpc`, through the admin portal; each tool recorded in the staff audit log first, no row no action, and
+  applied only while the change is as the page showed it: the scope's `labels_version` and the state): **Block this
+  change** (a note of 10–300 characters, required; any version proposed, announced, held or in force; one in force stops
+  being served at once and any older version of the entry still in force ends with it, so a block never brings back an
+  earlier document; final: the partner proposes again, another full wait); **Allow** (only while review is required and
+  the version isn't allowed yet; it lifts the hold and nothing else: its own time still applies); the switches (below).
+  Staff never propose or edit a document, and nothing staff do can make a version take effect before its time.
+- **Required review** (`label_controls.review_required`, for one org or for everyone, default off): a version whose time
+  has come waits for Allow however long, until it lapses 7 days after its time (decided: the partner then proposes again;
+  a held change neither goes live by itself nor waits forever). Switching review off lets a held version whose time has
+  passed take effect at once (it went through the notice and the delay).
+- **Kill switches** (`AdminRpc.labelControl`): one entry, one org's labels, every partner label: off at once (the next
+  `GET /v1/app` read), and back on (a separate act with its own note) only re-serves versions already in force through
+  the guarded path; a switch never makes a waiting version take effect. Each switch writes `label_control_log` and, for an
+  org's or an entry's, the org's `app_changes` (the partner sees it in its audit and the feed's digest).
+
+#### The ledger, the feed and drift
+- `app_changes` kinds: `labels.proposed`, `change.announced` and `change.cancelled` with detail `kind: 'label_set'` (the
+  cron's lapses carry `reason: not_announced | not_reviewed`), `labels.activated`, `labels.blocked` (with the note and
+  `wasLive`), `labels.allowed`, `labels.removed`, `labels.switched_off` / `switched_on`, `labels.review_on` / `review_off`
+  (org-level). Security events: `label_proposed` (at the proposal), `label_blocked`, `label_live` (when the hourly job
+  records it in force), each once per version, no document text; the feed emails them to the security alias and the org's
+  contacts.
+- **Drift** (`labels/drift.ts`, hourly beside `changes/drift.ts`): a `drift` event (detail `what: partner_label` and a
+  `finding`) for a version in force without the `labels.proposed` row of its exact sha256 and apps or without an
+  announcement no later than its `active_from` (`unannounced`: a bare D1 write that skipped the notice or the delay); a
+  version in force whose text no longer hashes to its sha256 (`text_changed`; the trigger refuses an in-place edit, so
+  this needs the trigger dropped too); an `allowed_at` without a staff `labels.allowed` row (`not_allowed`); a blocked
+  version no longer blocked (`unblocked`); a removed entry back (`not_removed`); a switch that isn't what its last log
+  row set (`control`). Once per finding. **Residual, the same as today's for origins and policies** (docs/security.md):
+  someone who can write D1 freely can also forge the ledger rows and the log, and then drift sees nothing.
+
+#### Delivery (`GET /v1/app`) and the vault
+- Only on the vault's own read (request `Origin` = `VAULT_ORIGIN`) and only with `PARTNER_LABELS = "on"`:
+  `partnerLabels: [{id, changeId, version, sha256, text, effectiveSince, previousEffectiveSince}]`, the requesting app's
+  served documents: the entry's newest version in force, the app among its attached apps, the entry's org and scope the
+  app's own NOW (a scope moved to another org serves nothing of the old org's), not removed, no switch off, nothing
+  proposed, announced, held, blocked, lapsed or cancelled. At most 16 entries; the org's limits keep it under 32 KiB of
+  documents per app. Read from D1 on every request (no isolate cache), answered `cache-control: no-store` as every API
+  answer; a failed read leaves the field out (no labels), never fails the config. Switch off: no field at all, as before.
+- The vault: `AppConfig.partnerLabels` is typed unknown; `verifyDeliveredLabels` (pure) re-hashes each text, requires the
+  schema version this build knows, re-parses with the vault's own copy of core's parser and text rules, requires the
+  env's network, drops an entry named twice, a malformed one and anything over the cap; a dropped document means the
+  plain view. NOTHING CALLS IT YET: piece 3 renders labels and must hold each to a read under a freshness window like
+  `POLICY_FRESH_MS` (D62), so a switch or a block reaches users within seconds and a failed read means no labels.
+- `@hana-id/core/partner-labels` is imported by exactly two sources outside core, the API's `labels/document.ts` and the
+  vault's helper (core's dormancy test now asserts exactly that, and that core's root entry still doesn't export it).
+
+#### Limits (`LABEL_STORE_LIMITS`, to confirm)
+- A document 16 KiB (core's `LABEL_LIMITS`); attached to at most 8 apps; an org holds at most 16 entries (not removed);
+  an org's documents in force or waiting at most 64 KiB together; the documents attached to one app at most 32 KiB
+  together (what its `GET /v1/app` can carry); at most 10 proposals per org in a rolling 24 hours; one waiting version
+  per entry; one live entry per contract per scope. A staff note 10–300 characters, one line. The lapses: 7 days. The
+  staff feed: every waiting version, and those proposed or decided in the last 14 days, at most 200. Drift: at most 100
+  findings per check and run, 500 versions re-hashed per run. ConsoleRpc costs (hot-DB statements): list 2, preview 1,
+  propose 7, remove 6.
+
+#### What each attacker can and cannot do
+| Attacker | Can | Cannot |
+|---|---|---|
+| A hijacked partner console account (a member's session; or an owner's Google account too) | With an owner's Google account: propose labels, which reach users only after the notice to the org's security contacts (with a cancel link), the full delay and the staff feed's wait, in the partner's voice; remove labels (back to the plain view). With a session alone: cancel a waiting change, preview, list. | Propose or remove without an on-chain owner's step-up for exactly that change (the API verifies the token itself); act before the notice and the delay; speak as Journear or claim safety (piece 1's text rules); change amounts or recipients (the window shows the request's own values, piece 3); remove or lower a warning (D892 recommendation 4); reach another org's apps (entries are the org's, per scope, checked at write and at every read); survive a staff block or switch. |
+| A hijacked partner page (XSS, a bad dependency) | Send forged requests, as today. | Change any label (they come only from D1 through the console's guarded path); make the vault read labels other than the API's for its own app; forged requests match nothing, or fail a declared constraint (piece 1's matcher). |
+| A D1 compromise (or a buggy script with D1 write) | Write any document and mark it in force, skipping the notice, the delay and the staff veto; clear a block or a switch. | Escape drift detection without also forging `app_changes` and `label_control_log` rows (the same residual as origins and policies today); get past the vault's own check (its hash and its own parser: only a document the text rules accept can ever be shown); make the window drop a warning or show values that aren't the request's. |
+| A malicious staff member | Block changes and switch labels off (a denial: users see the plain view; the partner is told of a block by email, an org's or entry's switch is in its audit); Allow a held change; turn a switch back on. Every act is in the staff audit log first, with the staffer and the note, and the API's ledger. | Propose, edit or expedite a document (no such staff method exists); make a version take effect before its time or without its notice; make a switch-on serve a version that didn't pass the guarded path. |
+
+#### Rejected
+- Reusing `guarded_changes` (above). Storing the parsed document (the server stores the text and the schema version, and
+  every reader re-parses with its own parser, D892's versioning rule). Required review by default (the founder's option
+  1). A staff proposal or expedite path for labels (nothing in the threat model needs it; staff only ever turn labels
+  off). An "Unblock" for a blocked change (blocked is final; the partner proposes again and waits again). A waiver
+  (`no_session`, `loopback`) for label changes. Serving labels on every `GET /v1/app` read, or from the isolate cache
+  (only the vault needs them; a switch must reach the next read).
+- Address impact: none (nothing signed, decoded or derived changes; nothing is rendered yet).
+
+#### To confirm (with the founder)
+1. The limits above. 2. The names: staff "partner labels", partners "request labels" (the console, the emails and the
+partner's audit titles). 3. Lapsing a change held for review 7 days after its time. 4. A proposal stays allowed while
+the org's or everyone's switch is off (only an entry switched off refuses one). 5. Block is final (no unblock).
+6. The staff- and partner-facing sentences, listed in the next item. 7. The audit titles and security event titles in
+`packages/console-core/src/audit-words.ts` ("Request labels proposed", "Request labels blocked by Journear", "Request
+labels now shown to users", "Request labels proposed: shown to users after the wait unless Journear blocks them", …).

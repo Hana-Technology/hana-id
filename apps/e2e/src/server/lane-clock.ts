@@ -4,10 +4,12 @@
 // time; only what the code reads as "now" moves. Installed once, before any product module reads the time.
 const RealDate = Date;
 let offsetMs = 0;
+/** The real time the lane's clock was stopped at, or null while it runs. */
+let frozenAt: number | null = null;
 let installed = false;
 
-/** The lane's "now" (real time plus the offset). */
-export const laneNow = (): number => RealDate.now() + offsetMs;
+/** The lane's "now" (real time, or the real time it was stopped at, plus the offset). */
+export const laneNow = (): number => (frozenAt ?? RealDate.now()) + offsetMs;
 /** The real time (what the rest of the stack reads), whatever the lane's offset. */
 export const realNow = (): number => RealDate.now();
 
@@ -18,9 +20,22 @@ export function advanceLaneClock(ms: number): number {
   return offsetMs;
 }
 
+/**
+ * Stops the lane's clock where it is (`true`), so a test can step it to the millisecond with `advanceLaneClock` (D894:
+ * a label is in force at its `active_from`, not a millisecond before), or starts it again (`false`), at real time plus
+ * the offset: it jumps over the time it stood still, so it never runs backwards. Timers keep real time either way.
+ */
+export function freezeLaneClock(on: boolean): void {
+  if (on && frozenAt === null) frozenAt = RealDate.now();
+  else if (!on) frozenAt = null;
+}
+
+export const laneClockFrozen = (): boolean => frozenAt !== null;
+
 /** Back to real time (the unit tests; a lane's clock only moves forward). */
 export function resetLaneClock(): void {
   offsetMs = 0;
+  frozenAt = null;
 }
 
 export const laneClockOffset = (): number => offsetMs;

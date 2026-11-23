@@ -4,7 +4,8 @@
 //   API      apps/api's real AdminRpc entrypoint, on the lane's own D1 (apps/api's migrations) and EVM gas sponsorship
 //            with the REAL relayer object (EvmRelayer, in memory) on chain 31337 (lane-evm.ts), signing with a key
 //            made when the lane starts. The relayer is the lane's alone: a test may pause it without touching the
-//            relayer the rest of the suite sends through (api.ts), or another browser's lane.
+//            relayer the rest of the suite sends through (api.ts), or another browser's lane. Partner labels (D894) are
+//            on in this API only, with a partner org whose on-chain owner proposes them (lane-labels.ts).
 //   CONSOLE  apps/console's real StaffRpc entrypoint on its own D1 (apps/console's migrations): the audit log.
 //   ISSUER   the stack's email issuer's real DirectoryRpc, in the main thread, through admin-lane.ts's bridge: it
 //            verifies the forwarded staff token itself.
@@ -31,8 +32,12 @@
 // never by the Worker):
 //   GET  /__e2e/lane/state                 the relayer's slots and pause, the chain's counts, the lane's clock
 //   POST /__e2e/lane/scenario {name}       puts the relayer in a state (SCENARIOS below); answers the state
-//   POST /__e2e/lane/clock {advanceMs, keepStatusCache?}  moves the lane's clock forward (lane-clock.ts); the status
-//                                          page's 30 s cache is emptied unless `keepStatusCache`
+//   POST /__e2e/lane/clock {advanceMs?, freeze?, keepStatusCache?}  moves the lane's clock forward (lane-clock.ts); the
+//                                          status page's 30 s cache is emptied unless `keepStatusCache`. `freeze: true`
+//                                          stops it first (a test then steps it to the millisecond), `false` lets it run
+//   POST /__e2e/lane/labels {action, …}    partner labels (D894, lane-labels.ts): an org whose on-chain owner proposes,
+//                                          the notice's ack, the hourly job, GET /v1/app as the vault reads it, the
+//                                          staff tools and switches, the hand test's states (labelsControl below)
 //   POST /__e2e/lane/run {times?}          time passes for the relayer: its alarm runs (then the API cron's relay check)
 //   POST /__e2e/lane/acquire               waits until no other test holds the lane, then holds it → {lease}; a lease
 //                                          ends by `release {lease}` or after 3 minutes (a test that died). The suite's
@@ -62,8 +67,8 @@ import { D1Shim } from './d1.ts';
 import { json } from './http.ts';
 import { LaneEvm } from './lane-evm.ts';
 import { LedgerWire, type PGliteLike } from './pglite-wire.ts';
-import { advanceLaneClock, laneClockOffset, realNow } from './lane-clock.ts';
-import { ExecContext, MemoryNamespace } from './workers.ts';
+import { advanceLaneClock, freezeLaneClock, laneClockFrozen, laneClockOffset, realNow } from './lane-clock.ts';
+import { ExecContext, MemoryNamespace, allowAllLimiter } from './workers.ts';
 
 export interface LaneData {
   name: string;
@@ -105,6 +110,9 @@ const CHECK_IN_CALL = { to: E2E_CHECK_IN, value: '0', data: '0x183ff085' };
 
 const modules = await loadApiModules();
 const { AdminRpc } = (await import(SRC('api', 'rpc/admin.ts'))) as { AdminRpc: new (ctx: unknown, env: unknown) => object };
+const { ConsoleRpc } = (await import(SRC('api', 'rpc/console.ts'))) as { ConsoleRpc: new (ctx: unknown, env: unknown) => object };
+const { RateLimiter } = (await import(SRC('api', 'rate-limiter.ts'))) as { RateLimiter: new (state: unknown, env: unknown) => object };
+const { LabelsLane, LABEL_SCENARIOS } = await import('./lane-labels.ts');
 const sponsor = (await import(SRC('api', 'evm/sponsor.ts'))) as {
   sponsorTiming: { receiptWaitMs: number; receiptPollMs: number };
   checkEvmSponsorRelay(env: unknown, now?: number): Promise<void>;
@@ -207,6 +215,26 @@ function laneSponsorVar(relayer: string, appId: string): string {
   return JSON.stringify(v);
 }
 
+/** The guarded changes' delay, as the admin env's (APP_CHANGE_DELAY_MS) and sandbox-dev's: 24 hours. */
+const CHANGE_DELAY_MS = 24 * 3_600_000;
+
+/**
+ * The lane API's RATE_LIMITER: the step-up tokens' single use (`reserve`, `release`) by apps/api's REAL RateLimiter
+ * object (in memory), so a proposal's token is used up as on testnet. Every limit allows, as the stack's
+ * (workers.ts allowAllLimiter), the console's budget too (`consoleAdmit`, `consoleSettle`): the controls call faster
+ * than a person clicks, and apps/api's own tests hold the budget.
+ */
+function laneLimiter(real: MemoryNamespace<Record<string, (...a: unknown[]) => unknown>>) {
+  return {
+    idFromName: (name: string): string => name,
+    get: (id: string) => {
+      const obj = real.get(id);
+      const via = (m: string) => async (...a: unknown[]) => obj[m]!(...a);
+      return { ...allowAllLimiter.get(id), consoleAdmit: async () => ({ ok: true as const, reserveUsed: 0 }), consoleSettle: async () => undefined, reserve: via('reserve'), release: via('release') };
+    },
+  };
+}
+
 interface Sent {
   status: number;
   code: string | null;
@@ -219,6 +247,8 @@ class Lane {
   readonly api: MockApi;
   readonly consoleEnv = { CONSOLE_DB: new D1Shim(CONSOLE_MIGRATIONS), ENV_NAME, NETWORK: 'testnet', OWNER_GRANT_DELAY_MS: String(24 * 3_600_000) };
   readonly adminEnv: Record<string, unknown>;
+  /** Partner labels' org, its owner's proposals and the staff tools (lane-labels.ts). */
+  readonly labels: InstanceType<typeof LabelsLane>;
   evm!: LaneEvm;
   relayerAddress!: Hex;
   app!: { appId: string; pk: string };
@@ -228,7 +258,14 @@ class Lane {
 
   constructor() {
     this.api = new MockApi(this.d1, this.chain, modules, { nearRpc: LANE_NEAR, fingerprint: `admin-lane-${data.name}` });
-    this.api.env.NEON_PLAN = NEON_PLAN;
+    const env = this.api.env;
+    env.NEON_PLAN = NEON_PLAN;
+    // Partner labels (D894), in the lanes only (the local stack's staff portal): the switch on, and the guarded changes'
+    // config a real env has (the admin's delay, Hana's own origins refused), so proposals and their notice run.
+    env.PARTNER_LABELS = 'on';
+    env.APP_CHANGE_DELAY_MS = String(CHANGE_DELAY_MS);
+    env.REFUSED_ORIGINS = JSON.stringify([new URL(API_URL).origin, VAULT_ORIGIN, AUTH_ORIGIN].sort());
+    env.RATE_LIMITER = laneLimiter(new MemoryNamespace(RateLimiter as never, () => env));
     const apiRpc = binding(new AdminRpc(new ExecContext(), this.api.env));
     const staffRpc = binding(new StaffRpc(new ExecContext(), this.consoleEnv));
     this.adminEnv = {
@@ -251,7 +288,7 @@ class Lane {
       STAFF_EMAILS: JSON.stringify([E2E_STAFF]),
       EMAIL_FROM: 'Journear Passport E2E <security@e2e.invalid>',
       SECURITY_ALIAS: 'security@e2e.invalid',
-      APP_CHANGE_DELAY_MS: String(24 * 3_600_000),
+      APP_CHANGE_DELAY_MS: String(CHANGE_DELAY_MS),
       OWNER_GRANT_DELAY_MS: String(24 * 3_600_000),
       NEAR_NETWORK: 'testnet',
       // The link keys (throwaway, per lane); no EMAIL_API_KEY: no mail leaves the stack (the status page says so).
@@ -264,6 +301,21 @@ class Lane {
       USAGE_DB: { connectionString: ledger.url },
       NEON_PLAN,
     };
+    this.labels = new LabelsLane({
+      api: this.api,
+      d1: this.d1,
+      chain: this.chain,
+      modules,
+      adminRpc: apiRpc as never,
+      consoleRpc: binding(new ConsoleRpc(new ExecContext(), env)) as never,
+      cancelLinkKey: this.adminEnv.CANCEL_LINK_KEY as string,
+      securityAlias: this.adminEnv.SECURITY_ALIAS as string,
+      advance: (ms) => {
+        advanceLaneClock(ms);
+        adminStatus.resetStatusCache();
+      },
+      delayMs: CHANGE_DELAY_MS,
+    });
     this.fresh();
   }
 
@@ -362,6 +414,7 @@ class Lane {
       staffLog: s.staffLog.map((e) => ({ seq: e.seq, tool: e.action, done: e.done, refused: e.refused, who: e.who, note: e.note, auto: e.auto === true })),
       chain: this.evm.view(),
       clockOffsetMs: laneClockOffset(),
+      clockFrozen: laneClockFrozen(),
       nowMs: Date.now(),
       ledgerConnections: ledger.wire.connections,
     };
@@ -501,6 +554,8 @@ export const SCENARIOS = ['ready', 'working', 'low-money', 'waiting', 'past-dead
 
 installAccessCerts(data.access.certs);
 const lane = new Lane();
+// The lane's Google key (lane-labels.ts), before anything in this thread reads Google's JWKS.
+await lane.labels.start();
 
 // The lane's chain endpoints, in this thread's fetch (after the certs' interception, which stays in front).
 {
@@ -555,6 +610,52 @@ function cookieOf(request: Request): string | null {
 
 const SIGN_IN_AS: Record<string, string> = { staff: E2E_STAFF, outsider: E2E_OUTSIDER };
 
+/**
+ * POST /__e2e/lane/labels {action, …}: partner labels in the lane (lane-labels.ts). Every action but `app` answers the
+ * lane org's `state` with what it did:
+ *   reset                         a new labels org, scope and app (the last one's entries removed, its switches back)
+ *   propose {next?}               the owner proposes (ConsoleRpc, a verified step-up): the entry's first version, or
+ *                                 `next: true` a new version of it → {proposed: {changeId, labelId, sha256, document}}
+ *   announce {changeId?}          the admin notice's ack (no email sent) → {announced: [{changeId, activeFrom, wouldEmail}]}
+ *   cron                          the API's hourly job for labels at the lane's clock → {run: {activated, lapsed, drift}}
+ *   app                           GET /v1/app as the vault reads it → {status, partnerLabels} (null: no such field)
+ *   state                         the org's versions (oldest first), its switches, the lane's clock
+ *   block|allow {changeId?, note?} AdminRpc.labelStaffAct as the stack's staff member (default: the newest version)
+ *   switch {target: all|org|entry, what: off|on|review_on|review_off, note?}  AdminRpc.labelControl
+ *   scenario {name}               one of LABEL_SCENARIOS (lane-labels.ts), from a reset
+ */
+async function labelsControl(b: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const l = lane.labels;
+  const str = (v: unknown): string | undefined => (typeof v === 'string' && v.length > 0 ? v : undefined);
+  const done = async (extra: Record<string, unknown> = {}) => ({ ...extra, state: await l.state() });
+  switch (b.action) {
+    case 'reset':
+      await l.reset();
+      return done();
+    case 'propose':
+      return done({ proposed: await l.propose({ next: b.next === true }) });
+    case 'announce':
+      return done({ announced: await l.announce(str(b.changeId)) });
+    case 'cron':
+      return done({ run: await l.cron() });
+    case 'app':
+      return l.app();
+    case 'state':
+      return done();
+    case 'block':
+    case 'allow':
+      return done({ acted: await l.staffAct(b.action, str(b.changeId), str(b.note)) });
+    case 'switch':
+      await l.switchNamed(String(b.target), String(b.what), str(b.note));
+      return done();
+    case 'scenario':
+      await l.scenario(String(b.name));
+      return done({ scenario: b.name });
+    default:
+      throw new Error(`labels: action is reset, propose, announce, cron, app, state, block, allow, switch or scenario (${LABEL_SCENARIOS.join(', ')})`);
+  }
+}
+
 async function control(request: Request, url: URL): Promise<Response> {
   if (url.pathname === '/__e2e/access/sign-in' && request.method === 'GET') {
     const who = SIGN_IN_AS[url.searchParams.get('as') ?? 'staff'];
@@ -574,19 +675,22 @@ async function control(request: Request, url: URL): Promise<Response> {
   try {
     if (url.pathname === '/__e2e/lane/state' && request.method === 'GET') return json(200, await lane.state());
     if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
-    const b = ((await request.json().catch(() => ({}))) ?? {}) as { name?: unknown; advanceMs?: unknown; keepStatusCache?: unknown; times?: unknown; lease?: unknown };
+    const b = ((await request.json().catch(() => ({}))) ?? {}) as { name?: unknown; advanceMs?: unknown; keepStatusCache?: unknown; freeze?: unknown; times?: unknown; lease?: unknown };
     if (url.pathname === '/__e2e/lane/acquire') return json(200, { lease: await acquire() });
     if (url.pathname === '/__e2e/lane/release') return json(200, { released: typeof b.lease === 'string' && release(b.lease) });
     if (url.pathname === '/__e2e/lane/scenario' && typeof b.name === 'string') {
       await lane.scenario(b.name);
       return json(200, await lane.state());
     }
-    if (url.pathname === '/__e2e/lane/clock' && typeof b.advanceMs === 'number') {
-      advanceLaneClock(b.advanceMs);
+    if (url.pathname === '/__e2e/lane/clock' && (typeof b.advanceMs === 'number' || typeof b.freeze === 'boolean')) {
+      // `freeze` first: stopped, then stepped by exactly `advanceMs`.
+      if (typeof b.freeze === 'boolean') freezeLaneClock(b.freeze);
+      if (typeof b.advanceMs === 'number') advanceLaneClock(b.advanceMs);
       // `keepStatusCache`: the status page keeps its reading (D890's tile Check again is then what reads it fresh).
       if (b.keepStatusCache !== true) adminStatus.resetStatusCache();
       return json(200, await lane.state());
     }
+    if (url.pathname === '/__e2e/lane/labels') return json(200, await labelsControl(b as Record<string, unknown>));
     if (url.pathname === '/__e2e/lane/run') {
       await lane.run(typeof b.times === 'number' && b.times >= 1 && b.times <= 10 ? b.times : 1);
       return json(200, await lane.state());

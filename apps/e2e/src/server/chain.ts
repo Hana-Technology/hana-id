@@ -81,6 +81,14 @@ export class Chain {
    */
   googleKid: string | null = null;
   /**
+   * `get_config`'s `console_audiences` in force (provider, aud): none on the stack's chain (it has no partner console).
+   * An admin lane's chain lists its own console audience, so the API verifies the lane's step-up tokens (D894's
+   * partner labels, admin-lane-worker.ts).
+   */
+  consoleAudiences: [string, string][] = [];
+  /** `get_scope`'s `owners` by scope (contract `Owner` values, e.g. `{Oidc: {provider, sub}}`); a scope not listed has none. */
+  readonly scopeOwners = new Map<string, unknown[]>();
+  /**
    * Contract v3's accounts and links (build plan batches 7 and 8b), as packages/web's vault test harness models them:
    * identity keys whose own path was derived (`opened`, D130) and accounts by root identity key.
    */
@@ -245,7 +253,7 @@ export class Chain {
         return {
           value:
             typeof args.scope_id === 'string'
-              ? { id: args.scope_id, owners: [], clients: this.emailKey ? [['email', `email:${args.scope_id}`]] : [], pending: [], action_nonce: 0, allow_shared: true }
+              ? { id: args.scope_id, owners: this.scopeOwners.get(args.scope_id) ?? [], clients: this.emailKey ? [['email', `email:${args.scope_id}`]] : [], pending: [], action_nonce: 0, allow_shared: true }
               : null,
         };
       case 'scope_for_client':
@@ -259,7 +267,7 @@ export class Chain {
         // list (H6): Hana Home's exit Google client and the email exit, in force, as on sandbox-dev.
         return {
           value: {
-            console_audiences: [],
+            console_audiences: this.consoleAudiences,
             shared_clients: [['google', GOOGLE_CLIENT_ID]],
             pending_shared_clients: [],
             unrecorded_wallets: false,

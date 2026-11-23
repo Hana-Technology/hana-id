@@ -236,6 +236,8 @@ export const security = {
   },
   watcher: { cursor: 's5d1e8a0c2f6b9', updatedAt: ago(4 * MIN) },
   lastRun: { at: ago(4 * MIN), ms: 2140, calls: 17, notices: { sent: 1, failed: 0 }, feed: { sent: 3 }, watcher: { scopes: 12, alerts: 0 } },
+  // D894: the partner label changes waiting (test-spa/preview-labels.ts has three).
+  labels: { waiting: 3, awaitingAllow: 1, notAnnounced: 1, nextLiveAt: ago(-20 * HOUR) },
   unnotifiedEvents: [{ id: 'sev_01jdq4', detectedAt: ago(6 * MIN), kind: 'drift', orgId: 'org_01jc8lumenpay', appId: 'app_01jcblumen', scopeId: 's5d1e8a0c2f6b9', detail: { origin: 'https://xn--lumnpay-b1a.example' } }],
   ledger: {
     relayerAccountSet: true,

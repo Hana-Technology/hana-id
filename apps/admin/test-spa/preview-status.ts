@@ -27,6 +27,8 @@
 //   fees-paused-key    paused: someone else used the relayer's key (`foreign_transactions`)
 //   fees-low       working, but the relayer's wallet under its low line
 //   fees-no-endpoint  set up, but the relayer's trusted read endpoint secret missing (sponsorship off: Not set up)
+//   labels-off     partner labels (D894): one organisation's switched off and one set on its own (amber, with the issue)
+//   labels-review  partner labels: no switch off, staff review required for every change (OK, with the line)
 // Every other scenario has no `evm.sponsor` (the API answers no `evmRelay`): the tile says "Not set up".
 // `previewEvmDetail` and `previewEvmAct` answer the "Gas sponsorship" page and its tools through the Worker's own
 // routes (src/evm-relay.ts) over the same fake views.
@@ -39,7 +41,7 @@ import type { EvmRelayChainView, EvmRelayDetail, EvmRelayRecordView, EvmRelaySta
 import { evmRelayActRoute, evmRelayDetailRoute } from '../src/evm-relay.ts';
 import type { RouteCtx } from '../src/routes.ts';
 
-export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale', 'fees-working', 'fees-paused-money', 'fees-money-arrived', 'fees-money-held', 'fees-auto-restarted', 'fees-money-limit', 'fees-money-limit-refilled', 'fees-paused-money-leak', 'fees-paused-key', 'fees-low', 'fees-no-endpoint'] as const;
+export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale', 'fees-working', 'fees-paused-money', 'fees-money-arrived', 'fees-money-held', 'fees-auto-restarted', 'fees-money-limit', 'fees-money-limit-refilled', 'fees-paused-money-leak', 'fees-paused-key', 'fees-low', 'fees-no-endpoint', 'labels-off', 'labels-review'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 const BUILD = '8a797fe1c2d3';
@@ -64,6 +66,8 @@ interface World {
   watchdog: Record<string, unknown> | null;
   api: Record<string, unknown> | null;
   console: Record<string, unknown>;
+  /** D894: AdminRpc.labelControls's answer. */
+  labels: Record<string, unknown>;
   near: { primary: number | 'down'; fallback: number | 'down'; backup: number | 'down' };
   five: Record<string, unknown>;
   fifteen: Record<string, unknown>;
@@ -150,6 +154,7 @@ function world(now: number, s: Scenario): World {
       },
     },
     console: { ok: true, build: BUILD, db: { ok: true, latencyMs: 3 }, cron: { job: 'hourly', atMs: now - 34 * MIN, outcome: 'ok', detail: null }, notices: { pending: 0, oldestAt: null, truncated: false }, logos: 'ok' },
+    labels: { all: { labelsOff: false, reviewRequired: false, version: 0, updatedAt: null, updatedBy: null, note: null }, orgs: [], entries: [] },
     near: { primary: now - 1_200, fallback: now - 1_500, backup: now - 1_800 },
     five: { at: now - 3 * MIN, notices: { acked: 1, failed: 0 }, feed: true, watcher: true, budgetLeft: 31, calls: { ops: 1, notices: 4, feed: 2, watcher: 2 } },
     fifteen: { at: now - 9 * MIN, budgetLeft: 36, calls: { ledger: 1, relayer_keys: 1, settlement: 2 }, failed: [] },
@@ -182,6 +187,13 @@ function world(now: number, s: Scenario): World {
   if (s === 'relay-key-missing') relay.keys = { configured: 2, missing: [PK_R2] };
   if (s === 'relay-stale') relay.readAt = now - 40 * MIN;
   if (s.startsWith('fees-') && w.api) (w.api as Record<string, unknown>).evmRelay = { state: 'on', chains: [evmView(now, s)] };
+  if (s === 'labels-off')
+    w.labels = {
+      all: { labelsOff: false, reviewRequired: false, version: 0, updatedAt: null, updatedBy: null, note: null },
+      orgs: [{ orgId: 'org_01jdzharbour', labelsOff: true, reviewRequired: false, version: 2, updatedAt: now - 50 * MIN, updatedBy: 'tze@hana.example', note: 'Its labels promise a refund the call doesn’t make' }],
+      entries: [{ labelId: 'pl_01jdzstamps4', orgId: 'org_01jdzlumen', scopeId: 's01jdzlumen', offAt: now - 6 * 60 * MIN, offBy: 'tze@hana.example', note: 'Reported by a user as confusing; asked the partner', version: 1 }],
+    };
+  if (s === 'labels-review') w.labels = { all: { labelsOff: false, reviewRequired: true, version: 1, updatedAt: now - 2 * 24 * 60 * MIN, updatedBy: 'tze@hana.example', note: 'Every change reviewed during the pilot' }, orgs: [], entries: [] };
   if (s === 'relay-off') (w.api as Record<string, unknown>).nearRelay = { state: 'off', offReason: 'none', readAt: now, account: null, lowBalanceYocto: null, dailyBudgetYocto: null, budgetAlertPct: null, chain: null, keys: null, spend: null };
   return w;
 }
@@ -364,7 +376,7 @@ function fakeEnv(w: World): Env {
     USAGE_DB: { connectionString: 'postgresql://preview.invalid/usage' } as unknown as Hyperdrive,
     STATEMENTS: bucket,
     EXPORTS: bucket,
-    API: { systemStatus: async () => (w.api ? w.api : Promise.reject(new Error('Service unavailable'))) } as unknown as Env['API'],
+    API: { systemStatus: async () => (w.api ? w.api : Promise.reject(new Error('Service unavailable'))), labelControls: async () => (w.api ? { ok: true, controls: w.labels } : Promise.reject(new Error('Service unavailable'))) } as unknown as Env['API'],
     CONSOLE: { health: async () => w.console } as unknown as Env['CONSOLE'],
     ISSUER: { health: async () => ({ ok: true, build: w.builds.issuer, db: { ok: true, latencyMs: 5 } }) } as unknown as Env['ISSUER'],
     ASSETS: {} as Fetcher,

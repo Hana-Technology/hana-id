@@ -1,7 +1,7 @@
 // Shared helpers of the admin Worker tests: a throwaway Access signing key and its certs endpoint, staff requests to the
 // Worker's fetch, a fake EmailSender, an in-memory ops store, a fake NEAR RPC, and seeds for the real API's hot DB and
 // the real console's CONSOLE_DB (shared with the auxiliary Workers).
-import { newId, newPublishableKey } from '@hana-id/console-core';
+import { base58, newId, newPublishableKey } from '@hana-id/console-core';
 import { env, exports } from 'cloudflare:workers';
 import { vi } from 'vitest';
 import { resetAccessVerifier } from '../src/access.ts';
@@ -366,3 +366,62 @@ export const linkIn = (text: string, path: string): string => {
   if (!m) throw new Error(`no ${path} link`);
   return m[0];
 };
+
+// ---- partner labels (D894) ----
+
+let labelSeq = 0;
+/** A `journear-labels/1` document for a NEAR contract (a fresh account per call), as apps/api/test/partner-labels.test.ts writes one. */
+export function nearLabelDoc(o: { verb?: string; object?: string; account?: string } = {}): { text: string; account: string } {
+  labelSeq += 1;
+  const account = o.account ?? `club${labelSeq}${uid().toLowerCase().replace(/[^a-z0-9]/gu, '')}.testnet`;
+  const codeHash = base58(crypto.getRandomValues(new Uint8Array(32)));
+  const text = JSON.stringify({
+    schema: 'journear-labels/1',
+    context: { near: { network: 'testnet', account, codeHash } },
+    metadata: { enums: { stamp: { arrival: 'Arrival', sponsored: 'Fare paid' } } },
+    display: {
+      formats: {
+        collect: {
+          call: { gasAtMost: '30000000000000', args: { stamp: { type: 'string' } }, otherArgs: 'refuse' },
+          intent: { verb: o.verb ?? 'collect', object: o.object ?? 'the stamp' },
+          sentence: ['verb', 'object', { field: 'args.stamp' }],
+          fields: [{ path: 'args.stamp', label: 'Stamp', format: 'enum', params: { enum: 'stamp' } }],
+        },
+      },
+    },
+  });
+  return { text, account };
+}
+
+export interface SeededLabelChange {
+  id: string;
+  labelId: string;
+  app: HotApp;
+}
+
+/**
+ * A pending request labels version in the hot DB (D894), as ConsoleRpc.proposeLabels leaves it (no notice yet), for an
+ * app of a fresh org with one security contact; `previous` makes it a new version of that one's entry (the diff).
+ */
+export async function seedLabelChange(o: { app?: HotApp; labelId?: string; previous?: string; verb?: string; notifiedAt?: number; activeFrom?: number } = {}): Promise<SeededLabelChange> {
+  const app = o.app ?? (await seedHotApp());
+  const hot = env.HOT_DB;
+  const now = Date.now();
+  const labelId = o.labelId ?? `pl_${uid().replace(/[^A-Za-z0-9]/gu, '')}`;
+  if (!o.labelId) await hot.prepare("INSERT INTO partner_labels (id, org_id, scope_id, created_at, created_by) VALUES (?1, ?2, ?3, ?4, 'usr_test')").bind(labelId, app.org, app.scope, now).run();
+  const doc = nearLabelDoc({ verb: o.verb });
+  const sha = await sha256Hex(new TextEncoder().encode(doc.text));
+  const id = `lc_${uid().replace(/[^A-Za-z0-9]/gu, '')}`;
+  await hot
+    .prepare(
+      "INSERT INTO label_changes (id, label_id, org_id, scope_id, doc_text, doc_schema, doc_sha256, doc_bytes, context_key, apps_json, previous_id, status, proposed_by, proposer_sub, proposed_at, notified_at, active_from, request_id) VALUES (?1, ?2, ?3, ?4, ?5, 'journear-labels/1', ?6, ?7, ?8, ?9, ?10, 'pending', 'usr_test', 'owner-sub-1', ?11, ?12, ?13, ?14)",
+    )
+    .bind(id, labelId, app.org, app.scope, doc.text, sha, new TextEncoder().encode(doc.text).length, `near:testnet:${doc.account}`, JSON.stringify([app.id]), o.previous ?? null, now - 1000, o.notifiedAt ?? null, o.activeFrom ?? null, `req_${uid()}`)
+    .run();
+  return { id, labelId, app };
+}
+
+export const labelChangeRow = (id: string) =>
+  env.HOT_DB.prepare('SELECT status, notified_at, active_from, CASE WHEN cancel_token_hash IS NULL THEN NULL ELSE hex(cancel_token_hash) END AS h, blocked_at, block_note, was_live, allowed_at FROM label_changes WHERE id = ?1')
+    .bind(id)
+    .first<{ status: string; notified_at: number | null; active_from: number | null; h: string | null; blocked_at: number | null; block_note: string | null; was_live: number | null; allowed_at: number | null }>();

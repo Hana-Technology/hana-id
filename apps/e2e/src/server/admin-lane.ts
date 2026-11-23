@@ -7,12 +7,23 @@
 // This file is the main thread's side: it owns the lanes' ports, hands each HTTP request to the lane's thread and
 // back (as structured clones), and answers the lane's ISSUER binding with the stack's email issuer's real DirectoryRpc
 // (issuer.ts `directoryRpc`), so the Users screen, the issuer's audit rows and its status tile are the stack's own.
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import type { AccessKeys } from './access.ts';
 import type { LaneData } from './admin-lane-worker.ts';
 import type { Handler } from './http.ts';
 
 const WORKER = new URL('./admin-lane-worker.ts', import.meta.url);
+
+/**
+ * The thread's TypeScript loader: under tsx (the stack) a worker inherits it; under vitest (test/admin-lane.test.ts
+ * starts a lane) it is added, so the lane's thread runs the same code either way.
+ */
+function tsxExecArgv(): { execArgv?: string[] } {
+  if (process.execArgv.some((a) => a.includes('tsx'))) return {};
+  return { execArgv: [...process.execArgv, '--import', pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href] };
+}
 /** DirectoryRpc's methods the admin Worker calls (apps/admin src/env.ts DirectoryRpcClient). */
 const ISSUER_METHODS = new Set(['search', 'get', 'auditSince', 'issuerStats', 'health']);
 
@@ -37,7 +48,7 @@ class LaneThread {
   private start(): Promise<void> {
     if (this.ready) return this.ready;
     this.ready = new Promise<void>((resolve, reject) => {
-      const w = new Worker(WORKER, { workerData: this.data });
+      const w = new Worker(WORKER, { workerData: this.data, ...tsxExecArgv() });
       this.worker = w;
       w.on('message', (m: { type: string; id: number; target?: string; method?: string; args?: unknown[] } & Partial<HttpAnswer>) => {
         if (m.type === 'ready') resolve();
@@ -70,6 +81,14 @@ class LaneThread {
     } catch (e) {
       this.worker?.postMessage({ type: 'rpc', id, ok: false, error: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  /** Ends the thread (a test's lane; the stack's live as long as it does). */
+  async close(): Promise<void> {
+    const w = this.worker;
+    this.worker = null;
+    this.ready = null;
+    if (w) await w.terminate();
   }
 
   handler(): Handler {
@@ -105,5 +124,11 @@ export class AdminLanes {
       this.threads.set(name, t);
     }
     return t.handler();
+  }
+
+  /** Ends every lane's thread. */
+  async close(): Promise<void> {
+    await Promise.all([...this.threads.values()].map((t) => t.close()));
+    this.threads.clear();
   }
 }

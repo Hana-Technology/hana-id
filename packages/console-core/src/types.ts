@@ -12,7 +12,7 @@ export const PROPOSER_KINDS = ['member', 'hana', 'system'] as const;
 export const GUARDED_CHANGE_KINDS = ['origin_add', 'policy_set', 'raw_sign_on'] as const;
 export const GUARDED_CHANGE_STATUSES = ['pending', 'active', 'cancelled', 'ended'] as const;
 export const WAIVERS = ['loopback', 'no_session'] as const;
-export const SECURITY_EVENT_KINDS = ['drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'near_billing_late', 'evm_relay_closed_slot_mined', 'neon_compute_high', 'evm_relay_auto_resumed'] as const;
+export const SECURITY_EVENT_KINDS = ['drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'near_billing_late', 'evm_relay_closed_slot_mined', 'neon_compute_high', 'evm_relay_auto_resumed', 'label_proposed', 'label_blocked', 'label_live'] as const;
 export const ORG_KINDS = ['partner', 'internal'] as const;
 export const ORG_STATUSES = ['active', 'frozen'] as const;
 export const GRANTOR_KINDS = ['member', 'hana'] as const;
@@ -31,6 +31,9 @@ export const STEP_UP_KINDS = [
   'member.role',
   'member.remove',
   'org.policy',
+  /** D894: a partner label document proposed (a guarded change) or removed (immediate), both bound to the change. */
+  'labels.set',
+  'labels.remove',
 ] as const;
 export const OWNER_ACTION_METHODS = ['propose_change', 'execute_change', 'cancel_change', 'remove_client', 'disable_shared_login'] as const;
 
@@ -60,6 +63,8 @@ export const RPC_CODES = [
   'invalid_client_proof',
   'owner_nonce_mismatch',
   'passkeys_required',
+  /** D894: a partner label document the parser or the server's rules refuse (the problems are listed in `error`). */
+  'label_invalid',
   'internal',
 ] as const;
 export type RpcCode = (typeof RPC_CODES)[number];
@@ -70,6 +75,7 @@ export const RPC_HTTP_STATUS: Record<RpcCode, number> = {
   bad_request: 400,
   origin_refused: 400,
   policy_invalid: 400,
+  label_invalid: 400,
   env_mismatch: 400,
   invalid_client_proof: 400,
   forbidden: 403,

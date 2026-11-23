@@ -41,6 +41,16 @@ export const APP_CHANGE_KINDS = [
   'suspension.org_cleared',
   'mainnet_demo.on',
   'mainnet_demo.off',
+  // D894: partner labels (their announcement and cancels are `change.announced` / `change.cancelled`, kind `label_set`).
+  'labels.proposed',
+  'labels.removed',
+  'labels.activated',
+  'labels.blocked',
+  'labels.allowed',
+  'labels.switched_off',
+  'labels.switched_on',
+  'labels.review_on',
+  'labels.review_off',
 ] as const;
 export type AppChangeKind = (typeof APP_CHANGE_KINDS)[number];
 
@@ -87,6 +97,16 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'raw_sign.proposed': 'Raw signing proposed',
   'raw_sign.activated': 'Raw signing in force',
   'raw_sign.off': 'Raw signing turned off',
+  // Request labels (D894; staff call them partner labels).
+  'labels.proposed': 'Request labels proposed',
+  'labels.removed': 'Request labels removed',
+  'labels.activated': 'Request labels in force',
+  'labels.blocked': 'Request labels blocked by Journear',
+  'labels.allowed': 'Request labels allowed by Journear',
+  'labels.switched_off': 'Request labels switched off by Journear',
+  'labels.switched_on': 'Request labels switched back on by Journear',
+  'labels.review_on': 'Journear review of request labels turned on',
+  'labels.review_off': 'Journear review of request labels turned off',
   // Keys.
   'key.created': 'Key created',
   'key.revoked': 'Key revoked',
@@ -128,6 +148,8 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'users.find': 'Wallet directory searched',
   'evm_relay.staff_action': 'Gas sponsorship tool used',
   'evm_relay.staff_result': 'Gas sponsorship tool result',
+  'labels.staff_action': 'Partner labels tool used',
+  'labels.staff_result': 'Partner labels tool result',
 };
 
 /** An action or change code in words: its title from `ACTION_TITLES`, else its own words (`some_new.kind` → "Some new kind"). */
@@ -157,6 +179,9 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   evm_relay_nonce_taken: 'Gas sponsorship: a payment slot was used by another transaction',
   evm_relay_closed_slot_mined: 'Gas sponsorship: a slot staff closed went through after all',
   evm_relay_auto_resumed: 'Gas sponsorship: restarted by itself after the relayer wallet was refilled',
+  label_proposed: 'Request labels proposed: shown to users after the wait unless Journear blocks them',
+  label_blocked: 'Request labels blocked by Journear',
+  label_live: 'Request labels now shown to users',
 };
 
 /** A security event's kind in words; an unknown kind reads as its own words. */

@@ -69,7 +69,7 @@ describe('the verdict', () => {
     expect(v.className).toBe('verdict ok');
     expect(v.getAttribute('role')).toBe('status');
     expect(v.querySelector('h2')!.textContent).toBe('All systems operational');
-    expect(v.textContent).toMatch(/Checked \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · \d+ s ago · 37 of 37 checks passed/u);
+    expect(v.textContent).toMatch(/Checked \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · \d+ s ago · 38 of 38 checks passed/u);
     expect(s.text()).not.toContain('Issues');
     for (const t of tiles(s)) expect(['OK', 'Not measured'], t.name!).toContain(t.chip);
     expect(s.text()).toContain('Not measured yet');

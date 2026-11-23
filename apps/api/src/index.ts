@@ -4,6 +4,8 @@ import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, han
 import { GOVERNANCE_ENDPOINT, handleGovernance } from './governance-status.ts';
 import { json } from './http.ts';
 import { detectDrift } from './changes/drift.ts';
+import { labelsMaintenance } from './labels/cron.ts';
+import { detectLabelDrift } from './labels/drift.ts';
 import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
 import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
 import { NEAR_ACTIVATE_ENDPOINT, NEAR_RELAY_ENDPOINT, handleNearActivate, handleNearRelay } from './near/relay.ts';
@@ -266,7 +268,7 @@ export default {
     // Independent jobs: one failing must not skip the other. The sync records the JWKS observation from its fetch.
     const jobs: Promise<unknown>[] = [syncIssuerKeys(env)];
     if (isHourlyRun(controller.scheduledTime)) {
-      jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env), detectDrift(env));
+      jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env), detectDrift(env), labelsMaintenance(env), detectLabelDrift(env));
       // Usage fails open: these log their own failures and never fail the run (the next hour tries again). Partitions
       // first, so the copy and the hour's events have their months. Pushed last: the destructuring below is positional.
       jobs.push(ensureUsagePartitions(env).then(() => Promise.all([syncIdentityUsage(env), syncEmailUsage(env)])));
@@ -279,17 +281,22 @@ export default {
     // Every run (D863): the NEAR relay's billing records read at FINAL, copied to the usage ledger, lateness checked.
     // Also outside `jobs`; never fails the run (nothing to do before migration 0023).
     const nearBilling = nearBillingMaintenance(env).catch(() => undefined);
-    const [issuerKeys, vault, identity, guarded, drift] = await Promise.allSettled(jobs);
+    const [issuerKeys, vault, identity, guarded, drift, labels, labelDrift] = await Promise.allSettled(jobs);
     await evmRelayCheck;
     await nearBilling;
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (identity?.status === 'rejected') log({ event: 'identity_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (guarded?.status === 'rejected') log({ event: 'guarded_change_cron', outcome: 'error', code: 'internal' }, 'error');
     if (drift?.status === 'rejected') log({ event: 'drift_detection', outcome: 'error', code: 'internal' }, 'error');
+    // D894: partner labels' hourly job and drift check, logged and thrown as the guarded changes' are.
+    if (labels?.status === 'rejected') log({ event: 'labels_cron', outcome: 'error', code: 'internal' }, 'error');
+    if (labelDrift?.status === 'rejected') log({ event: 'label_drift_detection', outcome: 'error', code: 'internal' }, 'error');
     if (issuerKeys?.status === 'rejected') throw issuerKeys.reason;
     if (vault?.status === 'rejected') throw vault.reason;
     if (identity?.status === 'rejected') throw identity.reason;
     if (guarded?.status === 'rejected') throw guarded.reason;
     if (drift?.status === 'rejected') throw drift.reason;
+    if (labels?.status === 'rejected') throw labels.reason;
+    if (labelDrift?.status === 'rejected') throw labelDrift.reason;
   },
 } satisfies ExportedHandler<Env>;

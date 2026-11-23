@@ -29,7 +29,8 @@
     "./home": "./src/home.ts",
     "./near": "./src/near/index.ts",
     "./evm-sponsor": "./src/evm-sponsor/index.ts",
-    "./sponsor-session": "./src/sponsor-session.ts"
+    "./sponsor-session": "./src/sponsor-session.ts",
+    "./partner-labels": "./src/partner-labels/index.ts"
   },
   "files": [
     "dist",
@@ -96,6 +97,10 @@
       "./sponsor-session": {
         "types": "./dist/sponsor-session.d.ts",
         "import": "./dist/sponsor-session.js"
+      },
+      "./partner-labels": {
+        "types": "./dist/partner-labels/index.d.ts",
+        "import": "./dist/partner-labels/index.js"
       },
       "./package.json": "./package.json"
     },

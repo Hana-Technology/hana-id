@@ -265,13 +265,17 @@ describe('audit and CSV', () => {
 });
 
 describe('the route table', () => {
-  it('is the spec’s C8 routes, C12’s, C13’s, C14’s, C8b’s Users routes, C15’s lookup (POST) and the System status (D425); no user export', () => {
+  it('is the spec’s C8 routes, C12’s, C13’s, C14’s, C8b’s Users routes, C15’s lookup (POST), the System status (D425), Gas sponsorship (D843) and Partner labels (D894); no user export', () => {
     expect(ROUTE_TABLE).toMatchInlineSnapshot(`
       [
         "GET /api/me",
         "GET /api/status",
         "GET /api/evm-relay/:chain",
         "POST /api/evm-relay/:chain/act",
+        "GET /api/labels",
+        "POST /api/labels/controls",
+        "GET /api/labels/:changeId",
+        "POST /api/labels/:changeId/act",
         "GET /api/orgs",
         "GET /api/orgs/:org",
         "POST /api/orgs/:org/freeze",

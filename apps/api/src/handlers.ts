@@ -1,4 +1,5 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
+import { type DeliveredLabel, deliveredLabels } from './labels/deliver.ts';
 import { identityRoot } from '@hana-id/core/identity';
 import { appIdentityEmail } from './identity/email.ts';
 import { JwksUnavailableError } from '@hana-id/oidc';
@@ -398,7 +399,11 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
           log({ event: 'share_status_unavailable', requestId, appId: app.id, endpoint: ctx.endpoint }, 'warn');
           return undefined;
         });
-  const [settingsDone, chainDone, demoPrices, consent, share] = await Promise.all([settingsRead, chainRead, pricesRead, consentRead, shareRead]);
+  // D894: partner labels in force for this app, only on the vault's own read and only with the manifest switch on; read
+  // from D1 on every request (a staff switch or block is in the next read). A failed read leaves the field out.
+  const vaultRead = !!env.VAULT_ORIGIN && request.headers.get('origin') === env.VAULT_ORIGIN;
+  const labelsRead: Promise<DeliveredLabel[] | undefined> = vaultRead ? timed('labels', deliveredLabels(env, app.id, Date.now())).then((r) => (r.ok ? r.value : undefined)) : Promise.resolve(undefined);
+  const [settingsDone, chainDone, demoPrices, consent, share, partnerLabels] = await Promise.all([settingsRead, chainRead, pricesRead, consentRead, shareRead, labelsRead]);
   if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   const [settings, methods, identityEmail, mainnetDemo] = settingsDone.value;
   const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
@@ -450,6 +455,8 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       ...(consent ? { consent } : {}),
       // H9: only on the vault's read with `x-hana-share`; older vaults never send the header.
       ...(share ? { share } : {}),
+      // D894: only on the vault's read with PARTNER_LABELS on; nothing reads it yet (piece 3 renders it).
+      ...(partnerLabels ? { partnerLabels } : {}),
     });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');

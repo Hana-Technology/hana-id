@@ -234,25 +234,38 @@ describe('items 8, 9, 10, 13: the matcher’s inputs and outputs', () => {
   });
 });
 
-describe('item 13: nothing outside the tests uses the module yet', () => {
+describe('item 13, as amended by D894: exactly two places outside core import the module, through its subpath', () => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
-  it('core’s package exports and publish exports don’t name it', () => {
-    const pkg = readFileSync(join(root, 'packages/core/package.json'), 'utf8');
-    expect(pkg).not.toMatch(/partner-labels/u);
-    expect(readFileSync(join(root, 'packages/core/src/index.ts'), 'utf8')).not.toMatch(/partner-labels/u);
-  });
-  it('no source file in apps/ or packages/ imports it, outside core’s own folder and tests', () => {
-    const hits: string[] = [];
+  /** An import of the module: the subpath, or a relative path into core's folder. */
+  const IMPORT = /(?:from\s*|import\s*\(\s*)['"]([^'"]*(?:@hana-id\/core\/partner-labels|core\/src\/partner-labels|vault\/partner-labels)[^'"]*)['"]/gu;
+  const isTest = (p: string) => /(^|\/)(test|tests|test-[a-z-]+)\//u.test(p) || /\.test\.ts$/u.test(p);
+  const importers = (): { file: string; spec: string }[] => {
+    const hits: { file: string; spec: string }[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         if (name === 'node_modules' || name === 'dist' || name.startsWith('.')) continue;
         const p = join(dir, name);
         if (statSync(p).isDirectory()) walk(p);
-        else if (/\.(ts|tsx|mjs|js)$/u.test(name) && /partner-labels/u.test(readFileSync(p, 'utf8'))) hits.push(p.slice(root.length));
+        else if (/\.(ts|tsx|mjs|js)$/u.test(name)) for (const m of readFileSync(p, 'utf8').matchAll(IMPORT)) hits.push({ file: p.slice(root.length), spec: m[1]! });
       }
     };
     walk(join(root, 'apps'));
     walk(join(root, 'packages'));
-    expect(hits.filter((h) => !h.startsWith('packages/core/src/partner-labels/') && !h.startsWith('packages/core/test/'))).toEqual([]);
+    return hits.filter((h) => !h.file.startsWith('packages/core/src/partner-labels/') && !h.file.startsWith('packages/core/test/'));
+  };
+  it('core publishes it as the ./partner-labels subpath only, never from its root entry', () => {
+    const pkg = JSON.parse(readFileSync(join(root, 'packages/core/package.json'), 'utf8')) as { exports: Record<string, string> };
+    expect(Object.entries(pkg.exports).filter(([, v]) => v.includes('partner-labels'))).toEqual([['./partner-labels', './src/partner-labels/index.ts']]);
+    expect(readFileSync(join(root, 'packages/core/src/index.ts'), 'utf8')).not.toMatch(/partner-labels/u);
+  });
+  it('the API’s labels module and the vault’s check are the only sources that import it, by the subpath', () => {
+    const sources = importers().filter((h) => !isTest(h.file));
+    expect(sources.map((h) => h.file).sort()).toEqual(['apps/api/src/labels/document.ts', 'packages/web/src/vault/partner-labels.ts']);
+    // (Other files named partner-labels, such as the admin portal's own screen module, are not core's module.)
+    expect(new Set(sources.map((h) => h.spec))).toEqual(new Set(['@hana-id/core/partner-labels']));
+  });
+  it('outside core, only those two places’ tests import it (or the helper that wraps it)', () => {
+    const tests = importers().filter((h) => isTest(h.file));
+    for (const t of tests) expect(t.file, t.spec).toMatch(/^(apps\/api\/test\/|packages\/web\/test\/)/u);
   });
 });

@@ -32,6 +32,10 @@ import {
   turnOffInput,
   updateSettingsInput,
   usageInput,
+  listLabelsInput,
+  previewLabelsInput,
+  proposeLabelsInput,
+  removeLabelsInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -48,6 +52,9 @@ import { finishUsageOnThrow } from '../usage/event.ts';
 import { orgLedger, orgStatements, orgUsage } from '../usage/reports.ts';
 import { consoleGetUser, consoleListUsers } from '../directory/read.ts';
 import { emailSearchMac } from '../identity/email.ts';
+import { cancelLabelChange, cancelLabelChangeByLink } from '../labels/lifecycle.ts';
+import { listLabels, previewLabels, proposeLabels, removeLabels } from '../labels/propose.ts';
+import { isLabelChange } from '../labels/sql.ts';
 import { runRpc } from './common.ts';
 
 const MEMBER = ['member'] as const;
@@ -81,6 +88,14 @@ export const CONSOLE_COSTS = {
   /** One SELECT each (directory/read.ts). */
   listUsers: 1,
   getUser: 1,
+  /** D894: the entries' read and, for a scope with none, its version. */
+  listLabels: 2,
+  /** One plan read. */
+  previewLabels: 1,
+  /** Plan read, a batch of up to five (commit, version, entry, version row, security event), one diagnostic read. */
+  proposeLabels: 7,
+  /** Plan read, a batch of four, one diagnostic read. */
+  removeLabels: 6,
 } as const;
 
 /**
@@ -185,8 +200,9 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'ledger', ledgerInput, c, { actors: MEMBER }, ({ input }) => orgLedger(this.env, input, Date.now(), this.ctx));
   }
 
+  /** A guarded change (`gc_`) or a partner label version (`lc_`, D894). */
   cancelChange(c: unknown) {
-    return runRpc(this.env, 'cancelChange', cancelChangeInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.cancelChange }, ({ input, db, w }) => cancelChange(db, w, input));
+    return runRpc(this.env, 'cancelChange', cancelChangeInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.cancelChange }, ({ input, db, w }): Promise<{ change: object }> => (isLabelChange(input.changeId) ? cancelLabelChange(db, w, input) : cancelChange(db, w, input)));
   }
 
   /**
@@ -195,7 +211,30 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
    * budget, so a link flood can't block anyone's kill switches.
    */
   cancelChangeByLink(c: unknown) {
-    return runRpc(this.env, 'cancelChangeByLink', cancelChangeByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.cancelChangeByLink, link: true }, ({ input, db, w }) => cancelChangeByLink(db, w, input));
+    return runRpc(this.env, 'cancelChangeByLink', cancelChangeByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.cancelChangeByLink, link: true }, ({ input, db, w }): Promise<{ change: object }> =>
+      isLabelChange(input.changeId) ? cancelLabelChangeByLink(db, w, input) : cancelChangeByLink(db, w, input),
+    );
+  }
+
+  // ---- partner labels (D894): an on-chain owner's proposals and removals, bound to the step-up; no UI yet (piece 4) ----
+
+  listLabels(c: unknown) {
+    return runRpc(this.env, 'listLabels', listLabelsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listLabels }, ({ input, db, w }) => listLabels(db, input, w.now));
+  }
+
+  /** Every check a proposal gets, without the step-up and without writing: the preview, or `label_invalid`. */
+  previewLabels(c: unknown) {
+    return runRpc(this.env, 'previewLabels', previewLabelsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.previewLabels }, ({ input, db, w }) => previewLabels(db, this.env, w, input));
+  }
+
+  /** Not counted by the breaker: nothing applies without an on-chain owner's token for exactly this change, and the notice and delay. */
+  proposeLabels(c: unknown) {
+    return runRpc(this.env, 'proposeLabels', proposeLabelsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.proposeLabels }, ({ input, db, w }) => proposeLabels(db, this.env, w, input));
+  }
+
+  /** Immediate, with the same proof as a proposal; it only ever returns the window to the plain view. */
+  removeLabels(c: unknown) {
+    return runRpc(this.env, 'removeLabels', removeLabelsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.removeLabels, killSwitch: true }, ({ input, db, w }) => removeLabels(db, this.env, w, input));
   }
 
   /** The partner bit (4) only: a member never sets or clears Hana's bits 1 and 2. Suspending is counted by the breaker. */

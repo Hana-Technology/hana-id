@@ -44,10 +44,20 @@ const OLD_GUARDED = (cutoff: Q): Q => q`(
    AND NOT EXISTS (SELECT 1 FROM app_origins o WHERE o.change_id = g.id))
   OR EXISTS (SELECT 1 FROM apps a WHERE a.id = g.app_id AND a.deleted_at IS NOT NULL AND a.deleted_at < ${cutoff} AND g.proposed_at < ${cutoff}))`;
 
+/**
+ * D894 after review: a partner labels ledger row (`labels.*`, or a `change.*` row of kind `label_set`) is kept while
+ * its entry exists (entries are never purged): label drift reads the proposal, announcement, allow, block and removal
+ * rows of every entry, so purging them would report a false finding, or let a block or a removal be undone unseen.
+ * `label_changes` rows are not purged at all yet ("kept 60 months" is a floor): they are small, and a version in force
+ * must keep its text.
+ */
+const LABEL_ROW = q`((c.kind LIKE 'labels.%' OR (c.kind IN ('change.announced', 'change.cancelled') AND json_extract(c.detail_json, '$.kind') = 'label_set'))
+  AND EXISTS (SELECT 1 FROM partner_labels pl WHERE pl.id = json_extract(c.detail_json, '$.labelId')))`;
+
 export async function purgeAudit(db: HotDb, i: { before: number; limit: number }): Promise<ApiPurgeAuditResult> {
   const cutoff = auditCutoff(i.before);
   const [changes, guarded] = await db.batch([
-    q`DELETE FROM app_changes WHERE seq IN (SELECT c.seq FROM app_changes c WHERE c.at < ${cutoff} AND NOT ${DRIFT_ROW} ORDER BY c.seq LIMIT ${i.limit})`,
+    q`DELETE FROM app_changes WHERE seq IN (SELECT c.seq FROM app_changes c WHERE c.at < ${cutoff} AND NOT ${DRIFT_ROW} AND NOT ${LABEL_ROW} ORDER BY c.seq LIMIT ${i.limit})`,
     q`DELETE FROM guarded_changes WHERE id IN (SELECT g.id FROM guarded_changes g WHERE ${OLD_GUARDED(cutoff)} ORDER BY g.proposed_at, g.id LIMIT ${i.limit})`,
   ]);
   return { appChanges: changes!.meta.changes ?? 0, guardedChanges: guarded!.meta.changes ?? 0 };

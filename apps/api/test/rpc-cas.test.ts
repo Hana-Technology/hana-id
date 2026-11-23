@@ -12,7 +12,15 @@ import { removeOrigins } from '../src/changes/origins.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
 import { ORIGIN, call } from './helpers.ts';
-import { nonceOf, originChangeDigest, ownerActionNonce, settingsChangeDigest } from '@hana-id/console-core';
+import { hex, labelChangeDigest, nonceOf, originChangeDigest, ownerActionNonce, settingsChangeDigest, sha256, utf8 } from '@hana-id/console-core';
+
+/** A partner label document (D894) for the budget test: a made-up contract on the NEAR test network. */
+const LABEL_DOC = JSON.stringify({
+  schema: 'journear-labels/1',
+  context: { near: { network: 'testnet', account: 'budget-club.testnet', codeHash: 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn' } },
+  display: { formats: { join: { call: { args: {} }, intent: { verb: 'join', object: 'the club' }, sentence: ['verb', 'object'], fields: [] } } },
+});
+const sha256HexOf = async (s: string): Promise<string> => hex(await sha256(utf8(s)));
 import {
   type DbCount,
   adminRpc,
@@ -227,6 +235,7 @@ describe('the hot-DB budget', () => {
     const pending2 = await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://pending2.example.com'], expectedVersion: 1 });
     if (!pending2.ok) throw new Error(pending2.code);
     let created: { key: { id: string } } | undefined;
+    let labelId: string | undefined;
     const calls: [keyof typeof CONSOLE_COSTS, (rpc: ConsoleRpc) => Promise<{ ok: boolean }>][] = [
       ['listApps', (rpc) => rpc.listApps({ ...member(), orgId: app.org })],
       ['getApp', (rpc) => rpc.getApp({ ...member(), orgId: app.org, appId: app.id })],
@@ -266,6 +275,21 @@ describe('the hot-DB budget', () => {
       ['pendingUpgrades', (rpc) => rpc.pendingUpgrades({ ...member(), orgId: app.org })],
       // The wallet directory (D315): one SELECT each.
       ['listUsers', (rpc) => rpc.listUsers({ ...member(), orgId: app.org })],
+      // D894: partner labels (the switch on for this test's ConsoleRpc).
+      ['listLabels', (rpc) => rpc.listLabels({ ...member(), orgId: app.org, scopeId: app.scope })],
+      ['previewLabels', (rpc) => rpc.previewLabels({ ...member(), orgId: app.org, scopeId: app.scope, document: LABEL_DOC, appIds: [app.id] })],
+      ['proposeLabels', async (rpc) => {
+        const v = (await rows<{ v: number }>('SELECT labels_version AS v FROM scopes WHERE scope_id = ?1', app.scope))[0]!.v;
+        const nonce = nonceOf(await labelChangeDigest({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope, kind: 'labels_set', labelId: '', docSha256: await sha256HexOf(LABEL_DOC), appIds: [app.id], labelsVersion: v }));
+        const r = await rpc.proposeLabels({ ...member(), orgId: app.org, scopeId: app.scope, document: LABEL_DOC, appIds: [app.id], expectedVersion: v, stepUpJwt: await stepUp(nonce) });
+        if (r.ok) labelId = r.change!.labelId;
+        return r;
+      }],
+      ['removeLabels', async (rpc) => {
+        const v = (await rows<{ v: number }>('SELECT labels_version AS v FROM scopes WHERE scope_id = ?1', app.scope))[0]!.v;
+        const nonce = nonceOf(await labelChangeDigest({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope, kind: 'labels_remove', labelId: labelId!, appIds: [], labelsVersion: v }));
+        return rpc.removeLabels({ ...member(), orgId: app.org, scopeId: app.scope, labelId: labelId!, expectedVersion: v, stepUpJwt: await stepUp(nonce) });
+      }],
       ['getUser', async (rpc) => {
         const userId = `u1_${'E'.repeat(21)}A`;
         await env.DB.prepare('INSERT OR IGNORE INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 1)').bind(`hu_${'1'.repeat(26)}`, userId, '11111111', app.scope).run();
@@ -276,7 +300,7 @@ describe('the hot-DB budget', () => {
     for (const [method, run] of calls) {
       clock.advance(5000); // a refilled budget for each call
       const count: DbCount = { reads: 0, batches: 0, statements: 0 };
-      expect(await run(counted((c, e) => new ConsoleRpc(c, e), count)), method).toMatchObject({ ok: true });
+      expect(await run(counted((c, e) => new ConsoleRpc(c, { ...e, PARTNER_LABELS: 'on' }), count)), method).toMatchObject({ ok: true });
       expect(count.reads, method).toBeLessThanOrEqual(2);
       expect(count.batches, method).toBeLessThanOrEqual(1);
       expect(count.statements - count.reads, method).toBeLessThanOrEqual(8);

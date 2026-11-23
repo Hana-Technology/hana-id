@@ -96,7 +96,7 @@ function wordForms(text: string): { plain: string[]; leet: string[]; compact: st
 // ---- the lists ----
 
 /**
- * Claim words (D892): a statement about checking, safety, cost or refunds that only Journear may make, with the usual
+ * Claim words: a statement about checking, safety, cost or refunds that only Journear may make, with the usual
  * inflections. A word is refused when it starts with one of the stems or is one of the exact words; the long stems
  * are also refused inside a longer run of letters ("Superverified", "s a f e" is caught as a word). English first,
  * with the common Latin-script forms of Spanish, French, German, Portuguese, Italian and Malay.
@@ -117,8 +117,8 @@ const YOU_WORDS = new Set(['you', 'your', 'yours', 'yourself', 'youre', 'u', 'ur
 const LINK_WORDS = new Set(['www', 'http', 'https', 'ftp', 'mailto']);
 
 /**
- * The plain-words list (D853), copied from `@hana-id/brand/plain-words` (core has no runtime dependency on the brand
- * package); test/partner-labels-text.test.ts checks the two are the same list.
+ * The plain-words list (the approval window's banned technical words), copied from the brand package's list (core has
+ * no runtime dependency on it); test/partner-labels-text.test.ts checks the two are the same list.
  */
 export const PARTNER_JARGON: readonly string[] = Object.freeze([
   'gas', 'gasless', 'nonce', 'RPC', 'block hash', 'block height', 'vault', 'ledger', 'decoder', 'API', 'relayer', 'relay', 'sponsored', 'faucet', 'testnet',
@@ -133,7 +133,7 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'
 const JARGON_PATTERNS: readonly [string, RegExp][] = PARTNER_JARGON.map((w) => [w, new RegExp(`(?<![\\w-])${escapeRe(w)}(?![\\w-])`, 'iu')]);
 
 /**
- * Names a label may not use (D892): Journear's own ("Journear", "Passport", "Hana", the name before Journear), and every
+ * Names a label may not use: Journear's own ("Journear", "Passport", "Hana", the name before Journear), and every
  * name on Journear's reviewed lists, which only Journear's own lines name: the protocols and contracts of the verified
  * list, the reviewed NEAR contracts, the known tokens' symbols and names, and the networks' own coins.
  */

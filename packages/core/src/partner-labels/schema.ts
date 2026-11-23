@@ -21,7 +21,7 @@ import { type PartnerConnector, type PartnerVerb, isPartnerConnector, isPartnerV
 export const LABEL_SCHEMA = 'journear-labels/1';
 
 /**
- * The limits (D892 "Limits"). A document is stored with the app and sent with the vault's app config on every load,
+ * The limits. A document is stored with the app and sent with the vault's app config on every load,
  * and the window must show every field it declares, so it is small by design.
  */
 export const LABEL_LIMITS = Object.freeze({

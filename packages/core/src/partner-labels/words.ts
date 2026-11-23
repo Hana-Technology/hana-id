@@ -5,9 +5,8 @@
 
 /**
  * The verbs a partner's label may use, lower case, as the window writes them after "{App} says: ". Chosen for plain
- * words a non-crypto user reads without help, and against abuse (D892 lists what was left out and why: "approve",
- * "burn", "mint", "bridge", "sign", "verify", "allow", "connect", "unlock", "get", "earn", "win", "receive",
- * "refund", "protect").
+ * words a non-crypto user reads without help, and against abuse. Left out on purpose: "approve", "burn", "mint",
+ * "bridge", "sign", "verify", "allow", "connect", "unlock", "get", "earn", "win", "receive", "refund", "protect".
  */
 export const PARTNER_VERBS = Object.freeze([
   'add',
@@ -61,5 +60,5 @@ export type PartnerConnector = (typeof PARTNER_CONNECTORS)[number];
 
 export const isPartnerConnector = (v: unknown): v is PartnerConnector => typeof v === 'string' && (PARTNER_CONNECTORS as readonly string[]).includes(v);
 
-/** What the window says under a partner's sentence, always (D892, from the proposal's section 4.1). */
+/** What the window says under a partner's sentence, every time. */
 export const partnerAttribution = (appName: string): string => `These are ${appName}’s words. Journear hasn’t checked them.`;

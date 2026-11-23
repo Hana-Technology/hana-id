@@ -506,6 +506,8 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
             acked.add(c.changeId);
             return { ok: true as const, change: changes.find((n) => n.change.id === c.changeId)!.change };
           },
+          // D894: the request labels' notice step reads its page every run (none waiting here).
+          labelNotices: async () => ({ ok: true as const, notices: [] }),
           getSecurityContacts: async (c: { orgId: string }) => ({ ok: true as const, emails: [`sec-${c.orgId}@partner.example`] }),
           securityEvents: async (c: { limit: number }) => ({ ok: true as const, events: events.filter((e) => !notified.has(e.id)).slice(0, c.limit) }),
           markSecurityEventNotified: async (c: { ids: string[] }) => {

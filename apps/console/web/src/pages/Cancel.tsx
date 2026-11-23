@@ -72,11 +72,17 @@ function CancelPage({ what, explain, idOk, post }: { what: string; explain: stri
 
 export function CancelChange() {
   const { changeId } = useParams();
-  const ok = /^gc_[A-Za-z0-9]{1,64}$/u.test(changeId ?? '');
+  const ok = /^(?:gc|lc)_[A-Za-z0-9]{1,64}$/u.test(changeId ?? '');
+  // D894: a change to request labels has its own link (`lc_…`) and its own words.
+  const labels = (changeId ?? '').startsWith('lc_');
   return (
     <CancelPage
-      what="this change"
-      explain="This cancels the app change announced in the email (a new origin, an auto-approve policy or raw signing). It never takes effect. You don’t need to sign in."
+      what={labels ? 'this change to request labels' : 'this change'}
+      explain={
+        labels
+          ? 'This cancels the change to your app’s request labels announced in the email (the words the approval window would show your users). It never takes effect. You don’t need to sign in.'
+          : 'This cancels the app change announced in the email (a new origin, an auto-approve policy or raw signing). It never takes effect. You don’t need to sign in.'
+      }
       idOk={ok}
       post={(token) => postJson('/api/cancel', { changeId, token })}
     />

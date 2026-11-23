@@ -51,6 +51,7 @@ describe('audit details', () => {
         ],
         "change.link_cancel": [
           "code",
+          "labelId",
         ],
         "evm_relay.staff_action": [
           "tool",
@@ -92,6 +93,27 @@ describe('audit details', () => {
           "code",
           "keyId",
           "newKeyId",
+        ],
+        "labels.proposed": [
+          "code",
+          "version",
+          "changeId",
+          "labelId",
+        ],
+        "labels.removed": [
+          "code",
+          "version",
+          "labelId",
+        ],
+        "labels.staff_action": [
+          "tool",
+          "target",
+          "note",
+        ],
+        "labels.staff_result": [
+          "tool",
+          "target",
+          "result",
         ],
         "ledger.exported": [
           "month",

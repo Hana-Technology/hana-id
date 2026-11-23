@@ -1,7 +1,7 @@
 // What every email says (docs/batch-c-spec.md "Email", "Notice and cancel", "Invites and owner grants", "On-chain
 // owner actions"). Builders only: who gets each message and when it is sent is notices.ts, feed.ts and watcher.ts.
 // The link tokens are passed in as finished URLs; nothing here sees a key.
-import { type AppChange, type AuditRow, type InviteView, type MemberNotice, type SecurityEvent, actionLabel, detailFields, securityEventLabel } from '@hana-id/console-core';
+import { type AppChange, type AuditRow, type InviteView, type LabelDiffLine, type LabelNotice, type MemberNotice, type SecurityEvent, actionLabel, detailFields, securityEventLabel } from '@hana-id/console-core';
 import type { ChangeNotice } from '../env.ts';
 import { log } from '../log.ts';
 import { type Block, type Design, type LogRow, type Rendered, cut, duration, oneLine, readableTime, render, rowTime } from './render.ts';
@@ -204,6 +204,132 @@ export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?:
     c.label,
     notice(c, `Email login turned ${on ? 'on' : 'off'}`, 'An app’s sign-in methods changed. This is already in force.'),
   );
+}
+
+// ---- request labels (D894; staff call them partner labels) ----
+
+/** A wait in words for a partner: "24 hours", "1 hour 30 minutes", "7 days", "1 minute" (the two largest units). */
+export function durationWords(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 60_000) return 'less than a minute';
+  const units: [number, string][] = [
+    [86_400_000, 'day'],
+    [3_600_000, 'hour'],
+    [60_000, 'minute'],
+  ];
+  const parts: string[] = [];
+  let left = ms;
+  for (const [size, name] of units) {
+    const n = Math.floor(left / size);
+    left -= n * size;
+    if (n > 0) parts.push(`${n} ${name}${n === 1 ? '' : 's'}`);
+  }
+  return parts.slice(0, 2).join(' ');
+}
+
+/** Names as a sentence lists them: "A", "A and B", "A, B and C". */
+export const nameList = (names: readonly string[]): string => (names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+/** A label diff line in words (the partner's text as it is, one line each). */
+const diffWords = (d: LabelDiffLine): string =>
+  d.change === 'added' ? `Added: ${oneLine(d.after ?? '', 300)}` : d.change === 'removed' ? `Removed: ${oneLine(d.before ?? '', 300)}` : `Changed: ${oneLine(d.before ?? '', 300)} → ${oneLine(d.after ?? '', 300)}`;
+
+/**
+ * `label_pending` (blocking, D894): a proposed set of request labels, what users would see (the preview's example
+ * values), what changes against what users see now, the wait, and the cancel link. Every partner text (app names, the
+ * lines, the rows' labels and values) is one line, unlinked (a list item or a paragraph, never a table key).
+ */
+export function labelsProposed(c: MailContext, n: LabelNotice, o: { cancelUrl: string; delayMs: number; orgName?: string | undefined }): Rendered {
+  const ch = n.change;
+  const names = ch.apps.map((a) => oneLine(a.name ?? a.id, 80));
+  const first = names[0] ?? (n.preview ? oneLine(n.preview.appName, 80) : 'your app');
+  const wait = durationWords(o.delayMs);
+  // With staff review on for the org (or everyone), they go live only once Journear allows them (D894 after review).
+  const when = ch.reviewRequired
+    ? `Journear reviews them first: they go live only after Journear allows them, at the earliest ${wait} after this email, unless someone cancels them. If Journear hasn’t allowed them within 7 days of that time, they lapse and nothing changes.`
+    : `Unless someone cancels them, they go live ${wait} after this email. Journear may block them if they would mislead users.`;
+  const blocks: Block[] = [
+    {
+      kind: 'p',
+      text: `Someone with owner rights in your organisation proposed request labels for ${names.length ? nameList(names) : first}: the words the approval window will show your users for your app’s requests, in your app’s name. ${when}`,
+    },
+    {
+      kind: 'kv',
+      rows: [
+        ['Apps', ch.apps.map((a) => (a.name ? `${a.name} (${a.id})` : a.id)).join(', ')],
+        ['Organisation', o.orgName ? `${oneLine(o.orgName, 80)} (${ch.orgId})` : ch.orgId],
+        ['Scope', `${ch.scopeId} (${ch.environment})`],
+        ...(n.preview?.context ? ([['Describes', n.preview.context]] as [string, string][]) : []),
+        ['Change', `Set request labels (${ch.id})`],
+        ['Proposed at', readableTime(ch.proposedAt)],
+      ],
+    },
+  ];
+  if (n.preview && n.preview.formats.length) {
+    blocks.push({ kind: 'p', text: 'What users would see (example values):' });
+    for (const f of n.preview.formats) {
+      blocks.push({ kind: 'p', text: oneLine(f.line, 300) });
+      if (f.fields.length) blocks.push({ kind: 'list', items: f.fields.map((x) => `${oneLine(x.label, 120)}: ${oneLine(x.value, 200)}`) });
+    }
+  } else blocks.push({ kind: 'p', text: 'What users would see can’t be shown in this email. An owner can read the labels in the console.' });
+  const changed = n.diff.filter((d) => d.change !== 'same');
+  blocks.push({ kind: 'p', text: 'What changes:' }, changed.length ? { kind: 'list', items: changed.map(diffWords) } : { kind: 'p', text: 'Nothing users see changes: every line stays as it is now.' });
+  blocks.push(
+    { kind: 'link', label: 'Cancel this change', url: o.cancelUrl },
+    { kind: 'p', text: 'If you did not expect this change, cancel it. The page asks you to confirm; opening the link alone changes nothing. An owner can also cancel it in the console.' },
+  );
+  return render(c.env, `Request labels proposed for ${oneLine(first, 60)}`, blocks, c.consoleOrigin, c.label, notice(c, 'Request labels proposed', 'New words for your app’s requests are waiting. They are not live yet, and you can cancel them.'));
+}
+
+/**
+ * Journear blocked a change to request labels (D894): from the feed's walk of `app_changes` (`labels.blocked`), to the
+ * alias and the org's security contacts. `apps`: the change's app names (AdminRpc.labelDetail), or null when they
+ * couldn't be read (then "your app"). Says what is true now: never seen; or seen until now and now neither these nor
+ * the earlier labels show (a live block ends the older versions too); or already switched off by Journear. Then the
+ * staff note, and how to ask or try again.
+ */
+export function labelsBlocked(c: MailContext, r: AppChange, o: { apps: string[] | null; delayMs: number }): Rendered {
+  const id = typeof r.detail.changeId === 'string' ? oneLine(r.detail.changeId, 80) : 'a change';
+  const wasLive = r.detail.wasLive === true;
+  const offBy = typeof r.detail.offBy === 'string' ? r.detail.offBy : null;
+  const note = typeof r.detail.note === 'string' ? oneLine(r.detail.note, 300) : '';
+  const names = o.apps && o.apps.length ? o.apps.map((n) => oneLine(n, 80)) : null;
+  const at = rowTime(r.at);
+  const now = !wasLive
+    ? 'Your users will never see it.'
+    : offBy
+      ? 'Your users weren’t seeing it: Journear had already switched these labels off. When they are switched back on, neither these nor your earlier labels will show.'
+      : 'Your users see the plain approval window for these requests from now, without your earlier labels either.';
+  const blocks: Block[] = [
+    { kind: 'p', text: `Journear blocked a change to the request labels of ${names ? nameList(names) : 'your app'} (${id}): the words the approval window shows your users for your app’s requests. ${now}` },
+    ...(note ? ([{ kind: 'p', text: `Journear’s note: “${note}”` }] as Block[]) : []),
+    { kind: 'p', text: `To ask why, reply to this email or write to your Journear contact. To try again, change the labels in the console; the new change waits ${durationWords(o.delayMs)} again.` },
+    {
+      kind: 'kv',
+      rows: [
+        ['Organisation', r.orgId],
+        ...(r.scopeId ? ([['Scope', r.scopeId]] as [string, string][]) : []),
+        ['Change', id],
+        ['Blocked at', at.valid ? readableTime(r.at) : at.text],
+      ],
+    },
+  ];
+  return render(c.env, `Journear blocked a change to request labels for ${names ? oneLine(names[0]!, 60) : 'your app'}`, blocks, c.consoleOrigin, c.label, notice(c, 'Journear blocked a change to request labels', 'A change to your app’s request labels was blocked by Journear.'));
+}
+
+/**
+ * A change held for Journear's review lapsed (D894 after review): from the feed's walk (`change.cancelled`, kind
+ * `label_set`, reason `not_reviewed`), to the alias and the org's contacts, so the partner learns it never went live.
+ */
+export function labelsLapsed(c: MailContext, r: AppChange, o: { apps: string[] | null }): Rendered {
+  const id = typeof r.detail.changeId === 'string' ? oneLine(r.detail.changeId, 80) : 'a change';
+  const names = o.apps && o.apps.length ? o.apps.map((n) => oneLine(n, 80)) : null;
+  const at = rowTime(r.at);
+  const blocks: Block[] = [
+    { kind: 'p', text: `A change to the request labels of ${names ? nameList(names) : 'your app'} (${id}), the words the approval window shows your users for your app’s requests, lapsed: Journear didn’t allow it within 7 days of its time, so your users never see it. Nothing else changed.` },
+    { kind: 'p', text: 'To try again, change the labels in the console. To ask why it wasn’t allowed, reply to this email or write to your Journear contact.' },
+    { kind: 'kv', rows: [['Organisation', r.orgId], ...(r.scopeId ? ([['Scope', r.scopeId]] as [string, string][]) : []), ['Change', id], ['Lapsed at', at.valid ? readableTime(r.at) : at.text]] },
+  ];
+  return render(c.env, `A change to request labels lapsed for ${names ? oneLine(names[0]!, 60) : 'your app'}`, blocks, c.consoleOrigin, c.label, notice(c, 'A change to request labels lapsed', 'A change to your app’s request labels waited for Journear’s review and lapsed.'));
 }
 
 // ---- the feed (best effort, after the fact) ----

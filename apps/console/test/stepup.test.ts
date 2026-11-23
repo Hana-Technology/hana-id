@@ -5,13 +5,13 @@
 // a digest for another action or session, a stale iat, a sub mismatch, reuse, an expired action, a revoked session
 // between creation and callback, a flow finished in another browser; console-only kinds consume, change and audit
 // atomically, and a lost race writes nothing.
-import { originChangeDigest, ownerActionNonce, nonceOf, stepUpDigest } from '@hana-id/console-core';
+import { hex, labelChangeDigest, originChangeDigest, ownerActionNonce, nonceOf, sha256, stepUpDigest, utf8 } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { actionOf, breathe, createAction, getAs, member, postAs, stepUp } from './c10.ts';
 import { installChain, oidc, setChain, setScope, uninstallChain } from './chain.ts';
 import { MockGoogle, account, signIn } from './google.ts';
-import { auditRows, db, seedHotApp, shiftClock } from './helpers.ts';
+import { auditRows, db, linkPair, post, seedHotApp, shiftClock, system } from './helpers.ts';
 
 /** An auto-approve policy the validator accepts (apps/api/test/vault-helpers.ts autoApprovePolicy's shape). */
 const policyJson = () => ({
@@ -416,5 +416,68 @@ describe('clock', () => {
     expect(a.expiresAt - Date.now()).toBeLessThanOrEqual(5 * 60_000);
     shiftClock(5 * 60_000 + 1000);
     expect((await actionOf(m, a.id)).body.status).toBe('expired');
+  });
+});
+
+describe('labels.set and labels.remove (D894): the API previews, the nonce binds the document, the API verifies and proposes', () => {
+  const doc = JSON.stringify({
+    schema: 'journear-labels/1',
+    context: { near: { network: 'testnet', account: 'stepup-club.testnet', codeHash: 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn' } },
+    display: { formats: { join: { call: { args: {} }, intent: { verb: 'join', object: 'the club' }, sentence: ['verb', 'object'], fields: [] } } },
+  });
+
+  it('a proposal: the screen shows the preview; the nonce is the label-change layout at the scope’s version; the API proposes it', async () => {
+    const { m, app } = await ownerWithApp();
+    const a = await createAction(m, 'labels.set', { scopeId: app.scope, document: doc, appIds: [app.id] });
+    expect(a.decoded).toMatchObject({ scopeId: app.scope, labelId: null, appIds: [app.id], labelsVersion: 0, preview: { formats: [{ key: 'join', sentence: 'join the club' }] } });
+    const expected = nonceOf(await labelChangeDigest({ signer: 'signer.test.near', scopeId: app.scope, kind: 'labels_set', labelId: '', docSha256: hex(await sha256(utf8(doc))), appIds: [app.id], labelsVersion: 0 }));
+    const s = await stepUp(google, m, a.id);
+    expect(s.nonce).toBe(expected);
+    const out = await actionOf(m, a.id);
+    expect(out.body).toMatchObject({ status: 'ok', kind: 'labels.set', outcome: { status: 'ok', version: 1 } });
+    const rows = (await env.HOT_DB.prepare('SELECT label_id, status, doc_text FROM label_changes WHERE scope_id = ?').bind(app.scope).all<{ label_id: string; status: string; doc_text: string }>()).results;
+    expect(rows).toEqual([{ label_id: expect.stringMatching(/^pl_/u), status: 'pending', doc_text: doc }]);
+    expect(await auditRows("action = 'labels.proposed' AND org_id = ?", m.org)).toHaveLength(1);
+
+    // The removal: immediate, its own nonce, the same proof.
+    const r = await createAction(m, 'labels.remove', { scopeId: app.scope, labelId: rows[0]!.label_id });
+    expect(r.decoded).toMatchObject({ labelId: rows[0]!.label_id, labelsVersion: 1, immediate: true });
+    const s2 = await stepUp(google, m, r.id);
+    expect(s2.nonce).toBe(nonceOf(await labelChangeDigest({ signer: 'signer.test.near', scopeId: app.scope, kind: 'labels_remove', labelId: rows[0]!.label_id, appIds: [], labelsVersion: 1 })));
+    expect((await actionOf(m, r.id)).body).toMatchObject({ status: 'ok', kind: 'labels.remove' });
+    expect(await env.HOT_DB.prepare('SELECT removed_at IS NOT NULL AS removed FROM partner_labels WHERE id = ?').bind(rows[0]!.label_id).first('removed')).toBe(1);
+  });
+
+  it('the emailed link cancels a waiting label change through POST /api/cancel, audited with its entry and no app', async () => {
+    const { m, app } = await ownerWithApp();
+    const a = await createAction(m, 'labels.set', { scopeId: app.scope, document: doc, appIds: [app.id] });
+    await stepUp(google, m, a.id);
+    const out = (await actionOf(m, a.id)).body as unknown as { outcome: { changeId: string; labelId: string } };
+    const changeId = out.outcome.changeId;
+    const pair = await linkPair();
+    const ack = await env.API_ADMIN.ackLabelNotice({ ...system(), changeId, cancelTokenHash: pair.hashB64 });
+    expect(ack.ok, JSON.stringify(ack)).toBe(true);
+    // Another token is refused and audits nothing.
+    const other = await linkPair();
+    expect((await post('/api/cancel', { changeId, token: other.tokenB64 })).status).toBe(403);
+    const res = await post('/api/cancel', { changeId, token: pair.tokenB64 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: changeId, labelId: out.outcome.labelId, state: 'cancelled' });
+    expect(await env.HOT_DB.prepare('SELECT status, end_reason FROM label_changes WHERE id = ?').bind(changeId).first()).toEqual({ status: 'cancelled', end_reason: 'link' });
+    const rows = await auditRows("action = 'change.link_cancel' AND target = ?", changeId);
+    expect(rows).toEqual([expect.objectContaining({ actor_kind: 'link', actor_id: changeId, target: changeId, outcome: 'ok', details_json: JSON.stringify({ labelId: out.outcome.labelId }) })]);
+    expect(await db.prepare("SELECT app_id FROM audit_log WHERE action = 'change.link_cancel' AND target = ?").bind(changeId).first('app_id')).toBeNull();
+    // Single use.
+    expect((await post('/api/cancel', { changeId, token: pair.tokenB64 })).status).toBe(409);
+  });
+
+  it('refuses at build time what the API refuses (the parser’s problems), and a non-owner at the API', async () => {
+    const { m, app } = await ownerWithApp();
+    const bad = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'labels.set', params: { scopeId: app.scope, document: doc.replace('the club', 'the verified club'), appIds: [app.id] } });
+    expect(bad.body).toMatchObject({ error: { code: 'label_invalid' } });
+    const other = await ownerWithApp({ onChain: false });
+    const a = await createAction(other.m, 'labels.set', { scopeId: other.app.scope, document: doc, appIds: [other.app.id] });
+    await stepUp(google, other.m, a.id);
+    expect((await actionOf(other.m, a.id)).body).toMatchObject({ status: 'failed', outcome: { code: 'not_owner' } });
   });
 });

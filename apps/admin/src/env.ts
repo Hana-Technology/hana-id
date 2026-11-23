@@ -19,6 +19,10 @@ import type {
   DeletedAppsResult,
   GuardedChange,
   InviteView,
+  LabelChangeView,
+  LabelControls,
+  LabelFeedItem,
+  LabelNotice,
   MemberNotice,
   MemberView,
   OrgView,
@@ -127,6 +131,21 @@ export interface AdminRpcClient {
   supportLookup(c: unknown): Answer<SupportLookupResult>;
   /** The vault shares of one path in one app that haven't expired (C15). */
   userShares(c: unknown): Answer<{ shares: UserShare[] }>;
+  // ---- partner labels (D894) ----
+  /** The label versions proposed and not yet announced, with the org's security contacts (the notice cron's page; system actor). */
+  labelNotices(c: unknown): Answer<{ notices: LabelNotice[] }>;
+  /** Every recipient's notice was accepted: starts the version's clock (`activeFrom`) and stores the cancel link's hash (system actor only). */
+  ackLabelNotice(c: unknown): Answer<{ change: { id: string; activeFrom: number } }>;
+  /** The staff feed: every change waiting, those decided in the last `days`, and the switches (staff). */
+  labelQueue(c: unknown): Answer<{ items: LabelFeedItem[]; controls: LabelControls }>;
+  /** One change with its preview and diff (staff). */
+  labelDetail(c: unknown): Answer<{ item: LabelFeedItem }>;
+  /** The switches as they are now (staff or system; the System status tile). */
+  labelControls(c: unknown): Answer<{ controls: LabelControls }>;
+  /** "Block this change" or "Allow", only while the scope's labels are as the page saw them (staff). */
+  labelStaffAct(c: unknown): Answer<{ change: LabelChangeView }>;
+  /** A switch: off / back on for an entry, an org or everyone; review on / off for an org or everyone (staff). */
+  labelControl(c: unknown): Answer<{ version: number; changed: boolean }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */

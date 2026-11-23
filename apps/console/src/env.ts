@@ -34,6 +34,13 @@ import type {
   UpdateSettingsInput,
   UsageInput,
   UsageRow,
+  LabelChangeView,
+  LabelEntryView,
+  LabelPreview,
+  ListLabelsInput,
+  PreviewLabelsInput,
+  ProposeLabelsInput,
+  RemoveLabelsInput,
 } from '@hana-id/console-core';
 import type { ConsoleUsersClient } from './users.ts';
 
@@ -71,6 +78,11 @@ export interface ConsoleRpcClient {
   usage(c: UsageInput): Answer<{ rows: UsageRow[] }>;
   statements(c: StatementsInput): Answer<{ statements: StatementWithTotals[] }>;
   ledger(c: LedgerInput): Answer<{ rows: LedgerRow[]; next?: string; asOf: number }>;
+  // D894: partner labels (the step-up kinds `labels.set` and `labels.remove`, actions.ts; no screen yet, piece 4).
+  listLabels(c: ListLabelsInput): Answer<{ labelsVersion: number; entries: LabelEntryView[] }>;
+  previewLabels(c: PreviewLabelsInput): Answer<{ preview: LabelPreview; sha256: string; bytes: number; labelsVersion: number; noChange: boolean }>;
+  proposeLabels(c: ProposeLabelsInput): Answer<{ version: number; change: LabelChangeView | null; preview: LabelPreview; noChange: boolean }>;
+  removeLabels(c: RemoveLabelsInput): Answer<{ version: number }>;
 }
 
 export interface Env {

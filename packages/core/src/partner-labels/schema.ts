@@ -394,6 +394,8 @@ const isStellarAsset = (v: string): boolean => {
 };
 
 const STELLAR_PASSPHRASES = new Set([STELLAR_TESTNET_PASSPHRASE, STELLAR_MAINNET_PASSPHRASE]);
+/** The two Stellar networks a document may name: a test app's documents name the test one, a live app's the public one. */
+export const LABEL_STELLAR_NETWORKS = Object.freeze({ test: STELLAR_TESTNET_PASSPHRASE, public: STELLAR_MAINNET_PASSPHRASE });
 
 /** A NEAR method or Soroban function name: letters, digits and underscores, starting with a letter or underscore. */
 const METHOD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;

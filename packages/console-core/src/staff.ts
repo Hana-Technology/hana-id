@@ -104,19 +104,20 @@ export const queryAuditInput = ctx.extend({ filters: auditFilters, cursor: z.str
  * (the tool, the chain, the slot and the staffer's note: no row, no action) and `evm_relay.staff_result` after it (done,
  * or the relayer's reason), both org-less, the target the chain id.
  */
-export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden', 'support.lookup', 'users.find', 'evm_relay.staff_action', 'evm_relay.staff_result'] as const;
+export const STAFF_ACTIONS = ['statement.issued', 'ledger.exported', 'rate.overridden', 'support.lookup', 'users.find', 'evm_relay.staff_action', 'evm_relay.staff_result', 'labels.staff_action', 'labels.staff_result'] as const;
 /**
  * Staff actions about an end user, not an org's act: recorded without an org, so no partner's view or feed shows them.
  * The EVM relayer's staff tools (D843) are org-less too: the relayer is the env's, not a partner's.
  */
-export const ORGLESS_STAFF_ACTIONS: ReadonlySet<string> = new Set(['support.lookup', 'users.find', 'evm_relay.staff_action', 'evm_relay.staff_result']);
+/** D894: the partner labels' staff tools (Block, Allow, the switches) are org-less too: the change id or the switch is the target, and the org's own record is the API's `app_changes` row. */
+export const ORGLESS_STAFF_ACTIONS: ReadonlySet<string> = new Set(['support.lookup', 'users.find', 'evm_relay.staff_action', 'evm_relay.staff_result', 'labels.staff_action', 'labels.staff_result']);
 /** The one detail that is a list: a lookup's request IDs (at most 20, each in the request-ID form). */
 export const STAFF_DETAIL_LIST_MAX = 20;
 const isListDetail = (action: string, key: string) => action === 'support.lookup' && key === 'requestIdList';
 /** A detail string's length, except the one longer text: a relayer staff tool's note (D843, plain text, EVM_RELAY_NOTE_MAX). */
 export const STAFF_DETAIL_TEXT_MAX = 128;
 export const STAFF_NOTE_MAX = 300;
-const isNoteDetail = (action: string, key: string) => action === 'evm_relay.staff_action' && key === 'note';
+const isNoteDetail = (action: string, key: string) => (action === 'evm_relay.staff_action' || action === 'labels.staff_action') && key === 'note';
 export const recordStaffActionInput = ctx
   .extend({
     orgId: orgIdInput.optional(),
@@ -142,7 +143,8 @@ export const recordStaffActionInput = ctx
 export type RecordStaffActionInput = z.infer<typeof recordStaffActionInput>;
 
 // The console's emailed-link confirms (no session; the token is the proof; CSRF rules apply).
-export const cancelByLinkBody = z.object({ changeId: z.string().regex(/^gc_[A-Za-z0-9]{1,64}$/u), token: b64url32 }).strict();
+/** A guarded change (`gc_`) or a partner label version (`lc_`, D894): both are cancelled by their emailed link. */
+export const cancelByLinkBody = z.object({ changeId: z.string().regex(/^(?:gc|lc)_[A-Za-z0-9]{1,64}$/u), token: b64url32 }).strict();
 export const ownerGrantCancelBody = z.object({ grantId: ownerGrantIdInput, token: b64url32 }).strict();
 
 export type ListOrgsInput = z.infer<typeof listOrgsInput>;

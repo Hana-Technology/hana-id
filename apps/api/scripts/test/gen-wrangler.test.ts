@@ -254,6 +254,14 @@ describe('wrangler.jsonc', () => {
     expect((wranglerConfig(manifestSchema.parse(manifest), LOCAL_D1_ID) as { vars: Record<string, string> }).vars.NEON_PLAN).toBeUndefined();
   });
 
+  it('writes PARTNER_LABELS = "on" only when the manifest turns partner labels on (D894); sandbox-dev’s config has none', () => {
+    const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
+    expect(vars(manifest).PARTNER_LABELS).toBeUndefined();
+    expect(vars({ ...manifest, partnerLabels: { enabled: false } }).PARTNER_LABELS).toBeUndefined();
+    expect(vars({ ...manifest, partnerLabels: { enabled: true } }).PARTNER_LABELS).toBe('on');
+    expect((wranglerConfig(loadEnv('sandbox-dev'), LOCAL_D1_ID) as { vars: Record<string, string> }).vars.PARTNER_LABELS).toBeUndefined();
+  });
+
   it('writes HANA_ORG_ID only when the manifest names Hana’s own org', () => {
     const vars = (m: unknown) => (wranglerConfig(manifestSchema.parse(m), LOCAL_D1_ID) as { vars: Record<string, string> }).vars;
     expect(vars(manifest).HANA_ORG_ID).toBeUndefined();

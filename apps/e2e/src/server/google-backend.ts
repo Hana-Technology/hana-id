@@ -73,6 +73,17 @@ export class GoogleBackend {
     return { keys: [{ kty: 'RSA', alg: 'RS256', use: 'sig', kid: this.kid, n: jwk.n as string, e: jwk.e as string }] };
   }
 
+  /**
+   * An RS256 ID token over `claims`, signed with this key (as the tests' stub signs, google-stub.ts): an admin lane's
+   * console step-up (admin-lane-worker.ts, D894), in the lane's thread only. Never logged or answered.
+   */
+  async sign(claims: Record<string, unknown>): Promise<string> {
+    const enc = (o: unknown) => base64UrlEncode(utf8(JSON.stringify(o)));
+    const input = `${enc({ alg: 'RS256', kid: this.kid, typ: 'JWT' })}.${enc(claims)}`;
+    const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', this.pair.privateKey, utf8(input)));
+    return `${input}.${base64UrlEncode(sig)}`;
+  }
+
   /** Google's answer for `url`, or null when it isn't one of Google's endpoints. */
   async answer(url: string, init: RequestInit | undefined): Promise<Response | null> {
     const bare = url.split('?')[0];

@@ -740,3 +740,140 @@ const COULDNT_CHECK: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>([
 
 /** The kind of a no-match (`NoMatchKind`), so a renderer never infers it from the codes itself. */
 export const noMatchKind = (reason: LabelNoMatchCode): NoMatchKind => (NOT_DESCRIBED.has(reason) ? 'not_described' : COULDNT_CHECK.has(reason) ? 'couldnt_check' : 'described_mismatch');
+
+// ---- the preview (D894): every format with example values, exactly as the plain-text form renders a match ----
+
+/** One format as users would see it, with made-up example values (core's plain-text form, for the console and staff). */
+export interface LabelPreviewFormat {
+  readonly key: string;
+  /** "{App} says: …" */
+  readonly line: string;
+  readonly sentence: string;
+  readonly parts: readonly { readonly kind: 'verb' | 'word' | 'object' | 'value'; readonly text: string }[];
+  readonly fields: readonly { readonly label: string; readonly value: string }[];
+}
+
+/** The example user in a preview: an account argument marked `isSelf` reads "your account". */
+const PREVIEW_USER = 'the-user.example';
+/** A placeholder Stellar account (the all-zero key's address) for an account argument with no listed value. */
+const PREVIEW_STELLAR = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+/** 1 January 2027, 00:00 UTC, and two hours: the example date and duration. */
+const PREVIEW_DATE_MS = 1_798_761_600_000n;
+const PREVIEW_DURATION_MS = 7_200_000n;
+
+const clamp = (v: bigint, lo?: string, hi?: string): bigint => {
+  let x = v;
+  if (hi !== undefined && x > BigInt(hi)) x = BigInt(hi);
+  if (lo !== undefined && x < BigInt(lo)) x = BigInt(lo);
+  return x;
+};
+
+/** The example value of a declared argument, chosen to meet its constraints where it can. */
+function exampleArg(spec: ArgSpec, field: LabelField | undefined, c: { doc: LabelDocument; near: NearNetwork | null; tokenNetwork: Parameters<typeof knownToken>[0] }): ArgValue {
+  const p = field?.params;
+  switch (spec.type) {
+    case 'accountId':
+    case 'address': {
+      if (spec.isSelf) return { kind: 'account', v: PREVIEW_USER };
+      if (spec.oneOf?.length) return { kind: 'account', v: spec.oneOf[0]! };
+      const listed = c.doc.metadata.addressBook[0];
+      if (listed) return { kind: 'account', v: listed.account };
+      return { kind: 'account', v: c.near ? `example.${c.near}` : PREVIEW_STELLAR };
+    }
+    case 'string':
+    case 'symbol': {
+      if (spec.oneOf?.length) return { kind: 'text', v: spec.oneOf[0]! };
+      if (p?.format === 'enum') {
+        const first = Object.keys(c.doc.metadata.enums[p.enum] ?? {})[0];
+        if (first !== undefined) return { kind: 'text', v: first };
+      }
+      return { kind: 'text', v: '1042' };
+    }
+    case 'boolean':
+    case 'bool':
+      return { kind: 'bool', v: spec.equals ?? true };
+    case 'integer':
+    case 'u32':
+    case 'i32': {
+      const lo = spec.min === undefined ? undefined : String(spec.min);
+      const hi = spec.max === undefined ? undefined : String(spec.max);
+      if (p?.format === 'enum') {
+        const first = Object.keys(c.doc.metadata.enums[p.enum] ?? {}).find((k) => DECIMAL.test(k));
+        if (first !== undefined) return { kind: 'int', v: BigInt(first) };
+      }
+      if (p?.format === 'count') return { kind: 'int', v: clamp(1n, String(Math.max(p.min, spec.min ?? p.min)), String(Math.min(p.max, spec.max ?? p.max))) };
+      return { kind: 'int', v: clamp(p?.format === 'itemId' || p?.format === 'orderNumber' ? 1042n : 1n, lo, hi) };
+    }
+    default: {
+      // u128, u64, i128, i64, timepoint, duration.
+      const s = spec as Extract<ArgSpec, { atLeast?: string }>;
+      let v = 1n;
+      if (p?.format === 'enum') {
+        const first = Object.keys(c.doc.metadata.enums[p.enum] ?? {}).find((k) => DECIMAL.test(k));
+        if (first !== undefined) return { kind: 'int', v: BigInt(first) };
+      } else if (p?.format === 'date' || p?.format === 'duration') {
+        const ms = p.format === 'date' ? PREVIEW_DATE_MS : PREVIEW_DURATION_MS;
+        v = (ms * 1_000_000n) / UNIT_NS[p.unit];
+      } else if (p?.format === 'nativeAmount') v = 10n ** 24n;
+      else if (p?.format === 'tokenAmount') {
+        const token = 'token' in p ? p.token : null;
+        const listed = token === null ? null : knownToken(c.tokenNetwork, token);
+        v = listed && listed.kind === 'token' && listed.decimals > 0 ? 25n * 10n ** BigInt(listed.decimals - 1) : 25n;
+      } else if (p?.format === 'itemId' || p?.format === 'orderNumber') v = 1042n;
+      else if (p?.format === 'count') v = clamp(1n, String(p.min), String(p.max));
+      return { kind: 'int', v: clamp(v, s.atLeast, s.atMost) };
+    }
+  }
+}
+
+/**
+ * Every format of a parsed document as users would see it, with example values: each field rendered by the matcher's
+ * own renderer and the sentence by `sentencePlainText`, so the console's and the staff feed's preview is the plain form
+ * a real match would give (values aside). An example that the document's own constraints can't take reads "(an
+ * example value)". Pure.
+ */
+export function previewLabelDocument(doc: LabelDocument, appName: string): LabelPreviewFormat[] {
+  const ctx = doc.context;
+  const near = ctx.chain === 'near' ? ctx.network : null;
+  const tokenNetwork: Parameters<typeof knownToken>[0] = ctx.chain === 'near' ? { kind: 'near', network: ctx.network } : { kind: 'stellar', networkPassphrase: ctx.networkPassphrase };
+  const book = new Map(doc.metadata.addressBook.map((e) => [e.account, e.name]));
+  return Object.keys(doc.formats).map((key) => {
+    const format = doc.formats[key]!;
+    const values = new Map<string, ArgValue>();
+    const fieldAt = (path: string) => format.fields.find((f) => f.path === path);
+    if (format.chain === 'near' || format.chain === 'soroban') {
+      for (const spec of format.call.args) values.set(`args.${spec.name}`, exampleArg(spec, fieldAt(`args.${spec.name}`), { doc, near, tokenNetwork }));
+      // A tokenPath names an account argument: its example is a token (its first listed value, else a placeholder), never an address book name.
+      for (const f of format.fields) {
+        if (f.params.format !== 'tokenAmount' || !('tokenPath' in f.params)) continue;
+        const spec = format.call.args.find((a) => `args.${a.name}` === (f.params as { tokenPath: string }).tokenPath) as { oneOf?: readonly string[] } | undefined;
+        values.set(f.params.tokenPath, { kind: 'account', v: spec?.oneOf?.[0] ?? (near ? `token.${near}` : PREVIEW_STELLAR) });
+      }
+    }
+    if (format.chain === 'near') {
+      const d = format.call.deposit;
+      values.set('deposit', { kind: 'int', v: 'exactly' in d ? BigInt(d.exactly) : clamp(10n ** 24n, undefined, d.atMost) });
+    }
+    if (format.chain === 'stellar') values.set('memo', format.call.memo === 'id' ? { kind: 'int', v: 1042n } : { kind: 'text', v: '1042' });
+    const rc: RenderContext = { doc, user: PREVIEW_USER, book, tokenNetwork, valueAt: (p) => values.get(p) };
+    const rendered = new Map<string, string>();
+    for (const f of format.fields) {
+      const v = renderField(f, rc);
+      rendered.set(f.path, 'ok' in v ? '(an example value)' : valuePlainText(v, appName));
+    }
+    const parts = format.sentence.map((s) => {
+      switch (s.kind) {
+        case 'verb':
+          return { kind: 'verb' as const, text: format.intent.verb as string };
+        case 'object':
+          return { kind: 'object' as const, text: format.intent.object! };
+        case 'word':
+          return { kind: 'word' as const, text: s.word as string };
+        case 'field':
+          return { kind: 'value' as const, text: rendered.get(s.path) ?? '(an example value)' };
+      }
+    });
+    const sentence = parts.map((p) => p.text).join(' ');
+    return Object.freeze({ key, line: `${appName} says: ${sentence}`, sentence, parts: Object.freeze(parts), fields: Object.freeze(format.fields.map((f) => ({ label: f.label, value: rendered.get(f.path)! }))) });
+  });
+}

@@ -510,6 +510,16 @@ describe('drift: a bare D1 write that skips the guarded path is reported, as for
     await detectLabelDrift(env, clock.now());
     expect(await drift(app.org)).toEqual([]);
     await expect(env.DB.prepare("UPDATE label_changes SET doc_text = '{}' WHERE id = ?1").bind(c.id).run()).rejects.toThrow(/never edited/u);
+    // Past the trigger (dropped, as a D1 compromise could): the edited text no longer hashes to its sha256.
+    const trigger = (await env.DB.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'label_changes_fixed'").first<{ sql: string }>())!.sql;
+    await env.DB.prepare('DROP TRIGGER label_changes_fixed').run();
+    try {
+      await env.DB.prepare("UPDATE label_changes SET doc_text = replace(doc_text, 'the stamp', 'the token') WHERE id = ?1").bind(c.id).run();
+      await detectLabelDrift(env, clock.now());
+      expect((await drift(app.org)).map((d) => d.finding)).toEqual(['text_changed']);
+    } finally {
+      await env.DB.prepare(trigger).run();
+    }
   });
 });
 

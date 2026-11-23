@@ -15,7 +15,7 @@ const DIFF_TEXT: Record<DiffLine['change'], string> = { added: 'Added', removed:
 /** The changed lines (none: the one line that says so). */
 export function DiffList({ diff }: { diff: readonly DiffLine[] }) {
   const changed = diff.filter((x) => x.change !== 'same');
-  if (changed.length === 0) return <p>Nothing users see changes: every line stays as it is now (only the apps change).</p>;
+  if (changed.length === 0) return <p>The example lines users see stay the same: what changes is elsewhere in the description (its conditions, its lists of values, the program’s code it describes, or the apps).</p>;
   return (
     <ul className="labels-diff">
       {changed.map((x) => (

@@ -403,6 +403,13 @@ describe('after PR 126’s review', () => {
     await waitFor(() => expect(calls.some((c) => c.url === '/api/orgs/org_a/changes/lc_wait/cancel' && c.init?.method === 'POST')).toBe(true));
   });
 
+  it('a change whose example lines stay the same says where the change is', async () => {
+    signedIn({ list: listOf([entry({ current: version({ id: 'lc_live', text: paymentDoc() }), waiting: version({ id: 'lc_wait', state: 'announced', activeFrom: NOW + 3_600_000, text: paymentDoc(), diff: [{ key: '(contract)', change: 'same', before: 'x', after: 'x' }, { key: 'payment', change: 'same', before: 'y', after: 'y' }] }) })]) });
+    at('/orgs/org_a/apps/app_1/labels');
+    await tab();
+    expect(await screen.findByText(/^The example lines users see stay the same: what changes is elsewhere in the description/u)).toBeTruthy();
+  });
+
   it('a waiting change shows what it changes; a NEAR entry in force says it isn’t shown yet', async () => {
     const near = JSON.stringify({ schema: 'journear-labels/1', context: { near: { network: 'testnet', account: 'stamp-rally.testnet', codeHash: 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn' } }, display: { formats: { join: { call: { args: {} }, intent: { verb: 'join', object: 'the club' }, sentence: ['verb', 'object'], fields: [] } } } });
     signedIn({

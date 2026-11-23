@@ -19461,7 +19461,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   your list doesn’t have."; "Add one of your Stellar accounts (G…) to see a matching payment."
 - Review: "For {apps}. These are the words the approval window shows your users for your app’s requests, as “{App} says:
   …”, always with “These are {App}’s words. Journear hasn’t checked them.”"; "What changes for users" (Added / Changed /
-  Removed; "What they describe"); "Nothing users see changes: every line stays as it is now (only the apps change).";
+  Removed; "What they describe"); "The example lines users see stay the same: what changes is elsewhere in the description (its conditions, its lists of values, the program’s code it describes, or the apps).";
   "What users would see (example values)"; when: "Not at once. After you confirm, Journear emails your organisation’s
   security contacts. It goes live {wait} after the email unless someone cancels it; Journear may block it if it would
   mislead users. Any owner can cancel it until then, on the Request labels tab or from the email." / with review: "Not at

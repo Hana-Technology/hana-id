@@ -546,12 +546,26 @@ export async function schedule(p, { run = runStep, log = console.log, logDir } =
   return { results, failed, ms: Date.now() - t0, logDir: dir };
 }
 
+/**
+ * A line of help for a failure whose cause is known from its log, or null. The sandbox lane's first build in a fresh
+ * worktree downloads the near-sandbox binary (about 71 MB) in near-workspaces' build script; when that fails, the
+ * binary another checkout already has can be reused (docs/operations.md "CI and git", the sandbox e2e).
+ */
+export function failureHint(stepId, log) {
+  if (stepId === 'sandbox' && /Could not install sandbox|failed to run custom build command for `near-workspaces/u.test(log)) {
+    return 'hint: the near-sandbox binary did not download; set NEAR_SANDBOX_BIN_PATH to one another checkout has and run again (docs/operations.md "CI and git", the sandbox e2e).';
+  }
+  return null;
+}
+
 async function execute(p) {
   const { results, failed, ms, logDir } = await schedule(p);
   if (failed) {
     console.log(`\n--- ${failed.s.title}: \`${failed.out.failed}\`${failed.out.cwd === '.' ? '' : ` (in ${failed.out.cwd})`} failed. Last lines of ${failed.log}:\n`);
     console.log(tail(failed.log, 60));
     console.log('---');
+    const hint = failureHint(failed.s.id, tail(failed.log, 400));
+    if (hint) console.log(hint);
   }
   console.log(`\n${summaryTable(summaryRows(p.steps, results, failed, ms))}\n\nLogs: ${logDir}`);
   return failed ? 1 : 0;

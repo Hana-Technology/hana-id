@@ -1,7 +1,9 @@
 // The approval window's whole addresses, its account's Copy and the line under Approve, in a real browser (D876,
-// D878), Chromium only (clipboard permissions are Chromium's in Playwright): the counterparty row's value is the exact
-// address on whole lines at a phone's width; Copy puts exactly the account on the clipboard and says "Copied"; the
-// line under the buttons appears, changes and goes without moving Reject or Approve.
+// D878): the counterparty row's value is the exact address on whole lines at a phone's width; Copy says "Copied" and
+// moves nothing; the line under the buttons appears, changes and goes without moving Reject or Approve. In all three
+// browsers. Reading the clipboard back (Copy put exactly the account there) needs clipboard permissions, which only
+// Chromium grants in Playwright: that one check is Chromium only. Headless Chromium also refuses the write without
+// the write permission ("Couldn't copy"), where Firefox and WebKit allow it on the click, as browsers do for a page.
 import { type Page } from '@playwright/test';
 import { EVM_CHAIN_ID } from '../src/stack.ts';
 import { approve, clickLauncher, expect, login, newApp, openPartner, runAction, test } from './fixtures.ts';
@@ -36,10 +38,8 @@ const lineTexts = (popup: Page, selector: string) =>
   });
 
 test.describe('the approval window in a real browser (D876, D878)', () => {
-  test.skip(({ browserName }) => browserName !== 'chromium', 'Chromium: clipboard permissions');
-
-  test('the To row is one line at 390 px; Copy copies exactly the account; the line under Approve never moves the buttons', async ({ page, context }) => {
-    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  test('the To row is one line at 390 px; Copy says Copied; the line under Approve never moves the buttons', async ({ page, context, browserName }) => {
+    if (browserName === 'chromium') await context.grantPermissions(['clipboard-write']);
     await openPartner(page, await newApp());
     const { evm } = await login(page);
     const popup = await popupFor(page);
@@ -64,12 +64,11 @@ test.describe('the approval window in a real browser (D876, D878)', () => {
     await expect(approveBtn).toBeDisabled();
     await expect(approveBtn).toHaveAttribute('aria-describedby', 'guard-hint');
 
-    // Copy, in the details: exactly the account on the clipboard, "Copied" beside it; nothing below it moves.
+    // Copy, in the details: "Copied" beside it; nothing below it moves.
     await popup.locator('details.request-details > summary').first().click();
     const before = await boxes();
     await popup.locator('button.copy-account').click();
     await expect(popup.locator('dl.your-account .account-copy-status')).toHaveText('Copied');
-    expect(await popup.evaluate(() => navigator.clipboard.readText())).toBe(evm);
     expect(await boxes()).toEqual(before);
     // The account's own row: the exact address, its lines whole groups (no lone character).
     const account = await lineTexts(popup, 'dl.your-account code.id-full');
@@ -80,6 +79,20 @@ test.describe('the approval window in a real browser (D876, D878)', () => {
     await expect(approveBtn).toBeEnabled();
     await expect(line).toHaveText('');
     expect(await boxes()).toEqual(before);
+    await approve(popup);
+  });
+
+  test('Copy puts exactly the account on the clipboard', async ({ page, context, browserName }) => {
+    test.skip(browserName !== 'chromium', 'reading the clipboard back needs clipboard permissions: Chromium only in Playwright');
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await openPartner(page, await newApp());
+    const { evm } = await login(page);
+    const popup = await popupFor(page);
+
+    await popup.locator('details.request-details > summary').first().click();
+    await popup.locator('button.copy-account').click();
+    await expect(popup.locator('dl.your-account .account-copy-status')).toHaveText('Copied');
+    expect(await popup.evaluate(() => navigator.clipboard.readText())).toBe(evm);
     await approve(popup);
   });
 });

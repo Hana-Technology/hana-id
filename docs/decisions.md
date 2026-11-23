@@ -17840,7 +17840,9 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
   version, no document), immediate: the version in force ends, a waiting one is cancelled; it only ever returns the window
   to the plain view.
 - **Cancel** a waiting version: an owner (`ConsoleRpc.cancelChange`, no step-up, as for guarded changes), the emailed link
-  (`cancelChangeByLink`, its token's hash), staff (`AdminRpc.cancelChange`).
+  (`cancelChangeByLink`, its token's hash: the console's `/cancel/lc_…#t=` page and `POST /api/cancel` take an `lc_`
+  id, its audit row names the entry and no app, and opening the link alone changes nothing), staff
+  (`AdminRpc.cancelChange`).
 - **Announce**: only the admin Worker's notice cron (`AdminRpc.labelNotices` → email the security alias and every
   security contact, each with the preview, the diff and the cancel link → `AdminRpc.ackLabelNotice`, `system` actor only,
   after every send was accepted). No staff expedite exists for labels.
@@ -17850,7 +17852,10 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
   being served at once and any older version of the entry still in force ends with it, so a block never brings back an
   earlier document; final: the partner proposes again, another full wait); **Allow** (only while review is required and
   the version isn't allowed yet; it lifts the hold and nothing else: its own time still applies); the switches (below).
-  Staff never propose or edit a document, and nothing staff do can make a version take effect before its time.
+  Staff never propose or edit a document, and nothing staff do can make a version take effect before its time
+  (tested: Allow pressed before the notice or before `active_from`, review switched off while versions wait, and a
+  switch turned back on after versions were blocked, replaced, cancelled or lapsed while it was off; none serves
+  anything early or anything that ended).
 - **Required review** (`label_controls.review_required`, for one org or for everyone, default off): a version whose time
   has come waits for Allow however long, until it lapses 7 days after its time (decided: the partner then proposes again;
   a held change neither goes live by itself nor waits forever). Switching review off lets a held version whose time has

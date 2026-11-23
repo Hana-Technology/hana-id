@@ -1150,6 +1150,39 @@ a.explorer {
   margin: 0;
 }
 
+/* D898 option A: "Open {App} to cancel it", a small outlined link on its own line (D887's look for a banner's action),
+   then where it goes, as text, and what to do there. */
+.home-sign-in-risk .home-sign-in-open-row {
+  margin-top: var(--jp-space-1);
+}
+
+.home-sign-in-risk a.home-sign-in-open {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--jp-control-sm);
+  padding-top: 4px;
+  padding-bottom: 4px;
+  border-color: var(--jp-fg-faint);
+  white-space: normal;
+  text-align: left;
+  text-decoration: none;
+  color: var(--jp-fg);
+}
+
+.home-sign-in-risk a.home-sign-in-open .ic {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.home-sign-in-risk .home-sign-in-open-where {
+  color: var(--jp-fg-muted);
+}
+
+.home-sign-in-risk .home-sign-in-open-where .origin {
+  font-size: var(--jp-text-xs);
+}
+
 /* A stop's confirmation, under its row: what it does and doesn't, then the stop itself (the only danger button). */
 .home-confirm {
   display: grid;

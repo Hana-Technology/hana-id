@@ -1504,6 +1504,9 @@ describe('D887: a banner’s Remove or Cancel is findable: “Don’t recognise 
     // An automatic same-address Google link: Home's softer, more specific question (D865); the same button.
     expect(SIGN_IN_TEXT.removeAtSignInAuto).toBe(`Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose “${BANNER_ACTION_TEXT.remove}”.`);
     expect(SIGN_IN_TEXT.cancelAtSignIn).toBe(`${BANNER_ACTION_TEXT.lead} Sign in to this app the way you signed in here, and choose “${BANNER_ACTION_TEXT.cancel}”. If you’re not sure, cancel it.`);
+    // D898 option A: the same question, and the window's own label in its steps.
+    expect(SIGN_IN_TEXT.cancelOpenLead).toBe(`${BANNER_ACTION_TEXT.lead} If you’re not sure, cancel it.`);
+    expect(SIGN_IN_TEXT.cancelOpenSteps).toBe(`There, sign in the way you signed in here, and choose “${BANNER_ACTION_TEXT.cancel}”.`);
     expect(SIGN_IN_TEXT.removeAtSignInOnceNotOffered).toBe('Once you press “Done” in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.');
     // Every button Home names is in quotation marks, and none is the old bare "Remove".
     for (const t of Object.values(SIGN_IN_TEXT)) {

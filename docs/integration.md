@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-23 (request labels in the console, D899; app names; gas sponsorship; sign-in window buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-23 (request labels; app names; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -997,7 +997,7 @@ before proposing new ones"); a change already waiting ("cancel it first"); the l
 organisation, 64 KiB of documents, 32 KiB per app, 10 proposals a day); a version conflict ("Your request labels changed
 while you were working … Reload"); an owner who isn't an on-chain owner of the scope.
 
-**Example** (what the form writes for the box above, on a test app):
+**An example** (what the form writes for the box above, on a test app):
 
 ```json
 {

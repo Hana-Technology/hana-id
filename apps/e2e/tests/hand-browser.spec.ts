@@ -158,7 +158,7 @@ test('the start page, a Google sign-in with a named account, and a guestbook wri
   await expect(demo.locator('#near-balance')).toHaveText('Balance: 0 NEAR. The guestbook write needs none.');
   const approval = await popupOf(demo, () => demo.getByRole('button', { name: 'Write to the guestbook (no NEAR needed)' }).click());
   await approve(approval);
-  await expect(demo.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
+  await expect(demo.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR’s test network. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
   await expect(demo.locator('#near-messages li', { hasText: text }).locator('.you')).toHaveText('you');
   expect(h.relay.guestbook).toEqual([text]);
   expect(h.relay.problems).toEqual([]);

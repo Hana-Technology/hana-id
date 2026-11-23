@@ -12,7 +12,7 @@
 // signs into that window; if reading fails, the ticket is cancelled.
 import type { ApprovalTicket, NearActivateResult } from '@hana-id/web';
 import type { DemoConfig } from './config.ts';
-import { type DemoAction, errorInfo, relayTransaction } from './errors.ts';
+import { type DemoAction, activationFailure, errorInfo, relayTransaction } from './errors.ts';
 import {
   type AccessKeyState,
   type FetchLike,
@@ -59,16 +59,28 @@ const BUSY_RETRIES = 2;
 const ACTIVATION_TRIES = 10;
 
 /** NEP-413's demo message: harmless to sign, proves the account only to whoever checks the nonce. */
-export const NEAR_TEST_MESSAGE = 'Journear Passport testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.';
+export const NEAR_TEST_MESSAGE = 'Journear Passport demo (test networks): signing in with NEAR. This signature moves nothing.';
 /** The text "Sign a transaction" uses when the message box holds no valid message. */
 export const DEFAULT_TX_TEXT = 'Hello from Journear Passport (a signed NEAR transaction)';
 
+/**
+ * D889: the network's name on a label, as the approval window names it ("NEAR test network"); in a sentence the demo
+ * says "NEAR’s test network", as the stamps site does.
+ */
+export const NEAR_NETWORK_LABEL = 'NEAR test network';
+
+/**
+ * D889: before the one automatic second approval after `delegate_nonce_used`, the card reads the guestbook: this
+ * account's message with the same text is already there (another tab, a reload), so nothing more is asked.
+ */
+export const ALREADY_IN_GUESTBOOK = 'Your message is already in the guestbook.';
+
 export const STAGES = {
-  reading: 'Reading your NEAR account on testnet…',
+  reading: 'Reading your NEAR account…',
   activating: 'Preparing your NEAR account…',
-  approving: 'Waiting for your approval in the Journear window…',
+  approving: 'Waiting for your approval in the Journear Passport window…',
   relaying: 'Sending it. Journear pays the network fee…',
-  retrying: 'That request’s number was already used. Building a fresh one: approve it once more in the Journear window…',
+  retrying: 'Another request took this one’s place. The demo is preparing a new one: approve it once more in the Journear Passport window…',
 } as const;
 
 /**
@@ -77,7 +89,7 @@ export const STAGES = {
  * this page created the account says so too.
  */
 export const guestbookDone = (created: boolean): string =>
-  `Written to the guestbook on NEAR testnet.${created ? ' Your NEAR account was created for it.' : ''} Journear paid the network fee, so it cost you nothing.`;
+  `Written to the guestbook on NEAR’s test network.${created ? ' Your NEAR account was created for it.' : ''} Journear paid the network fee, so it cost you nothing.`;
 
 export interface NearCardDeps {
   config: DemoConfig;
@@ -142,6 +154,8 @@ export function startNearCard(deps: NearCardDeps): NearCard {
   /** Accounts known to exist on testnet this session (a key was read, or activate answered). */
   const activated = new Set<string>();
   const activating = new Map<string, Promise<NearActivateResult>>();
+  /** D889: errors of `hana.near.activate`, so the write tells them apart from the relay's (nothing was signed yet). */
+  const activationErrors = new WeakSet<object>();
   /** Accounts this page's activation created, until their first write says so. */
   const justCreated = new Set<string>();
   /** The highest nonce this page signed per account, so a second write before the next read still goes up. */
@@ -213,6 +227,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         },
         (e: unknown) => {
           activating.delete(accountId);
+          if (isObj(e)) activationErrors.add(e);
           throw e;
         },
       );
@@ -333,14 +348,14 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     b.hidden = false;
     b.textContent = p.key
       ? `Balance: ${formatNear(p.balance)} NEAR${p.balance < TX_FEE_RESERVE ? '. The guestbook write needs none.' : '.'}`
-      : 'Not on NEAR testnet yet: your first guestbook write creates it (Journear sends it a zero-value transfer), at no cost to you.';
+      : 'Not on NEAR’s test network yet: your first guestbook write creates it, at no cost to you.';
   }
 
   /** A signing result, newest first (result.ts): the facts as mono rows, then the explorer link when it was sent. */
   function result(label: string, facts: ResultFact[], note: string | null, ok: boolean, txHash?: string): void {
     const rows = [...facts];
     if (txHash && explorer) rows.push({ label: 'Explorer', value: 'View the transaction ↗', href: `${explorer}/txns/${encodeURIComponent(txHash)}` });
-    el('near-results').prepend(resultItem({ title: label, ok, chain: { kind: 'near', name: 'NEAR testnet' }, facts: rows, note }));
+    el('near-results').prepend(resultItem({ title: label, ok, chain: { kind: 'near', name: NEAR_NETWORK_LABEL }, facts: rows, note }));
   }
 
   function renderMessages(list: ReturnType<typeof parseMessages>): void {
@@ -401,6 +416,8 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         done(null);
         sentPending(null);
         clearCardError();
+        // D889: set once the relay is asked: before it, nothing of the message can have been sent.
+        let relayStarted = false;
         try {
           let ready = fresh(accountId);
           if (ready === null || ready.key === null) {
@@ -423,6 +440,7 @@ export function startNearCard(deps: NearCardDeps): NearCard {
             const { signedDelegateAction } = await signing;
             lastNonce.set(accountId, nonce);
             stage(STAGES.relaying);
+            relayStarted = true;
             return (await whileUnrecorded(() => c.near.relay({ network: 'testnet', signedDelegateAction }))).transactionHash;
           };
           let transactionHash: string;
@@ -436,6 +454,26 @@ export function startNearCard(deps: NearCardDeps): NearCard {
             if (info.reason !== 'delegate_nonce_used') throw e;
             const held = isObj(e) && isObj(e.data) && typeof e.data.accessKeyNonce === 'string' ? BigInt(e.data.accessKeyNonce) : null;
             if (held !== null && held > (lastNonce.get(accountId) ?? 0n)) lastNonce.set(accountId, held);
+            // D889: the request that took this one's place may have been this message (another tab, a reload): read the
+            // guestbook once first. There: say so, no second approval. Not readable: no automatic retry (the error's
+            // sentence says to check). Not there: one more approval, as before.
+            let list: ReturnType<typeof parseMessages>;
+            try {
+              list = parseMessages(await rpc.view(guestbook, 'get_messages', { limit: GUESTBOOK_LIST_LIMIT }));
+            } catch {
+              throw e;
+            }
+            if (list.some((m) => m.accountId === accountId && m.text === check.text)) {
+              stage(null);
+              renderMessages(list);
+              done(ALREADY_IN_GUESTBOOK);
+              input.value = '';
+              renderCount();
+              prep = null;
+              refresh(accountId).catch(() => {});
+              return;
+            }
+            relayStarted = false;
             stage(STAGES.retrying);
             transactionHash = await signAndRelay(await refresh(accountId));
           }
@@ -450,10 +488,12 @@ export function startNearCard(deps: NearCardDeps): NearCard {
           await loadList({ accountId, text: check.text });
         } catch (e) {
           stage(null);
+          // D889: the activation failed (before any approval): words about the account, never "Sent, still confirming".
+          if (!relayStarted && isObj(e) && activationErrors.has(e)) throw activationFailure(e);
           // The relayer gave up waiting (504 `timeout`, the transaction pending): it may still land, so look again. With
           // the transaction's hash that's no error: the card says it was sent and links to it.
           const reason = errorInfo(e).reason;
-          if (reason === 'timeout') {
+          if (reason === 'timeout' && relayStarted) {
             loadList({ accountId, text: check.text }).catch(() => {});
             const sent = relayTransaction(e);
             if (sent !== null) {
@@ -479,8 +519,10 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     if (accountId === null || guestbook === null) return;
     const check = checkGuestbookText(input.value);
     const text = check.ok ? check.text : DEFAULT_TX_TEXT;
-    const label = 'NEAR transaction (add_message on the guestbook)';
+    const label = 'NEAR transaction (a message to the guestbook)';
     deps.run('sign', async () => {
+      // D889: whether the approval came back, so a failure after it says "signed" (it was), not "not signed".
+      let signed = false;
       try {
         let ready = fresh(accountId);
         if (ready === null) {
@@ -495,10 +537,11 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         const nonce = transactionNonce({ keyNonce: ready.key?.nonce ?? null, lastSigned: lastNonce.get(accountId) });
         const transaction = addMessageTransaction({ accountId, guestbook, text, nonce, blockHash: ready.hash });
         const r = await c.near.signTransaction({ network: 'testnet', transaction });
+        signed = true;
         if (ready.key !== null && ready.balance >= TX_FEE_RESERVE) {
           await rpc.sendTx(r.signedTransaction);
           lastNonce.set(accountId, nonce);
-          result(`${label}: signed and sent`, [{ label: 'Transaction hash', value: r.hash }], 'Your account paid the fee.', true, r.hash);
+          result(`${label}: signed and sent`, [{ label: 'Transaction hash', value: r.hash }], 'Your account paid the network fee.', true, r.hash);
           refresh(accountId).catch(() => {});
           await loadList();
           return;
@@ -513,7 +556,10 @@ export function startNearCard(deps: NearCardDeps): NearCard {
           true,
         );
       } catch (e) {
-        result(`${label}: not signed`, [], deps.plainMessage(e, 'sign'), false);
+        // After signing, only the send can fail (near.ts sendTx): definitely not run (`near_send_failed`), or unknown
+        // (`near_send_unconfirmed`, also anything unexpected after the approval).
+        const title = !signed ? 'not signed' : errorInfo(e).code === 'near_send_failed' ? 'signed, didn’t go through' : 'signed, not confirmed';
+        result(`${label}: ${title}`, [], deps.plainMessage(e, 'sign'), false);
         throw e;
       }
     });

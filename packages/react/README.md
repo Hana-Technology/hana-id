@@ -69,7 +69,7 @@ const { demo, known } = useMainnetDemo();                     // Journear's sand
   `login()` returns is already marked handled, so `onClick={login}` never raises an unhandled rejection. `logout()`
   and `exportKey()` reject as usual: handle them.
 - `useHana().client` is the underlying `HanaClient`, for what the hooks don't wrap (events, auto-approve,
-  `revokeOtherDevices`, NEAR, and the gas-free EVM actions of 0.5.0: `client.evm.sponsorship()` and
+  `revokeOtherDevices`, NEAR, and 0.5.0's gas sponsorship for EVM actions: `client.evm.sponsorship()` and
   `client.evm.sendSponsored()`, not live yet).
 - To show an error to your user, use `error.userMessage` (0.5.0), never `error.message`. A `login_cancelled` in
   `useHana().error` is usually the user closing the window; with `data.reason: 'link_remove'` they removed a linked

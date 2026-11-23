@@ -193,7 +193,7 @@ body.home-page > main:focus {
 }
 
 #home-content > section,
-#home-app-extras > section {
+.home-tools > section {
   display: flex;
   flex-direction: column;
   gap: var(--jp-space-3);
@@ -204,25 +204,25 @@ body.home-page > main:focus {
 }
 
 #home-content > section:first-of-type,
-#home-app-extras > section:first-child {
+.home-tools > section:first-child {
   margin-top: 0;
 }
 
-#home-app-extras {
+.home-tools {
   margin-top: var(--jp-space-10);
 }
 
-#home-app-extras > section:empty {
+.home-tools > section:empty {
   display: none;
 }
 
 #home-content > section > *,
-#home-app-extras > section > * {
+.home-tools > section > * {
   margin: 0;
 }
 
 #home-content > section > :is(h2, h3, h4):not(:first-child),
-#home-app-extras > section > :is(h2, h3, h4):not(:first-child) {
+.home-tools > section > :is(h2, h3, h4):not(:first-child) {
   margin-top: var(--jp-space-3);
 }
 
@@ -234,7 +234,7 @@ body.home-page > main:focus {
 
 /* The wallet's tools, a card each. On their own views (D893) "Devices and auto-approve" and "Your name" are the page,
    not a card: their heading is the view's `h1` and their sentence its lede. */
-#home-app-extras > section {
+.home-tools > section {
   padding: var(--jp-space-5);
   background: var(--jp-surface);
   border: 1px solid var(--jp-border);
@@ -242,7 +242,7 @@ body.home-page > main:focus {
 }
 
 @media (max-width: 480px) {
-  #home-app-extras > section {
+  .home-tools > section {
     padding: var(--jp-space-4);
   }
 }
@@ -275,7 +275,7 @@ body.home-page > main:focus {
   line-height: var(--jp-leading-snug);
 }
 
-#home-content :is(.home-app-details, #home-app-extras) h2 {
+#home-content :is(.home-app-details, .home-tools) h2 {
   font-size: var(--jp-text-md);
 }
 
@@ -859,7 +859,7 @@ a.explorer {
 
 /* One app's group after another's: the gap of a sub-heading. */
 #home-content > section > .home-devices-group + .home-devices-group,
-#home-app-extras > section > .home-devices-group + .home-devices-group {
+.home-tools > section > .home-devices-group + .home-devices-group {
   margin-top: var(--jp-space-3);
 }
 
@@ -1274,4 +1274,226 @@ a.explorer {
    page's own `p` margin would add 8 px the moment its words appear (D878's line under the move flow's buttons). */
 .home .reserved > * {
   margin: 0;
+}
+
+/* ---- a wallet's head and tabs (D895, option A's a2–a5): the apps and whether the wallet needs them above the tabs;
+   then Addresses, Security and Move wallet as the system's tabs, full width on a phone ---- */
+.home .home-app-label {
+  margin: 0;
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-semibold);
+}
+
+.home-tabs {
+  margin-top: var(--jp-space-8);
+}
+
+.home-tabs .jp-tab {
+  box-sizing: border-box;
+  min-height: var(--jp-control-sm);
+  padding: 12px 14px;
+  font-size: var(--jp-text-md);
+}
+
+.home .home-tabs .jp-tab:focus-visible {
+  outline: 2px solid var(--jp-focus);
+  outline-offset: -2px;
+}
+
+.home-tabs .jp-tab .ic {
+  width: 16px;
+  height: 16px;
+}
+
+.home-tabs .jp-tab.home-tab-move {
+  margin-left: auto;
+}
+
+.home-tabpanel {
+  padding-top: var(--jp-space-6);
+  min-width: 0;
+}
+
+.home-tabpanel[hidden] {
+  display: none;
+}
+
+.home .home-tabpanel:focus-visible {
+  outline: 2px solid var(--jp-focus);
+  outline-offset: 4px;
+  border-radius: var(--jp-radius-sm);
+}
+
+.home-tabpanel > .home-tools {
+  margin-top: 0;
+}
+
+#home-content .home-app-split h2 {
+  font-size: var(--jp-text-lg);
+}
+
+@media (max-width: 560px) {
+  .home-tabs .jp-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    padding: 12px 4px;
+    font-size: var(--jp-text-sm);
+  }
+
+  .home-tabs .jp-tab.home-tab-move {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 360px) {
+  .home-tabs .jp-tab .ic {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-tabs .jp-tab {
+    transition: none;
+  }
+}
+
+/* ---- the phone's "Sign in again" chip (D895): only on a phone or a tablet (the bar scrolls away there), only while
+   the bar's notice is out of view and nothing that can be pressed is under it (home-page.ts decides; hidden, it takes
+   no clicks and no focus). It takes the person up to the notice. ---- */
+.home-again-chip {
+  position: fixed;
+  left: 50%;
+  bottom: max(var(--jp-space-4), env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: var(--jp-z-sticky);
+  visibility: hidden;
+  box-shadow: var(--jp-shadow-md);
+  white-space: nowrap;
+}
+
+.home-again-chip[data-shown] {
+  visibility: visible;
+}
+
+.home-again-chip .ic {
+  width: 16px;
+  height: 16px;
+}
+
+@media (min-width: 641px) and (min-height: 600px) and (pointer: fine) {
+  .home-again-chip {
+    display: none;
+  }
+}
+
+/* ---- D895 after PR 122's review: a tighter wallet page (option A's a2–a5) ---- */
+/* The head: the apps' box with its label inside, the badge on its own line above the answer. */
+.home-app-all > .home-app-label {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--jp-text-xs);
+  font-weight: var(--jp-weight-medium);
+}
+
+#home-content .home-app-details {
+  gap: var(--jp-space-3);
+}
+
+#home-content .home-app-details > .home-app-all {
+  margin-bottom: 0;
+}
+
+#home-coverage {
+  display: grid;
+  justify-items: start;
+  gap: var(--jp-space-1);
+  font-size: var(--jp-text-sm);
+}
+
+#home-coverage .jp-badge {
+  margin-right: 0;
+}
+
+.home-tabs {
+  margin-top: var(--jp-space-6);
+}
+
+/* Security: its tools close together, one group. */
+#home-panel-security .home-tools > section + section {
+  margin-top: var(--jp-space-3);
+}
+
+/* Addresses: the address on the left, Copy on the right, the explorer link under both; no empty foot. */
+.home-tabpanel .home-address {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--jp-space-1) var(--jp-space-4);
+  align-items: center;
+}
+
+.home-tabpanel .home-address > .home-address-label,
+.home-tabpanel .home-address > .home-address-more,
+.home-tabpanel .home-address > #home-no-near {
+  grid-column: 1 / -1;
+}
+
+.home .home-tabpanel .home-address-actions {
+  margin-top: 0 !important;
+}
+
+.home-address-more {
+  margin: 0;
+}
+
+.home-copied-box:has(> .copy-status:empty) {
+  display: none;
+}
+
+.home-addresses > .home-copied-box {
+  margin-top: 0;
+}
+
+/* Move wallet: the flow's title larger and the section without a card, as the mock-up's entry screen. */
+#home-panel-move .home-tools > section {
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+
+#home-content #home-panel-move #home-export-title {
+  font-size: var(--jp-text-xl);
+}
+
+/* The chip's room at the page's foot while it shows (home-page.ts writes --home-chip-space). */
+body.home-page.home-chip-on > main {
+  padding-bottom: max(var(--jp-space-16), var(--home-chip-space, 76px));
+}
+
+/* Very narrow (a 390 px phone at 200 % zoom): the tabs wrap onto two lines rather than leave the window. */
+@media (max-width: 300px) {
+  .home-tabs {
+    flex-wrap: wrap;
+  }
+
+  .home-tabs .jp-tab {
+    flex: 1 1 auto;
+  }
+}
+
+#home-content .home-app-details > .home-app-all {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jp-space-2) var(--jp-space-5);
+  padding: var(--jp-space-3) var(--jp-space-4);
+}
+
+#home-content .home-app-details > .home-app-all > .home-app-label {
+  flex: 1 1 100%;
+}
+
+#home-content .home-app-details > .home-app-all > .home-app {
+  flex: 0 1 auto;
 }

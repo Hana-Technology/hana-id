@@ -37,6 +37,13 @@ export function homeRow(page: Page, name: string): Locator {
   return page.locator('.home-row[data-scope]').filter({ has: page.locator('.home-row-name', { hasText: exact }) });
 }
 
+/** Opens a tab of a wallet's page (D895: Addresses, Security, Move wallet), unless it is the one open. */
+export async function homeTab(page: Page, name: 'Addresses' | 'Security' | 'Move wallet'): Promise<void> {
+  const tab = page.getByRole('tab', { name, exact: true });
+  if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click();
+  await expect(tab).toHaveAttribute('aria-selected', 'true');
+}
+
 /** The click, the child at `/login?mode=home`, the Google stub's chooser. */
 export async function signIn(page: Page, button = 'Continue with Google', account = 0): Promise<void> {
   const childP = page.waitForEvent('popup');

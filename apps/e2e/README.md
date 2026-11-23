@@ -43,6 +43,13 @@ the hand-test lane) only an alarm set from outside the handler (or an outside `s
 pending) fires after that short delay; one the handler sets for itself keeps its time (`src/server/workers.ts`,
 `MemoryStorage`; `test/stack.test.ts`, D882).
 
+Passport Home's shell (D888): `tests/home-shell.spec.ts` (Chromium only: it measures layout) reaches the move flow's
+guarded Continue with the API's own derive, its Home sign-in made 4 minutes long by a `GET /v1/home/config` whose server
+time is 11 minutes behind, and checks that Continue's place in the document doesn't change when the sign-in's notice
+appears, when a failed copy's line appears (the Clipboard API's write made to refuse) and when the sign-in ends; and that
+the page has one `header`, one `nav` (who is signed in and Sign out, in the top bar) and a skip link that Tab reaches
+first and that moves focus to `main#app` without changing the page's address.
+
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
 sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,
 can't be removed, no other button); a waiting email linked to a Google wallet (case B) listed as waiting by kind only,

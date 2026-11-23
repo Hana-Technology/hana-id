@@ -1782,7 +1782,7 @@ describe('H10: email users (D463)', () => {
     const addr = document.getElementById('home-who-address')!;
     expect(addr.textContent).toBe(hostile);
     expect(addr.querySelectorAll('*:not(wbr)')).toHaveLength(0);
-    expect(document.querySelector('.home-head img, .home-head a')).toBeNull();
+    expect(document.querySelector('#home-account img, #home-account a')).toBeNull();
     // auth.css isolates `.mail-address` (bidi), so the override can't reorder the text around it.
     expect(addr.className).toBe('mail-address');
   });

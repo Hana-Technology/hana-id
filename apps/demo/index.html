@@ -6,7 +6,7 @@
     <meta name="referrer" content="no-referrer" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="color-scheme" content="light dark" />
-    <title>Journear Passport testnet demo</title>
+    <title>Journear Passport demo (test networks)</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script type="module" src="/src/main.ts"></script>
   </head>
@@ -46,11 +46,11 @@
       <p class="eyebrow">SDK demo</p>
       <h1>Journear Passport demo</h1>
 
-      <div class="jp-alert jp-alert-warning" id="testnet-banner"><svg class="ic" aria-hidden="true"><use href="#i-warn"/></svg><div class="body"><b>Testnet demo: Stellar, EVM and NEAR test networks only, nothing here holds real funds.</b></div></div>
+      <div class="jp-alert jp-alert-warning" id="testnet-banner"><svg class="ic" aria-hidden="true"><use href="#i-warn"/></svg><div class="body"><b>This demo uses test networks only (Stellar, EVM and NEAR), so nothing here holds real money.</b></div></div>
       <p class="lead">
         <strong>Sign in with email</strong> (we send a code to your inbox; Google sign-in works for listed testers) to get
         a Stellar, an EVM and a NEAR wallet, with no extension and no seed phrase. On NEAR you can write to a guestbook
-        right away with zero NEAR: Journear pays the fee. This page is a partner app built on
+        right away with zero NEAR: Journear pays the network fee. This page is a partner app built on
         <code>@hana-id/web</code>. Your keys and your sign-in stay inside Journear Passport’s own windows; this page
         sees only your addresses and the signatures you approve, and every signature needs your approval in a Journear
         window.
@@ -78,7 +78,7 @@
       <section id="wallet" class="jp-card" aria-labelledby="h-wallet" hidden>
         <h2 id="h-wallet">Your addresses</h2>
         <dl class="jp-kv addresses">
-          <dt><span class="jp-chain chain-stellar"><i></i>Stellar testnet</span></dt>
+          <dt><span class="jp-chain chain-stellar"><i></i>Stellar test network</span></dt>
           <dd>
             <code id="stellar-address"></code>
             <span class="addr-actions">
@@ -101,18 +101,18 @@
       <section id="near" class="jp-card near" aria-labelledby="h-near" hidden>
         <div class="card-head">
           <h2 id="h-near">NEAR</h2>
-          <span class="jp-chain chain-near"><i></i>NEAR testnet</span>
+          <span class="jp-chain chain-near"><i></i>NEAR test network</span>
         </div>
         <dl class="jp-kv addresses">
           <dt>Your NEAR account</dt>
           <dd>
-            <code id="near-account" title="Your NEAR implicit account"></code>
+            <code id="near-account" title="Your NEAR account"></code>
             <span class="addr-actions">
               <button id="copy-near" type="button" class="jp-btn jp-btn-ghost jp-btn-sm"><svg class="ic" aria-hidden="true"><use href="#i-copy"/></svg>Copy</button>
               <a id="near-link" target="_blank" rel="noopener noreferrer" hidden>View on NearBlocks ↗</a>
             </span>
             <details id="near-full" class="near-full">
-              <summary>Show the full account ID</summary>
+              <summary>Show your full NEAR account</summary>
               <code id="near-account-full"></code>
             </details>
           </dd>
@@ -121,7 +121,7 @@
 
         <div id="near-write" class="sub-block near-write" hidden>
           <h3>Write to the guestbook</h3>
-          <p class="card-hint">Your message is stored in public on NEAR testnet by the guestbook contract <code id="near-guestbook"></code>. You approve it in a Journear window; Journear sends it and pays the network fee, so your account needs no NEAR.</p>
+          <p class="card-hint">Your message is stored in public on NEAR’s test network by the Journear demo guestbook <code id="near-guestbook"></code>. You approve it in a Journear window; Journear sends it and pays the network fee, so your account needs no NEAR.</p>
           <div class="jp-field" id="near-field">
             <label for="near-text" class="jp-label">Your message</label>
             <input id="near-text" class="jp-input" type="text" maxlength="800" autocomplete="off" spellcheck="true" placeholder="gm from Journear Passport" aria-describedby="near-count near-hint" />
@@ -151,7 +151,7 @@
 
         <div class="sub-block">
           <h3>Sign</h3>
-          <p class="card-hint">Like the buttons above, each opens a Journear window to approve. The transaction is sent only if your account holds NEAR for its fee.</p>
+          <p class="card-hint">Like the buttons above, each opens a Journear window to approve. The transaction is sent only if your account holds NEAR for its network fee.</p>
           <div class="row">
             <button id="sign-near-message" type="button" class="jp-btn jp-btn-secondary">Sign a message (NEP-413)</button>
             <button id="sign-near-tx" type="button" class="jp-btn jp-btn-secondary">Sign a transaction</button>

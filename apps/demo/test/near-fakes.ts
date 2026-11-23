@@ -40,6 +40,8 @@ export class FakeNearRpc {
   messages: Record<string, unknown>[] = [];
   /** Every endpoint answers 503. */
   down = false;
+  /** How send_tx answers: executed, failed on chain, or no usable answer (503). */
+  sendAnswer: 'ok' | 'failure' | 'none' = 'ok';
   readonly calls: { url: string; body: RpcCall }[] = [];
   readonly sent: string[] = [];
 
@@ -53,6 +55,8 @@ export class FakeNearRpc {
     if (body.method === 'block') return ok({ header: { height: this.height, hash: BLOCK_HASH } });
     if (body.method === 'send_tx') {
       this.sent.push(String(p.signed_tx_base64));
+      if (this.sendAnswer === 'none') return new Response('down', { status: 503 });
+      if (this.sendAnswer === 'failure') return ok({ status: { Failure: { ActionError: { index: 0 } } }, transaction: { hash: TX_HASH } });
       return ok({ status: { SuccessValue: '' }, transaction: { hash: TX_HASH } });
     }
     if (body.method === 'query' && p.request_type === 'view_access_key') return this.key ? ok({ nonce: this.key.nonce, block_height: this.height, block_hash: BLOCK_HASH, permission: 'FullAccess' }) : err('UNKNOWN_ACCOUNT');

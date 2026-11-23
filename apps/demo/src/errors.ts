@@ -7,7 +7,7 @@ import { userMessageFor } from '@hana-id/web';
 import { displayText } from './near.ts';
 
 /**
- * `near`: the NEAR card's gasless guestbook write (activate, sign, relay) and its reads from NEAR testnet. `gasFree`:
+ * `near`: the NEAR card's guestbook write that Journear pays for (activate, sign, relay) and its reads from NEAR testnet. `gasFree`:
  * the gas-free check-in card's `hana.evm.sendSponsored` (gas-free-card.ts, D867).
  */
 export type DemoAction = 'load' | 'login' | 'logout' | 'revoke' | 'sign' | 'export' | 'copy' | 'identity' | 'near' | 'gasFree';
@@ -63,94 +63,119 @@ export function isSignedOut(e: unknown): boolean {
 }
 
 const GASLESS = '“Write to the guestbook (no NEAR needed)”';
+/** D889: where the person checks a NEAR write whose outcome Journear can't vouch for (the SDK's rule: check first). */
+const CHECK_LIST = 'Check the guestbook list for your message before you try again';
 
 /**
- * The vault's NEAR refusals (4100 with `data.reason`, docs/integration.md section 8), by reason. Each is about a
- * request the page built, so the advice is to try again: the card reads a fresh nonce and block for every attempt.
+ * The vault's NEAR refusals (4100 with `data.reason`, docs/integration.md section 8), by reason. Each comes before the
+ * approval window, so nothing was signed; the card reads its account and the network afresh for every attempt. D889:
+ * plain words (no nonce, block, delegate, testnet), one sentence each so support can tell them apart.
  */
 const NEAR_VAULT_REASONS: Readonly<Record<string, string>> = {
-  near_key_unknown: `Your NEAR account doesn’t exist on testnet yet, so Journear can’t check this request. Click ${GASLESS} again: the demo creates the account first.`,
-  near_block_unknown: 'Journear couldn’t find this transaction’s block on NEAR testnet. Try again: the demo reads a fresh block.',
-  near_network_mismatch: 'Refused: this transaction names a block of another NEAR network than the one it claims.',
-  near_delegate_nonce_used: 'That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one.',
-  near_delegate_nonce_too_large: 'Journear refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
-  near_delegate_expiry: 'The NEAR request expired before it was approved, or expires too far ahead. Try again.',
-  near_delegate_nonce_stale: 'That NEAR request was prepared too long ago (its nonce is behind testnet’s current block). Try again: the demo reads a fresh one.',
-  near_relayed_delegate: 'Refused: Journear doesn’t sign a transaction that relays someone else’s delegate action.',
-  // A test app's delegate actions: only calls and transfers (…_action), to a .testnet account other than the user's (…_receiver).
-  near_delegate_test_app_action: 'Refused: a test app’s request that Journear pays for may only call a contract or send NEAR, never change your account.',
-  near_delegate_test_app_receiver: 'Refused: a test app’s request that Journear pays for may only go to a testnet account other than your own.',
+  near_key_unknown: `Your NEAR account isn’t set up yet, so nothing was signed. Click ${GASLESS} again: the demo sets up your account first.`,
+  // The SDK's own sentence (userMessage), word for word.
+  near_block_unknown: 'Journear Passport couldn’t check this request, so it wasn’t signed. Try again.',
+  near_network_mismatch: `This request mixed up two NEAR networks, so Journear Passport stopped it. Nothing was signed. ${REPORT}`,
+  near_delegate_nonce_used: `This request was already used, perhaps in another tab or by an earlier write. Nothing new was signed. ${CHECK_LIST}.`,
+  // The SDK's own sentence, word for word.
+  near_delegate_nonce_too_large: 'This request can’t be checked yet, so nothing was signed. Wait a few seconds and try again.',
+  near_delegate_expiry: 'This request ran out of time before it was approved, or was set to last too long, so nothing was signed. Try again.',
+  near_delegate_nonce_stale: 'This request was prepared too long ago, so nothing was signed. Try again: the demo prepares a new one.',
+  near_relayed_delegate: 'Journear Passport doesn’t sign a request that passes on someone else’s, so it stopped this one. Nothing was signed.',
+  // A test app's requests that Journear pays for: only calls and transfers (…_action), to a .testnet account other than
+  // the user's (…_receiver).
+  near_delegate_test_app_action: 'Journear Passport stopped this: a test app’s request that Journear pays for may only use a program or send NEAR, never change your account. Nothing was signed.',
+  near_delegate_test_app_receiver: 'Journear Passport stopped this: a test app’s request that Journear pays for may only go to another account on NEAR’s test network, not your own. Nothing was signed.',
 };
 
 /**
- * The relayer's refusals of `POST /v1/near/relay` and `/v1/near/activate` (the SDK makes a 4xx 4100 and a 5xx
- * `api_unavailable`, with the API's code in `data.reason` and the HTTP status in `data.status`). The codes are those of
- * docs/api.md "NEAR relay"; add a row here for a new one. Anything else falls back to
- * RELAYER_REFUSED or RELAYER_DOWN.
+ * Journear's NEAR relay's refusals of `POST /v1/near/relay` and `/v1/near/activate` (the SDK makes a 4xx 4100 and a
+ * 5xx `api_unavailable`, with the API's code in `data.reason` and the HTTP status in `data.status`). The codes are those
+ * of docs/api.md "NEAR relay"; add a row here for a new one. Anything else falls back to RELAY_REFUSED or RELAY_DOWN.
+ *
+ * D889: plain words (no relayer, nonce, delegate, testnet), one sentence per code. "Nothing was sent" only where the
+ * API answers before anything is broadcast (apps/api/src/near/relay.ts: every check before `relayThrough`). A code the
+ * API can also send after its transaction may have gone out (`relayer_busy`, `relayer_unavailable`, `near_unavailable`,
+ * `near_error`, `timeout`, and NEAR's own refusals; the API's `notSent` doesn't reach the page) says to check the
+ * guestbook list first, as the SDK's `userMessage` does: a new approval could write the message twice.
  */
 const RELAYER_REASONS: Readonly<Record<string, string>> = {
   // 409 until the vault has recorded the user's NEAR account in Hana's wallet directory (seconds after login); the
   // card retries for about 20 s (near-card.ts UNRECORDED_REASON) before it shows this.
   near_account_unrecorded: 'Journear is still setting up your NEAR account for this app (it takes a few seconds after you sign in). Try again in a moment.',
   directory_unavailable: 'Journear couldn’t check your NEAR account right now. Try again in a minute.',
-  // The relayer's policy: zero-deposit calls to an allowed contract, from an implicit account, with bounded gas.
-  receiver_not_allowed: 'Journear’s relayer pays only for calls to the demo guestbook, and refused this one.',
-  action_not_allowed: 'Journear’s relayer pays only for function calls, and refused this request.',
-  deposit_not_allowed: 'Journear’s relayer refused a request that attaches NEAR: the guestbook needs none.',
+  // The relay's policy: zero-deposit calls to an allowed contract, from an implicit account, with bounded gas. The page
+  // only ever sends that, so these mean the env or the page is wrong: tell the team.
+  receiver_not_allowed: 'Journear isn’t set up to pay for this guestbook, so it refused this request. Nothing was sent. Tell the Journear team.',
+  action_not_allowed: `This request isn’t a kind Journear pays for, so it was refused. Nothing was sent. ${REPORT}`,
+  deposit_not_allowed: `This request tried to send NEAR with your message, which the guestbook never needs, so Journear refused it. Nothing was sent. ${REPORT}`,
   gas_too_high: 'Journear refused this request: its network fee could be more than the guestbook needs, and Journear pays only up to that.',
-  sender_not_implicit: 'Journear’s relayer acts only for Journear’s own NEAR accounts, and refused this one.',
-  bad_delegate: 'Journear’s relayer could not read the signed request. Try again.',
-  bad_delegate_signature: 'Journear’s relayer found the request’s signature invalid. Try again.',
-  bad_request: 'Journear’s relayer could not read the request. Try again.',
-  mainnet_not_allowed: 'Journear’s relayer works on NEAR testnet only.',
+  sender_not_implicit: 'Journear pays only for Journear Passport’s own NEAR accounts, and this request came from another one. Nothing was sent.',
+  bad_delegate: 'Journear couldn’t read your approved request. Nothing was sent. Try again.',
+  bad_delegate_signature: 'Journear couldn’t check your approval of this request. Nothing was sent. Try again.',
+  bad_request: 'Journear couldn’t read this request. Nothing was sent. Try again.',
+  mainnet_not_allowed: 'Journear pays only on NEAR’s test network, so it refused this request. Nothing was sent.',
   // Checked on chain before relaying.
-  account_not_activated: 'Your NEAR account doesn’t exist on testnet yet. Try again: the demo creates it first.',
-  access_key_missing: 'Your NEAR account has no Journear key on testnet any more (was it changed elsewhere?), so the relayer can’t act for it.',
-  delegate_nonce_used: 'That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one.',
-  delegate_nonce_too_large: 'Journear’s relayer refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again.',
-  delegate_expired: 'The signed request expired before the relayer sent it. Try again.',
-  block_height_too_far: 'The signed request expires too far ahead for Journear’s relayer. Try again.',
-  already_relayed: 'Journear’s relayer sent this exact request a moment ago. Check the guestbook list.',
-  // After relaying.
-  contract_rejected: 'The guestbook contract refused the message (is it 1 to 200 characters?). Nothing was stored.',
-  delegate_rejected: 'NEAR testnet refused the signed request. Try again: the demo reads a fresh nonce and block.',
-  timeout: 'NEAR testnet hasn’t confirmed the transaction yet: it may still land. Click Refresh on the guestbook list in a moment to see.',
-  near_rejected: 'NEAR testnet refused the relayed transaction. Try again; the guestbook list shows whether it landed.',
-  near_error: 'NEAR testnet returned an error for the relayed transaction. Try again; the guestbook list shows whether it landed.',
-  near_unavailable: 'Journear’s relayer couldn’t reach NEAR testnet. Try again in a minute.',
+  account_not_activated: 'Your NEAR account isn’t set up yet. Nothing was sent. Try again: the demo sets it up first.',
+  access_key_missing: 'Your NEAR account no longer holds Journear Passport’s key (was it changed in another wallet?), so Journear can’t send for it. Nothing was sent. Tell the Journear team.',
+  // Refused before sending, but an earlier request with the same number may have gone through.
+  delegate_nonce_used: `This request was already sent, perhaps from another tab or an earlier write. ${CHECK_LIST}.`,
+  // The SDK's own sentence, word for word.
+  delegate_nonce_too_large: 'This request can’t be used yet, so nothing was sent. Wait a few seconds and try again.',
+  delegate_expired: 'Your approved request ran out of time before Journear could send it. Nothing was sent. Try again.',
+  block_height_too_far: 'Your approved request was set to last too long, so Journear refused it. Nothing was sent. Try again.',
+  already_relayed: `Journear sent this same request a moment ago. ${CHECK_LIST}.`,
+  // After relaying. `contract_rejected` with the guestbook's own reason is nearMessage's; this is the table's row.
+  contract_rejected: 'The guestbook refused the message (is it 1 to 200 characters?). Nothing was stored.',
+  delegate_rejected: 'NEAR’s test network turned down your approved request. Check the guestbook list for your message, then try again if it isn’t there.',
+  timeout: 'NEAR’s test network hasn’t confirmed your message yet: it may still arrive. Click Refresh on the guestbook list in a moment to see, before you try again.',
+  near_rejected: 'NEAR’s test network didn’t accept this request. Check the guestbook list for your message, then try again if it isn’t there.',
+  near_error: `NEAR’s test network reported a problem with this request, so it may or may not have gone through. ${CHECK_LIST}.`,
+  near_unavailable: `Journear couldn’t reach NEAR’s test network, so it can’t tell whether your request went through. ${CHECK_LIST} in a minute.`,
   // Capacity and limits.
-  app_budget_exhausted: 'The demo app has used up today’s free NEAR relays. Try again tomorrow (UTC).',
+  app_budget_exhausted: 'The demo app has used up today’s free NEAR transactions. Nothing was sent. Try again tomorrow (UTC).',
   relay_budget_exhausted: 'The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC).',
-  relayer_busy: 'Journear’s relayer is busy. Try again in a moment.',
-  not_enough_balance: 'Journear’s relayer is low on testnet NEAR right now. Tell the Journear team.',
-  relayer_unavailable: 'Journear’s relayer is unavailable right now. Try again in a minute.',
+  relayer_busy: `Journear is busy right now. ${CHECK_LIST} in a moment.`,
+  // Not a code the API sends today (a short relay account answers `near_rejected`); kept in case it comes back.
+  not_enough_balance: 'Journear can’t pay for NEAR transactions right now. Nothing was sent. Tell the Journear team.',
+  relayer_unavailable: `Journear couldn’t send this right now and can’t tell whether it went through. ${CHECK_LIST} in a minute.`,
   // Only a tester on a test version set up without the NEAR relay sees this (D881: plain words).
   relayer_unconfigured: 'The demo’s free NEAR transactions aren’t set up on this test version yet. Tell the Journear team.',
-  rate_limiter_unavailable: 'Journear’s relayer is unavailable right now. Try again in a minute.',
+  rate_limiter_unavailable: 'Journear couldn’t take this request right now. Nothing was sent. Try again in a minute.',
+  // The relay key's own check, answered without `notSent` (the SDK's NEAR_RELAY_REASON_NAMES has it): check first.
+  method_not_allowed: `Journear couldn’t use this request. ${CHECK_LIST}, or tell the Journear team.`,
 };
-const RELAYER_REFUSED = 'Journear’s relayer refused this request';
-const RELAYER_DOWN = 'Journear’s relayer is unavailable right now. Try again in a minute.';
+const RELAY_REFUSED = 'Journear refused this request';
+const RELAY_DOWN = `Something went wrong while Journear was sending this. ${CHECK_LIST}.`;
 
 /** The NEAR card's own failures (src/near.ts), and the NEAR answers of every action; null for any other error. */
 function nearMessage(e: unknown, code: string | number | null, reason: string | null, action: DemoAction): string | null {
-  if (code === 'near_page_rpc_failed') return 'This page couldn’t read NEAR testnet (its RPC didn’t answer). Check your connection and try again.';
-  if (code === 'near_account_pending') return 'Journear’s relayer is still creating your NEAR account. Wait a few seconds and try again.';
-  if (code === 'near_nonce_wait') return 'NEAR testnet needs a new block before this request. Wait a few seconds and try again.';
-  if (code === 'near_send_failed') return `NEAR testnet refused or failed the transaction. Use ${GASLESS} instead.`;
+  if (code === 'near_page_rpc_failed') {
+    // "Sign a transaction" also sends with this page's own reads (near.ts sendTx): after an approval, the outcome is unknown.
+    return action === 'sign'
+      ? 'This page couldn’t reach NEAR’s test network. If you had already approved the transaction, it may or may not have gone through: check the guestbook list before you try again.'
+      : 'This page couldn’t reach NEAR’s test network. Check your connection and try again.';
+  }
+  if (code === 'near_account_pending') return 'Journear is still creating your NEAR account. Wait a few seconds and try again.';
+  if (code === 'near_nonce_wait') return 'NEAR’s test network isn’t ready for this request yet, so nothing was signed. Wait a few seconds and try again.';
+  if (code === 'near_send_failed') return `NEAR’s test network refused this transaction, or it failed there, so your message wasn’t stored. Use ${GASLESS} instead.`;
   if (code === 4100 && reason !== null && Object.hasOwn(NEAR_VAULT_REASONS, reason)) return NEAR_VAULT_REASONS[reason]!;
-  if (code === 'api_unavailable' && reason === 'near_rpc_unavailable') return 'Journear couldn’t reach NEAR testnet to check this request. Try again in a minute.';
-  if (code === 'api_unavailable' && reason === 'near_rpc_single_provider') return `This Journear environment has only one NEAR provider, so Journear can’t check a test app’s NEAR request. ${REPORT}`;
-  // The relayer's answers carry their HTTP status in data.status (the SDK's relay and activate); the vault's don't.
+  if (code === 'api_unavailable' && reason === 'near_rpc_unavailable') return 'Journear couldn’t reach NEAR’s test network to check this request, so nothing was signed. Try again in a minute.';
+  if (code === 'api_unavailable' && reason === 'near_rpc_single_provider') return `This test version of Journear isn’t set up to check this request yet, so nothing was signed. ${REPORT}`;
+  // The relay's answers carry their HTTP status in data.status (the SDK's relay and activate); the vault's don't.
   const fromRelayer = isObj(e) && isObj(e.data) && typeof e.data.status === 'number';
+  // No answer at all (the SDK's fetch failed or timed out: `api_unavailable` with no status or reason). In the write,
+  // that is activate or the relay, and the relay may have gone out: check first (D889).
+  if (action === 'near' && !fromRelayer && code === 'api_unavailable' && reason === null) return 'Couldn’t reach Journear, so this may or may not have been sent. Check your connection, then check the guestbook list for your message before you try again.';
   if (action !== 'near' || !fromRelayer) return null;
   // The contract's own panic text (the API's `error`, the SDK's message): from the chain, so shown made safe and short.
   if (reason === 'contract_rejected') {
     const why = displayText(errorInfo(e).message, 160).trim();
-    return `The guestbook contract refused the message${why ? `: ${why}` : ''}. Nothing was stored.`;
+    return `The guestbook refused the message${why ? `: ${why}` : ''}. Nothing was stored.`;
   }
   if (reason !== null && Object.hasOwn(RELAYER_REASONS, reason) && (code === 4100 || code === 'api_unavailable' || code === 'rate_limited')) return RELAYER_REASONS[reason]!;
-  if (code === 4100) return `${RELAYER_REFUSED}${reason ? ` (${reason})` : ''}. ${REPORT}`;
-  if (code === 'api_unavailable') return reason ? `${RELAYER_DOWN} (${reason})` : 'Could not reach Journear’s relayer. Check your connection and try again.';
+  if (code === 4100) return `${RELAY_REFUSED}${reason ? ` (${reason})` : ''}. ${REPORT}`;
+  if (code === 'api_unavailable') return reason ? `${RELAY_DOWN} (${reason})` : `Journear didn’t answer properly, so it can’t tell whether this was sent. ${CHECK_LIST}.`;
   if (code === 'rate_limited') return 'Too many guestbook writes from this app in a short time. Wait a minute and try again.';
   return null;
 }

@@ -63,12 +63,24 @@ export const NEAR_TEST_MESSAGE = 'Journear Passport testnet demo: sign in with N
 /** The text "Sign a transaction" uses when the message box holds no valid message. */
 export const DEFAULT_TX_TEXT = 'Hello from Journear Passport (a signed NEAR transaction)';
 
+/**
+ * D889: the network's name on a label, as the approval window names it ("NEAR test network"); in a sentence the demo
+ * says "NEAR’s test network", as the stamps site does.
+ */
+export const NEAR_NETWORK_LABEL = 'NEAR test network';
+
+/**
+ * D889: "Sign a transaction" when the send after signing got no answer: NEAR may have taken it, so check before trying
+ * again (a new signature could write the message twice).
+ */
+export const SEND_UNCONFIRMED = 'This page couldn’t reach NEAR’s test network while sending it, so it may or may not have gone through. Check the guestbook list before you try again.';
+
 export const STAGES = {
-  reading: 'Reading your NEAR account on testnet…',
+  reading: 'Reading your NEAR account…',
   activating: 'Preparing your NEAR account…',
   approving: 'Waiting for your approval in the Journear window…',
   relaying: 'Sending it. Journear pays the network fee…',
-  retrying: 'That request’s number was already used. Building a fresh one: approve it once more in the Journear window…',
+  retrying: 'That request was already used. The demo is preparing a new one: approve it once more in the Journear window…',
 } as const;
 
 /**
@@ -77,7 +89,7 @@ export const STAGES = {
  * this page created the account says so too.
  */
 export const guestbookDone = (created: boolean): string =>
-  `Written to the guestbook on NEAR testnet.${created ? ' Your NEAR account was created for it.' : ''} Journear paid the network fee, so it cost you nothing.`;
+  `Written to the guestbook on NEAR’s test network.${created ? ' Your NEAR account was created for it.' : ''} Journear paid the network fee, so it cost you nothing.`;
 
 export interface NearCardDeps {
   config: DemoConfig;
@@ -333,14 +345,14 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     b.hidden = false;
     b.textContent = p.key
       ? `Balance: ${formatNear(p.balance)} NEAR${p.balance < TX_FEE_RESERVE ? '. The guestbook write needs none.' : '.'}`
-      : 'Not on NEAR testnet yet: your first guestbook write creates it (Journear sends it a zero-value transfer), at no cost to you.';
+      : 'Not on NEAR’s test network yet: your first guestbook write creates it (Journear sends it a zero-value transfer), at no cost to you.';
   }
 
   /** A signing result, newest first (result.ts): the facts as mono rows, then the explorer link when it was sent. */
   function result(label: string, facts: ResultFact[], note: string | null, ok: boolean, txHash?: string): void {
     const rows = [...facts];
     if (txHash && explorer) rows.push({ label: 'Explorer', value: 'View the transaction ↗', href: `${explorer}/txns/${encodeURIComponent(txHash)}` });
-    el('near-results').prepend(resultItem({ title: label, ok, chain: { kind: 'near', name: 'NEAR testnet' }, facts: rows, note }));
+    el('near-results').prepend(resultItem({ title: label, ok, chain: { kind: 'near', name: NEAR_NETWORK_LABEL }, facts: rows, note }));
   }
 
   function renderMessages(list: ReturnType<typeof parseMessages>): void {
@@ -481,6 +493,8 @@ export function startNearCard(deps: NearCardDeps): NearCard {
     const text = check.ok ? check.text : DEFAULT_TX_TEXT;
     const label = 'NEAR transaction (add_message on the guestbook)';
     deps.run('sign', async () => {
+      // D889: whether the approval came back, so a failure after it says "signed" (it was), not "not signed".
+      let signed = false;
       try {
         let ready = fresh(accountId);
         if (ready === null) {
@@ -495,10 +509,11 @@ export function startNearCard(deps: NearCardDeps): NearCard {
         const nonce = transactionNonce({ keyNonce: ready.key?.nonce ?? null, lastSigned: lastNonce.get(accountId) });
         const transaction = addMessageTransaction({ accountId, guestbook, text, nonce, blockHash: ready.hash });
         const r = await c.near.signTransaction({ network: 'testnet', transaction });
+        signed = true;
         if (ready.key !== null && ready.balance >= TX_FEE_RESERVE) {
           await rpc.sendTx(r.signedTransaction);
           lastNonce.set(accountId, nonce);
-          result(`${label}: signed and sent`, [{ label: 'Transaction hash', value: r.hash }], 'Your account paid the fee.', true, r.hash);
+          result(`${label}: signed and sent`, [{ label: 'Transaction hash', value: r.hash }], 'Your account paid the network fee.', true, r.hash);
           refresh(accountId).catch(() => {});
           await loadList();
           return;
@@ -513,7 +528,10 @@ export function startNearCard(deps: NearCardDeps): NearCard {
           true,
         );
       } catch (e) {
-        result(`${label}: not signed`, [], deps.plainMessage(e, 'sign'), false);
+        // After signing, only the send can fail: NEAR refused or failed it (`near_send_failed`), or gave no answer.
+        const unconfirmed = signed && errorInfo(e).code === 'near_page_rpc_failed';
+        const title = !signed ? 'not signed' : unconfirmed ? 'signed, not confirmed' : 'signed, didn’t go through';
+        result(`${label}: ${title}`, [], unconfirmed ? SEND_UNCONFIRMED : deps.plainMessage(e, 'sign'), false);
         throw e;
       }
     });

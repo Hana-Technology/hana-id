@@ -118,6 +118,8 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await page.locator('#near-text').fill('this one is refused');
   await approveNext(page, approval, () => page.getByRole('button', { name: 'Write to the guestbook (no NEAR needed)' }).click());
   await expect(page.locator('#near-error')).toBeVisible();
+  // D889: plain words, before anything was sent.
+  await expect(page.locator('#near-error-text')).toHaveText('Journear isn’t set up to pay for this guestbook, so it refused this request. Nothing was sent. Tell the Journear team.');
   await page.bringToFront();
   await shots(page, '07-error');
 

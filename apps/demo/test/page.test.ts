@@ -174,7 +174,7 @@ async function loginFlow(): Promise<void> {
   click('login');
   t = 8000;
   fake.emit('loginProgress', { stage: 'chain' });
-  expect($('progress').textContent).toMatch(/NEAR testnet/u);
+  expect($('progress').textContent).toBe('Creating your wallet key on NEAR’s test network (a few seconds)…');
   fake.finishLogin!({ addresses: ADDRESSES, expiresAtMs: Date.UTC(2026, 9, 29, 23), persistence: 'session', timings: TIMINGS });
   await flush();
 }
@@ -204,13 +204,13 @@ describe('demo page', () => {
       evm: { chains: [{ id: 84532, rpcUrl: 'https://sepolia.base.org' }], defaultChainId: 84532 },
       stellar: { networkPassphrase: 'Test SDF Network ; September 2015' },
     });
-    expect($('testnet-banner').textContent).toBe('Testnet demo: Stellar, EVM and NEAR test networks only, nothing here holds real funds.');
+    expect($('testnet-banner').textContent).toBe('This demo uses test networks only (Stellar, EVM and NEAR), so nothing here holds real money.');
     expect(document.querySelector('.lead')!.textContent).toMatch(/^\s*Sign in with email \(we send a code to your inbox; Google sign-in works for listed testers\) to get\s+a Stellar, an EVM and a NEAR wallet/u);
     // One primary action per view: signed out, it is the email login.
     expect($('login-email').classList.contains('jp-btn-primary')).toBe(true);
     expect([...document.querySelectorAll('#h-account ~ .row .jp-btn-primary')].map((b) => b.id)).toEqual(['login-email']);
     expect($('footer-env').textContent).toContain('NEAR: testnet, guestbook hana-id-guestbook-dev1.testnet');
-    expect($('env-badge').textContent).toBe('sandbox-dev · testnet');
+    expect($('env-badge').textContent).toBe('sandbox-dev · test network');
     expect($('status').textContent).toBe('Connecting to the Journear vault…');
     expect(($('login') as HTMLButtonElement).disabled).toBe(true);
   });
@@ -518,13 +518,13 @@ describe('the design system’s patterns on the demo (D765)', () => {
     await flush();
     const item = $('results').querySelector('li.result.ok')!;
     expect(item.querySelector('.result-title')!.textContent).toBe('EVM personal_sign: signed');
-    expect(item.querySelector('.jp-chain.chain-evm')!.textContent).toBe('Base Sepolia');
+    expect(item.querySelector('.jp-chain.chain-evm')!.textContent).toBe('Base Sepolia (test network)');
     expect([...item.querySelectorAll('.jp-kv dt')].map((d) => d.textContent)).toEqual(['Signature']);
     expect(item.querySelector('.jp-kv dd code')!.textContent).toBe(`0x${'ab'.repeat(65)}`);
     expect(item.querySelector('.result-note')).toBeNull();
     click('sign-stellar');
     await flush();
-    expect($('results').querySelector('li .jp-chain')!.textContent).toBe('Stellar testnet');
+    expect($('results').querySelector('li .jp-chain')!.textContent).toBe('Stellar test network');
   });
 
   it('the stats strip: the latest login’s total, sign-in and wallet-key times; and a restored session', async () => {
@@ -741,7 +741,7 @@ describe('the NEAR card', () => {
     await settle();
     expect($('near-stage').hidden).toBe(true);
     expect($('near-done').hidden).toBe(false);
-    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. Journear paid the network fee, so it cost you nothing.');
+    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR’s test network. Journear paid the network fee, so it cost you nothing.');
     expect(($('near-tx-link') as HTMLAnchorElement).href).toBe(`https://testnet.nearblocks.io/txns/${TX_HASH}`);
     const items = [...$('near-messages').querySelectorAll('li')];
     expect(items).toHaveLength(2);
@@ -763,7 +763,7 @@ describe('the NEAR card', () => {
     rpc.key = null;
     await loginFlow();
     await settle();
-    expect($('near-balance').textContent).toMatch(/^Not on NEAR testnet yet: your first guestbook write creates it/u);
+    expect($('near-balance').textContent).toBe('Not on NEAR’s test network yet: your first guestbook write creates it (Journear sends it a zero-value transfer), at no cost to you.');
     fake.near.activate.mockImplementationOnce(async () => {
       rpc.key = { nonce: 199_999_999_000_000 };
       return { created: true };
@@ -793,7 +793,7 @@ describe('the NEAR card', () => {
     click('near-write-button');
     expect(fake.prepareApproval).toHaveBeenCalledTimes(1);
     expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
-    expect($('near-stage').textContent).toBe('Reading your NEAR account on testnet…');
+    expect($('near-stage').textContent).toBe('Reading your NEAR account…');
     await settle();
     expect($('near-stage').textContent).toBe('Preparing your NEAR account…');
     rpc.key = { nonce: 5_000_000 };
@@ -802,7 +802,7 @@ describe('the NEAR card', () => {
     expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
     // The key's nonce is far below testnet's window: the nonce is the floor, (height − 100) × 10^6 (core’s nearDelegateNonce).
     expect(signedDelegate().nonce).toBe(199_999_900_000_000n);
-    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
+    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR’s test network. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
     // Cached for the session: the next write doesn't activate again.
     type('second');
     click('near-write-button');
@@ -880,7 +880,8 @@ describe('the NEAR card', () => {
     click('near-write-button');
     await settle();
     expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(4);
-    expect($('near-error').textContent).toMatch(/nonce was already used/u);
+    // D889: refused before sending, but the earlier request may have gone through: check first (the SDK's rule).
+    expect($('near-error').textContent).toBe('This request was already sent, perhaps from another tab or an earlier write. Check the guestbook list for your message before you try again.');
   });
 
   it('a busy relayer (503 relayer_busy) is retried twice, then said so', async () => {
@@ -899,7 +900,8 @@ describe('the NEAR card', () => {
     click('near-write-button');
     await settle();
     expect(fake.near.relay).toHaveBeenCalledTimes(6);
-    expect($('near-error').textContent).toBe('Journear’s relayer is busy. Try again in a moment.');
+    // D889: busy can follow a send that was dropped: check first.
+    expect($('near-error').textContent).toBe('Journear is busy right now. Check the guestbook list for your message before you try again in a moment.');
   });
 
   it('a relay that timed out may still land: says so and looks at the list again', async () => {
@@ -913,7 +915,7 @@ describe('the NEAR card', () => {
     type('slow one');
     click('near-write-button');
     await settle();
-    expect($('near-error').textContent).toMatch(/it may still land/u);
+    expect($('near-error').textContent).toMatch(/it may still arrive\. Click Refresh on the guestbook list/u);
     expect($('near-messages').textContent).toContain('slow one');
     expect($('near-pending').hidden).toBe(true);
   });
@@ -960,7 +962,7 @@ describe('the NEAR card', () => {
     click('near-write-button');
     await settle();
     expect($('near-pending').hidden).toBe(true);
-    expect($('near-error').textContent).toMatch(/it may still land/u);
+    expect($('near-error').textContent).toMatch(/it may still arrive\. Click Refresh on the guestbook list/u);
     expect(document.body.innerHTML).not.toContain('onerror="window.__xss');
     expect(document.querySelector('img[src="x"]')).toBeNull();
   });
@@ -989,7 +991,7 @@ describe('the NEAR card', () => {
     click('near-write-button');
     await settle();
     expect($('near-pending').hidden).toBe(true);
-    expect($('near-error').textContent).toMatch(/The guestbook contract refused the message/u);
+    expect($('near-error').textContent).toMatch(/^The guestbook refused the message/u);
   });
 
   it('near_account_unknown, which the API never sends, is not retried (D788)', async () => {
@@ -1017,7 +1019,7 @@ describe('the NEAR card', () => {
     await settle();
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
-    expect($('near-error').textContent).toBe('This page couldn’t read NEAR testnet (its RPC didn’t answer). Check your connection and try again.');
+    expect($('near-error').textContent).toBe('This page couldn’t reach NEAR’s test network. Check your connection and try again.');
     expect($('near-stage').hidden).toBe(true);
     expect($('error').hidden).toBe(true);
     // The fallback RPC was tried too.
@@ -1025,12 +1027,12 @@ describe('the NEAR card', () => {
   });
 
   it.each([
-    ['the vault refuses an unknown key', 'signDelegateAction', hanaError(4100, { reason: 'near_key_unknown' }), /doesn’t exist on testnet yet/u],
-    ['the vault refuses an expired action', 'signDelegateAction', hanaError(4100, { reason: 'near_delegate_expiry' }), /expired before it was approved/u],
+    ['the vault refuses an unknown key', 'signDelegateAction', hanaError(4100, { reason: 'near_key_unknown' }), /^Your NEAR account isn’t set up yet, so nothing was signed\. /u],
+    ['the vault refuses an expired action', 'signDelegateAction', hanaError(4100, { reason: 'near_delegate_expiry' }), /ran out of time before it was approved.*nothing was signed/u],
     ['the user rejects', 'signDelegateAction', hanaError(4001), /^Rejected in the Journear window: nothing was signed\.$/u],
-    ['the relayer refuses the receiver', 'relay', hanaError(4100, { status: 403, reason: 'receiver_not_allowed' }), /pays only for calls to the demo guestbook/u],
-    ['the relayer refuses with a code the demo doesn’t know', 'relay', hanaError(4100, { status: 400, reason: 'brand_new_code' }), /^Journear’s relayer refused this request \(brand_new_code\)/u],
-    ['the relayer is down', 'relay', hanaError('api_unavailable', { status: 503, reason: 'relayer_unavailable' }), /relayer is unavailable right now/u],
+    ['the relayer refuses the receiver', 'relay', hanaError(4100, { status: 403, reason: 'receiver_not_allowed' }), /^Journear isn’t set up to pay for this guestbook, so it refused this request\. Nothing was sent\./u],
+    ['the relayer refuses with a code the demo doesn’t know', 'relay', hanaError(4100, { status: 400, reason: 'brand_new_code' }), /^Journear refused this request \(brand_new_code\)/u],
+    ['the relayer is down', 'relay', hanaError('api_unavailable', { status: 503, reason: 'relayer_unavailable' }), /can’t tell whether it went through\. Check the guestbook list/u],
     ['the relayer rate-limits', 'relay', hanaError('rate_limited', { status: 429, reason: 'rate_limited' }), /Too many guestbook writes/u],
   ] as const)('shows a plain message in the card when %s', async (_name, method, error, text) => {
     boot();
@@ -1109,6 +1111,26 @@ describe('the NEAR card', () => {
     const item = $('near-results').querySelector('li')!;
     expect(item.textContent).toContain('signed and sent');
     expect(item.querySelector('a')!.getAttribute('href')).toBe(`https://testnet.nearblocks.io/txns/${TX_HASH}`);
+  });
+
+  it.each([
+    ['failure', 'signed, didn’t go through', 'NEAR’s test network refused this transaction, or it failed there, so your message wasn’t stored. Use “Write to the guestbook (no NEAR needed)” instead.'],
+    ['none', 'signed, not confirmed', 'This page couldn’t reach NEAR’s test network while sending it, so it may or may not have gone through. Check the guestbook list before you try again.'],
+  ] as const)('D889: Sign a transaction whose send fails (%s) says it was signed, and what happened to the send', async (answer, title, note) => {
+    boot();
+    rpc.balance = '2000000000000000000000000';
+    await loginFlow();
+    await settle();
+    rpc.sendAnswer = answer;
+    click('sign-near-tx');
+    await settle();
+    // No usable answer: the same signed transaction goes to the fallback endpoint too (the same bytes can run once only).
+    expect(rpc.sent).toHaveLength(answer === 'none' ? 2 : 1);
+    const item = $('near-results').querySelector('li')!;
+    expect(item.querySelector('.result-title')!.textContent).toBe(`NEAR transaction (add_message on the guestbook): ${title}`);
+    expect(item.textContent).toContain(note);
+    // The page's own error box says the same thing in the page's words: never a plain "try again" after a send.
+    expect($('error').textContent).toMatch(answer === 'none' ? /it may or may not have gone through: check the guestbook list before you try again/u : /refused this transaction, or it failed there/u);
   });
 
   it('Sign a message (NEP-413): this page as the recipient, a fresh 32-byte nonce, signed in the click', async () => {

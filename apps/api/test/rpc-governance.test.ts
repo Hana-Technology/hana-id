@@ -37,7 +37,9 @@ describe('AdminRpc.governance', () => {
 
 describe('pendingUpgrades (both consoles)', () => {
   it('AdminRpc and ConsoleRpc give the same view, built from the snapshot', async () => {
-    ownClock();
+    // Frozen: the pending owner transfer is acceptable a second after governanceViews' clock, and `due: false` below
+    // would turn true if the first read came more than a second later on a running clock.
+    ownClock({ freeze: true });
     governanceViews(ownerChain());
     const admin = await adminRpc().pendingUpgrades(hana());
     const partner = await consoleRpc().pendingUpgrades({ ...member(), orgId: newOrg() });

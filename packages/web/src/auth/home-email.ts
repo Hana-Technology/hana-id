@@ -183,6 +183,12 @@ export interface HomeEmailStepDeps {
   now: () => number;
   /** The heading of the first screen. */
   title: string;
+  /**
+   * What each screen's title is: a heading (`h3`, the default), or, where the screens sit before the page's `h1` (the
+   * top bar's notice when signing in again, D888), a paragraph in the heading's place, so no heading comes before the
+   * page's own.
+   */
+  titleTag?: 'h3' | 'p';
   /** What the first screen says above the field (or with a fixed address, above the "Send code" button). */
   intro: string;
   /** The address to use, fixed (opening a wallet uses the sign-in's own); null: the user types it. */
@@ -245,7 +251,7 @@ export function homeEmailStep(deps: HomeEmailStepDeps): HomeEmailStep {
   // The login popup's email step's notice (a `note` line, "Try again" in it when the service didn't answer).
   const message = (text: string | null, retry?: () => void): HTMLElement | null =>
     text ? alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: id('notice') } }, text, ...(retry ? [' ', button('Try again', 'retry', retry, 'link')] : [])) : null;
-  const heading = (text: string) => d.h('h3', { attrs: { id: id('title'), tabindex: '-1' } }, text);
+  const heading = (text: string) => d.h(deps.titleTag ?? 'h3', { ...(deps.titleTag === 'p' ? { class: 'email-step-title' } : {}), attrs: { id: id('title'), tabindex: '-1' } }, text);
   const focus = (el: HTMLElement): void => {
     try {
       el.focus();

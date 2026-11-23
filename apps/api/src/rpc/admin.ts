@@ -230,8 +230,9 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.labelQueue', labelQueueInput, c, { actors: HANA }, ({ input, db, w }) => labelQueue(db, input.days ?? 14, w.now));
   }
 
+  /** Read-only; also the feed's (`system`: the blocked mail names the apps). */
   labelDetail(c: unknown) {
-    return runRpc(this.env, 'admin.labelDetail', labelDetailInput, c, { actors: HANA }, async ({ input, db, w }) => ({ item: await labelDetail(db, input.changeId, w.now) }));
+    return runRpc(this.env, 'admin.labelDetail', labelDetailInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ item: await labelDetail(db, input.changeId, w.now) }));
   }
 
   /** The switches alone (the System status page's indicator). Also the feed's (`system`). */

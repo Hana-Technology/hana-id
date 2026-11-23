@@ -425,6 +425,16 @@ describe('the staff veto: Block, and required review with Allow', () => {
     expect((await served(other))!.map((s) => s.changeId)).toEqual([o.change!.id]);
   });
 
+  it('the feed (a system actor) may read a change, never act on one or switch anything', async () => {
+    const app = await orgApp();
+    const p = await ok(propose(app, await nearDoc()));
+    const item = (await ok(adminRpc().labelDetail({ ...system(), changeId: p.change!.id }))).item;
+    expect(item.change.apps.map((a) => a.name)).toEqual([`Test ${app.id}`]);
+    expect((await fail(adminRpc().labelStaffAct({ ...system(), changeId: p.change!.id, tool: 'block', note, seen: { labelsVersion: item.labelsVersion, state: item.change.state } }))).code).toBe('forbidden');
+    expect((await fail(adminRpc().labelControl({ ...system(), target: { kind: 'all' }, what: 'off', note, seenVersion: 0 }))).code).toBe('forbidden');
+    expect((await fail(adminRpc().labelQueue({ ...system() }))).code).toBe('forbidden');
+  });
+
   it('only staff: ConsoleRpc has no staff tool, and the notice ack is the cron’s alone', async () => {
     expect((ConsoleRpc.prototype as unknown as Record<string, unknown>).labelStaffAct).toBeUndefined();
     expect((ConsoleRpc.prototype as unknown as Record<string, unknown>).labelControl).toBeUndefined();
@@ -455,6 +465,19 @@ describe('the switches (staff): an entry, an org, everyone; only ever off, and b
     expect((await fail(propose(app, await nearDoc(), { labelId: c.labelId }))).code).toBe('forbidden');
   });
 
+  it('an org switched on, off and on again: every switch row is listed with its version, so the next switch is never stuck', async () => {
+    const app = await orgApp();
+    const versionOf = async () => (await ok(adminRpc().labelControls({ ...hana() }))).controls.orgs.find((o) => o.orgId === app.org)?.version ?? 0;
+    for (const what of ['off', 'on', 'off', 'on'] as const) await ok(ctl({ kind: 'org', orgId: app.org }, what, await versionOf()));
+    expect(await versionOf()).toBe(4);
+    const row = (await ok(adminRpc().labelControls({ ...hana() }))).controls.orgs.find((o) => o.orgId === app.org);
+    expect(row).toMatchObject({ labelsOff: false, reviewRequired: false, version: 4 });
+    // An entry's switch version travels with its change, on and off alike.
+    const c = await inForce(app);
+    for (const what of ['off', 'on', 'off'] as const) await ok(ctl({ kind: 'entry', labelId: c.labelId }, what, (await detail(c.id)).entryVersion));
+    expect((await detail(c.id)).entryVersion).toBe(3);
+  });
+
   it('one org and everyone: off and back on; another org is untouched by an org’s switch', async () => {
     const a = await orgApp();
     const b = await orgApp();
@@ -476,6 +499,83 @@ describe('the switches (staff): an entry, an org, everyone; only ever off, and b
     await ok(ctl({ kind: 'org', orgId: a.org }, 'off', 2));
     await ok(ctl({ kind: 'org', orgId: a.org }, 'on', 3));
     expect((await served(a))!.map((s) => s.changeId)).not.toContain(w.change!.id);
+  });
+});
+
+describe('the safety argument: nothing staff press makes a version effective early, and Back on serves only what passed', () => {
+  const seenOf = async (id: string) => {
+    const d = await detail(id);
+    return { labelsVersion: d.labelsVersion, state: d.change.state };
+  };
+  const reviewFor = (org: string, what: 'review_on' | 'review_off', seenVersion: number) => adminRpc().labelControl({ ...hana(), target: { kind: 'org', orgId: org }, what, note, seenVersion });
+
+  it('Allow pressed before its time (proposed, then announced) never makes it effective a millisecond early', async () => {
+    const app = await orgApp();
+    await ok(reviewFor(app.org, 'review_on', 0));
+    const p = await ok(propose(app, await nearDoc()));
+    // Allowed before its notice: still nothing until announced and the full delay after.
+    await ok(adminRpc().labelStaffAct({ ...hana(), changeId: p.change!.id, tool: 'allow', note, seen: await seenOf(p.change!.id) }));
+    expect(await served(app)).toEqual([]);
+    const { change } = await ack(p.change!.id);
+    clock.advance(DELAY - 1);
+    expect(clock.now()).toBe(change.activeFrom - 1);
+    expect(await served(app)).toEqual([]);
+    await labelsMaintenance(env, clock.now());
+    expect((await rows('SELECT status FROM label_changes WHERE id = ?1', p.change!.id))[0]).toEqual({ status: 'pending' });
+    clock.advance(1);
+    expect((await served(app))!.map((s) => s.changeId)).toEqual([p.change!.id]);
+    // Allow pressed after the notice, before its time: the same.
+    const q = await ok(propose(app, await nearDoc()));
+    const a = await ack(q.change!.id);
+    await ok(adminRpc().labelStaffAct({ ...hana(), changeId: q.change!.id, tool: 'allow', note, seen: await seenOf(q.change!.id) }));
+    clock.advance(a.change.activeFrom - clock.now() - 1);
+    expect((await served(app))!.map((s) => s.changeId)).not.toContain(q.change!.id);
+    clock.advance(1);
+    expect((await served(app))!.map((s) => s.changeId)).toContain(q.change!.id);
+  });
+
+  it('review switched off while versions wait releases none before its own time', async () => {
+    const app = await orgApp();
+    await ok(reviewFor(app.org, 'review_on', 0));
+    const early = await ok(propose(app, await nearDoc()));
+    const e = await ack(early.change!.id);
+    clock.advance(DELAY / 2);
+    const late = await ok(propose(app, await nearDoc()));
+    const l = await ack(late.change!.id);
+    const unannounced = await ok(propose(app, await nearDoc()));
+    clock.advance(e.change.activeFrom - clock.now() - 1);
+    await ok(reviewFor(app.org, 'review_off', 1));
+    expect(await served(app)).toEqual([]);
+    clock.advance(1);
+    expect((await served(app))!.map((s) => s.changeId)).toEqual([early.change!.id]);
+    clock.advance(l.change.activeFrom - clock.now() - 1);
+    expect((await served(app))!.map((s) => s.changeId)).not.toContain(late.change!.id);
+    clock.advance(1);
+    expect((await served(app))!.map((s) => s.changeId).sort()).toEqual([early.change!.id, late.change!.id].sort());
+    // A version never announced is never served, review or not.
+    clock.advance(10 * DELAY);
+    expect((await served(app))!.map((s) => s.changeId)).not.toContain(unannounced.change!.id);
+  });
+
+  it('Back on after a switch serves no version blocked, replaced, cancelled or lapsed while it was off', async () => {
+    const app = await orgApp();
+    const blockedEntry = await inForce(app);
+    const replaced = await inForce(app);
+    const replacing = await ok(propose(app, await nearDoc(), { labelId: replaced.labelId }));
+    const cancelled = await ok(propose(app, await nearDoc()));
+    const lapsing = await ok(propose(app, await nearDoc()));
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'org', orgId: app.org }, what: 'off', note, seenVersion: 0 }));
+    expect(await served(app)).toEqual([]);
+    // While off: one blocked, one replaced (its successor announced and due), one cancelled, one lapsed.
+    await ok(adminRpc().labelStaffAct({ ...hana(), changeId: blockedEntry.id, tool: 'block', note, seen: await seenOf(blockedEntry.id) }));
+    const r = await ack(replacing.change!.id);
+    await ok(consoleRpc().cancelChange({ ...member(), orgId: app.org, changeId: cancelled.change!.id }));
+    clock.advance(Math.max(r.change.activeFrom - clock.now(), 0) + LABEL_LAPSE_MS);
+    await labelsMaintenance(env, clock.now());
+    expect((await rows('SELECT status FROM label_changes WHERE id = ?1', lapsing.change!.id))[0]).toEqual({ status: 'lapsed' });
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'org', orgId: app.org }, what: 'on', note, seenVersion: 1 }));
+    expect((await served(app))!.map((s) => s.changeId)).toEqual([replacing.change!.id]);
+    for (const id of [blockedEntry.id, replaced.id, cancelled.change!.id, lapsing.change!.id]) expect((await served(app))!.map((s) => s.changeId)).not.toContain(id);
   });
 });
 

@@ -224,6 +224,9 @@ export const BYPASS_PURPOSES: ReadonlySet<string> = new Set([
   // The link-rate alert (batch 9, D448).
   'link_jump',
   'change_pending',
+  // D894: a request labels version's blocking notice, and the mail that Journear blocked one.
+  'label_pending',
+  'labels_blocked',
   // An app's login methods changed (D444 as amended): in force already, so this mail is the only warning.
   'login_methods_changed',
   'invite_notice',

@@ -290,6 +290,18 @@ describe('the emailed cancel pages', () => {
     expect(calls.every((c) => !c.url.includes(token))).toBe(true);
   });
 
+  it('/cancel/lc_…: a change to request labels (D894) gets its own words and posts the same way; opening it sends nothing', async () => {
+    const token = 'L'.repeat(43);
+    routes['/api/cancel'] = { body: { id: 'lc_1', labelId: 'pl_1', state: 'cancelled' } };
+    at(`/cancel/lc_1#t=${token}`);
+    const button = await screen.findByRole('button', { name: 'Cancel this change to request labels' });
+    expect(screen.getByText(/request labels announced in the email/u)).toBeTruthy();
+    expect(calls).toEqual([]);
+    fireEvent.click(button);
+    await screen.findByRole('status');
+    expect(bodyOf('/api/cancel')).toEqual({ changeId: 'lc_1', token });
+  });
+
   it('a used link (single use) or a wrong one says so', async () => {
     routes['/api/cancel'] = { status: 409, body: { error: { code: 'not_pending', message: 'x' } } };
     at(`/cancel/gc_1#t=${'K'.repeat(43)}`);

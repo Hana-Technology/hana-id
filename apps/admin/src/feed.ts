@@ -21,7 +21,8 @@
 // the next run carries on from it.
 //
 // Not emailed (they are covered by a blocking notice, or by the app_changes row of the same act): the proposals and
-// the announcement of a guarded change (`origin.proposed`, `policy.proposed`, `raw_sign.proposed`, `change.announced`),
+// the announcement of a guarded change (`origin.proposed`, `policy.proposed`, `raw_sign.proposed`, `labels.proposed`,
+// `change.announced`),
 // the notices' own audit rows (`invite.notified`, `owner_grant.notified`) and the console's record of a link cancel
 // (`change.link_cancel`; the API's `change.cancelled` is emailed). Sign-in rows (`auth.*`, `session.*`, from C9) are
 // for the hourly bulk refusal digest of C9, not this feed. Everything else is emailed, so a new kind is never silent.
@@ -30,10 +31,14 @@
 // the org's contacts as a guarded change's notice, because the change is in force at once and a digest line doesn't say
 // what it means or how to undo it. It uses this walk's cursor, budget and retries; a row that changes nothing else is
 // then left out of the digest.
+//
+// A `labels.blocked` row (D894: staff blocked a change to an org's request labels) gets a mail of its own in the same
+// way, to the alias and the org's contacts, with the change's app names (AdminRpc.labelDetail) and the staff note, and
+// is left out of the digest.
 import type { AppChange, AuditRow, SecurityEvent } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { mailLabel } from './env.ts';
-import { auditDigest, changesDigest, loginMethodsChanged, type MailContext, securityDigest } from './email/messages.ts';
+import { auditDigest, changesDigest, labelsBlocked, loginMethodsChanged, type MailContext, securityDigest } from './email/messages.ts';
 import { consoleLink, type Rendered } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
@@ -51,7 +56,8 @@ export const FEED_INIT_PAGES = 10;
 /** Where an unfinished silent first walk keeps its place between runs. */
 export const initKey = (key: string): string => `${key}.init`;
 
-export const SKIPPED_CHANGE_KINDS: ReadonlySet<string> = new Set(['origin.proposed', 'policy.proposed', 'raw_sign.proposed', 'change.announced']);
+/** D894: `labels.proposed` (and its `change.announced`) is covered by the request labels' blocking notice. */
+export const SKIPPED_CHANGE_KINDS: ReadonlySet<string> = new Set(['origin.proposed', 'policy.proposed', 'raw_sign.proposed', 'labels.proposed', 'change.announced']);
 /** Never emailed: notices' own bookkeeping, emailed-link cancels, staff Support ID lookups and Users finds (never mailed, D396, D410). */
 export const SKIPPED_AUDIT_ACTIONS: ReadonlySet<string> = new Set(['invite.notified', 'owner_grant.notified', 'change.link_cancel', 'support.lookup', 'users.find']);
 
@@ -214,6 +220,27 @@ async function appNameOf(env: Env, r: AppChange): Promise<string | undefined> {
   return d?.ok && typeof d.app.name === 'string' ? d.app.name : undefined;
 }
 
+/** A row that gets the request labels' "Journear blocked" mail (D894), and only that (it is left out of the digest). */
+export const isLabelsBlocked = (r: AppChange): boolean => r.kind === 'labels.blocked';
+
+/**
+ * The blocked change's app names (AdminRpc.labelDetail by its change id), one RPC of the run's budget; null when
+ * unreadable (the mail then says "your app").
+ */
+async function labelAppsOf(env: Env, r: AppChange): Promise<string[] | null> {
+  const changeId = r.detail.changeId;
+  if (typeof changeId !== 'string') return null;
+  const d = await env.API.labelDetail({ ...systemCtx(), changeId }).catch(() => null);
+  if (!d?.ok) return null;
+  const names = d.item.change.apps.map((a) => a.name ?? a.id).filter((n): n is string => typeof n === 'string' && n.length > 0);
+  return names.length ? names : null;
+}
+
+const delayOf = (env: Env): number => {
+  const v = Number(env.APP_CHANGE_DELAY_MS);
+  return Number.isSafeInteger(v) && v > 0 ? v : 86_400_000;
+};
+
 export function feedChanges(rawEnv: Env, ops: OpsStore, sender: EmailSender, budget: Budget): Promise<FeedStepResult> {
   const env = meteredEnv(rawEnv, budget);
   const contacts = new Contacts(env);
@@ -236,7 +263,13 @@ export function feedChanges(rawEnv: Env, ops: OpsStore, sender: EmailSender, bud
         const outcome = await sendGroup(env, sender, budget, contacts, g.orgId, [], notice, `login_methods_changed:${r.seq}`, true);
         if (outcome !== 'sent') return outcome;
       }
-      const rows = g.rows.filter((r) => !onlyLoginMethods(r));
+      for (const r of g.rows.filter(isLabelsBlocked)) {
+        if (!budget.fits(1, 1)) return 'budget';
+        const notice = labelsBlocked(mail(env), r, { apps: await labelAppsOf(env, r), delayMs: delayOf(env) });
+        const outcome = await sendGroup(env, sender, budget, contacts, g.orgId, [], notice, `labels_blocked:${r.seq}`, true);
+        if (outcome !== 'sent') return outcome;
+      }
+      const rows = g.rows.filter((r) => !onlyLoginMethods(r) && !isLabelsBlocked(r));
       if (rows.length === 0) return 'sent';
       // A contacts change goes to the old contacts as well as the new ones (spec "Email").
       const extra = rows.flatMap((r) => (r.kind === 'org.security_contacts' ? [...((r.detail.old as string[] | undefined) ?? []), ...((r.detail.new as string[] | undefined) ?? [])] : [])).filter((e) => typeof e === 'string');

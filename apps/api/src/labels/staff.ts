@@ -20,7 +20,7 @@ export const LABEL_QUEUE_MAX = 200;
 
 type Row = LabelRow & { previous_text: string | null };
 
-const itemOf = (r: Row, now: number): LabelFeedItem => ({ change: labelView(r, now, true), labelsVersion: r.labels_version, ...previewAndDiff(r, r.previous_text) });
+const itemOf = (r: Row, now: number): LabelFeedItem => ({ change: labelView(r, now, true), labelsVersion: r.labels_version, entryVersion: r.off_version, ...previewAndDiff(r, r.previous_text) });
 
 const WAITING_STATES: ReadonlySet<LabelState> = new Set(['proposed', 'announced', 'waiting_review']);
 
@@ -56,7 +56,7 @@ export async function labelControls(db: HotDb): Promise<LabelControls> {
   const all = controls.find((c) => c.target === '*');
   return {
     all: { labelsOff: !!all?.labelsOff, reviewRequired: !!all?.reviewRequired, version: all?.version ?? 0, updatedAt: all?.updatedAt ?? null, updatedBy: all?.updatedBy ?? null, note: all?.note ?? null },
-    orgs: controls.filter((c) => c.target !== '*' && (c.labelsOff || c.reviewRequired)).map((c) => ({ orgId: c.target, labelsOff: !!c.labelsOff, reviewRequired: !!c.reviewRequired, version: c.version, updatedAt: c.updatedAt, updatedBy: c.updatedBy, note: c.note })),
+    orgs: controls.filter((c) => c.target !== '*').map((c) => ({ orgId: c.target, labelsOff: !!c.labelsOff, reviewRequired: !!c.reviewRequired, version: c.version, updatedAt: c.updatedAt, updatedBy: c.updatedBy, note: c.note })),
     entries: JSON.parse(r?.entries ?? '[]') as LabelControls['entries'],
   };
 }

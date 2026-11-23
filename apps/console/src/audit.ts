@@ -27,7 +27,8 @@ export const AUDIT_DETAIL_KEYS = {
   'user.enabled': [],
   'org.frozen': [],
   'org.unfrozen': [],
-  'change.link_cancel': ['code'],
+  // D894: a partner label version's link cancel also names its entry (it has no one app).
+  'change.link_cancel': ['code', 'labelId'],
   // Batch C11: the outcome of the setLogo RPC after an upload or a removal (app_changes has the change itself).
   'app.logo_set': ['logoKey', 'code'],
   'app.logo_removed': ['code'],

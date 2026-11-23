@@ -17,7 +17,12 @@
 // fees-money-held, fees-auto-restarted, fees-money-limit, fees-money-limit-refilled (D890), fees-paused-money-leak,
 // fees-paused-key and fees-low, whose "Gas sponsorship" page and tools answer here too; a done Resume there switches
 // the page to working). `PREVIEW_STATUS=<scenario>` picks
-// it at start (green by default); opening /preview/status/<scenario> switches it and goes to the page.
+// it at start (green by default); opening /preview/status/<scenario> switches it and goes to the page. The scenarios
+// labels-off and labels-review show the Partner labels tile (D894) with a switch off and with review required.
+//
+// Partner labels (D894): /labels and /labels/<change id> answer from test-spa/preview-labels.ts (a change in each
+// state, the switches) through the Worker's own routes; Block, Allow and the switches change that set in memory, and
+// /preview/labels/reset puts it back.
 import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname } from 'node:path';
@@ -27,13 +32,22 @@ import * as data from './preview-data.ts';
 // The status scenarios run the Worker's own src/status.ts (Workers types): loaded by a specifier TypeScript doesn't follow
 // here, typechecked with test-ops/ instead (its tsconfig has the Workers types; this one has the DOM's).
 const STATUS_MODULE = './preview-status.ts';
-type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down' | 'relay-low' | 'relay-budget' | 'relay-key-missing' | 'relay-off' | 'relay-stale' | 'fees-working' | 'fees-paused-money' | 'fees-money-arrived' | 'fees-money-held' | 'fees-auto-restarted' | 'fees-money-limit' | 'fees-money-limit-refilled' | 'fees-paused-money-leak' | 'fees-paused-key' | 'fees-low' | 'fees-no-endpoint' | 'fees-resumed';
+// The Partner labels screen (D894): the Worker's own routes (src/partner-labels.ts) over a small fake set, the same way.
+const LABELS_MODULE = './preview-labels.ts';
+type Scenario = 'green' | 'warnings' | 'critical' | 'mixed-build' | 'watchdog-down' | 'relay-low' | 'relay-budget' | 'relay-key-missing' | 'relay-off' | 'relay-stale' | 'fees-working' | 'fees-paused-money' | 'fees-money-arrived' | 'fees-money-held' | 'fees-auto-restarted' | 'fees-money-limit' | 'fees-money-limit-refilled' | 'fees-paused-money-leak' | 'fees-paused-key' | 'fees-low' | 'fees-no-endpoint' | 'labels-off' | 'labels-review' | 'fees-resumed';
 type Fake = { status: number; body: unknown };
 const { SCENARIOS, previewStatus, previewEvmDetail, previewEvmAct } = (await import(STATUS_MODULE)) as {
   SCENARIOS: readonly Scenario[];
   previewStatus: (s: Scenario) => Promise<unknown>;
   previewEvmDetail: (s: Scenario) => Promise<Fake>;
   previewEvmAct: (body: Record<string, unknown>, s: Scenario) => Promise<Fake & { resumed: boolean }>;
+};
+const labels = (await import(LABELS_MODULE)) as {
+  previewLabels: () => Promise<Fake>;
+  previewLabel: (id: string) => Promise<Fake>;
+  previewLabelAct: (id: string, body: Record<string, unknown>) => Promise<Fake>;
+  previewLabelControl: (body: Record<string, unknown>) => Promise<Fake>;
+  resetPreviewLabels: () => void;
 };
 /** The "Gas sponsorship" page's scenario: the status one, until a resume there is done (then it shows working). */
 let feesResumed = false;
@@ -70,6 +84,8 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
     if (p === '/api/me') return ok({ ...data.me, accessExp: Math.floor(sessionEndsAt / 1000) });
     if (p === '/api/status') return ok(await previewStatus(feesResumed ? 'fees-working' : statusScenario));
     if (p === '/api/evm-relay/84532') return previewEvmDetail(feesResumed ? 'fees-resumed' : statusScenario);
+    if (p === '/api/labels') return labels.previewLabels();
+    if ((m = /^\/api\/labels\/([^/]+)$/u.exec(p))) return labels.previewLabel(decodeURIComponent(m[1]!));
     if (p === '/api/orgs') return ok({ orgs: data.orgs });
     if (p === '/api/invites/new-orgs') return ok(data.newOrgInvites);
     if ((m = /^\/api\/orgs\/([^/]+)\/changes$/u.exec(p))) return ok(data.orgChanges(decodeURIComponent(m[1]!)));
@@ -100,6 +116,8 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
   if (p === '/api/orgs/org_legacy/freeze') return refuse(403, 'forbidden', "org_legacy can't be frozen");
   if (/^\/api\/orgs\/org_legacy\/members\//u.test(p)) return refuse(403, 'forbidden', 'org_legacy has no members');
   if ((m = /^\/api\/scopes\/[^/]+\/assign$/u.exec(p)) && body.orgId === 'org_legacy') return refuse(400, 'bad_request', "A scope can't be assigned to org_legacy");
+  if (p === '/api/labels/controls') return labels.previewLabelControl(body);
+  if ((m = /^\/api\/labels\/([^/]+)\/act$/u.exec(p))) return labels.previewLabelAct(decodeURIComponent(m[1]!), body);
   if (p === '/api/evm-relay/84532/act') {
     const a = await previewEvmAct(body, statusScenario);
     if (a.resumed) feesResumed = true;
@@ -137,6 +155,13 @@ const server = createServer((req, res) => {
       return;
     }
     if (url.pathname === '/signed-in') sessionEndsAt = Date.now() + 60 * 60_000;
+    // The Partner labels set back as it started (a Block or a switch changes it in memory).
+    if (url.pathname === '/preview/labels/reset') {
+      labels.resetPreviewLabels();
+      res.writeHead(302, { ...securityHeaders('https://files.preview.invalid'), location: '/labels' });
+      res.end();
+      return;
+    }
     const pick = /^\/preview\/status\/([a-z-]+)$/u.exec(url.pathname);
     if (pick && (SCENARIOS as readonly string[]).includes(pick[1]!)) {
       statusScenario = pick[1] as Scenario;

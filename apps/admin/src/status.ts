@@ -4,9 +4,9 @@
 // screen or playbook that resolves it. Unknown is never green: a check that should have answered and didn't is an
 // issue (unless the failure that hid it is one already). Read-only: nothing here writes, acts or alerts.
 //
-// Budget (Workers Free: 50 subrequests, 10 ms CPU): one cold read makes at most 1 watchdog call, 3 RPCs, 10 public
-// build reads, one NEAR read per endpoint (`nearEndpoints`: 3 on sandbox-dev, at most 5), 1 Hyperdrive connection and
-// 2 R2 reads (20 on sandbox-dev, at most 22, counted in `calls`); the Access check before the route adds its certs
+// Budget (Workers Free: 50 subrequests, 10 ms CPU): one cold read makes at most 1 watchdog call, 4 RPCs (the 4th the
+// partner labels' switches, D894), 10 public build reads, one NEAR read per endpoint (`nearEndpoints`: 3 on
+// sandbox-dev, at most 5), 1 Hyperdrive connection and 2 R2 reads (21 on sandbox-dev, at most 23, counted in `calls`); the Access check before the route adds its certs
 // fetch on a cold isolate. With NEON_PLAN (D872) the Hyperdrive connection isn't made: the ledger's tiles come from
 // what the admin crons last handed the API (`AdminRpc.neonWake`), so opening this page never wakes Neon; the
 // "Neon compute this month" tile reads the API's estimate. The answer is kept in the isolate for STATUS_CACHE_MS and
@@ -14,7 +14,7 @@
 // any cron.
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
 import { getPlaybook } from '@hana-id/playbooks';
-import type { ApiSystemStatus, ConsoleHealth, CronRunView, EvmRelayChainView } from '@hana-id/console-core';
+import type { ApiSystemStatus, ConsoleHealth, CronRunView, EvmRelayChainView, LabelControls } from '@hana-id/console-core';
 import { BUILD_ID_RE, parseBuildId } from '@hana-id/env/build-id';
 import { CRON_LAST_RUN } from './cron.ts';
 import type { Env } from './env.ts';
@@ -29,7 +29,7 @@ import { type StaffRequest, staffCtx } from './rpc.ts';
 import { MIN_PARTITIONS_AHEAD } from './security.ts';
 import { NEON_ALERT_PCTS, NEON_PARTIAL_AFTER_MS, type NeonStatus, allowancePct, assumedAwakeMs, awakeMsAt, computeHours, countedPartly, estimateAwakeMs, nextMonthStart } from '@hana-id/console-core';
 import { opsEveryMinutesOf, tracksNeon } from './neon.ts';
-import { type ChainPlain, LINE_LABELS, STATE_LABELS, chainInfo, evmRelayPath, evmRelayTitle, explainChain } from './evm-relay.ts';
+import { type ChainPlain, LINE_LABELS, STATE_LABELS, chainInfo, evmRelayPath, evmRelayTitle, explainChain, missingMethod } from './evm-relay.ts';
 import { type BuildRead, CallCount, type NearEndpoint, type NearRead, SLOW_MS, buildTargets, nearEndpoints, readBuild, readNear } from './status-probes.ts';
 import { callWatchdog, watchdogConfigured } from './watchdog.ts';
 
@@ -135,6 +135,7 @@ export const GROUPS = [
   { id: 'contract', title: 'Contract and watchdog' },
   { id: 'funds', title: 'Relayer funds' },
   { id: 'data', title: 'Data' },
+  { id: 'partners', title: 'Partners' },
   { id: 'jobs', title: 'Scheduled jobs' },
   { id: 'external', title: 'External services' },
   { id: 'headroom', title: 'Free-tier headroom' },
@@ -353,6 +354,8 @@ interface Sources {
   ledger: LedgerPart;
   statements: 'ok' | 'error' | null;
   exports: 'ok' | 'error' | null;
+  /** D894: the partner labels' switches (`api_outdated`: the API has no labelControls). */
+  labels: Settled<LabelControls>;
 }
 
 async function gatherSources(env: Env, staff: StaffRequest, accessJwt: string, now: number, calls: CallCount): Promise<Sources> {
@@ -368,7 +371,21 @@ async function gatherSources(env: Env, staff: StaffRequest, accessJwt: string, n
     const build = raw === undefined ? undefined : typeof raw === 'string' && BUILD_ID_RE.test(raw) ? raw : null;
     return { configured, ok: true, view: statusView(a.body, now, env.NEAR_NETWORK), build };
   })();
-  const [w, api, con, issuer, builds, near, ledger, statements, exportsBucket] = await Promise.all([
+  // D894: the partner labels' switches; an API without the method is said as older, not as down.
+  const labels = (async (): Promise<Settled<LabelControls>> => {
+    calls.take('rpc');
+    try {
+      const a = await env.API.labelControls(ctx);
+      if (a.ok) return { ok: true, value: a.controls };
+      log({ event: 'bff', route: 'GET /api/status labels', requestId: staff.requestId, outcome: 'rejected', code: a.code });
+      return { ok: false, code: a.code };
+    } catch (err) {
+      if (missingMethod(err)) return { ok: false, code: 'api_outdated' };
+      log({ event: 'bff', route: 'GET /api/status labels', requestId: staff.requestId, outcome: 'error', code: 'upstream_unavailable', error: errorName(err) }, 'warn');
+      return { ok: false, code: 'upstream_unavailable' };
+    }
+  })();
+  const [w, api, con, issuer, builds, near, ledger, statements, exportsBucket, labelControls] = await Promise.all([
     watchdog,
     rpc<ApiSystemStatus>('GET /api/status api', staff, calls, () => env.API.systemStatus(ctx)),
     rpc<ConsoleHealth>('GET /api/status console', staff, calls, () => env.CONSOLE.health(ctx)),
@@ -379,8 +396,9 @@ async function gatherSources(env: Env, staff: StaffRequest, accessJwt: string, n
     tracksNeon(env) ? Promise.resolve(null) : ledgerPart(env, staff, calls),
     bucketPart(env.STATEMENTS, calls),
     bucketPart(env.EXPORTS, calls),
+    labels,
   ]);
-  return { watchdog: w, api, console: con, issuer, builds, near, ledger: ledger ?? ledgerFromRuns(env, api.ok ? api.value.neon : undefined), statements, exports: exportsBucket };
+  return { watchdog: w, api, console: con, issuer, builds, near, ledger: ledger ?? ledgerFromRuns(env, api.ok ? api.value.neon : undefined), statements, exports: exportsBucket, labels: labelControls };
 }
 
 // ---- the checks ----
@@ -818,6 +836,45 @@ function dataTiles(r: Report, s: Sources): void {
   else bucket('r2-logos', 'R2: logos', 'Partner logo uploads and the logos the login pages show', s.console.value.logos);
 }
 
+const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+const utcMinute = (at: number): string => `${new Date(at).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
+/**
+ * Partner labels (D894): the staff switches, from `AdminRpc.labelControls`. OK while none is off (the review switches,
+ * when on, as a line); a warning naming each switch that is off, who turned it off and when, with one issue saying what
+ * it does to users and where to turn it back on (the Partner labels screen). Unknown when the read fails, and an API
+ * without the method is said to be older than this page.
+ */
+function partnerLabelsTile(r: Report, s: Sources): void {
+  const link = { path: '/labels', label: 'Partner labels' };
+  const base: TileInput = { id: 'partner-labels', group: 'partners', name: 'Partner labels', affects: 'What the approval window shows for partners’ requests: their own words, in their app’s name', detail: '', link };
+  const l = s.labels;
+  if (!l.ok) {
+    if (l.code === 'api_outdated') return r.add({ ...base, detail: 'Can’t check: the API deployed here is older than this page.' }, [{ severity: 'unknown', title: 'The API deployed here is older than this page, so the partner label switches can’t be read', action: 'Deploy the API first, then this admin console.', key: 'outdated' }]);
+    return r.add({ ...base, detail: 'Can’t check right now: the API didn’t answer' }, [{ severity: 'unknown', title: 'The partner label switches can’t be read right now', action: 'Check again in a minute. If it stays like this, look at the API Worker’s logs.', key: 'rpc', issue: s.api.ok }]);
+  }
+  const c = l.value;
+  const offOrgs = c.orgs.filter((o) => o.labelsOff);
+  const reviewOrgs = c.orgs.filter((o) => o.reviewRequired);
+  const review = c.all.reviewRequired ? 'Staff review required for every change' : reviewOrgs.length ? `Staff review required for ${plural(reviewOrgs.length, 'organisation')}` : null;
+  const byWhen = (who: string | null, at: number | null): string => [who ? `by ${plainString(who, 128)}` : null, at !== null ? `${utcMinute(at)} (${ago(Math.max(0, r.now - at))} ago)` : null].filter(Boolean).join(', ');
+  const lines: TileLine[] = [];
+  if (c.all.labelsOff) lines.push({ label: 'Every partner label', state: 'warning', stateLabel: 'Off', detail: `Switched off ${byWhen(c.all.updatedBy, c.all.updatedAt)}` });
+  for (const o of offOrgs) lines.push({ label: `Organisation ${plainString(o.orgId, 80)}`, state: 'warning', stateLabel: 'Off', detail: `Switched off ${byWhen(o.updatedBy, o.updatedAt)}` });
+  for (const e of c.entries) lines.push({ label: `Labels ${plainString(e.labelId, 80)} (organisation ${plainString(e.orgId, 80)})`, state: 'warning', stateLabel: 'Off', detail: `Switched off ${byWhen(e.offBy, e.offAt)}` });
+  if (review) lines.push({ label: 'Staff review', state: 'ok', detail: review.replace(/^Staff review required/u, 'Required') });
+  const off = [c.all.labelsOff ? 'Switched off for everyone' : null, offOrgs.length ? `Switched off for ${plural(offOrgs.length, 'organisation')}` : null, c.entries.length ? `${plural(c.entries.length, 'set')} switched off` : null].filter((x): x is string => x !== null);
+  if (!off.length) return r.add({ ...base, detail: review ? `No switch is off · ${review}` : 'No switch is off', ...(lines.length ? { lines } : {}) });
+  const whom = [c.all.labelsOff ? 'for everyone' : null, offOrgs.length ? `for ${plural(offOrgs.length, 'organisation')}` : null].filter(Boolean).join(' and ');
+  const sets = c.entries.length ? `${plural(c.entries.length, 'set')} of partner labels ${c.entries.length === 1 ? 'is' : 'are'} switched off` : null;
+  const title = [whom ? `Partner labels are switched off ${whom}` : null, sets].filter(Boolean).join('; ');
+  const times = [c.all.labelsOff ? c.all.updatedAt : null, ...offOrgs.map((o) => o.updatedAt), ...c.entries.map((e) => e.offAt)].filter((t): t is number => typeof t === 'number');
+  const users = c.all.labelsOff ? 'Users of every partner’s apps' : 'Users of those apps';
+  r.add({ ...base, detail: [...off, ...(review ? [review] : [])].join(' · '), lines }, [
+    { severity: 'warning', title, action: `${users} see the plain approval window, without the partner’s words. To turn a switch back on, open Partner labels.`, since: times.length ? Math.min(...times) : null, link, key: 'off' },
+  ]);
+}
+
 function cronProblems(name: string, at: number | null, intervalMs: number, now: number, playbook?: string): Problem[] {
   if (at === null) return [];
   const age = now - at;
@@ -1118,6 +1175,7 @@ export async function buildStatus(env: Env, staff: StaffRequest, accessJwt: stri
   nearRelayTile(r, s);
   evmRelayTiles(r, s);
   dataTiles(r, s);
+  partnerLabelsTile(r, s);
   jobTiles(r, env, s);
   externalTiles(r, env, s);
   headroomTiles(r, env, s);

@@ -143,7 +143,8 @@ export const recordStaffActionInput = ctx
 export type RecordStaffActionInput = z.infer<typeof recordStaffActionInput>;
 
 // The console's emailed-link confirms (no session; the token is the proof; CSRF rules apply).
-export const cancelByLinkBody = z.object({ changeId: z.string().regex(/^gc_[A-Za-z0-9]{1,64}$/u), token: b64url32 }).strict();
+/** A guarded change (`gc_`) or a partner label version (`lc_`, D894): both are cancelled by their emailed link. */
+export const cancelByLinkBody = z.object({ changeId: z.string().regex(/^(?:gc|lc)_[A-Za-z0-9]{1,64}$/u), token: b64url32 }).strict();
 export const ownerGrantCancelBody = z.object({ grantId: ownerGrantIdInput, token: b64url32 }).strict();
 
 export type ListOrgsInput = z.infer<typeof listOrgsInput>;

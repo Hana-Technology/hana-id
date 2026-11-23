@@ -51,6 +51,7 @@ describe('audit details', () => {
         ],
         "change.link_cancel": [
           "code",
+          "labelId",
         ],
         "evm_relay.staff_action": [
           "tool",

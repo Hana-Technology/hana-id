@@ -1112,6 +1112,15 @@ const LOG_KIND = {
   'origin.removed': 'Origin removed',
   'org.security_contacts': 'Security contacts replaced',
   'scope.assigned': 'Scope moved to this organisation',
+  'labels.proposed': 'Request labels proposed',
+  'labels.removed': 'Request labels removed',
+  'labels.activated': 'Request labels in force',
+  'labels.blocked': 'Request labels blocked by Journear',
+  'labels.allowed': 'Request labels allowed by Journear',
+  'labels.switched_off': 'Request labels switched off by Journear',
+  'labels.switched_on': 'Request labels switched back on by Journear',
+  'labels.review_on': 'Journear review of request labels turned on',
+  'labels.review_off': 'Journear review of request labels turned off',
 };
 const logKind = (k) => h('span', {}, LOG_KIND[k] || k, LOG_KIND[k] ? h('span', { class: 'sub' }, h('code', {}, k)) : '');
 
@@ -1129,6 +1138,7 @@ const NAV_GROUPS = [
     items: [
       { path: '/security/monitoring', label: 'Security & monitoring' },
       { path: '/security', label: 'Feed and notices' },
+      { path: '/labels', label: 'Partner labels' },
       { path: '/security/upgrades', label: 'Pending upgrades' },
       { path: '/security/playbooks', label: 'Playbooks' },
       { path: '/audit', label: 'Audit log' },
@@ -2129,6 +2139,7 @@ async function securityPage(main) {
           ),
       waiting ? '' : h('p', { class: 'hint' }, 'Everything has been emailed.'),
     ),
+    labelsWaitingPanel(d.labels),
     panel(
       'Security events not yet emailed',
       {},
@@ -2773,6 +2784,371 @@ async function evmRelayPage(main, chainId) {
       ),
     ),
   );
+}
+
+// ---- Partner labels (D894; partners read "request labels"): the staff feed of label changes, Block and Allow, the switches ----
+//
+// Partners write the words the approval window shows for their apps' requests ("{App} says: …"). Every change appears
+// here for its whole wait: the organisation, the apps, what users would see (example values), what changes against what
+// users see now, and when it goes live. Nothing is needed for a change to go live; "Block this change" stops one, and
+// while staff review is switched on a change waits for "Allow". The partner's words are always written as text, never
+// as markup. Each tool sends the page's one-time token and what the page saw; the Worker records it in the audit log
+// before and after, and a change that moved since the page was read is refused (nothing done).
+
+/** The last tool's answer, shown once at the top of the page after it re-reads. */
+let labelsLast = null;
+
+const LABEL_WAITING = new Set(['proposed', 'announced', 'waiting_review']);
+const LABEL_STATE = {
+  proposed: ['Waiting for the notice email', 'warning'],
+  announced: ['Goes live at its time', 'info'],
+  waiting_review: ['Waiting for a staff Allow', 'warning'],
+  in_force: ['Live', 'ok'],
+  blocked: ['Blocked by staff', 'bad'],
+  cancelled: ['Cancelled by the partner', ''],
+  lapsed: ['Lapsed', ''],
+  replaced: ['Replaced by a newer change', ''],
+  removed: ['Removed by the partner', ''],
+};
+/** "in 3 h 5 min" from the reader's clock; "any moment now" once the time has passed. */
+const labelCountdown = (at) => (at - Date.now() > 0 ? `in ${roughly(at - Date.now())}` : 'any moment now');
+/** A change's state in words: the state, with its time where it has one. */
+function labelStateText(ch) {
+  if (ch.state === 'announced' && typeof ch.activeFrom === 'number') return `Goes live ${time(ch.activeFrom)} (${labelCountdown(ch.activeFrom)})${ch.reviewRequired && !ch.allowedAt ? ', once staff press Allow' : ''}`;
+  if (ch.state === 'waiting_review') return `Waiting for a staff Allow${typeof ch.lapsesAt === 'number' ? ` (lapses ${time(ch.lapsesAt)})` : ''}`;
+  if (ch.state === 'proposed') return `Waiting for the notice email${typeof ch.lapsesAt === 'number' ? ` (lapses ${time(ch.lapsesAt)} if it can’t be sent)` : ''}`;
+  if (ch.state === 'lapsed') return ch.endReason === 'not_reviewed' ? 'Lapsed: nobody allowed it in time' : ch.endReason === 'not_announced' ? 'Lapsed: the notice email couldn’t be sent in time' : 'Lapsed';
+  return (LABEL_STATE[ch.state] || [ch.state])[0];
+}
+const labelBadge = (ch) => badge(labelStateText(ch), (LABEL_STATE[ch.state] || [, ''])[1]);
+const OFF_WORDS = { entry: 'These labels are switched off', org: 'Switched off for this organisation', all: 'Every partner label is switched off' };
+const labelApps = (ch) => (ch.apps || []).map((a) => named(a.name || a.id, a.id));
+const orgOf = (orgNames, id) => named((orgNames && orgNames[id]) || id, orgNames && orgNames[id] ? id : null);
+
+/** What users would see (example values): each line, and its rows. The partner's words as text only. */
+function labelPreviewBlock(preview) {
+  if (!preview) return note('warn', 'The preview can’t be shown', 'The stored labels can’t be read as they are now. Ask an engineer to look.');
+  return h(
+    'div',
+    { class: 'label-preview' },
+    h('p', { class: 'hint' }, `${preview.context ? `${preview.context}. ` : ''}The values are made-up examples.`),
+    h(
+      'ul',
+      { class: 'label-lines' },
+      (preview.formats || []).map((f) => h('li', {}, h('p', { class: 'label-line' }, f.line), f.fields && f.fields.length ? h('dl', { class: 'label-rows' }, f.fields.flatMap((x) => [h('dt', {}, x.label), h('dd', {}, x.value)])) : '')),
+    ),
+  );
+}
+
+const DIFF_WORDS = { added: ['New', 'info'], changed: ['Changed', 'warning'], removed: ['Removed', 'bad'], same: ['Unchanged', ''] };
+/** Compared with what users see now: each line added, changed (before and after), removed or unchanged. */
+function labelDiffBlock(diff) {
+  if (!Array.isArray(diff) || !diff.length) return h('p', { class: 'hint' }, 'Nothing to compare.');
+  return h(
+    'ul',
+    { class: 'label-diff' },
+    diff.map((d) =>
+      h(
+        'li',
+        { class: `diff-${d.change}` },
+        badge(...(DIFF_WORDS[d.change] || [d.change, ''])),
+        ' ',
+        d.change === 'changed' ? h('span', {}, h('span', { class: 'sub' }, 'Before: ', h('span', { class: 'diff-before' }, d.before || '')), h('span', { class: 'sub' }, 'Now: ', h('span', { class: 'diff-after' }, d.after || ''))) : h('span', {}, d.change === 'removed' ? d.before || '' : d.after || ''),
+      ),
+    ),
+  );
+}
+
+/** One change in the feed: its state, organisation and apps, the preview, the diff, and the link to its page. */
+function labelFeedItem(item, orgNames) {
+  const ch = item.change;
+  return h(
+    'li',
+    { class: 'label-item', 'data-change': ch.id },
+    h('div', { class: 'label-item-head' }, labelBadge(ch), ch.off ? badge(OFF_WORDS[ch.off] || 'Switched off', 'warning') : '', h('strong', {}, link(`/labels/${encodeURIComponent(ch.id)}`, `Open ${ch.id}`))),
+    facts([
+      ['Organisation', orgOf(orgNames, ch.orgId)],
+      ['Apps', h('span', {}, labelApps(ch))],
+      ['Proposed', when(ch.proposedAt)],
+      ch.reviewRequired ? ['Staff review', ch.allowedAt ? `Allowed ${time(ch.allowedAt)}` : 'Required: it waits for Allow'] : null,
+    ]),
+    h('h3', {}, 'What users would see (example values)'),
+    labelPreviewBlock(item.preview),
+    h('h3', {}, 'Compared with what users see now'),
+    labelDiffBlock(item.diff),
+  );
+}
+
+const LABEL_NOTE_INVALID = 'Write at least 10 characters, on one line.';
+/** The note of a tool: 10 to 300 characters, one line; `label` says who reads it. */
+const labelNoteField = (label, placeholder) => ({ name: 'note', label, placeholder, required: true, minlength: 10, maxlength: 300, size: 'wide', help: '10 to 300 characters, one line. Kept in the audit log, with your name.', invalid: LABEL_NOTE_INVALID });
+const PARTNER_NOTE = 'Why (the partner’s security contacts see this note; it is kept in the audit log)';
+const STAFF_NOTE = 'Why (kept in the audit log)';
+
+/** The answer of a tool the server refused: in words, with the server's own sentence, and the page read again. */
+function refusedWords(label, err) {
+  const e = explain(err);
+  return { tone: err.code === 'version_conflict' || err.code === 'already_applied' ? 'warn' : 'error', title: `${label}: ${e.title}`, text: `${err.message && err.message !== err.code ? err.message : e.hint || ''} The page has been read again.`.trim(), code: err.code };
+}
+
+/** One tool's form: it posts `body(values)` to `path`, then the page reads again with the answer at its top. */
+function labelToolForm(where, label, fields, path, body, confirmText, opts = {}) {
+  return form(
+    fields,
+    label,
+    async (v) => {
+      try {
+        return await api('POST', path, body(v));
+      } catch (err) {
+        // The server answered (a page that moved, a form already sent, an outage): this page and its one-time token
+        // may be out of date, so it is read again first. Only a check in this page itself (nothing sent) stays here.
+        if (!(err instanceof ApiError) || err.status === 0) throw err;
+        return { words: refusedWords(label, err) };
+      }
+    },
+    {
+      confirm: confirmText,
+      confirmLabel: label,
+      danger: !!opts.danger,
+      primary: !!opts.primary,
+      vertical: true,
+      after: async (out) => {
+        labelsLast = { where, words: out.words };
+        await render();
+      },
+    },
+  );
+}
+
+/** The last tool's answer, once, at the top of the page it was sent from. */
+function labelsLastNote(main, where) {
+  if (!labelsLast || labelsLast.where !== where) return;
+  const w = labelsLast.words || { tone: 'info', title: 'Done', text: '' };
+  labelsLast = null;
+  main.append(h('div', { class: 'act-result' }, note(w.tone, w.title, w.text, ...(w.code ? [engineerCode(w.code)] : []))));
+}
+
+/** A switch's form: what it does, the note, and its confirmation. */
+function switchForm(d, where, target, what, seenVersion, label, confirmText, noteLabel, opts = {}) {
+  return labelToolForm(where, label, [labelNoteField(noteLabel, opts.placeholder || 'Why, in one line')], '/api/labels/controls', (v) => ({ token: d.token, target, what, note: v.note, seenVersion }), confirmText, opts);
+}
+
+const byWhen = (who, at) => h('span', {}, typeof at === 'number' ? when(at) : '', who ? h('span', { class: 'sub' }, `by ${who}`) : '');
+
+/** The switches: every partner label (off / back on), review for everyone, the organisations with a switch, the sets switched off, and one organisation's. */
+function labelSwitchesPanel(d) {
+  const c = d.controls;
+  const all = c.all;
+  const where = '/labels';
+  const everyone = h(
+    'div',
+    { class: 'tool' },
+    h('h3', {}, 'Every partner label'),
+    h('p', {}, all.labelsOff ? h('span', {}, badge('Off', 'warning'), ' Users of every partner’s apps see the plain approval window, without the partner’s words.') : h('span', {}, badge('On', 'ok'), ' Partners’ words show in the approval window once each change passes its wait.')),
+    all.labelsOff && (all.updatedBy || all.updatedAt) ? h('p', { class: 'hint' }, 'Switched off ', byWhen(all.updatedBy, all.updatedAt), all.note ? [' · ', h('span', {}, `“${all.note}”`)] : '') : '',
+    all.labelsOff
+      ? switchForm(d, where, { kind: 'all' }, 'on', all.version, 'Turn every partner label back on', 'Turn every partner label back on? Only versions that already passed their wait are shown again.', STAFF_NOTE)
+      : switchForm(d, where, { kind: 'all' }, 'off', all.version, 'Switch every partner label off', 'Switch every partner label off? Users of every partner’s apps see the plain approval window, without the partner’s words, until staff turn them back on.', STAFF_NOTE, { danger: true }),
+  );
+  const review = h(
+    'div',
+    { class: 'tool' },
+    h('h3', {}, 'Staff review for everyone'),
+    h('p', {}, all.reviewRequired ? h('span', {}, badge('On', 'warning'), ' No change goes live until staff press Allow; one nobody allows lapses 7 days after its time.') : h('span', {}, badge('Off', ''), ' Changes go live at their time unless staff block them.')),
+    all.reviewRequired
+      ? switchForm(d, where, { kind: 'all' }, 'review_off', all.version, 'Turn review off for everyone', 'Turn staff review off for everyone? Changes waiting for an Allow go live at their time (or at once if it has passed), unless an organisation’s own review is on.', STAFF_NOTE)
+      : switchForm(d, where, { kind: 'all' }, 'review_on', all.version, 'Require review for everyone', 'Require staff review for every change? None goes live until staff press Allow, and one nobody allows lapses 7 days after its time.', STAFF_NOTE),
+  );
+  // Every org with a switch row comes back (its version is what the next switch needs); the table shows those with one on.
+  const orgRows = c.orgs.filter((o) => o.labelsOff || o.reviewRequired).map((o) => {
+    const actions = [];
+    if (o.labelsOff) {
+      const f = disclosure('Turn back on…', switchForm(d, where, { kind: 'org', orgId: o.orgId }, 'on', o.version, 'Turn back on', 'Turn this organisation’s partner labels back on? Only versions that already passed their wait are shown again.', PARTNER_NOTE), { small: true });
+      actions.push(h('div', { class: 'inline-action' }, f.button, f.box));
+    }
+    if (o.reviewRequired) {
+      const f = disclosure('Review off…', switchForm(d, where, { kind: 'org', orgId: o.orgId }, 'review_off', o.version, 'Turn review off', 'Turn staff review off for this organisation? Its changes waiting for an Allow go live at their time (or at once if it has passed).', PARTNER_NOTE), { small: true });
+      actions.push(h('div', { class: 'inline-action' }, f.button, f.box));
+    }
+    return tr(orgOf(d.orgNames, o.orgId), o.labelsOff ? badge('Off', 'warning') : badge('On', 'ok'), o.reviewRequired ? badge('Required', 'warning') : 'Not required', byWhen(o.updatedBy, o.updatedAt), o.note || '', h('div', { class: 'stack' }, actions));
+  });
+  const entryRows = c.entries.map((e) => {
+    const f = disclosure('Turn back on…', switchForm(d, where, { kind: 'entry', labelId: e.labelId }, 'on', e.version, 'Turn back on', 'Turn these labels back on? Only a version that already passed its wait is shown again.', PARTNER_NOTE), { small: true });
+    return tr(mono(e.labelId), orgOf(d.orgNames, e.orgId), byWhen(e.offBy, e.offAt), e.note || '', h('div', { class: 'inline-action' }, f.button, f.box));
+  });
+  const orgForm = (() => {
+    // One organisation's switch, by its id; the version is the one this page read for it (0 for one without a switch).
+    const fields = [
+      { name: 'orgId', label: 'Organisation id', required: true, placeholder: 'org_…', pattern: '^org_[A-Za-z0-9]{1,64}$', help: 'As on its Organisations page.', invalid: 'An organisation id starts with org_.' },
+      { name: 'what', type: 'select', label: 'Switch', required: true, options: [{ value: 'off', label: 'Switch its partner labels off' }, { value: 'on', label: 'Turn its partner labels back on' }, { value: 'review_on', label: 'Require staff review for its changes' }, { value: 'review_off', label: 'Stop requiring staff review' }], value: 'off' },
+      labelNoteField(PARTNER_NOTE, 'Why, in one line'),
+    ];
+    const CONFIRM = {
+      off: 'Switch this organisation’s partner labels off? Users of its apps see the plain approval window, without its words, until staff turn them back on.',
+      on: 'Turn this organisation’s partner labels back on? Only versions that already passed their wait are shown again.',
+      review_on: 'Require staff review for this organisation? None of its changes goes live until staff press Allow; one nobody allows lapses 7 days after its time.',
+      review_off: 'Stop requiring staff review for this organisation? Its changes waiting for an Allow go live at their time (or at once if it has passed).',
+    };
+    return h(
+      'div',
+      {},
+      form(
+        fields,
+        'Apply to this organisation',
+        async (v) => {
+          const known = c.orgs.find((o) => o.orgId === v.orgId);
+          try {
+            return await api('POST', '/api/labels/controls', { token: d.token, target: { kind: 'org', orgId: v.orgId }, what: v.what, note: v.note, seenVersion: known ? known.version : 0 });
+          } catch (err) {
+            if (!(err instanceof ApiError) || err.status === 0) throw err;
+            return { words: refusedWords('Apply to this organisation', err) };
+          }
+        },
+        { confirm: (v) => CONFIRM[v.what] || 'Apply this switch?', confirmLabel: 'Apply to this organisation', vertical: true, after: async (out) => ((labelsLast = { where, words: out.words }), render()) },
+      ),
+    );
+  })();
+  return panel(
+    'Switches',
+    { hint: 'Each switch acts at once and is recorded in the audit log with your note. Turning one back on never makes a waiting change go live sooner.' },
+    h('div', { class: 'stack' }, everyone, review),
+    h('h3', {}, 'Organisations with a switch'),
+    table(['Organisation', 'Partner labels', 'Staff review', 'Set', 'Note', ''], orgRows, { empty: 'No organisation has a switch set.' }),
+    h('h3', {}, 'Sets of labels switched off'),
+    table(['Labels', 'Organisation', 'Switched off', 'Note', ''], entryRows, { empty: 'None: no set of labels is switched off on its own.' }),
+    h('h3', {}, 'One organisation'),
+    orgForm,
+  );
+}
+
+/** "Partner label changes waiting" on Feed and notices: how many, and where they are. */
+function labelsWaitingPanel(l) {
+  if (l === undefined) return '';
+  return panel(
+    'Partner label changes waiting',
+    { hint: 'Every change partners make to their request labels shows on Partner labels for its whole wait. Nothing is needed for one to go live; staff can block one.' },
+    l === null
+      ? note('warn', 'The API didn’t answer', 'The partner label changes can’t be counted right now. Open Partner labels to try again.')
+      : h('p', {}, l.waiting === 0 ? 'None waiting.' : `${l.waiting} waiting${l.awaitingAllow ? `, ${l.awaitingAllow} of them for a staff Allow` : ''}${l.notAnnounced ? `, ${l.notAnnounced} not yet emailed to the partner` : ''}.`, ' ', link('/labels', 'Open Partner labels')),
+  );
+}
+
+async function labelsPage(main) {
+  const d = await api('GET', '/api/labels');
+  main.append(
+    pageHead('Partner labels', {
+      subtitle: 'The words partners write for the approval window, shown to their users as “{App} says: …”. Every change waits its time after the partner’s security contacts are emailed. Nothing is needed for it to go live; block one that would mislead users.',
+      actions: [h('button', { type: 'button', class: btn('secondary'), onclick: () => render() }, 'Check again')],
+    }),
+  );
+  labelsLastNote(main, '/labels');
+  const waiting = d.items.filter((i) => LABEL_WAITING.has(i.change.state));
+  const decided = d.items.filter((i) => !LABEL_WAITING.has(i.change.state));
+  main.append(
+    panel('Waiting', { hint: 'Soonest live first. Open one to block it, or to allow it while staff review is on.' }, waiting.length ? h('ol', { class: 'label-feed' }, waiting.map((i) => labelFeedItem(i, d.orgNames))) : emptyState('No change is waiting', 'When a partner proposes request labels, the change shows here for its whole wait.')),
+    panel('Decided in the last 14 days', {}, decided.length ? h('ol', { class: 'label-feed' }, decided.map((i) => labelFeedItem(i, d.orgNames))) : emptyState('Nothing decided lately', '')),
+    labelSwitchesPanel(d),
+  );
+}
+
+async function labelPage(main, changeId) {
+  const d = await api('GET', `/api/labels/${encodeURIComponent(changeId)}`);
+  const item = d.item;
+  const ch = item.change;
+  const where = `/labels/${ch.id}`;
+  const seen = { labelsVersion: item.labelsVersion, state: ch.state };
+  main.append(
+    pageHead('Partner label change', {
+      crumbs: [{ href: '/labels', text: 'Partner labels' }],
+      subtitle: `${(ch.apps || []).map((a) => a.name || a.id).join(', ')} · ${d.orgName || ch.orgId}`,
+      actions: [h('button', { type: 'button', class: btn('secondary'), onclick: () => render() }, 'Check again')],
+    }),
+  );
+  labelsLastNote(main, where);
+  main.append(
+    panel(
+      'Now',
+      {},
+      h('p', {}, labelBadge(ch), ch.off ? [' ', badge(OFF_WORDS[ch.off] || 'Switched off', 'warning')] : ''),
+      facts([
+        ['Organisation', named(d.orgName || ch.orgId, d.orgName ? ch.orgId : null)],
+        ['Apps', h('span', {}, labelApps(ch))],
+        ['Environment', envBadge(ch.environment)],
+        ['Shown to users now', ch.served ? 'Yes' : 'No'],
+        ['Proposed', when(ch.proposedAt)],
+        ['Notice emailed', ch.notifiedAt ? when(ch.notifiedAt) : 'Not yet'],
+        typeof ch.activeFrom === 'number' ? [ch.activeFrom <= Date.now() ? 'Its time' : 'Goes live', when(ch.activeFrom)] : null,
+        typeof ch.lapsesAt === 'number' && LABEL_WAITING.has(ch.state) ? ['Lapses', when(ch.lapsesAt)] : null,
+        ['Staff review', ch.reviewRequired ? (ch.allowedAt ? `Allowed ${time(ch.allowedAt)}` : 'Required: it waits for Allow') : 'Not required'],
+        ch.blockedAt ? ['Blocked', h('span', {}, when(ch.blockedAt), ch.blockNote ? h('span', { class: 'sub' }, `“${ch.blockNote}”`) : '')] : null,
+        ['Change', mono(ch.id)],
+        ['Labels', mono(ch.labelId)],
+        ch.previousId ? ['Replaces', link(`/labels/${encodeURIComponent(ch.previousId)}`, ch.previousId)] : null,
+      ]),
+    ),
+    panel('What users would see (example values)', {}, labelPreviewBlock(item.preview)),
+    panel('Compared with what users see now', {}, labelDiffBlock(item.diff)),
+    labelToolsPanel(d, where, seen),
+  );
+}
+
+const BLOCKABLE = new Set(['proposed', 'announced', 'waiting_review', 'in_force']);
+function labelToolsPanel(d, where, seen) {
+  const ch = d.item.change;
+  const path = `/api/labels/${encodeURIComponent(ch.id)}/act`;
+  const tools = [];
+  const allowable = ch.reviewRequired && !ch.allowedAt && LABEL_WAITING.has(ch.state);
+  if (allowable)
+    tools.push(
+      h(
+        'div',
+        { class: 'tool' },
+        h('h3', {}, 'Allow'),
+        h('p', {}, 'Staff review is on for this organisation, so this change waits for an Allow. Allow it only when the words are honest about what the request does. Its own wait still applies.'),
+        labelToolForm(where, 'Allow', [labelNoteField(PARTNER_NOTE, 'Read the lines: they say what the call does')], path, (v) => ({ token: d.token, tool: 'allow', note: v.note, seen }), 'Allow this change? It goes live at its time, or at once if its time has passed.', { primary: true }),
+      ),
+    );
+  if (BLOCKABLE.has(ch.state))
+    tools.push(
+      h(
+        'div',
+        { class: 'tool' },
+        h('h3', {}, 'Block this change'),
+        h('p', {}, ch.state === 'in_force' ? 'Users see these words now. Blocking stops them at once, and the partner is told, with your note.' : 'Stops this change: users never see it, and the partner is told, with your note. Use it when the words would mislead users.'),
+        labelToolForm(
+          where,
+          'Block this change',
+          [labelNoteField('Why (the partner is sent this note; it is kept in the audit log)', 'The words say “collect a stamp” but the call moves money')],
+          path,
+          (v) => ({ token: d.token, tool: 'block', note: v.note, seen }),
+          ch.state === 'in_force' ? 'Block this change? Users stop seeing it at once, and the partner is told Journear blocked it.' : 'Block this change? Users will never see it, and the partner is told Journear blocked it.',
+          { danger: true },
+        ),
+      ),
+    );
+  // One set of labels' own kill switch (the entry, every version of it), with the entry's switch version this page read.
+  if (BLOCKABLE.has(ch.state) || ch.off === 'entry') {
+    const entryVersion = typeof d.item.entryVersion === 'number' ? d.item.entryVersion : 0;
+    tools.push(
+      ch.off === 'entry'
+        ? h(
+            'div',
+            { class: 'tool' },
+            h('h3', {}, 'Turn these labels back on'),
+            h('p', {}, 'Staff switched this set of labels off. Turning it back on shows only a version that already passed its wait; a waiting change still waits.'),
+            switchForm(d, where, { kind: 'entry', labelId: ch.labelId }, 'on', entryVersion, 'Turn these labels back on', 'Turn these labels back on? Only a version that already passed its wait is shown again.', PARTNER_NOTE),
+          )
+        : h(
+            'div',
+            { class: 'tool' },
+            h('h3', {}, 'Switch these labels off'),
+            h('p', {}, 'Every version of this set of labels stops showing at once, now and later, until staff turn it back on. Use it to stop one partner’s words quickly without blocking a change.'),
+            switchForm(d, where, { kind: 'entry', labelId: ch.labelId }, 'off', entryVersion, 'Switch these labels off', 'Switch these labels off? Users of these apps see the plain approval window, without the partner’s words, until staff turn them back on.', PARTNER_NOTE, { danger: true }),
+          ),
+    );
+  }
+  if (!tools.length) tools.push(h('p', { class: 'hint' }, `Nothing to do: this change is ${labelStateText(ch).toLowerCase()}.`));
+  return panel('Staff tools', { hint: 'Each asks for a note and says what it will do before it does it. It is recorded in the audit log with your name.' }, h('div', { class: 'stack' }, tools));
 }
 
 async function upgradesPage(main) {
@@ -3972,6 +4348,8 @@ async function render() {
     else if (path === '/security/playbooks') await playbooksPage(main);
     else if ((m = /^\/security\/playbooks\/([a-z0-9-]{1,64})$/u.exec(path))) await playbookPage(main, m[1]);
     else if ((m = /^\/gas-sponsorship\/([1-9][0-9]{0,15})$/u.exec(path))) await evmRelayPage(main, Number(m[1]));
+    else if (path === '/labels') await labelsPage(main);
+    else if ((m = /^\/labels\/(lc_[A-Za-z0-9]{1,64})$/u.exec(path))) await labelPage(main, m[1]);
     else if (path === '/reports') await reportsPage(main);
     else if (path === '/statements') await statementsPage(main);
     else if (path === '/rates') await ratesPage(main);

@@ -178,6 +178,8 @@ export interface LabelFeedItem {
   change: LabelChangeView;
   /** The scope's labels version now: a staff tool applies only while it is still this (`seen.labelsVersion`). */
   labelsVersion: number;
+  /** The entry's own switch version now: the `seenVersion` an entry switch (off / back on) needs. */
+  entryVersion: number;
   /** Null only for a stored text that no longer parses (drift's concern, never a proposal's). */
   preview: LabelPreview | null;
   /** Against the version it would replace; every line `added` for a first version. */
@@ -196,7 +198,7 @@ export interface LabelNotice {
 export interface LabelControls {
   /** Every partner label off, and review required for every org; `version` is the `seenVersion` a change of it needs. */
   all: { labelsOff: boolean; reviewRequired: boolean; version: number; updatedAt: number | null; updatedBy: string | null; note: string | null };
-  /** The orgs with a switch set. */
+  /** Every org that has (or had) a switch row, including one with both switches off now: its `version` is what the next change needs (no row: 0). */
   orgs: { orgId: string; labelsOff: boolean; reviewRequired: boolean; version: number; updatedAt: number; updatedBy: string; note: string | null }[];
   /** The entries staff switched off (not removed); `version` is the entry's switch version. */
   entries: { labelId: string; orgId: string; scopeId: string; offAt: number; offBy: string | null; note: string | null; version: number }[];

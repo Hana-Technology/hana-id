@@ -100,17 +100,17 @@ function cancelBatch(w: Writer, c: ChangePlan, reason: 'owner' | 'link', extra: 
 }
 
 /** ConsoleRpc.cancelChange / AdminRpc.cancelChange with an `lc_` id: any waiting version of the org's (not one in force: remove it). */
-export async function cancelLabelChange(db: HotDb, w: Writer, i: { orgId: string; changeId: string }): Promise<{ change: { id: string; state: 'cancelled' } }> {
+export async function cancelLabelChange(db: HotDb, w: Writer, i: { orgId: string; changeId: string }): Promise<{ change: { id: string; labelId: string; state: 'cancelled' } }> {
   expectReplay(w, ['change.cancelled']);
   const c = await planChange(db, w, i.changeId, i.orgId);
   if (c.removed_at !== null) refuse('not_found', 'These request labels were removed');
   if (!c.waiting) refuse('not_pending', c.status === 'pending' || c.status === 'active' ? 'The change is already in force: remove the request labels instead' : `The change is ${c.status}`);
   await runWrite(db, w, cancelBatch(w, c, 'owner', q`1`));
-  return { change: { id: c.id!, state: 'cancelled' } };
+  return { change: { id: c.id!, labelId: c.label_id, state: 'cancelled' } };
 }
 
 /** ConsoleRpc.cancelChangeByLink with an `lc_` id: the emailed link's token against the stored hash, while the version waits. */
-export async function cancelLabelChangeByLink(db: HotDb, w: Writer, i: { changeId: string; token: string }): Promise<{ change: { id: string; state: 'cancelled' } }> {
+export async function cancelLabelChangeByLink(db: HotDb, w: Writer, i: { changeId: string; token: string }): Promise<{ change: { id: string; labelId: string; state: 'cancelled' } }> {
   expectReplay(w, ['change.cancelled'], undefined, { kind: 'link', id: i.changeId });
   const c = await planChange(db, w, i.changeId, null);
   let presented: Uint8Array;
@@ -123,7 +123,7 @@ export async function cancelLabelChangeByLink(db: HotDb, w: Writer, i: { changeI
   if (c.removed_at !== null) refuse('not_found', 'These request labels were removed');
   if (!c.waiting) refuse('not_pending', c.status === 'pending' || c.status === 'active' ? 'The change is already in force' : `The change is ${c.status}`);
   await runWrite(db, w, cancelBatch(w, c, 'link', q`hex(g.cancel_token_hash) = ${hex(presented).toUpperCase()}`));
-  return { change: { id: c.id!, state: 'cancelled' } };
+  return { change: { id: c.id!, labelId: c.label_id, state: 'cancelled' } };
 }
 
 function hexBytes(h: string): Uint8Array {

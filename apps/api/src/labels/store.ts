@@ -42,6 +42,7 @@ export interface LabelRow {
   off_by: 'entry' | 'org' | 'all' | null;
   removed_at: number | null;
   labels_version: number;
+  off_version: number;
 }
 
 /** Every column a view needs, over `label_changes c JOIN partner_labels l JOIN scopes s`. */
@@ -51,7 +52,7 @@ export const VIEW_SELECT = (now: number): Q =>
     c.previous_id, c.status, c.proposed_at, c.notified_at, c.active_from, c.allowed_at, c.blocked_at, c.block_note, c.cancelled_at, c.ended_at, c.end_reason,
     ${IN_FORCE('c', now)} AS in_force, (c.id IS ${CURRENT('l', now)}) AS is_current, ${REVIEW_HELD('c')} AS held,
     EXISTS (SELECT 1 FROM label_controls rq WHERE rq.target IN ('*', c.org_id) AND rq.review_required = 1) AS review_required,
-    ${OFF_BY('l')} AS off_by, l.removed_at, s.labels_version`;
+    ${OFF_BY('l')} AS off_by, l.removed_at, s.labels_version, l.off_version`;
 export const VIEW_FROM = raw('label_changes c JOIN partner_labels l ON l.id = c.label_id JOIN scopes s ON s.scope_id = c.scope_id');
 
 export function stateOf(r: Pick<LabelRow, 'status' | 'notified_at' | 'active_from' | 'in_force' | 'is_current' | 'end_reason'>, now: number): LabelState {

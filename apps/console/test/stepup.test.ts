@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { actionOf, breathe, createAction, getAs, member, postAs, stepUp } from './c10.ts';
 import { installChain, oidc, setChain, setScope, uninstallChain } from './chain.ts';
 import { MockGoogle, account, signIn } from './google.ts';
-import { auditRows, db, seedHotApp, shiftClock } from './helpers.ts';
+import { auditRows, db, linkPair, post, seedHotApp, shiftClock, system } from './helpers.ts';
 
 /** An auto-approve policy the validator accepts (apps/api/test/vault-helpers.ts autoApprovePolicy's shape). */
 const policyJson = () => ({
@@ -446,6 +446,29 @@ describe('labels.set and labels.remove (D894): the API previews, the nonce binds
     expect(s2.nonce).toBe(nonceOf(await labelChangeDigest({ signer: 'signer.test.near', scopeId: app.scope, kind: 'labels_remove', labelId: rows[0]!.label_id, appIds: [], labelsVersion: 1 })));
     expect((await actionOf(m, r.id)).body).toMatchObject({ status: 'ok', kind: 'labels.remove' });
     expect(await env.HOT_DB.prepare('SELECT removed_at IS NOT NULL AS removed FROM partner_labels WHERE id = ?').bind(rows[0]!.label_id).first('removed')).toBe(1);
+  });
+
+  it('the emailed link cancels a waiting label change through POST /api/cancel, audited with its entry and no app', async () => {
+    const { m, app } = await ownerWithApp();
+    const a = await createAction(m, 'labels.set', { scopeId: app.scope, document: doc, appIds: [app.id] });
+    await stepUp(google, m, a.id);
+    const out = (await actionOf(m, a.id)).body as unknown as { outcome: { changeId: string; labelId: string } };
+    const changeId = out.outcome.changeId;
+    const pair = await linkPair();
+    const ack = await env.API_ADMIN.ackLabelNotice({ ...system(), changeId, cancelTokenHash: pair.hashB64 });
+    expect(ack.ok, JSON.stringify(ack)).toBe(true);
+    // Another token is refused and audits nothing.
+    const other = await linkPair();
+    expect((await post('/api/cancel', { changeId, token: other.tokenB64 })).status).toBe(403);
+    const res = await post('/api/cancel', { changeId, token: pair.tokenB64 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ id: changeId, labelId: out.outcome.labelId, state: 'cancelled' });
+    expect(await env.HOT_DB.prepare('SELECT status, end_reason FROM label_changes WHERE id = ?').bind(changeId).first()).toEqual({ status: 'cancelled', end_reason: 'link' });
+    const rows = await auditRows("action = 'change.link_cancel' AND target = ?", changeId);
+    expect(rows).toEqual([expect.objectContaining({ actor_kind: 'link', actor_id: changeId, target: changeId, outcome: 'ok', details_json: JSON.stringify({ labelId: out.outcome.labelId }) })]);
+    expect(await db.prepare("SELECT app_id FROM audit_log WHERE action = 'change.link_cancel' AND target = ?").bind(changeId).first('app_id')).toBeNull();
+    // Single use.
+    expect((await post('/api/cancel', { changeId, token: pair.tokenB64 })).status).toBe(409);
   });
 
   it('refuses at build time what the API refuses (the parser’s problems), and a non-owner at the API', async () => {

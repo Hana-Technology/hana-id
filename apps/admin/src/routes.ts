@@ -10,7 +10,8 @@
 // C12's reports, statements, rates and exports (report-routes.ts); C14's "Security & monitoring" (the watchdog through
 // monitoring.ts, the governance snapshot), the pending-upgrades page and the playbooks (playbooks.ts); C13's retention
 // screen (retention-routes.ts); C8b's Users screen (users.ts: `/api/users/search`, `/find`, `/get`, D275); C15's
-// Support ID lookup (`POST /api/support/lookup`, support.ts). D843's "Gas sponsorship" (evm-relay.ts).
+// Support ID lookup (`POST /api/support/lookup`, support.ts). D843's "Gas sponsorship" (evm-relay.ts). D894's
+// "Partner labels" (partner-labels.ts).
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
 import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView, NEW_ORG_INVITES_MAX } from '@hana-id/console-core';
 import type { Env } from './env.ts';
@@ -24,6 +25,7 @@ import { retentionRoute } from './retention-routes.ts';
 import { securityView } from './security.ts';
 import { statusRoute } from './status.ts';
 import { evmRelayActRoute, evmRelayDetailRoute } from './evm-relay.ts';
+import { labelActRoute, labelControlRoute, labelRoute, labelsRoute } from './partner-labels.ts';
 import { usersFindRoute, usersGetRoute, usersSearchRoute } from './users.ts';
 import { supportLookupRoute } from './support.ts';
 import { issuerViewRoute, linksViewRoute } from './email-views.ts';
@@ -149,6 +151,11 @@ const ROUTES: Route[] = [
   // ---- Gas sponsorship (D843): EVM gas sponsorship's relayer and its staff tools (audited before and after) ----
   { method: 'GET', pattern: '/api/evm-relay/:chain', handler: evmRelayDetailRoute },
   { method: 'POST', pattern: '/api/evm-relay/:chain/act', handler: evmRelayActRoute },
+  // ---- Partner labels (D894): the staff feed of label changes, Block and Allow, the switches (audited before and after) ----
+  { method: 'GET', pattern: '/api/labels', handler: labelsRoute },
+  { method: 'POST', pattern: '/api/labels/controls', handler: labelControlRoute },
+  { method: 'GET', pattern: '/api/labels/:changeId', handler: labelRoute },
+  { method: 'POST', pattern: '/api/labels/:changeId/act', handler: labelActRoute },
 
   // ---- orgs ----
   {

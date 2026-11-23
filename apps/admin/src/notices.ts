@@ -8,6 +8,8 @@
 //                   invitee's link → StaffRpc.ackMemberNotice (the link works from the ack). Token: INVITE_LINK_KEY.
 //   owner_grant     (kind owner_grant) → every owner, the contacts and the alias, with the cancel link → ack (a
 //                   promotion's 24 h starts at the ack). Token: HMAC(CANCEL_LINK_KEY, "hana-console/owner-grant-cancel/v1" ‖ id).
+//   label_pending   AdminRpc.labelNotices → the security alias and every security contact → AdminRpc.ackLabelNotice
+//                   (D894: a request labels version's clock starts at the ack). Token: as change_pending's, of its `lc_` id.
 //
 // Fails closed: a missing key or sender, a failed or skipped send, or an unreadable recipient list means no ack; the
 // next run tries again with the same token (it is deterministic, so a link from an earlier attempt works once acked).
@@ -20,7 +22,7 @@ import { b64url, linkToken, linkTokenHash } from '@hana-id/console-core';
 import type { MemberNotice } from '@hana-id/console-core';
 import type { ChangeNotice, Env } from './env.ts';
 import { mailLabel } from './env.ts';
-import { changePending, inviteLink, inviteNotice, ownerGrantNotice, type MailContext } from './email/messages.ts';
+import { changePending, inviteLink, inviteNotice, labelsProposed, ownerGrantNotice, type MailContext } from './email/messages.ts';
 import { consoleLink } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
@@ -94,6 +96,72 @@ export async function runChangeNotices(rawEnv: Env, sender: EmailSender, budget:
     } else {
       out.failed++;
       log({ event: 'notice', step: 'change_pending', target: id, orgId: n.app.orgId, outcome: 'rejected', code: ack.code }, 'warn');
+    }
+  }
+  return out;
+}
+
+/**
+ * `label_pending` (D894): AdminRpc.labelNotices → the security alias and the org's security contacts, one message each
+ * (what users would see, what changes, the wait, the cancel link) → AdminRpc.ackLabelNotice with sha256 of the link's
+ * token, only after every send was accepted (the version's clock starts at the ack). The link is the console's cancel
+ * page for the version's `lc_` id; its token is HMAC(CANCEL_LINK_KEY, "hana-id/cancel-link/v1" ‖ id), as a guarded
+ * change's. The same budget rules as `runChangeNotices`: a notice is started only with room for every email and its ack.
+ */
+export async function runLabelNotices(rawEnv: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
+  const out: StepResult = { acked: 0, failed: 0, skipped: 0 };
+  const env = meteredEnv(rawEnv, budget);
+  const key = linkKey(env.CANCEL_LINK_KEY);
+  if (!key) {
+    log({ event: 'notice', step: 'label_pending', outcome: 'skipped', code: 'cancel_link_key_missing' }, 'error');
+    return out;
+  }
+  if (!budget.fits(PAGE_AND_ONE, 2)) {
+    noRoom('label_pending');
+    return out;
+  }
+  const page = await env.API.labelNotices({ ...systemCtx(), limit: NOTICE_PAGE });
+  if (!page.ok) {
+    log({ event: 'notice', step: 'label_pending', outcome: 'error', code: page.code }, 'error');
+    return out;
+  }
+  const delayMs = delay(env.APP_CHANGE_DELAY_MS, 86_400_000);
+  for (const n of page.notices) {
+    const id = n.change.id;
+    const orgId = n.change.orgId;
+    const token = await linkToken('cancelLink', key, id);
+    const to = recipients(env.SECURITY_ALIAS, n.contacts);
+    // Every recipient's email and the ack, or the notice waits whole for the next run (D280, D380).
+    if (!budget.fits(to.length + 1, 1)) {
+      out.skipped++;
+      break;
+    }
+    let message;
+    try {
+      message = labelsProposed(mailContext(env), n, { cancelUrl: consoleLink(env.CONSOLE_ORIGIN, `/cancel/${encodeURIComponent(id)}#t=${b64url(token)}`), delayMs });
+    } catch (err) {
+      // A view this Worker can't put in words (a bad time, say): nothing sent, nothing acked; the next run tries again.
+      out.failed++;
+      log({ event: 'notice', step: 'label_pending', target: id, orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
+      continue;
+    }
+    const sent = await sendToAll(sender, budget, to, message, `label_pending:${id}`);
+    if (sent.outOfBudget) {
+      out.skipped++;
+      break;
+    }
+    if (!sent.allAccepted) {
+      out.failed++;
+      log({ event: 'notice', step: 'label_pending', target: id, orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed }, 'warn');
+      continue;
+    }
+    const ack = await env.API.ackLabelNotice({ ...systemCtx(), changeId: id, cancelTokenHash: b64url(await linkTokenHash(token)) });
+    if (ack.ok) {
+      out.acked++;
+      log({ event: 'notice', step: 'label_pending', target: id, orgId, outcome: 'ok', sent: sent.sent });
+    } else {
+      out.failed++;
+      log({ event: 'notice', step: 'label_pending', target: id, orgId, outcome: 'rejected', code: ack.code }, 'warn');
     }
   }
   return out;
@@ -221,9 +289,13 @@ export async function runMemberNotices(rawEnv: Env, sender: EmailSender, budget:
   return out;
 }
 
-/** Both blocking steps, each on its own (a console outage doesn't hold back the guarded changes' notices). */
-export async function runNotices(env: Env, sender: EmailSender, budget: Budget): Promise<{ changes: StepResult | null; members: StepResult | null }> {
+/**
+ * The blocking steps, each on its own (a console outage doesn't hold back the guarded changes' notices; an API older
+ * than the request labels, D894, fails only their step).
+ */
+export async function runNotices(env: Env, sender: EmailSender, budget: Budget): Promise<{ changes: StepResult | null; labels: StepResult | null; members: StepResult | null }> {
   let changes: StepResult | null = null;
+  let labels: StepResult | null = null;
   let members: StepResult | null = null;
   try {
     changes = await runChangeNotices(env, sender, budget);
@@ -231,9 +303,14 @@ export async function runNotices(env: Env, sender: EmailSender, budget: Budget):
     log({ event: 'notice', step: 'change_pending', outcome: 'error', error: errorName(err) }, 'error');
   }
   try {
+    labels = await runLabelNotices(env, sender, budget);
+  } catch (err) {
+    log({ event: 'notice', step: 'label_pending', outcome: 'error', error: errorName(err) }, 'error');
+  }
+  try {
     members = await runMemberNotices(env, sender, budget);
   } catch (err) {
     log({ event: 'notice', step: 'member', outcome: 'error', error: errorName(err) }, 'error');
   }
-  return { changes, members };
+  return { changes, labels, members };
 }

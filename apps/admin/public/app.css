@@ -873,6 +873,24 @@ details.advanced[open] > * + * { margin-top: var(--jp-space-4); }
 .state-chip.unknown { border-style: dashed; }
 .state-chip.off { background: transparent; }
 
+/* Partner labels (D894): the feed of label changes, each with what users would see and what changes. */
+.label-feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--jp-space-4); }
+.label-item { border: var(--jp-border-w) solid var(--jp-border); border-radius: var(--jp-radius-md); padding: var(--jp-space-4); display: flex; flex-direction: column; gap: var(--jp-space-2); min-width: 0; }
+.label-item > h3 { margin: var(--jp-space-2) 0 0; font-size: var(--jp-text-sm); }
+.label-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--jp-space-2); }
+.label-item-head > strong { margin-left: auto; font-weight: 600; }
+.label-preview > .hint { margin: 0 0 var(--jp-space-2); }
+.label-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--jp-space-3); }
+.label-lines > li { background: var(--jp-bg-subtle); border-radius: var(--jp-radius-sm); padding: var(--jp-space-3); }
+.label-line { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.label-rows { display: grid; grid-template-columns: max-content 1fr; gap: 2px var(--jp-space-3); margin: var(--jp-space-2) 0 0; font-size: var(--jp-text-sm); }
+.label-rows dt { color: var(--jp-fg-muted); }
+.label-rows dd { margin: 0; overflow-wrap: anywhere; }
+.label-diff { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--jp-space-2); font-size: var(--jp-text-sm); }
+.label-diff > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--jp-space-2); overflow-wrap: anywhere; }
+.label-diff .diff-before { text-decoration: line-through; color: var(--jp-fg-muted); }
+.label-diff > li.diff-same { color: var(--jp-fg-muted); }
+
 .not-measured { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: var(--jp-space-2); font-size: var(--jp-text-sm); }
 .not-measured li > strong { display: block; font-weight: 600; }
 .not-measured li > span { color: var(--jp-fg-muted); }

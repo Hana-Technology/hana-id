@@ -42,6 +42,7 @@ import { GuardHint, coarsePointer, quietly } from './guard-hint.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
 import { fullId, renderApproval, testAppNoteKind, watchOverflowing } from './render-approval.ts';
+import { windowLabelDocuments } from './render-labels.ts';
 import { renderConsent } from './render-consent.ts';
 import { BTN, alert, icon, reservedLine } from './ui.ts';
 import { type BalanceFetch, readDemoBalance } from './demo-balance.ts';
@@ -575,6 +576,8 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     try {
       // A test app's request the popup itself reads as for a demo mainnet (the vault signs those only under the demo).
       const demo = msg.testApp && decoded ? demoNetworkOf(decoded) : null;
+      // D896: the app's partner labels the vault sent (its own fresh read, checked there), parsed again here.
+      const labels = windowLabelDocuments(msg.partnerLabels, env.network);
       const notes = [
         demo ? demoBanner(input, demo, msg.id, msg.demoPrices) : testAppNote(msg, decoded),
         // The out-of-policy case (the confirm pattern's warning alert): why the app's rules didn't sign this one.
@@ -589,7 +592,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
         // Support ID goes. An unreadable request keeps the Support ID and the notes in view.
         decoded
-          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, testAppNoteHere: msg.testApp === true && !demo && !demoOn(msg), parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [accountRow(msg.address), supportId], nowMs: now(), ...(env.nearReviewed ? { reviewedNear: env.nearReviewed } : {}) })
+          ? renderRequest(d, decoded, msg.appName, { envNetwork: env.network, testApp: msg.testApp === true, testAppNoteHere: msg.testApp === true && !demo && !demoOn(msg), parentOrigin: msg.parentOrigin, address: msg.address, notes, detailsExtra: [accountRow(msg.address), supportId], nowMs: now(), ...(env.nearReviewed ? { reviewedNear: env.nearReviewed } : {}), ...(labels.length > 0 ? { partnerLabels: labels } : {}) })
           : d.h('div', { class: 'request' }, supportId, ...notes, ...unreadable(problem, msg.appName, msg.address)),
         buttons('Approve', decoded !== null, msg.id),
         auto?.active ? stopAutoApproveButton(auto.label) : null,

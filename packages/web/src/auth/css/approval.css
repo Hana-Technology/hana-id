@@ -101,6 +101,83 @@ div.summary-quote {
   unicode-bidi: isolate;
 }
 
+/* ---- a partner's label (D896): the app's own words for this exact request ----
+   Its own box after every warning box (render-labels.ts): "{App} says: …" and the attribution under it, then the
+   app's rows. The normal text colour and a plain border: never green, blue or a check mark, nothing that reads as
+   Journear vouching for it. Journear's verb and joining words are plain text; the app's object phrase and every value
+   are set apart, each in its own outlined span with its direction isolated, so partner words never run into
+   Journear's. Partner text is Latin letters, digits, spaces and a few marks only (core's text rules), so nothing in it
+   can paint outside its span; a long value wraps inside the box. */
+div.partner-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-2);
+  min-width: 0;
+  padding: var(--jp-space-3);
+  border: 1px solid var(--jp-border-strong);
+  border-radius: var(--jp-radius-md);
+  color: var(--jp-fg);
+  overflow-wrap: anywhere;
+}
+
+div.partner-label > * {
+  margin: 0;
+}
+
+div.partner-label p.partner-says {
+  font-size: var(--jp-text-md);
+  line-height: var(--jp-leading-snug);
+}
+
+div.partner-label p.partner-attribution {
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
+}
+
+div.partner-label :is(.partner-words, .partner-value) {
+  unicode-bidi: isolate;
+  padding: 0 0.25em;
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-sm);
+  background: var(--jp-bg-subtle);
+  color: var(--jp-fg);
+  font-weight: var(--jp-weight-regular);
+  overflow-wrap: anywhere;
+  word-break: normal;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+div.partner-label code.partner-value {
+  font-size: 0.9em;
+}
+
+/* The app's rows: inside the box, so no rules of their own; the label above its value, as the whole-value rows. */
+div.partner-label dl.partner-fields {
+  border: 0;
+  padding: 0;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: var(--jp-space-1);
+}
+
+div.partner-label dl.partner-fields dd + dt {
+  margin-top: var(--jp-space-2);
+}
+
+div.partner-label dl.partner-fields dd {
+  min-width: 0;
+  font-size: var(--jp-text-sm);
+}
+
+div.partner-label .partner-account {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--jp-space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
 /* ---- addresses and keys (D859): short in the sentence, whole once in their own row right under it ---- */
 dl.id-rows {
   margin: 0;
@@ -202,7 +279,7 @@ dl.id-rows dd + dt {
 }
 
 :is(.request, div.consent) dl.jp-kv:not(:empty) + dl.jp-kv,
-:is(.request, div.consent) :is(.jp-alert, div.summary-quote, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details) + dl.jp-kv,
+:is(.request, div.consent) :is(.jp-alert, div.summary-quote, div.partner-label, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details) + dl.jp-kv,
 :is(.request, div.consent) :not(.details-body) > dl.jp-kv:first-child {
   border-top: 0;
   padding-top: 0;
@@ -213,7 +290,7 @@ dl.id-rows dd + dt {
   padding-bottom: 0;
 }
 
-:is(.request, div.consent) dl.jp-kv:has(+ :is(.jp-alert, div.summary-quote, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details)) {
+:is(.request, div.consent) dl.jp-kv:has(+ :is(.jp-alert, div.summary-quote, div.partner-label, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details)) {
   border-bottom: 0;
   padding-bottom: 0;
 }
@@ -229,7 +306,7 @@ dl.id-rows dd + dt {
 }
 
 :is(.request, div.consent)
-  :is(dl.jp-kv:not(:empty), .jp-alert, div.summary-quote, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details)
+  :is(dl.jp-kv:not(:empty), .jp-alert, div.summary-quote, div.partner-label, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details)
   + :is(.ops, .contracts) > li:first-child:not(.takeover-op) {
   border-top: 0;
   padding-top: 0;

@@ -31,9 +31,9 @@
 // computed here, so an answer about another identity or a half-made account reads as a failed read, never as a list;
 // dates past the year 9999 too (a date the page can't write would break it). Both providers must agree on the list.
 import { type AccountView, type IdentityView, ViewShapeError, identityKeyHex, isRecentLink, parseAccountView, parseIdentityView } from '@hana-id/core';
-import { type Child, type Dom, addressText, maskedAddress, supportCode } from './dom.ts';
+import { type Child, type Dom, addressText, maskedAddress, originText, supportCode } from './dom.ts';
 import { plainProblem } from './home-problems.ts';
-import type { HomeScope } from './home-api.ts';
+import type { HomeApp, HomeScope } from './home-api.ts';
 import type { NearReader } from './near-rpc.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
 import { BTN, alert, icon } from './ui.ts';
@@ -190,6 +190,15 @@ export const SIGN_IN_TEXT = Object.freeze({
   cancelOwnEmail: 'Didn’t set this up? Sign in to this app with this email and choose “Cancel this link”. If you’re not sure, cancel it.',
   cancelOwnNone: 'Only the email this wallet was made with can cancel this. If you didn’t set this up, don’t add money to that wallet.',
   cancelAtSignIn: 'Don’t recognise it? Sign in to this app the way you signed in here, and choose “Cancel this link”. If you’re not sure, cancel it.',
+  /** D898 option A: the same advice where Home can open the app for the person. */
+  cancelOpenLead: 'Don’t recognise it? If you’re not sure, cancel it.',
+  cancelOpenButtonStart: 'Open ',
+  cancelOpenButtonEnd: ' to cancel it',
+  cancelOpenNewTab: ' (opens in a new tab)',
+  cancelOpenWhere: 'Opens ',
+  cancelOpenWhereEnd: ' in a new tab.',
+  cancelOpenSteps: 'There, sign in the way you signed in here, and choose “Cancel this link”.',
+  cancelOpenShared: 'Cancelling it there stops it for every app that uses this wallet.',
   removeAtSignIn: 'Don’t recognise it? Sign in to this app the way you signed in here, and choose “Remove it”. If you’re not sure, remove it.',
   /** An automatic same-address Google link (D865's softer words: nothing pushes its removal). */
   removeAtSignInAuto: 'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose “Remove it”.',
@@ -269,6 +278,30 @@ export function pointerText(p: SignInPointer, row: SignInRow): { lines: string[]
 
 /** Whether a pointer tells the user to sign in to the app (then the section says once to sign out of it first). */
 export const pointerSignsIn = (p: SignInPointer | null): boolean => p !== null && ['cancel_own_email', 'cancel_at_sign_in', 'remove_own', 'remove_at_sign_in', 'remove_at_sign_in_once'].includes(p.kind);
+
+/**
+ * D898 option A: where Home can send the person to cancel a waiting sign-in: the first app of the wallet (in the
+ * listing's order) that is active and has a web address on record, and that address. Only Journear's own record of the
+ * app is used, never anything of the waiting sign-in. Only a plain `https://host[:port]` is accepted (no user name or
+ * password, no path, query or fragment, exactly as the browser writes an origin); anything else gives no button.
+ */
+export function cancelTarget(scope: HomeScope | null): { app: HomeApp; origin: string } | null {
+  for (const app of scope?.apps ?? []) {
+    if (app.status !== 'active') continue;
+    for (const origin of app.origins) if (isPlainHttpsOrigin(origin)) return { app, origin };
+  }
+  return null;
+}
+
+export function isPlainHttpsOrigin(v: unknown): v is string {
+  if (typeof v !== 'string' || v.length === 0 || v.length > 512) return false;
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' && u.username === '' && u.password === '' && u.pathname === '/' && u.search === '' && u.hash === '' && u.origin === v;
+  } catch {
+    return false;
+  }
+}
 
 // ---- the section ----
 
@@ -421,6 +454,7 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     const nameId = `home-sign-in-name-${i}`;
     const pointer = pointerFor(viewer, row, deps.now());
     const how = pointer ? pointerText(pointer, row) : null;
+    const target = cancelTarget(scope);
     const name = address ? addressText(d, address, 'strong', nameId) : d.h('strong', { attrs: { id: nameId } }, rowName(row, null));
     const badges: Child[] = [
       row.you ? d.h('span', { class: 'jp-badge jp-badge-success home-sign-in-you' }, SIGN_IN_TEXT.youBadge) : null,
@@ -441,8 +475,33 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
           how && !how.risk ? d.h('div', { class: 'home-sign-in-how' }, ...how.lines.map((t, j) => d.h('p', { class: j === 0 ? '' : 'muted' }, t))) : null,
         ),
       ),
-      how && how.risk ? alert(d, 'warning', { tag: 'div', class: 'home-sign-in-how home-sign-in-risk' }, ...how.lines.map((t) => d.h('p', {}, t))) : null,
+      how && how.risk ? alert(d, 'warning', { tag: 'div', class: 'home-sign-in-how home-sign-in-risk' }, ...(pointer?.kind === 'cancel_at_sign_in' && target ? openToCancel(target, i) : how.lines.map((t) => d.h('p', {}, t)))) : null,
     );
+  }
+
+  /**
+   * D898 option A: "Don’t recognise it?", a small outlined link that opens the app's web address in a new tab (no
+   * opener, no referrer, nothing added to the address), where it goes as text, and what to do there.
+   */
+  function openToCancel(target: { app: HomeApp; origin: string }, i: number): Child[] {
+    const whereId = `home-sign-in-open-where-${i}`;
+    const link = d.h(
+      'a',
+      {
+        class: `${BTN.secondary} jp-btn-sm home-sign-in-open`,
+        attrs: { id: `home-sign-in-open-${i}`, href: target.origin, target: '_blank', rel: 'noopener noreferrer', 'aria-describedby': whereId },
+      },
+      `${SIGN_IN_TEXT.cancelOpenButtonStart}${target.app.name}${SIGN_IN_TEXT.cancelOpenButtonEnd}`,
+      d.h('span', { class: 'sr-only' }, SIGN_IN_TEXT.cancelOpenNewTab),
+      icon(d, 'ext'),
+    );
+    return [
+      d.h('p', {}, SIGN_IN_TEXT.cancelOpenLead),
+      d.h('p', { class: 'home-sign-in-open-row' }, link),
+      d.h('p', { class: 'home-sign-in-open-where', attrs: { id: whereId } }, SIGN_IN_TEXT.cancelOpenWhere, originText(d, target.origin), SIGN_IN_TEXT.cancelOpenWhereEnd),
+      d.h('p', {}, SIGN_IN_TEXT.cancelOpenSteps),
+      (scope?.apps.length ?? 0) > 1 ? d.h('p', {}, SIGN_IN_TEXT.cancelOpenShared) : null,
+    ];
   }
 
   function body(): Child[] {

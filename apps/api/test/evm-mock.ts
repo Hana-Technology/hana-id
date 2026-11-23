@@ -165,6 +165,12 @@ export class EvmMock {
    * for the mock's answer.
    */
   answer?: (method: string, params: unknown[]) => { result: unknown } | { error: { code: number; message: string; data?: string } } | undefined;
+  /** eth_getBalance per address (lowercase), 1 ETH otherwise (D890's automatic restart reads the relayer's). */
+  readonly balances = new Map<string, bigint>();
+  /** eth_getCode per address (lowercase): an address not here answers the handlers' default (an error). */
+  readonly codes = new Map<string, string>();
+  /** Answers a read at one endpoint (by index) before everything else, or undefined (D890: a second endpoint that disagrees). */
+  answerAt?: (endpoint: number, method: string, params: unknown[]) => { result: unknown } | undefined;
   /** A mined transaction's receipt logs (the delegate's Executed event), none by default. */
   receiptLogs?: (tx: MockTx) => { address: string; topics: string[]; data: string }[];
   private readonly receipts = new Map<string, { tx: MockTx; block: number }>();
@@ -194,6 +200,8 @@ export class EvmMock {
       if (body.method === 'eth_chainId') return reply({ result: q(mode === 'wrong_chain' ? this.chainId + 1 : this.chainId) });
       if (body.method === 'eth_sendRawTransaction') return this.sendRaw(endpoint, body.params[0] as Hex, init?.signal, reply);
       await this.onRead?.(body.method, endpoint);
+      const at = this.answerAt?.(endpoint, body.method, body.params);
+      if (at) return reply(at);
       return this.read(body.method, body.params, reply);
     });
     return this;
@@ -230,8 +238,10 @@ export class EvmMock {
       const n = tag === 'safe' ? head - this.safeDepth : tag === 'latest' ? head : Number(BigInt(tag));
       return reply({ result: { number: q(n), timestamp: '0x6553f100', baseFeePerGas: q(this.baseFee) } });
     }
+    const who = typeof params[0] === 'string' ? params[0].toLowerCase() : '';
+    if (method === 'eth_getCode' && this.codes.has(who)) return reply({ result: this.codes.get(who) });
     if (method === 'eth_getCode' || method === 'eth_call') return reply({ error: { code: 3, message: 'execution reverted', data: '0x08c379a0' } });
-    if (method === 'eth_getBalance') return reply({ result: '0xde0b6b3a7640000' });
+    if (method === 'eth_getBalance') return reply({ result: q(this.balances.get(who) ?? 10n ** 18n) });
     return reply({ error: { code: -32601, message: 'method not found' } });
   }
 

@@ -11,7 +11,7 @@ import { CRON_LAST_RUN } from '../src/cron.ts';
 import { LEDGER_LAST_RUN } from '../src/ledger-cron.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
 import { probeTiming } from '../src/status-probes.ts';
-import { STATUS_CACHE_MS, type StatusAnswer, type Tile, buildStatus, resetStatusCache, statusRoute } from '../src/status.ts';
+import { FRESH_MIN_MS, STALE_AFTER_MS, STATUS_CACHE_MS, type StatusAnswer, type Tile, buildStatus, resetStatusCache, statusRoute } from '../src/status.ts';
 import { MAX_NEAR_BACKUPS, nearEndpoints } from '../src/status-probes.ts';
 import { ADMIN, CERTS_URL, RPC, STAFF_EMAIL, STAFF_SUB, WATCHDOG, WATCHDOG_TOKEN, accessSigner, adminRequest, envWith, json, overrideBinding, staffJwt } from './helpers.ts';
 import { resetAccessVerifier } from '../src/access.ts';
@@ -947,6 +947,27 @@ describe('the subrequest budget and the cache (Workers Free: 50 a request)', () 
     expect(counts.fetch + counts.rpc + counts.hyperdrive + counts.r2).toBe(2 * outside);
   });
 
+  it('D890: “Check again” on the Gas sponsorship tile (?fresh=1) reads everything again past the 30 s cache, at most once per 10 s', async () => {
+    const plain = new Request(`${ADMIN}/api/status`);
+    const fresh = new Request(`${ADMIN}/api/status?fresh=1`);
+    const cold = await json<{ cached: boolean }>(await statusRoute(worldEnv(), staff, plain, NOW));
+    expect(cold.cached).toBe(false);
+    const one = counts.fetch + counts.rpc + counts.hyperdrive + counts.r2;
+    // Within 10 s of the last read: that read answers, saying so, and when the next fresh one may be taken.
+    const soon = await json<{ cached: boolean; fresh: { refused: boolean; retryInMs: number } }>(await statusRoute(worldEnv(), staff, fresh, NOW + FRESH_MIN_MS - 1));
+    expect(soon).toMatchObject({ cached: true, fresh: { refused: true, retryInMs: 1 } });
+    expect(counts.fetch + counts.rpc + counts.hyperdrive + counts.r2).toBe(one);
+    // 10 s on (still inside the 30 s cache): a fresh read of every part.
+    const got = await json<StatusAnswer & { cached: boolean; fresh: { refused: boolean } }>(await statusRoute(worldEnv(), staff, fresh, NOW + FRESH_MIN_MS));
+    expect(got).toMatchObject({ cached: false, checkedAt: NOW + FRESH_MIN_MS, fresh: { refused: false }, freshMinMs: FRESH_MIN_MS, staleAfterMs: STALE_AFTER_MS });
+    expect(counts.fetch + counts.rpc + counts.hyperdrive + counts.r2).toBe(2 * one);
+    // It is the cached read from then on (an ordinary load costs nothing).
+    expect((await json<{ cached: boolean; checkedAt: number }>(await statusRoute(worldEnv(), staff, plain, NOW + FRESH_MIN_MS + 1))).checkedAt).toBe(NOW + FRESH_MIN_MS);
+    // Hammering it: one fresh read per 10 s, however many presses.
+    for (let i = 1; i <= 9; i++) await statusRoute(worldEnv(), staff, fresh, NOW + FRESH_MIN_MS + i * 1_000);
+    expect(counts.fetch + counts.rpc + counts.hyperdrive + counts.r2).toBe(2 * one);
+  });
+
   it('concurrent cold requests share one read', async () => {
     const req = new Request(`${ADMIN}/api/status`);
     const [a, b, c] = await Promise.all([statusRoute(worldEnv(), staff, req, NOW), statusRoute(worldEnv(), staff, req, NOW), statusRoute(worldEnv(), staff, req, NOW)]);
@@ -1018,14 +1039,37 @@ describe('Gas sponsorship (D843)', () => {
     const a = await read();
     invariants(a);
     const t = tile(a, 'evm-relay-84532');
-    expect(t).toMatchObject({ state: 'critical', stateLabel: 'Paused: needs a person', explain: { why: 'The relayer’s wallet can’t send transactions: it is out of money.', code: 'relayer_cannot_send · insufficient_funds · slot 42' } });
-    expect(t.explain!.steps).toHaveLength(5);
+    // An API older than D890 (no autoRestart in the view): a person presses Resume.
+    const why = 'The relayer wallet is out of money, so gas sponsorship is paused for everyone. It can’t restart by itself this time: the API deployed here is older than this page and can’t do that.';
+    expect(t).toMatchObject({ state: 'critical', stateLabel: 'Paused: needs a person', checkAgain: true, explain: { why, code: 'relayer_cannot_send · insufficient_funds · slot 42' } });
+    expect(t.explain!.steps).toHaveLength(4);
     // First: look for money that went out without Journear (a thief), before sending more.
     expect(t.explain!.steps[0]).toMatch(/^Open the relayer wallet on Basescan .*If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money\.$/u);
-    const [main, low] = issuesOf(a, 'evm-relay-84532');
-    expect(main).toMatchObject({ severity: 'critical', title: 'The relayer’s wallet can’t send transactions: it is out of money.', since: NOW - 600_000, sinceSource: 'source', code: 'relayer_cannot_send · insufficient_funds · slot 42', playbook: { id: 'evm-relay-paused' } });
-    expect(main!.steps).toEqual(t.explain!.steps);
-    expect(low).toMatchObject({ severity: 'critical', playbook: { id: 'evm-relay-balance-low' } });
+    // D890: one issue (the money asked for once), not a second "running low" beside it.
+    const issues = issuesOf(a, 'evm-relay-84532');
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ severity: 'critical', title: why, since: NOW - 600_000, sinceSource: 'source', code: 'relayer_cannot_send · insufficient_funds · slot 42', playbook: { id: 'evm-relay-paused' } });
+    expect(issues[0]!.steps).toEqual(t.explain!.steps);
+  });
+
+  it('D890: paused for money, restarting by itself once refilled: amber “Restarting by itself”; restarted: Working with its line', async () => {
+    const pause = { blocked: null, restartWei: (5021n * 10n ** 13n).toString(), resumeWei: '21000000000000', check: null };
+    const halted = { halted: { reason: 'relayer_cannot_send', since: NOW - 600_000, slot: 42, code: 'insufficient_funds' }, autoRestart: { limit: 3, today: 0, recent: [], pause } };
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain(halted, { balance: { ok: true, wei: '1000' } })] } });
+    let a = await read();
+    invariants(a);
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'critical', stateLabel: 'Paused: needs money', checkAgain: true });
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain(halted, { balance: { ok: true, wei: (10n ** 18n).toString() } })] } });
+    a = await read();
+    invariants(a);
+    expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'warning', stateLabel: 'Restarting by itself' });
+    expect(issuesOf(a, 'evm-relay-84532')[0]).toMatchObject({ severity: 'warning', title: 'The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within about a minute.' });
+    const entry = { seq: 1, at: NOW - 4_000, who: 'relayer (automatic)', tool: 'resume', slot: null, note: 'Restarted by itself after a refill (D890).', done: true, refused: null, auto: true };
+    world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({ staffLog: [entry], lastStaffSeq: 1, autoRestart: { limit: 3, today: 1, recent: [NOW - 4_000], pause: null } })] } });
+    a = await read();
+    const t = tile(a, 'evm-relay-84532');
+    expect(t).toMatchObject({ state: 'ok', stateLabel: 'Working' });
+    expect(t.lines).toContainEqual(expect.objectContaining({ label: 'Last restart', detail: 'Restarted by itself after a refill, 4 s ago (1 of 3 today)' }));
   });
 
   it('what it affects is scoped to its own network and to new actions, on the tile and on every issue (paused, low, budget; D879 review)', async () => {

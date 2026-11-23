@@ -3,12 +3,15 @@
 // through this one client.
 //
 // - The read endpoint is the keyed URL in the secret `EVM_SPONSOR_RPC_<chainId>` when it is set (https only), else the
-//   manifest's `rpc`. Reads never fail over and never ask another endpoint: no voting, no cross-checks. A read that
+//   manifest's `rpc`. Reads never fail over and never ask another endpoint (but the one veto below): no voting. A read that
 //   gets no usable answer throws `unavailable`, and the caller does nothing it would need that answer for.
 // - A broadcast sends the SAME raw transaction to the read endpoint, then to each other configured URL (`rpcFallback`,
 //   and `rpc` when the keyed URL is the read one), until one takes it. A broadcast is always safe to repeat: it is
 //   the same signed bytes. Its outcome is `accepted` (an endpoint took it, or already had it), `rejected` (every
 //   endpoint it reached refused it with a definite pool rejection), `unknown` (some endpoint may hold it) or `unsent`.
+// - One exception (D890): before the relayer restarts BY ITSELF after a refill it also asks one other configured
+//   endpoint (`sponsorSecondEndpoint`) for the wallet's count, balance and code. That answer can only hold the
+//   automatic restart back (a disagreement or no answer: it waits for a person); it is never evidence for a halt.
 // - Every endpoint's `eth_chainId` is checked before anything else is asked of it, kept per isolate for 10 minutes; a
 //   failed check is remembered for 30 s. An endpoint that answers for another chain is never read from or sent to.
 // - At most `maxRequests` fetches per client (one client per critical section; the free plan allows 50 subrequests
@@ -146,6 +149,16 @@ export function sponsorRpcEndpoints(env: Partial<Record<string, unknown>> | Env,
   const broadcast: string[] = [];
   for (const u of [read, chain.rpcFallback, chain.rpc]) if (u && !broadcast.includes(u)) broadcast.push(u);
   return { read, broadcast };
+}
+
+/**
+ * The one other endpoint the relayer's automatic restart after a refill reads (D890): the first configured URL that is
+ * not the read endpoint (`rpcFallback`, else `rpc` when the keyed URL is the read one), or null (a `local*` env with
+ * neither). It is never evidence for anything the relayer does; it can only hold an automatic restart back.
+ */
+export function sponsorSecondEndpoint(env: Partial<Record<string, unknown>> | Env, chain: SponsorChainEndpoints): string | null {
+  const { read, broadcast } = sponsorRpcEndpoints(env, chain);
+  return broadcast.find((u) => u !== read) ?? null;
 }
 
 /** Endpoint URL → the chain ID it answered and when, per isolate. */

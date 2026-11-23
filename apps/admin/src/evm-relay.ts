@@ -10,7 +10,7 @@
 // and the relayer's own checks are final), and its answer recorded (`evm_relay.staff_result`). Nothing here retries a
 // refused or failed call. Every value from the API is shown as text (plainString); links are built here, only to the
 // chain's block explorer, only for well-formed hashes and addresses.
-import { type EvmRelayActInput, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayHalt, type EvmRelayRecordView, type EvmRelayTool, evmRelayActInput, isLeakHalt, needsKeyConfirmation } from '@hana-id/console-core';
+import { type EvmRelayActInput, type EvmRelayAutoRestartView, type EvmRelayChainView, type EvmRelayDetail, type EvmRelayHalt, type EvmRelayRecordView, type EvmRelayTool, evmRelayActInput, isLeakHalt, needsKeyConfirmation } from '@hana-id/console-core';
 import { errorResponse, json } from './http.ts';
 import { errorName, log } from './log.ts';
 import { plainString } from './plain.ts';
@@ -49,6 +49,11 @@ export function testEth(w: bigint): string {
   let shown = frac.slice(0, 4).replace(/0+$/u, '');
   if (whole === 0n && !shown && w > 0n) shown = frac.slice(0, 8).replace(/0+$/u, '') || '00000001';
   return `${whole}${shown ? `.${shown}` : ''} test ETH`;
+}
+/** "0.0103 test ETH": as testEth but rounded UP to 4 decimals, for an amount someone must send at least (D890). */
+export function testEthUp(w: bigint): string {
+  const step = ETH / 10_000n;
+  return testEth(w <= 0n ? 0n : ((w + step - 1n) / step) * step);
 }
 /** "0x12ab…cd34": the short form for a sentence (D859); the whole address stays in its own row. */
 export const shortAddress = (a: string): string => (ADDRESS.test(a) ? `${a.slice(0, 6)}…${a.slice(-4)}` : plainString(a, 64));
@@ -110,11 +115,8 @@ function haltReasonExplained(h: HaltWords, w: Words): Explained {
   const n = h.slot === null ? 'the slot shown below' : `slot ${h.slot}`;
   switch (h.reason) {
     case 'relayer_cannot_send':
-      if (h.code === 'insufficient_funds')
-        return {
-          why: 'The relayer’s wallet can’t send transactions: it is out of money.',
-          steps: [`${w.explorer ? `Open the relayer wallet on ${w.explorer} (its address is below).` : 'Check the relayer wallet’s recent transactions (ask an engineer if you can’t).'} If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.`, 'Check the wallet’s balance below.', `Send at least ${w.refill} to the relayer wallet (its address is below) from ${w.faucet}.`, 'When the balance below shows the new amount, press Resume on the Gas sponsorship page.', 'If it pauses again for the same reason, it still needs more money: send more, then press Resume again.'],
-        };
+      // The tile's own words come from moneyExplained (D890), which knows the balance and whether it restarts by itself.
+      if (h.code === 'insufficient_funds') return { why: 'The relayer’s wallet can’t send transactions: it is out of money.', steps: [safetyStep(w), `Send the amount the Gas sponsorship page names to the relayer wallet (its address is below) from ${w.faucet}, once.`, 'Press Check again on the Gas sponsorship page: it says whether it restarts by itself or needs Resume.'] };
       if (h.code === 'fee_cap_too_low')
         return {
           why: 'Gas prices are higher right now than the relayer is allowed to pay, so it can’t even send its own cancel.',
@@ -159,6 +161,102 @@ function haltReasonExplained(h: HaltWords, w: Words): Explained {
   }
 }
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
+/** The out-of-money pause's first step, always (D843 re-check M): the safety look at the wallet before any money. */
+const safetyStep = (w: Words): string => `${w.explorer ? `Open the relayer wallet on ${w.explorer} (its address is below).` : 'Check the relayer wallet’s recent transactions (ask an engineer if you can’t).'} If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.`;
+
+/** Why a pause for money can't restart by itself (the relayer's `autoRestart.pause.blocked`), in words; D890. */
+export function autoBlockedWords(blocked: string | null, limit: number): string {
+  switch (blocked) {
+    case 'daily_limit':
+      return `it has already restarted by itself ${limit} times today (UTC), the most it may`;
+    case 'ran_out_again':
+      return 'it ran out of money again within 30 minutes of restarting by itself, so a person should look first';
+    case 'no_second_endpoint':
+      return 'this environment has no second network server to check the wallet with';
+    case 'no_key':
+      return 'the relayer’s key isn’t loaded';
+    case 'old_api':
+      return 'the API deployed here is older than this page and can’t do that';
+    default:
+      return 'a person needs to look first';
+  }
+}
+
+/** The tile's words for a pause for money (D890): before the money arrives, once it has, and whether it restarts by itself. */
+export interface MoneyPlain {
+  state: 'money' | 'restarting' | 'paused';
+  explained: Explained;
+  /** One line under the title. */
+  detail: string;
+  /** The "Restarts by itself" line. */
+  line: PlainLine;
+}
+
+/**
+ * A pause for money in words (D890). `canAuto`: the relayer restarts by itself once the wallet holds `restartWei` (the
+ * low-balance mark plus what is waiting at the gas price limit); otherwise a person presses Resume, which needs what is
+ * waiting at its own fees (`resumeWei`), asked for here with one more action's worst cost so the next action doesn't
+ * pause it again. Never asks for money when the balance already covers it; every amount to send is rounded up.
+ */
+export function moneyExplained(o: { balance: bigint | null; auto: EvmRelayAutoRestartView['pause'] | null; today: number; limit: number; oneSend: bigint; budget: bigint; address: string; w: Words; since: string }): MoneyPlain {
+  const { balance, w } = o;
+  const auto = o.auto ?? { blocked: 'old_api', restartWei: '0', resumeWei: '0', check: null };
+  const canAuto = auto.blocked === null;
+  const need = canAuto ? (wei(auto.restartWei) ?? 0n) : (wei(auto.resumeWei) ?? 0n) + o.oneSend;
+  const enough = balance !== null && balance >= need;
+  const reason = autoBlockedWords(auto.blocked, o.limit);
+  const line: PlainLine = canAuto
+    ? { label: 'Restarts by itself', state: 'ok', detail: `Yes, once the wallet has ${testEthUp(need)} · ${o.today} of ${o.limit} automatic restarts used today` }
+    : { label: 'Restarts by itself', state: 'warning', detail: `No: ${reason}` };
+  const sendStep = (): string => {
+    const where = `the relayer wallet (${shortAddress(o.address)}; its whole address is below)`;
+    const send = balance === null ? `Bring ${where} to at least ${testEthUp(need)} from ${w.faucet}.` : `Send at least ${testEthUp(need - balance)} to ${where} from ${w.faucet}.`;
+    const least = canAuto ? 'That is the least it needs to restart by itself.' : 'That is the least Resume needs: what is waiting, plus room for the next action.';
+    return `${send} ${least} A day of gas sponsorship can use up to ${testEth(o.budget)}.`;
+  };
+  const once = 'Send it once. The balance on this page can be up to 30 s old: press Check again to see the new amount before you send more.';
+  const has = balance === null ? '' : ` (${testEth(balance)})`;
+  if (canAuto && !enough)
+    return {
+      state: 'money',
+      line,
+      detail: `Paused since ${o.since}. Gas sponsorship is stopped for everyone until the relayer wallet has enough money. Nothing is lost.`,
+      explained: { why: 'The relayer wallet is out of money, so gas sponsorship is paused for everyone. It restarts by itself once the wallet has enough.', steps: [safetyStep(w), sendStep(), 'It restarts by itself within about a minute of the money arriving. You don’t need to press Resume.', once] },
+    };
+  if (canAuto && auto.check?.blocked === 'second_endpoint_disagrees')
+    return {
+      state: 'paused',
+      line,
+      detail: `Paused since ${o.since}. The wallet has money again, but gas sponsorship hasn’t restarted by itself. Nothing is lost.`,
+      explained: {
+        why: `The relayer wallet has money again${has}, but gas sponsorship hasn’t restarted by itself: the two network servers it checks with don’t agree about the wallet.`,
+        steps: ['Don’t send more money.', `${w.explorer ? `Open the relayer wallet on ${w.explorer} (its address is below).` : 'Check the relayer wallet’s recent transactions (ask an engineer if you can’t).'} If money went out in transfers nobody at Journear made, stop: tell an engineer now.`, 'If it all looks right, press Resume on the Gas sponsorship page. Resume checks the network again itself.', 'If this keeps happening, ask an engineer to look at the network servers.'],
+      },
+    };
+  if (canAuto)
+    return {
+      state: 'restarting',
+      line,
+      detail: `Paused since ${o.since}. The wallet has money again: it restarts by itself within about a minute.`,
+      explained: { why: `The relayer wallet has money again${has}. Gas sponsorship restarts by itself within about a minute.`, steps: ['Nothing to do: don’t send more money, and you don’t need to press Resume.', 'If it still says this after 2 minutes, press Check again. If it is still paused then, press Resume on the Gas sponsorship page.'] },
+    };
+  if (!enough)
+    return {
+      state: 'paused',
+      line,
+      detail: `Paused since ${o.since}. Gas sponsorship is stopped for everyone until a person fixes it. Nothing is lost.`,
+      explained: { why: `The relayer wallet is out of money, so gas sponsorship is paused for everyone. It can’t restart by itself this time: ${reason}.`, steps: [safetyStep(w), sendStep(), 'Then press Resume on the Gas sponsorship page.', once] },
+    };
+  return {
+    state: 'paused',
+    line,
+    detail: `Paused since ${o.since}. The wallet has money again; a person needs to press Resume. Nothing is lost.`,
+    explained: {
+      why: `The relayer wallet has money again${has}, but gas sponsorship can’t restart by itself: ${reason}.`,
+      steps: ['Don’t send more money.', `${w.explorer ? `Open the relayer wallet on ${w.explorer} (its address is below).` : 'Check the relayer wallet’s recent transactions (ask an engineer if you can’t).'} If money went out in transfers nobody at Journear made, stop: tell an engineer now.`, 'Then press Resume on the Gas sponsorship page.'],
+    },
+  };
+}
 /** The engineer's look at the wallet: on the chain's block explorer, or (none, the local chain: D873) its recent transactions. */
 const engineerWalletCheck = (w: Words): string =>
   w.explorer ? `checks the relayer wallet on ${w.explorer} for transactions nobody at Journear sent.` : 'checks the relayer wallet’s recent transactions for any nobody at Journear sent.';
@@ -175,10 +273,13 @@ export function chainAhead(v: EvmRelayChainView, chainCount: EvmRelayDetail['cha
 
 // ---- one chain, as the tile and the page header show it ----
 
-export type PlainState = 'working' | 'paused' | 'low' | 'not_set_up' | 'needs_person' | 'unknown';
+export type PlainState = 'working' | 'paused' | 'money' | 'restarting' | 'low' | 'not_set_up' | 'needs_person' | 'unknown';
 export const STATE_LABELS: Readonly<Record<PlainState, string>> = Object.freeze({
   working: 'Working',
   paused: 'Paused: needs a person',
+  // D890: paused for money, and it restarts by itself once the wallet has enough; then the money is there and it is about to.
+  money: 'Paused: needs money',
+  restarting: 'Restarting by itself',
   low: 'Low on money',
   not_set_up: 'Not set up',
   needs_person: 'Needs a person',
@@ -298,7 +399,8 @@ export function explainChain(v: EvmRelayChainView, now: number, chainCount?: Evm
 
   // The latest staff action.
   const last = r?.staffLog[0];
-  if (last) lines.push({ label: 'Last staff action', state: last.done ? 'ok' : 'warning', detail: `${TOOL_NAMES[last.tool] ?? 'A tool'} by ${plainString(last.who, 128)}, ${ageText(Math.max(0, now - last.at))} ago: ${last.done ? 'done' : `refused (${code(last.refused)})`}` });
+  if (last?.auto) lines.push({ label: 'Last restart', state: 'ok', detail: `${AUTO_RESTART_NAME}, ${ageText(Math.max(0, now - last.at))} ago${r?.autoRestart ? ` (${r.autoRestart.today} of ${r.autoRestart.limit} today)` : ''}` });
+  else if (last) lines.push({ label: 'Last staff action', state: last.done ? 'ok' : 'warning', detail: `${TOOL_NAMES[last.tool] ?? 'A tool'} by ${plainString(last.who, 128)}, ${ageText(Math.max(0, now - last.at))} ago: ${last.done ? 'done' : `refused (${code(last.refused)})`}` });
 
   // The main state, most urgent first.
   if (r?.halted) {
@@ -308,9 +410,17 @@ export function explainChain(v: EvmRelayChainView, now: number, chainCount?: Evm
     // A key replaced since the stop: the records' signer is no longer the settings' wallet (the relayer tells us so).
     if (leak && ADDRESS.test(r.signerAddress) && r.signerAddress.toLowerCase() !== v.relayerAddress.toLowerCase())
       e = { ...e, why: `${e.why} The relayer’s key has been replaced since it stopped (its transactions were signed by ${shortAddress(r.signerAddress)}; the settings now name the wallet below).` };
+    const since = `${utc(r.halted.since)} (${ageText(Math.max(0, now - r.halted.since))})`;
+    // A pause for money (D890): its own words, with the balance and whether it restarts by itself. The box asks for
+    // money once (no second "running low" issue beside it), and never when the balance already covers it.
+    if (!leak && r.halted.reason === 'relayer_cannot_send' && r.halted.code === 'insufficient_funds') {
+      const m = moneyExplained({ balance, auto: r.autoRestart?.pause ?? null, today: r.autoRestart?.today ?? 0, limit: r.autoRestart?.limit ?? 0, oneSend, budget, address: v.relayerAddress, w, since });
+      lines.push(m.line);
+      return out(m.state, m.state === 'restarting' ? 'warning' : 'critical', m.detail, m.explained, haltCode(r.halted), 'evm-relay-paused', r.halted.since);
+    }
     // Never a refill while the key may be someone else's: money sent to it can be taken.
     if (!leak && (balanceState === 'critical' || balanceState === 'warning')) extra.push(lowProblem(balance!, low, w, balanceState));
-    return out('paused', 'critical', `Paused since ${utc(r.halted.since)} (${ageText(Math.max(0, now - r.halted.since))}). Gas sponsorship is stopped for everyone until a person fixes it. Nothing is lost.`, e, haltCode(r.halted, { chainAhead: ahead }), 'evm-relay-paused', r.halted.since);
+    return out('paused', 'critical', `Paused since ${since}. Gas sponsorship is stopped for everyone until a person fixes it. Nothing is lost.`, e, haltCode(r.halted, { chainAhead: ahead }), 'evm-relay-paused', r.halted.since);
   }
   if (v.key === 'wrong')
     return out('not_set_up', 'critical', 'The relayer sends nothing new.', { why: 'The relayer’s key doesn’t belong to the relayer wallet named in the settings, so it sends nothing new.', steps: ['Ask an engineer: the key file or relayerAddress in the settings is wrong.', 'Don’t change keys while transactions are waiting.'] }, 'key_wrong', 'evm-relay-paused');
@@ -371,6 +481,8 @@ function lowProblem(balance: bigint, low: bigint, w: Words, s: Severity): ExtraP
 
 // ---- the detail page: the records and the tools ----
 
+/** What an automatic restart is called in the staff log (D890). */
+export const AUTO_RESTART_NAME = 'Restarted by itself after a refill';
 export const TOOL_NAMES: Readonly<Record<EvmRelayTool, string>> = Object.freeze({ resume: 'Resume', cancel: 'Cancel this slot', close: 'Close as “used by something else”', fill: 'Fill a gap', adopt_nonce: 'Set the next slot number' });
 
 /** What closing a slot does to the books (the founder's decision D869: the partner is not charged for a slot lost to Journear's own key). */
@@ -444,11 +556,13 @@ export interface ToolsOffered {
   adoptBecause: string | null;
   /** The reason every tool is hidden, in words, or null. */
   noneBecause: string | null;
+  /** D890: paused for money and it restarts by itself once the wallet has enough (Resume still works). */
+  restartsByItself: boolean;
 }
 
 /** Which tools may apply now (never one the relayer would certainly refuse: it still checks every one). */
 export function toolsOffered(v: EvmRelayChainView, records: EvmRelayRecordView[], chainCount: EvmRelayDetail['chainCount']): ToolsOffered {
-  const none = (why: string): ToolsOffered => ({ resume: false, resumeNeedsKeyConfirmation: false, fill: null, adopt: null, adoptBecause: null, noneBecause: why });
+  const none = (why: string): ToolsOffered => ({ resume: false, resumeNeedsKeyConfirmation: false, fill: null, adopt: null, adoptBecause: null, noneBecause: why, restartsByItself: false });
   if (!v.relayer.ok) return none('The relayer can’t be read right now, so no tool is offered. Reload the page in a minute.');
   const r = v.relayer;
   if (!r.started) return none('The relayer hasn’t sent anything yet, so there is nothing to fix.');
@@ -470,6 +584,7 @@ export function toolsOffered(v: EvmRelayChainView, records: EvmRelayRecordView[]
     adopt,
     adoptBecause,
     noneBecause: null,
+    restartsByItself: r.halted?.reason === 'relayer_cannot_send' && r.halted.code === 'insufficient_funds' && !needsKeyConfirmation(r.halted) && !chainAhead(v, chainCount) && r.autoRestart?.pause?.blocked === null,
   };
 }
 
@@ -603,7 +718,8 @@ export async function evmRelayDetailRoute(c: RouteCtx): Promise<Response> {
     records: d.records.map((x) => recordPlain(x, chainId, d.chain.key === 'ok', d.apps, now, haltReason, haltSlot)),
     tools: toolsOffered(d.chain, d.records, d.chainCount),
     closeBilling: CLOSE_BILLING,
-    staffLog: (relayer?.staffLog ?? []).map((e) => ({ seq: e.seq, at: e.at, who: plainString(e.who, 128), tool: TOOL_NAMES[e.tool] ?? 'A tool', slot: e.slot, note: plainString(e.note, 500), done: e.done, refused: e.refused ? code(e.refused) : null })),
+    // D890: an automatic restart is the relayer's own entry: who and what in words, its note (what it saw) as is.
+    staffLog: (relayer?.staffLog ?? []).map((e) => ({ seq: e.seq, at: e.at, who: e.auto ? 'The relayer itself' : plainString(e.who, 128), tool: e.auto ? AUTO_RESTART_NAME : (TOOL_NAMES[e.tool] ?? 'A tool'), slot: e.slot, note: plainString(e.note, 500), done: e.done, refused: e.refused ? code(e.refused) : null, auto: e.auto === true })),
   });
 }
 

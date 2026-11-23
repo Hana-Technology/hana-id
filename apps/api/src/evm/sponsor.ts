@@ -1288,6 +1288,12 @@ async function anythingLeft(env: Env): Promise<boolean> {
  * settles what requests couldn't. The audit rows' 24-month retention runs with or without the config. Never throws;
  * logs what it couldn't read.
  */
+/** The relayer's automatic restarts (D890) of the last day, as its status reports them (bounded, well-formed times only). */
+function autoRestarts(s: { autoRestartedAt?: unknown }, now: number): number[] {
+  const a = Array.isArray(s.autoRestartedAt) ? s.autoRestartedAt.slice(0, 5) : [];
+  return a.filter((t): t is number => typeof t === 'number' && Number.isSafeInteger(t) && t > now - DAY && t <= now + 60_000);
+}
+
 export async function checkEvmSponsorRelay(env: Env, now: number = Date.now()): Promise<void> {
   const config = evmSponsorReady(env);
   // Without the block (every env today, the live testnet env among them): one cheap read decides whether anything is
@@ -1319,6 +1325,10 @@ export async function checkEvmSponsorRelay(env: Env, now: number = Date.now()): 
         const code = halted ? haltCode(s.halted) : null;
         await noteEvent(env, null, 'evm_relay_stuck', [String(chain.chainId), hour], { chainId: chain.chainId, pending: s.unmined, oldestPendingMs: age, ...(unaccepted !== null ? { oldestUnacceptedMs: unaccepted } : {}), ...(halted ? { halted } : {}), ...(code ? { haltCode: code } : {}) }, now);
       }
+      // D890: each time it restarted by itself after a refill (the last few it reports), one event, so staff aren't
+      // surprised; its id is the restart's time, so a later run never raises it twice.
+      const restarts = s ? autoRestarts(s, now) : [];
+      for (const at of restarts) await noteEvent(env, null, 'evm_relay_auto_resumed', [String(chain.chainId), String(at)], { chainId: chain.chainId, at, today: restarts.filter((t) => Math.floor(t / DAY) === Math.floor(now / DAY)).length }, now);
     } catch {
       log({ event: 'evm_sponsor_relay_check', outcome: 'error', code: 'relayer_unavailable' }, 'warn');
     }

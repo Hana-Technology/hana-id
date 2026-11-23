@@ -2457,8 +2457,13 @@ function startStatusTicker() {
     const spans = document.querySelectorAll('#app .ago[data-at]');
     if (!spans.length) return stopStatusTicker();
     for (const el of spans) el.textContent = `${el.getAttribute('data-prefix') || ''}${agoText(Number(el.getAttribute('data-at')))}`;
+    // D890: a Gas sponsorship tile's "this reading is old" note shows once its reading passes the page's limit.
+    for (const el of document.querySelectorAll('#app [data-stale-at]')) el.hidden = Date.now() < Number(el.getAttribute('data-stale-at'));
   }, 5_000);
 }
+
+/** D890: the next System status read skips the page's 30 s cache (the Gas sponsorship tile's "Check again"). */
+let statusFresh = false;
 
 /** Only the console's own paths are links (the answer is ours, but a path is checked before it becomes an href). */
 const pathLink = (l) => (l && typeof l.path === 'string' && /^\/[a-z0-9/_-]*$/u.test(l.path) ? link(l.path, l.label) : '');
@@ -2515,7 +2520,7 @@ function explainBlock(e) {
   return h('div', { class: 'explain' }, h('p', { class: 'explain-why' }, e.why), Array.isArray(e.steps) && e.steps.length ? h('ol', { class: 'explain-steps' }, e.steps.map((x) => h('li', {}, richText(x)))) : '', typeof e.code === 'string' && e.code ? engineerCode(e.code) : '');
 }
 
-function tileItem(t, checkedAt) {
+function tileItem(t, checkedAt, staleAfterMs = 15_000) {
   const s = tileState(t.state);
   // A tile may name its state in its own plain words ("Paused: needs a person"); its colour is still the state's.
   const chip = typeof t.stateLabel === 'string' && t.stateLabel ? { ...s, label: t.stateLabel } : s;
@@ -2531,7 +2536,19 @@ function tileItem(t, checkedAt) {
           return h('li', {}, stateChip(typeof l.stateLabel === 'string' && l.stateLabel ? { ...ls, label: l.stateLabel } : ls), h('span', { class: 'tile-line-label' }, l.label), h('span', {}, l.detail));
         }))
       : '',
-    h('p', { class: 'tile-meta' }, liveAgo(checkedAt, 'checked '), t.link ? h('span', {}, ' · ', pathLink(t.link)) : ''),
+    // D890: the Gas sponsorship tile's own fresh read, and a note once its reading is old enough that money sent since may not show.
+    t.checkAgain ? h('p', { class: 'hint tile-stale', 'data-stale-at': String(checkedAt + staleAfterMs), hidden: Date.now() < checkedAt + staleAfterMs }, liveAgo(checkedAt, 'This reading is from '), '. Money sent since then shows after Check again.') : '',
+    h(
+      'p',
+      { class: 'tile-meta' },
+      liveAgo(checkedAt, 'checked '),
+      t.link ? h('span', {}, ' · ', pathLink(t.link)) : '',
+      t.checkAgain ? h('span', {}, ' · ', h('button', { type: 'button', class: `${btn('secondary')} tile-check`, onclick: () => {
+            statusFresh = true;
+            render();
+          },
+        }, 'Check again')) : '',
+    ),
   );
 }
 
@@ -2544,7 +2561,9 @@ function statusStats(d) {
 }
 
 async function statusPage(main) {
-  const d = await api('GET', '/api/status');
+  const fresh = statusFresh;
+  statusFresh = false;
+  const d = await api('GET', fresh ? '/api/status?fresh=1' : '/api/status');
   main.append(
     pageHead('System status', {
       subtitle: `Every part of ${d.env}: its Workers, the contract and the watchdog, funds, data, scheduled jobs and outside services. Read only; nothing here changes anything.`,
@@ -2553,14 +2572,16 @@ async function statusPage(main) {
     verdictBanner(d),
     statusStats(d),
   );
-  if (d.cached) main.append(h('p', { class: 'hint' }, `This is the read from ${agoText(d.checkedAt)}: the console reads every part at most every ${Math.round(d.cacheMs / 1000)} s, so a refresh costs nothing. Check again after that for a fresh read.`));
+  if (d.fresh && d.fresh.refused) main.append(h('p', { class: 'hint', role: 'status' }, `A fresh reading was taken ${agoText(d.checkedAt)}, so this is that one. The next fresh reading can be taken in ${Math.max(1, Math.ceil(d.fresh.retryInMs / 1000))} s.`));
+  else if (d.fresh) main.append(h('p', { class: 'hint', role: 'status' }, 'A fresh reading: every part was read again just now.'));
+  else if (d.cached) main.append(h('p', { class: 'hint' }, `This is the read from ${agoText(d.checkedAt)}: the console reads every part at most every ${Math.round(d.cacheMs / 1000)} s, so a refresh costs nothing. Check again after that for a fresh read, or press Check again on the Gas sponsorship tile for one now.`));
   if (d.issues.length) {
     main.append(panel('Issues', { hint: 'Critical first. Each says what it affects, since when, and what to do.' }, h('ol', { class: 'issues' }, d.issues.map(issueItem))));
   }
   for (const g of d.groups) {
     if (!g.tiles.length) continue;
     const bad = g.tiles.filter((t) => t.state === 'critical' || t.state === 'warning' || t.state === 'unknown').length;
-    main.append(panel(g.title, { hint: bad ? `${bad} of ${g.tiles.length} need${bad === 1 ? 's' : ''} a look.` : undefined }, h('ul', { class: 'tiles' }, g.tiles.map((t) => tileItem(t, d.checkedAt)))));
+    main.append(panel(g.title, { hint: bad ? `${bad} of ${g.tiles.length} need${bad === 1 ? 's' : ''} a look.` : undefined }, h('ul', { class: 'tiles' }, g.tiles.map((t) => tileItem(t, d.checkedAt, d.staleAfterMs)))));
   }
   if (d.notMeasured && d.notMeasured.length) {
     main.append(panel('Not measured yet', { hint: 'Nothing on this page measures these yet; they aren’t counted as issues. Each says why and how to check it meanwhile.' }, h('ul', { class: 'not-measured' }, d.notMeasured.map((n) => h('li', {}, h('strong', {}, n.what), h('span', {}, richText(n.why)))))));
@@ -2659,6 +2680,7 @@ function evmToolsPanel(d) {
       { class: 'tool' },
       h('h3', {}, 'Resume'),
       h('p', {}, 'Starts gas sponsorship again. Use it once you have done what the box above says. The relayer checks the network first and says no if the numbers still disagree. It can’t tell whether its key is safe: if the box above says the key may be used by someone else, wait for the engineer.'),
+      t.restartsByItself ? h('p', { class: 'hint' }, 'You don’t need Resume for this pause: it restarts by itself within about a minute of the money arriving. Resume still works if you want it to restart now.') : '',
       !t.resume
         ? h('p', { class: 'hint' }, 'Not needed now: gas sponsorship isn’t paused.')
         : t.resumeNeedsKeyConfirmation

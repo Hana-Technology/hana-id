@@ -35,6 +35,14 @@ import { callWatchdog, watchdogConfigured } from './watchdog.ts';
 
 /** How long one read serves every request of the isolate. */
 export const STATUS_CACHE_MS = 30_000;
+/**
+ * D890: "Check again" on the Gas sponsorship tile asks for a fresh read (`?fresh=1`): it skips the 30 s cache (every
+ * part of the page is read again, the relayer's balance included), at most once per this long per isolate; sooner, the
+ * last read answers with `fresh: { refused: true, retryInMs }`. Concurrent requests share one read either way.
+ */
+export const FRESH_MIN_MS = 10_000;
+/** D890: a Gas sponsorship tile says its reading is old past this (money sent since then doesn't show until a fresh read). */
+export const STALE_AFTER_MS = 15_000;
 /** The Free plan's cron triggers per account (D417; docs/operations.md "Plan limits on sandbox-dev"). */
 export const FREE_PLAN_CRON_LIMIT = 5;
 /** A cron run's calls at or above this, of RUN_BUDGET, is a backlog (docs/operations.md "What to watch", D380). */
@@ -86,6 +94,11 @@ export interface Tile {
   stateLabel?: string;
   /** What is wrong in a sentence, what to do as numbered steps, and the code for engineers (Gas sponsorship, D843). */
   explain?: { why: string; steps: string[]; code: string | null };
+  /**
+   * D890: the tile offers its own "Check again" (a fresh read past the page's 30 s cache, at most one per FRESH_MIN_MS)
+   * and says when its reading is older than STALE_AFTER_MS (money sent since then doesn't show yet).
+   */
+  checkAgain?: boolean;
 }
 
 export interface TileLine {
@@ -139,6 +152,9 @@ export interface StatusAnswer {
   /** This read's outbound calls (the page's subrequest budget). */
   calls: { total: number; byKind: Record<string, number> };
   cacheMs: number;
+  /** D890: how often a fresh read may be asked for, and after how long a Gas sponsorship tile says its reading is old. */
+  freshMinMs: number;
+  staleAfterMs: number;
 }
 
 // ---- building it ----
@@ -171,6 +187,7 @@ interface TileInput {
   lines?: TileLine[];
   stateLabel?: string;
   explain?: Tile['explain'];
+  checkAgain?: boolean;
 }
 
 const RANK: Record<TileState, number> = { critical: 4, warning: 3, unknown: 2, ok: 1, not_measured: 0 };
@@ -186,7 +203,7 @@ class Report {
   add(t: TileInput, problems: Problem[] = []): void {
     let state: TileState = t.notMeasured ? 'not_measured' : 'ok';
     for (const p of problems) if (RANK[p.severity] > RANK[state]) state = p.severity;
-    this.tiles.push({ id: t.id, group: t.group, name: t.name, state, detail: t.detail, affects: t.affects, latencyMs: t.latencyMs ?? null, build: t.build ?? null, link: t.link ?? null, ...(t.lines ? { lines: t.lines } : {}), ...(t.stateLabel ? { stateLabel: t.stateLabel } : {}), ...(t.explain ? { explain: t.explain } : {}) });
+    this.tiles.push({ id: t.id, group: t.group, name: t.name, state, detail: t.detail, affects: t.affects, latencyMs: t.latencyMs ?? null, build: t.build ?? null, link: t.link ?? null, ...(t.lines ? { lines: t.lines } : {}), ...(t.stateLabel ? { stateLabel: t.stateLabel } : {}), ...(t.explain ? { explain: t.explain } : {}), ...(t.checkAgain ? { checkAgain: true } : {}) });
     for (const p of problems) {
       if (p.issue === false) continue;
       const pb = p.playbook ? getPlaybook(p.playbook) : undefined;
@@ -735,7 +752,7 @@ function evmRelayTiles(r: Report, s: Sources): void {
     // The plain label names the main state; a second problem that is worse says so instead of hiding behind it.
     const top = problems.reduce<TileState>((a, x) => (RANK[x.severity] > RANK[a] ? x.severity : a), p.severity);
     const label = RANK[top] > RANK[p.severity] ? (top === 'critical' ? STATE_LABELS.needs_person : 'Needs a look') : p.label;
-    r.add({ ...chainBase, id, name: p.title, link, detail: p.detail, stateLabel: label, ...(p.explained ? { explain: { why: p.explained.why, steps: p.explained.steps, code: p.code } } : {}), lines: p.lines.map((l) => ({ label: l.label, state: l.state, detail: l.detail, ...(Object.hasOwn(LINE_LABELS, l.state) ? { stateLabel: LINE_LABELS[l.state] } : {}) })) }, problems);
+    r.add({ ...chainBase, id, name: p.title, link, checkAgain: true, detail: p.detail, stateLabel: label, ...(p.explained ? { explain: { why: p.explained.why, steps: p.explained.steps, code: p.code } } : {}), lines: p.lines.map((l) => ({ label: l.label, state: l.state, detail: l.detail, ...(Object.hasOwn(LINE_LABELS, l.state) ? { stateLabel: LINE_LABELS[l.state] } : {}) })) }, problems);
   }
 }
 
@@ -1125,6 +1142,8 @@ export async function buildStatus(env: Env, staff: StaffRequest, accessJwt: stri
     notMeasured: [...NOT_MEASURED],
     calls: { total: calls.total, byKind: { ...calls.byKind } },
     cacheMs: STATUS_CACHE_MS,
+    freshMinMs: FRESH_MIN_MS,
+    staleAfterMs: STALE_AFTER_MS,
   };
 }
 
@@ -1141,7 +1160,11 @@ export function resetStatusCache(): void {
 }
 
 export async function statusRoute(env: Env, staff: StaffRequest, request: Request, now = Date.now()): Promise<Response> {
-  if (cached && now - cached.at >= 0 && now - cached.at < STATUS_CACHE_MS) return json(200, { ...cached.body, cached: true, ageMs: now - cached.at });
+  // D890: `?fresh=1` (the Gas sponsorship tile's "Check again") skips the cache, but not more often than FRESH_MIN_MS.
+  const fresh = new URL(request.url).searchParams.get('fresh') === '1';
+  const age = cached ? now - cached.at : -1;
+  if (cached && age >= 0 && fresh && age < FRESH_MIN_MS) return json(200, { ...cached.body, cached: true, ageMs: age, fresh: { refused: true, retryInMs: FRESH_MIN_MS - age } });
+  if (cached && age >= 0 && !fresh && age < STATUS_CACHE_MS) return json(200, { ...cached.body, cached: true, ageMs: age });
   if (!inflight) {
     const jwt = request.headers.get(ACCESS_JWT_HEADER) ?? '';
     inflight = buildStatus(env, staff, jwt, now).finally(() => {
@@ -1157,5 +1180,5 @@ export async function statusRoute(env: Env, staff: StaffRequest, request: Reques
   }
   cached = { at: body.checkedAt, body };
   log({ event: 'bff', route: 'GET /api/status', requestId: staff.requestId, outcome: 'ok', count: body.calls.total });
-  return json(200, { ...body, cached: false, ageMs: Math.max(0, now - body.checkedAt) });
+  return json(200, { ...body, cached: false, ageMs: Math.max(0, now - body.checkedAt), ...(fresh ? { fresh: { refused: false } } : {}) });
 }

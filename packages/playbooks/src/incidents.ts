@@ -122,9 +122,9 @@ const evmRelayPaused: Playbook = {
   kind: 'incident',
   severity: 'critical',
   status: 'live',
-  summary: "An `evm_relay_stuck` security event, or the System status tile “Gas sponsorship” saying “Paused: needs a person”: the relayer that pays users' gas stopped, turned a user's action away for a reason on our side, or has a transaction waiting too long.",
+  summary: "An `evm_relay_stuck` security event, or the System status tile “Gas sponsorship” saying “Paused: needs a person” or “Paused: needs money”: the relayer that pays users' gas stopped, turned a user's action away for a reason on our side, or has a transaction waiting too long.",
   signals: [
-    "The tile “Gas sponsorship (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.",
+    "The tile “Gas sponsorship (Base Sepolia)” on System status says “Paused: needs a person” or “Paused: needs money”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.",
     "An `evm_relay_stuck` row in the admin's security events, emailed by the feed (at most one an hour per network), with one of: `halted` (the relayer stopped itself; `haltCode` the network's refusal), `rejected` (a refusal on our side turned a user's action away), `oldestPendingMs` or `oldestUnacceptedMs` over 2 minutes (the oldest transaction not on the network, or not taken by any node), or a send still unsettled after 10 minutes.",
     "An `evm_relay_stuck` row with `rejected: gas_limit` and `gas model: yes` (its own row, at most one an hour per network): the network refused the gas Journear set for a user's action. The relayer does not pause for it and the user is not charged; it is a fault in Journear's gas settings or formula.",
   ],
@@ -134,7 +134,7 @@ const evmRelayPaused: Playbook = {
   ],
   steps: [
     { title: 'Read the tile', who: 'anyone', detail: "Open System status. The tile says why in one sentence and what to do as numbered steps. The code for engineers under it (for example `relayer_cannot_send · insufficient_funds`) is what to quote to an engineer." },
-    { title: 'Do the steps', who: 'a founder', detail: "Follow the numbered steps on the tile. Most often the relayer's wallet is out of test ETH: first open the wallet on the block explorer, and if money went out in transfers nobody at Journear made, stop and tell an engineer now (the next step); otherwise send test ETH to its address from a Base Sepolia faucet, then press Resume on the Gas sponsorship page. Every tool there asks for a note, says what it will do before it does it, and is recorded in the audit log." },
+    { title: 'Do the steps', who: 'a founder', detail: "Follow the numbered steps on the tile. Most often the relayer wallet is out of test ETH: first open the wallet on the block explorer, and if money went out in transfers nobody at Journear made, stop and tell an engineer now (the next step); otherwise send the amount the tile names to its address from a Base Sepolia faucet, once (the tile's balance can be up to 30 s old: press Check again on the tile to see the new amount, never send twice). It restarts by itself within about a minute of the money arriving (D890), and the tile then says “Restarted by itself after a refill”: you don't need to press Resume. Press Resume on the Gas sponsorship page only when the tile says it can't restart by itself (it already restarted by itself 3 times today, it ran out again within 30 minutes of restarting by itself, or this environment has no second network endpoint), after the same check of the wallet. Every tool there asks for a note, says what it will do before it does it, and is recorded in the audit log." },
     { title: 'If the key may be someone else’s, the engineer first', who: 'a founder', detail: "If the box says the key may be used by someone else (a slot used by a transaction Journear didn't send, a gap, more transactions than the relayer sent, or the network saying another sender holds its numbers): don't send money to the wallet; tell an engineer now. The engineer follows “A relayer key leaked” in the runbook (gas sponsorship off, the money moved out, the key replaced), then uses the slot tools under Advanced. Press Resume only when the engineer says the key is safe or replaced: the page asks you to confirm that, also when such a sign was seen after a pause that started for another reason. Your tick is your own recorded statement, not a second person's approval." },
     { title: 'Ask an engineer when the steps say so', who: 'a founder', detail: "If the records disagree (a bug), or Resume keeps being refused for the same reason, stop and ask an engineer. The relayer refuses anything unsafe itself; never work around a refusal." },
     { title: 'Not paused, only slow or one refusal', who: 'anyone', detail: "With no pause, a transaction waiting over 2 minutes usually means the network is busy: the relayer raises its fee every minute and it clears by itself. With `rejected` only, check the wallet's balance on the tile. If either lasts an hour, ask an engineer to look." },
@@ -143,7 +143,28 @@ const evmRelayPaused: Playbook = {
   verify: ['The tile says “Working”, and the next sponsored action goes through.'],
   followUps: ["If the wallet ran out of money, check whether the daily budget or the low-balance line in the settings should be higher."],
   refs: ['docs/operations.md#gas-sponsorship-in-the-admin-portal-d843', 'docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live', 'D843', 'D851'],
-  related: ['evm-relay-balance-low', 'evm-relay-slot-taken'],
+  related: ['evm-relay-balance-low', 'evm-relay-slot-taken', 'evm-relay-auto-resumed'],
+};
+
+// The relayer's one automatic restart (D890): a pause for money ended by itself after a refill, on its own evidence.
+const evmRelayAutoResumed: Playbook = {
+  id: 'evm-relay-auto-resumed',
+  title: 'Gas sponsorship: restarted by itself after the relayer wallet was refilled',
+  kind: 'incident',
+  severity: 'info',
+  status: 'live',
+  summary: "An `evm_relay_auto_resumed` security event: the relayer had paused because its wallet was out of money, the wallet then had enough again, and the relayer restarted itself after checking the network (with a second network endpoint) found nothing else wrong.",
+  signals: ["An `evm_relay_auto_resumed` row in the admin's security events, emailed by the feed (one per restart: the network, the time, and how many times it restarted by itself that UTC day).", "On the Gas sponsorship page, the staff log's newest line: “Restarted by itself after a refill”, by the relayer itself, with what it saw (the balance, the network's counts, the block) in its note."],
+  impact: ["Nothing is wrong if someone at Journear just sent money to the relayer wallet: gas sponsorship works again.", "How urgent: look today. If nobody at Journear sent that money, someone else did (anyone can send money to a wallet): that is harmless in itself, but say so to an engineer."],
+  steps: [
+    { title: 'Check who sent the money', who: 'anyone', detail: "Ask in the team who sent test ETH to the relayer wallet. If it was one of us, there is nothing more to do." },
+    { title: 'Check the wallet’s transactions', who: 'anyone', detail: "On the Gas sponsorship page, open the relayer wallet on the block explorer. The money that went out should be Journear's own sponsored actions (many small transactions). If money went out in transfers nobody at Journear made, tell an engineer now: the engineer follows “A relayer key leaked” in docs/operations.md." },
+    { title: 'If it keeps happening', who: 'a founder', detail: "It restarts by itself at most 3 times a UTC day, and never when it ran out again within 30 minutes of the last time: then it waits for a person. If it runs out every day, keep more in the wallet, or check whether the daily budget is right." },
+  ],
+  verify: ['The tile says “Working”, and the next sponsored action goes through.'],
+  followUps: ['If the money came from outside Journear, note it in the decision log.'],
+  refs: ['docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live', 'D890', 'D851'],
+  related: ['evm-relay-paused', 'evm-relay-balance-low', 'relayer-key-stolen'],
 };
 
 const evmRelayBalanceLow: Playbook = {
@@ -1180,6 +1201,7 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   nearRelayBudgetHigh,
   nearRelayBalanceLow,
   evmRelayPaused,
+  evmRelayAutoResumed,
   evmRelayBalanceLow,
   evmRelayBudgetHigh,
   evmRelayReceiptOdd,

@@ -53,6 +53,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [The NEAR relay's daily budget reached 80%](#near-relay-budget-high) | warning | — |
 | [The NEAR relay account is running low](#near-relay-balance-low) | warning | — |
 | [Gas sponsorship is paused or slow](#evm-relay-paused) | critical | — |
+| [Gas sponsorship: restarted by itself after the relayer wallet was refilled](#evm-relay-auto-resumed) | info | — |
 | [Gas sponsorship: the relayer wallet is running low](#evm-relay-balance-low) | warning | — |
 | [Gas sponsorship: today's budget is nearly used up](#evm-relay-budget-high) | warning | — |
 | [Gas sponsorship: a payment looked wrong](#evm-relay-receipt-odd) | warning | — |
@@ -1559,11 +1560,11 @@ A `near_relay_balance_low` security event: the hourly check found `near.relay.ac
 
 `evm-relay-paused` · critical
 
-An `evm_relay_stuck` security event, or the System status tile “Gas sponsorship” saying “Paused: needs a person”: the relayer that pays users' gas stopped, turned a user's action away for a reason on our side, or has a transaction waiting too long.
+An `evm_relay_stuck` security event, or the System status tile “Gas sponsorship” saying “Paused: needs a person” or “Paused: needs money”: the relayer that pays users' gas stopped, turned a user's action away for a reason on our side, or has a transaction waiting too long.
 
 **Signals**
 
-- The tile “Gas sponsorship (Base Sepolia)” on System status says “Paused: needs a person”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.
+- The tile “Gas sponsorship (Base Sepolia)” on System status says “Paused: needs a person” or “Paused: needs money”, with why in one sentence and numbered steps; or its “Waiting to go through” line is amber.
 - An `evm_relay_stuck` row in the admin's security events, emailed by the feed (at most one an hour per network), with one of: `halted` (the relayer stopped itself; `haltCode` the network's refusal), `rejected` (a refusal on our side turned a user's action away), `oldestPendingMs` or `oldestUnacceptedMs` over 2 minutes (the oldest transaction not on the network, or not taken by any node), or a send still unsettled after 10 minutes.
 - An `evm_relay_stuck` row with `rejected: gas_limit` and `gas model: yes` (its own row, at most one an hour per network): the network refused the gas Journear set for a user's action. The relayer does not pause for it and the user is not charged; it is a fault in Journear's gas settings or formula.
 
@@ -1576,7 +1577,7 @@ An `evm_relay_stuck` security event, or the System status tile “Gas sponsorshi
 
 1. **Read the tile** (who: anyone). Open System status. The tile says why in one sentence and what to do as numbered steps. The code for engineers under it (for example `relayer_cannot_send · insufficient_funds`) is what to quote to an engineer.
 
-2. **Do the steps** (who: a founder). Follow the numbered steps on the tile. Most often the relayer's wallet is out of test ETH: first open the wallet on the block explorer, and if money went out in transfers nobody at Journear made, stop and tell an engineer now (the next step); otherwise send test ETH to its address from a Base Sepolia faucet, then press Resume on the Gas sponsorship page. Every tool there asks for a note, says what it will do before it does it, and is recorded in the audit log.
+2. **Do the steps** (who: a founder). Follow the numbered steps on the tile. Most often the relayer wallet is out of test ETH: first open the wallet on the block explorer, and if money went out in transfers nobody at Journear made, stop and tell an engineer now (the next step); otherwise send the amount the tile names to its address from a Base Sepolia faucet, once (the tile's balance can be up to 30 s old: press Check again on the tile to see the new amount, never send twice). It restarts by itself within about a minute of the money arriving (D890), and the tile then says “Restarted by itself after a refill”: you don't need to press Resume. Press Resume on the Gas sponsorship page only when the tile says it can't restart by itself (it already restarted by itself 3 times today, it ran out again within 30 minutes of restarting by itself, or this environment has no second network endpoint), after the same check of the wallet. Every tool there asks for a note, says what it will do before it does it, and is recorded in the audit log.
 
 3. **If the key may be someone else’s, the engineer first** (who: a founder). If the box says the key may be used by someone else (a slot used by a transaction Journear didn't send, a gap, more transactions than the relayer sent, or the network saying another sender holds its numbers): don't send money to the wallet; tell an engineer now. The engineer follows “A relayer key leaked” in the runbook (gas sponsorship off, the money moved out, the key replaced), then uses the slot tools under Advanced. Press Resume only when the engineer says the key is safe or replaced: the page asks you to confirm that, also when such a sign was seen after a pause that started for another reason. Your tick is your own recorded statement, not a second person's approval.
 
@@ -1594,7 +1595,43 @@ An `evm_relay_stuck` security event, or the System status tile “Gas sponsorshi
 
 - If the wallet ran out of money, check whether the daily budget or the low-balance line in the settings should be higher.
 
-**Refs:** [`docs/operations.md#gas-sponsorship-in-the-admin-portal-d843`](operations.md#gas-sponsorship-in-the-admin-portal-d843), [`docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live`](operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-balance-low](#evm-relay-balance-low), [evm-relay-slot-taken](#evm-relay-slot-taken)
+**Refs:** [`docs/operations.md#gas-sponsorship-in-the-admin-portal-d843`](operations.md#gas-sponsorship-in-the-admin-portal-d843), [`docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live`](operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live), D843 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-balance-low](#evm-relay-balance-low), [evm-relay-slot-taken](#evm-relay-slot-taken), [evm-relay-auto-resumed](#evm-relay-auto-resumed)
+
+<a id="evm-relay-auto-resumed"></a>
+
+### Gas sponsorship: restarted by itself after the relayer wallet was refilled
+
+`evm-relay-auto-resumed` · info
+
+An `evm_relay_auto_resumed` security event: the relayer had paused because its wallet was out of money, the wallet then had enough again, and the relayer restarted itself after checking the network (with a second network endpoint) found nothing else wrong.
+
+**Signals**
+
+- An `evm_relay_auto_resumed` row in the admin's security events, emailed by the feed (one per restart: the network, the time, and how many times it restarted by itself that UTC day).
+- On the Gas sponsorship page, the staff log's newest line: “Restarted by itself after a refill”, by the relayer itself, with what it saw (the balance, the network's counts, the block) in its note.
+
+**Impact**
+
+- Nothing is wrong if someone at Journear just sent money to the relayer wallet: gas sponsorship works again.
+- How urgent: look today. If nobody at Journear sent that money, someone else did (anyone can send money to a wallet): that is harmless in itself, but say so to an engineer.
+
+**Steps**
+
+1. **Check who sent the money** (who: anyone). Ask in the team who sent test ETH to the relayer wallet. If it was one of us, there is nothing more to do.
+
+2. **Check the wallet’s transactions** (who: anyone). On the Gas sponsorship page, open the relayer wallet on the block explorer. The money that went out should be Journear's own sponsored actions (many small transactions). If money went out in transfers nobody at Journear made, tell an engineer now: the engineer follows “A relayer key leaked” in docs/operations.md.
+
+3. **If it keeps happening** (who: a founder). It restarts by itself at most 3 times a UTC day, and never when it ran out again within 30 minutes of the last time: then it waits for a person. If it runs out every day, keep more in the wallet, or check whether the daily budget is right.
+
+**Verify**
+
+- The tile says “Working”, and the next sponsored action goes through.
+
+**Follow-ups**
+
+- If the money came from outside Journear, note it in the decision log.
+
+**Refs:** [`docs/operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live`](operations.md#the-relayer-what-it-does-when-it-stops-what-to-do-d851-built-not-live), D890 (`docs/decisions.md`), D851 (`docs/decisions.md`) · **See also:** [evm-relay-paused](#evm-relay-paused), [evm-relay-balance-low](#evm-relay-balance-low), [relayer-key-stolen](#relayer-key-stolen)
 
 <a id="evm-relay-balance-low"></a>
 

@@ -31,7 +31,8 @@
 // never by the Worker):
 //   GET  /__e2e/lane/state                 the relayer's slots and pause, the chain's counts, the lane's clock
 //   POST /__e2e/lane/scenario {name}       puts the relayer in a state (SCENARIOS below); answers the state
-//   POST /__e2e/lane/clock {advanceMs}     moves the lane's clock forward (lane-clock.ts)
+//   POST /__e2e/lane/clock {advanceMs, keepStatusCache?}  moves the lane's clock forward (lane-clock.ts); the status
+//                                          page's 30 s cache is emptied unless `keepStatusCache`
 //   POST /__e2e/lane/run {times?}          time passes for the relayer: its alarm runs (then the API cron's relay check)
 //   POST /__e2e/lane/acquire               waits until no other test holds the lane, then holds it → {lease}; a lease
 //                                          ends by `release {lease}` or after 3 minutes (a test that died). The suite's
@@ -88,6 +89,11 @@ if (!process.env.LOG) {
 /** The lane's chain endpoints: `*.localhost` (loopback, as a local* env's sponsorship requires), answered in this thread. */
 const LANE_NEAR = 'http://near.admin-lane.localhost';
 const LANE_EVM = 'http://evm.admin-lane.localhost';
+/**
+ * The lane's second endpoint (`rpcFallback`), the same chain: broadcasts may reach it, and the relayer's automatic restart
+ * after a refill asks it before restarting (D890: a `local*` env without one never restarts by itself).
+ */
+const LANE_EVM_FALLBACK = 'http://evm-fallback.admin-lane.localhost';
 const CONSOLE_MIGRATIONS = fileURLToPath(new URL('../../../console/migrations/', import.meta.url));
 const ADMIN_PUBLIC = fileURLToPath(new URL('../../../admin/public/', import.meta.url));
 const SRC = (app: string, path: string): string => new URL(`../../../${app}/src/${path}`, import.meta.url).href;
@@ -130,7 +136,7 @@ interface RelayerStatus {
   halted: null | { reason: string; nonce?: number; code?: string; leakSeen?: true; since: number };
   unmined: number;
   records: { nonce: number; digest: string | null; seen: unknown; accepted: boolean; deadline: number; versions: { hash: string; kind: string }[] }[];
-  staffLog: { seq: number; action: string; done: boolean; refused: string | null; who: string; note: string }[];
+  staffLog: { seq: number; action: string; done: boolean; refused: string | null; who: string; note: string; auto?: true }[];
 }
 
 // A held transaction would keep a send waiting for its receipt for 30 s: the lane's sends give up after 1.5 s (504),
@@ -193,8 +199,9 @@ const randomKey = (): string => Buffer.from(crypto.getRandomValues(new Uint8Arra
 
 /** The API's EVM_SPONSOR for the lane: the stack's chain settings, the lane's relayer and chain endpoint, its one app. */
 function laneSponsorVar(relayer: string, appId: string): string {
-  const v = JSON.parse(e2eEvmSponsorVar(relayer, [appId], E2E_SPONSOR_TARGETS)) as { chains: Record<string, { rpc: string }> };
+  const v = JSON.parse(e2eEvmSponsorVar(relayer, [appId], E2E_SPONSOR_TARGETS)) as { chains: Record<string, { rpc: string; rpcFallback?: string }> };
   v.chains[String(EVM_CHAIN_ID)]!.rpc = LANE_EVM;
+  v.chains[String(EVM_CHAIN_ID)]!.rpcFallback = LANE_EVM_FALLBACK;
   return JSON.stringify(v);
 }
 
@@ -350,7 +357,7 @@ class Lane {
       halted: s.halted,
       waiting: s.unmined,
       records: s.records.map((r) => ({ slot: r.nonce, kind: r.digest ? 'action' : 'filler', onChain: r.seen !== null, taken: r.accepted, deadlineMs: r.deadline * 1000, copies: r.versions.map((v) => v.kind) })),
-      staffLog: s.staffLog.map((e) => ({ seq: e.seq, tool: e.action, done: e.done, refused: e.refused, who: e.who, note: e.note })),
+      staffLog: s.staffLog.map((e) => ({ seq: e.seq, tool: e.action, done: e.done, refused: e.refused, who: e.who, note: e.note, auto: e.auto === true })),
       chain: this.evm.view(),
       clockOffsetMs: laneClockOffset(),
       nowMs: Date.now(),
@@ -372,7 +379,7 @@ class Lane {
     return r;
   }
 
-  /** SCENARIOS: each starts from a fresh relayer (but `past-deadline` and `refill`, which continue the one before). */
+  /** SCENARIOS: each starts from a fresh relayer (but `past-deadline`, `money-arrives`, `refill` and `out-of-money-again`, which continue the one before). */
   async scenario(name: string): Promise<void> {
     const halted = (reason: string) => (s: RelayerStatus) => s.halted?.reason === reason;
     switch (name) {
@@ -419,13 +426,35 @@ class Lane {
         await this.until(halted('relayer_cannot_send'), name);
         await this.run();
         break;
-      // The money is back: the relayer's stored cancel goes out and lands. Still paused until staff press Resume.
-      case 'refill':
+      // The money is back (1 test ETH), and nothing has run yet: "Restarting by itself" (D890), or, when it can't
+      // restart by itself, "has money again" with Resume. The status page's cache is left alone.
+      case 'money-arrives':
         this.evm.refuse = false;
         this.evm.balanceWei = 10n ** 18n;
         sponsor.forgetRelayerBalances();
+        break;
+      // The money is back and time passes for the relayer: its stored cancel goes out and lands, and (D890) once the
+      // pause is 60 s old (the lane's clock moves there) it restarts by itself, or stays paused for a person (below).
+      case 'refill': {
+        await this.scenario('money-arrives');
+        const since = (await this.status()).halted?.since;
+        if (since !== undefined && Date.now() - since < 61_000) advanceLaneClock(61_000 - (Date.now() - since));
         await this.run(2);
         break;
+      }
+      // Restarted by itself after a refill, and the very next check-in finds the wallet empty again: paused within
+      // 30 minutes of the restart, so this pause waits for a person (D890); `refill` then ends with Resume needed.
+      case 'out-of-money-again': {
+        if ((await this.status()).halted) throw new Error('out-of-money-again: the relayer is paused (run "out-of-money" then "refill" first)');
+        this.evm.refuse = true;
+        sponsor.forgetRelayerStatus();
+        sponsor.forgetRelayerBalances();
+        await this.expectSent(await this.sendCheckIn(), (r) => r.status === 503 && r.code === 'sponsorship_paused', name);
+        this.evm.balanceWei = 100_000_000_000_000n;
+        await this.until(halted('relayer_cannot_send'), name);
+        await this.run();
+        break;
+      }
       // Someone else used the relayer's key: a transaction it never sent took slot 0 while its check-in waited there.
       // Paused, nonce_consumed_elsewhere (the leak steps; the fix: Close slot 0, then Resume with the engineer's word).
       case 'key-used-elsewhere':
@@ -466,7 +495,7 @@ class Lane {
   }
 }
 
-export const SCENARIOS = ['ready', 'working', 'low-money', 'waiting', 'past-deadline', 'out-of-money', 'refill', 'key-used-elsewhere', 'foreign-transactions', 'gap'] as const;
+export const SCENARIOS = ['ready', 'working', 'low-money', 'waiting', 'past-deadline', 'out-of-money', 'money-arrives', 'refill', 'out-of-money-again', 'key-used-elsewhere', 'foreign-transactions', 'gap'] as const;
 
 installAccessCerts(data.access.certs);
 const lane = new Lane();
@@ -478,7 +507,7 @@ const lane = new Lane();
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.startsWith(LANE_NEAR)) return near(new Request(input, init), new AbortController().signal);
-    if (url.startsWith(LANE_EVM)) return lane.evm.handler()(new Request(input, init));
+    if (url.startsWith(LANE_EVM) || url.startsWith(LANE_EVM_FALLBACK)) return lane.evm.handler()(new Request(input, init));
     return before(input, init);
   }) as typeof fetch;
 }
@@ -543,7 +572,7 @@ async function control(request: Request, url: URL): Promise<Response> {
   try {
     if (url.pathname === '/__e2e/lane/state' && request.method === 'GET') return json(200, await lane.state());
     if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
-    const b = ((await request.json().catch(() => ({}))) ?? {}) as { name?: unknown; advanceMs?: unknown; times?: unknown; lease?: unknown };
+    const b = ((await request.json().catch(() => ({}))) ?? {}) as { name?: unknown; advanceMs?: unknown; keepStatusCache?: unknown; times?: unknown; lease?: unknown };
     if (url.pathname === '/__e2e/lane/acquire') return json(200, { lease: await acquire() });
     if (url.pathname === '/__e2e/lane/release') return json(200, { released: typeof b.lease === 'string' && release(b.lease) });
     if (url.pathname === '/__e2e/lane/scenario' && typeof b.name === 'string') {
@@ -552,7 +581,8 @@ async function control(request: Request, url: URL): Promise<Response> {
     }
     if (url.pathname === '/__e2e/lane/clock' && typeof b.advanceMs === 'number') {
       advanceLaneClock(b.advanceMs);
-      adminStatus.resetStatusCache();
+      // `keepStatusCache`: the status page keeps its reading (D890's tile Check again is then what reads it fresh).
+      if (b.keepStatusCache !== true) adminStatus.resetStatusCache();
       return json(200, await lane.state());
     }
     if (url.pathname === '/__e2e/lane/run') {

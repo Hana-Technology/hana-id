@@ -8,7 +8,8 @@
 //
 // Covered: sign-in as staff, and the refusals (no token, a forged one, someone not on the staff list); System status's
 // "Gas sponsorship" tile; the sponsorship page against the relayer's real state: a waiting transaction, Cancel only
-// past its time limit; out of money (the steps, refill, Resume); someone else using the relayer's key three ways (the
+// past its time limit; out of money (the steps, refill, it restarts by itself; out again at once, refill, Resume: D890);
+// the Gas sponsorship tile's own Check again; someone else using the relayer's key three ways (the
 // leak steps, no refill asked, Resume refused without the engineer's word, then Close, Set the next slot number and
 // Fill a gap, each with its confirmation); a stale page and a second tab; every action in the audit log with who, when
 // and the note; the sponsorship's security events with their playbooks; and the staff side of the support pages
@@ -49,12 +50,15 @@ async function expectAnswer(page: Page, title: string, text: string | RegExp): P
   await expect(actResult(page)).toContainText(text);
 }
 
-/** The relayer's own log has exactly these entries, newest first: [tool, done, refused]. */
-async function expectStaffLog(lane: string, entries: [string, boolean, string | null][]): Promise<void> {
+/** The relayer's own log has exactly these entries, newest first: [tool, done, refused]; each by the staff member, or (D890) by the relayer itself. */
+async function expectStaffLog(lane: string, entries: [string, boolean, string | null, ('auto' | undefined)?][]): Promise<void> {
   const s = await laneState(lane);
-  expect(s.staffLog.map((e) => [e.tool, e.done, e.refused])).toEqual(entries);
-  for (const e of s.staffLog) expect(e.who).toBe(STAFF);
+  expect(s.staffLog.map((e) => [e.tool, e.done, e.refused, ...(e.auto ? ['auto'] : [])])).toEqual(entries);
+  for (const e of s.staffLog) expect(e.who).toBe(e.auto ? 'relayer (automatic)' : STAFF);
 }
+
+/** The out-of-money pause's first step on the local chain (no block explorer: D873, after review). */
+const SAFETY_LOCAL = 'Check the relayer wallet’s recent transactions (ask an engineer if you can’t). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.';
 
 /**
  * The Audit log page's console rows for one staff tool use: `evm_relay.staff_action` (before, with the note) and
@@ -188,17 +192,24 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
       ['working', 'Working', 'Sending normally · the next transaction gets slot 1'],
       ['waiting', 'Working', 'Sending normally · the next transaction gets slot 1'],
       ['low-money', 'Low on money', '0.005 test ETH left in the relayer wallet.'],
-      ['out-of-money', 'Paused: needs a person', /^Paused since \d{2}:\d{2} UTC \(\d+ s\)\. Gas sponsorship is stopped for everyone until a person fixes it\. Nothing is lost\.$/u],
+      ['out-of-money', 'Paused: needs money', /^Paused since \d{2}:\d{2} UTC \(\d+ s\)\. Gas sponsorship is stopped for everyone until the relayer wallet has enough money\. Nothing is lost\.$/u],
+      ['money-arrives', 'Restarting by itself', /^Paused since \d{2}:\d{2} UTC \(\d+ s\)\. The wallet has money again: it restarts by itself within about a minute\.$/u],
       ['key-used-elsewhere', 'Paused: needs a person', /^Paused since /u],
     ];
     await signIn(page, lane, 'staff', '/status');
     for (const [name, chip, detail] of states) {
       await scenario(lane, name);
+      // The money's arrival is no fresh relayer: the page's 30 s reading is emptied with the lane's clock.
+      if (name === 'money-arrives') await laneClock(lane, 1_000);
       await page.reload();
       await expect(tile.locator('.tile-head'), name).toContainText(chip);
       await expect(tile.locator('.tile-detail').first(), name).toHaveText(detail);
       if (name === 'waiting') await expect(tile).toContainText(/Waiting to go through1 · the oldest for \d+ s · not yet picked up by the network|Waiting to go through1 · the oldest for \d+ s/u);
-      if (name === 'out-of-money') await expect(tile.locator('.explain-why')).toHaveText('The relayer’s wallet can’t send transactions: it is out of money.');
+      if (name === 'out-of-money') await expect(tile.locator('.explain-why')).toHaveText('The relayer wallet is out of money, so gas sponsorship is paused for everyone. It restarts by itself once the wallet has enough.');
+      if (name === 'money-arrives') {
+        await expect(tile.locator('.explain-why')).toHaveText('The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within about a minute.');
+        await expect(tile).not.toContainText('Send at least');
+      }
       if (name === 'key-used-elsewhere') {
         await expect(tile.locator('.explain-steps li').first()).toHaveText(LEAK_FIRST_STEP);
         await expect(tile).not.toContainText('Send at least');
@@ -208,14 +219,26 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
         await tile.screenshot({ path: join(SHOTS, `status-tile-${name}.png`), animations: 'disabled' });
       }
     }
-    // The page keeps one reading for 30 s (D425): a change shows once that has passed (here, the lane's clock).
+    // The page keeps one reading for 30 s (D425): out of money, then refilled and restarted by itself (D890), the page
+    // still shows the reading it had; the tile's own Check again reads it fresh at once.
+    await scenario(lane, 'out-of-money');
+    await laneClock(lane, 61_000);
+    await page.reload();
+    await expect(tile.locator('.tile-head')).toContainText('Paused: needs money');
     await scenario(lane, 'refill');
+    expect((await laneState(lane)).halted).toBeNull();
+    await laneClock(lane, 12_000, { keepStatusCache: true });
     await page.reload();
-    await expect(tile.locator('.tile-head')).toContainText('Paused: needs a person');
-    await laneClock(lane, 31_000);
-    await page.reload();
-    await expect(tile.locator('.tile-head')).toContainText('Paused: needs a person');
+    await expect(tile.locator('.tile-head')).toContainText('Paused: needs money');
+    await tile.getByRole('button', { name: 'Check again' }).click();
+    await expect(page.getByText('A fresh reading: every part was read again just now.')).toBeVisible();
+    await expect(tile.locator('.tile-head')).toContainText('Working');
+    await expect(tile).toContainText(/Last restartRestarted by itself after a refill, \d+ s ago \(1 of 3 today\)/u);
     await expect(tile).toContainText('Money in the wallet1 test ETH · low below 0.01 test ETH');
+    if (SHOTS && info.project.name === 'chromium') await tile.screenshot({ path: join(SHOTS, 'status-tile-restarted-by-itself.png'), animations: 'disabled' });
+    // Pressed again at once: no second read within 10 s, said so.
+    await tile.getByRole('button', { name: 'Check again' }).click();
+    await expect(page.getByText(/The next fresh reading can be taken in \d+ s\./u)).toBeVisible();
   });
 
   test('a waiting transaction is listed with its app; Cancel only once its time limit has passed; Cancel sends one', async ({ page, lane }, info) => {
@@ -244,39 +267,74 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
     await expectAudited(page, lane, { tool: 'cancel', note, result: 'done' });
   });
 
-  test('out of money: the steps; Resume refused while it still can’t send; refilled, Resume works', async ({ page, lane }, info) => {
+  test('out of money: the steps; refilled, it restarts by itself (D890); out again at once, refilled, Resume is needed and works', async ({ page, lane }, info) => {
     await scenario(lane, 'out-of-money');
     await signIn(page, lane, 'staff', DETAIL);
     const now = nowPanel(page);
-    await expect(now).toContainText('Paused: needs a person');
-    await expect(now.locator('.explain-why')).toHaveText('The relayer’s wallet can’t send transactions: it is out of money.');
+    await expect(now).toContainText('Paused: needs money');
+    await expect(now.locator('.explain-why')).toHaveText('The relayer wallet is out of money, so gas sponsorship is paused for everyone. It restarts by itself once the wallet has enough.');
     const steps = now.locator('.explain-steps li');
-    await expect(steps).toHaveCount(5);
+    await expect(steps).toHaveCount(4);
     // The local chain has no block explorer: no step names one (D873, after review).
-    await expect(steps.nth(0)).toHaveText('Check the relayer wallet’s recent transactions (ask an engineer if you can’t). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.');
+    await expect(steps.nth(0)).toHaveText(SAFETY_LOCAL);
     await expect(now).not.toContainText('explorer');
-    await expect(steps.nth(2)).toHaveText('Send at least 1.01 test ETH to the relayer wallet (its address is below) from the local node’s funded test account.');
-    await expect(steps.nth(3)).toHaveText('When the balance below shows the new amount, press Resume on the Gas sponsorship page.');
+    // The real minimum: the low line (0.01) plus the waiting cancel at the gas price limit, less what is there, rounded up.
+    await expect(steps.nth(1)).toHaveText(/^Send at least 0\.0102 test ETH to the relayer wallet \(0x[0-9a-fA-F]{4}…[0-9a-fA-F]{4}; its whole address is below\) from the local node’s funded test account\. That is the least it needs to restart by itself\. A day of gas sponsorship can use up to 1 test ETH\.$/u);
+    await expect(steps.nth(2)).toHaveText('It restarts by itself within about a minute of the money arriving. You don’t need to press Resume.');
+    await expect(steps.nth(3)).toHaveText('Send it once. The balance on this page can be up to 30 s old: press Check again to see the new amount before you send more.');
     await expect(now).toContainText('relayer_cannot_send · insufficient_funds · slot 0');
     await expect(now).toContainText('Money in the walletProblem 0.0001 test ETH · low below 0.01 test ETH');
-    // Not a leak: Resume is the plain one (no engineer's confirmation).
+    await expect(now).toContainText('Restarts by itselfYes, once the wallet has 0.0103 test ETH · 0 of 3 automatic restarts used today');
+    // Not a leak: Resume is the plain one, said not to be needed.
     const resume = tool(page, 'Resume');
     await expect(resume.locator('[name="keyConfirmed"]')).toHaveCount(0);
+    await expect(resume).toContainText('You don’t need Resume for this pause: it restarts by itself within about a minute of the money arriving.');
     await shot(page, info, 'detail-paused-out-of-money');
-
     await useTool(resume, { button: 'Resume', note: n('Pressed before the refill to see what it says'), confirm: 'Resume gas sponsorship? The relayer checks the network first' });
     await expectAnswer(page, 'Resume: the relayer said no. Nothing was changed.', 'The problem is still there: the relayer’s wallet can’t send transactions: it is out of money.');
 
+    // The money arrives: the page says so, asks for nothing, and it restarts by itself on the relayer's next run.
+    await scenario(lane, 'money-arrives');
+    await page.reload();
+    await expect(nowPanel(page)).toContainText('Restarting by itself');
+    await expect(nowPanel(page).locator('.explain-why')).toHaveText('The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within about a minute.');
+    await expect(nowPanel(page)).not.toContainText('Send at least');
+    await shot(page, info, 'detail-money-arrived');
     await scenario(lane, 'refill');
     await page.reload();
-    await expect(nowPanel(page)).toContainText('Money in the wallet1 test ETH · low below 0.01 test ETH');
-    const note = n('Sent 1.01 test ETH from the local node account; balance now 1');
+    await expect(nowPanel(page)).toContainText('Working');
+    await expect(nowPanel(page)).toContainText(/Last restartRestarted by itself after a refill, \d+ s ago \(1 of 3 today\)/u);
+    const restart = page.locator('.panel', { has: page.getByRole('heading', { name: 'Recent staff actions', exact: true }) }).locator('tbody tr').first();
+    await expect(restart).toContainText('The relayer itself');
+    await expect(restart).toContainText('Restarted by itself after a refill');
+    await expect(restart).toContainText('Trusted endpoint: balance 1000000000000000000 wei');
+    await shot(page, info, 'detail-restarted-by-itself');
+    await expectStaffLog(lane, [
+      ['resume', true, null, 'auto'],
+      ['resume', false, 'relayer_cannot_send'],
+    ]);
+
+    // Out of money again at once (within 30 minutes of restarting by itself): this pause waits for a person.
+    await scenario(lane, 'out-of-money-again');
+    await page.reload();
+    await expect(nowPanel(page)).toContainText('Paused: needs a person');
+    await expect(nowPanel(page).locator('.explain-why')).toHaveText('The relayer wallet is out of money, so gas sponsorship is paused for everyone. It can’t restart by itself this time: it ran out of money again within 30 minutes of restarting by itself, so a person should look first.');
+    await expect(nowPanel(page).locator('.explain-steps li').nth(2)).toHaveText('Then press Resume on the Gas sponsorship page.');
+    await expect(tool(page, 'Resume')).not.toContainText('You don’t need Resume');
+    await scenario(lane, 'refill');
+    expect((await laneState(lane)).halted).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+    await page.reload();
+    await expect(nowPanel(page).locator('.explain-why')).toHaveText('The relayer wallet has money again (1 test ETH), but gas sponsorship can’t restart by itself: it ran out of money again within 30 minutes of restarting by itself, so a person should look first.');
+    await expect(nowPanel(page).locator('.explain-steps li')).toHaveText(['Don’t send more money.', 'Check the relayer wallet’s recent transactions (ask an engineer if you can’t). If money went out in transfers nobody at Journear made, stop: tell an engineer now.', 'Then press Resume on the Gas sponsorship page.']);
+    await shot(page, info, 'detail-needs-a-person-after-refill');
+    const note = n('Refilled again; the wallet shows only our own transactions');
     await useTool(tool(page, 'Resume'), { button: 'Resume', note, confirm: 'Resume gas sponsorship?' });
     await expectAnswer(page, 'Resume: done', 'Gas sponsorship is running again.');
     await expect(nowPanel(page)).toContainText('Working');
     await shot(page, info, 'detail-resumed');
     await expectStaffLog(lane, [
       ['resume', true, null],
+      ['resume', true, null, 'auto'],
       ['resume', false, 'relayer_cannot_send'],
     ]);
     await expectAudited(page, lane, { tool: 'resume', note, result: 'done' });
@@ -398,8 +456,9 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
 
   test('a stale page or a second tab: the relayer changed, so nothing is done and the page reads it again', async ({ page, context, lane, watch }) => {
     watch.allow(/Failed to load resource: the server responded with a status of 409/u);
+    // Refilled, before the relayer's own run restarts it (D890): Resume still works then, from either tab.
     await scenario(lane, 'out-of-money');
-    await scenario(lane, 'refill');
+    await scenario(lane, 'money-arrives');
     await signIn(page, lane, 'staff', DETAIL);
     const other = await context.newPage();
     await other.goto(`${lane}${DETAIL}`);
@@ -417,6 +476,8 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
     // The stack runs no watchdog: Security & monitoring's watchdog reads answer 503 (said on the page), expected here.
     watch.allow(/Failed to load resource: the server responded with a status of 503/u);
     await scenario(lane, 'out-of-money');
+    // Refilled: it restarts by itself, and the cron's check raises that too (D890).
+    await scenario(lane, 'refill');
     const eventsOf = (heading: string) => page.locator('.panel', { has: page.getByRole('heading', { name: heading, exact: true }) }).locator('tbody tr');
     for (const [path, heading] of [
       ['/security', 'Security events not yet emailed'],
@@ -427,6 +488,7 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
       for (const [kind, words, playbook] of [
         ['evm_relay_stuck', 'Gas sponsorship: paused or slow, needs a look', 'Gas sponsorship is paused or slow'],
         ['evm_relay_balance_low', 'Gas sponsorship: the relayer wallet is running low', 'Gas sponsorship: the relayer wallet is running low'],
+        ['evm_relay_auto_resumed', 'Gas sponsorship: restarted by itself after the relayer wallet was refilled', 'Gas sponsorship: restarted by itself after the relayer wallet was refilled'],
       ] as const) {
         const row = events.filter({ hasText: kind }).first();
         await expect(row, `${path} ${kind}`).toContainText(words);

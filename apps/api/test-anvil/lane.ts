@@ -35,6 +35,11 @@ export const GWEI = 10n ** 9n;
 export { CHECK_IN, CHECK_IN_DATA, PREPARE, SEND, TOKEN, TRANSFER_SELECTOR, transferData };
 
 const REAL_FETCH = globalThis.fetch;
+/**
+ * A second name for the same node (a loopback host, as a `local*` env allows): a world given it as `rpcFallback` has
+ * the second endpoint the relayer's automatic restart after a refill asks (D890). Fetched as the node itself.
+ */
+export const LANE_FALLBACK: string | null = LANE.url ? LANE.url.replace(/^http:\/\/[^:/]+/u, 'http://anvil-fallback.localhost') : null;
 
 export const toHex = (b: Uint8Array): Hex => `0x${Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')}`;
 export const fromHex = (h: string): Uint8Array<ArrayBuffer> => {
@@ -171,6 +176,7 @@ export function routeAnvil(): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     if (LANE.url && (url === LANE.url || url === `${LANE.url}/`)) return REAL_FETCH(input, init);
+    if (LANE_FALLBACK && (url === LANE_FALLBACK || url === `${LANE_FALLBACK}/`)) return REAL_FETCH(LANE.url!, init);
     if (before) return before(input, init);
     throw new Error('Unexpected fetch');
   });

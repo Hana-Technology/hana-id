@@ -31,7 +31,7 @@
 //
 // THE OBJECT: fresh (no `nextNonce`) → running → halted(reason). A fresh object reads the pending count ONCE (its first
 // send); after that only `nextNonce + 1` per send, or staffAdoptNonce raising it, sets it. NOTHING clears a halt by
-// itself: only staffResume, which re-reads the chain and refuses while any condition holds. Conditions, checked by
+// itself but ONE case (D890, below): staffResume, which re-reads the chain and refuses while any condition holds. Conditions, checked by
 // every alarm run (also with no records: hourly), at send where noted, and by staffResume; none is user-triggerable:
 //   nonce_consumed_elsewhere  the confirmed count is past a nonce, a complete check finds no receipt of its versions.
 //   nonce_gap                 the pending count below the lowest record unmined at head (or `nextNonce`), twice running.
@@ -50,6 +50,16 @@
 //   staffAdoptNonce(n)  no unmined record, n ≥ nextNonce (so above every record), latest == pending == n.
 //   staffResume         only with `keyConfirmed` once the pause is marked `leakSeen` (a leak-type reason or condition
 //                       seen during it, or a staff Close/Fill/AdoptNonce done during it): `key_confirmation_required`.
+// THE ONE AUTOMATIC RESTART (D890, the founder's decision): a pause for money (`relayer_cannot_send` ·
+// `insufficient_funds`) ends by itself on an alarm run (never on a request) only when ALL hold: the only reason is money;
+// not `leakSeen`; fewer than 3 automatic restarts this UTC day; the pause began 30 minutes or more after the last one
+// and is 60 s old; the run's own verdict is staffResume's (no condition, complete); every record below the latest count
+// has its own receipt and every record unmined at head was taken by an endpoint; the key loaded; the trusted endpoint's
+// balance ≥ `lowBalanceEth` + every waiting record's gas at the gas price limit (× 2 on an OP Stack chain) and no code
+// at the relayer's address (code: the pause is marked `leakSeen`); the ONE other configured endpoint agrees (the same
+// latest count, pending ≤ nextNonce, the balance, no code; none configured, unreadable or different: it waits for a
+// person). Recorded as a staff action (who `relayer (automatic)`, the evidence in its note) and raised by the cron
+// (`evm_relay_auto_resumed`). While paused for money the alarm runs every 15 s for 10 minutes, then every 60 s.
 //
 // Concurrency: send, the alarm and the staff tools run through one FIFO queue (`exclusive`) across their RPC awaits;
 // each storage change is one `transactionSync`. `status`, `lookup`, `staffStatus` read storage only. Bounded: ≤ 45
@@ -67,7 +77,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import type { Env } from './env.ts';
 import { isLeakHalt } from '@hana-id/console-core';
 import { log } from './log.ts';
-import { type EvmBroadcast, type EvmReceipt, type EvmRejection, EvmRpcError, type Hex, type SponsorChain, receiptCostWei, sponsorChainFor } from './evm/sponsor-chain.ts';
+import { type EvmBroadcast, type EvmReceipt, type EvmRejection, EvmRpcError, type Hex, SponsorChain, receiptCostWei, sponsorChainFor, sponsorSecondEndpoint } from './evm/sponsor-chain.ts';
 import { type EvmSponsorChainConfig, type EvmSponsorConfig, checksumEvmAddress, parseEvmSponsorConfig, sponsorChain } from './evm/sponsor-config.ts';
 
 export type { Hex };
@@ -96,6 +106,21 @@ export const EVM_RELAYER_STUCK_AFTER_DEADLINE_MS = 30 * 60_000;
 export const EVM_RELAYER_MAX_REQUESTS = 45;
 export const EVM_RELAYER_RUN_LIMITS = Object.freeze({ receipts: 20, signatures: 4 });
 export const CANCEL_GAS = 21_000n;
+/** D890: automatic restarts after a refill a UTC day, at most. */
+export const EVM_RELAYER_AUTO_RESTARTS_PER_DAY = 3;
+/** D890: a money pause restarts by itself only once it is this old (several runs looked at the chain during it). */
+export const EVM_RELAYER_AUTO_MIN_PAUSE_MS = 60_000;
+/** D890: a money pause that began within this of the last automatic restart waits for a person (it ran out again fast). */
+export const EVM_RELAYER_AUTO_RAN_OUT_AGAIN_MS = 30 * 60_000;
+/** D890 (D882's question): while paused for money, 15 s for this long, then every EVM_RELAYER_MONEY_CHECK_MS. */
+export const EVM_RELAYER_MONEY_FAST_MS = 10 * 60_000;
+export const EVM_RELAYER_MONEY_CHECK_MS = 60_000;
+/** Who an automatic restart is recorded as, in the staff log. */
+export const EVM_RELAYER_AUTO_WHO = 'relayer (automatic)';
+/** The fetches an automatic restart's own reads may need: 4 on the trusted endpoint, 5 on the other (its chain check included). */
+const AUTO_FETCHES = 9;
+/** Subrequests an invocation may make on the free plan: the run's and the restart's reads together stay under it. */
+const PLATFORM_FETCHES = 50;
 /** EIP-7702's per-authorization cost and EIP-7623's calldata floor, as nodes check a transaction's intrinsic gas. */
 const AUTHORIZATION_GAS = 25_000n;
 const FLOOR_PER_TOKEN = 10n;
@@ -177,7 +202,44 @@ export interface EvmRelayerLookup {
   versionFees?: { hash: Hex; maxFeePerGas: bigint }[];
 }
 /** `oldestUnacceptedMs`: the age of the oldest record no endpoint has taken any version of (for an alert), or null. */
-export interface EvmRelayerStatus { address: Hex; unmined: number; awaitingConfirmation: number; oldestUnminedMs: number | null; oldestUnacceptedMs: number | null; nextNonce: number | null; halted: null | EvmRelayerHalt }
+export interface EvmRelayerStatus {
+  address: Hex;
+  unmined: number;
+  awaitingConfirmation: number;
+  oldestUnminedMs: number | null;
+  oldestUnacceptedMs: number | null;
+  nextNonce: number | null;
+  halted: null | EvmRelayerHalt;
+  /** D890: when it restarted by itself after a refill, newest first (the last few): the cron raises each as an event. */
+  autoRestartedAt?: number[];
+}
+/** A money pause is a pause whose reason is `relayer_cannot_send` with `insufficient_funds` (D890). */
+export const isMoneyHalt = (h: { reason: string; code?: string | null } | null | undefined): boolean => h?.reason === 'relayer_cannot_send' && h.code === 'insufficient_funds';
+/**
+ * What staff are shown about the automatic restart (D890): today's count and the limit, the recent times, and while
+ * paused, `blocked` (what in storage rules a restart by itself out, or null), the amounts (wei, decimal) a restart by
+ * itself and a Resume need with what is waiting now, and this pause's latest check (what held it back, the balance seen).
+ */
+export interface EvmRelayerAutoRestart {
+  limit: number;
+  today: number;
+  recent: number[];
+  pause: null | {
+    blocked: EvmRelayerAutoBlock | null;
+    restartWei: string;
+    resumeWei: string;
+    check: null | { at: number; blocked: EvmRelayerAutoBlock | EvmRelayerHaltReason | 'incomplete_check' | null; balanceWei: string | null };
+  };
+}
+/**
+ * Why a money pause doesn't restart by itself. In storage (a person is needed): `not_money` (another reason), `leak_seen`,
+ * `daily_limit`, `ran_out_again` (it began within 30 minutes of the last automatic restart), `no_second_endpoint`,
+ * `no_key`, `unconfigured`. On a check (it may still restart on a later run): `pause_too_new`, `unexplained_slot` (a
+ * record below the latest count without its own receipt), `waiting_not_taken`, `busy` (the run used its fetches),
+ * `balance_short`, `balance_unreadable` (a fresh read failed), `code_at_relayer` (marks the pause `leakSeen`),
+ * `second_endpoint_unavailable`, `second_endpoint_disagrees`.
+ */
+export type EvmRelayerAutoBlock = 'not_money' | 'leak_seen' | 'daily_limit' | 'ran_out_again' | 'no_second_endpoint' | 'no_key' | 'unconfigured' | 'pause_too_new' | 'unexplained_slot' | 'waiting_not_taken' | 'busy' | 'balance_short' | 'balance_unreadable' | 'code_at_relayer' | 'second_endpoint_unavailable' | 'second_endpoint_disagrees';
 /** `send`'s answer: the transaction (`ok: true`), or a coded refusal (`ok: false`: nothing was sent) as a value. */
 export type EvmRelayerSendAnswer = ({ ok: true } & EvmRelayerSent) | { ok: false; refused: EvmRelayerErrorCode; reason: string | null };
 export interface EvmRelayerStaffEntry {
@@ -190,9 +252,13 @@ export interface EvmRelayerStaffEntry {
   note: string;
   done: boolean;
   refused: string | null;
+  /** D890: the relayer restarted itself after a refill (who is EVM_RELAYER_AUTO_WHO; the note holds what it saw). */
+  auto?: true;
 }
 /** Every record as stored (no raw transactions), the day's backstop and the last 50 staff actions. */
 export interface EvmRelayerStaffStatus extends EvmRelayerStatus {
+  /** D890: the automatic restart after a refill. */
+  autoRestart: EvmRelayerAutoRestart;
   chainId: number | null;
   /** The UTC day (ms ÷ 1 day) `dayWei` counts; null before the first send. An earlier day's `dayWei` isn't today's spend. */
   day: number | null;
@@ -407,6 +473,11 @@ interface Meta {
   staffSeq: number;
   /** Refusals that would halt but the trusted endpoint did not confirm (no halt), for staff: how many, the last. */
   unconfirmedRefusal?: { count: number; lastAt: number; nonce: number; code: string };
+  /**
+   * D890: the automatic restarts: the UTC day `count` counts, the recent times (newest first, at most 5), and the latest
+   * check during a money pause (`since`: that pause's start, so an older pause's check is never shown as this one's).
+   */
+  auto?: { day: number; count: number; recent: number[]; check: null | { at: number; since: number; blocked: string | null; balanceWei: string | null } };
 }
 interface StoredAuthorization { chainId: number; address: Hex; nonce: string; yParity: 0 | 1; r: Hex; s: Hex }
 interface Version { hash: Hex; raw: Hex; kind: 'execute' | 'cancel'; maxFeePerGas: string; maxPriorityFeePerGas: string }
@@ -483,7 +554,7 @@ interface Ctx {
 type Counts = { head: number; baseFee: bigint; confirmedBlock: number; latest: number; confirmed: number; pending: number };
 type Condition = { reason: EvmRelayerHaltReason; nonce?: number; code?: string };
 /** `incomplete`: a record past the confirmed count could not be fully checked this run (budget or a failed read). */
-type RunResult = { conditions: Condition[]; changed: boolean; incomplete: boolean; gap: number | null };
+type RunResult = { conditions: Condition[]; changed: boolean; incomplete: boolean; gap: number | null; counts: Counts | null };
 /** What a section did that costs CPU: logged as `evmOps` (cold-isolate CPU on the free plan is measured at deploy). */
 type Ops = { signatures: number; recoveries: number; fetches: number; keyDerivations: number };
 
@@ -546,6 +617,7 @@ export class EvmRelayer extends DurableObject<Env> {
       oldestUnacceptedMs: oldestUnaccepted === null ? null : Math.max(0, Date.now() - oldestUnaccepted),
       nextNonce: meta?.nextNonce ?? null,
       halted: meta?.halted ?? null,
+      autoRestartedAt: [...(meta?.auto?.recent ?? [])],
     };
   }
 
@@ -587,11 +659,27 @@ export class EvmRelayer extends DurableObject<Env> {
       if (this.#records().length === 0 && c.keyAddress && c.keyAddress !== meta.address) this.#putMeta({ ...meta, address: c.keyAddress, nextNonce: null });
       const out = await this.#run(c, Date.now());
       this.#markLeak(out.conditions.filter((x) => x.reason !== 'nonce_gap' || meta.gapSeen === x.nonce));
-      if (out.conditions.length > 0) return out.conditions[0]!.reason;
-      if (out.incomplete) return 'incomplete_check';
-      this.#putMeta({ ...this.#meta()!, halted: null, gapSeen: null });
+      const verdict = this.#resumeVerdict(out);
+      if (verdict) return verdict;
+      this.#endHalt();
       return null;
     });
+  }
+
+  /**
+   * staffResume's verdict on a fresh run, also the automatic restart's (D890): the first condition found (any, a gap
+   * seen once included), else `incomplete_check` when a record past the confirmed count couldn't be fully checked, else
+   * null (nothing found: the halt may end).
+   */
+  #resumeVerdict(out: RunResult): EvmRelayerHaltReason | 'incomplete_check' | null {
+    if (out.conditions.length > 0) return out.conditions[0]!.reason;
+    if (out.incomplete) return 'incomplete_check';
+    return null;
+  }
+
+  /** Ends the halt (staffResume, or the automatic restart once its verdict and its own checks pass). */
+  #endHalt(): void {
+    this.#putMeta({ ...this.#meta()!, halted: null, gapSeen: null });
   }
 
   async staffClose(guard: string, who: string, nonce: number, verdict: 'consumed_elsewhere', note: string, expect?: EvmRelayerStaffExpect): Promise<EvmRelayerStaffResult> {
@@ -849,8 +937,10 @@ export class EvmRelayer extends DurableObject<Env> {
       this.#markLeak(counted);
       for (const x of out.conditions) log({ event: 'evm_relayer_condition', chainId: meta.chainId, code: x.reason, ...(x.nonce !== undefined ? { nonce: String(x.nonce) } : {}) }, 'warn');
       if (this.#meta()!.gapSeen !== out.gap) this.#putMeta({ ...this.#meta()!, gapSeen: out.gap });
+      // D890: a pause for money may end by itself, on this run's own result (the fresh run staffResume would make).
+      const restarted = isMoneyHalt(this.#meta()!.halted) ? await this.#autoRestart(c, now, out) : false;
       log({ event: 'evm_relayer_run', chainId: meta.chainId, evmOps: this.#ops });
-      await this.#schedule(now, out.changed);
+      await this.#schedule(now, out.changed || restarted);
     } finally {
       c.key?.fill(0);
     }
@@ -863,12 +953,12 @@ export class EvmRelayer extends DurableObject<Env> {
    */
   async #run(c: Ctx, now: number): Promise<RunResult> {
     const meta = this.#meta()!;
-    const out: RunResult = { conditions: [], changed: false, incomplete: false, gap: null };
+    const out: RunResult = { conditions: [], changed: false, incomplete: false, gap: null, counts: null };
     const records = this.#records();
     if (records.length > 0 && (c.keyWrong || (c.keyAddress !== null && c.keyAddress !== meta.address))) out.conditions.push({ reason: 'key_mismatch' });
     if (this.#inconsistency(meta, records)) out.conditions.push({ reason: 'storage_inconsistent' });
     const rpc = this.#client(c);
-    const n = await this.#counts(rpc, meta.address);
+    const n = (out.counts = await this.#counts(rpc, meta.address));
     if (meta.nextNonce !== null && Math.max(n.latest, n.pending) > meta.nextNonce) out.conditions.push({ reason: 'foreign_transactions', nonce: meta.nextNonce });
 
     const budget = { left: EVM_RELAYER_RUN_LIMITS.receipts };
@@ -1015,6 +1105,161 @@ export class EvmRelayer extends DurableObject<Env> {
     if (d.state === 'closed') log({ event: 'evm_relay_closed', nonce: String(r.nonce), code: d.outcome }, 'warn');
   }
 
+  // ---- the automatic restart after a refill (D890) ----
+
+  /**
+   * The one automatic end of a halt (see the header). Called only by an alarm run, while the pause is for money, with
+   * that run's own result: the fresh run staffResume makes, judged by the same `#resumeVerdict`, then this restart's own
+   * checks, cheapest first (a chain read only once everything in storage allows it). Each check is kept as this
+   * pause's latest (for staff); a restart ends the halt as staffResume does and is recorded as a staff action with
+   * what it saw. Returns whether it restarted. Never throws for a failed read (it waits for the next run).
+   */
+  async #autoRestart(c: Ctx, now: number, out: RunResult): Promise<boolean> {
+    const meta = this.#meta()!;
+    const h = meta.halted!;
+    const records = this.#records();
+    const need = this.#restartWei(c.chain, records);
+    const seen = await this.#autoCheck(c, meta, records, need, now, out);
+    this.#ops.fetches += seen.fetches;
+    const { blocked } = seen;
+    if (blocked === 'code_at_relayer') this.#markLeak([], 'code_at_relayer');
+    const today = Math.floor(now / DAY_MS);
+    const a = this.#meta()!.auto ?? { day: today, count: 0, recent: [], check: null };
+    const check = { at: now, since: h.since, blocked, balanceWei: seen.balanceWei === null ? null : seen.balanceWei.toString() };
+    if (blocked !== null || !seen.second || !out.counts) {
+      this.#putMeta({ ...this.#meta()!, auto: { ...a, check } });
+      // Logged when what holds it back changes (not every run).
+      if (blocked !== a.check?.blocked || h.since !== a.check?.since) log({ event: 'evm_relayer_auto_restart_waiting', chainId: c.chain.chainId, code: blocked ?? 'internal' }, blocked === 'code_at_relayer' || blocked === 'second_endpoint_disagrees' ? 'error' : 'info');
+      return false;
+    }
+    const n = out.counts;
+    const s = seen.second;
+    const t = seen.trusted!;
+    const note = `Restarted by itself after a refill (D890). Trusted endpoint: balance ${seen.balanceWei} wei (at least ${need} needed), count ${t.latest} (pending ${t.pending}, next slot ${meta.nextNonce ?? 'none'}) after block ${n.head}, no code at the wallet. Second endpoint: count ${s.latest} (pending ${s.pending}), balance ${s.balance} wei, no code.`;
+    this.ctx.storage.transactionSync(() => {
+      this.#endHalt();
+      this.#putMeta({ ...this.#meta()!, auto: { day: today, count: (a.day === today ? a.count : 0) + 1, recent: [now, ...a.recent].slice(0, 5), check } });
+      this.#putStaffEntry({ at: now, who: EVM_RELAYER_AUTO_WHO, action: 'resume', nonce: null, verdict: null, note, done: true, refused: null, auto: true });
+    });
+    log({ event: 'evm_relayer_auto_restarted', chainId: c.chain.chainId, code: 'insufficient_funds' }, 'warn');
+    return true;
+  }
+
+  /** The automatic restart's checks in order (see #autoRestart): what holds it back (null: nothing), and what it read. */
+  async #autoCheck(
+    c: Ctx,
+    meta: Meta,
+    records: Rec[],
+    need: bigint,
+    now: number,
+    out: RunResult,
+  ): Promise<{ blocked: EvmRelayerAutoBlock | EvmRelayerHaltReason | 'incomplete_check' | null; balanceWei: bigint | null; second: { latest: number; pending: number; balance: bigint } | null; trusted?: { latest: number; pending: number }; fetches: number }> {
+    const h = meta.halted!;
+    const none = { balanceWei: null, second: null, fetches: 0 };
+    const stored = this.#autoBlocked(meta, c.chain, this.#canSign(c, meta), now);
+    if (stored) return { blocked: stored, ...none };
+    if (now - h.since < EVM_RELAYER_AUTO_MIN_PAUSE_MS) return { blocked: 'pause_too_new', ...none };
+    const verdict = this.#resumeVerdict(out);
+    if (verdict) return { blocked: verdict, ...none };
+    const n = out.counts;
+    if (!n) return { blocked: 'incomplete_check', ...none };
+    // The counts explained by our own records alone: every slot the network counts as used has its own receipt, and
+    // every one still waiting was taken by an endpoint (none refused, none held off by something else at its slot).
+    if (records.some((r) => r.nonce < n.latest && r.seen === null)) return { blocked: 'unexplained_slot', ...none };
+    if (records.some((r) => r.nonce >= n.latest && (!r.accepted || r.cannotSend !== null || r.priceRefused === true))) return { blocked: 'waiting_not_taken', ...none };
+    if (this.#ops.fetches > PLATFORM_FETCHES - AUTO_FETCHES) return { blocked: 'busy', ...none };
+    // Fresh reads of the trusted endpoint now (the run's counts were read before its broadcasts): the counts still
+    // explained by our own records, the balance, and no code at the relayer's own address. Code there (an EIP-7702
+    // delegation signed with its key) would let anyone move its money with no transaction of its own: no count shows it.
+    const trusted = sponsorChainFor(this.env, c.chain, { maxRequests: 4 });
+    const used = (o?: SponsorChain): number => trusted.requestsUsed + (o?.requestsUsed ?? 0);
+    let now2: { latest: number; pending: number; balance: bigint; code: Hex };
+    try {
+      now2 = { latest: await trusted.transactionCount(meta.address, 'latest'), pending: await trusted.transactionCount(meta.address, 'pending'), balance: await trusted.balance(meta.address), code: await trusted.code(meta.address) };
+    } catch {
+      return { blocked: 'balance_unreadable', ...none, fetches: used() };
+    }
+    const { balance: balanceWei } = now2;
+    if (now2.code !== '0x') return { blocked: 'code_at_relayer', balanceWei, second: null, fetches: used() };
+    // A slot used since the run's read without its own receipt seen yet, or counts past our next slot: the next run decides.
+    const next = meta.nextNonce ?? 0;
+    if (now2.latest < n.latest || now2.latest > next || now2.pending > next || now2.pending < now2.latest || records.some((r) => r.nonce < now2.latest && r.seen === null)) return { blocked: 'unexplained_slot', balanceWei, second: null, fetches: used() };
+    if (balanceWei < need) return { blocked: 'balance_short', balanceWei, second: null, fetches: used() };
+    // The one other endpoint: it can only hold this back (never evidence for a halt or a mark).
+    const url = sponsorSecondEndpoint(this.env, c.chain)!;
+    const other = new SponsorChain(c.chain.chainId, { read: url, broadcast: [url] }, { maxRequests: 5 });
+    try {
+      const latest = await other.transactionCount(meta.address, 'latest');
+      const pending = await other.transactionCount(meta.address, 'pending');
+      const balance = await other.balance(meta.address);
+      const code2 = await other.code(meta.address);
+      const second = { latest, pending, balance };
+      const agrees = latest === now2.latest && pending >= latest && pending <= next && balance >= need && code2 === '0x';
+      return { blocked: agrees ? null : 'second_endpoint_disagrees', balanceWei, second, trusted: { latest: now2.latest, pending: now2.pending }, fetches: used(other) };
+    } catch {
+      return { blocked: 'second_endpoint_unavailable', balanceWei, second: null, fetches: used(other) };
+    }
+  }
+
+  /**
+   * What in storage rules an automatic restart out (a person is needed), or null: another reason than money, a leak
+   * sign during the pause, today's limit used, a pause that began within 30 minutes of the last automatic restart, no
+   * settings, no second endpoint to check with, the key not loaded (or not the records' signer).
+   */
+  #autoBlocked(meta: Meta, chain: Readonly<EvmSponsorChainConfig> | null, keyOk: boolean, now: number): EvmRelayerAutoBlock | null {
+    const h = meta.halted;
+    if (!h || !isMoneyHalt(h)) return 'not_money';
+    if (h.leakSeen) return 'leak_seen';
+    const a = meta.auto;
+    if (a && a.day === Math.floor(now / DAY_MS) && a.count >= EVM_RELAYER_AUTO_RESTARTS_PER_DAY) return 'daily_limit';
+    const last = a?.recent[0];
+    if (last !== undefined && h.since - last < EVM_RELAYER_AUTO_RAN_OUT_AGAIN_MS) return 'ran_out_again';
+    if (!chain) return 'unconfigured';
+    if (sponsorSecondEndpoint(this.env, chain) === null) return 'no_second_endpoint';
+    if (!keyOk) return 'no_key';
+    return null;
+  }
+
+  /** What an automatic restart needs in the wallet: the low-balance mark plus every waiting record's gas at the gas price limit (× 2 on an OP Stack chain, for its L1 fee). */
+  #restartWei(chain: Readonly<EvmSponsorChainConfig>, records: Rec[]): bigint {
+    const f = chain.opStack ? 2n : 1n;
+    return records.filter((r) => r.seen === null).reduce((sum, r) => sum + BigInt(r.gas) * chain.maxFeePerGasWei * f, chain.lowBalanceWei);
+  }
+
+  /** What Resume needs in the wallet: every waiting record's gas at its own latest max fee (what a node checks before taking it), × 2 on an OP Stack chain. */
+  #resumeWei(chain: Readonly<EvmSponsorChainConfig>, records: Rec[]): bigint {
+    const f = chain.opStack ? 2n : 1n;
+    return records.filter((r) => r.seen === null).reduce((sum, r) => sum + BigInt(r.gas) * BigInt(latestOf(r).maxFeePerGas) * f, 0n);
+  }
+
+  /** The chain's settings, or null when the env's block is refused or lacks the chain (no throw, no log: for views). */
+  #chainSettings(chainId: number | undefined): Readonly<EvmSponsorChainConfig> | null {
+    if (chainId === undefined) return null;
+    const setting = parseEvmSponsorConfig(this.env.EVM_SPONSOR, { network: this.env.NETWORK, envName: this.env.ENV_NAME, pinnedDelegates: SPONSOR_DELEGATES });
+    return setting.status === 'configured' ? (sponsorChain((setting as { config: EvmSponsorConfig }).config, chainId) ?? null) : null;
+  }
+
+  /** The automatic restart as staff see it (storage and the settings only). */
+  #autoView(meta: Meta | undefined, now: number): EvmRelayerAutoRestart {
+    const a = meta?.auto;
+    const today = Math.floor(now / DAY_MS);
+    const base = { limit: EVM_RELAYER_AUTO_RESTARTS_PER_DAY, today: a && a.day === today ? a.count : 0, recent: [...(a?.recent ?? [])] };
+    if (!meta?.halted) return { ...base, pause: null };
+    const chain = this.#chainSettings(meta.chainId);
+    const key = evmRelayKeyAddress(this.env.EVM_RELAY_KEYS);
+    const records = this.#records();
+    const check = a?.check && a.check.since === meta.halted.since ? { at: a.check.at, blocked: a.check.blocked as EvmRelayerAutoBlock | null, balanceWei: a.check.balanceWei } : null;
+    return {
+      ...base,
+      pause: {
+        blocked: this.#autoBlocked(meta, chain, key !== null && key === meta.address, now),
+        restartWei: chain ? this.#restartWei(chain, records).toString() : '0',
+        resumeWei: chain ? this.#resumeWei(chain, records).toString() : '0',
+        check,
+      },
+    };
+  }
+
   // ---- shared steps ----
 
   /** Runs `fn` after every earlier one has finished: never two at once, across their awaits. */
@@ -1087,13 +1332,14 @@ export class EvmRelayer extends DurableObject<Env> {
 
   /**
    * Marks the current pause `leakSeen` (D843) when any of `conds` means the key may be someone else's (console-core
-   * `isLeakHalt`), or with `staff` (a Close, Fill or AdoptNonce done during it). Running, or already marked: nothing.
+   * `isLeakHalt`), or `by` a staff Close, Fill or AdoptNonce done during it, or (D890) code found at the relayer's own
+   * address by the automatic restart's check. Running, or already marked: nothing.
    */
-  #markLeak(conds: readonly Condition[], staff = false): void {
+  #markLeak(conds: readonly Condition[], by: 'staff_tool' | 'code_at_relayer' | null = null): void {
     const m = this.#meta();
-    if (!m?.halted || m.halted.leakSeen || !(staff || conds.some((x) => isLeakHalt(x)))) return;
+    if (!m?.halted || m.halted.leakSeen || !(by || conds.some((x) => isLeakHalt(x)))) return;
     this.#putMeta({ ...m, halted: { ...m.halted, leakSeen: true } });
-    log({ event: 'evm_relayer_leak_seen', chainId: m.chainId, code: staff ? 'staff_tool' : conds.find((x) => isLeakHalt(x))!.reason }, 'error');
+    log({ event: 'evm_relayer_leak_seen', chainId: m.chainId, code: by ?? conds.find((x) => isLeakHalt(x))!.reason }, 'error');
   }
 
   #meta(): Meta | undefined {
@@ -1124,9 +1370,16 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
-  /** While records exist: 15 s after a change, else double up to 5 minutes. Else hourly (or the next forget time if sooner). */
+  /** Paused for money: see below. While records exist: 15 s after a change, else double up to 5 minutes. Else hourly (or the next forget time if sooner). */
   async #schedule(now: number, changed: boolean): Promise<void> {
     const m = this.#meta()!;
+    // Paused for money (D890, D882's question): every 15 s for the pause's first 10 minutes, then every 60 s, records or
+    // not, so a refill is noticed within about a minute (the automatic restart) at a quarter of the calls.
+    if (isMoneyHalt(m.halted)) {
+      const every = changed || now - m.halted!.since < EVM_RELAYER_MONEY_FAST_MS ? EVM_RELAYER_ALARM_MS : EVM_RELAYER_MONEY_CHECK_MS;
+      if (m.alarmMs !== every) this.#putMeta({ ...m, alarmMs: every });
+      return this.ctx.storage.setAlarm(now + every);
+    }
     const records = this.#records();
     if (records.length > 0) {
       // Never backed off while a record is unmined and no endpoint has taken it (it may be holding every later one up).
@@ -1162,20 +1415,14 @@ export class EvmRelayer extends DurableObject<Env> {
         if (expect && ((meta?.halted?.since ?? null) !== expect.haltSince || (meta?.staffSeq ?? 0) !== expect.lastStaffSeq)) refused = 'version_conflict';
         else if (meta) refused = await fn(meta, (c = this.#context(meta.chainId)));
         // A slot closed, filled or set by hand during a pause: Resume then needs the key confirmed (D843).
-        if (refused === null && meta?.halted && what.action !== 'resume' && what.action !== 'cancel') this.#markLeak([], true);
+        if (refused === null && meta?.halted && what.action !== 'resume' && what.action !== 'cancel') this.#markLeak([], 'staff_tool');
       } catch (e) {
         refused = evmRelayerError(e)?.code ?? (e instanceof EvmRpcError ? 'rpc_unavailable' : 'internal');
       } finally {
         c?.key?.fill(0);
       }
-      const m = this.#meta();
-      if (m) {
-        const seq = m.staffSeq + 1;
-        this.ctx.storage.transactionSync(() => {
-          this.ctx.storage.kv.put(staffKey(seq), { seq, at: Date.now(), who, ...what, note, done: refused === null, refused } satisfies EvmRelayerStaffEntry);
-          if (seq > STAFF_LOG_KEEP) this.ctx.storage.kv.delete(staffKey(seq - STAFF_LOG_KEEP));
-          this.#putMeta({ ...this.#meta()!, staffSeq: seq });
-        });
+      if (this.#meta()) {
+        this.ctx.storage.transactionSync(() => this.#putStaffEntry({ at: Date.now(), who, ...what, note, done: refused === null, refused }));
         await this.#schedule(Date.now(), true);
       }
       log({ event: 'evm_relayer_staff', code: `${what.action}_${refused === null ? 'done' : 'refused'}`, ...(what.nonce !== null ? { nonce: String(what.nonce) } : {}) }, 'warn');
@@ -1183,11 +1430,20 @@ export class EvmRelayer extends DurableObject<Env> {
     });
   }
 
+  /** Adds one staff log entry (the next number; the oldest past 200 dropped). Inside the caller's transaction. */
+  #putStaffEntry(e: Omit<EvmRelayerStaffEntry, 'seq'>): void {
+    const m = this.#meta()!;
+    const seq = m.staffSeq + 1;
+    this.ctx.storage.kv.put(staffKey(seq), { seq, ...e } satisfies EvmRelayerStaffEntry);
+    if (seq > STAFF_LOG_KEEP) this.ctx.storage.kv.delete(staffKey(seq - STAFF_LOG_KEEP));
+    this.#putMeta({ ...m, staffSeq: seq });
+  }
+
   async #staffView(): Promise<EvmRelayerStaffStatus> {
     const meta = this.#meta();
     const s = await this.status().catch(() => ({ address: '0x' as Hex, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, oldestUnacceptedMs: null, nextNonce: null, halted: null }));
     const records = this.#records().map(({ versions, to: _t, data: _d, authorization: _a, ...r }) => ({ ...r, versions: versions.map(({ raw: _r, ...v }) => v) }));
     const staffLog = Array.from(this.ctx.storage.kv.list<EvmRelayerStaffEntry>({ prefix: 'staff:', reverse: true, limit: 50 }), ([, v]) => v);
-    return { ...s, chainId: meta?.chainId ?? null, day: meta?.day ?? null, dayWei: BigInt(meta?.dayWei ?? '0'), gapSeen: meta?.gapSeen ?? null, unconfirmedRefusal: meta?.unconfirmedRefusal ?? null, records, staffLog };
+    return { ...s, chainId: meta?.chainId ?? null, day: meta?.day ?? null, dayWei: BigInt(meta?.dayWei ?? '0'), gapSeen: meta?.gapSeen ?? null, unconfirmedRefusal: meta?.unconfirmedRefusal ?? null, records, staffLog, autoRestart: this.#autoView(meta, Date.now()) };
   }
 }

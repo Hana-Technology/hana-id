@@ -971,6 +971,19 @@ describe('the relayer checks (cron): balance and stuck transactions', () => {
     await checkEvmSponsorRelay({ ...e, EVM_SPONSOR: undefined } as typeof env);
     expect(s.chain.calls).toEqual([]);
   });
+
+  it('D890: each automatic restart the relayer reports raises evm_relay_auto_resumed once (its id the restart’s time); none older than a day, none malformed', async () => {
+    const s = await setup();
+    const now = Date.now();
+    const recent = [now - 60_000, now - 2 * 60 * 60_000, now - 2 * 86_400_000, 'x' as never];
+    sponsorPorts.relayer = () => ({ send: async () => Promise.reject(new Error('unused')), status: async () => ({ address: RELAYER, unmined: 0, awaitingConfirmation: 0, oldestUnminedMs: null, oldestUnacceptedMs: null, nextNonce: 5, halted: null, autoRestartedAt: recent }), lookup: async () => null });
+    const e = { ...env, ...s.bindings } as typeof env;
+    await checkEvmSponsorRelay(e, now);
+    await checkEvmSponsorRelay(e, now + 15 * 60_000);
+    const rows = (await env.DB.prepare("SELECT detail_json FROM security_events WHERE kind = 'evm_relay_auto_resumed' ORDER BY detected_at").all<{ detail_json: string }>()).results.map((r) => JSON.parse(r.detail_json) as { at: number });
+    expect(rows.map((r) => r.at).sort()).toEqual([now - 2 * 60 * 60_000, now - 60_000].sort());
+    expect(rows[0]).toMatchObject({ chainId: LOCAL_CHAIN });
+  });
 });
 
 // ---- after the independent review (2026-11-17): M1–M3, L1–L5 ----

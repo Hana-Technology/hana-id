@@ -15,6 +15,11 @@ import type { Env } from '../src/env.ts';
 import {
   EVM_RELAYER_ALARM_MAX_MS,
   EVM_RELAYER_ALARM_MS,
+  EVM_RELAYER_AUTO_MIN_PAUSE_MS,
+  EVM_RELAYER_AUTO_RAN_OUT_AGAIN_MS,
+  EVM_RELAYER_AUTO_WHO,
+  EVM_RELAYER_MONEY_CHECK_MS,
+  EVM_RELAYER_MONEY_FAST_MS,
   EVM_RELAYER_BASE_FEE_TTL_MS,
   EVM_RELAYER_BUMP_AFTER_MS,
   EVM_RELAYER_IDLE_CHECK_MS,
@@ -1933,5 +1938,323 @@ describe('D843 re-check M: a sign of a leaked key seen during any pause makes Re
   it('keyConfirmed is a boolean or absent', async () => {
     const stub = await fresh();
     expect(await codeOf(evmRelayerStaffResume(stub, WHO, 'n', undefined, 'yes' as never))).toBe('invalid_request');
+  });
+});
+
+describe('D890: a pause for money restarts by itself after a refill, only on its own evidence', () => {
+  const R = RELAYER.toLowerCase();
+  /** lowBalanceEth 0.05 plus the one waiting cancel's gas (21 000) at the gas price limit (1 gwei). */
+  const LOW = 5n * 10n ** 16n;
+  const NEED = LOW + 21_000n * GWEI;
+  const broke = () => ({ error: 'insufficient funds for gas * price + value' });
+  const run = (stub: Stub) => runDurableObjectAlarm(stub);
+  async function moneyPause(over?: Partial<Env>): Promise<{ stub: Stub; req: EvmRelayerSendRequest; since: number }> {
+    const stub = await fresh(over);
+    chain.codes.set(R, '0x');
+    chain.balances.set(R, 1_000n);
+    chain.onSend = broke;
+    const req = request();
+    await stub.send(req);
+    const h = await halted(stub);
+    expect(h).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+    return { stub, req, since: h!.since };
+  }
+  /** Out of money again: the next send is refused for funds (a new pause). */
+  async function broken(stub: Stub): Promise<void> {
+    chain.balances.set(R, 1_000n);
+    chain.onSend = broke;
+    await stub.send(request());
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds' });
+  }
+  const refill = (wei: bigint = ETH): void => {
+    chain.balances.set(R, wei);
+    chain.onSend = undefined;
+  };
+  const autoOf = async (stub: Stub) => (await evmRelayerStaffStatus(stub)).autoRestart;
+  const blockedOf = async (stub: Stub) => (await autoOf(stub)).pause?.check?.blocked ?? null;
+  const autoEntries = async (stub: Stub) => (await evmRelayerStaffStatus(stub)).staffLog.filter((e) => e.auto);
+
+  it('refilled: the first run once the pause is 60 s old restarts it, recorded as a staff action with what it saw; the next send goes out', async () => {
+    const { stub, req } = await moneyPause();
+    await run(stub);
+    expect(await blockedOf(stub)).toBe('pause_too_new');
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    await run(stub);
+    // Still broke: the run's own verdict, as staffResume would give it.
+    expect(await blockedOf(stub)).toBe('relayer_cannot_send');
+    expect((await autoOf(stub)).pause).toMatchObject({ blocked: null, restartWei: NEED.toString() });
+    refill();
+    await run(stub);
+    expect(await halted(stub)).toBeNull();
+    const s = await evmRelayerStaffStatus(stub);
+    expect(s.staffLog[0]).toMatchObject({ seq: 1, who: EVM_RELAYER_AUTO_WHO, action: 'resume', nonce: null, verdict: null, done: true, refused: null, auto: true });
+    expect(s.staffLog[0]!.note).toContain(`Trusted endpoint: balance ${ETH} wei (at least ${NEED} needed), count 0 (pending 1, next slot 1) after block 100, no code at the wallet.`);
+    expect(s.staffLog[0]!.note).toContain(`Second endpoint: count 0 (pending 1), balance ${ETH} wei, no code.`);
+    expect(s.staffLog[0]!.note.length).toBeLessThanOrEqual(500);
+    expect(s.autoRestart).toMatchObject({ limit: 3, today: 1, recent: [now], pause: null });
+    expect((await stub.status()).autoRestartedAt).toEqual([now]);
+    // Restarted: the alarm comes 15 s on (a change), and its cancel lands as usual; the next send gets slot 1.
+    expect((await stored(stub)).alarm).toBe(now + EVM_RELAYER_ALARM_MS);
+    chain.mine(RELAYER);
+    await run(stub);
+    expect(await stub.lookup(digestOf(req))).toMatchObject({ state: 'mined', outcome: 'cancel' });
+    expect((await stub.send(request())).relayerNonce).toBe(1);
+  });
+
+  for (const [name, wei, restarts] of [
+    ['below', NEED - 1n, false],
+    ['exactly at', NEED, true],
+    ['above', NEED + 1n, true],
+  ] as const) {
+    it(`a balance ${name} the low-balance mark plus what is waiting at the gas price limit: ${restarts ? 'restarts' : 'waits (balance_short)'}`, async () => {
+      const { stub } = await moneyPause();
+      advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+      refill(wei);
+      await run(stub);
+      if (restarts) expect(await halted(stub)).toBeNull();
+      else {
+        expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send' });
+        expect((await autoOf(stub)).pause).toMatchObject({ blocked: null, restartWei: NEED.toString(), check: { blocked: 'balance_short', balanceWei: wei.toString() } });
+        expect(await autoEntries(stub)).toEqual([]);
+      }
+    });
+  }
+
+  /** Each case alone holds the restart back: what the pause's latest check (or the storage gate) says, and whether it marked a leak. */
+  const cases: [string, (stub: Stub) => Promise<void> | void, string, { leak?: boolean; staffResume?: boolean }][] = [
+    ['a leak sign seen during the pause (leakSeen)', async (stub) => {
+      await runInDurableObject(stub, (_i, state) => {
+        const m = state.storage.kv.get<{ halted: Record<string, unknown> }>('meta')!;
+        state.storage.kv.put('meta', { ...m, halted: { ...m.halted, leakSeen: true } });
+      });
+    }, 'leak_seen', { leak: true }],
+    ['a slot the network counts as used without its own receipt yet (the latest count unexplained)', async (stub) => {
+      // Our own cancel mined, but the endpoint doesn't show its receipt (not indexed yet), short of confirmed depth.
+      chain.admit(decodeRawTx((await stored(stub)).recs[0]!.versions.at(-1)!.raw as Hex));
+      chain.mine(RELAYER, Number.POSITIVE_INFINITY, { after: 0 });
+      chain.hideReceipts = true;
+    }, 'unexplained_slot', { staffResume: true }],
+    ['something else holds the waiting slot in the pool (the pending count not ours): the run’s own verdict', () => {
+      chain.admit(foreign(0));
+    }, 'relayer_cannot_send', { staffResume: false }],
+    ['code at the relayer’s own address (an EIP-7702 delegation signed with its key)', () => {
+      chain.codes.set(R, `0xef0100${'ab'.repeat(20)}`);
+    }, 'code_at_relayer', { leak: true }],
+    ['the trusted endpoint’s own fresh count moved past the next slot since the run read it', () => {
+      // (The run reads its counts at a block number; the restart's fresh read asks for `latest`.)
+      chain.answerAt = (e, m, p) => (e === 0 && m === 'eth_getTransactionCount' && p[1] === 'latest' ? { result: '0x2' } : undefined);
+    }, 'unexplained_slot', { staffResume: true }],
+    ['the second endpoint counts a transaction more (latest)', () => {
+      chain.answerAt = (e, m, p) => (e === 1 && m === 'eth_getTransactionCount' && p[1] === 'latest' ? { result: '0x1' } : undefined);
+    }, 'second_endpoint_disagrees', { staffResume: true }],
+    ['the second endpoint’s pending count is past the relayer’s next slot', () => {
+      chain.answerAt = (e, m, p) => (e === 1 && m === 'eth_getTransactionCount' && p[1] === 'pending' ? { result: '0x2' } : undefined);
+    }, 'second_endpoint_disagrees', { staffResume: true }],
+    ['the second endpoint’s balance is short', () => {
+      chain.answerAt = (e, m) => (e === 1 && m === 'eth_getBalance' ? { result: `0x${(NEED - 1n).toString(16)}` } : undefined);
+    }, 'second_endpoint_disagrees', { staffResume: true }],
+    ['the second endpoint shows code at the relayer (no mark: it is never evidence)', () => {
+      chain.answerAt = (e, m) => (e === 1 && m === 'eth_getCode' ? { result: `0xef0100${'ab'.repeat(20)}` } : undefined);
+    }, 'second_endpoint_disagrees', { staffResume: true }],
+    ['the second endpoint is down', () => {
+      chain.modes[1] = 'down';
+    }, 'second_endpoint_unavailable', { staffResume: true }],
+    ['the key isn’t loaded', async (stub) => {
+      await configure(stub, overlay({ EVM_RELAY_KEYS: undefined }));
+    }, 'no_key', {}],
+  ];
+  for (const [name, setup, blocked, o] of cases) {
+    it(`held back by ${name}: ${blocked}${o.leak ? ', the pause marked leakSeen' : ''}`, async () => {
+      const { stub } = await moneyPause();
+      advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+      refill();
+      await setup(stub);
+      await run(stub);
+      expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds', ...(o.leak ? { leakSeen: true } : {}) });
+      if (!o.leak) expect((await halted(stub))!.leakSeen).toBeUndefined();
+      const a = await autoOf(stub);
+      expect(a.pause!.blocked === blocked || a.pause!.check?.blocked === blocked).toBe(true);
+      expect(await autoEntries(stub)).toEqual([]);
+      // Another run decides the same (nothing it saw goes away by itself).
+      await run(stub);
+      expect(await halted(stub)).not.toBeNull();
+      // The staff Resume keeps today's rule (one endpoint; the key gate where marked).
+      if (o.staffResume === true) expect(await evmRelayerStaffResume(stub, WHO, 'checked on the explorer')).toMatchObject({ done: true });
+      if (o.staffResume === false) expect((await evmRelayerStaffResume(stub, WHO, 'checked on the explorer')).done).toBe(false);
+      if (o.leak) expect(await evmRelayerStaffResume(stub, WHO, 'topped up')).toMatchObject({ refused: 'key_confirmation_required' });
+    });
+  }
+
+  it('another reason than money never restarts by itself, however much money there is (stuck_past_deadline: not_money)', async () => {
+    const stub = await fresh();
+    chain.codes.set(R, '0x');
+    chain.onSend = () => 'network';
+    await stub.send(request({ execute: { deadline: nowS() + 60n } }));
+    advance(61_000);
+    await run(stub);
+    advance(EVM_RELAYER_STUCK_AFTER_DEADLINE_MS);
+    await run(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'stuck_past_deadline' });
+    chain.onSend = undefined;
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    await run(stub);
+    chain.mine(RELAYER);
+    await run(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'stuck_past_deadline' });
+    expect((await autoOf(stub)).pause).toMatchObject({ blocked: 'not_money' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'n')).toMatchObject({ done: true });
+  });
+
+  it('a local env with no second endpoint never restarts by itself (no_second_endpoint); staff Resume does', async () => {
+    const { rpcFallback: _f, ...noFallback } = chainSettings();
+    const { stub } = await moneyPause(overlay({ EVM_SPONSOR: evmSponsorVar({ relayerAddress: RELAYER, chains: { [CHAIN]: noFallback as never }, apps: {} }) }));
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    refill();
+    await run(stub);
+    expect(await halted(stub)).not.toBeNull();
+    expect((await autoOf(stub)).pause).toMatchObject({ blocked: 'no_second_endpoint' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'funded')).toMatchObject({ done: true });
+  });
+
+  it('it ran out again within 30 minutes of restarting by itself: that pause waits for a person (ran_out_again), however long it lasts', async () => {
+    const { stub } = await moneyPause();
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    refill();
+    await run(stub);
+    expect(await halted(stub)).toBeNull();
+    chain.mine(RELAYER);
+    await run(stub);
+    // The very next action finds the wallet empty again.
+    advance(5 * 60_000);
+    await broken(stub);
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    refill();
+    await run(stub);
+    expect((await autoOf(stub)).pause).toMatchObject({ blocked: 'ran_out_again' });
+    chain.mine(RELAYER);
+    await run(stub);
+    advance(EVM_RELAYER_AUTO_RAN_OUT_AGAIN_MS);
+    await run(stub);
+    expect(await halted(stub)).not.toBeNull();
+    expect((await autoOf(stub)).pause).toMatchObject({ blocked: 'ran_out_again' });
+    expect(await evmRelayerStaffResume(stub, WHO, 'funded, looked at the wallet')).toMatchObject({ done: true });
+    expect((await autoOf(stub)).today).toBe(1);
+  });
+
+  it('at most 3 a UTC day; the 4th waits for a person (daily_limit); the next UTC day it may again', async () => {
+    const { stub } = await moneyPause();
+    for (let i = 1; i <= 3; i++) {
+      advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+      refill();
+      await run(stub);
+      expect([i, await halted(stub)]).toEqual([i, null]);
+      expect((await autoOf(stub)).today).toBe(i);
+      chain.mine(RELAYER);
+      await run(stub);
+      advance(EVM_RELAYER_AUTO_RAN_OUT_AGAIN_MS + 60_000);
+      await broken(stub);
+    }
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    refill();
+    await run(stub);
+    expect(await halted(stub)).not.toBeNull();
+    expect((await autoOf(stub)).pause).toMatchObject({ blocked: 'daily_limit' });
+    expect((await autoEntries(stub)).length).toBe(3);
+    expect((await stub.status()).autoRestartedAt).toHaveLength(3);
+    // A person still can.
+    expect(await evmRelayerStaffResume(stub, WHO, 'funded again')).toMatchObject({ done: true });
+    // The next UTC day: allowed again.
+    now = (Math.floor(now / 86_400_000) + 1) * 86_400_000 + 60_000;
+    chain.mine(RELAYER);
+    await run(stub);
+    await broken(stub);
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    refill();
+    await run(stub);
+    expect(await halted(stub)).toBeNull();
+    expect((await autoOf(stub)).today).toBe(1);
+  });
+
+  it('no request restarts it: a send, a replay, status, lookup and staffStatus while it could change nothing; only the alarm run does', async () => {
+    const { stub, req } = await moneyPause();
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    refill();
+    const alarm = (await stored(stub)).alarm;
+    expect(await codeOf(stub.send(request()))).toBe('relayer_halted');
+    expect((await stub.send(req)).replay).toBe(true);
+    await stub.status();
+    await stub.lookup(digestOf(req));
+    await evmRelayerStaffStatus(stub);
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send' });
+    expect((await stored(stub)).alarm).toBe(alarm);
+    expect(await autoEntries(stub)).toEqual([]);
+    await run(stub);
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('a staff page read before it restarted by itself acts on nothing (version_conflict: the halt and the staff log moved)', async () => {
+    const { stub, since } = await moneyPause();
+    advance(EVM_RELAYER_AUTO_MIN_PAUSE_MS);
+    refill();
+    await run(stub);
+    expect(await evmRelayerStaffResume(stub, WHO, 'funded', { haltSince: since, lastStaffSeq: 0 })).toMatchObject({ done: false, refused: 'version_conflict' });
+  });
+
+  /** The next alarms' distances while paused for money, each run when its alarm is due; stops once the pause is `until` old. */
+  async function gapsWhilePaused(stub: Stub, since: number, until: number): Promise<number[]> {
+    const gaps: number[] = [];
+    while (now - since < until) {
+      const at = (await stored(stub)).alarm!;
+      if (at > now) now = at;
+      await run(stub);
+      gaps.push((await stored(stub)).alarm! - now);
+    }
+    return gaps;
+  }
+
+  it('D882’s question answered: paused for money, every 15 s for the pause’s first 10 minutes, then every 60 s (a record waiting)', async () => {
+    const { stub, since } = await moneyPause();
+    const fast = await gapsWhilePaused(stub, since, EVM_RELAYER_MONEY_FAST_MS - EVM_RELAYER_ALARM_MS);
+    expect(fast.length).toBeGreaterThan(30);
+    expect(new Set(fast)).toEqual(new Set([EVM_RELAYER_ALARM_MS]));
+    const slow = (await gapsWhilePaused(stub, since, EVM_RELAYER_MONEY_FAST_MS + 6 * EVM_RELAYER_MONEY_CHECK_MS)).slice(1);
+    expect(slow.length).toBeGreaterThanOrEqual(5);
+    expect(new Set(slow)).toEqual(new Set([EVM_RELAYER_MONEY_CHECK_MS]));
+    expect(await halted(stub)).toMatchObject({ reason: 'relayer_cannot_send' });
+    // A refill is still noticed on the next run (a minute at most).
+    refill();
+    now = (await stored(stub)).alarm!;
+    await run(stub);
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('the same with nothing waiting (its cancel landed, the wallet still short): every 60 s after 10 minutes, never hourly', async () => {
+    const stub = await fresh();
+    chain.codes.set(R, '0x');
+    chain.balances.set(R, 1_000n);
+    // The batch is refused for funds, its cheap cancel is taken: paused, the cancel lands.
+    chain.onSend = (tx) => (tx.gas > 21_000n ? broke() : undefined);
+    await stub.send(request());
+    const since = (await halted(stub))!.since;
+    // (At send the cancel is stored; the next run sends it.)
+    await run(stub);
+    chain.mine(RELAYER);
+    await run(stub);
+    expect((await stored(stub)).recs).toEqual([]);
+    expect((await autoOf(stub)).pause).toMatchObject({ restartWei: LOW.toString(), resumeWei: '0' });
+    const gaps = await gapsWhilePaused(stub, since, EVM_RELAYER_MONEY_FAST_MS + 3 * EVM_RELAYER_MONEY_CHECK_MS);
+    expect(gaps.slice(-3)).toEqual([EVM_RELAYER_MONEY_CHECK_MS, EVM_RELAYER_MONEY_CHECK_MS, EVM_RELAYER_MONEY_CHECK_MS]);
+    expect(await blockedOf(stub)).toBe('balance_short');
+    chain.balances.set(R, LOW);
+    now = (await stored(stub)).alarm!;
+    await run(stub);
+    expect(await halted(stub)).toBeNull();
+  });
+
+  it('staffStatus: what a restart by itself and a Resume each need with what is waiting (the latter at the record’s own fee)', async () => {
+    const { stub } = await moneyPause();
+    const s = await evmRelayerStaffStatus(stub);
+    const latest = s.records[0]!.versions.at(-1)!;
+    expect(s.autoRestart.pause).toMatchObject({ blocked: null, restartWei: NEED.toString(), resumeWei: (21_000n * BigInt(latest.maxFeePerGas)).toString(), check: null });
   });
 });

@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-19 (branch `feat/near-reviewed-calls`, from `next`, not merged, not deployed: 1.6a, the reviewed NEAR contracts checked on chain before the pages deploy, and 3.12's stamps approval reads as reviewed, D885); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: 3.12's stamps check and 5.5's quoted heading after D884); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-23 (branch `feat/evm-relayer-auto-resume`, from `next`, not merged, not deployed: 4.16's out-of-money pause that restarts by itself after a refill, the tile's Check again, migration 0024, the alerts table's `evm_relay_auto_resumed`, D890); 2026-11-19 (branch `feat/near-reviewed-calls`, from `next`, not merged, not deployed: 1.6a, the reviewed NEAR contracts checked on chain before the pages deploy, and 3.12's stamps approval reads as reviewed, D885); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: 3.12's stamps check and 5.5's quoted heading after D884); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -374,7 +374,8 @@ You run these, from the main checkout, right after phase 1. Runbook: [Checking a
 **Why this order.** Each migration only adds tables, so the API running now (the old code) keeps working while you
 apply them. The new API, deployed in phase 3, writes billing records from its first NEAR relay: if it ran before the
 migrations, those relays would get no record (only a "billing record is late" alert the next day). So: D1 first, then
-the ledger, then the API. 0023 rebuilds the alerts table with 0022's alert kinds in it, so it must run after 0022:
+the ledger, then the API. 0023 rebuilds the alerts table with 0022's alert kinds in it, so it must run after 0022 (and
+0024, D890's "restarted by itself after a refill" alert, rebuilds it again with 0023's kinds in it, so it runs last):
 only `wrangler d1 migrations apply` does that safely, by name, and records each as done. **Never** run either file with
 `wrangler d1 execute --file`.
 
@@ -384,7 +385,8 @@ only `wrangler d1 migrations apply` does that safely, by name, and records each 
 corepack pnpm --dir apps/api exec wrangler d1 migrations list hana-id-sandbox-dev --remote
 ```
 
-You see: a table with exactly `0022_evm_sponsor.sql` and `0023_near_relay_billing.sql`.
+You see: a table with exactly `0022_evm_sponsor.sql`, `0023_near_relay_billing.sql` and
+`0024_evm_relay_auto_resumed.sql`.
 If it lists anything else, or `✅ No migrations to apply!`: stop and ask.
 
 ### 2.2 Apply them
@@ -759,6 +761,14 @@ the relayer address.
   and the console (row 5) before the admin portal (row 7), which this needs: with an older API the tile says "This page
   is newer than the API: deploy the API first" and the tools do nothing; with an older console the tools say so and do
   nothing. Without the read endpoint (4.12) the tile says "Not set up" with the upload step.
+- If it pauses because the relayer wallet is out of money (**Paused: needs money**): do the tile's first step (look at
+  the wallet on Basescan; transfers nobody at Journear made: stop, tell the assistant, don't send money), then send the
+  amount it names once. It restarts by itself within about a minute of the money arriving (D890: it says
+  **Restarting by itself**, then **Working** with "Last restart: Restarted by itself after a refill", and the alert
+  "Gas sponsorship: restarted by itself after the relayer wallet was refilled" follows). You don't press Resume unless
+  the tile says it can't restart by itself (3 times already today, it ran out again within 30 minutes, or the two
+  network servers disagree). The tile's **Check again** shows a fresh reading at once. Migration 0024 (phase 3's D1
+  migrations) must be applied for that alert.
 
 ### 4.17 The free-plan CPU measurement (the assistant)
 
@@ -870,6 +880,7 @@ Look at the admin portal (**Security & monitoring** and **System status**) once 
 | "Gas sponsorship: today's budget is nearly used up" (`evm_relay_budget_high`) | 80% of the day's 0.02 test ETH is used | usually nothing; it resets at 00:00 UTC |
 | "Gas sponsorship: a payment looked wrong …" (`evm_relay_receipt_odd`) | The read endpoint gave an odd answer | check or replace the endpoint (4.12) |
 | "Gas sponsorship: a payment slot was used by another transaction" (`evm_relay_nonce_taken`) | The relayer key may be used elsewhere | the leaked-key steps in operations "EVM sponsorship relay" |
+| "Gas sponsorship: restarted by itself after the relayer wallet was refilled" (`evm_relay_auto_resumed`) | It had paused for money and restarted itself after a refill, every check passed (D890) | nothing if one of us sent the money; else, and anyway, look at the wallet on Basescan ([playbook](playbooks.md#evm-relay-auto-resumed)) |
 | "Gas sponsorship: a billing record is late" (`evm_billing_late`) | A sponsored send's record didn't reach the ledger | check the ledger connection first |
 | `usage_write_failed` in the API's logs | A usage event didn't reach the ledger | operations "Usage capture", "What to watch" |
 | A demo says the vault didn't load | Usually a cold Worker for a minute after a deploy; else an origin or build problem | operations "Common failures" |

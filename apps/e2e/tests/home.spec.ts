@@ -601,17 +601,33 @@ const VIEWS: readonly { name: string; open: (page: import('@playwright/test').Pa
   { name: 'security', open: async (page) => { await page.locator('.home-row[data-scope="s1"]').click(); await homeTab(page, 'Security'); await expect(page.locator('#home-app-devices-summary')).toHaveText(/./u); } },
   { name: 'move', open: async (page) => { await page.locator('.home-row[data-scope="s1"]').click(); await homeTab(page, 'Move wallet'); } },
   { name: 'devices', open: async (page) => { await page.locator('#home-open-devices').click(); await expect(page.locator('#home-devices [role="status"]')).toHaveCount(0); } },
-  { name: 'name', open: async (page) => page.locator('#home-open-profile').click() },
+  { name: 'name', open: async (page) => { await page.locator('#home-open-profile').click(); await expect(page.locator('#home-profile')).not.toContainText('Loading your name…'); } },
 ];
 
-/** Devices answered as the API would for the routed wallets: none signed in (the real API doesn't know `s1`). */
-async function routeNoDevices(context: import('@playwright/test').BrowserContext): Promise<void> {
+/** One sign-in with long dates (another year) and an auto-approve, so an open card is as wide as it gets. */
+const LONG_DEVICE = () => {
+  const n = Date.now();
+  return {
+    shareId: `01${'Qx7'.repeat(6)}AB`,
+    appId: 'app_sodax1',
+    partnerOrigin: 'https://sodax.example',
+    label: 'Chrome on macOS',
+    signedInAtMs: new Date(new Date(n).getFullYear() - 1, 0, 2, 23, 45).getTime(),
+    lastUsedAtMs: new Date(new Date(n).getFullYear() - 1, 11, 22, 22, 45).getTime(),
+    idleUntilMs: n + 40 * 86_400_000,
+    expiresAtMs: n + 400 * 86_400_000,
+    consent: { consentId: `11${'Qx7'.repeat(6)}AB`, label: 'Swaps up to 50 USDC a day on Base, to Sodax’s own contracts', grantedAtMs: n - 60_000, expiresAtMs: n + 380 * 86_400_000 },
+  };
+};
+
+/** Devices answered as the API would for the routed wallets (the real API doesn't know `s1`): none, or one long card. */
+async function routeNoDevices(context: import('@playwright/test').BrowserContext, withDevice = false): Promise<void> {
   await context.route(new RegExp(`^${API_URL.replace(/[.]/gu, '\\.')}/v1/home/devices`, 'u'), async (route) => {
     const req = route.request();
     const cors = { 'access-control-allow-origin': AUTH_ORIGIN, 'access-control-allow-headers': 'content-type, x-hana-home', 'access-control-allow-methods': 'GET, POST, OPTIONS', vary: 'Origin' };
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
     const scopeId = new URL(req.url()).searchParams.get('scopeId');
-    const scopes = scopeId ? [{ scopeId, apps: [], devices: [], consents: [], email: [], more: false, canStop: true }] : [];
+    const scopes = scopeId ? [{ scopeId, apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active' }], devices: withDevice ? [LONG_DEVICE()] : [], consents: [], email: [], more: false, canStop: true }] : [];
     return route.fulfill({ status: 200, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ scopes, nextCursor: null }) });
   });
 }
@@ -643,14 +659,39 @@ test('D897: at 195 px (a 390 px phone at 200 % zoom) no view scrolls sideways, t
   await expect(page.locator('#home-sign-out')).toBeVisible();
 });
 
+test('D897: at 195 px an open device card with long dates (another year) and an auto-approve stays in the window', async ({ page, context }) => {
+  await routeApps(context, () => ({ status: 200, body: LIST }));
+  await routeNoDevices(context, true);
+  await page.setViewportSize({ width: 195, height: 422 });
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  await page.locator('.home-row[data-scope="s1"]').click();
+  await homeTab(page, 'Security');
+  await page.locator('#home-app-devices-show').click();
+  await expect(page.locator('#home-app-devices .home-device')).toHaveCount(1);
+  await expect(page.locator('#home-app-devices .home-device-facts')).toContainText(/on [A-Z][a-z]{2} \d{1,2}, \d{4} at/u);
+  for (const scheme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    const w = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, window: window.innerWidth }));
+    expect(w.page, `${scheme}: no sideways scroll with the card open`).toBeLessThanOrEqual(w.window);
+  }
+});
+
 for (const width of [320, 360, 390, 430] as const) {
-  test(`D897: at ${width} px every control on every view is at least 44 px tall (links inside a sentence aside)`, async ({ page, context }) => {
+  test(`D897: at ${width} px every control on every view is at least 44 px tall (links inside a sentence aside), an open confirmation included`, async ({ page, context }) => {
     await routeApps(context, () => ({ status: 200, body: LIST }));
-    await routeNoDevices(context);
+    await routeNoDevices(context, true);
     await page.setViewportSize({ width, height: 844 });
     await page.goto(`${AUTH_ORIGIN}/home`);
     await signIn(page);
-    for (const view of VIEWS) {
+    const stops = { name: 'security, a stop’s confirmation open', open: async (p: import('@playwright/test').Page) => {
+      await p.locator('.home-row[data-scope="s1"]').click();
+      await homeTab(p, 'Security');
+      await p.locator('#home-app-devices-show').click();
+      await p.getByRole('button', { name: 'Sign out this device' }).click();
+      await expect(p.locator('.home-confirm-more summary').first()).toBeVisible();
+    } };
+    for (const view of [...VIEWS, stops]) {
       await view.open(page);
       const small = await page.evaluate(() =>
         [...document.querySelectorAll('button, a[href], [role="tab"], input:not([type="hidden"]), summary, select')]
@@ -661,7 +702,13 @@ for (const width of [320, 360, 390, 430] as const) {
             if (el.tagName === 'A' && getComputedStyle(el).display === 'inline') return false;
             return el.id !== 'home-skip' && !el.classList.contains('home-skip');
           })
-          .filter((el) => el.getBoundingClientRect().height < 43.5)
+          // A tap area around a compact control (Sign out keeps the bar small) counts as its height.
+          .filter((el) => {
+            const h = el.getBoundingClientRect().height;
+            const pad = getComputedStyle(el, '::before');
+            const area = pad.content !== 'none' && pad.position === 'absolute' ? h - parseFloat(pad.top) - parseFloat(pad.bottom) : h;
+            return Math.max(h, area) < 43.5;
+          })
           .map((el) => `${el.tagName.toLowerCase()}#${el.id}.${[...el.classList].join('.')} ${Math.round(el.getBoundingClientRect().height)}px "${(el.textContent ?? '').trim().slice(0, 30)}"`),
       );
       expect(small, `${view.name} at ${width} px`).toEqual([]);
@@ -698,8 +745,7 @@ test('D897: the focus ring shows on every control the keyboard reaches, in both 
           const bg = getComputedStyle(document.body).backgroundColor;
           return {
             what: `${el.tagName.toLowerCase()}#${el.id}.${[...el.classList].join('.')} "${(el.textContent ?? '').trim().slice(0, 24)}"`,
-            // A heading that took focus as its view finished loading (tabindex -1, never a tab stop) shows no ring on purpose.
-            visible: el.matches(':focus-visible') && el.getAttribute('tabindex') !== '-1',
+            visible: el.matches(':focus-visible'),
             ring: (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) >= 2 && cs.outlineColor !== bg && cs.outlineColor !== 'rgba(0, 0, 0, 0)') || /rgb/u.test(cs.boxShadow),
           };
         });
@@ -725,9 +771,10 @@ test('D897: a wallet’s head at 1280 px: the apps start under their label; the 
   const first = await page.locator('.home-app-all > .home-app').first().boundingBox();
   expect(label && first && first.y >= label.y + label.height - 1, 'the first app under the label').toBe(true);
   const text = page.locator('#home-coverage .home-coverage-text');
-  await expect(text).toHaveText('No. If these apps shut down, you can still sign in to this wallet through Journear.');
-  // The answer word is in the screen-reader-only text, clipped to nothing on screen.
-  await expect(text.locator('.sr-only')).toHaveText('No.');
-  expect(await text.locator('.sr-only').evaluate((el) => { const r = el.getBoundingClientRect(); return r.width <= 1 && r.height <= 1; })).toBe(true);
+  await expect(text).toHaveText('If these apps shut down, you can still sign in to this wallet through Journear.');
+  // The question and its answer word are screen-reader-only, before the badge, clipped to nothing on screen.
+  const sr = page.locator('#home-coverage > .sr-only');
+  await expect(sr).toHaveText('Does this wallet need these apps? No.');
+  expect(await sr.evaluate((el) => { const r = el.getBoundingClientRect(); return r.width <= 1 && r.height <= 1; })).toBe(true);
   await expect(page.locator('#home-coverage .jp-badge')).toHaveText('Safe if the apps close');
 });

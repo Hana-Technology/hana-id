@@ -18860,17 +18860,37 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   - "Devices and auto-approve": **opening the Security tab is asking** (as D893 took opening an account view): it makes
     **one** read, `GET /v1/home/devices?scopeId=…` for this wallet, when the tab is opened by a press (the tab, or the
     keyboard on the tab list); never on Back or Forward to the tab, never a second time while the wallet's page stays
-    open, never without a usable sign-in. The focus stays on the tab. The line then reads, for example, "Signed in on 2
-    devices. 1 may sign without asking. Your email is shared with the app." (or "No device is signed in to this wallet
-    right now.", "Signed in on 1 device. It asks you before signing.", "Each asks you before signing.", "An open tab may
-    sign without asking.", "Your email is shared with 2 apps."). The cards stay behind "Show devices", which now shows
-    what was read without a second request; "Show again" reads again. A failed read leaves the refusal's box and "Show
-    devices", which reads and shows the cards at once. Leaving the wallet's page drops what was read (as before), so
-    the next visit's Security tab reads once more.
+    open, never without a usable sign-in. The focus stays on the tab. The line then says, in places (one place is one
+    sign-in: one browser on one site for one app, so one laptop in two apps is two places; the data can't tell devices
+    apart honestly), what may sign without asking and which app gets the email (the app's name, as text):
+    "Signed in to this wallet in 2 places. 1 of them may sign without asking. Your email is shared with Sodax." Every
+    form: "Not signed in to this wallet anywhere right now."; "Not kept signed in to this wallet anywhere. A tab that
+    may still be open can sign without asking."; "Signed in to this wallet in 1 place. It asks you before signing." /
+    "It may sign without asking."; "… in N places. Each asks you before signing." / "N of them may sign without
+    asking."; "N tabs that may still be open can also sign without asking."; "Your email is shared with the app." (a
+    wallet of one app), "… with Sodax." / "… with Sodax and Sodax Earn." / "… with N apps."; on an app's page where the
+    person has no wallet, "this app" in place of "this wallet" ("Your email is shared with this app."). The cards stay
+    behind "Show devices": it shows what the tab read while that read is at most a minute old, else it reads again (a
+    press, D893) and the line follows. "Show again", now small and at the top beside what it refreshes, reads again.
+    **A failed read made by the tab is quiet**: the section keeps its sentence and adds a muted "Passport Home couldn’t
+    check this just now. “Show devices” tries again." (no `role="alert"`); the refusal's box comes only after a press.
+    Leaving the wallet's page drops what was read (as before), so the next visit's Security tab reads once more.
+  - **What is on screen stays true**: the section is drawn again from what it holds, with no request, when the page is
+    seen again (`visibilitychange`), at the next local midnight, and at the first moment a date on it passes (an
+    auto-approve's end, a sign-in's idle moment or last moment). An ended auto-approve shows as off ("Auto-approve is
+    off…", and the line stops saying it may sign), an ended sign-in and an ended tab's auto-approve are gone, and past
+    the idle moment the card says "If it wasn’t used, it signed out by itself today at 7:00 PM; if it was, it signs out
+    tomorrow at 2:20 AM at the latest." The focus stays on the same control when it is still there.
+  - **Focus after a read**: a read that finishes takes the focus to the section's heading only if the focus is still on
+    that heading or nowhere (the pressed button was drawn over); someone who tabbed on keeps their place. The same for
+    "Your name" (`home-profile.ts`).
   - "Ways to sign in": nothing more is read (two NEAR reads on two providers is not cheap); once shown in this sign-in
-    the line says "One sign-in opens this wallet." / "2 sign-ins open this wallet." and "One more is waiting to start."
-    / "2 more are waiting to start."; before, "The sign-ins that open this wallet.".
-  - "Your name": its sentence as before, as the section's line (its read stays on "Show name sharing").
+    the line says "1 sign-in opens this wallet." / "2 sign-ins open this wallet.", and a waiting one in the warning
+    colour and icon of its card: "1 more starts opening it soon. Check it below." / "2 more start opening it soon.
+    Check them below."; before, "The sign-ins that open this wallet.". Numbers as digits in every line.
+  - "Your name": its sentence as before, as the section's line (its read stays on "Show name sharing"); on a wallet two
+    or more apps share, "Choose whether these apps get the name you set in Passport Home: they don’t unless you share
+    it.".
   - So the tab makes at most one read by itself, the devices', when it is opened; every other read is a press.
 - **The device card**: the device's name, then the site on a line of its own (muted, 12 px), so a web address wraps
   only when it is wider than the line, and then at its own break points (D853's `originText`); "App: …" where the
@@ -18878,13 +18898,18 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   2:20 PM.", "Last opened or approved here today at 5:00 PM.", "Signs out by itself today at 7:00 PM if it isn’t used,
   and tomorrow at 2:20 AM at the latest." Dates in a few plain words (`whenWords`: "today at", "tomorrow at",
   "yesterday at", "on Nov 25 at", "on Nov 25, 2027 at" in another year; the device's own language for the date and the
-  time), each kept on one line, the full date and time ("Monday, November 23, 2026 at 2:20 PM") in the `time`
-  element's `title` (a tooltip) and as the screen reader's text in its place. Auto-approve: "Auto-approve on until today
+  time in English like the sentence, never "on 2027年1月2日 at", with the device's 12- or 24-hour preference), each kept on
+  one line (allowed to wrap only under 300 px), the full date and time ("Monday, November 23, 2026 at 2:20 PM") in the
+  `time` element's `title` (a tooltip) and as the screen reader's text in its place. The card's facts, its asides and
+  the section's footnotes share one secondary size, 14 px muted (the site stays 12 px mono, so the fixtures' longest
+  fits one line at 320 px). Auto-approve: "Auto-approve on until today
   at 6:20 PM", then "In the app’s words, it may sign without asking:" with the app's own words (quoted, unchanged) on a
   line of their own (was "The app describes what it may sign without asking as: “…”", which ran on at 390 px). No
   button does anything new: "Sign out this device", "Stop auto-approving", "Stop sharing email" and the name's sharing
   keep their confirmations and requests.
 - **Polish across Home (step 5)**:
+  0. **The coverage line's order**: the question and its "Yes." / "No." (screen readers only), then the badge, then the
+     reason, so it is heard in order.
   1. **A wallet two or more apps share**: its badge says "Safe if the apps close" / "Needs the apps" (on the row, in its
      accessible name, and on its page), matching "If these apps shut down…"; one app keeps "the app". "Can’t be opened
      here" and "Not checked yet" read the same for one or several.
@@ -18895,11 +18920,16 @@ labels now shown to users", "Request labels proposed: shown to users after the w
      the page in both themes and stays apart from a teal button or badge under it. Its colours are the primary
      button's (dark: #06201D on #2E9C90, about 5.1 : 1).
   4. **195 px wide (a 390 px phone at 200 % zoom)**: the top bar no longer scrolls sideways: under 300 px Sign out goes
-     under "Signed in with …", at the start (D895 had left this open). No view of Home scrolls sideways there (checked
-     on all six views, light and dark).
-  5. **Tap targets**: in a window up to 640 px wide every button, tab, field and the explorer link is at least 44 px
-     tall (the design system did so only for a coarse pointer); links inside a sentence keep their size (WCAG 2.5.8's
-     inline exception).
+     under "Signed in with …", at the start (D895 had left this open); a date and a button's words may wrap there and
+     a setting's control may shrink to its card, so an open device card stays in the window. No view of Home scrolls
+     sideways there (checked on all six views, light and dark, and with an open card of long dates).
+  5. **Tap targets**: in a window up to 640 px wide every button, tab, field, the explorer link and a confirmation's
+     "More" is at least 44 px tall (the design system did so only for a coarse pointer); links inside a sentence keep
+     their size (WCAG 2.5.8's inline exception). Sign out keeps the bar compact (32 px, as the mock-ups): its 44 px is
+     an invisible tap area around it inside the bar's padding, where no other control is. From 380 px a Google
+     sign-in's "Signed in with Google" is back on the bar's first row (12 px); an email address keeps its own line. The
+     phone's bar is about 64 px tall again (96 px with the first 44 px Sign out). D888's bar measurements and scroll
+     checks pass unchanged.
   6. **Focus rings**: checked on every control the keyboard reaches on all six views in both themes (the system's 2 px
      ring, #D95F0C, about 3.7 : 1 on the light page and 4.9 : 1 on the dark one); no change was needed.
   7. **The wallet's head at a desktop width**: the apps' box put the first app beside its label (the reading measure
@@ -18910,12 +18940,22 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   stop's confirmation, so it waits for a decision).
 - Address impact: none (no path, key or derivation input changes).
 - **To confirm (the founder)**: (1) opening the Security tab reads the devices once by itself (D893's "opening the view
-  is asking"), the cards still behind "Show devices"; (2) the lines' words above; (3) "Ways to sign in" not read on
-  opening; (4) the device card's sentences and the dates as "today at …"; (5) "In the app’s words, it may sign without
-  asking:"; (6) the plural badges "Safe if the apps close" / "Needs the apps"; (7) the bare "Yes." / "No." no longer
-  shown; (8) the chip's ring; (9) Sign out under the signed-in line below 300 px; (10) 44 px controls on any narrow
-  window, not only touch screens.
+  is asking"), the cards still behind "Show devices", which reads again after a minute; (2) **the summary shown without
+  a press on a screen others may see**: on opening Security, how many places the wallet is signed in and which app
+  gets the email are on screen; (3) the wording of every new line above ("places", "Not kept signed in…", "A tab that
+  may still be open…", the waiting line); (4) "Ways to sign in" not read on opening; (5) the device card's sentences
+  and the dates as "today at …" in English; (6) "In the app’s words, it may sign without asking:"; (7) the plural
+  badges "Safe if the apps close" / "Needs the apps"; (8) the bare "Yes." / "No." no longer shown; (9) the chip's
+  ring; (10) the bar's layout (Google's line on the first row from 380 px, Sign out under it below 300 px, its tap
+  area); (11) 44 px controls on any narrow window, not only touch screens; (12) "Show again" small at the top.
 - **For the founder to decide**: whether email sharing and the name move into one card "What these apps get from you"
-  (a3), leaving "Devices and auto-approve" to devices and auto-approve alone.
+  (a3), leaving "Devices and auto-approve" to devices and auto-approve alone (a stop's confirmation moves with it).
+- **After PR 124's review (2026-11-23)**, applied on the same branch: an open card at 195 px no longer scrolls sideways;
+  the email line names the app; "this app" on an app's page; "places" for sign-ins; no contradiction with a tab's
+  auto-approve; "Show devices" reads again after a minute; a quiet note for a failed tab read; the confirmation's
+  "More" at 44 px; the section drawn again when the page is seen, at midnight and when a date passes; the waiting line
+  as a warning with digits; focus after a read stays where the person moved it; the module's header; the compact bar;
+  one 14 px secondary size and "Show again" at the top; English dates with the device's hours; "these apps" for the
+  name. The focus-ring test checks every stop again (no exception for headings).
 - **Not verified**: real iOS Safari and Android browsers, real screen readers (names and descriptions checked in the
   browsers' accessibility trees), browser text-only zoom, landscape phones.

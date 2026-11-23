@@ -548,7 +548,7 @@ describe('your apps', () => {
     expect(document.getElementById('home-support-id')?.textContent).toBe('HANA-AB12-CD34');
     // PR 122's review: a wallet two apps use reads "these apps".
     expect(pageText()).toContain('If these apps shut down, you can still sign in to this wallet through Journear.');
-    expect(document.querySelector('#home-coverage .sr-only')?.textContent).toBe('Does this wallet need these apps? ');
+    expect(document.querySelector('#home-coverage .sr-only')?.textContent).toBe('Does this wallet need these apps? No. ');
     const links = [...document.querySelectorAll('#app a')] as HTMLAnchorElement[];
     expect(links.map((a) => a.getAttribute('href'))).toEqual([`https://stellar.expert/explorer/testnet/account/${G}`]);
     expect(links[0]?.getAttribute('rel')).toBe('noopener noreferrer');
@@ -638,7 +638,7 @@ describe('your apps', () => {
     expect(document.getElementById('home-app-title')?.textContent).toBe('Wallet details');
     expect(document.getElementById('home-app-label')?.textContent).toBe('App that uses this wallet');
     expect(document.querySelector('.home-app-all')?.textContent).toBe('App that uses this walletOld ExchangeClosed');
-    expect(document.querySelector('#home-coverage .sr-only')?.textContent).toBe('Does this wallet need the app? ');
+    expect(document.querySelector('#home-coverage .sr-only')?.textContent).toBe('Does this wallet need the app? No. ');
     expect(document.getElementById('home-support-id')).toBeNull();
     expect(pageText()).not.toContain('Support ID');
     expect(document.getElementById('home-no-address')?.textContent).toBe('Journear has no address on record for this wallet yet.');
@@ -1669,7 +1669,7 @@ describe('D897: the Security tab’s reads, and the badges of a shared wallet', 
     h.click('home-tab-security');
     await h.page.idle();
     expect(h.deviceCalls().map((c) => c.url.search)).toEqual(['?scopeId=s1']);
-    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe('No device is signed in to this wallet right now.');
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe('Not signed in to this wallet anywhere right now.');
     // The other sections read nothing until asked.
     expect(h.nameCalls()).toHaveLength(0);
     h.click('home-tab-addresses');
@@ -1698,9 +1698,10 @@ describe('D897: the Security tab’s reads, and the badges of a shared wallet', 
     expect(document.querySelector('.home-row[data-scope="s2"] > .badge')?.textContent).toBe('Safe if the app closes');
     (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     expect(document.querySelector('#home-coverage .badge')?.textContent).toBe('Safe if the apps close');
-    // The answer's "No." is read with the question, not shown beside the badge.
-    expect(document.querySelector('#home-coverage .home-coverage-text > .sr-only')?.textContent).toBe('No. ');
-    expect(document.querySelector('#home-coverage .home-coverage-text')?.textContent).toBe('No. If these apps shut down, you can still sign in to this wallet through Journear.');
+    // The answer's "No." is read with the question, before the badge; not shown.
+    expect(document.querySelector('#home-coverage > .sr-only')?.textContent).toBe('Does this wallet need these apps? No. ');
+    expect(document.querySelector('#home-coverage .home-coverage-text')?.textContent).toBe('If these apps shut down, you can still sign in to this wallet through Journear.');
+    expect([...document.querySelector('#home-coverage')!.children].map((c) => c.className.split(' ')[0])).toEqual(['sr-only', 'badge', 'home-coverage-text']);
     expect(coverageText('partner_client', true, false, 2).badge).toBe('Needs the apps');
     expect(coverageText('partner_client', true, false, 1).badge).toBe('Needs the app');
   });

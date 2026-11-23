@@ -498,7 +498,7 @@ test('the Security tab (D897): one read when it opens, each section’s line wit
   await homeTab(page, 'Security');
   // The one read, by itself; the focus stays on the tab.
   const line = page.locator('#home-app-devices-summary');
-  await expect(line).toHaveText('Signed in on 3 devices. 1 may sign without asking. Your email is shared with the app.');
+  await expect(line).toHaveText('Signed in to this wallet in 3 places. 1 of them may sign without asking. Your email is shared with Sodax.');
   await expect(line).toBeVisible();
   expect(reads).toEqual(['?scopeId=s1']);
   await expect(page.getByRole('tab', { name: 'Security' })).toBeFocused();

@@ -83,8 +83,9 @@ The Security tab and Home's polish (D897): `tests/home-devices.spec.ts` checks t
 read (none on Back or Forward, one more on the wallet's next visit) with the focus left on the tab, each section's line,
 "Show devices" with no second read, and the device card at 320, 360, 390 and 430 px (each site and date on one line, the
 app's words on their own line, the full date as the tooltip and the screen reader's text). `tests/home.spec.ts` checks
-every view at 195 px (no sideways scroll, the top bar included, light and dark), every control at least 44 px tall at
-320, 360, 390 and 430 px, the focus ring on every control the keyboard reaches in both themes (WebKit with Option-Tab,
+every view at 195 px (no sideways scroll, the top bar included, light and dark) and an open device card with long dates
+there, every control at least 44 px tall at 320, 360, 390 and 430 px (an open stop confirmation's "More" included; Sign
+out by its tap area), the focus ring on every control the keyboard reaches in both themes (WebKit with Option-Tab,
 as Safari), and the wallet's head at 1280 px (the apps under their label, the answer's "No." read and not shown).
 
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to

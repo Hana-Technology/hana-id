@@ -398,9 +398,48 @@ body.home-page > main:focus {
   }
 }
 
+/* D897: a Google sign-in's short line goes back on the bar's first row, between the lockup and Sign out, where it fits
+   (an email address keeps its own line). */
+@media (min-width: 380px) and (max-width: 560px) {
+  .home-top:has(#home-who):has(.home-who:not(.home-who-email)) {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'logo who out' 'notice notice notice';
+    column-gap: var(--jp-space-3);
+  }
+
+  .home-top:has(.home-who:not(.home-who-email)) #home-who {
+    justify-self: end;
+    margin-top: 0;
+    font-size: var(--jp-text-xs);
+    text-align: right;
+  }
+}
+
 /* D897: a very narrow window (a 390 px phone at 200 % zoom is 195 px): the lockup and Sign out no longer fit side by
    side, so Sign out goes under who is signed in, at the start; nothing is wider than the window. */
 @media (max-width: 300px) {
+  /* D897: a date may wrap here, or an open device card would be wider than the window (above the rule that keeps it
+     whole elsewhere, later in this file). */
+  body.home-page .home-when > time {
+    white-space: normal;
+  }
+
+  /* A setting's control may shrink to the card, and a button's words wrap ("Stop auto-approving" is wider than a card
+     here). */
+  body.home-page .home-setting.jp-setting > .home-setting-control {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+
+  body.home-page .jp-btn:not(#home-sign-out) {
+    max-width: 100%;
+    height: auto;
+    white-space: normal;
+    text-align: center;
+  }
+
   .home-top:has(#home-who) {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: 'logo' 'who' 'out' 'notice';
@@ -419,8 +458,28 @@ body.home-page > main:focus {
 /* D897: on a phone every control is at least 44 px tall (the design system does so for a coarse pointer; a narrow
    window gets the same, so a phone that reports a fine pointer, or a zoomed page, keeps them). */
 @media (max-width: 640px) {
-  body.home-page :is(.jp-btn, .jp-input, .home-tabs .jp-tab, button.link, .home-address-more > a) {
+  body.home-page :is(.jp-btn, .jp-input, .home-tabs .jp-tab, button.link, .home-address-more > a, .home-confirm-more summary):not(#home-sign-out) {
     min-height: 44px;
+  }
+
+  body.home-page .home-confirm-more summary {
+    display: flex;
+    align-items: center;
+  }
+
+  /* Sign out keeps the bar compact (as the mock-ups): its 44 px is a tap area around it, inside the bar's own padding,
+     where no other control is. */
+  body.home-page #home-sign-out {
+    position: relative;
+  }
+
+  body.home-page #home-sign-out::before {
+    content: '';
+    position: absolute;
+    top: calc((100% - 44px) / 2);
+    bottom: calc((100% - 44px) / 2);
+    left: -2px;
+    right: -2px;
   }
 
   body.home-page .home-address-more > a {
@@ -992,10 +1051,33 @@ a.explorer {
   margin-top: var(--jp-space-1);
 }
 
-.home-device-facts > p {
+/* D897 after review: one secondary size (14 px, muted) for the facts, the cards' asides and the section's footnotes. */
+.home-device-facts > p,
+.home-devices .home-device p.muted,
+.home-devices > p.muted,
+.home-devices-group > p.muted {
   margin: 0;
-  font-size: var(--jp-text-xs);
+  font-size: var(--jp-text-sm);
   color: var(--jp-fg-muted);
+}
+
+/* "Show again" beside what it refreshes, under the section's line. */
+.home-devices > .home-devices-again {
+  margin-top: 0;
+}
+
+/* The waiting sign-in in "Ways to sign in"'s line: the warning colour and icon of its card. */
+.home-set-attn {
+  display: inline;
+  color: var(--jp-warning);
+  font-weight: var(--jp-weight-medium);
+}
+
+.home-set-attn .ic {
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
 }
 
 .home-when > time {

@@ -795,3 +795,38 @@ describe('names are text only', () => {
     expect(headings()).toEqual(['Your name']);
   });
 });
+
+describe('D897 after review', () => {
+  it('a wallet two apps share: the line says “these apps”; one app keeps “this app”', async () => {
+    const h = await start();
+    h.mountApp(homeScope(S1, [{ appId: 'app_sodax1', name: 'Sodax' }, { appId: 'app_earn1', name: 'Earn' }]));
+    expect(document.getElementById('home-app-profile-summary')?.textContent).toBe(HOME_NAME_TEXT.appAboutMany);
+    expect(HOME_NAME_TEXT.appAboutMany).toBe('Choose whether these apps get the name you set in Passport Home: they don’t unless you share it.');
+    h.section.leaveApp();
+    h.mountApp(homeScope('s9'));
+    expect(document.getElementById('home-app-profile-summary')?.textContent).toBe(HOME_NAME_TEXT.appAbout);
+  });
+
+  it('a read that finishes after the person moved on leaves the focus where it is', async () => {
+    const h = await start();
+    h.mountFront();
+    let release: () => void = () => {};
+    let sent = false;
+    h.answer = () => {
+      sent = true;
+      return new Promise<Response>((r) => {
+        release = () => r(json(200, profile({ shares: [] })));
+      });
+    };
+    (document.getElementById('home-profile-title') as HTMLElement).focus();
+    h.section.openFront();
+    for (let i = 0; i < 200 && !sent; i++) await new Promise((r) => setImmediate(r));
+    const elsewhere = document.createElement('button');
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    release();
+    await h.idle();
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+  });
+});

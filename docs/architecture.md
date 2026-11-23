@@ -1518,14 +1518,19 @@ its tab stop back on the open tab.
 merged, not deployed).** Security's three cards (Ways to sign in, Devices and auto-approve, Your name) each show a title
 and one line without a press, their details behind their buttons. Opening the tab by a press makes one read, the
 wallet's `GET /v1/home/devices?scopeId=…` (never on Back or Forward, never twice while the wallet's page is open), so the
-devices' line says where the wallet is signed in, what may sign without asking and whether the email is shared; "Show
-devices" then shows the cards without another request. "Ways to sign in" reads nothing until pressed; once read in this
+devices' line says in how many places the wallet is signed in, what may sign without asking and which app gets the
+email; "Show devices" then shows the cards without another request while that read is at most a minute old (else it
+reads again); a failed tab read is a quiet note, never an alert. The section is drawn again, with no request, when the
+page is seen again, at midnight and when a date on it passes (an ended auto-approve shows as off, an ended sign-in goes).
+A finished read moves the focus to its heading only if the focus is still there or nowhere. "Ways to sign in" reads nothing until pressed; once read in this
 sign-in its line counts the sign-ins that open the wallet and those waiting. A device card: the name, its site on a line
 of its own, one short sentence per date ("today at 2:20 PM", the full date in the `time`'s `title` and for screen
 readers), the app's own words for auto-approve on a line of their own. Across Home: a wallet two or more apps share says
 "Safe if the apps close" / "Needs the apps"; the coverage answer's "Yes." / "No." is read, not shown; the phone's chip
-has a ring of the page's background and a deep shadow; under 300 px Sign out goes under the signed-in line; up to
-640 px every button, tab, field and the explorer link is at least 44 px tall.
+has a ring of the page's background and a deep shadow; under 300 px Sign out goes under the signed-in line, and dates
+and buttons may wrap; up to 640 px every button, tab, field, the explorer link and a confirmation's "More" is at least
+44 px tall, Sign out by an invisible tap area (the bar stays compact; from 380 px Google's "Signed in with Google" is on
+its first row).
 
 **Moving a wallet out (H8, D575–D584; `home-export.ts`, `key-reveal.ts`, `export-path.ts`; live on sandbox-dev since 2026-11-10).** A wallet's "Move wallet" tab (D895)
 holds a collapsed section, "Move this wallet to another wallet app": collapsed, its heading, one sentence and a "Show

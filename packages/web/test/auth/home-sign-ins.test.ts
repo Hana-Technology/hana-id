@@ -342,7 +342,10 @@ describe('what it shows', () => {
     expect(buttons()).toEqual([SIGN_IN_TEXT.again]);
     // D897: the section's line, once read, says how many open the wallet and how many wait.
     const line = document.getElementById('home-sign-ins-summary');
-    expect(line?.textContent).toBe('One sign-in opens this wallet. One more is waiting to start.');
+    expect(line?.textContent).toBe('1 sign-in opens this wallet. 1 more starts opening it soon. Check it below.');
+    // The waiting part in the warning style of its card.
+    expect(line?.querySelector('.home-set-attn .ic')).not.toBeNull();
+    expect(line?.querySelector('.home-set-attn')?.textContent).toBe('1 more starts opening it soon. Check it below.');
     expect(line?.hasAttribute('data-read')).toBe(true);
   });
 
@@ -720,9 +723,9 @@ describe('words (D853)', () => {
 
 describe('D897: the line of “Ways to sign in”', () => {
   it('says how many open the wallet and how many wait, once read', () => {
-    expect(signInSummary(1, 0)).toBe('One sign-in opens this wallet.');
-    expect(signInSummary(2, 0)).toBe('2 sign-ins open this wallet.');
-    expect(signInSummary(1, 1)).toBe('One sign-in opens this wallet. One more is waiting to start.');
-    expect(signInSummary(3, 2)).toBe('3 sign-ins open this wallet. 2 more are waiting to start.');
+    expect(signInSummary(1, 0)).toEqual({ line: '1 sign-in opens this wallet.', waiting: null });
+    expect(signInSummary(2, 0)).toEqual({ line: '2 sign-ins open this wallet.', waiting: null });
+    expect(signInSummary(1, 1)).toEqual({ line: '1 sign-in opens this wallet.', waiting: '1 more starts opening it soon. Check it below.' });
+    expect(signInSummary(3, 2)).toEqual({ line: '3 sign-ins open this wallet.', waiting: '2 more start opening it soon. Check them below.' });
   });
 });

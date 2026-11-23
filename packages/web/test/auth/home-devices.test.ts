@@ -6,7 +6,7 @@ import { decodeHomeIdentity, homeMessage } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dom, originText } from '../../src/auth/dom.ts';
 import { HOME_UNNAMED_RULE, type HomeIdentity, homeDevicesApi, homeDevicesSearch, homePolicyLabel, homeStopBody, newHomeIdentity, parseHomeDevices } from '../../src/auth/home-api.ts';
-import { HOME_DEVICES_WALLET_INTRO, HOME_STOP_CONFIRM, type HomeDevices, UNNAMED_DEVICE, devicesLinked, devicesSummary, startHomeDevices, stopDoneText, whenWords } from '../../src/auth/home-devices.ts';
+import { HOME_DEVICES_WALLET_INTRO, HOME_STOP_CONFIRM, type HomeDevices, UNNAMED_DEVICE, DEVICES_FRESH_MS, devicesLinked, devicesSummary, nextMidnight, startHomeDevices, stillTrue, stopDoneText, whenFull, whenWords } from '../../src/auth/home-devices.ts';
 import type { HomeScope } from '../../src/auth/home-api.ts';
 import { ENV, FakeWindow, pageText, resetDom } from './helpers.ts';
 
@@ -55,6 +55,11 @@ interface Harness {
   answer: (url: URL, call: Call) => Response | Promise<Response>;
   identity: HomeIdentity | null;
   signedOut: number;
+  /** The clock the section reads (D897); unset, the real one. */
+  nowMs: number | null;
+  timers: { run: () => void; at: number; live: boolean }[];
+  /** Moves the clock on and runs every timer then due. */
+  advance(ms: number): void;
   click(id: string): void;
   idle(): Promise<void>;
   mountFront(): void;
@@ -74,6 +79,8 @@ async function start(o: { search?: string; isGesture?: boolean } = {}): Promise<
     calls,
     identity,
     signedOut: 0,
+    nowMs: null,
+    timers: [],
     answer: (_url: URL): Response | Promise<Response> => json(200, { scopes: [], nextCursor: null }),
   } as unknown as Harness;
   const fetchFn = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -98,7 +105,24 @@ async function start(o: { search?: string; isGesture?: boolean } = {}): Promise<
       void p.finally(() => running.delete(p));
     },
     appName: (appId) => (appId === 'app_other1' ? 'Other from the list' : null),
+    now: () => h.nowMs ?? Date.now(),
+    setTimer: (run, ms) => {
+      const t = { run, at: (h.nowMs ?? Date.now()) + ms, live: true };
+      h.timers.push(t);
+      return () => {
+        t.live = false;
+      };
+    },
   });
+  h.advance = (ms) => {
+    h.nowMs = (h.nowMs ?? Date.now()) + ms;
+    for (const t of [...h.timers]) {
+      if (t.live && t.at <= h.nowMs) {
+        t.live = false;
+        t.run();
+      }
+    }
+  };
   h.click = (id) => {
     const el = document.getElementById(id);
     if (!el) throw new Error(`No #${id} on the page: ${pageText()}`);
@@ -175,7 +199,7 @@ describe('the list', () => {
     expect(h.calls[0]!.url.search).toBe('?scopeId=s7');
     expect(text('home-app-devices-empty')).toContain('No device is signed in to this wallet right now.');
     // D897: once read, the line says where the wallet is signed in.
-    expect(document.querySelector('#home-app-devices > p')?.textContent).toBe('No device is signed in to this wallet right now.');
+    expect(document.querySelector('#home-app-devices > p')?.textContent).toBe('Not signed in to this wallet anywhere right now.');
     expect(HOME_DEVICES_WALLET_INTRO(1)).toBe('Where you’re signed in to this wallet, what those devices may sign without asking, and whether you share your email with the app.');
     expect(HOME_DEVICES_WALLET_INTRO(2)).toContain('with these apps.');
     expect(document.getElementById('home-app-devices-empty')?.classList.contains('jp-empty')).toBe(true);
@@ -573,7 +597,7 @@ describe('D897: the Security tab’s devices', () => {
     before.remove();
     expect(h.devices.app).toBe('ready');
     expect(h.devices.appExpanded).toBe(false);
-    expect(document.querySelector('#home-app-devices-summary')?.textContent).toBe('Signed in on 2 devices. 1 may sign without asking. Your email is shared with the app.');
+    expect(document.querySelector('#home-app-devices-summary')?.textContent).toBe('Signed in to this wallet in 2 places. 1 of them may sign without asking. Your email is shared with the app.');
     // What was read is in the text colour; the section's own sentence before it was quiet.
     expect(document.querySelector('#home-app-devices-summary')?.hasAttribute('data-read')).toBe(true);
     expect(document.querySelector('#home-app-devices .home-device')).toBeNull();
@@ -612,26 +636,178 @@ describe('D897: the Security tab’s devices', () => {
     expect(h.calls).toHaveLength(2);
   });
 
-  it('the line in each case', () => {
+  it('the line in each case: places, not devices; which app gets the email; this wallet or this app', () => {
+    const one = [{ appId: 'a1', name: 'Sodax' }];
+    const two = [{ appId: 'a1', name: 'Sodax' }, { appId: 'a2', name: 'Sodax Earn' }];
+    const three = [...two, { appId: 'a3', name: 'Lumen' }];
     const dev = (consent: unknown) => ({ consent });
-    expect(devicesSummary({ devices: [], consents: [], email: [] })).toBe('No device is signed in to this wallet right now.');
-    expect(devicesSummary({ devices: [dev(null)], consents: [], email: [] })).toBe('Signed in on 1 device. It asks you before signing.');
-    expect(devicesSummary({ devices: [dev({})], consents: [], email: null })).toBe('Signed in on 1 device. It may sign without asking.');
-    expect(devicesSummary({ devices: [dev(null), dev(null)], consents: [], email: [] })).toBe('Signed in on 2 devices. Each asks you before signing.');
-    expect(devicesSummary({ devices: [], consents: [{}], email: [{}, {}] })).toBe('No device is signed in to this wallet right now. An open tab may sign without asking. Your email is shared with 2 apps.');
-    expect(devicesSummary({ devices: [], consents: [{}, {}], email: [] })).toBe('No device is signed in to this wallet right now. 2 open tabs may sign without asking.');
+    expect(devicesSummary({ apps: one, devices: [], consents: [], email: [] })).toBe('Not signed in to this wallet anywhere right now.');
+    expect(devicesSummary({ apps: one, devices: [], consents: [], email: [] }, false)).toBe('Not signed in to this app anywhere right now.');
+    expect(devicesSummary({ apps: one, devices: [dev(null)], consents: [], email: [] })).toBe('Signed in to this wallet in 1 place. It asks you before signing.');
+    expect(devicesSummary({ apps: one, devices: [dev({})], consents: [], email: null })).toBe('Signed in to this wallet in 1 place. It may sign without asking.');
+    expect(devicesSummary({ apps: one, devices: [dev(null), dev(null)], consents: [], email: [] })).toBe('Signed in to this wallet in 2 places. Each asks you before signing.');
+    expect(devicesSummary({ apps: one, devices: [dev({}), dev({}), dev(null)], consents: [], email: [] })).toBe('Signed in to this wallet in 3 places. 2 of them may sign without asking.');
+    // No sign-in kept, but a tab's auto-approve: no contradiction.
+    expect(devicesSummary({ apps: one, devices: [], consents: [{}], email: [] })).toBe('Not kept signed in to this wallet anywhere. A tab that may still be open can sign without asking.');
+    expect(devicesSummary({ apps: one, devices: [dev(null)], consents: [{}, {}], email: [] })).toBe('Signed in to this wallet in 1 place. It asks you before signing. 2 tabs that may still be open can also sign without asking.');
+    // The email: "the app" with one app; otherwise the apps by name, or how many.
+    expect(devicesSummary({ apps: one, devices: [], consents: [], email: [{ appId: 'a1' }] })).toBe('Not signed in to this wallet anywhere right now. Your email is shared with the app.');
+    expect(devicesSummary({ apps: one, devices: [], consents: [], email: [{ appId: 'a1' }] }, false)).toBe('Not signed in to this app anywhere right now. Your email is shared with this app.');
+    expect(devicesSummary({ apps: two, devices: [], consents: [], email: [{ appId: 'a2' }] })).toBe('Not signed in to this wallet anywhere right now. Your email is shared with Sodax Earn.');
+    expect(devicesSummary({ apps: two, devices: [], consents: [], email: [{ appId: 'a1' }, { appId: 'a2' }] })).toBe('Not signed in to this wallet anywhere right now. Your email is shared with Sodax and Sodax Earn.');
+    expect(devicesSummary({ apps: three, devices: [], consents: [], email: [{ appId: 'a1' }, { appId: 'a2' }, { appId: 'a3' }] })).toBe('Not signed in to this wallet anywhere right now. Your email is shared with 3 apps.');
   });
 
-  it('dates in a few plain words, the full date for a screen reader and a tooltip', () => {
+  it('dates in a few plain words, in English with the device’s hours; the full date for a screen reader and a tooltip', () => {
     const now = new Date(2026, 10, 23, 14, 20).getTime();
-    const time = (ms: number) => new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(ms);
+    const h12 = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hourCycle !== 'h23';
+    const time = (ms: number) => new Intl.DateTimeFormat('en', { hour: 'numeric', minute: '2-digit', hourCycle: h12 ? 'h12' : 'h23' }).format(ms);
     const at = (y: number, m: number, d: number, h: number) => new Date(y, m, d, h, 5).getTime();
     expect(whenWords(at(2026, 10, 23, 9), now)).toBe(`today at ${time(at(2026, 10, 23, 9))}`);
     expect(whenWords(at(2026, 10, 24, 2), now)).toBe(`tomorrow at ${time(at(2026, 10, 24, 2))}`);
     expect(whenWords(at(2026, 10, 22, 23), now)).toBe(`yesterday at ${time(at(2026, 10, 22, 23))}`);
-    const dec = at(2026, 11, 2, 8);
-    expect(whenWords(dec, now)).toBe(`on ${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(dec)} at ${time(dec)}`);
-    const jan = at(2027, 0, 5, 8);
-    expect(whenWords(jan, now)).toBe(`on ${new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(jan)} at ${time(jan)}`);
+    expect(whenWords(at(2026, 11, 2, 8), now)).toBe(`on Dec 2 at ${time(at(2026, 11, 2, 8))}`);
+    expect(whenWords(at(2027, 0, 5, 8), now)).toBe(`on Jan 5, 2027 at ${time(at(2027, 0, 5, 8))}`);
+    expect(whenFull(at(2026, 10, 23, 14))).toBe(`Monday, November 23, 2026 at ${time(at(2026, 10, 23, 14))}`);
+  });
+});
+
+describe('D897 after review: fresh, quiet, true and focus', () => {
+  const answerWith = (over: Record<string, unknown>) => () => json(200, { scopes: [scopeOf('s1', over)], nextCursor: null });
+
+  it('"Show devices" reads again when the tab’s read is over a minute old, and the line follows', async () => {
+    const h = await start();
+    h.nowMs = T0;
+    h.mountApp('s1');
+    h.answer = answerWith({ devices: [device(1)] });
+    h.devices.openApp();
+    await h.idle();
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe('Signed in to this wallet in 1 place. It asks you before signing.');
+    h.nowMs = T0 + DEVICES_FRESH_MS + 1;
+    h.answer = answerWith({ devices: [device(1), device(2)] });
+    h.click('home-app-devices-show');
+    await h.idle();
+    expect(h.calls).toHaveLength(2);
+    expect(document.querySelectorAll('#home-app-devices .home-device')).toHaveLength(2);
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe('Signed in to this wallet in 2 places. Each asks you before signing.');
+  });
+
+  it('within the minute "Show devices" sends nothing', async () => {
+    const h = await start();
+    h.nowMs = T0;
+    h.mountApp('s1');
+    h.answer = answerWith({ devices: [device(1)] });
+    h.devices.openApp();
+    await h.idle();
+    h.nowMs = T0 + DEVICES_FRESH_MS;
+    h.click('home-app-devices-show');
+    await h.idle();
+    expect(h.calls).toHaveLength(1);
+  });
+
+  it('a failed quiet read says so quietly (no alert); the alert comes only after a press', async () => {
+    const h = await start();
+    h.mountApp('s1');
+    h.answer = () => refusal(503, 'home_directory_unavailable');
+    h.devices.openApp();
+    await h.idle();
+    expect(document.querySelector('#home-app-devices [role="alert"]')).toBeNull();
+    expect(document.getElementById('home-devices-quiet-app')?.textContent).toBe('Passport Home couldn’t check this just now. “Show devices” tries again.');
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe(HOME_DEVICES_WALLET_INTRO(1));
+    h.click('home-app-devices-show');
+    await h.idle();
+    expect(document.querySelector('#home-app-devices [role="alert"]')).not.toBeNull();
+    expect(document.getElementById('home-devices-quiet-app')).toBeNull();
+  });
+
+  it('what is on screen is drawn again with no request: at the end of an auto-approve, at midnight, when the page is seen again', async () => {
+    const h = await start();
+    h.nowMs = T0;
+    h.mountApp('s1');
+    h.answer = answerWith({ devices: [device(1, { consent: consent(9) })], consents: [{ consentId: ID(8), appId: 'app_sodax1', partnerOrigin: 'https://sodax.example', label: 'Tab rule', grantedAtMs: T0 - 1000, expiresAtMs: T0 + 600_000 }] });
+    h.devices.openApp();
+    await h.idle();
+    h.click('home-app-devices-show');
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toContain('It may sign without asking.');
+    expect(document.querySelectorAll('#home-app-devices .home-device')).toHaveLength(2);
+    // The tab's auto-approve ends first: its card goes, nothing is read.
+    // (Timers run a little after the moment, so the date has passed.)
+    h.advance(601_000);
+    expect(document.querySelectorAll('#home-app-devices .home-device')).toHaveLength(1);
+    expect(document.getElementById('home-app-devices-summary')?.textContent).not.toContain('tab');
+    // Then the device's: "Auto-approve on" goes, the line says it asks.
+    h.advance(1_200_000);
+    expect(h.calls).toHaveLength(1);
+    expect(document.querySelector('#home-app-devices .home-consent-state')).toBeNull();
+    expect(document.querySelector('#home-app-devices .home-device')?.textContent).toContain('Auto-approve is off');
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe('Signed in to this wallet in 1 place. It asks you before signing.');
+    // Past its idle moment: the sentence says what may have happened.
+    h.advance(device(1).idleUntilMs - h.nowMs! + 1000);
+    expect(document.querySelector('#home-app-devices .home-device-facts')?.textContent).toContain('If it wasn’t used, it signed out by itself');
+    // At midnight "today" becomes "yesterday".
+    const before = document.querySelector('#home-app-devices .home-device-facts time')?.textContent ?? '';
+    h.advance(nextMidnight(h.nowMs!) - h.nowMs! + 1000);
+    const after = document.querySelector('#home-app-devices .home-device-facts time')?.textContent ?? '';
+    expect(before.startsWith('today') || before.startsWith('yesterday') || before.startsWith('on ')).toBe(true);
+    if (before.startsWith('today')) expect(after.startsWith('yesterday')).toBe(true);
+    // Seen again (another tab, a phone unlocked): drawn again; still nothing read.
+    h.nowMs = device(1).expiresAtMs + 1;
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(document.querySelectorAll('#home-app-devices .home-device')).toHaveLength(0);
+    expect(h.calls).toHaveLength(1);
+    delete (document as unknown as Record<string, unknown>).visibilityState;
+  });
+
+  it('drawing again keeps the focus on the same control', async () => {
+    const h = await start();
+    h.nowMs = T0;
+    h.mountApp('s1');
+    h.answer = answerWith({ devices: [device(1)], consents: [{ consentId: ID(8), appId: 'app_sodax1', partnerOrigin: 'https://sodax.example', label: 'Tab rule', grantedAtMs: T0 - 1000, expiresAtMs: T0 + 600_000 }] });
+    h.devices.openApp();
+    await h.idle();
+    h.click('home-app-devices-show');
+    const again = document.getElementById('home-app-devices-refresh') as HTMLElement;
+    again.focus();
+    h.advance(601_000);
+    expect(document.activeElement?.id).toBe('home-app-devices-refresh');
+    expect(document.activeElement).not.toBe(again);
+  });
+
+  it('a read that finishes after the person moved on leaves the focus where it is', async () => {
+    const h = await start();
+    h.mountFront();
+    let release: () => void = () => {};
+    h.answer = () => new Promise<Response>((r) => { release = () => r(json(200, { scopes: [scopeOf('s1', { devices: [device(1)] })], nextCursor: null })); });
+    (document.getElementById('home-devices-title') as HTMLElement).focus();
+    let sent = false;
+    const answer = h.answer;
+    h.answer = (u, c) => {
+      sent = true;
+      return answer(u, c);
+    };
+    h.devices.openFront();
+    for (let i = 0; i < 200 && !sent; i++) await new Promise((r) => setImmediate(r));
+    const elsewhere = document.createElement('button');
+    document.body.append(elsewhere);
+    elsewhere.focus();
+    release();
+    await h.idle();
+    expect(document.activeElement).toBe(elsewhere);
+    elsewhere.remove();
+    // Still on the heading (or nowhere): the heading takes it, as before.
+    h.answer = answerWith({ devices: [device(1)] });
+    (document.getElementById('home-devices-title') as HTMLElement).focus();
+    h.click('home-devices-refresh');
+    await h.idle();
+    expect(document.activeElement?.id).toBe('home-devices-title');
+  });
+
+  it('stillTrue drops what ended and nothing else', () => {
+    const sc = scopeOf('s1', { devices: [device(1, { consent: consent(9) }), device(2, { expiresAtMs: T0 - 1 })], consents: [] }) as unknown as Parameters<typeof stillTrue>[0];
+    const out = stillTrue(sc, T0 + 1_800_000);
+    expect(out.devices.map((x) => x.shareId)).toEqual([ID(1)]);
+    expect(out.devices[0]!.consent).toBeNull();
+    expect(stillTrue(sc, T0).devices[0]!.consent).not.toBeNull();
   });
 });

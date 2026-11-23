@@ -306,12 +306,14 @@ export function coverageText(coverage: HomeCoverage, mine: boolean, canMove = fa
 }
 
 /**
- * The sentence under the badge (D897): its "Yes." or "No." answers the question only screen readers hear, so it is read
- * to them too and not shown (beside "Safe if the apps close", a bare "No." read as a contradiction).
+ * The coverage line (D897): the question and its "Yes." or "No." for screen readers only, then the badge and the
+ * sentence. Shown beside "Safe if the apps close", a bare "No." read as a contradiction; heard first, the question, its
+ * answer, the badge and the reason read in order.
  */
-function coverageDetail(d: Dom, detail: string): Child[] {
-  const m = /^(Yes|No)\. /u.exec(detail);
-  return m ? [d.h('span', { class: 'sr-only' }, m[0]), detail.slice(m[0].length)] : [detail];
+function coverageParts(d: Dom, cover: CoverageText, checking: boolean, badgeEl: HTMLElement): Child[] {
+  const m = checking ? null : /^(Yes|No)\. /u.exec(cover.detail);
+  const detail = checking ? 'Checking…' : m ? cover.detail.slice(m[0].length) : cover.detail;
+  return [d.h('span', { class: 'sr-only' }, `${cover.question} ${m ? m[0] : ''}`), badgeEl, d.h('span', { class: 'home-coverage-text' }, detail)];
 }
 
 export { type HomeProblem, homeProblem } from './home-problems.ts';
@@ -2277,7 +2279,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         ),
         // Whether it needs them: the badge on its own line, then the answer; the question is read to a screen reader
         // only (the answer starts "No." or "Yes.").
-        d.h('p', { attrs: { id: 'home-coverage' } }, d.h('span', { class: 'sr-only' }, `${cover.question} `), badge(cover.badge, cover.tone), d.h('span', { class: 'home-coverage-text' }, ...(busy === 'check' ? ['Checking…'] : coverageDetail(d, cover.detail)))),
+        d.h('p', { attrs: { id: 'home-coverage' } }, ...coverageParts(d, cover, busy === 'check', badge(cover.badge, cover.tone))),
         scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
       ),
       walletTabs(scope, tab),

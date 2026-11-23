@@ -24,6 +24,11 @@
 // A request is refused at once (4100) when MAX_PENDING_APPROVALS are already waiting or on show, or when the message
 // the popup would get fails the popup's own validator (parseWindowMessage), which would otherwise drop it silently and
 // leave the request hanging until its 5 min end.
+//
+// Partner labels (D896): a sign request's message carries the app's checked label documents for its chain only while
+// the vault's read of them is fresh (`partnerLabels`). When they are stale at the moment the request goes to the popup,
+// the request waits for one fresh read (at most the vault's PARTNER_LABELS_WAIT_MS), once, and then goes with what is
+// fresh by then, or with none: never with a stale label, and never blocked or failed because of labels.
 import {
   type ApprovalSubject,
   type AutoApproveNote,
@@ -79,6 +84,8 @@ interface SignItem extends BaseItem {
   note?: AutoApproveNote;
   /** The mainnet demo's prices this request was decided with (the popup shows its value with the same book). */
   demoPrices?: MainnetDemoPriceBook;
+  /** D896: its partner labels were stale once and a fresh read was asked for (only once per request). */
+  labelsRead?: true;
 }
 
 interface ConsentItem extends BaseItem {
@@ -89,6 +96,16 @@ interface ConsentItem extends BaseItem {
 }
 
 type Item = SignItem | ConsentItem;
+
+/**
+ * D896: the vault's partner labels for a request's window. `forRequest` answers the checked documents' texts for the
+ * request's chain while the read they came from is fresh, `'stale'` when there are some but that read is too old, and
+ * none otherwise; `refresh` reads `GET /v1/app` again (settling within the vault's wait, whatever the read does).
+ */
+export interface WindowLabels {
+  forRequest(subject: ApprovalSubject): readonly string[] | 'stale';
+  refresh(): Promise<void>;
+}
 
 /** A request flagged `popupOpened`, from its arrival until it ends (vault.ts). */
 export interface PopupClaim {
@@ -133,6 +150,8 @@ export interface ApprovalDeps {
   onStop(): void;
   /** Whether an approval popup is open (reported to the SDK as the `approvalWindow` event); called on each change. */
   onWindow?(open: boolean): void;
+  /** D896: the app's partner labels for a request's window (absent: none, as before). */
+  partnerLabels?: WindowLabels;
 }
 
 export class Approvals {
@@ -151,6 +170,8 @@ export class Approvals {
   /** Until when a partner-opened popup arriving with nothing to show is closed at once (LATE_CLOSE_MS). */
   private lateCloseUntil = 0;
   private windowOpen = false;
+  /** D896: the request at the head of the queue waiting for a fresh read of its labels before it is sent. */
+  private labelWait: Item | null = null;
 
   constructor(private readonly d: ApprovalDeps) {}
 
@@ -206,6 +227,7 @@ export class Approvals {
     const items = [...(this.current ? [this.current] : []), ...this.queue];
     this.current = null;
     this.queue.length = 0;
+    this.labelWait = null;
     for (const item of items) this.finish(item, outcome);
     this.dropPopup(true);
     this.syncLauncher();
@@ -249,6 +271,7 @@ export class Approvals {
       const i = this.queue.indexOf(item);
       if (i < 0) return;
       this.queue.splice(i, 1);
+      if (this.labelWait === item) this.labelWait = null;
     }
     this.finish(item, 'rejected');
     this.pump();
@@ -266,6 +289,11 @@ export class Approvals {
   /** Sends the next request to a connected popup, or shows the launcher. */
   private pump(): void {
     if (this.current) return;
+    // A request waiting for its labels' read is sent when the read settles (labelsFor); the launcher still follows the popup.
+    if (this.labelWait) {
+      this.syncLauncher();
+      return;
+    }
     const next = this.queue[0];
     if (!next) {
       this.syncLauncher();
@@ -407,17 +435,50 @@ export class Approvals {
   private send(item: Item): void {
     const popup = this.popup;
     if (!popup) return;
+    const labels = this.labelsFor(item);
+    if (labels === 'wait') return;
     this.queue.shift();
     this.current = item;
     this.fresh = false;
     // A popup reused for a long batch could count past the protocol's bound: clamp (the popup shows "1000 of 1000").
     const queued = Math.min(QUEUED_MAX, this.batchDone + 1 + this.queue.length);
     const position = Math.min(this.batchDone + 1, queued);
-    popup.postMessage(this.message(item, position, queued, true), this.d.authOrigin);
+    let m = this.message(item, position, queued, true, labels);
+    // The labels never cost the request: should the popup's validator refuse the message with them, it goes without.
+    if (labels.length > 0 && !parseWindowMessage(m, [m.t])) m = this.message(item, position, queued, true);
+    popup.postMessage(m, this.d.authOrigin);
+  }
+
+  /**
+   * D896: the partner label texts `item`'s message carries, or `'wait'` when they are stale and this is the first time:
+   * one fresh read is asked for, and the request is sent when it settles (with what is fresh then, or none).
+   */
+  private labelsFor(item: Item): readonly string[] | 'wait' {
+    const source = this.d.partnerLabels;
+    if (item.type !== 'sign' || !source) return [];
+    let l: readonly string[] | 'stale';
+    try {
+      l = source.forRequest(item.subject);
+    } catch {
+      return [];
+    }
+    if (l !== 'stale') return l;
+    if (item.labelsRead) return [];
+    item.labelsRead = true;
+    this.labelWait = item;
+    void Promise.resolve()
+      .then(() => source.refresh())
+      .catch(() => undefined)
+      .then(() => {
+        if (this.labelWait !== item) return;
+        this.labelWait = null;
+        this.pump();
+      });
+    return 'wait';
   }
 
   /** The hana:approve-request or hana:consent-request for `item`; `copy` gives the popup its own bytes and policy. */
-  private message(item: Item, position: number, queued: number, copy: boolean): { t: 'hana:approve-request' | 'hana:consent-request' } & Record<string, unknown> {
+  private message(item: Item, position: number, queued: number, copy: boolean, labels: readonly string[] = []): { t: 'hana:approve-request' | 'hana:consent-request' } & Record<string, unknown> {
     const logoUrl = this.d.logoUrl?.() ?? null;
     const common = {
       v: 1,
@@ -446,6 +507,8 @@ export class Approvals {
       ...(supportId ? { supportId } : {}),
       ...(this.d.emailShared?.() ? { emailShared: true } : {}),
       ...(item.demoPrices ? { demoPrices: item.demoPrices } : {}),
+      // D896: only when there are fresh labels for this request's chain, so every other request is the older message.
+      ...(labels.length > 0 ? { partnerLabels: [...labels] } : {}),
     };
   }
 

@@ -36,6 +36,18 @@ export const MESSAGE_MAX_BYTES = 8 * 1024;
  * every sign request the port accepts yields an approval request the popup accepts and a reply the SDK accepts.
  */
 export const APPROVAL_MESSAGE_MAX_BYTES = SIGN_MESSAGE_MAX_BYTES + MESSAGE_MAX_BYTES;
+/**
+ * The most partner label text one hana:approve-request carries (D896): the documents the vault checked for the app's
+ * chain, at most 32 KiB together (the API's per-app limit, LABEL_STORE_LIMITS.appBytes; the vault sends none above it).
+ */
+export const APPROVAL_LABELS_MAX_BYTES = 32 * 1024;
+/** At most this many label documents in one hana:approve-request (the API's entries per org). */
+export const APPROVAL_LABELS_MAX = 16;
+/**
+ * Cap for hana:approve-request: APPROVAL_MESSAGE_MAX_BYTES plus room for its partner labels (and the field's own key
+ * and list), so a request the popup takes without labels is still one it takes with them.
+ */
+export const APPROVE_REQUEST_MAX_BYTES = APPROVAL_MESSAGE_MAX_BYTES + APPROVAL_LABELS_MAX_BYTES + 1024;
 const MAX_DEPTH = 24;
 
 // ---- errors ----
@@ -1092,6 +1104,14 @@ export interface WindowMessageMap {
      * it refuses it; the vault has already decided the request with the same book.
      */
     demoPrices?: unknown;
+    /**
+     * D896: the partner label documents (their text, `journear-labels/1`) the vault took from its own `GET /v1/app`
+     * read under its freshness window (PARTNER_LABELS_FRESH_MS), after its own hash, parse, network and duplicate
+     * checks, for this request's chain. The popup parses each again with its own parser and shows a label only for a
+     * request that matches one exactly. Present only when there is one, so every other request sends the message older
+     * pages take.
+     */
+    partnerLabels?: string[];
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -1305,7 +1325,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels'])) return false;
+    if (m.partnerLabels !== undefined && !isLabelTexts(m.partnerLabels)) return false;
     if (m.mainnetDemo !== undefined && (m.mainnetDemo !== true || m.testApp !== true)) return false;
     if (m.demoPrices !== undefined && !isPlainObject(m.demoPrices)) return false;
     if (m.logoUrl !== undefined && !isLogoUrl(m.logoUrl)) return false;
@@ -1381,6 +1402,18 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:email-revoked': (m) => exactKeys(m, ['v', 't', 'ok']) && typeof m.ok === 'boolean',
 };
 
+/** 1 to APPROVAL_LABELS_MAX non-empty texts, together at most APPROVAL_LABELS_MAX_BYTES of UTF-8 (D896). */
+function isLabelTexts(v: unknown): v is string[] {
+  if (!Array.isArray(v) || v.length < 1 || v.length > APPROVAL_LABELS_MAX) return false;
+  let total = 0;
+  for (const t of v) {
+    if (typeof t !== 'string' || t.length === 0 || t.length > APPROVAL_LABELS_MAX_BYTES) return false;
+    total += utf8Length(t);
+    if (total > APPROVAL_LABELS_MAX_BYTES) return false;
+  }
+  return true;
+}
+
 function isAutoApproveNote(v: unknown): v is AutoApproveNote {
   return (
     isPlainObject(v) &&
@@ -1397,7 +1430,7 @@ function isAutoApproveNote(v: unknown): v is AutoApproveNote {
  */
 export function parseWindowMessage<T extends WindowMessageType>(data: unknown, allowed: readonly T[]): WindowMessage<T> | null {
   if (!isPlainObject(data) || data.v !== PROTOCOL_VERSION || typeof data.t !== 'string' || !(allowed as readonly string[]).includes(data.t) || !Object.hasOwn(FIELDS, data.t)) return null;
-  const cap = data.t === 'hana:approve-request' || data.t === 'hana:consent-request' ? APPROVAL_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
+  const cap = data.t === 'hana:approve-request' ? APPROVE_REQUEST_MAX_BYTES : data.t === 'hana:consent-request' ? APPROVAL_MESSAGE_MAX_BYTES : MESSAGE_MAX_BYTES;
   if (messageSize(data, cap) === Number.POSITIVE_INFINITY) return null;
   return FIELDS[data.t as WindowMessageType](data) ? (data as WindowMessage<T>) : null;
 }

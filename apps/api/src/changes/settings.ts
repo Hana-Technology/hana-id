@@ -25,8 +25,9 @@ import { type ChangeRow, changeView } from './views.ts';
 
 /**
  * An app name as stored: NFC, trimmed, 1..64 characters, one display-safe line, and not like a web address or the
- * service's names, "Hana", "Journear" or "Passport Home" (console-core normalisePartnerAppName, D686 as extended by
- * D765). Applies to a new app and to every rename.
+ * service's names, "Hana", "Journear", "Passport Home" or "Passport" alone or as the wallet, nor a claim word beside
+ * sentence punctuation (console-core normalisePartnerAppName, D686 as extended by D765 and D891). Applies to a new
+ * app and to every rename; stored names are never rewritten.
  */
 export function appName(input: string): string {
   const r = normalisePartnerAppName(input);

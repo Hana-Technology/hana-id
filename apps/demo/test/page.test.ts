@@ -1201,8 +1201,11 @@ describe('the NEAR card', () => {
   });
 
   it.each([
-    ['the person rejects', () => fake.near.signTransaction.mockRejectedValueOnce(hanaError(4001)), 'Rejected in the Journear Passport window: nothing was signed.'],
-    ['the read fails before the window', () => ((wall += 61_000), (rpc.down = true)), 'This page couldn’t reach NEAR’s test network. Check your connection and try again.'],
+    ['the person rejects', (): void => void fake.near.signTransaction.mockRejectedValueOnce(hanaError(4001)), 'Rejected in the Journear Passport window: nothing was signed.'],
+    ['the read fails before the window', (): void => {
+      wall += 61_000;
+      rpc.down = true;
+    }, 'This page couldn’t reach NEAR’s test network. Check your connection and try again.'],
   ] as const)('D889: Sign a transaction that never got signed (%s) says "not signed" and nothing about a send', async (_name, arrange, text) => {
     boot();
     await loginFlow();

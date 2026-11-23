@@ -142,6 +142,9 @@ describe('app names (OPER-11)', () => {
     expect(() => assertAppName('Passport Wallet')).toThrow(/App name: The name must not have "Wallet" right after "Passport"/u);
     expect(() => assertAppName('Passport Pro')).toThrow(/App name: The name must not have "Pro" right after "Passport": it reads as a version of the wallet/u);
     expect(assertAppName('Passport Protocol')).toBe('Passport Protocol');
+    expect(assertAppName('Passport Online')).toBe('Passport Online');
+    expect(assertAppName('Acme Passport Plus')).toBe('Acme Passport Plus');
+    expect(() => assertAppName('Passport Pro™')).toThrow(/App name: The name must not have "Pro" right after "Passport"/u);
     expect(() => assertAppName('Acme. Verified')).toThrow(/App name: The name must not have a word like "Verified" after sentence punctuation/u);
     expect(assertAppName('Passport Travel')).toBe('Passport Travel');
     expect(assertAppName('Dr. Martens')).toBe('Dr. Martens');

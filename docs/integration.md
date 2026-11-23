@@ -83,9 +83,10 @@ refused (when an app is created or renamed, by Journear staff or on **Branding**
   Wallet, App, Account, Login, Sign-in, Sign-up, Support, Help, Security, Team, Official, Pay, Vault, Verify,
   Recovery, Admin, Staff, Service, Auth, Connect, Key, Relayer, Sponsor, Gas or "by" right before or after it, plurals
   too, or ID or "from" right after it ("Passport ID", "Admin Passport"); a word like "verified", "secure" or "safe"
-  right next to it; a word that makes it read as a version of the wallet right before or after it (Plus, Pro, One, Go,
-  Lite, Mini, Max, Ultra, Prime, Premium, Basic, Classic, Beta, Next, Card, Online, Mobile, Web, Cloud, Desktop or
-  Extension, plurals too, or joined to it: "Passport Pro", "Mobile Passport", "PassportPlus"); or a name that starts
+  right next to it; "Passport" followed only by a word that makes it an edition of the wallet (Plus, Pro, Premium,
+  Prime, Max, Ultra, Lite, Mini, Basic, Classic, One or Beta: "Passport Pro", "My Passport Plus", "PassportPlus"), or
+  "Premium", "Pro", "Plus", "Lite", "Ultra" or "Beta" Passport with nothing before it ("Premium Passport"); your brand
+  in front or your own words after it are fine ("Acme Passport Plus", "Passport Mini Golf"); or a name that starts
   with "Passport" followed by a comma, bracket, bar, slash, colon, dash or "by"/"from"/"of" and another name
   ("Passport | Acme"). Your brand first is fine ("Acme Passport", "Gitcoin
   Passport"), and so is "Passport" with words of your own ("Passport Photos Co", "Passport Travel", "Passport Labs");

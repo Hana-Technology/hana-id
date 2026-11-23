@@ -55,7 +55,7 @@ const evmProvider = createSodaxEvmProvider(hana, { chainId: 84532, rpcUrl: 'http
   in the same window and need an Approve each. Sodax swaps can't be
   auto-approved yet.
 - The adapters' errors are `ProviderRpcError`s (numeric `code`, Journear Passport's string code in `data.code`): show
-  `error.userMessage` to your user (0.5.0). Sodax transactions are never gas-free: the user pays the network fee.
+  `error.userMessage` to your user (0.5.0). Sodax transactions never use gas sponsorship: the user pays the network fee.
 
 ## What you can test with a test key
 

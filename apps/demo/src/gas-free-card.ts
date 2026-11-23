@@ -1,6 +1,6 @@
 // The gas-free check-in card (D867): one button, "Check in", that runs Journear's demo check-in (`checkIn()` on the
 // pinned CheckIn program, contracts/evm-delegate, D854) with the network fee paid by Journear, through the SDK's
-// `hana.evm.sendSponsored` (D838, D855), the way docs/integration.md "Gas-free actions" tells partners to do it.
+// `hana.evm.sendSponsored` (D838, D855), the way docs/integration.md "Gas sponsorship" tells partners to do it.
 //
 // When it appears (and otherwise it doesn't exist at all: not disabled, not "coming soon"):
 // 1. the env's manifest has an `evm.sponsor` block (config.ts `evmSponsor`, baked in at build time). Without it

@@ -124,7 +124,7 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   const approval = await approvalP;
   // The click opened the approval itself: no "Review in Journear Passport" button.
   await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' })).toHaveCount(0);
-  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
+  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear Passport window…');
   // D808: the plain summary leads; the request's kind heading is in the details.
   // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.
   await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add a message to the demo guestbook$/u);

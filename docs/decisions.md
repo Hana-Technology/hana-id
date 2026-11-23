@@ -16488,9 +16488,22 @@ page).
     check first too (before, the page's generic "Could not reach Journear's service. Check your connection and try
     again.").
   - "Sign a transaction" sends with the page's own NEAR reads (`near.ts` `sendTx`): after the approval only the send
-    can fail, so the result no longer says "not signed" (it was signed): "signed, didn't go through" (NEAR refused or
-    failed it, `near_send_failed`) or "signed, not confirmed" (no usable answer: it may have gone out). The page's own
-    error box for that case says the same.
+    can fail, so the result no longer says "not signed" (it was signed). Since PR 111's review the send follows the
+    API's broadcast rule (`apps/api/src/near/rpc.ts`, D435): it moves to `rpcFallback` only when an endpoint gave no
+    JSON-RPC answer, with the same signed bytes, and an answer is final. `near_send_failed` ("signed, didn’t go
+    through") only for an outcome whose status is `Failure`, or an invalid transaction from the first endpoint asked,
+    before any failover; every other case is the new page code `near_send_unconfirmed` ("signed, not confirmed",
+    check first): TIMEOUT_ERROR, any error after a failover (the first endpoint may have forwarded the bytes, and the
+    fallback answers InvalidNonce because they landed), no endpoint answering, an outcome without a status. Before,
+    any error body was "didn’t go through … your message wasn’t stored", which a failover could make false and lead to
+    a second write.
+  - NEAR's own refusals of the relay's transaction (`near_rejected`: an invalid transaction, never included, the API's
+    NOT_EXECUTED; `delegate_rejected`: the delegate failed in the sender's receipt) never ran the guestbook call, so
+    they say the message wasn't stored, as the SDK does. (Corrected after PR 111's review: the first version said they
+    "come without `notSent`", which confuses broadcast with execution: `notSent` says nothing was broadcast.)
+  - `delegate_nonce_used` (the API's, and the vault's `near_delegate_nonce_used`) is refused before anything is sent
+    or signed: another request already used this one's number. It may have been this message (another tab, a
+    reload), so the sentence still says to check.
 - Decision, old → new, by condition (the card's red box unless said; `{GB}` is “Write to the guestbook (no NEAR
   needed)”, `{REPORT}` is "If it keeps happening, use “Copy diagnostics” and send it to the Journear team.", `{CHECK}`
   is "Check the guestbook list for your message before you try again"):
@@ -16502,21 +16515,21 @@ page).
   | `near_key_unknown` | Your NEAR account doesn’t exist on testnet yet, so Journear can’t check this request. Click {GB} again: the demo creates the account first. | Your NEAR account isn’t set up yet, so nothing was signed. Click {GB} again: the demo sets up your account first. |
   | `near_block_unknown` | Journear couldn’t find this transaction’s block on NEAR testnet. Try again: the demo reads a fresh block. | Journear Passport couldn’t check this request, so it wasn’t signed. Try again. (the SDK's, word for word) |
   | `near_network_mismatch` | Refused: this transaction names a block of another NEAR network than the one it claims. | This request mixed up two NEAR networks, so Journear Passport stopped it. Nothing was signed. {REPORT} |
-  | `near_delegate_nonce_used` | That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one. | This request was already used, perhaps in another tab or by an earlier write. Nothing new was signed. {CHECK}. |
+  | `near_delegate_nonce_used` | That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one. | Another request from your account just used this one’s place, perhaps from another tab, so this one wasn’t signed. {CHECK}. |
   | `near_delegate_nonce_too_large` | Journear refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again. | This request can’t be checked yet, so nothing was signed. Wait a few seconds and try again. (the SDK's) |
   | `near_delegate_expiry` | The NEAR request expired before it was approved, or expires too far ahead. Try again. | This request ran out of time before it was approved, or was set to last too long, so nothing was signed. Try again. |
   | `near_delegate_nonce_stale` | That NEAR request was prepared too long ago (its nonce is behind testnet’s current block). Try again: the demo reads a fresh one. | This request was prepared too long ago, so nothing was signed. Try again: the demo prepares a new one. |
-  | `near_relayed_delegate` | Refused: Journear doesn’t sign a transaction that relays someone else’s delegate action. | Journear Passport doesn’t sign a request that passes on someone else’s, so it stopped this one. Nothing was signed. |
-  | `near_delegate_test_app_action` | Refused: a test app’s request that Journear pays for may only call a contract or send NEAR, never change your account. | Journear Passport stopped this: a test app’s request that Journear pays for may only use a program or send NEAR, never change your account. Nothing was signed. |
-  | `near_delegate_test_app_receiver` | Refused: a test app’s request that Journear pays for may only go to a testnet account other than your own. | Journear Passport stopped this: a test app’s request that Journear pays for may only go to another account on NEAR’s test network, not your own. Nothing was signed. |
-  | `api_unavailable` `near_rpc_unavailable` | Journear couldn’t reach NEAR testnet to check this request. Try again in a minute. | Journear couldn’t reach NEAR’s test network to check this request, so nothing was signed. Try again in a minute. |
-  | `api_unavailable` `near_rpc_single_provider` | This Journear environment has only one NEAR provider, so Journear can’t check a test app’s NEAR request. {REPORT} | This test version of Journear isn’t set up to check this request yet, so nothing was signed. {REPORT} |
+  | `near_relayed_delegate` | Refused: Journear doesn’t sign a transaction that relays someone else’s delegate action. | Journear Passport stopped this: it asked to send on a request someone else had already approved, which Journear Passport never signs. Nothing was signed. |
+  | `near_delegate_test_app_action` | Refused: a test app’s request that Journear pays for may only call a contract or send NEAR, never change your account. | Journear Passport stopped this: in a test app, a request that Journear pays for may only send NEAR or use an app on NEAR, never change your account’s keys or settings. Nothing was signed. |
+  | `near_delegate_test_app_receiver` | Refused: a test app’s request that Journear pays for may only go to a testnet account other than your own. | Journear Passport stopped this: in a test app, a request that Journear pays for may only go to another account on NEAR’s test network, not your own. Nothing was signed. |
+  | `api_unavailable` `near_rpc_unavailable` | Journear couldn’t reach NEAR testnet to check this request. Try again in a minute. | Journear Passport couldn’t reach NEAR’s test network to check this request, so nothing was signed. Try again in a minute. |
+  | `api_unavailable` `near_rpc_single_provider` | This Journear environment has only one NEAR provider, so Journear can’t check a test app’s NEAR request. {REPORT} | This test version of Journear Passport isn’t set up to check this request yet, so nothing was signed. {REPORT} |
 
   **The relay refused before sending anything**
 
   | Code | Old | New |
   |---|---|---|
-  | `receiver_not_allowed` | Journear’s relayer pays only for calls to the demo guestbook, and refused this one. | Journear isn’t set up to pay for this guestbook, so it refused this request. Nothing was sent. Tell the Journear team. (the page only ever writes to its guestbook: this is the env's list) |
+  | `receiver_not_allowed` | Journear’s relayer pays only for calls to the demo guestbook, and refused this one. | Journear isn’t set up to pay for this guestbook, so it refused this request. Nothing was sent. {REPORT} (the page only ever writes to its guestbook: this is the env's list) |
   | `action_not_allowed` | Journear’s relayer pays only for function calls, and refused this request. | This request isn’t a kind Journear pays for, so it was refused. Nothing was sent. {REPORT} |
   | `deposit_not_allowed` | Journear’s relayer refused a request that attaches NEAR: the guestbook needs none. | This request tried to send NEAR with your message, which the guestbook never needs, so Journear refused it. Nothing was sent. {REPORT} |
   | `sender_not_implicit` | Journear’s relayer acts only for Journear’s own NEAR accounts, and refused this one. | Journear pays only for Journear Passport’s own NEAR accounts, and this request came from another one. Nothing was sent. |
@@ -16525,25 +16538,29 @@ page).
   | `bad_request` | Journear’s relayer could not read the request. Try again. | Journear couldn’t read this request. Nothing was sent. Try again. |
   | `mainnet_not_allowed` | Journear’s relayer works on NEAR testnet only. | Journear pays only on NEAR’s test network, so it refused this request. Nothing was sent. |
   | `account_not_activated` | Your NEAR account doesn’t exist on testnet yet. Try again: the demo creates it first. | Your NEAR account isn’t set up yet. Nothing was sent. Try again: the demo sets it up first. |
-  | `access_key_missing` | Your NEAR account has no Journear key on testnet any more (was it changed elsewhere?), so the relayer can’t act for it. | Your NEAR account no longer holds Journear Passport’s key (was it changed in another wallet?), so Journear can’t send for it. Nothing was sent. Tell the Journear team. |
+  | `access_key_missing` | Your NEAR account has no Journear key on testnet any more (was it changed elsewhere?), so the relayer can’t act for it. | Your NEAR account no longer holds the key Journear Passport made for it (was it changed in another wallet?), so it can’t be used here. Nothing was sent. {REPORT} |
   | `delegate_nonce_too_large` | Journear’s relayer refused the request’s nonce for NEAR testnet’s current block. Wait a few seconds and try again. | This request can’t be used yet, so nothing was sent. Wait a few seconds and try again. (the SDK's) |
   | `delegate_expired` | The signed request expired before the relayer sent it. Try again. | Your approved request ran out of time before Journear could send it. Nothing was sent. Try again. |
   | `block_height_too_far` | The signed request expires too far ahead for Journear’s relayer. Try again. | Your approved request was set to last too long, so Journear refused it. Nothing was sent. Try again. |
   | `app_budget_exhausted` | The demo app has used up today’s free NEAR relays. Try again tomorrow (UTC). | The demo app has used up today’s free NEAR transactions. Nothing was sent. Try again tomorrow (UTC). |
+  | `relay_budget_exhausted` | The demo’s free NEAR transactions are used up for today. Try again tomorrow (UTC). | The demo’s free NEAR transactions are used up for today. Nothing was sent. Try again tomorrow (UTC). |
+  | `gas_too_high` (D881's) | Journear refused this request: its network fee could be more than the guestbook needs, and Journear pays only up to that. | the same + Nothing was sent. {REPORT} |
+  | `relayer_unconfigured` (D881's) | The demo’s free NEAR transactions aren’t set up on this test version yet. Tell the Journear team. | The demo’s free NEAR transactions aren’t set up on this test version yet. Nothing was sent. {REPORT} |
+  | 4001 in a signing (also the EVM and Stellar buttons) | Rejected in the Journear window: nothing was signed. | Rejected in the Journear Passport window: nothing was signed. |
   | `rate_limiter_unavailable` | Journear’s relayer is unavailable right now. Try again in a minute. | Journear couldn’t take this request right now. Nothing was sent. Try again in a minute. |
-  | `not_enough_balance` (no longer an API code: a short relay account answers `near_rejected`; the row is kept) | Journear’s relayer is low on testnet NEAR right now. Tell the Journear team. | Journear can’t pay for NEAR transactions right now. Nothing was sent. Tell the Journear team. |
+  | `not_enough_balance` (no longer an API code: a short relay account answers `near_rejected`; the row is kept) | Journear’s relayer is low on testnet NEAR right now. Tell the Journear team. | Journear can’t pay for NEAR transactions right now. Nothing was sent. {REPORT} |
   | an unknown 4xx (default) | Journear’s relayer refused this request ({code}). {REPORT} | Journear refused this request ({code}). {REPORT} |
 
   **An answer that may follow a send: check first**
 
   | Code | Old | New |
   |---|---|---|
-  | `delegate_nonce_used` (shown after the card's one automatic retry) | That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one. | This request was already sent, perhaps from another tab or an earlier write. {CHECK}. |
+  | `delegate_nonce_used` (shown after the card's one automatic retry) | That NEAR request’s nonce was already used (another tab or an earlier write?). Try again: the demo reads a fresh one. | Another request from your account just used this one’s place, perhaps from another tab, so this one wasn’t sent. {CHECK}. (Before the card's one automatic second approval it now reads the guestbook: see below.) |
   | `already_relayed` | Journear’s relayer sent this exact request a moment ago. Check the guestbook list. | Journear sent this same request a moment ago. {CHECK}. |
   | `relayer_busy` (after the card's two retries) | Journear’s relayer is busy. Try again in a moment. | Journear is busy right now. {CHECK} in a moment. |
   | `relayer_unavailable` | Journear’s relayer is unavailable right now. Try again in a minute. | Journear couldn’t send this right now and can’t tell whether it went through. {CHECK} in a minute. |
   | `near_unavailable` | Journear’s relayer couldn’t reach NEAR testnet. Try again in a minute. | Journear couldn’t reach NEAR’s test network, so it can’t tell whether your request went through. {CHECK} in a minute. |
-  | `method_not_allowed` (new row: was the unknown-4xx default) | Journear’s relayer refused this request (method_not_allowed). {REPORT} | Journear couldn’t use this request. {CHECK}, or tell the Journear team. |
+  | `method_not_allowed` (new row: was the unknown-4xx default) | Journear’s relayer refused this request (method_not_allowed). {REPORT} | Journear couldn’t use this request. {CHECK}. {REPORT} |
   | an unknown 5xx (default) | Journear’s relayer is unavailable right now. Try again in a minute. ({code}) | Something went wrong while Journear was sending this. {CHECK}. ({code}) |
   | a 5xx with no code | Could not reach Journear’s relayer. Check your connection and try again. | Journear didn’t answer properly, so it can’t tell whether this was sent. {CHECK}. |
   | no answer at all (the SDK's fetch failed or timed out) | Could not reach Journear’s service. Check your connection and try again. (the page's generic) | Couldn’t reach Journear, so this may or may not have been sent. Check your connection, then check the guestbook list for your message before you try again. |
@@ -16553,8 +16570,8 @@ page).
   | Code | Old | New |
   |---|---|---|
   | `contract_rejected` (with the guestbook's reason, made safe) | The guestbook contract refused the message: {reason}. Nothing was stored. | The guestbook refused the message: {reason}. Nothing was stored. (the table's row too: "…(is it 1 to 200 characters?). Nothing was stored.") |
-  | `delegate_rejected` | NEAR testnet refused the signed request. Try again: the demo reads a fresh nonce and block. | NEAR’s test network turned down your approved request. Check the guestbook list for your message, then try again if it isn’t there. |
-  | `near_rejected` | NEAR testnet refused the relayed transaction. Try again; the guestbook list shows whether it landed. | NEAR’s test network didn’t accept this request. Check the guestbook list for your message, then try again if it isn’t there. |
+  | `delegate_rejected` | NEAR testnet refused the signed request. Try again: the demo reads a fresh nonce and block. | NEAR’s test network turned down your approved request, so your message wasn’t stored. Try again. |
+  | `near_rejected` | NEAR testnet refused the relayed transaction. Try again; the guestbook list shows whether it landed. | NEAR’s test network turned this request down, so your message wasn’t stored. Try again. |
   | `near_error` | NEAR testnet returned an error for the relayed transaction. Try again; the guestbook list shows whether it landed. | NEAR’s test network reported a problem with this request, so it may or may not have gone through. {CHECK}. |
   | `timeout` without its transaction | NEAR testnet hasn’t confirmed the transaction yet: it may still land. Click Refresh on the guestbook list in a moment to see. | NEAR’s test network hasn’t confirmed your message yet: it may still arrive. Click Refresh on the guestbook list in a moment to see, before you try again. |
 
@@ -16563,11 +16580,14 @@ page).
   | Code | Old | New |
   |---|---|---|
   | `near_page_rpc_failed` (the write, the list) | This page couldn’t read NEAR testnet (its RPC didn’t answer). Check your connection and try again. | This page couldn’t reach NEAR’s test network. Check your connection and try again. |
-  | `near_page_rpc_failed` ("Sign a transaction", the page's box) | the same | This page couldn’t reach NEAR’s test network. If you had already approved the transaction, it may or may not have gone through: check the guestbook list before you try again. |
+  | `near_page_rpc_failed` ("Sign a transaction"'s read, before the window) | the same | the same (the send has its own codes since PR 111's review) |
   | `near_account_pending` | Journear’s relayer is still creating your NEAR account. Wait a few seconds and try again. | Journear is still creating your NEAR account. Wait a few seconds and try again. |
   | `near_nonce_wait` | NEAR testnet needs a new block before this request. Wait a few seconds and try again. | NEAR’s test network isn’t ready for this request yet, so nothing was signed. Wait a few seconds and try again. |
-  | `near_send_failed` | NEAR testnet refused or failed the transaction. Use {GB} instead. | NEAR’s test network refused this transaction, or it failed there, so your message wasn’t stored. Use {GB} instead. |
-  | "Sign a transaction" result title after the approval | NEAR transaction (add_message on the guestbook): not signed | …: signed, didn’t go through (`near_send_failed`) / …: signed, not confirmed, with "This page couldn’t reach NEAR’s test network while sending it, so it may or may not have gone through. Check the guestbook list before you try again." |
+  | `near_send_failed` (only `Failure`, or the first endpoint's invalid transaction) | NEAR testnet refused or failed the transaction. Use {GB} instead. | NEAR’s test network refused this transaction, or it failed there: it didn’t go through. Check the guestbook list, then use {GB} if your message isn’t there. |
+  | `near_send_unconfirmed` (new page code) | (was `near_send_failed` or `near_page_rpc_failed`) | NEAR’s test network didn’t confirm this transaction, so it may or may not have gone through. Check the guestbook list before you try again. |
+  | `near_activation_failed` (new page code: the write's activation, before any approval, answered `relayer_busy`, `relayer_unavailable`, `near_unavailable`, `near_error`, `near_rejected`, `method_not_allowed`, an unknown 5xx or no answer; the API's reason kept for diagnostics) | the relay's sentence ("…check the guestbook list for your message…") | Journear couldn’t finish setting up your NEAR account. Nothing was signed. Try again in a minute. |
+  | `near_activation_pending` (new page code: the activation's `timeout`) | "Sent, still confirming" with a link, when it carried a hash | Your NEAR account is still being set up. Wait a few seconds and try again. |
+  | "Sign a transaction" result title | NEAR transaction (add_message on the guestbook): not signed (also after the approval) | NEAR transaction (a message to the guestbook): not signed (before the approval) / signed, didn’t go through (`near_send_failed`) / signed, not confirmed (`near_send_unconfirmed`) |
   | its sent result's note | Your account paid the fee. | Your account paid the network fee. |
 
   **Stages, lines and labels**
@@ -16575,11 +16595,14 @@ page).
   | Where | Old | New |
   |---|---|---|
   | stage, reading | Reading your NEAR account on testnet… | Reading your NEAR account… (the stamps site's words) |
-  | stage, the automatic second approval | That request’s number was already used. Building a fresh one: approve it once more in the Journear window… | That request was already used. The demo is preparing a new one: approve it once more in the Journear window… |
+  | stage, waiting for the approval | Waiting for your approval in the Journear window… | Waiting for your approval in the Journear Passport window… |
+  | stage, the automatic second approval (replaced at once by the waiting stage, as before) | That request’s number was already used. Building a fresh one: approve it once more in the Journear window… | Another request took this one’s place. The demo is preparing a new one: approve it once more in the Journear Passport window… |
+  | after `delegate_nonce_used`, the same message already in the list (new) | (a second approval) | Your message is already in the guestbook. (green, no second approval) |
   | the guestbook's success | Written to the guestbook on NEAR testnet.[ Your NEAR account was created for it.] Journear paid the network fee, so it cost you nothing. | Written to the guestbook on NEAR’s test network.[ …] (rest unchanged, D881) |
-  | the balance line, new account | Not on NEAR testnet yet: your first guestbook write creates it (Journear sends it a zero-value transfer), at no cost to you. | Not on NEAR’s test network yet: … (rest unchanged) |
-  | the card's hint | Your message is stored in public on NEAR testnet by the guestbook contract {account}. … | Your message is stored in public on NEAR’s test network by the Journear demo guestbook {account}. … (the approval window's name for it, D885) |
-  | the Sign hint | …only if your account holds NEAR for its fee. | …only if your account holds NEAR for its network fee. |
+  | the balance line, new account | Not on NEAR testnet yet: your first guestbook write creates it (Journear sends it a zero-value transfer), at no cost to you. | Not on NEAR’s test network yet: your first guestbook write creates it, at no cost to you. |
+  | the card's hint | Your message is stored in public on NEAR testnet by the guestbook contract {account}. You approve it in a Journear window; … | Your message is stored in public on NEAR’s test network by the Journear demo guestbook {account}. You approve it in a Journear Passport window; … (the approval window's name for it, D885) |
+  | the Sign hint | Like the buttons above, each opens a Journear window to approve. …only if your account holds NEAR for its fee. | Like the buttons above, each opens a Journear Passport window to approve. …only if your account holds NEAR for its network fee. |
+  | the signed texts (shown in the approval window) | Journear Passport testnet demo: this signature proves nothing and moves nothing. / Journear Passport testnet demo: sign in with NEAR (NEP-413). This signature moves nothing. | Journear Passport demo (test networks): this signature proves nothing and moves nothing. / Journear Passport demo (test networks): signing in with NEAR. This signature moves nothing. (The stamps site's signed text is the contract's and doesn't change.) |
   | the account's summary and tooltip | Show the full account ID; "Your NEAR implicit account" | Show your full NEAR account; "Your NEAR account" |
   | the login stage | Creating your wallet key on NEAR testnet (a few seconds)… | Creating your wallet key on NEAR’s test network (a few seconds)… |
   | the banner | Testnet demo: Stellar, EVM and NEAR test networks only, nothing here holds real funds. | This demo uses test networks only (Stellar, EVM and NEAR), so nothing here holds real money. |
@@ -16598,9 +16621,8 @@ page).
 - Where the demo's sentence and the SDK's `userMessage` differ, and why: the demo shows its own words for the NEAR card
   (it knows it is the guestbook, can point to the guestbook list and to {GB}, and says "Tell the Journear team" where
   the SDK says "the app's team"); three rows are the SDK's word for word, and a test holds them to `userMessageFor`.
-  Different on purpose: `near_rejected` and `delegate_rejected` (the SDK: "The network refused this request, so it
-  didn't go through. Try again."; the demo adds "check the guestbook list, then try again if it isn't there", since
-  both come without `notSent`); `contract_rejected` (the SDK can't know the call and says "part of it may have gone
+  Different on purpose: `near_rejected` and `delegate_rejected` say the same as the SDK's ("The network refused this
+  request, so it didn't go through. Try again.") in the guestbook's words; `contract_rejected` (the SDK can't know the call and says "part of it may have gone
   through"; the guestbook's one call changes nothing when it fails: "Nothing was stored"); `relayer_unconfigured`
   (the SDK: "Free network fees aren't offered on this network."; the demo keeps D881's); the budget rows (the SDK:
   "Journear's free network fees…"; the demo: "free NEAR transactions"); `access_key_missing`,
@@ -16610,9 +16632,30 @@ page).
   timings", "Copy diagnostics", the diagnostics; the developer footer; "Sign a message (NEP-413)", "(EVM
   personal_sign)" and the results' raw values), the words outside the NEAR card that the plain-words check still finds
   (vault, EVM, explorer, declined, chain: `apps/demo/test/plain-words.test.ts` lists each by exact string), "View the
-  transaction ↗" (the check-in card says "See it on the public record ↗"), and the automatic second approval after
-  `delegate_nonce_used` (behaviour, not wording: if the earlier request was this page's own and landed, the second
-  could write the message again).
+  transaction ↗" (the check-in card says "See it on the public record ↗").
+- After PR 111's review (2026-11-23; small behaviour changes in `apps/demo` only, decided while building, **to
+  confirm**):
+  - `sendTx` (above): "didn’t go through" only when it is certain; anything else "not confirmed", check first.
+  - After the API's `delegate_nonce_used`, before its one automatic second approval, the card reads the guestbook's
+    newest messages once (`near-card.ts` `write`): this account's message with the same text there, "Your message is
+    already in the guestbook." and no second approval; the list unreadable, no automatic retry (the check-first
+    sentence); not there, the second approval as before. Before, the card asked again without knowing whether the
+    earlier request had landed (two tabs, a reload with a lagging read), which could write the message twice.
+  - The write's activation (`hana.near.activate`, before any approval) is told apart from the relay (a "relay started"
+    flag set at the relaying stage, and the activation's errors marked): an activation failure speaks of the account,
+    never of the message, and an activation `timeout` with a hash no longer shows "Sent, still confirming".
+  - "Journear Passport" for the part that checks and signs (its window, its key), "Journear" for the part that pays and
+    sends; where the team must act, {REPORT}, so diagnostics come with it.
+  - The demo's plain-words test reads `src/requests.ts` too, and keeps "zero-value", "add_message", "implicit account"
+    and "relayed" out of the demo (a list of its own: the brand's list is shared with the approval window, whose folded
+    details name `add_message` on purpose).
+  - Follow-up, not changed here: the SDK's `delegate_nonce_used` sentence (`packages/web/src/client/user-messages.ts`:
+    "This request was already sent, perhaps in another tab. Check whether it went through before you try again.") is
+    loose the same way (the API refused this request before sending it); proposed: "Another request from your account
+    used this one’s place, so this one wasn’t sent. Check whether it went through before you try again." The stamps
+    site's own-fare send (`apps/stamps/src/collector.ts` `sendOwnFare`) uses `NearRpc.call`, which fails over on a
+    non-answer and then reads an error body as `near_send_failed`; its sentence ("NEAR refused or failed this stamp.
+    Refresh to check whether it went through, then try again.") already says to check, so nothing false is shown.
 - The stamps site (re-checked after PRs 106 and 107): its texts don't contradict the window's headline ("collect the
   {stamp} stamp for you") or its network name. One mismatch, already listed in D884 (9): the window's details say
   "Free. Sponsored by Stamp Trail." (kept, decided by the founder 2026-11-23, D884's note) while the
@@ -16630,7 +16673,12 @@ page).
   check-first phrase; "your approved request" for a signed delegate action; "program" for a contract in the test-app
   refusals; "NEAR test network" (label) beside "NEAR’s test network" (sentence); "EVM · Base Sepolia (test network)";
   the page title "Journear Passport demo (test networks)"; the "Sign a transaction" titles "signed, didn’t go through"
-  and "signed, not confirmed"; the no-answer sentence in the write; the stamps attribution lines above.
+  and "signed, not confirmed"; the no-answer sentence in the write; the stamps attribution lines above; after PR 111's
+  review: "Another request from your account just used this one’s place…", "Your message is already in the
+  guestbook.", the two activation sentences, `near_rejected`'s and `delegate_rejected`'s "…so your message wasn’t
+  stored. Try again.", the test-app sentences ("use an app on NEAR", "your account’s keys or settings"),
+  `near_relayed_delegate`'s "it asked to send on a request someone else had already approved", the signed texts, and
+  the behaviour above (the list read before the second approval, no automatic retry when it can't be read).
 - Address impact: none (display text only).
 
 Also recorded on this branch (docs only, 2026-11-23, at the coordinator's request): the founder's decisions noted on

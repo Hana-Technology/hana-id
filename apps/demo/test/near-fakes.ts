@@ -40,8 +40,15 @@ export class FakeNearRpc {
   messages: Record<string, unknown>[] = [];
   /** Every endpoint answers 503. */
   down = false;
-  /** How send_tx answers: executed, failed on chain, or no usable answer (503). */
-  sendAnswer: 'ok' | 'failure' | 'none' = 'ok';
+  /**
+   * How send_tx answers: executed; failed on chain; no usable answer (503, every endpoint); an invalid transaction from
+   * the first endpoint; TIMEOUT_ERROR; or the first endpoint 503 and the next one an invalid transaction (D889).
+   */
+  sendAnswer: 'ok' | 'failure' | 'none' | 'invalid' | 'timeout' | 'failover' = 'ok';
+  /** The guestbook's get_messages answers 503 (every endpoint). */
+  listDown = false;
+  /** Endpoints send_tx went to, in order. */
+  readonly sentTo: string[] = [];
   readonly calls: { url: string; body: RpcCall }[] = [];
   readonly sent: string[] = [];
 
@@ -55,12 +62,19 @@ export class FakeNearRpc {
     if (body.method === 'block') return ok({ header: { height: this.height, hash: BLOCK_HASH } });
     if (body.method === 'send_tx') {
       this.sent.push(String(p.signed_tx_base64));
+      this.sentTo.push(url);
+      // The page's endpoints in order: the manifest's `rpc` (…rpc.test.invalid), then `rpcFallback`.
+      const first = url.includes('rpc.test.invalid');
       if (this.sendAnswer === 'none') return new Response('down', { status: 503 });
+      if (this.sendAnswer === 'failover' && first) return new Response('down', { status: 503 });
+      if (this.sendAnswer === 'invalid' || this.sendAnswer === 'failover') return err('INVALID_TRANSACTION');
+      if (this.sendAnswer === 'timeout') return Response.json({ jsonrpc: '2.0', id: 'hana-demo', error: { name: 'TIMEOUT_ERROR', cause: { name: 'TIMEOUT_ERROR' }, code: -32000, message: 'Timeout' } });
       if (this.sendAnswer === 'failure') return ok({ status: { Failure: { ActionError: { index: 0 } } }, transaction: { hash: TX_HASH } });
       return ok({ status: { SuccessValue: '' }, transaction: { hash: TX_HASH } });
     }
     if (body.method === 'query' && p.request_type === 'view_access_key') return this.key ? ok({ nonce: this.key.nonce, block_height: this.height, block_hash: BLOCK_HASH, permission: 'FullAccess' }) : err('UNKNOWN_ACCOUNT');
     if (body.method === 'query' && p.request_type === 'view_account') return this.key ? ok({ amount: this.balance, locked: '0', storage_usage: 182 }) : err('UNKNOWN_ACCOUNT');
+    if (body.method === 'query' && p.request_type === 'call_function' && p.method_name === 'get_messages' && this.listDown) return new Response('down', { status: 503 });
     if (body.method === 'query' && p.request_type === 'call_function' && p.method_name === 'get_messages') return ok({ result: Array.from(utf8(JSON.stringify(this.messages))), logs: [] });
     return err('UNKNOWN');
   });

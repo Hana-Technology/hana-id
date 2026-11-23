@@ -95,7 +95,7 @@ test('screens of the NEAR card', async ({ page, browserName, google }) => {
   await page.bringToFront();
   await shots(page, '03-stage-preparing');
   activation.open();
-  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
+  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear Passport window…');
   await shots(page, '04-stage-approving');
   // D808: the plain summary leads; the request's kind heading is in the details.
   // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.

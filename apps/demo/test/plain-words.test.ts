@@ -7,27 +7,37 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { jargonIn, sentencesIn } from '@hana-id/brand/plain-words';
 import { describe, expect, it } from 'vitest';
-import { NEAR_NETWORK_LABEL, SEND_UNCONFIRMED, STAGES, guestbookDone } from '../src/near-card.ts';
+import { ALREADY_IN_GUESTBOOK, NEAR_NETWORK_LABEL, STAGES, guestbookDone } from '../src/near-card.ts';
 import { STELLAR_NETWORK_LABEL } from '../src/page.ts';
 
 const root = join(import.meta.dirname, '..');
 const read = (p: string) => readFileSync(join(root, p), 'utf8');
-const FILES = ['src/near-card.ts', 'src/near.ts', 'src/page.ts', 'src/errors.ts', 'src/result.ts', 'src/gas-free-card.ts'];
+const FILES = ['src/near-card.ts', 'src/near.ts', 'src/page.ts', 'src/errors.ts', 'src/result.ts', 'src/gas-free-card.ts', 'src/requests.ts'];
+
+/**
+ * Words the demo has used and dropped (D889), on top of the brand's list: kept out of the demo here. (The brand's list
+ * is shared with the approval window, whose folded technical details name `add_message` on purpose.)
+ */
+const DEMO_JARGON = ['zero-value', 'add_message', 'implicit account', 'relayed'];
+const demoJargonIn = (s: string): string[] => DEMO_JARGON.filter((w) => new RegExp(`(?<![\\w-])${w}(?![\\w-])`, 'iu').test(s));
 
 /** Thrown with a code errors.ts maps to plain words: the message goes to diagnostics only, never on the page. */
 const DEVELOPER_ONLY = new Set([
   'The account has no key on testnet yet',
   'The key’s nonce is at the bound for the block height NEAR reported',
   "NEAR testnet's RPC gave no usable answer to …",
-  'NEAR testnet refused or failed the transaction',
+  'NEAR testnet failed the transaction',
+  'NEAR testnet gave no outcome for the transaction',
+  'NEAR testnet refused the transaction',
+  'NEAR testnet did not confirm the transaction',
   "This build's vault origin … is not the SDK's …",
   'No demo check-in is pinned on chain …',
   'Not the pinned check-in',
   'Not an EVM address',
 ]);
 
-/** What "Sign a message (NEP-413)" signs: changing it changes the signed bytes (left as it is). */
-const SIGNED_TEXT = new Set(['Journear Passport testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.']);
+/** What the signing buttons sign (D889 reworded them; the stamps site's signed text is the contract's and never changes). */
+const SIGNED_TEXT = new Set<string>([]);
 
 /** The page's technical areas (D889 item 3): login timings, the identity token, the developer footer. */
 const TECHNICAL = new Set([
@@ -81,7 +91,7 @@ describe('plain words on the hosted demo (D853, D889)', () => {
     const found: string[] = [];
     const check = (where: string, s: string) => {
       if (ALLOWED(s)) return;
-      const words = jargonIn(s);
+      const words = [...jargonIn(s), ...demoJargonIn(s)];
       if (words.length > 0) found.push(`${where}: [${words.join(', ')}] ${s}`);
     };
     for (const f of FILES) for (const s of sentencesIn(read(f))) check(f, s);
@@ -91,9 +101,9 @@ describe('plain words on the hosted demo (D853, D889)', () => {
 
   it('the NEAR card is plain throughout: its section of the page, its stages and its own sentences, none listed', () => {
     const card = /<section id="near"[\s\S]*?<\/section>/u.exec(read('index.html'))![0];
-    const texts = [...htmlTexts(card), ...Object.values(STAGES), guestbookDone(true), guestbookDone(false), SEND_UNCONFIRMED, NEAR_NETWORK_LABEL];
-    for (const t of texts) expect(jargonIn(t), t).toEqual([]);
-    for (const s of sentencesIn(read('src/near-card.ts'))) if (!DEVELOPER_ONLY.has(s) && !SIGNED_TEXT.has(s)) expect(jargonIn(s), s).toEqual([]);
+    const texts = [...htmlTexts(card), ...Object.values(STAGES), guestbookDone(true), guestbookDone(false), ALREADY_IN_GUESTBOOK, NEAR_NETWORK_LABEL];
+    for (const t of texts) expect([...jargonIn(t), ...demoJargonIn(t)], t).toEqual([]);
+    for (const s of sentencesIn(read('src/near-card.ts'))) if (!DEVELOPER_ONLY.has(s)) expect([...jargonIn(s), ...demoJargonIn(s)], s).toEqual([]);
   });
 
   it('names the networks as the approval window and the stamps site do: “NEAR test network” on a label, “NEAR’s test network” in a sentence', () => {

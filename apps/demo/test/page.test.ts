@@ -301,7 +301,7 @@ describe('demo page', () => {
     reject(Object.assign(new Error('User rejected'), { code: 4001 }));
     await flush();
     expect($('error').hidden).toBe(false);
-    expect($('error').textContent).toBe('Rejected in the Journear window: nothing was signed.');
+    expect($('error').textContent).toBe('Rejected in the Journear Passport window: nothing was signed.');
     expect(($('sign-stellar') as HTMLButtonElement).disabled).toBe(false);
     expect($('results').textContent).toContain('EVM personal_sign: not signed');
   });
@@ -605,6 +605,8 @@ const type = (text: string): void => {
 /** The delegate action the vault was asked to sign, decoded. */
 const signedDelegate = () => decodeNearDelegateAction(fake.near.signDelegateAction.mock.calls.at(-1)![0].delegateAction as Uint8Array);
 
+const FAILED = 'NEAR’s test network refused this transaction, or it failed there: it didn’t go through. Check the guestbook list, then use “Write to the guestbook (no NEAR needed)” if your message isn’t there.';
+const UNCONFIRMED = 'NEAR’s test network didn’t confirm this transaction, so it may or may not have gone through. Check the guestbook list before you try again.';
 const message = (index: number, account_id: string, text: string) => ({ index, account_id, text, block_timestamp_ms: Date.UTC(2026, 10, 11, 9, 30) });
 
 describe('the NEAR card', () => {
@@ -726,7 +728,7 @@ describe('the NEAR card', () => {
     // Synchronously in the click: the request is sent, and no window was opened in advance.
     expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
     expect(fake.prepareApproval).not.toHaveBeenCalled();
-    expect($('near-stage').textContent).toBe('Waiting for your approval in the Journear window…');
+    expect($('near-stage').textContent).toBe('Waiting for your approval in the Journear Passport window…');
     expect(($('near-write-button') as HTMLButtonElement).disabled).toBe(true);
     expect(fake.near.signDelegateAction.mock.calls[0]![0].network).toBe('testnet');
     const d = signedDelegate();
@@ -763,7 +765,7 @@ describe('the NEAR card', () => {
     rpc.key = null;
     await loginFlow();
     await settle();
-    expect($('near-balance').textContent).toBe('Not on NEAR’s test network yet: your first guestbook write creates it (Journear sends it a zero-value transfer), at no cost to you.');
+    expect($('near-balance').textContent).toBe('Not on NEAR’s test network yet: your first guestbook write creates it, at no cost to you.');
     fake.near.activate.mockImplementationOnce(async () => {
       rpc.key = { nonce: 199_999_999_000_000 };
       return { created: true };
@@ -880,8 +882,70 @@ describe('the NEAR card', () => {
     click('near-write-button');
     await settle();
     expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(4);
-    // D889: refused before sending, but the earlier request may have gone through: check first (the SDK's rule).
-    expect($('near-error').textContent).toBe('This request was already sent, perhaps from another tab or an earlier write. Check the guestbook list for your message before you try again.');
+    // D889: refused before sending; the request that took its place may have been this text: check first.
+    expect($('near-error').textContent).toBe('Another request from your account just used this one’s place, perhaps from another tab, so this one wasn’t sent. Check the guestbook list for your message before you try again.');
+  });
+
+  it('D889: after delegate_nonce_used, the guestbook is read first: the same message from this account already there, no second approval', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    rpc.messages = [message(3, NEAR_ACCOUNT, 'from the other tab'), message(2, 'alice.testnet', 'gm')];
+    fake.near.relay.mockRejectedValueOnce(hanaError(4100, { status: 409, reason: 'delegate_nonce_used', accessKeyNonce: '199999900000007' }));
+    type('from the other tab');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    expect(fake.near.relay).toHaveBeenCalledTimes(1);
+    expect($('near-error').hidden).toBe(true);
+    expect($('near-done').hidden).toBe(false);
+    expect($('near-done-text').textContent).toBe('Your message is already in the guestbook.');
+    expect(($('near-tx-link') as HTMLInputElement).hidden).toBe(true);
+    expect($('near-messages').querySelector('li.mine')!.textContent).toContain('from the other tab');
+  });
+
+  it('D889: after delegate_nonce_used, a guestbook that can’t be read means no automatic retry: the check-first sentence', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    fake.near.relay.mockRejectedValueOnce(hanaError(4100, { status: 409, reason: 'delegate_nonce_used', accessKeyNonce: '199999900000007' }));
+    type('unread list');
+    rpc.listDown = true;
+    click('near-write-button');
+    await settle();
+    expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(1);
+    expect($('near-error').textContent).toBe('Another request from your account just used this one’s place, perhaps from another tab, so this one wasn’t sent. Check the guestbook list for your message before you try again.');
+  });
+
+  it('D889: after delegate_nonce_used, a message not in the guestbook gets the one second approval, as before', async () => {
+    boot();
+    await loginFlow();
+    await settle();
+    rpc.messages = [message(3, NEAR_ACCOUNT, 'something else')];
+    fake.near.relay.mockRejectedValueOnce(hanaError(4100, { status: 409, reason: 'delegate_nonce_used', accessKeyNonce: '199999900000007' }));
+    type('not there yet');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.signDelegateAction).toHaveBeenCalledTimes(2);
+    expect($('near-done-text').textContent).toBe('Written to the guestbook on NEAR’s test network. Journear paid the network fee, so it cost you nothing.');
+  });
+
+  it.each([
+    ['relayer_unavailable', hanaError('api_unavailable', { status: 503, reason: 'relayer_unavailable' }), 'Journear couldn’t finish setting up your NEAR account. Nothing was signed. Try again in a minute.'],
+    ['no answer', hanaError('api_unavailable'), 'Journear couldn’t finish setting up your NEAR account. Nothing was signed. Try again in a minute.'],
+    ['timeout with a transaction', hanaError('api_unavailable', { status: 504, reason: 'timeout', transactionHash: TX_HASH }), 'Your NEAR account is still being set up. Wait a few seconds and try again.'],
+  ] as const)('D889: an activation failure (%s) is about the account, never the message or "Sent, still confirming"', async (_name, error, text) => {
+    boot();
+    rpc.key = null;
+    await loginFlow();
+    await settle();
+    fake.near.activate.mockRejectedValue(error);
+    type('first write');
+    click('near-write-button');
+    await settle();
+    expect(fake.near.signDelegateAction).not.toHaveBeenCalled();
+    expect($('near-pending').hidden).toBe(true);
+    expect($('near-error').textContent).toBe(text);
   });
 
   it('a busy relayer (503 relayer_busy) is retried twice, then said so', async () => {
@@ -1029,7 +1093,7 @@ describe('the NEAR card', () => {
   it.each([
     ['the vault refuses an unknown key', 'signDelegateAction', hanaError(4100, { reason: 'near_key_unknown' }), /^Your NEAR account isn’t set up yet, so nothing was signed\. /u],
     ['the vault refuses an expired action', 'signDelegateAction', hanaError(4100, { reason: 'near_delegate_expiry' }), /ran out of time before it was approved.*nothing was signed/u],
-    ['the user rejects', 'signDelegateAction', hanaError(4001), /^Rejected in the Journear window: nothing was signed\.$/u],
+    ['the user rejects', 'signDelegateAction', hanaError(4001), /^Rejected in the Journear Passport window: nothing was signed\.$/u],
     ['the relayer refuses the receiver', 'relay', hanaError(4100, { status: 403, reason: 'receiver_not_allowed' }), /^Journear isn’t set up to pay for this guestbook, so it refused this request\. Nothing was sent\./u],
     ['the relayer refuses with a code the demo doesn’t know', 'relay', hanaError(4100, { status: 400, reason: 'brand_new_code' }), /^Journear refused this request \(brand_new_code\)/u],
     ['the relayer is down', 'relay', hanaError('api_unavailable', { status: 503, reason: 'relayer_unavailable' }), /can’t tell whether it went through\. Check the guestbook list/u],
@@ -1091,7 +1155,7 @@ describe('the NEAR card', () => {
     expect(tx.actions).toEqual([{ type: 'functionCall', methodName: 'add_message', args: utf8(JSON.stringify({ text: 'signed only' })), gas: 10_000_000_000_000n, deposit: 0n }]);
     await settle();
     const item = $('near-results').querySelector('li')!;
-    expect(item.textContent).toContain('NEAR transaction (add_message on the guestbook): signed, not sent');
+    expect(item.textContent).toContain('NEAR transaction (a message to the guestbook): signed, not sent');
     expect(item.textContent).toContain('Not sent: your NEAR account has no NEAR to pay the network fee.');
     expect(item.textContent).toContain('“Write to the guestbook (no NEAR needed)”');
     expect(rpc.sent).toEqual([]);
@@ -1114,9 +1178,12 @@ describe('the NEAR card', () => {
   });
 
   it.each([
-    ['failure', 'signed, didn’t go through', 'NEAR’s test network refused this transaction, or it failed there, so your message wasn’t stored. Use “Write to the guestbook (no NEAR needed)” instead.'],
-    ['none', 'signed, not confirmed', 'This page couldn’t reach NEAR’s test network while sending it, so it may or may not have gone through. Check the guestbook list before you try again.'],
-  ] as const)('D889: Sign a transaction whose send fails (%s) says it was signed, and what happened to the send', async (answer, title, note) => {
+    ['failure', 'signed, didn’t go through', FAILED, 1],
+    ['invalid', 'signed, didn’t go through', FAILED, 1],
+    ['none', 'signed, not confirmed', UNCONFIRMED, 2],
+    ['timeout', 'signed, not confirmed', UNCONFIRMED, 1],
+    ['failover', 'signed, not confirmed', UNCONFIRMED, 2],
+  ] as const)('D889: Sign a transaction whose send fails (%s) says it was signed, and what happened to the send', async (answer, title, note, sends) => {
     boot();
     rpc.balance = '2000000000000000000000000';
     await loginFlow();
@@ -1124,13 +1191,30 @@ describe('the NEAR card', () => {
     rpc.sendAnswer = answer;
     click('sign-near-tx');
     await settle();
-    // No usable answer: the same signed transaction goes to the fallback endpoint too (the same bytes can run once only).
-    expect(rpc.sent).toHaveLength(answer === 'none' ? 2 : 1);
+    // No JSON-RPC answer: the same signed bytes go to the fallback (they can run once only); an answer is final.
+    expect(rpc.sent).toHaveLength(sends);
     const item = $('near-results').querySelector('li')!;
-    expect(item.querySelector('.result-title')!.textContent).toBe(`NEAR transaction (add_message on the guestbook): ${title}`);
+    expect(item.querySelector('.result-title')!.textContent).toBe(`NEAR transaction (a message to the guestbook): ${title}`);
     expect(item.textContent).toContain(note);
-    // The page's own error box says the same thing in the page's words: never a plain "try again" after a send.
-    expect($('error').textContent).toMatch(answer === 'none' ? /it may or may not have gone through: check the guestbook list before you try again/u : /refused this transaction, or it failed there/u);
+    // The page's own error box says the same.
+    expect($('error').textContent).toBe(note);
+  });
+
+  it.each([
+    ['the person rejects', () => fake.near.signTransaction.mockRejectedValueOnce(hanaError(4001)), 'Rejected in the Journear Passport window: nothing was signed.'],
+    ['the read fails before the window', () => ((wall += 61_000), (rpc.down = true)), 'This page couldn’t reach NEAR’s test network. Check your connection and try again.'],
+  ] as const)('D889: Sign a transaction that never got signed (%s) says "not signed" and nothing about a send', async (_name, arrange, text) => {
+    boot();
+    await loginFlow();
+    await settle();
+    arrange();
+    click('sign-near-tx');
+    await settle();
+    expect(rpc.sent).toEqual([]);
+    const item = $('near-results').querySelector('li')!;
+    expect(item.querySelector('.result-title')!.textContent).toBe('NEAR transaction (a message to the guestbook): not signed');
+    expect(item.textContent).toContain(text);
+    expect(item.textContent).not.toMatch(/may or may not|approved/u);
   });
 
   it('Sign a message (NEP-413): this page as the recipient, a fresh 32-byte nonce, signed in the click', async () => {
@@ -1140,7 +1224,7 @@ describe('the NEAR card', () => {
     click('sign-near-message');
     expect(fake.near.signMessage).toHaveBeenCalledTimes(1);
     const p = fake.near.signMessage.mock.calls[0]![0];
-    expect(p.message).toBe('Journear Passport testnet demo: sign in with NEAR (NEP-413). This signature moves nothing.');
+    expect(p.message).toBe('Journear Passport demo (test networks): signing in with NEAR. This signature moves nothing.');
     expect(p.recipient).toBe('hana-id-demo-sandbox-dev.tingtc.workers.dev');
     expect((p.nonce as Uint8Array).length).toBe(32);
     await settle();

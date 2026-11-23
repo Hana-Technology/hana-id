@@ -34,7 +34,7 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
     account isn't in the wallet directory yet), a `DelegateAction` calling `add_message({ text })` with 10 Tgas and
     no deposit, expiring 600 blocks after the latest final block, `hana.near.signDelegateAction` and
     `hana.near.relay`. Each stage is shown ("Preparing your NEAR account…", "Waiting for your approval in the Journear
-    window…", "Sending it. Journear pays the network fee…"), then the result with the transaction's
+    Passport window…", "Sending it. Journear pays the network fee…"), then the result with the transaction's
     link. A relay that timed out with its transaction sent (the SDK's `data.transactionHash`) is no error: "Sent, still
     confirming: view the transaction ↗" with the NearBlocks link, and the list is read again (D788). The message box is validated on blur (too long, or a broken character: the field turns invalid with the
     reason) and again on the click, never on each key; the count updates as you type;
@@ -48,13 +48,19 @@ email* (most reviewers use it: Google sign-in is limited to the Google client's 
     200 characters (D753). Refreshed after a write and with *Refresh*;
   - **Sign a message (NEP-413)** (this page's host as the recipient, a fresh 32-byte nonce) and **Sign a
     transaction**: a real `add_message` transaction, sent only when the account holds at least 0.01 NEAR; otherwise it
-    shows the signed transaction and its hash and says it wasn't sent for lack of NEAR for the fee (D754). If the send
-    fails after the approval, the result says "signed, didn’t go through" (NEAR refused or failed it) or "signed, not
-    confirmed" (no answer: check the guestbook list before trying again), never "not signed" (D889);
+    shows the signed transaction and its hash and says it wasn't sent for lack of NEAR for the fee (D754). The send
+    (`near.ts` `sendTx`) fails over to `rpcFallback` only when an endpoint gave no JSON-RPC answer, with the same signed
+    bytes, as the API's broadcast does (D435). After the approval the result says "signed, didn’t go through" only when
+    it definitely didn't run (an outcome with `Failure`, or an invalid transaction from the first endpoint before any
+    failover); anything else (TIMEOUT_ERROR, an error after a failover, no answer) is "signed, not confirmed": check the
+    guestbook list before trying again. Never "not signed" after an approval (D889);
   - every refusal of the write is a plain sentence in the card's red box (`src/errors.ts`, D889): what happened, whether
-    anything was signed or sent, and what to do; an answer that may follow a send (busy, unavailable, NEAR's error or
-    refusal, a timeout, a request already sent) says to check the guestbook list before trying again, as the SDK's
-    `userMessage` does. Networks are named as the approval window names them: "NEAR test network" on a label, "NEAR’s
+    anything was signed or sent, and what to do; an answer that may follow a send (busy, unavailable, NEAR's error, a
+    timeout, a request already sent, no answer at all) says to check the guestbook list before trying again, as the
+    SDK's `userMessage` does. A failure of the account's activation (before any approval) speaks of the account, never
+    of the message. After `delegate_nonce_used` (another request took this one's place) the card reads the guestbook
+    once before its one automatic second approval: this account's message with the same text already there, "Your
+    message is already in the guestbook." and no second approval; the list unreadable, no automatic retry. Networks are named as the approval window names them: "NEAR test network" on a label, "NEAR’s
     test network" in a sentence (D889);
   - the borsh bytes come from `@hana-id/core/near`'s codec, the one the vault decodes with (no NEAR SDK in the page);
 - **Try an action with no network fee** (D867, `src/gas-free-card.ts`), right after the addresses, **only** where the

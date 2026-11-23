@@ -17,7 +17,7 @@
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import { API_URL, AUTH_ORIGIN, GOOGLE_CLIENT_ID, ISSUER_URL } from '../src/stack.ts';
 import { chooseAccount, clickAction, clickClosing, clickUntilTaken, expect, login, newApp, okValue, openPartner, test, waitPersisted } from './fixtures.ts';
-import { HOME_CORS, routeApps, signIn } from './home-steps.ts';
+import { HOME_CORS, homeTab, routeApps, signIn } from './home-steps.ts';
 
 const MIN = 60_000;
 const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
@@ -104,15 +104,15 @@ async function nothingCovered(home: Page, label: string, browserName: string): P
   for (const sel of ['#home-app-title', '#home-back']) expect(await uncovered(home, sel), `${label}: ${sel}`).toMatchObject({ inView: true, hit: true });
   await centre(home, '#home-export-continue');
   expect(await uncovered(home, '#home-export-continue'), `${label}: Continue`).toMatchObject({ inView: true, hit: true });
-  // With the page scrolled to its end, Tab moves focus onto the first address's Copy, far above: the browser scrolls it
-  // into view, below the bar.
+  // With the page scrolled to its end, Tab moves focus onto the open tab, "Move wallet" (D895), far above: the browser
+  // scrolls it into view, below the bar.
   await home.locator('#home-back').focus();
   await home.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   // WebKit's Tab moves only between fields unless the user asks for every control: Option+Tab is that.
   const tab = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
-  for (let i = 0; i < 12 && (await home.evaluate(() => document.activeElement?.id)) !== 'home-copy-stellar'; i += 1) await home.keyboard.press(tab);
-  expect(await home.evaluate(() => document.activeElement?.id), `${label}: focus`).toBe('home-copy-stellar');
-  expect(await uncovered(home, '#home-copy-stellar'), `${label}: the focused Copy`).toMatchObject({ inView: true, hit: true });
+  for (let i = 0; i < 12 && (await home.evaluate(() => document.activeElement?.id)) !== 'home-tab-move'; i += 1) await home.keyboard.press(tab);
+  expect(await home.evaluate(() => document.activeElement?.id), `${label}: focus`).toBe('home-tab-move');
+  expect(await uncovered(home, '#home-tab-move'), `${label}: the focused tab`).toMatchObject({ inView: true, hit: true });
 }
 
 const SIZES = [
@@ -138,19 +138,23 @@ for (const size of SIZES) {
     await home.goto(`${AUTH_ORIGIN}/home`);
     await signIn(home);
     await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
+    await homeTab(home, 'Move wallet');
     await home.locator('#home-export-open').click();
     const childP = home.waitForEvent('popup');
     await home.locator('#home-export-start').click();
     await chooseAccount(await childP);
     await expect(home.locator('#home-export-title')).toHaveText('Your wallet is open', { timeout: 30_000 });
-    await home.locator('#home-export-stellar').click();
-    await expect(home.locator('#home-export-title')).toHaveText('Your Stellar key');
+    // NEAR's key: its confirmation is the longest (its three notes), so even on the Move wallet tab alone (D895) the page
+    // scrolls far enough to put a control just under the bar.
+    await home.locator('#home-export-near').click();
+    await expect(home.locator('#home-export-title')).toHaveText('Your NEAR key');
     await home.locator('#home-export-confirm').fill('EXPORT');
     const go = '#home-export-continue';
     const desktop = size.name === 'desktop';
-    // What is in view when the notice comes. On a desktop (a stuck bar): the first address's Copy, focused, just under
-    // the bar, where a growing bar would cover it if the page didn't move. On a phone: Continue, in the window's middle.
-    const watched = desktop ? '#home-copy-stellar' : go;
+    // What is in view when the notice comes. On a desktop (a stuck bar): the open tab, "Move wallet" (D895: the move flow
+    // is a tab of its own, so the addresses' Copy isn't on screen), focused, just under the bar, where a growing bar would
+    // cover it if the page didn't move. On a phone: Continue, in the window's middle.
+    const watched = desktop ? '#home-tab-move' : go;
     if (desktop) {
       await home.locator(watched).focus();
       await home.locator(watched).evaluate((el) => window.scrollBy(0, el.getBoundingClientRect().top - (document.querySelector('header')!.getBoundingClientRect().bottom + 16)));
@@ -175,7 +179,7 @@ for (const size of SIZES) {
       // still below the bar, and it is the element at its own centre.
       expect(Math.abs(withNotice.top - before.top - (bar1.height - bar0.height))).toBeLessThanOrEqual(1);
       expect(withNotice.top).toBeGreaterThanOrEqual(bar1.top + bar1.height);
-      expect(await home.evaluate(() => document.activeElement?.id)).toBe('home-copy-stellar');
+      expect(await home.evaluate(() => document.activeElement?.id)).toBe('home-tab-move');
     } else {
       // A bar that scrolls with the page: what is in view stays put (Chromium and Firefox anchor scrolling; in WebKit
       // the page scrolls by the bar's change).
@@ -184,16 +188,7 @@ for (const size of SIZES) {
     expect(await uncovered(home, watched)).toMatchObject({ inView: true, hit: true });
     await nothingCovered(home, `${size.name}, the notice up`, browserName);
 
-    // A copy that fails: its line keeps its space, so Continue's place in the page doesn't change.
-    const docY = () => home.locator(go).evaluate((el) => Math.round(el.getBoundingClientRect().top + window.scrollY));
-    const yBefore = await docY();
-    await home.evaluate(() => {
-      const clip = navigator.clipboard as Clipboard | undefined;
-      if (clip) Object.defineProperty(clip, 'writeText', { configurable: true, value: () => Promise.reject(new Error('blocked by the test')) });
-    });
-    await home.locator('#home-copy-stellar').click();
-    await expect(home.locator('#home-copied')).toContainText('copy it yourself');
-    expect(await docY()).toBe(yBefore);
+    // (D895: a failed copy's line is on the Addresses tab, Continue on Move wallet: they are never on screen together.)
 
     // The end: the notice's words change, its height doesn't; again nothing is covered.
     await centre(home, go);
@@ -268,6 +263,8 @@ async function reachable(home: Page, selector: string, label: string): Promise<v
 /** A toast that worked (the copy), with the email code screens in the bar: it is in the window, below what is left of the bar. */
 async function toastInView(home: Page, s: { width: number; height: number }): Promise<Record<string, number>> {
   await home.setViewportSize(s);
+  // D895: the addresses' Copy is on the Addresses tab.
+  await homeTab(home, 'Addresses');
   await home.evaluate(() => {
     const ok = { writeText: () => Promise.resolve() };
     if (navigator.clipboard) Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: ok.writeText });
@@ -338,6 +335,7 @@ for (const size of [
     expect(await uncovered(home, search)).toMatchObject({ inView: true, hit: true });
     api.refuse = false;
     await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
+    await homeTab(home, 'Move wallet');
     await home.evaluate(() => window.scrollTo(0, 0));
     for (const sel of ['#home-app-title', '#home-back']) expect(await uncovered(home, sel), sel).toMatchObject({ inView: true, hit: true });
 
@@ -364,19 +362,22 @@ for (const size of [
     expect(m.whoAgain).toBe(m.whoSignedIn);
     expect(m.barAgain).toBe(m.barSignedIn);
 
-    // The notice (the email sign-in's token lasts 10 minutes: it comes at 8), with the move flow's button in view.
-    const target = '#home-export-open';
+    // The notice (the email sign-in's token lasts 10 minutes: it comes at 8), with a button of the Security tab in view
+    // (D895: its three tools make the longest panel, so the page scrolls; the Move wallet tab alone is shorter than the
+    // window here, and at the page's top the page moves by the bar's change, D888).
+    const target = '#home-app-profile-show';
+    await homeTab(home, 'Security');
     await settled(home);
     await centre(home, target);
     // In view before the notice comes: "stays where it was" below then means something.
-    expect(await uncovered(home, target), 'the move flow’s button is in view before the notice').toMatchObject({ inView: true, hit: true });
+    expect(await uncovered(home, target), 'the button is in view before the notice').toMatchObject({ inView: true, hit: true });
     const targetTop = (await box(home, target)).top;
     await context.clock.fastForward(8 * MIN + 5_000);
     await expect(home.locator('#home-ending')).toBeVisible();
     await settled(home);
     m.barWithNotice = (await bar()).height;
     m.targetTop = [targetTop, (await box(home, target)).top];
-    expect(Math.abs((await box(home, target)).top - targetTop), 'the move flow’s button stays where it was in the window').toBeLessThanOrEqual(1);
+    expect(Math.abs((await box(home, target)).top - targetTop), 'the button stays where it was in the window').toBeLessThanOrEqual(1);
     expect(await uncovered(home, target)).toMatchObject({ inView: true, hit: true });
     info.annotations.push({ type: 'measured', description: JSON.stringify({ browserName, size, ...m }) });
     console.log(`[home-shell] ${browserName} email ${size.width}: ${JSON.stringify(m)}`);

@@ -367,6 +367,8 @@ function start(o: Opts = {}): H {
       await page.idle();
       if (page.openScope === null) (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
       expect(page.openScope).toBe(SCOPE);
+      // D895: the move flow is on the wallet's "Move wallet" tab.
+      document.getElementById('home-tab-move')?.click();
     },
     async begin(sub = SUB, claims = {}) {
       h.click('home-export-open');
@@ -405,6 +407,7 @@ function start(o: Opts = {}): H {
       await page.idle();
       if (page.openScope === null) (document.querySelector('.home-row[data-scope]') as HTMLElement).click();
       expect(page.openScope).toBe(SCOPE);
+      document.getElementById('home-tab-move')?.click();
     },
     async openByEmail() {
       // Read through a function: the state changes under the awaits below.
@@ -551,7 +554,7 @@ describe('golden: Hana Home opens the vault’s address', () => {
   it('says so when the address on record differs from the wallet’s own, and shows the wallet’s', async () => {
     const h = start({ scopes: [mineScope({ addresses: [{ chain: 'stellar', address: vector(ROOT).accounts[0]!.stellar.address }] })] });
     await h.unlock();
-    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from this wallet’s');
+    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from the wallet’s own');
     expect(document.getElementById('home-export-address-stellar')?.textContent).toBe(vector(OWN).accounts[0]!.stellar.address);
   });
 
@@ -571,7 +574,7 @@ describe('golden: Hana Home opens the vault’s address', () => {
     resetDom();
     const other = start({ scopes: [mineScope({ addresses: [...records, { chain: 'near', address: 'ab'.repeat(32) }] })] });
     await other.unlock();
-    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from this wallet’s');
+    expect(document.getElementById('home-export-mismatch')?.textContent).toContain('different from the wallet’s own');
     // What is shown is the wallet's own NEAR account and key, never the record's.
     expect(document.getElementById('home-export-address-near')?.textContent).toBe(near);
     // The app's page above lists the record (the API's word); the section never shows it.
@@ -1061,7 +1064,9 @@ describe('the secret’s life', () => {
     expect(r.secret.textContent).toBe(key);
     h.win.history.back();
     await flush();
-    expect(h.page.view).toBe('front');
+    // D895: "Move wallet" is a tab with its own entry: Back returns to Addresses, and leaving the tab locks the wallet.
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('addresses');
     expect(h.page.moving.holdsSecret).toBe(false);
     expect(zeroed.has(prkOf(OWN))).toBe(true);
     expect(h.page.moving.state).toBe('closed');
@@ -1071,6 +1076,7 @@ describe('the secret’s life', () => {
     h.win.history.forward();
     await flush();
     expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('move');
     expect(h.page.openScope).toBe(SCOPE);
     expect(h.page.moving.state).toBe('closed');
     expect(h.page.moving.holdsSecret).toBe(false);
@@ -1079,7 +1085,7 @@ describe('the secret’s life', () => {
     // No timer of the old wallet is left to fire, and the history entries hold nothing of it.
     advance(HOME_PRK_LIFETIME_MS + 1000);
     expect(h.page.moving.state).toBe('closed');
-    for (const e of h.win.history.entries) expect(JSON.stringify(e.state ?? null)).toMatch(/^(null|"home:[A-Za-z0-9_-]{16}:1")$/u);
+    for (const e of h.win.history.entries) expect(JSON.stringify(e.state ?? null)).toMatch(/^(null|"home:[A-Za-z0-9_-]{16}:[12]")$/u);
   });
 
   it('D893: the browser’s Back while the per-app sign-in is on its way drops it; an answer that comes after opens nothing', async () => {
@@ -1099,7 +1105,7 @@ describe('the secret’s life', () => {
     expect(h.page.moving.state).toBe('opening');
     h.win.history.back();
     await flush();
-    expect(h.page.view).toBe('front');
+    expect(h.page.tab).toBe('addresses');
     const { response } = simulateMpc(pk1 as unknown as string, ckdAppId(HOME_ENV.signer, OWN), NET);
     release(json(200, { result: response, session: { scope_id: SCOPE, expires_at_ms: T0 + 1, max_uses: 1, used: 1 }, nearTx: 'tx', requestId: 'req_1' }));
     await h.page.idle();
@@ -1109,6 +1115,7 @@ describe('the secret’s life', () => {
     h.win.history.forward();
     await flush();
     expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('move');
     expect(h.page.moving.holdsSecret).toBe(false);
     expectCollapsed();
   });
@@ -1264,11 +1271,11 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     expect(document.documentElement.style.getPropertyValue('--home-bar-h')).toBe('140px');
   });
 
-  it('a tool above the move flow changes height (devices loading, a section opening): the same', async () => {
+  it('a part above the move flow changes height (D895: the wallet’s tabs, the head above them): the same', async () => {
     const h = start();
     await h.unlock();
     armedAtContinue(h);
-    resize(document.getElementById('home-app-devices') as HTMLElement, 480);
+    resize(document.querySelector('.home-tabs') as HTMLElement, 96);
     land(h, 'home-export-continue');
     expect(h.page.moving.state).toBe('confirm');
     h.press('home-export-continue');
@@ -1290,6 +1297,30 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     window.dispatchEvent(new Event('scroll'));
     resize(header, 290);
     expect(scrollBy).toHaveBeenCalledWith(0, 165);
+  });
+
+  it('D895: the phone’s chip showing or going starts the guard over: a press that lands then does nothing', async () => {
+    const h = start();
+    await h.toApp();
+    const rect = (top: number, height: number, left = 0, width = 390): DOMRect => ({ top, bottom: top + height, left, right: left + width, width, height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+    const chip = document.getElementById('home-again-chip') as HTMLElement;
+    chip.getBoundingClientRect = () => rect(780, 40, 120, 150);
+    (document.getElementById('home-banner') as HTMLElement).getBoundingClientRect = () => rect(-200, 60);
+    // Near the sign-in's end (its warning shows), the wallet opened (its 5 minutes start now).
+    advance(13 * 60_000 + 1000);
+    expect(chip.hasAttribute('data-shown')).toBe(true);
+    await h.open();
+    expect(h.page.moving.state).toBe('unlocked');
+    armedAtContinue(h);
+    // The page scrolls a button of its own under the chip: the chip goes, and the guard starts over.
+    (document.getElementById('home-back') as HTMLElement).getBoundingClientRect = () => rect(790, 32, 140, 80);
+    window.dispatchEvent(new Event('scroll'));
+    await new Promise((r) => setImmediate(r));
+    expect(chip.hasAttribute('data-shown')).toBe(false);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
   });
 
   it('D893: everything above the move flow is watched, whatever it is (the way back, the details, a part added later)', async () => {
@@ -1618,7 +1649,7 @@ describe('the guard and the auto-hide', () => {
 describe('words and source', () => {
   it('the availability sentence mentions the move only where the page offers it', () => {
     expect(coverageText('shared', true, true).detail).toContain('You can also move it to another wallet app');
-    expect(coverageText('partner_client', true, true).detail).toContain('To avoid that, you can move it to another wallet app below.');
+    expect(coverageText('partner_client', true, true).detail).toContain('To avoid that, you can move it to another wallet app, under “Move wallet”.');
     for (const [coverage, mine, canMove] of [['shared', true, false], ['exit', true, false], ['shared', false, true], ['none', true, true], ['unknown', true, true]] as const) {
       expect(coverageText(coverage, mine, canMove).detail, `${coverage} ${mine} ${canMove}`).not.toMatch(/move/u);
     }

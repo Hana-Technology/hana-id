@@ -7,7 +7,7 @@
 //   HANA_SHOTS_DIR set (Chromium only) it saves each screen there at desktop and phone width, light and dark.
 import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { chooseAccount, expect, login, newApp, openPartner, test, walletDirectory } from './fixtures.ts';
-import { HOME_APPS, routeApps, shots, signIn } from './home-steps.ts';
+import { HOME_APPS, homeTab, routeApps, shots, signIn } from './home-steps.ts';
 
 const G = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
@@ -133,7 +133,7 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { level: 1, name: 'Wallet details' })).toBeFocused();
   await expect(page).toHaveTitle('Wallet details – Passport Home');
-  await expect(page.getByRole('heading', { name: 'Apps that use this wallet' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Apps that use this wallet' })).toBeVisible();
   await expect(page.locator('#home-address-stellar')).toHaveText(G);
   await expect(page.getByRole('link', { name: 'View on StellarExpert (test network)' })).toHaveAttribute('href', `https://stellar.expert/explorer/testnet/account/${G}`);
   await shots(page, '04-app-page', browserName);
@@ -413,4 +413,97 @@ test('rows: a screen reader’s name and description; the placeholders stand sti
   await expect(page.locator('.home-row[data-scope="s2"]')).toHaveAccessibleName('Lumen Pay (Closed), Safe if the app closes');
   await expect(page.locator('#home-open-devices')).toHaveAccessibleName('Devices and auto-approve');
   await expect(page.locator('#home-open-devices')).toHaveAccessibleDescription('Where you’re signed in to your apps, and what may sign without asking');
+});
+
+// ---- D895: a wallet's tabs, and the phone's "Sign in again" chip ----
+
+test('a wallet’s tabs: roles and names, the keyboard, one history entry each, and no sideways scroll on a phone (D895)', async ({ page, context }) => {
+  const requests: string[] = [];
+  await routeApps(context, (url) => {
+    requests.push(url.search);
+    return { status: 200, body: LIST };
+  });
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  await page.locator('.home-row[data-scope="s1"]').click();
+  const list = page.getByRole('tablist', { name: 'This wallet' });
+  await expect(list.getByRole('tab')).toHaveText(['Addresses', 'Security', 'Move wallet']);
+  await expect(page.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel', { name: 'Addresses' })).toBeVisible();
+  await expect(page.getByRole('tabpanel', { name: 'Security' })).toBeHidden();
+  const sent = requests.length;
+  // The keyboard: Tab reaches the open tab; the arrows move between tabs without opening one; Enter opens it.
+  await page.getByRole('tab', { name: 'Addresses' }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Security' })).toBeFocused();
+  await expect(page.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel', { name: 'Security' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Ways to sign in' })).toBeVisible();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Space');
+  await expect(page.getByRole('tab', { name: 'Move wallet' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { level: 2, name: 'Move this wallet to another wallet app' })).toBeVisible();
+  // One entry per tab opened, at the same address; Back and Forward move between them, then to the list.
+  expect(await page.evaluate(() => history.state as unknown)).toMatch(/^home:[A-Za-z0-9_-]{16}:3$/u);
+  expect(page.url()).toBe(`${AUTH_ORIGIN}/home`);
+  await page.goBack();
+  await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+  await page.goBack();
+  await expect(page.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
+  await page.goForward();
+  await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+  await page.goBack();
+  await page.goBack();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  expect(requests.length).toBe(sent);
+  // A phone: the three tabs fit, nothing scrolls sideways.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.home-row[data-scope="s1"]').click();
+  for (const name of ['Addresses', 'Security', 'Move wallet'] as const) {
+    await homeTab(page, name);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), name).toBe(true);
+    const box = await page.getByRole('tab', { name }).boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= 390, name).toBe(true);
+  }
+});
+
+test('the phone’s “Sign in again” chip: only scrolled away from the ending notice, over nothing, and it takes the person to it (D895)', async ({ page, context }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await routeApps(context, () => ({ status: 200, body: LIST }));
+  await context.clock.install();
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  await page.locator('.home-row[data-scope="s1"]').click();
+  await homeTab(page, 'Security');
+  const chip = page.locator('#home-again-chip');
+  await expect(chip).toBeHidden();
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(chip).toBeHidden();
+  await context.clock.fastForward(13 * 60_000 + 5_000);
+  await expect(page.locator('#home-ending')).toBeAttached();
+  await page.evaluate(() => window.scrollBy(0, 1));
+  await expect(chip).toBeVisible();
+  await expect(chip).toHaveAccessibleName(/^Sign in again/u);
+  await expect(chip).toHaveAccessibleDescription('Your sign-in to Passport Home ends soon.');
+  // Nothing that can be pressed is under it.
+  const c = await chip.boundingBox();
+  const under = await page.evaluate((r) => {
+    if (!r) return null;
+    const els = [...document.querySelectorAll('#app button, #app a[href], #app input, #app summary, #app [tabindex="0"]')];
+    return els.filter((el) => {
+      const b = el.getBoundingClientRect();
+      return b.width > 0 && b.height > 0 && b.left < r.x + r.width && b.right > r.x && b.top < r.y + r.height && b.bottom > r.y;
+    }).length;
+  }, c);
+  expect(under).toBe(0);
+  // At the top, with the notice in view: no chip.
+  await chip.click();
+  await expect(page.locator('#home-sign-in-again')).toBeFocused();
+  await expect(page.locator('#home-banner')).toBeInViewport();
+  await expect(chip).toBeHidden();
+  // Reduced motion changes nothing here: the chip has no animation.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await chip.evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
 });

@@ -13,7 +13,7 @@ import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { API_URL, AUTH_ORIGIN, EXIT_CLIENT_ID, ISSUER_URL } from '../src/stack.ts';
 import { chooseAccount, clickAction, clickClosing, clickUntilTaken, expect, guardedClick, login, newApp, okValue, openPartner, test, waitPersisted, walletDirectory } from './fixtures.ts';
-import { HOME_CORS, shots, signIn } from './home-steps.ts';
+import { HOME_CORS, homeTab, shots, signIn } from './home-steps.ts';
 
 const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
 const newSub = (): string => `1${Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => String(b % 10)).join('')}`;
@@ -126,6 +126,7 @@ test('an email user signs in to Hana Home with a code and sees their app and add
   expect(await storage()).toEqual({ ...stored, url: `${AUTH_ORIGIN}/home` });
 
   // Moving the wallet out: a new code to the same address, then the wallet the partner login opened.
+  await homeTab(home, 'Move wallet');
   await home.locator('#home-export-open').click();
   await expect(home.locator('#home-export-start')).toHaveText('Continue with a code');
   await shots(home, 'h10-05-move-intro-email', browserName);
@@ -260,6 +261,7 @@ test('export for an app whose coverage is exit: the per-app sign-in goes through
   await home.goto(`${AUTH_ORIGIN}/home`);
   await signIn(home);
   await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
+  await homeTab(home, 'Move wallet');
   await home.locator('#home-export-open').click();
   await expect(home.locator('#home-export-start')).toHaveText('Sign in again to continue');
   await shots(home, 'h10-15-move-intro-exit', browserName);

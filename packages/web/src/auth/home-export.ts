@@ -90,7 +90,7 @@ export type HomeExportChain = keyof typeof CHAIN_NAMES;
 const NEAR_NETWORK_NAME: Readonly<Record<HanaEnv['network'], string>> = Object.freeze({ testnet: 'NEAR’s test network (“testnet”)' });
 export const HOME_EXPORT_TITLE = 'Move this wallet to another wallet app';
 /** What the collapsed section says under its heading, and its button: the same shape as "Devices and auto-approve". */
-export const HOME_EXPORT_ABOUT = `${BRAND.home} can show you the private key of your wallet in this app, so that you can import it into another wallet app.`;
+export const HOME_EXPORT_ABOUT = `${BRAND.home} can show you this wallet’s private key, so that you can add the wallet to another wallet app.`;
 export const HOME_EXPORT_OPEN = 'Show how to move it';
 
 export type HomeExportState =
@@ -114,7 +114,7 @@ export type HomeExportState =
 export type HomeExportOff = 'link' | 'none' | 'unknown';
 
 export const HOME_EXPORT_OFF_TEXT: Readonly<Record<HomeExportOff, string>> = Object.freeze({
-  link: `You came to this app through a link. ${BRAND.home} never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open ${BRAND.home} yourself, without the link, and find the app in your list or by its name.`,
+  link: `You came here through a link. ${BRAND.home} never moves a wallet out from a link, because a link can come from anyone. If you want to move this wallet, open ${BRAND.home} yourself, without the link, and find the wallet under “Your wallets”.`,
   none: `${BRAND.company} can’t open this wallet from here. If the app still runs, use the app itself.`,
   unknown: `${BRAND.company} hasn’t checked this app yet. Use “Check now” above, then come back here.`,
 });
@@ -129,7 +129,7 @@ export const HOME_EXPORT_NEAR_NOTES_TITLE = 'Before you move a NEAR account';
  */
 export function homeExportNearNotes(network: HanaEnv['network']): readonly string[] {
   return [
-    'This key is the NEAR account itself: the account’s name above is made from it. Whoever imports it into a NEAR wallet app has full control of the account. If that app removes this key from the account, this app loses the wallet too.',
+    'This key is the NEAR account itself: the account’s name above is made from it. Whoever imports it into a NEAR wallet app has full control of the account. If that app removes this key from the account, the apps that use this wallet lose it too.',
     `Choose ${NEAR_NETWORK_NAME[network]} in the other wallet app. An account that was never sent any NEAR doesn’t exist on NEAR yet: until it gets its first NEAR, a wallet app may show it as not found or not import it.`,
     `${BRAND.company} pays NEAR network fees only for a few actions it has approved, such as its demo’s, and only in apps that use ${BRAND.product}. In another wallet app, every network fee is paid from this account’s own NEAR.`,
   ];
@@ -290,7 +290,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
     });
     return b;
   };
-  const title = (text: string): HTMLElement => d.h('h3', { attrs: { id: 'home-export-title', tabindex: '-1' } }, text);
+  const title = (text: string): HTMLElement => d.h('h2', { attrs: { id: 'home-export-title', tabindex: '-1' } }, text);
   const show = (...children: Child[]): void => {
     root.replaceChildren();
     for (const c of children) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? win.document.createTextNode(c) : c);
@@ -821,7 +821,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
             'p',
             {},
             s.mine
-              ? `${BRAND.home} can show you this wallet’s private key, so that you can import it into another wallet app. The wallet keeps working in the app as before.`
+              ? `${BRAND.home} can show you this wallet’s private key, so that you can add the wallet to another wallet app. The wallet keeps working in its apps as before.`
               : `${BRAND.company} has no wallet on record for you in this app. If you had one, ${byEmail ? 'confirm with a code' : 'sign in again'} and ${BRAND.home} will look for it. If it finds one, it can show you its private key, so that you can import it into another wallet app.`,
           ),
           alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
@@ -854,12 +854,12 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           title('Your wallet is open'),
           exportSteps(d, 2),
           mismatch
-            ? alert(d, 'warning', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, `The address ${BRAND.company} had on record for you in this app is different from this wallet’s. The addresses below come from the wallet itself, worked out on this page.`)
+            ? alert(d, 'warning', { class: 'warn', attrs: { id: 'home-export-mismatch' } }, `The address ${BRAND.company} had on record for this wallet is different from the wallet’s own. The addresses below come from the wallet itself, worked out on this page.`)
             : null,
           addressRows(addresses),
           d.h('p', {}, 'Choose the key to show: the Stellar key for a Stellar wallet app, the Ethereum-style key for an Ethereum wallet app, the NEAR key for a NEAR wallet app.'),
           d.h('div', { class: 'actions start' }, button('Stellar key', 'home-export-stellar', () => choose('stellar')), button('Ethereum-style key', 'home-export-evm', () => choose('evm')), button('NEAR key', 'home-export-near', () => choose('near'))),
-          d.h('p', { class: 'muted' }, `The wallet is locked again 5 minutes after you signed in, when you leave this app’s page, and when you close or reload ${BRAND.home}.`),
+          d.h('p', { class: 'muted' }, `The wallet locks again 5 minutes after you signed in, when you leave “Move wallet”, and when you close or reload ${BRAND.home}.`),
           d.h('div', { class: 'actions start' }, button('Lock now', 'home-export-lock', () => lock('locked'))),
         );
       }
@@ -905,7 +905,7 @@ export function startHomeExport(deps: HomeExportDeps): HomeExport {
           r.actions,
           r.hint,
           r.status,
-          d.h('p', { class: 'muted' }, `A shown key hides again after 60 seconds. It is erased from this page 5 minutes after you signed in, when you leave this app’s page, and when you close or reload ${BRAND.home}.`),
+          d.h('p', { class: 'muted' }, `A shown key hides again after 60 seconds. It is erased from this page 5 minutes after you signed in, when you leave “Move wallet”, and when you close or reload ${BRAND.home}.`),
           d.h('p', { class: 'muted' }, EXPORT_CLIPBOARD_NOTE),
           d.h('div', { class: 'actions start' }, button('Choose another key', 'home-export-back', back), button('Lock now', 'home-export-lock', () => lock('locked'))),
         );

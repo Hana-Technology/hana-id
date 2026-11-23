@@ -124,6 +124,14 @@ export const HOME_TEXT = Object.freeze({
   walletApp: 'App that uses this wallet',
   walletApps: 'Apps that use this wallet',
   noAddress: `${BRAND.company} has no address on record for this wallet yet.`,
+  /** A wallet's tabs (D895), and what their list is called. */
+  tabs: Object.freeze({ addresses: 'Addresses', security: 'Security', move: 'Move wallet' }) as Readonly<Record<'addresses' | 'security' | 'move', string>>,
+  tabsWallet: 'This wallet',
+  tabsApp: 'This app',
+  /** The phone's "Sign in again" chip (D895), and what it says to a screen reader beside its words. */
+  chip: 'Sign in again',
+  chipEnding: `Your sign-in to ${BRAND.home} ends soon.`,
+  chipEnded: `Your sign-in to ${BRAND.home} has ended.`,
   /** The top bar's Sign out, as a screen reader and a tooltip name it: apart from "Sign out this device". */
   signOutName: `Sign out of ${BRAND.home}`,
 });
@@ -196,7 +204,10 @@ export type HomeSession = 'none' | 'active' | 'ending' | 'ended';
 /** Passport Home's views while signed in (D893): "Your wallets", a wallet's page, and the two "Your account" views. */
 export type HomeViewKind = 'front' | 'wallet' | 'devices' | 'profile';
 /** A view as the page remembers it (memory only): a wallet's view keeps the listing it was opened from. */
-type HomeView = { readonly kind: 'front' } | { readonly kind: 'wallet'; scope: HomeScope } | { readonly kind: 'devices' } | { readonly kind: 'profile' };
+type HomeView = { readonly kind: 'front' } | { readonly kind: 'wallet'; scope: HomeScope; readonly tab: HomeWalletTab } | { readonly kind: 'devices' } | { readonly kind: 'profile' };
+/** A wallet's page's three tabs (D895, structure A's step 3), in their order: Addresses first, open by default. */
+export const HOME_WALLET_TABS = ['addresses', 'security', 'move'] as const;
+export type HomeWalletTab = (typeof HOME_WALLET_TABS)[number];
 
 export type HomeListState = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -210,6 +221,8 @@ export interface HomePage {
   readonly openScope: string | null;
   /** The view on screen while signed in (D893): the front page, a wallet's (or an app's) page, or an account view. */
   readonly view: HomeViewKind;
+  /** The wallet's page's tab on screen (D895), or null on any other view. */
+  readonly tab: HomeWalletTab | null;
   /** The code of the problem on screen, or null. */
   readonly errorCode: string | null;
   /** The sign-in child's window name, once opened. */
@@ -269,8 +282,8 @@ const COVERAGE_WORDS: Readonly<Record<'mine' | 'other', Readonly<Record<Coverage
 
 /** What the sentence adds for the user's own wallet when this page can move it out. */
 const MOVE_WORDS: Readonly<Partial<Record<CoverageKind, string>>> = Object.freeze({
-  yes: ' You can also move it to another wallet app below.',
-  maybe: ' To avoid that, you can move it to another wallet app below.',
+  yes: ' You can also move it to another wallet app, under “Move wallet”.',
+  maybe: ' To avoid that, you can move it to another wallet app, under “Move wallet”.',
 });
 
 /**
@@ -619,6 +632,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   const onScroll = (): void => {
     lastScrollY = view()?.scrollY ?? 0;
     noteBarBottom();
+    chipSoon();
   };
   // The bar's height: written to the root's --home-bar-h (through the CSSOM, which the CSP allows; no style attribute),
   // which focus scrolling keeps clear of; a change starts the guard over.
@@ -648,8 +662,71 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     }
     if (v) lastScrollY = v.scrollY;
     layoutChanged();
+    chipSoon();
   })?.observe(bar.header);
   view()?.addEventListener('scroll', onScroll, { passive: true });
+  view()?.addEventListener('resize', () => chipSoon(), { passive: true });
+
+  // ---- the phone's "Sign in again" chip (D895; decided by the founder 2026-11-23, D888's open list) ----
+  // On a phone or a tablet the bar scrolls away with the page, so someone scrolled down sees no sign that the sign-in
+  // is ending or has ended. The chip shows then, and only then: signed in, the bar's notice offering "Sign in again" and
+  // out of view, and nothing that can be pressed under the chip (so it covers no control, and never a guarded button).
+  // It is a fixed button outside the page's content: hidden, it takes no click and no focus. Pressed, it takes the
+  // person up to the notice, with focus on its "Sign in again". Each time it shows or goes, the move flow's guard starts
+  // over, as for any other change around it.
+  const chipWhy = d.h('span', { class: 'sr-only', attrs: { id: 'home-again-chip-why' } });
+  const chip = d.h('button', { class: `${BTN.primary} jp-btn-sm home-again-chip`, attrs: { type: 'button', id: 'home-again-chip', 'aria-describedby': 'home-again-chip-why' } }, icon(d, 'clock'), HOME_TEXT.chip, chipWhy);
+  chip.addEventListener('click', (e) => {
+    if (!isGesture(e)) return;
+    try {
+      view()?.scrollTo(0, 0);
+    } catch {
+      // Scrolling is a convenience.
+    }
+    try {
+      byId('home-sign-in-again')?.focus({ preventScroll: true });
+    } catch {
+      // Focus is a convenience.
+    }
+  });
+  let chipShown = false;
+  /** What a person can press, in the page's content: the chip never sits over one. */
+  const PRESSABLE = ['button:not([disabled])', 'a[href]', 'input:not([type="hidden"])', 'select', 'textarea', 'summary', '[tabindex="0"]'].map((x) => `#app ${x}`).join(', ');
+  function updateChip(): void {
+    let show = false;
+    try {
+      const again = byId('home-sign-in-again');
+      const banner = byId('home-banner');
+      if (stage === 'signed_in' && again && banner && chip.isConnected && !sticky() && banner.getBoundingClientRect().bottom <= 0) {
+        const c = chip.getBoundingClientRect();
+        const under = Array.from(win.document.querySelectorAll<HTMLElement>(PRESSABLE)).some((el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && r.left < c.right && r.right > c.left && r.top < c.bottom && r.bottom > c.top;
+        });
+        show = !under;
+      }
+    } catch {
+      show = false;
+    }
+    chipWhy.textContent = ` ${session === 'ended' ? HOME_TEXT.chipEnded : HOME_TEXT.chipEnding}`;
+    if (show === chipShown) return;
+    chipShown = show;
+    if (show) chip.setAttribute('data-shown', '');
+    else chip.removeAttribute('data-shown');
+    layoutChanged();
+  }
+  let chipQueued = false;
+  /** On scroll and resize: once per frame. */
+  function chipSoon(): void {
+    const v = view();
+    if (chipQueued) return;
+    if (typeof v?.requestAnimationFrame !== 'function') return updateChip();
+    chipQueued = true;
+    v.requestAnimationFrame(() => {
+      chipQueued = false;
+      updateChip();
+    });
+  }
   // On a wallet's page, everything above the move flow in the page (the way back, the details with a refusal under their
   // heading, the other tools): a change in its height moves the guarded buttons, so it starts the guard over too. D893:
   // not a list of selectors any more but every element before the move flow's section, at each level up to `main`, so
@@ -1168,8 +1245,18 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    * `history`: Back or Forward (never a read). A view starts at its top with focus on its heading; the front page comes
    * back where it was scrolled, with focus on the row the user opened (its heading when that row is gone).
    */
-  function showView(next: HomeView, how: 'open' | 'back' | 'history'): void {
+  function showView(next: HomeView, how: 'open' | 'back' | 'history' | 'tab'): void {
     const was = viewing;
+    // Another tab of the same wallet's page (D895): the page stays, only the panel changes. Leaving "Move wallet" locks
+    // and erases a wallet opened there, exactly as leaving the page does; the other tabs keep what they show.
+    if (was.kind === 'wallet' && next.kind === 'wallet' && was.scope.scopeId === next.scope.scopeId) {
+      if (was.tab === 'move' && next.tab !== 'move') moving.leave();
+      viewing = next;
+      problem = null;
+      renderContent();
+      focusQuiet(byId(`home-tab-${next.tab}`));
+      return;
+    }
     if (was.kind === 'front') frontScroll = view()?.scrollY ?? 0;
     if (was !== next) leaveView(was);
     viewing = next;
@@ -1195,8 +1282,16 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const scope = findScope(scopeId);
     if (!scope) return;
     if (viewing.kind === 'front') frontReturn = scopeId;
-    const v: HomeView = { kind: 'wallet', scope };
+    const v: HomeView = { kind: 'wallet', scope, tab: 'addresses' };
     showView(v, 'open');
+    addStep(v);
+  }
+
+  /** A tab of the wallet's page on screen chosen (a click, or Enter or Space on it): its own history entry (D895). */
+  function selectTab(tab: HomeWalletTab): void {
+    if (viewing.kind !== 'wallet' || viewing.tab === tab) return;
+    const v: HomeView = { kind: 'wallet', scope: viewing.scope, tab };
+    showView(v, 'tab');
     addStep(v);
   }
 
@@ -1606,6 +1701,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     stage = 'signed_out';
     signInError = null;
     renderSignedOut();
+    updateChip();
   }
 
   // ---- screens ----
@@ -1727,6 +1823,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     fill('home-banner', ...bannerParts());
     barChanged();
     layoutChanged();
+    updateChip();
   }
 
   /** What the bar's notice shows: a sign-in again that didn't finish, then the sign-in's own state. */
@@ -1914,6 +2011,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const h1 = byId('home-content')?.querySelector('h1') ?? null;
     setTitle(h1 ? homeViewTitle(headingText(h1)) : BRAND.home);
     watchAbove();
+    chipSoon();
   }
 
   function frontPage(): Child[] {
@@ -2106,6 +2204,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     // The apps' label: for the user's wallet, the apps that use it (D893); for an app where Journear has no wallet of
     // theirs, as before.
     const appsLabel = scope.mine ? (scope.apps.length > 1 ? HOME_TEXT.walletApps : HOME_TEXT.walletApp) : scope.apps.length > 1 ? 'Apps that share one wallet' : 'App';
+    const tab = viewing.kind === 'wallet' ? viewing.tab : 'addresses';
+    const panel = (which: HomeWalletTab, ...children: Child[]): HTMLElement => {
+      const el = d.h('div', { class: 'home-tabpanel', attrs: { id: `home-panel-${which}`, role: 'tabpanel', 'aria-labelledby': `home-tab-${which}`, tabindex: '0' } }, ...children);
+      if (which !== tab) el.setAttribute('hidden', '');
+      return el;
+    };
     return [
       backLink(),
       d.h(
@@ -2116,11 +2220,17 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         // box below, never the heading of a page on Journear's origin.
         d.h('h1', { attrs: { id: 'home-app-title', tabindex: '-1' } }, scope.mine ? HOME_TEXT.walletTitle : HOME_TEXT.appTitle),
         noticeSlot('top'),
-        d.h('h2', { attrs: { id: 'home-app-label' } }, appsLabel),
+        // D895: the wallet's head, above its tabs (option A's a2): which apps use it, and whether it needs them. Labels,
+        // not headings: the tabs' panels hold the page's sections.
+        d.h('p', { class: 'home-app-label', attrs: { id: 'home-app-label' } }, appsLabel),
         scope.apps.length > 0 ? d.h('div', { class: 'home-card-apps home-app-all', attrs: { 'aria-labelledby': 'home-app-label', role: 'group' } }, ...scope.apps.map((a) => appLine(a, 5))) : d.h('p', { class: 'muted' }, scopeTitle(scope)),
-        d.h('h2', {}, cover.question),
+        d.h('p', { class: 'home-app-label home-app-question' }, cover.question),
         d.h('p', { attrs: { id: 'home-coverage' } }, badge(cover.badge, cover.tone), ' ', busy === 'check' ? 'Checking…' : cover.detail),
         scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
+      ),
+      walletTabs(scope, tab),
+      panel(
+        'addresses',
         // The addresses and the Support ID: side by side where there is room, one above the other on a phone.
         d.h(
           'div',
@@ -2153,10 +2263,45 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             : null,
         ),
       ),
-      // Where the wallet's tools go: the devices signed in to it, the ways to sign in to it, the name its apps get, and
-      // moving the wallet out (last, never featured; its screens' titles stay `h3`, home-export.ts unchanged, D893).
-      d.h('div', { attrs: { id: 'home-app-extras' } }, devices.appView(scope), signIns.appView(scope), profile.appView(scope), moving.view(scope, fromLink)),
+      // Security (D895): who can open this wallet and where it is signed in, then what its apps get (the name). Step 4
+      // fills it out; here it holds the sections that were under the addresses.
+      panel('security', d.h('div', { class: 'home-tools', attrs: { id: 'home-app-extras' } }, signIns.appView(scope), devices.appView(scope), profile.appView(scope))),
+      // Moving the wallet out, on a tab of its own (never featured: the last tab). Leaving the tab locks it.
+      panel('move', d.h('div', { class: 'home-tools' }, moving.view(scope, fromLink))),
     ];
+  }
+
+  /**
+   * The wallet's tabs (D895; WAI-ARIA tabs with manual activation): one tab stop, the arrow keys, Home and End move
+   * between the tabs, Enter or Space (a button's click) opens one. Opening is never automatic on an arrow key: each tab
+   * opened is a history entry, and leaving "Move wallet" locks an opened wallet.
+   */
+  function walletTabs(scope: HomeScope, tab: HomeWalletTab): HTMLElement {
+    const icons: Readonly<Record<HomeWalletTab, Parameters<typeof icon>[1]>> = { addresses: 'wallet', security: 'shield', move: 'arrow' };
+    const tabs = HOME_WALLET_TABS.map((which) => {
+      const el = d.h(
+        'button',
+        { class: which === 'move' ? 'jp-tab home-tab home-tab-move' : 'jp-tab home-tab', attrs: { type: 'button', role: 'tab', id: `home-tab-${which}`, 'aria-selected': String(which === tab), 'aria-controls': `home-panel-${which}`, tabindex: which === tab ? '0' : '-1' } },
+        icon(d, icons[which]),
+        HOME_TEXT.tabs[which],
+      );
+      el.addEventListener('click', (e) => {
+        if (isGesture(e)) selectTab(which);
+      });
+      return el;
+    });
+    const list = d.h('div', { class: 'jp-tabs home-tabs', attrs: { role: 'tablist', 'aria-label': scope.mine ? HOME_TEXT.tabsWallet : HOME_TEXT.tabsApp } }, ...tabs);
+    list.addEventListener('keydown', (e) => {
+      const key = (e as KeyboardEvent).key;
+      const at = tabs.findIndex((t) => t === win.document.activeElement);
+      if (at < 0) return;
+      const to = key === 'ArrowRight' ? (at + 1) % tabs.length : key === 'ArrowLeft' ? (at + tabs.length - 1) % tabs.length : key === 'Home' ? 0 : key === 'End' ? tabs.length - 1 : -1;
+      if (to < 0) return;
+      e.preventDefault();
+      tabs.forEach((t, i) => t.setAttribute('tabindex', i === to ? '0' : '-1'));
+      focusQuiet(tabs[to] ?? null);
+    });
+    return list;
   }
 
   // ---- start ----
@@ -2199,7 +2344,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     } catch {
       // Scroll restoration is a convenience.
     }
-    win.document.body?.append(toasts.root);
+    win.document.body?.append(toasts.root, chip);
     // A timer can fire late after the device slept: look again whenever the page is shown or focused.
     for (const type of ['focus', 'pageshow', 'visibilitychange']) win.addEventListener(type, () => checkSession());
     track(loadConfig());
@@ -2223,6 +2368,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     },
     get view() {
       return viewing.kind;
+    },
+    get tab() {
+      return viewing.kind === 'wallet' ? viewing.tab : null;
     },
     get errorCode() {
       return (stage === 'signed_in' ? (problem ?? renewProblem) : signInError)?.code ?? null;

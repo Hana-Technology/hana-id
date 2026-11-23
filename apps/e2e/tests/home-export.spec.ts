@@ -16,7 +16,7 @@ import type { BrowserContext, Page, Route, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { API_URL, AUTH_ORIGIN, GOOGLE_CLIENT_ID, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { type RequestLog, chainView, chooseAccount, clickAction, clickClosing, clickMayClose, clickUntilTaken, closeOf, expect, guardedClick, login, newApp, okValue, openPartner, runAction, test, waitPersisted, walletDirectory } from './fixtures.ts';
-import { HOME_CORS, homeRow, routeApps, shots, signIn } from './home-steps.ts';
+import { HOME_CORS, homeRow, homeTab, routeApps, shots, signIn } from './home-steps.ts';
 
 const HOME_LOGIN = `${API_URL}/v1/home/login`;
 const HIDDEN = '••••••••';
@@ -119,7 +119,9 @@ test('a wallet made by a partner login is opened in Passport Home and its Stella
   // Collapsed: the section's heading, its sentence and one button, as the devices section.
   await expect(s.title).toHaveText('Move this wallet to another wallet app');
   await expect(s.open).toHaveText('Show how to move it');
-  expect(await home.locator('#home-app-extras').evaluate((el) => el.parentElement?.lastElementChild === el && el.lastElementChild?.id === 'home-export')).toBe(true);
+  // D895: the move flow is on the wallet's last tab, "Move wallet", in its panel alone.
+  expect(await home.locator('#home-export').evaluate((el) => el.closest('[role="tabpanel"]')?.id)).toBe('home-panel-move');
+  await expect(home.getByRole('tab').last()).toHaveText('Move wallet');
   await expect(s.start).toHaveCount(0);
 
   // A link naming the app opens its page, and no more: still collapsed, no window opened, nothing sent.
@@ -127,6 +129,7 @@ test('a wallet made by a partner login is opened in Passport Home and its Stella
   popups = 0;
   await signIn(home);
   await expect(home.locator('#home-address-stellar')).toHaveText(wallet.stellar);
+  await homeTab(home, 'Move wallet');
   await expect(s.open).toBeVisible();
   await expect(s.root.locator('button')).toHaveCount(1);
   await home.waitForTimeout(1_000);
@@ -135,6 +138,7 @@ test('a wallet made by a partner login is opened in Passport Home and its Stella
   expect(homeLogins(requests)).toBe(0);
   // A link can come from anyone, so the wallet of the app it named isn't moved out in that page load, the user's own
   // included: the section says to come back without the link, and offers no sign-in.
+  await homeTab(home, 'Move wallet');
   await s.open.click();
   await expect(home.locator('#home-export-off')).toContainText('open Passport Home yourself, without the link');
   await expect(s.start).toHaveCount(0);
@@ -149,6 +153,7 @@ test('a wallet made by a partner login is opened in Passport Home and its Stella
   await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
 
   // Expanded: the warning, and still nothing sent until the click.
+  await homeTab(home, 'Move wallet');
   await s.open.click();
   await expect(s.title).toHaveText('Move this wallet to another wallet app');
   await expect(s.root.locator('.warn')).toContainText('Anyone with this key controls your funds');
@@ -206,7 +211,7 @@ test('a wallet made by a partner login is opened in Passport Home and its Stella
   expect(homeLogins(requests)).toBe(1);
 });
 
-test('D893: the browser’s Back out of an open wallet locks it and erases the key; Forward shows the page with the move closed, never the key', async ({ page, context, google, requests, browserName }) => {
+test('D893, D895: the browser’s Back out of an open wallet’s “Move wallet” locks it and erases the key; Forward shows the tab with the move closed, never the key', async ({ page, context, google, requests, browserName }) => {
   test.setTimeout(120_000);
   freshAccounts(google);
   const scopeId = newScope(browserName);
@@ -219,6 +224,7 @@ test('D893: the browser’s Back out of an open wallet locks it and erases the k
   await signIn(home);
   await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
   const s = section(home);
+  await homeTab(home, 'Move wallet');
   await s.open.click();
   await signInAgain(home);
   await expect(s.title).toHaveText('Your wallet is open', { timeout: 20_000 });
@@ -230,25 +236,27 @@ test('D893: the browser’s Back out of an open wallet locks it and erases the k
   const key = (await s.secret.textContent()) ?? '';
   expect(addressOfExport('evm', key)).toBe(wallet.evm);
 
-  // Back: the list, and nothing of the opened wallet left in the page.
+  // D895: Back leaves the "Move wallet" tab for Addresses, and leaving the tab locks the wallet: nothing of it stays.
   await home.goBack();
-  await expect(home.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
-  await expect(home.locator(`.home-row[data-scope="${scopeId}"]`)).toBeFocused();
-  await expect(s.root).toHaveCount(0);
+  await expect(home.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
+  await expect(home.getByRole('tab', { name: 'Addresses' })).toBeFocused();
+  await expect(s.secret).toHaveCount(0);
   await expectNoKey(home, key);
-  // Forward: the wallet's page again, the move collapsed; no key, no derive, nothing opened.
+  // Forward: "Move wallet" again, the move collapsed; no key, no derive, nothing opened.
   await home.goForward();
-  await expect(home.getByRole('heading', { level: 1, name: 'Wallet details' })).toBeFocused();
+  await expect(home.getByRole('tab', { name: 'Move wallet' })).toHaveAttribute('aria-selected', 'true');
   await expect(s.open).toBeVisible();
   await expect(s.title).toHaveText('Move this wallet to another wallet app');
   await expect(s.secret).toHaveCount(0);
   await expectNoKey(home, key);
   expect(homeLogins(requests)).toBe(1);
-  // Opening it again needs a new sign-in, as after "Lock now".
+  // Opening it again needs a new sign-in, as after "Lock now". Back twice more: Addresses, then the list.
   await s.open.click();
   await expect(s.start).toHaveText('Sign in again to continue');
   await home.goBack();
+  await home.goBack();
   await expect(home.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await expect(home.locator(`.home-row[data-scope="${scopeId}"]`)).toBeFocused();
   await expectNoKey(home, key);
   expect(await home.evaluate(() => ({ session: sessionStorage.length, local: localStorage.length, url: location.href, state: history.state as unknown }))).toEqual({ session: 0, local: 0, url: `${AUTH_ORIGIN}/home`, state: null });
 });
@@ -322,6 +330,7 @@ test('a linked sign-in method: Google, a member of an email wallet, opens that w
   await home.locator(`#home-results .home-row[data-scope="${scopeId}"]`).click();
   await expect(home.locator('#home-no-address')).toBeVisible();
   const s = section(home);
+  await homeTab(home, 'Move wallet');
   await s.open.click();
   await expect(s.root).toContainText('Journear has no wallet on record for you in this app. If you had one, sign in again and Passport Home will look for it.');
   await signInAgain(home);
@@ -330,7 +339,8 @@ test('a linked sign-in method: Google, a member of an email wallet, opens that w
   // The wallet is the account root's (the email wallet), not one of Google's own; the app's page now shows it too.
   await expect(home.locator('#home-export-address-stellar')).toHaveText(wallet.stellar);
   await expect(home.locator('#home-export-address-evm')).toHaveText(wallet.evm);
-  await expect(home.locator('#home-opened-note')).toBeVisible();
+  // On the Addresses tab (D895), out of sight while "Move wallet" is open: switching would lock the wallet.
+  await expect(home.locator('#home-opened-note')).toBeAttached();
   await expect(home.locator('#home-address-stellar')).toHaveText(wallet.stellar);
   expect(homeLogins(requests)).toBe(1);
   // Both providers answered the member's `get_identity` and the root's (the root is an email identity).
@@ -424,6 +434,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
     await home.goto(`${AUTH_ORIGIN}/home`);
     await signIn(home);
     await homeRow(home, 'Sodax').click();
+    await homeTab(home, 'Move wallet');
     await s.open.click();
   };
 
@@ -496,7 +507,7 @@ test('every screen of an opened wallet: opening, open, a wrong address on record
   await openApp();
   await signInAgain(home);
   await expect(s.title).toHaveText('Your wallet is open', { timeout: 20_000 });
-  await expect(home.locator('#home-export-mismatch')).toContainText('different from this wallet’s');
+  await expect(home.locator('#home-export-mismatch')).toContainText('different from the wallet’s own');
   await expect(home.locator('#home-export-address-evm')).toHaveText(wallet.evm);
   await shots(home, 'h8-12-wallet-open-address-mismatch', browserName);
 
@@ -567,6 +578,7 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
   const view = async (name: string): Promise<void> => {
     await homeRow(home, name).click();
     await expect(home.getByRole('heading', { level: 1, name: /^(Wallet|App) details$/u })).toBeVisible();
+    await homeTab(home, 'Move wallet');
     await expect(s.open).toBeVisible();
   };
   const back = (): Promise<void> => home.getByRole('button', { name: 'Your wallets' }).click();
@@ -577,15 +589,17 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
     ['Lumen Pay', 'h8-03-not-offered-exit-login', 'Journear can’t open this wallet from here.'],
     ['Atlas Markets', 'h8-04-not-offered-out-of-reach', 'Journear can’t open this wallet from here.'],
     ['Nova Earn', 'h8-05-not-offered-not-checked', 'Journear hasn’t checked this app yet.'],
-    ['Orbit Swap', 'h8-06-not-offered-app-from-link', 'You came to this app through a link'],
+    ['Orbit Swap', 'h8-06-not-offered-app-from-link', 'You came here through a link'],
   ];
   for (const [name, shot, says] of off) {
     await view(name);
+    await homeTab(home, 'Move wallet');
     await s.open.click();
     await expect(home.locator('#home-export-off')).toContainText(says);
     await expect(s.start).toHaveCount(0);
     await shots(home, shot, browserName);
     await home.locator('#home-export-close').click();
+    await homeTab(home, 'Move wallet');
     await expect(s.open).toBeVisible();
     await back();
   }
@@ -593,6 +607,7 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
   // The user's own app: collapsed, last on the page; then the warning.
   await view('Sodax');
   await shots(home, 'h8-01-entry-collapsed', browserName);
+  await homeTab(home, 'Move wallet');
   await s.open.click();
   await expect(s.start).toHaveText('Sign in again to continue');
   await shots(home, 'h8-02-intro-warning', browserName);
@@ -663,5 +678,6 @@ test('every screen before a wallet opens: collapsed, the warning, where it can�
   // Neither sent a derive.
   expect(homeLogins(requests)).toBe(sent);
   await home.locator('#home-export-close').click();
+  await homeTab(home, 'Move wallet');
   await expect(s.open).toBeVisible();
 });

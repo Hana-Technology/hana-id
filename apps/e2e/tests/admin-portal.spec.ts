@@ -193,7 +193,7 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
       ['waiting', 'Working', 'Sending normally · the next transaction gets slot 1'],
       ['low-money', 'Low on money', '0.005 test ETH left in the relayer wallet.'],
       ['out-of-money', 'Paused: needs money', /^Paused since \d{2}:\d{2} UTC \(\d+ s\)\. Gas sponsorship is stopped for everyone until the relayer wallet has enough money\. Nothing is lost\.$/u],
-      ['money-arrives', 'Restarting by itself', /^Paused since \d{2}:\d{2} UTC \(\d+ s\)\. The wallet has money again: it restarts by itself within about a minute\.$/u],
+      ['money-arrives', 'Restarting by itself', /^Paused since \d{2}:\d{2} UTC \(\d+ s\)\. The wallet has money again: it restarts by itself within 2 minutes\.$/u],
       ['key-used-elsewhere', 'Paused: needs a person', /^Paused since /u],
     ];
     await signIn(page, lane, 'staff', '/status');
@@ -207,7 +207,7 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
       if (name === 'waiting') await expect(tile).toContainText(/Waiting to go through1 · the oldest for \d+ s · not yet picked up by the network|Waiting to go through1 · the oldest for \d+ s/u);
       if (name === 'out-of-money') await expect(tile.locator('.explain-why')).toHaveText('The relayer wallet is out of money, so gas sponsorship is paused for everyone. It restarts by itself once the wallet has enough.');
       if (name === 'money-arrives') {
-        await expect(tile.locator('.explain-why')).toHaveText('The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within about a minute.');
+        await expect(tile.locator('.explain-why')).toHaveText('The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within 2 minutes.');
         await expect(tile).not.toContainText('Send at least');
       }
       if (name === 'key-used-elsewhere') {
@@ -278,17 +278,17 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
     // The local chain has no block explorer: no step names one (D873, after review).
     await expect(steps.nth(0)).toHaveText(SAFETY_LOCAL);
     await expect(now).not.toContainText('explorer');
-    // The real minimum: the low line (0.01) plus the waiting cancel at the gas price limit, less what is there, rounded up.
-    await expect(steps.nth(1)).toHaveText(/^Send at least 0\.0102 test ETH to the relayer wallet \(0x[0-9a-fA-F]{4}…[0-9a-fA-F]{4}; its whole address is below\) from the local node’s funded test account\. That is the least it needs to restart by itself\. A day of gas sponsorship can use up to 1 test ETH\.$/u);
-    await expect(steps.nth(2)).toHaveText('It restarts by itself within about a minute of the money arriving. You don’t need to press Resume.');
+    // The real minimum: the low line (0.01) plus the waiting cancel and one more action at the gas price limit, less what is there, rounded up.
+    await expect(steps.nth(1)).toHaveText(/^Send at least 0\.0132 test ETH to the relayer wallet \(0x[0-9a-fA-F]{4}…[0-9a-fA-F]{4}; its whole address is below\) from the local node’s funded test account\. That is the least it needs to restart by itself, with room for the next action\. A day of gas sponsorship can use up to 1 test ETH\.$/u);
+    await expect(steps.nth(2)).toHaveText('It restarts by itself within 2 minutes of the money arriving. You don’t need to press Resume.');
     await expect(steps.nth(3)).toHaveText('Send it once. The balance on this page can be up to 30 s old: press Check again to see the new amount before you send more.');
     await expect(now).toContainText('relayer_cannot_send · insufficient_funds · slot 0');
     await expect(now).toContainText('Money in the walletProblem 0.0001 test ETH · low below 0.01 test ETH');
-    await expect(now).toContainText('Restarts by itselfYes, once the wallet has 0.0103 test ETH · 0 of 3 automatic restarts used today');
+    await expect(now).toContainText('Restarts by itselfYes, once the wallet has 0.0133 test ETH · 0 of 3 automatic restarts used today');
     // Not a leak: Resume is the plain one, said not to be needed.
     const resume = tool(page, 'Resume');
     await expect(resume.locator('[name="keyConfirmed"]')).toHaveCount(0);
-    await expect(resume).toContainText('You don’t need Resume for this pause: it restarts by itself within about a minute of the money arriving.');
+    await expect(resume).toContainText('You don’t need Resume for this pause: it restarts by itself within 2 minutes of the money arriving.');
     await shot(page, info, 'detail-paused-out-of-money');
     await useTool(resume, { button: 'Resume', note: n('Pressed before the refill to see what it says'), confirm: 'Resume gas sponsorship? The relayer checks the network first' });
     await expectAnswer(page, 'Resume: the relayer said no. Nothing was changed.', 'The problem is still there: the relayer’s wallet can’t send transactions: it is out of money.');
@@ -297,7 +297,7 @@ test.describe('gas sponsorship (the relayer on chain 31337)', () => {
     await scenario(lane, 'money-arrives');
     await page.reload();
     await expect(nowPanel(page)).toContainText('Restarting by itself');
-    await expect(nowPanel(page).locator('.explain-why')).toHaveText('The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within about a minute.');
+    await expect(nowPanel(page).locator('.explain-why')).toHaveText('The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within 2 minutes.');
     await expect(nowPanel(page)).not.toContainText('Send at least');
     await shot(page, info, 'detail-money-arrived');
     await scenario(lane, 'refill');

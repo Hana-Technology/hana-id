@@ -1063,7 +1063,7 @@ describe('Gas sponsorship (D843)', () => {
     a = await read();
     invariants(a);
     expect(tile(a, 'evm-relay-84532')).toMatchObject({ state: 'warning', stateLabel: 'Restarting by itself' });
-    expect(issuesOf(a, 'evm-relay-84532')[0]).toMatchObject({ severity: 'warning', title: 'The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within about a minute.' });
+    expect(issuesOf(a, 'evm-relay-84532')[0]).toMatchObject({ severity: 'warning', title: 'The relayer wallet has money again (1 test ETH). Gas sponsorship restarts by itself within 2 minutes.' });
     const entry = { seq: 1, at: NOW - 4_000, who: 'relayer (automatic)', tool: 'resume', slot: null, note: 'Restarted by itself after a refill (D890).', done: true, refused: null, auto: true };
     world.api = apiAnswer({ evmRelay: { state: 'on', chains: [chain({ staffLog: [entry], lastStaffSeq: 1, autoRestart: { limit: 3, today: 1, recent: [NOW - 4_000], pause: null } })] } });
     a = await read();

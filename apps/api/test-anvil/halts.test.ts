@@ -15,7 +15,9 @@ import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { DEFAULT_SPONSOR_PORTS, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { evmSponsorConfig, forgetRelayerBalances, forgetRelayerStatus, sponsorTiming } from '../src/evm/sponsor.ts';
 import { reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
-import { act, auditRows, balance, clockAhead, clockTo, automine, billingRows, checkInCall, DEV_ACCOUNT, ETH, json, LANE, LANE_FALLBACK, mine, prepare, rawTx, receipt, relayerRun, rpc, send, setBalance, SKIPPED, txCount, untilPooled, vaultSign, world, type World } from './lane.ts';
+import { act, addressOf, auditRows, balance, CHAIN, clockAhead, clockTo, automine, billingRows, checkInCall, code, DELEGATE, designator, DEV_ACCOUNT, ETH, json, LANE, LANE_FALLBACK, mine, prepare, rawAuthorization, rawTx, rawType4, receipt, relayerRun, rpc, send, setBalance, SKIPPED, txCount, untilPooled, vaultSign, world, type World } from './lane.ts';
+import { testKey } from '../test/evm-sponsor-helpers.ts';
+import { uid } from '../test/helpers.ts';
 
 const WHO = 'anvil-lane';
 const fee = { maxFeePerGas: 100_000_000n, maxPriorityFeePerGas: 1_000_000n };
@@ -158,7 +160,7 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
 
   /** A world paused for money at its first action (the handler read 1 test ETH, the node then saw 1000 wei). */
   async function pausedForMoney(): Promise<{ w: World; since: number }> {
-    const w = await world({ fields: { rpcFallback: LANE_FALLBACK } });
+    const w = await world({ fields: { rpcFallback: LANE_FALLBACK, autoRestart: true } });
     const p = await prepare(w, [checkInCall]);
     expect(p.body).toMatchObject({ allowed: true });
     await setBalance(w.relayer, 1_000n);
@@ -197,10 +199,41 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
     expect((await auditRows(w.user.address)).at(-1)).toMatchObject({ status: 'executed', relayer_nonce: 1 });
   });
 
+  it('9f. the relayer key signs an EIP-7702 authorization carried by another account during a pause for money: count +1, code at its address, a leak; never restarts by itself; cleared to the zero address, still not (D890 review)', async () => {
+    const { w, since } = await pausedForMoney();
+    const carrier = testKey(`anvil carrier ${uid()}`);
+    await setBalance(addressOf(carrier), ETH);
+    const before = await txCount(w.relayer);
+    const auth = rawAuthorization(w.relayerKey, { chainId: CHAIN, address: DELEGATE, nonce: BigInt(before) });
+    await rpc('eth_sendRawTransaction', [rawType4(carrier, { nonce: 0, to: addressOf(carrier), ...fee, authorizations: [auth] })]);
+    expect(await txCount(w.relayer)).toBe(before + 1);
+    expect((await code(w.relayer)).toLowerCase()).toBe(designator(DELEGATE));
+    await setBalance(w.relayer, ETH);
+    clockTo(since + 61_000);
+    await relayerRun(w);
+    await relayerRun(w);
+    let s = await evmRelayerStaffStatus(w.stub);
+    expect(s.halted).toMatchObject({ reason: 'relayer_cannot_send', code: 'insufficient_funds', leakSeen: true });
+    expect(s.autoRestart.pause).toMatchObject({ blocked: 'leak_seen' });
+    // Cleared again: an authorization to the zero address (count +1 once more, no code).
+    const clear = rawAuthorization(w.relayerKey, { chainId: CHAIN, address: `0x${'0'.repeat(40)}`, nonce: BigInt(before + 1) });
+    await rpc('eth_sendRawTransaction', [rawType4(carrier, { nonce: 1, to: addressOf(carrier), ...fee, authorizations: [clear] })]);
+    expect(await txCount(w.relayer)).toBe(before + 2);
+    expect(await code(w.relayer)).toBe('0x');
+    await mine(LANE.safeDepth);
+    await relayerRun(w);
+    await relayerRun(w);
+    s = await evmRelayerStaffStatus(w.stub);
+    expect(s.halted).toMatchObject({ leakSeen: true });
+    expect(s.staffLog.filter((e) => e.auto)).toEqual([]);
+    expect((await evmRelayerStaffResume(w.stub, WHO, 'refilled')).refused).toBe('key_confirmation_required');
+  });
+
   it('9e. out of money, then a transfer from the relayer’s key that it didn’t send takes the refill: no restart by itself; the pause is marked a leak and Resume needs the engineer (D890)', async () => {
     const { w, since } = await pausedForMoney();
     await setBalance(w.relayer, ETH);
-    // Someone with the key, quicker than the relayer's next run: half the refill out, at the relayer's slot 0.
+    // Someone with the key, quicker than the relayer's next run: half the refill out, at the relayer's slot 0. (The
+    // relayer's cancel for slot 0 went out at send, D890 review, but was refused for funds then, so no pool holds it.)
     await rpc('eth_sendRawTransaction', [rawTx(w.relayerKey, { nonce: 0, to: DEV_ACCOUNT, value: ETH / 2n, ...fee })]);
     expect(await txCount(w.relayer)).toBe(1);
     expect(await balance(w.relayer)).toBeGreaterThan(ETH / 4n);

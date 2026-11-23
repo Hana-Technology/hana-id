@@ -1281,19 +1281,20 @@ async function anythingLeft(env: Env): Promise<boolean> {
   }
 }
 
-/**
- * Every cron run, per sponsored chain: the relayer's balance below `lowBalanceEth` writes `evm_relay_balance_low`
- * (once a UTC day); the relayer halted (it takes no new sends until staff resume it, D851), or its oldest unmined
- * (or unaccepted) transaction older than 2 minutes, writes `evm_relay_stuck` (once an hour); then the reconciler (sponsor-settle.ts)
- * settles what requests couldn't. The audit rows' 24-month retention runs with or without the config. Never throws;
- * logs what it couldn't read.
- */
 /** The relayer's automatic restarts (D890) of the last day, as its status reports them (bounded, well-formed times only). */
 function autoRestarts(s: { autoRestartedAt?: unknown }, now: number): number[] {
   const a = Array.isArray(s.autoRestartedAt) ? s.autoRestartedAt.slice(0, 5) : [];
   return a.filter((t): t is number => typeof t === 'number' && Number.isSafeInteger(t) && t > now - DAY && t <= now + 60_000);
 }
 
+/**
+ * Every cron run, per sponsored chain: the relayer's balance below `lowBalanceEth` writes `evm_relay_balance_low`
+ * (once a UTC day); the relayer halted (it takes no new sends until staff resume it, D851), or its oldest unmined
+ * (or unaccepted) transaction older than 2 minutes, writes `evm_relay_stuck` (once an hour); each automatic restart after a refill the relayer reports writes
+ * `evm_relay_auto_resumed` (once per restart, D890); then the reconciler (sponsor-settle.ts)
+ * settles what requests couldn't. The audit rows' 24-month retention runs with or without the config. Never throws;
+ * logs what it couldn't read.
+ */
 export async function checkEvmSponsorRelay(env: Env, now: number = Date.now()): Promise<void> {
   const config = evmSponsorReady(env);
   // Without the block (every env today, the live testnet env among them): one cheap read decides whether anything is

@@ -199,9 +199,11 @@ const randomKey = (): string => Buffer.from(crypto.getRandomValues(new Uint8Arra
 
 /** The API's EVM_SPONSOR for the lane: the stack's chain settings, the lane's relayer and chain endpoint, its one app. */
 function laneSponsorVar(relayer: string, appId: string): string {
-  const v = JSON.parse(e2eEvmSponsorVar(relayer, [appId], E2E_SPONSOR_TARGETS)) as { chains: Record<string, { rpc: string; rpcFallback?: string }> };
+  const v = JSON.parse(e2eEvmSponsorVar(relayer, [appId], E2E_SPONSOR_TARGETS)) as { chains: Record<string, { rpc: string; rpcFallback?: string; autoRestart?: boolean }> };
   v.chains[String(EVM_CHAIN_ID)]!.rpc = LANE_EVM;
   v.chains[String(EVM_CHAIN_ID)]!.rpcFallback = LANE_EVM_FALLBACK;
+  // D890: on for the hand test and the suite (default off until the checks on Base Sepolia).
+  v.chains[String(EVM_CHAIN_ID)]!.autoRestart = true;
   return JSON.stringify(v);
 }
 

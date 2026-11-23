@@ -2337,25 +2337,35 @@ stands between a request and the key:
   own address and its own hashes; nothing in a user's account counts. Anything it can't explain that way halts it:
   new sends are refused, and only a staff tool that re-checks the chain changes a record's fate or the nonce. When it
   is unsure whether money was spent, the reservation stays spent.
-- **The one halt that ends by itself (D890): a pause for money after a refill.** Only `relayer_cannot_send` with
-  `insufficient_funds`, never `leakSeen`, and only on an alarm run (nothing a user sends to the API runs it; money sent
-  to the wallet by anyone meets the balance condition only, which is money given to Journear). The money is ours to
-  have spent only if nothing else moved it: an account's balance falls only by its own transactions (each uses a slot:
-  any not ours shows as a count above its records, a slot used elsewhere, a gap or a leak-type refusal), by the gas of
-  its own transactions, or by code at its own address (an EIP-7702 delegation signed with its key, which raises the
-  count once but then lets anyone move its money with no slot used). So it restarts only when the run's own verdict is
-  staffResume's, every slot the network counts as used has the relayer's own receipt and every waiting one was taken, a
-  fresh read's counts stay within its records, the balance covers `lowBalanceEth` plus what waits at the gas price
-  limit, there is no code at its address (code found there marks the pause `leakSeen`: the leak steps, Resume needs the
-  key confirmed), and the ONE other configured endpoint (`rpcFallback`, a second provider; none in a `local*` env: no
-  restart) agrees on the count, the balance and the code. That second answer can only hold the restart back; it is
-  never evidence for a halt or a mark, and staff Resume keeps the one-endpoint rule. Bounded: at most 3 a UTC day, never
-  within 30 minutes of the last one (the pause then waits for a person), never in a pause's first 60 s. Each is in the
-  relayer's staff log (who `relayer (automatic)`, what it saw) and raised as `evm_relay_auto_resumed`. Residual: both
-  endpoints wrong the same way could hide a thief's newest transaction for a moment; the next runs see it and halt
-  (users' own money is never at risk: the relayer only pays gas for Executes each user signed; what is left in the
-  wallet can be taken by a thief with or without the restart). Not checked by staff Resume or by every run: the
-  relayer's own code (to confirm, D890).
+- **Code at the relayer's own address is a leaked key (D890 review).** Only its key can put code there (an EIP-7702
+  authorization, which raises its count once), and then anyone can move its money with no slot used, which no count
+  shows. So the relayer reads its own code every run (one call), at its first send's nonce read (code: nothing stored or
+  sent) and in staffAdoptNonce (refused); code is a leak-type halt (`relayer_has_code`) or marks the pause `leakSeen`.
+  A failed read makes the run incomplete (no halt, nothing resumes).
+- **The one halt that ends by itself (D890): a pause for money after a refill**, off unless the chain's `autoRestart`
+  is on (default off; on only after the checks on Base Sepolia, go-live). Only `relayer_cannot_send` with
+  `insufficient_funds`, never `leakSeen`, never after another condition was seen during the pause (`otherSeen`), and only
+  on an alarm run (nothing a user sends to the API runs it; money sent to the wallet by anyone meets the balance
+  condition only, which is money given to Journear). The money is ours to have spent only if nothing else moved it: an
+  account's balance falls only by its own transactions (each uses a slot: any not ours shows as a count above its
+  records, a slot used elsewhere, a gap or a leak-type refusal; an L1→L2 deposit sent with the same key raises the L2
+  count too, per the OP Stack spec, to be tested on Base Sepolia, and never shows in `pending` before it lands), by the
+  gas of its own transactions, or by code at its address (above). So it restarts only when the run's own verdict is
+  staffResume's; every slot the network counts as used had the relayer's own receipt seen (at some run, not re-read on
+  this one); the TRUSTED endpoint itself took (or held) each waiting record on that run; fresh reads keep the counts
+  within its records; the balance covers `lowBalanceEth` plus what waits at the gas price limit plus one more action;
+  there is no code at its address; and ONE other configured endpoint of another provider agrees on the count, the
+  balance and the code. What is enforced about "another provider": outside `local*` envs the Worker skips a second URL
+  whose host ends in the same two labels as the read endpoint's (`sponsorProviderOf`; stricter than the manifest's
+  registrable-domain rule, which compares `rpcFallback` with `rpc` but not with the keyed secret); two providers
+  under unrelated domains that share a backend are not detected. That second answer can only hold the restart back
+  (never evidence for a halt or a mark), and staff Resume keeps the one-endpoint rule. Bounded: at most 3 a UTC day,
+  never within 30 minutes of the last one, never in a pause's first 60 s. Each is in the relayer's staff log (who
+  `relayer (automatic)`, what it saw) and raised as `evm_relay_auto_resumed`; for 10 minutes after one the relayer runs
+  every 15–60 s. Residual: the person's second look at the explorer after the refill (before pressing Resume) is gone;
+  both endpoints wrong the same way could hide a thief's newest transaction for a moment, which the next runs see and
+  halt on within about a minute (users' own money is never at risk: the relayer only pays gas for Executes each user
+  signed; what is left in the wallet can be taken by a thief with or without the restart).
 - **The key**: a key for another address than `relayerAddress` (or than the records' signer, while records exist)
   signs nothing and halts it; a missing key signs nothing. The key is parsed per section, zeroed after use, never
   stored, logged or returned.

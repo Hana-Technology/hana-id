@@ -59,7 +59,7 @@ export type EvmRelayDetailInput = z.infer<typeof evmRelayDetailInput>;
 export type EvmRelayActInput = z.infer<typeof evmRelayActInput>;
 
 /** Why the relayer stopped (D851; the relayer's `EvmRelayerHaltReason`). An API newer than the admin may add one. */
-export const EVM_RELAY_HALT_REASONS = ['nonce_consumed_elsewhere', 'nonce_gap', 'foreign_transactions', 'relayer_cannot_send', 'stuck_past_deadline', 'key_mismatch', 'storage_inconsistent'] as const;
+export const EVM_RELAY_HALT_REASONS = ['nonce_consumed_elsewhere', 'nonce_gap', 'foreign_transactions', 'relayer_cannot_send', 'stuck_past_deadline', 'key_mismatch', 'storage_inconsistent', 'relayer_has_code'] as const;
 
 /** `relayer_cannot_send` codes that mean another sender with the relayer's key (D851 items 16, 18). */
 const LEAK_CODES: ReadonlySet<string> = new Set(['replacement_underpriced', 'sender_restricted', 'nonce_too_low', 'nonce_too_high']);
@@ -71,7 +71,8 @@ const LEAK_CODES: ReadonlySet<string> = new Set(['replacement_underpriced', 'sen
  */
 export function isLeakHalt(h: { reason: string; code?: string | null } | null | undefined): boolean {
   if (!h) return false;
-  if (h.reason === 'nonce_consumed_elsewhere' || h.reason === 'nonce_gap' || h.reason === 'foreign_transactions') return true;
+  // `relayer_has_code` (D890 review): code at the relayer's own address, which only its key can put there.
+  if (h.reason === 'nonce_consumed_elsewhere' || h.reason === 'nonce_gap' || h.reason === 'foreign_transactions' || h.reason === 'relayer_has_code') return true;
   return h.reason === 'relayer_cannot_send' && typeof h.code === 'string' && LEAK_CODES.has(h.code);
 }
 
@@ -123,7 +124,7 @@ export interface EvmRelayAutoRestartView {
   today: number;
   /** When it restarted by itself, newest first (the last few). */
   recent: number[];
-  pause: null | { blocked: string | null; restartWei: string; resumeWei: string; check: null | { at: number; blocked: string | null; balanceWei: string | null } };
+  pause: null | { blocked: string | null; restartWei: string; resumeWei: string; otherSeen?: string | null; check: null | { at: number; blocked: string | null; balanceWei: string | null; streak?: number } };
 }
 
 /** The relayer object's own state (its storage: no chain read). */

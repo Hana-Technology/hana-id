@@ -230,8 +230,8 @@ describe('D890: a pause for money that restarts by itself after a refill, in wor
       why: 'The relayer wallet is out of money, so gas sponsorship is paused for everyone. It restarts by itself once the wallet has enough.',
       steps: [
         safety,
-        'Send at least 0.0503 test ETH to the relayer wallet (0x7aD3…f640; its whole address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”). That is the least it needs to restart by itself. A day of gas sponsorship can use up to 0.02 test ETH.',
-        'It restarts by itself within about a minute of the money arriving. You don’t need to press Resume.',
+        'Send at least 0.0503 test ETH to the relayer wallet (0x7aD3…f640; its whole address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”). That is the least it needs to restart by itself, with room for the next action. A day of gas sponsorship can use up to 0.02 test ETH.',
+        'It restarts by itself within 2 minutes of the money arriving. You don’t need to press Resume.',
         once,
       ],
     });
@@ -249,7 +249,7 @@ describe('D890: a pause for money that restarts by itself after a refill, in wor
     for (const b of [5021n * 10n ** 13n, W]) {
       const p = money(b);
       expect([p.state, p.label, p.severity]).toEqual(['restarting', 'Restarting by itself', 'warning']);
-      expect(p.explained!.why).toBe(`The relayer wallet has money again (${testEth(b)}). Gas sponsorship restarts by itself within about a minute.`);
+      expect(p.explained!.why).toBe(`The relayer wallet has money again (${testEth(b)}). Gas sponsorship restarts by itself within 2 minutes.`);
       expect(p.explained!.steps).toEqual(['Nothing to do: don’t send more money, and you don’t need to press Resume.', 'If it still says this after 2 minutes, press Check again. If it is still paused then, press Resume on the Gas sponsorship page.']);
       expect([p.explained!.why, ...p.explained!.steps].join(' ')).not.toMatch(/Send at least|faucet/u);
     }
@@ -260,11 +260,48 @@ describe('D890: a pause for money that restarts by itself after a refill, in wor
   });
 
   it('the money there but the two network servers disagree: the wallet check, then Resume (it doesn’t restart by itself)', () => {
-    const p = money(W, { check: { at: NOW - 5_000, blocked: 'second_endpoint_disagrees', balanceWei: W.toString() } });
+    const p = money(W, { check: { at: NOW - 5_000, blocked: 'second_endpoint_disagrees', balanceWei: W.toString(), streak: 2 } });
     expect([p.state, p.label]).toEqual(['paused', 'Paused: needs a person']);
     expect(p.explained!.why).toBe('The relayer wallet has money again (1 test ETH), but gas sponsorship hasn’t restarted by itself: the two network servers it checks with don’t agree about the wallet.');
     expect(p.explained!.steps[0]).toBe('Don’t send more money.');
     expect(p.explained!.steps).toContain('If it all looks right, press Resume on the Gas sponsorship page. Resume checks the network again itself.');
+    expect(p.explained!.steps.at(-1)).toBe('If Resume says no, or this keeps happening, ask an engineer to look at the network servers.');
+    // Seen once only (our own transaction landing between two reads is common): still "Restarting by itself".
+    expect(money(W, { check: { at: NOW - 5_000, blocked: 'second_endpoint_disagrees', balanceWei: W.toString(), streak: 1 } }).state).toBe('restarting');
+  });
+
+  it('D890 review: every blocker the relayer’s own check finds on two runs in a row is named; one seen once stays “Restarting by itself”', () => {
+    const cases: [string, string][] = [
+      ['second_endpoint_unavailable', 'it can’t reach its second network server to check the wallet'],
+      ['waiting_not_taken', 'the network’s main server isn’t taking its waiting transaction'],
+      ['busy', 'it has too much to check on each run right now'],
+      ['balance_unreadable', 'it can’t read the wallet from the network right now'],
+      ['incomplete_check', 'it can’t finish checking the network'],
+      ['unexplained_slot', 'the network shows a transaction it can’t match to its own yet'],
+      ['counts_moving', 'the network shows a transaction it can’t match to its own yet'],
+      ['stuck_past_deadline', 'its own check of the network still finds a problem'],
+    ];
+    for (const [blocked, why] of cases) {
+      expect(money(W, { check: { at: NOW, blocked, balanceWei: W.toString(), streak: 1 } }).state, blocked).toBe('restarting');
+      const p = money(W, { check: { at: NOW, blocked, balanceWei: W.toString(), streak: 2 } });
+      expect([p.state, p.label], blocked).toEqual(['paused', 'Paused: needs a person']);
+      expect(p.explained!.why, blocked).toBe(`The relayer wallet has money again (1 test ETH), but gas sponsorship hasn’t restarted by itself: ${why}.`);
+      for (const t of [p.explained!.why, ...p.explained!.steps]) expect(t, blocked).not.toMatch(STAFF_JARGON);
+    }
+    // Waiting for the money itself is never a blocker to name, however long.
+    expect(money(1000n, { check: { at: NOW, blocked: 'balance_short', balanceWei: '1000', streak: 9 } }).state).toBe('money');
+    // The relayer's own reading is enough when this page's is missing.
+    const unread = explainChain(view({ balance: { ok: false, code: 'rpc_unavailable' } }, { ...halt('relayer_cannot_send', 42, 'insufficient_funds'), ...auto({ check: { at: NOW, blocked: 'counts_moving', balanceWei: W.toString(), streak: 1 } }) }), NOW);
+    expect(unread.state).toBe('restarting');
+    expect(money(W, { blocked: 'other_seen' }).explained!.why).toMatch(/: the relayer also saw another problem during this pause, so a person should look first\.$/u);
+    expect(money(W, { blocked: 'switched_off' }).explained!.why).toMatch(/: restarting by itself is switched off in this environment’s settings\.$/u);
+  });
+
+  it('D890 review: a program attached to the relayer wallet (relayer_has_code) is a leak: the engineer first, never money', () => {
+    const p = explainChain(view({}, halt('relayer_has_code', null)), NOW);
+    expect(p.explained!.why).toBe('A program has been attached to the relayer wallet. Only someone with the relayer’s key can do that, and it lets them move the wallet’s money at any time.');
+    expect(p.explained!.steps[0]).toBe('Tell an engineer now: treat the relayer’s key as leaked. Don’t send money to the relayer wallet.');
+    expect(toolsOffered(view({}, halt('relayer_has_code', null)), [], { ok: true, latest: 12, pending: 12 }).resumeNeedsKeyConfirmation).toBe(true);
   });
 
   it('it can’t restart by itself (the daily limit, ran out again, no second server): before the money, Resume’s real minimum; after it, press Resume, no more money', () => {
@@ -287,7 +324,7 @@ describe('D890: a pause for money that restarts by itself after a refill, in wor
     });
     expect(after.detail).toBe('Paused since 08:50 UTC (10 min). The wallet has money again; a person needs to press Resume. Nothing is lost.');
     expect(money(W, { blocked: 'ran_out_again' }).explained!.why).toMatch(/: it ran out of money again within 30 minutes of restarting by itself, so a person should look first\.$/u);
-    expect(money(W, { blocked: 'no_second_endpoint' }).explained!.why).toMatch(/: this environment has no second network server to check the wallet with\.$/u);
+    expect(money(W, { blocked: 'no_second_endpoint' }).explained!.why).toMatch(/: this environment has no second network server, from another provider, to check the wallet with\.$/u);
   });
 
   it('a leak sign during the pause still takes the leak steps (never a refill), whatever the automatic restart says', () => {
@@ -312,7 +349,8 @@ describe('D890: a pause for money that restarts by itself after a refill, in wor
   it('the page: Resume is still offered during a pause for money, with a note that it isn’t needed while it restarts by itself', () => {
     const count = { ok: true as const, latest: 12, pending: 12 };
     const pause = view({}, { ...halt('relayer_cannot_send', 3, 'insufficient_funds'), ...auto({}) });
-    expect(toolsOffered(pause, [], count)).toMatchObject({ resume: true, resumeNeedsKeyConfirmation: false, restartsByItself: true });
+    expect(toolsOffered(pause, [], count)).toMatchObject({ resume: true, resumeNeedsKeyConfirmation: false, restartsByItself: true, resumeNeeds: { wei: (21n * 10n ** 12n + 6n * 10n ** 14n).toString(), amount: '0.0007 test ETH', met: true } });
+    expect(toolsOffered(view({ balance: { ok: true, wei: '1000' } }, { ...halt('relayer_cannot_send', 3, 'insufficient_funds'), ...auto({}) }), [], count).resumeNeeds).toMatchObject({ met: false });
     expect(toolsOffered(view({}, { ...halt('relayer_cannot_send', 3, 'insufficient_funds'), ...auto({ blocked: 'daily_limit' }) }), [], count).restartsByItself).toBe(false);
     expect(toolsOffered(pause, [], { ok: true, latest: 13, pending: 13 }).restartsByItself).toBe(false);
   });
@@ -356,8 +394,8 @@ describe('the waiting transactions and the tools offered', () => {
 
   it('Resume only while paused; fill and the next slot only where they can apply; none on a fresh relayer or broken records', () => {
     const count = (latest: number, pending = latest) => ({ ok: true as const, latest, pending });
-    expect(toolsOffered(view(), [], count(14))).toEqual({ resume: false, resumeNeedsKeyConfirmation: false, fill: { suggested: null, max: 11 }, adopt: { suggested: 14, min: 12 }, adoptBecause: null, noneBecause: null, restartsByItself: false });
-    expect(toolsOffered(view({}, { ...halt('nonce_gap', 9), waiting: 1 }), [record(10)], count(9))).toEqual({ resume: true, resumeNeedsKeyConfirmation: true, fill: { suggested: 9, max: 11 }, adopt: null, adoptBecause: 'Not possible now: wait until nothing is waiting.', noneBecause: null, restartsByItself: false });
+    expect(toolsOffered(view(), [], count(14))).toEqual({ resume: false, resumeNeedsKeyConfirmation: false, fill: { suggested: null, max: 11 }, adopt: { suggested: 14, min: 12 }, adoptBecause: null, noneBecause: null, restartsByItself: false, resumeNeeds: null });
+    expect(toolsOffered(view({}, { ...halt('nonce_gap', 9), waiting: 1 }), [record(10)], count(9))).toEqual({ resume: true, resumeNeedsKeyConfirmation: true, fill: { suggested: 9, max: 11 }, adopt: null, adoptBecause: 'Not possible now: wait until nothing is waiting.', noneBecause: null, restartsByItself: false, resumeNeeds: null });
     expect(toolsOffered(view({}, halt('relayer_cannot_send', 3, 'insufficient_funds')), [], count(12)).resumeNeedsKeyConfirmation).toBe(false);
     expect(toolsOffered(view({ key: 'missing' }, halt('foreign_transactions', null)), [], count(12)).fill).toBeNull();
     // The network's own count: read (never the explorer's list, which counts incoming transfers); unreadable or still moving: ask an engineer, or wait.

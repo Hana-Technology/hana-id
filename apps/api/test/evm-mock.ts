@@ -167,7 +167,7 @@ export class EvmMock {
   answer?: (method: string, params: unknown[]) => { result: unknown } | { error: { code: number; message: string; data?: string } } | undefined;
   /** eth_getBalance per address (lowercase), 1 ETH otherwise (D890's automatic restart reads the relayer's). */
   readonly balances = new Map<string, bigint>();
-  /** eth_getCode per address (lowercase): an address not here answers the handlers' default (an error). */
+  /** eth_getCode per address (lowercase); an address not here has no code (`0x`). */
   readonly codes = new Map<string, string>();
   /** Answers a read at one endpoint (by index) before everything else, or undefined (D890: a second endpoint that disagrees). */
   answerAt?: (endpoint: number, method: string, params: unknown[]) => { result: unknown } | undefined;
@@ -240,6 +240,8 @@ export class EvmMock {
     }
     const who = typeof params[0] === 'string' ? params[0].toLowerCase() : '';
     if (method === 'eth_getCode' && this.codes.has(who)) return reply({ result: this.codes.get(who) });
+    // An address with no entry and no `answer`: an account with no code (the relayer's own, read every run).
+    if (method === 'eth_getCode') return reply({ result: '0x' });
     if (method === 'eth_getCode' || method === 'eth_call') return reply({ error: { code: 3, message: 'execution reverted', data: '0x08c379a0' } });
     if (method === 'eth_getBalance') return reply({ result: q(this.balances.get(who) ?? 10n ** 18n) });
     return reply({ error: { code: -32601, message: 'method not found' } });

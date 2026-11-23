@@ -61,8 +61,8 @@ describe('the System status tile', () => {
     expect(t.querySelector('.explain-why')!.textContent).toBe('The relayer wallet is out of money, so gas sponsorship is paused for everyone. It restarts by itself once the wallet has enough.');
     expect([...t.querySelectorAll('.explain-steps li')].map((li) => li.textContent)).toEqual([
       'Open the relayer wallet on Basescan (its address is below). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.',
-      'Send at least 0.0532 test ETH to the relayer wallet (0x7aD3…f640; its whole address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”). That is the least it needs to restart by itself. A day of gas sponsorship can use up to 0.02 test ETH.',
-      'It restarts by itself within about a minute of the money arriving. You don’t need to press Resume.',
+      'Send at least 0.0538 test ETH to the relayer wallet (0x7aD3…f640; its whole address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”). That is the least it needs to restart by itself, with room for the next action. A day of gas sponsorship can use up to 0.02 test ETH.',
+      'It restarts by itself within 2 minutes of the money arriving. You don’t need to press Resume.',
       'Send it once. The balance on this page can be up to 30 s old: press Check again to see the new amount before you send more.',
     ]);
     expect(t.querySelector('.engineer-code')!.textContent).toBe('Code for engineers: relayer_cannot_send · insufficient_funds · slot 42');
@@ -85,7 +85,7 @@ describe('the System status tile', () => {
 
   it('the money there (D890): the wallet has money again and it is restarting; nothing asks for money', async () => {
     const t = feesTile(await openStatus('fees-money-arrived'));
-    expect(t.querySelector('.explain-why')!.textContent).toBe('The relayer wallet has money again (0.25 test ETH). Gas sponsorship restarts by itself within about a minute.');
+    expect(t.querySelector('.explain-why')!.textContent).toBe('The relayer wallet has money again (0.25 test ETH). Gas sponsorship restarts by itself within 2 minutes.');
     expect([...t.querySelectorAll('.explain-steps li')].map((li) => li.textContent)).toEqual(['Nothing to do: don’t send more money, and you don’t need to press Resume.', 'If it still says this after 2 minutes, press Check again. If it is still paused then, press Resume on the Gas sponsorship page.']);
     expect(t.textContent).not.toMatch(/Send at least|faucet/u);
   });
@@ -170,12 +170,18 @@ describe('the Gas sponsorship page', () => {
     const p = openDetail('fees-paused-money');
     await ready(p);
     const tool = [...p.main().querySelectorAll('.tool')].find((t) => t.querySelector('h3')!.textContent === 'Resume')!;
-    expect(tool.textContent).toContain('You don’t need Resume for this pause: it restarts by itself within about a minute of the money arriving. Resume still works if you want it to restart now.');
+    // Before the money (D890 review): what Resume needs, never "Resume still works".
+    expect(tool.textContent).toContain('You don’t need Resume for this pause: it restarts by itself within 2 minutes of the money arriving. Resume needs at least 0.0007 test ETH in the wallet first: before that it says no.');
+    expect(tool.textContent).not.toContain('already has enough');
     expect(tool.querySelector('form')).not.toBeNull();
     await closeWindow();
     const limited = openDetail('fees-money-limit');
     await ready(limited);
     expect(limited.main().textContent).not.toContain('You don’t need Resume for this pause');
+    await closeWindow();
+    const arrived = openDetail('fees-money-arrived');
+    await ready(arrived);
+    expect(arrived.main().textContent).toContain('The wallet already has enough for Resume, if you want it to restart now.');
     await closeWindow();
     const done = openDetail('fees-auto-restarted');
     await ready(done);

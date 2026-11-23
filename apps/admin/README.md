@@ -200,7 +200,8 @@ migration 0003 missing), `critical` (the API answering 503, every NEAR RPC endpo
 `relay-low` (1.4 NEAR, under its 2 NEAR line), `relay-budget` (86% of the day's budget), `relay-key-missing` (one of
 two keys not on the account), `relay-off` (no relay in the env) and `relay-stale` (a 40-minute-old reading), and gas
 sponsorship's `fees-working`, `fees-paused-money` (out of money, before the refill: it restarts by itself, D890),
-`fees-money-arrived` (the money there: restarting by itself), `fees-auto-restarted` (working again, restarted by
+`fees-money-arrived` (the money there: restarting by itself), `fees-money-held` (the money there, its second network
+server unreachable on two checks in a row: named, Resume), `fees-auto-restarted` (working again, restarted by
 itself 4 s ago), `fees-money-limit` and `fees-money-limit-refilled` (3 restarts by itself already today: a person
 presses Resume), `fees-paused-money-leak`, `fees-paused-key` (the key used elsewhere) and `fees-low` (every other
 scenario: Not set up); their "Gas sponsorship" page (`/gas-sponsorship/84532`) and its tools

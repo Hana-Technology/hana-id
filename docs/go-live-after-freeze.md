@@ -772,6 +772,44 @@ button for it (the reason for the recommendation above). When it exists: sign in
 in the window. You see: it goes through, the user's balance stays 0, and on the explorer the transaction was sent by
 the relayer address.
 
+### 4.15a Checks on Base Sepolia before switching on (the assistant, then you)
+
+A gate (D890, after its security review): run these on Base Sepolia before gas sponsorship is switched on for any app,
+and in particular before the chain's `autoRestart` (the relayer restarting by itself after a refill) is set to `true`
+in `envs/sandbox-dev.json`. Use throwaway test keys and test ETH only: a fresh test relayer key and test accounts made
+for this, never the production relayer key, never mainnet. Record each result (the commands, the hashes, the answers)
+in the PR that turns `autoRestart` on. Until then leave `autoRestart` out (it is off by default); staff Resume always
+works.
+
+1. **A deposit from Sepolia raises the relayer's count on Base Sepolia.** From the test relayer key on Sepolia, call
+   `OptimismPortal.depositTransaction` (Base Sepolia's portal on Sepolia; `_to` any address, `_value` > 0, `_gasLimit`
+   100 000; `cast send` with the key from `.secrets/`). Required: once it lands on Base Sepolia, `eth_getTransactionCount`
+   of the relayer address is one higher on BOTH providers (the keyed read endpoint and `rpcFallback`), `_value` left the
+   relayer's L2 balance, and a test relayer object then halts `foreign_transactions`. If the count does not rise, stop:
+   the relayer can't see this way of moving its money; ask the assistant.
+2. **An EIP-7702 authorization by the relayer key, carried by another account.** Sign an authorization with the test
+   relayer key (any contract address, its current count) and send it in a type-4 transaction from another funded test
+   account. Required: the count +1 and `eth_getCode` of the relayer address returns `0xef0100…` on both providers, and the
+   relayer halts `relayer_has_code`; an authorization to the zero address then gives +1 again and `0x`. Also note
+   op-geth's answer to a second in-flight transaction from the delegated relayer ("in-flight transaction limit reached
+   for delegated accounts" expected).
+3. **The `pending` count**, D851 item 18's two checks, on the keyed endpoint AND on `rpcFallback`: does
+   `eth_getTransactionCount(pending)` rise between `eth_sendRawTransaction` and inclusion (send a low-tip transaction), and
+   does re-sending the same raw answer "already known". Base's pool is private, so `pending` may equal `latest`; write
+   down what each provider answers.
+4. **Refill to restart, timed.** With `autoRestart: true` on a test env only: drain the test relayer below a send's cost,
+   let it pause for money, send the amount the tile names, and time the restart, once within the pause's first 10
+   minutes (runs every 15 s) and once after (every 60 s). Required: "Restarted by itself after a refill" within 2 minutes
+   each time. Note how often the first try ends in `unexplained_slot`, `counts_moving` or a disagreement (the Gas
+   sponsorship page's "Restarts by itself" line and the API's `evm_relayer_auto_restart_waiting` log lines).
+5. **The second provider from Workers:** its answers and rate limits as the API Worker reaches it (a day of the paused
+   cadence's 5 reads a check is the most it is asked); `second_endpoint_unavailable` should be rare. If it is not, pick
+   another provider for `rpcFallback` (another company than the keyed endpoint's).
+6. **The tile's amount with real L1 data fees:** sending exactly the "Send at least" amount restarts it, and the next
+   sponsored action goes through without a second pause.
+
+Then, only with all six recorded: `autoRestart: true` in the chain's block, `gen`, deploy the API (a PR on its own).
+
 ### 4.16 What the admin portal should show (you)
 
 - **Security & monitoring**: no "Gas sponsorship: …" alert (their meanings: operations "EVM gas sponsorship",
@@ -784,11 +822,12 @@ the relayer address.
   nothing. Without the read endpoint (4.12) the tile says "Not set up" with the upload step.
 - If it pauses because the relayer wallet is out of money (**Paused: needs money**): do the tile's first step (look at
   the wallet on Basescan; transfers nobody at Journear made: stop, tell the assistant, don't send money), then send the
-  amount it names once. It restarts by itself within about a minute of the money arriving (D890: it says
+  amount it names once. Where `autoRestart` is on (after 4.15a), it restarts by itself within 2 minutes of the money arriving (D890: it says
   **Restarting by itself**, then **Working** with "Last restart: Restarted by itself after a refill", and the alert
   "Gas sponsorship: restarted by itself after the relayer wallet was refilled" follows). You don't press Resume unless
   the tile says it can't restart by itself (3 times already today, it ran out again within 30 minutes, or the two
-  network servers disagree). The tile's **Check again** shows a fresh reading at once. Migration 0024 (phase 3's D1
+  network servers disagree, restarting by itself is off, or the tile names another blocker). The tile's **Check
+  again** shows a fresh reading at once. Migration 0024 (phase 3's D1
   migrations) must be applied for that alert.
 
 ### 4.17 The free-plan CPU measurement (the assistant)

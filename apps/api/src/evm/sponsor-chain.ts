@@ -70,8 +70,11 @@ export type EvmRejection = 'nonce_too_low' | 'nonce_too_high' | 'replacement_und
 /** Every classified rejection (the relayer gives each its cause: evm-relayer.ts REJECTION_CAUSE). */
 export const EVM_REJECTIONS: readonly EvmRejection[] = Object.freeze(['nonce_too_low', 'nonce_too_high', 'replacement_underpriced', 'underpriced', 'insufficient_funds', 'fee_below_base_fee', 'gas_limit', 'oversized', 'invalid_transaction', 'authority_reserved', 'sender_restricted']);
 
-/** `byRead`: the trusted read endpoint's own definite refusal, when it was reached and refused (else null). */
-export type EvmBroadcast = { kind: 'accepted'; hash: Hex } | { kind: 'rejected'; reason: EvmRejection; byRead: EvmRejection | null } | { kind: 'unknown' } | { kind: 'unsent' };
+/**
+ * `byRead`: on `rejected`, the trusted read endpoint's own definite refusal, when it was reached and refused (else null);
+ * on `accepted`, whether it was the trusted read endpoint that took it (or already had it).
+ */
+export type EvmBroadcast = { kind: 'accepted'; hash: Hex; byRead?: boolean } | { kind: 'rejected'; reason: EvmRejection; byRead: EvmRejection | null } | { kind: 'unknown' } | { kind: 'unsent' };
 
 export interface EvmLog {
   address: Hex;
@@ -152,13 +155,33 @@ export function sponsorRpcEndpoints(env: Partial<Record<string, unknown>> | Env,
 }
 
 /**
- * The one other endpoint the relayer's automatic restart after a refill reads (D890): the first configured URL that is
- * not the read endpoint (`rpcFallback`, else `rpc` when the keyed URL is the read one), or null (a `local*` env with
- * neither). It is never evidence for anything the relayer does; it can only hold an automatic restart back.
+ * A URL's provider, for telling two providers apart: the host's last two labels (`base-sepolia.g.alchemy.com` →
+ * `alchemy.com`), or the whole host for an IP address or a one-label host. Stricter than the manifest's registrable
+ * domain (`safeSite`, the Public Suffix List, which the Worker doesn't bundle): two hosts under one public suffix such as
+ * `workers.dev` count as one provider here, which can only hold an automatic restart back. Null for a malformed URL.
+ */
+export function sponsorProviderOf(url: string): string | null {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/\.$/u, '');
+    if (/^\d{1,3}(\.\d{1,3}){3}$/u.test(host) || host.startsWith('[')) return host;
+    return host.split('.').slice(-2).join('.');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The one other endpoint the relayer's automatic restart after a refill reads (D890): the first configured URL other
+ * than the read endpoint (`rpcFallback`, else `rpc` when the keyed URL is the read one) that is, outside `local*` envs,
+ * another provider than the read endpoint (`sponsorProviderOf`); null when there is none (no automatic restart). It is
+ * never evidence for anything the relayer does; it can only hold an automatic restart back.
  */
 export function sponsorSecondEndpoint(env: Partial<Record<string, unknown>> | Env, chain: SponsorChainEndpoints): string | null {
   const { read, broadcast } = sponsorRpcEndpoints(env, chain);
-  return broadcast.find((u) => u !== read) ?? null;
+  const name = (env as Record<string, unknown>).ENV_NAME;
+  const local = typeof name === 'string' && /^local/u.test(name);
+  const readProvider = sponsorProviderOf(read);
+  return broadcast.find((u) => u !== read && (local || (readProvider !== null && sponsorProviderOf(u) !== null && sponsorProviderOf(u) !== readProvider))) ?? null;
 }
 
 /** Endpoint URL → the chain ID it answered and when, per isolate. */
@@ -333,11 +356,11 @@ export class SponsorChain {
       const answer = await this.post(url, 'eth_sendRawTransaction', [raw]);
       if (answer.kind === 'result') {
         // The hash is always computed here (keccak256 of the raw bytes), whatever the node returned.
-        if (typeof answer.result === 'string' && HASH_RE.test(answer.result)) return { kind: 'accepted', hash: rawTxHash(raw) };
+        if (typeof answer.result === 'string' && HASH_RE.test(answer.result)) return { kind: 'accepted', hash: rawTxHash(raw), byRead: url === this.readUrl };
         uncertain = true;
       } else if (answer.kind === 'error') {
         const c = classifyRejection(answer.message);
-        if (c === 'already_known') return { kind: 'accepted', hash: rawTxHash(raw) };
+        if (c === 'already_known') return { kind: 'accepted', hash: rawTxHash(raw), byRead: url === this.readUrl };
         // A classified refusal is definite whatever else its text says ("exceeds block gas limit" is no rate limit).
         if (c === null) uncertain = true;
         else {

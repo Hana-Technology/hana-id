@@ -1116,13 +1116,16 @@ deadline with a 0-value self-transfer; with no records it still checks the chain
 On anything odd that only our side can cause (a nonce used by something else, a gap, foreign transactions from the
 key, a refusal only we can cause, a record stuck 30 minutes past its deadline, a key mismatch, inconsistent storage) it
 halts: new sends get `relayer_halted`, the safe work above goes on, `status().halted` says
-why, and only `staffResume` (after a fresh check) clears it, with one exception (D890): a pause for money
-(`relayer_cannot_send` · `insufficient_funds`) ends by itself on an alarm run after a refill when that run's own verdict
-is staffResume's, the counts are explained by the relayer's own records alone, the balance covers `lowBalanceEth` plus
-what waits at the gas price limit, there is no code at the relayer's own address and the one other configured endpoint
-(`rpcFallback`) agrees; at most 3 a UTC day, never within 30 minutes of the last one; recorded as a staff action by
-`relayer (automatic)` and raised by the cron as `evm_relay_auto_resumed`. While paused for money it runs every 15 s for
-10 minutes, then every 60 s. The staff tools (`apps/api/src/evm-relayer-staff.ts`:
+why, and only `staffResume` (after a fresh check) clears it, with one exception (D890, off unless the chain's
+`autoRestart` is on, default off): a pause for money (`relayer_cannot_send` · `insufficient_funds`) with no other
+condition seen during it ends by itself on an alarm run after a refill when that run's own verdict is staffResume's,
+the counts are explained by the relayer's own records (its own read endpoint took each waiting transaction on that
+run), the balance covers `lowBalanceEth` plus what waits at the gas price limit plus one more action, there is no code
+at the relayer's own address and one other configured endpoint of another provider agrees; at most 3 a UTC day, never
+within 30 minutes of the last one; recorded as a staff action by `relayer (automatic)` and raised by the cron as
+`evm_relay_auto_resumed`. Paused for money it runs every 15 s for 10 minutes, then every 60 s; for 10 minutes after an
+automatic restart every 15–60 s. Every run also reads the relayer's own code (as do its first send and
+staffAdoptNonce): code there is a leak-type halt, `relayer_has_code` (D890 review). The staff tools (`apps/api/src/evm-relayer-staff.ts`:
 `staffStatus`, `staffResume`, `staffClose`, `staffCancel`, `staffFill`, `staffAdoptNonce`) are reached only through
 `AdminRpc` (D843, next section). RPC: `apps/api/src/evm/sponsor-chain.ts` (`SponsorChain`). Operations and the halt table:
 `docs/operations.md` "EVM sponsorship relay (not live)"; why: D851 (superseding D837).

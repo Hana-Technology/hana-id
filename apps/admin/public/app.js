@@ -2680,7 +2680,9 @@ function evmToolsPanel(d) {
       { class: 'tool' },
       h('h3', {}, 'Resume'),
       h('p', {}, 'Starts gas sponsorship again. Use it once you have done what the box above says. The relayer checks the network first and says no if the numbers still disagree. It can’t tell whether its key is safe: if the box above says the key may be used by someone else, wait for the engineer.'),
-      t.restartsByItself ? h('p', { class: 'hint' }, 'You don’t need Resume for this pause: it restarts by itself within about a minute of the money arriving. Resume still works if you want it to restart now.') : '',
+      t.restartsByItself
+        ? h('p', { class: 'hint' }, `You don’t need Resume for this pause: it restarts by itself within 2 minutes of the money arriving. ${t.resumeNeeds && t.resumeNeeds.met ? 'The wallet already has enough for Resume, if you want it to restart now.' : `Resume needs at least ${t.resumeNeeds ? t.resumeNeeds.amount : 'more money'} in the wallet first: before that it says no.`}`)
+        : '',
       !t.resume
         ? h('p', { class: 'hint' }, 'Not needed now: gas sponsorship isn’t paused.')
         : t.resumeNeedsKeyConfirmation

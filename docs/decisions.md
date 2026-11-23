@@ -16855,9 +16855,13 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
      `leakSeen` (the leak steps; Resume needs the key confirmed).
   4. *The OP Stack L1 data fee and operator fee* are charged only on the relayer's own transactions: part of (1).
   5. *Anything else:* an account's balance also falls by nothing a user's batch does (its calls may not target the
-     relayer, and with no code at the relayer nothing can call into it); money sent to it only raises it. To confirm
-     for Base Sepolia: an L1→L2 deposit transaction sent from L1 with the same key has the relayer as its L2 sender and,
-     per the OP Stack's deposit rules (since Regolith), raises its L2 count, so it is (2).
+     relayer, and with no code at the relayer nothing can call into it); money sent to it only raises it. **An L1→L2
+     deposit transaction** sent from Sepolia with the same key (`OptimismPortal.depositTransaction`): per the OP Stack
+     spec (from the spec, not yet tested; go-live "Checks on Base Sepolia" item 1), for an account with no code its L2
+     `from` is the same address (not aliased), its `value` is taken from the relayer's L2 balance, and its L2 count rises
+     whether it succeeds or fails (this predates Regolith, which only added `depositNonce` to receipts). It never sits in
+     the L2 pool, so `pending` can't show it before it lands; once it lands the count is past `nextNonce`
+     (`foreign_transactions`), so it is (2).
 - **The exact conditions**, all of them, checked in this order on an alarm run only (`#autoCheck`; never by a
   request): the pause's reason is `relayer_cannot_send` with `insufficient_funds`; not `leakSeen`; fewer than 3
   automatic restarts this UTC day; the pause began 30 minutes or more after the last automatic restart; the settings
@@ -16886,8 +16890,9 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   It can only hold the restart back: it is never evidence for a halt or a mark. A `local*` env without one never
   restarts by itself (`no_second_endpoint`). Cost: 5 calls, only on a run where the balance already covers it.
   Residual risk: both endpoints wrong the same way (both behind the same sequencer feed): a thief's transaction in the
-  last moments before the check is unseen, it restarts, and the next runs see the transaction (a leak halt within
-  15 s to a few minutes). What a restart on a leaked key costs: users' actions go through for that time (no user's
+  last moments before the check is unseen, it restarts, and the next runs see the transaction: for 10 minutes after an
+  automatic restart the relayer runs every 15 to 60 s, records or not (amended after the review: it used to go hourly
+  with nothing waiting), so a leak halt follows within about a minute. What a restart on a leaked key costs: users' actions go through for that time (no user's
   money is at risk: the relayer only pays gas for Executes each user signed), and money left in the wallet can be
   taken, which the thief can do with or without the restart. Each restart is raised as an event.
 - **The amount.** The restart needs `lowBalanceEth` plus what is waiting at the gas price limit ("back above the
@@ -16912,7 +16917,7 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   request, and every other condition is the relayer's own evidence; at worst someone restarts gas sponsorship by
   funding it, as a staff refill would, within the bounds above.
 - **The cadence (D882's open question, answered).** While paused for money: every 15 s for the pause's first 10 minutes,
-  then every 60 s, with or without a record waiting (never hourly): a refill is noticed within about a minute. Cost, with
+  then every 60 s, with or without a record waiting (never hourly): a refill is noticed within about a minute (it restarts within 2 minutes, after the review). Cost, with
   D882's measure of about 6 provider calls a run (now 7 with the run's balance read only when everything else allows a
   restart; usually the waiting record's refusal decides first, with no extra read): 5,760 runs a day before, about 1,480
   now (40 in the first 10 minutes, then 1,440), so about 35,000 calls a day become about 10,000. Other pauses keep their
@@ -16927,10 +16932,10 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   has enough." Steps: the safety check (unchanged: "Open the relayer wallet on Basescan (its address is below). If money
   went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money."); "Send at least
   {amount} to the relayer wallet ({0x12ab…cd34}; its whole address is below) from {faucet}. That is the least it needs
-  to restart by itself. A day of gas sponsorship can use up to {budget}."; "It restarts by itself within about a minute
+  to restart by itself. A day of gas sponsorship can use up to {budget}."; "It restarts by itself within 2 minutes
   of the money arriving. You don’t need to press Resume."; "Send it once. The balance on this page can be up to 30 s
   old: press Check again to see the new amount before you send more." The money there: **Restarting by itself** (amber):
-  "The relayer wallet has money again ({balance}). Gas sponsorship restarts by itself within about a minute." Steps:
+  "The relayer wallet has money again ({balance}). Gas sponsorship restarts by itself within 2 minutes." Steps:
   "Nothing to do: don’t send more money, and you don’t need to press Resume."; "If it still says this after 2 minutes,
   press Check again. If it is still paused then, press Resume on the Gas sponsorship page." When it can't restart by
   itself (**Paused: needs a person**): "… It can’t restart by itself this time: {why}." with Resume's amount and "Then
@@ -16944,12 +16949,70 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   ago (1 of 3 today)"; the staff log row "The relayer itself · Restarted by itself after a refill". A line "Restarts by
   itself: Yes, once the wallet has {amount} · 0 of 3 automatic restarts used today" (or "No: {why}") during a pause for
   money. No second "running low" issue beside a pause for money (it asked for money twice, in two amounts). The Resume
-  tool says "You don’t need Resume for this pause: it restarts by itself within about a minute of the money arriving.
+  tool says "You don’t need Resume for this pause: it restarts by itself within 2 minutes of the money arriving.
   Resume still works if you want it to restart now." A leak sign keeps the leak steps, never a refill.
-- **Also found (not changed here):** at send, when a batch is refused for a relayer-side reason (`insufficient_funds`
-  among them), its cancel is signed and stored but not broadcast until the next run (`code ??= this.#afterBroadcast(…)`
-  in `#sendLocked` skips the broadcast because `code` is already set); harmless (the next run sends it, 15 s later) but
-  not what D851 item 2 says ("at once"). For the founder: fix separately?
+- **Also found, fixed after the review:** at send, when a batch was refused for a relayer-side reason
+  (`insufficient_funds` among them), its cancel was signed and stored but not broadcast until the next run (`code ??=
+  this.#afterBroadcast(…)` in `#sendLocked` skipped the broadcast because `code` was already set). Now it is broadcast
+  at once, as D851 item 2 says, and its own refusal counts only when the batch's didn't.
+- **Amended after its security review (2026-11-23; the coordinator's call with the reviewer's recommendation, to
+  confirm by the founder; the review found the restart stricter than staff Resume, and "no halt and no resume by a
+  user's request", the bounds, the atomicity and the migration sound).** Safe to merge; NOT to be switched on before
+  the checks on Base Sepolia (go-live) are recorded. Changes:
+  1. *A common race read as a disagreement.* Our own waiting transaction often lands between the trusted endpoint's read
+     and the other's (Base: 2 s blocks). A difference in the latest count made only of slots our own records hold
+     (each waiting or with its own receipt) is now `counts_moving`: no restart that run, no alarm. Every check records
+     how many runs in a row found the same blocker (`streak`); a disagreement is logged as an error, and named to staff,
+     only from the second run.
+  2. *Code at the relayer's address checked everywhere* (decided): one `eth_getCode` on the trusted endpoint per run, at
+     the first send's nonce read (code there: nothing stored or sent) and in staffAdoptNonce (refused, never a re-baseline
+     over code); code is a leak-type halt (`relayer_has_code`, console-core `isLeakHalt`), or marks a pause `leakSeen`.
+     This closes the channel the counts can't see: a delegation planted before the relayer's first send (when it reads
+     the pending count once) or before a staffAdoptNonce re-baseline. A code read that fails makes the run incomplete
+     (no halt; staffResume and the restart wait). Staff words: "A program has been attached to the relayer wallet. Only
+     someone with the relayer’s key can do that, and it lets them move the wallet’s money at any time." with the leak
+     steps. Its event is the halt's (`evm_relay_stuck`, with the reason); the paused playbook names it among the leak
+     signs. Cost: one more provider call a run.
+  3. *Another condition seen during a pause for money* (a wrong key loaded then restored, a slot stuck past its time
+     limit, another refusal code, a gap seen twice) now marks the pause `otherSeen` (the first such reason): the
+     restart then waits for a person (`other_seen`), whatever clears later.
+  4. *The second endpoint must be another provider:* outside `local*` envs a configured URL of the read endpoint's
+     provider is skipped (the Worker compares the hosts' last two labels, `sponsorProviderOf`, stricter than the
+     manifest's registrable domain; the manifest also checks `rpcFallback` against `rpc`, not against the keyed secret);
+     none left: `no_second_endpoint`, said to staff.
+  5. *Staff see every persistent blocker:* "Restarting by itself" only while the relayer's own latest check waits for the
+     money or names a blocker seen once; a blocker seen on two runs in a row is named ("it can’t reach its second network
+     server to check the wallet", "the network’s main server isn’t taking its waiting transaction", "it can’t read the
+     wallet from the network right now", "it has too much to check on each run right now", "it can’t finish checking the
+     network", "the network shows a transaction it can’t match to its own yet", "its own check of the network still finds
+     a problem", "the two network servers it checks with don’t agree about the wallet"), with the wallet check and
+     Resume. The money counts as arrived by this page's balance read or the relayer's own.
+  6. *Watched after a restart:* for 10 minutes after an automatic restart the alarm runs every 15–60 s, records or not.
+  7. *The trusted pool itself:* `accepted` is sticky and any endpoint's, so the restart now needs the TRUSTED endpoint
+     to have taken (or already hold) each waiting record on that very run (the broadcast's answer says which endpoint
+     took it: `byRead`); a thief's transaction holding our slot in that pool while the fallback takes ours blocks it
+     (`waiting_not_taken`). "Every used slot has its own receipt" means one was seen at some point (`seen`), not re-read
+     on that run (a reorg un-sees it on a later run).
+  8. *The at-send cancel* is broadcast at once (above).
+  9. *Words true in every state:* "within 2 minutes" (the 60 s cadence, one more run, the 60 s minimum age) everywhere;
+     the Resume tool says "The wallet already has enough for Resume, if you want it to restart now." only when the
+     balance covers what Resume needs, else "Resume needs at least {X} in the wallet first: before that it says no.";
+     the restart's amount now also includes **one more action's worst cost** (`maxGasPerTx` at the gas price limit, ×2
+     on OP Stack), so it doesn't restart into an immediate second pause that then needs a person (chosen over a manifest
+     rule `lowBalanceEth` ≥ that cost: no schema rule, and the tile's X is exactly the code's threshold); the step reads
+     "That is the least it needs to restart by itself, with room for the next action."
+  10. *A switch, default off:* the chain's `autoRestart` (manifest `evm.sponsor.chains.<id>.autoRestart`, optional
+      boolean, default false; `switched_off` otherwise): the restart stays off in every deployed env until the six
+      checks on Base Sepolia (go-live) are recorded; staff Resume always works. On in the local stack's admin lane and the
+      tests that need it.
+  Tests: each condition alone (code at first send, while working, while paused, at staffAdoptNonce, at staff Resume,
+  planted then cleared; another condition then cleared; the second endpoint a block ahead; the trusted pool refusing
+  while the fallback takes; a fresh balance read failing; settings unreadable and switched off; eviction between checks;
+  a foreign transaction at the next slot after the refill; the streak; the watch after a restart; the at-send cancel);
+  the anvil lane's 9f (the relayer key's EIP-7702 authorization carried by another account: count +1, code, a leak,
+  never a restart, cleared to the zero address). Not tested alone: `busy` (it needs a run of over 41 fetches, which the
+  fake chain can't stage without many dozens of records) and an eviction in the middle of a check (the check writes
+  nothing before its one final write, so an eviction then leaves the pause exactly as it was; tested between checks).
 - Rejected: restarting by itself for any other reason (each needs a person's judgement, D851); the balance alone (the
   thief case: money there says nothing about who moved it); the second endpoint for staff Resume too (the founder kept
   Resume as it is; a person can look at the explorer); backing off to 5 minutes while paused for money (a refill noticed

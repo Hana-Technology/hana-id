@@ -15511,8 +15511,9 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
   guard to report its own phase (the guard stays as decided); words that tell the user to go on ("… to continue"),
   which read as Journear coaching an approval.
 - Note 2026-11-23 (D888): on Passport Home any change of layout around the move flow (the top bar's height, its
-  notice, a refusal, a tool above it changing height) calls the guard's `rendered()`, so the guarded buttons need a
-  fresh wait and arming gesture after anything moved; the guard itself is unchanged. The line a failed copy leaves
+  notice, a refusal, a tool above it changing height), and any input after a guarded button's place in the page
+  changed, calls the guard's `rendered()`, so the guarded buttons need a fresh wait and arming gesture after anything
+  moved; the guard itself is unchanged. The line a failed copy leaves
   keeps its space, and this line no longer gains the page's 8 px paragraph margin when its words appear.
 - Address impact: none.
 - To confirm: (1) the words above; (2) "One moment…" during the first second; (3) the first guess from
@@ -16847,15 +16848,20 @@ From `next` @ 0c47747b; not merged, not deployed.
      - **On a desktop** (a mouse, a window at least 641 × 600 px) the bar stays at the window's top (sticky); focus that
        scrolls the page stops below the bar as it is at that moment, the notice included (`scroll-padding-top` from
        `--home-bar-h`, which a ResizeObserver keeps on the root); an email code screen in the stuck bar is never taller
-       than the window (`100dvh`) and scrolls inside itself.
+       than the window (`100dvh`) and scrolls inside itself. Scroll anchoring is off there (`overflow-anchor: none` on
+       the root and the body): when the bar grows, what is in view moves down by as much in all three browsers, out
+       from under the bar, instead of being kept in place under it.
      - **On a phone or a tablet** (any other window) the bar scrolls with the page, in option A's phone layout: the
        lockup and Sign out on the first row, who is signed in on its own line under them (an email address wrapping at
        its own break points), then the notice. The code screens are in the page's flow, so the page scrolls to every
        control however short the window (checked at 390 × 844, 320 × 568, 640 × 360 and 320 × 300).
-     - **When the notice comes, changes or goes**, the page under the bar moves by the bar's change at the page's top.
-       Further down, Chromium and Firefox keep what is in view in place (CSS scroll anchoring); WebKit (Safari) has no
-       anchoring, so there what is in view moves by the bar's change. Item 5 makes any such move harmless for the
-       guarded buttons.
+     - **When the notice comes, changes or goes**: on a desktop what is in view moves by the bar's change (above). On a
+       phone, scrolled past the bar, what is in view stays put: Chromium and Firefox anchor scrolling, and where the
+       browser didn't (WebKit, every iPhone: it reports `overflow-anchor` but doesn't anchor here) the page scrolls by
+       what is missing, in the bar's ResizeObserver callback, before the paint (not when the bar's width changed too, a
+       window resized). At the page's top the page moves by the bar's change. The warning and the end keep one height
+       (the longest of their sentences, ui.ts `reservedLine`), so the one becoming the other moves nothing. Item 5 makes
+       any remaining move harmless for the guarded buttons.
      - **The who line keeps its height** when the sign-in ends and the address is masked (D689): the page measures the
        line's box against its line height and keeps that many lines (a class on the bar's account part, at most 4) for
        the rest of that sign-in, so the bar's height doesn't change then.
@@ -16874,17 +16880,24 @@ From `next` @ 0c47747b; not merged, not deployed.
      on an app's page the addresses (one card, a row per chain, as A) beside the Support ID (a quiet box) from 900 px,
      one above the other below that. Reading text (sentences, alerts, the move flow's steps) stops at 720 px. The lockup
      is 148 px (128 px on a phone; was 168 px).
-  5. **A change of layout starts the move flow's guard over.** Whenever the bar's height changes (the notice comes,
-     changes or goes, the who line changes, the window is resized), the notice is redrawn, the refusal at the top of the
-     page changes, or anything above the move flow on an app's page changes height (its details, devices, ways to sign
-     in, the name), the page calls the move flow's guard's `rendered()`: Continue, Show key and Copy key are off again
-     until a fresh 1 s wait and a new arming gesture, so a press aimed at what was under the pointer can't land on them
-     as an action (the review's scenario: an email user, the box ticked and the guard armed, finishes "Sign in again"
-     in the notice; the notice goes; a second tap would have landed on Show key). `approve-guard.ts` is untouched
-     (D878: byte for byte, its hash test unchanged); the move flow's own section isn't watched (its screens start the
-     guard themselves). Without ResizeObserver, the page's own triggers (the notice, a refusal) still do it.
-  6. **Toasts on a phone** start below the bar and its notice (`--home-bar-h`), so for their 4 seconds a toast never
-     sits on Sign out or the notice's buttons.
+  5. **A guarded button that moved starts the move flow's guard over.** The page calls the guard's `rendered()`
+     (Continue, Show key and Copy key off again until a fresh 1 s wait and a new arming gesture) whenever the bar's
+     height changes, the notice is redrawn, the refusal at the top of the page changes, or anything above the move flow
+     on an app's page changes height (its details, devices, ways to sign in, the name: ResizeObservers). And a
+     catch-all, whatever moved a button (an element nobody watches, a scrollbar, WebKit's page move, the key's box
+     growing when the key is shown): in capture-phase `pointermove`, `pointerdown` and `keydown` listeners, registered
+     before the guard's own, the page compares each guarded button's place in the page (its top and left plus the
+     scroll, so scrolling alone changes nothing) with its place when the guard last started over or saw an input; if
+     it differs, the guard starts over before the input reaches it. So a press aimed at what was under the pointer
+     can't land on a guarded button as an action (the first review's scenario: an email user, the box ticked and the
+     guard armed, finishes "Sign in again" in the notice; the notice goes; a second tap would have landed on Show key).
+     `approve-guard.ts`, `key-reveal.ts` and `home-export.ts` are untouched (D878: the guard byte for byte, its hash
+     test unchanged); the page wraps the guard it hands the move flow. Without ResizeObserver, the page's own triggers
+     and the catch-all still do it.
+  6. **Toasts on a phone** start below what is left of the bar in the window (`--home-bar-bottom`, kept by the page on
+     scroll and on the bar's resize; 16 px from the top once the bar has scrolled away), and never lower than 40 % of
+     the window (`40dvh`), whatever the bar holds: a toast never sits on Sign out or the notice's buttons, and never
+     lands below the window.
   7. **Accessibility and targets**: a skip link before the bar ("Skip to content", shown when it has focus; it moves
      focus to `main#app` and never follows its `#app`, so the address doesn't change); one `header`, one `main`, no
      `nav`; explorer links at least the controls' height (32 px, 44 px on a touch screen, `--jp-control-sm`); the
@@ -16899,18 +16912,32 @@ From `next` @ 0c47747b; not merged, not deployed.
   email user at 390 px across the end and a sign-in again, moving everything below); and that the guard didn't start
   over when the notice went. The coordinator decided the design change above (the notice in the bar, the bar sticky
   only on a desktop, option A's phone bar), **to confirm with the founder**.
+- **Amended again after PR 109's second review (2026-11-23).** Scrolled on a desktop, Chromium and Firefox kept a control
+  just under the bar in place while the bar grew over it (measured: a Copy button at y = 80 under the 64 px bar; the
+  notice's text at its centre once the bar was 130 px): scroll anchoring is now off under the stuck bar. A phone's toast
+  could be placed below the window while the email code screens were in the bar (bar 477 px at 320 × 568, toast at
+  494–544): now below what is left of the bar, at most 40 % down. The catch-all of item 5, WebKit's scroll by what it
+  didn't anchor, and the one height for the warning and the end were added at the review's request.
 - Measured (`apps/e2e/tests/home-shell.spec.ts`, Chromium, Firefox and WebKit):
   - Before step 1: Continue (the move flow's guarded step, 1280 × 720, its place in the page) at y = 1904, 1985 with the
     notice (+81 px), 2013 with the copy line too (+109 px).
-  - Now, a Google account, the notice coming while Continue is in the window's middle: the bar 64 → 130 px at
-    1280 × 720, 85 → 222 px at 390 × 844, 85 → 241 px at 320 × 568; Continue's place in the window unchanged in
-    Chromium and Firefox (563 → 563, 672 → 672, 377 → 377 in Chromium); in WebKit it moved with the page (564 → 630,
-    672 → 808, 396 → 552) and Continue was off again (the guard started over), as in the other two. At each size, with
-    the notice up and after the end: the heading, Back, Continue and a Copy button focused by Tab are each the element
-    at their own centre (nothing covers them). A failed copy's line moved Continue's place in the page by 0 px.
-  - An email account at 390 × 844 with a long address: the who line 40 px signed in, 40 px masked after the end, 40 px
-    after signing in again; the bar 105 px signed in, 242 px with the notice and after the end, 105 px after signing in
-    again; the move flow's button's place in the window unchanged across all three in all three browsers.
+  - Now, a Google account. 1280 × 720 (the bar 64 → 130 px): a focused Copy button 16 px under the bar moved down with
+    the page, 80 → 146 px (Chromium, Firefox) and 81 → 147 px (WebKit), still below the bar and the element at its own
+    centre. 390 × 844 (85 → 222 px) and 320 × 568 (85 → 241 px): Continue, in the window's middle, kept its place in all
+    three browsers (672 → 672; 377 → 377 in Chromium, 396 → 396 in Firefox and WebKit). The end kept the warning's
+    height (130, 222, 241 px). Continue was off again after the notice came, after the end and after signing in again,
+    then could be armed. With the notice up and after the end the heading, Back, Continue and a Copy button focused by
+    Tab are each the element at their own centre. A failed copy's line moved Continue's place in the page by 0 px.
+  - An email account with a long address, the end by the API's 401, a sign-in again by code, then the notice: at 390 ×
+    844 the who line 40 → 40 → 40 px and the bar 105 → 242 → 105 → 242 px; at 320 × 568 the who line 60 → 60 → 60 px and
+    the bar 125 → 281 → 125 → 281 px; what was in view (Search at the end, the move flow's button at the notice) kept its
+    place in the window in all three browsers. A toast with the code screens in the bar: at 320 × 568 at 22–88 px
+    (Firefox, WebKit; 236–300 px in Chromium, whose scroll event came after the toast, the 40 % cap holding it) and at
+    640 × 360 at 83–137 px.
+- Not done: the key's box (`.secret`, shared with the export window) still grows when a long key wraps on a narrow
+  screen (a Stellar key to 3 lines at 320 px), moving the tick box and Show / Copy key; reserving its height would need
+  the key's length at the box's width, which no Home-only CSS can say. The catch-all (item 5) starts the guard over when
+  it does, so a press can't land on a button it moved.
 - Left as they were (they are a structure or a wording decision, steps 2 to 5): the "Back to all apps" button and the
   page's own Back (D555, decision 3 above); "App details", "Your apps" and every other noun (decision 2); tabs, "Your
   account", moving Devices and Your name off an app's page, the move flow's place; one clickable row per card; new empty
@@ -16927,5 +16954,15 @@ From `next` @ 0c47747b; not merged, not deployed.
   box with its apps side by side; (6) no dividers, 40 px between sections, the tools in cards; (7) the addresses beside
   the Support ID from 900 px, the Support ID in a quiet box; (8) the copy line's kept space at the foot of the
   addresses' card (one to four empty lines there until a copy fails, most on a narrow phone); (9) the lockup at
-  148 / 128 px; (10) the skip link's words "Skip to content" (the one new string), and no `nav` until step 2.
+  148 / 128 px; (10) the skip link's words "Skip to content" (the one new string), and no `nav` until step 2; (11) on a
+  desktop, what is in view moving down when the bar grows (no scroll anchoring under the stuck bar); on a phone, the
+  page scrolling by what WebKit didn't anchor; (12) the catch-all: any input after a guarded button moved needs a fresh
+  wait and arming gesture (after Show key wraps a long key on a phone, Copy key needs one more).
+- To confirm, not built (for step 2 or 3): (a) on a phone, a user scrolled down gets no sign on screen that the sign-in
+  is ending or has ended (as before this change; screen readers hear the live region), and the move flow's refusal
+  "Your sign-in to Passport Home has ended. Sign in to Passport Home again, then try once more." doesn't say where (the
+  top of the page): a small "Sign in again" chip that covers nothing, or a link in the refusal that scrolls there;
+  (b) the copy line's kept space (about 4 empty lines at 320 px at the foot of the addresses' card); (c) for step 2:
+  the watched selectors above the move flow revisited for tabs (the catch-all covers what they miss), and
+  `history.scrollRestoration = 'manual'` when Back is added (decision 3).
 - Next steps (not in step 1): step 2 onward of structure A, with decisions 2 and 3 above (decided, not built yet).

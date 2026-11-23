@@ -1214,6 +1214,101 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     expect(h.page.moving.state).toBe('reveal');
   });
 
+  /** Puts `el` at `top` in the window (with the page scrolled `scrollY`), as layout would. */
+  const placeAt = (el: Element, top: number, scrollY = 0): void => {
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: scrollY });
+    el.getBoundingClientRect = () => ({ top, left: 20, right: 120, bottom: top + 40, width: 100, height: 40, x: 20, y: top, toJSON: () => ({}) }) as DOMRect;
+  };
+  afterEach(() => {
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 });
+  });
+
+  it('the catch-all: Continue moved in the page by something nobody watches, between the arming and the press: the press does nothing; a fresh gesture works', async () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
+    const h = start();
+    await h.unlock();
+    const go = () => document.getElementById('home-export-continue') as HTMLButtonElement;
+    h.click('home-export-stellar');
+    placeAt(go(), 600);
+    h.type(EXPORT_CONFIRMATION);
+    arm(h);
+    expect(go().disabled).toBe(false);
+    // Something above it (no observer sees it) pushes it 50 px down.
+    placeAt(go(), 650);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    expect(go().disabled).toBe(true);
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  it('the catch-all ignores plain scrolling: the same place in the page, another place in the window, and the press acts', async () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
+    const h = start();
+    await h.unlock();
+    const go = () => document.getElementById('home-export-continue') as HTMLButtonElement;
+    h.click('home-export-stellar');
+    placeAt(go(), 600, 0);
+    h.type(EXPORT_CONFIRMATION);
+    arm(h);
+    // The page scrolled 250 px: Continue is 250 px higher in the window, at the same place in the page.
+    placeAt(go(), 350, 250);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  it('a bar that scrolls with the page grows above what is in view: the page scrolls by what the browser’s anchoring didn’t; not when scrolled above the bar’s end, and never with a stuck bar', async () => {
+    const h = start();
+    await h.toApp();
+    const header = document.querySelector('header.home-top') as HTMLElement;
+    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+    /** The page scrolled to `y` (the browser says so with a scroll event). */
+    const scrolled = (y: number): void => {
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: y });
+      window.dispatchEvent(new Event('scroll'));
+    };
+    scrolled(900);
+    resize(header, 100);
+    scrollBy.mockClear();
+    // No anchoring (WebKit): the page hasn't moved, so it scrolls by the bar's whole change.
+    resize(header, 140);
+    expect(scrollBy).toHaveBeenCalledWith(0, 40);
+    resize(header, 120);
+    expect(scrollBy).toHaveBeenLastCalledWith(0, -20);
+    // Anchoring that did its part (Chromium, Firefox): the browser already scrolled by the change; nothing more.
+    scrollBy.mockClear();
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 960 });
+    resize(header, 180);
+    expect(scrollBy).not.toHaveBeenCalled();
+    // Scrolled to the top: the bar is in view, nothing to keep in place.
+    scrolled(30);
+    resize(header, 200);
+    expect(scrollBy).not.toHaveBeenCalled();
+    // A stuck bar (a desktop): content must move out from under it.
+    scrolled(900);
+    const real = window.getComputedStyle;
+    window.getComputedStyle = ((el: Element) => (el === header ? ({ position: 'sticky' } as CSSStyleDeclaration) : real(el))) as typeof window.getComputedStyle;
+    try {
+      resize(header, 260);
+      expect(scrollBy).not.toHaveBeenCalled();
+    } finally {
+      window.getComputedStyle = real;
+    }
+    expect(h.page.stage).toBe('signed_in');
+  });
+
+  it('the warning and the end keep the same space in the bar (the longest of their sentences)', async () => {
+    const h = start();
+    await h.toApp();
+    advance(13 * 60_000);
+    const sizes = (id: string) => [...(document.getElementById(id)?.querySelectorAll('.home-banner-text > .sizer') ?? [])].map((x) => x.textContent);
+    const ending = sizes('home-ending');
+    expect(ending).toHaveLength(3);
+    advance(2 * 60_000);
+    expect(sizes('home-ended')).toEqual(ending);
+    expect(document.querySelector('#home-ended .home-banner-text > p')?.textContent).toBe('Your sign-in to Passport Home has ended. Everything on screen stays. To load anything new, sign in again.');
+  });
+
   /** Signed in to Home with a Google token that ends in 2.5 minutes (its notice in 30 s), on the app's page. */
   const toAppShort = async (h: H): Promise<void> => {
     await h.page.idle();

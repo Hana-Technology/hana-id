@@ -58,9 +58,16 @@ body.home-page {
   }
 
   /* Focus that scrolls the page (a heading or a button taking focus) stops below the bar as it is now, the notice
-     included (home-page.ts watchBar keeps --home-bar-h). */
+     included (home-page.ts keeps --home-bar-h). No scroll anchoring under a stuck bar: when the bar grows, what is in
+     view moves down by as much, out from under it, instead of being kept in place and covered (the move is harmless:
+     the move flow's guard starts over, D888). */
   :root:has(> body.home-page) {
     scroll-padding-top: calc(var(--home-bar-h, 64px) + var(--jp-space-4));
+    overflow-anchor: none;
+  }
+
+  body.home-page {
+    overflow-anchor: none;
   }
 
   /* The email code screens in a stuck bar: never taller than the window, scrolling inside it. */
@@ -347,7 +354,8 @@ body.home-page > main:focus {
   gap: var(--jp-space-2) var(--jp-space-4);
 }
 
-.home-banner .body > p {
+.home-banner .body > p,
+.home-banner .body > .home-banner-text {
   flex: 1 1 260px;
   margin: 0;
 }
@@ -919,7 +927,9 @@ a.explorer {
 
 @media (max-width: 640px) {
   .home-toasts {
-    top: max(calc(var(--home-bar-h, 96px) + var(--jp-space-2)), env(safe-area-inset-top, 0px));
+    /* Below what is left of the bar in the window (--home-bar-bottom: 0 once it has scrolled away), never lower than
+       40 % of the window, whatever the bar holds (the email code screens). */
+    top: min(max(calc(var(--home-bar-bottom, 0px) + var(--jp-space-2)), var(--jp-space-4), env(safe-area-inset-top, 0px)), 40dvh);
     bottom: auto;
     right: auto;
     left: 50%;

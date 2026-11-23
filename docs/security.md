@@ -1460,8 +1460,10 @@ A compromised API or D1 can hide consents, report `active` for a revoked one (as
   inline SVG and "Secured by Journear Passport"; no URL, nothing that runs; a build test), which replaces D426's Hana bar; Passport Home has a
   static inline lockup header, to which the page adds (outside `#app`, D888) who is signed in, Sign out and the
   sign-in's notice as a row of the bar that covers nothing: Journear's own words only, the email address as text,
-  nothing a partner supplies. Any change of layout around Passport Home's move flow starts its guard over (a fresh wait
-  and arming gesture before Continue, Show key or Copy key act; `approve-guard.ts` unchanged). The app's logo, name and origin stay inside the page in a neutral box of their own, so
+  nothing a partner supplies; it never covers the page (on a desktop the page moves down out from under it). Any change
+  of layout around Passport Home's move flow, and any input after one of its guarded buttons moved in the page,
+  starts its guard over (a fresh wait and arming gesture before Continue, Show key or Copy key act; `approve-guard.ts`
+  unchanged). The app's logo, name and origin stay inside the page in a neutral box of their own, so
   Journear's chrome never names the app and the app can't take its place (an app name can't contain "Journear" either:
   the app-name guard). The popups follow the device's light or dark setting. The vault loads no font: its launcher is
   Journear's ink surface (#0b1f1e, a #223634 inset border, #fcfdfd text) on the system font (a build test keeps

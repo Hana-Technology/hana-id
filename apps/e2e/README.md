@@ -45,15 +45,16 @@ pending) fires after that short delay; one the handler sets for itself keeps its
 
 Passport Home's shell (D888): `tests/home-shell.spec.ts`, in all three browsers. A Google account at 1280 × 720,
 390 × 844 and 320 × 568 reaches the move flow's guarded Continue with the API's own derive, its Home sign-in made 4
-minutes long by a `GET /v1/home/config` whose server time is 11 minutes behind: when the sign-in's notice comes (a row
-of the top bar) Continue is off again (the guard started over), its place in the window is unchanged where the browser
-anchors scrolling (Chromium, Firefox), and the heading, Back, Continue and a Copy button focused by Tab (Option+Tab in
-WebKit) are each the element at their own centre, with the notice up and after the end; a failed copy's line moves
-nothing. An email account at 390 px with a long address goes through the notice, the end (the address masked: the who
-line keeps its height) and a sign-in again by code in the bar (the page's clock set back with `clock.setSystemTime`
-first, since the fast-forward ran it past the issuer's), whose controls are reachable at 390 × 844, 320 × 568,
-640 × 360 and 320 × 300. The page has one `header`, no `nav`, and a skip link that moves focus to `main#app` without
-changing the page's address.
+minutes long by a `GET /v1/home/config` whose server time is 11 minutes behind. On the desktop a focused Copy button
+sits 16 px under the stuck bar when the sign-in's notice comes: it moves down by the bar's growth and stays uncovered.
+On the phones Continue keeps its place in the window. The end keeps the warning's height; Continue is off again after
+each change and after signing in again, then can be armed; the heading, Back, Continue and a Copy button focused by Tab
+(Option+Tab in WebKit) are each the element at their own centre; a failed copy's line moves nothing. An email account
+with a long address, at 390 and 320 px: the end by the API's 401 on a search (the who line keeps its height when the
+address is masked), a sign-in again by code in the bar (its controls reachable at 390 × 844, 320 × 568, 640 × 360 and
+320 × 300; a toast stays in the window at 320 × 568 and 640 × 360), then the notice; the page's clock only moves
+forward. The page has one `header`, no `nav`, and a skip link that moves focus to `main#app` without changing the
+page's address.
 
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
 sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,

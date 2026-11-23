@@ -1,15 +1,18 @@
 // Passport Home's shell (D888), in Chromium, Firefox and WebKit: the top bar holds who is signed in, Sign out and the
-// sign-in's notice as a row of its own, so the notice covers nothing; anything that changes the layout around the move
-// flow starts its guard over; the line a failed copy leaves keeps its space.
+// sign-in's notice as a row of its own, so the notice covers nothing; anything that moves the move flow's guarded
+// buttons starts their guard over; the line a failed copy leaves keeps its space.
 //
 // - "the move flow's guarded Continue …" (a Google account at 1280 x 720, 390 x 844 and 320 x 568): the API's own derive,
 //   the Home sign-in made 4 minutes long by a `GET /v1/home/config` whose server time is 11 minutes behind (its notice
-//   at 2, its end at 4, the open wallet's lock after 5). With the notice up: the heading, Back and Continue are each the
-//   element at their own centre (nothing covers them), a button focused by Tab is too, Continue is off again (the guard
-//   started over), and where the browser anchors scrolling (Chromium, Firefox) Continue stays where it was in the window.
-// - "an email account at 390 px …": the same across the notice, the end (the address masked: the who line keeps its
-//   height) and a sign-in again by code inside the bar; the code screens usable at 390 x 844, 320 x 568, 640 x 360 and
-//   320 x 300 (an open keyboard's height).
+//   at 2, its end at 4, the open wallet's lock after 5). On a desktop a focused Copy sits just under the stuck bar when
+//   the notice comes: the page moves down by the bar's growth (no scroll anchoring there), so it stays below the bar
+//   and uncovered. On a phone Continue keeps its place in the window (anchoring, or WebKit's scroll by the bar's
+//   change). The heading, Back, Continue and a Copy button focused by Tab are each the element at their own centre with
+//   the notice up and after the end; the end keeps the warning's height; Continue is off again after each change and
+//   after signing in again, then can be armed.
+// - "an email account …" (390 and 320 px): the end by the API's 401 (the address masked: the who line keeps its
+//   height), a sign-in again by code in the bar (its controls reachable down to 320 x 300; a toast stays in the
+//   window at 320 x 568 and 640 x 360), then the notice; the page's clock only moves forward.
 // - "one header, no nav, a skip link": the landmarks, and the skip link moving focus without changing the address.
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import { API_URL, AUTH_ORIGIN, GOOGLE_CLIENT_ID, ISSUER_URL } from '../src/stack.ts';
@@ -21,8 +24,6 @@ const rand = (): string => crypto.randomUUID().replace(/-/gu, '').slice(0, 10);
 /** A fresh Google `sub` (21 digits, as Google's): the test's user is its own, whatever ran on the stack before. */
 const newSub = (): string => `1${Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => String(b % 10)).join('')}`;
 const listedApp = (appId: string, name: string) => ({ appId, name, status: 'active', environment: 'live', origins: [`https://${name.toLowerCase().replace(/[^a-z]+/gu, '')}.example`], logoUrl: null });
-/** Browsers that keep what is in view in place when something above it changes height (CSS scroll anchoring). */
-const ANCHORS = new Set(['chromium', 'firefox']);
 
 type Mail = { subject: string; text: string; kind: string };
 const mails = async (to: string): Promise<Mail[]> => (await (await fetch(`${ISSUER_URL}/__e2e/outbox?to=${encodeURIComponent(to)}`)).json()) as Mail[];
@@ -47,11 +48,11 @@ async function shortSignIn(context: BrowserContext, behindMs: number): Promise<v
 }
 
 /** The listing, routed (its Support ID and addresses fixed), for the wallet a partner login made. */
-async function routeWallet(context: BrowserContext, scopeId: string, appId: string, wallet: { stellar: string; evm: string }, coverage = 'shared'): Promise<void> {
-  await routeApps(context, () => ({
+async function routeWallet(context: BrowserContext, scopeId: string, appId: string, wallet: { stellar: string; evm: string }, coverage = 'shared', state: { refuse?: boolean } = {}): Promise<void> {
+  await routeApps(context, () => state.refuse ? { status: 401, body: { error: 'x', code: 'home_identity_expired', requestId: 'req_e2e' } } : ({
     status: 200,
     body: { scopes: [{ scopeId, mine: true, coverage, googleClientId: coverage === 'email' ? null : GOOGLE_CLIENT_ID, supportId: 'HANA-7K2M-Q9XD', addresses: [{ chain: 'stellar', address: wallet.stellar }, { chain: 'evm', address: wallet.evm }], apps: [listedApp(appId, 'Sodax')] }], nextCursor: null },
-  }));
+  }) as { status: number; body: unknown });
 }
 
 /** An element's box in the window. */
@@ -61,12 +62,12 @@ const box = (page: Page, selector: string) =>
     return { top: Math.round(r.top), left: Math.round(r.left), width: Math.round(r.width), height: Math.round(r.height) };
   });
 
-/** Whether the element at `selector`'s centre is that element (or inside it): nothing is drawn over it there. */
+/** Whether the element at `selector`'s centre is that element (or inside it): nothing is drawn over it there; and whether it is in the window (to a pixel of sub-pixel layout). */
 const uncovered = (page: Page, selector: string) =>
   page.locator(selector).evaluate((el) => {
     const r = el.getBoundingClientRect();
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-    return { inView: r.top >= 0 && r.bottom <= window.innerHeight, hit: hit === el || el.contains(hit), what: hit ? `${hit.tagName.toLowerCase()}#${hit.id}` : 'nothing' };
+    return { inView: r.top >= -1 && r.bottom <= window.innerHeight + 1, hit: hit === el || el.contains(hit), what: hit ? `${hit.tagName.toLowerCase()}#${hit.id}` : 'nothing' };
   });
 
 /** Scrolls so `selector` sits in the window's middle. */
@@ -104,7 +105,7 @@ const SIZES = [
 ] as const;
 
 for (const size of SIZES) {
-  test(`the move flow’s guarded Continue at ${size.width} x ${size.height}: the notice covers nothing, starts the guard over and, where scrolling is anchored, moves nothing in view; a failed copy moves nothing`, async ({ page, context, google, browserName }, info) => {
+  test(`the move flow’s guarded Continue at ${size.width} x ${size.height}: the notice covers nothing (on a desktop the page moves out from under it; on a phone nothing in view moves), starts the guard over, keeps its height at the end; a failed copy moves nothing; after signing in again Continue can be armed`, async ({ page, context, google, browserName }, info) => {
     test.setTimeout(180_000);
     google.accounts = [{ sub: newSub(), label: 'Shell user', email: `e2eshell${rand()}@gmail.com`, emailVerified: true }];
     const scopeId = `shell${browserName}${rand()}`;
@@ -129,11 +130,19 @@ for (const size of SIZES) {
     await expect(home.locator('#home-export-title')).toHaveText('Your Stellar key');
     await home.locator('#home-export-confirm').fill('EXPORT');
     const go = '#home-export-continue';
-    await centre(home, go);
+    const desktop = size.name === 'desktop';
+    // What is in view when the notice comes. On a desktop (a stuck bar): the first address's Copy, focused, just under
+    // the bar, where a growing bar would cover it if the page didn't move. On a phone: Continue, in the window's middle.
+    const watched = desktop ? '#home-copy-stellar' : go;
+    if (desktop) {
+      await home.locator(watched).focus();
+      await home.locator(watched).evaluate((el) => window.scrollBy(0, el.getBoundingClientRect().top - (document.querySelector('header')!.getBoundingClientRect().bottom + 16)));
+    } else await centre(home, go);
     await arm(home, go);
     await expect(home.locator('#home-ending')).toHaveCount(0);
     const bar0 = await box(home, 'header');
-    const before = await box(home, go);
+    const before = await box(home, watched);
+    if (desktop) expect(before.top - (bar0.top + bar0.height)).toBeLessThanOrEqual(17);
 
     // The notice: a row of the bar.
     await context.clock.fastForward(2 * MIN + 5_000);
@@ -141,13 +150,21 @@ for (const size of SIZES) {
     expect(await home.locator('#home-banner').evaluate((el) => el.closest('header') !== null && el.closest('#app') === null)).toBe(true);
     // The guard started over: Continue is off until a fresh wait and arming gesture.
     await expect(home.locator(go)).toBeDisabled();
-    const withNotice = await box(home, go);
+    const withNotice = await box(home, watched);
     const bar1 = await box(home, 'header');
     expect(bar1.height).toBeGreaterThan(bar0.height);
-    if (ANCHORS.has(browserName)) expect(Math.abs(withNotice.top - before.top), 'Continue stays where it was in the window (to a pixel of rounding)').toBeLessThanOrEqual(1);
-    // Without anchoring (WebKit) Continue moved down with the page; wherever it is, nothing covers it.
-    await centre(home, go);
-    expect(await uncovered(home, go)).toMatchObject({ inView: true, hit: true });
+    if (desktop) {
+      // The page moved down by the bar's growth, in every browser (no anchoring under a stuck bar): the focused Copy is
+      // still below the bar, and it is the element at its own centre.
+      expect(Math.abs(withNotice.top - before.top - (bar1.height - bar0.height))).toBeLessThanOrEqual(1);
+      expect(withNotice.top).toBeGreaterThanOrEqual(bar1.top + bar1.height);
+      expect(await home.evaluate(() => document.activeElement?.id)).toBe('home-copy-stellar');
+    } else {
+      // A bar that scrolls with the page: what is in view stays put (Chromium and Firefox anchor scrolling; in WebKit
+      // the page scrolls by the bar's change).
+      expect(Math.abs(withNotice.top - before.top), 'Continue stays where it was in the window (to a pixel of rounding)').toBeLessThanOrEqual(1);
+    }
+    expect(await uncovered(home, watched)).toMatchObject({ inView: true, hit: true });
     await nothingCovered(home, `${size.name}, the notice up`, browserName);
 
     // A copy that fails: its line keeps its space, so Continue's place in the page doesn't change.
@@ -161,17 +178,35 @@ for (const size of SIZES) {
     await expect(home.locator('#home-copied')).toContainText('copy it yourself');
     expect(await docY()).toBe(yBefore);
 
-    // The end: the notice changes; again nothing is covered.
+    // The end: the notice's words change, its height doesn't; again nothing is covered.
     await centre(home, go);
     await arm(home, go);
+    const beforeEnd = await box(home, go);
     await context.clock.fastForward(2 * MIN);
     await expect(home.locator('#home-ended')).toBeVisible();
+    const bar2 = await box(home, 'header');
+    expect(bar2.height, 'the end keeps the warning’s height').toBe(bar1.height);
+    expect(Math.abs((await box(home, go)).top - beforeEnd.top)).toBeLessThanOrEqual(1);
     await expect(home.locator(go)).toBeVisible();
     await expect(home.locator(go)).toBeDisabled();
     await nothingCovered(home, `${size.name}, ended`, browserName);
 
-    info.annotations.push({ type: 'measured', description: JSON.stringify({ browserName, size, barBefore: bar0.height, barWithNotice: bar1.height, continueTopBefore: before.top, continueTopWithNotice: withNotice.top }) });
-    console.log(`[home-shell] ${browserName} ${size.width}x${size.height}: bar ${bar0.height} -> ${bar1.height} px; Continue top ${before.top} -> ${withNotice.top}`);
+    // Signing in again: the notice goes, the bar shrinks; the guard starts over, and Continue can be armed again.
+    await centre(home, go);
+    await arm(home, go);
+    const again = home.waitForEvent('popup');
+    await home.locator('#home-sign-in-again').click();
+    await chooseAccount(await again);
+    await expect(home.locator('#home-ended')).toHaveCount(0);
+    await expect(home.locator('#home-banner')).toBeEmpty();
+    expect((await box(home, 'header')).height).toBe(bar0.height);
+    await expect(home.locator(go)).toBeDisabled();
+    await centre(home, go);
+    await arm(home, go);
+
+    const measured = { browserName, size: `${size.width}x${size.height}`, watched, bar: [bar0.height, bar1.height, bar2.height], top: [before.top, withNotice.top] };
+    info.annotations.push({ type: 'measured', description: JSON.stringify(measured) });
+    console.log(`[home-shell] ${JSON.stringify(measured)}`);
   });
 }
 
@@ -202,91 +237,129 @@ async function reachable(home: Page, selector: string, label: string): Promise<v
     { width: 320, height: 300 },
   ]) {
     await home.setViewportSize(s);
-    await home.locator(selector).evaluate((el) => el.scrollIntoView({ block: 'nearest' }));
-    expect(await uncovered(home, selector), `${label} at ${s.width} x ${s.height}`).toMatchObject({ inView: true, hit: true });
+    // Scrolled to (again, once the window's new size has settled), it is in the window and nothing covers it.
+    await expect
+      .poll(async () => {
+        await home.locator(selector).evaluate((el) => el.scrollIntoView({ block: 'nearest' }));
+        return uncovered(home, selector);
+      }, { message: `${label} at ${s.width} x ${s.height}`, timeout: 5_000 })
+      .toMatchObject({ inView: true, hit: true });
   }
   await home.setViewportSize({ width: 390, height: 844 });
 }
 
-test('an email account at 390 px: the notice, the end (the address masked) and a sign-in again by code in the bar cover nothing and, where scrolling is anchored, move nothing in view; the code screens are usable down to 320 x 300', async ({ page, context, browserName }, info: TestInfo) => {
-  test.setTimeout(240_000);
-  const scopeId = `shellmail${browserName}${rand()}`;
-  const app = await newApp({ name: 'Sodax', scopeId, loginMethods: 'google,email' });
-  await openPartner(page, app);
-  // A long address, so the who line wraps on a phone.
-  const to = `e2e-shell-a-rather-long-mailbox-name-${info.project.name}-${rand()}@mail-e2e.example.com`;
-  const wallet = await partnerEmailLogin(page, to);
-  await page.goto('about:blank');
-  await routeWallet(context, scopeId, app.appId, wallet, 'email');
-  await context.clock.install();
-  const home = await context.newPage();
-  await home.setViewportSize({ width: 390, height: 844 });
-  await home.goto(`${AUTH_ORIGIN}/home`);
-  await home.getByRole('button', { name: 'Continue with email' }).click();
-  await home.fill('#home-email-address', to);
-  let sent = (await mails(to)).length;
-  await home.locator('#home-email-send').click();
-  await home.fill('#home-email-code', await codeFor(to, sent));
-  await home.locator('#home-email-verify').click();
-  await expect(home.locator('#home-who')).toHaveText(`Signed in as ${to}`);
-  await home.getByRole('button', { name: 'View Sodax', exact: true }).click();
-  // What the user is about to press, far down the page: the move flow's button (its guarded steps are the Google
-  // tests'; an email sign-in's own 10 minutes outlast an open wallet's 5).
-  const target = '#home-export-open';
-  const who = () => box(home, '#home-who');
-  const bar = () => box(home, 'header');
-  await centre(home, target);
-  const m: Record<string, unknown> = { whoSignedIn: (await who()).height, barSignedIn: (await bar()).height, targetTop: (await box(home, target)).top };
+/** A toast that worked (the copy), with the email code screens in the bar: it is in the window, below what is left of the bar. */
+async function toastInView(home: Page, s: { width: number; height: number }): Promise<Record<string, number>> {
+  await home.setViewportSize(s);
+  await home.evaluate(() => {
+    const ok = { writeText: () => Promise.resolve() };
+    if (navigator.clipboard) Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: ok.writeText });
+    else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: ok });
+  });
+  await home.locator('#home-copy-evm').click();
+  const toast = home.locator('.home-toasts .jp-toast').last();
+  await expect(toast).toBeVisible();
+  const r = await toast.evaluate((el) => {
+    const t = el.getBoundingClientRect();
+    const bar = document.querySelector('header')!.getBoundingClientRect();
+    return { top: Math.round(t.top), bottom: Math.round(t.bottom), window: window.innerHeight, barHeight: Math.round(bar.height), barBottom: Math.round(bar.bottom) };
+  });
+  expect(r.top, `the toast at ${s.width} x ${s.height}`).toBeGreaterThanOrEqual(0);
+  expect(r.bottom, `the toast at ${s.width} x ${s.height}`).toBeLessThanOrEqual(r.window);
+  expect(r.top).toBeGreaterThanOrEqual(Math.max(0, r.barBottom));
+  return r;
+}
 
-  // The notice: the email sign-in's token lasts 10 minutes, so it comes at 8.
-  await context.clock.fastForward(8 * MIN + 5_000);
-  await expect(home.locator('#home-ending')).toBeVisible();
-  m.barWithNotice = (await bar()).height;
-  m.targetTopWithNotice = (await box(home, target)).top;
-  if (ANCHORS.has(browserName)) expect(Math.abs((m.targetTopWithNotice as number) - (m.targetTop as number))).toBeLessThanOrEqual(1);
-  await centre(home, target);
-  expect(await uncovered(home, target)).toMatchObject({ inView: true, hit: true });
+for (const size of [
+  { width: 390, height: 844 },
+  { width: 320, height: 568 },
+] as const) {
+  test(`an email account at ${size.width} px: the end (the address masked), a sign-in again by code in the bar, then the notice, cover nothing and move nothing in view; the code screens are usable down to 320 x 300; a toast stays in the window`, async ({ page, context, browserName }, info: TestInfo) => {
+    test.setTimeout(240_000);
+    const scopeId = `shellmail${browserName}${rand()}`;
+    const app = await newApp({ name: 'Sodax', scopeId, loginMethods: 'google,email' });
+    await openPartner(page, app);
+    // A long address, so the who line wraps on a phone.
+    const to = `e2e-shell-a-rather-long-mailbox-name-${info.project.name}-${rand()}@mail-e2e.example.com`;
+    const wallet = await partnerEmailLogin(page, to);
+    await page.goto('about:blank');
+    const api: { refuse?: boolean } = {};
+    await routeWallet(context, scopeId, app.appId, wallet, 'email', api);
+    // The page's clock only ever moves forward here (no setSystemTime back): the guard's waits stay true.
+    await context.clock.install();
+    const home = await context.newPage();
+    await home.setViewportSize(size);
+    await home.goto(`${AUTH_ORIGIN}/home`);
+    await home.getByRole('button', { name: 'Continue with email' }).click();
+    await home.fill('#home-email-address', to);
+    let sent = (await mails(to)).length;
+    await home.locator('#home-email-send').click();
+    await home.fill('#home-email-code', await codeFor(to, sent));
+    await home.locator('#home-email-verify').click();
+    await expect(home.locator('#home-who')).toHaveText(`Signed in as ${to}`);
+    const who = () => box(home, '#home-who');
+    const bar = () => box(home, 'header');
+    const m: Record<string, unknown> = { whoSignedIn: (await who()).height, barSignedIn: (await bar()).height };
+    expect(m.whoSignedIn as number, 'the long address wraps').toBeGreaterThan(20);
 
-  // The end: the address masked, the who line keeps its height.
-  const topBeforeEnd = (await box(home, target)).top;
-  await context.clock.fastForward(2 * MIN);
-  await expect(home.locator('#home-ended')).toBeVisible();
-  await expect(home.locator('#home-who')).toContainText('•••@mail-e2e.example.com');
-  m.whoEnded = (await who()).height;
-  m.barEnded = (await bar()).height;
-  m.targetTopEnded = (await box(home, target)).top;
-  expect(m.whoEnded).toBe(m.whoSignedIn);
-  if (ANCHORS.has(browserName)) expect(Math.abs((m.targetTopEnded as number) - topBeforeEnd)).toBeLessThanOrEqual(1);
-  expect(await uncovered(home, target)).toMatchObject({ inView: true, hit: true });
-  await home.evaluate(() => window.scrollTo(0, 0));
-  for (const sel of ['#home-title', '#home-back']) expect(await uncovered(home, sel), sel).toMatchObject({ inView: true, hit: true });
+    // The end, by the API's 401 on a search (the front page's Search button in view): the address masked, the who line
+    // keeps its height, what is in view stays put.
+    api.refuse = true;
+    await home.getByLabel('App name').fill('Sodax');
+    const search = '#home-search-go';
+    await centre(home, search);
+    const searchTop = (await box(home, search)).top;
+    await home.locator(search).click();
+    await expect(home.locator('#home-ended')).toBeVisible();
+    await expect(home.locator('#home-who')).toContainText('•••@mail-e2e.example.com');
+    m.whoEnded = (await who()).height;
+    m.barEnded = (await bar()).height;
+    m.searchTop = [searchTop, (await box(home, search)).top];
+    expect(m.whoEnded).toBe(m.whoSignedIn);
+    expect(Math.abs((await box(home, search)).top - searchTop), 'Search stays where it was in the window').toBeLessThanOrEqual(1);
+    expect(await uncovered(home, search)).toMatchObject({ inView: true, hit: true });
+    api.refuse = false;
+    await home.getByRole('button', { name: 'View Sodax', exact: true }).click();
+    await home.evaluate(() => window.scrollTo(0, 0));
+    for (const sel of ['#home-title', '#home-back']) expect(await uncovered(home, sel), sel).toMatchObject({ inView: true, hit: true });
 
-  // Signing in again by code, in the bar (the page's clock back to the issuer's, which the fast-forward ran ahead of):
-  // its screens are usable at every size.
-  await context.clock.setSystemTime(Date.now());
-  await home.locator('#home-sign-in-again').click();
-  await expect(home.locator('#home-email-send')).toBeVisible();
-  // Its title is no heading: the page's h1 is the first heading.
-  expect(await home.evaluate(() => document.querySelector('h1, h2, h3, h4')?.id)).toBe('home-title');
-  await reachable(home, '#home-email-send', 'Send code');
-  sent = (await mails(to)).length;
-  await home.locator('#home-email-send').click();
-  await expect(home.locator('#home-email-code')).toBeVisible();
-  await reachable(home, '#home-email-code', 'the code field');
-  await reachable(home, '#home-email-verify', 'Verify');
-  await home.fill('#home-email-code', await codeFor(to, sent));
-  await home.locator('#home-email-verify').click();
-  await expect(home.locator('#home-ended')).toHaveCount(0);
-  await expect(home.locator('#home-who')).toHaveText(`Signed in as ${to}`);
-  m.whoAgain = (await who()).height;
-  m.barAgain = (await bar()).height;
-  expect(m.whoAgain).toBe(m.whoSignedIn);
-  expect(m.barAgain).toBe(m.barSignedIn);
-  await centre(home, target);
-  expect(await uncovered(home, target)).toMatchObject({ inView: true, hit: true });
-  info.annotations.push({ type: 'measured', description: JSON.stringify({ browserName, ...m }) });
-  console.log(`[home-shell] ${browserName} email 390: ${JSON.stringify(m)}`);
-});
+    // Signing in again by code, in the bar: its screens are usable at every size; a toast stays in the window.
+    await home.locator('#home-sign-in-again').click();
+    await expect(home.locator('#home-email-send')).toBeVisible();
+    // Its title is no heading: the page's h1 is the first heading.
+    expect(await home.evaluate(() => document.querySelector('h1, h2, h3, h4')?.id)).toBe('home-title');
+    await reachable(home, '#home-email-send', 'Send code');
+    sent = (await mails(to)).length;
+    await home.locator('#home-email-send').click();
+    await expect(home.locator('#home-email-code')).toBeVisible();
+    await reachable(home, '#home-email-code', 'the code field');
+    await reachable(home, '#home-email-verify', 'Verify');
+    m.toast320 = await toastInView(home, { width: 320, height: 568 });
+    m.toast640 = await toastInView(home, { width: 640, height: 360 });
+    await home.setViewportSize(size);
+    await home.fill('#home-email-code', await codeFor(to, sent));
+    await home.locator('#home-email-verify').click();
+    await expect(home.locator('#home-ended')).toHaveCount(0);
+    await expect(home.locator('#home-who')).toHaveText(`Signed in as ${to}`);
+    m.whoAgain = (await who()).height;
+    m.barAgain = (await bar()).height;
+    expect(m.whoAgain).toBe(m.whoSignedIn);
+    expect(m.barAgain).toBe(m.barSignedIn);
+
+    // The notice (the email sign-in's token lasts 10 minutes: it comes at 8), with the move flow's button in view.
+    const target = '#home-export-open';
+    await centre(home, target);
+    const targetTop = (await box(home, target)).top;
+    await context.clock.fastForward(8 * MIN + 5_000);
+    await expect(home.locator('#home-ending')).toBeVisible();
+    m.barWithNotice = (await bar()).height;
+    m.targetTop = [targetTop, (await box(home, target)).top];
+    expect(Math.abs((await box(home, target)).top - targetTop), 'the move flow’s button stays where it was in the window').toBeLessThanOrEqual(1);
+    expect(await uncovered(home, target)).toMatchObject({ inView: true, hit: true });
+    info.annotations.push({ type: 'measured', description: JSON.stringify({ browserName, size, ...m }) });
+    console.log(`[home-shell] ${browserName} email ${size.width}: ${JSON.stringify(m)}`);
+  });
+}
 
 test('one header, no nav, and a skip link that moves focus into the page without changing its address', async ({ page, context }) => {
   await routeApps(context, () => ({ status: 200, body: { scopes: [], nextCursor: null } }));

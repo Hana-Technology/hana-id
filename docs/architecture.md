@@ -1387,9 +1387,11 @@ in, who is signed in and Sign out (a plain part of the header, no `nav`), and as
 (`#home-banner`: the 2-minute warning, the end, signing in again with Google or by email code, and a sign-in again
 that failed): the bar grows with it and nothing is drawn over the page. The bar stays at the window's top on a desktop
 (a mouse, a window of at least 641 × 600 px; focus scrolling keeps clear of it through `--home-bar-h`, which a
-ResizeObserver writes to the root through the CSSOM) and scrolls with the page elsewhere (option A's phone bar). Any
-change of layout around the move flow (the bar's height, its notice, a refusal, a tool above it) calls the move flow's
-guard's `rendered()`. One width of at most 1040 px for everything, reading text at 720 px; one section pattern
+ResizeObserver writes to the root through the CSSOM; no scroll anchoring there, so what is in view moves down out from
+under a growing bar) and scrolls with the page elsewhere (option A's phone bar; scrolled past it, what is in view stays
+put: anchoring, or the page's own scroll by what WebKit didn't anchor). The warning and the end keep one height. The
+move flow's guard starts over (`rendered()`) when the bar's height, its notice, a refusal or a tool above the move flow
+changes, and, as a catch-all, on any pointer or key input after a guarded button's place in the page changed. One width of at most 1040 px for everything, reading text at 720 px; one section pattern
 (sections 40 px apart, no dividers, their parts 12 px apart; devices, ways to sign in, the name and the move in a card
 each); on an app's page the addresses as one card of rows beside the Support ID from 900 px; and the line a failed copy
 leaves keeps the space of its longest sentence at the foot of the addresses' card. Served like the other auth pages (`home.html`,

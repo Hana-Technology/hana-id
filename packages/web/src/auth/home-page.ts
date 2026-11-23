@@ -45,7 +45,7 @@ import { type HomeSignIns, startHomeSignIns } from './home-sign-ins.ts';
 import { EMAIL_SUB_RE, type HomeEmailApi, type HomeEmailStep, emailTokenClaims, homeEmailStep } from './home-email.ts';
 import { type HomeExport, type HomeExportState, homeExportRoute, startHomeExport } from './home-export.ts';
 import { type HomeProblem, homeProblem } from './home-problems.ts';
-import { type ExportClipboard, browserClipboard as exportClipboard, screenGuard } from './key-reveal.ts';
+import { type ExportClipboard, type ScreenGuard, browserClipboard as exportClipboard, screenGuard } from './key-reveal.ts';
 import type { NearReader } from './near-rpc.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
@@ -70,6 +70,9 @@ const COPY_FAILED = Object.freeze({
   none: (what: string): string => `This browser can’t copy for you. Select the ${what} and copy it yourself.`,
   refused: (what: string): string => `This browser didn’t allow the copy. Select the ${what} and copy it yourself.`,
 });
+/** The sign-in's notice: two minutes before its end, and at the end (D553). */
+const ENDING_TEXT = (minutes: number): string => `Your sign-in to ${BRAND.home} ends in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. Everything on screen stays. To load anything new after that, sign in again.`;
+const ENDED_TEXT = `Your sign-in to ${BRAND.home} has ended. Everything on screen stays. To load anything new, sign in again.`;
 /** The skip link's words (D888), the first thing Tab reaches on the page. */
 export const HOME_SKIP_TEXT = 'Skip to content';
 
@@ -293,18 +296,20 @@ type SizeWatch = { observe(el: Element): void; disconnect(): void };
  * browser without ResizeObserver: the page still works, and the guard still starts over on what the page itself
  * changes (the notice, a refusal).
  */
-function sizeWatch(changed: (el: Element, height: number, first: boolean) => void): SizeWatch | null {
+function sizeWatch(changed: (el: Element, height: number, was: number | undefined, widthChanged: boolean) => void): SizeWatch | null {
   const RO = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
   if (typeof RO !== 'function') return null;
-  const seen = new WeakMap<Element, number>();
+  const seen = new WeakMap<Element, { h: number; w: number }>();
   const ro = new RO((entries) => {
     for (const entry of entries) {
       const el = entry.target;
-      const h = Math.round(el.getBoundingClientRect().height);
+      const r = el.getBoundingClientRect();
+      const h = Math.round(r.height);
+      const w = Math.round(r.width);
       const was = seen.get(el);
-      if (was === h) continue;
-      seen.set(el, h);
-      changed(el, h, was === undefined);
+      seen.set(el, { h, w });
+      if (was?.h === h) continue;
+      changed(el, h, was?.h, was !== undefined && was.w !== w);
     }
   });
   return { observe: (el) => ro.observe(el), disconnect: () => ro.disconnect() };
@@ -418,8 +423,65 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   // ---- moving a wallet out (home-export.ts) ----
   const hasFocus = deps.hasFocus ?? (() => win.document.hasFocus());
+  const view = (): (Window & typeof globalThis) | null => win.document.defaultView;
+  /**
+   * The move flow's guarded buttons and where each was in the page (not the window: scrolling doesn't change it) when
+   * the guard last started over or saw an arming gesture. D888's catch-all: whatever moved one (an observed tool, an
+   * unobserved element, a scrollbar, WebKit's page move, the key's box growing), the next pointer move, press or key
+   * notices before the guard does and starts the guard over, so the press can't act on a button that moved under it.
+   */
+  const guardedButtons = new Set<HTMLButtonElement>();
+  const placed = new Map<HTMLButtonElement, string>();
+  const placeOf = (el: HTMLButtonElement): string | null => {
+    if (!el.isConnected) return null;
+    const r = el.getBoundingClientRect();
+    const v = view();
+    return `${Math.round(r.top + (v?.scrollY ?? 0))},${Math.round(r.left + (v?.scrollX ?? 0))}`;
+  };
+  const notePlaces = (): void => {
+    placed.clear();
+    for (const el of guardedButtons) {
+      const at = placeOf(el);
+      if (at !== null) placed.set(el, at);
+    }
+  };
+  /** Whether a guarded button is somewhere else in the page than when its place was last noted. */
+  const guardedMoved = (): boolean => {
+    for (const el of guardedButtons) {
+      const at = placeOf(el);
+      if (at === null) continue;
+      const was = placed.get(el);
+      if (was !== undefined && was !== at) return true;
+    }
+    return false;
+  };
+  // Registered before the guard's own listeners, and in the capture phase: the check runs first on every input.
+  const onInput = (): void => {
+    if (guardedButtons.size === 0) return;
+    if (guardedMoved()) rawGuard.rendered();
+    notePlaces();
+  };
+  for (const type of ['pointermove', 'pointerdown', 'keydown']) (win as unknown as { addEventListener(t: string, l: () => void, capture: boolean): void }).addEventListener(type, onInput, true);
+  const rawGuard = screenGuard({ win, isGesture, hasFocus, ...(deps.guardNow ? { now: deps.guardNow } : {}) });
   /** The move flow's guard (Continue, Show key, Copy key): held here too, so a change of layout can start it over. */
-  const guard = screenGuard({ win, isGesture, hasFocus, ...(deps.guardNow ? { now: deps.guardNow } : {}) });
+  const guard: ScreenGuard = {
+    button(el, ready) {
+      guardedButtons.add(el);
+      rawGuard.button(el, ready);
+    },
+    newScreen() {
+      guardedButtons.clear();
+      placed.clear();
+      rawGuard.newScreen();
+    },
+    rendered() {
+      rawGuard.rendered();
+      notePlaces();
+    },
+    sync: () => rawGuard.sync(),
+    click: (e) => rawGuard.click(e),
+    hint: () => rawGuard.hint(),
+  };
   /**
    * D888: anything that changes the layout around the page's content (the bar's height, its notice, the refusal at the
    * top of the page) starts the guard over: a fresh wait and a new arming gesture before Continue, Show key or Copy key
@@ -427,21 +489,48 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    * the guarded buttons on screen; with none, it changes nothing.
    */
   const layoutChanged = (): void => guard.rendered();
-  // The bar's height: written to the root's --home-bar-h (through the CSSOM, which the CSP allows; no style attribute),
-  // which focus scrolling and a phone's toasts keep clear of; a change starts the guard over.
-  sizeWatch((_, height, first) => {
+  const rootStyle = (name: string, value: string): void => {
     try {
-      win.document.documentElement.style.setProperty('--home-bar-h', `${height}px`);
+      win.document.documentElement.style.setProperty(name, value);
     } catch {
-      // The offset is a convenience.
+      // The offsets are a convenience.
     }
-    if (!first) layoutChanged();
+  };
+  /** Where the bar's bottom is in the window now (0 once a bar that scrolls with the page is gone): a phone's toasts start below it. */
+  const noteBarBottom = (): void => rootStyle('--home-bar-bottom', `${Math.max(0, Math.round(bar.header.getBoundingClientRect().bottom))}px`);
+  const sticky = (): boolean => view()?.getComputedStyle(bar.header).position === 'sticky';
+  /** The page's scroll position as last seen, before any change of layout this frame. */
+  let lastScrollY = view()?.scrollY ?? 0;
+  const onScroll = (): void => {
+    lastScrollY = view()?.scrollY ?? 0;
+    noteBarBottom();
+  };
+  // The bar's height: written to the root's --home-bar-h (through the CSSOM, which the CSP allows; no style attribute),
+  // which focus scrolling keeps clear of; a change starts the guard over.
+  sizeWatch((_, height, was, widthChanged) => {
+    rootStyle('--home-bar-h', `${height}px`);
+    noteBarBottom();
+    if (was === undefined) return;
+    // A bar that scrolls with the page (a phone) grew or shrank above what the user is looking at: scroll by what the
+    // browser's own scroll anchoring didn't (all of it in WebKit, every iPhone, which reports the property but doesn't
+    // anchor here; nothing in Chromium and Firefox), before the next paint, so what is in view stays put. Never on a
+    // desktop: there the bar is stuck over the page, and content must move out from under it.
+    const v = view();
+    // The bar's width changed too: the window was resized and everything reflowed; not the bar changing above what is
+    // in view.
+    if (v && !widthChanged && !sticky() && lastScrollY >= was) {
+      const missing = height - was - (v.scrollY - lastScrollY);
+      if (Math.abs(missing) >= 1) v.scrollBy(0, missing);
+      lastScrollY = v.scrollY;
+    }
+    layoutChanged();
   })?.observe(bar.header);
+  view()?.addEventListener('scroll', onScroll, { passive: true });
   // On an app's page, what sits above the move flow (its details, the other tools, a refusal at the top): a change in
   // its height moves the guarded buttons, so it starts the guard over too. The move flow's own section isn't watched:
   // its screens start the guard themselves.
-  const above = sizeWatch((_, __, first) => {
-    if (!first) layoutChanged();
+  const above = sizeWatch((_, __, was) => {
+    if (was !== undefined) layoutChanged();
   });
   const watchAbove = (): void => {
     if (!above) return;
@@ -1230,6 +1319,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function replaceWho(): void {
     const old = byId('home-who');
     if (!old) return;
+    lastScrollY = view()?.scrollY ?? lastScrollY;
     // The line's box (a flex item, so one box however many lines it wraps to) over its line height.
     let lines = 0;
     try {
@@ -1271,6 +1361,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   function renderBanner(): void {
     if (stage !== 'signed_in') return;
+    // Where the page was scrolled before the bar changes (a scroll event may not have come yet).
+    lastScrollY = view()?.scrollY ?? lastScrollY;
     fill('home-banner', ...bannerParts());
     layoutChanged();
   }
@@ -1292,21 +1384,15 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     }
     // Sign in again with the method this account uses.
     const again = () => button('Sign in again', account?.provider === 'email' ? beginEmailSignIn : beginSignIn, { class: 'primary', id: 'home-sign-in-again', sm: true });
+    // The warning and the end keep the space of the longest of their sentences (ui.ts reservedLine), so the bar's
+    // height doesn't change when one becomes the other (D888).
+    const sessionLine = (text: string): HTMLElement => reservedLine(d, d.h('p', {}, text), 'home-banner-text', [ENDING_TEXT(2), ENDING_TEXT(1), ENDED_TEXT]).box;
     if (session === 'ending' && identity) {
       const minutes = Math.max(1, Math.ceil((identity.endsAtMs - clock.now()) / 60_000));
-      return [
-        failed,
-        alert(
-          d,
-          'warning',
-          { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ending' } },
-          d.h('p', {}, `Your sign-in to ${BRAND.home} ends in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. Everything on screen stays. To load anything new after that, sign in again.`),
-          again(),
-        ),
-      ];
+      return [failed, alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ending' } }, sessionLine(ENDING_TEXT(minutes)), again())];
     }
     if (session === 'ended') {
-      return [failed, alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ended' } }, d.h('p', {}, `Your sign-in to ${BRAND.home} has ended. Everything on screen stays. To load anything new, sign in again.`), again())];
+      return [failed, alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ended' } }, sessionLine(ENDED_TEXT), again())];
     }
     return [failed];
   }

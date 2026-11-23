@@ -552,3 +552,13 @@ export async function actionUnderSentence(page: Page, sentence: Locator, button:
   expect(await page.locator('#app .jp-btn-primary').evaluateAll((els) => els.map((e) => e.id))).toEqual(['banner-done']);
   for (const hidden of await button.locator('.sr-only').all()) expect((await hidden.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 }
+
+/**
+ * Before a screenshot: every font the page uses has loaded, so two runs (a "before" and an "after") draw the same
+ * text the same way. A font still loading would show the fallback face in one and not the other.
+ */
+export async function fontsLoaded(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
+}

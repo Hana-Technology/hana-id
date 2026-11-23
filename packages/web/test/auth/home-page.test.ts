@@ -347,7 +347,8 @@ describe('sign-in', () => {
     const claims = JSON.parse(Buffer.from(header.jwt.split('.')[1] as string, 'base64url').toString()) as { nonce: string };
     expect(claims.nonce).toBe(homeNonce({ signer: ENV.signer, homePublicKey: header.key, expiresAtMs: header.expiresAtMs, salt: header.salt }));
     expect(pageText()).toContain('App s1');
-    expect(pageText()).toContain('Signed in with Google');
+    // Who is signed in is in the top bar, outside the page's content (D888).
+    expect(document.getElementById('home-account')?.textContent).toContain('Signed in with Google');
   });
 
   it.each([
@@ -841,6 +842,120 @@ describe('partner strings are text only', () => {
     expect(() => parseHomeApps({ scopes: 'x' })).toThrow(ApiError);
     expect(() => parseHomeApps({ scopes: [], nextCursor: '<b>' })).toThrow(ApiError);
     expect(() => parseHomeConfig({ serverTimeMs: 1, signer: 'Not An Account', sharedGoogleClientId: null })).toThrow(ApiError);
+  });
+});
+
+describe('the shell (D888)', () => {
+  const LIST = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
+
+  it('one header outside the page’s content: who is signed in and Sign out in it while signed in (no nav: it holds no navigation), nothing of them after sign-out', async () => {
+    const h = await ready();
+    const headers = document.querySelectorAll('header');
+    expect(headers).toHaveLength(1);
+    expect(headers[0]?.closest('#app')).toBeNull();
+    // Signed out: the bar has no account part and no notice.
+    const account = document.getElementById('home-account') as HTMLElement;
+    expect(account.closest('header')).toBe(headers[0]);
+    expect(account.textContent).toBe('');
+    expect(document.getElementById('home-banner')?.textContent).toBe('');
+    h.answer = LIST;
+    await h.signIn();
+    expect(document.querySelector('nav')).toBeNull();
+    expect(account.querySelector('#home-who')?.textContent).toBe('Signed in with Google');
+    expect(account.querySelector('#home-sign-out')).not.toBeNull();
+    // The page's content has its heading, no second header, and none of the bar's parts.
+    expect(document.querySelector('#app header, #app #home-who, #app #home-sign-out, #app #home-banner')).toBeNull();
+    expect(document.getElementById('home-title')?.closest('#app')).not.toBeNull();
+    h.click('home-sign-out');
+    expect(account.textContent).toBe('');
+    expect(document.getElementById('home-who')).toBeNull();
+    expect(document.querySelectorAll('header')).toHaveLength(1);
+  });
+
+  it('the notice is a row of the bar: it sits after who is signed in, inside the header, never over the page', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const header = document.querySelector('header') as HTMLElement;
+    const notice = document.getElementById('home-banner')?.parentElement as HTMLElement;
+    expect(notice.parentElement).toBe(header);
+    expect(notice.previousElementSibling?.id).toBe('home-account');
+    expect(notice.nextElementSibling).toBeNull();
+  });
+
+  it('a sign-in again that fails is said in the bar’s notice, where it was started, not at the top of the page', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    advance(15 * MIN);
+    // The browser blocks the window.
+    h.win.openResult = null;
+    h.click('home-sign-in-again');
+    expect(h.page.errorCode).toBe('popup_blocked');
+    expect(document.getElementById('home-notice')?.textContent).toBe('');
+    const failed = document.getElementById('home-renew-problem') as HTMLElement;
+    expect(failed.closest('#home-banner')).not.toBeNull();
+    expect(failed.textContent).toContain('Your browser blocked the sign-in window.');
+    // The ended notice and its Sign in again stay under it.
+    expect(document.getElementById('home-ended')).not.toBeNull();
+    // Dismiss takes it away; a new attempt clears it too.
+    (failed.querySelector('button.link') as HTMLElement).click();
+    expect(document.getElementById('home-renew-problem')).toBeNull();
+    expect(h.page.errorCode).toBeNull();
+  });
+
+  it('the notice is in the bar, a live region kept for the page’s life; it never touches the page’s content', async () => {
+    const h = await ready();
+    const banner = document.getElementById('home-banner');
+    expect(banner?.getAttribute('aria-live')).toBe('polite');
+    expect(banner?.closest('header')).not.toBeNull();
+    h.answer = LIST;
+    await h.signIn();
+    const app = document.getElementById('app')?.innerHTML;
+    advance(15 * MIN - HOME_EXPIRY_WARN_MS);
+    expect(document.getElementById('home-ending')?.closest('#home-banner')).toBe(banner);
+    advance(HOME_EXPIRY_WARN_MS);
+    expect(document.getElementById('home-ended')?.closest('#home-banner')).toBe(banner);
+    expect(document.getElementById('app')?.innerHTML).toBe(app);
+    // The same element throughout: a live region that is there before it speaks.
+    expect(document.getElementById('home-banner')).toBe(banner);
+  });
+
+  it('a skip link before the bar moves focus into the page and never follows its #app', async () => {
+    await ready();
+    const skip = document.body.firstElementChild as HTMLAnchorElement;
+    expect(skip.tagName).toBe('A');
+    expect(skip.textContent).toBe('Skip to content');
+    expect(skip.getAttribute('href')).toBe('#app');
+    expect(skip.nextElementSibling?.tagName).toBe('HEADER');
+    const main = document.getElementById('app') as HTMLElement;
+    expect(main.getAttribute('tabindex')).toBe('-1');
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    skip.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(main);
+  });
+
+  it('the copy line keeps the space of every sentence it may say on this page, hidden from screen readers', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    (document.querySelector('.home-card[data-scope="s1"] .home-open') as HTMLElement).click();
+    const line = document.getElementById('home-copied') as HTMLElement;
+    const box = line.parentElement as HTMLElement;
+    expect(box.classList.contains('reserved')).toBe(true);
+    expect(box.classList.contains('home-copied-box')).toBe(true);
+    const sizers = [...box.querySelectorAll(':scope > .sizer')];
+    expect(sizers.every((x) => x.getAttribute('aria-hidden') === 'true')).toBe(true);
+    expect(sizers.map((x) => x.textContent)).toEqual(
+      ['Stellar address', 'Ethereum-style address', 'Support ID'].flatMap((what) => [`This browser can’t copy for you. Select the ${what} and copy it yourself.`, `This browser didn’t allow the copy. Select the ${what} and copy it yourself.`]),
+    );
+    expect(line.getAttribute('role')).toBe('status');
+    expect(line.textContent).toBe('');
+    // The addresses and the Support ID sit side by side where there is room; the per-app tools come after the line.
+    expect(document.querySelector('.home-app-split > .home-app-addresses + .home-support')).not.toBeNull();
+    expect(box.nextElementSibling).toBeNull();
+    expect(document.getElementById('home-app-extras')?.previousElementSibling?.contains(box)).toBe(true);
   });
 });
 

@@ -43,6 +43,19 @@ the hand-test lane) only an alarm set from outside the handler (or an outside `s
 pending) fires after that short delay; one the handler sets for itself keeps its time (`src/server/workers.ts`,
 `MemoryStorage`; `test/stack.test.ts`, D882).
 
+Passport Home's shell (D888): `tests/home-shell.spec.ts`, in all three browsers. A Google account at 1280 × 720,
+390 × 844 and 320 × 568 reaches the move flow's guarded Continue with the API's own derive, its Home sign-in made 4
+minutes long by a `GET /v1/home/config` whose server time is 11 minutes behind. On the desktop a focused Copy button
+sits 16 px under the stuck bar when the sign-in's notice comes: it moves down by the bar's growth and stays uncovered.
+On the phones Continue keeps its place in the window. The end keeps the warning's height; Continue is off again after
+each change and after signing in again, then can be armed; the heading, Back, Continue and a Copy button focused by Tab
+(Option+Tab in WebKit) are each the element at their own centre; a failed copy's line moves nothing. An email account
+with a long address, at 390 and 320 px: the end by the API's 401 on a search (the who line keeps its height when the
+address is masked), a sign-in again by code in the bar (its controls reachable at 390 × 844, 320 × 568, 640 × 360 and
+320 × 300; a toast stays in the window at 320 × 568 and 640 × 360), then the notice; the page's clock only moves
+forward. The page has one `header`, no `nav`, and a skip link that moves focus to `main#app` without changing the
+page's address.
+
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
 sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,
 can't be removed, no other button); a waiting email linked to a Google wallet (case B) listed as waiting by kind only,
@@ -103,7 +116,22 @@ fee is), each of the sponsored check-in (first time and later), a sponsored unli
 (and one that attaches NEAR), an EVM send, a NEAR transfer and a Stellar payment at 390 px and at the popup's size,
 folded and with the details open (`fee-{case}-{main|details}-{phone|popup}.png`); and, for D886, a Stellar message,
 an EVM message (and one Journear can't read), typed data with and without a network and a NEAR message, for a test app and a live app, at 390 px
-(`msg-{kind}-{test|live}-phone.png`). It checks nothing itself.
+(`msg-{kind}-{test|live}-phone.png`). It checks only the dividers (below), softly, so every screen is still saved.
+
+The approval and consent windows' dividers (D884's note): `tests/divider-checks.ts` measures the page as drawn: no two
+lines (a list's rule, a box's edge) close together with nothing between them unless both are box edges, no ruled block
+around nothing, the same space above and below every rule, and a rule between any two consecutive operations or
+consent contract lines (an operation's own rule under a box that ends the one before is that boundary, not a double);
+it fails when it finds no window or no lines. `tests/approval-dividers.spec.ts` runs it as a gate (every browser) on
+an EVM send, the sponsored check-in (later and first time), a sponsored unlimited permission, a sponsored batch whose
+first call Journear can't read, a relayed NEAR postcard with its note, a NEAR transfer, a NEAR call with JSON and
+with non-JSON arguments then a transfer, a message and one Journear can't read, a Stellar payment, two Stellar
+operations, a Soroban call with a nested authorization and the consent screen (two contract lines), at 390 px and
+the popup's size, folded and open (with `HANA_SHOTS_DIR=<dir>`, Chromium, it also saves each as
+`dividers-{name}-{phone|popup}-{main|details}.png` and records a failure without stopping). The screenshot specs
+(`approval-plain-shots`, `approval-near-reviewed-shots`, `approval-summary`, `evm-sponsor`) run it softly on every
+screen they save; no flow test asserts it. Every screenshot in these specs waits for the page's fonts
+(`fontsLoaded`), so two runs draw the same text the same way.
 
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown

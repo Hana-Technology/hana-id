@@ -45,12 +45,12 @@ import { type HomeSignIns, startHomeSignIns } from './home-sign-ins.ts';
 import { EMAIL_SUB_RE, type HomeEmailApi, type HomeEmailStep, emailTokenClaims, homeEmailStep } from './home-email.ts';
 import { type HomeExport, type HomeExportState, homeExportRoute, startHomeExport } from './home-export.ts';
 import { type HomeProblem, homeProblem } from './home-problems.ts';
-import { type ExportClipboard, browserClipboard as exportClipboard, screenGuard } from './key-reveal.ts';
+import { type ExportClipboard, type ScreenGuard, browserClipboard as exportClipboard, screenGuard } from './key-reveal.ts';
 import type { NearReader } from './near-rpc.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, isFramed, isUserGesture, randomName } from './page-window.ts';
 import { type Toaster, toaster } from './toast.ts';
-import { BTN, alert, icon } from './ui.ts';
+import { BTN, alert, icon, reservedLine } from './ui.ts';
 
 /** How long before the sign-in's end the page warns. */
 export const HOME_EXPIRY_WARN_MS = 2 * 60_000;
@@ -65,6 +65,16 @@ const RELAY_WAIT_S = 25;
 const CHILD_WATCH_MS = 500;
 /** How long "Copied" stays. */
 const COPIED_MS = 4000;
+/** A copy that didn't work: the browser has no Clipboard API, or refused the write. */
+const COPY_FAILED = Object.freeze({
+  none: (what: string): string => `This browser can’t copy for you. Select the ${what} and copy it yourself.`,
+  refused: (what: string): string => `This browser didn’t allow the copy. Select the ${what} and copy it yourself.`,
+});
+/** The sign-in's notice: two minutes before its end, and at the end (D553). */
+const ENDING_TEXT = (minutes: number): string => `Your sign-in to ${BRAND.home} ends in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. Everything on screen stays. To load anything new after that, sign in again.`;
+const ENDED_TEXT = `Your sign-in to ${BRAND.home} has ended. Everything on screen stays. To load anything new, sign in again.`;
+/** The skip link's words (D888), the first thing Tab reaches on the page. */
+export const HOME_SKIP_TEXT = 'Skip to content';
 
 /** The one Clipboard API call the page makes: it writes an address or a Support ID, it never reads. */
 export interface HomeClipboard {
@@ -232,6 +242,79 @@ export function linkedAppId(search: string): string | null {
   return values.length === 1 && HOME_APP_ID.test(values[0] as string) ? (values[0] as string) : null;
 }
 
+/** The most lines the who line keeps when its words get shorter (home.css `.home-who-lines-N`). */
+const WHO_LINES_KEPT = 4;
+
+/** The top bar's parts the page fills: who is signed in and Sign out, and the sign-in's notice. */
+interface TopBar {
+  readonly header: HTMLElement;
+  readonly account: HTMLElement;
+  readonly notice: HTMLElement;
+}
+
+/**
+ * Passport Home's shell (D888). The top bar is the build's static `header.home-top` (the lockup; pageHtml), made here if
+ * the document has none. The page adds its two parts to it, outside `#app`: who is signed in with Sign out (filled while
+ * signed in), and the sign-in's notice (`#home-banner`, a live region kept for the page's life), a row of the bar
+ * itself, so the bar grows when it shows and covers nothing. Before the bar, a skip link that moves focus into `#app`
+ * without changing the page's address (D555).
+ */
+function topBar(d: Dom): TopBar {
+  const doc = d.doc;
+  const main = doc.getElementById('app');
+  let header = doc.querySelector<HTMLElement>('header.home-top');
+  if (!header) {
+    header = d.h('header', { class: 'home-top' });
+    if (main) main.before(header);
+    else doc.body.prepend(header);
+  }
+  const account = d.h('div', { class: 'home-top-account', attrs: { id: 'home-account' } });
+  // `home`: what the notice shows (the email code screens too) is styled as it is in the page.
+  const notice = d.h('div', { class: 'home-top-notice home' }, d.h('div', { attrs: { id: 'home-banner', 'aria-live': 'polite' } }));
+  header.append(account, notice);
+  if (main) {
+    main.setAttribute('tabindex', '-1');
+    const skip = d.h('a', { class: 'home-skip', attrs: { href: '#app' } }, HOME_SKIP_TEXT);
+    skip.addEventListener('click', (e) => {
+      // Focus only: the page never changes its own address (D555), so the link's `#app` is never followed.
+      e.preventDefault();
+      try {
+        main.focus();
+      } catch {
+        // Focus is a convenience.
+      }
+    });
+    header.before(skip);
+  }
+  return { header, account, notice };
+}
+
+type SizeWatch = { observe(el: Element): void; disconnect(): void };
+
+/**
+ * D888: watches elements' heights and calls `changed(el, height)` when one changes after it was first seen. Null in a
+ * browser without ResizeObserver: the page still works, and the guard still starts over on what the page itself
+ * changes (the notice, a refusal).
+ */
+function sizeWatch(changed: (el: Element, height: number, was: number | undefined, widthChanged: boolean) => void): SizeWatch | null {
+  const RO = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+  if (typeof RO !== 'function') return null;
+  const seen = new WeakMap<Element, { h: number; w: number }>();
+  const ro = new RO((entries) => {
+    for (const entry of entries) {
+      const el = entry.target;
+      const r = el.getBoundingClientRect();
+      const h = Math.round(r.height);
+      const w = Math.round(r.width);
+      const was = seen.get(el);
+      seen.set(el, { h, w });
+      if (was?.h === h) continue;
+      changed(el, h, was?.h, was !== undefined && was.w !== w);
+    }
+  });
+  return { observe: (el) => ro.observe(el), disconnect: () => ro.disconnect() };
+}
+
 /** Who a sign-in is for: the method and that method's id for the person. Memory only. */
 interface HomeAccount {
   provider: 'google' | 'email';
@@ -298,6 +381,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let child: Window | null = null;
   let childName: string | null = null;
   let signInError: HomeProblem | null = null;
+  /** A sign-in again that didn't finish: said in the bar's notice, where it was started, not at the page's top. */
+  let renewProblem: HomeProblem | null = null;
   /** An email sign-in in progress: its code screens, where they draw, and the identity its code is for. */
   let emailStep: HomeEmailStep | null = null;
   let emailBox: HTMLElement | null = null;
@@ -315,6 +400,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   /** Short outcomes (a copy that worked): the stack lives outside `#app`, which is redrawn. */
   const toasts: Toaster = toaster(d);
+  /** The top bar's own parts (D888): who is signed in with Sign out, and the sign-in's notice; outside `#app`. */
+  const bar = topBar(d);
 
   // ---- idle tracking (tests) ----
   let running = 0;
@@ -336,6 +423,121 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   // ---- moving a wallet out (home-export.ts) ----
   const hasFocus = deps.hasFocus ?? (() => win.document.hasFocus());
+  const view = (): (Window & typeof globalThis) | null => win.document.defaultView;
+  /**
+   * The move flow's guarded buttons and where each was in the page (not the window: scrolling doesn't change it) when
+   * the guard last started over or saw an arming gesture. D888's catch-all: whatever moved one (an observed tool, an
+   * unobserved element, a scrollbar, WebKit's page move, the key's box growing), the next pointer move, press or key
+   * notices before the guard does and starts the guard over, so the press can't act on a button that moved under it.
+   */
+  const guardedButtons = new Set<HTMLButtonElement>();
+  const placed = new Map<HTMLButtonElement, string>();
+  const placeOf = (el: HTMLButtonElement): string | null => {
+    if (!el.isConnected) return null;
+    const r = el.getBoundingClientRect();
+    const v = view();
+    return `${Math.round(r.top + (v?.scrollY ?? 0))},${Math.round(r.left + (v?.scrollX ?? 0))}`;
+  };
+  const notePlaces = (): void => {
+    placed.clear();
+    for (const el of guardedButtons) {
+      const at = placeOf(el);
+      if (at !== null) placed.set(el, at);
+    }
+  };
+  /** Whether a guarded button is somewhere else in the page than when its place was last noted. */
+  const guardedMoved = (): boolean => {
+    for (const el of guardedButtons) {
+      const at = placeOf(el);
+      if (at === null) continue;
+      const was = placed.get(el);
+      if (was !== undefined && was !== at) return true;
+    }
+    return false;
+  };
+  // Registered before the guard's own listeners, and in the capture phase: the check runs first on every input.
+  const onInput = (): void => {
+    if (guardedButtons.size === 0) return;
+    if (guardedMoved()) rawGuard.rendered();
+    notePlaces();
+  };
+  for (const type of ['pointermove', 'pointerdown', 'keydown']) (win as unknown as { addEventListener(t: string, l: () => void, capture: boolean): void }).addEventListener(type, onInput, true);
+  const rawGuard = screenGuard({ win, isGesture, hasFocus, ...(deps.guardNow ? { now: deps.guardNow } : {}) });
+  /** The move flow's guard (Continue, Show key, Copy key): held here too, so a change of layout can start it over. */
+  const guard: ScreenGuard = {
+    button(el, ready) {
+      guardedButtons.add(el);
+      rawGuard.button(el, ready);
+    },
+    newScreen() {
+      guardedButtons.clear();
+      placed.clear();
+      rawGuard.newScreen();
+    },
+    rendered() {
+      rawGuard.rendered();
+      notePlaces();
+    },
+    sync: () => rawGuard.sync(),
+    click: (e) => rawGuard.click(e),
+    hint: () => rawGuard.hint(),
+  };
+  /**
+   * D888: anything that changes the layout around the page's content (the bar's height, its notice, the refusal at the
+   * top of the page) starts the guard over: a fresh wait and a new arming gesture before Continue, Show key or Copy key
+   * act, so a press aimed at what was under the pointer before the change can't turn into one of them. It acts only on
+   * the guarded buttons on screen; with none, it changes nothing.
+   */
+  const layoutChanged = (): void => guard.rendered();
+  const rootStyle = (name: string, value: string): void => {
+    try {
+      win.document.documentElement.style.setProperty(name, value);
+    } catch {
+      // The offsets are a convenience.
+    }
+  };
+  /** Where the bar's bottom is in the window now (0 once a bar that scrolls with the page is gone): a phone's toasts start below it. */
+  const noteBarBottom = (): void => rootStyle('--home-bar-bottom', `${Math.max(0, Math.round(bar.header.getBoundingClientRect().bottom))}px`);
+  const sticky = (): boolean => view()?.getComputedStyle(bar.header).position === 'sticky';
+  /** The page's scroll position as last seen, before any change of layout this frame. */
+  let lastScrollY = view()?.scrollY ?? 0;
+  const onScroll = (): void => {
+    lastScrollY = view()?.scrollY ?? 0;
+    noteBarBottom();
+  };
+  // The bar's height: written to the root's --home-bar-h (through the CSSOM, which the CSP allows; no style attribute),
+  // which focus scrolling keeps clear of; a change starts the guard over.
+  sizeWatch((_, height, was, widthChanged) => {
+    rootStyle('--home-bar-h', `${height}px`);
+    noteBarBottom();
+    if (was === undefined) return;
+    // A bar that scrolls with the page (a phone) grew or shrank above what the user is looking at: scroll by what the
+    // browser's own scroll anchoring didn't (all of it in WebKit, every iPhone, which reports the property but doesn't
+    // anchor here; nothing in Chromium and Firefox), before the next paint, so what is in view stays put. Never on a
+    // desktop: there the bar is stuck over the page, and content must move out from under it.
+    const v = view();
+    // The bar's width changed too: the window was resized and everything reflowed; not the bar changing above what is
+    // in view.
+    if (v && !widthChanged && !sticky() && lastScrollY >= was) {
+      const missing = height - was - (v.scrollY - lastScrollY);
+      if (Math.abs(missing) >= 1) v.scrollBy(0, missing);
+      lastScrollY = v.scrollY;
+    }
+    layoutChanged();
+  })?.observe(bar.header);
+  view()?.addEventListener('scroll', onScroll, { passive: true });
+  // On an app's page, what sits above the move flow (its details, the other tools, a refusal at the top): a change in
+  // its height moves the guarded buttons, so it starts the guard over too. The move flow's own section isn't watched:
+  // its screens start the guard themselves.
+  const above = sizeWatch((_, __, was) => {
+    if (was !== undefined) layoutChanged();
+  });
+  const watchAbove = (): void => {
+    if (!above) return;
+    above.disconnect();
+    const doc = win.document;
+    for (const el of [doc.getElementById('home-notice'), doc.querySelector('#home-content > .home-app-details'), ...Array.from(doc.querySelectorAll('#home-app-extras > section:not(#home-export)'))]) if (el) above.observe(el);
+  };
   const moving: HomeExport = startHomeExport({
     win,
     env,
@@ -347,7 +549,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     clock,
     sleep,
     isGesture,
-    guard: screenGuard({ win, isGesture, hasFocus, ...(deps.guardNow ? { now: deps.guardNow } : {}) }),
+    guard,
     clipboard: (): ExportClipboard | null => (deps.clipboard === undefined ? exportClipboard() : deps.clipboard),
     hasFocus,
     session: () => {
@@ -476,7 +678,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     identity = null;
     if (session === 'none') return;
     session = 'ended';
-    byId('home-who')?.replaceWith(whoText());
+    replaceWho();
     signIns.sessionEnded();
     renderBanner();
   }
@@ -711,9 +913,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       signInError = p;
       renderSignedOut();
     } else {
-      if (p) problem = p;
+      if (p) renewProblem = p;
       renderBanner();
-      renderNotice();
     }
   }
 
@@ -730,6 +931,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     moving.yieldChild();
     signingIn = true;
     signInError = null;
+    renewProblem = null;
     childName = randomName('hana-home-login-');
     child = win.open(`${env.authOrigin}${HOME_LOGIN_CHILD}`, childName, 'popup,width=480,height=640');
     if (!child) {
@@ -739,8 +941,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         signInError = blocked;
         renderSignedOut();
       } else {
-        problem = blocked;
-        renderNotice();
+        renewProblem = blocked;
+        renderBanner();
       }
       return;
     }
@@ -826,6 +1028,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     moving.yieldChild();
     signingIn = true;
     signInError = null;
+    renewProblem = null;
     const renew = stage === 'signed_in';
     const fixed = renew && account?.provider === 'email' ? emailAddress : null;
     const box = d.h('div', { class: 'home-email-step', attrs: { id: 'home-email' } });
@@ -836,6 +1039,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       isGesture,
       now: () => clock.now(),
       title: renew ? 'Sign in again' : 'Sign in with email',
+      // In the top bar, before the page's `h1`: the titles are no headings there (D888).
+      ...(renew ? { titleTag: 'p' as const } : {}),
       intro: renew ? 'Passport Home sends a new code to the email you signed in with.' : 'Use the email you sign in to your apps with. Journear sends a 6-digit code to it.',
       address: fixed,
       start: async (address) => {
@@ -982,11 +1187,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     emailAddress = who.provider === 'email' ? address : null;
     session = 'active';
     signInError = null;
+    renewProblem = null;
     scheduleSession(next);
     if (same) {
       problem = null;
       // The same account: only the header's address can differ (the same mailbox, typed in another case).
-      byId('home-who')?.replaceWith(whoText());
+      replaceWho();
       renderBanner();
       renderNotice();
       checkSession();
@@ -1032,8 +1238,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     account = null;
     emailAddress = null;
     session = 'none';
+    renewProblem = null;
     clearScreen();
     toasts.clear();
+    // The top bar's account and notice go with the sign-in.
+    bar.account.replaceChildren();
+    bar.account.className = 'home-top-account';
+    fill('home-banner');
     stage = 'signed_out';
     signInError = null;
     renderSignedOut();
@@ -1087,7 +1298,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   }
 
   /**
-   * Who is signed in, in the header: an email account by the address it signed in with (the page's own memory of it,
+   * Who is signed in, in the top bar: an email account by the address it signed in with (the page's own memory of it,
    * `emailAddress`), a Google account by its method only (Home's Google sign-in asks for `openid` alone: the page never
    * learns the address).
    */
@@ -1099,64 +1310,101 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     return el;
   }
 
-  /** The signed-in page's frame: built once per sign-in, so a banner or a notice never rebuilds what the user is reading. */
-  function renderShell(): void {
-    d.show(
-      d.h(
-        'section',
-        { class: 'panel home' },
-        d.h(
-          'header',
-          { class: 'home-head' },
-          d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home),
-          d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), button('Sign out', signOut, { id: 'home-sign-out', sm: true })),
-        ),
-        d.h('div', { attrs: { id: 'home-banner', 'aria-live': 'polite' } }),
-        d.h('div', { attrs: { id: 'home-notice' } }),
-        d.h('div', { attrs: { id: 'home-content' } }),
-      ),
+  /** The most lines the who line has taken in this sign-in's bar: it keeps at least that many. */
+  let keptLines = 0;
+  /**
+   * Puts the who line in again (the sign-in ended, or the same account signed in again). Its line keeps at least the
+   * lines it took (D888): a masked address is shorter, and the top bar's height must not change under the page.
+   */
+  function replaceWho(): void {
+    const old = byId('home-who');
+    if (!old) return;
+    lastScrollY = view()?.scrollY ?? lastScrollY;
+    // The line's box (a flex item, so one box however many lines it wraps to) over its line height.
+    let lines = 0;
+    try {
+      const lineHeight = Number.parseFloat(win.document.defaultView?.getComputedStyle(old).lineHeight ?? '');
+      if (lineHeight > 0) lines = Math.round(old.getBoundingClientRect().height / lineHeight);
+    } catch {
+      lines = 0;
+    }
+    if (lines > 1) {
+      keptLines = Math.max(lines, keptLines);
+      for (let n = 2; n <= WHO_LINES_KEPT; n += 1) bar.account.classList.remove(`home-who-lines-${n}`);
+      bar.account.classList.add(`home-who-lines-${Math.min(keptLines, WHO_LINES_KEPT)}`);
+    }
+    old.replaceWith(whoText());
+  }
+
+  /**
+   * The top bar's account part: who is signed in and Sign out (D888). A plain part of the header: it holds a status line
+   * and a button, no navigation, so it is no `nav`.
+   */
+  function renderAccount(): void {
+    keptLines = 0;
+    bar.account.className = 'home-top-account';
+    bar.account.replaceChildren(
+      d.h('div', { class: 'home-account' }, d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), button('Sign out', signOut, { id: 'home-sign-out', sm: true }))),
     );
+  }
+
+  /**
+   * The signed-in page's frame: built once per sign-in, so a banner or a notice never rebuilds what the user is reading.
+   * Who is signed in, Sign out and the sign-in's notice are in the top bar, outside it (D888).
+   */
+  function renderShell(): void {
+    d.show(d.h('section', { class: 'panel home' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home), d.h('div', { attrs: { id: 'home-notice' } }), d.h('div', { attrs: { id: 'home-content' } })));
+    renderAccount();
     renderBanner();
     renderContent();
   }
 
   function renderBanner(): void {
     if (stage !== 'signed_in') return;
+    // Where the page was scrolled before the bar changes (a scroll event may not have come yet).
+    lastScrollY = view()?.scrollY ?? lastScrollY;
+    fill('home-banner', ...bannerParts());
+    layoutChanged();
+  }
+
+  /** What the bar's notice shows: a sign-in again that didn't finish, then the sign-in's own state. */
+  function bannerParts(): Child[] {
+    const failed = renewProblem
+      ? problemView(renewProblem, 'home-renew-problem', () => {
+          renewProblem = null;
+          renderBanner();
+        })
+      : null;
     if (signingIn && emailBox) {
       // Signing in again with email: the code screens, kept as they are while the banner is drawn again.
-      fill('home-banner', d.h('div', { class: 'home-banner home-banner-email jp-card' }, emailBox));
-      return;
+      return [d.h('div', { class: 'home-banner home-banner-email jp-card' }, emailBox)];
     }
     if (signingIn) {
-      fill('home-banner', alert(d, 'info', { tag: 'div', class: 'home-banner note' }, d.h('p', {}, 'Finish signing in with Google in the other window.'), button('Cancel', () => signInFailed(null), { id: 'home-cancel', sm: true })));
-      return;
+      return [alert(d, 'info', { tag: 'div', class: 'home-banner note' }, d.h('p', {}, 'Finish signing in with Google in the other window.'), button('Cancel', () => signInFailed(null), { id: 'home-cancel', sm: true }))];
     }
     // Sign in again with the method this account uses.
     const again = () => button('Sign in again', account?.provider === 'email' ? beginEmailSignIn : beginSignIn, { class: 'primary', id: 'home-sign-in-again', sm: true });
+    // The warning and the end keep the space of the longest of their sentences (ui.ts reservedLine), so the bar's
+    // height doesn't change when one becomes the other (D888).
+    const sessionLine = (text: string): HTMLElement => reservedLine(d, d.h('p', {}, text), 'home-banner-text', [ENDING_TEXT(2), ENDING_TEXT(1), ENDED_TEXT]).box;
     if (session === 'ending' && identity) {
       const minutes = Math.max(1, Math.ceil((identity.endsAtMs - clock.now()) / 60_000));
-      fill(
-        'home-banner',
-        alert(
-          d,
-          'warning',
-          { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ending' } },
-          d.h('p', {}, `Your sign-in to ${BRAND.home} ends in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. Everything on screen stays. To load anything new after that, sign in again.`),
-          again(),
-        ),
-      );
-    } else if (session === 'ended') {
-      fill(
-        'home-banner',
-        alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ended' } }, d.h('p', {}, `Your sign-in to ${BRAND.home} has ended. Everything on screen stays. To load anything new, sign in again.`), again()),
-      );
-    } else {
-      fill('home-banner');
+      return [failed, alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ending' } }, sessionLine(ENDING_TEXT(minutes)), again())];
     }
+    if (session === 'ended') {
+      return [failed, alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ended' } }, sessionLine(ENDED_TEXT), again())];
+    }
+    return [failed];
   }
 
+  /** The refusal the top of the page shows now: a change of it moves the page, so it starts the guard over (D888). */
+  let noticeShown: HomeProblem | null = null;
   function renderNotice(): void {
     if (stage !== 'signed_in') return;
+    if (noticeShown !== problem) {
+      noticeShown = problem;
+      layoutChanged();
+    }
     fill(
       'home-notice',
       problem
@@ -1212,6 +1460,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const open = openScope ? findScope(openScope) : null;
     if (open) fill('home-content', ...appPage(open));
     else fill('home-content', ...frontPage());
+    watchAbove();
   }
 
   function frontPage(): Child[] {
@@ -1226,14 +1475,18 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     });
     const others = listed.filter((s) => s.scopeId !== linked?.scopeId);
     return [
-      d.h('h2', { attrs: { id: 'home-mine-title' } }, 'Your apps'),
-      loading
-        ? d.h('p', { class: 'muted', attrs: { role: 'status', id: 'home-loading' } }, 'Loading your apps…')
-        : list === 'error'
-          ? d.h('div', { class: 'actions start' }, button('Try again', () => track(loadFirst()), { class: 'primary', id: 'home-reload' }))
-          : mine.length > 0
-            ? cards(mine)
-            : empty('home-empty', 'Nothing here yet', `No apps yet for this ${accountName()}. An app appears here once you have signed in to it with ${BRAND.company}.`),
+      d.h(
+        'section',
+        { attrs: { id: 'home-mine', 'aria-labelledby': 'home-mine-title' } },
+        d.h('h2', { attrs: { id: 'home-mine-title' } }, 'Your apps'),
+        loading
+          ? d.h('p', { class: 'muted', attrs: { role: 'status', id: 'home-loading' } }, 'Loading your apps…')
+          : list === 'error'
+            ? d.h('div', { class: 'actions start' }, button('Try again', () => track(loadFirst()), { class: 'primary', id: 'home-reload' }))
+            : mine.length > 0
+              ? cards(mine)
+              : empty('home-empty', 'Nothing here yet', `No apps yet for this ${accountName()}. An app appears here once you have signed in to it with ${BRAND.company}.`),
+      ),
       list === 'ready' && linked && !mine.some((s) => s.scopeId === linked?.scopeId)
         ? d.h(
             'section',
@@ -1303,7 +1556,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       () => {
         const c = clipboard();
         // A copy that worked is a toast (nothing to do about it); one that didn't stays on the page, under the
-        // addresses, because the user has to copy by hand.
+        // addresses, because the user has to copy by hand. Its line keeps its space (D888): nothing below it moves.
         const failed = (text: string) => {
           copied = text;
           fill('home-copied', text);
@@ -1313,7 +1566,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             fill('home-copied');
           }, COPIED_MS);
         };
-        if (!c) return failed(`This browser can’t copy for you. Select the ${what} and copy it yourself.`);
+        if (!c) return failed(COPY_FAILED.none(what));
         track(
           c.writeText(value).then(
             () => {
@@ -1322,7 +1575,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
               fill('home-copied');
               toasts.show({ tone: 'success', title: `Copied the ${what}.` });
             },
-            () => failed(`This browser didn’t allow the copy. Select the ${what} and copy it yourself.`),
+            () => failed(COPY_FAILED.refused(what)),
           ),
         );
       },
@@ -1369,30 +1622,59 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         ),
       );
     }
+    // What the copy line may say on this page: its space is that of the longest (D888).
+    const copyWhats = [...shown.map((a) => ADDRESS_NAME[a.chain]), ...(scope.supportId ? ['Support ID'] : [])];
+    const copyLine = reservedLine(
+      d,
+      d.h('p', { class: 'copy-status', attrs: { id: 'home-copied', role: 'status' } }, copied),
+      'home-copied-box',
+      copyWhats.flatMap((what) => [COPY_FAILED.none(what), COPY_FAILED.refused(what)]),
+    );
     return [
       button('Back to all apps', closeApp, { class: 'home-back', id: 'home-back', kind: 'ghost', sm: true }),
-      // The heading is Hana's own words, always. An app's name is the partner's: it is a labelled value in the box below
-      // ("App"), never the heading of a page on Hana's origin.
-      d.h('h2', { attrs: { id: 'home-app-title', tabindex: '-1' } }, 'App details'),
-      d.h('h3', { attrs: { id: 'home-app-label' } }, scope.apps.length > 1 ? 'Apps that share one wallet' : 'App'),
-      scope.apps.length > 0 ? d.h('div', { class: 'home-card-apps home-app-all', attrs: { 'aria-labelledby': 'home-app-label', role: 'group' } }, ...scope.apps.map((a) => appLine(a, 5))) : d.h('p', { class: 'muted' }, scopeTitle(scope)),
-      d.h('h3', {}, cover.question),
-      d.h('p', { attrs: { id: 'home-coverage' } }, badge(cover.badge, cover.tone), ' ', busy === 'check' ? 'Checking…' : cover.detail),
-      scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
-      d.h('h3', {}, 'Your addresses'),
-      addressRows.length > 0
-        ? d.h('div', { class: 'home-addresses' }, fromWallet.length > 0 ? d.h('p', { class: 'muted', attrs: { id: 'home-opened-note' } }, 'From the wallet you opened on this page. Journear had no address on record for you here.') : null, ...addressRows)
-        : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Journear has no address on record for you in this app yet.' : `Journear has no wallet on record for this ${accountName()} in this app.`),
-      scope.supportId
-        ? d.h(
+      d.h(
+        'section',
+        { class: 'home-app-details', attrs: { 'aria-labelledby': 'home-app-title' } },
+        // The heading is Hana's own words, always. An app's name is the partner's: it is a labelled value in the box
+        // below ("App"), never the heading of a page on Hana's origin.
+        d.h('h2', { attrs: { id: 'home-app-title', tabindex: '-1' } }, 'App details'),
+        d.h('h3', { attrs: { id: 'home-app-label' } }, scope.apps.length > 1 ? 'Apps that share one wallet' : 'App'),
+        scope.apps.length > 0 ? d.h('div', { class: 'home-card-apps home-app-all', attrs: { 'aria-labelledby': 'home-app-label', role: 'group' } }, ...scope.apps.map((a) => appLine(a, 5))) : d.h('p', { class: 'muted' }, scopeTitle(scope)),
+        d.h('h3', {}, cover.question),
+        d.h('p', { attrs: { id: 'home-coverage' } }, badge(cover.badge, cover.tone), ' ', busy === 'check' ? 'Checking…' : cover.detail),
+        scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
+        // The addresses and the Support ID: side by side where there is room, one above the other on a phone.
+        d.h(
+          'div',
+          { class: 'home-app-split' },
+          d.h(
             'div',
-            { class: 'home-support' },
-            d.h('h3', {}, 'Support ID'),
-            d.h('p', {}, d.h('span', { class: 'mono', attrs: { id: 'home-support-id' } }, scope.supportId), ' ', copyButton('Support ID', scope.supportId, 'home-copy-support')),
-            d.h('p', { class: 'muted' }, 'Give this to the app’s support team if you need help. It doesn’t reveal your email or your Google account.'),
-          )
-        : null,
-      d.h('p', { class: 'copy-status', attrs: { id: 'home-copied', role: 'status' } }, copied),
+            { class: 'home-app-addresses' },
+            d.h('h3', {}, 'Your addresses'),
+            addressRows.length > 0
+              ? d.h(
+                  'div',
+                  { class: 'home-addresses' },
+                  fromWallet.length > 0 ? d.h('p', { class: 'muted', attrs: { id: 'home-opened-note' } }, 'From the wallet you opened on this page. Journear had no address on record for you here.') : null,
+                  ...addressRows,
+                  // The copy line, at the card's foot (its space kept, so nothing anywhere moves when it speaks).
+                  copyLine.box,
+                )
+              : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Journear has no address on record for you in this app yet.' : `Journear has no wallet on record for this ${accountName()} in this app.`),
+          ),
+          scope.supportId
+            ? d.h(
+                'div',
+                { class: 'home-support' },
+                d.h('h3', {}, 'Support ID'),
+                d.h('p', {}, d.h('span', { class: 'mono', attrs: { id: 'home-support-id' } }, scope.supportId), ' ', copyButton('Support ID', scope.supportId, 'home-copy-support')),
+                d.h('p', { class: 'muted' }, 'Give this to the app’s support team if you need help. It doesn’t reveal your email or your Google account.'),
+                // With no addresses, the copy line is the Support ID's.
+                addressRows.length === 0 ? copyLine.box : null,
+              )
+            : null,
+        ),
+      ),
       // Where the per-app tools go: the devices signed in to it, the ways to sign in to its wallet, the name it gets, and
       // moving the wallet out (last, never featured).
       d.h('div', { attrs: { id: 'home-app-extras' } }, devices.appView(scope), signIns.appView(scope), profile.appView(scope), moving.view(scope, fromLink)),
@@ -1454,7 +1736,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       return openScope;
     },
     get errorCode() {
-      return (stage === 'signed_in' ? problem : signInError)?.code ?? null;
+      return (stage === 'signed_in' ? (problem ?? renewProblem) : signInError)?.code ?? null;
     },
     get childName() {
       return childName;

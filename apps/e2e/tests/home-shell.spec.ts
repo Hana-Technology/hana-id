@@ -84,7 +84,7 @@ async function arm(page: Page, selector: string): Promise<void> {
 /** Nothing covers the heading, Back and (scrolled to it) Continue; a button that Tab brings into view isn't covered. */
 async function nothingCovered(home: Page, label: string, browserName: string): Promise<void> {
   await home.evaluate(() => window.scrollTo(0, 0));
-  for (const sel of ['#home-title', '#home-back']) expect(await uncovered(home, sel), `${label}: ${sel}`).toMatchObject({ inView: true, hit: true });
+  for (const sel of ['#home-app-title', '#home-back']) expect(await uncovered(home, sel), `${label}: ${sel}`).toMatchObject({ inView: true, hit: true });
   await centre(home, '#home-export-continue');
   expect(await uncovered(home, '#home-export-continue'), `${label}: Continue`).toMatchObject({ inView: true, hit: true });
   // With the page scrolled to its end, Tab moves focus onto the first address's Copy, far above: the browser scrolls it
@@ -120,7 +120,7 @@ for (const size of SIZES) {
     await home.setViewportSize({ width: size.width, height: size.height });
     await home.goto(`${AUTH_ORIGIN}/home`);
     await signIn(home);
-    await home.getByRole('button', { name: 'View Sodax', exact: true }).click();
+    await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
     await home.locator('#home-export-open').click();
     const childP = home.waitForEvent('popup');
     await home.locator('#home-export-start').click();
@@ -305,12 +305,15 @@ for (const size of [
     // The end, by the API's 401 on a search (the front page's Search button in view): the address masked, the who line
     // keeps its height, what is in view stays put.
     api.refuse = true;
-    await home.getByLabel('App name').fill('Sodax');
+    await home.getByLabel('Find an app by name').fill('Sodax');
     const search = '#home-search-go';
     await centre(home, search);
     const searchTop = (await box(home, search)).top;
+    home.on('console', (m) => { if (m.text().startsWith('DBG')) console.log(m.text()); });
+    console.log('DBG click');
     await home.locator(search).click();
     await expect(home.locator('#home-ended')).toBeVisible();
+    await home.waitForTimeout(300);
     await expect(home.locator('#home-who')).toContainText('•••@mail-e2e.example.com');
     m.whoEnded = (await who()).height;
     m.barEnded = (await bar()).height;
@@ -319,15 +322,15 @@ for (const size of [
     expect(Math.abs((await box(home, search)).top - searchTop), 'Search stays where it was in the window').toBeLessThanOrEqual(1);
     expect(await uncovered(home, search)).toMatchObject({ inView: true, hit: true });
     api.refuse = false;
-    await home.getByRole('button', { name: 'View Sodax', exact: true }).click();
+    await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
     await home.evaluate(() => window.scrollTo(0, 0));
-    for (const sel of ['#home-title', '#home-back']) expect(await uncovered(home, sel), sel).toMatchObject({ inView: true, hit: true });
+    for (const sel of ['#home-app-title', '#home-back']) expect(await uncovered(home, sel), sel).toMatchObject({ inView: true, hit: true });
 
     // Signing in again by code, in the bar: its screens are usable at every size; a toast stays in the window.
     await home.locator('#home-sign-in-again').click();
     await expect(home.locator('#home-email-send')).toBeVisible();
-    // Its title is no heading: the page's h1 is the first heading.
-    expect(await home.evaluate(() => document.querySelector('h1, h2, h3, h4')?.id)).toBe('home-title');
+    // Its title is no heading: the view's h1 (D893: "Wallet details") is the first heading.
+    expect(await home.evaluate(() => document.querySelector('h1, h2, h3, h4')?.id)).toBe('home-app-title');
     await reachable(home, '#home-email-send', 'Send code');
     sent = (await mails(to)).length;
     await home.locator('#home-email-send').click();
@@ -386,7 +389,10 @@ test('one header, no nav, and a skip link that moves focus into the page without
   await expect(page.getByRole('navigation')).toHaveCount(0);
   const account = page.locator('#home-account');
   await expect(account).toContainText('Signed in with Google');
-  await expect(account.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  // D893: named apart from "Sign out this device": its words stay "Sign out", its name and tooltip say what it ends.
+  await expect(account.getByRole('button', { name: 'Sign out of Passport Home', exact: true })).toBeVisible();
+  await expect(account.locator('#home-sign-out')).toHaveText('Sign out');
+  await expect(account.locator('#home-sign-out')).toHaveAttribute('title', 'Sign out of Passport Home');
   expect(await account.evaluate((el) => el.closest('header') !== null && el.closest('#app') === null)).toBe(true);
   expect(page.url()).toBe(`${AUTH_ORIGIN}/home`);
 });

@@ -71,15 +71,57 @@ export function crossOriginWindow(): RemoteWindow {
 
 type Listener = (e: Event) => void;
 
+/**
+ * The page's session history as a browser keeps it: entries with their state, the one in view, and `popstate` (a
+ * microtask later, as a browser queues it) when the user or the page moves between them. Going back before the first
+ * entry leaves the page (`left` counts it). D893: Passport Home's Back and Forward.
+ */
+export class FakeHistory {
+  readonly entries: { state: unknown }[] = [{ state: null }];
+  index = 0;
+  /** How many times Back went past the first entry: the browser left the page. */
+  left = 0;
+  scrollRestoration = 'auto';
+  constructor(private readonly win: FakeWindow) {}
+  get state(): unknown {
+    return this.entries[this.index]?.state ?? null;
+  }
+  readonly pushState = vi.fn((data: unknown, _unused: string, url?: string | null) => {
+    if (url !== undefined && url !== null) this.win.replaced.push(url);
+    this.entries.splice(this.index + 1);
+    this.entries.push({ state: structuredClone(data) });
+    this.index += 1;
+  });
+  readonly replaceState = vi.fn((data: unknown, _unused: string, url?: string | null) => {
+    this.win.replaced.push(url ?? '');
+    this.win.location.hash = '';
+    const entry = this.entries[this.index];
+    if (entry) entry.state = structuredClone(data ?? null);
+  });
+  readonly go = vi.fn((delta: number) => {
+    const to = this.index + delta;
+    if (to < 0) {
+      this.left += 1;
+      return;
+    }
+    if (to >= this.entries.length || delta === 0) return;
+    this.index = to;
+    const state = this.state;
+    queueMicrotask(() => this.win.dispatch('popstate', { state }));
+  });
+  /** The browser's Back and Forward buttons. */
+  back(): void {
+    this.go(-1);
+  }
+  forward(): void {
+    this.go(1);
+  }
+}
+
 export class FakeWindow implements PageWindow {
   readonly document: Document = document;
   readonly location: { search: string; hash: string; pathname: string; assigned: string[]; assign(url: string): void };
-  readonly history = {
-    replaceState: vi.fn((_data: unknown, _unused: string, url?: string | null) => {
-      this.replaced.push(url ?? '');
-      this.location.hash = '';
-    }),
-  };
+  readonly history: FakeHistory = new FakeHistory(this);
   readonly replaced: string[] = [];
   readonly sessionStorage: Storage = window.sessionStorage;
   opener: Window | null = null;

@@ -287,7 +287,8 @@ describe('the front page', () => {
     h.mountFront();
     expect(h.calls).toEqual([]);
     const root = document.getElementById('home-profile')!;
-    expect([...root.children].map((c) => c.tagName)).toEqual(['H2', 'P', 'DIV']);
+    // D893: the section is its own view, so its heading is the view's h1.
+    expect([...root.children].map((c) => c.tagName)).toEqual(['H1', 'P', 'DIV']);
     expect(text('home-profile-title')).toBe(HOME_NAME_TITLE);
     expect(root.querySelector('p')?.textContent).toBe(HOME_NAME_TEXT.frontAbout);
     expect(HOME_NAME_TEXT.frontAbout).toContain('no app gets it until you turn on sharing for that app.');
@@ -417,6 +418,33 @@ describe('the front page', () => {
     expect(document.getElementById('home-name-remove-confirm-go')?.closest('#home-name-remove-confirm')).not.toBeNull();
   });
 
+  it('D893: opening the view reads once, only while closed and signed in; leaving it closes the removal’s confirmation', async () => {
+    const h = await start();
+    h.mountFront();
+    h.answer = () => json(200, profile({ shares: [share('app_sodax1', 'Sodax')] }));
+    h.section.openFront();
+    h.section.openFront();
+    await h.idle();
+    expect(h.calls).toHaveLength(1);
+    expect(h.section.front).toBe('ready');
+    h.section.openFront();
+    await h.idle();
+    expect(h.calls).toHaveLength(1);
+    h.click('home-name-remove');
+    expect(h.section.confirming).toBe(true);
+    h.section.leaveFront();
+    expect(h.section.confirming).toBe(false);
+    expect(document.getElementById('home-name-remove-confirm')).toBeNull();
+    expect(h.section.front).toBe('ready');
+    // Signed out of Passport Home: opening sends nothing, and the view keeps its button.
+    h.section.reset();
+    h.identity = null;
+    h.section.openFront();
+    await h.idle();
+    expect(h.calls).toHaveLength(1);
+    expect(document.getElementById('home-profile-show')).not.toBeNull();
+  });
+
   it('nothing to save sends nothing: both empty with no name, or the same name again', async () => {
     const h = await front(profile({ name: null }));
     h.submit();
@@ -505,7 +533,7 @@ describe('sharing per app', () => {
     h.mountApp();
     expect(h.calls).toEqual([]);
     const root = document.getElementById('home-app-profile')!;
-    expect([...root.children].map((c) => c.tagName)).toEqual(['H3', 'P', 'DIV']);
+    expect([...root.children].map((c) => c.tagName)).toEqual(['H2', 'P', 'DIV']);
     expect(text('home-app-profile-title')).toBe(HOME_NAME_TITLE);
     h.answer = () => json(200, profile({ app: { appId: 'app_sodax1', shared: false } }));
     h.click('home-app-profile-show');

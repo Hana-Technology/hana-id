@@ -43,12 +43,13 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
   expect(google.requests.at(-1)).toMatchObject({ ok: true });
 
   await expect(home.getByText('Signed in with Google')).toBeVisible();
-  const card = home.locator(`.home-card[data-scope="${scopeId}"]`);
+  const card = home.locator(`.home-row[data-scope="${scopeId}"]`);
   await expect(card).toContainText(name);
-  await expect(card.locator('.home-card-foot .badge')).toHaveText('Safe if the app closes');
-  // It is one of the user's own: listed under "Your apps", before the search.
-  expect(await card.evaluate((el) => el.closest('ul')?.previousElementSibling?.textContent)).toBe('Your apps');
-  await card.getByRole('button', { name: `View ${name}` }).click();
+  await expect(card.locator('> .badge')).toHaveText('Safe if the app closes');
+  // It is one of the user's own: listed under "Your wallets" (D893), before "Your account" and "Other apps".
+  expect(await card.evaluate((el) => el.closest('section')?.id)).toBe('home-mine');
+  await card.click();
+  await expect(home.getByRole('heading', { level: 1, name: 'Wallet details' })).toBeFocused();
   await expect(home.locator('#home-address-stellar')).toHaveText(addresses.stellar);
   await expect(home.locator('#home-address-evm')).toHaveText(addresses.evm);
   await expect(home.locator('#home-support-id')).toHaveText(`HANA-${user!.supportCode.slice(0, 4)}-${user!.supportCode.slice(4)}`);
@@ -57,7 +58,7 @@ test('lists the app the user signed in to, with its addresses and Support ID, fr
   expect(await home.evaluate(() => ({ session: sessionStorage.length, local: localStorage.length, url: location.href }))).toEqual({ session: 0, local: 0, url: `${AUTH_ORIGIN}/home` });
   await home.reload();
   await expect(home.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
-  await expect(home.locator('.home-card')).toHaveCount(0);
+  await expect(home.locator('.home-row')).toHaveCount(0);
 });
 
 test('the Home sign-in child stops when Hana Home didn’t open it', async ({ page }) => {
@@ -120,57 +121,63 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   await shots(page, '02-signing-in', browserName);
   await chooseAccount(child);
 
-  // The list: the user's own apps first, then the others, each with its badge.
-  await expect(page.getByRole('heading', { name: 'Your apps' })).toBeVisible();
-  await expect(page.locator('.home-card')).toHaveCount(6);
-  await expect(page.locator('.home-card .home-card-foot .badge')).toHaveText(['Safe if the app closes', 'Safe if the app closes', 'Needs the app', 'Can’t be opened here', 'Not checked yet', 'Safe if the app closes']);
+  // The list (D893): the user's wallets first, as rows, then "Your account", then the other apps, each with its badge.
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await expect(page).toHaveTitle('Your wallets – Passport Home');
+  await expect(page.locator('.home-row[data-scope]')).toHaveCount(6);
+  await expect(page.locator('.home-row[data-scope] > .badge')).toHaveText(['Safe if the app closes', 'Safe if the app closes', 'Needs the app', 'Can’t be opened here', 'Not checked yet', 'Safe if the app closes']);
   await shots(page, '03-app-list', browserName);
 
-  // An app's page.
-  await page.getByRole('button', { name: 'View Sodax', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'App details' })).toBeFocused();
-  await expect(page.getByRole('heading', { name: 'Apps that share one wallet' })).toBeVisible();
+  // A wallet's page: the row is one button, opened by the keyboard here.
+  await page.locator('.home-row[data-scope="s1"]').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { level: 1, name: 'Wallet details' })).toBeFocused();
+  await expect(page).toHaveTitle('Wallet details – Passport Home');
+  await expect(page.getByRole('heading', { name: 'Apps that use this wallet' })).toBeVisible();
   await expect(page.locator('#home-address-stellar')).toHaveText(G);
   await expect(page.getByRole('link', { name: 'View on StellarExpert (test network)' })).toHaveAttribute('href', `https://stellar.expert/explorer/testnet/account/${G}`);
   await shots(page, '04-app-page', browserName);
-  await page.getByRole('button', { name: 'Back to all apps' }).click();
+  await page.getByRole('button', { name: 'Your wallets' }).click();
+  // Back on the list, focus is on the row the user opened.
+  await expect(page.locator('.home-row[data-scope="s1"]')).toBeFocused();
 
-  // An app Hana can't open, and one it checks when the page opens.
-  await page.getByRole('button', { name: 'View Atlas Markets' }).click();
+  // An app Hana can't open (pressed with Space), and one it checks when the page opens (clicked).
+  await page.locator('.home-row[data-scope="s4"]').focus();
+  await page.keyboard.press('Space');
   // The app's name is a labelled value, never a heading.
-  await expect(page.getByRole('heading', { name: 'App details' })).toBeFocused();
+  await expect(page.getByRole('heading', { level: 1, name: 'App details' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Atlas Markets' })).toHaveCount(0);
   await expect(page.getByRole('group', { name: 'App' })).toContainText('Atlas Markets');
   await expect(page.locator('#home-coverage')).toContainText('the sign-in it used is gone');
   await shots(page, '05-app-not-available', browserName);
-  await page.getByRole('button', { name: 'Back to all apps' }).click();
-  await page.getByRole('button', { name: 'View Nova Earn' }).click();
+  await page.getByRole('button', { name: 'Your wallets' }).click();
+  await page.locator('.home-row[data-scope="s5"]').click();
   await expect(page.locator('#home-coverage .badge')).toHaveText('Safe if the app closes');
   expect(requests.at(-1)).toBe('?appId=app_nova01');
-  await page.getByRole('button', { name: 'Back to all apps' }).click();
+  await page.getByRole('button', { name: 'Your wallets' }).click();
 
   // Search (Enter works as the button does), and Show more.
-  await page.getByLabel('App name').fill('Orbit');
-  await page.getByLabel('App name').press('Enter');
+  await page.getByLabel('Find an app by name').fill('Orbit');
+  await page.getByLabel('Find an app by name').press('Enter');
   await expect(page.getByRole('heading', { name: 'Results for Orbit' })).toBeVisible();
-  await expect(page.locator('#home-results .home-card')).toHaveCount(1);
+  await expect(page.locator('#home-results .home-row')).toHaveCount(1);
   await shots(page, '06-search-results', browserName);
   await page.getByRole('button', { name: 'Clear' }).click();
   await page.getByRole('button', { name: 'Show more' }).click();
-  await expect(page.locator('.home-card')).toHaveCount(7);
+  await expect(page.locator('.home-row[data-scope]')).toHaveCount(7);
 
   // Two minutes before the end: the warning. The list is untouched and nothing is fetched.
   const sent = requests.length;
   await context.clock.fastForward(13 * 60_000 + 1000);
   await expect(page.locator('#home-ending')).toContainText('ends in about 2 minutes');
-  await expect(page.locator('.home-card')).toHaveCount(7);
+  await expect(page.locator('.home-row[data-scope]')).toHaveCount(7);
   await shots(page, '07-ending-soon', browserName);
 
   // The end: everything stays, and a click that needs the API sends nothing.
   await context.clock.fastForward(2 * 60_000);
   await expect(page.locator('#home-ended')).toContainText('has ended. Everything on screen stays.');
-  await expect(page.locator('.home-card')).toHaveCount(7);
-  await page.getByLabel('App name').fill('Kite');
+  await expect(page.locator('.home-row[data-scope]')).toHaveCount(7);
+  await page.getByLabel('Find an app by name').fill('Kite');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await context.clock.fastForward(60_000);
   expect(requests.length).toBe(sent);
@@ -179,8 +186,8 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   // Signing in again as the same account: the screen stays as it was and nothing is fetched by the page itself.
   await signIn(page, 'Sign in again');
   await expect(page.locator('#home-ended')).toHaveCount(0);
-  await expect(page.locator('.home-card')).toHaveCount(7);
-  await expect(page.getByLabel('App name')).toHaveValue('Kite');
+  await expect(page.locator('.home-row[data-scope]')).toHaveCount(7);
+  await expect(page.getByLabel('Find an app by name')).toHaveValue('Kite');
   expect(requests.length).toBe(sent);
 
   // A refusal while the list is on screen: the list stays, the problem is said once.
@@ -189,29 +196,31 @@ test('every screen: signed out, signing in, the list, an app, search, the sign-i
   await expect(page.getByRole('alert')).toContainText('Passport Home is not reachable right now.');
   await expect(page.getByRole('alert')).toContainText('Error code (for support): home_directory_unavailable');
   await expect(page.getByRole('alert')).toContainText('Request ID (for support): req_e2e');
-  await expect(page.locator('.home-card')).toHaveCount(7);
+  await expect(page.locator('.home-row[data-scope]')).toHaveCount(7);
   await shots(page, '09-error-with-list', browserName);
 
   // Sign out, then an account with no app, then one whose list can't be read.
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByRole('button', { name: 'Sign out of Passport Home' }).click();
   await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
   mode = 'empty';
   await signIn(page);
   await expect(page.locator('#home-empty')).toBeVisible();
   await shots(page, '10-empty-list', browserName);
 
-  await page.getByRole('button', { name: 'Sign out' }).click();
+  await page.getByRole('button', { name: 'Sign out of Passport Home' }).click();
   mode = 'error';
   await signIn(page);
+  // D893: the group says its list didn't load, with the refusal and Try again together.
+  await expect(page.locator('#home-list-failed')).toContainText('Your wallets didn’t load');
   await expect(page.getByRole('alert')).toContainText('Passport Home is not reachable right now.');
-  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect(page.locator('#home-list-failed').getByRole('button', { name: 'Try again' })).toBeVisible();
   await shots(page, '11-error-no-list', browserName);
   const before = requests.length;
   await context.clock.fastForward(5 * 60_000);
   expect(requests.length).toBe(before);
   mode = 'list';
   await page.getByRole('button', { name: 'Try again' }).click();
-  await expect(page.locator('.home-card')).toHaveCount(6);
+  await expect(page.locator('.home-row[data-scope]')).toHaveCount(6);
 });
 
 test('a link to an app that isn’t the user’s lands on their own list, with the app under Hana’s notice', async ({ page, context, browserName }) => {
@@ -227,8 +236,8 @@ test('a link to an app that isn’t the user’s lands on their own list, with t
   await signIn(page);
   await expect(page.locator('#home-linked')).toContainText('Journear has no wallet on record for this Google account in it.');
   expect(requests).toEqual(['', '?appId=app_phish1']);
-  await expect(page.getByRole('heading')).toHaveText(['Passport Home', 'Your apps', 'The app from your link', 'Devices and auto-approve', 'Your name', 'Find an app']);
-  await expect(page.locator('#home-linked .home-app-name strong')).toHaveText('Hana security notice: your wallet is locked, restore it at h…');
+  await expect(page.getByRole('heading')).toHaveText(['Your wallets', 'The app from your link', 'Your account', 'Other apps']);
+  await expect(page.locator('#home-linked .home-row-name')).toHaveText('Hana security notice: your wallet is locked, restore it at h…');
   await expect(page.getByText('hana-restore.example')).toHaveCount(0);
   await shots(page, '13-linked-app-not-yours', browserName);
 });
@@ -258,4 +267,98 @@ test('a cancelled Google sign-in leaves Hana Home signed out, with a way to try 
   await page.getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
   await shots(page, '12-signed-out-after-cancel', browserName);
+});
+
+// ---- D893: Back and Forward inside Home ----
+
+test('Back and Forward move between Home’s views at one address; Back from the list leaves Home (D893)', async ({ page, context }) => {
+  const requests: string[] = [];
+  await routeApps(context, (url) => {
+    requests.push(url.search);
+    return { status: 200, body: LIST };
+  });
+  // A page before Home, so that Back from the list has somewhere to go.
+  await page.goto(`${EVIL_ORIGIN}/`);
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  await expect(page.locator('.home-row[data-scope]')).toHaveCount(6);
+  const url = page.url();
+  const entries = await page.evaluate(() => history.length);
+  expect(await page.evaluate(() => history.scrollRestoration)).toBe('manual');
+
+  await page.locator('.home-row[data-scope="s1"]').click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Wallet details' })).toBeFocused();
+  // One entry, at the same address, holding only the page's opaque marker.
+  expect(page.url()).toBe(url);
+  expect(await page.evaluate(() => history.length)).toBe(entries + 1);
+  const state = await page.evaluate(() => history.state as unknown);
+  expect(state).toMatch(/^home:[A-Za-z0-9_-]{16}:1$/u);
+  for (const word of ['s1', 'Sodax', G, EVM, 'HANA-']) expect(String(state)).not.toContain(word);
+
+  const sent = requests.length;
+  await page.goBack();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await expect(page.locator('.home-row[data-scope="s1"]')).toBeFocused();
+  await expect(page).toHaveTitle('Your wallets – Passport Home');
+  expect(page.url()).toBe(url);
+  await page.goForward();
+  await expect(page.getByRole('heading', { level: 1, name: 'Wallet details' })).toBeFocused();
+  await expect(page.locator('#home-address-stellar')).toHaveText(G);
+  await page.goBack();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+
+  // "Your wallets" (the way back) returns to the list's own entry: Forward still reaches the view.
+  await page.locator('#home-open-devices').click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Devices and auto-approve' })).toBeFocused();
+  await expect(page).toHaveTitle('Devices and auto-approve – Passport Home');
+  await page.getByRole('button', { name: 'Your wallets' }).click();
+  await expect(page.locator('#home-open-devices')).toBeFocused();
+  await expect.poll(() => page.evaluate(() => history.state as unknown)).toBeNull();
+  await page.goForward();
+  await expect(page.getByRole('heading', { level: 1, name: 'Devices and auto-approve' })).toBeFocused();
+  await page.goBack();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  // Back and Forward never read the list again.
+  expect(requests.length).toBe(sent);
+  expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 });
+
+  // Back from the list leaves Home, as before.
+  await page.goBack();
+  await expect(page).toHaveURL(`${EVIL_ORIGIN}/`);
+});
+
+test('after the sign-in ends Back and Forward show what is on screen and read nothing; after Sign out they show nothing of the account (D893)', async ({ page, context }) => {
+  const requests: string[] = [];
+  await routeApps(context, (url) => {
+    requests.push(url.search);
+    return { status: 200, body: LIST };
+  });
+  await context.clock.install();
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  await page.locator('.home-row[data-scope="s1"]').click();
+  await expect(page.locator('#home-address-stellar')).toHaveText(G);
+  await context.clock.fastForward(15 * 60_000 + 1000);
+  await expect(page.locator('#home-ended')).toBeVisible();
+  const sent = requests.length;
+  await page.goBack();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole('heading', { level: 1, name: 'Wallet details' })).toBeVisible();
+  await expect(page.locator('#home-ended')).toBeVisible();
+  expect(requests.length).toBe(sent);
+
+  // Sign out: the page goes back to its first entry; Forward and Back then show the signed-out page only.
+  await page.getByRole('button', { name: 'Sign out of Passport Home' }).click();
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => history.state as unknown)).toBeNull();
+  await page.goForward();
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+  await expect(page.locator('.home-row')).toHaveCount(0);
+  await expect(page.locator('#home-address-stellar')).toHaveCount(0);
+  expect(await page.content()).not.toContain(G);
+  await page.goBack();
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+  expect(await page.content()).not.toContain(G);
+  expect(requests.length).toBe(sent);
 });

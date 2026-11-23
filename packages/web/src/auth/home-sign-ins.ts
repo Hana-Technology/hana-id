@@ -192,7 +192,8 @@ export const SIGN_IN_TEXT = Object.freeze({
   cancelAtSignIn: 'Don’t recognise it? Sign in to this app the way you signed in here, and choose “Cancel this link”. If you’re not sure, cancel it.',
   /** D898 option A: the same advice where Home can open the app for the person. */
   cancelOpenLead: 'Don’t recognise it? If you’re not sure, cancel it.',
-  cancelOpenButton: (app: string) => `Open ${app} to cancel it`,
+  cancelOpenButtonStart: 'Open ',
+  cancelOpenButtonEnd: ' to cancel it',
   cancelOpenNewTab: ' (opens in a new tab)',
   cancelOpenWhere: 'Opens ',
   cancelOpenWhereEnd: ' in a new tab.',
@@ -490,7 +491,7 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
         class: `${BTN.secondary} jp-btn-sm home-sign-in-open`,
         attrs: { id: `home-sign-in-open-${i}`, href: target.origin, target: '_blank', rel: 'noopener noreferrer', 'aria-describedby': whereId },
       },
-      SIGN_IN_TEXT.cancelOpenButton(target.app.name),
+      `${SIGN_IN_TEXT.cancelOpenButtonStart}${target.app.name}${SIGN_IN_TEXT.cancelOpenButtonEnd}`,
       d.h('span', { class: 'sr-only' }, SIGN_IN_TEXT.cancelOpenNewTab),
       icon(d, 'ext'),
     );

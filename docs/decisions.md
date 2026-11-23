@@ -19226,9 +19226,13 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 - **Not verified**: real iOS Safari and Android browsers, real screen readers (names and descriptions checked in the
   browsers' accessibility trees), browser text-only zoom, landscape phones.
 
-### D898. Cancelling a waiting sign-in from Passport Home: the design, and why it needs the founder first
-- Date 2026-11-23 · Status: **design only, awaiting the founder's choice** (nothing built, nothing pushed). Branch
-  `feat/home-waiting-sign-in-actions` (from `next` e7520687). Follows the founder's "Cancel/Remove inside Home: yes,
+### D898. Cancelling a waiting sign-in from Passport Home: option A built (Home opens the app to cancel it); cancelling inside Home waits for the founder
+- Date 2026-11-23 · Status: **option A built** (the coordinator, 2026-11-23: "Build OPTION A now"), its details
+  **decided while building, to confirm**; options B and B+email **for the founder** (nothing of them built). Branch
+  `feat/home-waiting-sign-in-actions` (from `next`), not merged, not deployed. Built: `packages/web/src/auth/home-sign-ins.ts`
+  (`cancelTarget`, `isPlainHttpsOrigin`, `openToCancel`, `SIGN_IN_TEXT.cancelOpen*`), `css/home.css`; tests
+  `packages/web/test/auth/home-sign-ins.test.ts` ("D898 option A …"), e2e `apps/e2e/tests/home-sign-ins.spec.ts` ("D898
+  option A …", three browsers). No API, issuer, vault or contract change. Follows the founder's "Cancel/Remove inside Home: yes,
   later" (D888's open list, D895 and D897's "not in this step").
 - **How it works today** (read from the code and D259, D864, D874, D875, D881, D887):
   1. A *waiting* sign-in is a pending member (`Standing::Pending`, `links.rs`): an explicit link (`linkAccount`) or an
@@ -19278,22 +19282,39 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   3. *An email proof*: the issuer's `POST /v1/email/home/start` mints only `home` and `home_session`; `start` (which has
      `link_change`) is app-gated. A new Home kind `link-change` (a code to the signed-in address, a `link_change` token
      for `email:{scope}` while the scope holds its email client) is an **issuer change** with its own limits and review.
-- **Options for the founder**:
-  - **A. Guidance only, no server change** (small, web only): the waiting row keeps its words and gains, under "Don’t
+- **Options**:
+  - **A. Guidance only, no server change** (small, web only; **built**, below): the waiting row keeps its words and gains, under "Don’t
     recognise it?", a small outlined **Open {App} to cancel it** that opens the app's first web address in a new tab
     (where the sign-in window offers Cancel), and the steps in a sentence. No new authority, no new route, nothing to
     review beyond a link. It doesn't make cancelling one press from Home.
-  - **B. Cancel inside Home, Google on the shared client first**: items 1 and 2 above (a new API route, a new child mode),
+  - **B. Cancel inside Home, Google on the shared client first** (**for the founder**): items 1 and 2 above (a new API route, a new child mode),
     Home's confirmation, result and failure screens in D881's words (below). Authority equal to the window's plus Home's
     session and the "same identity, active, member pending" checks (stricter). Covers wallets on the shared Google
     client; others keep today's pointer, and the row says which applies. Its own security review.
-  - **B+email**: B plus the issuer's `link-change` kind (item 3), so an email owner can cancel from Home too. A second
+  - **B+email** (**for the founder**): B plus the issuer's `link-change` kind (item 3), so an email owner can cancel from Home too. A second
     service changes; larger review.
   - **C. Both A and B**: A everywhere B can't reach.
 - **Recommendation**: **C, built in two changes**: A now (it helps every wallet today, with nothing new to trust), then B
   as its own server change with its security review; email (item 3) after B proves out. Reason: the waiting period
   exists for exactly this, and Home is where the notice mail sends people, but B is a new server check and only reaches
   shared-client wallets, so it should be decided and reviewed on its own.
+- **Option A as built**: on a waiting sign-in's amber box ("Don’t recognise it?" row, `cancel_at_sign_in`: the viewer is
+  an active sign-in of the wallet), where Journear's record of the wallet's apps has one to open:
+  1. **Which address**: the first app in the listing's order that is active (not paused, not closed) and has a web
+     address on record that is a plain `https://host[:port]` exactly as the browser writes an origin (no user name or
+     password, no path, query or fragment, at most 512 characters); its first such address. Only Journear's record
+     (`GET /v1/home/apps`), never anything of the waiting sign-in. Anything else (`http:`, `javascript:`, `data:`,
+     `https://a@b`, a path) gives no link, and the box keeps today's sentence.
+  2. **The box**: "Don’t recognise it? If you’re not sure, cancel it."; a small outlined link **Open {App} to cancel it**
+     (its name adds "(opens in a new tab)"; an external-link icon; D887's look) that opens the address in a new tab
+     (`target="_blank"`, `rel="noopener noreferrer"`, the address unchanged: the new tab has no opener and no referrer);
+     "Opens {address} in a new tab." (the link's description; the address as text, wrapping at its own break points);
+     "There, sign in the way you signed in here, and choose “Cancel this link”."; for a wallet of several apps,
+     "Cancelling it there stops it for every app that uses this wallet.". The amber box, the summary line ("1 more
+     starts opening it soon. Check it below.") and the section's "sign out of it first" line stay.
+  3. **Without a link** (no active app with such an address): the box says what it said before, "Don’t recognise it?
+     Sign in to this app the way you signed in here, and choose “Cancel this link”. If you’re not sure, cancel it."
+  4. Nothing else in the section changes; the click guards and the phone's chip are untouched.
 - **Words, if B is built** (D881's family, for Home): the row's action, after "Don’t recognise it?", a small outlined
   **Cancel this link** (named "Cancel this link for the {email address | Google account}"); the confirmation "Cancel
   this link? The {email address | Google account} will never open this wallet. You can't undo this: it can only be
@@ -19302,5 +19323,8 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   changed" (not this sign-in, the sign-ins changed, refused before anything was sent), "It may not have been cancelled"
   (can't tell: "Show again" to check), each with **Close**; the line and the row update without a reload.
 - Not changed by any option: the delay, what a waiting sign-in can do, derivation paths or keys. **Address impact: none.**
-- **To confirm**: the option; for B, the words above, the "same identity as Home's" rule (stricter than the window, where
+- **To confirm**: for A, (1) the sentences above; (2) the first active app with a plain https address (a paused or closed
+  app is skipped; an app that is first in the listing but has no address gives way to the next); (3) the address as
+  text under the link; (4) no link for `http:` addresses (the local stack's own apps show today's sentence). **For the
+  founder**: B or B+email; for B, the words above, the "same identity as Home's" rule (stricter than the window, where
   any active method of the login may prove), and Google-only at first.

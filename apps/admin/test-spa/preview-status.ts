@@ -16,7 +16,13 @@
 //   relay-off      no NEAR relay in this env (Not measured, no issue)
 //   relay-stale    the NEAR relay's reading 40 minutes old (amber; the API reads it live, so only a test shows it)
 //   fees-working   gas sponsorship on Base Sepolia (D843): working, two transactions waiting
-//   fees-paused-money  paused: the relayer's wallet is out of money (`relayer_cannot_send` · `insufficient_funds`)
+//   fees-paused-money  paused: the relayer's wallet is out of money (`relayer_cannot_send` · `insufficient_funds`), before
+//                  the refill: it restarts by itself once the wallet has enough (D890)
+//   fees-money-arrived  the same pause, the money there: "Restarting by itself"
+//   fees-money-held  the money there, but its second network server unreachable on two checks in a row: named, Resume
+//   fees-auto-restarted  working again: it restarted by itself after the refill, 4 s ago
+//   fees-money-limit  paused for money, but it already restarted by itself 3 times today: a person presses Resume
+//   fees-money-limit-refilled  the same, the money there: press Resume, don't send more
 //   fees-paused-money-leak  paused for money, then the relayer saw a sign of a leaked key (its `leakSeen` mark)
 //   fees-paused-key    paused: someone else used the relayer's key (`foreign_transactions`)
 //   fees-low       working, but the relayer's wallet under its low line
@@ -33,7 +39,7 @@ import type { EvmRelayChainView, EvmRelayDetail, EvmRelayRecordView, EvmRelaySta
 import { evmRelayActRoute, evmRelayDetailRoute } from '../src/evm-relay.ts';
 import type { RouteCtx } from '../src/routes.ts';
 
-export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale', 'fees-working', 'fees-paused-money', 'fees-paused-money-leak', 'fees-paused-key', 'fees-low', 'fees-no-endpoint'] as const;
+export const SCENARIOS = ['green', 'warnings', 'critical', 'mixed-build', 'watchdog-down', 'relay-low', 'relay-budget', 'relay-key-missing', 'relay-off', 'relay-stale', 'fees-working', 'fees-paused-money', 'fees-money-arrived', 'fees-money-held', 'fees-auto-restarted', 'fees-money-limit', 'fees-money-limit-refilled', 'fees-paused-money-leak', 'fees-paused-key', 'fees-low', 'fees-no-endpoint'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 const BUILD = '8a797fe1c2d3';
@@ -189,13 +195,25 @@ const MILLI = 10n ** 15n;
 const hashOf = (n: number, k = 'a'): string => `0x${k.repeat(56)}${String(n).padStart(8, '0')}`;
 const staffEntry = (seq: number, at: number, over: Partial<EvmRelayStaffEntry> = {}): EvmRelayStaffEntry => ({ seq, at, who: 'tze@hana.example', tool: 'resume', slot: null, note: 'Sent 0.1 test ETH from the faucet; balance now 0.11', done: true, refused: null, ...over });
 
-/** Paused for money, and (`-leak`) a sign of a leaked key seen since (the relayer's mark, D843 re-check M). */
-const isMoney = (s: string): boolean => s === 'fees-paused-money' || s === 'fees-paused-money-leak';
+/** Paused for money (before or after the refill, D890), and (`-leak`) a sign of a leaked key seen since (the relayer's mark, D843 re-check M). */
+const isMoney = (s: string): boolean => ['fees-paused-money', 'fees-money-arrived', 'fees-money-held', 'fees-money-limit', 'fees-money-limit-refilled', 'fees-paused-money-leak'].includes(s);
+/** The money there again (D890): 0.25 test ETH. */
+const refilled = (s: string): boolean => s === 'fees-money-arrived' || s === 'fees-money-held' || s === 'fees-money-limit-refilled';
+const AUTO_NOTE = 'Restarted by itself after a refill (D890). Trusted endpoint: balance 250000000000000000 wei (at least 53800000000000000 needed), count 41 (pending 44, next slot 44) after block 18402211, no code at the wallet. Second endpoint: count 41 (pending 44), balance 250000000000000000 wei, no code.';
+
+/** The relayer's automatic restart (D890) as each scenario has it. */
+function autoOf(now: number, s: Scenario | 'fees-resumed'): NonNullable<Extract<EvmRelayChainView['relayer'], { ok: true }>['autoRestart']> {
+  const limited = s === 'fees-money-limit' || s === 'fees-money-limit-refilled';
+  const recent = s === 'fees-auto-restarted' ? [now - 4_000] : limited ? [now - 70 * MIN, now - 3 * 60 * MIN, now - 5 * 60 * MIN] : [];
+  const pause = isMoney(s) ? { blocked: s === 'fees-paused-money-leak' ? 'leak_seen' : limited ? 'daily_limit' : null, restartWei: (538n * 10n ** 14n).toString(), resumeWei: (5n * 10n ** 13n).toString(), check: s === 'fees-money-held' ? { at: now - 20_000, blocked: 'second_endpoint_unavailable', balanceWei: (250n * MILLI).toString(), streak: 2 } : { at: now - 20_000, blocked: 'relayer_cannot_send', balanceWei: (2n * 10n ** 13n).toString(), streak: 30 } } : null;
+  return { limit: 3, today: s === 'fees-auto-restarted' ? 1 : limited ? 3 : 0, recent, pause };
+}
 
 export function evmView(now: number, s: Scenario | 'fees-resumed'): EvmRelayChainView {
   const paused = isMoney(s) || s === 'fees-paused-key';
-  const balance = isMoney(s) ? 2n * 10n ** 13n : s === 'fees-low' ? 31n * MILLI : 112n * MILLI;
-  const log = [staffEntry(3, now - 26 * 60 * MIN), staffEntry(2, now - 27 * 60 * MIN, { tool: 'cancel', slot: 38, note: 'Time limit long gone; slot 39 waiting behind it', done: false, refused: 'nonce_mined' }), staffEntry(1, now - 50 * 60 * MIN)];
+  const balance = refilled(s) ? 250n * MILLI : isMoney(s) ? 2n * 10n ** 13n : s === 'fees-low' ? 31n * MILLI : s === 'fees-auto-restarted' ? 249n * MILLI : 112n * MILLI;
+  const base = [staffEntry(3, now - 26 * 60 * MIN), staffEntry(2, now - 27 * 60 * MIN, { tool: 'cancel', slot: 38, note: 'Time limit long gone; slot 39 waiting behind it', done: false, refused: 'nonce_mined' }), staffEntry(1, now - 50 * 60 * MIN)];
+  const log = s === 'fees-auto-restarted' ? [staffEntry(4, now - 4_000, { who: 'relayer (automatic)', note: AUTO_NOTE, auto: true }), ...base] : base;
   return {
     chainId: 84532,
     readAt: now,
@@ -211,14 +229,15 @@ export function evmView(now: number, s: Scenario | 'fees-resumed'): EvmRelayChai
       signerAddress: EVM_RELAYER,
       halted: isMoney(s) ? { reason: 'relayer_cannot_send', since: now - 12 * MIN, slot: 42, code: 'insufficient_funds', leakSeen: s === 'fees-paused-money-leak' } : s === 'fees-paused-key' ? { reason: 'foreign_transactions', since: now - 4 * MIN, slot: null, code: null, leakSeen: true } : null,
       waiting: s === 'fees-paused-key' ? 0 : 2,
-      awaitingConfirmation: s === 'fees-working' || s === 'fees-resumed' ? 1 : 0,
+      awaitingConfirmation: s === 'fees-working' || s === 'fees-resumed' || s === 'fees-auto-restarted' ? 1 : 0,
       oldestWaitingMs: s === 'fees-paused-key' ? null : paused ? 13 * MIN : 40_000,
       oldestNotTakenMs: isMoney(s) ? 13 * MIN : null,
       nextSlot: 44,
       spentTodayWei: (isMoney(s) ? 7n * MILLI : 3n * MILLI).toString(),
       unconfirmedRefusals: null,
-      lastStaffSeq: 3,
+      lastStaffSeq: log[0]!.seq,
       staffLog: log,
+      autoRestart: autoOf(now, s),
     },
     budget: { ok: true, spentWei: (isMoney(s) ? 7n * MILLI : 3n * MILLI).toString() },
     balance: { ok: true, wei: balance.toString() },

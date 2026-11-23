@@ -25,7 +25,7 @@ export interface LaneState {
   halted: null | { reason: string; nonce?: number; code?: string; leakSeen?: boolean; since: number };
   waiting: number;
   records: { slot: number; kind: string; onChain: boolean; taken: boolean; deadlineMs: number; copies: string[] }[];
-  staffLog: { seq: number; tool: string; done: boolean; refused: string | null; who: string; note: string }[];
+  staffLog: { seq: number; tool: string; done: boolean; refused: string | null; who: string; note: string; auto: boolean }[];
   chain: { latest: number; pending: number; pooled: { nonce: number; foreign: boolean }[]; hold: boolean; refuse: boolean; balanceWei: string };
   clockOffsetMs: number;
   /** The lane's "now" (its clock). */
@@ -46,8 +46,8 @@ export const scenario = (lane: string, name: string): Promise<LaneState> => cont
 export const laneState = (lane: string): Promise<LaneState> => control(lane, 'state');
 /** Time passes for the relayer: its alarm runs (then the API cron's relay check). */
 export const laneRun = (lane: string, times = 1): Promise<LaneState> => control(lane, 'run', { times });
-/** The lane's clock moves forward (the status page's 30 s cache too). */
-export const laneClock = (lane: string, advanceMs: number): Promise<LaneState> => control(lane, 'clock', { advanceMs });
+/** The lane's clock moves forward (the status page's 30 s cache emptied, unless `keepStatusCache`). */
+export const laneClock = (lane: string, advanceMs: number, o: { keepStatusCache?: boolean } = {}): Promise<LaneState> => control(lane, 'clock', { advanceMs, ...(o.keepStatusCache ? { keepStatusCache: true } : {}) });
 
 /** Signs in through the Access stand-in (as Cloudflare Access would, before the page) and opens `to`. */
 export async function signIn(page: Page, lane: string, as: 'staff' | 'outsider' = 'staff', to = '/'): Promise<void> {

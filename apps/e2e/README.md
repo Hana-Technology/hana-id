@@ -378,20 +378,27 @@ the admin's own check, and that no admin source names `__e2e`, the stand-in or a
 
 **Controls** (`/__e2e/lane/*` on a lane's origin, no CORS, refused with an `Origin`, served by the stand-in and never by
 the Worker): `GET state` (the relayer's slots, pause and staff log, the chain's counts, the clock), `POST scenario
-{name}` (`ready`, `working`, `low-money`, `waiting`, `past-deadline`, `out-of-money`, `refill`, `key-used-elsewhere`,
-`foreign-transactions`, `gap`: each runs the relayer's own alarm until the relayer itself is in that state), `POST run
-{times?}` (time passes for the relayer: its alarm, then the API cron's relay check, which writes the security events),
-`POST clock {advanceMs}`, and `POST acquire` / `release {lease}`: each test holds its lane (`tests/admin-fixtures.ts`),
+{name}` (`ready`, `working`, `low-money`, `waiting`, `past-deadline`, `out-of-money`, `money-arrives` (the wallet
+refilled, nothing run yet), `refill` (refilled, the lane's clock past the pause's first 60 s, two runs: it restarts
+by itself, D890, unless it can't), `out-of-money-again` (after a restart by itself, the next check-in finds the wallet
+empty: that pause waits for a person), `key-used-elsewhere`, `foreign-transactions`, `gap`: each runs the relayer's own
+alarm until the relayer itself is in that state; the lane's EVM settings have a second endpoint, `rpcFallback`, on the
+same chain, which the restart asks), `POST run {times?}` (time passes for the relayer: its alarm, then the API cron's
+relay check, which writes the security events), `POST clock {advanceMs, keepStatusCache?}` (the status page's 30 s
+reading kept with `keepStatusCache`), and `POST acquire` / `release {lease}`: each test holds its lane (`tests/admin-fixtures.ts`),
 so two runs on one stack or `--repeat-each` never share a relayer at once. In the suite's lanes the relayer's alarm runs
 only by a control; in the hand-test lane also by itself: 250 ms after a change from outside the alarm (a send, a staff
 tool), then as deployed (the relayer's own 15 s, or its backoff up to 5 minutes), never in a loop (D882; while paused
-with a transaction no node took, that is every 15 s).
+with a transaction no node took, that is every 15 s; while paused for money, D890, every 15 s for 10 minutes, then
+every 60 s).
 
 **What the spec covers**, in every browser: sign-in and the refusals (no token, a forged one, a client's own header,
 someone not on the list); every page in the sidebar opens; System status's tile **Gas sponsorship (local test network)**
 in each state, and its link to the page `/gas-sponsorship/31337` (staff's name for the feature since D879; users still
 read "free network fees"; `staff-demo` prints that address); a waiting transaction
-and Cancel only past its time limit; out of money, refill, Resume; someone else using the relayer's key three ways
+and Cancel only past its time limit; out of money, the money arriving ("Restarting by itself"), refilled and restarted
+by itself (no Resume), out again at once, refilled, Resume needed and done; the tile's own Check again past the 30 s
+reading; someone else using the relayer's key three ways
 (Close, Set the next slot number, Fill a gap, each confirmed, and Resume only with the engineer's word, refused by the
 page and by the Worker without it); a stale page and a second tab; the audit log's rows with who, when and the note;
 the sponsorship's events with their playbooks on Feed and notices and Security & monitoring; the ledger's pages; the

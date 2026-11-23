@@ -246,7 +246,7 @@ test.describe('plain-wording screens', () => {
         await popup.setViewportSize(SIZES.phone);
         await popup.screenshot({ path: `${SHOTS}/msg-${name}-${tag}-phone.png`, fullPage: true, animations: 'disabled' });
       };
-      let popup = await popupFor(page, 'stellar', 'stellarSignMessage', 'Journear Passport testnet demo: this signature proves nothing and moves nothing.');
+      let popup = await popupFor(page, 'stellar', 'stellarSignMessage', 'Journear Passport demo (test networks): this signature proves nothing and moves nothing.');
       await phone(popup, 'stellar');
       await done(page, popup, 'stellar');
       popup = await popupFor(page, 'evm', 'personalSign', 'Welcome to Stamp Trail!\n\nSign this message to prove you own this wallet.');

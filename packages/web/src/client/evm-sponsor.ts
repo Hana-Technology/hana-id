@@ -1,4 +1,4 @@
-// `hana.evm`, gas-free EVM actions (docs/decisions.md D838, D855; docs/integration.md "Gas-free actions"): a batch of
+// `hana.evm`, gas sponsorship for EVM actions (docs/decisions.md D838, D855; docs/integration.md "Gas sponsorship"): a batch of
 // calls Journear's relayer sends for the user, the network fee paid by Journear. Not live: no deployed environment
 // sponsors a chain yet.
 //

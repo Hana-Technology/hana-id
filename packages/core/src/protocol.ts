@@ -37,8 +37,8 @@ export const MESSAGE_MAX_BYTES = 8 * 1024;
  */
 export const APPROVAL_MESSAGE_MAX_BYTES = SIGN_MESSAGE_MAX_BYTES + MESSAGE_MAX_BYTES;
 /**
- * The most partner label text one hana:approve-request carries (D896): the documents the vault checked for the app's
- * chain, at most 32 KiB together (the API's per-app limit, LABEL_STORE_LIMITS.appBytes; the vault sends none above it).
+ * The most partner label text one hana:approve-request carries: the documents the vault checked for the app's
+ * chain, at most 32 KiB together (the API's per-app limit; the vault sends none above it).
  */
 export const APPROVAL_LABELS_MAX_BYTES = 32 * 1024;
 /** At most this many label documents in one hana:approve-request (the API's entries per org). */
@@ -1105,7 +1105,7 @@ export interface WindowMessageMap {
      */
     demoPrices?: unknown;
     /**
-     * D896: the partner label documents (their text, `journear-labels/1`) the vault took from its own `GET /v1/app`
+     * The partner label documents (their text, `journear-labels/1`) the vault took from its own `GET /v1/app`
      * read under its freshness window (PARTNER_LABELS_FRESH_MS), after its own hash, parse, network and duplicate
      * checks, for this request's chain. The popup parses each again with its own parser and shows a label only for a
      * request that matches one exactly. Present only when there is one, so every other request sends the message older
@@ -1402,7 +1402,7 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:email-revoked': (m) => exactKeys(m, ['v', 't', 'ok']) && typeof m.ok === 'boolean',
 };
 
-/** 1 to APPROVAL_LABELS_MAX non-empty texts, together at most APPROVAL_LABELS_MAX_BYTES of UTF-8 (D896). */
+/** 1 to APPROVAL_LABELS_MAX non-empty texts, together at most APPROVAL_LABELS_MAX_BYTES of UTF-8. */
 function isLabelTexts(v: unknown): v is string[] {
   if (!Array.isArray(v) || v.length < 1 || v.length > APPROVAL_LABELS_MAX) return false;
   let total = 0;

@@ -4,9 +4,8 @@
 import { LABEL_STELLAR_NETWORKS, type LabelDocument } from './schema.ts';
 
 /**
- * What a document describes, as one key: the chain, the network and the account or contract. The same key as the
- * API's `label_changes.context_key` (apps/api src/labels/store.ts contextKey), under which two live entries of a scope
- * never coexist.
+ * What a document describes, as one key: the chain, the network and the account or contract. The same key the API
+ * stores with each document, under which two live entries of a scope never coexist.
  */
 export function labelContextKey(doc: LabelDocument): string {
   const c = doc.context;
@@ -21,7 +20,7 @@ export function labelOnNetwork(doc: LabelDocument, network: 'testnet' | 'mainnet
 }
 
 /**
- * Drops every document whose contract another one also describes, both of them (D894's requirement for piece 3): the
+ * Drops every document whose contract another one also describes, both of them: the
  * API refuses a second live entry for a contract, so two mean a write that skipped that check, and neither is trusted.
  * The order of the rest is kept.
  */

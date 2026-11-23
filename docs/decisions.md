@@ -17970,8 +17970,9 @@ Other screens you haven't seen:
   guess and timings; the same line on Share email, the export screens and Passport Home; what screen readers hear.
 - D879: staff sentences shown only in rarer states ("gas prices", "gas price limit", "a little ETH for gas"), the
   audit log's labels, and "NEAR relay: a billing record is late".
-- D881: the screens after a Remove or Cancel that fails or can't be checked, and the window's title following each
-  screen.
+- D881: the screens after a Remove or Cancel that fails or can't be checked, the window's title following each
+  screen, and the SDK's sentence for a sign-in waiting to be linked ("This sign-in is waiting to be linked to a
+  wallet, so it can’t open one yet. …"); the demo's own sentences are D889's.
 - D884: "Sponsored by the app." when there is no name; the NEAR rows and the details' headings; the two "None of your
   …" lines; a Stellar fee paid by another account; the demo's and stamps site's own texts; a list between two boxes
   with no line. Proposed, not built: after "None of your ETH is used." the warning "It may still use tokens you've
@@ -17980,7 +17981,8 @@ Other screens you haven't seen:
   the user's own transaction; unusual notes falling back to the usual screen; the signature checked in the window;
   which commit each demo deploy was built from (not known).
 - D886: the network note for a live app, raw signing and typed data, and the amber box before a NEAR message.
-- D865: the partner page's message after choosing Remove, the question asked in every app, and the re-check's fixes.
+- D865: the partner page's message after choosing Remove, the question now asked in every app of the wallet (not
+  only apps with email sign-in), and the re-check's fixes.
 - D889 (also listed above), the stamps site: proposed, not built: "Free for you: the network fee is paid for you, so
   you need no NEAR." and "Free: the network fee was paid for you", so it doesn't name a second payer beside
   "Sponsored by Stamp Trail".

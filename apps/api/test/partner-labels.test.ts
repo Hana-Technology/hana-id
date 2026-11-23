@@ -10,6 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { labelsMaintenance } from '../src/labels/cron.ts';
 import { detectLabelDrift } from '../src/labels/drift.ts';
 import { LABEL_LAPSE_MS } from '../src/labels/sql.ts';
+import { TOKEN_LIMITER } from '../src/changes/step-up.ts';
+import { sha256Hex } from '../src/owner-actions.ts';
+import { placedStub } from '../src/placement.ts';
+import worker from '../src/index.ts';
+import { createScheduledController, waitOnExecutionContext } from 'cloudflare:test';
 import { type LabelPlan, limitProblem } from '../src/labels/store.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { ConsoleRpc } from '../src/rpc/console.ts';
@@ -201,8 +206,13 @@ describe('proposing (ConsoleRpc.proposeLabels): who, what, and every refusal', (
     expect((await fail(consoleRpc().proposeLabels({ ...hana(), orgId: app.org, scopeId: app.scope, document: doc, appIds: [app.id], expectedVersion: 0, stepUpJwt: await stepUp('x') } as never))).code).toBe('forbidden');
     const jwt = await stepUp(await nonce(app, { doc, version: 0 }));
     await ok(send(jwt));
-    // The token can't be used again: the scope's version moved, and its nonce named the old one.
-    expect((await fail(send(jwt, { expectedVersion: 1 }))).code).not.toBe('ok');
+    // Sent again exactly: refused (the same document now waits), nothing written twice.
+    expect((await fail(send(jwt))).code).toBe('conflict');
+    // A token already used elsewhere (the owner-actions limiter is shared, one token one use): token_used, nothing written.
+    const fresh = await nearDoc();
+    const used = await stepUp(await nonce(app, { doc: fresh, version: 1 }));
+    expect(await placedStub(env, env.RATE_LIMITER, TOKEN_LIMITER).reserve(await sha256Hex(used), Date.now() + 3_600_000)).toBe(true);
+    expect((await fail(consoleRpc().proposeLabels({ ...member(), orgId: app.org, scopeId: app.scope, document: fresh, appIds: [app.id], expectedVersion: 1, stepUpJwt: used }))).code).toBe('token_used');
   });
 
   it('holds an org to its limits: entries, bytes, proposals a day', async () => {
@@ -366,7 +376,7 @@ describe('the staff veto: Block, and required review with Allow', () => {
     expect((await detail(p.change!.id)).change.state).toBe('blocked');
     const [l] = await rows<{ actor_kind: string; actor_id: string; detail_json: string }>("SELECT actor_kind, actor_id, detail_json FROM app_changes WHERE kind = 'labels.blocked' AND org_id = ?1", app.org);
     expect(l!.actor_kind).toBe('hana');
-    expect(JSON.parse(l!.detail_json)).toEqual({ changeId: p.change!.id, labelId: p.change!.labelId, wasLive: false, note });
+    expect(JSON.parse(l!.detail_json)).toEqual({ changeId: p.change!.id, labelId: p.change!.labelId, wasLive: false, offBy: null, note });
     expect(await rows("SELECT kind FROM security_events WHERE kind = 'label_blocked' AND org_id = ?1", app.org)).toEqual([{ kind: 'label_blocked' }]);
     // Blocked is final: nothing more to block or allow.
     expect((await fail(act(p.change!.id, 'block', await seenOf(p.change!.id)))).code).toBe('not_pending');
@@ -382,7 +392,7 @@ describe('the staff veto: Block, and required review with Allow', () => {
     await ok(act(v2.change!.id, 'block', await seenOf(v2.change!.id)));
     expect(await served(app)).toEqual([]);
     expect(await rows('SELECT status, was_live FROM label_changes WHERE id = ?1', v2.change!.id)).toEqual([{ status: 'blocked', was_live: 1 }]);
-    expect(await rows('SELECT status, end_reason FROM label_changes WHERE id = ?1', v1.id)).toEqual([{ status: 'ended', end_reason: 'replaced' }]);
+    expect(await rows('SELECT status, end_reason FROM label_changes WHERE id = ?1', v1.id)).toEqual([{ status: 'ended', end_reason: 'blocked_successor' }]);
   });
 
   it('required review (off by default): a due change waits for Allow however long; lapses 7 days after its time; on for everyone too', async () => {
@@ -658,3 +668,172 @@ describe('GET /v1/app delivers only what is in force, served, and the app’s ow
   });
 });
 
+
+describe('after the security review (D894)', () => {
+  const seenOf = async (id: string) => {
+    const d = await detail(id);
+    return { labelsVersion: d.labelsVersion, state: d.change.state };
+  };
+  /** The hot DB, with `before` run once just before the first batch whose first statement matches `match`. */
+  const racing = (match: RegExp, before: () => Promise<unknown>): typeof env => {
+    let done = false;
+    const db = new Proxy(env.DB, {
+      get(t, p) {
+        if (p === 'batch')
+          return async (stmts: D1PreparedStatement[]) => {
+            const first = (stmts[0] as unknown as { statement?: string; query?: string }) ?? {};
+            const text = JSON.stringify(first) + String((first as { statement?: string }).statement ?? '');
+            if (!done && (match.test(text) || match.test(String(stmts[0])))) {
+              done = true;
+              await before();
+            }
+            return t.batch(stmts);
+          };
+        const v: unknown = Reflect.get(t, p);
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+    return { ...env, DB: db };
+  };
+
+  it('a failing label job or drift check is logged at error level and stops nothing else; without migration 0025 they skip with one line', async () => {
+    const lines: string[] = [];
+    for (const level of ['log', 'warn', 'error'] as const) vi.spyOn(console, level).mockImplementation((...a: unknown[]) => void lines.push(a.map(String).join(' ')));
+    const broken = new Proxy(env.DB, {
+      get(t, p) {
+        if (p === 'prepare') return (sql: string) => (/label_changes|label_controls/u.test(sql) ? { bind: () => ({ first: () => Promise.reject(new Error('D1 down')), all: () => Promise.reject(new Error('D1 down')) }), first: () => Promise.reject(new Error('D1 down')), all: () => Promise.reject(new Error('D1 down')) } : t.prepare(sql));
+        const v: unknown = Reflect.get(t, p);
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+    const hourly = Math.floor(Date.now() / 3_600_000) * 3_600_000 + 60_000;
+    const ctx = createExecutionContext();
+    await expect(worker.scheduled(createScheduledController({ cron: '*/15 * * * *', scheduledTime: hourly }), { ...env, DB: broken } as typeof env, ctx)).rejects.toThrow();
+    await waitOnExecutionContext(ctx);
+    const parsed = lines.filter((l) => l.startsWith('{')).map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(parsed).toContainEqual(expect.objectContaining({ level: 'error', event: 'labels_cron', outcome: 'error' }));
+    expect(parsed).toContainEqual(expect.objectContaining({ level: 'error', event: 'label_drift_detection', outcome: 'error' }));
+    // The guarded changes' job and drift still ran (no error line of theirs).
+    expect(parsed.filter((l) => l.event === 'guarded_change_cron' && l.outcome === 'error')).toEqual([]);
+    expect(parsed.filter((l) => l.event === 'drift_detection' && l.outcome === 'error')).toEqual([]);
+    // An empty database (no 0025 tables): one warning line each, no throw.
+    lines.length = 0;
+    expect(await labelsMaintenance({ DB: env.MIGRATION_DB }, Date.now())).toEqual({ activated: 0, lapsed: 0 });
+    expect(await detectLabelDrift({ DB: env.MIGRATION_DB }, Date.now())).toEqual({ found: 0, recorded: 0 });
+    const warned = lines.filter((l) => l.startsWith('{')).map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.code === 'migration_0025_not_applied');
+    expect(warned.map((l) => l.event).sort()).toEqual(['label_drift_detection', 'labels_cron']);
+  });
+
+  it('staff never cancel a label change (they Block); expedite and the guarded ack refuse an lc_ id', async () => {
+    const app = await orgApp();
+    const p = await ok(propose(app, await nearDoc()));
+    expect(await fail(adminRpc().cancelChange({ ...hana(), orgId: app.org, changeId: p.change!.id }))).toMatchObject({ code: 'forbidden', error: expect.stringMatching(/Block this change/u) });
+    expect((await fail(adminRpc().expediteChange({ ...hana(), changeId: p.change!.id, reason: 'The security contact confirmed it by phone today' }))).code).toBe('bad_request');
+    expect((await fail(adminRpc().ackNotice({ ...system(), changeId: p.change!.id, cancelTokenHash: await linkToken().hash }))).code).toBe('bad_request');
+    expect((await detail(p.change!.id)).change.state).toBe('proposed');
+  });
+
+  it('review turned on holds only versions due after it: a version whose time had passed stays live, whether or not the job had recorded it', async () => {
+    const app = await orgApp();
+    const v1 = await inForce(app);
+    await labelsMaintenance(env, clock.now());
+    const v2 = await ok(propose(app, await nearDoc(), { labelId: v1.labelId }));
+    await ack(v2.change!.id);
+    clock.advance(DELAY);
+    // v2's time passed; the job hasn't recorded it. Review on now changes nothing users see.
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'org', orgId: app.org }, what: 'review_on', note, seenVersion: 0 }));
+    expect((await served(app))!.map((s) => s.changeId)).toEqual([v2.change!.id]);
+    await labelsMaintenance(env, clock.now());
+    expect((await rows('SELECT status FROM label_changes WHERE id = ?1', v2.change!.id))[0]).toEqual({ status: 'active' });
+    // A version whose time comes after review was turned on waits for Allow.
+    const v3 = await ok(propose(app, await nearDoc(), { labelId: v1.labelId }));
+    await ack(v3.change!.id);
+    clock.advance(DELAY);
+    expect((await served(app))!.map((s) => s.changeId)).toEqual([v2.change!.id]);
+    expect((await detail(v3.change!.id)).change.state).toBe('waiting_review');
+  });
+
+  it('the job re-checks the hold in its own statements: review on, or an Allow, landing between its read and its write wins', async () => {
+    const app = await orgApp();
+    const a = await ok(propose(app, await nearDoc()));
+    const { change } = await ack(a.change!.id);
+    clock.advance(DELAY);
+    // Review turned on (before its time, as a staff press racing the job) between the job's read and its batch.
+    const turnOnReview = () => env.DB.prepare("INSERT INTO label_controls (target, labels_off, review_required, review_since, updated_at, updated_by, version) VALUES (?1, 0, 1, ?2, ?3, 'staff', 1)").bind(app.org, change.activeFrom - 1, clock.now()).run();
+    expect(await labelsMaintenance(racing(/active/u, turnOnReview), clock.now())).toMatchObject({ activated: 0 });
+    expect((await rows('SELECT status FROM label_changes WHERE id = ?1', a.change!.id))[0]).toEqual({ status: 'pending' });
+    // Seven days on, an Allow landing between the job's read and its lapse keeps the change.
+    clock.advance(LABEL_LAPSE_MS);
+    const allow = () => env.DB.prepare("UPDATE label_changes SET allowed_at = ?2, allowed_by = 'staff' WHERE id = ?1").bind(a.change!.id, clock.now()).run();
+    // (Other tests' stale proposals may lapse in the same run; this one was read as stale, then allowed, and stays.)
+    await labelsMaintenance(racing(/lapsed/u, allow), clock.now());
+    expect((await rows('SELECT status, allowed_at IS NOT NULL AS allowed FROM label_changes WHERE id = ?1', a.change!.id))[0]).toEqual({ status: 'pending', allowed: 1 });
+  });
+
+  it('a live block ends the older versions too (blocked_successor): users then see the plain window, never the earlier labels', async () => {
+    const app = await orgApp();
+    const v1 = await inForce(app);
+    await labelsMaintenance(env, clock.now());
+    const v2 = await inForce(app, undefined, { labelId: v1.labelId });
+    await ok(adminRpc().labelStaffAct({ ...hana(), changeId: v2.id, tool: 'block', note, seen: await seenOf(v2.id) }));
+    expect(await served(app)).toEqual([]);
+    expect(await rows('SELECT end_reason FROM label_changes WHERE id = ?1', v1.id)).toEqual([{ end_reason: 'blocked_successor' }]);
+    expect((await detail(v1.id)).change).toMatchObject({ state: 'replaced', endReason: 'blocked_successor' });
+  });
+
+  it('drift: a cancelled or lapsed version put back to waiting by hand is a finding', async () => {
+    const app = await orgApp();
+    const p = await ok(propose(app, await nearDoc()));
+    await ok(consoleRpc().cancelChange({ ...member(), orgId: app.org, changeId: p.change!.id }));
+    await env.DB.prepare("UPDATE label_changes SET status = 'pending', end_reason = NULL, cancelled_at = NULL WHERE id = ?1").bind(p.change!.id).run();
+    await detectLabelDrift(env, clock.now());
+    const found = (await rows<{ detail_json: string }>("SELECT detail_json FROM security_events WHERE kind = 'drift' AND org_id = ?1", app.org)).map((r) => JSON.parse(r.detail_json) as { finding: string });
+    expect(found.map((f) => f.finding)).toEqual(['uncancelled']);
+  });
+
+  it('no proposal while the org’s labels, or everyone’s, are switched off', async () => {
+    const app = await orgApp();
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'org', orgId: app.org }, what: 'off', note, seenVersion: 0 }));
+    expect(await fail(propose(app, await nearDoc()))).toMatchObject({ code: 'forbidden', error: 'Journear has switched request labels off for your organisation: ask Journear security before proposing new ones' });
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'org', orgId: app.org }, what: 'on', note, seenVersion: 1 }));
+    const all = (await ok(adminRpc().labelControls({ ...hana() }))).controls.all;
+    await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'all' }, what: 'off', note, seenVersion: all.version }));
+    try {
+      expect(await fail(propose(app, await nearDoc()))).toMatchObject({ code: 'forbidden', error: 'Journear has switched request labels off for now: ask Journear security before proposing new ones' });
+    } finally {
+      await ok(adminRpc().labelControl({ ...hana(), target: { kind: 'all' }, what: 'on', note, seenVersion: all.version + 1 }));
+    }
+    await ok(propose(app, await nearDoc()));
+  });
+
+  it('concurrency: two proposals at once (one wins, the other is a version conflict and its token is given back); Block racing a cancel; the org’s limits across scopes', async () => {
+    const app = await orgApp();
+    const [d1, d2] = [await nearDoc(), await nearDoc()];
+    const [j1, j2] = [await stepUp(await nonce(app, { doc: d1, version: 0 })), await stepUp(await nonce(app, { doc: d2, version: 0 }))];
+    const rpc = new ConsoleRpc(createExecutionContext(), ON);
+    const both = await Promise.all([j1, j2].map((jwt, k) => rpc.proposeLabels({ ...member(), orgId: app.org, scopeId: app.scope, document: k ? d2 : d1, appIds: [app.id], expectedVersion: 0, stepUpJwt: jwt })));
+    expect(both.map((r) => (r.ok ? 'ok' : r.code)).sort()).toEqual(['ok', 'version_conflict']);
+    const loser = both[0]!.ok ? j2 : j1;
+    // Given back: the loser's token can be reserved again (nothing used it).
+    expect(await placedStub(env, env.RATE_LIMITER, TOKEN_LIMITER).reserve(await sha256Hex(loser), Date.now() + 3_600_000)).toBe(true);
+
+    const won = (both.find((r) => r.ok) as Extract<(typeof both)[number], { ok: true }>).change!;
+    await ack(won.id);
+    const seen = await seenOf(won.id);
+    const race = await Promise.all([adminRpc().labelStaffAct({ ...hana(), changeId: won.id, tool: 'block', note, seen }), new ConsoleRpc(createExecutionContext(), ON).cancelChange({ ...member(), orgId: app.org, changeId: won.id })]);
+    expect(race.filter((r) => r.ok)).toHaveLength(1);
+    expect(['blocked', 'cancelled']).toContain((await detail(won.id)).change.state);
+
+    // An org with two scopes at 15 of its 16 entries: two new entries at once in different scopes, one wins.
+    const org = await orgApp();
+    const other = await orgApp({ org: org.org });
+    for (let k = 0; k < 15; k++) await env.DB.prepare('INSERT INTO partner_labels (id, org_id, scope_id, created_at, created_by) VALUES (?1, ?2, ?3, 1, ?4)').bind(`pl_seed${k}x${Math.random().toString(36).slice(2, 8)}`, org.org, org.scope, 'usr_x').run();
+    const [e1, e2] = [await nearDoc(), await nearDoc()];
+    const pair = await Promise.all([
+      new ConsoleRpc(createExecutionContext(), ON).proposeLabels({ ...member(), orgId: org.org, scopeId: org.scope, document: e1, appIds: [org.id], expectedVersion: 0, stepUpJwt: await stepUp(await nonce(org, { doc: e1, version: 0 })) }),
+      new ConsoleRpc(createExecutionContext(), ON).proposeLabels({ ...member(), orgId: other.org, scopeId: other.scope, document: e2, appIds: [other.id], expectedVersion: 0, stepUpJwt: await stepUp(await nonce(other, { doc: e2, version: 0 })) }),
+    ]);
+    expect(pair.filter((r) => r.ok)).toHaveLength(1);
+    expect((await rows<{ n: number }>('SELECT COUNT(*) AS n FROM partner_labels WHERE org_id = ?1 AND removed_at IS NULL', org.org))[0]!.n).toBe(16);
+  });
+});

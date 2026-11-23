@@ -10,8 +10,12 @@
 //   text_changed  a version in force whose text no longer hashes to the sha256 it was proposed with;
 //   not_allowed   a version marked allowed with no staff `labels.allowed` row;
 //   unblocked     a version staff blocked (`labels.blocked`) that is no longer blocked;
+//   uncancelled   a version cancelled or lapsed (`change.cancelled`, kind `label_set`, any reason) back to waiting or in force;
 //   not_removed   an entry an owner removed (`labels.removed`) that is back;
 //   control       a switch (every org's, an org's, an entry's) that isn't what its last `label_control_log` row set.
+// An older version put back in force after it was replaced (or ended with a blocked successor) is caught only
+// indirectly: it shows as `unannounced` only if its own ledger rows don't explain it; with them intact, a bare
+// un-ending of a replaced version serves it again unreported (the same class as forging the ledger).
 import type { Env } from '../env.ts';
 import { eventId } from '../changes/guard.ts';
 import { DRIFT_BATCH } from '../changes/drift.ts';
@@ -23,7 +27,7 @@ import { IN_FORCE, labelTablesExist } from './sql.ts';
 export const LABEL_HASH_BATCH = 500;
 
 interface Finding {
-  finding: 'unannounced' | 'text_changed' | 'not_allowed' | 'unblocked' | 'not_removed' | 'control';
+  finding: 'unannounced' | 'text_changed' | 'not_allowed' | 'unblocked' | 'uncancelled' | 'not_removed' | 'control';
   org_id: string | null;
   scope_id: string | null;
   change_id: string | null;
@@ -51,6 +55,8 @@ export async function detectLabelDrift(env: Pick<Env, 'DB'>, now = Date.now()): 
                OR NOT ${ledger('change.announced', "AND json_extract(a.detail_json, '$.kind') = 'label_set' AND json_extract(a.detail_json, '$.activeFrom') <= c.active_from")}) LIMIT ?1`,
     `SELECT 'not_allowed' AS finding, c.org_id, c.scope_id, c.id AS change_id, c.label_id, NULL AS target FROM label_changes c
         WHERE c.allowed_at IS NOT NULL AND c.status IN ('pending', 'active') AND NOT ${ledger('labels.allowed')} LIMIT ?1`,
+    `SELECT 'uncancelled' AS finding, c.org_id, c.scope_id, c.id AS change_id, c.label_id, NULL AS target FROM label_changes c
+        WHERE c.status IN ('pending', 'active') AND ${ledger('change.cancelled', "AND json_extract(a.detail_json, '$.kind') = 'label_set'")} LIMIT ?1`,
     `SELECT 'unblocked' AS finding, c.org_id, c.scope_id, c.id AS change_id, c.label_id, NULL AS target FROM label_changes c
         WHERE c.status != 'blocked' AND ${ledger('labels.blocked')} LIMIT ?1`,
     `SELECT 'not_removed' AS finding, l.org_id, l.scope_id, NULL AS change_id, l.id AS label_id, NULL AS target FROM partner_labels l

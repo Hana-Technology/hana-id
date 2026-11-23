@@ -27,10 +27,11 @@ interface Due {
   active_from: number;
 }
 
+/** Runs one version's batch; true only when its first statement (the state change) changed the row. */
 async function apply(db: D1Database, stmts: D1PreparedStatement[], id: string, what: string): Promise<boolean> {
   try {
-    await db.batch(stmts);
-    return true;
+    const results = await db.batch(stmts);
+    return (results[0]?.meta.changes ?? 0) === 1;
   } catch {
     log({ event: 'labels_cron', outcome: 'error', code: 'write_failed', labelChangeId: id, what }, 'error');
     return false;

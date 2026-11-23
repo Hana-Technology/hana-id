@@ -28,7 +28,7 @@ const problemText = (ps: readonly LabelProblem[]): string => ps.map((p) => `${p.
 
 /** ConsoleRpc.listLabels: the scope's entries (not removed), each with its version in force and its waiting one. */
 export async function listLabels(db: HotDb, i: { orgId: string; scopeId: string }, now: number): Promise<{ labelsVersion: number; entries: LabelEntryView[] }> {
-  const rows = await db.all<LabelRow & { scope_ok: number }>(
+  const rows = await db.all<LabelRow>(
     q`SELECT ${VIEW_SELECT(now)} FROM ${VIEW_FROM}
        WHERE l.scope_id = ${i.scopeId} AND l.org_id = ${i.orgId} AND l.removed_at IS NULL
          AND (c.id = ${CURRENT('l', now)} OR c.id = ${OPEN('l', now)})
@@ -73,6 +73,10 @@ async function check(db: HotDb, env: Env, w: Writer, i: { orgId: string; scopeId
   if (plan.scope_id === null || plan.environment === null) return refuse('not_found', 'No such scope in this organisation');
   const wrong = networkProblem(doc.doc, plan.environment);
   if (wrong) return refuse('label_invalid', problemText([wrong]));
+  // D894 after review: no proposal while Journear has the org's (or every partner's) labels switched off: an org
+  // switched off for abuse can't keep mailing its contacts and filling the staff feed, and nothing waits to go live the
+  // moment the switch comes back on.
+  if (plan.org_off !== null) refuse('forbidden', plan.org_off === 'org' ? 'Journear has switched request labels off for your organisation: ask Journear security before proposing new ones' : 'Journear has switched request labels off for now: ask Journear security before proposing new ones');
   if (i.labelId !== undefined) {
     if (plan.label_id === null) refuse('not_found', 'No such request labels in this scope');
     if (plan.removed_at !== null) refuse('not_found', 'These request labels were removed: propose new ones');
@@ -124,7 +128,13 @@ export async function proposeLabels(
       w,
       { kind: 'labels.proposed', detail: { changeId, labelId, newEntry: i.labelId === undefined, sha256: c.doc.sha256, bytes: c.doc.bytes, apps: c.apps, previousId: c.plan.cur_id } },
       ids,
-      q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND labels_version = ${i.expectedVersion})`,
+      // The scope's version serialises everything within the scope (an app is in one scope, so its bytes too); the
+      // org's limits span scopes, so they are checked again here, in the write's own transaction (D894 after review).
+      q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND labels_version = ${i.expectedVersion})
+        AND (SELECT COUNT(*) FROM partner_labels WHERE org_id = ${i.orgId} AND removed_at IS NULL) + ${i.labelId === undefined ? 1 : 0} <= ${LABEL_STORE_LIMITS.entriesPerOrg}
+        AND (SELECT COUNT(*) FROM label_changes WHERE org_id = ${i.orgId} AND proposed_at > ${w.now - 24 * 3_600_000}) + 1 <= ${LABEL_STORE_LIMITS.proposalsPerDay}
+        AND (SELECT COALESCE(SUM(c.doc_bytes), 0) FROM label_changes c JOIN partner_labels pl ON pl.id = c.label_id
+              WHERE c.org_id = ${i.orgId} AND c.status IN ('pending', 'active') AND pl.removed_at IS NULL AND c.label_id IS NOT ${i.labelId ?? null}) + ${c.doc.bytes} <= ${LABEL_STORE_LIMITS.orgBytes}`,
     ),
     q`UPDATE scopes SET labels_version = labels_version + 1 WHERE scope_id = ${i.scopeId} AND ${committed(w.requestId)}`,
   ];

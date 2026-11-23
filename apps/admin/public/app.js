@@ -2950,7 +2950,7 @@ function labelSwitchesPanel(d) {
     h('p', {}, all.labelsOff ? h('span', {}, badge('Off', 'warning'), ' Users of every partner’s apps see the plain approval window, without the partner’s words.') : h('span', {}, badge('On', 'ok'), ' Partners’ words show in the approval window once each change passes its wait.')),
     all.labelsOff && (all.updatedBy || all.updatedAt) ? h('p', { class: 'hint' }, 'Switched off ', byWhen(all.updatedBy, all.updatedAt), all.note ? [' · ', h('span', {}, `“${all.note}”`)] : '') : '',
     all.labelsOff
-      ? switchForm(d, where, { kind: 'all' }, 'on', all.version, 'Turn every partner label back on', 'Turn every partner label back on? Only versions that already passed their wait are shown again.', STAFF_NOTE)
+      ? switchForm(d, where, { kind: 'all' }, 'on', all.version, 'Turn every partner label back on', 'Turn every partner label back on? Versions that passed their wait show again, including any whose time came while switched off; a change still waiting keeps waiting.', STAFF_NOTE)
       : switchForm(d, where, { kind: 'all' }, 'off', all.version, 'Switch every partner label off', 'Switch every partner label off? Users of every partner’s apps see the plain approval window, without the partner’s words, until staff turn them back on.', STAFF_NOTE, { danger: true }),
   );
   const review = h(
@@ -2966,7 +2966,7 @@ function labelSwitchesPanel(d) {
   const orgRows = c.orgs.filter((o) => o.labelsOff || o.reviewRequired).map((o) => {
     const actions = [];
     if (o.labelsOff) {
-      const f = disclosure('Turn back on…', switchForm(d, where, { kind: 'org', orgId: o.orgId }, 'on', o.version, 'Turn back on', 'Turn this organisation’s partner labels back on? Only versions that already passed their wait are shown again.', PARTNER_NOTE), { small: true });
+      const f = disclosure('Turn back on…', switchForm(d, where, { kind: 'org', orgId: o.orgId }, 'on', o.version, 'Turn back on', 'Turn this organisation’s partner labels back on? Versions that passed their wait show again, including any whose time came while switched off; a change still waiting keeps waiting.', PARTNER_NOTE), { small: true });
       actions.push(h('div', { class: 'inline-action' }, f.button, f.box));
     }
     if (o.reviewRequired) {
@@ -2976,7 +2976,7 @@ function labelSwitchesPanel(d) {
     return tr(orgOf(d.orgNames, o.orgId), o.labelsOff ? badge('Off', 'warning') : badge('On', 'ok'), o.reviewRequired ? badge('Required', 'warning') : 'Not required', byWhen(o.updatedBy, o.updatedAt), o.note || '', h('div', { class: 'stack' }, actions));
   });
   const entryRows = c.entries.map((e) => {
-    const f = disclosure('Turn back on…', switchForm(d, where, { kind: 'entry', labelId: e.labelId }, 'on', e.version, 'Turn back on', 'Turn these labels back on? Only a version that already passed its wait is shown again.', PARTNER_NOTE), { small: true });
+    const f = disclosure('Turn back on…', switchForm(d, where, { kind: 'entry', labelId: e.labelId }, 'on', e.version, 'Turn back on', 'Turn these labels back on? A version that passed its wait shows again, including one whose time came while switched off; a change still waiting keeps waiting.', PARTNER_NOTE), { small: true });
     return tr(mono(e.labelId), orgOf(d.orgNames, e.orgId), byWhen(e.offBy, e.offAt), e.note || '', h('div', { class: 'inline-action' }, f.button, f.box));
   });
   const orgForm = (() => {
@@ -2988,7 +2988,7 @@ function labelSwitchesPanel(d) {
     ];
     const CONFIRM = {
       off: 'Switch this organisation’s partner labels off? Users of its apps see the plain approval window, without its words, until staff turn them back on.',
-      on: 'Turn this organisation’s partner labels back on? Only versions that already passed their wait are shown again.',
+      on: 'Turn this organisation’s partner labels back on? Versions that passed their wait show again, including any whose time came while switched off; a change still waiting keeps waiting.',
       review_on: 'Require staff review for this organisation? None of its changes goes live until staff press Allow; one nobody allows lapses 7 days after its time.',
       review_off: 'Stop requiring staff review for this organisation? Its changes waiting for an Allow go live at their time (or at once if it has passed).',
     };
@@ -3138,8 +3138,8 @@ function labelToolsPanel(d, where, seen) {
             'div',
             { class: 'tool' },
             h('h3', {}, 'Turn these labels back on'),
-            h('p', {}, 'Staff switched this set of labels off. Turning it back on shows only a version that already passed its wait; a waiting change still waits.'),
-            switchForm(d, where, { kind: 'entry', labelId: ch.labelId }, 'on', entryVersion, 'Turn these labels back on', 'Turn these labels back on? Only a version that already passed its wait is shown again.', PARTNER_NOTE),
+            h('p', {}, 'Staff switched this set of labels off. Turning it back on shows the newest version that passed its wait, including one whose time came while it was off; a waiting change still waits.'),
+            switchForm(d, where, { kind: 'entry', labelId: ch.labelId }, 'on', entryVersion, 'Turn these labels back on', 'Turn these labels back on? A version that passed its wait shows again, including one whose time came while switched off; a change still waiting keeps waiting.', PARTNER_NOTE),
           )
         : h(
             'div',

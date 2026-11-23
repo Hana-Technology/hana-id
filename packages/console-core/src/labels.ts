@@ -34,7 +34,7 @@ export const labelNote = z
   .trim()
   .min(LABEL_NOTE_MIN, `A note of at least ${LABEL_NOTE_MIN} characters`)
   .max(LABEL_NOTE_MAX, `A note of at most ${LABEL_NOTE_MAX} characters`)
-  .refine((s) => !/[\u0000-\u001f\u007f]/u.test(s), 'One line, no control characters');
+  .refine((s) => !/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/u.test(s), 'One line of plain text: no control, direction or invisible characters');
 
 const version = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const jwt = z.string().max(7168).regex(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u);

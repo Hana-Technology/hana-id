@@ -309,13 +309,13 @@ function nearRelayRules(m: { network: string; signer: string; relayer: string; o
   }
 }
 
-/** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 /** D894: partner labels on is for testnet only until piece 3 and a go-live decision (the same rule as D702's Users screen). */
 export function partnerLabelsProblem(m: { network: string; partnerLabels?: { enabled: boolean } | undefined }): string | null {
   if (m.partnerLabels?.enabled !== true || m.network === 'testnet') return null;
   return `partnerLabels.enabled is for testnet only (D894): turning partner labels on for ${m.network} needs its own decision first`;
 }
 
+/** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 export const manifestSchema = z
   .object({
     name: z.string().regex(/^[a-z0-9-]+$/u),

@@ -127,6 +127,8 @@ export interface LabelPlan {
   app_bytes: string;
   day_proposals: number;
   same_context: number;
+  /** Which staff switch has the org's labels off ('org', 'all'), or null. */
+  org_off: 'org' | 'all' | null;
 }
 
 export async function planLabels(db: HotDb, w: Writer, i: { orgId: string; scopeId: string; labelId: string | null; appIds: readonly string[]; contextKey: string | null }): Promise<LabelPlan> {
@@ -146,6 +148,8 @@ export async function planLabels(db: HotDb, w: Writer, i: { orgId: string; scope
                 FROM json_each(${JSON.stringify(i.appIds)}) j) AS app_bytes,
              (SELECT COUNT(*) FROM label_changes c WHERE c.org_id = ${i.orgId} AND c.proposed_at > ${now - DAY_MS}) AS day_proposals,
              (SELECT COUNT(*) FROM label_changes c JOIN partner_labels pl ON pl.id = c.label_id WHERE pl.scope_id = ${i.scopeId} AND pl.org_id = ${i.orgId} AND ${live} AND ${other} AND c.context_key = ${i.contextKey ?? ''}) AS same_context
+             , (CASE WHEN EXISTS (SELECT 1 FROM label_controls k WHERE k.target = ${i.orgId} AND k.labels_off = 1) THEN 'org'
+                     WHEN EXISTS (SELECT 1 FROM label_controls k WHERE k.target = '*' AND k.labels_off = 1) THEN 'all' END) AS org_off
         FROM (SELECT 1) LEFT JOIN scopes s ON s.scope_id = ${i.scopeId} AND s.org_id = ${i.orgId}
         LEFT JOIN partner_labels l ON l.id = ${i.labelId} AND l.org_id = s.org_id AND l.scope_id = s.scope_id
         LEFT JOIN label_changes cur ON cur.id = ${CURRENT('l', now)}`,

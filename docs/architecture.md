@@ -1464,9 +1464,11 @@ page, or the signed-out page). A reload signs out as before (D553) and its lefto
 Leaving a wallet's page, by its way back or by Back, locks and erases a wallet opened in it (`home-export.ts` `leave`);
 Forward shows the page with the move flow collapsed, never a key. Opening a row reads what that view needs once (an
 unchecked coverage, the devices, the name); Back and Forward read nothing. A refusal shows where the user acted: under
-the view's heading, or under the search. On a phone, the page no longer scrolls a second time for a bar change the
-browser already anchored (a fix to D888's compensation: the scroll position before the page changed the bar is held
-until the resize is handled).
+the view's heading, or under the search. On a phone, for a change the page makes to the bar, it scrolls by the bar's
+change only when nothing has moved the page since (WebKit, which doesn't anchor); if the browser anchored or the
+person scrolled, it leaves the scroll alone (a fix to D888's compensation, which scrolled a second time). The partner's
+link opens the wallet's page only while the front page is on screen. A row's accessible name is the apps (with their
+state) and its badge; where the first app runs is its description.
 
 **Moving a wallet out (H8, D575–D584; `home-export.ts`, `key-reveal.ts`, `export-path.ts`; live on sandbox-dev since 2026-11-10).** A wallet's page
 ends with a collapsed section, "Move this wallet to another wallet app": collapsed, its heading, one sentence and a "Show

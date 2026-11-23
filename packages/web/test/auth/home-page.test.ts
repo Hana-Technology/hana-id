@@ -483,7 +483,9 @@ describe('your apps', () => {
     expect(cards.map((c) => c.getAttribute('data-scope'))).toEqual(['s1', 's2', 's3', 's4', 's5', 's6']);
     // A row names every app that shares the wallet, with their state, and where the first runs (quieter, D893).
     expect([...(cards[0]?.querySelectorAll('.home-row-name') ?? [])].map((x) => x.textContent)).toEqual(['Sodax', 'Sodax Earn']);
-    expect(cards[0]?.querySelector('.home-row-sub')?.textContent).toBe('https://app.example and 1 more');
+    expect(cards[0]?.querySelector('.home-row-sub')?.textContent).toBe('https://app.example and 1 more website');
+    expect(cards[0]?.getAttribute('aria-label')).toBe('Sodax, Sodax Earn (Paused), Safe if the app closes');
+    expect(cards[5]?.getAttribute('aria-label')).toBe('Sandbox (Test app), Safe if the app closes');
     // Every row has a tile: a neutral placeholder where the app has no logo.
     expect(cards.every((c) => c.querySelector('.home-tile > svg.ic') !== null && c.querySelector('.home-tile')?.getAttribute('aria-hidden') === 'true')).toBe(true);
     const badgeOf = (id: string) => document.querySelector(`.home-row[data-scope="${id}"] > .badge`)?.textContent;
@@ -813,7 +815,7 @@ describe('partner strings are text only', () => {
     // The row is one button named by its own words (no label of the partner's beyond them).
     const open = document.querySelector('.home-row[data-scope]') as HTMLElement;
     expect(open.tagName).toBe('BUTTON');
-    expect(open.getAttribute('aria-label')).toBeNull();
+    expect(open.getAttribute('aria-label')).toBe('Unnamed app, Safe if the app closes');
     expect(open.textContent).toContain('Unnamed app');
     open.click();
     expect(document.querySelector('.home-app-all strong')?.textContent).toBe('Unnamed app');
@@ -905,8 +907,14 @@ describe('the views and their words (D893)', () => {
     // Nothing else in the row can take focus or a click.
     expect(r.querySelectorAll('button, a, input, [tabindex]')).toHaveLength(0);
     expect(r.querySelector(':scope > .badge')?.textContent).toBe('Safe if the app closes');
-    // A screen reader reads the row's own words: the apps, where the first runs, the badge.
-    expect(r.textContent).toBe('Sodax · Sodax Earnhttps://app.example and 1 moreSafe if the app closes');
+    // A screen reader names the row by the apps, with pauses, and its badge; where the first app runs is its
+    // description, not its name (PR 116's review).
+    expect(r.textContent).toBe('Sodax · Sodax Earnhttps://app.example and 1 more websiteSafe if the app closes');
+    expect(r.getAttribute('aria-label')).toBe('Sodax, Sodax Earn, Safe if the app closes');
+    expect(document.getElementById(r.getAttribute('aria-describedby') ?? '')?.textContent).toBe('https://app.example and 1 more website');
+    const account = document.getElementById('home-open-devices') as HTMLElement;
+    expect(account.getAttribute('aria-label')).toBeNull();
+    expect(document.getElementById(account.getAttribute('aria-describedby') ?? '')?.textContent).toBe(HOME_TEXT.devicesRow);
     r.focus();
     expect(document.activeElement).toBe(r);
     r.click();
@@ -1302,6 +1310,92 @@ describe('Back and Forward inside Home (D893)', () => {
     expect(window.sessionStorage.length).toBe(0);
     expect(h.win.history.entries.map((e) => e.state)).toEqual([null, expect.stringMatching(MARK)]);
     expect(h.win.history.pushState.mock.calls.every((c) => c.length === 2 && typeof c[0] === 'string' && MARK.test(c[0] as string))).toBe(true);
+  });
+});
+
+
+describe('PR 116’s review (D893)', () => {
+  const row = (id: string): HTMLElement => document.querySelector(`.home-row[data-scope="${id}"]`) as HTMLElement;
+
+  it('the link’s wallet never pulls the person out of a view they opened while the list loaded; it stays a row', async () => {
+    const h = await ready({ search: '?appId=app_mine1' });
+    let answer: ((r: Response) => void) | null = null;
+    h.answer = () => new Promise<Response>((r) => (answer = r));
+    await h.signInStart();
+    await until(() => answer !== null, 'the list to be asked for');
+    h.click('home-open-devices');
+    expect(h.page.view).toBe('devices');
+    (answer as unknown as (r: Response) => void)(json(200, { scopes: [mine('s1', { apps: [app('Mine', { appId: 'app_mine1' })] })], nextCursor: null }));
+    await h.page.idle();
+    expect(h.page.view).toBe('devices');
+    expect(h.win.history.entries).toHaveLength(2);
+    expect(h.win.history.state).toMatch(/^home:[A-Za-z0-9_-]{16}:1$/u);
+    h.win.history.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(row('s1')).not.toBeNull();
+    // On the front page, the link's wallet opens as before (one entry over the list).
+    resetDom();
+    const f = await ready({ search: '?appId=app_mine1' });
+    f.answer = () => json(200, { scopes: [mine('s1', { apps: [app('Mine', { appId: 'app_mine1' })] })], nextCursor: null });
+    await f.signIn();
+    expect(f.page.openScope).toBe('s1');
+    expect(f.win.history.entries).toHaveLength(2);
+  });
+
+  it('an app where the person has no wallet keeps the app’s words in its tools: no wallet is called theirs', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
+    await h.signIn();
+    row('s3').click();
+    expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
+    expect(document.querySelector('#home-app-devices > p')?.textContent).toBe('Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it.');
+    expect(document.querySelector('#home-sign-ins > p')?.textContent).toBe('The sign-ins that open a wallet in this app, if you have one.');
+    h.click('home-back');
+    row('s1').click();
+    expect(document.querySelector('#home-app-devices > p')?.textContent).toContain('signed in to this wallet');
+    expect(document.querySelector('#home-sign-ins > p')?.textContent).toBe('The sign-ins that open this wallet.');
+  });
+
+  it('a view opened while the page’s own Back is on its way waits for it, however late: no flip back to the list', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
+    await h.signIn();
+    const hist = h.win.history;
+    row('s1').click();
+    hist.hold = true;
+    h.click('home-back');
+    row('s3').click();
+    // The browser is slow: well past a second, the traversal hasn't landed and no entry was added during it.
+    advance(5_000);
+    expect(hist.entries).toHaveLength(2);
+    expect(hist.index).toBe(0);
+    hist.hold = false;
+    hist.release();
+    await flush();
+    expect(h.page.openScope).toBe('s3');
+    expect(hist.index).toBe(1);
+    expect(hist.state).toMatch(/^home:[A-Za-z0-9_-]{16}:1$/u);
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+  });
+
+  it('a traversal that never lands: after 10 s the view keeps no entry, and a popstate that comes even later changes nothing', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
+    await h.signIn();
+    const hist = h.win.history;
+    row('s1').click();
+    hist.hold = true;
+    h.click('home-back');
+    row('s3').click();
+    advance(11_000);
+    hist.hold = false;
+    hist.release();
+    await flush();
+    expect(h.page.openScope).toBe('s3');
+    expect(hist.index).toBe(0);
   });
 });
 

@@ -7,7 +7,7 @@
 //   HANA_SHOTS_DIR set (Chromium only) it saves each screen there at desktop and phone width, light and dark.
 import { API_URL, AUTH_ORIGIN, EVIL_ORIGIN, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { chooseAccount, expect, login, newApp, openPartner, test, walletDirectory } from './fixtures.ts';
-import { routeApps, shots, signIn } from './home-steps.ts';
+import { HOME_APPS, routeApps, shots, signIn } from './home-steps.ts';
 
 const G = 'GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ';
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
@@ -361,4 +361,56 @@ test('after the sign-in ends Back and Forward show what is on screen and read no
   await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
   expect(await page.content()).not.toContain(G);
   expect(requests.length).toBe(sent);
+});
+
+// ---- PR 116's review (D893) ----
+
+test('a link’s wallet never pulls the person out of a view opened while the list loaded (the list 3 s late)', async ({ page, context }) => {
+  let late = true;
+  await routeApps(context, () => ({ status: 200, body: { scopes: [LIST.scopes[0]], nextCursor: null } }));
+  // Registered after routeApps, so it runs first: the first list is 3 s late.
+  await context.route(`${HOME_APPS}**`, async (route) => {
+    if (late && route.request().method() === 'GET') {
+      late = false;
+      await new Promise((r) => setTimeout(r, 3_000));
+    }
+    return route.fallback();
+  });
+  await page.goto(`${AUTH_ORIGIN}/home?appId=app_sodax1`);
+  const listed = page.waitForResponse((r) => r.url().startsWith(HOME_APPS) && r.request().method() === 'GET');
+  await signIn(page);
+  await page.locator('#home-open-devices').click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Devices and auto-approve' })).toBeFocused();
+  // The list arrives: the page stays on Devices, with one entry over the list.
+  await listed;
+  await expect(page.locator('#home-loading')).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 1, name: 'Devices and auto-approve' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Wallet details' })).toHaveCount(0);
+  expect(await page.evaluate(() => history.state as unknown)).toMatch(/^home:[A-Za-z0-9_-]{16}:1$/u);
+  await page.goBack();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await expect(page.locator('.home-row[data-scope="s1"]')).toBeVisible();
+});
+
+test('rows: a screen reader’s name and description; the placeholders stand still with reduced motion', async ({ page, context }) => {
+  let hold: ((v: unknown) => void) | null = null;
+  await routeApps(context, () => ({ status: 200, body: LIST }));
+  await context.route(`${HOME_APPS}**`, async (route) => {
+    if (hold === null && route.request().method() === 'GET') await new Promise((r) => (hold = r));
+    return route.fallback();
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  await expect(page.locator('#home-loading')).toBeVisible();
+  expect(await page.locator('.home-skeleton-line').first().evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  expect(await page.locator('.home-skeleton-line').first().evaluate((el) => getComputedStyle(el).animationName)).not.toBe('none');
+  (hold as unknown as (v: unknown) => void)(null);
+  const s1 = page.locator('.home-row[data-scope="s1"]');
+  await expect(s1).toHaveAccessibleName('Sodax, Sodax Earn (Paused), Safe if the app closes');
+  await expect(s1).toHaveAccessibleDescription('https://sodax.example and 1 more website');
+  await expect(page.locator('.home-row[data-scope="s2"]')).toHaveAccessibleName('Lumen Pay (Closed), Safe if the app closes');
+  await expect(page.locator('#home-open-devices')).toHaveAccessibleName('Devices and auto-approve');
+  await expect(page.locator('#home-open-devices')).toHaveAccessibleDescription('Where you’re signed in to your apps, and what may sign without asking');
 });

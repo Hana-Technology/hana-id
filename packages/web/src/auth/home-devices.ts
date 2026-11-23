@@ -22,6 +22,8 @@ import type { GestureCheck, PageWindow } from './page-window.ts';
 import { BTN, alert, icon } from './ui.ts';
 
 export const HOME_DEVICES_TITLE = 'Devices and auto-approve';
+/** What the section says on an app's page where Journear has no wallet of the user's on record (no wallet called theirs). */
+export const HOME_DEVICES_APP_INTRO = 'Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it.';
 /** What the section says on a wallet's page (D893: "this wallet", and the app or apps that use it). */
 export const HOME_DEVICES_WALLET_INTRO = (apps: number): string =>
   `Where you’re signed in to this wallet, what those devices may sign without asking, and whether you share your email with ${apps > 1 ? 'these apps' : 'the app'}.`;
@@ -449,7 +451,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       items.length > 0
         ? d.h('ul', { class: 'home-device-list' }, ...items)
         : where === 'app'
-          ? empty('home-app-devices-empty', 'Nothing signed in', 'No device is signed in to this wallet right now.')
+          ? empty('home-app-devices-empty', 'Nothing signed in', appScope?.mine === false ? 'No device is signed in to this app with Journear right now.' : 'No device is signed in to this wallet right now.')
           : null,
       s.more ? d.h('p', { class: 'muted' }, `Passport Home shows the ${HOME_DEVICES_MAX} most recent here; others are signed in too. Sign out the ones you don’t use, then show your devices again.`) : null,
       s.devices.some((x) => x.lastUsedAtMs !== null) ? d.h('p', { class: 'muted home-last-used-note' }, '“Last opened or approved here” doesn’t count requests the app signed by itself.') : null,
@@ -487,7 +489,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       out.push(...shown.map((s) => scopeGroup(where, s)));
     }
     if (where === 'front' && view.scopes.some((s) => s.email === null)) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-email-unknown-front' } }, 'Passport Home can’t tell right now which apps you share your email with.'));
-    if (where === 'front') out.push(d.h('p', { class: 'muted' }, 'Only apps Journear has on record for you are listed here. For any other app, find it under “Other apps” and open it.'));
+    if (where === 'front') out.push(d.h('p', { class: 'muted' }, 'Only apps Journear has on record for you are listed here. For any other app, find it on “Your wallets”, under “Other apps”, and open it.'));
     out.push(
       d.h(
         'div',
@@ -504,7 +506,9 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     const intro =
       where === 'front'
         ? 'Where you’re signed in to your apps with Journear, which of those devices may sign for you without asking, and the apps you share your email with.'
-        : HOME_DEVICES_WALLET_INTRO(appScope?.apps.length ?? 1);
+        : appScope?.mine === false
+          ? HOME_DEVICES_APP_INTRO
+          : HOME_DEVICES_WALLET_INTRO(appScope?.apps.length ?? 1);
     // The view's own heading for every wallet (D893: the page's `h1` names the view); a section of a wallet's page.
     const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE) : d.h('h2', { attrs: { id: 'home-app-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE);
     root.replaceChildren();

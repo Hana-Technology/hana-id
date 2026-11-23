@@ -73,6 +73,23 @@ const uncovered = (page: Page, selector: string) =>
 /** Scrolls so `selector` sits in the window's middle. */
 const centre = (page: Page, selector: string) => page.locator(selector).evaluate((el) => el.scrollIntoView({ block: 'center' }));
 
+/**
+ * Waits until the page is still: the bar's height and the scroll position read the same twice, 100 ms of real time
+ * apart (the page's clock may be Playwright's; this wait is the test's own), so a resize the browser hasn't delivered
+ * yet can't move the page under a measurement.
+ */
+async function settled(page: Page): Promise<void> {
+  const read = (): Promise<string> => page.evaluate(() => `${Math.round(document.querySelector('header')?.getBoundingClientRect().height ?? 0)},${Math.round(scrollY)}`);
+  let last = await read();
+  for (let i = 0; i < 50; i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    const now = await read();
+    if (now === last) return;
+    last = now;
+  }
+  throw new Error(`the page didn't settle: ${last}`);
+}
+
 /** The guard armed: a second's wait, then the mouse moves (as fixtures' guardedClick, without the click). */
 async function arm(page: Page, selector: string): Promise<void> {
   await page.waitForTimeout(1_100);
@@ -309,11 +326,9 @@ for (const size of [
     const search = '#home-search-go';
     await centre(home, search);
     const searchTop = (await box(home, search)).top;
-    home.on('console', (m) => { if (m.text().startsWith('DBG')) console.log(m.text()); });
-    console.log('DBG click');
     await home.locator(search).click();
     await expect(home.locator('#home-ended')).toBeVisible();
-    await home.waitForTimeout(300);
+    await settled(home);
     await expect(home.locator('#home-who')).toContainText('•••@mail-e2e.example.com');
     m.whoEnded = (await who()).height;
     m.barEnded = (await bar()).height;
@@ -351,10 +366,14 @@ for (const size of [
 
     // The notice (the email sign-in's token lasts 10 minutes: it comes at 8), with the move flow's button in view.
     const target = '#home-export-open';
+    await settled(home);
     await centre(home, target);
+    // In view before the notice comes: "stays where it was" below then means something.
+    expect(await uncovered(home, target), 'the move flow’s button is in view before the notice').toMatchObject({ inView: true, hit: true });
     const targetTop = (await box(home, target)).top;
     await context.clock.fastForward(8 * MIN + 5_000);
     await expect(home.locator('#home-ending')).toBeVisible();
+    await settled(home);
     m.barWithNotice = (await bar()).height;
     m.targetTop = [targetTop, (await box(home, target)).top];
     expect(Math.abs((await box(home, target)).top - targetTop), 'the move flow’s button stays where it was in the window').toBeLessThanOrEqual(1);

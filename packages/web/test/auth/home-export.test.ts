@@ -1275,6 +1275,23 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     expect(h.page.moving.state).toBe('reveal');
   });
 
+  it('D893: a resize of another height than the page’s change noted is handled by step 1’s rule, never with the note', async () => {
+    const h = start();
+    await h.unlock();
+    const header = document.querySelector('header.home-top') as HTMLElement;
+    resize(header, 125);
+    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 600 });
+    window.dispatchEvent(new Event('scroll'));
+    header.getBoundingClientRect = () => ({ height: 281, width: 0, top: 0, left: 0, right: 0, bottom: 281, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+    advance(13 * 60_000 + 1000);
+    // The browser anchored (+156) and reported it; the resize then reports another height (a font swap meanwhile).
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 756 });
+    window.dispatchEvent(new Event('scroll'));
+    resize(header, 290);
+    expect(scrollBy).toHaveBeenCalledWith(0, 165);
+  });
+
   it('D893: everything above the move flow is watched, whatever it is (the way back, the details, a part added later)', async () => {
     const h = start();
     await h.unlock();
@@ -1296,6 +1313,7 @@ describe('D888: a change of layout around the move flow starts the guard over', 
   it.each([
     ['a browser that anchors (Chromium, Firefox): its own scroll event comes before the resize, and the page adds nothing', true, null],
     ['a browser that doesn’t (WebKit): the page scrolls by the whole change', false, 156],
+    ['a person who scrolled before a late resize (PR 116’s review): the page never undoes their scroll', 'person', null],
   ] as const)('D893: the notice grows a bar that scrolls with the page, with %s', async (_, anchors, scrolled) => {
     const h = start();
     await h.unlock();
@@ -1311,7 +1329,8 @@ describe('D888: a change of layout around the move flow starts the guard over', 
     header.getBoundingClientRect = () => ({ height: 281, width: 0, top: 0, left: 0, right: 0, bottom: 281, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
     advance(13 * 60_000 + 1000);
     expect(document.getElementById('home-ending')).not.toBeNull();
-    if (anchors) scrollTo(756);
+    if (anchors === true) scrollTo(756);
+    if (anchors === 'person') scrollTo(700);
     resize(header, 281);
     if (scrolled === null) expect(scrollBy).not.toHaveBeenCalled();
     else expect(scrollBy).toHaveBeenCalledWith(0, scrolled);

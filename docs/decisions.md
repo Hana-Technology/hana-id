@@ -17260,8 +17260,10 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   above the move flow is watched instead of a selector list; `history.scrollRestoration = 'manual'`). Step 2 also fixes a
   race in item 1's phone compensation: the browser's scroll event (its own anchoring) came before the bar's resize and
   overwrote the position the resize compares with, so the page scrolled a second time by the bar's change wherever
-  there was room below (hidden in step 1, where the front page was mostly at its end); the position from before the
-  page's own change is now held until the resize is handled.
+  there was room below (hidden in step 1, where the front page was mostly at its end). As revised after PR 116's
+  review: for a change the page itself makes (its notice, who is signed in), the resize of that very change (the same
+  height) scrolls by the bar's change only if nothing has moved the page since; otherwise the page leaves the scroll as
+  it is, so a late resize can never undo a scroll the browser or the person made.
 - **Open, recorded with step 2 (2026-11-23), not built**: (1) tabs on a wallet's page, Addresses / Security / Move
   wallet (step 3); (2) the Security tab's contents (step 4: the ways to sign in, the devices for that wallet, the name it
   gets); (3) Cancel and Remove of a sign-in inside Home (decided, later, as its own security-reviewed change: today Home
@@ -17936,6 +17938,47 @@ while building, **to confirm**:
   the phone "Sign in again" chip (**decided by the founder 2026-11-23, to be built in step 3**: shown only while the
   bar's notice is out of view, covering no control and never where a guarded button can be, taking the person to the
   notice; any change of layout it makes near a guarded button starts the guard over); QR codes; a sign-in timer.
+- **After PR 116's review (2026-11-23)**, applied on the same branch:
+  1. **The partner's link no longer pulls the person out of a view.** "Your account" is usable before the list
+     arrives; a link to the user's own app used to open "Wallet details" (and a second entry) when the list came, over
+     a view the person had opened meanwhile. Now the link's wallet opens only while the front page is on screen (its
+     view, at its own entry); otherwise it stays a row. Unit test and e2e (the list 3 s late, three browsers).
+  2. **No "wallet" on an app where the person has none.** On "App details" the devices' line is the app's again
+     ("Where you’re signed in to this app with Journear, … whether you share your email with it.", and "No device is
+     signed in to this app with Journear right now."), and "Ways to sign in" says "The sign-ins that open a wallet in
+     this app, if you have one." (new).
+  3. **The row's screen-reader name.** A row's accessible name is Journear's assembly of the apps' names, each with its
+     state, and the badge: "Sodax, Sodax Earn (Paused), Safe if the app closes" (`aria-label`, partner names as an
+     attribute value only); where the first app runs is its description (`aria-describedby`), no longer read as part of
+     the name. The visible line now says "and 1 more website" / "and N more websites" (was "and N more", which read like
+     more addresses). "Your account"'s rows are named by their title, their line is the description.
+  4. **Reduced motion.** The loading placeholders (`.jp-skel`, first used by Home) flickered with reduced motion: the
+     system's rule shortens every animation to 0.01 ms but keeps `.jp-skel`'s infinite repeats. `home.css` stops their
+     animation under `prefers-reduced-motion: reduce`. The brand rule itself is likely wrong for every infinite
+     animation (it would want `animation-iteration-count: 1`); left for the design system, not changed here.
+  5. **Test hygiene.** Debug lines and a fixed wait removed from `home-shell.spec.ts`; it waits until the bar's height
+     and the scroll read the same twice, and checks the move flow's button is in view before the notice comes.
+  6. **The 390 px flake was a product bug, confirmed.** The note of the page's bar change was held until "the bar's
+     resize"; when the change left no resize to deliver (or a resize of another height came first), a stale note stayed
+     and the NEXT bar change (the 8-minute notice) took its old scroll position as the base, scrolling the page back by
+     however far it had been scrolled meanwhile (the test's own `centre()`; equally a person's scroll). Fixed in the
+     page as described in D888's note above: a note is used only by a resize of the same height, and even then the page
+     scrolls only if nothing has moved it since. Unit tests: anchored, not anchored, a person's scroll before a late
+     resize, a resize of another height.
+  7. **The page's own Back no longer times out into a flip.** The view opened while "Your wallets"' `history.go` is on
+     its way now waits for that traversal however long it takes (it was 1 s; a later popstate then flipped the new view
+     back to the list). After 10 s the page stops waiting: that view keeps no entry (Back leaves Home from it, as with a
+     browser that refuses one), and a popstate that still arrives for the page's own traversal changes nothing. Unit
+     tests with delayed popstates.
+  8. **Wording.** The devices' view: "For any other app, find it on “Your wallets”, under “Other apps”, and open it."
+- **The review's conclusions, for the founder**: after the 15-minute sign-in ends, Back and Forward re-show only views
+  already in the page's memory: no more than one click away before this change, and consistent with D553 ("everything
+  on screen stays"). On a shared computer, Sign out and another account's sign-in drop the remembered views and make a
+  new tag; Forward after Sign out stayed on the signed-out page in Chromium, Firefox and WebKit. With the back-forward
+  cache enabled, coming back to Home gave a fresh load of the signed-out page. Opening "Devices and auto-approve" or
+  "Your name" from its row makes one read, the same as "Show devices" / "Show my name" did; Home's reads aren't billed
+  (D586 bills derives only). Not verified: stable-channel browsers' caching of `no-store` pages outside Playwright,
+  real screen readers (names checked by the browsers' accessibility trees only), and iOS.
 - Address impact: none (no path, key or derivation input changes).
 - Tests: unit 323 in the five files (home-page 104, home-export 140, home-devices 32, home-profile 44, plain-words
   3): rows by pointer and keyboard, each state, the heading and title pattern, the old → new strings, Back and Forward
@@ -17967,4 +18010,8 @@ while building, **to confirm**:
   "Show more"; (13) Back and Forward as described (focus back on the row; the scroll restored; Back from the front page
   leaving Home; after a reload, one more Back showing the signed-out page before leaving); (14) the account views
   without their card frame (the section is the page); (15) the move flow's two sentences that still say "this app’s
-  page" (reword in step 3 or 4).
+  page" (reword in step 3 or 4); (16) the rows' "and N more websites" and their spoken name "Sodax, Sodax Earn
+  (Paused), Safe if the app closes"; (17) "The sign-ins that open a wallet in this app, if you have one." on an app
+  with no wallet of theirs; (18) the devices' "find it on “Your wallets”, under “Other apps”"; (19) for step 3:
+  "Does this wallet need the app?" and the move flow's "your wallet in this app" read oddly for a wallet several apps
+  share; the move flow's `h3` under the `h2` "Your name" (goes with the tabs).

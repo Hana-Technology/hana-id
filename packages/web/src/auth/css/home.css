@@ -613,6 +613,14 @@ button.home-row:focus-visible {
   max-width: 180px;
 }
 
+/* Reduced motion: the placeholders stand still. The system's own rule shortens every animation to 0.01 ms but keeps
+   `.jp-skel`'s infinite repeats, which then flicker (PR 116's review: Firefox and WebKit). */
+@media (prefers-reduced-motion: reduce) {
+  .home .home-skeleton-line {
+    animation: none;
+  }
+}
+
 /* An empty or failed group: the system's empty state, its action under its words. */
 .home-empty .code {
   font-size: var(--jp-text-xs);

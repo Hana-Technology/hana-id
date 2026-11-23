@@ -117,6 +117,8 @@ export const HOME_TEXT = Object.freeze({
   noResultsTitle: 'No app found with that name',
   noResults: 'Check the spelling, or type the app’s whole name.',
   back: 'Your wallets',
+  /** After where an app runs, when its apps run on more websites (PR 116's review: "more" alone read as addresses). */
+  moreSites: (n: number): string => ` and ${n} more ${n === 1 ? 'website' : 'websites'}`,
   walletTitle: 'Wallet details',
   appTitle: 'App details',
   walletApp: 'App that uses this wallet',
@@ -128,6 +130,9 @@ export const HOME_TEXT = Object.freeze({
 
 /** The window's title on a signed-in view (D893): the view's `h1`, then the page's name. */
 export const homeViewTitle = (heading: string): string => `${heading} – ${BRAND.home}`;
+
+/** How long the page waits for the popstate of its own `history.go` before it stops waiting (D893). */
+export const REWIND_GIVE_UP_MS = 10_000;
 
 /** The marker a history entry of Passport Home holds (D893): `home:`, the sign-in's random tag, `:`, the step. */
 const STEP_MARK = /^home:([A-Za-z0-9_-]{16}):([1-9][0-9]{0,2})$/u;
@@ -584,38 +589,43 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   /** The page's scroll position as last seen, before any change of layout this frame. */
   let lastScrollY = view()?.scrollY ?? 0;
   /**
-   * D893 (a fix to D888's step 1): the scroll position just before the page itself changed the bar (its notice, who is
-   * signed in), held until the bar's resize is handled. The browser's own scroll anchoring moves the page in the same
-   * frame and fires a scroll event BEFORE the resize observation; that event used to overwrite `lastScrollY`, so the
-   * resize took the anchoring as missing and scrolled by the bar's change a second time (hidden while the page was
-   * already at its end, as the front page with step 1's layout mostly was). Dropped at once when the change left the
-   * bar's height as it was (no resize will come), else by the resize that handles it.
+   * D893 (a fix to D888's step 1, revised after PR 116's review): a change the page itself makes to the bar (its notice,
+   * who is signed in) is noted with the scroll position just before it and the bar's height just after. The browser's
+   * own scroll anchoring moves the page in the same frame and fires a scroll event BEFORE the resize observation; step 1
+   * read that event's position as the base, so it scrolled by the bar's change a second time wherever there was room
+   * below. Now, when the resize for that very change comes (the same height), the page scrolls by the bar's change only
+   * if the page hasn't moved at all since the change (WebKit, which doesn't anchor here); if it moved, by the browser's
+   * anchoring or by the person (a resize that comes late, under load), the page leaves the scroll as it is: it never
+   * undoes a scroll. A note the resize doesn't match (another height, or no resize at all) is never used.
    */
-  let beforeBarChange: number | null = null;
+  let barChange: { y: number; height: number | null } | null = null;
   /** The bar's height as the resize observer last reported it (null before its first report, or without one). */
   let barSeen: number | null = null;
   const noteBarChange = (): void => {
-    beforeBarChange = view()?.scrollY ?? lastScrollY;
-    lastScrollY = beforeBarChange;
+    barChange = { y: view()?.scrollY ?? lastScrollY, height: null };
   };
   const barChanged = (): void => {
-    if (beforeBarChange === null) return;
+    if (barChange === null) return;
     let now: number | null = null;
     try {
       now = Math.round(bar.header.getBoundingClientRect().height);
     } catch {
       now = null;
     }
-    if (barSeen === null || now === null || now === barSeen) beforeBarChange = null;
+    // No resize will come for a change that left the height as last reported: nothing to note.
+    if (barSeen === null || now === null || now === barSeen) barChange = null;
+    else barChange.height = now;
   };
   const onScroll = (): void => {
-    if (beforeBarChange === null) lastScrollY = view()?.scrollY ?? 0;
+    lastScrollY = view()?.scrollY ?? 0;
     noteBarBottom();
   };
   // The bar's height: written to the root's --home-bar-h (through the CSSOM, which the CSP allows; no style attribute),
   // which focus scrolling keeps clear of; a change starts the guard over.
   sizeWatch((_, height, was, widthChanged) => {
     barSeen = height;
+    const change = barChange;
+    barChange = null;
     rootStyle('--home-bar-h', `${height}px`);
     noteBarBottom();
     if (was === undefined) return;
@@ -626,11 +636,15 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const v = view();
     // The bar's width changed too: the window was resized and everything reflowed; not the bar changing above what is
     // in view.
-    const before = beforeBarChange ?? lastScrollY;
-    beforeBarChange = null;
-    if (v && !widthChanged && !sticky() && before >= was) {
-      const missing = height - was - (v.scrollY - before);
-      if (Math.abs(missing) >= 1) v.scrollBy(0, missing);
+    if (v && !widthChanged && !sticky()) {
+      if (change !== null && change.height === height) {
+        // The page's own change: only where nothing has moved the page since (see above).
+        if (change.y >= was && Math.abs(v.scrollY - change.y) < 1) v.scrollBy(0, height - was);
+      } else if (lastScrollY >= was) {
+        // A change the page didn't make (the email code screens in the bar): step 1's rule.
+        const missing = height - was - (v.scrollY - lastScrollY);
+        if (Math.abs(missing) >= 1) v.scrollBy(0, missing);
+      }
     }
     if (v) lastScrollY = v.scrollY;
     layoutChanged();
@@ -898,7 +912,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       const own = mine.find(hasLinked);
       if (own) {
         linkScope = own.scopeId;
-        openWallet(own.scopeId);
+        openLinkedWallet(own.scopeId);
         return;
       }
       const known = listed.find(hasLinked);
@@ -914,7 +928,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       if (found?.mine) {
         mine = [found, ...mine.filter((s) => s.scopeId !== found.scopeId)];
         linkScope = found.scopeId;
-        openWallet(found.scopeId);
+        openLinkedWallet(found.scopeId);
       } else if (found) {
         linked = found;
         renderContent();
@@ -1011,8 +1025,15 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let stepTag = '';
   let steps: HomeView[] = [{ kind: 'front' }];
   let step = 0;
-  /** The page asked the browser to go back (`history.go`): its popstate is the page's own; a view opened meanwhile waits for it. */
+  /**
+   * The page asked the browser to go back (`history.go`): its popstate is the page's own, and a view opened meanwhile
+   * adds its entry only once that traversal is done (never during it, however long it takes under load: PR 116's
+   * review). If no popstate has come after `REWIND_GIVE_UP_MS`, the page stops waiting: that view gets no entry (Back
+   * then leaves Home from it, as with a browser that refuses one), and a popstate that still comes for the page's own
+   * traversal, landing on the front page's entry, changes nothing on screen (`lateRewind`).
+   */
   let rewinding = false;
+  let lateRewind = false;
   let rewindTimer: ReturnType<typeof setTimeout> | undefined;
   let afterRewind: (() => void) | null = null;
   /** Where the front page was scrolled when a view opened over it, and the row that opened it: both come back with it. */
@@ -1039,9 +1060,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const h = hist();
     if (!onOwnStep() || typeof h?.go !== 'function') return false;
     rewinding = true;
+    lateRewind = false;
     clearTimeout(rewindTimer);
-    // A popstate that never comes (a browser that drops it) mustn't hold a view opened meanwhile for ever.
-    rewindTimer = setTimeout(() => endRewind(), 1000);
+    rewindTimer = setTimeout(() => {
+      rewinding = false;
+      afterRewind = null;
+      lateRewind = true;
+    }, REWIND_GIVE_UP_MS);
     try {
       h.go(-step);
       return true;
@@ -1087,6 +1112,11 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   function onPopState(event: Event): void {
     if (rewinding) return endRewind();
+    if (lateRewind) {
+      lateRewind = false;
+      // The page's own traversal, finished after the page stopped waiting: it lands on the front page's entry.
+      if (stepOf((event as { state?: unknown }).state ?? null) === null) return;
+    }
     // Signed out (or signing in): nothing of an account is shown, whatever the entry.
     if (stage !== 'signed_in') return;
     const n = stepOf((event as { state?: unknown }).state ?? null);
@@ -1168,6 +1198,16 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const v: HomeView = { kind: 'wallet', scope };
     showView(v, 'open');
     addStep(v);
+  }
+
+  /**
+   * The partner's link named the user's own wallet: its page opens, but only while the front page is on screen (its
+   * view, at its own entry). "Your account" is usable before the list arrives, so the person may already have opened a
+   * view: the link never pulls them out of it, and the wallet stays a row of the list (D893, PR 116's review).
+   */
+  function openLinkedWallet(scopeId: string): void {
+    if (viewing.kind === 'front' && step === 0) openWallet(scopeId);
+    else renderContent();
   }
 
   /** Opens "Devices and auto-approve" or "Your name" from "Your account" (or `?view=devices`). */
@@ -1762,6 +1802,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     );
   }
 
+  /** Numbers the rows' descriptions so every id on the page is its own. */
+  let rowSeq = 0;
   const scopeTitle = (scope: HomeScope): string => scope.apps[0]?.name ?? 'An app that is no longer listed';
 
   /**
@@ -1775,19 +1817,25 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const cover = coverageText(scope.coverage, scope.mine);
     const origins = scope.apps.flatMap((a) => a.origins);
     const first = origins[0];
+    // What a screen reader names the row (PR 116's review): the apps, each with its state, then the badge, in words with
+    // pauses ("Sodax, Sodax Earn (Paused), Safe if the app closes"); where the first app runs is the row's description,
+    // not its name. Journear's own words around the partner's names, set as an attribute value, never markup.
+    const stateWords = (a: HomeApp): string[] => [STATUS_TEXT[a.status], a.environment === 'test' ? 'Test app' : null].filter((w): w is string => w !== null);
+    const named = scope.apps.length > 0 ? scope.apps.map((a) => (stateWords(a).length > 0 ? `${a.name} (${stateWords(a).join(', ')})` : a.name)).join(', ') : scopeTitle(scope);
+    const whereId = `home-row-where-${(rowSeq += 1)}`;
     const title =
       scope.apps.length > 0
         ? scope.apps.flatMap((a, i) => [i > 0 ? d.h('span', { class: 'home-row-sep', attrs: { 'aria-hidden': 'true' } }, ' · ') : null, d.h('span', { class: 'home-row-app' }, d.h('span', { class: 'home-row-name' }, a.name), ...appBadges(a))])
         : [scopeTitle(scope)];
     const row = d.h(
       'button',
-      { class: 'home-row', attrs: { type: 'button', 'data-scope': scope.scopeId } },
+      { class: 'home-row', attrs: { type: 'button', 'data-scope': scope.scopeId, 'aria-label': `${named}, ${cover.badge}`, ...(first !== undefined ? { 'aria-describedby': whereId } : {}) } },
       d.h('span', { class: 'home-tile', attrs: { 'aria-hidden': 'true' } }, icon(d, 'wallet'), scope.apps.map((a) => appLogo(d, env, a.logoUrl)).find((img) => img !== null) ?? null),
       d.h(
         'span',
         { class: 'home-row-text' },
         d.h('span', { class: 'home-row-title' }, ...title),
-        first !== undefined ? d.h('span', { class: 'home-row-sub' }, originText(d, first), origins.length > 1 ? ` and ${origins.length - 1} more` : null) : null,
+        first !== undefined ? d.h('span', { class: 'home-row-sub', attrs: { id: whereId } }, originText(d, first), origins.length > 1 ? HOME_TEXT.moreSites(origins.length - 1) : null) : null,
       ),
       badge(cover.badge, cover.tone),
       icon(d, 'chev-r', 'chev'),
@@ -1804,9 +1852,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function accountRow(id: string, ic: 'device' | 'person', title: string, sub: string, open: () => void): HTMLElement {
     const row = d.h(
       'button',
-      { class: 'home-row', attrs: { type: 'button', id } },
+      { class: 'home-row', attrs: { type: 'button', id, 'aria-describedby': `${id}-about` } },
       d.h('span', { class: 'home-tile home-tile-own', attrs: { 'aria-hidden': 'true' } }, icon(d, ic)),
-      d.h('span', { class: 'home-row-text' }, d.h('span', { class: 'home-row-title' }, title), d.h('span', { class: 'home-row-sub' }, sub)),
+      // Named by its title; its line is the description.
+      d.h('span', { class: 'home-row-text' }, d.h('span', { class: 'home-row-title' }, title), d.h('span', { class: 'home-row-sub', attrs: { id: `${id}-about`, 'aria-hidden': 'true' } }, sub)),
       icon(d, 'chev-r', 'chev'),
     );
     row.addEventListener('click', (e) => {

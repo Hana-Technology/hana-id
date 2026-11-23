@@ -166,6 +166,8 @@ export function pointerFor(viewer: SignInViewer, row: SignInRow, nowMs: number):
 /** Every fixed sentence of the section, in one place (the plain-words check reads this file). */
 export const SIGN_IN_TEXT = Object.freeze({
   intro: 'The sign-ins that open this wallet.',
+  /** On an app where Journear has no wallet of the user's on record (D893: no wallet is called theirs there). */
+  introApp: 'The sign-ins that open a wallet in this app, if you have one.',
   show: 'Show ways to sign in',
   loading: 'Checking the ways to sign in…',
   again: 'Show again',
@@ -456,7 +458,7 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
 
   function render(): void {
     root.replaceChildren();
-    for (const c of [d.h('h2', { attrs: { id: 'home-sign-ins-title', tabindex: '-1' } }, HOME_SIGN_INS_TITLE), d.h('p', {}, SIGN_IN_TEXT.intro), ...body()]) {
+    for (const c of [d.h('h2', { attrs: { id: 'home-sign-ins-title', tabindex: '-1' } }, HOME_SIGN_INS_TITLE), d.h('p', {}, scope?.mine === false ? SIGN_IN_TEXT.introApp : SIGN_IN_TEXT.intro), ...body()]) {
       if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
     }
   }

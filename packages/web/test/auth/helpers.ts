@@ -82,7 +82,14 @@ export class FakeHistory {
   /** How many times Back went past the first entry: the browser left the page. */
   left = 0;
   scrollRestoration = 'auto';
+  /** While true, popstate events wait for `release()` (a browser under load delivering them late). */
+  hold = false;
+  private readonly held: (() => void)[] = [];
   constructor(private readonly win: FakeWindow) {}
+  /** Delivers the popstate events held so far, in order. */
+  release(): void {
+    for (const fire of this.held.splice(0)) fire();
+  }
   get state(): unknown {
     return this.entries[this.index]?.state ?? null;
   }
@@ -107,7 +114,9 @@ export class FakeHistory {
     if (to >= this.entries.length || delta === 0) return;
     this.index = to;
     const state = this.state;
-    queueMicrotask(() => this.win.dispatch('popstate', { state }));
+    const fire = (): void => this.win.dispatch('popstate', { state });
+    if (this.hold) this.held.push(fire);
+    else queueMicrotask(fire);
   });
   /** The browser's Back and Forward buttons. */
   back(): void {

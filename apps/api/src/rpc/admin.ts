@@ -64,6 +64,12 @@ import {
   userSharesInput,
   evmRelayActInput,
   evmRelayDetailInput,
+  ackLabelNoticeInput,
+  labelControlInput,
+  labelDetailInput,
+  labelNoticesInput,
+  labelQueueInput,
+  labelStaffActInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -92,6 +98,9 @@ import { supportLookup, userShares } from '../directory/support.ts';
 import { linkStats } from '../link-usage.ts';
 import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
+import { isLabelChange } from '../labels/sql.ts';
+import { ackLabelNotice, cancelLabelChange, labelNotices } from '../labels/lifecycle.ts';
+import { labelControl, labelControls, labelDetail, labelQueue, labelStaffAct } from '../labels/staff.ts';
 import { refuse } from '../changes/cas.ts';
 import { adminRun, noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
@@ -139,8 +148,9 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.setLogo', setLogoInput, c, { actors: HANA }, ({ input, db, w }) => setLogo(db, w, input));
   }
 
+  /** A guarded change (`gc_`) or a partner label version (`lc_`, D894). */
   cancelChange(c: unknown) {
-    return runRpc(this.env, 'admin.cancelChange', cancelChangeInput, c, { actors: HANA }, ({ input, db, w }) => cancelChange(db, w, input));
+    return runRpc(this.env, 'admin.cancelChange', cancelChangeInput, c, { actors: HANA }, ({ input, db, w }): Promise<{ change: object }> => (isLabelChange(input.changeId) ? cancelLabelChange(db, w, input) : cancelChange(db, w, input)));
   }
 
   createKey(c: unknown) {
@@ -201,6 +211,42 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** Called only by the admin Worker's notice cron, after the email provider accepted every send; starts the clock. */
   ackNotice(c: unknown) {
     return runRpc(this.env, 'admin.ackNotice', ackNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackNotice(db, this.env, w, input));
+  }
+
+  // ---- partner labels (D894): their blocking notices, the staff feed and tools, the switches ----
+
+  /** The label versions proposed and not yet announced, each with its preview and its diff (the notice cron's page). */
+  labelNotices(c: unknown) {
+    return runRpc(this.env, 'admin.labelNotices', labelNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ notices: await labelNotices(db, input.limit, w.now) }));
+  }
+
+  /** Called only by the admin Worker's notice cron, after the email provider accepted every send; starts the clock. */
+  ackLabelNotice(c: unknown) {
+    return runRpc(this.env, 'admin.ackLabelNotice', ackLabelNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackLabelNotice(db, this.env, w, input));
+  }
+
+  /** The staff feed: every label change waiting (for its whole wait) and those decided lately, with the switches. */
+  labelQueue(c: unknown) {
+    return runRpc(this.env, 'admin.labelQueue', labelQueueInput, c, { actors: HANA }, ({ input, db, w }) => labelQueue(db, input.days ?? 14, w.now));
+  }
+
+  labelDetail(c: unknown) {
+    return runRpc(this.env, 'admin.labelDetail', labelDetailInput, c, { actors: HANA }, async ({ input, db, w }) => ({ item: await labelDetail(db, input.changeId, w.now) }));
+  }
+
+  /** The switches alone (the System status page's indicator). Also the feed's (`system`). */
+  labelControls(c: unknown) {
+    return runRpc(this.env, 'admin.labelControls', systemStatusInput, c, { actors: HANA_OR_SYSTEM }, async ({ db }) => ({ controls: await labelControls(db) }));
+  }
+
+  /** "Block this change" or "Allow", as the staffer, only while the change is as the page showed it. */
+  labelStaffAct(c: unknown) {
+    return runRpc(this.env, 'admin.labelStaffAct', labelStaffActInput, c, { actors: HANA }, ({ input, db, w }) => labelStaffAct(db, w, input));
+  }
+
+  /** A switch: off or back on (an entry, an org, everyone), or review required (an org, everyone). */
+  labelControl(c: unknown) {
+    return runRpc(this.env, 'admin.labelControl', labelControlInput, c, { actors: HANA }, ({ input, db, w }) => labelControl(db, w, input));
   }
 
   setSecurityContacts(c: unknown) {

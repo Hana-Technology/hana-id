@@ -43,6 +43,9 @@ export const AUDIT_DETAIL_KEYS = {
   'origin.proposed': ['code', 'version', 'added', 'removed'],
   'policy.proposed': ['code', 'version', 'policyId', 'changeId'],
   'raw_sign.proposed': ['code', 'version', 'changeId'],
+  // D894: an owner's partner labels proposal and removal (step-ups; app_changes, the API's, is authoritative).
+  'labels.proposed': ['code', 'version', 'changeId', 'labelId'],
+  'labels.removed': ['code', 'version', 'labelId'],
   'app.resumed': ['code', 'suspendedBy'],
   'app.settings_changed': ['code', 'version', 'fields'],
   'owner_action.relayed': ['code', 'method', 'status'],
@@ -70,6 +73,10 @@ export const AUDIT_DETAIL_KEYS = {
   // which tool, the chain, the slot and the staffer's note; after it, the relayer's answer (`done`, or its reason).
   'evm_relay.staff_action': ['tool', 'chainId', 'slot', 'note', 'keyConfirmed'],
   'evm_relay.staff_result': ['tool', 'chainId', 'slot', 'result'],
+  // D894: the partner labels' staff tools from the admin portal, org-less: before the tool runs, which tool, its target
+  // (a change, an entry, an org or every org) and the staffer's note; after it, the API's answer.
+  'labels.staff_action': ['tool', 'target', 'note'],
+  'labels.staff_result': ['tool', 'target', 'result'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type AuditAction = keyof typeof AUDIT_DETAIL_KEYS;

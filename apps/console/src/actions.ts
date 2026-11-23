@@ -33,6 +33,9 @@ import {
   emailClientAudOf,
   hex,
   inviteEmail,
+  LABEL_STORE_LIMITS,
+  labelChangeDigest,
+  labelIdInput,
   newId,
   nonceOf,
   normaliseOrigin,
@@ -126,6 +129,9 @@ const params = {
   'member.invite': z.object({ email: inviteEmail, role }).strict(),
   'member.role': z.object({ userId: userIdInput, role }).strict(),
   'member.remove': z.object({ userId: userIdInput }).strict(),
+  // D894: partner labels (no console screen yet, piece 4; the BFF route is this one).
+  'labels.set': z.object({ scopeId: scopeIdInput, labelId: labelIdInput.optional(), document: z.string().min(1).max(16 * 1024), appIds: z.array(appIdInput).min(1).max(LABEL_STORE_LIMITS.appsPerDocument) }).strict(),
+  'labels.remove': z.object({ scopeId: scopeIdInput, labelId: labelIdInput }).strict(),
   'org.policy': z
     .object({
       requiredHd: z
@@ -157,6 +163,8 @@ export const RETURN_PAGES = {
   'member.role': ['members'],
   'member.remove': ['members'],
   'org.policy': ['members'],
+  'labels.set': ['scope'],
+  'labels.remove': ['scope'],
 } as const satisfies Record<StepUpKind, readonly string[]>;
 type ReturnPage = (typeof RETURN_PAGES)[StepUpKind][number];
 const APP_PAGES: ReadonlySet<string> = new Set(['origins', 'signing', 'suspend', 'sessions', 'email']);
@@ -326,6 +334,31 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
     }
     case 'owner_action':
       return buildOwnerAction(env, c, ctx, p as z.infer<(typeof params)['owner_action']>, now);
+    case 'labels.set': {
+      // The API runs every check a proposal gets (no step-up, no write) and answers what users would see; the nonce
+      // binds the document's sha256, the sorted apps and the scope's labels version it read.
+      const appIds = [...new Set(p.appIds as string[])].sort();
+      const r = await env.API.previewLabels({ ...ctx, orgId: c.orgId, scopeId: p.scopeId as string, ...(p.labelId ? { labelId: p.labelId as string } : {}), document: p.document as string, appIds });
+      if (!r.ok) return no(r.code, r.error ?? r.code);
+      if (r.noChange) no('conflict', 'These request labels are already in force on these apps');
+      const digest = await labelChangeDigest({ signer: env.SIGNER_ACCOUNT, scopeId: p.scopeId as string, kind: 'labels_set', labelId: (p.labelId as string | undefined) ?? '', docSha256: r.sha256, appIds, labelsVersion: r.labelsVersion });
+      return {
+        action: { ...base, scope_id: p.scopeId, label_id: p.labelId ?? null, document: p.document, sha256: r.sha256, app_ids: appIds, labels_version: r.labelsVersion },
+        decoded: { scopeId: p.scopeId, labelId: p.labelId ?? null, appIds, sha256: r.sha256, bytes: r.bytes, labelsVersion: r.labelsVersion, preview: r.preview },
+        digest,
+      };
+    }
+    case 'labels.remove': {
+      const r = await env.API.listLabels({ ...ctx, orgId: c.orgId, scopeId: p.scopeId as string });
+      if (!r.ok) return no(r.code, r.error ?? r.code);
+      const entry = r.entries.find((e) => e.id === p.labelId) ?? no('not_found', 'No such request labels in this scope');
+      const digest = await labelChangeDigest({ signer: env.SIGNER_ACCOUNT, scopeId: p.scopeId as string, kind: 'labels_remove', labelId: entry.id, appIds: [], labelsVersion: r.labelsVersion });
+      return {
+        action: { ...base, scope_id: p.scopeId, label_id: entry.id, labels_version: r.labelsVersion },
+        decoded: { scopeId: p.scopeId, labelId: entry.id, labelsVersion: r.labelsVersion, immediate: true, current: entry.current?.id ?? null, waiting: entry.waiting?.id ?? null },
+        digest,
+      };
+    }
     case 'member.invite': {
       const open = await env.CONSOLE_DB.prepare(`SELECT COUNT(*) AS n FROM invites WHERE org_id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ${lit(now)}`).bind(c.orgId).first<number>('n');
       if ((open ?? 0) >= 10) no('conflict', 'The organisation has 10 open invites: revoke one first');
@@ -775,6 +808,16 @@ async function runApiKind(env: Env, w: Writer, a: LiveAction, act: Record<string
       await auditOutcome(env, w, a, 'owner_action.relayed', { ok, nearTx: r.ok ? (r.nearTx ?? null) : null, details: r.ok ? { method: body.method, status: r.status, ...(r.code ? { code: r.code } : {}) } : { method: body.method, code: r.code } });
       if (!r.ok) return failed(r.code, r.error);
       return ok ? { status: 'ok', ...(r.nearTx ? { nearTx: r.nearTx } : {}), relayStatus: r.status } : { ...failed(r.code ?? 'contract_rejected', r.error), relayStatus: r.status, ...(r.nearTx ? { nearTx: r.nearTx } : {}) };
+    }
+    case 'labels.set': {
+      const r = await env.API.proposeLabels({ ...ctx, orgId, scopeId: act.scope_id as string, ...(act.label_id ? { labelId: act.label_id as string } : {}), document: act.document as string, appIds: act.app_ids as string[], expectedVersion: act.labels_version as number, stepUpJwt: jwt });
+      await auditOutcome(env, w, a, 'labels.proposed', { ok: r.ok, details: r.ok ? { version: r.version, changeId: r.change?.id ?? null, labelId: r.change?.labelId ?? (act.label_id as string | null) } : { code: r.code } });
+      return r.ok ? { status: 'ok', version: r.version, ...(r.change ? { changeId: r.change.id, labelId: r.change.labelId } : { noChange: true }) } : failed(r.code, r.error);
+    }
+    case 'labels.remove': {
+      const r = await env.API.removeLabels({ ...ctx, orgId, scopeId: act.scope_id as string, labelId: act.label_id as string, expectedVersion: act.labels_version as number, stepUpJwt: jwt });
+      await auditOutcome(env, w, a, 'labels.removed', { ok: r.ok, details: r.ok ? { version: r.version, labelId: act.label_id as string } : { code: r.code } });
+      return r.ok ? { status: 'ok', version: r.version } : failed(r.code, r.error);
     }
     default:
       return failed('internal');

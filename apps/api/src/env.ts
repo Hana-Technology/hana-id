@@ -140,6 +140,13 @@ export interface Env {
    * out-of-range delay makes every guarded change refuse with `internal` (guarded/config.ts).
    */
   APP_CHANGE_DELAY_MS?: string;
+  /**
+   * D894 (manifest `partnerLabels.enabled`, scripts/gen-wrangler.ts): `"on"` turns partner labels' proposals and their
+   * delivery in `GET /v1/app` on; anything else (absent in every deployed env until piece 3 and a go-live step) leaves
+   * them off: proposals are refused and `GET /v1/app` has no `partnerLabels` field. Staff blocks and kill switches work
+   * either way (they only turn labels off).
+   */
+  PARTNER_LABELS?: string;
   NETWORK?: string;
   REFUSED_ORIGINS?: string;
   /** The logo origin (manifest `files.origin`), from batch C11; unset without the dashboard blocks. */

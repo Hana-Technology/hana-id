@@ -4,6 +4,8 @@ import { type AppEndpoint, APP_CONFIG_ENDPOINT, APP_ENDPOINTS, appPreflight, han
 import { GOVERNANCE_ENDPOINT, handleGovernance } from './governance-status.ts';
 import { json } from './http.ts';
 import { detectDrift } from './changes/drift.ts';
+import { labelsMaintenance } from './labels/cron.ts';
+import { detectLabelDrift } from './labels/drift.ts';
 import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
 import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
 import { NEAR_ACTIVATE_ENDPOINT, NEAR_RELAY_ENDPOINT, handleNearActivate, handleNearRelay } from './near/relay.ts';
@@ -266,7 +268,7 @@ export default {
     // Independent jobs: one failing must not skip the other. The sync records the JWKS observation from its fetch.
     const jobs: Promise<unknown>[] = [syncIssuerKeys(env)];
     if (isHourlyRun(controller.scheduledTime)) {
-      jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env), detectDrift(env));
+      jobs.push(vaultMaintenance(env), identityMaintenance(env), guardedChangesMaintenance(env), detectDrift(env), labelsMaintenance(env), detectLabelDrift(env));
       // Usage fails open: these log their own failures and never fail the run (the next hour tries again). Partitions
       // first, so the copy and the hour's events have their months. Pushed last: the destructuring below is positional.
       jobs.push(ensureUsagePartitions(env).then(() => Promise.all([syncIdentityUsage(env), syncEmailUsage(env)])));

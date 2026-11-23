@@ -73,6 +73,12 @@ export interface AppConfig {
    * which treats anything else as "no NEAR".
    */
   walletChains?: unknown;
+  /**
+   * D894: the partner label documents in force for this app (the vault's own read, with the API's manifest switch on).
+   * Typed unknown on purpose: nothing uses it yet (piece 3), and the vault reads it only through
+   * `verifyDeliveredLabels` (packages/web src/vault/partner-labels.ts), which drops anything it can't check.
+   */
+  partnerLabels?: unknown;
   requestId: string;
 }
 

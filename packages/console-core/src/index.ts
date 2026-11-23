@@ -9,6 +9,7 @@ export * from './neon-compute.ts';
 export * from './ids.ts';
 export * from './issuer-apps.ts';
 export * from './jcs.ts';
+export * from './labels.ts';
 export * from './layouts.ts';
 export * from './names.ts';
 export * from './origins.ts';

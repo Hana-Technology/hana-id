@@ -14,7 +14,8 @@ import { MAX_APP_ORIGINS } from './origins.ts';
 
 export const orgIdInput = z.string().regex(/^org_[A-Za-z0-9]{1,64}$/u);
 export const appIdInput = z.string().regex(/^app_[A-Za-z0-9]{1,64}$/u);
-export const changeIdInput = z.string().regex(/^gc_[A-Za-z0-9]{1,64}$/u);
+/** A guarded change (`gc_`) or a partner label version (`lc_`, D894): the cancel paths take either. */
+export const changeIdInput = z.string().regex(/^(?:gc|lc)_[A-Za-z0-9]{1,64}$/u);
 export const keyIdInput = z.string().regex(/^key_[A-Za-z0-9_]{1,96}$/u);
 export const securityEventIdInput = z.string().regex(/^se_[A-Za-z0-9]{1,64}$/u);
 /** Scope ids: "global" or the contract's "s" + base36. */

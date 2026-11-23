@@ -13,6 +13,8 @@ export const DOMAINS = {
   stepUp: 'hana-console/step-up/v1',
   originChange: 'hana-id/origin-change/v1',
   settingsChange: 'hana-id/settings-change/v1',
+  /** D894: a partner label document proposed or removed. */
+  labelChange: 'hana-id/label-change/v1',
   ownerAction: 'hana-id/owner-action/v1',
   clientProof: 'hana-id/client-proof/v1',
   cancelLink: 'hana-id/cancel-link/v1',
@@ -95,6 +97,31 @@ export async function settingsChangeDigest(i: { signer: string; appId: string; k
     throw new TypeError(`Unknown settings change kind ${String(i.kind)}`);
   }
   return sha256(concatBytes(utf8(DOMAINS.settingsChange), borshString(i.signer), borshString(i.appId), borshString(i.kind), value, u64le(i.settingsVersion)));
+}
+
+export type LabelChangeKind = 'labels_set' | 'labels_remove';
+
+/**
+ * Partner label change (D894): d = sha256("hana-id/label-change/v1" ‖ borsh(signer) ‖ borsh(scope_id) ‖ borsh(kind) ‖
+ * borsh(label_id) ‖ doc(32) ‖ borsh(sorted app ids) ‖ labels_version u64 LE). `label_id` is "" for a new entry; doc is
+ * the document's sha256 for `labels_set`, 32 zero bytes for `labels_remove` (whose app list is empty). The console
+ * builds it and the API recomputes it from the request and the scope's stored `labels_version`.
+ */
+export async function labelChangeDigest(i: { signer: string; scopeId: string; kind: LabelChangeKind; labelId: string; docSha256?: string; appIds: readonly string[]; labelsVersion: number | bigint }): Promise<Uint8Array> {
+  let doc: Uint8Array;
+  if (i.kind === 'labels_set') {
+    if (!i.docSha256 || !/^[0-9a-f]{64}$/u.test(i.docSha256)) throw new TypeError('labels_set needs the document sha256 (64 lowercase hex)');
+    if (i.appIds.length === 0) throw new TypeError('labels_set needs at least one app');
+    doc = fromHex(i.docSha256);
+  } else if (i.kind === 'labels_remove') {
+    if (i.docSha256 !== undefined || i.appIds.length !== 0 || !i.labelId) throw new TypeError('labels_remove takes a label id, no document and no apps');
+    doc = new Uint8Array(32);
+  } else {
+    throw new TypeError(`Unknown label change kind ${String(i.kind)}`);
+  }
+  if (new Set(i.appIds).size !== i.appIds.length) throw new TypeError('An app is listed twice');
+  const apps = [...i.appIds].sort((a, b) => compareBytes(utf8(a), utf8(b)));
+  return sha256(concatBytes(utf8(DOMAINS.labelChange), borshString(i.signer), borshString(i.scopeId), borshString(i.kind), borshString(i.labelId), doc, borshStringVec(apps), u64le(i.labelsVersion)));
 }
 
 /**

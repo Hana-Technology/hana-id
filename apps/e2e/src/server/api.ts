@@ -45,6 +45,8 @@
 //                                     the admin lanes', lane-labels.ts): the approval window's tests need a label that
 //                                     is served, not its lifecycle. PARTNER_LABELS is "on" in this Worker's env only.
 //   POST /__e2e/labels/remove         {labelId}: the entry is removed now (what an owner's removal does to delivery)
+//   GET  /__e2e/app-reads?pk=<pk>     {reads: [ms…]}: when the vault's GET /v1/app reads of that app arrived (D896: a test
+//                                     waits for the vault's labels read to be older than its freshness window)
 //   GET  /__e2e/wallets?address=<a>   [{userId, supportCode, internalId, scopeId, wallets: [{chain, address}],
 //                                     identities: [{provider, sub, role, status}]}]: the wallet directory's users listing
 //                                     that address (migration 0011, written by the Worker's own POST /v1/wallets/record;
@@ -335,8 +337,15 @@ export class MockApi {
 
   // ---- HTTP ----
 
+  /** D896: when each vault read of GET /v1/app arrived, by publishable key. */
+  private readonly appReads = new Map<string, number[]>();
+
   async handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    if (url.pathname === '/v1/app' && req.method === 'GET' && req.headers.get('origin') === this.env.VAULT_ORIGIN) {
+      const pk = req.headers.get('x-hana-key') ?? '';
+      this.appReads.set(pk, [...(this.appReads.get(pk) ?? []), Date.now()].slice(-50));
+    }
     if (url.pathname.startsWith('/__e2e/')) return this.control ? this.controlEndpoint(req, url) : json(404, { error: 'not_found' });
     if (req.method === 'POST' && MOCKED.has(url.pathname)) return this.mocked(req, url.pathname);
     if (SPONSOR_ROUTES.has(url.pathname)) return this.sponsorRoute(req, url);
@@ -635,6 +644,7 @@ export class MockApi {
         return e instanceof HttpError ? json(e.status, { error: e.code }) : json(400, { error: 'bad_label' });
       }
     }
+    if (p === '/__e2e/app-reads' && req.method === 'GET') return json(200, { reads: this.appReads.get(url.searchParams.get('pk') ?? '') ?? [] });
     if (p === '/__e2e/labels/remove' && req.method === 'POST') {
       const { labelId } = (await req.json()) as { labelId?: unknown };
       if (typeof labelId !== 'string') return json(400, { error: 'bad_request' });

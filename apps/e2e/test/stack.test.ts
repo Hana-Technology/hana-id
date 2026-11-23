@@ -414,6 +414,9 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     expect(await (await call(api, '/v1/app', { origin: PARTNER_ORIGIN, pk })).json()).not.toHaveProperty('partnerLabels');
     // A page can't reach the control (it always sends an Origin).
     expect((await call(api, '/__e2e/labels', { method: 'POST', origin: PARTNER_ORIGIN, body: { appId, text } })).status).toBe(403);
+    // The vault's reads are logged by key (the partner page's own read isn't the vault's).
+    const reads = (await (await call(api, `/__e2e/app-reads?pk=${pk}`)).json()) as { reads: number[] };
+    expect(reads.reads).toHaveLength(1);
     expect(await (await call(api, '/__e2e/labels/remove', { method: 'POST', body: { labelId } })).json()).toEqual({ removed: 1 });
     expect(((await (await call(api, '/v1/app', { origin: VAULT_ORIGIN, parent: PARTNER_ORIGIN, pk })).json()) as { partnerLabels?: unknown }).partnerLabels).toEqual([]);
   });

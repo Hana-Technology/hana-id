@@ -64,8 +64,8 @@ describe('item 2: every value that matters is shown, and every true value is ret
       withdraw: { call: { args: { owner: { type: 'accountId', isSelf: true }, beneficiary: { type: 'accountId' }, amount: { type: 'u128' } } }, intent: { verb: 'withdraw', object: 'the locker deposit' }, sentence: ['verb', 'object'], fields },
     });
   it('refuses a format that leaves an account, an amount or a non-zero deposit out of its fields', () => {
-    expect(codes(withdraw([{ path: 'args.owner', label: 'From', format: 'account' }]))).toContain('field_required');
-    const ok = codes(withdraw([{ path: 'args.owner', label: 'From', format: 'account' }, { path: 'args.beneficiary', label: 'To', format: 'account' }, { path: 'args.amount', label: 'Amount', format: 'tokenAmount', params: { token: 'shop.testnet' } }]));
+    expect(codes(withdraw([{ path: 'args.owner', label: 'Member', format: 'account' }]))).toContain('field_required');
+    const ok = codes(withdraw([{ path: 'args.owner', label: 'Member', format: 'account' }, { path: 'args.beneficiary', label: 'Treasury', format: 'account' }, { path: 'args.amount', label: 'Club share', format: 'tokenAmount', params: { token: 'shop.testnet' } }]));
     expect(ok).not.toContain('field_required');
     const dep = collectFmt();
     dep.call.deposit = { atMost: '5' };
@@ -80,7 +80,7 @@ describe('item 2: every value that matters is shown, and every true value is ret
         intent: { verb: 'buy', object: 'tickets' },
         sentence: ['verb', 'object'],
         fields: [
-          { path: 'args.token', label: 'Token', format: 'account' },
+          { path: 'args.token', label: 'Coin', format: 'account' },
           { path: 'args.amount', label: 'Price', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
           { path: 'args.to', label: 'Paid to', format: 'account' },
           { path: 'deposit', label: 'Attached', format: 'nativeAmount' },
@@ -171,7 +171,7 @@ describe('items 6, 7, 11, 14: amounts, joining words, duplicates, verbs', () => 
     const f = collectFmt();
     f.call.args.a = { type: 'accountId' };
     f.call.args.b = { type: 'accountId' };
-    f.fields.push({ path: 'args.a', label: 'To', format: 'account' }, { path: 'args.b', label: 'To', format: 'account' });
+    f.fields.push({ path: 'args.a', label: 'Treasury', format: 'account' }, { path: 'args.b', label: 'Treasury', format: 'account' });
     expect(codes(nearDoc(STAMPS, { collect: f }, STAMPS_DOC_JSON.metadata))).toContain('duplicate');
   });
   it('the verb list, and soft verbs only where no value can move', () => {

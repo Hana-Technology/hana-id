@@ -73,8 +73,8 @@ export const SOROBAN_DOC_JSON = {
         intent: { verb: 'deposit' },
         sentence: ['verb', { field: 'args.amount' }, { word: 'from' }, { field: 'args.from' }],
         fields: [
-          { path: 'args.amount', label: 'Amount', format: 'tokenAmount', params: { token: TEST_USDC_SAC } },
-          { path: 'args.from', label: 'From', format: 'account' },
+          { path: 'args.amount', label: 'Club share', format: 'tokenAmount', params: { token: TEST_USDC_SAC } },
+          { path: 'args.from', label: 'Member', format: 'account' },
         ],
       },
       pay_to: {
@@ -82,9 +82,9 @@ export const SOROBAN_DOC_JSON = {
         intent: { verb: 'pay' },
         sentence: ['verb', { field: 'args.amount' }, { word: 'to' }, { field: 'args.to' }],
         fields: [
-          { path: 'args.amount', label: 'Amount', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
-          { path: 'args.to', label: 'To', format: 'account' },
-          { path: 'args.token', label: 'Token', format: 'account' },
+          { path: 'args.amount', label: 'Club share', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
+          { path: 'args.to', label: 'Treasury', format: 'account' },
+          { path: 'args.token', label: 'Coin', format: 'account' },
         ],
       },
     },

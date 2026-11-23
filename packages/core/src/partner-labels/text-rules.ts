@@ -38,6 +38,7 @@ export type PartnerTextCode =
   | 'text_phishing'
   | 'text_ownership'
   | 'text_other_name'
+  | 'text_row_word'
   | 'text_jargon';
 
 export interface PartnerTextProblem {
@@ -189,6 +190,18 @@ function denied(words: readonly string[], list: DenyList): string | null {
   return null;
 }
 
+/**
+ * D896 (after PR 123's review): a field's label is a row's name in the partner's box, under Journear's own rows; it may
+ * not be one of Journear's row names or a word for an amount, an account, a fee or a network, which would read as one of
+ * Journear's facts ("Total: 1042", "To: Coffee Club till", "Network: …"). Whole words, compared as the other lists.
+ */
+const ROW_WORDS = denyList([
+  'to', 'from', 'amount', 'amounts', 'total', 'totals', 'sum', 'subtotal', 'send', 'sends', 'sent', 'sending', 'sender', 'recipient', 'recipients',
+  'receiver', 'receive', 'receives', 'received', 'network', 'networks', 'memo', 'memos', 'token', 'tokens', 'account', 'accounts', 'price', 'prices',
+  'value', 'values', 'leaving', 'program', 'programs', 'key', 'keys', 'owner', 'owners', 'permission', 'permissions', 'pool', 'pools', 'collection',
+  'valid', 'until', 'pay', 'pays', 'paid', 'payment', 'payments', 'payer', 'payee', 'charge', 'charges', 'charged', 'deposit', 'deposits', 'withdrawal',
+]);
+
 /** Words that would stand in for the window's own computed text ("your account") or speak to the user. */
 const YOU_WORDS = new Set(['you', 'your', 'yours', 'yourself', 'youre', 'u', 'ur']);
 
@@ -301,6 +314,9 @@ export function partnerTextProblem(text: unknown, role: PartnerTextRole): Partne
   }
   if (all.some((w) => YOU_WORDS.has(w))) return problem('text_you', 'Don’t write “you” or “your”: the window says “your account” itself, only where it is true.');
   for (const m of MEANING) if (denied(cw, m.list) !== null) return problem(m.code, m.message);
+  if (role === 'fieldLabel' && cw.some((w) => ROW_WORDS.exact.has(w))) {
+    return problem('text_row_word', 'Don’t name a row with the window’s own row names or words for amounts, accounts, fees or networks (To, From, Amount, Total, Network, Memo, Token, Account, Price, …): those rows are Journear’s.');
+  }
   // Numbers and things that look like an address: an amount or an account written as text would sit beside the true
   // values and could be taken for one.
   if (/\d{5}/u.test(text)) return problem('text_number', 'Use at most 4 digits in a row: amounts and numbers come from the request.');
@@ -318,4 +334,26 @@ export function partnerTextProblem(text: unknown, role: PartnerTextRole): Partne
   const jargon = JARGON_PATTERNS.find(([, re]) => re.test(text) || re.test(leet.join(' ')));
   if (jargon) return problem('text_jargon', `Use plain words: “${jargon[0]}” is on Journear’s list of technical words users shouldn’t need to know.`);
   return null;
+}
+
+/**
+ * D896 (after PR 123's review): why the request's own text, shown as an order number or item id (1 to 32 of
+ * `A–Z a–z 0–9 _ -`), may not be shown in the partner's box, or null. The request is the page's, so a hijacked page
+ * could write "1XLM", "Free" or "Journear-verified" there: refused are Journear's names, claim words, the window's own
+ * words, the names on Journear's lists (tokens, coins, programs) and other currencies' names, read in the value's
+ * pieces (split at `-`, `_` and between letters and digits) and in its letters run together. A hit means the request
+ * doesn't match its description (the amber line), and the value isn't shown.
+ */
+export function idValueProblem(value: string): boolean {
+  const pieces = foldLetters(value)
+    .split(/[-_]+|(?<=\p{L})(?=\p{N})|(?<=\p{N})(?=\p{L})/u)
+    .filter((w) => w.length > 0);
+  const words = pieces.map(cf);
+  const letters = cf(pieces.filter((w) => /^\p{L}+$/u.test(w)).join(''));
+  const skeleton = nameSkeleton(value);
+  if (BRAND_WORDS.some((b) => letters.includes(b) || skeleton.includes(nameSkeleton(b))) || pieces.some((w) => w.startsWith('hana'))) return true;
+  if (pieces.some((w) => REVIEWED.words.has(w)) || words.some((w) => OTHER.has(w))) return true;
+  if (denied(words, CLAIM) !== null || CLAIM_LONG_STEMS.some((st) => letters.includes(st)) || CLAIM_RUNS.some((st) => letters.includes(st))) return true;
+  const ui = MEANING.find((m) => m.code === 'text_ui_word')!.list;
+  return words.some((w) => ui.exact.has(w));
 }

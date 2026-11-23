@@ -10,7 +10,9 @@ import { JsonNumber, type StrictJson, isJsonObject, parseStrictJson } from '../d
 import { NEAR_ARGS_JSON_MAX_BYTES, formatNear } from '../decode/near.ts';
 import type { DecodedApproval } from '../decode/request.ts';
 import type { StellarContractCall, StellarInvocation, StellarScVal, StellarTransaction } from '../decode/stellar.ts';
-import { formatTokenUnits, groupDigits } from '../decode/summary.ts';
+import { formatTokenUnits, groupDigits, stellarBaseAccount } from '../decode/summary.ts';
+import type { StellarOperation } from '../decode/stellar.ts';
+import { idValueProblem } from './text-rules.ts';
 import { knownToken } from '../known-tokens.ts';
 import type { NearAction } from '../near/codec.ts';
 import { COMBINING_RUN, QUOTE_LIKE } from '../reviewed-near-calls.ts';
@@ -33,7 +35,14 @@ export type LabelRequest =
       /** A delegate action someone else sends (true), or the user's own transaction (false). */
       readonly relayed: boolean;
     }
-  | { readonly kind: 'stellar_tx'; readonly networkPassphrase: string; readonly user: string; readonly tx: StellarTransaction }
+  | {
+      readonly kind: 'stellar_tx';
+      readonly networkPassphrase: string;
+      readonly user: string;
+      readonly tx: StellarTransaction;
+      /** D896: the transaction comes inside a fee bump (someone else's envelope): no label describes it yet. */
+      readonly feeBump?: true;
+    }
   | { readonly kind: 'stellar_auth'; readonly networkPassphrase: string; readonly user: string; readonly invocation: StellarInvocation };
 
 /**
@@ -48,7 +57,7 @@ export function labelRequestOf(d: DecodedApproval, user: string): LabelRequest |
     case 'near_delegate':
       return { kind: 'near', network: d.network, user: d.delegate.senderId, receiver: d.delegate.receiverId, actions: d.delegate.actions, relayed: true };
     case 'stellar_tx':
-      return { kind: 'stellar_tx', networkPassphrase: d.networkPassphrase, user, tx: d.envelope.tx };
+      return { kind: 'stellar_tx', networkPassphrase: d.networkPassphrase, user, tx: d.envelope.tx, ...(d.envelope.envelope === 'fee_bump' ? { feeBump: true as const } : {}) };
     case 'stellar_auth_entry':
       return { kind: 'stellar_auth', networkPassphrase: d.networkPassphrase, user, invocation: d.preimage.invocation };
     default:
@@ -205,7 +214,11 @@ export type LabelNoMatchCode =
   | 'journear_reads_this'
   | 'network_not_checked'
   | 'bad_code_hash_input'
-  | 'no_contract_code';
+  | 'no_contract_code'
+  /** D896: a fee bump's inner transaction (not described in v1: its fee is someone else's envelope's). */
+  | 'fee_bump'
+  /** D896: a classic transaction that moves value to someone else, but not as the one payment the document describes. */
+  | 'operation_mismatch';
 
 export interface LabelNoMatch {
   readonly ok: false;
@@ -439,7 +452,9 @@ function renderField(f: LabelField, c: RenderContext): RenderedValue | LabelNoMa
     case 'itemId':
     case 'orderNumber': {
       const raw = value.kind === 'int' ? value.v.toString() : value.kind === 'text' ? value.v : null;
-      if (raw === null || !ID_TEXT.test(raw)) return no('value_not_displayable', f.path);
+      // The request's own text, shown under the app's name: plain characters only, and nothing that reads as Journear's
+      // words, a claim, an amount or a token (D896, after PR 123's review: "1XLM", "Free", "Journear-verified").
+      if (raw === null || !ID_TEXT.test(raw) || idValueProblem(raw)) return no('value_not_displayable', f.path);
       return Object.freeze({ format: p.format, raw, text: raw, source: 'request' });
     }
   }
@@ -564,12 +579,25 @@ function matchSoroban(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
   let call: StellarContractCall;
   let relayed: boolean;
   let fee: string | null = null;
+  // First what the request is (D896, after PR 123's review): only a request that calls this contract at its top level
+  // is described; anything else (another contract, a router whose nested authorization reaches this one, a classic
+  // transaction) is not, whatever its shape. Then the code hash: unread or different, nothing is said about the call.
+  const callsHere = (op: StellarOperation): boolean => op.type === 'invokeHostFunction' && op.hostFunction.type === 'invokeContract' && op.hostFunction.contract === ctx.contract;
+  if (req.kind === 'stellar_tx') {
+    if (req.feeBump) return no('fee_bump');
+    if (!req.tx.operations.some(callsHere)) return no('wrong_account', 'contract');
+  } else {
+    const f = req.invocation.function;
+    if (f.type !== 'contractFn' || f.contract !== ctx.contract) return no('wrong_account', 'contract');
+  }
+  const hash = codeHashFails(facts.codeHash, ctx.wasmHash, 'soroban');
+  if (hash) return hash;
   if (req.kind === 'stellar_tx') {
     const tx = req.tx;
     if (tx.operations.length !== 1) return no('more_than_one_action');
     const op = tx.operations[0]!;
     if (op.type !== 'invokeHostFunction' || op.hostFunction.type !== 'invokeContract') return no('not_a_function_call');
-    if (tx.source !== req.user || (op.source !== null && op.source !== req.user)) return no('source_not_user');
+    if (stellarBaseAccount(tx.source).base !== req.user || (op.source !== null && stellarBaseAccount(op.source).base !== req.user)) return no('source_not_user');
     call = op.hostFunction;
     // Every authorization the transaction carries is exactly this call, with nothing nested under it.
     for (const e of op.auth) {
@@ -586,9 +614,6 @@ function matchSoroban(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
     call = f;
     relayed = true;
   }
-  if (call.contract !== ctx.contract) return no('wrong_account', 'contract');
-  const hash = codeHashFails(facts.codeHash, ctx.wasmHash, 'soroban');
-  if (hash) return hash;
   const format = formatFor(doc, call.function);
   if (format === undefined || format.chain !== 'soroban') return no('wrong_method', 'function');
   const spec: SorobanCallSpec = format.call;
@@ -633,20 +658,58 @@ function matchSoroban(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
 
 const MEMO_TEXT_OK = (s: string): boolean => isDisplaySafeLine(s) && !COMBINING_RUN.test(s) && !QUOTE_LIKE.test(s);
 
+/** A Stellar account's base account (a muxed M… address moves its base G… account's funds). */
+const baseOf = (a: string): string => stellarBaseAccount(a).base;
+
+/**
+ * The accounts a classic operation moves value to from `user`'s account (base accounts), or null when it moves none of
+ * the user's value to an account: a payment, either path payment, an account creation, a merge (all of the account),
+ * a claimable balance (each claimant). Its source is the operation's own, else the transaction's.
+ */
+function valueTo(op: StellarOperation, txSource: string, user: string): string[] | null {
+  if (baseOf(op.source ?? txSource) !== user) return null;
+  switch (op.type) {
+    case 'payment':
+    case 'pathPaymentStrictSend':
+    case 'pathPaymentStrictReceive':
+    case 'createAccount':
+    case 'accountMerge':
+      return [baseOf(op.destination)];
+    case 'createClaimableBalance':
+      return op.claimants.map((c) => baseOf(c.destination));
+    default:
+      return null;
+  }
+}
+
 function matchPayment(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'near' }>): LabelMatchResult {
   const ctx = doc.context;
   if (ctx.chain !== 'stellar') return no('wrong_chain');
   if (req.networkPassphrase !== ctx.networkPassphrase) return no('wrong_network');
   if (req.kind !== 'stellar_tx') return no('wrong_operation');
+  if (req.feeBump) return no('fee_bump');
+  const format = formatFor(doc, 'payment');
+  if (format === undefined || format.chain !== 'stellar') return no('wrong_operation');
+  const call: PaymentCallSpec = format.call;
   const tx = req.tx;
+  const user = baseOf(req.user);
+  const book = new Map(doc.metadata.addressBook.map((e) => [e.account, e.name]));
+  const listed = new Set([...book.keys()].map(baseOf));
+  // First what the request is (D896, after PR 123's review): a classic transaction that moves the user's value to
+  // another account is a payment this document speaks about, in whatever operation and wherever in the transaction. One
+  // to an account the app hasn't listed is the red line, before anything else; one that moves nothing to anyone else
+  // (a trust line, an offer, a swap back to the user's own account) isn't described at all.
+  let described = false;
+  for (const op of tx.operations) {
+    const others = (valueTo(op, tx.source, user) ?? []).filter((a) => a !== user);
+    if (others.length === 0) continue;
+    described = true;
+    if (others.some((a) => !listed.has(a))) return no('not_in_address_book', 'destination');
+  }
+  if (!described) return no('wrong_operation');
   if (tx.operations.length !== 1) return no('more_than_one_action');
   const op = tx.operations[0]!;
-  const format = formatFor(doc, 'payment');
-  if (op.type !== 'payment' || format === undefined || format.chain !== 'stellar') return no('wrong_operation');
-  const call: PaymentCallSpec = format.call;
-  if (tx.source !== req.user || (op.source !== null && op.source !== req.user)) return no('source_not_user');
-  const book = new Map(doc.metadata.addressBook.map((e) => [e.account, e.name]));
-  if (!book.has(op.destination)) return no('not_in_address_book', 'destination');
+  if (op.type !== 'payment') return no('operation_mismatch');
   if (call.assets !== undefined && !call.assets.includes(op.asset)) return no('token_not_allowed', 'asset');
   if (call.amountAtMost !== undefined && BigInt(op.amount) > BigInt(call.amountAtMost)) return no('out_of_bounds', 'amount');
   if (call.feeAtMost !== undefined && BigInt(tx.fee) > BigInt(call.feeAtMost)) return no('fee_too_high', 'fee');
@@ -656,6 +719,7 @@ function matchPayment(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
     if (tx.memo.value === null || !MEMO_TEXT_OK(tx.memo.value)) return no('value_not_displayable', 'memo');
     memo = { kind: 'text', v: tx.memo.value };
   } else if (tx.memo.type === 'id') memo = { kind: 'int', v: BigInt(tx.memo.value) };
+  const destination = [...book.keys()].find((a) => baseOf(a) === baseOf(op.destination)) ?? op.destination;
   return build(
     'payment',
     format,
@@ -673,7 +737,7 @@ function matchPayment(doc: LabelDocument, req: Exclude<LabelRequest, { kind: 'ne
       { path: 'memo', type: 'memo', value: memo === undefined ? null : `${tx.memo.type}:${valueText(memo)}` },
       { path: 'fee', type: 'fee', value: tx.fee },
     ],
-    accountValue(op.destination, req.user, book),
+    accountValue(destination, req.user, book),
   );
 }
 
@@ -735,7 +799,7 @@ export type NoMatchKind =
   /** Journear couldn't check what the match needs (the code hash, the network): today's screen, no mismatch claim. */
   | 'couldnt_check';
 
-const NOT_DESCRIBED: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['wrong_chain', 'wrong_network', 'wrong_account', 'wrong_method', 'wrong_operation', 'calls_own_account', 'journear_reads_this', 'not_a_function_call']);
+const NOT_DESCRIBED: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['wrong_chain', 'wrong_network', 'wrong_account', 'wrong_method', 'wrong_operation', 'calls_own_account', 'journear_reads_this', 'not_a_function_call', 'fee_bump']);
 const COULDNT_CHECK: ReadonlySet<LabelNoMatchCode> = new Set<LabelNoMatchCode>(['no_code_hash', 'bad_code_hash_input', 'network_not_checked']);
 
 /** The kind of a no-match (`NoMatchKind`), so a renderer never infers it from the codes itself. */

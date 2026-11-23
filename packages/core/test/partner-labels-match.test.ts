@@ -215,7 +215,7 @@ describe('NEAR: typed slots', () => {
             { path: 'args.quantity', label: 'Tickets', format: 'count', params: { min: 1, max: 10 } },
             { path: 'args.amount', label: 'Price', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
             { path: 'args.to', label: 'Paid to', format: 'account' },
-            { path: 'args.token', label: 'Token', format: 'account' },
+            { path: 'args.token', label: 'Coin', format: 'account' },
             { path: 'deposit', label: 'Attached', format: 'nativeAmount' },
             { path: 'args.ends', label: 'Sale ends', format: 'date', params: { unit: 'nanoseconds' } },
             { path: 'args.lock', label: 'Held for', format: 'duration', params: { unit: 'seconds' } },

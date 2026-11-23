@@ -233,6 +233,11 @@ export const evmSponsorChainSchema = z
      * testnet only: anyone with a publishable key can spend the budget within the limits.
      */
     requireKnownAccount: z.boolean().optional(),
+    /**
+     * D890: a pause because the relayer wallet ran out of money may end by itself after a refill (default false). Turn
+     * it on only once the checks on Base Sepolia (docs/go-live-after-freeze.md) are recorded; staff Resume always works.
+     */
+    autoRestart: z.boolean().optional(),
   })
   .strict();
 

@@ -8,7 +8,7 @@ import { type Answer, type Call, boot, closeWindow } from './boot.ts';
 
 afterEach(closeWindow);
 
-type Scenario = 'green' | 'fees-working' | 'fees-paused-money' | 'fees-paused-money-leak' | 'fees-paused-key' | 'fees-low';
+type Scenario = 'green' | 'fees-working' | 'fees-paused-money' | 'fees-money-arrived' | 'fees-auto-restarted' | 'fees-money-limit' | 'fees-money-limit-refilled' | 'fees-paused-money-leak' | 'fees-paused-key' | 'fees-low';
 type Fake = { status: number; body: unknown };
 const MODULE = './preview-status.ts';
 const status = {} as Record<Scenario, Record<string, unknown>>;
@@ -17,7 +17,7 @@ const detail = {} as Record<Scenario, Fake>;
 const acts = {} as Record<'resume' | 'cancel', Fake>;
 beforeAll(async () => {
   const m = (await import(MODULE)) as { previewStatus: (s: Scenario) => Promise<Record<string, unknown>>; previewEvmDetail: (s: Scenario) => Promise<Fake>; previewEvmAct: (body: Record<string, unknown>, s: Scenario) => Promise<Fake> };
-  for (const s of ['green', 'fees-working', 'fees-paused-money', 'fees-paused-money-leak', 'fees-paused-key', 'fees-low'] as const) {
+  for (const s of ['green', 'fees-working', 'fees-paused-money', 'fees-money-arrived', 'fees-auto-restarted', 'fees-money-limit', 'fees-money-limit-refilled', 'fees-paused-money-leak', 'fees-paused-key', 'fees-low'] as const) {
     status[s] = await m.previewStatus(s);
     detail[s] = await m.previewEvmDetail(s);
   }
@@ -38,7 +38,10 @@ describe('the System status tile', () => {
   it('each state in plain words: Working, Paused: needs a person, Low on money, Not set up', async () => {
     const want: [Scenario, string, string, string][] = [
       ['fees-working', 'Working', 'tile ok', 'Gas sponsorship (Base Sepolia)'],
-      ['fees-paused-money', 'Paused: needs a person', 'tile critical wide', 'Gas sponsorship (Base Sepolia)'],
+      ['fees-paused-money', 'Paused: needs money', 'tile critical wide', 'Gas sponsorship (Base Sepolia)'],
+      ['fees-money-arrived', 'Restarting by itself', 'tile warning wide', 'Gas sponsorship (Base Sepolia)'],
+      ['fees-auto-restarted', 'Working', 'tile ok', 'Gas sponsorship (Base Sepolia)'],
+      ['fees-money-limit', 'Paused: needs a person', 'tile critical wide', 'Gas sponsorship (Base Sepolia)'],
       ['fees-paused-key', 'Paused: needs a person', 'tile critical wide', 'Gas sponsorship (Base Sepolia)'],
       ['fees-low', 'Low on money', 'tile warning wide', 'Gas sponsorship (Base Sepolia)'],
       ['green', 'Not set up', 'tile off', 'Gas sponsorship'],
@@ -52,16 +55,15 @@ describe('the System status tile', () => {
     }
   });
 
-  it('paused for money: why in one sentence, what to do as numbered steps, the code for engineers small and apart', async () => {
+  it('paused for money, before the refill (D890): the safety check, the least to send and where, then it restarts by itself', async () => {
     const p = await openStatus('fees-paused-money');
     const t = feesTile(p);
-    expect(t.querySelector('.explain-why')!.textContent).toBe('The relayer’s wallet can’t send transactions: it is out of money.');
+    expect(t.querySelector('.explain-why')!.textContent).toBe('The relayer wallet is out of money, so gas sponsorship is paused for everyone. It restarts by itself once the wallet has enough.');
     expect([...t.querySelectorAll('.explain-steps li')].map((li) => li.textContent)).toEqual([
       'Open the relayer wallet on Basescan (its address is below). If money went out in transfers nobody at Journear made, stop: tell an engineer now and don’t send money.',
-      'Check the wallet’s balance below.',
-      'Send at least 0.07 test ETH to the relayer wallet (its address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”).',
-      'When the balance below shows the new amount, press Resume on the Gas sponsorship page.',
-      'If it pauses again for the same reason, it still needs more money: send more, then press Resume again.',
+      'Send at least 0.0538 test ETH to the relayer wallet (0x7aD3…f640; its whole address is below) from a Base Sepolia faucet (docs.base.org, “Network faucets”). That is the least it needs to restart by itself, with room for the next action. A day of gas sponsorship can use up to 0.02 test ETH.',
+      'It restarts by itself within 2 minutes of the money arriving. You don’t need to press Resume.',
+      'Send it once. The balance on this page can be up to 30 s old: press Check again to see the new amount before you send more.',
     ]);
     expect(t.querySelector('.engineer-code')!.textContent).toBe('Code for engineers: relayer_cannot_send · insufficient_funds · slot 42');
     // The lines' chips in plain words too.
@@ -72,11 +74,64 @@ describe('the System status tile', () => {
       ['Waiting to go through', 'Needs a look'],
       ['Account helper program', 'OK'],
       ['Last staff action', 'OK'],
+      ['Restarts by itself', 'OK'],
     ]);
-    // The issue at the top: the same sentence, its steps, its playbook.
-    const issue = [...p.main().querySelectorAll('.issue')].find((i) => i.textContent!.includes('out of money'))!;
-    expect(issue.querySelectorAll('.issue-steps li')).toHaveLength(5);
-    expect(issue.querySelector('.issue-links')!.textContent).toContain('Playbook: Gas sponsorship is paused or slow');
+    // The issue at the top: the same sentence, its steps, its playbook; the money asked for once (no "running low" beside it).
+    const issues = [...p.main().querySelectorAll('.issue')].filter((i) => i.textContent!.includes('Gas sponsorship (Base Sepolia)'));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.querySelectorAll('.issue-steps li')).toHaveLength(4);
+    expect(issues[0]!.querySelector('.issue-links')!.textContent).toContain('Playbook: Gas sponsorship is paused or slow');
+  });
+
+  it('the money there (D890): the wallet has money again and it is restarting; nothing asks for money', async () => {
+    const t = feesTile(await openStatus('fees-money-arrived'));
+    expect(t.querySelector('.explain-why')!.textContent).toBe('The relayer wallet has money again (0.25 test ETH). Gas sponsorship restarts by itself within 2 minutes.');
+    expect([...t.querySelectorAll('.explain-steps li')].map((li) => li.textContent)).toEqual(['Nothing to do: don’t send more money, and you don’t need to press Resume.', 'If it still says this after 2 minutes, press Check again. If it is still paused then, press Resume on the Gas sponsorship page.']);
+    expect(t.textContent).not.toMatch(/Send at least|faucet/u);
+  });
+
+  it('restarted by itself (D890): Working, with “Restarted by itself after a refill, 4 s ago” where the last staff action shows', async () => {
+    const t = feesTile(await openStatus('fees-auto-restarted'));
+    const line = [...t.querySelectorAll('.tile-lines li')].find((li) => li.querySelector('.tile-line-label')!.textContent === 'Last restart')!;
+    expect(line.textContent).toMatch(/Restarted by itself after a refill, \d s ago \(1 of 3 today\)/u);
+    expect(t.querySelector('.explain')).toBeNull();
+  });
+
+  it('the daily limit used (D890): before the money, Resume’s minimum and Resume; after it, Resume and no more money', async () => {
+    const before = feesTile(await openStatus('fees-money-limit'));
+    expect(before.querySelector('.explain-why')!.textContent).toBe('The relayer wallet is out of money, so gas sponsorship is paused for everyone. It can’t restart by itself this time: it has already restarted by itself 3 times today (UTC), the most it may.');
+    expect([...before.querySelectorAll('.explain-steps li')].map((li) => li.textContent)).toContain('Then press Resume on the Gas sponsorship page.');
+    await closeWindow();
+    const after = feesTile(await openStatus('fees-money-limit-refilled'));
+    expect(after.querySelector('.explain-why')!.textContent).toBe('The relayer wallet has money again (0.25 test ETH), but gas sponsorship can’t restart by itself: it has already restarted by itself 3 times today (UTC), the most it may.');
+    expect([...after.querySelectorAll('.explain-steps li')].map((li) => li.textContent)).toEqual(['Don’t send more money.', 'Open the relayer wallet on Basescan (its address is below). If money went out in transfers nobody at Journear made, stop: tell an engineer now.', 'Then press Resume on the Gas sponsorship page.']);
+  });
+
+  it('“Check again” on the tile (D890): a fresh read past the page’s 30 s cache; the answer says when it was too soon; an old reading says so', async () => {
+    const old = { ...status['fees-paused-money'], checkedAt: Date.now() - 20_000, cached: true, ageMs: 20_000 };
+    const fresh = { ...status['fees-money-arrived'], fresh: { refused: false } };
+    const soon = { ...status['fees-money-arrived'], cached: true, fresh: { refused: true, retryInMs: 6_000 } };
+    const answers = [old, fresh, soon];
+    const p = boot('/', (c: Call): Answer => (c.path.startsWith('/api/status') ? { body: answers.shift() } : { status: 404, body: {} }));
+    await vi.waitFor(() => expect(p.main().querySelector('.verdict')).not.toBeNull());
+    const t = feesTile(p);
+    // Its reading is 20 s old (past 15 s): said on the tile.
+    const stale = t.querySelector('.tile-stale') as unknown as HTMLElement;
+    expect(stale.hidden).toBe(false);
+    expect(stale.textContent).toMatch(/^This reading is from 20 s ago\. Money sent since then shows after Check again\.$/u);
+    // Only the Gas sponsorship tile has its own button.
+    expect(p.main().querySelectorAll('.tile-check')).toHaveLength(1);
+    (t.querySelector('.tile-check') as unknown as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(feesTile(p).querySelector('.state-chip')!.textContent).toBe('Restarting by itself'));
+    expect(p.api().filter((c) => c.path.startsWith('/api/status')).map((c) => c.path)).toEqual(['/api/status', '/api/status?fresh=1']);
+    expect(p.main().textContent).toContain('A fresh reading: every part was read again just now.');
+    expect((feesTile(p).querySelector('.tile-stale') as unknown as HTMLElement).hidden).toBe(true);
+    // Pressed again too soon: the last fresh reading, and when the next one can be taken.
+    (feesTile(p).querySelector('.tile-check') as unknown as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(p.main().textContent).toContain('The next fresh reading can be taken in 6 s.'));
+    // The page's own button still reads the cached page.
+    const pageCheck = [...p.main().querySelectorAll('button')].find((b) => b.textContent === 'Check again' && !b.classList.contains('tile-check'))!;
+    expect(pageCheck).toBeDefined();
   });
 
   it('paused because the key is used elsewhere: the engineer first', async () => {
@@ -111,6 +166,30 @@ function openDetail(s: Scenario, onAct?: (c: Call) => Answer) {
 const ready = async (p: ReturnType<typeof openDetail>) => vi.waitFor(() => expect(p.main().querySelector('h1')?.textContent).toBe('Gas sponsorship (Base Sepolia)'));
 
 describe('the Gas sponsorship page', () => {
+  it('D890: paused for money, Resume says it isn’t needed (it restarts by itself) but still works; the restart shows in the staff log as the relayer’s own', async () => {
+    const p = openDetail('fees-paused-money');
+    await ready(p);
+    const tool = [...p.main().querySelectorAll('.tool')].find((t) => t.querySelector('h3')!.textContent === 'Resume')!;
+    // Before the money (D890 review): what Resume needs, never "Resume still works".
+    expect(tool.textContent).toContain('You don’t need Resume for this pause: it restarts by itself within 2 minutes of the money arriving. Resume needs at least 0.0007 test ETH in the wallet first: before that it says no.');
+    expect(tool.textContent).not.toContain('already has enough');
+    expect(tool.querySelector('form')).not.toBeNull();
+    await closeWindow();
+    const limited = openDetail('fees-money-limit');
+    await ready(limited);
+    expect(limited.main().textContent).not.toContain('You don’t need Resume for this pause');
+    await closeWindow();
+    const arrived = openDetail('fees-money-arrived');
+    await ready(arrived);
+    expect(arrived.main().textContent).toContain('The wallet already has enough for Resume, if you want it to restart now.');
+    await closeWindow();
+    const done = openDetail('fees-auto-restarted');
+    await ready(done);
+    const row = [...done.main().querySelectorAll('tr')].find((r) => r.textContent!.includes('Restarted by itself after a refill'))!;
+    expect(row.textContent).toContain('The relayer itself');
+    expect(row.textContent).toContain('Trusted endpoint: balance 250000000000000000 wei');
+  });
+
   it('the state, the wallet with its explorer link, the waiting transactions with their links, the staff log', async () => {
     const p = openDetail('fees-working');
     await ready(p);
@@ -334,12 +413,12 @@ describe('no "free network fees" on the staff side (D879)', () => {
     }
   });
 
-  it('the seven gas sponsorship playbooks and event titles, and the page’s own code', async () => {
+  it('the eight gas sponsorship playbooks and event titles (D890’s restart included), and the page’s own code', async () => {
     const { PLAYBOOKS } = await import('@hana-id/playbooks');
     const { SECURITY_EVENT_TITLES } = await import('@hana-id/console-core');
     const evmPlaybooks = PLAYBOOKS.filter((p) => p.id.startsWith('evm-'));
     const evmTitles = Object.entries(SECURITY_EVENT_TITLES).filter(([k]) => k.startsWith('evm_'));
-    expect([evmPlaybooks.length, evmTitles.length]).toEqual([7, 7]);
+    expect([evmPlaybooks.length, evmTitles.length]).toEqual([8, 8]);
     for (const p of evmPlaybooks) {
       expect(JSON.stringify(p), p.id).not.toMatch(OLD);
       expect(p.title, p.id).toMatch(/^Gas sponsorship/u);

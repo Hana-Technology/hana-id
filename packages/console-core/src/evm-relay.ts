@@ -59,7 +59,7 @@ export type EvmRelayDetailInput = z.infer<typeof evmRelayDetailInput>;
 export type EvmRelayActInput = z.infer<typeof evmRelayActInput>;
 
 /** Why the relayer stopped (D851; the relayer's `EvmRelayerHaltReason`). An API newer than the admin may add one. */
-export const EVM_RELAY_HALT_REASONS = ['nonce_consumed_elsewhere', 'nonce_gap', 'foreign_transactions', 'relayer_cannot_send', 'stuck_past_deadline', 'key_mismatch', 'storage_inconsistent'] as const;
+export const EVM_RELAY_HALT_REASONS = ['nonce_consumed_elsewhere', 'nonce_gap', 'foreign_transactions', 'relayer_cannot_send', 'stuck_past_deadline', 'key_mismatch', 'storage_inconsistent', 'relayer_has_code'] as const;
 
 /** `relayer_cannot_send` codes that mean another sender with the relayer's key (D851 items 16, 18). */
 const LEAK_CODES: ReadonlySet<string> = new Set(['replacement_underpriced', 'sender_restricted', 'nonce_too_low', 'nonce_too_high']);
@@ -71,7 +71,8 @@ const LEAK_CODES: ReadonlySet<string> = new Set(['replacement_underpriced', 'sen
  */
 export function isLeakHalt(h: { reason: string; code?: string | null } | null | undefined): boolean {
   if (!h) return false;
-  if (h.reason === 'nonce_consumed_elsewhere' || h.reason === 'nonce_gap' || h.reason === 'foreign_transactions') return true;
+  // `relayer_has_code` (D890 review): code at the relayer's own address, which only its key can put there.
+  if (h.reason === 'nonce_consumed_elsewhere' || h.reason === 'nonce_gap' || h.reason === 'foreign_transactions' || h.reason === 'relayer_has_code') return true;
   return h.reason === 'relayer_cannot_send' && typeof h.code === 'string' && LEAK_CODES.has(h.code);
 }
 
@@ -105,6 +106,25 @@ export interface EvmRelayStaffEntry {
   note: string;
   done: boolean;
   refused: string | null;
+  /** D890: the relayer restarted itself after a refill (`who` is the relayer; the note holds what it saw). Absent from an older API. */
+  auto?: boolean;
+}
+
+/**
+ * The automatic restart after a refill (D890), as the relayer reports it (storage and settings only). `pause` while
+ * paused: `blocked`, what rules a restart by itself out so a person is needed (`not_money`, `leak_seen`, `daily_limit`,
+ * `ran_out_again`, `no_second_endpoint`, `no_key`, `unconfigured`), else null (a refill restarts it); `restartWei`, the
+ * balance a restart by itself needs (the low-balance mark plus what is waiting at the gas price limit); `resumeWei`,
+ * what Resume needs (what is waiting, at its own fees); `check`, this pause's latest check (what held it back:
+ * `balance_short`, `second_endpoint_disagrees`, a halt reason, …; the balance it read).
+ */
+export interface EvmRelayAutoRestartView {
+  limit: number;
+  /** Automatic restarts this UTC day. */
+  today: number;
+  /** When it restarted by itself, newest first (the last few). */
+  recent: number[];
+  pause: null | { blocked: string | null; restartWei: string; resumeWei: string; otherSeen?: string | null; check: null | { at: number; blocked: string | null; balanceWei: string | null; streak?: number } };
 }
 
 /** The relayer object's own state (its storage: no chain read). */
@@ -130,6 +150,8 @@ export interface EvmRelayRelayerView {
   lastStaffSeq: number;
   /** Newest first: the last 5 in a status answer, the last 50 on the detail page. */
   staffLog: EvmRelayStaffEntry[];
+  /** D890: the automatic restart after a refill. Absent from an API older than it. */
+  autoRestart?: EvmRelayAutoRestartView;
 }
 
 /** One sponsored chain, for the System status tile and the detail page's header. Amounts are wei (decimal strings). */

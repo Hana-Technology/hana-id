@@ -62,6 +62,8 @@ export interface EvmSponsorChainConfig {
   sendsPerDay: number;
   sendsPerMinute: number;
   requireKnownAccount: boolean;
+  /** D890: a pause for money may end by itself after a refill (default off until the checks on Base Sepolia are recorded). */
+  autoRestart: boolean;
 }
 
 /** A contract an app's users may call with sponsored gas, value 0 (D835). */
@@ -137,6 +139,7 @@ export interface EvmSponsorChainManifest {
   sendsPerDay: number;
   sendsPerMinute: number;
   requireKnownAccount?: boolean | undefined;
+  autoRestart?: boolean | undefined;
 }
 
 /** The chain fields in the order the var lists them; the optional ones only when set. */
@@ -159,8 +162,9 @@ const CHAIN_FIELDS = [
   'sendsPerDay',
   'sendsPerMinute',
   'requireKnownAccount',
+  'autoRestart',
 ] as const;
-const OPTIONAL_CHAIN_FIELDS = new Set<string>(['rpcFallback', 'requireKnownAccount']);
+const OPTIONAL_CHAIN_FIELDS = new Set<string>(['rpcFallback', 'requireKnownAccount', 'autoRestart']);
 
 /** The EVM_SPONSOR var for a manifest's `evm.sponsor` (gen-wrangler): its fields in a fixed order, nothing else. */
 export function evmSponsorVar(sponsor: EvmSponsorManifest): string {
@@ -373,6 +377,8 @@ function parseChain(id: number, v: unknown, localEnv: boolean): EvmSponsorChainC
   if (BigInt(maxGasPerTx) * maxFeePerGasWei > appDailyBudgetWei) fail(`${what}: one transaction's worst case exceeds appDailyBudgetEth`);
   // Absent means the default; null is a value, and not a boolean (as the schema refuses it).
   const requireKnownAccount = v.requireKnownAccount === undefined ? true : v.requireKnownAccount;
+  const autoRestart = v.autoRestart === undefined ? false : v.autoRestart;
+  if (typeof autoRestart !== 'boolean') fail(`${what}.autoRestart is not a boolean`);
   if (typeof requireKnownAccount !== 'boolean') fail(`${what}.requireKnownAccount is not a boolean`);
   // Off, anyone holding a publishable key could make the relayer pay from accounts they make up: local* envs only (as
   // the manifest schema rules).
@@ -397,6 +403,7 @@ function parseChain(id: number, v: unknown, localEnv: boolean): EvmSponsorChainC
     sendsPerDay,
     sendsPerMinute,
     requireKnownAccount: requireKnownAccount as boolean,
+    autoRestart: autoRestart as boolean,
   };
 }
 

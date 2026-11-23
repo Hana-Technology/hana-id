@@ -189,6 +189,8 @@ describe('NEAR: the guestbook’s add_message, as a partner label', () => {
 });
 
 describe('NEAR: typed slots', () => {
+  // Two formats (D896: at most three rows besides the sentence's values): `buy` for amounts, accounts and counts, and
+  // `hold` (moves no value) for a date, a duration and an order number.
   const DOC = parsed({
     schema: 'journear-labels/1',
     context: { near: { network: 'testnet', account: 'shop.testnet', codeHash: STAMPS_HASH } },
@@ -203,9 +205,6 @@ describe('NEAR: typed slots', () => {
               amount: { type: 'u128' },
               to: { type: 'accountId' },
               quantity: { type: 'integer', min: 1, max: 10 },
-              ends: { type: 'u64' },
-              lock: { type: 'integer' },
-              order: { type: 'string', maxLength: 32 },
               gift: { type: 'boolean', equals: false },
             },
           },
@@ -213,10 +212,23 @@ describe('NEAR: typed slots', () => {
           sentence: ['verb', { field: 'args.quantity' }, 'object', { word: 'for' }, { field: 'args.amount' }],
           fields: [
             { path: 'args.quantity', label: 'Tickets', format: 'count', params: { min: 1, max: 10 } },
-            { path: 'args.amount', label: 'Price', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
-            { path: 'args.to', label: 'Paid to', format: 'account' },
+            { path: 'args.amount', label: 'Ticket cover', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
+            { path: 'args.to', label: 'Seller', format: 'account' },
             { path: 'args.token', label: 'Coin', format: 'account' },
             { path: 'deposit', label: 'Attached', format: 'nativeAmount' },
+          ],
+        },
+        hold: {
+          call: {
+            args: {
+              ends: { type: 'u64' },
+              lock: { type: 'integer' },
+              order: { type: 'string', maxLength: 32 },
+            },
+          },
+          intent: { verb: 'book', object: 'seats' },
+          sentence: ['verb', 'object', { word: 'for' }, { field: 'args.order' }],
+          fields: [
             { path: 'args.ends', label: 'Sale ends', format: 'date', params: { unit: 'nanoseconds' } },
             { path: 'args.lock', label: 'Held for', format: 'duration', params: { unit: 'seconds' } },
             { path: 'args.order', label: 'Order', format: 'orderNumber' },
@@ -225,9 +237,10 @@ describe('NEAR: typed slots', () => {
       },
     },
   });
-  const args = (over: Record<string, unknown> = {}) =>
-    JSON.stringify({ token: 'usdc.fakes.testnet', amount: '2500000', to: 'till.testnet', quantity: 2, ends: '1795000000000000000', lock: 90061, order: 'A-1042', gift: false, ...over });
+  const args = (over: Record<string, unknown> = {}) => JSON.stringify({ token: 'usdc.fakes.testnet', amount: '2500000', to: 'till.testnet', quantity: 2, gift: false, ...over });
   const buy = (over: Record<string, unknown> = {}, deposit = 0n) => run(DOC, near([fn('buy', args(over), { deposit })], { receiver: 'shop.testnet' }), STAMPS_HASH);
+  const holdArgs = (over: Record<string, unknown> = {}) => JSON.stringify({ ends: '1795000000000000000', lock: 90061, order: 'A-1042', ...over });
+  const hold = (over: Record<string, unknown> = {}) => run(DOC, near([fn('hold', holdArgs(over))], { receiver: 'shop.testnet' }), STAMPS_HASH);
   const value = (r: LabelMatchResult, path: string) => (r as LabelMatch).fields.find((f) => f.path === path)!.value;
 
   it('renders each slot from the request’s true value, with where its meaning came from', () => {
@@ -238,10 +251,13 @@ describe('NEAR: typed slots', () => {
     expect(value(r, 'args.amount')).toEqual({ format: 'tokenAmount', raw: '2500000', token: 'usdc.fakes.testnet', text: '2,500,000 units of the unlisted token usdc.fakes.testnet', symbol: null, decimals: null, source: 'unlisted_token', kind: null, binding: 'partner' });
     expect(value(r, 'args.to')).toEqual({ format: 'account', value: 'till.testnet', text: 'Shop till', source: 'partner_address_book' });
     expect(value(r, 'deposit')).toEqual({ format: 'nativeAmount', raw: '1500000000000000000000000', text: '1.5 NEAR', source: 'request', binding: 'request' });
-    expect(value(r, 'args.ends')).toEqual({ format: 'date', raw: '1795000000000000000', text: '18 November 2026, 11:06:40 UTC', source: 'request' });
-    expect(value(r, 'args.lock')).toEqual({ format: 'duration', raw: '90061', text: '1 day 1 hour 1 minute 1 second', source: 'request' });
-    expect(value(r, 'args.order')).toEqual({ format: 'orderNumber', raw: 'A-1042', text: 'A-1042', source: 'request' });
     expect(sentencePlainText((r as LabelMatch).parts, 'Shop')).toBe('buy 2 tickets for 2,500,000 units of the unlisted token usdc.fakes.testnet, as Shop describes it');
+    const h = hold();
+    expect(h.ok).toBe(true);
+    expect(value(h, 'args.ends')).toEqual({ format: 'date', raw: '1795000000000000000', text: '18 November 2026, 11:06:40 UTC', source: 'request' });
+    expect(value(h, 'args.lock')).toEqual({ format: 'duration', raw: '90061', text: '1 day 1 hour 1 minute 1 second', source: 'request' });
+    expect(value(h, 'args.order')).toEqual({ format: 'orderNumber', raw: 'A-1042', text: 'A-1042', source: 'request' });
+    expect(sentencePlainText((h as LabelMatch).parts, 'Shop')).toBe('book seats for “A-1042”');
   });
 
   it('a listed token gets its symbol and decimals from Journear’s list only; an account is "your account", a listed name or itself', () => {
@@ -269,13 +285,13 @@ describe('NEAR: typed slots', () => {
       ['amount over u128', buy({ amount: (2n ** 128n).toString() }), 'type_mismatch'],
       ['amount negative', buy({ amount: '-1' }), 'type_mismatch'],
       ['a token that is no account id', buy({ token: 'USDC' }), 'type_mismatch'],
-      ['a date before 2000', buy({ ends: '1' }), 'out_of_bounds'],
-      ['a date after 9999', buy({ ends: '99999999999999999999' }), 'type_mismatch'],
-      ['a duration over 100 years', buy({ lock: 100 * 365 * 86400 + 1 }), 'out_of_bounds'],
-      ['an order with a space', buy({ order: 'A 1042' }), 'value_not_displayable'],
-      ['an order with a quotation mark', buy({ order: 'A-1042”' }), 'value_not_displayable'],
-      ['an order with a bidi override', buy({ order: `A-1042${String.fromCharCode(0x202e)}` }), 'value_not_displayable'],
-      ['an order over 32 characters', buy({ order: 'A'.repeat(33) }), 'out_of_bounds'],
+      ['a date before 2000', hold({ ends: '1' }), 'out_of_bounds'],
+      ['a date after 9999', hold({ ends: '99999999999999999999' }), 'type_mismatch'],
+      ['a duration over 100 years', hold({ lock: 100 * 365 * 86400 + 1 }), 'out_of_bounds'],
+      ['an order with a space', hold({ order: 'A 1042' }), 'value_not_displayable'],
+      ['an order with a quotation mark', hold({ order: 'A-1042”' }), 'value_not_displayable'],
+      ['an order with a bidi override', hold({ order: `A-1042${String.fromCharCode(0x202e)}` }), 'value_not_displayable'],
+      ['an order over 32 characters', hold({ order: 'A'.repeat(33) }), 'out_of_bounds'],
       ['a gift', buy({ gift: true }), 'not_one_of'],
       ['2 NEAR + 1 yocto attached', buy({}, 2n * 10n ** 24n + 1n), 'deposit_not_allowed'],
     ];
@@ -330,7 +346,8 @@ describe('Soroban: a deposit and a payment to a listed account', () => {
       ['a nested authorization entry', run(SOROBAN_DOC, sorobanAuth(invocation(POOL, 'deposit', args, [invocation(TEST_USDC_SAC, 'transfer', [addr(USER), addr(POOL), i128(1n)])])), POOL_WASM), 'nested_call'],
       ['two operations', run(SOROBAN_DOC, sorobanTx('deposit', args, { extra: [changeTrustOp()] }), POOL_WASM), 'more_than_one_action'],
       ['a fee over the bound', run(SOROBAN_DOC, sorobanTx('deposit', args, { fee: '1000001' }), POOL_WASM), 'fee_too_high'],
-      ['a classic operation', run(SOROBAN_DOC, labelRequestOf(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: paymentTx() }), USER), POOL_WASM), 'not_a_function_call'],
+      ['a classic operation', run(SOROBAN_DOC, labelRequestOf(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: paymentTx() }), USER), POOL_WASM), 'wrong_account'],
+      // D896 (after PR 123's review): a request that doesn't call the contract at all isn't described, whatever it is.
     ];
     for (const [what, r, want] of cases) expect(reason(r), what).toBe(want);
   });
@@ -360,7 +377,9 @@ describe('Stellar: a classic payment with the partner’s purpose and address bo
   });
   it('near-misses: a hijacked page that swaps the recipient, another memo, more operations', () => {
     const cases: [string, LabelMatchResult, string][] = [
-      ['a recipient not in the book', payment({ destination: USER }), 'not_in_address_book'],
+      ['a recipient not in the book', payment({ destination: ISSUER }), 'not_in_address_book'],
+      // D896 (after PR 123's review): back to the user's own account moves nothing to anyone: not described.
+      ['the user’s own account', payment({ destination: USER }), 'wrong_operation'],
       ['a memo id', payment({ memo: Memo.id('1042') }), 'memo_mismatch'],
       ['no memo', payment({ memo: Memo.none() }), 'memo_mismatch'],
       ['a memo with a quotation mark', payment({ memo: Memo.text('1042” paid') }), 'value_not_displayable'],
@@ -369,8 +388,9 @@ describe('Stellar: a classic payment with the partner’s purpose and address bo
       ['a USDC look-alike issuer', payment({ asset: new Asset('USDC', OTHER) }), 'token_not_allowed'],
       ['an amount over the bound', payment({ amount: '100.0000001' }), 'out_of_bounds'],
       ['two operations', payment({ extra: [Operation.payment({ destination: OTHER, asset: Asset.native(), amount: '1' })] }), 'more_than_one_action'],
-      ['another source', payment({ source: OTHER }), 'source_not_user'],
-      ['an operation source not the user', payment({ opSource: OTHER }), 'source_not_user'],
+      // D896 (after PR 123's review): none of the user's value moves (another account's payment): not described.
+      ['another source', payment({ source: OTHER }), 'wrong_operation'],
+      ['an operation source not the user', payment({ opSource: OTHER }), 'wrong_operation'],
     ];
     for (const [what, r, want] of cases) expect(reason(r), what).toBe(want);
     const trust = labelRequestOf(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([changeTrustOp()]) }), USER);

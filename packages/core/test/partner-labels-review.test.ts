@@ -78,11 +78,12 @@ describe('item 2: every value that matters is shown, and every true value is ret
       buy: {
         call: { deposit: { atMost: '9' }, gasAtMost: '300000000000000', args: { token: { type: 'accountId' }, amount: { type: 'u128' }, to: { type: 'accountId' }, note: { type: 'string', optional: true }, n: { type: 'integer' } } },
         intent: { verb: 'buy', object: 'tickets' },
-        sentence: ['verb', 'object'],
+        // The amount in the sentence: at most three rows besides it (LABEL_LIMITS.rows, D896).
+        sentence: ['verb', 'object', { word: 'for' }, { field: 'args.amount' }],
         fields: [
           { path: 'args.token', label: 'Coin', format: 'account' },
-          { path: 'args.amount', label: 'Price', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
-          { path: 'args.to', label: 'Paid to', format: 'account' },
+          { path: 'args.amount', label: 'Ticket cover', format: 'tokenAmount', params: { tokenPath: 'args.token' } },
+          { path: 'args.to', label: 'Seller', format: 'account' },
           { path: 'deposit', label: 'Attached', format: 'nativeAmount' },
         ],
       },
@@ -156,7 +157,7 @@ describe('items 6, 7, 11, 14: amounts, joining words, duplicates, verbs', () => 
   it('nativeAmount only on the deposit', () => {
     const f = collectFmt();
     f.call.args.amount = { type: 'u128' };
-    f.fields.push({ path: 'args.amount', label: 'Price', format: 'nativeAmount' });
+    f.fields.push({ path: 'args.amount', label: 'Ticket cover', format: 'nativeAmount' });
     expect(codes(nearDoc(STAMPS, { collect: f }, STAMPS_DOC_JSON.metadata))).toContain('bad_field');
   });
   it('no "at least" or "at most"', () => {

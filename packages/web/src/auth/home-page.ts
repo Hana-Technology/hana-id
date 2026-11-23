@@ -1841,7 +1841,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const doc = win.document;
     const active = doc.activeElement as HTMLElement | null;
     const keep = active && active.id && byId('home-content')?.contains(active) ? active.id : null;
-    const caret = active instanceof (doc.defaultView?.HTMLInputElement ?? HTMLInputElement) ? [active.selectionStart, active.selectionEnd] : null;
+    const caret = active instanceof (doc.defaultView?.HTMLInputElement ?? HTMLInputElement) ? ([active.selectionStart, active.selectionEnd] as const) : null;
     const v = viewing;
     if (v.kind === 'wallet') {
       // A fresher copy of the listing when the page has one (a "Check now"); else the one it was opened with.

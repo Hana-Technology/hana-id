@@ -155,7 +155,7 @@ test('one divider where ruled blocks meet, on each kind of approval', async ({ p
   await expect(popup.locator('pre.message')).toBeVisible();
   await check(popup, 'personal-sign', browserName);
   await done(page, popup, 'msg');
-  // One Journear can't read (D886's note): the line that says so, then the label right above the raw form.
+  // One Journear can't read (D886's notes): the amber box above, then the label right above the raw form.
   popup = await popupFor(page, 'raw-msg', 'personalSign', 'pay\u202eevil');
   // Soft: a run on the old order still saves the screens after it (the "before").
   await expect.soft(popup.locator('div.request > p.message-label + code.mono')).toBeVisible();

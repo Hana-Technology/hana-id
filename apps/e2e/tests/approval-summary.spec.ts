@@ -291,8 +291,8 @@ test('D884: a relayed NEAR call’s free fee is only in the details, naming the 
 });
 
 test('D886: a message comes right after the headline, then one note about networks that is true for a test app', async ({ page }) => {
-  // Four windows, each waiting for its own close.
-  test.setTimeout(150_000);
+  // Five windows, each waiting for its own close.
+  test.setTimeout(180_000);
   await openPartner(page, await newApp());
   await login(page);
   for (const [name, action] of [['evm', 'personalSign'], ['stellar', 'stellarSignMessage']] as const) {
@@ -307,19 +307,19 @@ test('D886: a message comes right after the headline, then one note about networ
     await expect(popup.getByText('works only with test money', { exact: false })).toHaveCount(0);
     await done(page, popup, name);
   }
-  // D886's note (2026-11-23): a message Journear can't read: the line that says so first, then the label right above
-  // its raw form, then the note.
-  for (const [name, action] of [['evm-raw', 'personalSign'], ['stellar-raw', 'stellarSignMessage']] as const) {
-    const popup = await popupFor(page, name, action, 'pay\u202eevil');
+  // D886's notes (2026-11-23): a message Journear can't read: one amber box that says so (the founder's decision),
+  // then the label right above its raw form, then the note about networks, kept word for word.
+  for (const [name, action, arg] of [['evm-raw', 'personalSign', 'pay\u202eevil'], ['evm-bytes', 'personalSignHex', '0xff00fe0180c1'], ['stellar-raw', 'stellarSignMessage', 'pay\u202eevil']] as const) {
+    const popup = await popupFor(page, name, action, arg);
     const blocks = popup.locator('div.request > h2.summary-headline, div.request > p.message-label, div.request > code.mono, div.request > .jp-alert');
     await expect(blocks).toHaveText([
       /Journear can’t read$/u,
-      /can’t check what this does/u,
-      'This message isn’t readable text, so it’s shown in its raw form.',
+      'Journear can’t read this message, so it’s shown below in its raw form. Approve only if you expected this from E2E Partner.',
       'The message',
       /^0x[0-9a-f]+$/u,
-      /Sign only if you know why you’re signing it/u,
+      'This app is a test version, but your signature counts on every network, real-money ones included. Sign only if you know why you’re signing it, and don’t keep real money in this account.',
     ]);
+    await expect(popup.getByText('isn’t readable text', { exact: false })).toHaveCount(0);
     await done(page, popup, name);
   }
 });

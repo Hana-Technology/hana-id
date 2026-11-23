@@ -1215,7 +1215,7 @@ describe('D810 with D814: the risk lines of requests that leave things out, at t
   it('amber: bounded or not about value', () => {
     expect(level(evmSummary({ to: null, value: 0n, data: '0x6000' }), 'contract_creation')).toBe('warning');
     expect(level(stellar([Operation.createClaimableBalance({ asset: Asset.native(), amount: '1', claimants: [new Claimant(USER, Claimant.predicateBeforeRelativeTime('100'))] })]), 'cannot_explain')).toBe('warning');
-    expect(warnings(msg('personal_sign', 'a‮b'))).toEqual([['warning', 'cannot_explain', `Journear can’t check what this does (the message isn’t readable text). Approve only if you expected this from ${APP}.`]]);
+    expect(warnings(msg('personal_sign', 'a‮b'))).toEqual([['warning', 'cannot_explain', `Journear can’t read this message, so it’s shown below in its raw form. Approve only if you expected this from ${APP}.`]]);
   });
 
   it('every red warning has a short bullet form', () => {

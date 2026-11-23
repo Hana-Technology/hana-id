@@ -284,6 +284,33 @@ test.describe('plain-wording screens', () => {
     });
   }
 
+  // D886's note of 2026-11-23 (the founder's one amber box): every kind of message Journear can't read, for a test app
+  // and a live app, at a phone's width and the desktop popup's size, folded: `unreadable-{kind}-{test|live}-{size}.png`.
+  for (const live of [false, true]) {
+    test(`unreadable messages, ${live ? 'a live app' : 'a test app'} (D886)`, async ({ page }) => {
+      await openPartner(page, live ? await newLiveApp() : await newApp(), live ? { live: true } : {});
+      await login(page);
+      const kinds: [string, string, ...unknown[]][] = [
+        ['personal-sign-bytes', 'personalSignHex', '0xff00fe0180c1'],
+        ['personal-sign-hidden-character', 'personalSign', 'pay\u202eevil'],
+        ['stellar', 'stellarSignMessage', 'pay\u202eevil'],
+        ['near', 'nearSignMessage', 'pay\u202eevil', 'localhost'],
+      ];
+      for (const [kind, action, ...args] of kinds) {
+        const popup = await popupFor(page, kind, action, ...args);
+        await expect(popup.locator('div.request > p.message-label + code.mono')).toBeVisible();
+        for (const [size, viewport] of Object.entries(SIZES)) {
+          await popup.setViewportSize(viewport);
+          await fontsLoaded(popup);
+          const name = `unreadable-${kind}-${live ? 'live' : 'test'}-${size}`;
+          await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
+          await expectEvenDividers(popup, name, { soft: true });
+        }
+        await done(page, popup, kind);
+      }
+    });
+  }
+
   test('a live app', async ({ page }) => {
     await openPartner(page, await newLiveApp(), { live: true });
     await login(page);

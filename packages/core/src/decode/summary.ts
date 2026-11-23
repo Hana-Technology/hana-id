@@ -203,8 +203,13 @@ const cannotCheck = (level: RiskLevel, code: SummaryWarningCode, reason: string 
 export const cannotTell = (level: RiskLevel, reason?: string): SummaryWarning =>
   cannotCheck(level, 'cannot_explain', reason, 'It could take your money or tokens.', ['Journear can’t check what it does', ...because(reason)]);
 
-/** A message Journear can't read (not plain text): it can't say what signing it does. */
-const unreadableMessage = (): SummaryWarning => cannotCheck('warning', 'cannot_explain', 'the message isn’t readable text', null, ['Journear can’t read the message']);
+/**
+ * A message Journear can't read (not plain text): it can't say what signing it does. One amber box above the message
+ * says it and where the raw form is (the founder's decision 2026-11-23, D886's note: it replaced this line's earlier
+ * "Journear can’t check what this does (the message isn’t readable text). …" and the window's own line under it).
+ */
+const UNREADABLE_MESSAGE_LEAD = 'Journear can’t read this message, so it’s shown below in its raw form';
+const unreadableMessage = (): SummaryWarning => cannotCheck('warning', 'cannot_explain', undefined, null, ['Journear can’t read the message'], UNREADABLE_MESSAGE_LEAD);
 
 /**
  * Steps the summary's lines leave out: red when any of them moves or grants value or changes control, amber

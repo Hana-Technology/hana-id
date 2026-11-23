@@ -139,6 +139,9 @@ export const HOME_TEXT = Object.freeze({
 /** The window's title on a signed-in view (D893): the view's `h1`, then the page's name. */
 export const homeViewTitle = (heading: string): string => `${heading} – ${BRAND.home}`;
 
+/** How close the phone's chip may come to the move flow's guarded buttons (D895): never within this many CSS pixels. */
+export const CHIP_GUARD_CLEARANCE_PX = 48;
+
 /** How long the page waits for the popstate of its own `history.go` before it stops waiting (D893). */
 export const REWIND_GIVE_UP_MS = 10_000;
 
@@ -699,11 +702,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       const banner = byId('home-banner');
       if (stage === 'signed_in' && again && banner && chip.isConnected && !sticky() && banner.getBoundingClientRect().bottom <= 0) {
         const c = chip.getBoundingClientRect();
-        const under = Array.from(win.document.querySelectorAll<HTMLElement>(PRESSABLE)).some((el) => {
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0 && r.left < c.right && r.right > c.left && r.top < c.bottom && r.bottom > c.top;
-        });
-        show = !under;
+        const near = (r: DOMRect, margin: number): boolean => r.width > 0 && r.height > 0 && r.left < c.right + margin && r.right > c.left - margin && r.top < c.bottom + margin && r.bottom > c.top - margin;
+        const under = Array.from(win.document.querySelectorAll<HTMLElement>(PRESSABLE)).some((el) => near(el.getBoundingClientRect(), 0));
+        // The move flow's guarded buttons get a margin as well: the chip never comes within CHIP_GUARD_CLEARANCE_PX of
+        // Continue, Show key or Copy key, so a tap meant for the chip can't land on one, nor one meant for them on it.
+        const nearGuarded = Array.from(guardedButtons).some((el) => el.isConnected && near(el.getBoundingClientRect(), CHIP_GUARD_CLEARANCE_PX));
+        show = !under && !nearGuarded;
       }
     } catch {
       show = false;

@@ -69,6 +69,14 @@ goes Back (the key is erased from the page), then Forward (the page with the mov
 (one read, then Back to the list and Forward without a read). The rows' locator is `homeRow(page, appName)`
 (`tests/home-steps.ts`) or `.home-row[data-scope="…"]`.
 
+A wallet's tabs and the phone's chip (D895): `tests/home.spec.ts` checks the tabs' roles and names, the keyboard (the
+arrows move, Enter and Space open), one history entry per tab with Back and Forward, and no sideways scroll at 390 px;
+and the chip at 390 × 844: hidden until the ending notice is scrolled out of view, nothing that can be pressed under it,
+pressed it brings the notice back with focus on its "Sign in again". The Home specs open a tab with `homeTab(page,
+'Addresses' | 'Security' | 'Move wallet')` (`tests/home-steps.ts`): the move flow is on "Move wallet", the devices, ways
+to sign in and name on "Security". `home-shell.spec.ts` measures the guarded Continue on NEAR's confirmation (the
+longest, so the Move tab alone scrolls) and the email account's notice with a Security tab button in view.
+
 Passport Home's "Ways to sign in" (D874): `tests/home-sign-ins.spec.ts` checks Home reads nothing until "Show ways to
 sign in" and then exactly `get_identity` and `get_account`; an email-only wallet's one line (the address, signed in now,
 can't be removed, no other button); a waiting email linked to a Google wallet (case B) listed as waiting by kind only,

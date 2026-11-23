@@ -17410,6 +17410,8 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   review: for a change the page itself makes (its notice, who is signed in), the resize of that very change (the same
   height) scrolls by the bar's change only if nothing has moved the page since; otherwise the page leaves the scroll as
   it is, so a late resize can never undo a scroll the browser or the person made.
+- Note 2026-11-23 (step 3, D895): the tabs (1) and the phone's chip (4) below are built on
+  `feat/home-step3-wallet-view`; the Security tab holds today's sections only (its contents are step 4).
 - **Open, recorded with step 2 (2026-11-23), not built**: (1) tabs on a wallet's page, Addresses / Security / Move
   wallet (step 3); (2) the Security tab's contents (step 4: the ways to sign in, the devices for that wallet, the name it
   gets); (3) Cancel and Remove of a sign-in inside Home (decided, later, as its own security-reviewed change: today Home
@@ -18151,6 +18153,8 @@ while building, **to confirm**:
     ignored when it answers; D580's "on leaving the app's page"). Forward shows the wallet's page with the move flow
     collapsed ("Show how to move it"), never a key: opening it again needs a new sign-in. `home-export.ts` and
     `key-reveal.ts` needed no change (Back calls the same `leave`).
+- Note 2026-11-23 (D895): a wallet's page is now three tabs, and each tab opened adds one more entry of the same kind;
+  Back from a tab goes to the tab before, and leaving "Move wallet" (another tab, Back) locks an opened wallet.
 - **D553, D555 and D619 kept.** No storage of any kind (unit and e2e tests read `localStorage`, `sessionStorage` and
   every history entry's state); the address never changes; the history entries hold only the opaque marker; a reload
   signs out; Home still takes and keeps no device ticket or owner proof (D619): the only requests are the same reads as
@@ -18706,3 +18710,97 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 - Test note (optional now): run the partner-labels e2e in its own lane, or add a lane action that drains the feed with a
   capturing sender after label scenarios, then restore the strict "Caught up" check in `admin-portal.spec.ts` (loosened
   to `expectFeedsRead` in this branch; reviewed as legitimate); that would also cover the blocked mail end to end.
+
+### D895. Passport Home step 3: a wallet's page as three tabs (Addresses, Security, Move wallet), the phone's "Sign in again" chip, and the move flow in wallet words
+- Date 2026-11-23 · Status: the tabs and the chip **decided by the founder 2026-11-23** (structure A, D888; the chip's
+  "Yes", D888's open list); the details below decided while building, **to confirm** (the list at the end) · Built on
+  `feat/home-step3-wallet-view` (from `next`), not merged, not deployed: `packages/web/src/auth/home-page.ts`
+  (`HOME_WALLET_TABS`, `walletTabs`, `selectTab`, `showView`'s tab branch, `appPage`, the chip: `updateChip`,
+  `chipSoon`, `HOME_TEXT.tabs`, `tabsWallet`, `tabsApp`, `chip`, `chipEnding`, `chipEnded`, `MOVE_WORDS`),
+  `home-export.ts` (words and one heading level only, below), `css/home.css` (the head, the tabs, the panels, the chip;
+  `#home-app-extras` → `.home-tools`); tests `packages/web/test/auth/home-page.test.ts` ("a wallet’s tabs (D895)", "the
+  phone’s “Sign in again” chip (D895)"), `home-export.test.ts` (the move flow on its tab, Back and Forward between
+  tabs, "the phone’s chip showing or going starts the guard over"), e2e `apps/e2e/tests/home.spec.ts` (tabs and chip,
+  three browsers) and the Home specs opening tabs (`homeTab`). Notes on D888 and D893. No API, vault, issuer or contract
+  change; `key-reveal.ts`, `approve-guard.ts` and `guard-hint.ts` unchanged.
+- **The page** (option A's `a2`–`a5`): the head stays above the tabs: "Your wallets", the `h1` ("Wallet details", or
+  "App details" where the person has no wallet), the apps that use the wallet (a labelled group, no longer a heading),
+  the question and the coverage line (a label and a sentence, no longer a heading), "Check now". Then the design
+  system's tabs: **Addresses** (open first, by default: the addresses and the Support ID), **Security** (Ways to sign
+  in, Devices and auto-approve, Your name, in the mock-up's order; step 4 fills it out) and **Move wallet** (the move
+  flow alone, the last tab, set to the right on a wider screen). On a phone the three tabs share the width (no sideways
+  scroll at 390 or 320 px; under 360 px their icons go).
+- **Real tabs**: a `tablist` named "This wallet" ("This app" on "App details"), three `tab` buttons (`aria-selected`,
+  `aria-controls`), three `tabpanel`s (`aria-labelledby`; the others `hidden`; each a stop for Tab). One tab stop for
+  the list; the arrow keys, Home and End move focus between tabs (roving tabindex) **without opening one**; Enter or
+  Space (a button's click) opens it (manual activation: opening a tab adds a history entry, and leaving "Move wallet"
+  locks an opened wallet, so an arrow key must not do either by accident). Reduced motion: no transition on the tabs.
+- **History**: each tab opened adds one entry in D893's scheme (`home:{tag}:{step}`, nothing else). Back and Forward
+  move between the tabs opened, then to "Your wallets"; opening the tab already open adds nothing; "Your wallets"
+  goes back to the list's own entry however many tabs were opened (`history.go(-step)`); a wallet opens on Addresses
+  every time; nothing is read on a tab change, a Back or a Forward.
+- **Move wallet locks when left**: leaving the "Move wallet" tab (another tab, Back, Forward elsewhere, the way back)
+  locks and erases a wallet opened there, by the move flow's own `leave()` (the same call as leaving the page, D580,
+  D893): no key exists while its panel is hidden. Forward back to the tab shows it collapsed, never a key. The other
+  tabs keep what they show (the devices, the ways to sign in, the name) for as long as the wallet's page is open.
+- **The phone's "Sign in again" chip**: a small primary button, "Sign in again" with a clock icon, fixed at the
+  window's foot, outside the page's content. It shows only when all of these hold: signed in; the bar's notice offers
+  "Sign in again" (the warning or the end); the bar is not stuck (a phone or a tablet: on a desktop the bar, and so the
+  notice, is always in view; CSS also hides the chip there); the notice is scrolled out of view; and nothing that can be
+  pressed in the page (a button, a link, a field, a disclosure, a focusable panel) is under it, and none of the move
+  flow's guarded buttons (Continue, Show key, Copy key, enabled or not) is within 48 px of it (`CHIP_GUARD_CLEARANCE_PX`),
+  so it covers no control and never comes near a guarded one. Hidden, it takes no click and no focus (`visibility: hidden`). Pressed, it scrolls to the
+  top and puts focus on the notice's "Sign in again". Its accessible description says "Your sign-in to Passport Home
+  ends soon." or "…has ended."; the bar's live region still announces the notice. Each time it shows or goes, the move
+  flow's guard starts over (one more arming gesture), as for any other change around the guarded buttons; it is
+  checked once a frame on scroll and resize, and on every redraw of the notice and the page. Pressing it is not leaving
+  anything: an opened wallet on "Move wallet" stays as it was.
+- **How the two safety rules are proven.** (a) Leaving "Move wallet" erases the opened key from the page and from
+  memory: unit tests for another tab, Back, "Your wallets" and Forward to a tab opened after it (the secret zeroed, the
+  move flow `closed`, the key's box masked, the key's text nowhere in the document), checked to fail when the page
+  doesn't call `leave()` on a tab change; the chip's press keeps the wallet open (unit); e2e in Chromium, Firefox and
+  WebKit with the real derive for another tab, "Your wallets" and Forward (three derives, the key read off the page and
+  then searched for in the page's text, markup and fields), and Back (D893's test, now Back to Addresses). (b) The chip
+  and the guarded buttons: unit tests place Continue 7, 40 and 30 px from the chip (hidden) and 49 and 60 px away
+  (shown); in the three browsers, `home-shell.spec.ts` scrolls the move flow's confirmation from its top to its end in
+  40 px steps with the sign-in's warning up, at 390 and 320 px, and at every position where the chip shows checks that
+  nothing pressable is under it and that Continue is at least 48 px away (and that it shows somewhere; on a desktop,
+  that it never shows).
+- **The move flow in wallet words, and its heading level** (`home-export.ts`: WORDING AND STRUCTURE ONLY). Nothing
+  changes in what is derived, shown, timed, wiped or copied, in any guard, or in how a path or key is derived: with
+  every string literal blanked, the file before and after is the same text (SHA-256 prefix `9a5157a48a9a119a` for
+  both); 8 lines changed, all string literals, one of them the title's tag (`'h3'` → `'h2'`, so the move flow's screen
+  titles sit under the page's `h1` in their own panel instead of under "Your name"). `key-reveal.ts` is unchanged.
+
+  | Where | Old | New |
+  |---|---|---|
+  | Collapsed | "Passport Home can show you the private key of your wallet in this app, so that you can import it into another wallet app." | "Passport Home can show you this wallet’s private key, so that you can add the wallet to another wallet app." |
+  | Expanded (the user's wallet) | "…so that you can import it into another wallet app. The wallet keeps working in the app as before." | "…so that you can add the wallet to another wallet app. The wallet keeps working in its apps as before." |
+  | Not offered from a link | "You came to this app through a link. … open Passport Home yourself, without the link, and find the app in your list or by its name." | "You came here through a link. … open Passport Home yourself, without the link, and find the wallet under “Your wallets”." |
+  | A different address on record | "The address Journear had on record for you in this app is different from this wallet’s." | "The address Journear had on record for this wallet is different from the wallet’s own." |
+  | Open | "The wallet is locked again 5 minutes after you signed in, when you leave this app’s page, and when you close or reload Passport Home." | "The wallet locks again 5 minutes after you signed in, when you leave “Move wallet”, and when you close or reload Passport Home." |
+  | A key shown | "…It is erased from this page 5 minutes after you signed in, when you leave this app’s page, and when you close or reload Passport Home." | "…when you leave “Move wallet”, and when you close or reload Passport Home." |
+  | NEAR's first note | "…If that app removes this key from the account, this app loses the wallet too." | "…If that app removes this key from the account, the apps that use this wallet lose it too." |
+  | Move title | `h3` | `h2` (the panel's section) |
+
+  And in `home-page.ts`: the coverage line's move hint, "You can also move it to another wallet app below." / "To
+  avoid that, you can move it to another wallet app below." → "…, under “Move wallet”."; new: the tabs' names
+  "Addresses", "Security", "Move wallet", their list's names "This wallet" / "This app", the chip's "Sign in again"
+  and its descriptions "Your sign-in to Passport Home ends soon." / "Your sign-in to Passport Home has ended.".
+- **Headings now**: `h1` "Wallet details"; on Addresses `h2` "Your addresses", "Support ID"; on Security `h2` "Ways to
+  sign in", "Devices and auto-approve", "Your name"; on Move wallet `h2` the flow's screen title. No `h3` on the page.
+- **Tests' measurements moved** (`home-shell.spec.ts`): Continue and Copy are on different tabs now, so the old "a
+  failed copy moves Continue" check is gone (they are never on screen together); the desktop measurement watches the
+  open tab under the stuck bar, on NEAR's confirmation (the longest screen, so the page scrolls); the email account's
+  notice is measured with a Security tab button in view (the Move tab alone is shorter than a phone's window there).
+- **Not in this step** (D888's list): the Security tab's deeper content (step 4); polish (step 5); Cancel and Remove of
+  a sign-in inside Home (decided, later, its own security-reviewed change); QR codes; a sign-in timer.
+- Address impact: none (no path, key or derivation input changes).
+- **To confirm (the founder)**: (1) the tabs' names and order, Move wallet set apart on the right on a wider screen;
+  (2) Addresses open by default every time a wallet opens; (3) manual activation (the arrows move, Enter or Space
+  opens); (4) one history entry per tab opened; (5) leaving "Move wallet" locks an opened wallet (a stricter rule than
+  before, where only leaving the page did) and the two sentences that now say so ("when you leave “Move wallet”");
+  (6) Security's order: Ways to sign in, Devices and auto-approve, Your name; (7) the head above the tabs, with the
+  apps and the coverage question as labels; (8) the chip's words "Sign in again", its place (the window's foot, in the
+  middle), and that it hides when a control would be under it; (9) the new move-flow sentences above, "add the wallet
+  to another wallet app" in place of "import it"; (10) "This wallet" / "This app" as the tab list's spoken names.

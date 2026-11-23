@@ -90,6 +90,43 @@ async function settled(page: Page): Promise<void> {
   throw new Error(`the page didn't settle: ${last}`);
 }
 
+/**
+ * D895: scrolls the page from its top to its end in steps; at each, once the page is still, reads the chip. When it
+ * shows: nothing pressable in the page under it, and Continue, Show key and Copy key (when on screen) at least 48 px
+ * away. Returns how many positions showed it (some must, on a phone scrolled away from the notice).
+ */
+async function chipClear(home: Page, desktop: boolean): Promise<number> {
+  const max = await home.evaluate(() => document.documentElement.scrollHeight - window.innerHeight);
+  let shown = 0;
+  for (let y = 0; y <= max + 40; y += 40) {
+    await home.evaluate((to) => window.scrollTo(0, to), Math.min(y, max));
+    await settled(home);
+    const r = await home.evaluate(() => {
+      const chip = document.getElementById('home-again-chip');
+      if (!chip || getComputedStyle(chip).visibility !== 'visible' || getComputedStyle(chip).display === 'none') return null;
+      const c = chip.getBoundingClientRect();
+      const gap = (b: DOMRect): number => Math.max(b.left - c.right, c.left - b.right, b.top - c.bottom, c.top - b.bottom);
+      const pressable = [...document.querySelectorAll('#app button:not([disabled]), #app a[href], #app input, #app summary, #app [tabindex="0"]')]
+        .map((el) => el.getBoundingClientRect())
+        .filter((b) => b.width > 0 && b.height > 0 && gap(b) < 0).length;
+      const guarded = [...document.querySelectorAll('#home-export button')]
+        .filter((el) => el.id === 'home-export-continue' || /^(Show key|Hide key|Copy key)$/u.test(el.textContent?.trim() ?? ''))
+        .map((el) => el.getBoundingClientRect())
+        .filter((b) => b.width > 0 && b.height > 0)
+        .map((b) => gap(b));
+      return { pressable, nearest: guarded.length > 0 ? Math.min(...guarded) : null };
+    });
+    if (r === null) continue;
+    shown += 1;
+    expect(desktop, 'no chip on a desktop').toBe(false);
+    expect(r.pressable, `chip over a control at y=${y}`).toBe(0);
+    if (r.nearest !== null) expect(r.nearest, `chip within 48 px of a guarded button at y=${y}`).toBeGreaterThanOrEqual(48);
+  }
+  if (!desktop) expect(shown, 'the chip shows somewhere on a phone scrolled away from the notice').toBeGreaterThan(0);
+  await home.evaluate(() => window.scrollTo(0, 0));
+  return shown;
+}
+
 /** The guard armed: a second's wait, then the mouse moves (as fixtures' guardedClick, without the click). */
 async function arm(page: Page, selector: string): Promise<void> {
   await page.waitForTimeout(1_100);
@@ -187,6 +224,9 @@ for (const size of SIZES) {
     }
     expect(await uncovered(home, watched)).toMatchObject({ inView: true, hit: true });
     await nothingCovered(home, `${size.name}, the notice up`, browserName);
+    // D895: at every scroll position, the phone's chip, when it shows, covers nothing that can be pressed and keeps 48 px
+    // from the move flow's guarded buttons; on a desktop it never shows.
+    const chipShown = await chipClear(home, desktop);
 
     // (D895: a failed copy's line is on the Addresses tab, Continue on Move wallet: they are never on screen together.)
 
@@ -216,7 +256,7 @@ for (const size of SIZES) {
     await centre(home, go);
     await arm(home, go);
 
-    const measured = { browserName, size: `${size.width}x${size.height}`, watched, bar: [bar0.height, bar1.height, bar2.height], top: [before.top, withNotice.top] };
+    const measured = { browserName, size: `${size.width}x${size.height}`, watched, chipShown, bar: [bar0.height, bar1.height, bar2.height], top: [before.top, withNotice.top] };
     info.annotations.push({ type: 'measured', description: JSON.stringify(measured) });
     console.log(`[home-shell] ${JSON.stringify(measured)}`);
   });

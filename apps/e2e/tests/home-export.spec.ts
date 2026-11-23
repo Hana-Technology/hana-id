@@ -261,6 +261,65 @@ test('D893, D895: the browser’s Back out of an open wallet’s “Move wallet�
   expect(await home.evaluate(() => ({ session: sessionStorage.length, local: localStorage.length, url: location.href, state: history.state as unknown }))).toEqual({ session: 0, local: 0, url: `${AUTH_ORIGIN}/home`, state: null });
 });
 
+test('D895: leaving “Move wallet” by another tab, by “Your wallets” or by Forward erases the opened key from the page', async ({ page, context, google, requests, browserName }) => {
+  test.setTimeout(180_000);
+  freshAccounts(google);
+  const scopeId = newScope(browserName);
+  const app = await newApp({ name: 'Tab Lock App', scopeId });
+  await openPartner(page, app);
+  const wallet = await login(page);
+  await expect.poll(async () => (await walletDirectory(wallet.stellar)).length, { timeout: 15_000 }).toBe(1);
+  const home = await context.newPage();
+  await home.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(home);
+  const s = section(home);
+  /** On "Move wallet": a fresh sign-in, the EVM key shown; returns it. */
+  const showKey = async (): Promise<string> => {
+    await homeTab(home, 'Move wallet');
+    await s.open.click();
+    await signInAgain(home);
+    await expect(s.title).toHaveText('Your wallet is open', { timeout: 20_000 });
+    await home.locator('#home-export-evm').click();
+    await confirm(home);
+    await home.locator('#home-export .reveal-ack input').check();
+    await guardedClick(home, 'Show key');
+    await expect(s.secret).toHaveText(EVM_KEY);
+    return (await s.secret.textContent()) ?? '';
+  };
+  const gone = async (key: string): Promise<void> => {
+    await expect(s.secret).toHaveCount(0);
+    await expectNoKey(home, key);
+  };
+
+  // Another tab.
+  await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
+  let key = await showKey();
+  await homeTab(home, 'Security');
+  await gone(key);
+  await homeTab(home, 'Move wallet');
+  await expect(s.open).toBeVisible();
+
+  // "Your wallets".
+  key = await showKey();
+  await home.getByRole('button', { name: 'Your wallets' }).click();
+  await expect(home.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await gone(key);
+
+  // Forward to a tab opened after it: Move wallet, Security, Back to Move wallet, open it there, then Forward.
+  await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
+  await homeTab(home, 'Move wallet');
+  await homeTab(home, 'Security');
+  await home.goBack();
+  await expect(home.getByRole('tab', { name: 'Move wallet' })).toHaveAttribute('aria-selected', 'true');
+  key = await showKey();
+  await home.goForward();
+  await expect(home.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+  await gone(key);
+  // Three opens, three derives; nothing kept anywhere.
+  expect(homeLogins(requests)).toBe(3);
+  expect(await home.evaluate(() => ({ session: sessionStorage.length, local: localStorage.length }))).toEqual({ session: 0, local: 0 });
+});
+
 // ---- a linked sign-in method ----
 
 type Mail = { subject: string; text: string; kind: string };

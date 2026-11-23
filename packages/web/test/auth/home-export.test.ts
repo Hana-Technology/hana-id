@@ -36,7 +36,7 @@ import { maskedAddress } from '../../src/auth/dom.ts';
 import { homeApi } from '../../src/auth/home-api.ts';
 import type { HomeEmailApi, HomeIdentityCommitment, HomeSessionCommitment } from '../../src/auth/home-email.ts';
 import { HOME_EXPORT_NEAR_NOTES_TITLE, HOME_EXPORT_ABOUT, HOME_EXPORT_END_TEXT, HOME_EXPORT_OFF_TEXT, HOME_EXPORT_OPEN, HOME_EXPORT_SESSION_TTL_MS, HOME_EXPORT_TITLE, HOME_PRK_LIFETIME_MS, homeExportNearNotes, homeExportRoute } from '../../src/auth/home-export.ts';
-import { type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
+import { CHIP_GUARD_CLEARANCE_PX, type HomePage, coverageText, startHomePage } from '../../src/auth/home-page.ts';
 import { EXPORT_CLIPBOARD_CLEAR_MS, EXPORT_CONFIRMATION, EXPORT_SHOW_MS, EXPORT_WARNING } from '../../src/auth/key-reveal.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
 import { CLIENT_ID, ENV, FakeWindow, type RemoteWindow, type TokenSigner, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
@@ -1118,6 +1118,96 @@ describe('the secret’s life', () => {
     expect(h.page.tab).toBe('move');
     expect(h.page.moving.holdsSecret).toBe(false);
     expectCollapsed();
+  });
+
+  it.each([
+    ['another tab', async (h: H) => h.click('home-tab-addresses')],
+    ['the browser’s Back', async (h: H) => {
+      h.win.history.back();
+      await flush();
+    }],
+    ['“Your wallets”', async (h: H) => {
+      h.click('home-back');
+      await flush();
+    }],
+    ['the browser’s Forward to a tab opened after it', async (h: H) => {
+      h.win.history.forward();
+      await flush();
+    }],
+  ] as const)('D895: leaving “Move wallet” by %s erases the opened key, from the page and from memory', async (name, leave) => {
+    const h = start();
+    if (name.startsWith('the browser’s Forward')) {
+      // Move wallet, then Security, then Back to Move wallet: Forward from there leaves it for Security.
+      await h.toApp();
+      h.click('home-tab-security');
+      h.win.history.back();
+      await flush();
+      expect(h.page.tab).toBe('move');
+      await h.open();
+    } else await h.unlock();
+    expect(h.page.tab).toBe('move');
+    const r = h.reveal('evm');
+    pressEl(h, r.toggle);
+    const key = vector(OWN).accounts[0]!.evm.export;
+    expect(r.secret.textContent).toBe(key);
+    await leave(h);
+    expect(h.page.tab).not.toBe('move');
+    expect(h.page.moving.holdsSecret).toBe(false);
+    expect(zeroed.has(prkOf(OWN))).toBe(true);
+    expect(h.page.moving.state).toBe('closed');
+    expect(r.secret.textContent).toBe('••••••••');
+    expect(document.documentElement.outerHTML).not.toContain(key);
+    expect(document.querySelector('#home-export .secret')).toBeNull();
+  });
+
+  it('D895: the phone’s chip taking the person to the notice is not leaving: the opened wallet stays as it was', async () => {
+    const h = start();
+    await h.toApp();
+    const rect = (top: number, height: number, left = 0, width = 390): DOMRect => ({ top, bottom: top + height, left, right: left + width, width, height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+    const chip = document.getElementById('home-again-chip') as HTMLElement;
+    chip.getBoundingClientRect = () => rect(780, 40, 120, 150);
+    (document.getElementById('home-banner') as HTMLElement).getBoundingClientRect = () => rect(-200, 60);
+    advance(13 * 60_000 + 1000);
+    await h.open();
+    const r = h.reveal('evm');
+    pressEl(h, r.toggle);
+    const key = vector(OWN).accounts[0]!.evm.export;
+    expect(r.secret.textContent).toBe(key);
+    expect(chip.hasAttribute('data-shown')).toBe(true);
+    vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    chip.click();
+    expect(document.activeElement?.id).toBe('home-sign-in-again');
+    expect(h.page.tab).toBe('move');
+    expect(h.page.moving.holdsSecret).toBe(true);
+    expect(h.page.moving.state).toBe('reveal');
+    expect(zeroed.has(prkOf(OWN))).toBe(false);
+  });
+
+  it('D895: the chip never comes within 48 px of a guarded button (Continue, Show key, Copy key)', async () => {
+    const h = start();
+    await h.toApp();
+    const rect = (top: number, height: number, left = 0, width = 390): DOMRect => ({ top, bottom: top + height, left, right: left + width, width, height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+    const chip = document.getElementById('home-again-chip') as HTMLElement;
+    chip.getBoundingClientRect = () => rect(780, 40, 120, 150);
+    (document.getElementById('home-banner') as HTMLElement).getBoundingClientRect = () => rect(-200, 60);
+    advance(13 * 60_000 + 1000);
+    await h.open();
+    h.click('home-export-stellar');
+    const go = document.getElementById('home-export-continue') as HTMLElement;
+    const check = async (top: number, left = 120): Promise<boolean> => {
+      go.getBoundingClientRect = () => rect(top, 40, left, 100);
+      window.dispatchEvent(new Event('scroll'));
+      await new Promise((r) => setImmediate(r));
+      return chip.hasAttribute('data-shown');
+    };
+    // Continue disabled (the word not typed) isn't pressable, but it is guarded: the margin still holds.
+    expect(await check(300)).toBe(true);
+    expect(await check(700)).toBe(false); // 40 px above the chip
+    expect(await check(733)).toBe(false); // 7 px above
+    expect(await check(800, 300)).toBe(false); // 30 px to its right
+    expect(await check(691)).toBe(true); // 49 px above
+    expect(await check(800, 330)).toBe(true); // 60 px to its right
+    expect(CHIP_GUARD_CLEARANCE_PX).toBe(48);
   });
 
   it('collapsed, the section has the devices section’s shape; Close collapses it and gives focus back to its button', async () => {

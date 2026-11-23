@@ -43,7 +43,7 @@ test('the demo logs in, shows addresses and timings, signs, and copies safe diag
   expect(csp).toContain("frame-ancestors 'none'");
   expect(csp).not.toContain('unsafe-');
   expect(res.headers()).toMatchObject({ 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'cross-origin-opener-policy': 'same-origin-allow-popups' });
-  await expect(page.getByText('Testnet demo: Stellar, EVM and NEAR test networks only, nothing here holds real funds.')).toBeVisible();
+  await expect(page.getByText('This demo uses test networks only (Stellar, EVM and NEAR), so nothing here holds real money.')).toBeVisible();
 
   await loginOnDemo(page);
   await expect(page.locator('#stellar-address')).toHaveText(/^G[A-Z2-7]{55}$/u);
@@ -114,7 +114,7 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   await expect(page.locator('#near')).toBeVisible();
   const account = (await page.locator('#near-account-full').textContent()) ?? '';
   expect(account).toMatch(/^[0-9a-f]{64}$/u);
-  await expect(page.locator('#near-balance')).toHaveText(/^Not on NEAR testnet yet/u);
+  await expect(page.locator('#near-balance')).toHaveText(/^Not on NEAR’s test network yet/u);
   // Typing activates a new account before the click (the relayer's zero-value transfer).
   await page.locator('#near-text').fill(text);
   await expect(page.locator('#near-balance')).toHaveText('Balance: 0 NEAR. The guestbook write needs none.');
@@ -124,7 +124,7 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   const approval = await approvalP;
   // The click opened the approval itself: no "Review in Journear Passport" button.
   await expect(page.frameLocator(VAULT_FRAME).getByRole('button', { name: 'Review in Journear Passport' })).toHaveCount(0);
-  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear window…');
+  await expect(page.locator('#near-stage')).toHaveText('Waiting for your approval in the Journear Passport window…');
   // D808: the plain summary leads; the request's kind heading is in the details.
   // D885: the demo guestbook's write is a reviewed call: plain words, the contract named as checked by Journear.
   await expect(approval.locator('h2.summary-headline')).toHaveText(/wants to add a message to the demo guestbook$/u);
@@ -137,7 +137,7 @@ test('the demo writes to the NEAR guestbook with zero NEAR: activate, approve th
   await expectPlainWindow(approval);
   await approve(approval);
 
-  await expect(page.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR testnet. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
+  await expect(page.locator('#near-done-text')).toHaveText('Written to the guestbook on NEAR’s test network. Your NEAR account was created for it. Journear paid the network fee, so it cost you nothing.');
   expect(relayer.guestbook).toEqual([text]);
   const first = page.locator('#near-messages li', { hasText: text });
   await expect(first.locator('.text')).toHaveText(text);

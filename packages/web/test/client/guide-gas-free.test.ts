@@ -18,7 +18,7 @@ function part(start: string, end: string): string {
   return guide.slice(from, to);
 }
 
-const gasFree = part('### Gas-free actions (not live)', '### NEAR');
+const gasFree = part('### Gas sponsorship (not live)', '### NEAR');
 
 /** The rows of the table that follows `marker`: each row's cells, without the header and the rule. */
 function tableAfter(text: string, marker: string): string[][] {
@@ -37,7 +37,7 @@ function tableAfter(text: string, marker: string): string[][] {
 /** The backticked codes in a cell. */
 const codesIn = (cell: string): string[] => [...cell.matchAll(/`([a-z0-9_]+)`/gu)].map((m) => m[1]!);
 
-describe('docs/integration.md "Gas-free actions"', () => {
+describe('docs/integration.md "Gas sponsorship"', () => {
   const rows = tableAfter(gasFree, '<a id="gas-free-errors"></a>');
 
   it('lists every sponsored-action reason once, with the sentence userMessage gives for it', () => {

@@ -220,7 +220,7 @@ export const GUIDE_PARTS = [
   },
   {
     file: 'guide-gas-free.ts',
-    start: '### Gas-free actions (not live)',
+    start: '### Gas sponsorship (not live)',
     end: '### NEAR',
     prelude: [
       'declare const checkInButton: HTMLButtonElement;',

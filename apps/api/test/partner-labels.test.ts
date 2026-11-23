@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { labelsMaintenance } from '../src/labels/cron.ts';
 import { detectLabelDrift } from '../src/labels/drift.ts';
 import { LABEL_LAPSE_MS } from '../src/labels/sql.ts';
+import { type LabelPlan, limitProblem } from '../src/labels/store.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { ConsoleRpc } from '../src/rpc/console.ts';
 import { clearViewCaches } from '../src/views.ts';
@@ -211,6 +212,21 @@ describe('proposing (ConsoleRpc.proposeLabels): who, what, and every refusal', (
     clock.advance(DAY + 1);
     for (let k = 0; k < 6; k++) await ok(propose(app, await nearDoc()));
     expect((await fail(propose(app, await nearDoc()))).error).toMatch(/at most 16 sets of request labels/u);
+  });
+
+  it('limitProblem: the bytes an org and an app may hold, each limit at its edge', () => {
+    const plan = (o: Partial<LabelPlan>): LabelPlan => ({ org_entries: 0, org_bytes: 0, app_bytes: '{}', day_proposals: 0, ...o }) as LabelPlan;
+    const i = { newEntry: true, bytes: 1000, appIds: ['app_a'] };
+    expect(limitProblem(plan({}), i)).toBeNull();
+    expect(limitProblem(plan({ org_entries: 15 }), i)).toBeNull();
+    expect(limitProblem(plan({ org_entries: 16 }), i)).toMatch(/at most 16 sets/u);
+    expect(limitProblem(plan({ org_entries: 16 }), { ...i, newEntry: false })).toBeNull();
+    expect(limitProblem(plan({ org_bytes: 64 * 1024 - 1000 }), i)).toBeNull();
+    expect(limitProblem(plan({ org_bytes: 64 * 1024 - 999 }), i)).toMatch(/at most 64 KiB together/u);
+    expect(limitProblem(plan({ app_bytes: JSON.stringify({ app_a: 32 * 1024 - 1000 }) }), i)).toBeNull();
+    expect(limitProblem(plan({ app_bytes: JSON.stringify({ app_a: 32 * 1024 - 999 }) }), i)).toMatch(/attached to app_a would be over 32 KiB/u);
+    expect(limitProblem(plan({ day_proposals: 9 }), i)).toBeNull();
+    expect(limitProblem(plan({ day_proposals: 10 }), i)).toMatch(/at most 10 label changes in 24 hours/u);
   });
 
   it('the same document on the same apps as the one in force is a no-op (the token not used)', async () => {

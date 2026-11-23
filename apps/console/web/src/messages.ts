@@ -35,6 +35,7 @@ export const ERROR_TEXT: Record<string, string> = {
   key_limit: 'An app can have at most 5 active keys. Revoke one you no longer ship, then create the new one.',
   origin_refused: 'Journear can’t accept that origin.',
   policy_invalid: 'The policy has problems. Fix them, then check it again.',
+  label_invalid: 'The request labels have problems. Fix them, then check them again.',
   invalid_client_proof: 'The pasted token isn’t a valid proof for that client. Run the helper again and paste its new token.',
   logo_type: 'Journear can’t use that image. Use a still PNG, JPEG or WebP, 128 to 2048 px a side and nearly square.',
   logo_too_large: 'That image is over 512 KiB. Export a smaller one and upload it again.',

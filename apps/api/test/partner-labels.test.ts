@@ -945,3 +945,35 @@ describe('D899 (piece 4): what the console reads, no new authority', () => {
     expect((await detail(p.change!.id)).change.blockNote).toBe(note);
   });
 });
+
+describe('after PR 126’s review (D899)', () => {
+  it('listLabels and previewLabels name the environment’s delay (the one the notice’s ack adds), null when not configured', async () => {
+    const app = await orgApp();
+    const l = await ok(consoleRpc().listLabels({ ...member(), orgId: app.org, scopeId: app.scope }));
+    expect(l.delayMs).toBe(DELAY);
+    const p = await ok(consoleRpc().previewLabels({ ...member(), orgId: app.org, scopeId: app.scope, document: await nearDoc(), appIds: [app.id] }));
+    expect(p.delayMs).toBe(DELAY);
+    const day = { ...ON, APP_CHANGE_DELAY_MS: String(DAY) } as typeof env;
+    expect((await ok(consoleRpc(day).listLabels({ ...member(), orgId: app.org, scopeId: app.scope }))).delayMs).toBe(DAY);
+    const none = { ...ON, APP_CHANGE_DELAY_MS: undefined } as unknown as typeof env;
+    expect((await ok(consoleRpc(none).listLabels({ ...member(), orgId: app.org, scopeId: app.scope }))).delayMs).toBeNull();
+    // The ack adds exactly that delay.
+    const q = await ok(propose(app, await nearDoc()));
+    const a = await ack(q.change!.id);
+    expect(a.change.activeFrom - clock.now()).toBe(DELAY);
+  });
+
+  it('a waiting version carries what it changes against the version in force (every line added when none is)', async () => {
+    const app = await orgApp();
+    const doc = await nearDoc();
+    const first = await ok(propose(app, doc));
+    let r = await ok(consoleRpc().listLabels({ ...member(), orgId: app.org, scopeId: app.scope }));
+    expect(r.entries[0]!.waiting!.diff!.map((x) => x.change)).toEqual(['added', 'added']);
+    await ack(first.change!.id);
+    clock.advance(DELAY);
+    await ok(propose(app, doc.replace('"the stamp"', '"the badge"'), { labelId: first.change!.labelId }));
+    r = await ok(consoleRpc().listLabels({ ...member(), orgId: app.org, scopeId: app.scope }));
+    expect(r.entries[0]!.current!.diff).toBeUndefined();
+    expect(r.entries[0]!.waiting!.diff).toEqual([expect.objectContaining({ key: '(contract)', change: 'same' }), expect.objectContaining({ key: 'collect', change: 'changed', after: expect.stringContaining('the badge') })]);
+  });
+});

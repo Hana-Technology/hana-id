@@ -19338,7 +19338,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   piece 4; the design, the placements and every sentence decided while building, **to confirm** (the list at the end).
   No checked-in manifest turns `partnerLabels.enabled` on · Built: `apps/console/web/src/pages/app/Labels.tsx` (the
   tab), `apps/console/web/src/labels/` (`Editor.tsx`, `Preview.tsx`, `model.ts`, `problems.ts`, `examples.ts`,
-  `units.ts`, `window-preview.css`), `pages/Action.tsx` (the review of `labels.set` and `labels.remove`),
+  `units.ts`, `Diff.tsx`), `window/` (`frame.ts`, `window.css`: the popup's stylesheet in a shadow root), `pages/Action.tsx` (the review of `labels.set` and `labels.remove`),
   `pages/Consent.tsx` (now a lazy wrapper of `ConsentView.tsx`), `App.tsx` (the tab's lazy chunk), `pages/Apps.tsx`
   (the tab); `apps/console/src/writes.ts` (`GET …/scopes/:scope/labels`; the cancel route takes an `lc_` id),
   `actions.ts` (the review's `decoded`; returning to the tab), `audit.ts` (`change.cancelled` may carry `changeId`),
@@ -19367,7 +19367,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 - **Where.** An app tab, **Request labels**, between Signing and Branding: the entries of the app's scope (labels are a
   scope's, attached to named apps), reachable from every app of the scope. The editor is `…/labels/new` and
   `…/labels/:labelId`. A lazy chunk (the decoder, the Stellar SDK and the window's renderer), and the consent preview is
-  lazy too, so the console's first page shrank (325 KB, from 339 KB).
+  lazy too, so the console's first page shrank (326 KB, from 339 KB; sizes after PR 126's review below).
 - **The list.** Each entry: what it describes ("Payments to your Stellar accounts", "NEAR program {account}", "Soroban
   contract {id}"), its apps, badges (Live; In force + Not shown to users yet for NEAR and Soroban; Switched off by
   Journear; Removed; the waiting state), "What users see now" (core's `previewLabelDocument` lines, as the API's preview
@@ -19396,8 +19396,8 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   document as the window's labels: **A payment that matches** (to the first listed G… account, an allowed asset, within
   the limits, the memo it asks for), **A payment that doesn't match** (only the memo changed: the amber line), **A
   payment to an account not in your list** (only the payee changed: the red line); Light / Dark (the design system's
-  `.jp-light` / `.jp-dark`); at most 390 px wide; the window's stylesheet imported, and the few base rules its markup
-  needs scoped to the frame. For NEAR and Soroban: "Not shown to users yet" and core's preview lines.
+  `.jp-light` / `.jp-dark`); at most 390 px wide; drawn inside a shadow root with the popup's own stylesheets attached
+  there only (after PR 126's review, below), with Journear's example mark first in the frame. For NEAR and Soroban: "Not shown to users yet" and core's preview lines.
 - **The warnings, where they apply.** On the accounts: "List only accounts that only you control, never a shared
   deposit address." (D896) and, for payments, the muxed note; on a payment format: the red-line warning naming the five
   operation types; on the fee: the suggestion with "Use 0.01 XLM".
@@ -19425,13 +19425,19 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   labels off: your users see the plain approval window for these requests. Ask Journear security why before changing
   them."
 - "Journear reviews your organisation’s changes before they go live: a change goes live only after Journear allows it, at
-  the earliest 24 hours after the email."
-- The list panel: "Each change is emailed to your organisation’s security contacts and goes live 24 hours after the email
+  the earliest {wait} after the email." ({wait}: the environment's delay in the notices' words, below)
+- The list panel: "Each change is emailed to your organisation’s security contacts and goes live {wait} after the email
   unless someone cancels it. Journear may block it if it would mislead users. Removing labels is immediate."
-- Waiting: "Waiting for the email" / "Journear is about to email your security contacts. It goes live 24 hours after
-  that email unless someone cancels it."; "Goes live {time}" / "It goes live {in …} unless someone cancels it.";
-  "Held for Journear’s review" / "It goes live only after Journear allows it, at the earliest {time} ({in …})." or
-  "Journear reviews it before it goes live. If Journear hasn’t allowed it by {date}, it lapses and nothing changes."
+- Waiting (review decides first): "Waiting for the email" / "Journear is about to email your security contacts. It goes
+  live {wait} after that email unless someone cancels it." (with review: "…Journear reviews it first: it goes live only
+  after Journear allows it, at the earliest {wait} after that email."); "Goes live {time}" / "It goes live {in …} unless
+  someone cancels it."; "Held for Journear’s review" / "It goes live only after Journear allows it, at the earliest
+  {time} ({in …})."; its time come: "Its time has come: Journear reviews it before it goes live. If Journear hasn’t
+  allowed it by {date}, it lapses and nothing changes."
+- New after PR 126's review: "Users see your words under the name of the app they’re using. This preview uses {app}.";
+  "Example: not a real request"; "This text named another network. It will be saved for {network}."; "See the preview",
+  "Back to the form"; "What changes for users", "All its lines"; "In force, not shown to users yet", "In force since
+  {date}"; "These request labels were removed already"; the admin note label above.
 - Ended: "Journear blocked this change on {date}. Your users don’t see it." + "Journear’s note: “{note}”"; "Cancelled on
   {date}. It never went live."; "Lapsed on {date}: Journear didn’t allow it within 7 days of its time. It never went
   live." / "…: it wasn’t announced within 7 days. …"; "Removed on {date}."; "Replaced by a newer version on {date}.";
@@ -19457,12 +19463,12 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   …”, always with “These are {App}’s words. Journear hasn’t checked them.”"; "What changes for users" (Added / Changed /
   Removed; "What they describe"); "Nothing users see changes: every line stays as it is now (only the apps change).";
   "What users would see (example values)"; when: "Not at once. After you confirm, Journear emails your organisation’s
-  security contacts. It goes live 24 hours after the email unless someone cancels it; Journear may block it if it would
+  security contacts. It goes live {wait} after the email unless someone cancels it; Journear may block it if it would
   mislead users. Any owner can cancel it until then, on the Request labels tab or from the email." / with review: "Not at
   once. After you confirm, Journear emails your organisation’s security contacts. Journear reviews it first: it goes live
-  only after Journear allows it, at the earliest 24 hours after the email, unless someone cancels it. If Journear hasn’t
+  only after Journear allows it, at the earliest {wait} after the email, unless someone cancels it. If Journear hasn’t
   allowed it within 7 days of that time, it lapses and nothing changes."; outcome: "Proposed. Journear emails your
-  security contacts; it goes live 24 hours after the email unless someone cancels it. You can follow it, or cancel it, on
+  security contacts; it goes live {wait} after the email unless someone cancels it. You can follow it, or cancel it, on
   the Request labels tab."; removal: "Remove the request labels of {apps}, at once and for good: your users see the plain
   approval window for these requests from then on. The change waiting to go live is cancelled too." and "Removed: your
   users see the plain approval window for these requests."
@@ -19485,17 +19491,24 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 4. The tab on each app (the scope's entries), between Signing and Branding; "Request labels" as its name.
 5. NEAR and Soroban forms offered now, marked "Not shown to users yet", and proposable (the API takes them today).
 6. The suggested fee: 0.01 XLM; amounts typed in XLM, NEAR and TGas; a payment's highest amount in the asset's units.
-7. "In force" (not "Live") for a NEAR or Soroban entry in force, since users don't see it yet.
+7. A NEAR or Soroban entry in force: the badge "In force" with "Not shown to users yet", the heading "In force, not shown
+   to users yet" and "In force since {date}" (never "Live" or "What users see now"), since users don't see it yet.
 8. Proposing is offered only to an owner who is an on-chain owner of the scope, while labels are on here and not
    switched off; preparing and previewing always.
 9. The preview's example values (25 units, memo 1042, the fixed example accounts) and its three examples; the
    mismatch example changes only the memo.
-10. The form writes the network itself; a document naming another network reads back with the scope's.
+10. The form writes the network itself; a text naming another network reads back with the scope's, says so first ("This
+    text named another network. It will be saved for {the Stellar test network | …}."), and Review sends the form's
+    text on the scope's network.
 11. A text the form can't show keeps the text as the source until it can; an edit in the form rewrites the text in the
     form's layout.
 12. The verb list offered whole, refused verbs disabled with "(says nothing moves: not for this request)".
-13. The consent preview loaded lazily (its look unchanged; the window's stylesheet is now in the console's bundle, which
-    also styles the existing consent preview's `div.consent` as the popup does).
+13. Both previews (request labels and the consent screen) are drawn inside a shadow root with the popup's own
+    stylesheets (packages/web base.css and approval.css, the design system's tokens and components) attached to that
+    root only: nothing of the popup's CSS reaches a console page, and the consent preview looks the same whether or not
+    the labels tab was opened (tested in the browser: a console page's `details summary` and `main.auth` before and
+    after the preview, and no popup rule in the page's stylesheets). Each preview frame starts with "Example: not a real
+    request".
 14. The local stack's console lanes: the Google and TLS stand-ins at the edge (tests only).
 
 #### Tests
@@ -19513,3 +19526,50 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 - Screens: `hana-id-review-files/approval-shots/partner-labels-console/` (the editor's three examples, a problem, the
   review, the list, the list with a blocked change, a NEAR form; 1280 and 390 px, light and dark).
 - Address impact: none (display and the console only; nothing signed, decoded or derived changes).
+
+#### After PR 126's review (2026-11-23): what changed, each decided while fixing, **to confirm**
+1. **The wait is the environment's.** `listLabels` and `previewLabels` answer `delayMs` (the guarded-change config's
+   `appChangeDelayMs`, the delay `ackLabelNotice` adds; null when not configured), and every sentence says "{wait} after
+   the email" in the admin notices' own words: one function, `durationWords`, now in console-core
+   (`@hana-id/console-core/duration-words`, the admin Worker re-exports it): "1 minute" on sandbox-dev, "1 day" on 24 h
+   envs; unknown: "after the security delay that follows the email". The partner guide says "24 hours on production
+   deployments".
+2. **A waiting change's sentence is decided by review first**, in every state: before the email, after it, and once its
+   time has come ("Its time has come: Journear reviews it before it goes live. If Journear hasn’t allowed it by {date},
+   it lapses and nothing changes.").
+3. **Cancel for every owner, a frozen org's too** (the server keeps cancels open), whatever the app (labels are the
+   scope's); proposing and removing stay paused while frozen.
+4. **The popup's CSS in a shadow root** (item 13 above): chosen over a build-time selector prefix, because a prefix
+   would still let base.css's element rules (`h1`, `p`, `details summary`) be rewritten by hand, and a shadow root keeps
+   the popup's CSS whole. The stylesheet is a constructed sheet attached to the root (`adoptedStyleSheets`), allowed by
+   the console's CSP (`style-src 'self'`); tested in Chromium, Firefox and WebKit.
+5. **The Stellar SDK and the example builder load only on the Request labels tab.** `formatUnits` moved out of
+   `render-approval.ts` into packages/web `auth/format-units.ts` (re-exported unchanged), so the consent renderer no
+   longer pulls the approval window's module. Sizes (Vite build, gzip): before this branch the console was one chunk,
+   339.1 KB (108.0 KB); PR 126 as first pushed: first page 325.5 KB (101.2), Signing tab with the consent preview +701.6
+   KB (+205.8), Labels tab +803.9 KB (+237.1); now: first page 326.0 KB (101.4), Signing tab with the consent preview
+   +77.7 KB (+20.0: its renderer 6.2 KB and the popup's stylesheet as text 71.5 KB), Labels tab +863.0 KB (+247.1: the
+   window's renderer, the decoders, the Stellar SDK and the stylesheet).
+6. **The app name.** "Users see your words under the name of the app they’re using. This preview uses {first app}." (the
+   window names the requesting app).
+7. **In force, not shown** (item 7 above).
+8. **Another network** (item 10 above).
+9. **Removing an entry removed already** is refused when the action is built ("These request labels were removed
+   already"), before any Google step.
+10. **The example mark**: "Example: not a real request", first in every preview frame (both themes), built by the
+    console, never from partner text.
+11. **Phones**: "See the preview" near the top of the form and "Back to the form" under the preview (hidden when they
+    sit side by side). **The list**: a waiting change shows "What changes for users" (the API's diff against the version
+    in force, now on `listLabels`' waiting version as `diff`), with "All its lines" folded under it.
+12. **Staff are told who reads their note.** The admin portal's Block note label is now "Why (everyone in the partner’s
+    organisation can read this note; it is kept in the audit log)", and the tool's line says the note goes to the
+    security contacts by email and to everyone in the organisation on the console's Request labels tab for 14 days.
+
+#### For the founder (as the review framed them)
+1. Journear's block note is visible to every member of the partner's organisation, viewers included, on the console,
+   for 14 days (until now only the security contacts got it, by email).
+2. Viewers can read the text of waiting changes (and of the version in force), not only owners.
+3. 14 days and 5 ended versions per entry on the tab.
+4. NEAR and Soroban labels can be proposed now, though users don't see them until piece 5.
+5. The wait's wording: the environment's delay in the notices' words ("1 day", "1 minute"), not "24 hours".
+

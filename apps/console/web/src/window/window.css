@@ -1,0 +1,47 @@
+/* The Journear Passport popup's look for the console's previews (D899): the approval window's label preview and the
+   consent preview are drawn inside a shadow root (window/frame.ts) with this stylesheet attached there, so the popup's
+   own CSS (packages/web base.css and approval.css, imported whole, never copied) styles exactly what is inside the
+   preview and nothing of the console's pages, whether or not a preview was opened. The design system's tokens and
+   components come in too: inside a shadow root `.jp-light` / `.jp-dark` pick the scheme, and the page's tokens are
+   inherited from the host. */
+@import '@hana-id/brand/tokens.css';
+@import '@hana-id/brand/components.css';
+@import '../../../../../packages/web/src/auth/css/base.css';
+@import '../../../../../packages/web/src/auth/css/approval.css';
+
+:host {
+  display: block;
+  max-width: 100%;
+}
+
+/* The frame: a phone's width, the popup's surface and shadow, in the scheme the preview asks for. */
+.window-frame,
+.consent-frame {
+  max-width: 390px;
+  width: 100%;
+  padding: 16px;
+  border: 1px solid var(--jp-border-strong);
+  border-radius: var(--jp-radius-xl);
+  box-shadow: var(--jp-shadow-md);
+  background: var(--jp-surface);
+  color: var(--jp-fg);
+  font-family: var(--jp-font-body);
+  font-size: var(--jp-text-md);
+  line-height: var(--jp-leading-body);
+}
+
+/* The example mark: always first in the frame, in Journear's own words, so a screenshot of the preview can't pass for a
+   real request (D899). */
+.example-mark {
+  margin: 0 0 12px;
+  padding: 4px 10px;
+  border: 1px dashed var(--jp-border-strong);
+  border-radius: var(--jp-radius-sm);
+  background: var(--jp-bg-subtle);
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-xs);
+  font-weight: var(--jp-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: center;
+}

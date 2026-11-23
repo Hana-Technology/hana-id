@@ -11,6 +11,7 @@ import { expectVersion } from '../changes/apps.ts';
 import { type Writer, actorId, commitOn, committed, expectReplay, refuse, refuseReplay, runWrite } from '../changes/cas.ts';
 import type { HotDb } from '../changes/db.ts';
 import { requireChangeConfig } from '../changes/origins.ts';
+import { changeConfig } from '../guarded/config.ts';
 import { type Q, q, raw } from '../changes/sql.ts';
 import { type StepUpToken, confirmStepUp, releaseStepUp, verifyStepUpToken } from '../changes/step-up.ts';
 import { type CheckedDocument, type LabelProblem, diffOf, networkProblem, parseDocument, previewOf, storedDocument } from './document.ts';
@@ -25,6 +26,12 @@ function requireOn(env: Env): void {
 
 /** The problems as one `label_invalid` message: "code at path: message; …" (at most 20, the parser's own cap). */
 const problemText = (ps: readonly LabelProblem[]): string => ps.map((p) => `${p.code} at ${p.path}: ${p.message}`).join('; ');
+
+/** The environment's guarded-change delay (the one `ackLabelNotice` adds), or null when it isn't configured. */
+function delayOf(env: Env): number | null {
+  const c = changeConfig(env);
+  return c.ok ? c.config.delayMs : null;
+}
 
 /** When a version ended: its end, its cancel (or lapse) or its block, whichever is set. */
 const ENDED_AT = raw('MAX(COALESCE(c.ended_at, 0), COALESCE(c.cancelled_at, 0), COALESCE(c.blocked_at, 0))');
@@ -53,15 +60,29 @@ export async function listLabels(db: HotDb, env: Env, i: { orgId: string; scopeI
        ORDER BY l.created_at, l.id, ${ENDED_AT} DESC, c.proposed_at DESC`,
   );
   const entries = new Map<string, LabelEntryView>();
+  const texts = new Map<string, string>();
   for (const r of rows) {
     const e = entries.get(r.label_id) ?? { id: r.label_id, current: null, waiting: null, off: r.off_by, removedAt: r.removed_at, recent: [] };
     const v = labelView(r, now);
-    if (r.is_current) e.current = { ...v, text: r.doc_text };
+    if (r.is_current) {
+      e.current = { ...v, text: r.doc_text };
+      texts.set(r.label_id, r.doc_text);
+    }
     else if (r.is_open) e.waiting = { ...v, text: r.doc_text };
     else if (e.recent.length < LABEL_RECENT_PER_ENTRY) e.recent.push(v);
     entries.set(r.label_id, e);
   }
-  return { labelsVersion: head.v, entries: [...entries.values()], enabled: labelsOn(env), orgOff: head.org_off, reviewRequired: !!head.review_required };
+  // A waiting version's diff against the version in force (D899: the list shows what it changes, as the review did).
+  for (const e of entries.values()) {
+    const w = e.waiting;
+    const after = w?.text === undefined ? null : storedDocument(w.text);
+    if (!w || !after) continue;
+    const cur = texts.get(e.id);
+    const before = cur === undefined ? null : storedDocument(cur);
+    const name = [...w.apps].sort((a, b) => (a.id < b.id ? -1 : 1))[0];
+    w.diff = diffOf(before, after, name?.name ?? name?.id ?? 'Your app');
+  }
+  return { labelsVersion: head.v, entries: [...entries.values()], enabled: labelsOn(env), orgOff: head.org_off, reviewRequired: !!head.review_required, delayMs: delayOf(env) };
 }
 
 interface Checked {
@@ -126,6 +147,7 @@ export async function previewLabels(db: HotDb, env: Env, w: Writer, i: { orgId: 
     noChange: c.same,
     diff: diffOf(before, c.doc.doc, c.appName),
     reviewRequired: !!c.plan.review_required,
+    delayMs: delayOf(env),
   };
 }
 

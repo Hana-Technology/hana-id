@@ -360,6 +360,7 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
           preview: r.preview,
           diff: r.diff,
           reviewRequired: r.reviewRequired,
+          delayMs: r.delayMs,
         },
         digest,
       };
@@ -368,6 +369,8 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
       const r = await env.API.listLabels({ ...ctx, orgId: c.orgId, scopeId: p.scopeId as string });
       if (!r.ok) return no(r.code, r.error ?? r.code);
       const entry = r.entries.find((e) => e.id === p.labelId) ?? no('not_found', 'No such request labels in this scope');
+      // D899: the list also has entries removed in the last 14 days; removing one again is refused before any Google step.
+      if (entry.removedAt !== null) no('not_found', 'These request labels were removed already');
       const digest = await labelChangeDigest({ signer: env.SIGNER_ACCOUNT, scopeId: p.scopeId as string, kind: 'labels_remove', labelId: entry.id, appIds: [], labelsVersion: r.labelsVersion });
       return {
         action: { ...base, scope_id: p.scopeId, label_id: entry.id, labels_version: r.labelsVersion },

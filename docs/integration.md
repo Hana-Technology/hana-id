@@ -920,7 +920,7 @@ are set apart. Your words never replace, soften or move Journear's lines or warn
 always come from the request itself. A request that doesn't match your description never shows your words.
 
 **Where.** Open your app, then the **Request labels** tab. Labels belong to the app's scope (the apps that share your
-users' wallets); each set is attached to the apps you choose, and shown under the first one's name. Anyone in your
+users' wallets); each set is attached to the apps you choose, and users see your words under the name of the app they're using. Anyone in your
 organisation can read the tab; only an owner who is also an on-chain owner of the scope can propose or remove labels,
 and any owner can cancel a waiting change.
 
@@ -956,7 +956,7 @@ in short: plain Latin letters, digits, spaces and a few marks; no links, no amou
 plain-words list.
 
 **The preview.** Beside the form (under it on a phone) is the approval window itself, drawn by Journear's own window
-code with made-up values, in light or dark, at a phone's width. Switch between **A payment that matches** (your box),
+code with made-up values, in light or dark, at a phone's width, marked "Example: not a real request". Switch between **A payment that matches** (your box),
 **A payment that doesn't match** (no words from you, and an amber line: "Coffee Club describes this kind of request,
 but this one doesn't match, so Journear isn't showing Coffee Club's description. If you're not sure what this does,
 reject it.") and **A payment to an account not in your list** (a red line: "This isn't one of the accounts Coffee Club
@@ -977,13 +977,14 @@ has listed for payments. If you expected to pay Coffee Club, don't approve.").
 
 **Proposing.** **Review the change** shows what changes for users (lines added, changed or removed against what they
 see now) and what they would see; **Confirm with Google** (a fresh sign-in, bound to exactly this document) proposes
-it. Journear then emails your organisation's security contacts, and the change **goes live 24 hours after the email
-unless someone cancels it; Journear may block it if it would mislead users.** If Journear reviews your organisation's
-changes, the page says so: a change then goes live only after Journear allows it, at the earliest 24 hours after the
-email, and lapses if it isn't allowed within 7 days of that time.
+it. Journear then emails your organisation's security contacts, and the change **goes live after the security delay
+that follows the email (24 hours on production deployments) unless someone cancels it; Journear may block it if it
+would mislead users.** The page and the email name your environment's delay. If Journear reviews your organisation's
+changes, the page says so: a change then goes live only after Journear allows it, at the earliest the security delay
+after the email, and lapses if it isn't allowed within 7 days of that time.
 
 **On the tab**, each set of labels shows its state: **Live** (and what users see now), **Waiting for the email**,
-**Goes live {time}**, **Held for Journear's review**, and for the last 14 days the changes that ended: **Blocked by
+**Goes live {time}**, **Held for Journear's review** (a waiting change shows what it changes for users), and for the last 14 days the changes that ended: **Blocked by
 Journear** with Journear's note, **Cancelled**, **Lapsed**, **Replaced**, **Removed**. **Switched off by Journear**
 means your users see the plain window for those requests; ask Journear security before changing them. While Journear
 has switched your organisation's labels off, nothing can be proposed.

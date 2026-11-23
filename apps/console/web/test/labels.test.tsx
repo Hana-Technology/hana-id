@@ -11,8 +11,9 @@ import { parseLabelDocument } from '@hana-id/core/partner-labels';
 import { nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { NOT_SHOWN_YET, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
-import { LABELS_WAIT, LABELS_WAIT_REVIEW } from '../src/pages/Action.tsx';
-import { ENTRY_OFF, NOT_ENABLED, NOT_ENABLED_PROPOSE, ORG_OFF, REVIEW_ON } from '../src/pages/app/Labels.tsx';
+import { labelsWait, labelsWaitReview } from '../src/pages/Action.tsx';
+import { ENTRY_OFF, NOT_ENABLED, NOT_ENABLED_PROPOSE, ORG_OFF, guardedWait, reviewOn, waitingState } from '../src/pages/app/Labels.tsx';
+import { EXAMPLE_MARK } from '../src/window/frame.ts';
 
 type Answer = { status?: number; body: unknown };
 let routes: Record<string, Answer | ((init?: RequestInit) => Answer)>;
@@ -66,7 +67,11 @@ const version = (o: Record<string, unknown>) => ({
   ...o,
 });
 const entry = (o: Record<string, unknown>) => ({ id: 'pl_1', current: null, waiting: null, off: null, removedAt: null, recent: [], ...o });
-const listOf = (entries: unknown[], o: Record<string, unknown> = {}) => ({ labelsVersion: 4, entries, enabled: true, orgOff: null, reviewRequired: false, now: NOW, ...o });
+const DAY = 86_400_000;
+const listOf = (entries: unknown[], o: Record<string, unknown> = {}) => ({ labelsVersion: 4, entries, enabled: true, orgOff: null, reviewRequired: false, delayMs: DAY, now: NOW, ...o });
+/** The preview's shadow root (window/frame.ts): the window is drawn there, with the popup's stylesheet. */
+const win = (): ShadowRoot | null => (document.querySelector('.labels-preview .window-host') as HTMLElement | null)?.shadowRoot ?? null;
+const inWin = (sel: string) => win()?.querySelector(sel) ?? null;
 
 function signedIn(o: { role?: string; list?: unknown; onChain?: boolean } = {}) {
   routes['/api/me'] = { body: ME };
@@ -144,7 +149,7 @@ describe('the list', () => {
     at('/orgs/org_a/apps/app_1/labels');
     await tab();
     expect(screen.getByText(ORG_OFF.org)).toBeTruthy();
-    expect(screen.getByText(REVIEW_ON)).toBeTruthy();
+    expect(screen.getByText(reviewOn(DAY))).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'New request labels' })).toBeNull();
     cleanup();
     signedIn({ role: 'viewer', list: listOf([entry({ waiting: version({ id: 'lc_wait', state: 'announced', activeFrom: NOW + 3_600_000, text: paymentDoc() }) })]) });
@@ -198,7 +203,7 @@ describe('the editor', () => {
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('No problems: ready to review.'));
     // The window's own box, with the example's memo.
     const box = await waitFor(() => {
-      const b = document.querySelector('.window-preview div.partner-label');
+      const b = inWin('.window-preview div.partner-label');
       expect(b).not.toBeNull();
       return b as HTMLElement;
     });
@@ -210,7 +215,7 @@ describe('the editor', () => {
     const described = (phrase().getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '');
     expect(described.join(' ')).toMatch(/free|claim|Journear/iu);
     expect((screen.getByRole('button', { name: 'Review the change' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(document.querySelector('.window-preview div.partner-label')).toBeNull();
+    expect(inWin('.window-preview div.partner-label')).toBeNull();
     fireEvent.change(phrase(), { target: { value: 'order' } });
     await waitFor(() => expect(phrase().getAttribute('aria-invalid')).toBeNull());
   });
@@ -219,15 +224,15 @@ describe('the editor', () => {
     signedIn();
     await newEditor();
     fill();
-    await waitFor(() => expect(document.querySelector('.window-preview div.partner-label')).not.toBeNull());
+    await waitFor(() => expect(inWin('.window-preview div.partner-label')).not.toBeNull());
     fireEvent.click(screen.getByLabelText('A payment that doesn’t match'));
-    await waitFor(() => expect(document.querySelector('.window-preview .partner-mismatch')).not.toBeNull());
-    expect(document.querySelector('.window-preview div.partner-label')).toBeNull();
+    await waitFor(() => expect(inWin('.window-preview .partner-mismatch')).not.toBeNull());
+    expect(inWin('.window-preview div.partner-label')).toBeNull();
     fireEvent.click(screen.getByLabelText('A payment to an account not in your list'));
-    await waitFor(() => expect(document.querySelector('.window-preview .partner-not-listed')?.textContent).toContain('This isn’t one of the accounts Coffee Club has listed for payments.'));
-    expect(document.querySelector('.window-frame')?.classList.contains('jp-light')).toBe(true);
+    await waitFor(() => expect(inWin('.window-preview .partner-not-listed')?.textContent).toContain('This isn’t one of the accounts Coffee Club has listed for payments.'));
+    expect(inWin('.window-frame')?.classList.contains('jp-light')).toBe(true);
     fireEvent.click(screen.getByLabelText('Dark'));
-    expect(document.querySelector('.window-frame')?.classList.contains('jp-dark')).toBe(true);
+    expect(inWin('.window-frame')?.classList.contains('jp-dark')).toBe(true);
   });
 
   it('the advanced text round-trips with the form; a text the form can’t show is said', async () => {
@@ -320,6 +325,7 @@ describe('the confirmation page: the review of the change', () => {
     ],
     preview: { formats: [{ key: 'payment', line: 'Coffee Club says: pay for the order “1042”', fields: [] }] },
     reviewRequired: false,
+    delayMs: DAY,
     ...o,
   });
   it('what changes against what users see now (as text), and when it goes live', async () => {
@@ -331,15 +337,17 @@ describe('the confirmation page: the review of the change', () => {
     expect(screen.getByText('Changed')).toBeTruthy();
     expect(document.body.textContent).toContain('pay for <script>alert(1)</script>');
     expect(document.querySelector('.labels-diff script')).toBeNull();
-    expect(screen.getByText(LABELS_WAIT)).toBeTruthy();
+    expect(screen.getByText(labelsWait(DAY))).toBeTruthy();
+    expect(labelsWait(DAY)).toContain('goes live 1 day after the email unless someone cancels it');
     expect(screen.getByRole('link', { name: 'Not now' }).getAttribute('href')).toBe('/orgs/org_a/apps/app_1/labels');
   });
   it('with Journear’s review on: the true sentence', async () => {
     routes['/api/me'] = { body: ME };
-    routes['/api/actions/act_2'] = { body: { id: 'act_2', kind: 'labels.set', status: 'pending', decoded: decoded({ reviewRequired: true }), expiresAt: NOW + 300_000 } };
+    routes['/api/actions/act_2'] = { body: { id: 'act_2', kind: 'labels.set', status: 'pending', decoded: decoded({ reviewRequired: true, delayMs: 60_000 }), expiresAt: NOW + 300_000 } };
     at('/actions/act_2');
     await screen.findByText('Propose request labels');
-    expect(screen.getByText(LABELS_WAIT_REVIEW)).toBeTruthy();
+    expect(screen.getByText(labelsWaitReview(60_000))).toBeTruthy();
+    expect(labelsWaitReview(60_000)).toContain('at the earliest 1 minute after the email');
   });
   it('a removal: at once and final; its outcome', async () => {
     routes['/api/me'] = { body: ME };
@@ -348,5 +356,103 @@ describe('the confirmation page: the review of the change', () => {
     await screen.findByText('Remove request labels');
     expect(document.body.textContent).toContain('The change waiting to go live is cancelled too.');
     expect(document.body.textContent).toContain('Removed: your users see the plain approval window for these requests.');
+  });
+});
+
+describe('after PR 126’s review', () => {
+  it('the wait is the environment’s, in the notices’ words: 1 minute on a test deployment, 1 day on production', async () => {
+    expect(guardedWait(60_000)).toContain('goes live 1 minute after the email unless someone cancels it');
+    expect(guardedWait(DAY)).toContain('goes live 1 day after the email unless someone cancels it');
+    expect(guardedWait(null)).toContain('goes live after the security delay that follows the email');
+    signedIn({ list: listOf([], { delayMs: 60_000, reviewRequired: true }) });
+    at('/orgs/org_a/apps/app_1/labels');
+    await tab();
+    expect(screen.getByText(guardedWait(60_000))).toBeTruthy();
+    expect(screen.getByText(reviewOn(60_000))).toBeTruthy();
+    expect(document.body.textContent).not.toContain('24 hours');
+  });
+
+  it('every waiting state, with and without Journear’s review: the review decides the sentence first', () => {
+    const at = NOW + 2 * 3_600_000;
+    for (const delay of [60_000, DAY]) {
+      const words = delay === DAY ? '1 day' : '1 minute';
+      const v = (state: string, reviewRequired: boolean) => waitingState({ state: state as never, reviewRequired, activeFrom: state === 'proposed' ? null : at, lapsesAt: NOW + 3 * DAY }, NOW, delay);
+      expect(v('proposed', false)).toEqual({ badge: 'Waiting for the email', line: `Journear is about to email your security contacts. It goes live ${words} after that email unless someone cancels it.` });
+      expect(v('proposed', true)).toEqual({ badge: 'Waiting for the email', line: `Journear is about to email your security contacts. Journear reviews it first: it goes live only after Journear allows it, at the earliest ${words} after that email.` });
+      expect(v('announced', false).badge).toMatch(/^Goes live /u);
+      expect(v('announced', false).line).toMatch(/^It goes live in 2 h 0 min unless someone cancels it\.$/u);
+      expect(v('announced', true).badge).toBe('Held for Journear’s review');
+      expect(v('announced', true).line).toMatch(/^It goes live only after Journear allows it, at the earliest /u);
+      for (const review of [false, true]) {
+        expect(v('waiting_review', review).badge).toBe('Held for Journear’s review');
+        expect(v('waiting_review', review).line).toMatch(/^Its time has come: Journear reviews it before it goes live\. If Journear hasn’t allowed it by /u);
+      }
+    }
+  });
+
+  it('a frozen organisation’s owner can still cancel a waiting change (the server allows it); proposing stays paused', async () => {
+    signedIn({ list: listOf([entry({ waiting: version({ id: 'lc_wait', state: 'announced', activeFrom: NOW + 3_600_000, text: paymentDoc() }) })]) });
+    routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status: 'frozen' }, role: 'owner' } };
+    routes['/api/orgs/org_a/changes/lc_wait/cancel'] = { body: { id: 'lc_wait', state: 'cancelled' } };
+    at('/orgs/org_a/apps/app_1/labels');
+    await tab();
+    expect(screen.getByText('Proposing is paused while Journear has frozen the organisation; cancelling still works.')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'New request labels' })).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel this change' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel it now' }));
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/orgs/org_a/changes/lc_wait/cancel' && c.init?.method === 'POST')).toBe(true));
+  });
+
+  it('a waiting change shows what it changes; a NEAR entry in force says it isn’t shown yet', async () => {
+    const near = JSON.stringify({ schema: 'journear-labels/1', context: { near: { network: 'testnet', account: 'stamp-rally.testnet', codeHash: 'GKot5hBsd81kMupNCXHaqbhv3huEbxAFMLnpcX2hniwn' } }, display: { formats: { join: { call: { args: {} }, intent: { verb: 'join', object: 'the club' }, sentence: ['verb', 'object'], fields: [] } } } });
+    signedIn({
+      list: listOf([
+        entry({ id: 'pl_1', current: version({ id: 'lc_live', text: paymentDoc() }), waiting: version({ id: 'lc_wait', state: 'announced', activeFrom: NOW + 3_600_000, text: paymentDoc('the order'), diff: [{ key: '(contract)', change: 'same', before: 'x', after: 'x' }, { key: 'payment', change: 'changed', before: 'Coffee Club says: pay for order “1042”', after: 'Coffee Club says: pay for the order “1042”' }] }) }),
+        entry({ id: 'pl_2', current: version({ id: 'lc_near', labelId: 'pl_2', text: near }) }),
+      ]),
+    });
+    at('/orgs/org_a/apps/app_1/labels');
+    await tab();
+    const w = document.querySelector('.labels-waiting') as HTMLElement;
+    expect(within(w).getByText('What changes for users')).toBeTruthy();
+    expect(w.querySelector('[data-change="changed"] .diff-before')?.textContent).toContain('pay for order');
+    expect(w.querySelector('[data-change="changed"] .diff-after')?.textContent).toContain('pay for the order');
+    const n = document.querySelector('[data-entry="pl_2"]') as HTMLElement;
+    expect(within(n).getByText('In force')).toBeTruthy();
+    expect(within(n).getByText('In force, not shown to users yet')).toBeTruthy();
+    expect(within(n).queryByText('What users see now')).toBeNull();
+    expect(n.textContent).toMatch(/In force since /u);
+    expect(n.textContent).not.toMatch(/Live since/u);
+  });
+
+  it('the preview frame carries the example mark first, in both themes; the apps hint names the app users use', async () => {
+    signedIn();
+    await newEditor();
+    expect(screen.getByText(/Users see your words under the name of the app they’re using\. This preview uses Coffee Club\./u)).toBeTruthy();
+    fill();
+    await waitFor(() => expect(inWin('.window-frame')).not.toBeNull());
+    expect(inWin('.window-frame')!.firstElementChild?.textContent).toBe(EXAMPLE_MARK);
+    fireEvent.click(screen.getByLabelText('Dark'));
+    await waitFor(() => expect(inWin('.window-frame.jp-dark')?.firstElementChild?.textContent).toBe(EXAMPLE_MARK));
+    // The jumps between the form and the preview (phones).
+    expect(screen.getByRole('link', { name: 'See the preview' }).getAttribute('href')).toMatch(/^#.+-preview$/u);
+    expect(screen.getByRole('link', { name: 'Back to the form' }).getAttribute('href')).toMatch(/^#.+-form$/u);
+  });
+
+  it('a text naming another network: said before the form rewrites it; Review sends it on this environment’s network', async () => {
+    signedIn();
+    routes['/api/orgs/org_a/actions'] = { body: { id: 'act_1', kind: 'labels.set', decoded: {}, expiresAt: NOW + 300_000 } };
+    routes['/api/actions/act_1'] = { body: { id: 'act_1', kind: 'labels.set', status: 'pending', decoded: { apps: [], diff: [], preview: { formats: [] }, reviewRequired: false, delayMs: DAY }, expiresAt: NOW + 300_000 } };
+    await newEditor();
+    fill();
+    fireEvent.click(screen.getByText('Advanced: the document’s text'));
+    const area = screen.getByLabelText('The document (journear-labels/1)') as HTMLTextAreaElement;
+    fireEvent.change(area, { target: { value: area.value.replace('Test SDF Network ; September 2015', 'Public Global Stellar Network ; September 2015') } });
+    expect(screen.getByText('This text named another network. It will be saved for the Stellar test network.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Review the change' }));
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/orgs/org_a/actions')).toBe(true));
+    const body = JSON.parse(String(calls.find((c) => c.url === '/api/orgs/org_a/actions')!.init!.body)) as { params: { document: string } };
+    expect(body.params.document).toContain('Test SDF Network ; September 2015');
+    expect(body.params.document).not.toContain('Public Global');
   });
 });

@@ -15,6 +15,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, postJson } from '../../api.ts';
 import { clockTime, relative, useApi, useNow, useStepUp, useWrite, when } from '../../lib.tsx';
 import { Badge, Callout, ConfirmButton, Empty, ErrorNote, Loading, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
+import { DiffList, afterEmail } from '../../labels/Diff.tsx';
 import { LabelsEditor } from '../../labels/Editor.tsx';
 import { problemsOfApi } from '../../labels/problems.ts';
 import { clockOffset, useApp, useReloadAt } from '../Apps.tsx';
@@ -31,8 +32,9 @@ export const ORG_OFF: Readonly<Record<'org' | 'all', string>> = Object.freeze({
   all: 'Journear has switched request labels off for now: your users see the plain approval window. Ask Journear security before proposing new ones.',
 });
 export const ENTRY_OFF = 'Journear switched these request labels off: your users see the plain approval window for these requests. Ask Journear security why before changing them.';
-export const REVIEW_ON = 'Journear reviews your organisation’s changes before they go live: a change goes live only after Journear allows it, at the earliest 24 hours after the email.';
-export const GUARDED_WAIT = 'Each change is emailed to your organisation’s security contacts and goes live 24 hours after the email unless someone cancels it. Journear may block it if it would mislead users. Removing labels is immediate.';
+export const reviewOn = (delayMs: number | null | undefined): string => `Journear reviews your organisation’s changes before they go live: a change goes live only after Journear allows it, at the earliest ${afterEmail(delayMs)}.`;
+export const guardedWait = (delayMs: number | null | undefined): string =>
+  `Each change is emailed to your organisation’s security contacts and goes live ${afterEmail(delayMs)} unless someone cancels it. Journear may block it if it would mislead users. Removing labels is immediate.`;
 
 type View = LabelListAnswer & { now?: number };
 
@@ -75,12 +77,19 @@ function Lines({ v }: { v: LabelChangeView }) {
   );
 }
 
-/** A waiting version's state, in a badge and a line. */
-function waitingState(v: LabelChangeView, now: number): { badge: string; line: string } {
-  if (v.state === 'proposed') return { badge: 'Waiting for the email', line: 'Journear is about to email your security contacts. It goes live 24 hours after that email unless someone cancels it.' };
-  if (v.state === 'waiting_review') return { badge: 'Held for Journear’s review', line: `Journear reviews it before it goes live.${v.lapsesAt ? ` If Journear hasn’t allowed it by ${when(v.lapsesAt)}, it lapses and nothing changes.` : ''}` };
+/**
+ * A waiting version's state, in a badge and a line: whether Journear reviews it first decides the sentence in every
+ * state, then the state (`proposed` before the email, `announced` its time ahead, `waiting_review` its time passed).
+ */
+export function waitingState(v: Pick<LabelChangeView, 'state' | 'reviewRequired' | 'activeFrom' | 'lapsesAt'>, now: number, delayMs: number | null | undefined): { badge: string; line: string } {
   const at = v.activeFrom ?? now;
-  if (v.reviewRequired) return { badge: 'Held for Journear’s review', line: `It goes live only after Journear allows it, at the earliest ${clockTime(at, now)} (${relative(at, now)}).` };
+  const lapse = v.lapsesAt ? ` If Journear hasn’t allowed it by ${when(v.lapsesAt)}, it lapses and nothing changes.` : '';
+  if (v.state === 'waiting_review') return { badge: 'Held for Journear’s review', line: `Its time has come: Journear reviews it before it goes live.${lapse}` };
+  if (v.reviewRequired) {
+    if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear is about to email your security contacts. Journear reviews it first: it goes live only after Journear allows it, at the earliest ${afterEmail(delayMs).replace('the email', 'that email')}.` };
+    return { badge: 'Held for Journear’s review', line: `It goes live only after Journear allows it, at the earliest ${clockTime(at, now)} (${relative(at, now)}).` };
+  }
+  if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear is about to email your security contacts. It goes live ${afterEmail(delayMs).replace('the email', 'that email')} unless someone cancels it.` };
   return { badge: `Goes live ${clockTime(at, now)}`, line: `It goes live ${relative(at, now)} unless someone cancels it.` };
 }
 
@@ -108,8 +117,11 @@ interface Ctl {
   scopeId: string;
   appId: string;
   owner: boolean;
+  /** An owner, frozen org or not (the server keeps cancels open there), whatever the app: labels are the scope's. */
+  canCancel: boolean;
   canPropose: boolean;
   now: number;
+  delayMs: number | null;
   reload: () => void;
 }
 
@@ -129,7 +141,7 @@ function Entry({ e, ctl, chain }: { e: LabelEntryView; ctl: Ctl; chain: ChainOwn
           {!removed && e.off && <Badge tone="danger">Switched off by Journear</Badge>}
           {!removed && !e.off && e.current && <Badge tone="ok">{nearOrSoroban ? 'In force' : 'Live'}</Badge>}
           {!removed && e.current && nearOrSoroban && <Badge tone="warn">Not shown to users yet</Badge>}
-          {!removed && e.waiting && <Badge tone="warn">{waitingState(e.waiting, ctl.now).badge}</Badge>}
+          {!removed && e.waiting && <Badge tone="warn">{waitingState(e.waiting, ctl.now, ctl.delayMs).badge}</Badge>}
         </span>
       </div>
       {v && <p className="muted small">For {v.apps.map((a) => a.name ?? a.id).join(', ')}</p>}
@@ -137,19 +149,26 @@ function Entry({ e, ctl, chain }: { e: LabelEntryView; ctl: Ctl; chain: ChainOwn
       {!removed && e.off && <Callout tone="danger">{e.off === 'entry' ? ENTRY_OFF : ORG_OFF[e.off]}</Callout>}
       {e.current && (
         <div className="labels-version">
-          <h4>What users see now</h4>
-          {nearOrSoroban && <p className="muted small">Journear doesn’t show labels for this kind of request yet: users see the plain window. When shown, they read:</p>}
+          <h4>{nearOrSoroban ? 'In force, not shown to users yet' : 'What users see now'}</h4>
+          {nearOrSoroban && <p className="muted small">Journear doesn’t show labels for this kind of request yet: users see the plain window. When shown, they will read:</p>}
           <Lines v={e.current} />
-          <p className="muted small">Live since {when(e.current.activeFrom)}.</p>
+          <p className="muted small">{nearOrSoroban ? 'In force' : 'Live'} since {when(e.current.activeFrom)}.</p>
         </div>
       )}
       {!e.current && !removed && !e.waiting && <p className="muted">Nothing of these labels is live: your users see the plain approval window for these requests.</p>}
       {e.waiting && (
         <div className="labels-version labels-waiting" data-change={e.waiting.id}>
           <h4>Waiting to go live</h4>
-          <p>{waitingState(e.waiting, ctl.now).line}</p>
-          <Lines v={e.waiting} />
-          {ctl.owner && (
+          <p>{waitingState(e.waiting, ctl.now, ctl.delayMs).line}</p>
+          <h5 className="labels-sub-h">What changes for users</h5>
+          {e.waiting.diff ? <DiffList diff={e.waiting.diff} /> : <Lines v={e.waiting} />}
+          {e.waiting.diff && (
+            <details className="labels-all-lines">
+              <summary>All its lines</summary>
+              <Lines v={e.waiting} />
+            </details>
+          )}
+          {ctl.canCancel && (
             <ConfirmButton
               label="Cancel this change"
               confirm="Cancel it now"
@@ -222,7 +241,7 @@ function ListView({ data, ctl, chain, scopeApps }: { data: View; ctl: Ctl; chain
     <>
       <Panel
         title="Your request labels"
-        description={GUARDED_WAIT}
+        description={guardedWait(data.delayMs)}
         actions={
           ctl.owner && chain.state === 'yes' && !data.orgOff ? (
             <Link className="jp-btn jp-btn-primary jp-btn-sm" to={`/orgs/${ctl.org}/apps/${ctl.appId}/labels/new`}>
@@ -277,7 +296,7 @@ export function Labels() {
   const scopeApps = apps.data.apps.filter((a) => a.scopeId === app.scopeId && !a.deleted);
   const now = Date.now() + offset;
   const canPropose = owner && data.enabled && data.orgOff === null && chain.state === 'yes';
-  const ctl: Ctl = { org, scopeId: app.scopeId, appId: app.id, owner, canPropose, now, reload: r.reload };
+  const ctl: Ctl = { org, scopeId: app.scopeId, appId: app.id, owner, canCancel: ctx.role === 'owner', canPropose, now, reload: r.reload, delayMs: data.delayMs ?? null };
   const editing = labelId !== undefined;
   const entry = editing && labelId !== 'new' ? data.entries.find((e) => e.id === labelId) : undefined;
   const base = `/orgs/${org}/apps/${app.id}/labels`;
@@ -290,7 +309,7 @@ export function Labels() {
         </Callout>
       )}
       {data.orgOff && <Callout tone="danger">{ORG_OFF[data.orgOff]}</Callout>}
-      {data.reviewRequired && <Callout tone="info">{REVIEW_ON}</Callout>}
+      {data.reviewRequired && <Callout tone="info">{reviewOn(data.delayMs)}</Callout>}
       {ctx.role !== 'owner' && <Why>You’re a viewer: only owners can propose, cancel or remove request labels.</Why>}
       {ctx.role === 'owner' && ctx.frozen && <Why>Proposing is paused while Journear has frozen the organisation; cancelling still works.</Why>}
       {owner && chain.state !== 'yes' && chain.state !== 'off' && <ChainOwnerGate chain={chain} org={org} scopeId={app.scopeId} what="Proposing or removing request labels" />}

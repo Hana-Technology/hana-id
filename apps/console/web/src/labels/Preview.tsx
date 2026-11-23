@@ -14,7 +14,7 @@ import { dom } from '../../../../../packages/web/src/auth/dom.ts';
 import { renderApproval } from '../../../../../packages/web/src/auth/render-approval.ts';
 import { Callout } from '../ui.tsx';
 import { EXAMPLE_TITLES, EXAMPLE_USER, type ExampleKind, paymentExample } from './examples.ts';
-import './window-preview.css';
+import { EXAMPLE_MARK, windowRoot } from '../window/frame.ts';
 
 const KINDS: readonly ExampleKind[] = ['match', 'mismatch', 'not_listed'];
 
@@ -42,34 +42,39 @@ function Segmented<T extends string>({ legend, name, value, options, onChange }:
   );
 }
 
-/** The window for one example request, built by the window's own renderer. */
+/**
+ * The window for one example request, built by the window's own renderer, inside a shadow root with the popup's
+ * stylesheet (window/frame.ts): the frame in the chosen scheme, the example mark first, then the window's body.
+ */
 function WindowFrame({ doc, appName, example, environment, theme }: { doc: LabelDocument; appName: string; example: ExampleKind; environment: 'test' | 'live'; theme: 'light' | 'dark' }) {
   const ref = useRef<HTMLDivElement>(null);
   const [why, setWhy] = useState<string | null>(null);
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const host = ref.current;
+    if (!host) return;
+    const root = windowRoot(host);
     const ex = paymentExample(doc, example);
     if (!ex.ok) {
       setWhy(ex.why);
-      el.replaceChildren();
+      root.replaceChildren();
       return;
     }
     setWhy(null);
+    const d = dom(document);
     try {
-      const node = renderApproval(dom(document), ex.decoded, appName, { envNetwork: environment === 'test' ? 'testnet' : 'mainnet', testApp: environment === 'test', address: EXAMPLE_USER, partnerLabels: [doc], nowMs: Date.now() });
-      el.replaceChildren(node);
+      const body = renderApproval(d, ex.decoded, appName, { envNetwork: environment === 'test' ? 'testnet' : 'mainnet', testApp: environment === 'test', address: EXAMPLE_USER, partnerLabels: [doc], nowMs: Date.now() });
+      root.replaceChildren(d.h('div', { class: `window-frame ${theme === 'dark' ? 'jp-dark' : 'jp-light'}`, attrs: { 'data-example': example } }, d.h('p', { class: 'example-mark' }, EXAMPLE_MARK), d.h('div', { class: 'window-preview' }, body)));
     } catch {
       setWhy('This example can’t be shown yet: fix the problems in the form.');
-      el.replaceChildren();
+      root.replaceChildren();
     }
-    return () => el.replaceChildren();
-  }, [doc, appName, example, environment]);
+    return () => root.replaceChildren();
+  }, [doc, appName, example, environment, theme]);
   return (
-    <div className={`window-frame ${theme === 'dark' ? 'jp-dark' : 'jp-light'}`} data-theme-preview={theme} data-example={example}>
-      {why && <p className="window-why">{why}</p>}
-      <div className="window-preview" ref={ref} />
-    </div>
+    <>
+      {why && <p className="window-why muted">{why}</p>}
+      <div className="window-host" ref={ref} data-theme-preview={theme} data-example={example} />
+    </>
   );
 }
 

@@ -173,6 +173,11 @@ export interface LabelChangeView {
    * (the console's "what users see now" and its editor start from it; D899).
    */
   text?: string;
+  /**
+   * ConsoleRpc.listLabels only, on a waiting version: what it changes against the version in force (every line `added`
+   * when none is), D894's `diffOf` (D899).
+   */
+  diff?: LabelDiffLine[];
 }
 
 /** A scope's entry as its org's console lists it: the version in force and the waiting one. */
@@ -205,6 +210,8 @@ export interface LabelListAnswer {
   orgOff: 'org' | 'all' | null;
   /** Journear reviews this org's changes before they go live (its own switch or everyone's). */
   reviewRequired: boolean;
+  /** The environment's guarded-change delay (`appChangeDelayMs`): how long after the email a change goes live; null when not configured. */
+  delayMs: number | null;
 }
 
 /** ConsoleRpc.previewLabels's answer. */
@@ -219,6 +226,8 @@ export interface LabelPreviewAnswer {
   diff: LabelDiffLine[];
   /** Journear reviews this org's changes before they go live: the console says so before the step-up (D899). */
   reviewRequired: boolean;
+  /** The environment's guarded-change delay, as in `LabelListAnswer`. */
+  delayMs: number | null;
 }
 
 /** One label change in the staff feed (AdminRpc.labelQueue / labelDetail): its view, what users would see, and the diff. */

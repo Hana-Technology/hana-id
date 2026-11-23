@@ -6,12 +6,16 @@ import type { AutoApprovePolicyV1 } from '@hana-id/core/policy';
 import { useEffect, useRef } from 'react';
 import { dom } from '../../../../../packages/web/src/auth/dom.ts';
 import { renderConsent } from '../../../../../packages/web/src/auth/render-consent.ts';
+import { EXAMPLE_MARK, windowRoot } from '../window/frame.ts';
 
 export default function ConsentPreviewView({ policy, appName, parentOrigin, sessionTtlMs }: { policy: unknown; appName: string; parentOrigin: string | null; sessionTtlMs: number }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    const host = ref.current;
+    if (!host) return;
+    // D899: inside a shadow root with the popup's stylesheet, as the request labels preview, so it looks the same
+    // whether or not that preview was opened, and the popup's CSS never reaches the console's own pages.
+    const el = windowRoot(host);
     const p = policy as AutoApprovePolicyV1;
     const now = Date.now();
     const node = renderConsent(dom(document), {
@@ -21,13 +25,14 @@ export default function ConsentPreviewView({ policy, appName, parentOrigin, sess
       expiresAtMs: now + Math.min(typeof p.maxConsentMs === 'number' ? p.maxConsentMs : sessionTtlMs, sessionTtlMs),
       nowMs: now,
     });
-    el.replaceChildren(node);
+    const d = dom(document);
+    el.replaceChildren(d.h('div', { class: 'consent-frame' }, d.h('p', { class: 'example-mark' }, EXAMPLE_MARK), node));
     return () => el.replaceChildren();
   }, [policy, appName, parentOrigin, sessionTtlMs]);
   return (
     <figure className="consent-preview">
       <figcaption className="muted">What users will see when the app asks them to allow automatic signing:</figcaption>
-      <div ref={ref} />
+      <div className="window-host" ref={ref} />
     </figure>
   );
 }

@@ -22,7 +22,7 @@ import {
 import type { AutoApprovePolicyV1, FunctionRule } from '@hana-id/core/policy';
 import { BRAND } from '@hana-id/brand';
 import { type Child, type Dom, originText, row, rows, withoutEmptyLists } from './dom.ts';
-import { formatUnits } from './render-approval.ts';
+import { formatUnits } from './format-units.ts';
 import { alert } from './ui.ts';
 
 const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);

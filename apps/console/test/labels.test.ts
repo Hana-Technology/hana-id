@@ -187,3 +187,25 @@ describe('labels.set and labels.remove: the review the confirmation page shows',
     expect(b.decoded.reviewRequired).toBe(true);
   });
 });
+
+describe('after PR 126’s review (D899)', () => {
+  it('the list and the review carry the environment’s delay', async () => {
+    const { m, app } = await ownerWithApp();
+    expect((await list(m, m.org, app.scope)).body).toMatchObject({ delayMs: 60_000 });
+    const a = await createAction(m, 'labels.set', { scopeId: app.scope, document: paymentDoc(), appIds: [app.id] });
+    expect(a.decoded.delayMs).toBe(60_000);
+  });
+
+  it('removing an entry that was removed already is refused before any fresh sign-in', async () => {
+    const { m, app } = await ownerWithApp();
+    const p = await propose(m, app);
+    const r = await createAction(m, 'labels.remove', { scopeId: app.scope, labelId: p.labelId });
+    await stepUp(google, m, r.id);
+    expect((await actionOf(m, r.id)).body).toMatchObject({ status: 'ok' });
+    // Still listed (removed in the last 14 days), and not removable again.
+    expect((await list(m, m.org, app.scope)).body.entries).toEqual([expect.objectContaining({ id: p.labelId, removedAt: expect.any(Number) })]);
+    const again = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'labels.remove', params: { scopeId: app.scope, labelId: p.labelId } });
+    expect(again).toMatchObject({ status: 404, body: { error: { code: 'not_found', message: 'These request labels were removed already' } } });
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM pending_actions WHERE org_id = ? AND kind = 'labels.remove'").bind(m.org).first('n')).toBe(1);
+  });
+});

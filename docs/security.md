@@ -1850,7 +1850,10 @@ handshake removes the frame and closes its port, as `destroy()` does.
   only you control, never a shared deposit address." (D896's shared-address residual), that a payment description turns
   every value-moving classic operation to an unlisted account red in users' windows, that a muxed (M…) form of a listed
   account counts as that account, and to set a highest fee (a matching payment with a far higher fee still gets the box
-  without one). Residual: the console can't stop a partner who ignores those notes; D896's residuals stand. The
+  without one). The previews are drawn inside a shadow root with the popup's stylesheets attached there only, and each
+  frame starts with "Example: not a real request" (console-built, never partner text), so a screenshot of a preview
+  can't pass for a real request. Staff's Block note label says everyone in the partner's organisation can read it.
+  Residual: the console can't stop a partner who ignores those notes; D896's residuals stand. The
   local e2e stack's console lanes stand in for Google and for TLS at their edge (lane-console.ts): never on a deployed
   env.
 - **Wording (D853, standing rule).** Every user-visible text is in plain, everyday words for people who don't know

@@ -94,7 +94,8 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   await page.getByRole('button', { name: 'Review the change' }).click();
   await expect(page.getByRole('heading', { name: 'Propose request labels' })).toBeVisible();
   await expect(page.locator('.labels-diff [data-change="added"]')).toHaveCount(2);
-  await expect(page.getByText(/goes live 24 hours after the email unless someone cancels it; Journear may block it if it would mislead users/u)).toBeVisible();
+  // The lane's delay is the admin env's 24 h: the notices' words for it, "1 day".
+  await expect(page.getByText(/goes live 1 day after the email unless someone cancels it; Journear may block it if it would mislead users/u)).toBeVisible();
   await page.getByRole('button', { name: 'Confirm with Google' }).click();
   await expect(page.getByText(/^Done\./u)).toBeVisible();
   await expect(page.getByText(/Proposed\. Journear emails your security contacts/u)).toBeVisible();
@@ -109,6 +110,8 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   await expect(waiting).toContainText('Stamp Rally says: pay for order “1042”');
   await expect(waiting).toContainText(/It goes live in (?:23 h|1 d 0 h|24 h)/u);
   await expect(page.locator('.labels-entry .jp-badge').filter({ hasText: /^Goes live / })).toBeVisible();
+  await expect(waiting.locator('[data-change="added"]')).toHaveCount(2);
+  await expect(page.getByText(/goes live 1 day after the email unless someone cancels it\. Journear may block it/u)).toBeVisible();
   await waiting.getByRole('button', { name: 'Cancel this change' }).click();
   await waiting.getByRole('button', { name: 'Cancel it now' }).click();
   await expect(page.getByText('Cancelled. It won’t go live.').first()).toBeVisible();
@@ -127,6 +130,69 @@ test('a change Journear blocked is listed with Journear’s note', async ({ page
   await expect(recent.locator('.jp-badge')).toHaveText('Blocked by Journear');
   await expect(recent).toContainText(`Journear’s note: “${NOTE}”`);
   await expect(recent).toContainText('Your users don’t see it.');
+});
+
+/** What the console's own CSS gives a few of its elements, and whether any popup rule reached the page's stylesheets. */
+async function consoleLook(page: Page): Promise<{ summary: string; mainAuth: string; leaked: boolean }> {
+  return page.evaluate(() => {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'probe';
+    details.append(summary);
+    const main = document.createElement('main');
+    main.className = 'auth';
+    document.body.append(details, main);
+    const s = getComputedStyle(summary);
+    const m = getComputedStyle(main);
+    const look = { summary: `${s.color} ${s.cursor}`, mainAuth: `${m.display} ${m.justifyContent} ${m.alignItems}`, leaked: false };
+    details.remove();
+    main.remove();
+    for (const sheet of Array.from(document.styleSheets)) {
+      let rules: CSSRuleList | null = null;
+      try {
+        rules = sheet.cssRules;
+      } catch {
+        continue;
+      }
+      for (const r of Array.from(rules)) if (/partner-label|\.invocation|summary-headline|div\.consent/u.test(r.cssText)) look.leaked = true;
+    }
+    return look;
+  });
+}
+
+test('the popup’s stylesheet stays inside the preview: the console looks the same after the preview was opened', async ({ page, lane }, info) => {
+  const origin = consoleOf(info);
+  const r = await labels(lane, { action: 'reset' });
+  await page.goto(`${origin}/signin`);
+  await expect(page.locator('main.auth')).toBeVisible();
+  const fresh = await page.evaluate(() => {
+    const m = getComputedStyle(document.querySelector('main.auth')!);
+    return { look: `${m.display} ${m.justifyContent} ${m.alignItems}`, left: document.querySelector('.auth-card')!.getBoundingClientRect().left };
+  });
+  await openTab(page, origin, r.state);
+  const before = await consoleLook(page);
+  expect(before.leaked).toBe(false);
+  await page.getByRole('link', { name: 'New request labels' }).click();
+  await fillPayment(page);
+  await expect(box(page)).toBeVisible();
+  // Inside the preview: the popup's look (the window's own CSS applies there).
+  await expect(page.locator('.window-frame .example-mark')).toHaveText('Example: not a real request');
+  // The stylesheet is attached in the shadow root (a constructed sheet, which the CSP allows): the box and the mark are styled.
+  await expect(box(page)).toHaveCSS('border-top-style', 'solid');
+  await expect(page.locator('.window-frame .example-mark')).toHaveCSS('border-top-style', 'dashed');
+  await page.getByRole('navigation', { name: 'App sections' }).getByRole('link', { name: 'Signing', exact: true }).click();
+  expect(await consoleLook(page)).toEqual(before);
+  // Signed out in the same document: the sign-in card where a fresh page has it.
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.locator('main.auth')).toBeVisible();
+  const after = await page.evaluate(() => {
+    const m = getComputedStyle(document.querySelector('main.auth')!);
+    return { look: `${m.display} ${m.justifyContent} ${m.alignItems}`, left: document.querySelector('.auth-card')!.getBoundingClientRect().left };
+  });
+  expect(after.look).toBe(fresh.look);
+  // Centred as on a fresh page (a leak put it at the left edge); within a few pixels (fonts, a scrollbar).
+  expect(Math.abs(after.left - fresh.left)).toBeLessThan(4);
+  expect(fresh.left).toBeGreaterThan(100);
 });
 
 /** The whole page at `size`'s width, as tall as the page. */

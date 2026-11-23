@@ -1028,8 +1028,13 @@ in the browser and placed beside the control that writes its path (`labels/probl
 example Stellar payments built with the Stellar SDK and read by `decodeApprovalRequest` (`labels/examples.ts`): a match,
 a mismatch (amber) and a payment to an unlisted account (red), light or dark, at a phone's width; NEAR and Soroban
 documents show core's preview lines. "Review the change" builds the `labels.set` action, whose confirmation page shows
-the API's diff against what users see now, then D894's fresh sign-in. The consent preview (`pages/ConsentView.tsx`) is
-lazily loaded too, so the window's code isn't in the console's first page. The local e2e stack runs the console in
+the API's diff against what users see now, then D894's fresh sign-in. Every sentence about the wait names the env's
+delay (`delayMs` on `listLabels` and `previewLabels`) in the admin notices' words (console-core `durationWords`). Both
+previews, the labels one and the consent screen (`pages/ConsentView.tsx`, lazily loaded), are drawn inside a shadow root
+with the popup's own stylesheets attached there only (`apps/console/web/src/window/`), each frame marked "Example: not a
+real request", so the popup's CSS never styles a console page; the Stellar SDK, the decoders and the window's renderer
+load only on the Request labels tab (packages/web `auth/format-units.ts` keeps the consent renderer off the window's
+module). The local e2e stack runs the console in
 each browser lane (`apps/e2e/src/server/lane-console.ts`).
 
 ### NEAR requests (D720–D729)

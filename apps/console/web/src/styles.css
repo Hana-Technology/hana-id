@@ -1307,42 +1307,14 @@ tr.failed td {
   color: var(--jp-fg-muted);
 }
 
-/* The consent preview: packages/web's renderConsent markup (its classes), framed as the popup frames it. */
+/* The consent preview: packages/web's renderConsent markup inside a shadow root with the popup's own stylesheet
+   (window/frame.ts, D899); only its caption is the console's. */
 .consent-preview {
   margin: 4px 0;
 }
 .consent-preview figcaption {
   margin-bottom: 8px;
   font-size: var(--jp-text-sm);
-}
-.consent-preview > div {
-  max-width: 400px;
-  padding: 20px;
-  background: var(--jp-surface);
-  border: 1px solid var(--jp-border-strong);
-  border-radius: var(--jp-radius-xl);
-  box-shadow: var(--jp-shadow-md);
-}
-.consent h1 {
-  font-size: var(--jp-text-xl);
-}
-.consent .warn {
-  background: var(--jp-warning-bg);
-  color: var(--jp-warning);
-  padding: 8px 10px;
-  border-radius: var(--jp-radius-sm);
-}
-.consent .danger {
-  color: var(--jp-danger);
-}
-.consent .verified {
-  color: var(--jp-success);
-}
-.consent .label {
-  font-style: italic;
-}
-.consent .contract {
-  margin: 4px 0;
 }
 
 /* Statements and pending upgrades. */
@@ -1650,6 +1622,25 @@ tr.failed td {
 }
 .labels-rows {
   margin-top: 4px;
+}
+.labels-jump {
+  margin: 0;
+  font-size: var(--jp-text-sm);
+}
+.labels-sub-h {
+  margin: 8px 0 4px;
+  font-size: var(--jp-text-sm);
+}
+.labels-all-lines > summary {
+  font-size: var(--jp-text-sm);
+}
+.window-host {
+  max-width: 100%;
+}
+@media (min-width: 1181px) {
+  .labels-jump {
+    display: none;
+  }
 }
 @media (max-width: 1180px) {
   .labels-editor {

@@ -757,13 +757,18 @@ const KIND_CHOICES = [
   { value: 'soroban' as const, title: 'A Soroban contract', detail: 'Calls to your Stellar smart contract’s functions.', badge: <span className="jp-badge jp-badge-warn">{NOT_SHOWN_YET}</span> },
 ];
 
+/** The scope's network in words (the one every document of this scope describes). */
+export const networkWords = (kind: LabelKind, env: Environment): string =>
+  kind === 'near' ? (env === 'test' ? 'the NEAR test network (testnet)' : 'the NEAR main network (mainnet)') : env === 'test' ? 'the Stellar test network' : 'the Stellar public network';
+export const otherNetworkNote = (kind: LabelKind, env: Environment): string => `This text named another network. It will be saved for ${networkWords(kind, env)}.`;
+
 /** The whole editor: the form (or the advanced text), its problems, the preview, and Review. */
 export function LabelsEditor(p: EditorProps) {
   const env = p.environment;
   const start = useMemo(() => {
-    if (p.initialText === undefined) return { draft: emptyDraft('stellar'), text: toDocumentText(emptyDraft('stellar'), env), blocked: null as string | null };
+    if (p.initialText === undefined) return { draft: emptyDraft('stellar'), text: toDocumentText(emptyDraft('stellar'), env), blocked: null as string | null, network: false };
     const r = fromDocumentText(p.initialText, env);
-    return r.ok ? { draft: r.draft, text: p.initialText, blocked: null } : { draft: null, text: p.initialText, blocked: r.reason };
+    return r.ok ? { draft: r.draft, text: p.initialText, blocked: null, network: r.networkChanged } : { draft: null, text: p.initialText, blocked: r.reason, network: false };
     // The editor starts once per entry: the page gives it a new key for another one.
   }, []);
   const [draft, setDraft] = useState<Draft | null>(start.draft);
@@ -771,6 +776,8 @@ export function LabelsEditor(p: EditorProps) {
   const [blocked, setBlocked] = useState<string | null>(start.blocked);
   const [advanced, setAdvanced] = useState(start.blocked !== null);
   const [appIds, setAppIds] = useState<string[]>([...p.initialApps]);
+  /** The text names another network than the scope's: the form will write the scope's (said before it does). */
+  const [otherNetwork, setOtherNetwork] = useState(start.network);
   const id = useId();
 
   const set = (f: (d: Draft) => void) => {
@@ -779,6 +786,7 @@ export function LabelsEditor(p: EditorProps) {
     f(next);
     setDraft(next);
     setText(toDocumentText(next, env));
+    setOtherNetwork(false);
   };
   const onText = (t: string) => {
     setText(t);
@@ -786,7 +794,20 @@ export function LabelsEditor(p: EditorProps) {
     if (r.ok) {
       setDraft(r.draft);
       setBlocked(null);
-    } else setBlocked(r.reason);
+      setOtherNetwork(r.networkChanged);
+    } else {
+      setBlocked(r.reason);
+      setOtherNetwork(false);
+    }
+  };
+  /** What Review sends: the text as it is, or the form's (on the scope's network) when the text named another. */
+  const review = () => {
+    if (otherNetwork && draft) {
+      const fixed = toDocumentText(draft, env);
+      setText(fixed);
+      setOtherNetwork(false);
+      p.onReview(fixed, sortedApps);
+    } else p.onReview(text, sortedApps);
   };
 
   const parsed = useMemo(() => parseLabelDocument(text), [text]);
@@ -803,7 +824,10 @@ export function LabelsEditor(p: EditorProps) {
 
   return (
     <div className="labels-editor">
-      <div className="labels-form">
+      <div className="labels-form" id={`${id}-form`}>
+        <p className="labels-jump">
+          <a href={`#${id}-preview`}>See the preview</a>
+        </p>
         <p className="sr-status" role="status" aria-live="polite">
           {count === 0 ? 'No problems: ready to review.' : count === 1 ? '1 problem to fix.' : `${count} problems to fix.`}
         </p>
@@ -828,7 +852,7 @@ export function LabelsEditor(p: EditorProps) {
 
         <fieldset className="labels-section">
           <legend>Apps</legend>
-          <p className="muted small">The apps whose requests these labels describe. Users see your words under the first app’s name: {appName}.</p>
+          <p className="muted small">The apps whose requests these labels describe. Users see your words under the name of the app they’re using. This preview uses {appName}.</p>
           <div className="labels-apps" aria-describedby={appProblem ? `${id}-apps-err` : undefined}>
             {p.apps.map((a) => (
               <label key={a.id} className="jp-check">
@@ -853,6 +877,11 @@ export function LabelsEditor(p: EditorProps) {
           </Callout>
         )}
 
+        {otherNetwork && draft && (
+          <Callout tone="info" role="status">
+            {otherNetworkNote(draft.kind, env)}
+          </Callout>
+        )}
         {blocked && (
           <Callout tone="warn" role="status" title="The form can’t show this text">
             <p>{blocked} Fix it in the text below, or start again from the form.</p>
@@ -923,7 +952,7 @@ export function LabelsEditor(p: EditorProps) {
 
         <div className="form-actions labels-actions">
           {p.canPropose ? (
-            <button type="button" className="jp-btn jp-btn-primary" disabled={p.busy || count > 0} onClick={() => p.onReview(text, sortedApps)}>
+            <button type="button" className="jp-btn jp-btn-primary" disabled={p.busy || count > 0} onClick={review}>
               Review the change
             </button>
           ) : null}
@@ -934,8 +963,11 @@ export function LabelsEditor(p: EditorProps) {
         {!p.canPropose && p.whyNot && <div className="labels-why">{p.whyNot}</div>}
         {p.canPropose && count > 0 && <p className="muted small">Fix the problems above to review the change.</p>}
       </div>
-      <div className="labels-side">
+      <div className="labels-side" id={`${id}-preview`} tabIndex={-1}>
         <LabelsPreview doc={doc} appName={appName} environment={env} problems={problems.length} />
+        <p className="labels-jump">
+          <a href={`#${id}-form`}>Back to the form</a>
+        </p>
       </div>
     </div>
   );

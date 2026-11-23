@@ -45,6 +45,7 @@ interface VerifyModule {
     deps?: { run?: (s: Step, logPath: string) => Run; log?: (line: string) => void; logDir?: string },
   ): Promise<{ results: Map<string, Result>; failed: { s: Step } | null; ms: number }>;
   fmt(ms: number): string;
+  failureHint(stepId: string, log: string): string | null;
   SANDBOX_TEST_THREADS: number;
 }
 type Update = { localRef: string; localSha: string; remoteRef: string; remoteSha: string };
@@ -461,6 +462,35 @@ describe('the summary', () => {
       ['steps added up', '', '', '1m30s'],
     ]);
     expect(V.summaryRows([st('a')], new Map([['a', { result: 'pass', ms: 1_000, start: 0 }]]), null, 1_200).at(-2)).toEqual(['total (wall clock)', 'pass', '', '1.2s']);
+  });
+});
+
+describe('a hint for a known failure', () => {
+  // The last lines of the sandbox lane's log when near-workspaces' build script could not download near-sandbox.
+  const downloadFailed = [
+    '   Compiling near-jsonrpc-client v0.22.0',
+    'error: failed to run custom build command for `near-workspaces v0.23.0`',
+    '',
+    'Caused by:',
+    "  process didn't exit successfully: `…/build-script-build` (exit status: 101)",
+    '  --- stdout',
+    '  cargo:rerun-if-env-changed=NEAR_SANDBOX_BIN_PATH',
+    '  --- stderr',
+    "  thread 'main' panicked at build.rs:7:39:",
+    '  Could not install sandbox: DownloadError("timeout")',
+  ].join('\n');
+
+  it('the sandbox lane, failing at the near-sandbox download: reuse a binary with NEAR_SANDBOX_BIN_PATH', () => {
+    const hint = V.failureHint('sandbox', downloadFailed);
+    expect(hint).toMatch(/^hint: .*NEAR_SANDBOX_BIN_PATH/u);
+    expect(hint).toContain('docs/operations.md');
+    expect(hint?.split('\n')).toHaveLength(1);
+  });
+
+  it('nothing for a failing sandbox test, or for another step', () => {
+    expect(V.failureHint('sandbox', "test guestbook_meta_tx ... FAILED\nthread 'guestbook_meta_tx' panicked at tests/guestbook.rs:90:5")).toBeNull();
+    expect(V.failureHint('contract', downloadFailed)).toBeNull();
+    expect(V.failureHint('sandbox', '')).toBeNull();
   });
 });
 

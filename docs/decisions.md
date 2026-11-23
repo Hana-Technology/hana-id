@@ -18714,6 +18714,8 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   drop and the `app.renamed` recommendation are in D896. **For piece 4** (recorded by that review): the console's
   preview must warn a partner that declaring a payment format turns every payment, and every value-moving classic
   operation, to an account outside its address book red in its users' windows.
+- Note, 2026-11-23: piece 4 is D899 (the console's Request labels tab, its warnings and review; `listLabels` and
+  `previewLabels` gained read-only fields).
 
 ### D895. Passport Home step 3: a wallet's page as three tabs (Addresses, Security, Move wallet), the phone's "Sign in again" chip, and the move flow in wallet words
 - Date 2026-11-23 · Status: the tabs and the chip **decided by the founder 2026-11-23** (structure A, D888; the chip's
@@ -19091,6 +19093,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
     XLM maximum fee still gets the box when the document sets none); warn that a payment format turns every payment, and
     every one of the five operation types, to an unlisted account red; and "List only accounts that only you control,
     never a shared deposit address." where an address-book entry is added.
+    Note, 2026-11-23: built in D899 (all three, where they apply).
 15. The id-value refusals above (lures, shorthand amounts, capitals glued to digits) and the row-name list.
 12. Not built: the optional "{App} changed this description on {date}" line (D892 recommendation 6); `label_live`
     recorded at the first served read (D894's requirement); the `app.renamed` flag; a NEAR or Soroban label in the real
@@ -19328,3 +19331,185 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   text under the link; (4) no link for `http:` addresses (the local stack's own apps show today's sentence). **For the
   founder**: B or B+email; for B, the words above, the "same identity as Home's" rule (stricter than the window, where
   any active method of the login may prove), and Google-only at first.
+
+### D899. Partner labels piece 4: the console's Request labels tab, a form (never JSON by hand) with core's own problems, the approval window's own preview, and the review before D894's fresh sign-in
+- Date 2026-11-23 · Status: built on `feat/partner-labels-console` (from `next` @ 4aa20190, `next` @ 060727c5 merged
+  in), not merged, not deployed; within D892's adopted recommendations, D894's guarded path and D896's requirements for
+  piece 4; the design, the placements and every sentence decided while building, **to confirm** (the list at the end).
+  No checked-in manifest turns `partnerLabels.enabled` on · Built: `apps/console/web/src/pages/app/Labels.tsx` (the
+  tab), `apps/console/web/src/labels/` (`Editor.tsx`, `Preview.tsx`, `model.ts`, `problems.ts`, `examples.ts`,
+  `units.ts`, `window-preview.css`), `pages/Action.tsx` (the review of `labels.set` and `labels.remove`),
+  `pages/Consent.tsx` (now a lazy wrapper of `ConsentView.tsx`), `App.tsx` (the tab's lazy chunk), `pages/Apps.tsx`
+  (the tab); `apps/console/src/writes.ts` (`GET …/scopes/:scope/labels`; the cancel route takes an `lc_` id),
+  `actions.ts` (the review's `decoded`; returning to the tab), `audit.ts` (`change.cancelled` may carry `changeId`),
+  `env.ts`; **API (read-only additions)** `apps/api/src/labels/propose.ts` (`listLabels`, `previewLabels`),
+  `store.ts` (`labelView`'s partner note, `REVIEW_ON`, the plan's `review_required`), `rpc/console.ts`;
+  `packages/console-core/src/labels.ts` (`LabelListAnswer`, `LabelPreviewAnswer`, `LABEL_RECENT_MS`,
+  `LABEL_RECENT_PER_ENTRY`, `LabelEntryView.removedAt` / `recent`, `LabelChangeView.text`); core's dormancy test (the
+  console is the fourth importer); `apps/e2e` (the console in each browser lane: `src/server/lane-console.ts`, ports
+  base+37–39 and +42–44, `src/build.ts` builds the SPA, `tests/partner-labels-console.spec.ts`).
+
+#### No new authority; the API and console-core changes (read-only)
+- Proposing, removing and cancelling are D894's ConsoleRpc paths unchanged: `labels.set` / `labels.remove` with an
+  on-chain owner's fresh Google step-up bound to exactly the document, the apps and the scope's labels version; an
+  owner's immediate cancel of a waiting `lc_` change (D894 had the RPC; the console's cancel route took only `gc_`).
+- `ConsoleRpc.listLabels` now also answers: each listed version's `text` (the version in force and the waiting one: the
+  editor starts from it and "what users see now" is built from it); `recent`, the versions that ended in the last 14
+  days (`LABEL_RECENT_MS`), newest first, at most 5 per entry (`LABEL_RECENT_PER_ENTRY`), without text, a blocked one
+  with Journear's `blockNote`; entries removed in the last 14 days (`removedAt`); `enabled` (`PARTNER_LABELS` is on
+  here); `orgOff` (Journear's switch over the org's or every partner's labels); `reviewRequired`. Still two statements.
+  Why the note: the task asks for "blocked with Journear's note", and the blocked mail already sends it to the org's
+  security contacts; the console now also shows it to the org's viewers (to confirm).
+- `ConsoleRpc.previewLabels` now also answers `diff` (D894's `diffOf` against the version in force, every line `added`
+  for a new entry) and `reviewRequired`, so the confirmation page is the review.
+
+#### The design
+- **Where.** An app tab, **Request labels**, between Signing and Branding: the entries of the app's scope (labels are a
+  scope's, attached to named apps), reachable from every app of the scope. The editor is `…/labels/new` and
+  `…/labels/:labelId`. A lazy chunk (the decoder, the Stellar SDK and the window's renderer), and the consent preview is
+  lazy too, so the console's first page shrank (325 KB, from 339 KB).
+- **The list.** Each entry: what it describes ("Payments to your Stellar accounts", "NEAR program {account}", "Soroban
+  contract {id}"), its apps, badges (Live; In force + Not shown to users yet for NEAR and Soroban; Switched off by
+  Journear; Removed; the waiting state), "What users see now" (core's `previewLabelDocument` lines, as the API's preview
+  and the staff feed), "Waiting to go live" with its time and **Cancel this change**, "Earlier changes" (blocked with
+  the note, cancelled, lapsed, replaced, ended with a blocked successor, removed), **Change these labels** (only with no
+  change waiting and the entry not switched off) and **Remove these labels** (a fresh sign-in). Times on the server's
+  clock (D701), one re-read when a waiting change's time comes.
+- **The editor.** A form per kind: classic Stellar payments (shown to users today), a NEAR program and a Soroban
+  contract (each marked "Not shown to users yet"; D896: no code hash until piece 5). Apps; your accounts (the address
+  book); lists of values (NEAR, Soroban); per request the verb (Journear's list; a verb the parser refuses for that
+  request, a "nothing moves" verb on one that can move value, is offered disabled with why, found by asking the parser,
+  not by a second rule), the phrase, the conditions (a payment's memo, assets, highest amount and fee in XLM; a NEAR
+  call's attached NEAR exactly or at most, most gas in TGas, who sends it; a Soroban call's fee and who sends it), the
+  arguments and their limits, the values shown, and the sentence built from parts with Earlier / Later / Take out
+  buttons. The draft (`model.ts`) writes the document on the scope's network (never a choice: the API refuses another);
+  **Advanced** shows that text and takes edits; the form reads it back when it can, else says "The form can’t show this
+  text" with why, and keeps the text as typed (that exact text is what is proposed). A read-back is checked by writing
+  the text again: anything the form would drop makes it not representable, so nothing is silently lost.
+- **Problems.** Every problem is core's `parseLabelDocument` and text rules, run in the browser on every keystroke,
+  placed beside the control that writes its path (`problems.ts`; a path no control writes goes to "Fix these first"),
+  with `aria-invalid` and `aria-describedby`, and a polite status line ("2 problems to fix." / "No problems: ready to
+  review."). The form's own checks are only what JSON objects can't hold twice (two requests, lists, values or NEAR
+  arguments of one name). Review is off while any problem remains.
+- **The preview.** For a payment: the approval window's own `renderApproval` (packages/web, imported as the consent
+  preview is, D352) over example payments built with the Stellar SDK and read by `decodeApprovalRequest`, with the
+  document as the window's labels: **A payment that matches** (to the first listed G… account, an allowed asset, within
+  the limits, the memo it asks for), **A payment that doesn't match** (only the memo changed: the amber line), **A
+  payment to an account not in your list** (only the payee changed: the red line); Light / Dark (the design system's
+  `.jp-light` / `.jp-dark`); at most 390 px wide; the window's stylesheet imported, and the few base rules its markup
+  needs scoped to the frame. For NEAR and Soroban: "Not shown to users yet" and core's preview lines.
+- **The warnings, where they apply.** On the accounts: "List only accounts that only you control, never a shared
+  deposit address." (D896) and, for payments, the muxed note; on a payment format: the red-line warning naming the five
+  operation types; on the fee: the suggestion with "Use 0.01 XLM".
+- **Proposing.** **Review the change** builds the `labels.set` action (the API's checks run there: a refusal is shown
+  before any Google step); its page is the review: the apps, "What changes for users" (Added / Changed / Removed against
+  what users see now, the before struck through), "What users would see (example values)", and when it goes live (the
+  true sentence when Journear reviews); then D894's fresh sign-in. The outcome page says it was proposed and how it goes
+  live. Refusals in plain words: not switched on here, switched off by Journear (the API's own sentence), a change
+  already waiting and the limits (the API's sentences), a version conflict (with Reload; the form keeps what was
+  typed), the parser's problems as a list; after Google, a version conflict and "not switched on" have their own lines.
+- **Not switched on here.** The tab says so and the editor still works (the preview is the browser's); Review isn't
+  offered and the line says why. This follows the API: `previewLabels` and `proposeLabels` refuse `env_mismatch` while
+  `PARTNER_LABELS` is off; `listLabels` answers.
+- **Partner text is text.** React text nodes in the console; the window's DOM helpers use text nodes only. Tested with
+  markup in a staff note, a diff line and an API refusal.
+
+#### Every new sentence (exact; partner-facing, plain words, D853)
+- Tab intro: "Request labels are your own words for your app’s requests. When a user approves a request that matches one
+  exactly, the approval window adds “{App} says: …” under everything Journear says, with “These are {App}’s words.
+  Journear hasn’t checked them.” Your words never replace or soften Journear’s warnings."
+- "Request labels aren’t switched on here yet. You can prepare and preview them." / "Proposing them isn’t possible until
+  Journear switches request labels on here."
+- "Journear has switched request labels off for your organisation: your users see the plain approval window. Ask Journear
+  security before proposing new ones." (for everyone: "…off for now: …"); an entry: "Journear switched these request
+  labels off: your users see the plain approval window for these requests. Ask Journear security why before changing
+  them."
+- "Journear reviews your organisation’s changes before they go live: a change goes live only after Journear allows it, at
+  the earliest 24 hours after the email."
+- The list panel: "Each change is emailed to your organisation’s security contacts and goes live 24 hours after the email
+  unless someone cancels it. Journear may block it if it would mislead users. Removing labels is immediate."
+- Waiting: "Waiting for the email" / "Journear is about to email your security contacts. It goes live 24 hours after
+  that email unless someone cancels it."; "Goes live {time}" / "It goes live {in …} unless someone cancels it.";
+  "Held for Journear’s review" / "It goes live only after Journear allows it, at the earliest {time} ({in …})." or
+  "Journear reviews it before it goes live. If Journear hasn’t allowed it by {date}, it lapses and nothing changes."
+- Ended: "Journear blocked this change on {date}. Your users don’t see it." + "Journear’s note: “{note}”"; "Cancelled on
+  {date}. It never went live."; "Lapsed on {date}: Journear didn’t allow it within 7 days of its time. It never went
+  live." / "…: it wasn’t announced within 7 days. …"; "Removed on {date}."; "Replaced by a newer version on {date}.";
+  "Ended on {date}, when Journear blocked the newer version: neither shows."
+- Cancel: "Cancel this change" → "Cancel it now", "It never goes live. What users see now stays as it is.", toast
+  "Cancelled. It won’t go live." Remove: "Remove these labels" → "Remove (confirm with Google)", "At once and for good:
+  your users see the plain approval window for these requests from then on. To use labels again you propose new ones,
+  which wait again."
+- Warnings: "List only accounts that only you control, never a shared deposit address."; "A muxed form (M…) of a listed
+  account counts as that account."; "Before you describe payments" / "With a payment description, every time a user’s
+  money goes to an account that isn’t in your list, Journear shows your users a red warning: paying someone, a swap that
+  pays someone else, creating an account for someone, closing the account into another one, and sending a claimable
+  balance. If your app’s users also pay other people, think twice before adding one."; "Set a highest network fee.
+  Without one, a payment with an unusually high fee still shows your words (Journear’s own line always shows the fee)."
+  with "Use 0.01 XLM"; "Not shown to users yet" and "Journear can’t show labels for {NEAR programs | Soroban contracts}
+  until it checks the program’s code, which comes later. You can prepare and propose them now; your users see Journear’s
+  plain window until then."
+- Preview: "A payment that matches" / "Your words show in their own box, under everything Journear says."; "A payment
+  that doesn’t match" / "Journear doesn’t show your words, and adds an amber line: the request doesn’t match your
+  description."; "A payment to an account not in your list" / "Journear adds a red line: the money goes to an account
+  your list doesn’t have."; "Add one of your Stellar accounts (G…) to see a matching payment."
+- Review: "For {apps}. These are the words the approval window shows your users for your app’s requests, as “{App} says:
+  …”, always with “These are {App}’s words. Journear hasn’t checked them.”"; "What changes for users" (Added / Changed /
+  Removed; "What they describe"); "Nothing users see changes: every line stays as it is now (only the apps change).";
+  "What users would see (example values)"; when: "Not at once. After you confirm, Journear emails your organisation’s
+  security contacts. It goes live 24 hours after the email unless someone cancels it; Journear may block it if it would
+  mislead users. Any owner can cancel it until then, on the Request labels tab or from the email." / with review: "Not at
+  once. After you confirm, Journear emails your organisation’s security contacts. Journear reviews it first: it goes live
+  only after Journear allows it, at the earliest 24 hours after the email, unless someone cancels it. If Journear hasn’t
+  allowed it within 7 days of that time, it lapses and nothing changes."; outcome: "Proposed. Journear emails your
+  security contacts; it goes live 24 hours after the email unless someone cancels it. You can follow it, or cancel it, on
+  the Request labels tab."; removal: "Remove the request labels of {apps}, at once and for good: your users see the plain
+  approval window for these requests from then on. The change waiting to go live is cancelled too." and "Removed: your
+  users see the plain approval window for these requests."
+- Refusals: "Journear can’t take these labels yet:" (the parser's list); "Your request labels changed while you were
+  working (another change, or Journear). Reload to see them; what you typed here stays."; after Google: "Your request
+  labels changed meanwhile (another change, or Journear acted). Nothing was changed: go back, look again and propose it
+  again." and "Request labels aren’t switched on here yet, so nothing was proposed."
+- Form: the status lines; "The form can’t show this text" + "{why}. Fix it in the text below, or start again from the
+  form."; field labels and hints as in `Editor.tsx`.
+
+#### The `app.renamed` question (D896): not built
+- D896 recommended a security event and a staff-feed line when an app with labels is renamed. Not cheap and safe here:
+  a new `security_events` kind needs that table rebuilt by a migration (its kinds are a CHECK, as 0023–0025 did), plus
+  the admin feed. Left for a branch of its own; the recommendation stands.
+
+#### To confirm (with the founder)
+1. Every sentence above, exactly.
+2. Journear's note on a blocked change shown in the console (to every member, viewers included), for 14 days.
+3. The 14 days and the 5 ended versions per entry the tab lists; removed entries listed for 14 days.
+4. The tab on each app (the scope's entries), between Signing and Branding; "Request labels" as its name.
+5. NEAR and Soroban forms offered now, marked "Not shown to users yet", and proposable (the API takes them today).
+6. The suggested fee: 0.01 XLM; amounts typed in XLM, NEAR and TGas; a payment's highest amount in the asset's units.
+7. "In force" (not "Live") for a NEAR or Soroban entry in force, since users don't see it yet.
+8. Proposing is offered only to an owner who is an on-chain owner of the scope, while labels are on here and not
+   switched off; preparing and previewing always.
+9. The preview's example values (25 units, memo 1042, the fixed example accounts) and its three examples; the
+   mismatch example changes only the memo.
+10. The form writes the network itself; a document naming another network reads back with the scope's.
+11. A text the form can't show keeps the text as the source until it can; an edit in the form rewrites the text in the
+    form's layout.
+12. The verb list offered whole, refused verbs disabled with "(says nothing moves: not for this request)".
+13. The consent preview loaded lazily (its look unchanged; the window's stylesheet is now in the console's bundle, which
+    also styles the existing consent preview's `div.consent` as the popup does).
+14. The local stack's console lanes: the Google and TLS stand-ins at the edge (tests only).
+
+#### Tests
+- API `partner-labels.test.ts` +4 (the list's text, history, notes, removed entries, switches and review; the preview's
+  diff and review; the partner's note only when blocked). Console Worker `labels.test.ts` 6 (the list route for any
+  member and its 404s; blocked with the note; review and switch; the `lc_` cancel with its audit row, a viewer, a frozen
+  org, another org's; the review's `decoded`; returning to the tab), `writes.test.ts` (the role matrix's new routes),
+  `privacy.test.ts` (the audit allowlist). SPA `labels-model.test.tsx` 14 (round trips of every core fixture, every
+  argument type the parser takes, units, every path's placement, the API's message, the examples as the window reads
+  them), `labels.test.tsx` 13 (each list state and the note as text, Cancel, not switched on, switches, a viewer, an
+  owner who isn't on chain, the form with the warnings and live problems, the sentence's buttons, the preview's three
+  examples in light and dark, the advanced text both ways, Review's exact document, each refusal, a NEAR program, the
+  review page as text). Core's dormancy test lists the console's six files. e2e `partner-labels-console.spec.ts` in
+  Chromium, Firefox and WebKit (2 tests, the third the screenshots); `stack.test.ts` (the new ports).
+- Screens: `hana-id-review-files/approval-shots/partner-labels-console/` (the editor's three examples, a problem, the
+  review, the list, the list with a blocked change, a NEAR form; 1280 and 390 px, light and dark).
+- Address impact: none (display and the console only; nothing signed, decoded or derived changes).

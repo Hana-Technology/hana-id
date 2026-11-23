@@ -52,7 +52,7 @@ const soroban = (fnName: string, args: xdr.ScVal[], contract = POOL) =>
 
 type Decoded = ReturnType<typeof payment>;
 const render = (decoded: Decoded, labels?: readonly LabelDocument[], ctx: Partial<ApprovalRenderContext> = {}, app = APP): HTMLElement =>
-  watch(renderApproval(dom(document), decoded, app, { ...CTX, ...ctx, ...(labels ? { partnerLabels: labels } : {}) }));
+  watch(renderApproval(dom(document), decoded, app, { ...CTX, ...ctx, ...(labels ? { partnerLabels: labels } : {}) })) as HTMLElement;
 /** The window as it is with labels, with `remove` taken out: what it would be if the label added nothing else. */
 const without = (el: HTMLElement, remove: string): string => {
   const copy = el.cloneNode(true) as HTMLElement;

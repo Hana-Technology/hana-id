@@ -1482,7 +1482,8 @@ describe('D887: a banner’s Remove or Cancel is findable: “Don’t recognise 
   it('a way to sign in this sign-in just added: the small button alone (no question), “Remove” or “Cancel this link”, named for what it changes', async () => {
     await screen([active(0, { fresh: true })]);
     expect([...document.querySelectorAll('.banner-action > *')].map((e) => [e.tagName, seen(e)])).toEqual([['BUTTON', 'Remove']]);
-    expect(buttons()[0]!.slice(0, 3).concat([buttons()[0]![4]])).toEqual(['banner-unlink-0', 'Remove', 'Remove the email address from this wallet', SMALL]);
+    const [id, label, name, , cls] = buttons()[0]!;
+    expect([id, label, name, cls]).toEqual(['banner-unlink-0', 'Remove', 'Remove the email address from this wallet', SMALL]);
     namesStartWithTheirWords();
     resetDom();
     await screen([waiting({ fresh: true })]);

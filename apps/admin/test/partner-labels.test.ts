@@ -211,7 +211,7 @@ describe('the feed: the proposal is the notice’s; a block gets its own mail', 
   it('a change held for review that lapsed: its own mail', () => {
     const m = labelsLapsed({ env: 'sandbox-test', consoleOrigin: CONSOLE }, { seq: 2, at: Date.UTC(2026, 10, 30, 9, 0), kind: 'change.cancelled', orgId: 'org_x', scopeId: 'sx', appId: null, actorKind: 'system', actorId: 'cron', detail: { changeId: 'lc_7', kind: 'label_set', reason: 'not_reviewed' } } as never, { apps: ['Stamps'] });
     expect(m.subject).toBe('[Journear Passport sandbox-test] A change to request labels lapsed for Stamps');
-    expect(m.text).toContain('A change to the request labels of Stamps (lc_7) lapsed: Journear didn’t allow it within 7 days of its time, so your users never see it. Nothing else changed.');
+    expect(m.text).toContain('A change to the request labels of Stamps (lc_7), the words the approval window shows your users for your app’s requests, lapsed: Journear didn’t allow it within 7 days of its time, so your users never see it. Nothing else changed.');
   });
 
   it('a block of a live change while Journear had the labels switched off says what is true', () => {

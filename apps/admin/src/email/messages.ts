@@ -325,7 +325,7 @@ export function labelsLapsed(c: MailContext, r: AppChange, o: { apps: string[] |
   const names = o.apps && o.apps.length ? o.apps.map((n) => oneLine(n, 80)) : null;
   const at = rowTime(r.at);
   const blocks: Block[] = [
-    { kind: 'p', text: `A change to the request labels of ${names ? nameList(names) : 'your app'} (${id}) lapsed: Journear didn’t allow it within 7 days of its time, so your users never see it. Nothing else changed.` },
+    { kind: 'p', text: `A change to the request labels of ${names ? nameList(names) : 'your app'} (${id}), the words the approval window shows your users for your app’s requests, lapsed: Journear didn’t allow it within 7 days of its time, so your users never see it. Nothing else changed.` },
     { kind: 'p', text: 'To try again, change the labels in the console. To ask why it wasn’t allowed, reply to this email or write to your Journear contact.' },
     { kind: 'kv', rows: [['Organisation', r.orgId], ...(r.scopeId ? ([['Scope', r.scopeId]] as [string, string][]) : []), ['Change', id], ['Lapsed at', at.valid ? readableTime(r.at) : at.text]] },
   ];

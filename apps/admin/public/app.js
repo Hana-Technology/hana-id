@@ -3029,7 +3029,7 @@ function labelsWaitingPanel(l) {
   if (l === undefined) return '';
   return panel(
     'Partner label changes waiting',
-    { hint: 'Every change partners make to their request labels shows on Partner labels for its whole wait. Nothing is needed for one to go live; staff can block one.' },
+    { hint: 'Partner labels are the words partners write for the approval window (partners call them request labels). Every change shows on Partner labels for its whole wait. Nothing is needed for one to go live; staff can block one.' },
     l === null
       ? note('warn', 'The API didn’t answer', 'The partner label changes can’t be counted right now. Open Partner labels to try again.')
       : h('p', {}, l.waiting === 0 ? 'None waiting.' : `${l.waiting} waiting${l.awaitingAllow ? `, ${l.awaitingAllow} of them for a staff Allow` : ''}${l.notAnnounced ? `, ${l.notAnnounced} not yet emailed to the partner` : ''}.`, ' ', link('/labels', 'Open Partner labels')),
@@ -3040,7 +3040,7 @@ async function labelsPage(main) {
   const d = await api('GET', '/api/labels');
   main.append(
     pageHead('Partner labels', {
-      subtitle: 'The words partners write for the approval window, shown to their users as “{App} says: …”. Every change waits its time after the partner’s security contacts are emailed. Nothing is needed for it to go live; block one that would mislead users.',
+      subtitle: 'The words partners write for the approval window, shown to their users as “{App} says: …” (partners call them request labels). Every change waits its time after the partner’s security contacts are emailed. Nothing is needed for it to go live; block one that would mislead users.',
       actions: [h('button', { type: 'button', class: btn('secondary'), onclick: () => render() }, 'Check again')],
     }),
   );

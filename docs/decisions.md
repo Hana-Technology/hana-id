@@ -18247,16 +18247,21 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
   to the plain view.
 - **Cancel** a waiting version: an owner (`ConsoleRpc.cancelChange`, no step-up, as for guarded changes), the emailed link
   (`cancelChangeByLink`, its token's hash: the console's `/cancel/lc_…#t=` page and `POST /api/cancel` take an `lc_`
-  id, its audit row names the entry and no app, and opening the link alone changes nothing), staff
-  (`AdminRpc.cancelChange`).
+  id, its audit row names the entry and no app, and opening the link alone changes nothing). **Staff never cancel a
+  label change; they Block it** (decided after the security review, to confirm): `AdminRpc.cancelChange` and the
+  admin's `POST /api/changes/:id/cancel` refuse an `lc_` id ("Staff don’t cancel request label changes. Open it on
+  Partner labels and use Block this change, with a note."), so every staff stop has its note and audit row first.
+  `expediteChange` and the guarded notice's `ackNotice` take a `gc_` id only.
 - **Announce**: only the admin Worker's notice cron (`AdminRpc.labelNotices` → email the security alias and every
   security contact, each with the preview, the diff and the cancel link → `AdminRpc.ackLabelNotice`, `system` actor only,
   after every send was accepted). No staff expedite exists for labels.
 - **Staff** (`AdminRpc`, through the admin portal; each tool recorded in the staff audit log first, no row no action, and
   applied only while the change is as the page showed it: the scope's `labels_version` and the state): **Block this
   change** (a note of 10–300 characters, required; any version proposed, announced, held or in force; one in force stops
-  being served at once and any older version of the entry still in force ends with it, so a block never brings back an
-  earlier document; final: the partner proposes again, another full wait); **Allow** (only while review is required and
+  being served at once and any older version of the entry still in force ends with it (`end_reason`
+  `blocked_successor`, shown to staff as "Ended when the newer version was blocked: neither shows"), so users then see
+  the PLAIN window for those requests, never the earlier labels; final: the partner proposes again, another full wait. A
+  waiting version that is cancelled or blocked never replaced anything: the version in force stays); **Allow** (only while review is required and
   the version isn't allowed yet; it lifts the hold and nothing else: its own time still applies); the switches (below).
   Staff never propose or edit a document, and nothing staff do can make a version take effect before its time
   (tested: Allow pressed before the notice or before `active_from`, review switched off while versions wait, and a
@@ -18264,11 +18269,20 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
   anything early or anything that ended).
 - **Required review** (`label_controls.review_required`, for one org or for everyone, default off): a version whose time
   has come waits for Allow however long, until it lapses 7 days after its time (decided: the partner then proposes again;
-  a held change neither goes live by itself nor waits forever). Switching review off lets a held version whose time has
-  passed take effect at once (it went through the notice and the delay).
+  a held change neither goes live by itself nor waits forever; the partner gets a mail saying so). Switching review off
+  lets a held version whose time has passed take effect at once (it went through the notice and the delay). **Review
+  holds only versions due after it was turned on** (`label_controls.review_since`, after the security review): a
+  version whose time had already come when review was turned on stays in force, whether or not the hourly job had
+  recorded it, so the outcome never depends on the job's timing (before the fix, turning review on could put a live
+  version back to waiting and bring back the older one). The hourly job re-checks the hold in its own activation and
+  lapse statements, so a review switch or an Allow landing between its read and its write is never overridden.
 - **Kill switches** (`AdminRpc.labelControl`): one entry, one org's labels, every partner label: off at once (the next
-  `GET /v1/app` read), and back on (a separate act with its own note) only re-serves versions already in force through
-  the guarded path; a switch never makes a waiting version take effect. Each switch writes `label_control_log` and, for an
+  `GET /v1/app` read), and back on (a separate act with its own note) only re-serves versions that passed the guarded
+  path, including one whose time came while the switch was off (the staff confirmation says so); a switch never makes
+  a waiting version take effect. **While an org's or everyone's switch is off, proposals are refused** (decided after
+  the security review, to confirm): "Journear has switched request labels off for your organisation: ask Journear
+  security before proposing new ones" (or "…off for now…"), so an org switched off for abuse can't keep mailing its
+  contacts and filling the staff feed. An entry switched off refuses its own new versions likewise. Each switch writes `label_control_log` and, for an
   org's or an entry's, the org's `app_changes` (the partner sees it in its audit and the feed's digest).
 
 #### The ledger, the feed and drift
@@ -18283,8 +18297,14 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
   announcement no later than its `active_from` (`unannounced`: a bare D1 write that skipped the notice or the delay); a
   version in force whose text no longer hashes to its sha256 (`text_changed`; the trigger refuses an in-place edit, so
   this needs the trigger dropped too); an `allowed_at` without a staff `labels.allowed` row (`not_allowed`); a blocked
-  version no longer blocked (`unblocked`); a removed entry back (`not_removed`); a switch that isn't what its last log
-  row set (`control`). Once per finding. **Residual, the same as today's for origins and policies** (docs/security.md):
+  version no longer blocked (`unblocked`); a cancelled or lapsed version back to waiting or in force (`uncancelled`,
+  added after the review); a removed entry back (`not_removed`); a switch that isn't what its last log row set
+  (`control`). Once per finding. An older version un-ended by hand after it was replaced (or ended with a blocked
+  successor) is caught only indirectly, when its own ledger rows don't explain it. The hourly job and the drift check
+  log a failure at error level (`labels_cron`, `label_drift_detection`) and are thrown like the guarded changes' (after
+  the review: they were silent); before migration 0025 is applied they skip with one warning line each.
+  **Retention:** a label ledger row (`labels.*`, a `change.*` row of kind `label_set`) is kept while its entry exists
+  (`changes/retention.ts`), and `label_changes` rows are not purged at all yet ("kept 60 months" is a floor). **Residual, the same as today's for origins and policies** (docs/security.md):
   someone who can write D1 freely can also forge the ledger rows and the log, and then drift sees nothing.
 
 #### Delivery (`GET /v1/app`) and the vault
@@ -18306,8 +18326,11 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
 #### Limits (`LABEL_STORE_LIMITS`, to confirm)
 - A document 16 KiB (core's `LABEL_LIMITS`); attached to at most 8 apps; an org holds at most 16 entries (not removed);
   an org's documents in force or waiting at most 64 KiB together; the documents attached to one app at most 32 KiB
-  together (what its `GET /v1/app` can carry); at most 10 proposals per org in a rolling 24 hours; one waiting version
-  per entry; one live entry per contract per scope. A staff note 10–300 characters, one line. The lapses: 7 days. The
+  together (what its `GET /v1/app` can carry); at most 10 proposals per org in a rolling 24 hours (the org-wide limits
+  are checked again inside the proposal's own write, so concurrent proposals in different scopes can't pass them; the
+  per-app one is serialised by the scope's version, an app being in one scope); one waiting version
+  per entry; one live entry per contract per scope. A staff note 10–300 characters, one line of plain text (no
+  control, direction or invisible character). The lapses: 7 days. The
   staff feed: every waiting version, and those proposed or decided in the last 14 days, at most 200. Drift: at most 100
   findings per check and run, 500 versions re-hashed per run. ConsoleRpc costs (hot-DB statements): list 2, preview 1,
   propose 7, remove 6.
@@ -18317,7 +18340,7 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
 |---|---|---|
 | A hijacked partner console account (a member's session; or an owner's Google account too) | With an owner's Google account: propose labels, which reach users only after the notice to the org's security contacts (with a cancel link), the full delay and the staff feed's wait, in the partner's voice; remove labels (back to the plain view). With a session alone: cancel a waiting change, preview, list. | Propose or remove without an on-chain owner's step-up for exactly that change (the API verifies the token itself); act before the notice and the delay; speak as Journear or claim safety (piece 1's text rules); change amounts or recipients (the window shows the request's own values, piece 3); remove or lower a warning (D892 recommendation 4); reach another org's apps (entries are the org's, per scope, checked at write and at every read); survive a staff block or switch. |
 | A hijacked partner page (XSS, a bad dependency) | Send forged requests, as today. | Change any label (they come only from D1 through the console's guarded path); make the vault read labels other than the API's for its own app; forged requests match nothing, or fail a declared constraint (piece 1's matcher). |
-| A D1 compromise (or a buggy script with D1 write) | Write any document and mark it in force, skipping the notice, the delay and the staff veto; clear a block or a switch. | Escape drift detection without also forging `app_changes` and `label_control_log` rows (the same residual as origins and policies today); get past the vault's own check (its hash and its own parser: only a document the text rules accept can ever be shown); make the window drop a warning or show values that aren't the request's. |
+| A D1 compromise (or a buggy script with D1 write) | Write any document and mark it in force, skipping the notice, the delay and the staff veto; clear a block or a switch. | Escape drift detection without also forging `app_changes` and `label_control_log` rows (the same residual as origins and policies today); get past the vault's own parser and text rules (they, not the re-hash, bound what can be shown: the attacker writes the hash too, so the re-hash only catches corruption); make the window drop a warning or show values that aren't the request's. |
 | A malicious staff member | Block changes and switch labels off (a denial: users see the plain view; the partner is told of a block by email, an org's or entry's switch is in its audit); Allow a held change; turn a switch back on. Every act is in the staff audit log first, with the staffer and the note, and the API's ledger. | Propose, edit or expedite a document (no such staff method exists); make a version take effect before its time or without its notice; make a switch-on serve a version that didn't pass the guarded path. |
 
 #### Rejected
@@ -18329,11 +18352,15 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
   (only the vault needs them; a switch must reach the next read).
 - Address impact: none (nothing signed, decoded or derived changes; nothing is rendered yet).
 
-#### To confirm (with the founder)
-1. The limits above. 2. The names: staff "partner labels", partners "request labels" (the console, the emails and the
-partner's audit titles). 3. Lapsing a change held for review 7 days after its time. 4. A proposal stays allowed while
-the org's or everyone's switch is off (only an entry switched off refuses one). 5. Block is final (no unblock).
-6. The staff- and partner-facing sentences (below). 7. The audit titles and security event titles in
+#### To confirm (with the founder), as the security review framed them
+1. The limits above. 2. The two names: staff say "partner labels", partners read "request labels"; each screen and mail
+that uses one explains it once ("the words the approval window shows your users for your app’s requests"; the staff
+screen: "…(partners call them request labels)"). 3. A change held for review lapses 7 days after its time (the partner
+is mailed). 4. Block is final, no unblock: a mistaken block costs the partner a new proposal and another full wait; the
+expected handling is to tell the partner (reply to the blocked mail) and, if it must go live sooner, there is no staff
+shortcut by design. 5. Staff Block only, never cancel (decided after the review). 6. Proposals refused while the org's
+or everyone's labels are switched off (decided after the review; only an entry switch refused one before). 7. The
+staff- and partner-facing sentences (below). 7. The audit titles and security event titles in
 `packages/console-core/src/audit-words.ts` ("Request labels proposed", "Request labels blocked by Journear", "Request
 labels now shown to users", "Request labels proposed: shown to users after the wait unless Journear blocks them", …).
 
@@ -18342,15 +18369,27 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   contact): subject "Request labels proposed for {app}"; heading "Request labels proposed", lead "New words for your
   app’s requests are waiting. They are not live yet, and you can cancel them."; body "Someone with owner rights in your
   organisation proposed request labels for {apps}: the words the approval window will show your users for your app’s
-  requests, in your app’s name. Unless someone cancels it, it goes live {24 hours} after this email. Journear may block
-  it if it would mislead users."; the rows Apps, Organisation, Scope, Describes, "Change: Set request labels
+  requests, in your app’s name. Unless someone cancels them, they go live {24 hours} after this email. Journear may
+  block them if they would mislead users." With staff review on for the org: "…in your app’s name. Journear reviews
+  them first: they go live only after Journear allows them, at the earliest {24 hours} after this email, unless someone
+  cancels them. If Journear hasn’t allowed them within 7 days of that time, they lapse and nothing changes."; the rows
+  Apps, Organisation (its name and id), Scope, Describes, "Change: Set request labels
   ({lc_…})", Proposed at; "What users would see (example values):" each line and its rows; "What changes:" each changed
   line (or "Nothing users see changes: every line stays as it is now."); the button "Cancel this change"; "If you did not
   expect this change, cancel it. The page asks you to confirm; opening the link alone changes nothing. An owner can also
   cancel it in the console."
-- **Blocked mail** (`labelsBlocked`, the feed's own mail for a `labels.blocked` row): subject "Journear blocked a change to
-  request labels for {app}"; "Journear blocked a change to the request labels of {apps} ({lc_…}). Your users will never
-  see it." (in force: "Your users no longer see it, from now."); "Journear’s note: “{note}”"; "To ask why, reply to this
+- **Blocked mail** (`labelsBlocked`, the feed's own mail for a `labels.blocked` row; the `label_blocked` security event
+  then goes to the security alias only, so the partner gets one message): subject "Journear blocked a change to request
+  labels for {app}"; "Journear blocked a change to the request labels of {apps} ({lc_…}): the words the approval window
+  shows your users for your app’s requests. Your users will never see it." (in force: "Your users see the plain approval
+  window for these requests from now, without your earlier labels either."; in force while Journear had them switched
+  off: "Your users weren’t seeing it: Journear had already switched these labels off. When they are switched back on,
+  neither these nor your earlier labels will show.");
+- **Lapse mail** (`labelsLapsed`, for a change held for review that lapsed): subject "A change to request labels lapsed
+  for {app}"; "A change to the request labels of {apps} ({lc_…}), the words the approval window shows your users for
+  your app’s requests, lapsed: Journear didn’t allow it within 7 days of its time, so your users never see it. Nothing
+  else changed." and "To try again, change the labels in the console. To ask why it wasn’t allowed, reply to this email
+  or write to your Journear contact."; "Journear’s note: “{note}”"; "To ask why, reply to this
   email or write to your Journear contact. To try again, change the labels in the console; the new change waits {24
   hours} again."
 - **The console's cancel page** for an `lc_` link: "Cancel this change to request labels", "This cancels the change to
@@ -18367,8 +18406,9 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   it." or, in force, "Block this change? Users stop seeing it at once, and the partner is told Journear blocked it.");
   "Allow" (confirm "Allow this change? It goes live at its time, or at once if its time has passed."); "Switch these
   labels off" (confirm "Switch these labels off? Users of these apps see the plain approval window, without the
-  partner’s words, until staff turn them back on.") and "Turn these labels back on" ("Only a version that already passed
-  its wait is shown again."); "Switch every partner label off" / "Turn every partner label back on"; "Require review for
+  partner’s words, until staff turn them back on.") and "Turn these labels back on" ("…A version that passed its wait
+  shows again, including one whose time came while switched off; a change still waiting keeps waiting."; the org's and
+  everyone's say the same of versions); "Switch every partner label off" / "Turn every partner label back on"; "Require review for
   everyone" / "Turn review off for everyone"; one organisation's four switches by its id. A stale page: "This change moved
   since you opened the page (someone may have acted, or it went live). Nothing was done. Reload the page and look again."
   Every staff sentence passes the portal's plain-words checks (`test-spa/labels.test.ts`, D853, D879).
@@ -18377,3 +18417,17 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   organisations}; N sets of partner labels are switched off", with "{who} see the plain approval window, without the
   partner’s words. To turn a switch back on, open Partner labels."; review on is a detail line; Unknown when the API
   can't be read or is older.
+
+#### For piece 3 (requirements recorded after the security review, not built now)
+- Labels are used only from a fresh read, as policies are (`POLICY_FRESH_MS`, 10 s): a switch or a block reaches users
+  within seconds, and a failed read means no labels.
+- When two delivered entries describe the same contract (the server refuses it; a D1 write could make it), drop both.
+- App names can be renamed at once, outside the 24 h wait, while staff reviewed the preview under the old name: decide
+  in piece 3 whether an `app.renamed` of an app with labels is flagged in the staff feed (or holds its labels).
+- `label_live` can arrive up to an hour after a label actually goes live (the hourly job records it; delivery uses the
+  predicate): say so on the staff screen, or record it at the first served read, in piece 3.
+- Each screen and mail that names "partner labels" or "request labels" explains the name once (checked now for the
+  staff screen, the Feed and notices panel, the notice, the blocked and lapse mails and the cancel page).
+- Test note (optional now): run the partner-labels e2e in its own lane, or add a lane action that drains the feed with a
+  capturing sender after label scenarios, then restore the strict "Caught up" check in `admin-portal.spec.ts` (loosened
+  to `expectFeedsRead` in this branch; reviewed as legitimate); that would also cover the blocked mail end to end.

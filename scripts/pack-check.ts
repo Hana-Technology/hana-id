@@ -10,7 +10,7 @@
 //      the peer versions this repo tests (react, react-dom, @types/react*, @sodax/types).
 //   4. Type-checks pack-smoke/types.ts and app.tsx there (NodeNext and Bundler resolution, skipLibCheck off), and
 //      the partner guide's samples (docs/integration.md, every `ts` block of a part, one module per part; GUIDE_PARTS):
-//      guide-login.ts (section 4, "When sign-in doesn't finish"), guide-gas-free.ts (section 8, "Gas-free actions",
+//      guide-login.ts (section 4, "When sign-in doesn't finish"), guide-gas-free.ts (section 8, "Gas sponsorship",
 //      with viem), guide-near.ts (section 8, "NEAR", with the @near-js packages one of them uses) and
 //      guide-errors.ts (section 13); then runs pack-smoke/run.mjs in Node: every exported subpath imports, createHana
 //      knows exactly the envs/*.json that set both Hana origins, HanaProvider server-renders.

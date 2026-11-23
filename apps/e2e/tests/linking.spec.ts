@@ -8,7 +8,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { API_URL, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK } from '../src/stack.ts';
 import { addressOfExport, base64Decode, fromUtf8 } from '@hana-id/core';
-import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickClosing, clickLauncher, clickMayClose, clickUntilTaken, closeOf, errorOf, expect, guardedClick, newApp, okValue, openPartner, peek, responsive, runAction, status, test, vaultFrame, waitPersisted } from './fixtures.ts';
+import { AFTERWORD_MS, type App, LOGIN_PENDING_MS, chooseAccount, clickAction, clickClosing, clickLauncher, clickMayClose, clickUntilTaken, closeOf, errorOf, expect, guardedClick, newApp, okValue, openPartner, peek, responsive, runAction, seenText, status, test, vaultFrame, waitPersisted, actionUnderSentence } from './fixtures.ts';
 
 const MATCH = `${ISSUER_URL}/v1/email/google-match`;
 const RECORD = `${ISSUER_URL}/v1/email/google-record`;
@@ -239,7 +239,12 @@ test('case B, not hosted: the email joins pending 24 h; the partner sees it; it 
   expect(await okValue(page, 'email')).toEqual(wallet);
   const banner = popup.locator('#link-banners li[data-status="pending"]');
   await expect(banner).toContainText('will be able to open this wallet from');
-  await expect(popup.locator('#banner-cancel-0')).toHaveText('Cancel this link');
+  // D887: a link this sign-in just made: the small outlined button alone (no question), under its sentence, its name
+  // its words and then whose link.
+  await expect(popup.locator('#banner-cancel-0')).toHaveAccessibleName('Cancel this link for the email address');
+  await expect.poll(() => seenText(banner.locator('.banner-action'))).toBe('Cancel this link');
+  await expect(popup.locator('#banner-cancel-0')).toHaveClass('jp-btn jp-btn-secondary jp-btn-sm');
+  await actionUnderSentence(popup, banner.locator('.banner-what'), popup.locator('#banner-cancel-0'));
   await expect.poll(() => linkEvents(page)).toContainEqual(expect.objectContaining({ provider: 'email', status: 'pending' }));
   const methods = (await runAccount(page, 'acct')) as { methods: { provider: string; status: string; effectiveAtMs: number | null; root: boolean }[] };
   expect(methods.methods).toEqual([

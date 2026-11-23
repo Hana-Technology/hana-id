@@ -6,7 +6,7 @@
 // with `{ live: true }`) in the stack's live mode, whose https origins the context routes to the stack (src/stack.ts
 // LIVE_UPSTREAMS). The partner test app (partner/app.ts) is driven through `window.e2e`: gesture
 // actions are armed and then started by a real click on its #act button, so window.open runs with user activation.
-import { type BrowserContext, type Frame, type FrameLocator, type Page, test as base, expect } from '@playwright/test';
+import { type BrowserContext, type Frame, type FrameLocator, type Locator, type Page, test as base, expect } from '@playwright/test';
 import { routeStubs } from '../src/browser-routes.ts';
 import { GOOGLE_AUTH_URL, GoogleStub, stackGoogleKey } from '../src/google-stub.ts';
 import type { AppSpec as ServerAppSpec } from '../src/server/api.ts';
@@ -528,4 +528,27 @@ export async function responsive(frame: Frame, ms = 3_000): Promise<boolean> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** What the eye reads in `l`: its text without the visually hidden parts (`.sr-only`, D887's button names). */
+export function seenText(l: Locator): Promise<string> {
+  return l.evaluate((el) => {
+    const c = el.cloneNode(true) as Element;
+    for (const x of c.querySelectorAll('.sr-only')) x.remove();
+    return (c.textContent ?? '').replace(/\s+/gu, ' ').trim();
+  });
+}
+
+/**
+ * D887's layout, measured: the banner's or line's button sits under its sentence (not inline at its end), Done under
+ * the button, Done is the one primary button, and the button's hidden words take no room.
+ */
+export async function actionUnderSentence(page: Page, sentence: Locator, button: Locator): Promise<void> {
+  const s = (await sentence.boundingBox())!;
+  const b = (await button.boundingBox())!;
+  const done = (await page.locator('#banner-done').boundingBox())!;
+  expect(b.y, 'the button starts below its sentence').toBeGreaterThanOrEqual(s.y + s.height - 0.5);
+  expect(done.y, 'Done starts below the button').toBeGreaterThanOrEqual(b.y + b.height - 0.5);
+  expect(await page.locator('#app .jp-btn-primary').evaluateAll((els) => els.map((e) => e.id))).toEqual(['banner-done']);
+  for (const hidden of await button.locator('.sr-only').all()) expect((await hidden.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1);
 }

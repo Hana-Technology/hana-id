@@ -206,6 +206,28 @@ describe('NearRpc', () => {
   it('sends a signed transaction and reports a failure', async () => {
     await expect(new NearRpc(['https://a.test'], async () => ok({ status: { SuccessValue: '' } })).sendTx('AAAA')).resolves.toBeUndefined();
     await expect(new NearRpc(['https://a.test'], async () => ok({ status: { Failure: {} } })).sendTx('AAAA')).rejects.toMatchObject({ code: 'near_send_failed' });
-    await expect(new NearRpc(['https://a.test'], async () => rpcError('NotEnoughBalance')).sendTx('AAAA')).rejects.toMatchObject({ code: 'near_send_failed' });
+    // An invalid transaction from the first endpoint, with no failover: definite.
+    await expect(new NearRpc(['https://a.test', 'https://b.test'], async () => rpcError('INVALID_TRANSACTION')).sendTx('AAAA')).rejects.toMatchObject({ code: 'near_send_failed' });
+  });
+
+  it('D889: a send whose outcome is unknown is near_send_unconfirmed, never "didn’t go through"', async () => {
+    // The first endpoint 503s (it may have forwarded the bytes); the fallback's error says nothing definite.
+    const calls: string[] = [];
+    const failover = new NearRpc(['https://a.test', 'https://b.test'], async (url: string) => {
+      calls.push(url);
+      return url === 'https://a.test' ? new Response('down', { status: 503 }) : rpcError('INVALID_TRANSACTION');
+    });
+    await expect(failover.sendTx('AAAA')).rejects.toMatchObject({ code: 'near_send_unconfirmed' });
+    expect(calls).toEqual(['https://a.test', 'https://b.test']);
+    // A result after a failover is the same transaction's: its Failure is definite.
+    await expect(new NearRpc(['https://a.test', 'https://b.test'], async (url: string) => (url === 'https://a.test' ? new Response('down', { status: 502 }) : ok({ status: { Failure: {} } }))).sendTx('AAAA')).rejects.toMatchObject({ code: 'near_send_failed' });
+    // TIMEOUT_ERROR from the only endpoint: it may still run; and the answer is final (no second endpoint asked).
+    const asked: string[] = [];
+    const timeout = Response.json({ jsonrpc: '2.0', id: 'hana-demo', error: { name: 'TIMEOUT_ERROR', cause: { name: 'TIMEOUT_ERROR' }, code: -32000, message: 'Timeout' } });
+    await expect(new NearRpc(['https://a.test', 'https://b.test'], async (url: string) => (asked.push(url), timeout.clone())).sendTx('AAAA')).rejects.toMatchObject({ code: 'near_send_unconfirmed' });
+    expect(asked).toEqual(['https://a.test']);
+    // No endpoint answers, or an outcome without a status.
+    await expect(new NearRpc(['https://a.test'], async () => new Response('down', { status: 503 })).sendTx('AAAA')).rejects.toMatchObject({ code: 'near_send_unconfirmed' });
+    await expect(new NearRpc(['https://a.test'], async () => ok({ transaction: {} })).sendTx('AAAA')).rejects.toMatchObject({ code: 'near_send_unconfirmed' });
   });
 });

@@ -52,7 +52,7 @@ describe('the page', () => {
     const text = html.replace(/<[^>]+>/gu, ' ').replace(/@hana-id\/web/gu, '');
     expect(text).not.toMatch(/\bHana\b/u);
     expect(text).toContain(BRAND.product);
-    expect(/<title>([^<]+)<\/title>/u.exec(html)![1]).toBe(`${BRAND.product} testnet demo`);
+    expect(/<title>([^<]+)<\/title>/u.exec(html)![1]).toBe(`${BRAND.product} demo (test networks)`);
   });
 
   it('the strings the page shows say Journear, Journear Passport or Passport Home, not Hana', () => {

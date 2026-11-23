@@ -18959,3 +18959,82 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   name. The focus-ring test checks every stop again (no exception for headings).
 - **Not verified**: real iOS Safari and Android browsers, real screen readers (names and descriptions checked in the
   browsers' accessibility trees), browser text-only zoom, landscape phones.
+
+### D898. Cancelling a waiting sign-in from Passport Home: the design, and why it needs the founder first
+- Date 2026-11-23 · Status: **design only, awaiting the founder's choice** (nothing built, nothing pushed). Branch
+  `feat/home-waiting-sign-in-actions` (from `next` e7520687). Follows the founder's "Cancel/Remove inside Home: yes,
+  later" (D888's open list, D895 and D897's "not in this step").
+- **How it works today** (read from the code and D259, D864, D874, D875, D881, D887):
+  1. A *waiting* sign-in is a pending member (`Standing::Pending`, `links.rs`): an explicit link (`linkAccount`) or an
+     email joining a Google wallet (case B), pending for `change_delay_ms` (never before the unpause floor). The wait is
+     the owner's chance to notice a link someone else made and stop it before it opens the wallet: the notice mail and
+     every sign-in window of the account show it with Cancel (`docs/security.md`, "Accounts").
+  2. The model has **one** action on a waiting sign-in: `cancel_link` (immediate; drops the pending member; bumps the
+     epoch). The contract allows it to the pending identity itself, or to **any active identity of the account** (the
+     root or an active member), each with a JWT whose nonce is `link_change` "cancel" over (signer, scope, root,
+     member, epoch, salt). "Remove" is `unlink_identity`, for an *active* member only (root or the member itself): it
+     does not apply to a waiting one. So in Home the action is **Cancel this link**, as in the window.
+  3. The window: at every sign-in of the account the vault's last word lists each pending member with **Cancel this
+     link** (D259; D887: small outlined button after "Don’t recognise it?"; D881: ends on its outcome, `done` "Link
+     cancelled" or `stop` with the code). Cancel is a **fresh sign-in of this login's own method over the vault's
+     `link_change` nonce** (Google with the vault's nonce and `login_hint`; email: a code over the commitment), checked
+     by the vault, relayed by the vault through `POST /v1/link/cancel`. The waiting email's own sign-in can cancel its
+     link too (D864).
+  4. `POST /v1/link/cancel` (`apps/api/src/links.ts`) is **app-gated**: `x-hana-key` (an app's publishable key), the
+     vault or auth origin acting for one of that app's allowed partner origins (`checkCaller`), the app's link-change
+     limits; the token verified and a client of the app's scope; every contract rule prechecked; relayed through the
+     session pool; then every vault share of the account in the scope revoked and the directory synced.
+  5. Home today (`home-sign-ins.ts`): the waiting row with its amber box, "Don’t recognise it? Sign in to this app the
+     way you signed in here, and choose “Cancel this link”. If you’re not sure, cancel it." (`cancel_at_sign_in`), and
+     since D897 the line "1 more starts opening it soon. Check it below.". Read-only: D874 recorded why (no app key or
+     partner page for the relay; the issuer's Home route can't mint a `link_change` code).
+- **What proves authority, and what Home holds**: the window's Cancel rests on a *fresh proof by an active identity of
+  the account over a nonce that names this one change* (the contract checks it; nothing weaker can reach
+  `cancel_link`). Home holds a 15-minute Home identity: a token whose nonce commits to Home's own key (`home` purpose,
+  audience the shared client, the exit client or `hana-home`), which the contract never accepts for a link change
+  (`homeGate` answers `{provider, sub}` only; exit-client tokens "never a link or an owner action", D468). So Home must
+  get the **same fresh `link_change` proof** the window gets; its session alone is weaker and is not enough.
+- **What doing it inside Home would take** (none of it exists):
+  1. *A relay route Home can call*: `/v1/link/cancel` needs an app key and a partner origin; Home has neither and must
+     not borrow a partner's (it would act in a partner's name and bill its quota). So a new **`POST
+     /v1/home/link/cancel`**: `homeGate` (origin, per-IP limit, Home token and signature), body `{proofJwt, memberKey,
+     epoch, salt, scopeId}`; the proof verified with no app (`verifyLoginToken`) and its audience a client of that scope;
+     **stricter than the contract**: the proof's identity must be the Home identity itself (same provider and `sub`) and
+     **active** in the account (never the pending one, never another pending), and `memberKey` must be **pending** in
+     that account (an active member or the root is refused: removing an established sign-in stays out of scope); the
+     same precheck, relay, share revocation and directory sync as `/v1/link/cancel`; Home's own limits and usage (no
+     partner billed). Tests for every refusal.
+  2. *A Google proof*: a Google sign-in with `nonce = link_change` "cancel", `prompt=select_account` (Home never learns
+     the address, so no `login_hint`), through a new mode of the child window and `/home/callback`. The contract takes it
+     only from a client of the scope: Journear's **shared client** in a scope that allows it. A scope on the **partner's
+     own Google client** ("Needs the app") can't get such a token from Journear's pages at all, and the **exit client**
+     can't make link changes. So Google cancels from Home would work only for wallets on the shared client.
+  3. *An email proof*: the issuer's `POST /v1/email/home/start` mints only `home` and `home_session`; `start` (which has
+     `link_change`) is app-gated. A new Home kind `link-change` (a code to the signed-in address, a `link_change` token
+     for `email:{scope}` while the scope holds its email client) is an **issuer change** with its own limits and review.
+- **Options for the founder**:
+  - **A. Guidance only, no server change** (small, web only): the waiting row keeps its words and gains, under "Don’t
+    recognise it?", a small outlined **Open {App} to cancel it** that opens the app's first web address in a new tab
+    (where the sign-in window offers Cancel), and the steps in a sentence. No new authority, no new route, nothing to
+    review beyond a link. It doesn't make cancelling one press from Home.
+  - **B. Cancel inside Home, Google on the shared client first**: items 1 and 2 above (a new API route, a new child mode),
+    Home's confirmation, result and failure screens in D881's words (below). Authority equal to the window's plus Home's
+    session and the "same identity, active, member pending" checks (stricter). Covers wallets on the shared Google
+    client; others keep today's pointer, and the row says which applies. Its own security review.
+  - **B+email**: B plus the issuer's `link-change` kind (item 3), so an email owner can cancel from Home too. A second
+    service changes; larger review.
+  - **C. Both A and B**: A everywhere B can't reach.
+- **Recommendation**: **C, built in two changes**: A now (it helps every wallet today, with nothing new to trust), then B
+  as its own server change with its security review; email (item 3) after B proves out. Reason: the waiting period
+  exists for exactly this, and Home is where the notice mail sends people, but B is a new server check and only reaches
+  shared-client wallets, so it should be decided and reviewed on its own.
+- **Words, if B is built** (D881's family, for Home): the row's action, after "Don’t recognise it?", a small outlined
+  **Cancel this link** (named "Cancel this link for the {email address | Google account}"); the confirmation "Cancel
+  this link? The {email address | Google account} will never open this wallet. You can't undo this: it can only be
+  added again, and then it waits again." with **Cancel the link** / **Go back**, then the sign-in ("Sign in with Google
+  to confirm it’s you"); the result "Link cancelled. The {…} won’t open this wallet."; failures as D881's: "Nothing
+  changed" (not this sign-in, the sign-ins changed, refused before anything was sent), "It may not have been cancelled"
+  (can't tell: "Show again" to check), each with **Close**; the line and the row update without a reload.
+- Not changed by any option: the delay, what a waiting sign-in can do, derivation paths or keys. **Address impact: none.**
+- **To confirm**: the option; for B, the words above, the "same identity as Home's" rule (stricter than the window, where
+  any active method of the login may prove), and Google-only at first.

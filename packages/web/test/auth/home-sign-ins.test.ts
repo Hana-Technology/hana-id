@@ -27,6 +27,8 @@ import {
   rowFacts,
   signInDate,
   signInModel,
+  cancelTarget,
+  isPlainHttpsOrigin,
   signInSummary,
   startHomeSignIns,
 } from '../../src/auth/home-sign-ins.ts';
@@ -727,5 +729,79 @@ describe('D897: the line of “Ways to sign in”', () => {
     expect(signInSummary(2, 0)).toEqual({ line: '2 sign-ins open this wallet.', waiting: null });
     expect(signInSummary(1, 1)).toEqual({ line: '1 sign-in opens this wallet.', waiting: '1 more starts opening it soon. Check it below.' });
     expect(signInSummary(3, 2)).toEqual({ line: '3 sign-ins open this wallet.', waiting: '2 more start opening it soon. Check them below.' });
+  });
+});
+
+describe('D898 option A: “Open {App} to cancel it” on a waiting sign-in', () => {
+  type App = HomeScope['apps'][number];
+  const app = (name: string, origins: string[], status: App['status'] = 'active'): App => ({ appId: `app_${name.toLowerCase().replace(/[^a-z]/gu, '')}1`, name, status, environment: 'live', origins, logoUrl: null });
+  const scopeWith = (apps: App[]): HomeScope => ({ scopeId: S, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], apps });
+  async function showWith(apps: App[]) {
+    const h = start(googleWithEmail(T0 + DAY, false), asGoogle);
+    document.getElementById('app')!.replaceChildren(h.section.appView(scopeWith(apps)));
+    h.click('home-sign-ins-show');
+    await h.idle();
+    return document.querySelector('#home-sign-ins-list > li[data-role="waiting"] .home-sign-in-risk') as HTMLElement;
+  }
+
+  it('opens the first active app’s web address in a new tab, with no opener and no referrer, and says where and what to do', async () => {
+    const box = await showWith([app('Sodax', ['https://sodax.example', 'https://www.sodax.example'])]);
+    const a = box.querySelector('a.home-sign-in-open') as HTMLAnchorElement;
+    expect(a.getAttribute('href')).toBe('https://sodax.example');
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(a.textContent).toBe('Open Sodax to cancel it (opens in a new tab)');
+    expect(a.querySelector('.sr-only')?.textContent).toBe(' (opens in a new tab)');
+    const where = document.getElementById(a.getAttribute('aria-describedby')!);
+    expect(where?.textContent).toBe('Opens https://sodax.example in a new tab.');
+    expect([...box.querySelectorAll('p')].map((p) => p.textContent)).toEqual([
+      'Don’t recognise it? If you’re not sure, cancel it.',
+      'Open Sodax to cancel it (opens in a new tab)',
+      'Opens https://sodax.example in a new tab.',
+      'There, sign in the way you signed in here, and choose “Cancel this link”.',
+    ]);
+    // Still the amber box, and the section's "sign out first" line.
+    expect(box.classList.contains('jp-alert-warning')).toBe(true);
+    expect(document.getElementById('home-sign-ins-sign-out-first')).not.toBeNull();
+  });
+
+  it('a wallet of several apps: the first active one with an address, and the sentence that it stops it for every app', async () => {
+    const box = await showWith([app('Sodax', ['https://sodax.example'], 'suspended'), app('Sodax Earn', []), app('Lumen', ['https://lumen.example'])]);
+    const a = box.querySelector('a.home-sign-in-open') as HTMLAnchorElement;
+    expect(a.getAttribute('href')).toBe('https://lumen.example');
+    expect(a.textContent).toContain('Open Lumen to cancel it');
+    expect(box.textContent).toContain('Cancelling it there stops it for every app that uses this wallet.');
+  });
+
+  it('no button where no app is active with a plain https address: today’s sentence', async () => {
+    for (const apps of [[app('Sodax', [])], [app('Sodax', ['https://sodax.example'], 'deleted')], [app('Sodax', ['https://sodax.example'], 'suspended')], [app('Sodax', ['http://sodax.example'])], []]) {
+      resetDom();
+      const box = await showWith(apps);
+      expect(box.querySelector('a')).toBeNull();
+      expect(box.textContent).toBe(SIGN_IN_TEXT.cancelAtSignIn);
+    }
+  });
+
+  it('only a plain https origin from Journear’s record: hostile records give no button', () => {
+    for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'https://a@b.example', 'https://a:b@b.example', 'https://b.example/', 'https://b.example/path', 'https://b.example?x=1', 'https://b.example#x', 'http://b.example', 'HTTPS://B.EXAMPLE', ' https://b.example', 'https://b.example ', '', 'https://' + 'a'.repeat(600) + '.example', 42, null]) {
+      expect(isPlainHttpsOrigin(bad), String(bad)).toBe(false);
+      expect(cancelTarget(scopeWith([app('X', [bad as string])]))).toBeNull();
+    }
+    for (const good of ['https://b.example', 'https://b.example:8443', 'https://xn--bcher-kva.example', `https://${'a'.repeat(60)}.${'b'.repeat(60)}.example`]) expect(isPlainHttpsOrigin(good), good).toBe(true);
+  });
+
+  it('a very long address wraps at its own break points (the origin’s text, never markup)', async () => {
+    const long = `https://${'a'.repeat(60)}.${'b'.repeat(60)}.example`;
+    const box = await showWith([app('Sodax', [long])]);
+    const where = box.querySelector('.home-sign-in-open-where .origin');
+    expect(where?.textContent).toBe(long);
+    expect(where?.querySelectorAll('wbr').length).toBeGreaterThan(0);
+  });
+
+  it('the active member’s and the root’s other lines are unchanged', async () => {
+    const box = await showWith([app('Sodax', ['https://sodax.example'])]);
+    expect(box).not.toBeNull();
+    // Only the waiting row's amber box has the link.
+    expect(document.querySelectorAll('a.home-sign-in-open')).toHaveLength(1);
   });
 });

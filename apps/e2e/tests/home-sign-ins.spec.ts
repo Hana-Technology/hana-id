@@ -458,3 +458,85 @@ test('a failed read (both providers, or only one) says so plainly with Try again
   await expect(signInRows(home)).toHaveCount(1);
   expect(problems()).toEqual([]);
 });
+
+/** Where the waiting row sends the person in the D898 test: an https web address on Journear's record of the app. */
+const CANCEL_HERE = 'https://cancel-here.example';
+/** Before and after screenshots of D898 option A (Chromium only). */
+const WAITING_SHOTS = process.env.HANA_WAITING_SHOTS_DIR;
+
+test('D898 option A: a waiting link has “Open {App} to cancel it”, which opens exactly the app’s web address on record in a new tab with no opener', async ({ page, context, google, browserName }, info) => {
+  test.setTimeout(180_000);
+  const problems = await watchAuthPages(context);
+  const { scopeId, name } = await waitingEmail(page, google, info, browserName, 'a');
+  // Journear's record of the app, as the API answers it, with an https web address in place of the local stack's http one.
+  await context.route(`${API_URL}/v1/home/apps**`, async (route) => {
+    const res = await route.fetch();
+    const body = (await res.json()) as { scopes?: { scopeId: string; apps: { origins: string[] }[] }[] };
+    for (const s of body.scopes ?? []) if (s.scopeId === scopeId) for (const a of s.apps) a.origins = [CANCEL_HERE];
+    await route.fulfill({ response: res, json: body });
+  });
+  const opened: string[] = [];
+  await context.route(`${CANCEL_HERE}/**`, async (route) => {
+    opened.push(route.request().url());
+    await route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>App</title><p>The app</p>' });
+  });
+
+  const home = await context.newPage();
+  await home.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(home);
+  await openApp(home, scopeId, name);
+  await home.locator('#home-sign-ins-show').click();
+  const waiting = home.locator('#home-sign-ins-list > li[data-role="waiting"]');
+  const link = waiting.getByRole('link', { name: `Open ${name} to cancel it (opens in a new tab)`, exact: true });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute('href', CANCEL_HERE);
+  await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(link).toHaveAttribute('target', '_blank');
+  await expect(link).toHaveAccessibleDescription(`Opens ${CANCEL_HERE} in a new tab.`);
+  await expect(waiting.locator('.home-sign-in-risk p')).toHaveText([
+    'Don’t recognise it? If you’re not sure, cancel it.',
+    `Open ${name} to cancel it (opens in a new tab)`,
+    `Opens ${CANCEL_HERE} in a new tab.`,
+    'There, sign in the way you signed in here, and choose “Cancel this link”.',
+  ]);
+  // The summary line still says one is waiting; the section still says to sign out of the app first.
+  await expect(home.locator('#home-sign-ins-waiting-line')).toHaveText('1 more starts opening it soon. Check it below.');
+  await expect(home.locator('#home-sign-ins-sign-out-first')).toBeVisible();
+
+  // At every width, light and dark: no sideways scroll, the link inside its box, at least 44 px tall on a phone.
+  for (const width of [320, 360, 390, 430, 1280]) {
+    for (const scheme of ['light', 'dark'] as const) {
+      await home.setViewportSize({ width, height: 900 });
+      await home.emulateMedia({ colorScheme: scheme });
+      expect(await home.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width} ${scheme}: no sideways scroll`).toBe(true);
+      const box = await link.boundingBox();
+      const card = await waiting.locator('.home-sign-in-risk').boundingBox();
+      expect(box && card && box.x >= card.x && box.x + box.width <= card.x + card.width + 0.5, `${width}: the link inside its box`).toBe(true);
+      if (width <= 640) expect(box!.height, `${width}: 44 px`).toBeGreaterThanOrEqual(43.5);
+      if (WAITING_SHOTS && browserName === 'chromium' && (width === 390 || width === 1280)) {
+        await waiting.scrollIntoViewIfNeeded();
+        await home.screenshot({ path: `${WAITING_SHOTS}/waiting-open-to-cancel-w${width}${scheme === 'dark' ? '-dark' : ''}.png`, fullPage: true, animations: 'disabled' });
+      }
+    }
+  }
+  await home.setViewportSize({ width: 1280, height: 800 });
+  await home.emulateMedia({ colorScheme: 'light' });
+
+  // The keyboard reaches it, with the focus ring.
+  await link.focus();
+  await expect(link).toBeFocused();
+
+  // Opens a new tab at exactly the recorded address, with no opener and no referrer.
+  const tabP = context.waitForEvent('page');
+  await link.click();
+  const tab = await tabP;
+  await tab.waitForLoadState();
+  expect(tab.url()).toBe(`${CANCEL_HERE}/`);
+  expect(opened).toEqual([`${CANCEL_HERE}/`]);
+  expect(await tab.evaluate(() => window.opener)).toBeNull();
+  expect(await tab.evaluate(() => document.referrer)).toBe('');
+  await tab.close();
+  // Home is where it was.
+  await expect(link).toBeVisible();
+  expect(problems()).toEqual([]);
+});

@@ -137,7 +137,10 @@ describe('code mails: the designed HTML part', () => {
       expect(fake.subject).not.toBe(real.subject);
       expect(heading(fake.html)).not.toBe(heading(real.html));
     }
-    // "Passport" on its own is a name an app may have, shown quoted beside the service's own name.
+    // "Passport" as one word of another name is a name an app may have, shown quoted beside the service's own name;
+    // "Passport" itself or as the wallet (D891), or a claim word beside sentence punctuation, is not shown.
+    for (const appName of ['Passport', 'My Passport', 'Passport Wallet', 'Acme. Verified']) expect(displayAppName(appName), appName).toBeNull();
+    expect(codeMail({ to: 'a@example.com', code: '550046', appName: 'Passport', authOrigin: AUTH, purpose: 'session' }).subject).toBe('Your sign-in code');
     expect(displayAppName('Passport Travel')).toBe('Passport Travel');
     expect(codeMail({ to: 'a@example.com', code: '550046', appName: 'Passport Travel', authOrigin: AUTH, purpose: 'session' }).subject).toBe('Your sign-in code for Passport Travel');
   });

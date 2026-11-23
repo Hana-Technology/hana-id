@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-23 (sign-in window buttons; reviewed NEAR calls; free fees; message notes; link notice), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
+Last verified against code: 2026-11-23 (app names; sign-in window buttons; reviewed NEAR calls; free fees; message notes), SDK 0.5.0. "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
 
@@ -76,8 +76,15 @@ refused (when an app is created or renamed, by Journear staff or on **Branding**
 - a name holding "Journear" (anywhere, even inside a word: "MyJournear"), "Passport Home" as words, or a word starting
   with "Hana" (the product's former name), in any case or spelling: accents, full-width letters, look-alike letters
   from other alphabets (a Cyrillic "Н" for H, for example), digits or symbols for letters ("H4na", "J0urnear"), or
-  letters split by spaces or dots ("H a n a", "J.o.u.r.n.e.a.r"). "Hana" inside a word ("Johana") and "Passport" on its
-  own are fine;
+  letters split by spaces or dots ("H a n a", "J.o.u.r.n.e.a.r"). "Hana" inside a word ("Johana") is fine;
+- "Passport" on its own (users call Journear Passport "Passport"), in the same forms of spelling, or in a name that
+  reads as the wallet: "My Passport", "Your Passport", "The Passport", "NEAR Passport", or "Passport" followed by
+  Wallet, App, Account, ID, Login, Sign-in, Support, Help, Security, Team, Official, Pay, Vault or "by …". "Passport"
+  with words of your own is fine: "Passport Photos Co", "Passport Travel", "Travel Passport";
+- a word like "verified", "safe", "official", "free", "no fees", "guaranteed", "refund" or "trusted" in a name that
+  also has sentence punctuation (". ", "!", "?", ":", ";" or a dash), as in "Acme. Verified": in the approval window
+  it could read as Journear's own words. Punctuation alone is fine ("Yahoo!", "Dr. Martens"), and so are those words
+  without it ("Safe Wallet");
 - as before, control, bidi, zero-width and other invisible characters, and names over 64 characters.
 
 An app whose name was set before this rule keeps working, but its sign-in emails say "an app" instead of the name

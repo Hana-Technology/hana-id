@@ -665,13 +665,17 @@ describe('settings', () => {
     for (const name of ['Hana Pay', 'Journear', 'J0urnear', 'JOURNEAR', 'journear-pay', `J${String.fromCharCode(0x043e)}urnear`, 'Passport Home']) {
       expect(await s({ name }), name).toMatchObject({ ok: false, code: 'bad_request' });
     }
+    // D891: "Passport" itself or as the wallet, and a claim word beside sentence punctuation.
+    for (const name of ['Passport', ' passport ', `P${String.fromCharCode(0x0430)}ssport`, 'My Passport', 'Passport Wallet', 'Acme. Verified', 'Acme: no fees']) {
+      expect(await s({ name }), name).toMatchObject({ ok: false, code: 'bad_request', error: expect.stringMatching(/"Passport" on its own|sentence punctuation/u) });
+    }
     scopeChain([], ['web-client.apps.googleusercontent.com']);
     expect(await s({ googleWebClientId: 'other.apps.googleusercontent.com' })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ googleWebClientId: 'web-client.apps.googleusercontent.com', sessionTtlMs: 2 * HOUR, idleTtlMs: HOUR, name: '  Café  ' })).toEqual({ ok: true, version: 1 });
     expect(await appRow(app.id)).toMatchObject({ google_web_client_id: 'web-client.apps.googleusercontent.com', session_ttl_ms: 2 * HOUR, idle_ttl_ms: HOUR, name: 'Café' });
     expect(await s({ persistence: 'none' }, 0)).toMatchObject({ ok: false, code: 'version_conflict' });
     expect(await s({ googleWebClientId: null }, 1)).toEqual({ ok: true, version: 2 });
-    // "Passport" on its own is a common word: allowed.
+    // "Passport" as one word of another name is allowed (D891 refuses it alone or as the wallet).
     expect(await s({ name: 'Passport Travel' }, 2)).toEqual({ ok: true, version: 3 });
     expect(await appRow(app.id)).toMatchObject({ name: 'Passport Travel' });
     const near = chain();

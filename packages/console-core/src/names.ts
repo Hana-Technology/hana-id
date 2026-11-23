@@ -27,9 +27,13 @@ export function normaliseAppName(input: string): { ok: true; name: string } | { 
 // service or for an address: mail clients turn text that looks like a host into a link, and a code mail must carry
 // none. The service's names are refused in any case, accent, alphabet or spacing: "Hana" (its name until D765),
 // "Journear" (its name since), and "Passport Home" (the users' own wallet page, whose code mails a partner's app must
-// never be able to imitate). "Passport" on its own is a common word and stays allowed. The rule applies where an app
-// is named or renamed (the API's create and settings paths, the operator CLI); the email issuer applies it again when
-// it writes a mail, so a name stored before the rule is shown as "an app".
+// never be able to imitate). Since D891 "Passport" itself is refused too, alone or in a form that reads as the wallet
+// ("My Passport", "Passport Wallet", "Passport by …"), because users know Journear Passport as "Passport" and the
+// approval window says "Sponsored by {App}."; "Passport" as one word of another name ("Passport Photos Co") stays
+// allowed. Also since D891, a name that holds sentence punctuation may not hold one of Journear's claim words ("Acme.
+// Verified" would read "Sponsored by Acme. Verified." in Journear's own line). The rule applies where an app is named
+// or renamed (the API's create and settings paths, the operator CLI); stored names are never rewritten; the email
+// issuer applies it again when it writes a mail, so a name stored before the rule is shown as "an app".
 
 /**
  * Letters from other alphabets, digits and a few symbols that look like a letter of "hana", "journear" or "passport
@@ -156,15 +160,117 @@ export const looksLikeAddress = (name: string): boolean => {
   return s.includes('://') || /(?:^|[^\p{L}\p{N}])www\./iu.test(s) || /[\p{L}\p{N}][.。．｡]\p{L}/u.test(s);
 };
 
-/** Why an app name is refused by D686's rule (as extended by D765), or null. Runs on the stored form (`normaliseAppName`'s output). */
+// ---- "Passport" as the wallet's own name (D891) ----
+
+/** The skeleton's words: runs of letters and digits ("P a s s p o r t" is eight words; see `compactWords`). */
+const wordsOf = (skeleton: string): string[] => skeleton.split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 0);
+
+/**
+ * The words with each run of one-character words joined into one ("S a f e" → "safe", "Acme. V e r i f i e d" →
+ * "acme", "verified"), so letters split by spaces or punctuation count as the word they spell.
+ */
+function compactWords(words: readonly string[]): string[] {
+  const out: string[] = [];
+  let run = '';
+  for (const w of words) {
+    if ([...w].length === 1) {
+      run += w;
+      continue;
+    }
+    if (run) out.push(run);
+    run = '';
+    out.push(w);
+  }
+  if (run) out.push(run);
+  return out;
+}
+
+/**
+ * The whole name, its letters and digits only, that is "Passport" itself: alone, after a determiner or the wallet's
+ * own words ("The", "My", "Your", "Our", "NEAR", "Wallet"), with a trailing "TM" (what "™" folds to). Compared on the
+ * skeleton with every separator removed, so "P a s s p o r t", "PASS-PORT", "Pаssport" (Cyrillic а), "Pa55port" and
+ * "Passport!" all count.
+ */
+const PASSPORT_ALONE_RE = /^(?:the|my|your|our|near|wallet)?passport(?:tm)?$/u;
+/**
+ * "Passport" followed, as words, by a word that makes it the wallet or one of its parts ("Passport Wallet", "Passport
+ * App", "Passport Sign-in", "Passport Support", "Passport by Acme"), anywhere in the name. "Passport Home" has its own
+ * rule (D686 as extended by D765, `brandNameIn`).
+ */
+const PASSPORT_PRODUCT_WORDS = ['wallet', 'app', 'account', 'accounts', 'id', 'login', 'signin', 'support', 'help', 'security', 'team', 'official', 'pay', 'vault', 'by'];
+const PASSPORT_PRODUCT_RE = new RegExp(`${WORD_START}${spelled('passport')}${SEP}(?:${PASSPORT_PRODUCT_WORDS.map(spelled).join('|')})${WORD_END}`, 'u');
+
+/**
+ * Whether the name passes for Journear Passport itself, called "Passport" by its users (D891): "Passport" alone or
+ * in a form that reads as the wallet (`PASSPORT_ALONE_RE`, `PASSPORT_PRODUCT_RE`), in any case, accent, alphabet,
+ * look-alike letter or spacing. "Passport" as one word of another name ("Passport Photos Co", "Passport Travel",
+ * "Travel Passport") is allowed.
+ */
+export function passportNameIn(name: string): boolean {
+  const skeleton = nameSkeleton(name);
+  return PASSPORT_ALONE_RE.test(wordsOf(skeleton).join('')) || PASSPORT_PRODUCT_RE.test(skeleton);
+}
+
+// ---- sentence punctuation with a claim word (D891) ----
+
+/**
+ * What ends or splits a sentence in Journear's lines: a full stop (also ideographic and half-width), "!", "?", their
+ * inverted forms, ":", ";", "…", an en or em dash, and a hyphen with a space on either side. Matched after NFKC, so
+ * full-width forms count.
+ */
+const SENTENCE_BREAK_RE = /[.!?¡¿:;…–—。｡]|\s-|-\s/u;
+
+/**
+ * Journear's claim words and their usual inflections, as skeleton words (lower case, accents dropped, look-alikes and
+ * digits folded): what a name that reads as a sentence may not say after "Sponsored by " or before " wants to".
+ */
+export const APP_NAME_CLAIM_WORDS: readonly string[] = Object.freeze([
+  'checked',
+  'verify', 'verifies', 'verified', 'verification',
+  'official', 'officially',
+  'safe', 'safer', 'safest', 'safely', 'safety',
+  'secure', 'secured', 'securely', 'security',
+  'guarantee', 'guarantees', 'guaranteed',
+  'risk', 'risks', 'riskless',
+  'free', 'fee', 'fees', 'feeless',
+  'refund', 'refunds', 'refunded', 'refundable',
+  'insure', 'insured', 'insurance',
+  'approve', 'approves', 'approved', 'approval',
+  'recommend', 'recommends', 'recommended',
+  'trust', 'trusted', 'trustworthy',
+  'protect', 'protected', 'protection',
+  'certified', 'audited', 'endorsed', 'authentic', 'genuine', 'legit', 'legitimate',
+]);
+const CLAIM_WORDS = new Set(APP_NAME_CLAIM_WORDS);
+
+/**
+ * The claim word a name uses beside sentence punctuation (D891), or null. A name with no sentence punctuation may hold
+ * any of these words ("Safe Wallet", "Free Now", "Trust Wallet"); a name with it may hold none ("Acme. Verified",
+ * "Acme: safe", "Acme! No fees", "Acme – risk free", "S4fe. Acme", "Acme. S a f e"). On the skeleton, so look-alike
+ * letters and digits fold as for Journear's names, "1" read as "i" too.
+ */
+export function sentenceClaimIn(name: string): string | null {
+  if (!SENTENCE_BREAK_RE.test(name.normalize('NFKC'))) return null;
+  const words = compactWords(wordsOf(nameSkeleton(name).replace(/1/gu, 'i')));
+  return words.find((w) => CLAIM_WORDS.has(w)) ?? null;
+}
+
+/** Why an app name is refused by D686's rule (as extended by D765 and D891), or null. Runs on the stored form (`normaliseAppName`'s output). */
 export function appNameProblem(name: string): string | null {
   if (looksLikeAddress(name)) return 'The name must not look like a web address (no "://", "www." or a dot before a letter, as in "example.com")';
   const brand = brandNameIn(name);
   if (brand) return `The name must not contain "${brand}" (in any case, spelling or alphabet): Journear's pages and mails name Journear Passport themselves`;
+  if (passportNameIn(name)) {
+    return 'The name must not be "Passport" on its own or read as the wallet ("My Passport", "Passport Wallet", "Passport App", "Passport by …"), in any case, spelling or alphabet: users call Journear Passport "Passport". "Passport" with words of your own, as in "Passport Photos Co", is fine';
+  }
+  const claim = sentenceClaimIn(name);
+  if (claim) {
+    return `The name must not use sentence punctuation (". ", "!", "?", ":", ";" or a dash) together with a word like "${claim}": in the approval window it could read as Journear's own words. Drop the punctuation or the word`;
+  }
   return null;
 }
 
-/** An app name as stored, under every rule: `normaliseAppName` and D686's. */
+/** An app name as stored, under every rule: `normaliseAppName` and D686's (as extended by D765 and D891). */
 export function normalisePartnerAppName(input: string): { ok: true; name: string } | { ok: false; problem: string } {
   const r = normaliseAppName(input);
   if (!r.ok) return r;

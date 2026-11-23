@@ -1128,6 +1128,236 @@ describe('the secret’s life', () => {
   });
 });
 
+/** A stand-in ResizeObserver: tests set an element's height and say it changed. */
+class FakeResizeObserver {
+  static all: FakeResizeObserver[] = [];
+  readonly targets = new Set<Element>();
+  constructor(private readonly cb: ResizeObserverCallback) {
+    FakeResizeObserver.all.push(this);
+  }
+  observe(el: Element): void {
+    this.targets.add(el);
+    this.cb([{ target: el } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+  unobserve(el: Element): void {
+    this.targets.delete(el);
+  }
+  disconnect(): void {
+    this.targets.clear();
+  }
+}
+
+/** `el` is now `height` px tall, and every observer watching it hears so. */
+function resize(el: Element, height: number): void {
+  el.getBoundingClientRect = () => ({ height, width: 0, top: 0, left: 0, right: 0, bottom: height, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  for (const ro of FakeResizeObserver.all) if (ro.targets.has(el)) (ro as unknown as { cb: ResizeObserverCallback }).cb([{ target: el } as ResizeObserverEntry], ro as unknown as ResizeObserver);
+}
+
+describe('D888: a change of layout around the move flow starts the guard over', () => {
+  const realRO = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+  beforeEach(() => {
+    FakeResizeObserver.all = [];
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = FakeResizeObserver;
+  });
+  afterEach(() => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = realRO;
+  });
+
+  /** The pointer moves (the guard arms) and nothing more. */
+  const arm = (h: H): void => {
+    pointerX += 7;
+    h.win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1, clientX: pointerX, clientY: 10 });
+  };
+  /** A press that lands where the pointer already is: no new movement before it. */
+  const land = (h: H, id: string): void => {
+    h.win.dispatch('pointerdown', { pointerType: 'mouse', clientX: pointerX, clientY: 10 });
+    document.getElementById(id)?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  };
+  /** At Continue, the word typed and the guard armed. */
+  const armedAtContinue = (h: H): void => {
+    h.click('home-export-stellar');
+    h.type(EXPORT_CONFIRMATION);
+    arm(h);
+    expect((document.getElementById('home-export-continue') as HTMLButtonElement).disabled).toBe(false);
+  };
+
+  it('with nothing changed, a press after the arming acts (the baseline)', async () => {
+    const h = start();
+    await h.unlock();
+    armedAtContinue(h);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  it('the top bar’s height changes: Continue is off again and a press that lands does nothing; a new arming gesture works', async () => {
+    const h = start();
+    await h.unlock();
+    armedAtContinue(h);
+    resize(document.querySelector('header.home-top') as HTMLElement, 140);
+    expect((document.getElementById('home-export-continue') as HTMLButtonElement).disabled).toBe(true);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+    // The bar's height is written to the root, for focus scrolling and a phone's toasts.
+    expect(document.documentElement.style.getPropertyValue('--home-bar-h')).toBe('140px');
+  });
+
+  it('a tool above the move flow changes height (devices loading, a section opening): the same', async () => {
+    const h = start();
+    await h.unlock();
+    armedAtContinue(h);
+    resize(document.getElementById('home-app-devices') as HTMLElement, 480);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  /** Puts `el` at `top` in the window (with the page scrolled `scrollY`), as layout would. */
+  const placeAt = (el: Element, top: number, scrollY = 0): void => {
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: scrollY });
+    el.getBoundingClientRect = () => ({ top, left: 20, right: 120, bottom: top + 40, width: 100, height: 40, x: 20, y: top, toJSON: () => ({}) }) as DOMRect;
+  };
+  afterEach(() => {
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0 });
+  });
+
+  it('the catch-all: Continue moved in the page by something nobody watches, between the arming and the press: the press does nothing; a fresh gesture works', async () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
+    const h = start();
+    await h.unlock();
+    const go = () => document.getElementById('home-export-continue') as HTMLButtonElement;
+    h.click('home-export-stellar');
+    placeAt(go(), 600);
+    h.type(EXPORT_CONFIRMATION);
+    arm(h);
+    expect(go().disabled).toBe(false);
+    // Something above it (no observer sees it) pushes it 50 px down.
+    placeAt(go(), 650);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    expect(go().disabled).toBe(true);
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  it('the catch-all ignores plain scrolling: the same place in the page, another place in the window, and the press acts', async () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
+    const h = start();
+    await h.unlock();
+    const go = () => document.getElementById('home-export-continue') as HTMLButtonElement;
+    h.click('home-export-stellar');
+    placeAt(go(), 600, 0);
+    h.type(EXPORT_CONFIRMATION);
+    arm(h);
+    // The page scrolled 250 px: Continue is 250 px higher in the window, at the same place in the page.
+    placeAt(go(), 350, 250);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  it('a bar that scrolls with the page grows above what is in view: the page scrolls by what the browser’s anchoring didn’t; not when scrolled above the bar’s end, and never with a stuck bar', async () => {
+    const h = start();
+    await h.toApp();
+    const header = document.querySelector('header.home-top') as HTMLElement;
+    const scrollBy = vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+    /** The page scrolled to `y` (the browser says so with a scroll event). */
+    const scrolled = (y: number): void => {
+      Object.defineProperty(window, 'scrollY', { configurable: true, value: y });
+      window.dispatchEvent(new Event('scroll'));
+    };
+    scrolled(900);
+    resize(header, 100);
+    scrollBy.mockClear();
+    // No anchoring (WebKit): the page hasn't moved, so it scrolls by the bar's whole change.
+    resize(header, 140);
+    expect(scrollBy).toHaveBeenCalledWith(0, 40);
+    resize(header, 120);
+    expect(scrollBy).toHaveBeenLastCalledWith(0, -20);
+    // Anchoring that did its part (Chromium, Firefox): the browser already scrolled by the change; nothing more.
+    scrollBy.mockClear();
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 960 });
+    resize(header, 180);
+    expect(scrollBy).not.toHaveBeenCalled();
+    // Scrolled to the top: the bar is in view, nothing to keep in place.
+    scrolled(30);
+    resize(header, 200);
+    expect(scrollBy).not.toHaveBeenCalled();
+    // A stuck bar (a desktop): content must move out from under it.
+    scrolled(900);
+    const real = window.getComputedStyle;
+    window.getComputedStyle = ((el: Element) => (el === header ? ({ position: 'sticky' } as CSSStyleDeclaration) : real(el))) as typeof window.getComputedStyle;
+    try {
+      resize(header, 260);
+      expect(scrollBy).not.toHaveBeenCalled();
+    } finally {
+      window.getComputedStyle = real;
+    }
+    expect(h.page.stage).toBe('signed_in');
+  });
+
+  it('the warning and the end keep the same space in the bar (the longest of their sentences)', async () => {
+    const h = start();
+    await h.toApp();
+    advance(13 * 60_000);
+    const sizes = (id: string) => [...(document.getElementById(id)?.querySelectorAll('.home-banner-text > .sizer') ?? [])].map((x) => x.textContent);
+    const ending = sizes('home-ending');
+    expect(ending).toHaveLength(3);
+    advance(2 * 60_000);
+    expect(sizes('home-ended')).toEqual(ending);
+    expect(document.querySelector('#home-ended .home-banner-text > p')?.textContent).toBe('Your sign-in to Passport Home has ended. Everything on screen stays. To load anything new, sign in again.');
+  });
+
+  /** Signed in to Home with a Google token that ends in 2.5 minutes (its notice in 30 s), on the app's page. */
+  const toAppShort = async (h: H): Promise<void> => {
+    await h.page.idle();
+    h.click('home-sign-in');
+    await until(() => h.page.awaitingChild, 'the Home sign-in to be prepared');
+    await h.answer({ exp: Math.floor(now / 1000) + 150 }, CLIENT_ID);
+    await h.page.idle();
+    (document.querySelector('.home-open') as HTMLElement).click();
+  };
+
+  it('the sign-in’s notice appears while Show key is armed (no ResizeObserver: the page’s own trigger): a press that lands shows nothing', async () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
+    const h = start();
+    await toAppShort(h);
+    await h.open();
+    expect(h.page.moving.state).toBe('unlocked');
+    const { toggle, secret } = h.reveal('stellar');
+    arm(h);
+    expect(toggle.disabled).toBe(false);
+    expect(h.page.session).toBe('active');
+    advance(31_000);
+    expect(h.page.session).toBe('ending');
+    expect(document.getElementById('home-ending')).not.toBeNull();
+    expect(toggle.disabled).toBe(true);
+    h.win.dispatch('pointerdown', { pointerType: 'mouse', clientX: pointerX, clientY: 10 });
+    toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(secret.hasAttribute('data-shown')).toBe(false);
+    // A new arming gesture, then the press: it shows.
+    pressEl(h, toggle);
+    expect(secret.hasAttribute('data-shown')).toBe(true);
+  });
+
+  it('a sign-in again refused at once (the browser blocks its window) is said in the bar and starts it over', async () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
+    const h = start();
+    await toAppShort(h);
+    await h.open();
+    advance(31_000);
+    armedAtContinue(h);
+    h.win.openResult = null;
+    h.click('home-sign-in-again');
+    expect(document.getElementById('home-renew-problem')?.closest('#home-banner')).not.toBeNull();
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+});
+
 describe('the guard and the auto-hide', () => {
   it('Continue needs the typed word and a guarded click; a click carried over does nothing', async () => {
     const h = start();
@@ -1782,7 +2012,7 @@ describe('H10: email users (D463)', () => {
     const addr = document.getElementById('home-who-address')!;
     expect(addr.textContent).toBe(hostile);
     expect(addr.querySelectorAll('*:not(wbr)')).toHaveLength(0);
-    expect(document.querySelector('.home-head img, .home-head a')).toBeNull();
+    expect(document.querySelector('#home-account img, #home-account a')).toBeNull();
     // auth.css isolates `.mail-address` (bidi), so the override can't reorder the text around it.
     expect(addr.className).toBe('mail-address');
   });

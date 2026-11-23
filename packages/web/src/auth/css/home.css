@@ -1,39 +1,148 @@
 /*
  * Passport Home (home-page.ts, home-devices.ts, home-email.ts; toasts in toast.ts), on the design system (D765): the
- * page shell (the static lockup header from pageHtml, then `main#app`), the sign-in card, the app list as cards, an
+ * page shell (D888: a skip link, the static lockup header from pageHtml as the top bar with who is signed in and the
+ * sign-in's notice, then `main#app`), one section pattern, the sign-in card, the app list as cards, an
  * app's page, "Devices and auto-approve" as cards of setting rows with each stop behind its confirmation, the email code
  * screens, and the toast stack. Tokens only. Partner content (app names, origins, the app's words for its rule) keeps
  * its neutral boxes and its bidi isolation; Journear's headings are always the page's own words.
  */
 
-/* ---- the page shell ---- */
+/* ---- the page shell (D888): a skip link, the top bar, then `main#app`, in one frame of at most 1040 px ---- */
 body.home-page {
+  --home-frame: 1040px;
+  /* The longest a line of reading text gets (sentences, alerts, the move flow's steps). */
+  --home-measure: 720px;
   background: var(--jp-bg);
 }
 
+/* The skip link: off screen until it has focus, then above the bar's start. */
+.home-skip {
+  position: absolute;
+  left: var(--jp-space-4);
+  top: calc(-1 * var(--jp-space-16));
+  z-index: calc(var(--jp-z-sticky) + 1);
+  padding: var(--jp-space-2) var(--jp-space-3);
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border-strong);
+  border-radius: var(--jp-radius-md);
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-semibold);
+}
+
+.home-skip:focus {
+  top: var(--jp-space-2);
+  outline: 2px solid var(--jp-focus);
+  outline-offset: 2px;
+}
+
+/* The top bar: the lockup, who is signed in and Sign out, and under them, while it shows, the sign-in's notice as a
+   row of the bar itself: the bar grows with it and covers nothing. It scrolls with the page; on a desktop (a mouse, a
+   window at least 641 x 600 px) it stays at the window's top. */
 .home-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  padding: var(--jp-space-4) max(var(--jp-space-4), calc((100% - 760px) / 2 + var(--jp-space-4)));
+  justify-content: space-between;
+  gap: var(--jp-space-2) var(--jp-space-4);
+  min-height: 64px;
+  padding: var(--jp-space-3) max(var(--jp-space-4), calc((100% - var(--home-frame)) / 2 + var(--jp-space-4)));
   background: var(--jp-surface);
   border-bottom: 1px solid var(--jp-border);
 }
 
-/* The lockup at 168 px (the system's minimum is 120), with clear space around it. */
+@media (min-width: 641px) and (min-height: 600px) and (pointer: fine) {
+  .home-top {
+    position: sticky;
+    top: 0;
+    z-index: var(--jp-z-sticky);
+  }
+
+  /* Focus that scrolls the page (a heading or a button taking focus) stops below the bar as it is now, the notice
+     included (home-page.ts keeps --home-bar-h). No scroll anchoring under a stuck bar: when the bar grows, what is in
+     view moves down by as much, out from under it, instead of being kept in place and covered (the move is harmless:
+     the move flow's guard starts over, D888). */
+  :root:has(> body.home-page) {
+    scroll-padding-top: calc(var(--home-bar-h, 64px) + var(--jp-space-4));
+    overflow-anchor: none;
+  }
+
+  body.home-page {
+    overflow-anchor: none;
+  }
+
+  /* The email code screens in a stuck bar: never taller than the window, scrolling inside it. */
+  #home-banner {
+    max-height: calc(100dvh - 96px);
+    overflow-y: auto;
+  }
+}
+
+/* The lockup at 148 px (the system's minimum is 120), 128 px on a phone. */
 .home-top .jp-lockup {
   display: block;
-  width: 168px;
+  flex: none;
+  width: 148px;
   height: auto;
-  margin: 4px 0;
+}
+
+/* Who is signed in and Sign out, at the bar's end. */
+.home-top-account {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.home-top-account:empty {
+  display: none;
+}
+
+.home-account {
+  min-width: 0;
+}
+
+/* The notice: the bar's last row, the frame's width; nothing of it while it is empty. */
+.home-top-notice {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.home-top-notice:has(> #home-banner:empty) {
+  display: none;
+}
+
+#home-banner {
+  display: grid;
+  gap: var(--jp-space-2);
+  margin: var(--jp-space-1) 0 0;
+}
+
+#home-banner > * {
+  margin: 0;
 }
 
 body.home-page > main {
-  max-width: 760px;
+  max-width: var(--home-frame);
   margin: 0 auto;
   padding: var(--jp-space-8) var(--jp-space-4) var(--jp-space-16);
 }
 
-/* ---- headings and rhythm ---- */
+/* The skip link's target: focus lands at the page's start, with no ring around the whole page. */
+body.home-page > main:focus {
+  outline: none;
+}
+
+@media (max-width: 560px) {
+  .home-top .jp-lockup {
+    width: 128px;
+  }
+
+  body.home-page > main {
+    padding-top: var(--jp-space-6);
+  }
+}
+
+/* ---- headings ---- */
 .panel.home {
   gap: var(--jp-space-4);
 }
@@ -54,10 +163,6 @@ body.home-page > main {
   margin: var(--jp-space-5) 0 var(--jp-space-2);
 }
 
-.home #home-content > h2:first-child {
-  margin-top: var(--jp-space-2);
-}
-
 .home p {
   margin: 0 0 var(--jp-space-2);
 }
@@ -67,19 +172,79 @@ body.home-page > main {
   outline: none;
 }
 
-/* The banner and notice slots stay in the page while empty (live regions), without the panel's gap. */
-.panel.home > #home-banner:empty,
+/* The notice slot stays in the page while empty (a refusal's place), without the panel's gap. */
 .panel.home > #home-notice:empty {
   margin-top: calc(-1 * var(--jp-space-4));
 }
 
 @media (max-width: 560px) {
-  body.home-page > main {
-    padding-top: var(--jp-space-6);
-  }
-
   .home h1 {
     font-size: var(--jp-text-2xl);
+  }
+}
+
+/* ---- one section pattern (D888), on the front page and an app's page: sections 40 px apart, no dividers; inside
+   each, its parts 12 px apart and a sub-heading 24 px below what is above it. One width, the frame's: the lists and
+   the tools (devices, ways to sign in, the name, moving the wallet; a card each) use it; reading text stops at the
+   measure. ---- */
+#home-content {
+  padding-top: var(--jp-space-2);
+}
+
+#home-content > section,
+#home-app-extras > section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  min-width: 0;
+  margin: var(--jp-space-10) 0 0;
+  padding: 0;
+  border: 0;
+}
+
+#home-content > section:first-of-type,
+#home-app-extras > section:first-child {
+  margin-top: 0;
+}
+
+#home-app-extras {
+  margin-top: var(--jp-space-10);
+}
+
+#home-app-extras > section:empty {
+  display: none;
+}
+
+#home-content > section > *,
+#home-app-extras > section > * {
+  margin: 0;
+}
+
+#home-content > section > :is(h3, h4):not(:first-child),
+#home-app-extras > section > :is(h3, h4):not(:first-child) {
+  margin-top: var(--jp-space-3);
+}
+
+/* Reading text keeps a readable measure, inside the wide cards too. No specificity: a part's own narrower width (the
+   search field's) stays. */
+:where(#home-content) :where(p, .jp-alert, .jp-steps, .home-confirm, .home-export .jp-kv) {
+  max-width: var(--home-measure);
+}
+
+#home-content > section.home-devices,
+#home-content > section.home-profile,
+#home-app-extras > section {
+  padding: var(--jp-space-5);
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
+}
+
+@media (max-width: 480px) {
+  #home-content > section.home-devices,
+  #home-content > section.home-profile,
+  #home-app-extras > section {
+    padding: var(--jp-space-4);
   }
 }
 
@@ -107,30 +272,15 @@ body.home-page > main {
   }
 }
 
-/* ---- the signed-in header: the title, who is signed in, Sign out ---- */
-.home-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--jp-space-2) var(--jp-space-4);
-}
-
+/* ---- who is signed in and Sign out, in the top bar ---- */
 .home-who {
   display: flex;
   align-items: center;
   gap: var(--jp-space-3);
   min-width: 0;
-  margin: 0 !important;
+  margin: 0;
   font-size: var(--jp-text-sm);
-}
-
-/* "Signed in as <address>": a line of its own under the title, the address wrapping at its own break points (dom.ts
-   addressText) so a long one takes more lines, never the page's width; Sign out stays at the line's end. */
-.home-who.home-who-email {
-  flex: 1 1 100%;
-  justify-content: space-between;
-  align-items: flex-start;
+  line-height: 20px;
 }
 
 .home-who > span {
@@ -145,6 +295,57 @@ body.home-page > main {
   color: var(--jp-fg);
 }
 
+/* The line keeps the lines it took when its words get shorter (home-page.ts replaceWho, a class on the bar's account
+   part): the bar's height, and so the page under it, doesn't change when the sign-in ends and the address is masked. */
+.home-who-lines-2 #home-who {
+  min-height: 40px;
+}
+
+.home-who-lines-3 #home-who {
+  min-height: 60px;
+}
+
+.home-who-lines-4 #home-who {
+  min-height: 80px;
+}
+
+/* A phone (option A's): the lockup and Sign out on the first row, who is signed in on its own line under them (an
+   email address wrapping at its own break points, dom.ts addressText), then the notice while it shows. The bar scrolls
+   with the page here. */
+@media (max-width: 560px) {
+  .home-top:has(#home-who) {
+    display: grid;
+    grid-template-columns: auto auto;
+    grid-template-areas: 'logo out' 'who who' 'notice notice';
+    justify-content: space-between;
+    align-items: center;
+    row-gap: 0;
+  }
+
+  .home-top:has(#home-who) .jp-lockup {
+    grid-area: logo;
+  }
+
+  .home-top:has(#home-who) :is(.home-top-account, .home-account, .home-who) {
+    display: contents;
+  }
+
+  .home-top #home-who {
+    grid-area: who;
+    margin-top: var(--jp-space-2);
+  }
+
+  .home-top #home-sign-out {
+    grid-area: out;
+    justify-self: end;
+  }
+
+  .home-top .home-top-notice {
+    grid-area: notice;
+    margin-top: var(--jp-space-2);
+  }
+}
+
 /* ---- alerts on the page: the session's banner, a refusal ---- */
 .home-banner > .body {
   display: flex;
@@ -153,7 +354,8 @@ body.home-page > main {
   gap: var(--jp-space-2) var(--jp-space-4);
 }
 
-.home-banner .body > p {
+.home-banner .body > p,
+.home-banner .body > .home-banner-text {
   flex: 1 1 260px;
   margin: 0;
 }
@@ -293,29 +495,73 @@ body.home-page > main {
   margin-right: var(--jp-space-1);
 }
 
-.home-addresses {
+/* The addresses and the Support ID: side by side from 900 px, the Support ID in a quiet box at the side; one above
+   the other below that. Each column keeps the section's rhythm. */
+.home-app-split {
   display: grid;
-  gap: var(--jp-space-3);
-  margin-bottom: var(--jp-space-3);
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--jp-space-6);
+  align-items: start;
 }
 
-.home-address {
+.home-app-split > div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  min-width: 0;
+}
+
+.home-app-split > div > * {
+  margin: 0;
+}
+
+@media (min-width: 900px) {
+  .home-app-split {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  }
+}
+
+#home-content > section > .home-app-split {
+  margin-top: var(--jp-space-3);
+}
+
+/* The app's box: its apps side by side where there is room. */
+#home-content .home-app-all {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+}
+
+/* The addresses: one card, a row per chain. */
+.home-addresses {
+  display: grid;
   background: var(--jp-surface);
   border: 1px solid var(--jp-border);
   border-radius: var(--jp-radius-lg);
-  padding: var(--jp-space-3) var(--jp-space-4);
+  min-width: 0;
+}
+
+.home-addresses > #home-opened-note {
+  margin: 0;
+  padding: var(--jp-space-3) var(--jp-space-4) 0;
+}
+
+.home-address {
+  padding: var(--jp-space-4);
+  min-width: 0;
+}
+
+.home-address + .home-address {
+  border-top: 1px solid var(--jp-border);
 }
 
 .home-address p {
   margin: 0;
 }
 
+/* The chain's name as written (sentence case), not small capitals. */
 .home-address-label {
-  color: var(--jp-fg-muted);
-  font-size: 11px;
+  color: var(--jp-fg);
+  font-size: var(--jp-text-sm);
   font-weight: var(--jp-weight-semibold);
-  letter-spacing: var(--jp-tracking-caps);
-  text-transform: uppercase;
   margin-bottom: var(--jp-space-1) !important;
 }
 
@@ -331,12 +577,22 @@ body.home-page > main {
   margin-top: var(--jp-space-3) !important;
 }
 
+/* An explorer link is a target of the controls' height: 32 px, 44 px on a touch screen (the tokens' --jp-control-sm). */
 a.explorer {
   display: inline-flex;
   align-items: center;
   gap: var(--jp-space-1);
+  min-height: var(--jp-control-sm);
   font-size: var(--jp-text-sm);
   font-weight: var(--jp-weight-medium);
+}
+
+/* The Support ID: a quiet box beside the addresses (under them on a phone). */
+.home-app-split > .home-support {
+  padding: var(--jp-space-5);
+  background: var(--jp-bg-subtle);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
 }
 
 .home-support p:first-of-type {
@@ -346,37 +602,34 @@ a.explorer {
   gap: var(--jp-space-2) var(--jp-space-3);
 }
 
-/* Only a copy that didn't work is said here (one that did is a toast): the user has to copy by hand. */
-p.copy-status:not(:empty) {
-  color: var(--jp-warning);
+/* Only a copy that didn't work is said here (one that did is a toast): the user has to copy by hand. The line sits at
+   the foot of the addresses' card (or the Support ID's box) and keeps the space of its longest sentence (ui.ts
+   reservedLine), so nothing anywhere moves when it appears or goes. */
+.home .home-copied-box > * {
+  margin: 0;
   font-size: var(--jp-text-sm);
-  margin-top: var(--jp-space-2);
+  line-height: var(--jp-leading-body);
+}
+
+.home .home-copied-box > p.copy-status {
+  color: var(--jp-warning);
+}
+
+.home-addresses > .home-copied-box {
+  margin-top: calc(-1 * var(--jp-space-2));
+  padding: 0 var(--jp-space-4) var(--jp-space-3);
 }
 
 /* ---- "Devices and auto-approve": cards of setting rows ---- */
-.home-devices {
-  margin-top: var(--jp-space-8);
-  padding-top: var(--jp-space-2);
-  border-top: 1px solid var(--jp-border);
-}
-
-.home-devices h2,
-.home-devices h3 {
-  margin-top: var(--jp-space-5);
-}
-
-.home-devices > .actions.start {
-  margin-top: var(--jp-space-3);
-}
-
-.home-devices > .home-problem {
-  margin-bottom: var(--jp-space-3);
-}
-
 .home-devices-group {
-  margin: var(--jp-space-4) 0 var(--jp-space-5);
   display: grid;
   gap: var(--jp-space-3);
+}
+
+/* One app's group after another's: the gap of a sub-heading. */
+#home-content > section > .home-devices-group + .home-devices-group,
+#home-app-extras > section > .home-devices-group + .home-devices-group {
+  margin-top: var(--jp-space-3);
 }
 
 .home-devices-group > p {
@@ -643,7 +896,8 @@ p.copy-status:not(:empty) {
   height: var(--jp-control-lg);
 }
 
-/* ---- toasts (toast.ts): bottom-right on a desktop, at the top on a phone; at most 380 px, three at once ---- */
+/* ---- toasts (toast.ts): bottom-right on a desktop, at the top on a phone (below the top bar, so a toast never sits on
+   Sign out or the notice: --home-bar-h, home-page.ts watchBar); at most 380 px, three at once ---- */
 .home-toasts {
   position: fixed;
   right: var(--jp-space-4);
@@ -673,7 +927,9 @@ p.copy-status:not(:empty) {
 
 @media (max-width: 640px) {
   .home-toasts {
-    top: max(var(--jp-space-4), env(safe-area-inset-top, 0px));
+    /* Below what is left of the bar in the window (--home-bar-bottom: 0 once it has scrolled away), never lower than
+       40 % of the window, whatever the bar holds (the email code screens). */
+    top: min(max(calc(var(--home-bar-bottom, 0px) + var(--jp-space-2)), var(--jp-space-4), env(safe-area-inset-top, 0px)), 40dvh);
     bottom: auto;
     right: auto;
     left: 50%;
@@ -682,27 +938,6 @@ p.copy-status:not(:empty) {
 }
 
 /* ---- Passport Home: "Your name" (home-profile.ts), on the front page and on an app's page, after the devices ---- */
-.home-profile {
-  margin-top: var(--jp-space-8);
-  padding-top: var(--jp-space-2);
-  border-top: 1px solid var(--jp-border);
-  display: flex;
-  flex-direction: column;
-  gap: var(--jp-space-3);
-}
-
-.home-profile > * {
-  margin: 0;
-}
-
-.home-profile h2,
-.home-profile h3 {
-  margin-top: var(--jp-space-5);
-}
-
-.home-profile h3#home-name-shares-title {
-  margin-top: var(--jp-space-4);
-}
 
 /* The form: the two parts side by side where there is room, one above the other on a phone; then the help, the
    buttons, the removal's confirmation. */
@@ -802,4 +1037,10 @@ p.copy-status:not(:empty) {
   padding-top: var(--jp-space-1);
   padding-bottom: var(--jp-space-1);
   overflow-wrap: anywhere;
+}
+
+/* A line that keeps its space (ui.ts reservedLine: the guard's line, the copy line) has no paragraph margin here: the
+   page's own `p` margin would add 8 px the moment its words appear (D878's line under the move flow's buttons). */
+.home .reserved > * {
+  margin: 0;
 }

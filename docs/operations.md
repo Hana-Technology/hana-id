@@ -4605,6 +4605,30 @@ with email.
 The automated version: `apps/e2e/tests/demo-gas-free.spec.ts` (also the day's budget used up, paused, and no card for
 an app that isn't sponsored). `HANA_SHOTS_DIR=<dir>` with `--project=chromium` saves its screens.
 
+### Partner labels in the admin portal (D894)
+
+Partners write request labels (the words the approval window will show for their apps' requests, piece 3 renders
+them); staff see every change on **Security → Partner labels** (`/labels`) for its whole wait, with what users would see
+(example values), the comparison with what users see now, and when it goes live. **Nothing is needed for a change to go
+live** (the founder's option 1). What staff can do, each with a one-line note that is kept in the audit log:
+
+| Tool | Where | What it does |
+|---|---|---|
+| Block this change | a change's page | It never takes effect, or, if live, stops showing at once. Final: the partner proposes again and waits again. The partner's security contacts get "Journear blocked a change to request labels for {app}" with the note and how to ask why (the feed's own mail, within about 5 minutes). |
+| Allow | a change's page, while staff review is on | Lifts the review hold only: the change still waits its own time. |
+| Switch these labels off / Turn these labels back on | a change's page | One set of labels (every version) off at once; back on shows only a version that already passed its wait. |
+| Switch every partner label off / Turn every partner label back on | Switches | The same for every partner's labels. The status page's "Partner labels" tile shows a warning while any switch is off. |
+| Require review for everyone / Turn review off for everyone; one organisation's switches by its id | Switches | With review on, no change goes live until staff press Allow; one nobody allows lapses 7 days after its time. Turning review off lets held changes whose time has passed go live at once, never sooner than their time. |
+
+When to block: the words would mislead a user about what the request does (it moves money but reads as harmless, it
+names something the call doesn't do). The real amounts, recipients and warnings still show beside a partner's words,
+so a block is about the words, not the request. A partner that keeps proposing misleading words: turn review on for
+its organisation. Labels misused widely or an incident: **Switch every partner label off** first, then look.
+
+Nothing here works in a deployed env yet: proposals are refused while the manifest's `partnerLabels.enabled` is absent
+(every env), so the screen is empty; the switches and Block still work. Migrations 0025 and console 0004 are not applied
+anywhere.
+
 ### Trying the staff admin portal by hand on the local stack (D873)
 
 The local stack runs the staff admin portal too: the real admin pages, signed in through a stand-in for Cloudflare
@@ -4669,7 +4693,16 @@ is the stack's.
     tile says it wasn't read from here: the stack runs no 15-minute job to report it). Not there: the watchdog (Security & monitoring
     says it isn't set up), the contract's governance (Pending upgrades says "NEAR didn’t answer"), the partner
     console, statements' files (R2) and email: System status marks each, which is expected here.
-12. Stop the stack with Ctrl+C. Its state lives in memory only.
+12. **Partner labels (D894):** `staff-demo labels-waiting` (a change announced, going live in 24 h), `labels-review`
+    (staff review on for its organisation, its time passed: it waits for **Allow**), `labels-live` (one in force),
+    `labels-update` (one in force and a second version announced: the comparison shows what changes), `labels-off`
+    (one in force and every partner label switched off: the status page's **Partner labels** tile is a warning). Each
+    prints the change and the page to open (`/labels/<change>`, or `/status` and `/labels` for `labels-off`).
+    `staff-demo labels-later` moves the portal's clock 24 hours on and runs the hourly job; `staff-demo labels-state`
+    prints every version's state. On a change's page: **Block this change** (write a note, confirm), then the page says
+    "Blocked by staff" and the lane's app no longer serves it. The partner's notice and the blocked mail aren't sent
+    here (the stack sends no email). Each scenario starts a new organisation, so they can be run in any order.
+13. Stop the stack with Ctrl+C. Its state lives in memory only.
 
 The automated version: `apps/e2e/tests/admin-portal.spec.ts` (all three browsers, each with a portal of its own on
 base + 34 to + 36). `HANA_SHOTS_DIR=<dir>` with `--project=chromium` saves its screens (desktop, light).

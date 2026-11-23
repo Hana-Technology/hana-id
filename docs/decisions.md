@@ -17922,6 +17922,47 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
 1. The limits above. 2. The names: staff "partner labels", partners "request labels" (the console, the emails and the
 partner's audit titles). 3. Lapsing a change held for review 7 days after its time. 4. A proposal stays allowed while
 the org's or everyone's switch is off (only an entry switched off refuses one). 5. Block is final (no unblock).
-6. The staff- and partner-facing sentences, listed in the next item. 7. The audit titles and security event titles in
+6. The staff- and partner-facing sentences (below). 7. The audit titles and security event titles in
 `packages/console-core/src/audit-words.ts` ("Request labels proposed", "Request labels blocked by Journear", "Request
 labels now shown to users", "Request labels proposed: shown to users after the wait unless Journear blocks them", …).
+
+#### The sentences (from the code, to confirm)
+- **Partner notice** (`apps/admin/src/email/messages.ts` `labelsProposed`; to the security alias and every security
+  contact): subject "Request labels proposed for {app}"; heading "Request labels proposed", lead "New words for your
+  app’s requests are waiting. They are not live yet, and you can cancel them."; body "Someone with owner rights in your
+  organisation proposed request labels for {apps}: the words the approval window will show your users for your app’s
+  requests, in your app’s name. Unless someone cancels it, it goes live {24 hours} after this email. Journear may block
+  it if it would mislead users."; the rows Apps, Organisation, Scope, Describes, "Change: Set request labels
+  ({lc_…})", Proposed at; "What users would see (example values):" each line and its rows; "What changes:" each changed
+  line (or "Nothing users see changes: every line stays as it is now."); the button "Cancel this change"; "If you did not
+  expect this change, cancel it. The page asks you to confirm; opening the link alone changes nothing. An owner can also
+  cancel it in the console."
+- **Blocked mail** (`labelsBlocked`, the feed's own mail for a `labels.blocked` row): subject "Journear blocked a change to
+  request labels for {app}"; "Journear blocked a change to the request labels of {apps} ({lc_…}). Your users will never
+  see it." (in force: "Your users no longer see it, from now."); "Journear’s note: “{note}”"; "To ask why, reply to this
+  email or write to your Journear contact. To try again, change the labels in the console; the new change waits {24
+  hours} again."
+- **The console's cancel page** for an `lc_` link: "Cancel this change to request labels", "This cancels the change to
+  your app’s request labels announced in the email (the words the approval window would show your users). It never
+  takes effect. You don’t need to sign in."
+- **The staff screen** (`apps/admin/public/app.js`, "Partner labels" under Security): subtitle "The words partners write
+  for the approval window, shown to their users as “{App} says: …”. Every change waits its time after the partner’s
+  security contacts are emailed. Nothing is needed for it to go live; block one that would mislead users."; panels
+  "Waiting" (soonest live first), "Decided in the last 14 days", "Switches"; on a change, "What users would see (example
+  values)", "Compared with what users see now", "Staff tools". States: "Waiting for the notice email", "Goes live {time}",
+  "Waiting for a staff Allow", "Live", "Blocked by staff", "Cancelled by the partner", "Lapsed", "Replaced by a newer
+  change", "Removed by the partner". Tools: "Block this change" (note label "Why (the partner is sent this note; it is
+  kept in the audit log)"; confirm "Block this change? Users will never see it, and the partner is told Journear blocked
+  it." or, in force, "Block this change? Users stop seeing it at once, and the partner is told Journear blocked it.");
+  "Allow" (confirm "Allow this change? It goes live at its time, or at once if its time has passed."); "Switch these
+  labels off" (confirm "Switch these labels off? Users of these apps see the plain approval window, without the
+  partner’s words, until staff turn them back on.") and "Turn these labels back on" ("Only a version that already passed
+  its wait is shown again."); "Switch every partner label off" / "Turn every partner label back on"; "Require review for
+  everyone" / "Turn review off for everyone"; one organisation's four switches by its id. A stale page: "This change moved
+  since you opened the page (someone may have acted, or it went live). Nothing was done. Reload the page and look again."
+  Every staff sentence passes the portal's plain-words checks (`test-spa/labels.test.ts`, D853, D879).
+- **Feed and notices**: "Partner label changes waiting" with the count and a link. **System status**: the tile "Partner
+  labels" (group Partners): OK with no switch off; a warning "Partner labels are switched off {for everyone | for N
+  organisations}; N sets of partner labels are switched off", with "{who} see the plain approval window, without the
+  partner’s words. To turn a switch back on, open Partner labels."; review on is a detail line; Unknown when the API
+  can't be read or is older.

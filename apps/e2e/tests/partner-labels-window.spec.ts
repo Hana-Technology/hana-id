@@ -181,6 +181,7 @@ test.describe('partner labels in the approval window (D896)', () => {
     await expect(popup.locator('p.partner-says')).toHaveText('Coffee Club says: pay for order 1042');
     await expect(popup.locator('dl.id-rows code.id-full')).toHaveText(muxedTill);
     await expect(popup.locator('div.partner-label')).not.toContainText(TILL);
+    await check(popup, 'muxed-till', browserName);
     await finish(page, popup, 'pay-muxed');
 
     // 7. A request the label doesn't describe (a trust line: nothing moves to anyone).

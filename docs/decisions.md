@@ -18966,8 +18966,17 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   several operations.
 - Not covered: a Soroban token transfer (`transfer` on a token contract: a Soroban document's own contract only, and
   only after piece 5); value that leaves through an offer (`manageSellOffer`, `manageBuyOffer`: no destination); a
-  trust-line-plus-clawback pattern or any value moved by another account's operation; a liquidity pool deposit; a fee
-  bump (not described yet); a NEAR transfer. Those show Journear's own window and warnings as before.
+  trust-line-plus-clawback pattern or any value moved by another account's operation; a liquidity pool deposit; a
+  `setOptions` signer or weight change (an account takeover, not a value move); a fee bump (not described yet); a NEAR
+  transfer. Those show Journear's own window and warnings as before (tested byte for byte: an offer, a pool deposit, a
+  signer change and a Soroban token transfer under a payment document).
+- **A listed account others share** (after PR 123's second review): an exchange's or an anchor's deposit address, where
+  the memo or the muxed id picks who is credited, lets a hijacked page get the app's box on a payment that credits the
+  attacker: memo `99999` to a listed till matches ("{App} says: pay for order 99999"), and so does the till's M… form
+  with id 99. Journear's own Memo and To rows still show those values, and the partner box never shows the address.
+  Guidance for piece 4, shown where a partner adds an address-book entry: "List only accounts that only you control,
+  never a shared deposit address." The alternative for the founder, beside the muxed item below: refuse to match a
+  muxed destination at all (the plain window).
 
 #### The security argument
 - **A hostile partner with a label in force** (its owner's Google account, after the notice, the 24 h wait and the
@@ -18979,8 +18988,8 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   or warnings of any source; remove, lower, reorder or reword a warning; change or contradict an amount, a recipient or
   the fee (they are the request's, decoded by the window itself; no partner row repeats the destination; an id value
   that reads as an amount, a token, a claim or Journear's words is not shown, and the request gets the amber line);
-  show anything for a request that doesn't match; describe away a payment to an account it hasn't listed, by any
-  value-moving classic operation (the red line); use a soft verb on something that moves value; describe a contract
+  show anything for a request that doesn't match; describe away a payment to an account it hasn't listed by any of the
+  five operation types above (the red line; the not-covered list is above); use a soft verb on something that moves value; describe a contract
   Journear reads itself, or a standard token method; reach another org's users.
 - **A compromised API or D1** can serve any document with a matching sha256 (it writes both), skip the wait, the notice
   and the veto, and serve two entries for one contract. It cannot get past the vault's parser and text rules, which run
@@ -18992,8 +19001,8 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   legitimate payment by serving a document whose address book lacks the account (a denial in Journear's voice, the same
   as a hostile partner's own document).
 - **A hijacked partner page** can't change labels and can't make the vault read another app's; its forged requests
-  match nothing (plain), mismatch (amber) or send the user's value to an unlisted account by any classic operation
-  (red), which makes the tampering more visible. Remaining routes it has around the red line are the "not covered" list
+  match nothing (plain), mismatch (amber) or send the user's value to an unlisted account by one of the five operation
+  types (red), which makes the tampering more visible. Remaining routes it has around the red line are the "not covered" list
   above.
 - **A malicious staff member** can only block or switch labels off (D894): users then see the plain window.
 - **The phishing attempts tested** (`packages/web/test/auth/render-labels.test.ts`, `approve-page-labels.test.ts`, in the
@@ -19006,9 +19015,18 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   "Free", "Verified-9", "approve-1") and a memo with a hidden direction mark: the amber line, the value not shown. A
   phrase the rules let through ("the danger zone order") stays inside the attributed box with no alert style. Long
   values wrap inside the box at 390 px with no sideways scrolling, in Chromium, Firefox and WebKit.
-- **Residual**: an order number or item id is still the request's own text (plain ASCII, none of the refused words), in
-  mono under the app's attribution; a word filter is a first filter (D892 item 16); an app's name can change at once
-  (below); the routes around the red line listed above.
+- **Residual**: an order number or item id is still the request's own text (plain ASCII, none of the refused words:
+  Journear's names, claim and lure words such as paid, bonus, gift, reward, airdrop, claim, done, success, scam, free and
+  their plurals, shorthand amounts such as 1M or 10k, and a 2 to 6 capital run glued to digits or to 1 to 3 digits by a
+  hyphen, such as 1SOL or SOL-1; ordinary ids such as A1B2C3, INV-2026-0042 and Hanami-12 pass), in mono under the app's
+  attribution; a word filter is a first filter (D892 item 16); an app's name can change at once (below); the routes
+  around the red line listed above; a listed account others share (above); a matching payment whose fee is far above
+  normal still gets the box when the document sets no `feeAtMost` (Journear's own fee row shows it).
+- **Row names** (after the second review): a field label can't be any of the window's own row names (a test reads them
+  from `render-approval.ts`, so a row added there later fails until the rules refuse it) nor the generic money and
+  identity words (asset, source, through, offer, buy, sell, for, limit, name, code, call, sequence, destination,
+  address, beneficiary, spend, currency, worth, due, …). The partner's box is built inside its own guard: anything that
+  throws while building it is the plain window.
 
 #### After PR 123's review (2026-11-23): what changed, each decided while reviewing, **to confirm**
 1. The box comes after every alert of any source (the out-of-policy line and the demo banner are page notes), built by
@@ -19060,9 +19078,20 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 7. `code_hash_mismatch` (a contract changed since its label was written) is a `described_mismatch`, so with piece 5 it
    will show the amber line.
 8. Red for every value-moving classic operation to an unlisted account (the covered and not-covered lists).
-9. Muxed accounts matched on their base account.
+9. Muxed accounts matched on their base account (the shared-deposit-address residual above; the alternative: refuse
+   to match a muxed destination at all, the plain window).
 10. A row the sentence already shows is dropped; no partner "To" row; at most 3 rows; row labels' new refusals.
 11. Fee bumps not described for now.
+13. **The red line in wallet-style apps.** In an app with a payment document, a user paying a friend, funding a friend's
+    new account, or sending a claimable balance gets the red line "This isn’t one of the accounts {App} has listed for
+    payments. If you expected to pay {App}, don’t approve." That is alarming for wallet-style apps. Alternatives: keep
+    it (recommended for shop-style apps, where any other payee is the attack), or let a document declare "my users also
+    pay other people", which turns the red line into no line for plain payments (to design in piece 4 if wanted).
+14. For piece 4's console: suggest `feeAtMost` when a partner writes a payment format (a matching payment with a 4,000
+    XLM maximum fee still gets the box when the document sets none); warn that a payment format turns every payment, and
+    every one of the five operation types, to an unlisted account red; and "List only accounts that only you control,
+    never a shared deposit address." where an address-book entry is added.
+15. The id-value refusals above (lures, shorthand amounts, capitals glued to digits) and the row-name list.
 12. Not built: the optional "{App} changed this description on {date}" line (D892 recommendation 6); `label_live`
     recorded at the first served read (D894's requirement); the `app.renamed` flag; a NEAR or Soroban label in the real
     window (no code hash until piece 5), so no soft verb can be seen there yet (the unit tests render one).
@@ -19072,5 +19101,9 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   unit `stack.test.ts` +1; Playwright `partner-labels-window.spec.ts` (2 tests), `partner-labels.spec.ts` and
   `approval-dividers.spec.ts` in Chromium, Firefox and WebKit. Screens: `hana-id-review-files/approval-shots/
   partner-labels-window/` (with a label, without, a mismatch, an unlisted account, a path payment to one, a warning
-  with a label, long text; 390 and 1280 px, light and dark).
+  with a label, long text, the till's muxed form; 390 and 1280 px, light and dark). After the second review: core
+  `partner-labels-row-words.test.ts` (every row label of the window refused, the generic words, honest labels kept,
+  id values refused and kept); web: every risk box and alert above the box with each index checked present, the alerts
+  with labels equal to the alerts without, the box builder that throws, and four more identity cases (an offer, a pool
+  deposit, a signer change, a Soroban token transfer).
 - Address impact: none (display only; nothing signed, decoded or derived changes; the approval digest is unchanged).

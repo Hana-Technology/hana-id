@@ -13,7 +13,7 @@ import { type LabelDocument, SOFT_VERBS, partnerAttribution } from '@hana-id/cor
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dom } from '../../src/auth/dom.ts';
 import { alert } from '../../src/auth/ui.ts';
-import { type ApprovalRenderContext, renderApproval } from '../../src/auth/render-approval.ts';
+import { type ApprovalRenderContext, guardedLabelBox, renderApproval } from '../../src/auth/render-approval.ts';
 import { LABEL_MISMATCH, LABEL_NOT_LISTED, labelBoxName, labelOutcome, windowLabelDocuments } from '../../src/auth/render-labels.ts';
 import {
   GUESTBOOK_DOC_JSON,
@@ -112,10 +112,42 @@ describe('a classic payment exactly as described: the partner’s box', () => {
     const box = kids.findIndex((c) => c.matches('div.partner-label'));
     expect(box).toBe(kids.length - 2);
     expect(kids[box + 1]!.matches('details.request-details')).toBe(true);
-    for (const n of notes) expect(kids.indexOf(n)).toBeLessThan(box);
-    expect(kids.findIndex((c) => c.matches('.risk-box'))).toBeLessThan(box);
+    expect(box).toBeGreaterThanOrEqual(0);
+    for (const n of notes) {
+      const at = kids.indexOf(n);
+      expect(at, n.textContent ?? '').toBeGreaterThanOrEqual(0);
+      expect(at).toBeLessThan(box);
+    }
+    // EVERY risk box, wherever it is: above the box (and there is at least one here).
+    const risks = [...el.querySelectorAll('.risk-box')];
+    expect(risks.length).toBeGreaterThan(0);
+    for (const r of risks) expect(r.compareDocumentPosition(kids[box]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Journear's facts for the request (the memo row) are above the box too.
-    expect(kids.findIndex((c) => c.textContent === 'Memo1042')).toBeLessThan(box);
+    const memo = kids.findIndex((c) => c.textContent === 'Memo1042');
+    expect(memo).toBeGreaterThanOrEqual(0);
+    expect(memo).toBeLessThan(box);
+  });
+
+  it('a label never adds, drops or changes a warning: the alerts with labels present are the alerts without (count and text)', () => {
+    const alertsOf = (el: HTMLElement) => [...el.querySelectorAll('.risk-box, [role="alert"], .jp-alert, .alert')].filter((n) => !n.closest('div.partner-label')).map((n) => n.textContent);
+    for (const o of [{}, { asset: USDC_LOOKALIKE }, { amount: '1', memo: Memo.text('A-77_x') }, { destination: muxedOf(OTHER) }]) {
+      const d = dom(document);
+      const notes = () => [alert(d, 'info', { class: 'note test-app' }, 'test app'), alert(d, 'warning', { class: 'note out-of-policy' }, 'out of policy')];
+      const withLabels = alertsOf(render(payment(o), [PAYMENT], { notes: notes() }));
+      const without = alertsOf(render(payment(o), [], { notes: notes() }));
+      expect(withLabels.length).toBeGreaterThan(0);
+      expect(withLabels).toEqual(without);
+    }
+  });
+
+  it('a box that throws while it is built leaves the window plain (no box, no failure)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(guardedLabelBox(() => {
+      throw new Error('boom: the stamp');
+    })).toBeNull();
+    expect(warn).toHaveBeenCalledWith('partner label skipped: it could not be shown');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('stamp');
+    warn.mockRestore();
   });
 });
 
@@ -129,6 +161,11 @@ describe('the identity: no labels, or labels that describe nothing here, or that
     ['a payment from another account than the user’s', payment({ opSource: STRANGER, destination: STRANGER }), [PAYMENT], {}],
     ['a fee-bumped payment that would match', stellar(feeBumpBytes(paymentTx())), [PAYMENT], {}],
     ['a fee-bumped payment to an unlisted account (not described yet)', stellar(feeBumpBytes(paymentTx({ destination: STRANGER }))), [PAYMENT], {}],
+    // After PR 123's second review: value moves the payment rule doesn't cover (listed in D896): plain, byte for byte.
+    ['a payment document over an offer (manageSellOffer)', stellar(txBytes([Operation.manageSellOffer({ selling: Asset.native(), buying: USDC_LOOKALIKE, amount: '50', price: '1' })])), [PAYMENT], {}],
+    ['a payment document over a liquidity pool deposit', stellar(txBytes([Operation.liquidityPoolDeposit({ liquidityPoolId: 'ab'.repeat(32), maxAmountA: '10', maxAmountB: '10', minPrice: '0.5', maxPrice: '2' })])), [PAYMENT], {}],
+    ['a payment document over setOptions (a signer change)', stellar(txBytes([Operation.setOptions({ signer: { ed25519PublicKey: STRANGER, weight: 10 } })])), [PAYMENT], {}],
+    ['a payment document over a Soroban token transfer', stellar(txBytes([invokeOp(TEST_USDC_SAC, 'transfer', [addr(USER), addr(STRANGER), i128(1_000_000n)], [sourceAuth(invocation(TEST_USDC_SAC, 'transfer', [addr(USER), addr(STRANGER), i128(1_000_000n)]))])])), [PAYMENT], {}],
     ['a router swap on another contract, its authorization reaching the described one', stellar(txBytes([invokeOp(ROUTER, 'swap', args, [sourceAuth(invocation(ROUTER, 'swap', args, [invocation(POOL, 'deposit', args)]))])])), [SOROBAN], { labelFacts: { codeHash: POOL_WASM } }],
     ['a NEAR call to the described contract, no code hash (every NEAR document until piece 5)', collect(), [STAMPS_DOC], { address: ME }],
     ['a NEAR call with a deposit and two actions, no code hash', nearDecoded([fn('collect', '{"stamp":"gold"}', { deposit: 5n }), fn('collect', '{}')]), [STAMPS_DOC], { address: ME }],

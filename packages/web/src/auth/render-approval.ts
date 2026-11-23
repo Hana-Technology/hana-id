@@ -1526,6 +1526,23 @@ function windowLabel(decoded: DecodedApproval, ctx: ApprovalRenderContext): Labe
   }
 }
 
+/**
+ * The partner's box, built inside its own guard (after PR 123's second review): anything that throws while building it
+ * leaves the window plain (no box), never a window that can't be shown, and logs no label text.
+ */
+export function guardedLabelBox(build: () => HTMLElement): HTMLElement | null {
+  try {
+    return build();
+  } catch {
+    try {
+      console.warn('partner label skipped: it could not be shown');
+    } catch {
+      // No console: nothing to say.
+    }
+    return null;
+  }
+}
+
 /** Typed data whose domain names no chain (D35). */
 export const TYPED_DATA_NO_CHAIN = 'This signature names no network, so it may work on any of them, real-money ones included.';
 
@@ -1607,7 +1624,7 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
     ...journearAfterWarnings(k, ctx),
     // D896: the partner's own description of this exact request, attributed: after everything Journear says, every
     // warning of any source included, and only the folded details below it. Its one place, for every request.
-    label.kind === 'match' ? labelBox(d, label.match, appName) : null,
+    label.kind === 'match' ? guardedLabelBox(() => labelBox(d, label.match, appName)) : null,
     detailsSection(d, [free ? rows(d, [free], 'jp-kv facts fee-facts') : null, ...(ctx.detailsExtra ?? []), ...k.details]),
   );
   // No list without rows: its rules would be drawn around nothing (approval.css "the dividers").

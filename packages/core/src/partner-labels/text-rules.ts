@@ -200,6 +200,12 @@ const ROW_WORDS = denyList([
   'receiver', 'receive', 'receives', 'received', 'network', 'networks', 'memo', 'memos', 'token', 'tokens', 'account', 'accounts', 'price', 'prices',
   'value', 'values', 'leaving', 'program', 'programs', 'key', 'keys', 'owner', 'owners', 'permission', 'permissions', 'pool', 'pools', 'collection',
   'valid', 'until', 'pay', 'pays', 'paid', 'payment', 'payments', 'payer', 'payee', 'charge', 'charges', 'charged', 'deposit', 'deposits', 'withdrawal',
+  // After PR 123's second review: the rest of the window's own row names (a test reads them from render-approval.ts)
+  // and the generic money and identity words.
+  'asset', 'assets', 'code', 'codes', 'source', 'sources', 'through', 'offer', 'offers', 'buy', 'buys', 'sell', 'sells', 'for', 'limit', 'limits',
+  'name', 'names', 'call', 'calls', 'sequence', 'destination', 'destinations', 'address', 'addresses', 'beneficiary', 'beneficiaries', 'spend',
+  'spends', 'currency', 'currencies', 'worth', 'due', 'access', 'list', 'most', 'least', 'flag', 'flags', 'clears', 'sets', 'home', 'domain',
+  'inflation', 'ledger', 'ledgers', 'paying', 'size', 'transaction', 'transactions', 'hash',
 ]);
 
 /** Words that would stand in for the window's own computed text ("your account") or speak to the user. */
@@ -230,6 +236,8 @@ const JARGON_PATTERNS: readonly [string, RegExp][] = PARTNER_JARGON.map((w) => [
  * list, the reviewed NEAR contracts, the known tokens' symbols and names, and the networks' own coins.
  */
 const BRAND_WORDS = Object.freeze(['journear', 'passport']);
+/** Lures and outcome words an id value may not be (`idValueProblem`). */
+const LURE_WORDS: ReadonlySet<string> = new Set(['paid', 'bonus', 'gift', 'prize', 'reward', 'cashback', 'airdrop', 'claim', 'claimed', 'done', 'success', 'successful', 'scam', 'free', 'refund', 'refunded', 'approved', 'verified', 'complete', 'completed', 'won', 'winner']);
 const NATIVE_COINS = Object.freeze(['NEAR', 'ETH', 'Ether', 'XLM', 'Lumens', 'BTC', 'Bitcoin']);
 
 function reviewedNames(): { words: Set<string>; long: string[] } {
@@ -351,7 +359,14 @@ export function idValueProblem(value: string): boolean {
   const words = pieces.map(cf);
   const letters = cf(pieces.filter((w) => /^\p{L}+$/u.test(w)).join(''));
   const skeleton = nameSkeleton(value);
-  if (BRAND_WORDS.some((b) => letters.includes(b) || skeleton.includes(nameSkeleton(b))) || pieces.some((w) => w.startsWith('hana'))) return true;
+  // Journear's names anywhere; "Hana" only as a whole piece or as "hanaid…" ("Hanami-12" is a fine id).
+  if (BRAND_WORDS.some((b) => letters.includes(b) || skeleton.includes(nameSkeleton(b))) || words.some((w) => w === cf('hana') || w.startsWith(cf('hanaid'))) || letters.startsWith(cf('hanaid'))) return true;
+  // Lures and outcomes a request's own id could pass off as the result (after PR 123's second review), with plurals.
+  const lures = new Set([...LURE_WORDS].map(cf));
+  if (words.some((w) => lures.has(w) || (w.endsWith('s') && lures.has(w.slice(0, -1)))) || letters.includes(cf('paidinfull')) || letters.includes(cf('cashback'))) return true;
+  // Amount-like: a shorthand amount ("1M", "10k"), or a 2–6 capital ticker-like run glued to digits ("1SOL", "SOL1") or to
+  // 1–3 digits by a hyphen or underscore ("SOL-1"); ordinary ids ("A1B2C3", "INV-2026-0042", "1042") pass.
+  if (/(?:^|[-_])\d+(?:\.\d+)?[kKmMbB](?:$|[-_])/u.test(value) || /(?:^|[^A-Za-z])[A-Z]{2,6}\d|\d[A-Z]{2,6}(?:$|[^A-Za-z])/u.test(value) || /(?:^|[-_])[A-Z]{2,6}[-_]\d{1,3}(?:$|[-_])|(?:^|[-_])\d{1,3}[-_][A-Z]{2,6}(?:$|[-_])/u.test(value)) return true;
   if (pieces.some((w) => REVIEWED.words.has(w)) || words.some((w) => OTHER.has(w))) return true;
   if (denied(words, CLAIM) !== null || CLAIM_LONG_STEMS.some((st) => letters.includes(st)) || CLAIM_RUNS.some((st) => letters.includes(st))) return true;
   const ui = MEANING.find((m) => m.code === 'text_ui_word')!.list;

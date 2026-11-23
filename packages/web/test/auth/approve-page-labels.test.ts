@@ -100,8 +100,12 @@ describe('the approval page with partner labels (D896)', () => {
     const kids = [...document.querySelector('div.request')!.children];
     const box = kids.findIndex((c) => c.matches('div.partner-label'));
     expect(box).toBeGreaterThan(-1);
-    expect(kids.findIndex((c) => c.matches('.note.out-of-policy'))).toBeLessThan(box);
-    expect(kids.findIndex((c) => c.matches('.note.test-app'))).toBeLessThan(box);
+    // Each present (an index of -1 would also be "less than": checked first), then above the box.
+    for (const sel of ['.note.out-of-policy', '.note.test-app']) {
+      const at = kids.findIndex((c) => c.matches(sel));
+      expect(at, sel).toBeGreaterThanOrEqual(0);
+      expect(at, sel).toBeLessThan(box);
+    }
     expect(kids.slice(box + 1).map((c) => c.tagName.toLowerCase())).toEqual(['details']);
     // No alert of any kind, anywhere in the page, after the box (the buttons, their hint and the auto-approve stop
     // line are not alerts).

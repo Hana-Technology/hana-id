@@ -1007,8 +1007,10 @@ top-level call of its contract; a NEAR document: a call to its account; a fee bu
 until piece 5, so only classic payments render today), then the shape; muxed accounts are their base account. It
 renders: a match as "{App} says: …" with "These are {App}’s words. Journear hasn’t checked them." in a plain box (a
 named group, at most 3 rows, none repeating the sentence) after everything Journear says, with only the details below
-it; a described request that doesn't match as one amber line in Journear's voice; any value-moving classic operation to
-an account outside the app's address book as a red line; anything else exactly as without labels; anything thrown
+it; a described request that doesn't match as one amber line in Journear's voice; a payment, a strict-send or strict-receive path payment, an account creation, an account merge or a claimable balance (the five
+operation types) to an account outside the app's address book as a red line (not covered: offers, liquidity pool
+deposits, Soroban token transfers, and setOptions signer or weight changes, an account takeover rather than a value
+move); anything else exactly as without labels; anything thrown
 while reading labels as no label. Later pieces: the console's editor, computed effects and the code-hash read.
 
 ### NEAR requests (D720–D729)

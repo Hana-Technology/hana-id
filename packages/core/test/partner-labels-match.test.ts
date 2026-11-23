@@ -230,7 +230,7 @@ describe('NEAR: typed slots', () => {
           sentence: ['verb', 'object', { word: 'for' }, { field: 'args.order' }],
           fields: [
             { path: 'args.ends', label: 'Sale ends', format: 'date', params: { unit: 'nanoseconds' } },
-            { path: 'args.lock', label: 'Held for', format: 'duration', params: { unit: 'seconds' } },
+            { path: 'args.lock', label: 'Hold time', format: 'duration', params: { unit: 'seconds' } },
             { path: 'args.order', label: 'Order', format: 'orderNumber' },
           ],
         },

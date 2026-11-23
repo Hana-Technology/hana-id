@@ -193,7 +193,7 @@ export from Passport Home. Use email sign-in, as in A.
    "NEAR transaction (add_message on the guestbook): signed, not sent" with the signed transaction and its hash; it is
    sent (and linked) only when the account holds at least 0.01 NEAR for the fee.
 7. Optional, the user's exit: open Passport Home, <https://hana-id-auth-sandbox-dev.tingtc.workers.dev/home>, click
-   **Continue with email** and sign in with the same address. Under **Your apps**, click **View** on "Smoke B (shared
+   **Continue with email** and sign in with the same address. Under **Your wallets**, click the row of "Smoke B (shared
    only)" (the demo's app). See: "Your addresses" with the NEAR account. Under **Move this wallet to another wallet
    app**, click **Show how to move it**, then **Continue with a code**; after the code, the steps Verify, Understand,
    Export: "Your wallet is open", click **NEAR key**, read "Before you move a NEAR account", type `EXPORT`, click

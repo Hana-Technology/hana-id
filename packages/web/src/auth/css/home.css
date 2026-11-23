@@ -1,10 +1,11 @@
 /*
  * Passport Home (home-page.ts, home-devices.ts, home-email.ts; toasts in toast.ts), on the design system (D765): the
  * page shell (D888: a skip link, the static lockup header from pageHtml as the top bar with who is signed in and the
- * sign-in's notice, then `main#app`), one section pattern, the sign-in card, the app list as cards, an
- * app's page, "Devices and auto-approve" as cards of setting rows with each stop behind its confirmation, the email code
- * screens, and the toast stack. Tokens only. Partner content (app names, origins, the app's words for its rule) keeps
- * its neutral boxes and its bidi isolation; Journear's headings are always the page's own words.
+ * sign-in's notice, then `main#app`), one section pattern, the sign-in card, the front page's groups of rows (D893:
+ * "Your wallets", "Your account", "Other apps"), a wallet's page, the account views, "Devices and auto-approve" as
+ * cards of setting rows with each stop behind its confirmation, the email code screens, and the toast stack. Tokens
+ * only. Partner content (app names, origins, the app's words for its rule) keeps its neutral boxes and its bidi
+ * isolation; Journear's headings are always the page's own words.
  */
 
 /* ---- the page shell (D888): a skip link, the top bar, then `main#app`, in one frame of at most 1040 px ---- */
@@ -172,9 +173,9 @@ body.home-page > main:focus {
   outline: none;
 }
 
-/* The notice slot stays in the page while empty (a refusal's place), without the panel's gap. */
-.panel.home > #home-notice:empty {
-  margin-top: calc(-1 * var(--jp-space-4));
+/* A refusal's slot (D893: under the view's heading, or under the search) takes no space while empty. */
+#home-notice:empty {
+  display: none;
 }
 
 @media (max-width: 560px) {
@@ -183,7 +184,7 @@ body.home-page > main:focus {
   }
 }
 
-/* ---- one section pattern (D888), on the front page and an app's page: sections 40 px apart, no dividers; inside
+/* ---- one section pattern (D888), on every view (D893): sections 40 px apart, no dividers; inside
    each, its parts 12 px apart and a sub-heading 24 px below what is above it. One width, the frame's: the lists and
    the tools (devices, ways to sign in, the name, moving the wallet; a card each) use it; reading text stops at the
    measure. ---- */
@@ -220,8 +221,8 @@ body.home-page > main:focus {
   margin: 0;
 }
 
-#home-content > section > :is(h3, h4):not(:first-child),
-#home-app-extras > section > :is(h3, h4):not(:first-child) {
+#home-content > section > :is(h2, h3, h4):not(:first-child),
+#home-app-extras > section > :is(h2, h3, h4):not(:first-child) {
   margin-top: var(--jp-space-3);
 }
 
@@ -231,8 +232,8 @@ body.home-page > main:focus {
   max-width: var(--home-measure);
 }
 
-#home-content > section.home-devices,
-#home-content > section.home-profile,
+/* The wallet's tools, a card each. On their own views (D893) "Devices and auto-approve" and "Your name" are the page,
+   not a card: their heading is the view's `h1` and their sentence its lede. */
 #home-app-extras > section {
   padding: var(--jp-space-5);
   background: var(--jp-surface);
@@ -241,11 +242,57 @@ body.home-page > main:focus {
 }
 
 @media (max-width: 480px) {
-  #home-content > section.home-devices,
-  #home-content > section.home-profile,
   #home-app-extras > section {
     padding: var(--jp-space-4);
   }
+}
+
+#home-content > section#home-devices > h1 + p,
+#home-content > section#home-profile > h1 + p {
+  color: var(--jp-fg-muted);
+  margin-top: calc(-1 * var(--jp-space-1));
+  margin-bottom: var(--jp-space-3);
+}
+
+/* ---- a view's heading and its sentence (D893): the front page's groups, an account view ---- */
+.home-view-head {
+  display: grid;
+  gap: var(--jp-space-2);
+}
+
+.home .home-view-head > * {
+  margin: 0;
+}
+
+.home .home-lede {
+  color: var(--jp-fg-muted);
+  margin: 0;
+}
+
+/* Every heading on the page is the same size at its level (h2 inside a wallet's page reads as a section's title). */
+#home-content h2 {
+  font-size: var(--jp-text-xl);
+  line-height: var(--jp-leading-snug);
+}
+
+#home-content :is(.home-app-details, #home-app-extras) h2 {
+  font-size: var(--jp-text-md);
+}
+
+/* ---- the way back on a view (D893): "Your wallets", a quiet link-like button ---- */
+.home .home-back.jp-btn {
+  align-self: flex-start;
+  gap: var(--jp-space-1);
+  margin: 0 0 var(--jp-space-3) calc(-1 * var(--jp-space-2));
+  padding-left: var(--jp-space-2);
+  padding-right: var(--jp-space-2);
+  color: var(--jp-link);
+  font-weight: var(--jp-weight-medium);
+}
+
+.home .home-back .ic {
+  width: 14px;
+  height: 14px;
 }
 
 /* ---- signed out, loading, signing in: one card in the middle, the login modal's providers ---- */
@@ -386,25 +433,205 @@ body.home-page > main:focus {
   font-size: var(--jp-text-sm);
 }
 
-.home-empty b {
+.home-empty :is(b, strong) {
   color: var(--jp-fg);
 }
 
-/* ---- the app list: cards ---- */
-.home-cards {
+/* ---- a list of rows in one card (D893): the wallets, "Your account", the other apps. A row is one button. ---- */
+.home-rows {
   list-style: none;
-  margin: 0 0 var(--jp-space-3);
+  margin: 0;
   padding: 0;
+  background: var(--jp-surface);
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-lg);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.home-rows > li + li {
+  border-top: 1px solid var(--jp-border);
+}
+
+.home-row {
+  display: flex;
+  align-items: center;
+  gap: var(--jp-space-3);
+  width: 100%;
+  min-height: 64px;
+  margin: 0;
+  padding: var(--jp-space-3) var(--jp-space-4);
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--jp-fg);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+button.home-row:hover {
+  background: var(--jp-bg-subtle);
+}
+
+button.home-row:focus-visible {
+  outline: 2px solid var(--jp-focus);
+  outline-offset: -2px;
+}
+
+.home-row > .home-row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The apps' names: the partner's words, kept apart from each other, wrapped anywhere (a name can be one long word). */
+.home-row-title {
+  font-weight: var(--jp-weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.home-row-name {
+  unicode-bidi: isolate;
+}
+
+.home-row-title .jp-badge {
+  margin-left: var(--jp-space-2);
+  vertical-align: 1px;
+}
+
+/* Where the app runs: there, but quieter than the name (D893: no longer the loudest line of the row). */
+.home-row-sub {
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+  font-weight: var(--jp-weight-regular);
+  overflow-wrap: anywhere;
+}
+
+.home-row-sub .origin {
+  font-family: var(--jp-font-mono);
+  font-size: var(--jp-text-xs);
+  color: var(--jp-fg-muted);
+}
+
+.home-row > .jp-badge {
+  flex: none;
+}
+
+.home-row > .chev {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--jp-fg-faint);
+}
+
+/* The app's tile: its logo over a neutral placeholder, so an app with no logo (or one that fails to load) still has
+   one. Partner content stays in a neutral box. */
+.home-tile {
+  flex: none;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--jp-radius-md);
+  background: var(--jp-bg-subtle);
+  border: 1px solid var(--jp-border);
+  color: var(--jp-fg-muted);
+  overflow: hidden;
+}
+
+.home-tile > .ic {
+  width: 20px;
+  height: 20px;
+}
+
+.home-tile > img.app-logo {
+  position: absolute;
+  inset: 3px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--jp-radius-sm);
+  background: var(--jp-surface);
+}
+
+/* Journear's own rows ("Your account"). */
+.home-tile.home-tile-own {
+  background: var(--jp-primary-soft);
+  border-color: transparent;
+  color: var(--jp-primary);
+}
+
+.home-tile.home-tile-own > .ic {
+  width: 18px;
+  height: 18px;
+}
+
+/* A phone: the badge goes under the text, lined up with it. */
+@media (max-width: 560px) {
+  .home-row {
+    flex-wrap: wrap;
+    padding: var(--jp-space-3);
+  }
+
+  .home-row > .home-row-text {
+    flex: 1 1 calc(100% - 80px);
+  }
+
+  .home-row > .jp-badge {
+    order: 5;
+    margin-left: 52px;
+  }
+}
+
+/* A list on its way: two placeholder rows under the words. */
+.home-loading {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: var(--jp-space-3);
 }
 
-.home-card.jp-card {
-  padding: var(--jp-space-4);
-  gap: var(--jp-space-3);
+.home-loading > p {
+  margin: 0;
 }
 
+.home-row.home-row-skeleton {
+  cursor: default;
+}
+
+.home-skeleton-line {
+  display: block;
+  height: 12px;
+  width: 50%;
+  max-width: 280px;
+}
+
+.home-skeleton-line.short {
+  width: 30%;
+  max-width: 180px;
+}
+
+/* Reduced motion: the placeholders stand still. The system's own rule shortens every animation to 0.01 ms but keeps
+   `.jp-skel`'s infinite repeats, which then flicker (PR 116's review: Firefox and WebKit). */
+@media (prefers-reduced-motion: reduce) {
+  .home .home-skeleton-line {
+    animation: none;
+  }
+}
+
+/* An empty or failed group: the system's empty state, its action under its words. */
+.home-empty .code {
+  font-size: var(--jp-text-xs);
+  overflow-wrap: anywhere;
+}
+
+.home-empty > .actions {
+  margin-top: var(--jp-space-2);
+}
+
+/* The apps in a wallet's page box: names and origins, one per line. */
 .home-card-apps {
   display: grid;
   gap: var(--jp-space-3);
@@ -463,33 +690,37 @@ body.home-page > main:focus {
   font-size: var(--jp-text-xs);
 }
 
-.home-card-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--jp-space-3);
-  margin-top: auto;
-  padding-top: var(--jp-space-3);
-  border-top: 1px solid var(--jp-border);
-}
-
-/* ---- finding an app ---- */
+/* ---- finding an app: the field, Search and Clear on one line where there is room, the hint under them ---- */
 .home-find .jp-field {
-  max-width: 420px;
+  max-width: 560px;
 }
 
-.home-find .actions {
-  margin-top: var(--jp-space-3);
+.home-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jp-space-2);
+}
+
+.home-search-row > .jp-input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.home-search-row > .jp-btn .ic {
+  width: 16px;
+  height: 16px;
 }
 
 #home-results {
-  margin-top: var(--jp-space-4);
+  display: grid;
+  gap: var(--jp-space-3);
 }
 
-/* ---- an app's page ---- */
-.home-back {
-  margin: 0 0 var(--jp-space-2) calc(-1 * var(--jp-space-3));
+#home-results > h3 {
+  margin: 0;
 }
+
+/* ---- a wallet's page ---- */
 
 #home-coverage .jp-badge {
   margin-right: var(--jp-space-1);

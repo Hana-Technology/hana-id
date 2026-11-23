@@ -6,7 +6,7 @@ import { decodeHomeIdentity, homeMessage } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dom, originText } from '../../src/auth/dom.ts';
 import { HOME_UNNAMED_RULE, type HomeIdentity, homeDevicesApi, homeDevicesSearch, homePolicyLabel, homeStopBody, newHomeIdentity, parseHomeDevices } from '../../src/auth/home-api.ts';
-import { HOME_STOP_CONFIRM, type HomeDevices, UNNAMED_DEVICE, devicesLinked, startHomeDevices, stopDoneText } from '../../src/auth/home-devices.ts';
+import { HOME_DEVICES_WALLET_INTRO, HOME_STOP_CONFIRM, type HomeDevices, UNNAMED_DEVICE, devicesLinked, startHomeDevices, stopDoneText } from '../../src/auth/home-devices.ts';
 import type { HomeScope } from '../../src/auth/home-api.ts';
 import { ENV, FakeWindow, pageText, resetDom } from './helpers.ts';
 
@@ -168,7 +168,11 @@ describe('the list', () => {
     h.click('home-app-devices-show');
     await h.idle();
     expect(h.calls[0]!.url.search).toBe('?scopeId=s7');
-    expect(text('home-app-devices-empty')).toContain('No device is signed in to this app with Journear right now.');
+    expect(text('home-app-devices-empty')).toContain('No device is signed in to this wallet right now.');
+    // D893: the wallet's page says "this wallet", and names its app or apps.
+    expect(document.querySelector('#home-app-devices > p')?.textContent).toBe(HOME_DEVICES_WALLET_INTRO(1));
+    expect(HOME_DEVICES_WALLET_INTRO(1)).toBe('Where you’re signed in to this wallet, what those devices may sign without asking, and whether you share your email with the app.');
+    expect(HOME_DEVICES_WALLET_INTRO(2)).toContain('with these apps.');
     expect(document.getElementById('home-app-devices-empty')?.classList.contains('jp-empty')).toBe(true);
     expect(text('home-email-none')).toBe('You aren’t sharing your email address with this app.');
     // Another app's page starts closed again, and asks nothing on its own.
@@ -495,19 +499,42 @@ describe('the sign-in’s end and the link', () => {
     expect(text('home-devices-problem-front')).toContain('Your sign-in to Passport Home has ended.');
   });
 
-  it('`?view=devices` loads the list once after sign-in; any other query doesn’t', async () => {
+  it('`?view=devices` is exactly that query (the page opens the view for it, home-page.test.ts)', () => {
     expect(devicesLinked('?view=devices')).toBe(true);
     for (const q of ['', '?view=device', '?view=devices&appId=app_x1', '?view=devices&view=devices', '?appId=app_x1']) expect(devicesLinked(q)).toBe(false);
+  });
+
+  it('D893: mounting the view reads nothing; opening it reads once, only while closed and signed in; leaving closes a confirmation', async () => {
     const h = await start({ search: '?view=devices' });
     h.answer = () => json(200, { scopes: [scopeOf('s1', { devices: [device(1)] })], nextCursor: null });
+    // Drawing the section (Back and Forward do) never reads, even at `?view=devices`.
     h.mountFront();
     h.mountFront();
+    await h.idle();
+    expect(h.calls).toEqual([]);
+    h.devices.openFront();
+    h.devices.openFront();
     await h.idle();
     expect(h.calls).toHaveLength(1);
     expect(h.devices.front).toBe('ready');
-    h.mountFront();
+    // Opened again: it shows what it has, and reads only on "Show again".
+    h.devices.openFront();
     await h.idle();
     expect(h.calls).toHaveLength(1);
+    // A confirmation left open closes when the user leaves the view; what it shows stays.
+    h.click(`home-stop-share-front-${device(1).shareId}`);
+    expect(h.devices.confirming).not.toBeNull();
+    h.devices.leaveFront();
+    expect(h.devices.confirming).toBeNull();
+    expect(h.devices.front).toBe('ready');
+    // Without a usable sign-in, opening sends nothing: the view keeps its "Show devices".
+    h.devices.reset();
+    h.identity = null;
+    h.devices.openFront();
+    await h.idle();
+    expect(h.calls).toHaveLength(1);
+    expect(h.devices.front).toBe('closed');
+    expect(document.getElementById('home-devices-show')).not.toBeNull();
   });
 });
 

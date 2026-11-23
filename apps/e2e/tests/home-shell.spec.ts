@@ -73,6 +73,23 @@ const uncovered = (page: Page, selector: string) =>
 /** Scrolls so `selector` sits in the window's middle. */
 const centre = (page: Page, selector: string) => page.locator(selector).evaluate((el) => el.scrollIntoView({ block: 'center' }));
 
+/**
+ * Waits until the page is still: the bar's height and the scroll position read the same twice, 100 ms of real time
+ * apart (the page's clock may be Playwright's; this wait is the test's own), so a resize the browser hasn't delivered
+ * yet can't move the page under a measurement.
+ */
+async function settled(page: Page): Promise<void> {
+  const read = (): Promise<string> => page.evaluate(() => `${Math.round(document.querySelector('header')?.getBoundingClientRect().height ?? 0)},${Math.round(scrollY)}`);
+  let last = await read();
+  for (let i = 0; i < 50; i += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    const now = await read();
+    if (now === last) return;
+    last = now;
+  }
+  throw new Error(`the page didn't settle: ${last}`);
+}
+
 /** The guard armed: a second's wait, then the mouse moves (as fixtures' guardedClick, without the click). */
 async function arm(page: Page, selector: string): Promise<void> {
   await page.waitForTimeout(1_100);
@@ -84,7 +101,7 @@ async function arm(page: Page, selector: string): Promise<void> {
 /** Nothing covers the heading, Back and (scrolled to it) Continue; a button that Tab brings into view isn't covered. */
 async function nothingCovered(home: Page, label: string, browserName: string): Promise<void> {
   await home.evaluate(() => window.scrollTo(0, 0));
-  for (const sel of ['#home-title', '#home-back']) expect(await uncovered(home, sel), `${label}: ${sel}`).toMatchObject({ inView: true, hit: true });
+  for (const sel of ['#home-app-title', '#home-back']) expect(await uncovered(home, sel), `${label}: ${sel}`).toMatchObject({ inView: true, hit: true });
   await centre(home, '#home-export-continue');
   expect(await uncovered(home, '#home-export-continue'), `${label}: Continue`).toMatchObject({ inView: true, hit: true });
   // With the page scrolled to its end, Tab moves focus onto the first address's Copy, far above: the browser scrolls it
@@ -120,7 +137,7 @@ for (const size of SIZES) {
     await home.setViewportSize({ width: size.width, height: size.height });
     await home.goto(`${AUTH_ORIGIN}/home`);
     await signIn(home);
-    await home.getByRole('button', { name: 'View Sodax', exact: true }).click();
+    await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
     await home.locator('#home-export-open').click();
     const childP = home.waitForEvent('popup');
     await home.locator('#home-export-start').click();
@@ -305,12 +322,13 @@ for (const size of [
     // The end, by the API's 401 on a search (the front page's Search button in view): the address masked, the who line
     // keeps its height, what is in view stays put.
     api.refuse = true;
-    await home.getByLabel('App name').fill('Sodax');
+    await home.getByLabel('Find an app by name').fill('Sodax');
     const search = '#home-search-go';
     await centre(home, search);
     const searchTop = (await box(home, search)).top;
     await home.locator(search).click();
     await expect(home.locator('#home-ended')).toBeVisible();
+    await settled(home);
     await expect(home.locator('#home-who')).toContainText('•••@mail-e2e.example.com');
     m.whoEnded = (await who()).height;
     m.barEnded = (await bar()).height;
@@ -319,15 +337,15 @@ for (const size of [
     expect(Math.abs((await box(home, search)).top - searchTop), 'Search stays where it was in the window').toBeLessThanOrEqual(1);
     expect(await uncovered(home, search)).toMatchObject({ inView: true, hit: true });
     api.refuse = false;
-    await home.getByRole('button', { name: 'View Sodax', exact: true }).click();
+    await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
     await home.evaluate(() => window.scrollTo(0, 0));
-    for (const sel of ['#home-title', '#home-back']) expect(await uncovered(home, sel), sel).toMatchObject({ inView: true, hit: true });
+    for (const sel of ['#home-app-title', '#home-back']) expect(await uncovered(home, sel), sel).toMatchObject({ inView: true, hit: true });
 
     // Signing in again by code, in the bar: its screens are usable at every size; a toast stays in the window.
     await home.locator('#home-sign-in-again').click();
     await expect(home.locator('#home-email-send')).toBeVisible();
-    // Its title is no heading: the page's h1 is the first heading.
-    expect(await home.evaluate(() => document.querySelector('h1, h2, h3, h4')?.id)).toBe('home-title');
+    // Its title is no heading: the view's h1 (D893: "Wallet details") is the first heading.
+    expect(await home.evaluate(() => document.querySelector('h1, h2, h3, h4')?.id)).toBe('home-app-title');
     await reachable(home, '#home-email-send', 'Send code');
     sent = (await mails(to)).length;
     await home.locator('#home-email-send').click();
@@ -348,10 +366,14 @@ for (const size of [
 
     // The notice (the email sign-in's token lasts 10 minutes: it comes at 8), with the move flow's button in view.
     const target = '#home-export-open';
+    await settled(home);
     await centre(home, target);
+    // In view before the notice comes: "stays where it was" below then means something.
+    expect(await uncovered(home, target), 'the move flow’s button is in view before the notice').toMatchObject({ inView: true, hit: true });
     const targetTop = (await box(home, target)).top;
     await context.clock.fastForward(8 * MIN + 5_000);
     await expect(home.locator('#home-ending')).toBeVisible();
+    await settled(home);
     m.barWithNotice = (await bar()).height;
     m.targetTop = [targetTop, (await box(home, target)).top];
     expect(Math.abs((await box(home, target)).top - targetTop), 'the move flow’s button stays where it was in the window').toBeLessThanOrEqual(1);
@@ -386,7 +408,10 @@ test('one header, no nav, and a skip link that moves focus into the page without
   await expect(page.getByRole('navigation')).toHaveCount(0);
   const account = page.locator('#home-account');
   await expect(account).toContainText('Signed in with Google');
-  await expect(account.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  // D893: named apart from "Sign out this device": its words stay "Sign out", its name and tooltip say what it ends.
+  await expect(account.getByRole('button', { name: 'Sign out of Passport Home', exact: true })).toBeVisible();
+  await expect(account.locator('#home-sign-out')).toHaveText('Sign out');
+  await expect(account.locator('#home-sign-out')).toHaveAttribute('title', 'Sign out of Passport Home');
   expect(await account.evaluate((el) => el.closest('header') !== null && el.closest('#app') === null)).toBe(true);
   expect(page.url()).toBe(`${AUTH_ORIGIN}/home`);
 });

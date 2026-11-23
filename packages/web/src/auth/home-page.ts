@@ -1,12 +1,22 @@
-// `GET {authOrigin}/home`: Hana Home. One Hana page where a user signs in with Google and sees the apps they use with
-// Hana, whether Hana can still open their wallet in each, their addresses there and their Support ID. Looking derives
-// no key and sends no chain transaction: the lists come from `GET /v1/home/apps`. On an app's page, a collapsed section
-// lets the user open that wallet and take its private key to another wallet app (home-export.ts): it does nothing until
-// the user expands it and signs in again, and nothing in the page's address can open or start it. "Devices and
-// auto-approve" (home-devices.ts) sits on the front page and on each app's page, above the move; "Your name"
-// (home-profile.ts) after it, where the user sets an optional first and last name and shares it per app (D714). "Ways
-// to sign in" (home-sign-ins.ts, D874) sits on each app's page after the devices: the sign-ins that open that wallet,
-// read from the chain only when the user asks, read-only.
+// `GET {authOrigin}/home`: Passport Home (was Hana Home). One Journear page where a user signs in with Google or an
+// email code and sees their wallets in the apps they use with Journear, whether Journear can still open each, its
+// addresses and its Support ID. Looking derives no key and sends no chain transaction: the lists come from
+// `GET /v1/home/apps`.
+//
+// Its views (structure A, D888, D893), all at the one address `/home`:
+//   - "Your wallets", the front page: the user's wallets as rows (one per listing; a row names the apps that share the
+//     wallet), "Your account" (two rows: "Devices and auto-approve" and "Your name", each opening its own view), and
+//     "Other apps" last (find an app by name, and the apps where Journear has no wallet on record for the user);
+//   - a wallet's page, "Wallet details" ("App details" for an app where the user has no wallet): the apps, whether the
+//     wallet needs them, its addresses, its Support ID, then its tools: "Devices and auto-approve" (home-devices.ts),
+//     "Ways to sign in" (home-sign-ins.ts, D874), "Your name" (home-profile.ts, D714) and, last, a collapsed section
+//     that lets the user open the wallet and take its private key to another wallet app (home-export.ts): it does
+//     nothing until the user expands it and signs in again, and nothing in the page's address can open or start it;
+//   - "Devices and auto-approve" and "Your name" for every wallet.
+// Each view's `h1` names it, and so does the window's title ("Your wallets – Passport Home"). The browser's Back and
+// Forward move between the front page and a view (D893): opening a view adds a history entry at the same address that
+// carries only an opaque marker (`HomeSteps`), so Back returns to "Your wallets" instead of leaving Home and its
+// sign-in; Back from the front page leaves Home as before.
 //
 // Sign-in, with Google or an email code (`SIGN_IN_METHODS`). Google: a click opens a child `/login?mode=home` (as the
 // export window opens its own), which takes `hana:home-params` only from this page, goes to Google with a nonce that
@@ -25,6 +35,9 @@
 // - The identity (key, token, `sub`) is in memory only: never in storage, a URL, a message other than the one to the
 //   child (which carries the public key and the relay key, no token) or a log. So is an email sign-in's address: it is
 //   sent to the issuer only, and kept for the sign-in it was typed for (opening a wallet sends its code there).
+// - The page never changes its own address (D555). The history entries it adds (D893) hold one opaque string: a random
+//   tag made for the sign-in and the step's number. Which view a step shows, and for whom, is in this page's memory
+//   only, so a reload, a sign-out or another account leaves entries that show nothing.
 // - App names, origins and logos are partner-supplied. They reach the page only as text nodes, attribute values that
 //   aren't URLs, and a logo `<img>` pinned to this build's files origin (logo.ts). Nothing here builds markup from a
 //   string, and no partner string becomes a link.
@@ -35,12 +48,12 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ServerClock } from './clock.ts';
-import { type Child, type Dom, addressText, dom, maskedAddress, supportCode, supportRequest } from './dom.ts';
+import { type Child, type Dom, addressText, dom, headingText, maskedAddress, originText, supportCode, supportRequest } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { googleKeys } from './google-keys.ts';
 import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
-import { type HomeDevices, startHomeDevices } from './home-devices.ts';
-import { type HomeProfileSection, startHomeProfile } from './home-profile.ts';
+import { HOME_DEVICES_TITLE, type HomeDevices, devicesLinked, startHomeDevices } from './home-devices.ts';
+import { HOME_NAME_TITLE, type HomeProfileSection, startHomeProfile } from './home-profile.ts';
 import { type HomeSignIns, startHomeSignIns } from './home-sign-ins.ts';
 import { EMAIL_SUB_RE, type HomeEmailApi, type HomeEmailStep, emailTokenClaims, homeEmailStep } from './home-email.ts';
 import { type HomeExport, type HomeExportState, homeExportRoute, startHomeExport } from './home-export.ts';
@@ -75,6 +88,65 @@ const ENDING_TEXT = (minutes: number): string => `Your sign-in to ${BRAND.home} 
 const ENDED_TEXT = `Your sign-in to ${BRAND.home} has ended. Everything on screen stays. To load anything new, sign in again.`;
 /** The skip link's words (D888), the first thing Tab reaches on the page. */
 export const HOME_SKIP_TEXT = 'Skip to content';
+
+/**
+ * Passport Home's own words for its views (D893): "wallet" is the main noun where the user's wallet is meant; "app"
+ * stays where the partner's app is meant. In one place for the tests and the plain-words check.
+ */
+export const HOME_TEXT = Object.freeze({
+  signedOutAbout: `See your wallets in the apps you use with ${BRAND.company}, and their addresses, in one place.`,
+  walletsTitle: 'Your wallets',
+  walletsLede: `Your wallets in the apps you use with ${BRAND.company}. Apps that share a wallet are listed together. Open a wallet to see its addresses.`,
+  walletsLoading: 'Loading your wallets…',
+  walletsEmptyTitle: 'No wallets yet',
+  walletsEmpty: (account: string): string => `You don’t have a wallet with this ${account} yet. A wallet appears here after you sign in to an app with ${BRAND.company}.`,
+  walletsFailedTitle: 'Your wallets didn’t load',
+  walletsFailed: `${BRAND.home} couldn’t load your wallets. Try again in a moment.`,
+  retry: 'Try again',
+  linkedTitle: 'The app from your link',
+  accountTitle: 'Your account',
+  devicesRow: 'Where you’re signed in to your apps, and what may sign without asking',
+  nameRow: 'A name for your apps, if you want one. No app gets it until you share it.',
+  othersTitle: 'Other apps',
+  othersLede: `Apps that use ${BRAND.company}, where ${BRAND.company} has no wallet on record for you.`,
+  othersEmptyTitle: 'No other apps listed',
+  othersEmpty: 'Some apps appear only when you search for their whole name.',
+  othersFailed: 'The list of other apps didn’t load either. You can still find an app by name.',
+  searchLabel: 'Find an app by name',
+  searchHint: 'Some apps appear only when you type their whole name.',
+  noResultsTitle: 'No app found with that name',
+  noResults: 'Check the spelling, or type the app’s whole name.',
+  back: 'Your wallets',
+  /** After where an app runs, when its apps run on more websites (PR 116's review: "more" alone read as addresses). */
+  moreSites: (n: number): string => ` and ${n} more ${n === 1 ? 'website' : 'websites'}`,
+  walletTitle: 'Wallet details',
+  appTitle: 'App details',
+  walletApp: 'App that uses this wallet',
+  walletApps: 'Apps that use this wallet',
+  noAddress: `${BRAND.company} has no address on record for this wallet yet.`,
+  /** The top bar's Sign out, as a screen reader and a tooltip name it: apart from "Sign out this device". */
+  signOutName: `Sign out of ${BRAND.home}`,
+});
+
+/** The window's title on a signed-in view (D893): the view's `h1`, then the page's name. */
+export const homeViewTitle = (heading: string): string => `${heading} – ${BRAND.home}`;
+
+/** How long the page waits for the popstate of its own `history.go` before it stops waiting (D893). */
+export const REWIND_GIVE_UP_MS = 10_000;
+
+/** The marker a history entry of Passport Home holds (D893): `home:`, the sign-in's random tag, `:`, the step. */
+const STEP_MARK = /^home:([A-Za-z0-9_-]{16}):([1-9][0-9]{0,2})$/u;
+
+/**
+ * The part of `window.history` the page uses for Back inside Home (D893). Every member is optional: without them (an
+ * old browser, a test window) Back leaves Home, as it did before.
+ */
+interface HomeHistory {
+  readonly state?: unknown;
+  scrollRestoration?: string;
+  pushState?(data: unknown, unused: string): void;
+  go?(delta: number): void;
+}
 
 /** The one Clipboard API call the page makes: it writes an address or a Support ID, it never reads. */
 export interface HomeClipboard {
@@ -121,6 +193,11 @@ export type HomeStage =
 /** The Home sign-in's own life, apart from what is on screen. */
 export type HomeSession = 'none' | 'active' | 'ending' | 'ended';
 
+/** Passport Home's views while signed in (D893): "Your wallets", a wallet's page, and the two "Your account" views. */
+export type HomeViewKind = 'front' | 'wallet' | 'devices' | 'profile';
+/** A view as the page remembers it (memory only): a wallet's view keeps the listing it was opened from. */
+type HomeView = { readonly kind: 'front' } | { readonly kind: 'wallet'; scope: HomeScope } | { readonly kind: 'devices' } | { readonly kind: 'profile' };
+
 export type HomeListState = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface HomePage {
@@ -129,8 +206,10 @@ export interface HomePage {
   /** A sign-in child is open while a list is on screen (signing in again). */
   readonly renewing: boolean;
   readonly list: HomeListState;
-  /** The listing whose page is open, or null on the front page. */
+  /** The listing whose page is open, or null on any other view. */
   readonly openScope: string | null;
+  /** The view on screen while signed in (D893): the front page, a wallet's (or an app's) page, or an account view. */
+  readonly view: HomeViewKind;
   /** The code of the problem on screen, or null. */
   readonly errorCode: string | null;
   /** The sign-in child's window name, once opened. */
@@ -141,9 +220,9 @@ export interface HomePage {
   readonly requests: number;
   /** The "Move this wallet" section of the app page that is open (home-export.ts). */
   readonly moving: { readonly state: HomeExportState; readonly chain: 'stellar' | 'evm' | 'near' | null; readonly errorCode: string | null; readonly childName: string | null; readonly awaitingChild: boolean; readonly holdsSecret: boolean };
-  /** "Devices and auto-approve" (home-devices.ts), on the front page and each app's page. */
+  /** "Devices and auto-approve" (home-devices.ts), its own view and on each wallet's page. */
   readonly devices: Pick<HomeDevices, 'front' | 'app' | 'confirming' | 'errorCode' | 'requests'>;
-  /** "Your name" (home-profile.ts), on the front page and each app's page. */
+  /** "Your name" (home-profile.ts), its own view and on each wallet's page. */
   readonly profile: Pick<HomeProfileSection, 'front' | 'app' | 'confirming' | 'errorCode' | 'requests'>;
   /** "Ways to sign in" (home-sign-ins.ts), on each app's page. */
   readonly signIns: Pick<HomeSignIns, 'state' | 'reads' | 'errorCode'>;
@@ -370,10 +449,18 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   /** The listing the page's link named, the user's own or not: its wallet is never moved out in this page load. */
   let linkScope: string | null = null;
   let list: HomeListState = 'idle';
-  let openScope: string | null = null;
+  /** The view on screen (D893). A wallet's view keeps the listing it opened, so Back and Forward can show it again. */
+  let viewing: HomeView = { kind: 'front' };
   let problem: HomeProblem | null = null;
+  /**
+   * Where a refusal of the page's own actions shows (D893): `top`, under the view's heading (the first list, a link, a
+   * wallet's "Check now"); `others`, under the search (a search, "Show more"), where the user acted.
+   */
+  let problemAt: 'top' | 'others' = 'top';
   /** Which action is loading, so only its button says so. */
   let busy: 'more' | 'search' | 'check' | null = null;
+  /** `/home?view=devices` (D613): the devices view opens once after each new account's sign-in. */
+  const devicesLink = devicesLinked(win.location.search);
 
   // The sign-in in progress.
   let pending: PendingSignIn | null = null;
@@ -501,6 +588,34 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   const sticky = (): boolean => view()?.getComputedStyle(bar.header).position === 'sticky';
   /** The page's scroll position as last seen, before any change of layout this frame. */
   let lastScrollY = view()?.scrollY ?? 0;
+  /**
+   * D893 (a fix to D888's step 1, revised after PR 116's review): a change the page itself makes to the bar (its notice,
+   * who is signed in) is noted with the scroll position just before it and the bar's height just after. The browser's
+   * own scroll anchoring moves the page in the same frame and fires a scroll event BEFORE the resize observation; step 1
+   * read that event's position as the base, so it scrolled by the bar's change a second time wherever there was room
+   * below. Now, when the resize for that very change comes (the same height), the page scrolls by the bar's change only
+   * if the page hasn't moved at all since the change (WebKit, which doesn't anchor here); if it moved, by the browser's
+   * anchoring or by the person (a resize that comes late, under load), the page leaves the scroll as it is: it never
+   * undoes a scroll. A note the resize doesn't match (another height, or no resize at all) is never used.
+   */
+  let barChange: { y: number; height: number | null } | null = null;
+  /** The bar's height as the resize observer last reported it (null before its first report, or without one). */
+  let barSeen: number | null = null;
+  const noteBarChange = (): void => {
+    barChange = { y: view()?.scrollY ?? lastScrollY, height: null };
+  };
+  const barChanged = (): void => {
+    if (barChange === null) return;
+    let now: number | null = null;
+    try {
+      now = Math.round(bar.header.getBoundingClientRect().height);
+    } catch {
+      now = null;
+    }
+    // No resize will come for a change that left the height as last reported: nothing to note.
+    if (barSeen === null || now === null || now === barSeen) barChange = null;
+    else barChange.height = now;
+  };
   const onScroll = (): void => {
     lastScrollY = view()?.scrollY ?? 0;
     noteBarBottom();
@@ -508,6 +623,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   // The bar's height: written to the root's --home-bar-h (through the CSSOM, which the CSP allows; no style attribute),
   // which focus scrolling keeps clear of; a change starts the guard over.
   sizeWatch((_, height, was, widthChanged) => {
+    barSeen = height;
+    const change = barChange;
+    barChange = null;
     rootStyle('--home-bar-h', `${height}px`);
     noteBarBottom();
     if (was === undefined) return;
@@ -518,17 +636,25 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const v = view();
     // The bar's width changed too: the window was resized and everything reflowed; not the bar changing above what is
     // in view.
-    if (v && !widthChanged && !sticky() && lastScrollY >= was) {
-      const missing = height - was - (v.scrollY - lastScrollY);
-      if (Math.abs(missing) >= 1) v.scrollBy(0, missing);
-      lastScrollY = v.scrollY;
+    if (v && !widthChanged && !sticky()) {
+      if (change !== null && change.height === height) {
+        // The page's own change: only where nothing has moved the page since (see above).
+        if (change.y >= was && Math.abs(v.scrollY - change.y) < 1) v.scrollBy(0, height - was);
+      } else if (lastScrollY >= was) {
+        // A change the page didn't make (the email code screens in the bar): step 1's rule.
+        const missing = height - was - (v.scrollY - lastScrollY);
+        if (Math.abs(missing) >= 1) v.scrollBy(0, missing);
+      }
     }
+    if (v) lastScrollY = v.scrollY;
     layoutChanged();
   })?.observe(bar.header);
   view()?.addEventListener('scroll', onScroll, { passive: true });
-  // On an app's page, what sits above the move flow (its details, the other tools, a refusal at the top): a change in
-  // its height moves the guarded buttons, so it starts the guard over too. The move flow's own section isn't watched:
-  // its screens start the guard themselves.
+  // On a wallet's page, everything above the move flow in the page (the way back, the details with a refusal under their
+  // heading, the other tools): a change in its height moves the guarded buttons, so it starts the guard over too. D893:
+  // not a list of selectors any more but every element before the move flow's section, at each level up to `main`, so
+  // a part added above it later (step 3's tabs) is watched too. The move flow's own section isn't watched: its screens
+  // start the guard themselves. The catch-all (`onInput`) still covers whatever this misses.
   const above = sizeWatch((_, __, was) => {
     if (was !== undefined) layoutChanged();
   });
@@ -536,7 +662,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     if (!above) return;
     above.disconnect();
     const doc = win.document;
-    for (const el of [doc.getElementById('home-notice'), doc.querySelector('#home-content > .home-app-details'), ...Array.from(doc.querySelectorAll('#home-app-extras > section:not(#home-export)'))]) if (el) above.observe(el);
+    const main = doc.getElementById('app');
+    for (let el: Element | null = doc.getElementById('home-export'); el && el !== main && el !== doc.body; el = el.parentElement) {
+      for (let s = el.previousElementSibling; s; s = s.previousElementSibling) above.observe(s);
+    }
   };
   const moving: HomeExport = startHomeExport({
     win,
@@ -621,6 +750,18 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     if (!el) return;
     el.replaceChildren();
     for (const c of children) if (c !== null && c !== undefined && c !== false) el.append(typeof c === 'string' ? win.document.createTextNode(c) : c);
+  };
+  /** A screen without a sign-in (signed out, loading, signing in, a refusal): the window's title is the page's name. */
+  const showGate = (...children: Child[]): void => {
+    d.show(...children);
+    setTitle(BRAND.home);
+  };
+  const setTitle = (title: string): void => {
+    try {
+      win.document.title = title;
+    } catch {
+      // The title is a convenience.
+    }
   };
   /**
    * A button that acts only on a real click. The design system's kinds: `primary` (one per view), else secondary;
@@ -748,6 +889,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   async function loadFirst(): Promise<void> {
     list = 'loading';
     problem = null;
+    problemAt = 'top';
     renderContent();
     const at = epoch;
     const page = await request({ kind: 'first' });
@@ -770,7 +912,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       const own = mine.find(hasLinked);
       if (own) {
         linkScope = own.scopeId;
-        openApp(own.scopeId);
+        openLinkedWallet(own.scopeId);
         return;
       }
       const known = listed.find(hasLinked);
@@ -786,7 +928,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       if (found?.mine) {
         mine = [found, ...mine.filter((s) => s.scopeId !== found.scopeId)];
         linkScope = found.scopeId;
-        openApp(found.scopeId);
+        openLinkedWallet(found.scopeId);
       } else if (found) {
         linked = found;
         renderContent();
@@ -801,6 +943,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     if (!nextCursor || busy) return;
     busy = 'more';
     problem = null;
+    problemAt = 'others';
     renderContent();
     const at = epoch;
     const page = await request({ kind: 'cursor', cursor: nextCursor });
@@ -819,12 +962,14 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const term = searchDraft.trim();
     const length = [...term].length;
     if (length < HOME_SEARCH_MIN || length > HOME_SEARCH_MAX) {
+      problemAt = 'others';
       problem = { code: 'search_term', text: `Type ${HOME_SEARCH_MIN} to ${HOME_SEARCH_MAX} characters of the app’s name.`, requestId: null, signInAgain: false };
       renderContent();
       return;
     }
     busy = 'search';
     problem = null;
+    problemAt = 'others';
     renderContent();
     const at = epoch;
     const page = await request({ kind: 'search', term });
@@ -842,6 +987,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const query: HomeAppsQuery | null = scope.mine || !first ? { kind: 'scope', scopeId: scope.scopeId } : { kind: 'app', appId: first.appId };
     busy = 'check';
     problem = null;
+    problemAt = 'top';
     renderContent();
     const at = epoch;
     const page = await request(query);
@@ -852,27 +998,233 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     renderContent();
   }
 
-  function openApp(scopeId: string): void {
-    const scope = findScope(scopeId);
-    if (!scope) return;
-    openScope = scopeId;
-    problem = null;
-    renderContent();
-    focusHeading('home-app-title');
-    // Opening an app's page is the user asking about it: one read, when the list couldn't say.
-    if (scope.coverage === 'unknown' && session !== 'ended') track(checkScope(scope));
+  // ---- the views, and Back and Forward inside Home (D893) ----
+  //
+  // The front page ("Your wallets") is the history entry the page was on when the user signed in; it is never added.
+  // Opening a view from it (a wallet, an app, "Devices and auto-approve", "Your name") adds one entry at the same
+  // address (`history.pushState` with no URL: D555's address never changes) holding only `home:{tag}:{step}`, where
+  // `tag` is 16 random characters made for this sign-in and `step` its number. Which view a step is lives here, in
+  // memory (`steps`), never in the entry. So:
+  //   - Back from a view returns to the front page; Forward shows the view again from memory (nothing is read: Back and
+  //     Forward never send a request); Back from the front page leaves Home, as before;
+  //   - "Your wallets" (the way back on a view) goes back to the front page's own entry (`history.go`), so the front
+  //     page stays the first entry and Back from it still leaves Home; Forward still reaches the view;
+  //   - a reload signs out (D553) and keeps no tag: the entries it leaves show the signed-out page; a sign-out or
+  //     another account gets a new tag (and the page goes back to its first entry), so an earlier account's entries
+  //     show nothing of it: an entry whose tag isn't this sign-in's is the front page; signed out, the page ignores them.
+  // Leaving a wallet's view, by its way back or by Back, locks and erases a wallet opened in it (home-export.ts
+  // `leave`, D553); Forward shows its page with the move flow closed again, never a key.
+  const hist = (): HomeHistory | null => {
+    try {
+      return (win as { history?: HomeHistory }).history ?? null;
+    } catch {
+      return null;
+    }
+  };
+  /** This sign-in's random tag, the views by step (0 is the front page) and the step on screen. Memory only. */
+  let stepTag = '';
+  let steps: HomeView[] = [{ kind: 'front' }];
+  let step = 0;
+  /**
+   * The page asked the browser to go back (`history.go`): its popstate is the page's own, and a view opened meanwhile
+   * adds its entry only once that traversal is done (never during it, however long it takes under load: PR 116's
+   * review). If no popstate has come after `REWIND_GIVE_UP_MS`, the page stops waiting: that view gets no entry (Back
+   * then leaves Home from it, as with a browser that refuses one), and a popstate that still comes for the page's own
+   * traversal, landing on the front page's entry, changes nothing on screen (`lateRewind`).
+   */
+  let rewinding = false;
+  let lateRewind = false;
+  let rewindTimer: ReturnType<typeof setTimeout> | undefined;
+  let afterRewind: (() => void) | null = null;
+  /** Where the front page was scrolled when a view opened over it, and the row that opened it: both come back with it. */
+  let frontScroll = 0;
+  let frontReturn: string | null = null;
+
+  const stepMark = (n: number): string => `home:${stepTag}:${n}`;
+  /** The step an entry's marker names, for this sign-in only; null for anything else (another sign-in's, none). */
+  const stepOf = (state: unknown): number | null => {
+    if (typeof state !== 'string') return null;
+    const m = STEP_MARK.exec(state);
+    return m && m[1] === stepTag ? Number(m[2]) : null;
+  };
+  /** Whether the browser is on the entry the page added for the step on screen (so going back lands on the front page). */
+  const onOwnStep = (): boolean => {
+    try {
+      return step > 0 && hist()?.state === stepMark(step);
+    } catch {
+      return false;
+    }
+  };
+  /** Goes back to the front page's entry, when the browser is on the page's own step; true when it asked. */
+  function rewind(): boolean {
+    const h = hist();
+    if (!onOwnStep() || typeof h?.go !== 'function') return false;
+    rewinding = true;
+    lateRewind = false;
+    clearTimeout(rewindTimer);
+    rewindTimer = setTimeout(() => {
+      rewinding = false;
+      afterRewind = null;
+      lateRewind = true;
+    }, REWIND_GIVE_UP_MS);
+    try {
+      h.go(-step);
+      return true;
+    } catch {
+      endRewind();
+      return false;
+    }
+  }
+  function endRewind(): void {
+    rewinding = false;
+    clearTimeout(rewindTimer);
+    const next = afterRewind;
+    afterRewind = null;
+    next?.();
+  }
+  /** A new account's views (a sign-in, a sign-out): a new tag, and the browser back on the page's first entry. */
+  function newSteps(): void {
+    rewind();
+    stepTag = base64UrlEncode(randomBytes(12));
+    steps = [{ kind: 'front' }];
+    step = 0;
+    frontScroll = 0;
+    frontReturn = null;
+  }
+  /** Adds the history entry for a view just opened (after the page's own Back, if one is on its way). */
+  function addStep(v: HomeView): void {
+    const add = (): void => {
+      if (viewing !== v) return;
+      const h = hist();
+      if (typeof h?.pushState !== 'function') return;
+      try {
+        h.pushState(stepMark(step + 1), '');
+      } catch {
+        // A browser that refuses (too many entries at once): no entry, so Back leaves Home from here, as before.
+        return;
+      }
+      step += 1;
+      steps = [...steps.slice(0, step), v];
+    };
+    if (rewinding) afterRewind = add;
+    else add();
   }
 
-  function closeApp(): void {
-    // Leaving an app's page locks its wallet: nothing of it stays in the page. Its devices are read again next time.
-    moving.leave();
-    devices.leaveApp();
-    signIns.leaveApp();
-    profile.leaveApp();
-    openScope = null;
+  function onPopState(event: Event): void {
+    if (rewinding) return endRewind();
+    if (lateRewind) {
+      lateRewind = false;
+      // The page's own traversal, finished after the page stopped waiting: it lands on the front page's entry.
+      if (stepOf((event as { state?: unknown }).state ?? null) === null) return;
+    }
+    // Signed out (or signing in): nothing of an account is shown, whatever the entry.
+    if (stage !== 'signed_in') return;
+    const n = stepOf((event as { state?: unknown }).state ?? null);
+    const target = n !== null && n < steps.length ? n : 0;
+    const next = steps[target] as HomeView;
+    step = target;
+    if (next === viewing || (next.kind === 'front' && viewing.kind === 'front')) return;
+    showView(next, 'history');
+  }
+
+  /** What leaving a view drops: a wallet's page locks its wallet and closes its tools; an account view closes a confirmation. */
+  function leaveView(v: HomeView): void {
+    if (v.kind === 'wallet') {
+      // Leaving a wallet's page locks its wallet: nothing of it stays in the page. Its devices are read again next time.
+      moving.leave();
+      devices.leaveApp();
+      signIns.leaveApp();
+      profile.leaveApp();
+    } else if (v.kind === 'devices') devices.leaveFront();
+    else if (v.kind === 'profile') profile.leaveFront();
+  }
+
+  const scrollTo = (y: number): void => {
+    try {
+      view()?.scrollTo(0, y);
+    } catch {
+      // Scrolling is a convenience.
+    }
+  };
+  const focusQuiet = (el: HTMLElement | null): boolean => {
+    if (!el) return false;
+    try {
+      el.focus({ preventScroll: true });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** The row the user opened a view with, on the front page now (a wallet's by its listing, an account row by its id). */
+  const returnRow = (): HTMLElement | null => {
+    const ret = frontReturn;
+    if (!ret) return null;
+    if (ret.startsWith('#')) return byId(ret.slice(1));
+    return Array.from(win.document.querySelectorAll<HTMLElement>('#home-content .home-row[data-scope]')).find((el) => el.getAttribute('data-scope') === ret) ?? null;
+  };
+
+  /**
+   * Shows a view. `open`: the user opened it (one read where the view needs it); `back`: the way back to the front page;
+   * `history`: Back or Forward (never a read). A view starts at its top with focus on its heading; the front page comes
+   * back where it was scrolled, with focus on the row the user opened (its heading when that row is gone).
+   */
+  function showView(next: HomeView, how: 'open' | 'back' | 'history'): void {
+    const was = viewing;
+    if (was.kind === 'front') frontScroll = view()?.scrollY ?? 0;
+    if (was !== next) leaveView(was);
+    viewing = next;
     problem = null;
     renderContent();
-    focusHeading('home-title');
+    if (next.kind === 'front') {
+      if (!focusQuiet(returnRow())) focusQuiet(byId('home-title'));
+      scrollTo(frontScroll);
+    } else {
+      scrollTo(0);
+      focusHeading(next.kind === 'wallet' ? 'home-app-title' : next.kind === 'devices' ? 'home-devices-title' : 'home-profile-title');
+    }
+    if (how !== 'open') return;
+    // Opening a wallet's page is the user asking about it: one read, when the list couldn't say.
+    if (next.kind === 'wallet' && next.scope.coverage === 'unknown' && session !== 'ended') track(checkScope(next.scope));
+    // Opening an account view is the user asking to see it: one read, if it hasn't been read in this sign-in.
+    if (next.kind === 'devices') devices.openFront();
+    if (next.kind === 'profile') profile.openFront();
+  }
+
+  /** Opens a wallet's page (an app's, where the user has none) from the front page or the partner's link. */
+  function openWallet(scopeId: string): void {
+    const scope = findScope(scopeId);
+    if (!scope) return;
+    if (viewing.kind === 'front') frontReturn = scopeId;
+    const v: HomeView = { kind: 'wallet', scope };
+    showView(v, 'open');
+    addStep(v);
+  }
+
+  /**
+   * The partner's link named the user's own wallet: its page opens, but only while the front page is on screen (its
+   * view, at its own entry). "Your account" is usable before the list arrives, so the person may already have opened a
+   * view: the link never pulls them out of it, and the wallet stays a row of the list (D893, PR 116's review).
+   */
+  function openLinkedWallet(scopeId: string): void {
+    if (viewing.kind === 'front' && step === 0) openWallet(scopeId);
+    else renderContent();
+  }
+
+  /** Opens "Devices and auto-approve" or "Your name" from "Your account" (or `?view=devices`). */
+  function openAccount(kind: 'devices' | 'profile'): void {
+    if (viewing.kind === kind) return;
+    if (viewing.kind === 'front') frontReturn = kind === 'devices' ? '#home-open-devices' : '#home-open-profile';
+    const v: HomeView = { kind };
+    showView(v, 'open');
+    addStep(v);
+  }
+
+  /** "Your wallets", the way back on a view: the front page, and the browser back on its entry. */
+  function goFront(): void {
+    if (viewing.kind === 'front') return;
+    rewind();
+    step = 0;
+    showView(steps[0] as HomeView, 'back');
   }
 
   // ---- sign-in ----
@@ -948,7 +1300,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     }
     if (stage === 'signed_out') {
       stage = 'signing_in';
-      d.show(
+      showGate(
         d.h(
           'section',
           { class: 'panel home home-gate' },
@@ -1065,7 +1417,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       return;
     }
     stage = 'signing_in';
-    d.show(d.h('section', { class: 'panel home home-gate' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home), box));
+    showGate(d.h('section', { class: 'panel home home-gate' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home), box));
   }
 
   /** The code was right: the token must be the issuer's Home identity for this sign-in's key. */
@@ -1204,6 +1556,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     renderShell();
     checkSession();
     track(loadFirst());
+    // `/home?view=devices` (D613): the user came to see their devices, so their view opens (one read) for each account.
+    if (devicesLink) openAccount('devices');
   }
 
   function clearScreen(): void {
@@ -1220,8 +1574,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     searchDraft = '';
     linked = null;
     list = 'idle';
-    openScope = null;
+    // The views and their history entries go with the account (D893): the browser goes back to the page's first entry,
+    // and entries left from this account show nothing of it.
+    newSteps();
+    viewing = steps[0] as HomeView;
     problem = null;
+    problemAt = 'top';
     busy = null;
   }
 
@@ -1267,12 +1625,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       email ? provider('Continue with email', beginEmailSignIn, 'home-sign-in-email', !google, 'mail') : null,
     ].filter((b): b is HTMLButtonElement => b !== null);
     const how = google && email ? 'the Google account or the email' : email ? 'the email' : 'the Google account';
-    d.show(
+    showGate(
       d.h(
         'section',
         { class: 'panel home home-gate' },
         d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home),
-        d.h('p', {}, `See the apps you use with ${BRAND.company} and your wallet addresses in each of them, in one place.`),
+        d.h('p', {}, HOME_TEXT.signedOutAbout),
         d.h('p', { class: 'muted' }, `Sign in with ${how} you use in those apps. You stay signed in for a short time, and not after you close or reload this page.`),
         signInError ? problemView(signInError, 'home-sign-in-problem') : null,
         d.h('div', { class: 'providers' }, ...buttons),
@@ -1286,7 +1644,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function renderUnavailable(p: HomeProblem): void {
     stage = 'unavailable';
     signInError = p;
-    d.show(
+    showGate(
       d.h(
         'section',
         { class: 'panel home home-gate' },
@@ -1319,7 +1677,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function replaceWho(): void {
     const old = byId('home-who');
     if (!old) return;
-    lastScrollY = view()?.scrollY ?? lastScrollY;
+    noteBarChange();
     // The line's box (a flex item, so one box however many lines it wraps to) over its line height.
     let lines = 0;
     try {
@@ -1334,26 +1692,29 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       bar.account.classList.add(`home-who-lines-${Math.min(keptLines, WHO_LINES_KEPT)}`);
     }
     old.replaceWith(whoText());
+    barChanged();
   }
 
   /**
    * The top bar's account part: who is signed in and Sign out (D888). A plain part of the header: it holds a status line
-   * and a button, no navigation, so it is no `nav`.
+   * and a button, no navigation, so it is no `nav`. Sign out reads "Sign out" and is named "Sign out of Passport Home"
+   * (its accessible name and its tooltip, D893), apart from "Sign out this device" under "Devices and auto-approve".
    */
   function renderAccount(): void {
     keptLines = 0;
     bar.account.className = 'home-top-account';
-    bar.account.replaceChildren(
-      d.h('div', { class: 'home-account' }, d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), button('Sign out', signOut, { id: 'home-sign-out', sm: true }))),
-    );
+    const out = button('Sign out', signOut, { id: 'home-sign-out', sm: true, ariaLabel: HOME_TEXT.signOutName });
+    out.setAttribute('title', HOME_TEXT.signOutName);
+    bar.account.replaceChildren(d.h('div', { class: 'home-account' }, d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), out)));
   }
 
   /**
    * The signed-in page's frame: built once per sign-in, so a banner or a notice never rebuilds what the user is reading.
-   * Who is signed in, Sign out and the sign-in's notice are in the top bar, outside it (D888).
+   * Who is signed in, Sign out and the sign-in's notice are in the top bar, outside it (D888). Each view brings its own
+   * `h1` (D893): the product's name is in the bar's lockup, not a heading on every view.
    */
   function renderShell(): void {
-    d.show(d.h('section', { class: 'panel home' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home), d.h('div', { attrs: { id: 'home-notice' } }), d.h('div', { attrs: { id: 'home-content' } })));
+    d.show(d.h('section', { class: 'panel home' }, d.h('div', { attrs: { id: 'home-content' } })));
     renderAccount();
     renderBanner();
     renderContent();
@@ -1362,8 +1723,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function renderBanner(): void {
     if (stage !== 'signed_in') return;
     // Where the page was scrolled before the bar changes (a scroll event may not have come yet).
-    lastScrollY = view()?.scrollY ?? lastScrollY;
+    noteBarChange();
     fill('home-banner', ...bannerParts());
+    barChanged();
     layoutChanged();
   }
 
@@ -1440,26 +1802,117 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     );
   }
 
+  /** Numbers the rows' descriptions so every id on the page is its own. */
+  let rowSeq = 0;
   const scopeTitle = (scope: HomeScope): string => scope.apps[0]?.name ?? 'An app that is no longer listed';
 
-  function scopeCard(scope: HomeScope): HTMLElement {
+  /**
+   * One wallet (or an app where the user has none) as one row (D893): ONE button, so a click, a tap, Enter and Space all
+   * open it. Its tile is the first app's logo over a neutral placeholder (a logo that is missing or fails to load leaves
+   * the placeholder); its title names every app that shares the wallet, with their state badges; under it, quieter, where
+   * the first app runs and how many more addresses there are; then the coverage badge, exactly as the cards had it. All
+   * of it partner-supplied text, except the badges.
+   */
+  function scopeRow(scope: HomeScope): HTMLElement {
     const cover = coverageText(scope.coverage, scope.mine);
-    return d.h(
-      'li',
-      { class: 'home-card jp-card', attrs: { 'data-scope': scope.scopeId } },
-      scope.apps.length > 0 ? d.h('div', { class: 'home-card-apps' }, ...scope.apps.map((a) => appLine(a, 1))) : d.h('p', { class: 'muted' }, scopeTitle(scope)),
-      d.h('div', { class: 'home-card-foot' }, badge(cover.badge, cover.tone), button('View', () => openApp(scope.scopeId), { class: 'home-open', ariaLabel: `View ${scopeTitle(scope)}`, sm: true })),
+    const origins = scope.apps.flatMap((a) => a.origins);
+    const first = origins[0];
+    // What a screen reader names the row (PR 116's review): the apps, each with its state, then the badge, in words with
+    // pauses ("Sodax, Sodax Earn (Paused), Safe if the app closes"); where the first app runs is the row's description,
+    // not its name. Journear's own words around the partner's names, set as an attribute value, never markup.
+    const stateWords = (a: HomeApp): string[] => [STATUS_TEXT[a.status], a.environment === 'test' ? 'Test app' : null].filter((w): w is string => w !== null);
+    const named = scope.apps.length > 0 ? scope.apps.map((a) => (stateWords(a).length > 0 ? `${a.name} (${stateWords(a).join(', ')})` : a.name)).join(', ') : scopeTitle(scope);
+    const whereId = `home-row-where-${(rowSeq += 1)}`;
+    const title =
+      scope.apps.length > 0
+        ? scope.apps.flatMap((a, i) => [i > 0 ? d.h('span', { class: 'home-row-sep', attrs: { 'aria-hidden': 'true' } }, ' · ') : null, d.h('span', { class: 'home-row-app' }, d.h('span', { class: 'home-row-name' }, a.name), ...appBadges(a))])
+        : [scopeTitle(scope)];
+    const row = d.h(
+      'button',
+      { class: 'home-row', attrs: { type: 'button', 'data-scope': scope.scopeId, 'aria-label': `${named}, ${cover.badge}`, ...(first !== undefined ? { 'aria-describedby': whereId } : {}) } },
+      d.h('span', { class: 'home-tile', attrs: { 'aria-hidden': 'true' } }, icon(d, 'wallet'), scope.apps.map((a) => appLogo(d, env, a.logoUrl)).find((img) => img !== null) ?? null),
+      d.h(
+        'span',
+        { class: 'home-row-text' },
+        d.h('span', { class: 'home-row-title' }, ...title),
+        first !== undefined ? d.h('span', { class: 'home-row-sub', attrs: { id: whereId } }, originText(d, first), origins.length > 1 ? HOME_TEXT.moreSites(origins.length - 1) : null) : null,
+      ),
+      badge(cover.badge, cover.tone),
+      icon(d, 'chev-r', 'chev'),
     );
+    row.addEventListener('click', (e) => {
+      if (isGesture(e)) openWallet(scope.scopeId);
+    });
+    return d.h('li', {}, row);
   }
 
-  const cards = (rows: HomeScope[]): HTMLElement => d.h('ul', { class: 'home-cards' }, ...rows.map(scopeCard));
+  const rows = (scopes: HomeScope[], id?: string): HTMLElement => d.h('ul', { class: 'home-rows', ...(id ? { attrs: { id } } : {}) }, ...scopes.map(scopeRow));
+
+  /** A "Your account" row: one button that opens its view. */
+  function accountRow(id: string, ic: 'device' | 'person', title: string, sub: string, open: () => void): HTMLElement {
+    const row = d.h(
+      'button',
+      { class: 'home-row', attrs: { type: 'button', id, 'aria-describedby': `${id}-about` } },
+      d.h('span', { class: 'home-tile home-tile-own', attrs: { 'aria-hidden': 'true' } }, icon(d, ic)),
+      // Named by its title; its line is the description.
+      d.h('span', { class: 'home-row-text' }, d.h('span', { class: 'home-row-title' }, title), d.h('span', { class: 'home-row-sub', attrs: { id: `${id}-about`, 'aria-hidden': 'true' } }, sub)),
+      icon(d, 'chev-r', 'chev'),
+    );
+    row.addEventListener('click', (e) => {
+      if (isGesture(e)) open();
+    });
+    return d.h('li', {}, row);
+  }
+
+  /** A group's empty or failed state (the system's empty state): an icon, what is missing, why, and what to do. */
+  const stateBox = (id: string, ic: 'wallet' | 'search' | 'warn' | 'info', title: string, text: string, ...more: Child[]): HTMLElement =>
+    d.h('div', { class: 'jp-empty home-empty', attrs: { id } }, icon(d, ic), d.h('strong', {}, title), d.h('span', {}, text), ...more);
+
+  /** A list on its way: two placeholder rows (hidden from screen readers), and the words for them when there are some. */
+  const loadingRows = (id: string, words: string | null): HTMLElement =>
+    d.h(
+      'div',
+      { class: 'home-loading', attrs: { id } },
+      words ? d.h('p', { class: 'muted', attrs: { role: 'status' } }, words) : null,
+      d.h('ul', { class: 'home-rows home-rows-loading', attrs: { 'aria-hidden': 'true' } }, ...[0, 1].map(() => d.h('li', {}, d.h('span', { class: 'home-row home-row-skeleton' }, d.h('span', { class: 'home-tile' }), d.h('span', { class: 'home-row-text' }, d.h('span', { class: 'jp-skel home-skeleton-line' }), d.h('span', { class: 'jp-skel home-skeleton-line short' })))))),
+    );
+
+  /** The refusal's slot (`#home-notice`) where it belongs on this view; none where the refusal shows elsewhere. */
+  const noticeSlot = (at: 'top' | 'others'): HTMLElement | null => (problemAt === at ? d.h('div', { class: 'home-notice', attrs: { id: 'home-notice' } }) : null);
+
+  /** A view's way back to the front page (D893): "Your wallets", a quiet link-like button. */
+  const backLink = (): HTMLElement => button(HOME_TEXT.back, goFront, { class: 'home-back', id: 'home-back', kind: 'ghost', sm: true, icon: 'chev-l' });
 
   function renderContent(): void {
     if (stage !== 'signed_in') return;
-    renderNotice();
-    const open = openScope ? findScope(openScope) : null;
-    if (open) fill('home-content', ...appPage(open));
+    // What has focus in the page, so a redraw doesn't take it away (D893: the search can be typed in while the list
+    // loads, and the list's arrival redraws the page; a Copy pressed again after a check, …).
+    const doc = win.document;
+    const active = doc.activeElement as HTMLElement | null;
+    const keep = active && active.id && byId('home-content')?.contains(active) ? active.id : null;
+    const caret = active instanceof (doc.defaultView?.HTMLInputElement ?? HTMLInputElement) ? ([active.selectionStart, active.selectionEnd] as const) : null;
+    const v = viewing;
+    if (v.kind === 'wallet') {
+      // A fresher copy of the listing when the page has one (a "Check now"); else the one it was opened with.
+      v.scope = findScope(v.scope.scopeId) ?? v.scope;
+      fill('home-content', ...appPage(v.scope));
+    } else if (v.kind === 'devices') fill('home-content', backLink(), devices.frontView());
+    else if (v.kind === 'profile') fill('home-content', backLink(), profile.frontView());
     else fill('home-content', ...frontPage());
+    if (keep) {
+      const again = byId(keep);
+      if (again && doc.activeElement !== again && !again.hasAttribute('disabled') && focusQuiet(again) && caret && again instanceof (doc.defaultView?.HTMLInputElement ?? HTMLInputElement)) {
+        try {
+          again.setSelectionRange(caret[0], caret[1]);
+        } catch {
+          // Not every input has a caret.
+        }
+      }
+    }
+    renderNotice();
+    // The window's title follows the view's heading (D893): "Wallet details – Passport Home".
+    const h1 = byId('home-content')?.querySelector('h1') ?? null;
+    setTitle(h1 ? homeViewTitle(headingText(h1)) : BRAND.home);
     watchAbove();
   }
 
@@ -1474,78 +1927,98 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       if ((e as KeyboardEvent).key === 'Enter' && isGesture(e)) track(runSearch());
     });
     const others = listed.filter((s) => s.scopeId !== linked?.scopeId);
+    // The first list failed: the group says so, with the refusal and "Try again" together (never a lone button).
+    const failed = (): HTMLElement => {
+      const box = stateBox(
+        'home-list-failed',
+        'warn',
+        HOME_TEXT.walletsFailedTitle,
+        problem?.text ?? HOME_TEXT.walletsFailed,
+        problem ? d.h('span', { class: 'code muted' }, supportCode(problem.code)) : null,
+        problem?.requestId ? d.h('span', { class: 'code muted' }, supportRequest(problem.requestId)) : null,
+        d.h('span', { class: 'actions' }, button(HOME_TEXT.retry, () => track(loadFirst()), { class: 'primary', id: 'home-reload' })),
+      );
+      box.setAttribute('role', 'alert');
+      return box;
+    };
+    const othersList = (): Child[] => {
+      if (loading) return [loadingRows('home-others-loading', null)];
+      if (list === 'error') return [d.h('p', { class: 'muted', attrs: { id: 'home-others-failed' } }, HOME_TEXT.othersFailed)];
+      if (others.length === 0 && !nextCursor) return [stateBox('home-others-empty', 'info', HOME_TEXT.othersEmptyTitle, HOME_TEXT.othersEmpty)];
+      return [
+        others.length > 0 ? rows(others, 'home-others-list') : null,
+        nextCursor ? d.h('div', { class: 'actions start' }, button(busy === 'more' ? 'Loading…' : 'Show more', () => track(loadMore()), { id: 'home-more', disabled: busy !== null })) : null,
+      ];
+    };
     return [
       d.h(
         'section',
-        { attrs: { id: 'home-mine', 'aria-labelledby': 'home-mine-title' } },
-        d.h('h2', { attrs: { id: 'home-mine-title' } }, 'Your apps'),
+        { class: 'home-group', attrs: { id: 'home-mine', 'aria-labelledby': 'home-title' } },
+        d.h('div', { class: 'home-view-head' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, HOME_TEXT.walletsTitle), d.h('p', { class: 'home-lede' }, HOME_TEXT.walletsLede)),
+        list === 'error' ? null : noticeSlot('top'),
         loading
-          ? d.h('p', { class: 'muted', attrs: { role: 'status', id: 'home-loading' } }, 'Loading your apps…')
+          ? loadingRows('home-loading', HOME_TEXT.walletsLoading)
           : list === 'error'
-            ? d.h('div', { class: 'actions start' }, button('Try again', () => track(loadFirst()), { class: 'primary', id: 'home-reload' }))
+            ? failed()
             : mine.length > 0
-              ? cards(mine)
-              : empty('home-empty', 'Nothing here yet', `No apps yet for this ${accountName()}. An app appears here once you have signed in to it with ${BRAND.company}.`),
+              ? rows(mine, 'home-mine-list')
+              : stateBox('home-empty', 'wallet', HOME_TEXT.walletsEmptyTitle, HOME_TEXT.walletsEmpty(accountName())),
       ),
       list === 'ready' && linked && !mine.some((s) => s.scopeId === linked?.scopeId)
         ? d.h(
             'section',
-            { attrs: { id: 'home-linked', 'aria-labelledby': 'home-linked-title' } },
-            d.h('h2', { attrs: { id: 'home-linked-title' } }, 'The app from your link'),
+            { class: 'home-group', attrs: { id: 'home-linked', 'aria-labelledby': 'home-linked-title' } },
+            d.h('h2', { attrs: { id: 'home-linked-title' } }, HOME_TEXT.linkedTitle),
             alert(d, 'info', { class: 'note' }, `The link you opened is for the app below. ${BRAND.company} has no wallet on record for this ${accountName()} in it. Its name and address are the app’s own, not ${BRAND.company}’s.`),
-            cards([linked]),
+            rows([linked]),
           )
         : null,
-      list === 'ready' ? devices.frontView() : null,
-      list === 'ready' ? profile.frontView() : null,
-      list === 'ready'
-        ? d.h(
-            'section',
-            { class: 'home-find', attrs: { role: 'search', 'aria-labelledby': 'home-find-title' } },
-            d.h('h2', { attrs: { id: 'home-find-title' } }, 'Find an app'),
-            d.h(
-              'div',
-              { class: 'jp-field home-search-field' },
-              d.h('label', { class: 'jp-label', attrs: { for: 'home-search' } }, 'App name'),
-              input,
-              d.h('p', { class: 'jp-hint', attrs: { id: 'home-search-help' } }, 'Some apps appear only when you type their whole name.'),
-            ),
-            d.h(
-              'div',
-              { class: 'actions start' },
-              button(busy === 'search' ? 'Searching…' : 'Search', () => track(runSearch()), { id: 'home-search-go', disabled: busy !== null }),
-              search
-                ? button(
-                    'Clear',
-                    () => {
-                      search = null;
-                      searchDraft = '';
-                      problem = null;
-                      renderContent();
-                    },
-                    { id: 'home-search-clear' },
-                  )
-                : null,
-            ),
+      d.h(
+        'section',
+        { class: 'home-group', attrs: { id: 'home-your-account', 'aria-labelledby': 'home-account-title' } },
+        d.h('h2', { attrs: { id: 'home-account-title' } }, HOME_TEXT.accountTitle),
+        d.h('ul', { class: 'home-rows' }, accountRow('home-open-devices', 'device', HOME_DEVICES_TITLE, HOME_TEXT.devicesRow, () => openAccount('devices')), accountRow('home-open-profile', 'person', HOME_NAME_TITLE, HOME_TEXT.nameRow, () => openAccount('profile'))),
+      ),
+      d.h(
+        'section',
+        { class: 'home-group home-find', attrs: { id: 'home-others', 'aria-labelledby': 'home-others-title' } },
+        d.h('div', { class: 'home-view-head' }, d.h('h2', { attrs: { id: 'home-others-title' } }, HOME_TEXT.othersTitle), d.h('p', { class: 'home-lede' }, HOME_TEXT.othersLede)),
+        d.h(
+          'div',
+          { class: 'jp-field home-search-field', attrs: { role: 'search' } },
+          d.h('label', { class: 'jp-label', attrs: { for: 'home-search' } }, HOME_TEXT.searchLabel),
+          d.h(
+            'div',
+            { class: 'home-search-row' },
+            input,
+            button(busy === 'search' ? 'Searching…' : 'Search', () => track(runSearch()), { id: 'home-search-go', disabled: busy !== null, icon: 'search' }),
             search
-              ? d.h(
-                  'div',
-                  { attrs: { id: 'home-results' } },
-                  d.h('h3', { attrs: { id: 'home-results-title', tabindex: '-1' } }, 'Results for ', d.h('strong', {}, search.term)),
-                  search.results.length > 0 ? cards(search.results) : d.h('p', { class: 'muted', attrs: { id: 'home-no-results' } }, 'No app found with that name.'),
+              ? button(
+                  'Clear',
+                  () => {
+                    search = null;
+                    searchDraft = '';
+                    problem = null;
+                    renderContent();
+                  },
+                  { id: 'home-search-clear' },
                 )
               : null,
-          )
-        : null,
-      list === 'ready' && !search && others.length > 0
-        ? d.h(
-            'section',
-            { attrs: { 'aria-labelledby': 'home-others-title' } },
-            d.h('h2', { attrs: { id: 'home-others-title' } }, `Other apps that use ${BRAND.company}`),
-            cards(others),
-            nextCursor ? d.h('div', { class: 'actions start' }, button(busy === 'more' ? 'Loading…' : 'Show more', () => track(loadMore()), { id: 'home-more', disabled: busy !== null })) : null,
-          )
-        : null,
+          ),
+          d.h('p', { class: 'jp-hint', attrs: { id: 'home-search-help' } }, HOME_TEXT.searchHint),
+        ),
+        noticeSlot('others'),
+        ...(search
+          ? [
+              d.h(
+                'div',
+                { attrs: { id: 'home-results' } },
+                d.h('h3', { attrs: { id: 'home-results-title', tabindex: '-1' } }, 'Results for ', d.h('strong', {}, search.term)),
+                search.results.length > 0 ? rows(search.results, 'home-results-list') : stateBox('home-no-results', 'search', HOME_TEXT.noResultsTitle, HOME_TEXT.noResults),
+              ),
+            ]
+          : othersList()),
+      ),
     ];
   }
 
@@ -1630,17 +2103,22 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       'home-copied-box',
       copyWhats.flatMap((what) => [COPY_FAILED.none(what), COPY_FAILED.refused(what)]),
     );
+    // The apps' label: for the user's wallet, the apps that use it (D893); for an app where Journear has no wallet of
+    // theirs, as before.
+    const appsLabel = scope.mine ? (scope.apps.length > 1 ? HOME_TEXT.walletApps : HOME_TEXT.walletApp) : scope.apps.length > 1 ? 'Apps that share one wallet' : 'App';
     return [
-      button('Back to all apps', closeApp, { class: 'home-back', id: 'home-back', kind: 'ghost', sm: true }),
+      backLink(),
       d.h(
         'section',
         { class: 'home-app-details', attrs: { 'aria-labelledby': 'home-app-title' } },
-        // The heading is Hana's own words, always. An app's name is the partner's: it is a labelled value in the box
-        // below ("App"), never the heading of a page on Hana's origin.
-        d.h('h2', { attrs: { id: 'home-app-title', tabindex: '-1' } }, 'App details'),
-        d.h('h3', { attrs: { id: 'home-app-label' } }, scope.apps.length > 1 ? 'Apps that share one wallet' : 'App'),
+        // The heading is Journear's own words, always, and names the view (D893): "Wallet details" for the user's wallet,
+        // "App details" for an app where they have none. An app's name is the partner's: it is a labelled value in the
+        // box below, never the heading of a page on Journear's origin.
+        d.h('h1', { attrs: { id: 'home-app-title', tabindex: '-1' } }, scope.mine ? HOME_TEXT.walletTitle : HOME_TEXT.appTitle),
+        noticeSlot('top'),
+        d.h('h2', { attrs: { id: 'home-app-label' } }, appsLabel),
         scope.apps.length > 0 ? d.h('div', { class: 'home-card-apps home-app-all', attrs: { 'aria-labelledby': 'home-app-label', role: 'group' } }, ...scope.apps.map((a) => appLine(a, 5))) : d.h('p', { class: 'muted' }, scopeTitle(scope)),
-        d.h('h3', {}, cover.question),
+        d.h('h2', {}, cover.question),
         d.h('p', { attrs: { id: 'home-coverage' } }, badge(cover.badge, cover.tone), ' ', busy === 'check' ? 'Checking…' : cover.detail),
         scope.coverage === 'unknown' && busy !== 'check' ? d.h('div', { class: 'actions start' }, button('Check now', () => track(checkScope(scope)), { id: 'home-check' })) : null,
         // The addresses and the Support ID: side by side where there is room, one above the other on a phone.
@@ -1650,7 +2128,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           d.h(
             'div',
             { class: 'home-app-addresses' },
-            d.h('h3', {}, 'Your addresses'),
+            d.h('h2', {}, 'Your addresses'),
             addressRows.length > 0
               ? d.h(
                   'div',
@@ -1660,13 +2138,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
                   // The copy line, at the card's foot (its space kept, so nothing anywhere moves when it speaks).
                   copyLine.box,
                 )
-              : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Journear has no address on record for you in this app yet.' : `Journear has no wallet on record for this ${accountName()} in this app.`),
+              : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? HOME_TEXT.noAddress : `${BRAND.company} has no wallet on record for this ${accountName()} in this app.`),
           ),
           scope.supportId
             ? d.h(
                 'div',
                 { class: 'home-support' },
-                d.h('h3', {}, 'Support ID'),
+                d.h('h2', {}, 'Support ID'),
                 d.h('p', {}, d.h('span', { class: 'mono', attrs: { id: 'home-support-id' } }, scope.supportId), ' ', copyButton('Support ID', scope.supportId, 'home-copy-support')),
                 d.h('p', { class: 'muted' }, 'Give this to the app’s support team if you need help. It doesn’t reveal your email or your Google account.'),
                 // With no addresses, the copy line is the Support ID's.
@@ -1675,8 +2153,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             : null,
         ),
       ),
-      // Where the per-app tools go: the devices signed in to it, the ways to sign in to its wallet, the name it gets, and
-      // moving the wallet out (last, never featured).
+      // Where the wallet's tools go: the devices signed in to it, the ways to sign in to it, the name its apps get, and
+      // moving the wallet out (last, never featured; its screens' titles stay `h3`, home-export.ts unchanged, D893).
       d.h('div', { attrs: { id: 'home-app-extras' } }, devices.appView(scope), signIns.appView(scope), profile.appView(scope), moving.view(scope, fromLink)),
     ];
   }
@@ -1684,7 +2162,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   // ---- start ----
   async function loadConfig(): Promise<void> {
     stage = 'loading';
-    d.show(d.h('section', { class: 'panel home home-gate' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Loading…')));
+    showGate(d.h('section', { class: 'panel home home-gate' }, d.h('h1', { attrs: { id: 'home-title', tabindex: '-1' } }, BRAND.home), d.h('p', { class: 'muted', attrs: { role: 'status' } }, 'Loading…')));
     try {
       config = await api.config();
     } catch (err) {
@@ -1704,7 +2182,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   if (isFramed(win)) {
     stage = 'stopped';
     signInError = plain('config_mismatch', `${BRAND.home} can’t run inside another page.`);
-    d.show(d.h('section', { class: 'panel error', attrs: { role: 'alert' } }, d.h('h1', {}, `${BRAND.home} stopped`), d.h('p', {}, signInError.text)));
+    showGate(d.h('section', { class: 'panel error', attrs: { role: 'alert' } }, d.h('h1', {}, `${BRAND.home} stopped`), d.h('p', {}, signInError.text)));
   } else {
     // Whoever opened this window gets no handle on it from here on.
     try {
@@ -1713,6 +2191,14 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       // A browser that refuses the write still gives the opener nothing: the page takes no message from it.
     }
     win.addEventListener('message', onMessage);
+    // D893: Back and Forward between Home's views; the page restores scroll and focus itself.
+    win.addEventListener('popstate', onPopState);
+    try {
+      const h = hist();
+      if (h && 'scrollRestoration' in h) h.scrollRestoration = 'manual';
+    } catch {
+      // Scroll restoration is a convenience.
+    }
     win.document.body?.append(toasts.root);
     // A timer can fire late after the device slept: look again whenever the page is shown or focused.
     for (const type of ['focus', 'pageshow', 'visibilitychange']) win.addEventListener(type, () => checkSession());
@@ -1733,7 +2219,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       return list;
     },
     get openScope() {
-      return openScope;
+      return viewing.kind === 'wallet' ? viewing.scope.scopeId : null;
+    },
+    get view() {
+      return viewing.kind;
     },
     get errorCode() {
       return (stage === 'signed_in' ? (problem ?? renewProblem) : signInError)?.code ?? null;

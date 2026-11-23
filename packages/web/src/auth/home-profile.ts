@@ -1,12 +1,13 @@
-// Passport Home's "Your name" (was Hana Home's) (home-page.ts mounts it on the front page and on each app's page, D714): the first and last
-// name the user may set for their apps, both optional, and per app whether that app gets it. Nothing is shared until
-// the user turns it on for an app, on that app's page.
+// Passport Home's "Your name" (home-page.ts mounts it as its own view under "Your account", and on each wallet's page,
+// D714, D893): the first and last name the user may set for their apps, both optional, and per app whether that app
+// gets it. Nothing is shared until the user turns it on for an app, on its wallet's page.
 //
-// Like "Devices and auto-approve" (home-devices.ts, D677's shape), each view starts collapsed: a heading, one sentence and
-// a button. Only that button reads:
-//   - the front page: `GET /v1/home/profile` (the name, the apps it is shared with), then the form (First name, Last
-//     name, Save, "Remove my name") and the list, each app with "Stop sharing";
-//   - an app's page: `GET /v1/home/profile?appId=` for each app of the listing, then per app "Share my name with {App}"
+// Like "Devices and auto-approve" (home-devices.ts, D677's shape), each part starts collapsed: a heading, one sentence and
+// a button. Only that button reads, or opening the view from "Your account" (`openFront`, the user asking); Back and
+// Forward never read:
+//   - the "Your name" view: `GET /v1/home/profile` (the name, the apps it is shared with), then the form (First name,
+//     Last name, Save, "Remove my name") and the list, each app with "Stop sharing";
+//   - a wallet's page: `GET /v1/home/profile?appId=` for each app of the listing, then per app "Share my name with {App}"
 //     or "Stop sharing my name" (`POST /v1/home/name-sharing`).
 // Each part is checked with the API's own rule (`normalizeProfileName`) before anything is sent, and the normalized value
 // is what is sent. Saving both parts empty, or "Remove my name", asks first, on the page, saying that it stops sharing
@@ -49,15 +50,15 @@ export const HOME_NAME_TEXT = Object.freeze({
   removed: 'Your name is removed. No app gets it any more.',
   sharesTitle: 'Apps you share your name with',
   noShares: 'You aren’t sharing your name with any app.',
-  more: `Passport Home lists the ${HOME_NAME_SHARES_MAX} apps you shared it with most recently; there are others. To stop sharing with one of those, open its page.`,
-  howToShare: 'To share your name with an app, open the app’s page from “Your apps” and choose “Share my name”.',
+  more: `Passport Home lists the ${HOME_NAME_SHARES_MAX} apps you shared it with most recently; there are others. To stop sharing with one of those, open its wallet under “Your wallets”.`,
+  howToShare: 'To share your name with an app, open its wallet under “Your wallets” and choose “Share my name”.',
   stop: 'Stop sharing',
   stopApp: 'Stop sharing my name',
   stopping: 'Stopping…',
   sharing: 'Sharing…',
   again: 'Show again',
   current: 'Your name in Passport Home: ',
-  noName: 'You haven’t set a name in Passport Home. To share one, go back to all apps, open “Your name” and save it first.',
+  noName: 'You haven’t set a name in Passport Home. To share one, go back to “Your wallets”, open “Your name” and save it first.',
   shared: 'Shared',
   notShared: 'Not shared',
   cantShare: 'Passport Home can’t share your name with this app.',
@@ -121,8 +122,12 @@ export interface HomeProfileSection {
   readonly errorCode: string | null;
   /** How many requests this section has sent. */
   readonly requests: number;
-  /** The front page's section. The same element each time. */
+  /** The section of the "Your name" view (its heading is the view's `h1`). The same element each time. */
   frontView(): HTMLElement;
+  /** The user opened that view (its row under "Your account"): reads once if it hasn't yet. */
+  openFront(): void;
+  /** The user left that view: the removal's confirmation closes unless it is on its way. The name and drafts stay. */
+  leaveFront(): void;
   /** The section of `scope`'s page. Another app's page starts it closed again; the same app keeps what it shows. */
   appView(scope: HomeScope): HTMLElement;
   /** The user left an app's page: its section closes, and opening the page again reads it again. */
@@ -581,7 +586,7 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
       deps.track(save());
     });
     out.push(form, noteView(front.note, 'home-profile-note'));
-    out.push(d.h('h3', { attrs: { id: 'home-name-shares-title' } }, HOME_NAME_TEXT.sharesTitle));
+    out.push(d.h('h2', { attrs: { id: 'home-name-shares-title' } }, HOME_NAME_TEXT.sharesTitle));
     if (front.shares.length === 0)
       out.push(d.h('div', { class: 'jp-empty home-empty', attrs: { id: 'home-name-shares-none' } }, icon(d, 'shield'), d.h('span', {}, HOME_NAME_TEXT.noShares)));
     else
@@ -651,7 +656,8 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
 
   function render(where: Where): void {
     const root = where === 'front' ? frontRoot : appRoot;
-    const heading = where === 'front' ? d.h('h2', { attrs: { id: 'home-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE) : d.h('h3', { attrs: { id: 'home-app-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE);
+    // The view's own heading (D893: the page's `h1` names the view); a section of a wallet's page.
+    const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE) : d.h('h2', { attrs: { id: 'home-app-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE);
     const about = d.h('p', {}, where === 'front' ? HOME_NAME_TEXT.frontAbout : HOME_NAME_TEXT.appAbout);
     root.replaceChildren();
     for (const c of [heading, about, ...(where === 'front' ? frontBody() : appBody())]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
@@ -678,6 +684,17 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     },
     frontView() {
       return frontRoot;
+    },
+    openFront() {
+      // Opening the view is the user asking to see their name: one read, unless it is shown already or something is on
+      // its way. Without a usable sign-in nothing is sent: the view shows "Show my name", whose press says so.
+      if (front.state !== 'closed' || busy !== null || !deps.session()) return;
+      deps.track(loadFront());
+    },
+    leaveFront() {
+      if (!confirmRemove || busy === 'remove') return;
+      confirmRemove = false;
+      render('front');
     },
     appView(scope) {
       if (appScope?.scopeId !== scope.scopeId) {

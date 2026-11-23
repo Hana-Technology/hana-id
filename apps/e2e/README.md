@@ -103,7 +103,17 @@ fee is), each of the sponsored check-in (first time and later), a sponsored unli
 (and one that attaches NEAR), an EVM send, a NEAR transfer and a Stellar payment at 390 px and at the popup's size,
 folded and with the details open (`fee-{case}-{main|details}-{phone|popup}.png`); and, for D886, a Stellar message,
 an EVM message (and one Journear can't read), typed data with and without a network and a NEAR message, for a test app and a live app, at 390 px
-(`msg-{kind}-{test|live}-phone.png`). It checks nothing itself.
+(`msg-{kind}-{test|live}-phone.png`). It checks only the dividers (below), softly, so every screen is still saved.
+
+The approval and consent windows' dividers (D884's note): `tests/divider-checks.ts` measures the page as drawn: no two
+lines (a list's rule, a box's edge) close together with nothing between them unless both are box edges, no ruled block
+around nothing, and the same space above and below every rule. `tests/approval-dividers.spec.ts` runs it (every
+browser) on an EVM send, the sponsored check-in (later and first time), a sponsored unlimited permission, a relayed
+NEAR postcard with its note, a NEAR transfer, a message, a Stellar payment and the consent screen (two contract
+lines), at 390 px and the popup's size, folded and open (with `HANA_SHOTS_DIR=<dir>`, Chromium, it also saves each as
+`dividers-{name}-{phone|popup}-{main|details}.png` and records a failure without stopping); `evm-sponsor.spec.ts` on
+every window it opens; and the screenshot specs (`approval-plain-shots`, `approval-near-reviewed-shots`,
+`approval-summary`, `evm-sponsor`) on every screen they save.
 
 The mainnet demo (D428) and the export's guarded reveal (D430): `tests/mainnet-demo.spec.ts` (Horizon and Base's RPC
 routed, never the real network). With `HANA_SHOTS_DIR=<dir>` it also saves its screens there (Chromium only; a shown

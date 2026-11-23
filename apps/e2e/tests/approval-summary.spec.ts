@@ -24,6 +24,7 @@ import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from 
 import { e2eRelayer } from '../src/relayer-key.ts';
 import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { approve, clickLauncher, expect, login, newApp, newLiveApp, okValue, openPartner, runAction, test } from './fixtures.ts';
+import { expectEvenDividers } from './divider-checks.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 /** The approval popup's window (`popup,width=420,height=680`, D99). */
@@ -61,6 +62,7 @@ async function shot(popup: Page, name: string, browserName: string): Promise<voi
   if (!SHOTS || browserName !== 'chromium') return;
   await popup.setViewportSize(POPUP);
   await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
+  await expectEvenDividers(popup, name, { soft: true });
 }
 
 const details = (popup: Page) => popup.locator('details.request-details');

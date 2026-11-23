@@ -14,6 +14,7 @@ import { type Page } from '@playwright/test';
 import { type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, encodeNep413Message, nearImplicitPublicKey } from '@hana-id/core';
 import { DEMO_ORIGIN, E2E_GUESTBOOK, E2E_STAMPS, NEAR_RPC, STAMPS_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { approve, clickLauncher, expect, login, newApp, okValue, openPartner, runAction, test } from './fixtures.ts';
+import { dividerProblems } from './divider-checks.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const SIZES = { '390': { width: 390, height: 844 }, popup: { width: 420, height: 680 } } as const;
@@ -98,8 +99,10 @@ test('reviewed NEAR calls: the screens', async ({ page, browserName }) => {
       const details = popup.locator('details.request-details');
       await details.evaluate((d) => ((d as HTMLDetailsElement).open = false));
       await popup.screenshot({ path: `${SHOTS}/${s.name}-${size}-main.png`, fullPage: true, animations: 'disabled' });
+      expect.soft(await dividerProblems(popup), `${s.name}-${size}-main`).toEqual([]);
       await details.evaluate((d) => ((d as HTMLDetailsElement).open = true));
       await popup.screenshot({ path: `${SHOTS}/${s.name}-${size}-details.png`, fullPage: true, animations: 'disabled' });
+      expect.soft(await dividerProblems(popup), `${s.name}-${size}-details`).toEqual([]);
     }
   }
   await popup.close();

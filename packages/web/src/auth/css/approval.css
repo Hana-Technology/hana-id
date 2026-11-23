@@ -107,7 +107,6 @@ dl.id-rows {
 }
 
 .risk-box dl.id-rows {
-  margin-top: var(--jp-space-1);
   color: var(--jp-fg);
   font-weight: var(--jp-weight-regular);
 }
@@ -167,9 +166,65 @@ dl.id-rows dd + dt {
   color: var(--jp-fg);
 }
 
-/* A free fee is only in the details, first (D884): one rule above it; the "Your account" row's own rule is under it. */
-.request-details > .details-body > dl.fee-facts {
+/* ---- the dividers (D884's note, 2026-11-23): one rule where two ruled blocks meet, the same space on each side ----
+   A ruled block is a facts list (`dl.jp-kv`: a rule above and below it, base.css) or an operation or contract line
+   (`.ops > li`, `.contracts > li`: a rule above). A box (an alert, a quoted or signed message, raw data, the details)
+   has its own border. So that rows can come and go without doubling or orphaning a line, the rules are drawn by where
+   a block sits, not by which rows it has:
+   - two ruled blocks meet: one rule, the first one's; the second keeps no rule and no space above its rows;
+   - a ruled block meets a box, or the edge of the group it is in (the top of an operation, the inside of an alert,
+     the bottom of the details), or an operation follows one that ends in a box: no rule on that side (the box's
+     border or the group's edge is the line);
+   - the details' first list keeps its rule: it separates the rows from "Hide details" above them;
+   - an empty list draws nothing (dom.ts `withoutEmptyLists` also leaves it out of the page);
+   - a rule keeps its group's gap on both sides (`--rule-space`: the space between the group's blocks). */
+:is(.request, div.consent) {
+  --rule-space: var(--jp-space-3);
+}
+
+:is(.ops, .contracts) > li,
+.risk-box > .body,
+.sub {
+  --rule-space: var(--jp-space-2);
+}
+
+:is(.request, div.consent) dl.jp-kv {
+  padding-block: var(--rule-space);
+}
+
+:is(.request, div.consent) dl.jp-kv:empty {
+  display: none;
+}
+
+:is(.request, div.consent) dl.jp-kv:not(:empty) + dl.jp-kv,
+:is(.request, div.consent) :is(.jp-alert, div.summary-quote, pre.message, code.mono, details.request-details) + dl.jp-kv,
+:is(.request, div.consent) :not(.details-body) > dl.jp-kv:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+:is(.request, div.consent) dl.jp-kv:has(+ :is(.jp-alert, div.summary-quote, pre.message, code.mono, details.request-details)),
+:is(.request, div.consent) dl.jp-kv:has(+ :is(.ops, .contracts) > li.takeover-op:first-child),
+:is(.request, div.consent) dl.jp-kv:last-child {
   border-bottom: 0;
+  padding-bottom: 0;
+}
+
+:is(.request, div.consent)
+  :is(dl.jp-kv:not(:empty), .jp-alert, div.summary-quote, pre.message, code.mono, details.request-details)
+  + :is(.ops, .contracts) > li:first-child:not(.takeover-op) {
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* An operation after a framed one, or after one that ends in a box (its call data, its arguments): that border is
+   the line. */
+:is(.request, div.consent)
+  :is(.ops, .contracts)
+  > li:is(.takeover-op, :has(> :is(.jp-alert, div.summary-quote, pre.message, code.mono):last-child, > .args:last-child > :is(.jp-alert, pre.message):last-child))
+  + li:not(.takeover-op) {
+  border-top: 0;
+  padding-top: 0;
 }
 
 /* The user's own account in the details (D876): as the rows above, then Copy and what it did. */
@@ -353,7 +408,8 @@ strong.danger {
 }
 
 /* ---- operations and actions: numbered by their own headings ("1. payment"), so no second list number ---- */
-ol.ops {
+ol.ops,
+ul.contracts {
   list-style: none;
   padding-left: 0;
   margin: 0;
@@ -419,6 +475,18 @@ div.consent p {
   min-width: 0;
 }
 
+/* A NEAR transaction's actions: their heading and list, spaced as the details' other blocks (one rule between them). */
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  min-width: 0;
+}
+
+.action-list > * {
+  margin: 0;
+}
+
 /* What an authorization also authorizes, and a relayed action's inner actions: indented under a rule. */
 .sub {
   border-left: 3px solid var(--jp-border-strong);
@@ -427,6 +495,15 @@ div.consent p {
   display: flex;
   flex-direction: column;
   gap: var(--jp-space-2);
+}
+
+/* Its operations' rules keep its own gap on both sides. */
+.sub > .ops {
+  gap: var(--jp-space-2);
+}
+
+.sub > .ops > li {
+  padding-top: var(--jp-space-2);
 }
 
 ul.tree,

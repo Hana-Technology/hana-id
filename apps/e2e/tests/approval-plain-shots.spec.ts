@@ -13,6 +13,7 @@ import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from 
 import { e2eRelayer } from '../src/relayer-key.ts';
 import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { approve, clickLauncher, expect, login, newApp, newLiveApp, okValue, openPartner, reject, runAction, test } from './fixtures.ts';
+import { dividerProblems, expectEvenDividers } from './divider-checks.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const POPUP = { width: 420, height: 680 } as const;
@@ -49,6 +50,7 @@ async function popupFor(page: Page, name: string, action: string, ...args: unkno
 async function shot(popup: Page, name: string): Promise<void> {
   await popup.setViewportSize(POPUP);
   await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
+  await expectEvenDividers(popup, name, { soft: true });
 }
 
 const SIZES = { phone: { width: 390, height: 844 }, popup: POPUP } as const;
@@ -62,6 +64,7 @@ async function feeShots(popup: Page, name: string): Promise<void> {
     for (const [size, viewport] of Object.entries(SIZES)) {
       await popup.setViewportSize(viewport);
       await popup.screenshot({ path: `${SHOTS}/${name}-${open ? 'details' : 'main'}-${size}.png`, fullPage: true, animations: 'disabled' });
+      expect.soft(await dividerProblems(popup), `${name}-${open ? 'details' : 'main'}-${size}`).toEqual([]);
     }
   }
 }
@@ -245,6 +248,7 @@ test.describe('plain-wording screens', () => {
       const phone = async (popup: Page, name: string) => {
         await popup.setViewportSize(SIZES.phone);
         await popup.screenshot({ path: `${SHOTS}/msg-${name}-${tag}-phone.png`, fullPage: true, animations: 'disabled' });
+        await expectEvenDividers(popup, `msg-${name}-${tag}-phone`, { soft: true });
       };
       let popup = await popupFor(page, 'stellar', 'stellarSignMessage', 'Journear Passport testnet demo: this signature proves nothing and moves nothing.');
       await phone(popup, 'stellar');

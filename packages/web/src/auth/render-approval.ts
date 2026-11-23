@@ -45,7 +45,7 @@ import {
 } from '@hana-id/core/decode';
 import { DEMO_CHECK_IN_CALLDATA, type NearAction, type ReviewedNearAccounts, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
 import { BRAND } from '@hana-id/brand';
-import { type Child, type Dom, dom, row, rows } from './dom.ts';
+import { type Child, type Dom, dom, row, rows, withoutEmptyLists } from './dom.ts';
 import { alert, icon } from './ui.ts';
 
 /** `value` with `decimals` decimal places, trailing zeros trimmed: formatUnits(1500000000000000000n, 18) = "1.5". */
@@ -739,7 +739,7 @@ const NEAR_ACTION_NAMES: Readonly<Record<NearAction['type'], string>> = {
 function nearActionList(d: Dom, actions: readonly NearAction[], receiver: string, me: string, nested: boolean): HTMLElement {
   return d.h(
     'div',
-    nested ? { class: 'sub' } : {},
+    { class: nested ? 'action-list sub' : 'action-list' },
     d.h(nested ? 'p' : 'h2', nested ? { class: 'muted' } : {}, actions.length === 1 ? '1 action' : `${actions.length} actions`),
     d.h(
       'ol',
@@ -1536,7 +1536,7 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
     return withRows(d, book, p, refs);
   });
   const amberBox = riskBox(d, 'warning', amber, appName, book);
-  return d.h(
+  const view = d.h(
     'div',
     { class: 'request jp-confirm', attrs: { 'data-explainable': String(summary.explainable), ...(summary.reviewed ? { 'data-reviewed': 'true' } : {}) } },
     headlineEl,
@@ -1553,4 +1553,6 @@ export function renderApproval(d: Dom, decoded: DecodedApproval, appName: string
     ...(ctx.notes ?? []),
     detailsSection(d, [free ? rows(d, [free], 'jp-kv facts fee-facts') : null, ...(ctx.detailsExtra ?? []), ...k.details]),
   );
+  // No list without rows: its rules would be drawn around nothing (approval.css "the dividers").
+  return withoutEmptyLists(view);
 }

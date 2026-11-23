@@ -16082,6 +16082,23 @@ From `next` @ 032711e8; not merged, not deployed.
     ones included. Sign only if you know why you’re signing it, and don’t keep real money in this account."), in amber
     like the line above it that says the message can't be read (never calmer than it). Tested for `personal_sign`, a
     Stellar message and a NEAR message, test and live apps (D886).
+- Note, 2026-11-23 (branch `fix/approval-double-divider`; the founder's hand test on `next` @ 0c47747b: "there looks
+  like there's 2 lines between 'Program' and 'Network' rows"): every facts list (`dl.jp-kv`, base.css) drew a rule
+  above and below itself, so wherever two lists met (the sponsored check-in's "Program" row, D876, then its "Network"
+  row, D877, once this decision took the free fee out of the main view) there were two rules 12 px apart; the same
+  happened beside a box (an alert, the note's or message's box, the details) and at a group's edge (inside a red box,
+  at the bottom of the details, before an operation's own rule, after an operation that ends in its arguments' box),
+  and the free fee's one-off (`dl.fee-facts` with no rule under it) left uneven space. Now the rules are drawn by
+  where a list sits, not by its rows (`auth/css/approval.css` "the dividers"): one rule where two ruled blocks meet
+  (the first one's), none against a box or a group's edge (the details' first list keeps the rule under "Hide
+  details"), the group's gap on both sides of a rule (`--rule-space`), and a list with no rows is left out (`dom.ts`
+  `withoutEmptyLists`, also on the consent screen). A NEAR transaction's actions heading and list are spaced like the
+  details' other blocks (`.action-list`), and the consent screen's contract lines like a transaction's operations
+  (`ul.contracts`: before, a line's rule sat right under the previous line's text). Nothing shown, hidden, reordered
+  or reworded; the guard is unchanged. Tests: `packages/web/test/auth/approval-dividers.test.ts`;
+  `apps/e2e/tests/divider-checks.ts` measures the drawn page (no two lines with nothing between them, no ruled block
+  around nothing, the same space above and below a rule), run by `approval-dividers.spec.ts` (every browser), every
+  `evm-sponsor.spec.ts` window, and the screenshot specs.
 
 ### D886. A message being signed comes right after the headline; one note about networks, true for test and live apps
 - Date 2026-11-19 · Status: **asked for by the founder 2026-11-19** while hand-testing a Stellar message on the hosted

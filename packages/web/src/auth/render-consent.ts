@@ -21,7 +21,7 @@ import {
 } from '@hana-id/core';
 import type { AutoApprovePolicyV1, FunctionRule } from '@hana-id/core/policy';
 import { BRAND } from '@hana-id/brand';
-import { type Child, type Dom, originText, row, rows } from './dom.ts';
+import { type Child, type Dom, originText, row, rows, withoutEmptyLists } from './dom.ts';
 import { formatUnits } from './render-approval.ts';
 import { alert } from './ui.ts';
 
@@ -228,5 +228,5 @@ export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
     ]),
     alert(d, 'info', { class: 'note lingering' }, lingeringSignaturesNote(appName)),
   );
-  return d.h('div', { class: 'consent' }, ...parts);
+  return withoutEmptyLists(d.h('div', { class: 'consent' }, ...parts));
 }

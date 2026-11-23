@@ -10,15 +10,9 @@
 /* ---- the page shell (D888): a skip link, the top bar, then `main#app`, in one frame of at most 1040 px ---- */
 body.home-page {
   --home-frame: 1040px;
-  /* Where reading text and setting cards stop on a wide screen; card lists and the addresses use the whole frame. */
-  --home-read: 760px;
-  --home-bar: 64px;
+  /* The longest a line of reading text gets (sentences, alerts, the move flow's steps). */
+  --home-measure: 720px;
   background: var(--jp-bg);
-}
-
-/* Focus that scrolls the page (a heading taking focus) stops below the top bar, not under it. */
-:root:has(> body.home-page) {
-  scroll-padding-top: calc(var(--home-bar) + var(--jp-space-4));
 }
 
 /* The skip link: off screen until it has focus, then above the bar's start. */
@@ -41,20 +35,39 @@ body.home-page {
   outline-offset: 2px;
 }
 
-/* The top bar stays at the top of the window. Its own height never depends on the notice, which hangs under it. */
+/* The top bar: the lockup, who is signed in and Sign out, and under them, while it shows, the sign-in's notice as a
+   row of the bar itself: the bar grows with it and covers nothing. It scrolls with the page; on a desktop (a mouse, a
+   window at least 641 x 600 px) it stays at the window's top. */
 .home-top {
-  position: sticky;
-  top: 0;
-  z-index: var(--jp-z-sticky);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--jp-space-2) var(--jp-space-4);
-  min-height: var(--home-bar);
+  min-height: 64px;
   padding: var(--jp-space-3) max(var(--jp-space-4), calc((100% - var(--home-frame)) / 2 + var(--jp-space-4)));
   background: var(--jp-surface);
   border-bottom: 1px solid var(--jp-border);
+}
+
+@media (min-width: 641px) and (min-height: 600px) and (pointer: fine) {
+  .home-top {
+    position: sticky;
+    top: 0;
+    z-index: var(--jp-z-sticky);
+  }
+
+  /* Focus that scrolls the page (a heading or a button taking focus) stops below the bar as it is now, the notice
+     included (home-page.ts watchBar keeps --home-bar-h). */
+  :root:has(> body.home-page) {
+    scroll-padding-top: calc(var(--home-bar-h, 64px) + var(--jp-space-4));
+  }
+
+  /* The email code screens in a stuck bar: never taller than the window, scrolling inside it. */
+  #home-banner {
+    max-height: calc(100dvh - 96px);
+    overflow-y: auto;
+  }
 }
 
 /* The lockup at 148 px (the system's minimum is 120), 128 px on a phone. */
@@ -81,23 +94,24 @@ body.home-page {
   min-width: 0;
 }
 
-/* The sign-in's notice: under the bar, over the page (nothing in the page moves when it comes, changes or goes),
-   in the frame's width; one that is taller than the window scrolls inside itself. */
+/* The notice: the bar's last row, the frame's width; nothing of it while it is empty. */
 .home-top-notice {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  padding: 0 max(var(--jp-space-4), calc((100% - var(--home-frame)) / 2 + var(--jp-space-4)));
-  pointer-events: none;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.home-top-notice:has(> #home-banner:empty) {
+  display: none;
+}
+
+#home-banner {
+  display: grid;
+  gap: var(--jp-space-2);
+  margin: var(--jp-space-1) 0 0;
 }
 
 #home-banner > * {
-  pointer-events: auto;
-  margin-top: var(--jp-space-2);
-  max-height: calc(100vh - var(--home-bar) - var(--jp-space-8));
-  overflow-y: auto;
-  box-shadow: var(--jp-shadow-md);
+  margin: 0;
 }
 
 body.home-page > main {
@@ -163,8 +177,9 @@ body.home-page > main:focus {
 }
 
 /* ---- one section pattern (D888), on the front page and an app's page: sections 40 px apart, no dividers; inside
-   each, its parts 12 px apart and a sub-heading 24 px below what is above it. The tools (devices, ways to sign in,
-   the name, moving the wallet) sit in a card each. ---- */
+   each, its parts 12 px apart and a sub-heading 24 px below what is above it. One width, the frame's: the lists and
+   the tools (devices, ways to sign in, the name, moving the wallet; a card each) use it; reading text stops at the
+   measure. ---- */
 #home-content {
   padding-top: var(--jp-space-2);
 }
@@ -189,11 +204,6 @@ body.home-page > main:focus {
   margin-top: var(--jp-space-10);
 }
 
-/* After the copy line's kept space, which already parts them, the tools come a little closer. */
-.home-app-details:has(> .home-copied-box) + #home-app-extras {
-  margin-top: var(--jp-space-6);
-}
-
 #home-app-extras > section:empty {
   display: none;
 }
@@ -208,16 +218,15 @@ body.home-page > main:focus {
   margin-top: var(--jp-space-3);
 }
 
-/* Reading text and settings keep a reading width; the lists of cards and the addresses use the whole frame. No
-   specificity, so a part's own narrower width (the search field's) stays. */
-:where(#home-content > section) > :where(:not(.home-cards, #home-results, .home-app-split, .home-copied-box)) {
-  max-width: var(--home-read);
+/* Reading text keeps a readable measure, inside the wide cards too. No specificity: a part's own narrower width (the
+   search field's) stays. */
+:where(#home-content) :where(p, .jp-alert, .jp-steps, .home-confirm, .home-export .jp-kv) {
+  max-width: var(--home-measure);
 }
 
 #home-content > section.home-devices,
 #home-content > section.home-profile,
 #home-app-extras > section {
-  max-width: var(--home-read);
   padding: var(--jp-space-5);
   background: var(--jp-surface);
   border: 1px solid var(--jp-border);
@@ -279,34 +288,54 @@ body.home-page > main:focus {
   color: var(--jp-fg);
 }
 
-/* The line keeps the lines it took when its words get shorter (home-page.ts replaceWho): the bar's height, and so
-   the page under it, never moves when the sign-in ends and the address is masked. */
-.home-who.home-who-lines-2 {
+/* The line keeps the lines it took when its words get shorter (home-page.ts replaceWho, a class on the bar's account
+   part): the bar's height, and so the page under it, doesn't change when the sign-in ends and the address is masked. */
+.home-who-lines-2 #home-who {
   min-height: 40px;
 }
 
-.home-who.home-who-lines-3 {
+.home-who-lines-3 #home-who {
   min-height: 60px;
 }
 
-.home-who.home-who-lines-4 {
+.home-who-lines-4 #home-who {
   min-height: 80px;
 }
 
-/* An email address on a phone: a line of its own under the lockup, wrapping at its own break points (dom.ts
-   addressText), so a long one takes more lines, never the page's width; Sign out stays at the line's end. */
+/* A phone (option A's): the lockup and Sign out on the first row, who is signed in on its own line under them (an
+   email address wrapping at its own break points, dom.ts addressText), then the notice while it shows. The bar scrolls
+   with the page here. */
 @media (max-width: 560px) {
-  .home-top-account:has(.home-who-email) {
-    flex: 1 1 100%;
-  }
-
-  .home-top-account:has(.home-who-email) > .home-account {
-    flex: 1 1 auto;
-  }
-
-  .home-who.home-who-email {
+  .home-top:has(#home-who) {
+    display: grid;
+    grid-template-columns: auto auto;
+    grid-template-areas: 'logo out' 'who who' 'notice notice';
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
+    row-gap: 0;
+  }
+
+  .home-top:has(#home-who) .jp-lockup {
+    grid-area: logo;
+  }
+
+  .home-top:has(#home-who) :is(.home-top-account, .home-account, .home-who) {
+    display: contents;
+  }
+
+  .home-top #home-who {
+    grid-area: who;
+    margin-top: var(--jp-space-2);
+  }
+
+  .home-top #home-sign-out {
+    grid-area: out;
+    justify-self: end;
+  }
+
+  .home-top .home-top-notice {
+    grid-area: notice;
+    margin-top: var(--jp-space-2);
   }
 }
 
@@ -478,10 +507,6 @@ body.home-page > main:focus {
   margin: 0;
 }
 
-.home-app-split > :only-child {
-  max-width: var(--home-read);
-}
-
 @media (min-width: 900px) {
   .home-app-split {
     grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
@@ -490,6 +515,11 @@ body.home-page > main:focus {
 
 #home-content > section > .home-app-split {
   margin-top: var(--jp-space-3);
+}
+
+/* The app's box: its apps side by side where there is room. */
+#home-content .home-app-all {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
 }
 
 /* The addresses: one card, a row per chain. */
@@ -564,8 +594,9 @@ a.explorer {
   gap: var(--jp-space-2) var(--jp-space-3);
 }
 
-/* Only a copy that didn't work is said here (one that did is a toast): the user has to copy by hand. The line keeps
-   the space of its longest sentence (ui.ts reservedLine), so nothing below it moves when it appears or goes. */
+/* Only a copy that didn't work is said here (one that did is a toast): the user has to copy by hand. The line sits at
+   the foot of the addresses' card (or the Support ID's box) and keeps the space of its longest sentence (ui.ts
+   reservedLine), so nothing anywhere moves when it appears or goes. */
 .home .home-copied-box > * {
   margin: 0;
   font-size: var(--jp-text-sm);
@@ -574,6 +605,11 @@ a.explorer {
 
 .home .home-copied-box > p.copy-status {
   color: var(--jp-warning);
+}
+
+.home-addresses > .home-copied-box {
+  margin-top: calc(-1 * var(--jp-space-2));
+  padding: 0 var(--jp-space-4) var(--jp-space-3);
 }
 
 /* ---- "Devices and auto-approve": cards of setting rows ---- */
@@ -852,7 +888,8 @@ a.explorer {
   height: var(--jp-control-lg);
 }
 
-/* ---- toasts (toast.ts): bottom-right on a desktop, at the top on a phone; at most 380 px, three at once ---- */
+/* ---- toasts (toast.ts): bottom-right on a desktop, at the top on a phone (below the top bar, so a toast never sits on
+   Sign out or the notice: --home-bar-h, home-page.ts watchBar); at most 380 px, three at once ---- */
 .home-toasts {
   position: fixed;
   right: var(--jp-space-4);
@@ -882,7 +919,7 @@ a.explorer {
 
 @media (max-width: 640px) {
   .home-toasts {
-    top: max(var(--jp-space-4), env(safe-area-inset-top, 0px));
+    top: max(calc(var(--home-bar-h, 96px) + var(--jp-space-2)), env(safe-area-inset-top, 0px));
     bottom: auto;
     right: auto;
     left: 50%;
@@ -990,4 +1027,10 @@ a.explorer {
   padding-top: var(--jp-space-1);
   padding-bottom: var(--jp-space-1);
   overflow-wrap: anywhere;
+}
+
+/* A line that keeps its space (ui.ts reservedLine: the guard's line, the copy line) has no paragraph margin here: the
+   page's own `p` margin would add 8 px the moment its words appear (D878's line under the move flow's buttons). */
+.home .reserved > * {
+  margin: 0;
 }

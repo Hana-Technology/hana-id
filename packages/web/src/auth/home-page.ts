@@ -244,16 +244,17 @@ const WHO_LINES_KEPT = 4;
 
 /** The top bar's parts the page fills: who is signed in and Sign out, and the sign-in's notice. */
 interface TopBar {
+  readonly header: HTMLElement;
   readonly account: HTMLElement;
   readonly notice: HTMLElement;
 }
 
 /**
  * Passport Home's shell (D888). The top bar is the build's static `header.home-top` (the lockup; pageHtml), made here if
- * the document has none. The page adds its two parts outside `#app`, so nothing in the page's content moves when they
- * change: who is signed in with Sign out (filled while signed in), and under the bar the notice (`#home-banner`, a live
- * region kept for the page's life) that hangs over the page instead of pushing it down. Before the bar, a skip link
- * that moves focus into `#app` without changing the page's address (D555).
+ * the document has none. The page adds its two parts to it, outside `#app`: who is signed in with Sign out (filled while
+ * signed in), and the sign-in's notice (`#home-banner`, a live region kept for the page's life), a row of the bar
+ * itself, so the bar grows when it shows and covers nothing. Before the bar, a skip link that moves focus into `#app`
+ * without changing the page's address (D555).
  */
 function topBar(d: Dom): TopBar {
   const doc = d.doc;
@@ -282,7 +283,31 @@ function topBar(d: Dom): TopBar {
     });
     header.before(skip);
   }
-  return { account, notice };
+  return { header, account, notice };
+}
+
+type SizeWatch = { observe(el: Element): void; disconnect(): void };
+
+/**
+ * D888: watches elements' heights and calls `changed(el, height)` when one changes after it was first seen. Null in a
+ * browser without ResizeObserver: the page still works, and the guard still starts over on what the page itself
+ * changes (the notice, a refusal).
+ */
+function sizeWatch(changed: (el: Element, height: number, first: boolean) => void): SizeWatch | null {
+  const RO = (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+  if (typeof RO !== 'function') return null;
+  const seen = new WeakMap<Element, number>();
+  const ro = new RO((entries) => {
+    for (const entry of entries) {
+      const el = entry.target;
+      const h = Math.round(el.getBoundingClientRect().height);
+      const was = seen.get(el);
+      if (was === h) continue;
+      seen.set(el, h);
+      changed(el, h, was === undefined);
+    }
+  });
+  return { observe: (el) => ro.observe(el), disconnect: () => ro.disconnect() };
 }
 
 /** Who a sign-in is for: the method and that method's id for the person. Memory only. */
@@ -351,6 +376,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   let child: Window | null = null;
   let childName: string | null = null;
   let signInError: HomeProblem | null = null;
+  /** A sign-in again that didn't finish: said in the bar's notice, where it was started, not at the page's top. */
+  let renewProblem: HomeProblem | null = null;
   /** An email sign-in in progress: its code screens, where they draw, and the identity its code is for. */
   let emailStep: HomeEmailStep | null = null;
   let emailBox: HTMLElement | null = null;
@@ -391,6 +418,37 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   // ---- moving a wallet out (home-export.ts) ----
   const hasFocus = deps.hasFocus ?? (() => win.document.hasFocus());
+  /** The move flow's guard (Continue, Show key, Copy key): held here too, so a change of layout can start it over. */
+  const guard = screenGuard({ win, isGesture, hasFocus, ...(deps.guardNow ? { now: deps.guardNow } : {}) });
+  /**
+   * D888: anything that changes the layout around the page's content (the bar's height, its notice, the refusal at the
+   * top of the page) starts the guard over: a fresh wait and a new arming gesture before Continue, Show key or Copy key
+   * act, so a press aimed at what was under the pointer before the change can't turn into one of them. It acts only on
+   * the guarded buttons on screen; with none, it changes nothing.
+   */
+  const layoutChanged = (): void => guard.rendered();
+  // The bar's height: written to the root's --home-bar-h (through the CSSOM, which the CSP allows; no style attribute),
+  // which focus scrolling and a phone's toasts keep clear of; a change starts the guard over.
+  sizeWatch((_, height, first) => {
+    try {
+      win.document.documentElement.style.setProperty('--home-bar-h', `${height}px`);
+    } catch {
+      // The offset is a convenience.
+    }
+    if (!first) layoutChanged();
+  })?.observe(bar.header);
+  // On an app's page, what sits above the move flow (its details, the other tools, a refusal at the top): a change in
+  // its height moves the guarded buttons, so it starts the guard over too. The move flow's own section isn't watched:
+  // its screens start the guard themselves.
+  const above = sizeWatch((_, __, first) => {
+    if (!first) layoutChanged();
+  });
+  const watchAbove = (): void => {
+    if (!above) return;
+    above.disconnect();
+    const doc = win.document;
+    for (const el of [doc.getElementById('home-notice'), doc.querySelector('#home-content > .home-app-details'), ...Array.from(doc.querySelectorAll('#home-app-extras > section:not(#home-export)'))]) if (el) above.observe(el);
+  };
   const moving: HomeExport = startHomeExport({
     win,
     env,
@@ -402,7 +460,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     clock,
     sleep,
     isGesture,
-    guard: screenGuard({ win, isGesture, hasFocus, ...(deps.guardNow ? { now: deps.guardNow } : {}) }),
+    guard,
     clipboard: (): ExportClipboard | null => (deps.clipboard === undefined ? exportClipboard() : deps.clipboard),
     hasFocus,
     session: () => {
@@ -766,9 +824,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       signInError = p;
       renderSignedOut();
     } else {
-      if (p) problem = p;
+      if (p) renewProblem = p;
       renderBanner();
-      renderNotice();
     }
   }
 
@@ -785,6 +842,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     moving.yieldChild();
     signingIn = true;
     signInError = null;
+    renewProblem = null;
     childName = randomName('hana-home-login-');
     child = win.open(`${env.authOrigin}${HOME_LOGIN_CHILD}`, childName, 'popup,width=480,height=640');
     if (!child) {
@@ -794,8 +852,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         signInError = blocked;
         renderSignedOut();
       } else {
-        problem = blocked;
-        renderNotice();
+        renewProblem = blocked;
+        renderBanner();
       }
       return;
     }
@@ -881,6 +939,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     moving.yieldChild();
     signingIn = true;
     signInError = null;
+    renewProblem = null;
     const renew = stage === 'signed_in';
     const fixed = renew && account?.provider === 'email' ? emailAddress : null;
     const box = d.h('div', { class: 'home-email-step', attrs: { id: 'home-email' } });
@@ -891,6 +950,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       isGesture,
       now: () => clock.now(),
       title: renew ? 'Sign in again' : 'Sign in with email',
+      // In the top bar, before the page's `h1`: the titles are no headings there (D888).
+      ...(renew ? { titleTag: 'p' as const } : {}),
       intro: renew ? 'Passport Home sends a new code to the email you signed in with.' : 'Use the email you sign in to your apps with. Journear sends a 6-digit code to it.',
       address: fixed,
       start: async (address) => {
@@ -1037,6 +1098,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     emailAddress = who.provider === 'email' ? address : null;
     session = 'active';
     signInError = null;
+    renewProblem = null;
     scheduleSession(next);
     if (same) {
       problem = null;
@@ -1087,10 +1149,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     account = null;
     emailAddress = null;
     session = 'none';
+    renewProblem = null;
     clearScreen();
     toasts.clear();
     // The top bar's account and notice go with the sign-in.
     bar.account.replaceChildren();
+    bar.account.className = 'home-top-account';
     fill('home-banner');
     stage = 'signed_out';
     signInError = null;
@@ -1161,18 +1225,36 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    * Puts the who line in again (the sign-in ended, or the same account signed in again). Its line keeps at least the
    * lines it took (D888): a masked address is shorter, and the top bar's height must not change under the page.
    */
+  /** The most lines the who line has taken in this sign-in's bar: it keeps at least that many. */
+  let keptLines = 0;
   function replaceWho(): void {
     const old = byId('home-who');
     if (!old) return;
-    const lines = new Set(Array.from(old.getClientRects(), (r) => Math.round(r.top))).size;
-    if (lines > 1) old.parentElement?.classList.add(`home-who-lines-${Math.min(lines, WHO_LINES_KEPT)}`);
+    // The line's box (a flex item, so one box however many lines it wraps to) over its line height.
+    let lines = 0;
+    try {
+      const lineHeight = Number.parseFloat(win.document.defaultView?.getComputedStyle(old).lineHeight ?? '');
+      if (lineHeight > 0) lines = Math.round(old.getBoundingClientRect().height / lineHeight);
+    } catch {
+      lines = 0;
+    }
+    if (lines > 1) {
+      keptLines = Math.max(lines, keptLines);
+      for (let n = 2; n <= WHO_LINES_KEPT; n += 1) bar.account.classList.remove(`home-who-lines-${n}`);
+      bar.account.classList.add(`home-who-lines-${Math.min(keptLines, WHO_LINES_KEPT)}`);
+    }
     old.replaceWith(whoText());
   }
 
-  /** The top bar's account part: who is signed in and Sign out, in the page's one `nav` (D888). */
+  /**
+   * The top bar's account part: who is signed in and Sign out (D888). A plain part of the header: it holds a status line
+   * and a button, no navigation, so it is no `nav`.
+   */
   function renderAccount(): void {
+    keptLines = 0;
+    bar.account.className = 'home-top-account';
     bar.account.replaceChildren(
-      d.h('nav', { class: 'home-account' }, d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), button('Sign out', signOut, { id: 'home-sign-out', sm: true }))),
+      d.h('div', { class: 'home-account' }, d.h('p', { class: account?.provider === 'email' && emailAddress ? 'home-who home-who-email' : 'home-who' }, whoText(), button('Sign out', signOut, { id: 'home-sign-out', sm: true }))),
     );
   }
 
@@ -1189,21 +1271,31 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   function renderBanner(): void {
     if (stage !== 'signed_in') return;
+    fill('home-banner', ...bannerParts());
+    layoutChanged();
+  }
+
+  /** What the bar's notice shows: a sign-in again that didn't finish, then the sign-in's own state. */
+  function bannerParts(): Child[] {
+    const failed = renewProblem
+      ? problemView(renewProblem, 'home-renew-problem', () => {
+          renewProblem = null;
+          renderBanner();
+        })
+      : null;
     if (signingIn && emailBox) {
       // Signing in again with email: the code screens, kept as they are while the banner is drawn again.
-      fill('home-banner', d.h('div', { class: 'home-banner home-banner-email jp-card' }, emailBox));
-      return;
+      return [d.h('div', { class: 'home-banner home-banner-email jp-card' }, emailBox)];
     }
     if (signingIn) {
-      fill('home-banner', alert(d, 'info', { tag: 'div', class: 'home-banner note' }, d.h('p', {}, 'Finish signing in with Google in the other window.'), button('Cancel', () => signInFailed(null), { id: 'home-cancel', sm: true })));
-      return;
+      return [alert(d, 'info', { tag: 'div', class: 'home-banner note' }, d.h('p', {}, 'Finish signing in with Google in the other window.'), button('Cancel', () => signInFailed(null), { id: 'home-cancel', sm: true }))];
     }
     // Sign in again with the method this account uses.
     const again = () => button('Sign in again', account?.provider === 'email' ? beginEmailSignIn : beginSignIn, { class: 'primary', id: 'home-sign-in-again', sm: true });
     if (session === 'ending' && identity) {
       const minutes = Math.max(1, Math.ceil((identity.endsAtMs - clock.now()) / 60_000));
-      fill(
-        'home-banner',
+      return [
+        failed,
         alert(
           d,
           'warning',
@@ -1211,19 +1303,22 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           d.h('p', {}, `Your sign-in to ${BRAND.home} ends in about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}. Everything on screen stays. To load anything new after that, sign in again.`),
           again(),
         ),
-      );
-    } else if (session === 'ended') {
-      fill(
-        'home-banner',
-        alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ended' } }, d.h('p', {}, `Your sign-in to ${BRAND.home} has ended. Everything on screen stays. To load anything new, sign in again.`), again()),
-      );
-    } else {
-      fill('home-banner');
+      ];
     }
+    if (session === 'ended') {
+      return [failed, alert(d, 'warning', { tag: 'div', class: 'home-banner note', attrs: { id: 'home-ended' } }, d.h('p', {}, `Your sign-in to ${BRAND.home} has ended. Everything on screen stays. To load anything new, sign in again.`), again())];
+    }
+    return [failed];
   }
 
+  /** The refusal the top of the page shows now: a change of it moves the page, so it starts the guard over (D888). */
+  let noticeShown: HomeProblem | null = null;
   function renderNotice(): void {
     if (stage !== 'signed_in') return;
+    if (noticeShown !== problem) {
+      noticeShown = problem;
+      layoutChanged();
+    }
     fill(
       'home-notice',
       problem
@@ -1279,6 +1374,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const open = openScope ? findScope(openScope) : null;
     if (open) fill('home-content', ...appPage(open));
     else fill('home-content', ...frontPage());
+    watchAbove();
   }
 
   function frontPage(): Child[] {
@@ -1470,7 +1566,14 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             { class: 'home-app-addresses' },
             d.h('h3', {}, 'Your addresses'),
             addressRows.length > 0
-              ? d.h('div', { class: 'home-addresses' }, fromWallet.length > 0 ? d.h('p', { class: 'muted', attrs: { id: 'home-opened-note' } }, 'From the wallet you opened on this page. Journear had no address on record for you here.') : null, ...addressRows)
+              ? d.h(
+                  'div',
+                  { class: 'home-addresses' },
+                  fromWallet.length > 0 ? d.h('p', { class: 'muted', attrs: { id: 'home-opened-note' } }, 'From the wallet you opened on this page. Journear had no address on record for you here.') : null,
+                  ...addressRows,
+                  // The copy line, at the card's foot (its space kept, so nothing anywhere moves when it speaks).
+                  copyLine.box,
+                )
               : d.h('p', { class: 'muted', attrs: { id: 'home-no-address' } }, scope.mine ? 'Journear has no address on record for you in this app yet.' : `Journear has no wallet on record for this ${accountName()} in this app.`),
           ),
           scope.supportId
@@ -1480,10 +1583,11 @@ export function startHomePage(deps: HomePageDeps): HomePage {
                 d.h('h3', {}, 'Support ID'),
                 d.h('p', {}, d.h('span', { class: 'mono', attrs: { id: 'home-support-id' } }, scope.supportId), ' ', copyButton('Support ID', scope.supportId, 'home-copy-support')),
                 d.h('p', { class: 'muted' }, 'Give this to the app’s support team if you need help. It doesn’t reveal your email or your Google account.'),
+                // With no addresses, the copy line is the Support ID's.
+                addressRows.length === 0 ? copyLine.box : null,
               )
             : null,
         ),
-        copyWhats.length > 0 ? copyLine.box : null,
       ),
       // Where the per-app tools go: the devices signed in to it, the ways to sign in to its wallet, the name it gets, and
       // moving the wallet out (last, never featured).
@@ -1546,7 +1650,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       return openScope;
     },
     get errorCode() {
-      return (stage === 'signed_in' ? problem : signInError)?.code ?? null;
+      return (stage === 'signed_in' ? (problem ?? renewProblem) : signInError)?.code ?? null;
     },
     get childName() {
       return childName;

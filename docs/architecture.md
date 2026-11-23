@@ -1381,14 +1381,18 @@ derivation is touched.
 from nowhere).** A top-level page on the auth origin, shown to users as "Passport Home" in the Journear Passport
 design system (D765: a static inline Journear lockup header, `HOME_HEADER`; a signed-out card with the sign-in
 providers; apps as cards with badges and an empty state; devices, tabs and email sharing as `.jp-setting` rows; a
-successful Copy shows a toast, while stop outcomes and problems stay inline). Its shell (D888): a skip link ("Skip to
-content", focus only, the address never changes), then the one `header`, a top bar that stays at the window's top with
-the lockup and, while signed in, a `nav` holding who is signed in and Sign out; the sign-in's notice (`#home-banner`:
-the 2-minute warning, the end, and signing in again, with Google or by email code) hangs under the bar over the page,
-so nothing in `main#app` moves when it appears or changes; a frame of at most 1040 px, reading text and the tool
-sections at 760 px; one section pattern (sections 40 px apart, no dividers, their parts 12 px apart; devices, ways to
-sign in, the name and the move in a card each); on an app's page the addresses as one card of rows beside the Support
-ID from 900 px; and the line a failed copy leaves keeps the space of its longest sentence. Served like the other auth pages (`home.html`,
+successful Copy shows a toast, while stop outcomes and problems stay inline). Its shell (D888, as amended after PR 109's review): a skip link ("Skip
+to content", focus only, the address never changes), then the one `header`, a top bar with the lockup and, while signed
+in, who is signed in and Sign out (a plain part of the header, no `nav`), and as its last row the sign-in's notice
+(`#home-banner`: the 2-minute warning, the end, signing in again with Google or by email code, and a sign-in again
+that failed): the bar grows with it and nothing is drawn over the page. The bar stays at the window's top on a desktop
+(a mouse, a window of at least 641 × 600 px; focus scrolling keeps clear of it through `--home-bar-h`, which a
+ResizeObserver writes to the root through the CSSOM) and scrolls with the page elsewhere (option A's phone bar). Any
+change of layout around the move flow (the bar's height, its notice, a refusal, a tool above it) calls the move flow's
+guard's `rendered()`. One width of at most 1040 px for everything, reading text at 720 px; one section pattern
+(sections 40 px apart, no dividers, their parts 12 px apart; devices, ways to sign in, the name and the move in a card
+each); on an app's page the addresses as one card of rows beside the Support ID from 900 px; and the line a failed copy
+leaves keeps the space of its longest sentence at the foot of the addresses' card. Served like the other auth pages (`home.html`,
 `AUTH_PAGE_PATHS`) with `frame-ancestors 'none'; connect-src {apiUrl} {rpc} {rpcFallback} https://www.googleapis.com`
 (the export window's list, D583) and the files origin in `img-src`. It drops its opener at load, refuses to run framed and acts only on real clicks. Sign-in: a click opens the
 child `/login?mode=home`, which takes `hana:home-params` only from its same-origin opener at `/home` (D552), recomputes

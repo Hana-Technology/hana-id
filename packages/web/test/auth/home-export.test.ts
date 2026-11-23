@@ -1128,6 +1128,141 @@ describe('the secret’s life', () => {
   });
 });
 
+/** A stand-in ResizeObserver: tests set an element's height and say it changed. */
+class FakeResizeObserver {
+  static all: FakeResizeObserver[] = [];
+  readonly targets = new Set<Element>();
+  constructor(private readonly cb: ResizeObserverCallback) {
+    FakeResizeObserver.all.push(this);
+  }
+  observe(el: Element): void {
+    this.targets.add(el);
+    this.cb([{ target: el } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+  unobserve(el: Element): void {
+    this.targets.delete(el);
+  }
+  disconnect(): void {
+    this.targets.clear();
+  }
+}
+
+/** `el` is now `height` px tall, and every observer watching it hears so. */
+function resize(el: Element, height: number): void {
+  el.getBoundingClientRect = () => ({ height, width: 0, top: 0, left: 0, right: 0, bottom: height, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  for (const ro of FakeResizeObserver.all) if (ro.targets.has(el)) (ro as unknown as { cb: ResizeObserverCallback }).cb([{ target: el } as ResizeObserverEntry], ro as unknown as ResizeObserver);
+}
+
+describe('D888: a change of layout around the move flow starts the guard over', () => {
+  const realRO = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+  beforeEach(() => {
+    FakeResizeObserver.all = [];
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = FakeResizeObserver;
+  });
+  afterEach(() => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = realRO;
+  });
+
+  /** The pointer moves (the guard arms) and nothing more. */
+  const arm = (h: H): void => {
+    pointerX += 7;
+    h.win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1, clientX: pointerX, clientY: 10 });
+  };
+  /** A press that lands where the pointer already is: no new movement before it. */
+  const land = (h: H, id: string): void => {
+    h.win.dispatch('pointerdown', { pointerType: 'mouse', clientX: pointerX, clientY: 10 });
+    document.getElementById(id)?.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  };
+  /** At Continue, the word typed and the guard armed. */
+  const armedAtContinue = (h: H): void => {
+    h.click('home-export-stellar');
+    h.type(EXPORT_CONFIRMATION);
+    arm(h);
+    expect((document.getElementById('home-export-continue') as HTMLButtonElement).disabled).toBe(false);
+  };
+
+  it('with nothing changed, a press after the arming acts (the baseline)', async () => {
+    const h = start();
+    await h.unlock();
+    armedAtContinue(h);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  it('the top bar’s height changes: Continue is off again and a press that lands does nothing; a new arming gesture works', async () => {
+    const h = start();
+    await h.unlock();
+    armedAtContinue(h);
+    resize(document.querySelector('header.home-top') as HTMLElement, 140);
+    expect((document.getElementById('home-export-continue') as HTMLButtonElement).disabled).toBe(true);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+    // The bar's height is written to the root, for focus scrolling and a phone's toasts.
+    expect(document.documentElement.style.getPropertyValue('--home-bar-h')).toBe('140px');
+  });
+
+  it('a tool above the move flow changes height (devices loading, a section opening): the same', async () => {
+    const h = start();
+    await h.unlock();
+    armedAtContinue(h);
+    resize(document.getElementById('home-app-devices') as HTMLElement, 480);
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+
+  /** Signed in to Home with a Google token that ends in 2.5 minutes (its notice in 30 s), on the app's page. */
+  const toAppShort = async (h: H): Promise<void> => {
+    await h.page.idle();
+    h.click('home-sign-in');
+    await until(() => h.page.awaitingChild, 'the Home sign-in to be prepared');
+    await h.answer({ exp: Math.floor(now / 1000) + 150 }, CLIENT_ID);
+    await h.page.idle();
+    (document.querySelector('.home-open') as HTMLElement).click();
+  };
+
+  it('the sign-in’s notice appears while Show key is armed (no ResizeObserver: the page’s own trigger): a press that lands shows nothing', async () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
+    const h = start();
+    await toAppShort(h);
+    await h.open();
+    expect(h.page.moving.state).toBe('unlocked');
+    const { toggle, secret } = h.reveal('stellar');
+    arm(h);
+    expect(toggle.disabled).toBe(false);
+    expect(h.page.session).toBe('active');
+    advance(31_000);
+    expect(h.page.session).toBe('ending');
+    expect(document.getElementById('home-ending')).not.toBeNull();
+    expect(toggle.disabled).toBe(true);
+    h.win.dispatch('pointerdown', { pointerType: 'mouse', clientX: pointerX, clientY: 10 });
+    toggle.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(secret.hasAttribute('data-shown')).toBe(false);
+    // A new arming gesture, then the press: it shows.
+    pressEl(h, toggle);
+    expect(secret.hasAttribute('data-shown')).toBe(true);
+  });
+
+  it('a sign-in again refused at once (the browser blocks its window) is said in the bar and starts it over', async () => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
+    const h = start();
+    await toAppShort(h);
+    await h.open();
+    advance(31_000);
+    armedAtContinue(h);
+    h.win.openResult = null;
+    h.click('home-sign-in-again');
+    expect(document.getElementById('home-renew-problem')?.closest('#home-banner')).not.toBeNull();
+    land(h, 'home-export-continue');
+    expect(h.page.moving.state).toBe('confirm');
+    h.press('home-export-continue');
+    expect(h.page.moving.state).toBe('reveal');
+  });
+});
+
 describe('the guard and the auto-hide', () => {
   it('Continue needs the typed word and a guarded click; a click carried over does nothing', async () => {
     const h = start();

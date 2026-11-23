@@ -848,28 +848,60 @@ describe('partner strings are text only', () => {
 describe('the shell (D888)', () => {
   const LIST = () => json(200, { scopes: [mine('s1'), scope('s3')], nextCursor: null });
 
-  it('one header outside the page’s content: who is signed in and Sign out in its nav while signed in, nothing of them after sign-out', async () => {
+  it('one header outside the page’s content: who is signed in and Sign out in it while signed in (no nav: it holds no navigation), nothing of them after sign-out', async () => {
     const h = await ready();
     const headers = document.querySelectorAll('header');
     expect(headers).toHaveLength(1);
     expect(headers[0]?.closest('#app')).toBeNull();
     // Signed out: the bar has no account part and no notice.
-    expect(document.querySelector('nav')).toBeNull();
+    const account = document.getElementById('home-account') as HTMLElement;
+    expect(account.closest('header')).toBe(headers[0]);
+    expect(account.textContent).toBe('');
     expect(document.getElementById('home-banner')?.textContent).toBe('');
     h.answer = LIST;
     await h.signIn();
-    const nav = document.querySelectorAll('nav');
-    expect(nav).toHaveLength(1);
-    expect(nav[0]?.closest('header')).toBe(headers[0]);
-    expect(nav[0]?.querySelector('#home-who')?.textContent).toBe('Signed in with Google');
-    expect(nav[0]?.querySelector('#home-sign-out')).not.toBeNull();
+    expect(document.querySelector('nav')).toBeNull();
+    expect(account.querySelector('#home-who')?.textContent).toBe('Signed in with Google');
+    expect(account.querySelector('#home-sign-out')).not.toBeNull();
     // The page's content has its heading, no second header, and none of the bar's parts.
     expect(document.querySelector('#app header, #app #home-who, #app #home-sign-out, #app #home-banner')).toBeNull();
     expect(document.getElementById('home-title')?.closest('#app')).not.toBeNull();
     h.click('home-sign-out');
-    expect(document.querySelector('nav')).toBeNull();
+    expect(account.textContent).toBe('');
     expect(document.getElementById('home-who')).toBeNull();
     expect(document.querySelectorAll('header')).toHaveLength(1);
+  });
+
+  it('the notice is a row of the bar: it sits after who is signed in, inside the header, never over the page', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const header = document.querySelector('header') as HTMLElement;
+    const notice = document.getElementById('home-banner')?.parentElement as HTMLElement;
+    expect(notice.parentElement).toBe(header);
+    expect(notice.previousElementSibling?.id).toBe('home-account');
+    expect(notice.nextElementSibling).toBeNull();
+  });
+
+  it('a sign-in again that fails is said in the bar’s notice, where it was started, not at the top of the page', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    advance(15 * MIN);
+    // The browser blocks the window.
+    h.win.openResult = null;
+    h.click('home-sign-in-again');
+    expect(h.page.errorCode).toBe('popup_blocked');
+    expect(document.getElementById('home-notice')?.textContent).toBe('');
+    const failed = document.getElementById('home-renew-problem') as HTMLElement;
+    expect(failed.closest('#home-banner')).not.toBeNull();
+    expect(failed.textContent).toContain('Your browser blocked the sign-in window.');
+    // The ended notice and its Sign in again stay under it.
+    expect(document.getElementById('home-ended')).not.toBeNull();
+    // Dismiss takes it away; a new attempt clears it too.
+    (failed.querySelector('button.link') as HTMLElement).click();
+    expect(document.getElementById('home-renew-problem')).toBeNull();
+    expect(h.page.errorCode).toBeNull();
   });
 
   it('the notice is in the bar, a live region kept for the page’s life; it never touches the page’s content', async () => {

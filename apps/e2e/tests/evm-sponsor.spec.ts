@@ -16,7 +16,7 @@ import { type Page } from '@playwright/test';
 import { parseFunctionSignature, shortId } from '@hana-id/core/decode';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
 import { API_URL, EVM_CHAIN_ID } from '../src/stack.ts';
-import { approve, clickAction, expect, login, newApp, okValue, openPartner, reject, settled, test } from './fixtures.ts';
+import { approve, clickAction, expect, fontsLoaded, login, newApp, okValue, openPartner, reject, settled, test } from './fixtures.ts';
 import { expectPlainWindow } from './plain-checks.ts';
 import { expectEvenDividers } from './divider-checks.ts';
 
@@ -49,6 +49,7 @@ async function sponsorLog(appId: string): Promise<{ prepares: number; sends: num
 async function shot(popup: Page, name: string, browserName: string): Promise<void> {
   if (!SHOTS || browserName !== 'chromium') return;
   await popup.setViewportSize(POPUP);
+  await fontsLoaded(popup);
   await popup.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: true, animations: 'disabled' });
   await expectEvenDividers(popup, name, { soft: true });
 }
@@ -62,9 +63,8 @@ async function sponsoredWindow(page: Page, name: string, calls: { to: string; da
     throw new Error(`no window for ${name}: ${JSON.stringify(await page.evaluate((n) => (window as any).e2e.results[n], name))}: ${String(e)}`);
   });
   await expect(popup.locator('.summary-failed')).toHaveCount(0);
-  // The plain-wording rule and D859's rules, on every window of the real flow; one divider where ruled blocks meet.
+  // The plain-wording rule and D859's rules, on every window of the real flow.
   await expectPlainWindow(popup);
-  await expectEvenDividers(popup, name);
   return popup;
 }
 

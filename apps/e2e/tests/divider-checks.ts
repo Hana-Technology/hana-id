@@ -1,11 +1,14 @@
 // The approval and consent windows' dividers (D884's note, 2026-11-23), measured on the page as the browser draws it:
 // where two ruled blocks meet there is one line, never two with nothing between them; no rule sits at a group's edge
-// against a box's own border; no ruled block is empty; and the space above a rule matches the space below it.
+// against a box's own border; no ruled block is empty; the space above a rule matches the space below it; and between
+// any two operations (or consent contract lines) there is a rule: where one action ends and the next begins.
 //
 // A "line" is any drawn top or bottom border inside the window's content (`div.request`, `div.consent`): a rule (a
-// border with no side borders: `dl.jp-kv`, an operation's top rule) or a box's edge (an alert, the details box, a
-// quoted or signed message's box). Two lines that overlap across the page with no text, control or other line between
-// them read as a doubled divider, unless both are box edges (two boxes stacked are two boxes).
+// border with no side borders: `dl.jp-kv`, an operation's top rule) or a box's edge (an element with side borders or
+// a background of its own: an alert, the details box, a quoted or signed message's box). Two lines that overlap
+// across the page with no text, control or other line between them read as a doubled divider, unless both are box
+// edges (two boxes stacked are two boxes) or the second is an operation's own rule under a box that ends the operation
+// before it (that box belongs to that operation; the rule is the boundary between the two).
 import { type Page } from '@playwright/test';
 import { expect } from './fixtures.ts';
 
@@ -19,6 +22,7 @@ export async function dividerProblems(popup: Page): Promise<string[]> {
   return popup.evaluate(
     ({ doubleWithin, evenWithin }) => {
       const roots = [...document.querySelectorAll('div.request:not([data-shown]), div.consent')];
+      if (roots.length === 0) return ['no window content (div.request or div.consent) to measure'];
       type Line = { y: number; x1: number; x2: number; box: boolean; el: Element; side: 'top' | 'bottom' };
       type Rect = { top: number; bottom: number; x1: number; x2: number };
       const lines: Line[] = [];
@@ -42,6 +46,10 @@ export async function dividerProblems(popup: Page): Promise<string[]> {
           // A line's place is the middle of its border.
           if (drawn(s, 'Top')) lines.push({ y: r.top + parseFloat(s.borderTopWidth) / 2, x1: r.left, x2: r.right, box, el, side: 'top' });
           if (drawn(s, 'Bottom')) lines.push({ y: r.bottom - parseFloat(s.borderBottomWidth) / 2, x1: r.left, x2: r.right, box, el, side: 'bottom' });
+          // A box drawn by its background alone (an alert): its edges are lines too.
+          const filled = !/^inline/u.test(s.display) && el !== root && !/rgba\([^)]*,\s*0\)|transparent/u.test(s.backgroundColor);
+          if (filled && !box && !drawn(s, 'Top')) lines.push({ y: r.top, x1: r.left, x2: r.right, box: true, el, side: 'top' });
+          if (filled && !box && !drawn(s, 'Bottom')) lines.push({ y: r.bottom, x1: r.left, x2: r.right, box: true, el, side: 'bottom' });
           // A control, or the space kept for what Copy did (approve-page.ts, ui.ts reservedLine): content, not a gap.
           if (el.matches('svg, img, button, input, select, textarea, .copy-said')) content.push({ top: r.top, bottom: r.bottom, x1: r.left, x2: r.right });
         }
@@ -62,11 +70,21 @@ export async function dividerProblems(popup: Page): Promise<string[]> {
       }
       const overlaps = (a: { x1: number; x2: number }, b: { x1: number; x2: number }) => Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1) > 0.5 * Math.min(a.x2 - a.x1, b.x2 - b.x1);
       const problems: string[] = [];
+      if (lines.length === 0) problems.push('no lines found to measure');
+      // An operation (or contract line) after another: its own rule is the boundary between them.
+      const opRule = (l: Line) => l.side === 'top' && !l.box && l.el.matches(':is(.ops, .contracts) > li + li');
+      for (const li of roots.flatMap((root) => [...root.querySelectorAll(':is(.ops, .contracts) > li + li')])) {
+        if (!li.checkVisibility()) continue;
+        if (!drawn(getComputedStyle(li), 'Top')) problems.push(`missing: no rule between ${name(li.previousElementSibling!)} and ${name(li)}`);
+      }
       lines.sort((a, b) => a.y - b.y);
       for (const [i, a] of lines.entries()) {
         // The next line down that overlaps this one across the page.
         const b = lines.slice(i + 1).find((l) => l.y > a.y + 0.5 && overlaps(a, l));
         if (!b || b.y - a.y > doubleWithin || (a.box && b.box)) continue;
+        // A box that ends the operation before, then this operation's own rule: the boundary, not a double.
+        const prev = b.el.previousElementSibling;
+        if (a.box && opRule(b) && prev && (a.el === prev || prev.contains(a.el))) continue;
         // Something between them: text, a control or a block that starts or ends there (one around both is their container).
         const between = content.some((c) => c.bottom > a.y + 0.5 && c.top < b.y - 0.5 && !(c.top <= a.y && c.bottom >= b.y) && overlaps(c, { x1: Math.max(a.x1, b.x1), x2: Math.min(a.x2, b.x2) }));
         if (between) continue;

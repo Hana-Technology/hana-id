@@ -2,18 +2,21 @@
 // line with the same space on each side, no rule against a box's border or a group's edge, and no ruled block around
 // nothing (tests/divider-checks.ts measures what the browser draws). The founder's case first: the sponsored check-in,
 // where the "Program" row's rule and the "Network" row's rule were two lines 12 px apart. Then a few windows that put
-// each kind of neighbour next to a ruled block: a red box with its own rows, a quoted note, a signed message's box,
-// the user's own transaction's actions, a Stellar payment and the consent screen's contract lines. Each at a phone's
-// width (390 px) and the desktop popup's size (420 × 680), folded and with the details open.
+// each kind of neighbour next to a ruled block: a red box with its own rows, a quoted note, a signed message's box (and
+// one Journear can't read), the user's own transaction's actions, a Stellar payment and the consent screen's contract
+// lines; and batches, where every operation after the first must keep its own rule whatever the one before ends with
+// (a sponsored batch whose first call Journear can't read, a NEAR call with JSON and with non-JSON arguments then a
+// transfer, two Stellar operations, a Soroban call whose authorization holds another). Each at a phone's width
+// (390 px) and the desktop popup's size (420 × 680), folded and with the details open.
 import { type Page } from '@playwright/test';
 import { DEMO_CHECK_IN, type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey } from '@hana-id/core';
 import { parseFunctionSignature } from '@hana-id/core/decode';
 import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
-import { Account, Asset, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-base';
+import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, TransactionBuilder, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { e2eRelayer } from '../src/relayer-key.ts';
 import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { expectEvenDividers } from './divider-checks.ts';
-import { approve, clickLauncher, expect, login, newApp, okValue, openPartner, runAction, test } from './fixtures.ts';
+import { approve, clickLauncher, expect, fontsLoaded, login, newApp, okValue, openPartner, runAction, test } from './fixtures.ts';
 
 const SIZES = { phone: { width: 390, height: 844 }, popup: { width: 420, height: 680 } } as const;
 const UNLISTED = '0x1111111111111111111111111111111111111111';
@@ -37,6 +40,7 @@ async function check(popup: Page, name: string, browserName: string): Promise<vo
       const has = (await details.count()) > 0;
       for (const open of has ? [false, true] : [false]) {
         if (has) await details.evaluate((d, o) => ((d as HTMLDetailsElement).open = o), open);
+        await fontsLoaded(popup);
         await popup.screenshot({ path: `${SHOTS}/dividers-${name}-${size}-${open ? 'details' : 'main'}.png`, fullPage: true, animations: 'disabled' });
       }
       if (has) await details.evaluate((d) => ((d as HTMLDetailsElement).open = false));
@@ -77,7 +81,7 @@ async function injectSponsored(popup: Page, subject: EvmSponsorSubject): Promise
 }
 
 test('one divider where ruled blocks meet, on each kind of approval', async ({ page, browserName }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(420_000);
   await openPartner(page, await newApp({ settings: { autoApprovePolicy: CONSENT_POLICY } }));
   const { stellar } = await login(page);
   const near = (await page.evaluate(() => (window as any).e2e.addresses().near)) as string;
@@ -112,6 +116,11 @@ test('one divider where ruled blocks meet, on each kind of approval', async ({ p
   await injectSponsored(popup, subject({ calls: [{ to: UNLISTED, value: 0n, data: call('approve(address,uint256)', SPENDER, 2n ** 256n - 1n) }] }));
   await expect(popup.locator('.danger-box dl.id-rows')).toBeVisible();
   await check(popup, 'sponsored-unlimited-permission', browserName);
+  // A batch whose first call Journear can't read: its raw data ends that call; the second call keeps its own rule.
+  const checkIn = { to: (DEMO_CHECK_IN[EVM_CHAIN_ID] as { address: `0x${string}` }).address, value: 0n, data: '0x183ff085' as const };
+  await injectSponsored(popup, subject({ calls: [{ to: UNLISTED, value: 0n, data: `0xdeadbeef${word(42n)}` }, checkIn] }));
+  await expect(popup.locator('details.request-details ol.ops > li')).toHaveCount(2);
+  await check(popup, 'sponsored-batch-unknown-first', browserName);
   await popup.close();
   await okValue(page, 'send').catch(() => undefined);
 
@@ -128,21 +137,67 @@ test('one divider where ruled blocks meet, on each kind of approval', async ({ p
   await check(popup, 'near-transfer', browserName);
   await done(page, popup, 'near');
 
+  // A NEAR call then a transfer: with JSON arguments (their box ends the call) and without (an amber line, then the bytes).
+  const fnCall = (args: Uint8Array<ArrayBuffer>): NearAction => ({ type: 'functionCall', methodName: 'collect', args, gas: 30_000_000_000_000n, deposit: 0n });
+  const batches: [string, Uint8Array<ArrayBuffer>, bigint][] = [
+    ['near-call-json-then-transfer', new TextEncoder().encode('{"stamp":"arrival"}'), 13n],
+    ['near-call-bytes-then-transfer', new Uint8Array([0xff, 0x00, 0x01]), 14n],
+  ];
+  for (const [name, args, nonce] of batches) {
+    popup = await popupFor(page, name, 'nearSignTx', base64Encode(encodeNearTransaction({ signerId: near, publicKey: key, nonce, receiverId: E2E_STAMPS, blockHash: new Uint8Array(32).fill(0x2a), actions: [fnCall(args), { type: 'transfer', deposit: 10n ** 23n }] })));
+    await expect(popup.locator('details.request-details ol.ops > li')).toHaveCount(2);
+    await check(popup, name, browserName);
+    await done(page, popup, name);
+  }
+
   // A message in its box.
   popup = await popupFor(page, 'msg', 'personalSign', 'Welcome to Stamp Trail!\n\nSign this message to prove you own this wallet.');
   await expect(popup.locator('pre.message')).toBeVisible();
   await check(popup, 'personal-sign', browserName);
   await done(page, popup, 'msg');
+  // One Journear can't read (D886's note): the line that says so, then the label right above the raw form.
+  popup = await popupFor(page, 'raw-msg', 'personalSign', 'pay\u202eevil');
+  await expect(popup.locator('div.request > p.message-label + code.mono')).toBeVisible();
+  await check(popup, 'personal-sign-unreadable', browserName);
+  await done(page, popup, 'raw-msg');
 
   // A Stellar payment: its operations' rules after the transaction's facts.
-  const xdr = new TransactionBuilder(new Account(stellar, '100'), { fee: '100', networkPassphrase: Networks.TESTNET })
+  const payment = new TransactionBuilder(new Account(stellar, '100'), { fee: '100', networkPassphrase: Networks.TESTNET })
     .addOperation(Operation.payment({ destination: Keypair.random().publicKey(), asset: Asset.native(), amount: '1.5' }))
     .setTimeout(300)
     .build()
     .toXDR();
-  popup = await popupFor(page, 'pay', 'stellarSignXdr', xdr);
+  popup = await popupFor(page, 'pay', 'stellarSignXdr', payment);
   await check(popup, 'stellar-payment', browserName);
   await done(page, popup, 'pay');
+  // Two Stellar operations.
+  const other = Keypair.random().publicKey();
+  const two = new TransactionBuilder(new Account(stellar, '100'), { fee: '200', networkPassphrase: Networks.TESTNET })
+    .addOperation(Operation.payment({ destination: other, asset: Asset.native(), amount: '1.5' }))
+    .addOperation(Operation.payment({ destination: other, asset: Asset.native(), amount: '2' }))
+    .setTimeout(300)
+    .build()
+    .toXDR();
+  popup = await popupFor(page, 'pay2', 'stellarSignXdr', two);
+  await expect(popup.locator('details.request-details ol.ops > li')).toHaveCount(2);
+  await check(popup, 'stellar-two-operations', browserName);
+  await done(page, popup, 'pay2');
+  // A Soroban call whose authorization holds another token move (approval-summary.spec.ts): nested groups.
+  const contract = (n: number) => StrKey.encodeContract(Buffer.alloc(32, n));
+  const sc = (a: string) => nativeToScVal(a, { type: 'address' });
+  const amount = (n: bigint) => nativeToScVal(n, { type: 'i128' });
+  const inv = (c: string, fn: string, args: xdr.ScVal[], subs: xdr.SorobanAuthorizedInvocation[] = []) =>
+    new xdr.SorobanAuthorizedInvocation({ function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(new xdr.InvokeContractArgs({ contractAddress: new Address(c).toScAddress(), functionName: fn, args })), subInvocations: subs });
+  const callArgs = [sc(stellar), sc(other), amount(1n)];
+  const auth = new xdr.SorobanAuthorizationEntry({ credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(), rootInvocation: inv(contract(3), 'transfer', callArgs, [inv(contract(2), 'transfer', [sc(stellar), sc(other), amount(10n ** 15n)])]) });
+  const nested = new TransactionBuilder(new Account(stellar, '100'), { fee: '100', networkPassphrase: Networks.TESTNET })
+    .addOperation(Operation.invokeContractFunction({ contract: contract(3), function: 'transfer', args: callArgs, auth: [auth] }))
+    .setTimeout(300)
+    .build()
+    .toXDR();
+  popup = await popupFor(page, 'nested', 'stellarSignXdr', nested);
+  await check(popup, 'soroban-nested', browserName);
+  await done(page, popup, 'nested');
 
   // The consent screen: facts, then contract lines with their own rules, then a note.
   popup = await popupFor(page, 'consent', 'requestAutoApprove');

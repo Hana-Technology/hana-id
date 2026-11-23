@@ -518,11 +518,14 @@ function typedNode(d: Dom, n: TypedDataNode): HTMLElement {
 /** The words above a message being signed (D886): what the box below is. */
 export const MESSAGE_LABEL = 'The message';
 
-/** A message being signed: its label, then the message itself (D886: right after the headline and the facts). */
+/**
+ * A message being signed: its label, then the message itself (D886: right after the headline and the facts). One that
+ * isn't readable text: first the line that says so, then the label right above its raw form (D886's note).
+ */
 function message(d: Dom, m: DecodedMessage): HTMLElement[] {
   const label = d.h('p', { class: 'message-label' }, MESSAGE_LABEL);
   return m.text === null
-    ? [label, warnLine(d, 'warn', 'This message isn’t readable text, so it’s shown in its raw form.'), mono(d, m.hex)]
+    ? [warnLine(d, 'warn', 'This message isn’t readable text, so it’s shown in its raw form.'), label, mono(d, m.hex)]
     : [label, d.h('pre', { class: 'message' }, m.text)];
 }
 

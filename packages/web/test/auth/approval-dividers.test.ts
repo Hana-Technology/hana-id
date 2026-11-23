@@ -1,19 +1,25 @@
 // @vitest-environment happy-dom
 // The approval and consent windows' dividers (D884's note, 2026-11-23). A list's rules are drawn by where it sits, not
 // by which rows it has (css/approval.css "the dividers"): one rule where two ruled blocks meet, none against a box or
-// a group's edge, the same space on each side. What the browser draws is measured in apps/e2e
-// (tests/approval-dividers.spec.ts, tests/divider-checks.ts); here, the structure that rule relies on and the rules.
-import { evmTxSigningPayload, parseEvmTxRequest } from '@hana-id/core';
+// a group's edge, the same space on each side, and every operation after the first its own rule. What the browser
+// draws is measured in apps/e2e (tests/approval-dividers.spec.ts, tests/divider-checks.ts); here, the structure the
+// stylesheet relies on.
+import { type NearAction, encodeNearTransaction, evmTxSigningPayload, nearImplicitAccountId, parseEvmTxRequest, sha256, utf8 } from '@hana-id/core';
 import { decodeApprovalRequest } from '@hana-id/core/decode';
 import { validateAutoApprovePolicy } from '@hana-id/core/policy';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dom, row, rows, withoutEmptyLists } from '../../src/auth/dom.ts';
 import { renderApproval } from '../../src/auth/render-approval.ts';
 import { renderConsent } from '../../src/auth/render-consent.ts';
+import { CHECK_IN, CHECK_IN_DATA, SPONSOR_CHAINS, SPONSOR_ME, SPONSOR_NOW_MS, sponsorSubject, sponsoredApproval, sponsoredCall } from '../../../core/test/evm-sponsored-fixture.ts';
+import { PASSPHRASE, USER, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
+const OTHER_EVM = '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD';
+/** A contract Journear doesn't know. */
+const UNKNOWN = '0x4444444444444444444444444444444444444444';
+const PUB = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
+const ME = nearImplicitAccountId(PUB);
 const TX = { chainId: '0xaa36a7', nonce: '0x1', gas: '0x5208', maxFeePerGas: '0x2', maxPriorityFeePerGas: '0x1', to: EVM, value: '0xde0b6b3a7640000', data: '0x' };
 const evmSend = () => decodeApprovalRequest({ kind: 'evm_tx', chain: 'evm', address: EVM, context: { chainId: 11155111 }, bytes: evmTxSigningPayload(parseEvmTxRequest(TX)) });
 
@@ -50,22 +56,54 @@ describe('withoutEmptyLists', () => {
   });
 });
 
-describe('where ruled blocks meet', () => {
-  it('the stylesheet: one rule where two lists meet, none against a box or a group’s edge, nothing for an empty list, the group’s gap on both sides', () => {
-    const css = readFileSync(join(process.cwd(), 'src', 'auth', 'css', 'approval.css'), 'utf8');
-    const BOX = String.raw`:is\(\.jp-alert, div\.summary-quote, pre\.message, code\.mono, details\.request-details\)`;
-    const S = String.raw`:is\(\.request, div\.consent\)`;
-    // The second of two lists, a list after a box, a list first in its group (but the details' first, under "Hide details"): no rule above.
-    expect(css).toMatch(new RegExp(String.raw`${S} dl\.jp-kv:not\(:empty\) \+ dl\.jp-kv,\s*${S} ${BOX} \+ dl\.jp-kv,\s*${S} :not\(\.details-body\) > dl\.jp-kv:first-child \{\s*border-top: 0;\s*padding-top: 0;`, 'u'));
-    // A list before a box, before a framed operation, or last in its group: no rule below.
-    expect(css).toMatch(new RegExp(String.raw`${S} dl\.jp-kv:has\(\+ ${BOX}\),\s*${S} dl\.jp-kv:has\(\+ :is\(\.ops, \.contracts\) > li\.takeover-op:first-child\),\s*${S} dl\.jp-kv:last-child \{\s*border-bottom: 0;\s*padding-bottom: 0;`, 'u'));
-    // An operation or contract line right after a list or a box: its own top rule goes.
-    expect(css).toMatch(new RegExp(String.raw`\+ :is\(\.ops, \.contracts\) > li:first-child:not\(\.takeover-op\) \{\s*border-top: 0;\s*padding-top: 0;`, 'u'));
-    // An operation after a framed one, or after one that ends in a box.
-    expect(css).toMatch(/> li:is\(\.takeover-op, :has\(> :is\([^)]*pre\.message[^)]*\):last-child, > \.args:last-child > :is\([^)]*pre\.message[^)]*\):last-child\)\)\s*\+ li:not\(\.takeover-op\) \{\s*border-top: 0;\s*padding-top: 0;/u);
-    expect(css).toMatch(new RegExp(String.raw`${S} dl\.jp-kv:empty \{\s*display: none;`, 'u'));
-    expect(css).toMatch(new RegExp(String.raw`${S} dl\.jp-kv \{\s*padding-block: var\(--rule-space\);`, 'u'));
-    // D884's one-off (the free fee's list with no rule under it) is gone: the general rule covers it, evenly.
-    expect(css).not.toMatch(/dl\.fee-facts \{\s*border-bottom: 0;/u);
+describe('operations: each one after the first has its own rule (the stylesheet draws it on `.ops > li + li`)', () => {
+  // The structure that rule relies on: every operation an `li` of its list, one right after the other, whatever the
+  // one before ends with. Whether the rule is drawn is measured in apps/e2e (tests/approval-dividers.spec.ts).
+  const ops = (el: HTMLElement) => [...el.querySelectorAll('details.request-details ol.ops > li')];
+
+  it('a sponsored batch whose first call Journear can’t read: its raw data ends that operation, the next is its own item', () => {
+    const decoded = decodeApprovalRequest(sponsoredApproval(sponsorSubject({ calls: [sponsoredCall(UNKNOWN, '0xdeadbeef'), sponsoredCall(CHECK_IN, CHECK_IN_DATA)] })), { sponsorChains: SPONSOR_CHAINS, nowMs: SPONSOR_NOW_MS });
+    const el = renderApproval(dom(document), decoded, 'Partner App', { envNetwork: 'testnet', testApp: false, address: SPONSOR_ME });
+    const [first, second] = ops(el);
+    expect(ops(el)).toHaveLength(2);
+    expect(first?.lastElementChild?.matches('code.mono')).toBe(true);
+    expect(first?.nextElementSibling).toBe(second);
+    expect(second?.querySelector('h3')?.textContent).toBe('2. Call');
+  });
+
+  it('a NEAR call with arguments (JSON, and not JSON) then a transfer: the arguments end the call, the transfer is its own item', () => {
+    for (const args of [utf8('{"stamp":"arrival"}'), new Uint8Array([0xff, 0x00, 0x01])]) {
+      const actions: NearAction[] = [{ type: 'functionCall', methodName: 'collect', args, gas: 1n, deposit: 0n }, { type: 'transfer', deposit: 1n }];
+      const bytes = encodeNearTransaction({ signerId: ME, publicKey: { type: 'ed25519', bytes: PUB }, nonce: 3n, receiverId: 'bob.testnet', blockHash: sha256(utf8('block')), actions });
+      const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'near_tx', chain: 'near', address: ME, context: { nearNetwork: 'testnet' }, bytes }), 'Partner App');
+      const [call, transfer] = ops(el);
+      expect(ops(el)).toHaveLength(2);
+      expect(call?.lastElementChild?.matches('.args')).toBe(true);
+      expect(call?.nextElementSibling).toBe(transfer);
+      expect(transfer?.querySelector('h3')?.textContent).toBe('2. Send NEAR');
+    }
+  });
+
+  it('a Stellar transaction of two operations', () => {
+    const el = renderApproval(dom(document), decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes: txBytes([paymentOp(), paymentOp()]) }), 'Partner App');
+    const [one, two] = ops(el);
+    expect(ops(el)).toHaveLength(2);
+    expect(one?.nextElementSibling).toBe(two);
+  });
+
+  it('the consent screen’s contract lines: one item each, one after the other', () => {
+    const selectors = [{ selector: '0xb6b55f25', signature: 'deposit(uint256)', addressArgs: 'self-or-listed' }];
+    const p = validateAutoApprovePolicy({
+      v: 1,
+      label: 'Deposits',
+      maxConsentMs: 3_600_000,
+      limits: { perDayCount: 3 },
+      evm: { chains: [{ chainId: 8453, maxValueWei: '1000', maxValueWeiPerDay: '3000', maxFeeWei: '1000', contracts: [{ address: EVM, name: 'Vault', selectors }, { address: OTHER_EVM, name: 'Other vault', selectors }] }] },
+    });
+    if (!p.ok) throw new Error('fixture policy is invalid');
+    const el = renderConsent(dom(document), { policy: p.policy, appName: 'Partner App', parentOrigin: 'https://partner.example', expiresAtMs: 2e12, nowMs: 2e12 - 3_600_000 });
+    const lines = [...el.querySelectorAll('ul.contracts > li')];
+    expect(lines).toHaveLength(2);
+    expect(lines[0]?.nextElementSibling).toBe(lines[1]);
   });
 });

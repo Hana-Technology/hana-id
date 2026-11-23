@@ -168,16 +168,21 @@ dl.id-rows dd + dt {
 
 /* ---- the dividers (D884's note, 2026-11-23): one rule where two ruled blocks meet, the same space on each side ----
    A ruled block is a facts list (`dl.jp-kv`: a rule above and below it, base.css) or an operation or contract line
-   (`.ops > li`, `.contracts > li`: a rule above). A box (an alert, a quoted or signed message, raw data, the details)
-   has its own border. So that rows can come and go without doubling or orphaning a line, the rules are drawn by where
-   a block sits, not by which rows it has:
-   - two ruled blocks meet: one rule, the first one's; the second keeps no rule and no space above its rows;
-   - a ruled block meets a box, or the edge of the group it is in (the top of an operation, the inside of an alert,
-     the bottom of the details), or an operation follows one that ends in a box: no rule on that side (the box's
-     border or the group's edge is the line);
+   (`.ops > li`, `.contracts > li`: a rule above). A box draws its own edge: an alert (its background), a quoted note,
+   a message or arguments box (`pre.message`), raw data shown as a box (a `code.mono` right in the window, the details
+   or a `details`; inside an operation it has no box), the details. The rules are drawn by where a list sits, not by
+   which rows it has, so rows can come and go without doubling or orphaning a line:
+   - two lists meet: one rule, the first one's; the second keeps no rule and no space above its rows;
+   - a list meets a box (also the alert that starts an operation's arguments), or the edge of the group it is in (the
+     top of an operation, the inside of an alert, the bottom of the details): no rule on that side;
    - the details' first list keeps its rule: it separates the rows from "Hide details" above them;
+   - every operation after the first keeps its own rule, whatever the one before it ends with (a box inside an
+     operation is not the line between two operations: where one action ends and the next begins is a safety cue);
+     the first operation drops it only right after a list (whose rule is the line) or a box;
    - an empty list draws nothing (dom.ts `withoutEmptyLists` also leaves it out of the page);
-   - a rule keeps its group's gap on both sides (`--rule-space`: the space between the group's blocks). */
+   - a rule keeps its group's gap on both sides (`--rule-space`: the space between the group's blocks).
+   `:has()` is only in rules of its own and only removes a list's bottom rule: a browser without it draws an extra
+   line, never loses one (every target browser has it: Safari 16.4+, Chrome, Edge and Firefox of the last two years). */
 :is(.request, div.consent) {
   --rule-space: var(--jp-space-3);
 }
@@ -197,32 +202,35 @@ dl.id-rows dd + dt {
 }
 
 :is(.request, div.consent) dl.jp-kv:not(:empty) + dl.jp-kv,
-:is(.request, div.consent) :is(.jp-alert, div.summary-quote, pre.message, code.mono, details.request-details) + dl.jp-kv,
+:is(.request, div.consent) :is(.jp-alert, div.summary-quote, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details) + dl.jp-kv,
 :is(.request, div.consent) :not(.details-body) > dl.jp-kv:first-child {
   border-top: 0;
   padding-top: 0;
 }
 
-:is(.request, div.consent) dl.jp-kv:has(+ :is(.jp-alert, div.summary-quote, pre.message, code.mono, details.request-details)),
-:is(.request, div.consent) dl.jp-kv:has(+ :is(.ops, .contracts) > li.takeover-op:first-child),
 :is(.request, div.consent) dl.jp-kv:last-child {
   border-bottom: 0;
   padding-bottom: 0;
 }
 
-:is(.request, div.consent)
-  :is(dl.jp-kv:not(:empty), .jp-alert, div.summary-quote, pre.message, code.mono, details.request-details)
-  + :is(.ops, .contracts) > li:first-child:not(.takeover-op) {
-  border-top: 0;
-  padding-top: 0;
+:is(.request, div.consent) dl.jp-kv:has(+ :is(.jp-alert, div.summary-quote, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details)) {
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 
-/* An operation after a framed one, or after one that ends in a box (its call data, its arguments): that border is
-   the line. */
+:is(.request, div.consent) dl.jp-kv:has(+ .args > .jp-alert:first-child) {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+:is(.request, div.consent) dl.jp-kv:has(+ :is(.ops, .contracts) > li.takeover-op:first-child) {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
 :is(.request, div.consent)
-  :is(.ops, .contracts)
-  > li:is(.takeover-op, :has(> :is(.jp-alert, div.summary-quote, pre.message, code.mono):last-child, > .args:last-child > :is(.jp-alert, pre.message):last-child))
-  + li:not(.takeover-op) {
+  :is(dl.jp-kv:not(:empty), .jp-alert, div.summary-quote, pre.message, :is(.request, details, .details-body) > code.mono, details.request-details)
+  + :is(.ops, .contracts) > li:first-child:not(.takeover-op) {
   border-top: 0;
   padding-top: 0;
 }

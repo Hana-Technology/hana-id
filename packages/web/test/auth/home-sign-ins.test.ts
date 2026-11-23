@@ -369,7 +369,7 @@ describe('what it shows', () => {
     await shown(h);
     expect(rows()[1]!.text).toContain(SIGN_IN_TEXT.autoGoogle);
     // The email wallet's own sign-in may remove it: in the banner's 7 days, with no deadline named (D875).
-    expect(rows()[1]!.text).toContain('Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.');
+    expect(rows()[1]!.text).toContain('Didn’t add it? Sign in to this app the way you signed in here, and choose Remove it. If you’re not sure, remove it.');
     expect(rows()[1]!.text).not.toContain('before');
   });
 
@@ -386,8 +386,8 @@ describe('what it shows', () => {
       expect(other.querySelector('.home-sign-in-risk'), `${age}`).toBeNull();
       const how = [...other.querySelectorAll('.home-sign-in-how p')].map((p) => p.textContent);
       expect(how, `${age}`).toEqual([
-        'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.',
-        'Once you press Done in the sign-in window, that browser stops offering Remove. Not offered? Try signing in in a private window.',
+        'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove it. If you’re not sure, remove it.',
+        'Once you press Done in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
       ]);
       expect(other.textContent).not.toContain('Nothing can remove it');
       expect(other.textContent).not.toContain('before');
@@ -402,8 +402,8 @@ describe('what it shows', () => {
     await shown(h);
     const how = () => [...document.querySelectorAll('#home-sign-ins-list > li[data-role="member"] .home-sign-in-how p')].map((p) => p.textContent);
     expect(how()).toEqual([
-      'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose Remove.',
-      'Once you press Done in the sign-in window, that browser stops offering Remove. Not offered? Try signing in in a private window.',
+      'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose Remove it.',
+      'Once you press Done in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
     ]);
     expect(how().join(' ')).not.toContain('If you’re not sure, remove it.');
     resetDom();

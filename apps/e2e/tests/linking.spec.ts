@@ -240,6 +240,10 @@ test('case B, not hosted: the email joins pending 24 h; the partner sees it; it 
   const banner = popup.locator('#link-banners li[data-status="pending"]');
   await expect(banner).toContainText('will be able to open this wallet from');
   await expect(popup.locator('#banner-cancel-0')).toHaveText('Cancel this link');
+  // D887: a link this sign-in just made: the small outlined button alone (no "Didn't add it?"), named for whose link.
+  await expect(banner.locator('.banner-action')).toHaveText('Cancel this link');
+  await expect(popup.locator('#banner-cancel-0')).toHaveAttribute('aria-label', 'Cancel this link for the email address');
+  await expect(popup.locator('#banner-cancel-0')).toHaveClass('jp-btn jp-btn-secondary jp-btn-sm');
   await expect.poll(() => linkEvents(page)).toContainEqual(expect.objectContaining({ provider: 'email', status: 'pending' }));
   const methods = (await runAccount(page, 'acct')) as { methods: { provider: string; status: string; effectiveAtMs: number | null; root: boolean }[] };
   expect(methods.methods).toEqual([

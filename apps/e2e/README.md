@@ -49,7 +49,7 @@ can't be removed, no other button); a waiting email linked to a Google wallet (c
 cancelled where its line points (the banner's "Cancel this link" at a Google sign-in), then one line again; a link past
 its waiting period (`POST /__e2e/links/expire`) removed by the email's own sign-in (D865), then one line, and that email's
 next sign-in a new wallet, alone in its own Home list; D875, a link 8 days old (`POST /__e2e/links/age`, every member of
-that root started `ageMs` ago): Home's plain "choose Remove" line, the Google sign-in's one quiet line with Remove (the
+that root started `ageMs` ago): Home's plain "choose Remove it" line, the Google sign-in's one quiet line with "Didn’t add it?" and a small Remove it (D887; the
 app's result in before Done), after Done the next sign-in's window closing by itself, then, the browser's `hana.ol.` keys cleared
 as a private window would have them, Remove from that line, and one line in Home; a failed read (both NEAR endpoints answering a JSON-RPC error,
 then only the second: Home needs both to agree) and Try again. Every page on the sign-in origin (Home and the sign-in

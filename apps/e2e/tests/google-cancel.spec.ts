@@ -158,6 +158,9 @@ test('case B: Cancel at Google goes back to case B’s own choices; Link and con
   await popup.click('#account-0');
   expect(await okValue(page, 'email')).toEqual(wallet);
   await expect(popup.locator('#link-banners')).toContainText('You chose to link your email address, so signing in with it now opens the same wallet.');
+  // D887: the email this sign-in just linked: its Remove is the small outlined button alone, named for what it removes.
+  await expect(popup.locator('#link-banners .banner-action')).toHaveText('Remove');
+  await expect(popup.getByRole('button', { name: 'Remove the email address from this wallet', exact: true })).toHaveClass('jp-btn jp-btn-secondary jp-btn-sm');
   await clickClosing(popup, '#banner-done');
 });
 

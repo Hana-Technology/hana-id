@@ -58,7 +58,8 @@
 //   waiting). D875: for the wallet's own sign-in, an active method past its first 7 days (`RECENT_LINK_MS`, on the
 //   API's time from the read) is one plain line with Remove, shown until the user presses Done on it in this browser
 //   (`localStorage` on authOrigin, `hana.ol.<sha256 of the line's kind and date>`). When only such dismissed lines are
-//   left, the window answers `{choice: 'keep'}` and closes as with no banners;
+//   left, the window answers `{choice: 'keep'}` and closes as with no banners. D887: a banner's or a line's Remove or
+//   Cancel is a small outlined button on its own line under the sentence, after "Didn't add it?";
 // - `stop`: why the login ended (a pending link: when it activates).
 // - `link_waiting` (D864): this email sign-in was refused because the email itself waits to join a wallet (someone
 //   linked it to a Google account with one code to this address): the screen says so, with the date the link starts
@@ -228,6 +229,23 @@ export const LINK_DELAY_TEXT =
  */
 export const olderLinkText = (provider: string, since: string): string => `${provider === 'email' ? 'An email address' : 'A Google account'} also opens this wallet, since ${since}.`;
 export const OLDER_LINK_NOTE = `After you press Done, this browser won’t show this again. ${BRAND.home} lists the ways to sign in to your wallet.`;
+
+/**
+ * D887 (decided by the founder 2026-11-23: "a small button, plus 'Didn't add it?' in front of it"): a banner's or an
+ * older line's Remove or Cancel is a small outlined button on its own line under the sentence, after "Didn't add it?"
+ * (not on a way to sign in this sign-in just added: the user did add it, so the button stands alone, and a Remove
+ * there is the shorter "Remove"). Each button's accessible name says what it changes, so a screen reader's list of
+ * buttons tells two lines apart; it starts with the visible words where they allow it (Cancel), and for Remove it is
+ * the confirmation's own question (D881) without the question mark.
+ */
+export const BANNER_ACTION_TEXT = Object.freeze({
+  lead: 'Didn’t add it?',
+  remove: 'Remove it',
+  removeFresh: 'Remove',
+  cancel: 'Cancel this link',
+  removeName: (kind: string) => `Remove the ${kind} from this wallet`,
+  cancelName: (kind: string) => `Cancel this link for the ${kind}`,
+});
 /** How long a window waits for its `{choice: 'keep'}` write before it closes anyway (D875). */
 export const KEEP_WRITE_MS = 1_500;
 
@@ -1535,27 +1553,37 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       pressed = true;
       f();
     };
-    const button = (b: LinkBanner, i: number): HTMLElement | null => {
+    /**
+     * D887: the banner's Remove or Cancel, on its own line under the sentence: "Didn't add it?" and a small outlined
+     * button (a way to sign in this sign-in just added: the button alone). Quiet on purpose: no box, colour or icon of
+     * its own; Done stays the one primary button.
+     */
+    const actionLine = (b: LinkBanner, i: number): HTMLElement | null => {
       const action = b.action;
       if (!action) return null;
-      const el = d.h('button', { class: 'link', attrs: { type: 'button', id: `banner-${action.kind}-${i}` } }, action.kind === 'cancel' ? 'Cancel this link' : 'Remove');
-      const change: BannerAction = { kind: action.kind, provider: b.provider === 'google' ? 'google' : 'email', method: action.prove.method, slot: slot + 2, signedIn };
+      const provider = b.provider === 'google' ? 'google' : 'email';
+      const kind = kindName(provider);
+      const T = BANNER_ACTION_TEXT;
+      const label = action.kind === 'cancel' ? T.cancel : b.fresh ? T.removeFresh : T.remove;
+      const name = action.kind === 'cancel' ? T.cancelName(kind) : T.removeName(kind);
+      const el = d.h('button', { class: `${BTN.secondary} jp-btn-sm`, attrs: { type: 'button', id: `banner-${action.kind}-${i}`, 'aria-label': name } }, label);
+      const change: BannerAction = { kind: action.kind, provider, method: action.prove.method, slot: slot + 2, signedIn };
       // D881: Remove asks first (what it costs); Cancel, the safe side of a link nobody may have meant, doesn't.
       el.addEventListener(
         'click',
         once(() => (action.kind === 'unlink' ? showRemoveConfirm(change, action.prove, slot, again) : startChange(change, action.prove, slot))),
       );
-      return el;
+      return d.h('p', { class: 'banner-action' }, b.fresh ? null : d.h('span', { class: 'banner-action-lead' }, T.lead), el);
     };
     const items: HTMLElement[] = [];
     const older: HTMLElement[] = [];
     const shownOlder: LinkBanner[] = [];
     let freshShown = false;
     banners.forEach((b, i) => {
-      const remove = button(b, i);
+      const action = actionLine(b, i);
       if (olderLink(b, serverTimeMs)) {
-        // D875: one plain line, no box, no colour: who else opens this wallet, and Remove.
-        older.push(d.h('p', { class: 'older-link', attrs: { 'data-provider': b.provider } }, olderLinkText(b.provider, dateText(b.effectiveAtMs)), remove ? ' ' : null, remove));
+        // D875: plain lines, no box, no colour: who else opens this wallet; D887: under it, "Didn't add it?" and Remove.
+        older.push(d.h('div', { class: 'older-link', attrs: { 'data-provider': b.provider } }, d.h('p', { class: 'older-link-text' }, olderLinkText(b.provider, dateText(b.effectiveAtMs))), action));
         shownOlder.push(b);
         return;
       }
@@ -1572,7 +1600,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
           'li',
           { class: b.status === 'pending' ? 'banner pending' : 'banner', attrs: { 'data-provider': b.provider, 'data-status': b.status, ...(fresh ? { 'data-fresh': 'true' } : {}) } },
           icon(d, b.status === 'pending' ? 'clock' : 'check-c'),
-          d.h('span', { class: 'banner-text' }, ...what, remove ? ' ' : null, remove),
+          d.h('div', { class: 'banner-text' }, d.h('p', { class: 'banner-what' }, ...what), action),
         ),
       );
     });
@@ -1730,7 +1758,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
           body = [
             say('warning', removing ? CHANGE_TEXT.unknownRemoved(kind) : CHANGE_TEXT.unknownCancelled),
             removing
-              ? advice('Sign in to ', app(), ` again. If the ${kind} still opens this wallet, you’ll see it there with Remove.`)
+              ? advice('Sign in to ', app(), ` again. If the ${kind} still opens this wallet, you’ll see it there with a button to remove it.`)
               : advice('Sign in to ', app(), ' again. If the link is still waiting, you’ll see Cancel this link again.'),
           ];
           break;

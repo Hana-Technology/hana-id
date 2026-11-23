@@ -139,9 +139,9 @@ export type SignInPointer =
   | { readonly kind: 'cancel_at_sign_in' }
   /** D865: the member's own sign-in asks first, with "Remove this email" / "Remove this Google account". */
   | { readonly kind: 'remove_own' }
-  /** D259: the banner offers the wallet's own sign-in "Remove" at every sign-in for 7 days after it started. */
+  /** D259: the banner offers the wallet's own sign-in "Remove it" (D887) at every sign-in for 7 days after it started. */
   | { readonly kind: 'remove_at_sign_in' }
-  /** D875: after those 7 days, a quiet line with "Remove", until Done is pressed on it in that browser. */
+  /** D875: after those 7 days, a quiet line with "Remove it" (D887), until Done is pressed on it in that browser. */
   | { readonly kind: 'remove_at_sign_in_once' }
   /** The contract refuses this viewer (another added sign-in). */
   | { readonly kind: 'not_yours' };
@@ -188,10 +188,10 @@ export const SIGN_IN_TEXT = Object.freeze({
   cancelOwnEmail: 'Didn’t set this up? Sign in to this app with this email and choose Cancel this link. If you’re not sure, cancel it.',
   cancelOwnNone: 'Only the email this wallet was made with can cancel this. If you didn’t set this up, don’t add money to that wallet.',
   cancelAtSignIn: 'Didn’t add it? Sign in to this app the way you signed in here, and choose Cancel this link. If you’re not sure, cancel it.',
-  removeAtSignIn: 'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove. If you’re not sure, remove it.',
+  removeAtSignIn: 'Didn’t add it? Sign in to this app the way you signed in here, and choose Remove it. If you’re not sure, remove it.',
   /** An automatic same-address Google link (D865's softer words: nothing pushes its removal). */
-  removeAtSignInAuto: 'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose Remove.',
-  removeAtSignInOnceNotOffered: 'Once you press Done in the sign-in window, that browser stops offering Remove. Not offered? Try signing in in a private window.',
+  removeAtSignInAuto: 'Don’t recognise this Google account? Sign in to this app the way you signed in here, and choose Remove it.',
+  removeAtSignInOnceNotOffered: 'Once you press Done in the sign-in window, that browser stops offering to remove it. Not offered? Try signing in in a private window.',
   notYours: 'Only the sign-in this wallet was made with, or this sign-in itself, can remove it.',
   removeOwnNotAsked: 'Not asked? Try signing in in a private window. If this was added automatically because both use the same address, you won’t be asked.',
   signOutFirst: 'If you’re already signed in to this app, sign out of it first.',

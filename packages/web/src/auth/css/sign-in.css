@@ -102,15 +102,41 @@ ul.banners > li.banner.pending > .ic {
   color: var(--jp-warning);
 }
 
-/* D875: the wallet's older ways to sign in, for its own sign-in: plain lines, no box, no colour, each with Remove. */
+ul.banners > li.banner > .banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.banner-text > p.banner-what {
+  margin: 0;
+}
+
+/* D887: a banner's or an older line's Remove or Cancel, on its own line under its sentence: "Didn't add it?" and the
+   system's small outlined button (44 px on touch screens, the tokens'). No box, colour or icon of its own: findable,
+   not louder; Done stays the one primary button. */
+p.banner-action {
+  margin: var(--jp-space-2) 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jp-space-2) var(--jp-space-3);
+}
+
+p.banner-action > .jp-btn {
+  flex: 0 0 auto;
+}
+
+/* D875: the wallet's older ways to sign in, for its own sign-in: plain lines, no box, no colour, each with its Remove
+   right under it (D887); more space between two lines than within one, so each button sits with its own sentence. */
 div.older-links {
   display: flex;
   flex-direction: column;
-  gap: var(--jp-space-2);
+  gap: var(--jp-space-4);
   font-size: var(--jp-text-sm);
 }
 
-div.older-links > p {
+div.older-links > p,
+div.older-link > p.older-link-text {
   margin: 0;
 }
 

@@ -19928,9 +19928,14 @@ sound, and asked for these:
     chosen; Forward reaches "Move wallet" again, collapsed, never a key. So "Move wallet" ↔ another tab, however often,
     leaves at most one entry over the wallet's (the reviewer's "50 toggles leave 50 entries" is gone).
   - "Your wallets" goes back to the list's own entry, as before (`history.go(-1)` or `(-2)`).
-  - A browser that refuses an entry: the tab still opens; a tab change then changes nothing in history, and the list's
-    entry is never the one replaced. A tab pressed while the page's own Back is on its way: the entry added when it
-    ends is for the view then on screen (one for "Move wallet" at most).
+  - A browser that refuses "Move wallet" its entry: the tab still opens, Back from it leaves the wallet's page, and the
+    list's entry is never the one replaced. A browser where the page can't go back (`history.go` throws): the tab
+    chosen takes "Move wallet"'s entry, which stays "Move wallet"'s slot, so entering "Move wallet" again reuses it
+    (never more than one entry over the wallet's; Back from the tab in that slot shows the wallet's entry, on the tab it
+    last showed). A tab pressed while the page's own Back is on its way: the entry added when it lands is for the view
+    then on screen (one for "Move wallet" at most); a second way back asked for meanwhile ("Your wallets" right after
+    another tab) waits for the first to land, then goes on from where the browser really is. A traversal that lands
+    after the page stopped waiting (`REWIND_GIVE_UP_MS`, 10 s) on the entry it was going to changes nothing on screen.
   - **The lock holds on every way out**, unchanged: leaving "Move wallet" by another tab, Back, "Your wallets" (and
     Forward elsewhere, where that can still happen) runs `moving.leave()` in `showView`, before and apart from anything
     history does. Proven by `home-export.test.ts` "D895, D901: leaving “Move wallet” by …" (Addresses, Security, Back,
@@ -19948,12 +19953,12 @@ sound, and asked for these:
   name, if you chose to share them."**. Two parts, each a `section` named by its `h3`, each with its own line and button,
   exactly the pattern of D897's sections:
   - **"Your email"** (`home-devices.ts` `emailView`, from the devices' one read, so no new request): its line before a
-    read **"Whether you share your email address with the app."** ("…with this app." on "App details", "…with these
-    apps." for a shared wallet); after the Security tab's read, D897's email sentence moved here ("Your email is shared
-    with Sodax." / "…with the app." / "…with Sodax and Sodax Earn." / "…with 3 apps."), or the two sentences the wallet's
-    page used to say under the devices, now the line: "You aren’t sharing your email address with the app." and
-    "Passport Home can’t tell right now whether you share your email with the app." ("this app" / "these apps" as
-    above). Then **"Show email sharing"**: the same rule as "Show devices" (the tab's read while at most a minute old,
+    read **"Whether you share your email address with this app."** ("…with these apps." for a shared wallet; "this
+    app" for one app everywhere in the card, as its title and the name's line say, after PR 130's review); after the
+    Security tab's read, D897's email sentence moved here ("Your email is shared with Sodax." / "…with this app." /
+    "…with Sodax and Sodax Earn." / "…with 3 apps."), or the two sentences the wallet's page used to say under the
+    devices, now the line: "You aren’t sharing your email address with this app." and "Passport Home can’t tell right
+    now whether you share your email with this app." ("these apps" as above). Then **"Show email sharing"**: the same rule as "Show devices" (the tab's read while at most a minute old,
     else one new read), after which each app the email is shared with is the same card as before ("Your email is shared
     with Sodax: ada@…", "Stop sharing email", its confirmation unchanged, D765), and a small "Show again". A failed tab
     read is the same quiet note: "Passport Home couldn’t check this just now. “Show email sharing” tries again." A stop,
@@ -19969,6 +19974,29 @@ sound, and asked for these:
   - Not changed: the account view "Devices and auto-approve" (under "Your account") still lists the email sharing with
     the devices, app by app (a per-app card there would split one list in two); the account view "Your name"; every
     request, guard, confirmation and refusal sentence.
+- **After PR 130's review (2026-11-24)**, applied on the same branch (merged with `next` at `e2d7a142` first):
+  1. **A late landing no longer changes the screen.** On "Move wallet", another tab, then "Move wallet" again, with
+     the browser's traversal landing after 10 s, used to flip back to the tab (the move flow dropped, the key erased:
+     the safe direction). The page now remembers where its own traversal goes and ignores that landing whatever the
+     entry. Unit test.
+  2. **`history.go` throwing no longer piles up entries** (it did: 5 toggles, 7 entries): "Move wallet"'s entry is
+     reused, above. Unit tests, one of them proving the key is erased on that path (`home-export.test.ts`).
+  3. **The test's history is faithful**: `FakeHistory.go` changes `index` and `state` only when the traversal lands
+     (with `hold`, at `release()`), as browsers do. With it, "Move wallet" → another tab → "Your wallets" before the
+     first traversal landed left the list on screen over the wallet's entry (the next Back did nothing visible); the
+     page now chains the second way back after the first lands, from the browser's real entry (`rewind` reads the
+     entry's marker, no longer assumes it). Unit test; D893's "a view opened while the page's own Back is on its way"
+     test now expects the browser on the wallet's entry until the traversal lands.
+  4. **No read while a stop is on its way**: "Show devices" and "Show email sharing" are disabled then (a read landing
+     after the stop cleared its outcome sentence, and the focus landed on an empty note). Unit test.
+  5. **A stop answered after the person moved to another wallet** (or reopened the same one) applies what it stopped
+     but says nothing and moves no focus on the page now open. Unit test.
+  6. **Wording**: one form, "this app", in the card for one app (above); on a wallet's page the devices' warning for an
+     account Journear couldn't confirm is now "Passport Home couldn’t confirm that this sign-in is still part of your
+     account, so it offers no stop for now. Show your devices again in a moment." (the account view keeps "…and shows
+     no email sharing here for now…", where the email is listed).
+  7. Kept, still to confirm: "Show email sharing" offered when the line already says nothing is shared (e).
+  Each fix was checked to make its test fail when undone.
 - **Headings now** (Security): `h2` "Ways to sign in", "Devices and auto-approve", "What these apps get from you"; `h3`
   "Your email", "Your name" (D895's "No `h3` on the page" no longer holds).
 - **Accessibility**: the card and both parts are `section`s named by their headings; the email part's heading takes the
@@ -19982,14 +20010,13 @@ sound, and asked for these:
   entered from (so Forward returns to "Move wallet") instead of replacing "Move wallet"'s entry; (b) "What this app gets
   from you" as the singular title, also on "App details"; (c) the card keeping a separate button per part ("Show email
   sharing", "Show name sharing") instead of a3's single "Show sharing" (one button would change when the name is read);
-  (d) "Your email" as the part's title and its before-read line "Whether you share your email address with the app.";
+  (d) "Your email" as the part's title and its before-read line "Whether you share your email address with this app.";
   (e) "Show email sharing" is offered even when the line already says nothing is shared (pressing it then shows only
   "Show again"); (f) the account view "Devices and auto-approve" keeping the email with the devices; (g) the card's line
   "Your email and your name, if you chose to share them." (a3's words).
 - **Not verified**: real iOS Safari and Android browsers (Playwright's WebKit and Chromium only), real screen readers
   (names checked in the browsers' accessibility trees and by role queries), browser text-only zoom, landscape phones;
   `pnpm verify`'s full result is in the PR.
-
 
 ## The line under a partner's words, more app-name words, one NEAR operator on testnet (branch `feat/labels-line-names-provider-rule`), 2026-11-24
 

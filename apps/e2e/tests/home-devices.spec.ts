@@ -441,7 +441,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await page.locator('.home-row[data-scope="s2"]').click();
   await homeTab(page, 'Security');
   await page.locator('#home-app-devices-show').click();
-  await expect(page.locator('#home-app-email-summary')).toHaveText('You aren’t sharing your email address with the app.');
+  await expect(page.locator('#home-app-email-summary')).toHaveText('You aren’t sharing your email address with this app.');
   await expect(page.locator('#home-app-gets')).toHaveAccessibleName('What this app gets from you');
   await expect(page.locator('#home-app-devices')).toContainText('A tab (may be closed) on https://lumenpay.example');
   await page.locator('#home-app-devices').scrollIntoViewIfNeeded();

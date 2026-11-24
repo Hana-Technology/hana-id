@@ -276,12 +276,15 @@ export function devicesSummary(s: DevicesSummaryScope, mine = true): string {
   return parts.join(' ');
 }
 
-/** D901: how the email part names the apps: "the app" (a wallet of one app), "this app" (an app's page), "these apps". */
-const emailWho = (apps: number, mine: boolean): string => (apps > 1 ? 'these apps' : mine ? 'the app' : 'this app');
+/**
+ * D901: how the email part names the apps: "this app" for one (as the card's title and the name's line say, PR 130's
+ * review: one form in the card), "these apps" for several.
+ */
+const emailWho = (apps: number): string => (apps > 1 ? 'these apps' : 'this app');
 
 /** D901: what the email part says before anything is read (or when the read failed). */
-export function emailAbout(apps: number, mine = true): string {
-  return `Whether you share your email address with ${emailWho(apps, mine)}.`;
+export function emailAbout(apps: number): string {
+  return `Whether you share your email address with ${emailWho(apps)}.`;
 }
 
 /**
@@ -289,8 +292,8 @@ export function emailAbout(apps: number, mine = true): string {
  * which app gets the email ("Your email is shared with Sodax."), that none does, or that Passport Home can't tell.
  * `nameOf`: an app's name (partner text, only ever set as text).
  */
-export function emailSummary(s: Pick<DevicesSummaryScope, 'apps' | 'email'>, mine = true, nameOf: (appId: string) => string = (id) => s.apps.find((a) => a.appId === id)?.name ?? 'an app'): string {
-  const who = emailWho(s.apps.length, mine);
+export function emailSummary(s: Pick<DevicesSummaryScope, 'apps' | 'email'>, nameOf: (appId: string) => string = (id) => s.apps.find((a) => a.appId === id)?.name ?? 'an app'): string {
+  const who = emailWho(s.apps.length);
   if (s.email === null) return `Passport Home can’t tell right now whether you share your email with ${who}.`;
   if (s.email.length === 0) return `You aren’t sharing your email address with ${who}.`;
   const names = s.email.map((e) => nameOf(e.appId));
@@ -474,15 +477,29 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     const result: HomeStopResult | null = await send(view, (id) => deps.api.stop(id, stop));
     if (at !== epoch) return;
     stopping = null;
+    // PR 130's review: the person left the page the stop was made on (another wallet's page, or the same one opened
+    // again, is a new view): what the stop changed is applied to what is still on screen, but its sentence and the focus
+    // stay out of the page now open.
+    const left = views[where] !== view || (where === 'app' && appScope?.scopeId !== scopeId);
+    // No other confirmation can have opened meanwhile (one asks nothing while a stop is on its way).
     confirm = null;
     if (result) {
       applyStop(stop, scopeId);
       const done = stopDoneText(stop.kind, typeof result.revoked === 'number' ? result.revoked > 0 : result.revoked);
-      if (inEmail) view.emailNote = done;
-      else view.notes.set(scopeId, done);
+      if (!left) {
+        if (inEmail) view.emailNote = done;
+        else view.notes.set(scopeId, done);
+      }
     }
+    // On a page the person moved to, the focus stays on the control it was on (drawn again, its buttons enabled).
+    const had = deps.win.document.activeElement;
+    const keep = left && had && had.id && [frontRoot, appRoot, emailRoot].some((r) => r.contains(had)) ? had.id : null;
     render('front');
     render('app');
+    if (left) {
+      if (keep && deps.win.document.activeElement?.id !== keep) focus(keep);
+      return;
+    }
     focus(inEmail ? (result ? 'home-app-email-note' : 'home-app-email-problem') : result ? `home-devices-note-${where}-${scopeId}` : `home-devices-problem-${where}`);
   }
 
@@ -666,7 +683,10 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
             d,
             'warning',
             { class: 'note', attrs: { id: `home-devices-unconfirmed-${where}-${s.scopeId}` } },
-            'Passport Home couldn’t confirm that this sign-in is still part of your account, so it offers no stop and shows no email sharing here for now. Show your devices again in a moment.',
+            // On a wallet's page the email is in its own card, which says it can't tell (PR 130's review).
+            where === 'front'
+              ? 'Passport Home couldn’t confirm that this sign-in is still part of your account, so it offers no stop and shows no email sharing here for now. Show your devices again in a moment.'
+              : 'Passport Home couldn’t confirm that this sign-in is still part of your account, so it offers no stop for now. Show your devices again in a moment.',
           ),
       items.length > 0
         ? d.h('ul', { class: 'home-device-list' }, ...items)
@@ -708,7 +728,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
               view.expanded = true;
               deps.track(load(where));
             },
-            { disabled: view.busy !== null },
+            // PR 130's review: no read while a stop is on its way (its outcome and focus would be drawn over).
+            { disabled: view.busy !== null || stopping !== null },
           ),
         ),
       );
@@ -724,16 +745,21 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
         d.h(
           'div',
           { class: 'actions start' },
-          button('Show devices', ids.show, () => {
-            view.expanded = true;
-            // D897: the tab's read is shown while it is fresh; older than a minute, the press reads again.
-            if (view.readAtMs === null || now() - view.readAtMs > DEVICES_FRESH_MS) {
-              deps.track(load(where));
-              return;
-            }
-            render(where);
-            focus(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
-          }),
+          button(
+            'Show devices',
+            ids.show,
+            () => {
+              view.expanded = true;
+              // D897: the tab's read is shown while it is fresh; older than a minute, the press reads again.
+              if (view.readAtMs === null || now() - view.readAtMs > DEVICES_FRESH_MS) {
+                deps.track(load(where));
+                return;
+              }
+              render(where);
+              focus(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
+            },
+            { disabled: stopping !== null },
+          ),
         ),
       );
       return out;
@@ -775,11 +801,12 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     };
     if (view.state !== 'ready') {
       if (view.state === 'closed' && view.quietFailed) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-email-quiet' } }, `Passport Home couldn’t check this just now. “${HOME_EMAIL_SHOW}” tries again.`));
-      out.push(d.h('div', { class: 'actions start' }, button(view.busy ? 'Loading…' : HOME_EMAIL_SHOW, 'home-app-email-show', show, { disabled: view.busy !== null })));
+      out.push(d.h('div', { class: 'actions start' }, button(view.busy ? 'Loading…' : HOME_EMAIL_SHOW, 'home-app-email-show', show, { disabled: view.busy !== null || stopping !== null })));
       return out;
     }
     if (!view.emailExpanded) {
-      out.push(d.h('div', { class: 'actions start' }, button(HOME_EMAIL_SHOW, 'home-app-email-show', show, { disabled: view.busy !== null })));
+      // PR 130's review: no read while a stop is on its way (it would clear the stop's outcome as it lands).
+      out.push(d.h('div', { class: 'actions start' }, button(HOME_EMAIL_SHOW, 'home-app-email-show', show, { disabled: view.busy !== null || stopping !== null })));
       return out;
     }
     out.push(d.h('div', { class: 'actions start home-devices-again' }, button(view.busy === 'load' ? 'Loading…' : 'Show again', 'home-app-email-refresh', () => deps.track(load('app', false, false, 'email')), { disabled: view.busy !== null || stopping !== null, sm: true })));
@@ -812,7 +839,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     put(root, [heading, d.h('p', { class: 'home-set-summary', attrs: { id: where === 'front' ? 'home-devices-about' : 'home-app-devices-summary', ...(scope ? { 'data-read': '' } : {}) } }, line), ...body(where)]);
     if (where !== 'app') return;
     // D901: the email part, drawn with the devices it is read with. Its line says what the read says about the email.
-    const emailLine = scope ? emailSummary(scope, mine, (appId) => nameOf(scope, appId)) : emailAbout(appScope?.apps.length ?? 1, mine);
+    const emailLine = scope ? emailSummary(scope, (appId) => nameOf(scope, appId)) : emailAbout(appScope?.apps.length ?? 1);
     emailRoot.replaceChildren();
     put(emailRoot, [d.h('h3', { attrs: { id: 'home-app-email-title', tabindex: '-1' } }, HOME_EMAIL_TITLE), d.h('p', { class: 'home-set-summary', attrs: { id: 'home-app-email-summary', ...(scope ? { 'data-read': '' } : {}) } }, emailLine), ...emailBody()]);
   }

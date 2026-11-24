@@ -1146,50 +1146,67 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   /**
    * The page asked the browser to go back (`history.go`): its popstate is the page's own, and a view opened meanwhile
    * adds its entry only once that traversal is done (never during it, however long it takes under load: PR 116's
-   * review). If no popstate has come after `REWIND_GIVE_UP_MS`, the page stops waiting: that view gets no entry (Back
-   * then leaves Home from it, as with a browser that refuses one), and a popstate that still comes for the page's own
-   * traversal, landing on the front page's entry, changes nothing on screen (`lateRewind`).
+   * review). A second way back asked for meanwhile (a tab off "Move wallet", then "Your wallets") waits for the first to
+   * land and then goes on from where the browser really is (PR 130's review: `history.state` changes only when a
+   * traversal lands, and two `go`s in flight are counted differently by different browsers). If no popstate has come
+   * after `REWIND_GIVE_UP_MS`, the page stops waiting: that view gets no entry (Back then leaves its page from it, as
+   * with a browser that refuses one), and a popstate that still comes for the page's own traversal, landing on the entry
+   * it was going to (`lateTarget`: the front page's, or since D901 the tab "Move wallet" was entered from), changes
+   * nothing on screen.
    */
   let rewinding = false;
   let lateRewind = false;
+  /** The step the traversal the page stopped waiting for lands on (0: the front page's entry, which has no marker). */
+  let lateTarget = 0;
   let rewindTimer: ReturnType<typeof setTimeout> | undefined;
   let afterRewind: (() => void) | null = null;
+  /** A way back asked for while another was on its way: where to, and the sign-in's tag it was asked under. */
+  let chained: { to: number; tag: string } | null = null;
   /** Where the front page was scrolled when a view opened over it, and the row that opened it: both come back with it. */
   let frontScroll = 0;
   let frontReturn: string | null = null;
 
   const stepMark = (n: number): string => `home:${stepTag}:${n}`;
-  /** The step an entry's marker names, for this sign-in only; null for anything else (another sign-in's, none). */
-  const stepOf = (state: unknown): number | null => {
+  /** The step an entry's marker names, for this sign-in only (or `tag`'s); null for anything else (another sign-in's, none). */
+  const stepOf = (state: unknown, tag = stepTag): number | null => {
     if (typeof state !== 'string') return null;
     const m = STEP_MARK.exec(state);
-    return m && m[1] === stepTag ? Number(m[2]) : null;
+    return m && m[1] === tag ? Number(m[2]) : null;
   };
-  /** Whether the browser is on the entry the page added for the step on screen (so going back lands on the front page). */
-  const onOwnStep = (): boolean => {
+  /** The step of the entry the browser is on now, by its marker (null: not one of this sign-in's). */
+  const browserStep = (tag = stepTag): number | null => {
     try {
-      return step > 0 && hist()?.state === stepMark(step);
+      return stepOf(hist()?.state ?? null, tag);
     } catch {
-      return false;
+      return null;
     }
   };
   /**
-   * Goes back to step `to`'s entry (the front page's by default), when the browser is on the page's own step; true when
-   * it asked. D901: leaving "Move wallet" by another tab goes back one step, to the tab it was entered from.
+   * Goes back to step `to`'s entry (the front page's by default), when the browser is on one of the page's own entries
+   * past it; true when it asked (or will ask, once a traversal on its way has landed). D901: leaving "Move wallet" by
+   * another tab goes back one step, to the tab it was entered from.
    */
-  function rewind(to = 0): boolean {
+  function rewind(to = 0, tag = stepTag): boolean {
     const h = hist();
-    if (!onOwnStep() || typeof h?.go !== 'function' || to < 0 || to >= step) return false;
+    if (typeof h?.go !== 'function' || to < 0) return false;
+    if (rewinding) {
+      chained = { to, tag };
+      return true;
+    }
+    const at = browserStep(tag);
+    if (at === null || at <= to) return false;
     rewinding = true;
     lateRewind = false;
+    lateTarget = to;
     clearTimeout(rewindTimer);
     rewindTimer = setTimeout(() => {
       rewinding = false;
       afterRewind = null;
+      chained = null;
       lateRewind = true;
     }, REWIND_GIVE_UP_MS);
     try {
-      h.go(to - step);
+      h.go(to - at);
       return true;
     } catch {
       endRewind();
@@ -1199,6 +1216,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function endRewind(): void {
     rewinding = false;
     clearTimeout(rewindTimer);
+    // A way back asked for while this one was on its way: on from where the browser landed (it waits again).
+    const then = chained;
+    chained = null;
+    if (then && rewind(then.to, then.tag)) return;
     const next = afterRewind;
     afterRewind = null;
     next?.();
@@ -1235,8 +1256,11 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     if (rewinding) return endRewind();
     if (lateRewind) {
       lateRewind = false;
-      // The page's own traversal, finished after the page stopped waiting: it lands on the front page's entry.
-      if (stepOf((event as { state?: unknown }).state ?? null) === null) return;
+      // The page's own traversal, finished after the page stopped waiting: it lands on the entry it was going to (the
+      // front page's has no marker). What is on screen stays (PR 130's review: a late landing on the tab "Move wallet"
+      // was entered from flipped "Move wallet", opened again meanwhile, back to that tab).
+      const n = stepOf((event as { state?: unknown }).state ?? null);
+      if (n === (lateTarget === 0 ? null : lateTarget)) return;
     }
     // Signed out (or signing in): nothing of an account is shown, whatever the entry.
     if (stage !== 'signed_in') return;
@@ -1364,8 +1388,17 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const was = viewing;
     const v: HomeView & { kind: 'wallet' } = { kind: 'wallet', scope: viewing.scope, tab };
     if (tab === 'move') {
+      // The entry above the wallet's own is "Move wallet"'s, still there because the browser couldn't go back from it
+      // (`leaveMoveStep`'s fallback, PR 130's review): "Move wallet" takes it again instead of adding one more.
+      const below = step >= 2 ? steps[step - 1] : undefined;
+      const cur = steps[step];
+      const slot = !rewinding && below?.kind === 'wallet' && below.scope.scopeId === v.scope.scopeId && cur?.kind === 'wallet' && cur.scope.scopeId === v.scope.scopeId;
       showView(v, 'tab');
-      addStep(v);
+      if (slot) {
+        const next = steps.slice();
+        next[step] = v;
+        steps = next;
+      } else addStep(v);
     } else {
       if (was.tab === 'move') leaveMoveStep(was, v);
       else replaceStep(v);
@@ -1395,7 +1428,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    * D901: leaving "Move wallet" for another tab. When "Move wallet" has its own entry over one of the same wallet's tabs,
    * the browser goes back to that entry (`history.go(-1)`), which now shows `v`; Forward then reaches "Move wallet" again,
    * collapsed, as after Back. Otherwise (no entry of its own, or the browser can't go back) "Move wallet"'s entry, if it
-   * has one, shows `v` instead.
+   * has one, shows `v` instead, and stays "Move wallet"'s slot: entering "Move wallet" again takes it back rather than
+   * adding another (`selectTab`), so even then there is never more than one entry over the wallet's.
    */
   function leaveMoveStep(was: HomeView & { kind: 'wallet' }, v: HomeView & { kind: 'wallet' }): void {
     const before = step >= 2 ? steps[step - 1] : undefined;

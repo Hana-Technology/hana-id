@@ -1142,6 +1142,11 @@ describe('the secret’s life', () => {
       h.click('home-tab-security');
       await flush();
     }],
+    // PR 130's review: the page can't send the browser back (`history.go` throws); the tab still opens, and locks.
+    ['another tab, where the browser can’t go back', async (h: H) => {
+      h.click('home-tab-addresses');
+      await flush();
+    }],
   ] as const)('D895, D901: leaving “Move wallet” by %s erases the opened key, from the page and from memory', async (name, leave) => {
     const h = start();
     if (name.includes('refused')) {
@@ -1152,6 +1157,10 @@ describe('the secret’s life', () => {
         return real(data, unused, url);
       });
     }
+    if (name.includes('can’t go back'))
+      h.win.history.go.mockImplementation(() => {
+        throw new Error('refused');
+      });
     await h.unlock();
     expect(h.page.tab).toBe('move');
     const r = h.reveal('evm');
@@ -1180,6 +1189,15 @@ describe('the secret’s life', () => {
       h.win.history.back();
       await flush();
       expect(h.page.tab).toBe(name.includes('Addresses') ? 'addresses' : 'security');
+    }
+    if (name.includes('can’t go back')) {
+      // "Move wallet"'s entry now shows Addresses; entering "Move wallet" again takes it back, adding nothing.
+      expect(h.win.history.entries).toHaveLength(3);
+      h.click('home-tab-move');
+      expect(h.win.history.entries).toHaveLength(3);
+      expect(h.page.moving.state).toBe('closed');
+      expectCollapsed();
+      expect(document.documentElement.outerHTML).not.toContain(key);
     }
     if (name.includes('refused')) {
       // No entry of its own: nothing was added for "Move wallet" or the tab, and Back from the tab leaves the wallet.

@@ -205,7 +205,7 @@ describe('the list', () => {
     expect(HOME_DEVICES_WALLET_INTRO).toBe('Where you’re signed in to this wallet, and what those devices may sign without asking.');
     expect(HOME_DEVICES_APP_INTRO).toBe('Where you’re signed in to this app with Journear, and what those devices may sign without asking.');
     expect(document.getElementById('home-app-devices-empty')?.classList.contains('jp-empty')).toBe(true);
-    expect(text('home-app-email-summary')).toBe('You aren’t sharing your email address with the app.');
+    expect(text('home-app-email-summary')).toBe('You aren’t sharing your email address with this app.');
     expect(document.querySelector('#home-app-devices #home-app-email-summary')).toBeNull();
     // Another app's page starts closed again, and asks nothing on its own.
     h.mountApp('s8');
@@ -602,7 +602,7 @@ describe('D897: the Security tab’s devices', () => {
     expect(h.devices.appExpanded).toBe(false);
     expect(document.querySelector('#home-app-devices-summary')?.textContent).toBe('Signed in to this wallet in 2 places. 1 of them may sign without asking.');
     // D901: which app gets the email is said in the email part, from the same read.
-    expect(document.querySelector('#home-app-email-summary')?.textContent).toBe('Your email is shared with the app.');
+    expect(document.querySelector('#home-app-email-summary')?.textContent).toBe('Your email is shared with this app.');
     // What was read is in the text colour; the section's own sentence before it was quiet.
     expect(document.querySelector('#home-app-devices-summary')?.hasAttribute('data-read')).toBe(true);
     expect(document.querySelector('#home-app-devices .home-device')).toBeNull();
@@ -657,21 +657,19 @@ describe('D897: the Security tab’s devices', () => {
     expect(devicesSummary({ apps: one, devices: [dev(null)], consents: [{}, {}], email: [] })).toBe('Signed in to this wallet in 1 place. It asks you before signing. 2 tabs that may still be open can also sign without asking.');
     // D901: the devices' line never speaks of the email.
     expect(devicesSummary({ apps: two, devices: [], consents: [], email: [{ appId: 'a1' }] })).toBe('Not signed in to this wallet anywhere right now.');
-    // The email part's line: "the app" with one app; otherwise the apps by name, or how many (D897's words, moved).
-    expect(emailSummary({ apps: one, email: [{ appId: 'a1' }] })).toBe('Your email is shared with the app.');
-    expect(emailSummary({ apps: one, email: [{ appId: 'a1' }] }, false)).toBe('Your email is shared with this app.');
+    // The email part's line: "this app" with one app (one form in the card, as its title); otherwise the apps by name,
+    // or how many (D897's words, moved).
+    expect(emailSummary({ apps: one, email: [{ appId: 'a1' }] })).toBe('Your email is shared with this app.');
     expect(emailSummary({ apps: two, email: [{ appId: 'a2' }] })).toBe('Your email is shared with Sodax Earn.');
     expect(emailSummary({ apps: two, email: [{ appId: 'a1' }, { appId: 'a2' }] })).toBe('Your email is shared with Sodax and Sodax Earn.');
     expect(emailSummary({ apps: three, email: [{ appId: 'a1' }, { appId: 'a2' }, { appId: 'a3' }] })).toBe('Your email is shared with 3 apps.');
     // None, and can't tell (the sentences the wallet's page said under the devices, now the part's line).
-    expect(emailSummary({ apps: one, email: [] })).toBe('You aren’t sharing your email address with the app.');
-    expect(emailSummary({ apps: one, email: [] }, false)).toBe('You aren’t sharing your email address with this app.');
+    expect(emailSummary({ apps: one, email: [] })).toBe('You aren’t sharing your email address with this app.');
     expect(emailSummary({ apps: two, email: [] })).toBe('You aren’t sharing your email address with these apps.');
-    expect(emailSummary({ apps: one, email: null })).toBe('Passport Home can’t tell right now whether you share your email with the app.');
-    expect(emailSummary({ apps: two, email: null }, false)).toBe('Passport Home can’t tell right now whether you share your email with these apps.');
+    expect(emailSummary({ apps: one, email: null })).toBe('Passport Home can’t tell right now whether you share your email with this app.');
+    expect(emailSummary({ apps: two, email: null })).toBe('Passport Home can’t tell right now whether you share your email with these apps.');
     // Before anything is read.
-    expect(emailAbout(1)).toBe('Whether you share your email address with the app.');
-    expect(emailAbout(1, false)).toBe('Whether you share your email address with this app.');
+    expect(emailAbout(1)).toBe('Whether you share your email address with this app.');
     expect(emailAbout(2)).toBe('Whether you share your email address with these apps.');
   });
 
@@ -859,7 +857,7 @@ describe('D901: the email part of “What these apps get from you” on a wallet
     h.answer = withEmail();
     h.devices.openApp();
     await h.idle();
-    expect(text('home-app-email-summary')).toBe('Your email is shared with the app.');
+    expect(text('home-app-email-summary')).toBe('Your email is shared with this app.');
     expect(document.getElementById('home-app-email-summary')?.hasAttribute('data-read')).toBe(true);
     expect(pageText()).not.toContain('ada@example.com');
     expect(h.devices.emailExpanded).toBe(false);
@@ -935,7 +933,7 @@ describe('D901: the email part of “What these apps get from you” on a wallet
     expect(note.getAttribute('role')).toBe('status');
     expect(document.activeElement).toBe(note);
     expect(document.querySelector('#home-app-email .home-email')).toBeNull();
-    expect(text('home-app-email-summary')).toBe('You aren’t sharing your email address with the app.');
+    expect(text('home-app-email-summary')).toBe('You aren’t sharing your email address with this app.');
     // The devices' section says nothing about it.
     expect(text('home-devices-note-app-s1')).toBe('');
   });
@@ -982,10 +980,95 @@ describe('D901: the email part of “What these apps get from you” on a wallet
     h.answer = () => json(200, { scopes: [scopeOf('s1', { devices: [device(1)], email: null, canStop: false })], nextCursor: null });
     h.devices.openApp();
     await h.idle();
-    expect(text('home-app-email-summary')).toBe('Passport Home can’t tell right now whether you share your email with the app.');
+    expect(text('home-app-email-summary')).toBe('Passport Home can’t tell right now whether you share your email with this app.');
     h.click('home-app-email-show');
     expect(document.querySelector('#home-app-email .home-email')).toBeNull();
     expect(document.querySelector('#home-app-email button[id^="home-stop-"]')).toBeNull();
+  });
+
+  it('PR 130’s review: while a stop is on its way, neither part’s “Show …” can start a read; the stop’s outcome then stays, with the focus on it', async () => {
+    for (const which of ['email', 'share'] as const) {
+      resetDom();
+      const h = await opened();
+      let release: (r: Response) => void = () => {};
+      if (which === 'email') {
+        h.click('home-app-email-show');
+        h.click('home-stop-email-app-s1-app_sodax1');
+        h.answer = () => new Promise<Response>((r) => (release = r));
+        h.click('home-stop-email-app-s1-app_sodax1-confirm-go');
+        // The devices' cards are still behind their button, which waits for the stop.
+        expect(document.getElementById('home-app-devices-show')?.hasAttribute('disabled')).toBe(true);
+        h.click('home-app-devices-show');
+      } else {
+        h.click('home-app-devices-show');
+        h.click(`home-stop-share-app-${ID(1)}`);
+        h.answer = () => new Promise<Response>((r) => (release = r));
+        h.click(`home-stop-share-app-${ID(1)}-confirm-go`);
+        expect(document.getElementById('home-app-email-show')?.hasAttribute('disabled')).toBe(true);
+        h.nowMs = T0 + DEVICES_FRESH_MS + 1;
+        h.click('home-app-email-show');
+      }
+      for (let i = 0; i < 100 && !h.calls.some((c) => c.method === 'POST'); i++) await new Promise((r) => setImmediate(r));
+      expect(h.calls.filter((c) => c.method === 'GET')).toHaveLength(1);
+      release(json(200, which === 'email' ? { state: 'declined', revoked: 1 } : { revoked: true }));
+      await h.idle();
+      expect(h.calls.filter((c) => c.method === 'GET')).toHaveLength(1);
+      const note = document.getElementById(which === 'email' ? 'home-app-email-note' : 'home-devices-note-app-s1') as HTMLElement;
+      expect(note.textContent).toBe(stopDoneText(which, true));
+      expect(document.activeElement).toBe(note);
+      // Once it is done, the buttons work again.
+      expect(document.getElementById(which === 'email' ? 'home-app-devices-show' : 'home-app-email-show')?.hasAttribute('disabled')).toBe(false);
+    }
+  });
+
+  it('PR 130’s review: a stop answered after the person moved to another wallet changes what it stopped, but says nothing and moves no focus on the page now open', async () => {
+    const h = await opened();
+    h.click('home-app-email-show');
+    h.click('home-stop-email-app-s1-app_sodax1');
+    let release: (r: Response) => void = () => {};
+    h.answer = () => new Promise<Response>((r) => (release = r));
+    h.click('home-stop-email-app-s1-app_sodax1-confirm-go');
+    for (let i = 0; i < 100 && !h.calls.some((c) => c.method === 'POST'); i++) await new Promise((r) => setImmediate(r));
+    h.devices.leaveApp();
+    h.mountApp('s2');
+    // (Its buttons wait for the stop on its way, so the person is, say, on the part's heading.)
+    expect(document.getElementById('home-app-email-show')?.hasAttribute('disabled')).toBe(true);
+    (document.getElementById('home-app-email-title') as HTMLElement).focus();
+    release(json(200, { state: 'declined', revoked: 1 }));
+    await h.idle();
+    expect(text('home-app-email-note')).toBe('');
+    expect(document.getElementById('home-devices-note-app-s2')).toBeNull();
+    expect(document.activeElement?.id).toBe('home-app-email-title');
+    expect(document.getElementById('home-app-email-show')?.hasAttribute('disabled')).toBe(false);
+    expect(h.devices.confirming).toBeNull();
+    expect(text('home-app-email-summary')).toBe(emailAbout(1));
+    // The same wallet opened again is a new page too: nothing of the old stop's outcome is said there.
+    const h2 = await opened();
+    h2.click('home-app-email-show');
+    h2.click('home-stop-email-app-s1-app_sodax1');
+    h2.answer = () => new Promise<Response>((r) => (release = r));
+    h2.click('home-stop-email-app-s1-app_sodax1-confirm-go');
+    for (let i = 0; i < 100 && !h2.calls.some((c) => c.method === 'POST'); i++) await new Promise((r) => setImmediate(r));
+    h2.devices.leaveApp();
+    h2.mountApp('s1');
+    release(json(200, { state: 'declined', revoked: 1 }));
+    await h2.idle();
+    expect(text('home-app-email-note')).toBe('');
+    expect(document.getElementById('home-app-email-show')).not.toBeNull();
+  });
+
+  it('PR 130’s review: on a wallet’s page the “couldn’t confirm” warning no longer speaks of email (the card does); the account view keeps it', async () => {
+    const h = await start();
+    h.mountApp('s1');
+    h.answer = () => json(200, { scopes: [scopeOf('s1', { devices: [device(1)], email: null, canStop: false })], nextCursor: null });
+    h.devices.openApp();
+    await h.idle();
+    h.click('home-app-devices-show');
+    expect(text('home-devices-unconfirmed-app-s1')).toBe('Passport Home couldn’t confirm that this sign-in is still part of your account, so it offers no stop for now. Show your devices again in a moment.');
+    h.mountFront();
+    h.click('home-devices-show');
+    await h.idle();
+    expect(text('home-devices-unconfirmed-front-s1')).toContain('shows no email sharing here for now');
   });
 
   it('partner strings stay text in the email part', async () => {

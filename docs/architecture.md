@@ -1577,7 +1577,10 @@ per tab): only entering "Move wallet" adds a history entry (`home:{tag}:{step}`,
 what the wallet's entry shows (in memory only, nothing written to the browser), so Back from either goes to the list.
 Back from "Move wallet" returns to the tab the person entered it from; another tab pressed on "Move wallet" sends the
 browser back to that entry (`history.go(-1)`), which then shows the tab chosen, so Forward reaches "Move wallet" again
-(collapsed) and toggling never adds entries; "Your wallets" goes back to the list's own entry. Leaving "Move wallet"
+(collapsed) and toggling never adds entries (where the browser can't go back, the tab takes "Move wallet"'s entry and
+"Move wallet" reuses it); "Your wallets" goes back to the list's own entry. A way back asked for while the page's own
+is still on its way waits for it to land and goes on from the browser's real entry; a traversal landing after the page
+stopped waiting (10 s) changes nothing on screen. Leaving "Move wallet"
 (another tab, Back, the way back) locks and erases a wallet opened there (`home-export.ts` `leave`); the other tabs
 keep what they show. On a phone
 or a tablet (the bar scrolls away there), a "Sign in again" chip, fixed at the window's foot, shows while the bar's
@@ -1594,8 +1597,9 @@ read, the wallet's `GET /v1/home/devices?scopeId=…` (never on Back or Forward,
 open), so the devices' line says in how many places the wallet is signed in and what may sign without asking, and the
 email part's line which app gets the email (or that none does, or that Passport Home can't tell); "Show devices" and
 "Show email sharing" then show the device cards, or the apps the email is shared with each with "Stop sharing email",
-without another request while that read is at most a minute old (else they read again); a failed tab read is a quiet
-note in both parts, never an alert. A stop or refusal made in the email part is said there. The section is drawn again, with no request, when the
+without another request while that read is at most a minute old (else they read again), and neither can be pressed
+while a stop is on its way; a failed tab read is a quiet note in both parts, never an alert. A stop or refusal made in
+the email part is said there; a stop answered after the person moved to another wallet says nothing there. The section is drawn again, with no request, when the
 page is seen again, at midnight and when a date on it passes (an ended auto-approve shows as off, an ended sign-in goes).
 A finished read moves the focus to its heading only if the focus is still there or nowhere. "Ways to sign in" reads nothing until pressed; once read in this
 sign-in its line counts the sign-ins that open the wallet and those waiting. A device card: the name, its site on a line

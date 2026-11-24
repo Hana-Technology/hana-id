@@ -105,18 +105,29 @@ export class FakeHistory {
     const entry = this.entries[this.index];
     if (entry) entry.state = structuredClone(data ?? null);
   });
+  /**
+   * As a browser does: the traversal lands later (a task), and only then do `index` and `state` change and popstate fire.
+   * While `hold` is on, it lands at `release()` (PR 130's review: `history.state` must not change before the traversal
+   * lands, or a page that reads it in between is tested against a browser that doesn't exist). A `go` made while another
+   * is on its way counts from where the browser will be, as the browsers queue them.
+   */
+  private pendingIndex: number | null = null;
   readonly go = vi.fn((delta: number) => {
-    const to = this.index + delta;
+    const from = this.pendingIndex ?? this.index;
+    const to = from + delta;
     if (to < 0) {
       this.left += 1;
       return;
     }
     if (to >= this.entries.length || delta === 0) return;
-    this.index = to;
-    const state = this.state;
-    const fire = (): void => this.win.dispatch('popstate', { state });
-    if (this.hold) this.held.push(fire);
-    else queueMicrotask(fire);
+    this.pendingIndex = to;
+    const land = (): void => {
+      this.index = to;
+      if (this.pendingIndex === to) this.pendingIndex = null;
+      this.win.dispatch('popstate', { state: this.state });
+    };
+    if (this.hold) this.held.push(land);
+    else queueMicrotask(land);
   });
   /** The browser's Back and Forward buttons. */
   back(): void {

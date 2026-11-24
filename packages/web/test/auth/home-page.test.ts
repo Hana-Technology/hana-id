@@ -5,7 +5,7 @@
 import { ApiError, type RelayPayload, type RelayReadResponse, decodeHomeIdentity, encryptRelayPayload, homeMessage, homeNonce, identityKeyHex, parseWindowMessage } from '@hana-id/core';
 import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOME_UNNAMED_APP, homeApi, homeAppName, parseHomeApps, parseHomeConfig } from '../../src/auth/home-api.ts';
-import { HOME_EXPIRY_WARN_MS, HOME_TEXT, coverageText, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, homeViewTitle, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
+import { HOME_EXPIRY_WARN_MS, HOME_TEXT, REWIND_GIVE_UP_MS, coverageText, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, homeViewTitle, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
 import { CLIENT_ID, ENV, EVIL, FakeWindow, type RemoteWindow, type TokenSigner, asWindow, crossOriginWindow, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
 
 const FILES = 'https://files.hana.test';
@@ -1362,7 +1362,7 @@ describe('PR 116’s review (D893)', () => {
     h.click('home-back');
     row('s1').click();
     expect(document.querySelector('#home-app-devices > p')?.textContent).toContain('signed in to this wallet');
-    expect(document.getElementById('home-app-email-summary')?.textContent).toBe('Whether you share your email address with the app.');
+    expect(document.getElementById('home-app-email-summary')?.textContent).toBe('Whether you share your email address with this app.');
     expect(document.querySelector('#home-sign-ins > p')?.textContent).toBe('The sign-ins that open this wallet.');
   });
 
@@ -1375,10 +1375,11 @@ describe('PR 116’s review (D893)', () => {
     hist.hold = true;
     h.click('home-back');
     row('s3').click();
-    // The browser is slow: well past a second, the traversal hasn't landed and no entry was added during it.
+    // The browser is slow: well past a second, the traversal hasn't landed (the browser is still on the wallet's entry)
+    // and no entry was added during it.
     advance(5_000);
     expect(hist.entries).toHaveLength(2);
-    expect(hist.index).toBe(0);
+    expect(hist.index).toBe(1);
     hist.hold = false;
     hist.release();
     await flush();
@@ -1613,6 +1614,94 @@ describe('a wallet’s tabs (D895)', () => {
     hist.forward();
     await flush();
     expect(h.page.tab).toBe('security');
+  });
+
+  it('D901, PR 130’s review: a traversal that lands after the page stopped waiting leaves “Move wallet”, opened again meanwhile, on screen', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    tab('move').click();
+    hist.hold = true;
+    tab('addresses').click();
+    tab('move').click();
+    h.click('home-export-open');
+    const state = h.page.moving.state;
+    expect(h.page.tab).toBe('move');
+    advance(REWIND_GIVE_UP_MS + 1000);
+    hist.hold = false;
+    hist.release();
+    await flush();
+    // The late landing on the entry "Move wallet" was entered from changes nothing on screen.
+    expect(h.page.tab).toBe('move');
+    expect(h.page.moving.state).toBe(state);
+    expect(document.getElementById('home-export-start')).not.toBeNull();
+    expect(hist.index).toBe(1);
+    // "Move wallet" kept no entry (the page stopped waiting): Back leaves the wallet's page.
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+  });
+
+  it('D901, PR 130’s review: “Your wallets” pressed before the browser has gone back from “Move wallet” waits for it, then goes on to the list: screen and entry agree', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    tab('move').click();
+    hist.hold = true;
+    tab('addresses').click();
+    // Not landed yet: the browser is still on "Move wallet"'s entry.
+    expect(hist.state).toMatch(MARK(2));
+    h.click('home-back');
+    expect(h.page.view).toBe('front');
+    hist.hold = false;
+    hist.release();
+    await flush();
+    await flush();
+    expect(hist.index).toBe(0);
+    expect(h.page.view).toBe('front');
+    // Back from the list leaves Home; Forward shows the wallet (on the tab chosen) again.
+    hist.back();
+    await flush();
+    expect(hist.left).toBe(1);
+    hist.forward();
+    await flush();
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('addresses');
+  });
+
+  it('D901, PR 130’s review: a browser that can’t go back (`history.go` throws): “Move wallet” keeps one entry over the wallet’s, however often it is left and entered', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    const realGo = hist.go.getMockImplementation()!;
+    hist.go.mockImplementation(() => {
+      throw new Error('refused');
+    });
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    for (let i = 0; i < 5; i++) {
+      tab('move').click();
+      expect(h.page.tab).toBe('move');
+      tab(i % 2 === 0 ? 'addresses' : 'security').click();
+      expect(h.page.tab).toBe(i % 2 === 0 ? 'addresses' : 'security');
+    }
+    expect(hist.entries).toHaveLength(3);
+    tab('move').click();
+    expect(hist.entries).toHaveLength(3);
+    expect(hist.index).toBe(2);
+    // The browser's own Back still works: from "Move wallet" to the wallet's entry, then the list.
+    hist.go.mockImplementation(realGo);
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).not.toBe('move');
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
   });
 });
 

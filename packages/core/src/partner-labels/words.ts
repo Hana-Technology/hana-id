@@ -64,5 +64,33 @@ export type PartnerConnector = (typeof PARTNER_CONNECTORS)[number];
 
 export const isPartnerConnector = (v: unknown): v is PartnerConnector => typeof v === 'string' && (PARTNER_CONNECTORS as readonly string[]).includes(v);
 
+/**
+ * D907: the joining word Journear writes before the address book's name of a matching classic payment's destination,
+ * at the end of the partner's sentence ("pay the fare to Coffee Club till"), by verb, with or without the partner's
+ * phrase ("pay to Coffee Club till"). Journear's word, never the partner's. Only the verbs a payment may use are here: a
+ * soft verb says no value moves, and the parser refuses it for a payment. Each word says the named account is where the
+ * value goes ("to"), the seller or lender ("from", after buy and borrow) or the other side of a stake, bid or swap
+ * ("with"), never that the user receives anything from it.
+ */
+export const PAYMENT_DESTINATION_WORDS: Readonly<Partial<Record<PartnerVerb, PartnerConnector>>> = Object.freeze({
+  pay: 'to',
+  send: 'to',
+  donate: 'to',
+  deposit: 'to',
+  sell: 'to',
+  lend: 'to',
+  repay: 'to',
+  withdraw: 'to',
+  unstake: 'to',
+  buy: 'from',
+  borrow: 'from',
+  bid: 'with',
+  stake: 'with',
+  swap: 'with',
+});
+
+/** The joining word before a matching payment's destination name for `verb` ("to" for a verb the table lacks). */
+export const paymentDestinationWord = (verb: PartnerVerb): PartnerConnector => PAYMENT_DESTINATION_WORDS[verb] ?? 'to';
+
 /** What the window says under a partner's sentence, every time. */
 export const partnerAttribution = (appName: string): string => `These are ${appName}’s words, not Journear’s.`;

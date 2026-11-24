@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-24 (request labels; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+Last verified against code: 2026-11-24 (request labels, a payment's account name; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -915,13 +915,16 @@ are yours.
 exactly one you described, the approval window adds a box under everything Journear says:
 
 ```
-Coffee Club says: pay for [order] [1042]
+Coffee Club says: pay for [order] [1042] to [Coffee Club till]
 These are Coffee Club's words, not Journear's.
 ```
 
 Journear writes the sentence: the verb and the joining words are Journear's, your phrase and the request's own values
-are set apart. Your words never replace, soften or move Journear's lines or warnings; amounts, recipients and the fee
-always come from the request itself. A request that doesn't match your description never shows your words.
+are set apart. For a payment, Journear ends the sentence with the name you gave the account it goes to, after its own
+joining word: "to" (pay, send, donate, deposit, sell, lend, repay, withdraw, unstake), "from" (buy, borrow) or "with"
+(bid, stake, swap), as "pay to Coffee Club till" with no phrase. Journear's own To line, above your box, still shows the
+account's full address. Your words never replace, soften or move Journear's lines or warnings; amounts, recipients and
+the fee always come from the request itself. A request that doesn't match your description never shows your words.
 
 **Where.** Open your app, then the **Request labels** tab. Labels belong to the app's scope (the apps that share your
 users' wallets); each set is attached to the apps you choose, and users see your words under the name of the app they're using. Anyone in your
@@ -957,8 +960,11 @@ while the request runs exactly that code:
 1. **What your labels describe**: payments to your Stellar accounts, a NEAR program (its account and code hash) or a
    Soroban contract (its contract id and Wasm hash). The network is your app's: test apps describe the test networks.
 2. **Apps**: the apps these labels are for (1 to 8).
-3. **Your accounts**: the accounts your requests pay or name, each with the name users see for it. A payment shows
-   your words only when it goes to one of them.
+3. **Your accounts**: the accounts your requests pay or name, each with its **Name shown to users** (up to 32
+   characters, held to the same rules as your phrase). A payment shows your words only when it goes to one of them, and
+   then ends with that account's name. For a program, an account value in your sentence shows as its name alone, and
+   in a row as its name with the full address under it. For a payment, your phrase and your longest account name
+   together can be at most 40 characters, since the sentence shows both.
 4. **For each request**: the verb, from Journear's list (add, bid, book, borrow, buy, cancel, check in, collect, create,
    deposit, donate, join, leave, lend, list, pay, redeem, register, remove, renew, repay, sell, send, sign up, stake,
    subscribe, swap, unstake, unsubscribe, vote, withdraw; a verb that says nothing moves, such as "collect", can't

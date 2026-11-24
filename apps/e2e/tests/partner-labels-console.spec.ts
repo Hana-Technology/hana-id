@@ -55,7 +55,7 @@ async function openTab(page: Page, origin: string, s: LabelsState, rest = ''): P
 async function fillPayment(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Add an account' }).click();
   await page.getByLabel('Account 1', { exact: true }).fill(TILL);
-  await page.getByLabel(/Its name for users/u).fill('Stamp Rally till');
+  await page.getByLabel(/Name shown to users/u).fill('Stamp Rally till');
   await page.getByLabel(/Your phrase/u).fill('order');
   await page.getByLabel(/^The memo/u).selectOption('text');
   await page.getByLabel('Joining word').selectOption('for');
@@ -78,7 +78,7 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   await expect(page.getByRole('heading', { name: 'New request labels' })).toBeVisible();
   await fillPayment(page);
   // The approval window's own box, with the example memo.
-  await expect(box(page).locator('p.partner-says')).toHaveText('Stamp Rally says: pay for order 1042');
+  await expect(box(page).locator('p.partner-says')).toHaveText('Stamp Rally says: pay for order 1042 to Stamp Rally till');
   await expect(box(page)).toHaveAttribute('aria-label', 'What Stamp Rally says');
   // D903: the line under the partner's words, as the window says it.
   await expect(box(page).locator('p.partner-attribution')).toHaveText('These are Stamp Rally’s words, not Journear’s.');
@@ -110,7 +110,7 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   await page.clock.setFixedTime(a.state.nowMs);
   await page.getByRole('link', { name: 'Back to Request labels' }).first().click();
   const waiting = page.locator(`.labels-waiting[data-change="${proposed[0]!.changeId}"]`);
-  await expect(waiting).toContainText('Stamp Rally says: pay for order “1042”');
+  await expect(waiting).toContainText(`Stamp Rally says: pay for order “1042” to “Stamp Rally till” (${TILL})`);
   await expect(waiting).toContainText(/It goes live in (?:23 h|1 d 0 h|24 h)/u);
   await expect(page.locator('.labels-entry .jp-badge').filter({ hasText: /^Goes live / })).toBeVisible();
   await expect(waiting.locator('[data-change="added"]')).toHaveCount(2);

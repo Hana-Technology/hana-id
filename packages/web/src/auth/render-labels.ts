@@ -184,9 +184,11 @@ function sentenceNodes(d: Dom, parts: readonly SentencePart[], app: string): Chi
 /**
  * The partner's box: "{App} says: {sentence}", the attribution under it, then a row for each of the format's fields the
  * sentence doesn't already show (the partner's row label, the request's own value; at most 3, the parser's
- * LABEL_LIMITS.rows). Nothing of Journear's facts is repeated in it: a classic payment's destination is Journear's "To"
- * row alone (D896 after PR 123's review: a partner "To" row beside it could be read as Journear's). A group with its
- * own name for screen readers; normal text colour, no mark of any kind (approval.css `div.partner-label`).
+ * LABEL_LIMITS.rows). No row repeats Journear's facts: a classic payment's account is Journear's "To" row alone (D896
+ * after PR 123's review: a partner "To" row beside it could be read as Journear's). Its address book name ends the
+ * sentence instead (D907, core's `parts`: Journear's plain joining word, then the name set apart as every partner
+ * value is), so "pay the fare to Coffee Club till" stays inside the partner's attributed words. A group with its own
+ * name for screen readers; normal text colour, no mark of any kind (approval.css `div.partner-label`).
  */
 export function labelBox(d: Dom, m: LabelMatch, app: string): HTMLElement {
   const name = app.trim() === '' ? 'The app' : app;

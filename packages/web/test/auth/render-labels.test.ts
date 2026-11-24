@@ -82,17 +82,41 @@ describe('a classic payment exactly as described: the partner’s box', () => {
     expect(box[0]!.getAttribute('aria-label')).toBe(labelBoxName(APP));
     expect(labelBoxName(APP)).toBe('What Coffee Club says');
     const says = box[0]!.querySelector('p.partner-says')!;
-    expect(text(says)).toBe('Coffee Club says: pay for order 1042');
+    // D907: the sentence ends with Journear's joining word and the address book's name of the destination.
+    expect(text(says)).toBe('Coffee Club says: pay for order 1042 to Coffee Club till');
     expect(says.querySelector('strong.app-name')?.textContent).toBe(APP);
-    // The verb and the joining word are Journear's, as plain text; the object phrase and the value are set apart.
-    expect([...says.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent)).toEqual([' says: ', 'pay', ' for', ' ', ' ']);
-    expect(says.querySelector('span.partner-words')?.textContent).toBe('order');
+    // The verb and the joining words are Journear's, as plain text; the object phrase and each value are set apart.
+    expect([...says.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent)).toEqual([' says: ', 'pay', ' for', ' ', ' ', ' to', ' ']);
+    expect([...says.querySelectorAll('span.partner-words')].map((n) => n.textContent)).toEqual(['order', 'Coffee Club till']);
     expect(says.querySelector('code.partner-value')?.textContent).toBe('1042');
+    // The name is a partner value like every other: its own outlined span (direction isolated by approval.css), text only.
+    const name = says.lastElementChild!;
+    expect(name.matches('span.partner-value.partner-words')).toBe(true);
+    expect(name.childNodes).toHaveLength(1);
+    expect(name.firstChild!.nodeType).toBe(3);
     expect(text(box[0]!.querySelector('p.partner-attribution'))).toBe(partnerAttribution(APP));
-    // The memo is in the sentence: no "Order" row; and no partner "To" row beside Journear's own (the address book's
-    // name isn't shown at all).
+    // The memo is in the sentence: no "Order" row; and no partner "To" row beside Journear's own: the name is only in
+    // the partner's sentence, and the box holds no account.
     expect(box[0]!.querySelector('dl')).toBeNull();
-    expect(el.outerHTML).not.toContain('Coffee Club till');
+    expect(text(box[0]!)).not.toContain(OTHER);
+    expect(el.querySelectorAll('div.partner-label ~ * span.partner-words, dl.id-rows span.partner-words')).toHaveLength(0);
+    // Journear's own "To" row, above the box, is the account whole, as without labels.
+    const rowsAbove = el.querySelector('dl.id-rows')!;
+    expect(text(rowsAbove)).toContain(OTHER);
+    expect(text(rowsAbove)).not.toContain('Coffee Club till');
+    expect(rowsAbove.compareDocumentPosition(box[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(el.outerHTML.split('Coffee Club till')).toHaveLength(2);
+  });
+
+  it('D907: every verb a payment may use, with no phrase and with one: Journear’s joining word, then the name', () => {
+    const want: Record<string, string> = { pay: 'to', send: 'to', donate: 'to', deposit: 'to', sell: 'to', lend: 'to', repay: 'to', withdraw: 'to', unstake: 'to', buy: 'from', borrow: 'from', bid: 'with', stake: 'with', swap: 'with' };
+    for (const [verb, word] of Object.entries(want)) {
+      for (const object of [undefined, 'the fare']) {
+        const docOf = parsed({ ...PAYMENT_DOC_JSON, display: { formats: { payment: { call: { memo: 'text', assets: ['native'] }, intent: { verb, ...(object ? { object } : {}) }, sentence: object ? ['verb', 'object'] : ['verb'], fields: [{ path: 'memo', label: 'Order', format: 'orderNumber' }] } } } });
+        const says = render(payment(), [docOf]).querySelector('div.partner-label p.partner-says');
+        expect(text(says), verb).toBe(`Coffee Club says: ${verb}${object ? ` ${object}` : ''} ${word} Coffee Club till`);
+      }
+    }
   });
 
   it('only adds: the window without the box is byte for byte the window without labels', () => {
@@ -291,7 +315,7 @@ describe('a described request that doesn’t meet its description: one line in J
       .setTimebounds(10, 2000)
       .build();
     const el = render(stellar(new Uint8Array(tx.toEnvelope().toXDR())), [noMemo]);
-    expect(text(el.querySelector('p.partner-says'))).toBe('Coffee Club says: pay order');
+    expect(text(el.querySelector('p.partner-says'))).toBe('Coffee Club says: pay order to Coffee Club till');
   });
 
   it('the commit review: a listed account’s M… form is not red, and nothing in the box contradicts Journear’s own row', () => {
@@ -301,6 +325,8 @@ describe('a described request that doesn’t meet its description: one line in J
     const box = el.querySelector('div.partner-label')!;
     expect(text(box)).not.toContain(OTHER);
     expect(text(box)).not.toContain(m);
+    // D907: the M… form of a listed account is that account: its name ends the sentence.
+    expect(text(box.querySelector('p.partner-says'))).toBe('Coffee Club says: pay for order 1042 to Coffee Club till');
     // Journear's own row shows the request's M… address whole.
     expect(text(el.querySelector('dl.id-rows'))).toContain(m);
   });

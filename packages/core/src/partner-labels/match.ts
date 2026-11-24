@@ -21,7 +21,7 @@ import { COMBINING_RUN, QUOTE_LIKE } from '../reviewed-near-calls.ts';
 import { isDisplaySafeLine } from '../display-safe.ts';
 import { isNearCodeHash, isWasmHash } from './schema.ts';
 import { sorobanFootprintCode, sorobanWritesOnlyOwn } from './code.ts';
-import { SOFT_VERBS } from './words.ts';
+import { SOFT_VERBS, paymentDestinationWord } from './words.ts';
 import type { ArgSpec, ArgType, LabelDocument, LabelField, LabelFormat, NearCallSpec, NearNetwork, PaymentCallSpec, RelayRule, SorobanCallSpec } from './schema.ts';
 import type { PartnerConnector, PartnerVerb } from './words.ts';
 
@@ -168,7 +168,10 @@ export interface LabelMatch {
   readonly verb: PartnerVerb;
   readonly parts: readonly SentencePart[];
   readonly fields: readonly RenderedField[];
-  /** A classic payment's destination, as the address book names it. */
+  /**
+   * A classic payment's destination, as the address book names it. Its name also ends `parts` (D907): Journear's joining
+   * word for the verb, then this value ("pay the fare to Coffee Club till"); Journear's own "To" row shows the account.
+   */
   readonly destination?: RenderedValue & { readonly format: 'account' };
   /**
    * Every true value of the request, shown in a field or not: each declared argument (null when an optional one is
@@ -494,6 +497,7 @@ function build(key: string, format: LabelFormat, c: RenderContext, raw: readonly
         return Object.freeze({ kind: 'value', path: s.path, value: rendered.get(s.path)!.value });
     }
   });
+  if (destination) parts.push(...destinationParts(format.intent.verb, destination));
   return Object.freeze({
     ok: true,
     format: key,
@@ -503,6 +507,17 @@ function build(key: string, format: LabelFormat, c: RenderContext, raw: readonly
     ...(destination ? { destination } : {}),
     values: Object.freeze(raw.map((v) => Object.freeze({ ...v, shown: rendered.has(v.path) }))),
   });
+}
+
+/**
+ * D907: the end of a matching classic payment's sentence, Journear's joining word for the verb and the address book's
+ * name of the destination ("… to Coffee Club till"), only for a destination listed exactly (its base account, so an M…
+ * form of a listed account counts); otherwise nothing. The name is a value like any other (set apart by the window,
+ * quoted with its account by the plain form), and never replaces the account: Journear's "To" row shows it whole.
+ */
+function destinationParts(verb: PartnerVerb, destination: RenderedValue & { format: 'account' }): SentencePart[] {
+  if (destination.source !== 'partner_address_book') return [];
+  return [Object.freeze({ kind: 'word', text: paymentDestinationWord(verb) }), Object.freeze({ kind: 'value', path: 'destination', value: destination })];
 }
 
 const relayFails = (rule: RelayRule, relayed: boolean): LabelNoMatch | null =>
@@ -1020,6 +1035,10 @@ export function previewLabelDocument(doc: LabelDocument, appName: string): Label
           return { kind: 'value' as const, text: rendered.get(s.path) ?? '(an example value)' };
       }
     });
+    // D907: a payment's example goes to its first listed Stellar account (as the console's example payment does), so
+    // the sentence ends as a match's would: Journear's joining word and that account's name.
+    const payee = format.chain === 'stellar' ? doc.metadata.addressBook.find((e) => e.account.startsWith('G')) : undefined;
+    if (payee) for (const p of destinationParts(format.intent.verb, accountValue(payee.account, PREVIEW_USER, book))) parts.push(p.kind === 'value' ? { kind: 'value', text: valuePlainText(p.value, appName) } : { kind: 'word', text: p.text });
     const sentence = parts.map((p) => p.text).join(' ');
     return Object.freeze({ key, line: `${appName} says: ${sentence}`, sentence, parts: Object.freeze(parts), fields: Object.freeze(format.fields.map((f) => ({ label: f.label, value: rendered.get(f.path)! }))) });
   });

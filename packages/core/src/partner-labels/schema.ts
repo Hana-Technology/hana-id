@@ -927,15 +927,26 @@ function partnerWordsOf(f: LabelField, metadata: LabelMetadata): number | null {
 /**
  * At most one value in the sentence may be in the partner's words (an enumeration label, or an account the address
  * book may name), and the object phrase plus that value's longest text is at most SENTENCE_PARTNER_CHARS: one short
- * partner phrase, never several strung together in Journear's sentence. Other such fields are rows of their own.
+ * partner phrase, never several strung together in Journear's sentence. Other such fields are rows of their own. For a
+ * payment, that value is its destination's name, which Journear adds at the sentence's end (D907).
  */
-function sentenceTextFits(r: Reader, path: string, sentence: readonly SentencePartSpec[], fields: readonly LabelField[], metadata: LabelMetadata, object: string | undefined): boolean {
+function sentenceTextFits(r: Reader, path: string, sentence: readonly SentencePartSpec[], fields: readonly LabelField[], metadata: LabelMetadata, object: string | undefined, chain: LabelContext['chain'], objectPath: string): boolean {
   const worded = sentence.flatMap((p) => (p.kind === 'field' ? [fields.find((f) => f.path === p.path)!] : [])).filter((f) => f.params.format === 'enum' || f.params.format === 'account');
   if (worded.length > 1) {
     r.add('sentence_text', path, 'At most one enumeration or account field in the sentence: show the others as rows.');
     return false;
   }
   const longest = worded.length ? (partnerWordsOf(worded[0]!, metadata) ?? 0) : 0;
+  // D907: a matching payment's sentence ends with its destination's name from the address book, so for a payment that
+  // name is the sentence's one partner-worded value (a payment's only field, the memo, is the request's own text).
+  if (chain === 'stellar') {
+    const name = metadata.addressBook.length ? Math.max(...metadata.addressBook.map((e) => [...e.name].length)) : 0;
+    if ([...(object ?? '')].length + name > SENTENCE_PARTNER_CHARS) {
+      r.add('sentence_text', objectPath, `The phrase and the longest name in your address book come to more than ${SENTENCE_PARTNER_CHARS} characters, and a payment’s sentence shows both (“pay the fare to Coffee Club till”): shorten them.`);
+      return false;
+    }
+    return true;
+  }
   if ([...(object ?? '')].length + longest > SENTENCE_PARTNER_CHARS) {
     r.add('sentence_text', path, `The object and the longest label the sentence can show come to more than ${SENTENCE_PARTNER_CHARS} characters: shorten them.`);
     return false;
@@ -977,7 +988,7 @@ function readFormat(r: Reader, v: StrictJson | undefined, path: string, context:
   if (!requiredFieldsShown(r, path, context.chain, call, fields)) return null;
   const sentence = readSentence(r, o.sentence, join(path, 'sentence'), fields, object !== undefined);
   if (sentence === null) return null;
-  if (!sentenceTextFits(r, join(path, 'sentence'), sentence, fields, metadata, object)) return null;
+  if (!sentenceTextFits(r, join(path, 'sentence'), sentence, fields, metadata, object, context.chain, join(join(path, 'intent'), 'object'))) return null;
   const inSentence = new Set(sentence.flatMap((p) => (p.kind === 'field' ? [p.path] : [])));
   if (fields.filter((f) => !inSentence.has(f.path)).length > LABEL_LIMITS.rows) {
     r.add('too_many', join(path, 'fields'), `At most ${LABEL_LIMITS.rows} fields can be shown as rows besides the sentence's values: put one in the sentence, or leave out a value that can stay in the details (a text or a count).`);

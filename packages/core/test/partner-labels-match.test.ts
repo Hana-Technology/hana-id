@@ -9,6 +9,7 @@ import { Asset, Memo, Operation } from '@stellar/stellar-base';
 import { describe, expect, it } from 'vitest';
 import { utf8 } from '../src/bytes.ts';
 import { decodeApprovalRequest } from '../src/decode/request.ts';
+import { stellarBaseAccount } from '../src/decode/summary.ts';
 import type { NearAction } from '../src/near/codec.ts';
 import {
   type LabelMatch,
@@ -69,6 +70,7 @@ const collect = (args: Record<string, unknown> | string, over?: { gas?: bigint; 
 const stamps = (actions: NearAction[], o: Parameters<typeof nearDecoded>[1] = {}, hash: string | null | undefined = STAMPS_HASH) => run(STAMPS_DOC, near(actions, o), hash);
 const guestbook = (actions: NearAction[], o: Parameters<typeof nearDecoded>[1] = {}, hash: string | null | undefined = BOOK_HASH) => run(GUESTBOOK_DOC, near(actions, { receiver: BOOK, ...o }), hash);
 const reason = (r: LabelMatchResult) => (r.ok ? 'match' : r.reason);
+const stellarBase = (a: string): string => (/^[GM]/u.test(a) && a.length >= 56 ? stellarBaseAccount(a).base : a);
 
 describe('NEAR: the stamps’ collect, as a partner label', () => {
   it('matches each listed stamp, relayed or direct, and builds the window’s sentence', () => {
@@ -386,9 +388,11 @@ describe('Stellar: a classic payment with the partner’s purpose and address bo
     const r = payment();
     expect(r.ok).toBe(true);
     const m = r as LabelMatch;
-    expect(sentencePlainText(m.parts)).toBe('pay for order “1042”');
-    expect(labelLinePlainText('Coffee Club', m)).toBe('Coffee Club says: pay for order “1042”');
+    // D907: the sentence ends with Journear's joining word and the book's name; the plain form keeps the account whole.
+    expect(sentencePlainText(m.parts)).toBe(`pay for order “1042” to “Coffee Club till” (${OTHER})`);
+    expect(labelLinePlainText('Coffee Club', m)).toBe(`Coffee Club says: pay for order “1042” to “Coffee Club till” (${OTHER})`);
     expect(m.destination).toEqual({ format: 'account', value: OTHER, text: 'Coffee Club till', source: 'partner_address_book' });
+    expect(m.parts.slice(-2)).toEqual([{ kind: 'word', text: 'to' }, { kind: 'value', path: 'destination', value: m.destination }]);
     expect(payment({ asset: new Asset('USDC', ISSUER) }).ok).toBe(true);
   });
   it('near-misses: a hijacked page that swaps the recipient, another memo, more operations', () => {
@@ -454,13 +458,19 @@ describe('(a) a match’s sentence holds only Journear’s words, validated part
         else if (p.kind === 'object') expect(p.text).toBe(format.intent.object);
         else {
           const v = p.value;
+          // D907: a payment's destination is the request's own, named from the book (checked below), not a field.
+          if (p.path === 'destination') {
+            expect(m.format).toBe('payment');
+            expect(v.format === 'account' && v.source).toBe('partner_address_book');
+            expect(p).toBe(m.parts[m.parts.length - 1]);
+          }
           const field = format.fields.find((f) => f.path === p.path)!;
-          expect(field).toBeDefined();
+          if (p.path !== 'destination') expect(field).toBeDefined();
           if (v.format === 'enum') {
             expect(field.params.format).toBe('enum');
             expect(v.text).toBe(doc.metadata.enums[(field.params as { enum: string }).enum]![v.raw]);
           }
-          if (v.format === 'account') expect([v.value, 'your account', ...doc.metadata.addressBook.filter((e) => e.account === v.value).map((e) => e.name)]).toContain(v.text);
+          if (v.format === 'account') expect([v.value, 'your account', ...doc.metadata.addressBook.filter((e) => stellarBase(e.account) === stellarBase(v.value)).map((e) => e.name)]).toContain(v.text);
           if (v.format === 'account' && v.text === 'your account') expect(v.value).toBe(req.user);
           if (v.format === 'tokenAmount' && v.symbol === null) expect(v.text).toBe(`${BigInt(v.raw).toLocaleString('en-US')} units of the unlisted token ${v.token}`);
           if (v.format === 'tokenAmount') expect(v.binding).toBe('partner');

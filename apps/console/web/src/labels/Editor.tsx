@@ -19,6 +19,17 @@ import { NEAR_DECIMALS, STELLAR_DECIMALS, TGAS_DECIMALS, toDisplay, toRaw } from
 
 export const WARN_ADDRESS_BOOK = 'List only accounts that only you control, never a shared deposit address.';
 export const WARN_MUXED = 'A muxed form (M…) of a listed account counts as that account.';
+// D907 (to confirm): the name's field, true for each kind. A payment's name ends its sentence ("pay the fare to Coffee
+// Club till") while Journear's own To line shows the address; a NEAR or Soroban account in the sentence shows as its
+// name alone, and in a row as its name with the address under it.
+export const BOOK_NAME_LABEL = 'Name shown to users';
+export const BOOK_NAME_HINT: Readonly<Record<LabelKind, string>> = Object.freeze({
+  stellar: 'Shown at the end of your sentence in place of the account’s address, as “pay the fare to Coffee Club till”. Journear’s own To line still shows the full address. Up to 32 characters.',
+  near: 'Shown in your sentence in place of the account’s address, as “Coffee Club till”. In a row, the full address shows under it. Up to 32 characters.',
+  soroban: 'Shown in your sentence in place of the account’s address, as “Coffee Club till”. In a row, the full address shows under it. Up to 32 characters.',
+});
+/** D907: under a payment's sentence parts, what Journear adds at the end. */
+export const PAYMENT_NAME_NOTE = 'Journear ends the sentence with the name of the account the payment goes to, from your accounts, as “to Coffee Club till”.';
 export const WARN_PAYMENT_RED =
   'With a payment description, every time a user’s money goes to an account that isn’t in your list, Journear shows your users a red warning: paying someone, a swap that pays someone else, creating an account for someone, closing the account into another one, and sending a claimable balance. If your app’s users also pay other people, think twice before adding one.';
 export const SUGGEST_FEE = 'Set a highest network fee. Without one, a payment with an unusually high fee still shows your words (Journear’s own line always shows the fee).';
@@ -144,7 +155,7 @@ function AddressBook({ d, set, errs }: { d: Draft; set: (f: (d: Draft) => void) 
             <Field label={`Account ${i + 1}`} error={errs(`book.${i}.account`)}>
               {(c) => <input {...c} className="jp-input mono" value={e.account} placeholder={d.kind === 'near' ? 'payments.example.testnet' : 'G…'} onChange={(ev) => set((x) => void (x.addressBook[i]!.account = ev.target.value.trim()))} />}
             </Field>
-            <Field label="Its name for users" hint="Up to 32 characters, as “Coffee Club till”." error={errs(`book.${i}.name`)}>
+            <Field label={BOOK_NAME_LABEL} hint={BOOK_NAME_HINT[d.kind]} error={errs(`book.${i}.name`)}>
               {(c) => <input {...c} className="jp-input" value={e.name} onChange={(ev) => set((x) => void (x.addressBook[i]!.name = ev.target.value))} />}
             </Field>
             <button type="button" className="jp-btn jp-btn-ghost jp-btn-sm" aria-label={`Remove account ${i + 1}`} onClick={() => set((x) => void x.addressBook.splice(i, 1))}>
@@ -441,6 +452,7 @@ function SentenceBuilder({ kind, f, fi, set, errs }: { kind: LabelKind; f: Forma
     <fieldset className="labels-sentence" aria-describedby={error ? `${id}-err` : undefined}>
       <legend>The sentence</legend>
       <p className="muted small">Journear writes the sentence from these parts, in this order: the verb first, then your phrase, joining words and values from the request.</p>
+      {kind === 'stellar' && <p className="muted small">{PAYMENT_NAME_NOTE}</p>}
       <ol className="sentence-parts">
         {f.sentence.map((p, i) => (
           <li key={i} className={`sentence-part part-${p.kind}`}>

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseLabelDocument } from '@hana-id/core/partner-labels';
 import { nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
-import { CODE_TIED_NEAR, CODE_TIED_SOROBAN, NEAR_LIVE_RELAYED, CODE_TIED_TITLE, SOROBAN_SOFT_VERBS, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
+import { BOOK_NAME_HINT, BOOK_NAME_LABEL, CODE_TIED_NEAR, CODE_TIED_SOROBAN, NEAR_LIVE_RELAYED, CODE_TIED_TITLE, PAYMENT_NAME_NOTE, SOROBAN_SOFT_VERBS, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
 import { labelsWait, labelsWaitReview } from '../src/pages/Action.tsx';
 import { CODE_TIED_NOTE, ENTRY_OFF, NOT_ENABLED, NOT_ENABLED_PROPOSE, ORG_OFF, guardedWait, reviewOn, waitingState } from '../src/pages/app/Labels.tsx';
 import { EXAMPLE_MARK } from '../src/window/frame.ts';
@@ -101,10 +101,11 @@ describe('the list', () => {
     await tab();
     const e1 = document.querySelector('[data-entry="pl_1"]') as HTMLElement;
     await waitFor(() => expect(within(e1).getByText('Live')).toBeTruthy());
-    expect(within(e1).getByText('Coffee Club says: pay for order “1042”')).toBeTruthy();
+    // D907: the plain line ends with the account's name from the list, its address whole beside it.
+    expect(within(e1).getByText(`Coffee Club says: pay for order “1042” to “Coffee Club till” (${TILL})`)).toBeTruthy();
     expect(within(e1).getByText(/^Goes live /u)).toBeTruthy();
     expect(within(e1).getByText(/goes live in 4 h|goes live in 5 h/u)).toBeTruthy();
-    expect(within(e1).getByText('Coffee Club says: pay for the order “1042”')).toBeTruthy();
+    expect(within(e1).getByText(`Coffee Club says: pay for the order “1042” to “Coffee Club till” (${TILL})`)).toBeTruthy();
     expect(within(e1).getByText('Blocked by Journear')).toBeTruthy();
     // Journear's note is text, never markup.
     expect(e1.textContent).toContain('Journear’s note: “<b>Misleading</b> about the fare”');
@@ -176,7 +177,7 @@ async function newEditor() {
 function fill() {
   fireEvent.click(screen.getByRole('button', { name: 'Add an account' }));
   fireEvent.change(screen.getByLabelText('Account 1'), { target: { value: TILL } });
-  fireEvent.change(screen.getByLabelText(/Its name for users/u), { target: { value: 'Coffee Club till' } });
+  fireEvent.change(screen.getByLabelText(/Name shown to users/u), { target: { value: 'Coffee Club till' } });
   fireEvent.change(phrase(), { target: { value: 'order' } });
   fireEvent.change(screen.getByLabelText(/^The memo/u), { target: { value: 'text' } });
 }
@@ -207,7 +208,7 @@ describe('the editor', () => {
       expect(b).not.toBeNull();
       return b as HTMLElement;
     });
-    expect(box.querySelector('p.partner-says')?.textContent).toBe('Coffee Club says: pay for order 1042');
+    expect(box.querySelector('p.partner-says')?.textContent).toBe('Coffee Club says: pay for order 1042 to Coffee Club till');
     expect(box.getAttribute('aria-label')).toBe('What Coffee Club says');
     // D903: the line under the partner's words, the window's own.
     expect(box.querySelector('p.partner-attribution')?.textContent).toBe('These are Coffee Club’s words, not Journear’s.');
@@ -235,6 +236,51 @@ describe('the editor', () => {
     expect(inWin('.window-frame')?.classList.contains('jp-light')).toBe(true);
     fireEvent.click(screen.getByLabelText('Dark'));
     expect(inWin('.window-frame')?.classList.contains('jp-dark')).toBe(true);
+  });
+
+  it('D907: the account’s name ends a payment’s sentence, in the window’s preview as it is typed and in the line under the parts; the field says so for each kind', async () => {
+    signedIn();
+    await newEditor();
+    fill();
+    // The field: its label and the payment's hint; the note under the sentence's parts.
+    const name = screen.getByLabelText(new RegExp(BOOK_NAME_LABEL, 'u')) as HTMLInputElement;
+    expect((document.getElementById((name.getAttribute('aria-describedby') ?? '').split(' ')[0]!) ?? document.body).textContent).toContain(BOOK_NAME_HINT.stellar);
+    expect(screen.getByText(PAYMENT_NAME_NOTE)).toBeTruthy();
+    const says = () => inWin('.window-preview div.partner-label p.partner-says')?.textContent;
+    await waitFor(() => expect(says()).toBe('Coffee Club says: pay order 1042 to Coffee Club till'));
+    // As typed: the window's preview and the plain line follow every change of the name.
+    fireEvent.change(name, { target: { value: 'Riverside till' } });
+    await waitFor(() => expect(says()).toBe('Coffee Club says: pay order 1042 to Riverside till'));
+    expect(document.querySelector('.sentence-now .labels-line')?.textContent).toBe(`Coffee Club says: pay order “1042” to “Riverside till” (${TILL})`);
+    // The name is the partner's value, set apart in its own span; Journear's To row above shows the account.
+    expect(inWin('.window-preview div.partner-label p.partner-says span.partner-value.partner-words:last-child')?.textContent).toBe('Riverside till');
+    expect(inWin('.window-preview dl.id-rows')?.textContent).toContain(TILL);
+    // A buying verb: Journear's word for it.
+    fireEvent.change(screen.getByLabelText(/^The verb/u), { target: { value: 'buy' } });
+    await waitFor(() => expect(says()).toBe('Coffee Club says: buy order 1042 from Riverside till'));
+    // The phrase and the name together within the sentence's 40 characters: the problem beside the phrase.
+    fireEvent.change(name, { target: { value: 'Riverside Kiosk Coffee Club Till' } });
+    fireEvent.change(phrase(), { target: { value: 'the breakfast' } });
+    await waitFor(() => expect(phrase().getAttribute('aria-invalid')).toBe('true'));
+    const described = (phrase().getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '');
+    expect(described.join(' ')).toMatch(/longest name in your address book come to more than 40 characters/u);
+    expect(inWin('.window-preview div.partner-label')).toBeNull();
+    // Never for the amber or red example: the name only shows in a match.
+    fireEvent.change(phrase(), { target: { value: 'the fare' } });
+    await waitFor(() => expect(says()).toBe('Coffee Club says: buy the fare 1042 from Riverside Kiosk Coffee Club Till'));
+    fireEvent.click(screen.getByLabelText('A payment that doesn’t match'));
+    await waitFor(() => expect(inWin('.window-preview .partner-mismatch')).not.toBeNull());
+    expect(inWin('.window-preview')?.textContent).not.toContain('Riverside Kiosk');
+    fireEvent.click(screen.getByLabelText('A payment to an account not in your list'));
+    await waitFor(() => expect(inWin('.window-preview .partner-not-listed')).not.toBeNull());
+    expect(inWin('.window-preview')?.textContent).not.toContain('Riverside Kiosk');
+    // A NEAR program: the same label, its own hint, and no payment note.
+    fireEvent.click(screen.getByLabelText(/A NEAR program/u));
+    if (!screen.queryByLabelText(new RegExp(BOOK_NAME_LABEL, 'u'))) fireEvent.click(screen.getByRole('button', { name: 'Add an account' }));
+    const nearName = screen.getByLabelText(new RegExp(BOOK_NAME_LABEL, 'u'));
+    expect((document.getElementById((nearName.getAttribute('aria-describedby') ?? '').split(' ')[0]!) ?? document.body).textContent).toContain(BOOK_NAME_HINT.near);
+    expect(screen.queryByText(PAYMENT_NAME_NOTE)).toBeNull();
+    expect(BOOK_NAME_HINT.soroban).toBe(BOOK_NAME_HINT.near);
   });
 
   it('the advanced text round-trips with the form; a text the form can’t show is said', async () => {

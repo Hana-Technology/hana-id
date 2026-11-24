@@ -65,28 +65,29 @@ export type PartnerConnector = (typeof PARTNER_CONNECTORS)[number];
 export const isPartnerConnector = (v: unknown): v is PartnerConnector => typeof v === 'string' && (PARTNER_CONNECTORS as readonly string[]).includes(v);
 
 /**
- * The joining word Journear writes before the address book's name of a matching classic payment's destination,
- * at the end of the partner's sentence ("pay the fare to Coffee Club till"), by verb, with or without the partner's
- * phrase ("pay to Coffee Club till"). Journear's word, never the partner's. Only the verbs a payment may use are here: a
- * soft verb says no value moves, and the parser refuses it for a payment. Each word says the named account is where the
- * value goes ("to"), the seller or lender ("from", after buy and borrow) or the other side of a stake, bid or swap
- * ("with"), never that the user receives anything from it.
+ * The verbs a classic payment may use: each says the user's money goes to the named account. Left out on purpose, as
+ * well as every soft verb: sell, borrow, withdraw, unstake and swap, which with "to/from/with {name}" would say the
+ * money comes the other way.
+ */
+export const PAYMENT_VERBS: ReadonlySet<PartnerVerb> = new Set<PartnerVerb>(['pay', 'send', 'donate', 'deposit', 'repay', 'lend', 'buy', 'stake', 'bid']);
+
+/**
+ * The joining word Journear writes before the address book's name of a matching classic payment's destination, at the
+ * end of the partner's sentence ("pay the fare to Coffee Club till"), by verb, with or without the partner's phrase
+ * ("pay to Coffee Club till"). Journear's word, never the partner's. Only the payment verbs are here. Each says the
+ * named account is where the money goes ("to"), the seller ("from", after buy) or the side the user stakes or bids
+ * with ("with").
  */
 export const PAYMENT_DESTINATION_WORDS: Readonly<Partial<Record<PartnerVerb, PartnerConnector>>> = Object.freeze({
   pay: 'to',
   send: 'to',
   donate: 'to',
   deposit: 'to',
-  sell: 'to',
-  lend: 'to',
   repay: 'to',
-  withdraw: 'to',
-  unstake: 'to',
+  lend: 'to',
   buy: 'from',
-  borrow: 'from',
-  bid: 'with',
   stake: 'with',
-  swap: 'with',
+  bid: 'with',
 });
 
 /** The joining word before a matching payment's destination name for `verb` ("to" for a verb the table lacks). */

@@ -20780,9 +20780,10 @@ From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) merged in; not merged, not
   `previewLabelDocument` (the API's preview, the staff screen, the partner notice and diff, the console's "Reads:" line
   and Labels tab) all come from `destinationParts`. The preview uses the first listed G… account, as the console's
   example payment does. `partnerAttribution` is unchanged.
-- **The joining word, by verb** (`PAYMENT_DESTINATION_WORDS`; the same word with or without a phrase): "to" after pay,
-  send, donate, deposit, sell, lend, repay, withdraw, unstake; "from" after buy and borrow; "with" after bid, stake and
-  swap. Each says the named account is where the value goes, the seller or lender, or the other side; never that the
+- **The joining word, by verb** (as first built; **narrowed after PR 135's review, below**: a payment may now use only
+  pay, send, donate, deposit, repay, lend, buy, stake and bid) (`PAYMENT_DESTINATION_WORDS`; the same word with or
+  without a phrase): "to" after pay, send, donate, deposit, sell, lend, repay, withdraw, unstake; "from" after buy and
+  borrow; "with" after bid, stake and swap. Each says the named account is where the value goes, the seller or lender, or the other side; never that the
   user receives from it. The 17 soft verbs need none: the parser refuses them for a payment (a test holds the table to
   exactly the verbs a payment may use). The exact sentences, with phrase "the fare" and name "Coffee Club till": "pay to
   Coffee Club till" / "pay the fare to Coffee Club till"; likewise "send to", "donate to", "deposit to", "sell to",
@@ -20794,12 +20795,13 @@ From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) merged in; not merged, not
 - **The name's rules.** It was already held to every text rule, as the phrase is (`partnerTextProblem`, role
   `addressName`, 32 characters): the Latin allowlist, Journear's names, the reviewed lists' names, claim words, "you" and
   "your", negations, the window's words, number, money, phishing and ownership words, other currency and brand names,
-  numbers and address-like runs, jargon; two names equal after folding are refused. No new text rule. **One existing rule
+  numbers and address-like runs, jargon; two names equal after folding are refused. No new text rule at first (PR 135's
+  review added several, below). **One existing rule
   newly applies:** D892 item 3's 40 partner characters per sentence (the phrase plus its one partner-worded value) now
   counts the longest address-book name for a payment (`sentence_text` at `intent.object`, shown beside the phrase). A
   tightening of the parser: a payment document already over it is refused by the vault and the window (the plain
   window); partner labels are on in no checked-in env.
-- **Misleading names, as the rules stand** (tested): refused: "your own account" and "Your till" (`text_you`), "My
+- **Misleading names, as the rules stood when first built** (tested; PR 135's review tightened them, below): refused: "your own account" and "Your till" (`text_you`), "My
   account", "Own till" (`text_ownership`), "Journear", "Journear fees", "Passport top up", "Hana desk" (`text_brand`),
   "refund", "Refund desk", "Verified till", "Safe account", "Official till" (`text_claim`), "GBX3KQ2MABCDEFGH", "GBX3
   KQ2M", "0xabc" (`text_looks_like_address`), "GD6R...QRSL" (`text_character`), "till 12345" (`text_number`), "USDC
@@ -20829,24 +20831,28 @@ From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) merged in; not merged, not
 ### D908. The Request labels form: "See an example" for payments, the memo label's hint, and how soon the email goes out
 - Date 2026-11-24 · Status: the three changes **approved by the founder 2026-11-24** ("yes all"); the wording, the
   example's shape and the cadence line decided while building, **to confirm** (the list at the end) · Built:
-  `apps/console/web/src/labels/model.ts` (`EXAMPLE_ACCOUNT`, `exampleDraft`, `isEmptyDraft`), `Editor.tsx`
+  `apps/console/web/src/labels/model.ts` (`EXAMPLE_WORDS`, `exampleDraft`, `exampleLeft`, `isEmptyDraft`; `EXAMPLE_ACCOUNT`
+  removed after PR 135's review), `Editor.tsx`
   (`EXAMPLE_BUTTON`, `EXAMPLE_INTRO`, `EXAMPLE_CONFIRM`, `EXAMPLE_NOTE`, `MEMO_LABEL_HINT`; the button, the in-page
   question and the note in `LabelsEditor`), `apps/console/web/src/pages/app/Labels.tsx` (`waitingState`). Tests:
   `apps/console/web/test/labels-model.test.tsx`, `labels.test.tsx`, `apps/e2e/tests/partner-labels-console.spec.ts`.
 - **1. "See an example"** (the founder found the fields hard to fill cold). On a new entry's form, for payments only, a
   button "See an example" with "Fills the form with a made-up coffee shop, to show how it works. You then replace it
-  with your own." It fills: the account `GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP` (the example account
-  the tests already use; no one's real account) named "Coffee Club till"; verb "pay"; phrase "the order"; the sentence
+  with your own." It fills (as corrected after PR 135's review, below: **the account is left empty**; the first build put
+  `GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP` there, wrongly called "no one's real account": it is the
+  account of the public seed 32 × 0x1f and exists on the public network under someone else's control) an account named
+  "Coffee Club till"; verb "pay"; phrase "the order"; the sentence
   "pay for the order" (Journear's "for" before the phrase, decided while building: "pay the order" reads wrong); a
   number memo shown as "An order number" labelled "Order", as a row; assets XLM only; at most 50 XLM; a 0.01 XLM network
   fee. With the name (D907) users would read "Stamp Rally says: pay for the order to Coffee Club till", with the row
-  "Order 1042". It passes every check of the form (core's parser and the form's own, on test and live apps; tested), and
-  the preview's example payment matches it. **Never over what was typed without asking:** an empty form (exactly a new
+  "Order 1042". With the developer's own account added it passes every check of the form (core's parser and the form's
+  own, on test and live apps; tested), and the preview's example payment matches it; without one, the form says "Add
+  one of your own Stellar accounts here (G…)." beside the account and Review waits. **Never over what was typed without asking:** an empty form (exactly a new
   one) is filled at once; otherwise the page asks, in the page (no browser dialog): "This replaces what you’ve typed
   with the example. Replace it?" with "Replace with the example" and "Keep what I typed". **Obviously an example:**
-  while the example's account is in the list, an amber note "An example: This is an example, not your labels. Before you
-  review, change the account to one of your own Stellar accounts, and the name, phrase and limits to yours." It does not
-  block Review (the example passes the checks, as asked); a payment to that account would never be the partner's.
+  while any of the example is left (an empty account, its name or its phrase), an amber note "An example: This is an
+  example, not your labels. Add one of your own Stellar accounts, and replace the name, the phrase and the limits with
+  yours, before you review." (worded so after PR 135's review).
   **NEAR and Soroban: no button**, since their labels need the partner's own account and code hash, which no example can
   know (a made-up account could be someone's real one; a made-up hash is meaningless).
 - **2. The memo label's hint** ("Its label for users" on a payment): "Shown to users as its own line, with the memo under
@@ -20865,3 +20871,85 @@ From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) merged in; not merged, not
 - **To confirm** (decided while building): (1) the example's words and "pay for the order"; (2) the note not blocking
   Review (the option: a form problem while the example's account is listed, which would make the example fail the
   form's checks); (3) no example for NEAR and Soroban; (4) the memo hint's words; (5) "usually within a few minutes".
+
+#### After PR 135's review (2026-11-24): what changed, for D907 and D908, each decided while building, **to confirm**
+1. **HIGH: the example's account had a public secret key.** `GBBQI276…SS55TZP` is the account of the seed 32 × 0x1f,
+   so anyone can sign for it, and it exists on the public network under a stranger's control. A partner submitting the
+   example unchanged would have listed it as its own, and payments to it would have lost the red "not one of the
+   accounts listed" line. Now: "See an example" leaves the account empty, so the form's own problem ("Add one of your
+   own Stellar accounts here (G…).", a new plain message for an empty account in core's parser) holds Review until the
+   developer adds one; the console names no account of its own (`EXAMPLE_ACCOUNT` removed). And core's parser refuses,
+   in any Stellar or Soroban address book on any app, the API's and the console's alike (so the advanced text can't list
+   one either), every account whose secret key is public as far as Journear knows: the account of each seed made of one
+   repeated byte (32 × 0x00 to 32 × 0xff, the usual test and example seeds) and the all-zero public key
+   (`packages/core/src/partner-labels/public-accounts.ts` `isPublicSeedAccount`; code `public_account`, "This is a test
+   or example account whose secret key is public, so anyone can use it: list one of your own accounts."). Stored as the
+   first 4 bytes of each of the 257 public keys (2 KB in the SDK, a test derives them again from the seeds); about one
+   chance in 16 million that an unrelated account shares a prefix and is refused too. **The tests:** every fixture
+   account an address book lists is now a random public key no one has the secret key of (the labels fixtures' own
+   `OTHER` in core, the vault labels test's till, the e2e and console tills, the staff screen's preview), not a
+   test-aware exception in the rule; the shared Stellar fixtures, whose accounts only pay or are paid (some feed
+   derivations the tests pin), keep their seeds. Not covered: a public seed of another shape (a hash of a
+   known word, a published test key elsewhere): the list is a first filter, the real guard is that the console never
+   suggests an account.
+2. **MEDIUM-HIGH: verbs that say the money comes the other way.** A classic payment (the user sends money) now refuses
+   sell, borrow, withdraw, unstake and swap (`PAYMENT_VERBS`; `bad_verb`, "\"sell\" doesn’t fit a payment, where your
+   user sends money to your account: use pay, send, donate, deposit, repay, lend, buy, stake or bid."), with every soft
+   verb as before. The console's verb list shows them as "(not for a payment)". **The final table**, the same word with
+   or without a phrase: pay, send, donate, deposit, repay, lend → "to" ("pay to Coffee Club till", "pay the fare to
+   Coffee Club till"); buy → "from" ("buy the fare from Coffee Club till": the user pays the seller); stake, bid →
+   "with" ("stake with Coffee Club till", "bid the fare with Coffee Club till"). Reconsidered with the smaller set:
+   deposit kept "to" ("deposit with" reads as a bank deposit, less clear about where the money goes); lend kept "to".
+   **New text rules** (whole words, compared as the other lists, after "you/your"):
+   - `text_self`, in an object phrase and an account's name: me, us, we, our, ours, user, users, this, sender, senders,
+     holder, holders, back, return, returns, returned, reversal, reversals, reversed, undo, undone, chargeback,
+     chargebacks ("Don’t write “me”, “us”, “user”, “this”, “sender”, “back”, “return”, “undo” or similar: the window says
+     who pays whom itself.");
+   - `text_says`, in a phrase and a name: says, said, saying ("Don’t write “says”: the window says who is speaking.");
+   - `text_outcome`, in a name: the order number's lure words (paid, done, success, complete, approved, claimed,
+     winner, …, with plurals) and thanks, thank, welcome, settled, cleared, confirmed ("Don’t name an account with an
+     outcome (paid, done, success, complete, approved, …): the window says what happens."). Not in a phrase or an
+     enumeration label (the stamps' "Fare paid" is an honest enumeration label);
+   - `text_authority`, in a name: police, government, govt, gov, revenue, customs, court, courts, ministry, embassy,
+     irs, hmrc, lhdn, and "tax office" and "taxman" (adjacent words joined) ("Don’t name an account as an authority
+     (police, government, tax office, customs, court, …): users could think they must pay it."). A bare "Bank" was
+     already refused (`bank` is on the other-names list);
+   - on the other-names list (every role): Phantom (until now left out on purpose as an everyday word; an honest
+     "Phantom of the Opera tickets" is now refused), Bitget, Wend (a whole word: "Wendy’s till" passes).
+   - Judged too broad, not added: "treasury" ("Club treasury" is an honest name); "tax" alone ("Sales tax account");
+     "this" and "return" were asked for and added, though they refuse honest phrases such as "this ticket" and "the
+     return fare".
+3. **MEDIUM: only the first account's name was in the preview and the diff.** Now every account of the address book is
+   listed with its name and whole address in every preview (core `addressBookLines`: "Account “Coffee Club till”
+   (G…)"; the API's preview carries them as `accounts`), shown on the staff screen, in the partner's security email,
+   on the console's review page and Labels tab, and under the editor's "Reads:" line (with "The example pays your
+   first account; a payment to another ends with that account’s name instead." when there are several). The API's diff
+   has one line per account, keyed by its account (`(account) G…`): a rename is "changed", re-pointing a name to
+   another account is one "removed" and one "added". Tested in the API (`labels-document.test.ts`), the staff screen,
+   the email, the console and the e2e waiting card.
+4. **LOW-MEDIUM: stored documents.** A payment document valid before can now fail the 40 characters, a verb or a
+   word, and a still-valid one now shows the account's name, which nobody saw when it was reviewed. The rules are not
+   weakened. `docs/operations.md` ("Before switching partner labels on in an env") now requires, before
+   `partnerLabels.enabled` goes on anywhere, re-parsing every stored version waiting or in force with the build's
+   parser, and having any that fails or reads differently proposed again (and the old one blocked with a note). No admin
+   command exists to extend, so the check is described by hand. Today there is nothing to check: migration 0025 is
+   applied nowhere and labels are on in no env.
+5. **LOW: the email's timing on sandbox-dev.** The deployed sandbox-dev admin Worker runs its notices every 30 minutes
+   (the triggers set by hand on 2026-11-19) until its next normal deploy. The wording "usually within a few minutes"
+   stays; `docs/operations.md` now says the admin Worker must be deployed with this change, which restores the
+   five-minute trigger.
+6. **LOW: focus after the example's question.** After "Keep what I typed", focus returns to "See an example"; after
+   "Replace with the example", to the first account (which now needs filling). Tested in the console unit tests and the
+   e2e.
+7. **LOW: screen readers hear the name run into the sentence.** Not built: the window sets every partner value (the
+   phrase, an enumeration label, an id, an amount) apart only visually, with nothing announced between them; adding
+   hidden quotation marks around the name alone would make it announced differently from every other partner value,
+   and around all of them would change what is announced today. For the founder: whether to announce a boundary
+   (hidden quotation marks, or "named …") around every partner value in the window's sentence.
+8. **LOW: name rules.** Two names that read alike are one name: compared on core's name skeleton (look-alike letters,
+   "rn" as "m", spaces dropped) with digits read as letters and i/l and u/v as one (`partnerLookalikeKey`): "Coffee Club
+   tiIl", "Coffee Club ti11", "CoffeeClub till" and "Modem till" beside "Modern till" are refused as duplicates. The
+   authority words, Phantom, Bitget, Wend and "says" are in item 2.
+9. **INFO:** no decision number in the comments added or changed in core (they ship in source maps).
+- Address impact: none (display, the parser's refusals and console text; nothing signed, decoded or derived changes).
+

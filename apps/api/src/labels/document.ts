@@ -4,7 +4,7 @@
 // (every format with example values, core's plain-text form) and the diff against the version in force are built from
 // the parsed document, never from the raw text, so a staff page or an email never shows anything the parser didn't
 // accept.
-import { LABEL_SCHEMA, LABEL_STELLAR_NETWORKS, type LabelDocument, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
+import { LABEL_SCHEMA, LABEL_STELLAR_NETWORKS, type LabelDocument, addressBookLines, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
 
 const STELLAR_TESTNET_PASSPHRASE = LABEL_STELLAR_NETWORKS.test;
 const STELLAR_MAINNET_PASSPHRASE = LABEL_STELLAR_NETWORKS.public;
@@ -67,17 +67,21 @@ export function contextText(doc: LabelDocument): string {
 }
 
 export function previewOf(doc: LabelDocument, appName: string): LabelPreview {
-  return { appName, context: contextText(doc), examples: true, formats: previewLabelDocument(doc, appName).map((f) => ({ key: f.key, line: f.line, sentence: f.sentence, parts: f.parts.map((p) => ({ kind: p.kind, text: p.text })), fields: f.fields.map((x) => ({ label: x.label, value: x.value })) })) };
+  return { appName, context: contextText(doc), examples: true, formats: previewLabelDocument(doc, appName).map((f) => ({ key: f.key, line: f.line, sentence: f.sentence, parts: f.parts.map((p) => ({ kind: p.kind, text: p.text })), fields: f.fields.map((x) => ({ label: x.label, value: x.value })) })), accounts: addressBookLines(doc) };
 }
 
 /** One format as one comparable line: its sentence, then each row as "label: value". */
 const formatText = (f: LabelPreview['formats'][number]): string => [f.line, ...f.fields.map((x) => `${x.label}: ${x.value}`)].join(' · ');
 
+/** Each address book account as a line of the diff, keyed by its account: a rename is "changed", a new account "added". */
+const accountLines = (doc: LabelDocument): [string, string][] => doc.metadata.addressBook.map((e, i) => [`(account) ${e.account}`, addressBookLines(doc)[i]!]);
+
 /** The formats of `after` against `before` (null: no version in force, so every format is added). */
 export function diffOf(before: LabelDocument | null, after: LabelDocument, appName: string): LabelDiffLine[] {
-  // What the document describes comes first (its key can't be a format's: those are method names).
-  const b = new Map<string, string>([...(before ? [['(contract)', contextText(before)] as [string, string]] : []), ...(before ? previewOf(before, appName).formats : []).map((f): [string, string] => [f.key, formatText(f)])]);
-  const a = new Map<string, string>([['(contract)', contextText(after)], ...previewOf(after, appName).formats.map((f): [string, string] => [f.key, formatText(f)])]);
+  // What the document describes comes first (its key can't be a format's: those are method names), then each
+  // account of its address book (the lines name one example account; a renamed or re-pointed one must show).
+  const b = new Map<string, string>([...(before ? [['(contract)', contextText(before)] as [string, string]] : []), ...(before ? accountLines(before) : []), ...(before ? previewOf(before, appName).formats : []).map((f): [string, string] => [f.key, formatText(f)])]);
+  const a = new Map<string, string>([['(contract)', contextText(after)], ...accountLines(after), ...previewOf(after, appName).formats.map((f): [string, string] => [f.key, formatText(f)])]);
   const keys = [...new Set([...b.keys(), ...a.keys()])];
   return keys.map((key) => {
     const x = b.get(key) ?? null;

@@ -921,8 +921,9 @@ These are Coffee Club's words, not Journear's.
 
 Journear writes the sentence: the verb and the joining words are Journear's, your phrase and the request's own values
 are set apart. For a payment, Journear ends the sentence with the name you gave the account it goes to, after its own
-joining word: "to" (pay, send, donate, deposit, sell, lend, repay, withdraw, unstake), "from" (buy, borrow) or "with"
-(bid, stake, swap), as "pay to Coffee Club till" with no phrase. Journear's own To line, above your box, still shows the
+joining word: "to" (pay, send, donate, deposit, repay, lend), "from" (buy) or "with" (stake, bid), as "pay to Coffee
+Club till" with no phrase. Those are the only verbs a payment can use: sell, borrow, withdraw, unstake and swap would say
+the money comes the other way. Journear's own To line, above your box, still shows the
 account's full address. Your words never replace, soften or move Journear's lines or warnings; amounts, recipients and
 the fee always come from the request itself. A request that doesn't match your description never shows your words.
 
@@ -956,11 +957,11 @@ while the request runs exactly that code:
   their wait. Propose the new labels first, and upgrade soon after they go live.
 
 **Writing them: a form, not JSON.** The editor is a form; you never have to write the document by hand. For
-payments, **See an example** fills a new form with a made-up coffee shop (an example account named "Coffee Club till",
-"pay for the order", an order number as the memo, XLM only, at most 50 XLM, a 0.01 XLM network fee) to show how it
-works; if you've already typed something, the page asks before it replaces it. While the example's account is in the
-form, the page says it is an example: replace the account with one of your own, and the words and limits with yours,
-before you review. A NEAR program or a Soroban contract has no example, since its labels need your own account and
+payments, **See an example** fills a new form with a made-up coffee shop (an account named "Coffee Club till", "pay for
+the order", an order number as the memo, XLM only, at most 50 XLM, a 0.01 XLM network fee) to show how it works. It
+leaves the account itself empty: add one of your own Stellar accounts before you can review. If you've already typed
+something, the page asks before it replaces it. While any of the example is left, the page says it is an example:
+replace the name, the phrase and the limits with yours too. A NEAR program or a Soroban contract has no example, since its labels need your own account and
 code.
 
 1. **What your labels describe**: payments to your Stellar accounts, a NEAR program (its account and code hash) or a
@@ -970,7 +971,10 @@ code.
    characters, held to the same rules as your phrase). A payment shows your words only when it goes to one of them, and
    then ends with that account's name. For a program, an account value in your sentence shows as its name alone, and
    in a row as its name with the full address under it. For a payment, your phrase and your longest account name
-   together can be at most 40 characters, since the sentence shows both.
+   together can be at most 40 characters, since the sentence shows both. Two names can't read the same ("Coffee Club
+   till" and "Coffee Club tiIl"), and a test or example account whose secret key is public (such as one made from a
+   seed of one repeated byte) can't be listed. The review page and the security email list every account with its
+   name and full address, and say when one is renamed or changed.
 4. **For each request**: the verb, from Journear's list (add, bid, book, borrow, buy, cancel, check in, collect, create,
    deposit, donate, join, leave, lend, list, pay, redeem, register, remove, renew, repay, sell, send, sign up, stake,
    subscribe, swap, unstake, unsubscribe, vote, withdraw; a verb that says nothing moves, such as "collect", can't
@@ -985,7 +989,9 @@ code.
 Every problem shows beside the field that caused it as you type, in the same words Journear's servers use. The rules,
 in short: plain Latin letters, digits, spaces and a few marks; no links, no amounts or account-like text, no "you" or
 "your", no claims ("free", "safe", "verified", "official", "guaranteed", "refund", …), no negations ("no", "never",
-"nothing", …), no names of Journear or of tokens, networks, wallets and exchanges, and no crypto jargon from Journear's
+"nothing", …), no words for the people in a payment or for money coming back in a phrase or an account's name ("me",
+"us", "user", "this", "sender", "back", "return", "undo", …), no "says", and in an account's name no outcomes ("paid",
+"done", "success", …) or authorities ("police", "government", "tax office", "customs", "court", …), no names of Journear or of tokens, networks, wallets and exchanges, and no crypto jargon from Journear's
 plain-words list.
 
 **The preview.** Beside the form (under it on a phone) is the approval window itself, drawn by Journear's own window

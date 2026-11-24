@@ -15,12 +15,13 @@ import { JsonNumber, type StrictJson, isJsonObject, parseStrictJson } from '../d
 import { STELLAR_MAINNET_PASSPHRASE } from '../networks.ts';
 import { STELLAR_TESTNET_PASSPHRASE } from '../verified-contracts.ts';
 import { StrKey } from '@stellar/stellar-base';
-import { type PartnerTextCode, type PartnerTextRole, foldLetters, partnerTextProblem } from './text-rules.ts';
+import { type PartnerTextCode, type PartnerTextRole, foldLetters, partnerLookalikeKey, partnerTextProblem } from './text-rules.ts';
 import { KNOWN_TOKENS } from '../known-tokens.ts';
 import { VERIFIED_CONTRACTS } from '../verified-contracts.ts';
 import { REVIEWED_NEAR_DEPLOYS } from '../reviewed-near-calls.ts';
 import { sha256, toHex, utf8 } from '../bytes.ts';
-import { type PartnerConnector, type PartnerVerb, PARTNER_CONNECTORS, SOFT_VERBS, isPartnerConnector, isPartnerVerb } from './words.ts';
+import { type PartnerConnector, type PartnerVerb, PARTNER_CONNECTORS, PAYMENT_VERBS, SOFT_VERBS, isPartnerConnector, isPartnerVerb } from './words.ts';
+import { isPublicSeedAccount } from './public-accounts.ts';
 
 export const LABEL_SCHEMA = 'journear-labels/1';
 
@@ -187,6 +188,7 @@ export type LabelErrorCode =
   | 'bad_context'
   | 'bad_network'
   | 'bad_account'
+  | 'public_account'
   | 'bad_code_hash'
   | 'bad_method'
   | 'bad_number'
@@ -561,15 +563,24 @@ function readMetadata(r: Reader, v: StrictJson | undefined, chain: LabelContext[
       if (!e) return;
       const account = r.string(e.account, join(path, 'account'));
       const name = e.name === undefined ? null : r.text(e.name, join(path, 'name'), 'addressName');
+      if (account === '') {
+        r.add('bad_account', join(path, 'account'), chain === 'near' ? 'Add one of your own NEAR accounts here.' : 'Add one of your own Stellar accounts here (G…).');
+        return;
+      }
       if (account !== null && chain !== null && !accountOk(chain, account)) {
         r.add('bad_account', join(path, 'account'), chain === 'near' ? 'This must be a NEAR account id.' : 'This must be a Stellar account (G…) or contract (C…).');
         return;
       }
+      if (account !== null && chain !== null && chain !== 'near' && isPublicSeedAccount(account)) {
+        r.add('public_account', join(path, 'account'), 'This is a test or example account whose secret key is public, so anyone can use it: list one of your own accounts.');
+        return;
+      }
       if (account === null || name === null) return;
       if (accounts.has(account)) return r.add('duplicate', join(path, 'account'), 'This account is listed twice.');
-      if (names.has(foldLetters(name))) return r.add('duplicate', join(path, 'name'), `Two accounts are named “${name}”: each needs its own name.`);
+      // Two names that read alike ("Coffee Club till" and "Coffee Club tiIl") are one name to a user.
+      if (names.has(partnerLookalikeKey(name))) return r.add('duplicate', join(path, 'name'), `Two accounts are named “${name}” or a name that reads the same: each needs its own name.`);
       accounts.add(account);
-      names.add(foldLetters(name));
+      names.add(partnerLookalikeKey(name));
       book.push(Object.freeze({ account, name }));
     });
   }
@@ -928,7 +939,7 @@ function partnerWordsOf(f: LabelField, metadata: LabelMetadata): number | null {
  * At most one value in the sentence may be in the partner's words (an enumeration label, or an account the address
  * book may name), and the object phrase plus that value's longest text is at most SENTENCE_PARTNER_CHARS: one short
  * partner phrase, never several strung together in Journear's sentence. Other such fields are rows of their own. For a
- * payment, that value is its destination's name, which Journear adds at the sentence's end (D907).
+ * payment, that value is its destination's name, which Journear adds at the sentence's end.
  */
 function sentenceTextFits(r: Reader, path: string, sentence: readonly SentencePartSpec[], fields: readonly LabelField[], metadata: LabelMetadata, object: string | undefined, chain: LabelContext['chain'], objectPath: string): boolean {
   const worded = sentence.flatMap((p) => (p.kind === 'field' ? [fields.find((f) => f.path === p.path)!] : [])).filter((f) => f.params.format === 'enum' || f.params.format === 'account');
@@ -937,7 +948,7 @@ function sentenceTextFits(r: Reader, path: string, sentence: readonly SentencePa
     return false;
   }
   const longest = worded.length ? (partnerWordsOf(worded[0]!, metadata) ?? 0) : 0;
-  // D907: a matching payment's sentence ends with its destination's name from the address book, so for a payment that
+  // A matching payment's sentence ends with its destination's name from the address book, so for a payment that
   // name is the sentence's one partner-worded value (a payment's only field, the memo, is the request's own text).
   if (chain === 'stellar') {
     const name = metadata.addressBook.length ? Math.max(...metadata.addressBook.map((e) => [...e.name].length)) : 0;
@@ -992,6 +1003,12 @@ function readFormat(r: Reader, v: StrictJson | undefined, path: string, context:
   const inSentence = new Set(sentence.flatMap((p) => (p.kind === 'field' ? [p.path] : [])));
   if (fields.filter((f) => !inSentence.has(f.path)).length > LABEL_LIMITS.rows) {
     r.add('too_many', join(path, 'fields'), `At most ${LABEL_LIMITS.rows} fields can be shown as rows besides the sentence's values: put one in the sentence, or leave out a value that can stay in the details (a text or a count).`);
+    return null;
+  }
+  // A classic payment sends the user's money to the named account: only a verb that says so (no "sell", "borrow",
+  // "withdraw", "unstake" or "swap", which with "to {name}" would say the money comes the other way).
+  if (context.chain === 'stellar' && !PAYMENT_VERBS.has(verb)) {
+    r.add('bad_verb', join(join(path, 'intent'), 'verb'), `"${verb}" doesn’t fit a payment, where your user sends money to your account: use pay, send, donate, deposit, repay, lend, buy, stake or bid.`);
     return null;
   }
   if (SOFT_VERBS.has(verb) && valueCanMove(context.chain, call, fields)) {

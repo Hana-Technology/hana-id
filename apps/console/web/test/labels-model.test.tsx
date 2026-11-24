@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { GUESTBOOK_DOC_JSON, PAYMENT_DOC_JSON, SOROBAN_DOC_JSON, STAMPS_DOC_JSON } from '../../../../packages/core/test/partner-labels-fixtures.ts';
 import { labelOutcome } from '../../../../packages/web/src/auth/render-labels.ts';
 import { EXAMPLE_STRANGER, EXAMPLE_USER, paymentExample } from '../src/labels/examples.ts';
-import { ARG_TYPES, type Draft, EXAMPLE_ACCOUNT, emptyArg, emptyDraft, emptyField, emptyFormat, exampleDraft, fromDocumentText, isEmptyDraft, toDocumentText } from '../src/labels/model.ts';
+import { ARG_TYPES, type Draft, emptyArg, emptyDraft, emptyField, emptyFormat, exampleDraft, exampleLeft, fromDocumentText, isEmptyDraft, toDocumentText } from '../src/labels/model.ts';
 import { draftProblems, keyOfPath, problemsOf, problemsOfApi } from '../src/labels/problems.ts';
 import { toDisplay, toRaw } from '../src/labels/units.ts';
 
@@ -22,7 +22,7 @@ const parsed = (text: string): LabelDocument => {
 /** A complete payment draft the parser accepts. */
 function paymentDraft(): Draft {
   const d = emptyDraft('stellar');
-  d.addressBook = [{ account: 'GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP', name: 'Coffee Club till' }];
+  d.addressBook = [{ account: 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS', name: 'Coffee Club till' }];
   const f = d.formats[0]!;
   f.object = 'order';
   f.memo = 'text';
@@ -229,25 +229,46 @@ describe('the preview’s example payments, as the approval window reads them', 
 });
 
 describe('D908: the example the form can be filled with', () => {
-  it('passes the form’s own checks on a test and a live app, and is exactly the founder’s sample', () => {
+  it('leaves the account empty, so the form asks for the partner’s own and refuses to go on; with one, every check passes', () => {
+    const OWN = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
     for (const env of ['test', 'live'] as const) {
       const d = exampleDraft('stellar')!;
+      expect(d.addressBook).toEqual([{ account: '', name: 'Coffee Club till' }]);
+      const problems = problemsOf(toDocumentText(d, env), d);
+      expect(problems.find((p) => p.key === 'book.0.account')).toEqual({ key: 'book.0.account', code: 'bad_account', message: 'Add one of your own Stellar accounts here (G…).' });
+      expect(parseLabelDocument(toDocumentText(d, env)).ok).toBe(false);
+      // The partner adds their own account: nothing else to fix.
+      d.addressBook[0]!.account = OWN;
       const text = toDocumentText(d, env);
       expect(problemsOf(text, d), env).toEqual([]);
       const doc = parsed(text);
-      expect(doc.metadata.addressBook).toEqual([{ account: EXAMPLE_ACCOUNT, name: 'Coffee Club till' }]);
+      expect(doc.metadata.addressBook).toEqual([{ account: OWN, name: 'Coffee Club till' }]);
       const f = doc.formats.payment!;
       expect(f.intent).toEqual({ verb: 'pay', object: 'the order' });
       expect(f.chain === 'stellar' && f.call).toEqual({ memo: 'id', assets: ['native'], amountAtMost: '500000000', feeAtMost: '100000' });
       expect(f.fields).toEqual([{ path: 'memo', label: 'Order', params: { format: 'orderNumber' } }]);
-      // The text reads back to the same draft (the form shows exactly the example).
       const back = fromDocumentText(text, env);
       expect(back.ok && back.draft).toEqual(d);
-      // The window's own outcome for the preview's example payment: the partner's box.
       const ex = paymentExample(doc, 'match');
       if (!ex.ok) throw new Error(ex.why);
       expect(labelOutcome(ex.decoded, [doc], { user: EXAMPLE_USER, networkChecked: false, reviewedNear: [] }).kind).toBe('match');
     }
+  });
+  it('the console names no account of its own any more (the one it once suggested has a public secret key)', () => {
+    const d = exampleDraft('stellar')!;
+    expect(JSON.stringify(d)).not.toMatch(/G[A-Z2-7]{55}/u);
+    d.addressBook[0]!.account = 'GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP';
+    expect(problemsOf(toDocumentText(d, 'test'), d).map((p) => p.code)).toContain('public_account');
+  });
+  it('the note stays while any of the example is left', () => {
+    const d = exampleDraft('stellar')!;
+    expect(exampleLeft(d)).toBe(true);
+    d.addressBook[0]!.account = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
+    expect(exampleLeft(d)).toBe(true);
+    d.addressBook[0]!.name = 'Rally till';
+    expect(exampleLeft(d)).toBe(true);
+    d.formats[0]!.object = 'the fare';
+    expect(exampleLeft(d)).toBe(false);
   });
   it('no example for a NEAR program or a Soroban contract (they need the partner’s own account and code)', () => {
     expect(exampleDraft('near')).toBeNull();

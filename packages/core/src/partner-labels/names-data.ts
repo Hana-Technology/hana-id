@@ -3,9 +3,10 @@
 // guarantee: there are always more names than any list holds, and a name missing here is not thereby allowed in any
 // sense that matters (piece 3 shows partner words as the partner's, never Journear's). Lower case, compared after
 // folding (accents, digits for letters, i/l and u/v read as one). Everyday English words that are also tickers or
-// brands (sol, dot, link, atom, wise, chase, rainbow, phantom, meta, sender, won, rand) are left out on purpose: the
+// brands (sol, dot, link, atom, wise, chase, rainbow, meta, won, rand) are left out on purpose: the
 // list would refuse honest labels for little gain ("real" is a claim word); so are "coin" and "token", which an
-// honest row label needs ("Token"). Pure data, no imports.
+// honest row label needs ("Token"). "Phantom" is in, as a wallet, since the review of the address book's names, as are Bitget and Wend (a
+// wallet of the team's own). Pure data, no imports.
 
 export const OTHER_NAMES: readonly string[] = Object.freeze([
   // fiat
@@ -19,9 +20,11 @@ export const OTHER_NAMES: readonly string[] = Object.freeze([
   'cosmos', 'chainlink', 'aave', 'xlm', 'stellar', 'lumen', 'lumens', 'near', 'wnear', 'aurora', 'usdc', 'eurc', 'circle',
   'crypto', 'cryptocurrency',
   // wallets
-  'metamask', 'trezor', 'ledger', 'coinbase', 'argent', 'exodus', 'trustwallet', 'safewallet', 'lobstr', 'freighter', 'herewallet', 'mynearwallet',
+  'metamask', 'trezor', 'ledger', 'coinbase', 'argent', 'exodus', 'trustwallet', 'safewallet', 'lobstr', 'freighter', 'herewallet', 'mynearwallet', 'phantom',
+  'wend',
   // exchanges
   'binance', 'kraken', 'okx', 'bybit', 'kucoin', 'gemini', 'bitstamp', 'bitfinex', 'huobi', 'htx', 'gateio', 'upbit', 'bithumb', 'robinhood', 'uniswap',
+  'bitget',
   // payment brands and big platforms
   'paypal', 'venmo', 'stripe', 'visa', 'mastercard', 'amex', 'americanexpress', 'applepay', 'googlepay', 'alipay', 'wechat', 'wechatpay', 'grabpay',
   'touchngo', 'shopeepay', 'revolut', 'klarna', 'zelle', 'cashapp', 'google', 'apple', 'microsoft', 'amazon', 'facebook',

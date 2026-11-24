@@ -109,7 +109,8 @@ describe('a classic payment exactly as described: the partner’s box', () => {
   });
 
   it('D907: every verb a payment may use, with no phrase and with one: Journear’s joining word, then the name', () => {
-    const want: Record<string, string> = { pay: 'to', send: 'to', donate: 'to', deposit: 'to', sell: 'to', lend: 'to', repay: 'to', withdraw: 'to', unstake: 'to', buy: 'from', borrow: 'from', bid: 'with', stake: 'with', swap: 'with' };
+    // After PR 135's review a payment may use only these verbs (sell, borrow, withdraw, unstake and swap are refused).
+    const want: Record<string, string> = { pay: 'to', send: 'to', donate: 'to', deposit: 'to', lend: 'to', repay: 'to', buy: 'from', bid: 'with', stake: 'with' };
     for (const [verb, word] of Object.entries(want)) {
       for (const object of [undefined, 'the fare']) {
         const docOf = parsed({ ...PAYMENT_DOC_JSON, display: { formats: { payment: { call: { memo: 'text', assets: ['native'] }, intent: { verb, ...(object ? { object } : {}) }, sentence: object ? ['verb', 'object'] : ['verb'], fields: [{ path: 'memo', label: 'Order', format: 'orderNumber' }] } } } });

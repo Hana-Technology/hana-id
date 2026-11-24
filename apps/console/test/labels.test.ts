@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 const PASSPHRASE = 'Test SDF Network ; September 2015';
-const TILL = 'GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP';
+const TILL = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
 const paymentDoc = (object = 'order') =>
   JSON.stringify({
     schema: 'journear-labels/1',
@@ -148,8 +148,11 @@ describe('labels.set and labels.remove: the review the confirmation page shows',
     const diff = a.decoded.diff as { change: string; key: string }[];
     expect(diff.map((x) => [x.key, x.change])).toEqual([
       ['(contract)', 'added'],
+      [`(account) ${TILL}`, 'added'],
       ['payment', 'added'],
     ]);
+    // Every account in the preview, its name and its account whole (after PR 135's review).
+    expect((a.decoded.preview as { accounts: string[] }).accounts).toEqual([`Account “Coffee Club till” (${TILL})`]);
     await stepUp(google, m, a.id);
     const labelId = ((await actionOf(m, a.id)).body.outcome as { labelId: string }).labelId;
     // The version in force is what a new version is compared with: here nothing is in force yet, so all is added again.

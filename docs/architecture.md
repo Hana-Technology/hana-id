@@ -1009,10 +1009,13 @@ below), then the shape; muxed accounts are their base account. It
 renders: a match as "{App} says: …" with "These are {App}’s words, not Journear’s." (D903) in a plain box (a
 named group, at most 3 rows, none repeating the sentence, no row for a payment's destination) after everything
 Journear says, with only the details below it; a matching classic payment's sentence ends with Journear's joining word
-for its verb (`words.ts` `PAYMENT_DESTINATION_WORDS`: to, from after buy and borrow, with after bid, stake and swap) and
+for its verb (`words.ts` `PAYMENT_DESTINATION_WORDS`: to, from after buy, with after stake and bid; a payment may use only
+`PAYMENT_VERBS`, after PR 135's review) and
 the address book's name of the destination's base account, a value part like any other (D907: `match.ts`
 `destinationParts`, used by the match, the plain form and `previewLabelDocument` alike; the parser counts the longest
-name in the sentence's 40 partner characters), while Journear's own To row keeps the address; a described request that doesn't match as one amber line in Journear's voice; a payment, a strict-send or strict-receive path payment, an account creation, an account merge or a claimable balance (the five
+name in the sentence's 40 partner characters and refuses an account whose secret key is public, `public-accounts.ts`;
+every preview lists every account, `addressBookLines`, and the API's diff has a line per account), while Journear's own
+To row keeps the address; a described request that doesn't match as one amber line in Journear's voice; a payment, a strict-send or strict-receive path payment, an account creation, an account merge or a claimable balance (the five
 operation types) to an account outside the app's address book as a red line (not covered: offers, liquidity pool
 deposits, Soroban token transfers, and setOptions signer or weight changes, an account takeover rather than a value
 move); anything else exactly as without labels; anything thrown

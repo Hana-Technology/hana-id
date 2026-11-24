@@ -21,8 +21,8 @@ test.describe.configure({ mode: 'default' });
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const DESKTOP = { width: 1280, height: 900 } as const;
 const PHONE = { width: 390, height: 844 } as const;
-/** The lane org's till: an example Stellar account (no one's real account). */
-const TILL = 'GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP';
+/** The lane org's till: a random public key no one has the secret key of (an address book refuses an account of a public seed). */
+const TILL = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
 const RUN = crypto.randomUUID().slice(0, 6);
 const NOTE = `The words would mislead users about the fare (run ${RUN})`;
 
@@ -111,6 +111,7 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   await page.getByRole('link', { name: 'Back to Request labels' }).first().click();
   const waiting = page.locator(`.labels-waiting[data-change="${proposed[0]!.changeId}"]`);
   await expect(waiting).toContainText(`Stamp Rally says: pay for order “1042” to “Stamp Rally till” (${TILL})`);
+  await expect(waiting).toContainText(`Account “Stamp Rally till” (${TILL})`);
   await expect(waiting).toContainText(/It goes live in (?:23 h|1 d 0 h|24 h)/u);
   await expect(page.locator('.labels-entry .jp-badge').filter({ hasText: /^Goes live / })).toBeVisible();
   await expect(waiting.locator('[data-change="added"]')).toHaveCount(2);
@@ -122,7 +123,7 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   expect((await labels(lane, { action: 'state' })).state.versions).toEqual([expect.objectContaining({ changeId: proposed[0]!.changeId, state: 'cancelled' })]);
 });
 
-test('“See an example” fills the form with a sample that passes every check, and says it is an example (D908)', async ({ page, lane }, info) => {
+test('“See an example” fills the form but the account, which the developer adds; it says it is an example (D908)', async ({ page, lane }, info) => {
   const origin = consoleOf(info);
   const r = await labels(lane, { action: 'reset' });
   await openTab(page, origin, r.state);
@@ -133,11 +134,18 @@ test('“See an example” fills the form with a sample that passes every check,
   await expect(page.getByText('This replaces what you’ve typed with the example. Replace it?')).toBeVisible();
   await page.getByRole('button', { name: 'Keep what I typed' }).click();
   await expect(page.getByLabel(/Your phrase/u)).toHaveValue('the coffee');
+  await expect(page.getByRole('button', { name: 'See an example' })).toBeFocused();
   await page.getByRole('button', { name: 'See an example' }).click();
   await page.getByRole('button', { name: 'Replace with the example' }).click();
   await expect(page.getByLabel(/Your phrase/u)).toHaveValue('the order');
-  await expect(page.getByLabel('Account 1', { exact: true })).toHaveValue(TILL);
+  // The account is left for the developer: the form asks for one of their own, focus is on it, Review waits.
+  const account = page.getByLabel('Account 1', { exact: true });
+  await expect(account).toHaveValue('');
+  await expect(account).toBeFocused();
+  await expect(page.getByText('Add one of your own Stellar accounts here (G…).')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review the change' })).toBeDisabled();
   await expect(page.getByText(/This is an example, not your labels/u)).toBeVisible();
+  await account.fill(TILL);
   await expect(page.getByRole('status').filter({ hasText: /problem|ready/u })).toHaveText('No problems: ready to review.');
   await expect(box(page).locator('p.partner-says')).toHaveText('Stamp Rally says: pay for the order to Coffee Club till');
   await expect(box(page).locator('dl.partner-fields dt')).toHaveText(['Order']);

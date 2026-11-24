@@ -9,13 +9,13 @@
 // Everything a member reads here is `GET /api/orgs/:org/scopes/:scope/labels` (ConsoleRpc.listLabels), judged on the
 // server's clock (D701). Partner text is always rendered as text.
 import type { AppSummary, LabelChangeView, LabelEntryView, LabelListAnswer } from '@hana-id/console-core';
-import { type LabelDocument, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
+import { type LabelDocument, addressBookLines, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
 import { useMemo } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, getJson, postJson } from '../../api.ts';
 import { clockTime, relative, useApi, useNow, useStepUp, useWrite, when } from '../../lib.tsx';
 import { Badge, Callout, ConfirmButton, Empty, ErrorNote, Loading, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
-import { DiffList, afterEmail } from '../../labels/Diff.tsx';
+import { AccountLines, DiffList, afterEmail } from '../../labels/Diff.tsx';
 import { LabelsEditor, type NearCodeAnswer } from '../../labels/Editor.tsx';
 
 /** D900: a NEAR or Soroban entry shows only while the program runs the code its labels name. */
@@ -65,6 +65,7 @@ function Lines({ v }: { v: LabelChangeView }) {
   if (!doc) return <p className="muted small">Its words can’t be shown here.</p>;
   const lines = previewLabelDocument(doc, appNameOf(v));
   return (
+    <>
     <ul className="labels-lines">
       {lines.map((f) => (
         <li key={f.key}>
@@ -77,6 +78,8 @@ function Lines({ v }: { v: LabelChangeView }) {
         </li>
       ))}
     </ul>
+    <AccountLines accounts={addressBookLines(doc)} />
+    </>
   );
 }
 

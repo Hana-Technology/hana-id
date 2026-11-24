@@ -11,7 +11,13 @@ import { nearImplicitAccountId } from '../src/addresses.ts';
 import type { NearAction } from '../src/near/codec.ts';
 import { encodeNearDelegateAction, encodeNearTransaction } from '../src/near/codec.ts';
 import { decodeApprovalRequest } from '../src/decode/request.ts';
-import { ISSUER, OTHER, PASSPHRASE, POOL, USER, UNLISTED } from './stellar-fixtures.ts';
+import { ISSUER, PASSPHRASE, POOL, USER, UNLISTED } from './stellar-fixtures.ts';
+
+/**
+ * The account a label's address book lists: a random public key no one has the secret key of (an address book refuses
+ * the account of a public seed, such as stellar-fixtures' `OTHER`, the seed 32 × 9).
+ */
+export const OTHER = 'GC4OI7BDJ3EGZCOJOA3FNHCHQFQ4OKHXKZK6MXS2WFZBVMZ37I2NS4HC';
 
 /** A TEST seed from a public label (never funded). */
 const SEED = sha256(utf8('hana-id test: partner labels user'));
@@ -29,7 +35,7 @@ export const TGAS = 1_000_000_000_000n;
 /** Stellar's testnet USDC asset contract (on Journear's known-token list) and a Soroban contract's Wasm hash. */
 export const TEST_USDC_SAC = 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA';
 export const POOL_WASM = 'ab'.repeat(32);
-export { ISSUER, OTHER, PASSPHRASE, POOL, USER, UNLISTED };
+export { ISSUER, PASSPHRASE, POOL, USER, UNLISTED };
 
 export const STAMPS_DOC_JSON = {
   schema: 'journear-labels/1',

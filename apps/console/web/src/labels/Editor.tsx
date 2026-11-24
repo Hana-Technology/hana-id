@@ -7,10 +7,11 @@
 // Every problem is core's parser's and text rules' own answer (@hana-id/core/partner-labels, the code the API and the
 // window run), shown beside the field that caused it as the partner types; the live preview is the approval window's
 // own rendering (Preview.tsx). Partner text is always text: React text nodes, never HTML.
-import { FORMAT_ARG_TYPES, type FieldFormat, LABEL_LIMITS, type LabelDocument, PARTNER_CONNECTORS, PARTNER_VERBS, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
-import { type ReactNode, useId, useMemo, useState } from 'react';
+import { FORMAT_ARG_TYPES, type FieldFormat, LABEL_LIMITS, type LabelDocument, PARTNER_CONNECTORS, PARTNER_VERBS, addressBookLines, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
+import { type ReactNode, useId, useMemo, useRef, useState } from 'react';
 import { Callout, ChoiceCards, Field } from '../ui.tsx';
-import { type ArgDraft, ARG_TYPES, type Draft, type Environment, type FieldDraft, type FormatDraft, type LabelKind, type PartDraft, EXAMPLE_ACCOUNT, argFamily, emptyArg, emptyDraft, emptyField, emptyFormat, exampleDraft, fromDocumentText, isEmptyDraft, toDocumentText } from './model.ts';
+import { type ArgDraft, ARG_TYPES, type Draft, type Environment, type FieldDraft, type FormatDraft, type LabelKind, type PartDraft, argFamily, emptyArg, emptyDraft, emptyField, emptyFormat, exampleDraft, exampleLeft, fromDocumentText, isEmptyDraft, toDocumentText } from './model.ts';
+import { AccountLines } from './Diff.tsx';
 import { LabelsPreview } from './Preview.tsx';
 import { type Problem, problemsOf } from './problems.ts';
 import { NEAR_DECIMALS, STELLAR_DECIMALS, TGAS_DECIMALS, toDisplay, toRaw } from './units.ts';
@@ -30,9 +31,9 @@ export const BOOK_NAME_HINT: Readonly<Record<LabelKind, string>> = Object.freeze
 });
 /** D908 (to confirm): the example button, what it does, the question before it replaces a typed form, and the note while the example is in the form. */
 export const EXAMPLE_BUTTON = 'See an example';
-export const EXAMPLE_INTRO = 'Fills the form with a made-up coffee shop, to show how it works. You then replace it with your own.';
+export const EXAMPLE_INTRO = 'Fills the form with a made-up coffee shop, to show how it works. You then add your own account and replace the rest with your own.';
 export const EXAMPLE_CONFIRM = 'This replaces what you’ve typed with the example. Replace it?';
-export const EXAMPLE_NOTE = 'This is an example, not your labels. Before you review, change the account to one of your own Stellar accounts, and the name, phrase and limits to yours.';
+export const EXAMPLE_NOTE = 'This is an example, not your labels. Add one of your own Stellar accounts, and replace the name, the phrase and the limits with yours, before you review.';
 /** D908 (to confirm): the memo's row label, true in the window and its preview (a row only when the sentence doesn't show the memo). */
 export const MEMO_LABEL_HINT = 'Shown to users as its own line, with the memo under it, when the memo isn’t in your sentence. Up to 24 characters, as “Order”.';
 /** D907: under a payment's sentence parts, what Journear adds at the end. */
@@ -526,14 +527,17 @@ function SentenceBuilder({ kind, f, fi, set, errs }: { kind: LabelKind; f: Forma
   );
 }
 
-/** Which verbs the parser refuses for this format as it stands (a "no value moves" verb on a request that can move value): disabled, with why. */
-function refusedVerbs(d: Draft, fi: number, env: Environment): Set<string> {
-  const out = new Set<string>();
+/**
+ * Which verbs the parser refuses for this format as it stands, disabled, each with why: a "no value moves" verb on a
+ * request that can move value, or a verb that doesn't say the user sends money on a payment.
+ */
+function refusedVerbs(d: Draft, fi: number, env: Environment): Map<string, string> {
+  const out = new Map<string, string>();
   for (const v of PARTNER_VERBS) {
     const copy = structuredClone(d);
     copy.formats[fi]!.verb = v;
     const r = parseLabelDocument(toDocumentText(copy, env));
-    if (!r.ok && r.errors.some((e) => e.code === 'bad_verb' && e.path === `display.formats.${copy.formats[fi]!.key}.intent.verb`)) out.add(v);
+    if (!r.ok && r.errors.some((e) => e.code === 'bad_verb' && e.path === `display.formats.${copy.formats[fi]!.key}.intent.verb`)) out.set(v, d.kind === 'stellar' ? 'not for a payment' : 'says nothing moves: not for this request');
   }
   return out;
 }
@@ -541,10 +545,11 @@ function refusedVerbs(d: Draft, fi: number, env: Environment): Set<string> {
 function FormatEditor({ d, f, fi, env, set, errs, removable, appName }: { d: Draft; f: FormatDraft; fi: number; env: Environment; set: (g: (x: FormatDraft) => void) => void; errs: Errs; removable: (() => void) | null; appName: string }) {
   const kind = d.kind;
   const refused = useMemo(() => refusedVerbs(d, fi, env), [d, fi, env]);
-  const sentence = useMemo(() => {
+  const { sentence, accounts } = useMemo(() => {
     const r = parseLabelDocument(toDocumentText(d, env));
-    return r.ok ? (previewLabelDocument(r.document, appName).find((x) => x.key === f.key)?.line ?? null) : null;
-  }, [d, env, f.key, appName]);
+    if (!r.ok) return { sentence: null, accounts: [] as string[] };
+    return { sentence: previewLabelDocument(r.document, appName).find((x) => x.key === f.key)?.line ?? null, accounts: kind === 'stellar' ? addressBookLines(r.document) : [] };
+  }, [d, env, f.key, appName, kind]);
   return (
     <fieldset className="labels-section labels-format">
       <legend>{kind === 'stellar' ? 'The payment' : `Request ${fi + 1}${f.key ? `: ${f.key}` : ''}`}</legend>
@@ -573,7 +578,7 @@ function FormatEditor({ d, f, fi, env, set, errs, removable, appName }: { d: Dra
               {!(PARTNER_VERBS as readonly string[]).includes(f.verb) && f.verb !== '' && <option value={f.verb}>{f.verb}</option>}
               {PARTNER_VERBS.map((v) => (
                 <option key={v} value={v} disabled={refused.has(v) && v !== f.verb}>
-                  {refused.has(v) ? `${v} (says nothing moves: not for this request)` : v}
+                  {refused.has(v) ? `${v} (${refused.get(v)})` : v}
                 </option>
               ))}
             </select>
@@ -782,6 +787,10 @@ function FormatEditor({ d, f, fi, env, set, errs, removable, appName }: { d: Dra
           <span className="labels-line">{sentence}</span>
         </p>
       )}
+      {sentence !== null && accounts.length > 1 && (
+        <p className="muted small">The example pays your first account; a payment to another ends with that account’s name instead.</p>
+      )}
+      {sentence !== null && <AccountLines accounts={accounts} />}
     </fieldset>
   );
 }
@@ -865,14 +874,26 @@ export function LabelsEditor(p: EditorProps) {
   const [otherNetwork, setOtherNetwork] = useState(start.network);
   /** "See an example" on a form with something typed: asked in the page first, never replaced without a yes. */
   const [askExample, setAskExample] = useState(false);
+  /** The form was filled from the example (its note shows while any of the example is left). */
+  const [fromExample, setFromExample] = useState(false);
+  const exampleButton = useRef<HTMLButtonElement>(null);
+  const firstField = useRef<HTMLDivElement>(null);
   const id = useId();
-  const fillExample = () => {
+  /** After the question is answered, focus goes back to the button, or to the form's first account when it filled. */
+  const focusAfter = (filled: boolean) =>
+    requestAnimationFrame(() => {
+      const account = filled ? firstField.current?.querySelector<HTMLInputElement>('input') : null;
+      (account ?? exampleButton.current)?.focus();
+    });
+  const fillExample = (asked: boolean) => {
     const ex = draft ? exampleDraft(draft.kind) : null;
     if (!ex) return;
     setDraft(ex);
     setText(toDocumentText(ex, env));
     setOtherNetwork(false);
     setAskExample(false);
+    setFromExample(true);
+    if (asked) focusAfter(true);
   };
 
   const set = (f: (d: Draft) => void) => {
@@ -936,12 +957,14 @@ export function LabelsEditor(p: EditorProps) {
               const next = emptyDraft(k);
               setDraft(next);
               setText(toDocumentText(next, env));
+              setFromExample(false);
+              setAskExample(false);
             }}
           />
         )}
         {draft && !p.existing && !blocked && exampleDraft(draft.kind) && (
           <div className="labels-example">
-            <button type="button" className="jp-btn jp-btn-secondary jp-btn-sm" aria-describedby={`${id}-example`} onClick={() => (isEmptyDraft(draft) ? fillExample() : setAskExample(true))}>
+            <button ref={exampleButton} type="button" className="jp-btn jp-btn-secondary jp-btn-sm" aria-describedby={`${id}-example`} aria-expanded={askExample || undefined} onClick={() => (isEmptyDraft(draft) ? fillExample(false) : setAskExample(true))}>
               {EXAMPLE_BUTTON}
             </button>
             <span id={`${id}-example`} className="muted small">
@@ -952,10 +975,17 @@ export function LabelsEditor(p: EditorProps) {
               <Callout tone="warn" role="alert">
                 <p>{EXAMPLE_CONFIRM}</p>
                 <p className="labels-example-choice">
-                  <button type="button" className="jp-btn jp-btn-secondary jp-btn-sm" onClick={fillExample}>
+                  <button type="button" className="jp-btn jp-btn-secondary jp-btn-sm" onClick={() => fillExample(true)}>
                     Replace with the example
                   </button>{' '}
-                  <button type="button" className="jp-btn jp-btn-ghost jp-btn-sm" onClick={() => setAskExample(false)}>
+                  <button
+                    type="button"
+                    className="jp-btn jp-btn-ghost jp-btn-sm"
+                    onClick={() => {
+                      setAskExample(false);
+                      focusAfter(false);
+                    }}
+                  >
                     Keep what I typed
                   </button>
                 </p>
@@ -963,7 +993,7 @@ export function LabelsEditor(p: EditorProps) {
             )}
           </div>
         )}
-        {draft && draft.addressBook.some((e) => e.account === EXAMPLE_ACCOUNT) && (
+        {draft && fromExample && exampleLeft(draft) && (
           <Callout tone="warn" role="note" title="An example">
             <p>{EXAMPLE_NOTE}</p>
           </Callout>
@@ -1055,7 +1085,9 @@ export function LabelsEditor(p: EditorProps) {
                 </div>
               </fieldset>
             )}
-            <AddressBook d={draft} set={set} errs={errs} />
+            <div ref={firstField}>
+              <AddressBook d={draft} set={set} errs={errs} />
+            </div>
             {draft.kind !== 'stellar' && <Enums d={draft} set={set} errs={errs} />}
             {errs('formats') && <p className="jp-error section-error">{errs('formats')}</p>}
             {draft.formats.map((f, fi) => (

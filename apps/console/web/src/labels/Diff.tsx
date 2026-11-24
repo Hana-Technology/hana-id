@@ -47,3 +47,20 @@ export function DiffList({ diff }: { diff: readonly DiffLine[] }) {
  * `durationWords`, the same function); the delay unnamed when the API didn't say.
  */
 export const afterEmail = (delayMs: number | null | undefined): string => (typeof delayMs === 'number' ? `${durationWords(delayMs)} after the email` : 'after the security delay that follows the email');
+
+/** Every listed account's name and account whole (the example lines show one account only). Text only. */
+export function AccountLines({ accounts }: { accounts: readonly string[] }) {
+  if (accounts.length === 0) return null;
+  return (
+    <>
+      <p className="muted small">The accounts and the names users can be shown for them:</p>
+      <ul className="labels-accounts">
+        {accounts.map((a) => (
+          <li key={a} className="mono-wrap small">
+            {a}
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}

@@ -1,16 +1,20 @@
 // D907: a matching classic payment's sentence ends with Journear's joining word for the verb and the address book's
 // name of the destination ("pay the fare to Coffee Club till"), only for an exact match of the destination's base
 // account; never for a payment that doesn't match. The plain form and the preview say the same; the parser holds the
-// phrase and the longest name to the sentence's 40 characters; and what the text rules do with misleading names.
+// phrase and the longest name to the sentence's 40 characters, allows only the verbs that say the user sends money, and
+// refuses an account whose secret key is public; and what the text rules do with misleading names (after PR 135's
+// review).
 import { Account, Asset, Memo, MuxedAccount } from '@stellar/stellar-base';
 import { describe, expect, it } from 'vitest';
 import { decodeApprovalRequest } from '../src/decode/request.ts';
 import { type LabelMatch, type LabelRequest, labelLinePlainText, labelRequestOf, matchLabel, previewLabelDocument, sentencePlainText } from '../src/partner-labels/match.ts';
 import { SENTENCE_PARTNER_CHARS, parseLabelDocument } from '../src/partner-labels/schema.ts';
 import { partnerTextProblem } from '../src/partner-labels/text-rules.ts';
-import { PARTNER_CONNECTORS, PARTNER_VERBS, PAYMENT_DESTINATION_WORDS, type PartnerVerb, SOFT_VERBS, paymentDestinationWord } from '../src/partner-labels/words.ts';
-import { PAYMENT_DOC_JSON, STAMPS_DOC_JSON, parsed, paymentTx } from './partner-labels-fixtures.ts';
-import { ISSUER, OTHER, PASSPHRASE, USER } from './stellar-fixtures.ts';
+import { PARTNER_CONNECTORS, PARTNER_VERBS, PAYMENT_DESTINATION_WORDS, PAYMENT_VERBS, type PartnerVerb, paymentDestinationWord } from '../src/partner-labels/words.ts';
+import { Keypair } from '@stellar/stellar-base';
+import { PUBLIC_SEED_PREFIXES, isPublicSeedAccount } from '../src/partner-labels/public-accounts.ts';
+import { OTHER, PAYMENT_DOC_JSON, STAMPS_DOC_JSON, parsed, paymentTx } from './partner-labels-fixtures.ts';
+import { ISSUER, PASSPHRASE, USER } from './stellar-fixtures.ts';
 
 const stellarReq = (bytes: Uint8Array): LabelRequest => labelRequestOf(decodeApprovalRequest({ kind: 'stellar_tx', chain: 'stellar', address: USER, context: { networkPassphrase: PASSPHRASE }, bytes }), USER)!;
 const muxedOf = (g: string, id = '7') => new MuxedAccount(new Account(g, '0'), id).accountId();
@@ -43,22 +47,25 @@ const matchOf = (json: unknown, destination = OTHER): LabelMatch => {
 /** The sentence as the window writes it: the parts' texts, an address book name bare (as the window's span holds it). */
 const windowText = (m: LabelMatch): string => m.parts.map((p) => (p.kind === 'value' ? (p.value.format === 'account' ? p.value.text : p.value.format === 'orderNumber' ? p.value.text : '?') : p.text)).join(' ');
 
-/** Every verb a payment may use: the list less the soft verbs, which the parser refuses for a payment. */
-const PAYMENT_VERBS = PARTNER_VERBS.filter((v) => !SOFT_VERBS.has(v));
+/** A second listed account: a random public key no one has the secret key of. */
+const BAKERY = 'GCVFJJYF75734IR7PQB2IOI3C3RDQ66D6OMVMJG2DRO4VBN66ODCE76B';
 
 describe('the joining word, by verb (Journear’s word, from the joining-word list)', () => {
-  it('every verb a payment may use has its word; the soft verbs are refused for a payment, so they need none', () => {
-    for (const v of PAYMENT_VERBS) {
-      expect(PAYMENT_DESTINATION_WORDS[v], v).toBeDefined();
-      expect(PARTNER_CONNECTORS).toContain(PAYMENT_DESTINATION_WORDS[v]);
-    }
-    for (const v of SOFT_VERBS) {
-      expect(PAYMENT_DESTINATION_WORDS[v], v).toBeUndefined();
+  it('only the verbs that say the user sends money; each has its word; every other verb is refused for a payment', () => {
+    expect([...PAYMENT_VERBS].sort()).toEqual(['bid', 'buy', 'deposit', 'donate', 'lend', 'pay', 'repay', 'send', 'stake']);
+    expect(Object.keys(PAYMENT_DESTINATION_WORDS).sort()).toEqual([...PAYMENT_VERBS].sort());
+    for (const v of PAYMENT_VERBS) expect(PARTNER_CONNECTORS).toContain(PAYMENT_DESTINATION_WORDS[v]);
+    for (const v of PARTNER_VERBS.filter((x) => !PAYMENT_VERBS.has(x))) {
       const r = parseLabelDocument(JSON.stringify(doc({ verb: v })));
       expect(r.ok, v).toBe(false);
-      if (!r.ok) expect(r.errors.map((e) => e.code)).toContain('bad_verb');
+      if (!r.ok) expect(r.errors.map((e) => `${e.code} ${e.path}`), v).toContain('bad_verb display.formats.payment.intent.verb');
     }
-    expect(Object.keys(PAYMENT_DESTINATION_WORDS).sort()).toEqual([...PAYMENT_VERBS].sort());
+    // The five that would say the money comes the other way, with the plain message.
+    for (const v of ['sell', 'borrow', 'withdraw', 'unstake', 'swap']) {
+      const r = parseLabelDocument(JSON.stringify(doc({ verb: v })));
+      if (r.ok) throw new Error(v);
+      expect(r.errors[0]!.message).toBe(`"${v}" doesn’t fit a payment, where your user sends money to your account: use pay, send, donate, deposit, repay, lend, buy, stake or bid.`);
+    }
     expect(paymentDestinationWord('collect' as PartnerVerb)).toBe('to');
   });
 
@@ -68,16 +75,11 @@ describe('the joining word, by verb (Journear’s word, from the joining-word li
       send: ['send to Coffee Club till', 'send the fare to Coffee Club till'],
       donate: ['donate to Coffee Club till', 'donate the fare to Coffee Club till'],
       deposit: ['deposit to Coffee Club till', 'deposit the fare to Coffee Club till'],
-      sell: ['sell to Coffee Club till', 'sell the fare to Coffee Club till'],
-      lend: ['lend to Coffee Club till', 'lend the fare to Coffee Club till'],
       repay: ['repay to Coffee Club till', 'repay the fare to Coffee Club till'],
-      withdraw: ['withdraw to Coffee Club till', 'withdraw the fare to Coffee Club till'],
-      unstake: ['unstake to Coffee Club till', 'unstake the fare to Coffee Club till'],
+      lend: ['lend to Coffee Club till', 'lend the fare to Coffee Club till'],
       buy: ['buy from Coffee Club till', 'buy the fare from Coffee Club till'],
-      borrow: ['borrow from Coffee Club till', 'borrow the fare from Coffee Club till'],
-      bid: ['bid with Coffee Club till', 'bid the fare with Coffee Club till'],
       stake: ['stake with Coffee Club till', 'stake the fare with Coffee Club till'],
-      swap: ['swap with Coffee Club till', 'swap the fare with Coffee Club till'],
+      bid: ['bid with Coffee Club till', 'bid the fare with Coffee Club till'],
     };
     expect(Object.keys(want).sort()).toEqual([...PAYMENT_VERBS].sort());
     for (const v of PAYMENT_VERBS) {
@@ -104,10 +106,10 @@ describe('only for an exact match of the destination’s base account', () => {
   });
 
   it('with two listed accounts, the name of the one paid, never the other’s', () => {
-    const json = doc({ object: 'the fare', book: [{ account: ISSUER, name: 'Bakery till' }, { account: OTHER, name: 'Coffee Club till' }] });
+    const json = doc({ object: 'the fare', book: [{ account: BAKERY, name: 'Bakery till' }, { account: OTHER, name: 'Coffee Club till' }] });
     expect(windowText(matchOf(json))).toBe('pay the fare to Coffee Club till');
-    expect(windowText(matchOf(json, ISSUER))).toBe('pay the fare to Bakery till');
-    expect(windowText(matchOf(json, muxedOf(ISSUER)))).toBe('pay the fare to Bakery till');
+    expect(windowText(matchOf(json, BAKERY))).toBe('pay the fare to Bakery till');
+    expect(windowText(matchOf(json, muxedOf(BAKERY)))).toBe('pay the fare to Bakery till');
   });
 
   it('never for a payment that doesn’t match: an unlisted account (red), another memo (amber)', () => {
@@ -167,7 +169,7 @@ describe('the sentence’s 40 characters of partner words count the name (D892 i
       expect(over.errors[0]!.message).toContain('address book');
     }
     // The longest of several names counts.
-    const two = parseLabelDocument(JSON.stringify(doc({ object: 'the large breakfast', book: [{ account: OTHER, name: 'Till' }, { account: ISSUER, name: 'Coffee Club till two' }] })));
+    const two = parseLabelDocument(JSON.stringify(doc({ object: 'the large breakfast', book: [{ account: OTHER, name: 'Till' }, { account: BAKERY, name: 'Coffee Club till two' }] })));
     expect(two.ok).toBe(false);
   });
 });
@@ -195,29 +197,102 @@ describe('misleading names: what the text rules do (the same rules as the phrase
       ['till 12345', 'text_number'],
       ['USDC till', 'text_reviewed_name'],
       ['Coinbase', 'text_other_name'],
+      ['Bank', 'text_other_name'],
+      ['The bank', 'text_other_name'],
       ['Wallet', 'text_phishing'],
       ['Support desk', 'text_phishing'],
       ['Tap here', 'text_ui_word'],
-      ['Rewards till', 'text_money_word'],
       ['Nobody', 'text_negation'],
       ['Coffee Club till by the river gate', 'text_too_long'],
+      // After PR 135's review: the people in a payment and money coming back.
+      ['the user', 'text_self'],
+      ['Users', 'text_self'],
+      ['Me', 'text_self'],
+      ['us', 'text_self'],
+      ['We the club', 'text_self'],
+      ['Our till', 'text_self'],
+      ['this account', 'text_self'],
+      ['This till', 'text_self'],
+      ['Return to sender', 'text_self'],
+      ['Back to sender', 'text_self'],
+      ['Sender', 'text_self'],
+      ['Account holder', 'text_self'],
+      ['Returns desk', 'text_self'],
+      ['Reversal', 'text_self'],
+      ['Undo', 'text_self'],
+      ['Chargeback', 'text_self'],
+      // "says" (another speaker inside "{App} says:").
+      ['Stamp Rally says', 'text_says'],
+      ['Journear says', 'text_brand'],
+      // Outcomes and lures, as for an order number.
+      ['Paid', 'text_outcome'],
+      ['Paid in full', 'text_outcome'],
+      ['Done', 'text_outcome'],
+      ['Success', 'text_outcome'],
+      ['Complete', 'text_outcome'],
+      ['Thanks', 'text_outcome'],
+      ['Rewards till', 'text_outcome'],
+      // Authorities.
+      ['Police', 'text_authority'],
+      ['Government', 'text_authority'],
+      ['Tax office', 'text_authority'],
+      ['Inland Revenue', 'text_authority'],
+      ['Customs', 'text_authority'],
+      ['Court', 'text_authority'],
+      ['LHDN', 'text_authority'],
+      // Wallets and exchanges added to the names list.
+      ['Phantom', 'text_other_name'],
+      ['Wend', 'text_other_name'],
+      ['Bitget', 'text_other_name'],
     ];
     for (const [name, code] of cases) expect(partnerTextProblem(name, 'addressName')?.code, name).toBe(code);
   });
 
+  it('the same self and "says" words in a phrase; the outcome and authority words only in a name', () => {
+    for (const [phrase, code] of [['the order for me', 'text_self'], ['this ticket', 'text_self'], ['the return fare', 'text_self'], ['what the shop says', 'text_says']] as const) {
+      expect(partnerTextProblem(phrase, 'object')?.code, phrase).toBe(code);
+    }
+    // An enumeration's label (the stamps' "Fare paid") and a row's label keep their rules.
+    expect(partnerTextProblem('Fare paid', 'enumLabel')).toBeNull();
+    expect(partnerTextProblem('Court booking', 'object')).toBeNull();
+  });
+
   it('allowed: ordinary names, and some that could still mislead (the attribution and Journear’s To row are what bound them)', () => {
-    for (const name of ['Coffee Club till', 'Stamp Rally', 'a friend', 'the user', 'Escrow', 'Return to sender', 'Club treasury', 'Bakery till', 'GABC']) {
+    for (const name of ['Coffee Club till', 'Stamp Rally', 'a friend', 'Escrow', 'Club treasury', 'Bakery till', 'Backstage bar', 'Theatre till', 'GABC', 'Tennis club', 'Wendy’s till']) {
       expect(partnerTextProblem(name, 'addressName'), name).toBeNull();
     }
   });
 
-  it('another listed account’s name: the same name twice is refused (compared folded); a look-alike spelling isn’t', () => {
-    const dup = (a: string, b: string) => parseLabelDocument(JSON.stringify(doc({ book: [{ account: OTHER, name: a }, { account: ISSUER, name: b }] })));
-    for (const [a, b] of [['Coffee Club till', 'Coffee Club till'], ['Coffee Club till', 'coffee club TILL'], ['Café till', 'Cafe till']] as const) {
+  it('another listed account’s name: the same name twice is refused, compared on how it reads (look-alike letters too)', () => {
+    const dup = (a: string, b: string) => parseLabelDocument(JSON.stringify(doc({ book: [{ account: OTHER, name: a }, { account: BAKERY, name: b }] })));
+    for (const [a, b] of [['Coffee Club till', 'Coffee Club till'], ['Coffee Club till', 'coffee club TILL'], ['Café till', 'Cafe till'], ['Coffee Club till', 'Coffee Club tiIl'], ['Coffee Club till', 'Coffee Club ti11'], ['Coffee Club till', 'CoffeeClub till'], ['Modern till', 'Modem till']] as const) {
       const r = dup(a, b);
       expect(r.ok, `${a} / ${b}`).toBe(false);
-      if (!r.ok) expect(r.errors.map((e) => e.code)).toContain('duplicate');
+      if (!r.ok) expect(r.errors.map((e) => `${e.code} ${e.path}`)).toContain('duplicate metadata.addressBook[1].name');
     }
-    expect(dup('Coffee Club till', 'Coffee Club tiIl').ok).toBe(true);
+    expect(dup('Coffee Club till', 'Bakery till').ok).toBe(true);
+  });
+});
+
+describe('an account whose secret key is public is never listed (after PR 135’s review)', () => {
+  it('the list is every one-byte seed’s account and the all-zero key, derived again here', () => {
+    const want = new Set<string>(['00000000']);
+    for (let b = 0; b < 256; b++) want.add(Buffer.from(Keypair.fromRawEd25519Seed(Buffer.alloc(32, b)).rawPublicKey()).subarray(0, 4).toString('hex'));
+    expect(new Set(PUBLIC_SEED_PREFIXES)).toEqual(want);
+    for (const b of [0, 7, 9, 11, 21, 31, 0x1f, 255]) expect(isPublicSeedAccount(Keypair.fromRawEd25519Seed(Buffer.alloc(32, b)).publicKey()), String(b)).toBe(true);
+    expect(isPublicSeedAccount('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF')).toBe(true);
+    for (const a of [OTHER, BAKERY, 'CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526', 'not an account', '']) expect(isPublicSeedAccount(a), a).toBe(false);
+  });
+
+  it('the parser refuses one in an address book, on a test or a live app, with a plain message; the one the console once suggested too', () => {
+    const was = 'GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP';
+    expect(Keypair.fromRawEd25519Seed(Buffer.alloc(32, 0x1f)).publicKey()).toBe(was);
+    for (const passphrase of [PASSPHRASE, 'Public Global Stellar Network ; September 2015']) {
+      const r = parseLabelDocument(JSON.stringify({ ...doc({ book: [{ account: was, name: 'Coffee Club till' }] }), context: { stellar: { networkPassphrase: passphrase } } }));
+      if (r.ok) throw new Error('accepted');
+      expect(r.errors).toEqual(expect.arrayContaining([{ code: 'public_account', path: 'metadata.addressBook[0].account', message: 'This is a test or example account whose secret key is public, so anyone can use it: list one of your own accounts.' }]));
+    }
+    // A Soroban document's address book too; a NEAR one has no Stellar accounts.
+    expect(isPublicSeedAccount(Keypair.fromRawEd25519Seed(Buffer.alloc(32, 9)).publicKey())).toBe(true);
   });
 });

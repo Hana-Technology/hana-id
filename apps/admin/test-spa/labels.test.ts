@@ -17,6 +17,9 @@ type Labels = {
   previewLabelControl: (body: Record<string, unknown>) => Promise<Fake>;
   resetPreviewLabels: () => void;
 };
+/** Harbour Pay's tills in the preview set (preview-labels.ts, not imported here: it is the Worker's code). */
+const HARBOUR_TILL = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
+const HARBOUR_KIOSK = 'GCVFJJYF75734IR7PQB2IOI3C3RDQ66D6OMVMJG2DRO4VBN66ODCE76B';
 const MODULE = './preview-labels.ts';
 const STATUS = './preview-status.ts';
 let feed: Fake;
@@ -101,6 +104,17 @@ describe('the Partner labels screen', () => {
       'Unchanged Stamps Club says: redeem 3 stamps for a free coffee · Stamps: 3 · Reward: Free coffee',
     ]);
     expect(li.querySelector('a[href="/labels/lc_previewproposed"]')!.textContent).toBe('Open lc_previewproposed');
+  });
+
+  it('a payment: the line with the till’s name, every account with its name and whole address, and a renamed account as a change (PR 135’s review)', async () => {
+    const p = boot('/labels', api());
+    await ready(p, 'Waiting');
+    const li = itemOf(p, 'lc_previewreview');
+    expect([...li.querySelectorAll('.label-line')].map((x) => x.textContent)).toEqual([`Harbour Pay says: pay for order “1042” to “Harbour till” (${HARBOUR_TILL})`]);
+    expect([...li.querySelectorAll('.label-accounts li')].map((x) => x.textContent)).toEqual([`Account “Harbour till” (${HARBOUR_TILL})`, `Account “Harbour stall” (${HARBOUR_KIOSK})`]);
+    const diff = [...li.querySelectorAll('.label-diff li')].map((x) => x.textContent);
+    expect(diff).toContain(`Changed Before: Account “Harbour kiosk” (${HARBOUR_KIOSK})Now: Account “Harbour stall” (${HARBOUR_KIOSK})`);
+    expect(diff).toContain(`Unchanged Account “Harbour till” (${HARBOUR_TILL})`);
   });
 
   it('the partner’s words are text, never markup', async () => {

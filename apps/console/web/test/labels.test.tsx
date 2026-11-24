@@ -46,7 +46,7 @@ function at(url: string) {
 }
 
 const PASSPHRASE = 'Test SDF Network ; September 2015';
-const TILL = 'GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP';
+const TILL = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
 const NOW = Date.now();
 const ME = { user: { id: 'usr_a', email: 'me@partner.example' }, memberships: [{ orgId: 'org_a', orgName: 'Acme', status: 'active', role: 'owner' }], features: { users: false } };
 const APP = {
@@ -283,7 +283,7 @@ describe('the editor', () => {
     expect(BOOK_NAME_HINT.soroban).toBe(BOOK_NAME_HINT.near);
   });
 
-  it('D908: “See an example” fills an empty form at once; a typed form is asked first, in the page; the example says it is one and passes every check', async () => {
+  it('D908: “See an example” fills an empty form at once, the account left for the partner; a typed form is asked first, in the page, and focus lands sensibly', async () => {
     signedIn();
     const confirmSpy = vi.fn(() => true);
     vi.stubGlobal('confirm', confirmSpy);
@@ -291,35 +291,46 @@ describe('the editor', () => {
     const button = screen.getByRole('button', { name: EXAMPLE_BUTTON });
     expect(screen.getByText(EXAMPLE_INTRO)).toBeTruthy();
     expect(screen.queryByText(EXAMPLE_NOTE)).toBeNull();
-    // An empty form: filled at once, no question.
+    // An empty form: filled at once, no question; the account stays empty, and the form says to add one's own.
     fireEvent.click(button);
     expect(screen.queryByText(EXAMPLE_CONFIRM)).toBeNull();
-    expect((screen.getByLabelText('Account 1') as HTMLInputElement).value).toBe(TILL);
+    const account = screen.getByLabelText('Account 1') as HTMLInputElement;
+    expect(account.value).toBe('');
     expect((screen.getByLabelText(new RegExp(BOOK_NAME_LABEL, 'u')) as HTMLInputElement).value).toBe('Coffee Club till');
     expect(phrase().value).toBe('the order');
     expect(screen.getByText(EXAMPLE_NOTE)).toBeTruthy();
+    await waitFor(() => expect(account.getAttribute('aria-invalid')).toBe('true'));
+    const described = (account.getAttribute('aria-describedby') ?? '').split(' ').map((i) => document.getElementById(i)?.textContent ?? '');
+    expect(described.join(' ')).toContain('Add one of your own Stellar accounts here (G…).');
+    expect(screen.getByRole('status').textContent).toMatch(/problems? to fix/u);
+    expect((screen.getByRole('button', { name: 'Review the change' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(inWin('.window-preview div.partner-label')).toBeNull();
+    // With the partner's own account: ready, and the window's preview shows the sentence and the memo's own row.
+    fireEvent.change(account, { target: { value: TILL } });
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('No problems: ready to review.'));
-    // The window's preview: the sentence with the name, the memo as its own row under its label (not in the sentence).
     await waitFor(() => expect(inWin('.window-preview div.partner-label p.partner-says')?.textContent).toBe('Coffee Club says: pay for the order to Coffee Club till'));
     expect([...(win()?.querySelectorAll('.window-preview dl.partner-fields dt') ?? [])].map((n) => n.textContent)).toEqual(['Order']);
     expect([...(win()?.querySelectorAll('.window-preview dl.partner-fields dd') ?? [])].map((n) => n.textContent)).toEqual(['1042']);
     expect(screen.getByText(MEMO_LABEL_HINT)).toBeTruthy();
-    // Something typed: asked first; "Keep what I typed" changes nothing.
-    fireEvent.change(phrase(), { target: { value: 'my coffee' } });
+    // The note stays while the example's words are there.
+    expect(screen.getByText(EXAMPLE_NOTE)).toBeTruthy();
+    // Something typed: asked first; "Keep what I typed" changes nothing, and focus goes back to the button.
     fireEvent.change(phrase(), { target: { value: 'the coffee' } });
+    fireEvent.change(screen.getByLabelText(new RegExp(BOOK_NAME_LABEL, 'u')), { target: { value: 'Rally till' } });
+    expect(screen.queryByText(EXAMPLE_NOTE)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: EXAMPLE_BUTTON }));
     expect(screen.getByText(EXAMPLE_CONFIRM)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Keep what I typed' }));
     expect(screen.queryByText(EXAMPLE_CONFIRM)).toBeNull();
     expect(phrase().value).toBe('the coffee');
-    // Asked again, and replaced only on the yes.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: EXAMPLE_BUTTON })));
+    // Asked again, and replaced only on the yes: focus then goes to the first account, which needs filling.
     fireEvent.click(screen.getByRole('button', { name: EXAMPLE_BUTTON }));
     fireEvent.click(screen.getByRole('button', { name: 'Replace with the example' }));
     expect(phrase().value).toBe('the order');
+    expect((screen.getByLabelText('Account 1') as HTMLInputElement).value).toBe('');
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Account 1')));
     expect(confirmSpy).not.toHaveBeenCalled();
-    // The note goes once the account is the partner's own.
-    fireEvent.change(screen.getByLabelText('Account 1'), { target: { value: 'GD6ROJBYLKQMOW3E7N4M2YBPUHMZD7PL65VRHRMO24BOVSBV5H3BQRSL' } });
-    expect(screen.queryByText(EXAMPLE_NOTE)).toBeNull();
     // No example for a NEAR program.
     fireEvent.click(screen.getByLabelText(/A NEAR program/u));
     expect(screen.queryByRole('button', { name: EXAMPLE_BUTTON })).toBeNull();

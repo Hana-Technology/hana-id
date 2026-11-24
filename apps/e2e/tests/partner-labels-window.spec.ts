@@ -21,7 +21,8 @@ const SIZES = { phone: { width: 390, height: 844 }, desktop: { width: 1280, heig
 /** The vault's freshness window for labels (packages/web vault/partner-labels.ts PARTNER_LABELS_FRESH_MS). */
 const LABELS_FRESH_MS = 10_000;
 /** The app's till (in its address book), another account (not), and an issuer of a "USDC" that isn't Circle's. */
-const TILL = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 31)).publicKey();
+/** A random public key no one has the secret key of (a label's address book refuses an account of a public seed). */
+const TILL = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
 const STRANGER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 32)).publicKey();
 const FAKE_USDC_ISSUER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 33)).publicKey();
 

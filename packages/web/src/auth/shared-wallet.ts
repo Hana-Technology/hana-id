@@ -27,7 +27,7 @@ export const SHARED_WALLET_TEXT = Object.freeze({
 });
 
 /** The line for `otherApps` (a window message's field, checked again here), or null: then nothing is drawn. */
-export function sharedWalletLine(d: Dom, otherApps: unknown): HTMLElement | null {
+export function sharedWalletLine(d: Dom, otherApps: unknown): HTMLDetailsElement | null {
   if (otherApps === undefined || !isOtherApps(otherApps)) return null;
   const { count, names } = otherApps as OtherApps;
   const items = names.map((n) => d.h('li', {}, homeAppName(n)));

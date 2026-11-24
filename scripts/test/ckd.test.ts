@@ -157,6 +157,14 @@ describe('fetch-ckd-key', () => {
     expect(h.out.at(-1)).toContain(`was ${OTHER_KEY}: the MPC key changed`);
   });
 
+  it('a placeholder key anywhere UNSET (as the rule and the build read it) is not reported as a changed key (D904)', async () => {
+    for (const placeholder of ['UNSET', 'bls12381g2:UNSET-pin-me']) {
+      const h = harness({ ...base(), ckdNetworkKey: placeholder }, {}, fixtureText().replace(KEY, placeholder));
+      await fetchCkdKey(['sandbox-dev'], h.deps);
+      expect(h.out.at(-1), placeholder).toBe('Wrote ckdNetworkKey and its source to envs/sandbox-dev.json.');
+    }
+  });
+
   it('changes nothing when the key and a source are already recorded, or on --dry-run', async () => {
     const recorded = harness({ ...base(), ckdNetworkKeySource: { blockHeight: 5, blockHash: HASH, rpcs: ['a.fastnear.com', 'rpc.testnet.near.org', 'near-testnet.drpc.org'] } });
     await fetchCkdKey(['sandbox-dev'], recorded.deps);

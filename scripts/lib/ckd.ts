@@ -199,5 +199,5 @@ export async function fetchCkdKey(argv: readonly string[], deps: FetchCkdKeyDeps
   text = setManifestObject(text, 'ckdNetworkKeySource', source, 'ckdNetworkKey');
   deps.writeManifest(m.name, text);
   if (sameKey) return void deps.log(`envs/${m.name}.json had this key: recorded its source (block ${reading.blockHeight}).`);
-  deps.log(`Wrote ckdNetworkKey and its source to envs/${m.name}.json${m.ckdNetworkKey.startsWith('UNSET') ? '' : ` (was ${m.ckdNetworkKey}: the MPC key changed, every pinned client must update)`}.`);
+  deps.log(`Wrote ckdNetworkKey and its source to envs/${m.name}.json${m.ckdNetworkKey.includes('UNSET') ? '' : ` (was ${m.ckdNetworkKey}: the MPC key changed, every pinned client must update)`}.`);
 }

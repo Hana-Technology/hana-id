@@ -1,12 +1,12 @@
 // App names as the API stores them (docs/batch-c-spec.md "Other app settings, name and logo": ≤ 64 characters, the
 // batch B label rules). The name is shown beside the verified origin in the consent and approval popups, so it must be
-// one display-safe line: the property-based rule of @hana-id/core `isDisplaySafeLine` (display-safe.ts), imported from
-// its subpath `@hana-id/core/display-safe` (the Worker can't typecheck @hana-id/core's root entry; D904: it was a copy
-// until then); test/rpc.test.ts checks the two agree on every code point.
+// one display-safe line: the property-based rule of @hana-id/core `isDisplaySafeLine` (display-safe.ts) itself,
+// imported from its subpath `@hana-id/core/display-safe` (the Worker can't typecheck @hana-id/core's root entry; D904: it
+// was a copy until then); test/rpc.test.ts checks it is that function, core's and env's tests what it refuses.
 import { isDisplaySafeLine } from '@hana-id/core/display-safe';
 
 /** One-line text with no control, format (bidi, zero-width), private-use, separator or other invisible character. */
-export const isDisplaySafeName = (text: string): boolean => isDisplaySafeLine(text);
+export const isDisplaySafeName: (text: string) => boolean = isDisplaySafeLine;
 
 /** The longest app name, in code points, after NFC and trimming. */
 export const APP_NAME_MAX = 64;

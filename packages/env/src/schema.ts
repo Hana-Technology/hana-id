@@ -423,6 +423,53 @@ export function ckdSourceOperatorProblems(m: {
   return out;
 }
 
+/**
+ * One host, one operator (D904, after PR 133's review): every field that names who runs a host must agree when two of
+ * them name the same host, on every network. The hosts: `rpc`'s (`rpcOperator`), `rpcFallback`'s
+ * (`rpcFallbackOperator`), each `apiRpcFallbacks` URL's (`apiRpcFallbackOperators`, in order, when the counts match) and
+ * each `ckdSourceOperators` key; compared by `operatorKey`. Without it a host named "FastNear" as an API fallback and
+ * "Pagoda" as a CKD source would count as two operators where there is one. Only declared names are compared: a host
+ * named in one field alone, or in none, is not a contradiction.
+ */
+export function operatorConflictProblems(m: {
+  rpc: string;
+  rpcFallback?: string | undefined;
+  apiRpcFallbacks?: readonly string[] | undefined;
+  rpcOperator?: string | undefined;
+  rpcFallbackOperator?: string | undefined;
+  apiRpcFallbackOperators?: readonly string[] | undefined;
+  ckdSourceOperators?: Readonly<Record<string, string>> | undefined;
+}): { path: (string | number)[]; message: string }[] {
+  const hostOf = (url: string): string | null => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return null;
+    }
+  };
+  const named: { host: string; operator: string; path: (string | number)[] }[] = [];
+  const add = (url: string | undefined, operator: string | undefined, path: (string | number)[]) => {
+    const host = url === undefined ? null : hostOf(url);
+    if (host !== null && operator !== undefined) named.push({ host, operator, path });
+  };
+  add(m.rpc, m.rpcOperator, ['rpcOperator']);
+  add(m.rpcFallback, m.rpcFallbackOperator, ['rpcFallbackOperator']);
+  if (m.apiRpcFallbacks !== undefined && m.apiRpcFallbackOperators?.length === m.apiRpcFallbacks.length) {
+    m.apiRpcFallbacks.forEach((url, i) => add(url, m.apiRpcFallbackOperators![i], ['apiRpcFallbackOperators', i]));
+  }
+  for (const [host, operator] of Object.entries(m.ckdSourceOperators ?? {})) named.push({ host, operator, path: ['ckdSourceOperators', host] });
+  const out: { path: (string | number)[]; message: string }[] = [];
+  const first = new Map<string, { operator: string; path: (string | number)[] }>();
+  for (const n of named) {
+    const seen = first.get(n.host);
+    if (seen === undefined) first.set(n.host, n);
+    else if (operatorKey(seen.operator) !== operatorKey(n.operator)) {
+      out.push({ path: n.path, message: `${n.host} is run by ${seen.operator.trim()} in ${seen.path.join('.')} but by ${n.operator.trim()} in ${n.path.join('.')}: one host has one operator (D904)` });
+    }
+  }
+  return out;
+}
+
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 export const manifestSchema = z
   .object({
@@ -670,6 +717,7 @@ export const manifestSchema = z
     }
     for (const p of nearOperatorProblems(m)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: p.path, message: p.message });
     for (const p of ckdSourceOperatorProblems(m)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: p.path, message: p.message });
+    for (const p of operatorConflictProblems(m)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: p.path, message: p.message });
     if (m.emailIssuer && m.rpcFallback === undefined && !isLocalEnv(m.name)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'an env with emailIssuer needs rpcFallback outside local* envs: a linked identity’s path is confirmed on two providers (D263)' });
     }

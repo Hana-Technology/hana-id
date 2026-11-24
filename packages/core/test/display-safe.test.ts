@@ -101,6 +101,10 @@ describe('where the rule applies', () => {
   });
 });
 
+// D904: this module is the workspace's one copy of the rule, also served on the subpath `@hana-id/core/display-safe`
+// (it imports nothing, so a Worker or @hana-id/env uses it without the root entry): the app-name rule
+// (console-core names.ts), the email issuer (bytes.ts) and the manifest's operator names (env schema.ts) call it.
+// These tests, and env's for the operator names, are what guards what it refuses.
 describe('the shared module (D904): the same rule as before, on every code point', () => {
   // The two patterns as they were before the rule became the workspace's one module (the source then held the
   // default-ignorable characters themselves; here in escape form, the same code points).

@@ -1,6 +1,7 @@
 # Environments
 
-One JSON manifest per environment, validated by `packages/env` (`manifestSchema`). Every NEAR account name, endpoint and
+One JSON manifest per environment, validated by `packages/env` (`manifestSchema`; a file with a key twice in one
+object is refused before that, since JSON keeps only the last and a reader may not see it, D904). Every NEAR account name, endpoint and
 Cloudflare resource name comes from here. Names in `sandbox-dev.json` are throwaway; wallets derived on them are
 disposable. Add an environment by copying `sandbox-dev.json`, changing `name` (must match the file name) and the accounts.
 
@@ -213,7 +214,9 @@ read, and the map stays as it is when the key is re-pinned. On any network but t
 hosts aren't all named, or whose hosts are run by fewer than three different operators. On testnet the field may be
 left out, name some hosts only, or name one operator for several; sandbox-dev names none (its three hosts are run by
 two operators: FastNear runs `test.rpc.fastnear.com` and `rpc.testnet.near.org`, dRPC runs `near-testnet.drpc.org`).
-Nothing but those three reads it, so a change needs no `gen` or redeploy. **Not in force until the schema admits
+On every network, a host named in two places (`rpc`'s, `rpcFallback`'s or an `apiRpcFallbacks` URL's host and a
+`ckdSourceOperators` key, or two of D903's fields) must name one operator in both (compared the same way), or the
+schema and `deploy-check` refuse it. Nothing but those three reads it, so a change needs no `gen` or redeploy. **Not in force until the schema admits
 another network**, as for `rpcOperator`; and **a declaration, not proof**: a reviewer reading the manifest is the
 check that each name is who really runs the host.
 

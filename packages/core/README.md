@@ -34,8 +34,10 @@ ESM only, with TypeScript declarations.
 | `@hana-id/core/near` | NEAR's borsh codec (`encodeNearDelegateAction`, `encodeNearTransaction`, `encodeNep413Message`, the decoders), hashes (`nep413Hash`, …) and `nearDelegateNonce`, the nonce of a delegate action Hana will sign for a test app (also in the root entry) |
 | `@hana-id/core/evm-sponsor` | the signing core of sponsored EVM actions (the pinned delegate table, EIP-7702 authorizations, the delegate's `Execute` typed data and calldata, the approval subject, the relayer's type-2 and type-4 transactions), which Journear Passport's vault uses for `hana.evm.sendSponsored` (0.5.0); your app doesn't need it |
 | `@hana-id/core/support-id` | `supportIdFromSub` on its own (also in the root entry) |
-| `@hana-id/core/display-safe` | `isDisplaySafeLine` and `isDisplaySafeText`, the check Journear Passport uses before it shows a name or a message as text (also in the root entry; no other imports) |
 | `@hana-id/core/mainnet-demo-prices` | the price book of Journear's sandbox mainnet demo: its floor and ceiling per asset and the strict check of a book (no other imports) |
+
+Internal: the package also exports `@hana-id/core/display-safe`. It is used by Journear's own packages, is not part of
+the supported SDK surface, and may change without notice.
 
 The `signers/stellar` and `decode` declarations reference Node's `Buffer` through `@stellar/stellar-base`: if you
 import those in TypeScript, add `@types/node` or keep `skipLibCheck` on.

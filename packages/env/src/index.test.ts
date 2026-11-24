@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { readdirSync } from 'node:fs';
 import { isDisplaySafeLine } from '@hana-id/core/display-safe';
-import { apiRpcFallbacksOf, ckdSourceOperatorProblems, loadEnv, MAX_API_RPC_FALLBACKS, MAX_CKD_SOURCE_OPERATORS, MIN_CKD_SOURCES, manifestPath, manifestSchema, nearOperatorProblems, operatorKey } from './index.ts';
+import { apiRpcFallbacksOf, ckdSourceOperatorProblems, duplicateJsonKey, loadEnv, MAX_API_RPC_FALLBACKS, MAX_CKD_SOURCE_OPERATORS, MIN_CKD_SOURCES, manifestPath, manifestSchema, nearOperatorProblems, operatorConflictProblems, operatorKey, parseManifest } from './index.ts';
 
 const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
 
@@ -93,7 +93,8 @@ describe('manifestSchema: who runs the NEAR providers (D903)', () => {
   /** sandbox-dev as parsed, on a production network: the schema admits only testnet today, so the rule is run as the schema runs it. */
   const production = (extra: Record<string, unknown> = {}) => ({ ...manifestSchema.parse({ ...raw(), ...extra }), network: 'mainnet' });
   const paths = (m: Parameters<typeof nearOperatorProblems>[0]) => nearOperatorProblems(m).map((p) => p.path.join('.'));
-  const OPERATORS = { rpcOperator: 'FastNear', rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear', 'dRPC'] };
+  // apiRpcFallbacks[0] is rpcFallback itself, so it names the same operator (one host, one operator: D904 after PR 133's review).
+  const OPERATORS = { rpcOperator: 'FastNear', rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['Lava', 'dRPC'] };
 
   it('every committed env validates as it is (sandbox-dev names no operators: one operator, FastNear, behind both is accepted on testnet)', () => {
     const names = readdirSync(manifestPath('sandbox-dev').replace(/[^/]+$/u, '')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
@@ -133,7 +134,7 @@ describe('manifestSchema: who runs the NEAR providers (D903)', () => {
     expect(paths(production())).toEqual(['rpcOperator', 'rpcFallbackOperator', 'apiRpcFallbackOperators']);
     // One operator behind both, however it is written (a different domain is no proof: near.org's endpoint is FastNear's).
     for (const same of ['FastNear', 'fastnear', ' FASTNEAR ', 'Fast Near', 'Fast-NEAR', 'ＦａｓｔＮｅａｒ']) {
-      const p = nearOperatorProblems(production({ ...OPERATORS, rpcFallbackOperator: same }));
+      const p = nearOperatorProblems(production({ ...OPERATORS, rpcFallbackOperator: same, apiRpcFallbackOperators: [same, 'dRPC'] }));
       expect(p.map((x) => x.path.join('.')), same).toEqual(['rpcFallbackOperator']);
       expect(p[0]!.message, same).toBe('rpc and rpcFallback must be run by different operators on a production network (mainnet) (both are FastNear): one operator behind both makes the two-provider checks one provider’s word (D903)');
     }
@@ -142,14 +143,14 @@ describe('manifestSchema: who runs the NEAR providers (D903)', () => {
     expect(paths(production({ ...OPERATORS, rpcFallbackOperator: undefined }))).toEqual(['rpcFallbackOperator']);
     expect(paths(production({ ...OPERATORS, apiRpcFallbackOperators: undefined }))).toEqual(['apiRpcFallbackOperators']);
     // The API's fallbacks only fail over (never compared), so they may share an operator with rpc.
-    expect(nearOperatorProblems(production({ ...OPERATORS, apiRpcFallbackOperators: ['FastNear', 'FastNear'] }))).toEqual([]);
+    expect(nearOperatorProblems(production({ ...OPERATORS, apiRpcFallbackOperators: ['Lava', 'FastNear'] }))).toEqual([]);
     // No second provider at all: refused (the pages' checks need two).
     const { rpcFallback: _, emailIssuer: _issuer, rpcFallbackOperator: _o, ...one }: Record<string, unknown> = { ...raw(), ...OPERATORS };
     expect(paths({ ...manifestSchema.parse(one), network: 'mainnet' })).toEqual(['rpcFallback']);
     // The message for a missing operator says why.
     expect(nearOperatorProblems(production()).map((p) => p.message)[0]).toBe('rpcOperator is required on a production network (mainnet): name who runs rpc (a different domain is no proof of a different operator, D903)');
     // On testnet the same manifests pass.
-    expect(nearOperatorProblems({ ...production({ ...OPERATORS, rpcFallbackOperator: 'FastNear' }), network: 'testnet' })).toEqual([]);
+    expect(nearOperatorProblems({ ...production({ ...OPERATORS, rpcFallbackOperator: 'FastNear', apiRpcFallbackOperators: ['FastNear', 'dRPC'] }), network: 'testnet' })).toEqual([]);
     expect(nearOperatorProblems({ ...production(), network: 'testnet' })).toEqual([]);
   });
 
@@ -271,6 +272,75 @@ describe('manifestSchema: who runs the pinned CKD key\'s sources (D904)', () => 
 
   it('the schema runs it after the network: a production manifest is refused on its network first today', () => {
     expect(messages({ ...raw(), network: 'mainnet' })).toEqual(expect.arrayContaining([expect.stringMatching(/^network: /u)]));
+  });
+});
+
+describe('one host, one operator (D904, after PR 133\'s review)', () => {
+  const messages = (m: Record<string, unknown>): string[] => manifestSchema.safeParse(m).error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`) ?? [];
+  const ckd = (a: string, b: string, c: string) => ({ ckdSourceOperators: { 'test.rpc.fastnear.com': a, 'rpc.testnet.near.org': b, 'near-testnet.drpc.org': c } });
+
+  it('every committed env validates and names no host twice with different operators', () => {
+    const names = readdirSync(manifestPath('sandbox-dev').replace(/[^/]+$/u, '')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
+    for (const name of names) expect(operatorConflictProblems(loadEnv(name)), name).toEqual([]);
+  });
+
+  it('the review\'s case: an API fallback named FastNear and the same host as a CKD source named Pagoda is refused, on every network', () => {
+    // sandbox-dev: apiRpcFallbacks[0] and the CKD source rpc.testnet.near.org are one host.
+    const m = { ...raw(), apiRpcFallbackOperators: ['FastNear', 'dRPC'], ...ckd('FastNear', 'Pagoda', 'dRPC') };
+    expect(messages(m)).toEqual(['ckdSourceOperators.rpc.testnet.near.org: rpc.testnet.near.org is run by FastNear in apiRpcFallbackOperators.0 but by Pagoda in ckdSourceOperators.rpc.testnet.near.org: one host has one operator (D904)']);
+    // Without the cross-check the count would pass with three "operators" where there are two.
+    const { apiRpcFallbackOperators: _a, ...withoutApi } = m;
+    const parsed = { ...manifestSchema.parse(withoutApi), apiRpcFallbackOperators: ['FastNear', 'dRPC'], network: 'mainnet' };
+    expect(ckdSourceOperatorProblems(parsed)).toEqual([]);
+    expect(operatorConflictProblems(parsed).map((p) => p.path.join('.'))).toEqual(['ckdSourceOperators.rpc.testnet.near.org']);
+  });
+
+  it('D903\'s own fields against each other, and rpc against a CKD source', () => {
+    // rpcFallback is apiRpcFallbacks[0] in sandbox-dev.
+    expect(messages({ ...raw(), rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear', 'dRPC'] })).toEqual([
+      'apiRpcFallbackOperators.0: rpc.testnet.near.org is run by Lava in rpcFallbackOperator but by FastNear in apiRpcFallbackOperators.0: one host has one operator (D904)',
+    ]);
+    expect(messages({ ...raw(), rpcOperator: 'FastNear', ckdSourceOperators: { 'test.rpc.fastnear.com': 'Pagoda' } })).toEqual([
+      'ckdSourceOperators.test.rpc.fastnear.com: test.rpc.fastnear.com is run by FastNear in rpcOperator but by Pagoda in ckdSourceOperators.test.rpc.fastnear.com: one host has one operator (D904)',
+    ]);
+    // The same operator however written (operatorKey), a host named in one field only, or nothing declared: fine.
+    expect(messages({ ...raw(), rpcOperator: 'FastNear', rpcFallbackOperator: 'fast near', apiRpcFallbackOperators: ['Fast-Near', 'dRPC'], ...ckd('FASTNEAR', 'FastNear', 'drpc') })).toEqual([]);
+    expect(messages({ ...raw(), rpcFallbackOperator: 'Lava' })).toEqual([]);
+    expect(messages({ ...raw(), ...ckd('A', 'B', 'C') })).toEqual([]);
+    // A count mismatch is D903's own refusal, not compared host by host.
+    expect(messages({ ...raw(), rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear'] })).toEqual(['apiRpcFallbackOperators: apiRpcFallbackOperators must name one operator per apiRpcFallbacks URL, in order (2, got 1)']);
+  });
+});
+
+describe('manifests with a key twice in one object (D904, after PR 133\'s review)', () => {
+  const text = () => readFileSync(manifestPath('sandbox-dev'), 'utf8');
+
+  it('finds the first repeated key at any depth, keys compared as JSON reads them', () => {
+    expect(duplicateJsonKey('{"a":"FastNear","b":"FastNear","c":"dRPC","b":"Lava"}')).toBe('b');
+    expect(duplicateJsonKey('{"x":{"a":1,"\\u0061":2}}')).toBe('x.a');
+    expect(duplicateJsonKey('{"x":[{"a":1},{"a":1,"a":2}]}')).toBe('x[1].a');
+    expect(duplicateJsonKey('{"a":1,"a":1}')).toBe('a');
+    expect(duplicateJsonKey('{"ckdSourceOperators":{"rpc.testnet.near.org":"A","rpc.testnet.near.org":"B"}}')).toBe('ckdSourceOperators."rpc.testnet.near.org"');
+    expect(duplicateJsonKey('[{"a":1,"a":2}]')).toBe('$[0].a');
+    // Not duplicates: the same key in different objects, keys that only look alike in a value, escaped quotes and braces.
+    expect(duplicateJsonKey('{"a":{"a":1},"b":{"a":2},"c":[{"a":1},{"a":2}]}')).toBeNull();
+    expect(duplicateJsonKey('{"a":"\\"a\\":1,{\\"a\\"","b":"} , \\"a\\"","c":["a","a"],"d":"\\\\","a2":"x"}')).toBeNull();
+    expect(duplicateJsonKey('{"A":1,"a":2,"a ":3}')).toBeNull();
+    expect(duplicateJsonKey('{}')).toBeNull();
+    expect(duplicateJsonKey('"a"')).toBeNull();
+  });
+
+  it('parseManifest refuses one; every committed env parses to exactly what JSON.parse and the schema give', () => {
+    const t = text();
+    const twice = t.replace('"network": "testnet",', '"network": "testnet",\n  "network": "testnet",');
+    expect(twice).not.toBe(t);
+    expect(() => parseManifest('sandbox-dev', twice)).toThrow('envs/sandbox-dev.json has a key twice in one object (network): JSON keeps only the last, which a reader of the file may not see');
+    const names = readdirSync(manifestPath('sandbox-dev').replace(/[^/]+$/u, '')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
+    for (const name of names) {
+      const own = readFileSync(manifestPath(name), 'utf8');
+      expect(duplicateJsonKey(own), name).toBeNull();
+      expect(loadEnv(name), name).toEqual(manifestSchema.parse(JSON.parse(own)));
+    }
   });
 });
 

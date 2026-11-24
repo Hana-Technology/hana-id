@@ -10,11 +10,7 @@
 // Unassigned code points (Cn) aren't refused: what is unassigned depends on the engine's Unicode version, and the
 // policy validator must answer the same in the CLI, the API and every browser. An emoji with a variation selector
 // (U+FE0F) is shown as hex: variation selectors can also smuggle data into text that looks plain.
-//
-// The one shared module for these checks in the workspace: also served on the subpath `@hana-id/core/display-safe`
-// (it imports nothing, so a Worker or the manifest package uses it without the root entry). The app-name rule, the
-// email issuer and the manifest's operator names call it instead of keeping copies. Escapes only, so this source holds
-// no invisible character.
+// Escapes only, so this source holds no invisible character.
 
 // The invisible characters, as the body of a character class (for a `u` RegExp): format characters (bidi controls,
 // zero-width characters, tags), private use, line and paragraph separators, and the other default-ignorable code points

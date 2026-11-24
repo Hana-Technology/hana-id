@@ -8,6 +8,8 @@ portal connection (the platform API) and per-app User IDs: `partner-platform-spe
 
 Last verified: 2026-11-24 (branch `feat/shared-wallet-line`, from `next`, not merged, not deployed: the sign-in and
 approval windows now say when the wallet is also used on other apps, D912: the summary's row, section 4, section 7);
+2026-11-24 (branch `feat/name-sodax-evm-chains`, from `next`, not merged, not deployed: the approval
+window names all 14 of Sodax's EVM chains, D910; "Chains", the summary's last row and "Who builds what" updated);
 2026-11-24 (branch `docs/partner-platform-spec`, from `next`, not merged, docs only: the Tech Lead's
 answers of 2026-11-24 (D913) in the status line, sections 3, 4, 5 and "Open", and links to `partner-platform-spec.md`;
 nothing else re-checked); 2026-11-24 (branch `docs/sodax-sdk-integration`, from `next`, not merged, not deployed: written from
@@ -32,7 +34,7 @@ announcement), to be adjusted after the Tech Lead has talked to Sodax (D913); th
 | A switch in Sodax's portal | **Missing**: no service-to-service API exists; apps are made by Journear staff |
 | Our SDK on npm | **No** (tarballs, D706) |
 | Real swaps for Sodax partners | Only through the staff-only mainnet demo (Base and Stellar, $9.99 a transaction); real launch needs live keys |
-| Sodax's chains | EVM chains and Stellar covered; Solana, Sui, Bitcoin, Injective, ICON and Stacks planned (below); NEAR: not planned for the swap |
+| Sodax's chains | EVM chains (all 14 named in our windows, D910) and Stellar covered; Solana, Sui, Bitcoin, Injective, ICON and Stacks planned (below); NEAR: not planned for the swap |
 
 ## 1. What we checked, and how
 
@@ -209,9 +211,13 @@ we lack are planned, with no dates. NEAR is not planned for the Sodax swap (the 
 
 **Covered:** every EVM chain through one secp256k1 key and our EIP-1193 provider: Sonic, Ethereum, Arbitrum, Base,
 BNB Chain, Optimism, Polygon, Avalanche, HyperEVM (999), LightLink (1890), Redbelly (151), Kaia (8217), Hedera (295)
-and Robinhood Chain (4663); and Stellar. Our approval window names only the first eight; for the other six it says "A network
-Journear doesn't know (no. 999)" and "of this network's coin" instead of a name and a coin. Hedera runs through its EVM
-relay with its own account rules: not checked.
+and Robinhood Chain (4663); and Stellar. Our approval window names all fourteen with their own coin, as real-money
+networks (D910): "HyperEVM (real money)" and HYPE, "LightLink" and ETH, "Redbelly Network" and RBNT, "Kaia" and KAIA,
+"Hedera" and HBAR, "Robinhood Chain" and ETH, each checked against the chain's own docs and the public chain
+registries. Naming a chain is display only: test apps still refuse all of them, the mainnet demo stays Base and
+Stellar, and an unknown token or call on a named chain is still unknown. A transaction counts HBAR in 18 decimals
+(Hedera's relay takes weibars), which is how the window shows it; Sodax's own token list gives HBAR 8 (tinybars, as
+programs see it). Hedera's own account and fee rules through its relay: not checked.
 
 **Planned.** Every new chain needs the same pieces: a key from the user's existing secret, an address, a signer in
 our vault, a provider in our SDK and Sodax's wallet interface for it, an approval window that says in plain words what
@@ -226,7 +232,7 @@ rule and whether Injective reuses the EVM key are part of what becomes final. Ca
 
 | Chain | Key and curve | New derivation pair | What the approval window must explain | Rough size |
 |---|---|---|---|---|
-| The six EVM chains above | secp256k1 (have it) | none | the chain's name and coin | small |
+| The six EVM chains above | secp256k1 (have it) | none | done: named with their coin (D910) | done |
 | Solana | Ed25519 | yes, `solana`/`ed25519` | program calls and token accounts; Sodax's calls | medium |
 | Sui | Ed25519 (its default) | yes, `sui`/`ed25519` | Move calls and coins | medium |
 | Bitcoin | secp256k1 (and Schnorr for Taproot addresses) | yes, `bip122`/`secp256k1` | a PSBT's inputs, outputs, change and fee | large |
@@ -235,7 +241,8 @@ rule and whether Injective reuses the EVM key are part of what becomes final. Ca
 | Stacks | secp256k1 | yes, `stacks`/`secp256k1` | Clarity calls and their post-conditions | medium |
 
 "Medium" is about the size of adding NEAR (D720 to D729). **Proposed order**, cheapest first and then by how much we
-expect Sodax's users to use each (to confirm with Sodax, who has the numbers): the six EVM names and coins; Solana; Sui;
+expect Sodax's users to use each (to confirm with Sodax, who has the numbers): the six EVM names and coins (done,
+D910); Solana; Sui;
 Bitcoin; Injective; ICON; Stacks. Real use needs live keys: Sodax has no testnet, so on testnet only the signing can
 be tried, on each chain's own test network.
 
@@ -243,7 +250,7 @@ be tried, on each chain's own test network.
 
 | Who | What |
 |---|---|
-| Journear | The service API and its staff screens (section 3); the per-app answers in section 4 (the shared-wallet line in our windows is built, D912); the EVM chain names; publishing the SDK; then chains in the order above |
+| Journear | The service API and its staff screens (section 3); the per-app answers in section 4 (the shared-wallet line in our windows is built, D912); publishing the SDK; then chains in the order above |
 | Sodax | Load our SDK when the switch is on; create the client with the partner's key; accept extra Stellar Wallets Kit modules and keep wallet error codes; the portal switch and its call to our API |
 | Each Sodax partner | Its page meets our page requirements (popups allowed, the frame not blocked; `integration.md` section 5) |
 | The Tech Lead | The decisions in "Open" below |

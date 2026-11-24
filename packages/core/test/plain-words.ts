@@ -8,7 +8,7 @@ import type { ApprovalSummary, SummaryText } from './entries.ts';
 import { jargonIn as brandJargonIn } from '../../brand/src/plain-words.ts';
 
 /** Network names that hold a banned word as part of the name (BNB Smart Chain): names, not jargon. */
-const NETWORK_NAMES = /BNB Smart Chain|Avalanche C-Chain/gu;
+const NETWORK_NAMES = /BNB Smart Chain|Avalanche C-Chain|Robinhood Chain/gu;
 
 /**
  * The banned words in `text`: the one shared list (`@hana-id/brand/plain-words`, every surface's check), network names

@@ -35,7 +35,10 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
 
 /**
  * EVM mainnets Hana can name, by chain ID. For display only: it allows nothing (a test app signs for none of them
- * outside the mainnet demo's own list).
+ * outside the mainnet demo's own list). It holds every EVM chain Sodax's SDK lists (@sodax/types 2.2.0), each checked
+ * against the chain's own docs and the public chain registries. 999 is HyperEVM in its docs and on chainlist.org, and
+ * a Wanchain test network that is still running in ethereum-lists: one number, so one signature is good on both, and
+ * "real money" is the safe name for it. 999 must never join TEST_EVM_CHAINS.
  */
 export const KNOWN_EVM_MAINNETS: Readonly<Record<number, string>> = Object.freeze({
   1: 'Ethereum',
@@ -43,12 +46,23 @@ export const KNOWN_EVM_MAINNETS: Readonly<Record<number, string>> = Object.freez
   56: 'BNB Smart Chain',
   137: 'Polygon',
   146: 'Sonic',
+  151: 'Redbelly Network',
+  295: 'Hedera',
+  999: 'HyperEVM',
+  1890: 'LightLink',
+  4663: 'Robinhood Chain',
+  8217: 'Kaia',
   8453: 'Base',
   42161: 'Arbitrum One',
   43114: 'Avalanche C-Chain',
 });
 
-/** The native coin's symbol on the chains Hana can name; every other named chain's is ETH. */
+/**
+ * The native coin's symbol on the chains Hana can name; every other named chain's is ETH (LightLink's and Robinhood
+ * Chain's too). On every named chain a transaction's value and fee count that coin in 18 decimals, Hedera included:
+ * its JSON-RPC relay takes HBAR in weibars (10^10 to a tinybar); HBAR's 8-decimal tinybars exist only inside
+ * programs, whose amounts Hana never shows as the coin.
+ */
 const EVM_NATIVE_SYMBOLS: Readonly<Record<number, string>> = Object.freeze({
   56: 'BNB',
   97: 'tBNB',
@@ -59,6 +73,10 @@ const EVM_NATIVE_SYMBOLS: Readonly<Record<number, string>> = Object.freeze({
   14601: 'S',
   43114: 'AVAX',
   43113: 'AVAX',
+  151: 'RBNT',
+  295: 'HBAR',
+  999: 'HYPE',
+  8217: 'KAIA',
 });
 
 export interface EvmChainInfo {

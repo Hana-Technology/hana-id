@@ -99,13 +99,18 @@ function hasImitation(policy: AutoApprovePolicyV1): boolean {
 /** Shown for the native coin of a chain Hana can't name. */
 export const UNKNOWN_NATIVE_COIN = 'of this network’s own coin';
 
+/** Hedera mainnet: its JSON-RPC relay counts HBAR in weibars (18 decimals), not the tinybars (8) other tools show. */
+const HEDERA_MAINNET = 295;
+
 /**
  * A native amount with its unit: "0.001 ETH (1000000000000000 wei)", or, on a chain Hana can't name, "0.001 of this
- * chain’s native coin (1000000000000000 wei)".
+ * chain’s native coin (1000000000000000 wei)". On Hedera the raw number is in weibars: "1.5 HBAR (1500000000000000000
+ * weibars)".
  */
 export function nativeAmount(chainId: number, wei: string): string {
   const info = evmChainInfo(chainId);
-  return `${formatUnits(wei, 18)} ${info ? info.nativeSymbol : UNKNOWN_NATIVE_COIN} (${wei} wei)`;
+  const raw = chainId === HEDERA_MAINNET ? 'weibars' : 'wei';
+  return `${formatUnits(wei, 18)} ${info ? info.nativeSymbol : UNKNOWN_NATIVE_COIN} (${wei} ${raw})`;
 }
 
 /**

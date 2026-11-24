@@ -156,6 +156,37 @@ describe('EVM transactions', () => {
     expect(text(s.network!)).toBe('A network Journear doesn’t know (no. 987654321)');
   });
 
+  it('the six other chains Sodax lists: named with their own coin in the send, the fee and the network; nothing else changes', () => {
+    const six: readonly [number, string, string][] = [
+      [999, 'HyperEVM', 'HYPE'],
+      [1890, 'LightLink', 'ETH'],
+      [151, 'Redbelly Network', 'RBNT'],
+      [8217, 'Kaia', 'KAIA'],
+      [295, 'Hedera', 'HBAR'],
+      [4663, 'Robinhood Chain', 'ETH'],
+    ];
+    for (const [id, name, coin] of six) {
+      const send = evmSummary({}, id);
+      expect(headline(send)).toBe(`${APP} wants to send 1 ${coin} to ${TO}`);
+      expect(text(send.fee!)).toBe(`Up to 0.000042 ${coin}`);
+      expect(text(send.network!)).toBe(`${name} (real money)`);
+      expect(jargonWords(text(send.network!)), name).toEqual([]);
+      // A named chain says no more about an unknown call, token or spender than an unnamed one does.
+      const unknown = tokenCall('0xdeadbeef0000', id);
+      expect(warnings(unknown)).toEqual(warnings(tokenCall('0xdeadbeef0000', 987654321)));
+      expect(warnings(unknown)).toEqual([['danger', 'cannot_explain', `Journear can’t check what this does (it asks for an action Journear doesn’t know). It could take your money or tokens. If you’re not sure, reject it.`]]);
+      expect(unknown.explainable).toBe(false);
+      const transfer = tokenCall(calldata('transfer(address,uint256)', TO, 5_000_000n), id);
+      expect(headline(transfer)).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${TO}`);
+      const approve = tokenCall(calldata('approve(address,uint256)', SPENDER, UINT256_MAX), id);
+      expect(warnings(approve)).toEqual([['danger', 'unlimited_spend', `This lets ${SPENDER} (not checked by Journear) take all your tokens from ${TOKEN_EVM} (an unlisted token), now or later, with no limit. Approve only if you trust them completely.`]]);
+      // Value sent with a call: the coin is named, the call still unknown.
+      const paid = evmSummary({ to: TOKEN_EVM, data: '0xdeadbeef0000' }, id);
+      expect(codes(paid)).toEqual(['cannot_explain']);
+      expect(JSON.stringify(paid)).toContain(`1 ${coin}`);
+    }
+  });
+
   it('an ERC-20 transfer of a token Journear doesn’t know: "units of an unlisted token", what to do, never a guessed symbol', () => {
     const s = tokenCall(calldata('transfer(address,uint256)', TO, 5_000_000n));
     expect(headline(s)).toBe(`${APP} wants to send 5,000,000 units of an unlisted token to ${TO}`);

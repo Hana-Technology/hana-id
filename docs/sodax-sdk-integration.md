@@ -1,17 +1,19 @@
 # Journear Passport inside Sodax's SDK: what works today and the plan
 
-Sodax (a cross-chain swap SDK: `@sodax/sdk` with its wallet kit `@sodax/wallet-sdk-react` and `@sodax/dapp-kit`) wants
-to put Journear Passport inside its own SDK, so that a Sodax partner turns on sign-in with Google or email with a
-switch in Sodax's partner portal. This page says what works today, what is missing, who would build what, the risks
-and the questions to settle with Sodax. Decision: D909 in `decisions.md`.
+Sodax is a cross-chain swap SDK: `@sodax/sdk`, its wallet kit `@sodax/wallet-sdk-react` and `@sodax/dapp-kit`. The
+aim (D909): our SDK inside Sodax's SDK, switched on from Sodax's partner portal, so that a Sodax partner turns on
+sign-in with Google or email with a switch. This page says what works today, what is missing, who would build what,
+the risks and the questions to settle with Sodax. Decision: D909 in `decisions.md`.
 
 Last verified: 2026-11-24 (branch `docs/sodax-sdk-integration`, from `next`, not merged, not deployed: written from
 the code and a local test against Sodax's public packages at 2.2.0, their latest release; `2.3.0-rc.4` lists the same
-chains).
+chains); after PR 136's review: claims about Sodax's packages marked tested, read in source or inferred; the
+address-freeze wording; facts on the origin exception, demo prices and partner labels).
 
-**Status in one line:** the founder decided that every Sodax partner site shares one wallet (one app per partner, all
-in Sodax's organisation on one scope). Nothing for the portal switch is built. Who vouches for each partner's web
-address is parked until the founder has talked to Sodax.
+**Status in one line:** the Tech Lead decided that every Sodax partner site shares one wallet (one app per partner, all
+in Sodax's organisation on one scope). Test and live apps never share a scope (D51), so that is one test scope now and
+a separate live scope, with different addresses, later. Nothing for the portal switch is built. Who vouches for each
+partner's web address is parked until it is settled with Sodax.
 
 ## Summary
 
@@ -24,7 +26,7 @@ address is parked until the founder has talked to Sodax.
 | A switch in Sodax's portal | **Missing**: no service-to-service API exists; apps are made by Journear staff |
 | Our SDK on npm | **No** (tarballs, D706) |
 | Real swaps for Sodax partners | Only through the staff-only mainnet demo (Base and Stellar, $9.99 a transaction); real launch needs live keys |
-| Sodax's chains | EVM chains and Stellar covered; Solana, Sui, Bitcoin, Injective, ICON and Stacks planned (below) |
+| Sodax's chains | EVM chains and Stellar covered; Solana, Sui, Bitcoin, Injective, ICON and Stacks planned (below); NEAR: not planned for the swap |
 
 ## 1. What we checked, and how
 
@@ -33,26 +35,27 @@ A one-off page in a scratch folder (not in this repository): React 19, `@sodax/w
 this branch's sources. It ran against the local stack (`apps/e2e`, port base 4930) with the pretend Google, driven by
 Playwright in Chromium. Every request to a host outside the computer was answered locally or blocked: none was made,
 nothing was broadcast, no real account or funds were used. Base's RPC was a local stand-in that keeps a broadcast
-instead of sending it (none arrived).
+instead of sending it (none arrived). Below, "tested" means seen on that page; "read" means read in Sodax's 2.2.0
+published code; "inferred" means neither.
 
 | Check | Result |
 |---|---|
 | Sodax's kit alone | EVM list empty; Stellar list Albedo, xBull, HOT Wallet (the ones that need no extension) |
 | `createHana({ evm, stellar })` and nothing else | EVM list gains "Journear Passport" with its icon; Stellar list unchanged |
-| The same, created 2 s after Sodax's kit mounted (as a switch read from a server would) | EVM: still appears (EIP-6963 listens all the time) |
+| The same, created 2 s after Sodax's kit mounted (as a switch read from a server would) | EVM: still appears. Our client announces itself when created and on every EIP-6963 request; wagmi keeps listening for announcements |
 | A Stellar connector passed in Sodax's `config.STELLAR.connectors` | Replaced by Sodax's own discovery: never shown |
 | Our Stellar module pushed into Sodax's kit's private module list before discovery | Appears as "Journear Passport"; connect works and gives the same address as our client |
-| The same push 2 s later | Never appears (Sodax looks for Stellar wallets only in the first half second) |
+| The same push 2 s later | Never appears (tested). Read: Sodax looks for Stellar wallets at 0, 100 and 500 ms after mounting, then stops |
 | Connect EVM through Sodax's own connect | Our sign-in window opens; after the pretend Google, Sodax has the address and its own `EvmWalletProvider` |
 | Send on Base (8453) through Sodax's `EvmWalletProvider`, test key | Refused before any window: `4100`, "Test apps can sign only for test networks" |
-| Sign a Stellar public-network payment through Sodax's `StellarWalletProvider`, test key | Refused, but Sodax reports only "Failed to sign transaction" and drops our code |
+| Sign a Stellar public-network payment through Sodax's `StellarWalletProvider`, test key | Refused, but Sodax reports only "Failed to sign transaction" and drops our code (tested in the two cases tried: this refusal and a Reject, next row) |
 | A test app with the mainnet demo on, Base and Stellar through Sodax's providers | The approval shows the red "Real money, test system" banner, the value and the $9.99 limit; Reject reaches Sodax as `4001` (EVM) or "Failed to sign transaction" (Stellar) |
 | Two apps on one scope, two web addresses, the same Google account | The same EVM and Stellar addresses on both |
 
 Not checked: Firefox and Safari (Safari blocks a window opened after Sodax's own waits, so the sign-in goes through our
 "Sign in with Journear Passport" button in the page, as `apps/e2e/tests/interfaces.spec.ts` shows for wagmi); a real
-Google account; Sodax's swap itself on a real network; `@sodax/dapp-kit`'s hooks (it builds on the wallet kit and
-`@sodax/sdk`).
+Google account; Sodax's swap itself on a real network; `@sodax/dapp-kit`'s hooks (read: `@sodax/dapp-kit` 2.2.0
+depends on `@sodax/sdk` and `viem` only, not on the wallet kit, so it takes wallet providers from the page).
 
 ## 2. What Sodax's SDK would do to embed us
 
@@ -75,14 +78,15 @@ inserts our hidden frame at once (one page load and one `GET /v1/app`), so creat
 | Family | What Sodax's SDK does | Sodax code change? |
 |---|---|---|
 | EVM | Nothing beyond creating our client: wagmi's EIP-6963 discovery lists us, also when created late | No |
-| Stellar | Let its `StellarXService` take extra Stellar Wallets Kit modules (for example a `modules` option next to `allowAllModules()`), add `new HanaIdModule(hana)` there, and look for wallets again when one is added later | Yes, small |
+| Stellar | Let its `StellarXService` take extra Stellar Wallets Kit modules (for example a `modules` option next to `allowAllModules()`), add `new HanaIdModule(hana)` there, and look for wallets again when one is added later. Read: today it builds its kit with `allowAllModules()` and takes no module option; tested: a connector in its config is replaced by its discovery | Yes, small (inferred) |
 | Stellar errors | Keep the wallet's `code` and `message` when the wallet's error isn't an `Error` object, so users see our reason, not "Failed to sign transaction" | Yes, small |
 | Others | Not offered until we cover the chain (section 6) | Later |
 
 **Size.** `createHana`, the Stellar module and the Sodax adapters together are about 114 kB minified, 36 kB gzipped
 (measured with esbuild from this branch). Our test page with Sodax's wallet kit was 11.3 MB minified, so ours is about
-1 percent of it; loaded on demand it costs nothing when the switch is off. Sodax's kit also needed stand-ins for Node's
-`crypto` and `stream` in the browser; a partner's bundler already handles that for Sodax.
+1 percent of it; loaded on demand it costs nothing when the switch is off. Tested: bundling Sodax's kit with esbuild
+for the browser needed stand-ins for Node's `crypto` and `stream`; inferred: a partner already using Sodax's kit has
+its bundler set up for that.
 
 **npm.** Not published: `@hana-id/core`, `@hana-id/web` and `@hana-id/sodax` answer "not found" on the public npm
 registry (checked 2026-11-24). Partners get tarballs (D706). An SDK that depends on us needs a registry: the choice of
@@ -96,9 +100,10 @@ a protected environment, and removing `"private": true` (`operations.md`, "Publi
 - Apps are created only by Journear staff (`AdminRpc.createApp` from the admin portal, or `admin <env> app:create`).
 - A partner changes its apps in our partner portal as a person: a Google sign-in, and for adding a web address a fresh
   Google sign-in by an on-chain owner of the scope (the console's step-up), checked by the API.
-- Adding a web address waits after it is announced by email to the security contacts and to Journear: 24 hours on a
-  production network, 60 s on sandbox-dev. On a shared scope the "nobody has signed in yet" exception ends with the
-  scope's first user, so every later partner's addresses wait the full delay.
+- Adding a web address waits after it is announced by email to the security contacts and to Journear: at least 24
+  hours on a production network, 60 s on sandbox-dev. The "nobody has signed in yet" exception ends as soon as any
+  origin of the scope has been in force (or a user has a session in it), and for a staff-created app it applies only
+  when that create made the scope. So on a shared scope every later partner's addresses wait the full delay.
 
 **The smallest safe design** (not built; to settle with Sodax and after the origin question):
 
@@ -111,7 +116,7 @@ a protected environment, and removing `"private": true` (`operations.md`, "Publi
 3. **Limits.** A few apps per day per credential, at most 20 web addresses per app (as today), live apps only once
    live keys exist and only with Journear staff's approval.
 4. **The delays stay.** Every web address it adds is a proposal like a staff one: announced to Sodax's security
-   contacts and to Journear, cancellable from the email, in force 24 hours later on production. Removing and
+   contacts and to Journear, cancellable from the email, in force at least 24 hours later on production. Removing and
    suspending are immediate.
 5. **Audit.** Every call is recorded as the service actor in the existing change and audit records, with the
    request id, and shown in the portal's Audit page and the staff portal.
@@ -133,7 +138,8 @@ partner site opens the same wallet without a word about it. Only Passport Home l
 
 **What must stay off for apps on a shared scope** (each is per app today, but every one reaches the same funds):
 
-- auto-approve policies, until the user is told which other sites share the wallet and a policy can't outlast that;
+- auto-approve policies, until the user is told which other sites share the wallet and a policy can't outlast that
+  (auto-approved Sodax swaps stay deferred, D708);
 - raw signing (already refused for test apps);
 - the mainnet demo, except under staff's per-app rule (section 5);
 - gas sponsorship for EVM actions (not live), until each partner's sponsored calls are reviewed.
@@ -153,6 +159,8 @@ partner site opens the same wallet without a word about it. Only Passport Home l
    much that is worth.
 6. Signing out on one site doesn't sign out the others (each site has its own session). Passport Home lists the
    devices signed in to the wallet and signs each out.
+7. Partner labels (your own words for requests in the approval window) belong to the scope: on a shared scope they
+   are set by the scope's on-chain owners, Sodax's, not by each partner, and each version attaches to at most 8 apps.
 
 ## 5. Mainnet swaps on test infrastructure
 
@@ -162,8 +170,8 @@ partner site opens the same wallet without a word about it. Only Passport Home l
   environment is a development environment on testnet (`local…` or `sandbox…`; sandbox-dev is one) and the app is a
   test app (the database refuses it for a live scope);
 - the API serves it only in such an environment, and our vault honours it only when its own build is one;
-- Base (8453) and Stellar's public network only; at most $9.99 per transaction, fee included, valued from reviewed
-  prices; anything it can't value is refused; no daily limit; never auto-approved; every signature reported to staff;
+- Base (8453) and Stellar's public network only; at most $9.99 per transaction, fee included, valued from live
+  prices kept within a band that ends at the reviewed table (D436); anything it can't value is refused; no daily limit; never auto-approved; every signature reported to staff;
 - partners never see or set it.
 
 **Many partner apps on one shared scope:** nothing in the code stops staff switching it on for every app of the scope,
@@ -179,8 +187,8 @@ API; real swaps for Sodax partners wait for live keys.
 ## 6. Chains
 
 Sodax 2.2.0's chains (`@sodax/types`), against what we sign for. Sonic is Sodax's hub: users sign only on the chain
-they swap from. The founder's direction (D909): cover as many of Sodax's chains as we can in the long run; the ones
-we lack are planned, with no dates. NEAR is left out of the Sodax swap by an earlier decision (2026-11-12).
+they swap from. The Tech Lead's direction (D909): cover as many of Sodax's chains as we can in the long run; the ones
+we lack are planned, with no dates. NEAR is not planned for the Sodax swap (the Tech Lead, 2026-11-12).
 
 **Covered:** every EVM chain through one secp256k1 key and our EIP-1193 provider: Sonic, Ethereum, Arbitrum, Base,
 BNB Chain, Optimism, Polygon, Avalanche, HyperEVM (999), LightLink (1890), Redbelly (151), Kaia (8217), Hedera (295)
@@ -193,10 +201,11 @@ our vault, a provider in our SDK and Sodax's wallet interface for it, an approva
 moves (and, for Sodax, a decoder that binds the swap's delivery to the user's own wallet, as Base and Stellar have),
 the rule for which of its networks count as test networks, key export and Passport Home's "Move wallet".
 
-**Keys and the address freeze.** Our keys don't come from the MPC network one by one: the MPC gives each user one
-secret, and every chain's key is derived from it in the browser. So the NEAR MPC can produce every curve below. Each
-new chain is a new pair of name and curve in that derivation: no existing address moves, but the new addresses are
-final at the address freeze, and building one must be called out (`CLAUDE.md`).
+**Keys and the address freeze.** Our keys don't come from the MPC network one by one: the NEAR MPC gives each user
+one secret, and HKDF derives every chain's key from it in the browser. That one secret is enough to derive a key on
+every curve below. Each new chain adds a new (name, curve) pair: no existing address moves, but that pair's name,
+curve and key rule are final from the day it ships (from the address freeze if it ships before it). Bitcoin's Taproot
+rule and whether Injective reuses the EVM key are part of what becomes final. Call it out when built (`CLAUDE.md`).
 
 | Chain | Key and curve | New derivation pair | What the approval window must explain | Rough size |
 |---|---|---|---|---|
@@ -220,7 +229,7 @@ be tried, on each chain's own test network.
 | Journear | The service API and its staff screens (section 3); the shared-wallet line in our windows; the per-app answers in section 4; the EVM chain names; publishing the SDK; then chains in the order above |
 | Sodax | Load our SDK when the switch is on; create the client with the partner's key; accept extra Stellar Wallets Kit modules and keep wallet error codes; the portal switch and its call to our API |
 | Each Sodax partner | Its page meets our page requirements (popups allowed, the frame not blocked; `integration.md` section 5) |
-| The founder | The decisions in "Open" below |
+| The Tech Lead | The decisions in "Open" below |
 
 ## 8. Risks
 
@@ -238,11 +247,11 @@ be tried, on each chain's own test network.
 2. Would Sodax accept the Stellar change (extra wallet modules, wallet error codes kept) upstream?
 3. How does Sodax know each partner's real web addresses, and can a partner prove them (a DNS record or a file on the
    site)?
-4. Does Sodax want each partner's users to see the same User ID across partners, or one per partner?
+4. Does Sodax want each partner's backend to get the same User ID for a person, or one per partner?
 5. Can Sodax load our SDK only for partners with the switch on, from npm, once we publish?
 6. Should partners see their own users in our portal (needs per-app access), or only through Sodax?
 
-## Open (for the founder)
+## Open (for the Tech Lead)
 
 - Who vouches for each partner's web address (parked, D909).
 - Whether the mainnet demo stays a staff switch per partner app (recommended) or joins Sodax's switch (amends D428).

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { type Manifest, manifestSchema } from './schema.ts';
 
-export { apiRpcFallbacksOf, DO_LOCATION_HINTS, endpointUrlProblem, MAX_API_RPC_FALLBACKS, MAX_OPERATOR_NAME, type Manifest, manifestSchema, MIN_CKD_SOURCES, nearOperatorProblems, nearRelaySchema, nearSchema, operatorKey, PAGER_PROVIDERS, partnerLabelsProblem } from './schema.ts';
+export { apiRpcFallbacksOf, ckdSourceOperatorProblems, DO_LOCATION_HINTS, endpointUrlProblem, MAX_API_RPC_FALLBACKS, MAX_CKD_SOURCE_OPERATORS, MAX_OPERATOR_NAME, type Manifest, manifestSchema, MIN_CKD_SOURCES, nearOperatorProblems, nearRelaySchema, nearSchema, operatorKey, PAGER_PROVIDERS, partnerLabelsProblem } from './schema.ts';
 export {
   checksumEvmAddress,
   EVM_SPONSOR_BOUNDS,

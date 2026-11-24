@@ -683,6 +683,9 @@ importers:
 
   packages/env:
     dependencies:
+      '@hana-id/core':
+        specifier: workspace:*
+        version: link:../core
       '@noble/hashes':
         specifier: 1.8.0
         version: 1.8.0

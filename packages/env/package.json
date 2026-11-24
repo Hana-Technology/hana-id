@@ -9,6 +9,6 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": { "@noble/hashes": "1.8.0", "tldts": "7.4.18", "zod": "^4.6.6" },
+  "dependencies": { "@hana-id/core": "workspace:*", "@noble/hashes": "1.8.0", "tldts": "7.4.18", "zod": "^4.6.6" },
   "devDependencies": { "typescript": "^5.7.0", "vitest": "^3.2.0", "@types/node": "^22.0.0" }
 }

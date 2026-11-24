@@ -100,3 +100,30 @@ describe('where the rule applies', () => {
     }
   });
 });
+
+describe('the shared module (D904): the same rule as before, on every code point', () => {
+  // The two patterns as they were before the rule became the workspace's one module (the source then held the
+  // default-ignorable characters themselves; here in escape form, the same code points).
+  const OLD_INVISIBLE = String.raw`\p{Cf}\p{Co}\p{Zl}\p{Zp}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0\u{e0100}-\u{e01ef}`;
+  const OLD_MULTILINE = new RegExp(String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f${OLD_INVISIBLE}]`, 'u');
+  const OLD_LINE = new RegExp(String.raw`[\p{Cc}${OLD_INVISIBLE}]`, 'u');
+
+  it('accepts and refuses exactly what the old patterns did, alone and inside text, lone surrogates included', () => {
+    const differ: string[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      const c = cp >= 0xd800 && cp <= 0xdfff ? String.fromCharCode(cp) : String.fromCodePoint(cp);
+      for (const s of [c, `a${c}b`]) {
+        if (isDisplaySafeText(s) !== !OLD_MULTILINE.test(s)) differ.push(`text U+${cp.toString(16)}`);
+        if (isDisplaySafeLine(s) !== !OLD_LINE.test(s)) differ.push(`line U+${cp.toString(16)}`);
+      }
+    }
+    expect(differ).toEqual([]);
+  });
+
+  it('is served on its own subpath, the same functions as the root entry', async () => {
+    const sub = await import('@hana-id/core/display-safe');
+    expect(sub.isDisplaySafeLine).toBe(isDisplaySafeLine);
+    expect(sub.isDisplaySafeText).toBe(isDisplaySafeText);
+    expect(Object.keys(sub).sort()).toEqual(['isDisplaySafeLine', 'isDisplaySafeText']);
+  });
+});

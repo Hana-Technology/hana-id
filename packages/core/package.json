@@ -30,7 +30,8 @@
     "./near": "./src/near/index.ts",
     "./evm-sponsor": "./src/evm-sponsor/index.ts",
     "./sponsor-session": "./src/sponsor-session.ts",
-    "./partner-labels": "./src/partner-labels/index.ts"
+    "./partner-labels": "./src/partner-labels/index.ts",
+    "./display-safe": "./src/display-safe.ts"
   },
   "files": [
     "dist",
@@ -101,6 +102,10 @@
       "./partner-labels": {
         "types": "./dist/partner-labels/index.d.ts",
         "import": "./dist/partner-labels/index.js"
+      },
+      "./display-safe": {
+        "types": "./dist/display-safe.d.ts",
+        "import": "./dist/display-safe.js"
       },
       "./package.json": "./package.json"
     },

@@ -45,7 +45,7 @@ describe('@hana-id/core', () => {
     expect(VERSION).toBe(pkg.version);
   });
 
-  it('publishes the derivation, identity, Home, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo, demo constants, demo prices, NEAR, EVM sponsor, sponsor session and partner labels subpaths, and they exist', () => {
+  it('publishes the derivation, identity, Home, wallet record, Stellar signer, decode, policy, Support ID, mainnet demo, demo constants, demo prices, NEAR, EVM sponsor, sponsor session, partner labels and display-safety subpaths, and they exist', () => {
     expect(pkg.exports).toEqual({
       '.': './src/index.ts',
       './derivation': './src/derivation.ts',
@@ -63,6 +63,7 @@ describe('@hana-id/core', () => {
       './evm-sponsor': './src/evm-sponsor/index.ts',
       './sponsor-session': './src/sponsor-session.ts',
       './partner-labels': './src/partner-labels/index.ts',
+      './display-safe': './src/display-safe.ts',
     });
     for (const path of Object.values(pkg.exports)) expect(existsSync(new URL(`../${path}`, import.meta.url))).toBe(true);
   });

@@ -3,7 +3,9 @@
 // escaped, kept out of the heading and written so clients don't link them; the env banner; tracking off on the wire;
 // the size.
 import { MAIL_LOGO_PATH } from '@hana-id/brand/mail-logo';
+import * as displaySafe from '@hana-id/core/display-safe';
 import { describe, expect, it } from 'vitest';
+import { isDisplaySafeLine } from '../src/bytes.ts';
 import type { Purpose } from '../src/commitment.ts';
 import { CODE_HEADINGS, codeMail, confirmMail, displayAppName, linkNoticeMail, mailEnvNotice, mailLook, unlockMail } from '../src/mail.ts';
 import { SendGridSender } from '../src/sendgrid.ts';
@@ -292,5 +294,13 @@ describe('notices: the designed HTML part', () => {
       expectOnlyTheLogo(m.html);
       for (const line of m.text.split('\n').filter(Boolean)) expect(visibleText(m.html)).toContain(line);
     }
+  });
+});
+
+describe('the display-safety rule (D904)', () => {
+  it('is @hana-id/core\'s shared rule itself, no longer a copy', () => {
+    expect(isDisplaySafeLine).toBe(displaySafe.isDisplaySafeLine);
+    for (const bad of ['Acme\u202ePay', 'Acme\u200bPay', 'Acme\u3164Pay', 'Acme\nPay', 'Acme\u{e0041}Pay']) expect(isDisplaySafeLine(bad), JSON.stringify(bad)).toBe(false);
+    expect(isDisplaySafeLine('Acme Café 日本')).toBe(true);
   });
 });

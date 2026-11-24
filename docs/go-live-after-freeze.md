@@ -1017,7 +1017,8 @@ Free: faucets, Blockscout and Basescan verification, standard GitHub runners on 
    and the demo's check-in card are merged and deployed.
 7. **A second, independently operated NEAR testnet RPC provider (D900, after PR 128's review)? Settled 2026-11-24
    (D903): no; one operator is accepted on testnet, and a production network must name two different operators in its
-   manifest (the schema and `deploy-check` refuse it otherwise). Nothing to do for this deploy.** sandbox-dev's `rpc`
+   manifest (the schema and `deploy-check` refuse it otherwise; not in force until the schema admits another network
+   than testnet, and the names are a declaration a reviewer checks, not proof). Nothing to do for this deploy.** sandbox-dev's `rpc`
    (test.rpc.fastnear.com) and `rpcFallback` (rpc.testnet.near.org) are both run by FastNear today (the second is
    heavily rate-limited). Every check that asks "both providers" (a test app's network and delegate checks, D263/D729,
    and the code hash a NEAR request label is tied to, D900) then rests on one operator, and the docs say so. It was to

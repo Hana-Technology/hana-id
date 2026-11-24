@@ -19594,7 +19594,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   (After PR 128's review: "two providers" protects only when the two endpoints are independently operated; sandbox-dev's
   are one operator today. **Settled by the founder 2026-11-24 (D903):** one operator is accepted on testnet, so it is
   no longer a blocker for switching labels on in a testnet env; a production network must name two different
-  operators in its manifest, enforced by the schema and `deploy-check`.)
+  operators in its manifest, checked by the schema and `deploy-check` once the schema admits another network.)
   Soroban: no read at all; the code comes from the transaction the user signs, and the network refuses to run it on
   other code. The partner console gains one read-only route on its existing NEAR endpoint (a convenience the partner
   confirms; nothing trusts it).
@@ -19947,10 +19947,11 @@ quote the new sentence. Tested: markup, quotes, a right-to-left name, 64 charact
 - plurals ("Passport Elites") and longer words ("Passport Elitist") pass, as before.
 
 **Version numbers**, the pattern (`VERSION_RE`, on the NFKC text, any letter case, any script's decimal digits):
-`(v | ver | ver. | version)` then an optional space and a number with optional `.number` parts ("V2", "v2.0", "V 2",
-"Version 2", "ver. 3"), **or** a number with at least one `.number` part ("2.0", "3.1.4"); a whole word (no letter or
-digit right before or after it, a trade mark after it allowed: "2.0™"), in brackets or not; glued to "Passport" too
-("PassportV2", "Passport2.0"). The rule takes every such number out of the name and checks what is left: if that is
+`(v | ver | version)` then up to three spaces or dots and a number with optional `.number` parts ("V2", "v2.0", "V 2",
+"V.2", "v  2", "Version 2", "ver. 3"), **or** a number with at least one `.number` part ("2.0", "3.1.4"); a whole word
+(no letter or digit right before or after it, a trade mark after it allowed: "2.0™"), in brackets or not; glued to a
+word that reads "Passport" on the folded form too ("PassportV2", "Passport2.0", "Pa55portV2", "Pass portV2": the split
+is made per word on the compared key, after PR 129's review). The rule takes every such number out of the name and checks what is left: if that is
 "Passport" alone (the alone rule: with at most two of the/a/an/my/your/our/near/wallet/official before it), the name
 is refused as a version of the wallet; if what is left breaks another rule, that rule's message is given ("Passport Pro
 2.0" names "Pro"; "Passport V2 Wallet" names "Wallet", a name that passed before). A plain number is not a version:
@@ -19961,17 +19962,36 @@ V2", "Passport V2 Travel", "Web 3.0 Passport", "Passport 4x4", "Passport 3D", "P
 Wallet". The message: 'The name must not have a version number such as "2.0" with "Passport": it reads as a version
 of the wallet, as "Passport 2.0" would. Users call Journear Passport "Passport". Your brand first, as in "Acme
 Passport", or "Passport" with words of your own, as in "Passport Photos Co", is fine'.
-- Found while building, fixed: a trade mark NFKC glues onto "Passport" itself ("Passport™" reads "PassportTM") hid
-  the word beside it: "Passport™ Wallet", "Passport™ Pro", "Verified Passport™" and "Premium Passport™" passed. Now
-  "Passport" is read without it, as edition and wallet words already were (PR 117's review). "Acme Passport™",
-  "Gitcoin Passport™" and "Passport™ Travel" still pass.
+- Trade marks (found while building; the first fix was incomplete, PR 129's review found the rest): NFKC spells "™" as
+  the letters "TM", which hid the word beside "Passport" ("Passport™ Wallet", "Passport™Wallet", "Passport ™ Pro",
+  "Passport TM Wallet", "Passport (TM) Wallet", "Passport™V2" all passed on `next`). Now: the signs ™ ℠ ® © Ⓡ and
+  "(TM)", "(SM)", "(R)", "(C)" are read as a space (after the name as written is read, so what the written name alone
+  refuses stays refused: "Passport (TM) Acme" starts with "Passport" and a bracket); "TM" or "SM" written as its own
+  word right after "Passport" is skipped; "TM" or "SM" typed between "Passport" and a joined word is read past
+  ("PassportTMWallet"). Letters "tm" or "sm" inside a word, and a brand "SM", are untouched ("Passport Tmall",
+  "Passport Smart", "PassportSmart", "SM Passport", "SM Entertainment Passport", "Passport SMS", "Passport TM Travel"
+  pass, as on `next`). "Acme Passport™", "Gitcoin Passport™" and "Passport™ Travel" still pass.
+- "Passport Home" (D765) with a number or trade mark between (after PR 129's review): version numbers, whole numbers
+  standing alone and trade-mark signs are taken out before that rule too, so "Passport 2.0 Home", "Passport v2 Home",
+  "Passport 2 Home", "Passport 365 Home" and "Passport™ Home" are refused as "Passport Home" ("Passport 24 Homes"
+  passes, as "Passport Homes" does).
 - Kept: every allowance D891's narrowing recorded ("WD My Passport Ultra", "Acme Passport Plus", "Capital One
   Passport", only "Pros" as a plural, the ordinary business words), and its tests pass unchanged. Stored names are not
   rewritten: a stored app whose name the rule now refuses keeps working, a rename must pass, and its code mails say "an
-  app" (tested for the new forms). Speed: adversarial 64-character version and edition names are each under 20 ms.
+  app" (tested for the new forms). Speed: adversarial 64-character version and edition names are each under 20 ms;
+  the version and trade-mark steps on 2,000-character inputs stay under 200 ms (the glued split's pattern is bounded).
+- The differential check (after PR 129's review): about 370,000 names (every one, two and three-word combination of
+  63 tokens: "Passport" spellings, determiners, brands, wallet, edition and own words, trade marks in each form,
+  version and plain numbers; four-word names after "Passport"; every name the tests quote) against `next`'s rule:
+  **none refused on `next` passes now**; 29,718 are newly refused, each by a rule above. The newly refused with a word
+  of the partner's own fall in two groups, both the older rules' own shapes: "Passport" and a number or trade mark
+  and "Home" ("Passport 10 Home", "Passport™ Home Covers", as "Passport Home Rentals" is refused) and a before-word
+  with a version number or trade mark beside "Passport" ("Pro PassportV2 Travel", "Pro v 2 Passport Co", as "Pro
+  Passport Co" is refused).
 - What it still misses: Roman numerals ("Passport II", "Passport III"), Ultimate, Enterprise, Uno, Gold (still
   allowed, D891's open list); a look-alike "v" from another alphabet ("Passport ν2", Greek nu); a plain number as a
-  version ("Passport 10").
+  version ("Passport 10"); a comma or a space as the version's dot ("Passport 2,0", "Passport 2 0": a comma would
+  also refuse "Passport 1,000", and "2 0" can't be told from the plain "20").
 
 **3. NEAR providers: one operator accepted on testnet, two different ones required on production (founder
 2026-11-24).** The founder's words: "for 2nd NEAR provider, can we just do 1 on testnet? but enforce this only on
@@ -19980,9 +20000,16 @@ production." So (D900 item 1, option (c), enforced on production):
   are both run by FastNear; there the "both providers agree" checks (a member's path, D263; a test app's delegate
   action, D729; a NEAR label's code hash, D900) rest on one operator, and the docs say so. It is no longer a blocker for
   switching labels on in a testnet env (that switch is still its own step). `envs/sandbox-dev.json` is unchanged.
+- **Not in force yet (after PR 129's review):** the manifest's `network` admits only `testnet` today
+  (`z.enum(['testnet'])`), so any other network is refused before this rule runs, and `deploy-check` loads manifests
+  through that schema; the rule is reached only in tests that build a production manifest by hand. It takes effect
+  when the schema admits another network. **The names are a declaration, checked in review, not proof:** "FastNear"
+  and "FastNear Inc", "fastnear.com" or a name with a look-alike letter compare as different operators; nothing but a
+  reviewer reading the manifest catches that (no suffix stripping, on purpose: the reviewer's call).
 - **Production** (any network but testnet; the schema admits only testnet today, mainnet is parked): the manifest must
   say who runs each endpoint, since a different domain is no proof (near.org's endpoint is FastNear's). New fields:
-  `rpcOperator` and `rpcFallbackOperator` (strings, trimmed, 1 to 64 characters with a letter or digit), and
+  `rpcOperator` and `rpcFallbackOperator` (strings, trimmed, 1 to 64 characters with a letter or digit, no control,
+  bidi, zero-width or other invisible character: after PR 129's review), and
   `apiRpcFallbackOperators` (one name per `apiRpcFallbacks` URL, in order). The rule (`nearOperatorProblems`):
   everywhere, `rpcFallbackOperator` needs `rpcFallback`, and `apiRpcFallbackOperators` needs `apiRpcFallbacks` and
   the same count; on a production network, `rpcFallback`, `rpcOperator` and `rpcFallbackOperator` are required, and
@@ -20014,5 +20041,10 @@ production." So (D900 item 1, option (c), enforced on production):
   a name on production but may share an operator; (3) the version pattern above, a plain number not counting, and a
   version number before "Passport" ("V2 Passport") refused too; (4) Elite, Platinum and Deluxe before "Passport" only
   when the name ends there; (5) "’s" after every app name, also after one ending in "s" or already in "’s" ("Ben &
-  Jerry’s’s words"); (6) the glued trade mark fix on "Passport" itself; (7) "These are the app’s words" when an app
-  has no name.
+  Jerry’s’s words"); (6) reading trade marks past "Passport" (signs, bracketed forms, "TM"/"SM" as a word right after
+  it); (7) "These are the app’s words" when an app has no name; (8) real product names now refused as versions:
+  "Passport V8", "Passport V60", "Passport 24.7", "Passport 1.1.1.1" (each with "Passport" alone; with a brand or own
+  words they pass); (9) a name can still word the line awkwardly: an app named "Your wallet’s words, not Acme" would
+  read "These are Your wallet’s words, not Acme’s words, not Journear’s." A name with "Journear" is refused, and the
+  name stays bold and isolated, so it can't pass as Journear's own words; not a regression (the old line had the same
+  shape); (10) "Passport Home" refused with a number or trade mark between the words.

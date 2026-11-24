@@ -117,6 +117,12 @@ describe('manifestSchema: who runs the NEAR providers (D903)', () => {
     expect(messages({ ...noApi, apiRpcFallbackOperators: ['dRPC'] })).toEqual(['apiRpcFallbackOperators: apiRpcFallbackOperators names the operators of apiRpcFallbacks, which the manifest doesn’t have']);
     expect(messages({ ...raw(), apiRpcFallbackOperators: ['dRPC'] })).toEqual(['apiRpcFallbackOperators: apiRpcFallbackOperators must name one operator per apiRpcFallbacks URL, in order (2, got 1)']);
     for (const bad of ['', '   ', '---', 'x'.repeat(65), 7]) expect(manifestSchema.safeParse({ ...raw(), rpcOperator: bad }).success, String(bad)).toBe(false);
+    // Not display-safe (after PR 129's review): a bidi override, zero-width characters, a control, a line separator.
+    for (const bad of ['Fast\u202eraeN', '\u202eFastNear', 'Fast\u200bNear', 'FastNear\u200d', 'Fast\u0007Near', 'Fast\u2028Near', 'Fast\u3164Near', 'Fast\ufe0fNear']) {
+      expect(messages({ ...raw(), rpcOperator: bad }), JSON.stringify(bad)).toEqual(['rpcOperator: an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character']);
+      expect(manifestSchema.safeParse({ ...raw(), apiRpcFallbackOperators: ['dRPC', bad] }).success, JSON.stringify(bad)).toBe(false);
+    }
+    for (const ok of ['FastNear', 'dRPC', 'Lava Network', 'Ankr (Mainnet)', 'Café Nodes', 'Москва RPC']) expect(messages({ ...raw(), rpcOperator: ok }), ok).toEqual([]);
     expect(manifestSchema.safeParse({ ...raw(), apiRpcFallbackOperators: [] }).success).toBe(false);
   });
 

@@ -322,8 +322,20 @@ export const MAX_OPERATOR_NAME = 64;
  * " Fast Near " and "Fast-NEAR" are one operator.
  */
 export const operatorKey = (name: string): string => name.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-/** An operator name as written: trimmed, 1..MAX_OPERATOR_NAME characters, with a letter or digit. */
-const operatorName = z.string().trim().min(1).max(MAX_OPERATOR_NAME).refine((v) => operatorKey(v) !== '', 'an operator name needs a letter or digit');
+/**
+ * Characters an operator name may not hold (after PR 129's review): controls, format characters (bidi overrides such as
+ * U+202E, zero-width), private use, line and paragraph separators and the other invisible fillers, as the app-name rule
+ * (`@hana-id/console-core` names.ts `isDisplaySafeName`).
+ */
+const UNSAFE_OPERATOR_CHAR = /[\p{Cc}\p{Cf}\p{Co}\p{Zl}\p{Zp}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0\u{e0100}-\u{e01ef}]/u;
+/** An operator name as written: trimmed, 1..MAX_OPERATOR_NAME characters, with a letter or digit, every character display-safe. */
+const operatorName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_OPERATOR_NAME)
+  .refine((v) => operatorKey(v) !== '', 'an operator name needs a letter or digit')
+  .refine((v) => !UNSAFE_OPERATOR_CHAR.test(v), 'an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character');
 
 /**
  * The NEAR providers' operators (D903), as a list (empty = fine). Everywhere: an operator is named only for an

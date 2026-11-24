@@ -172,14 +172,18 @@ fine for a fallback). Both are run by one operator, FastNear: a different domain
 
 `rpcOperator`, `rpcFallbackOperator` (optional on testnet, required on a production network; D903): who runs `rpc` and
 `rpcFallback`, the company or project operating each endpoint as its own terms name it ("FastNear"), not the domain;
-trimmed, 1 to 64 characters with a letter or digit. The pages' "both providers agree" checks (a member's path, D263; a
+trimmed, 1 to 64 characters with a letter or digit and no control, bidi, zero-width or other invisible character. The pages' "both providers agree" checks (a member's path, D263; a
 test app's delegate action, D729; a partner label's NEAR code hash, D900) protect only when the two are run by
 different operators, so on any network but testnet the schema and `deploy-check` refuse a manifest without
 `rpcFallback`, without either operator, or with one operator for both (compared ignoring case, spaces and punctuation:
 "FastNear", "fast near" and "Fast-NEAR" are one). On testnet one operator behind both is accepted (the founder,
 2026-11-24) and the fields may be left out or name the same operator; sandbox-dev names none. `rpcFallbackOperator` is
 refused without `rpcFallback`. Nothing but the manifest's rules and `deploy-check` reads them, so a change needs no
-`gen` or redeploy.
+`gen` or redeploy. **Not in force until the schema admits another network:** `network` accepts only `testnet` today,
+so a production manifest is refused before this rule runs (it is tested on hand-built production manifests). **A
+declaration, not proof:** the names are compared as written, so "FastNear" and "FastNear Inc", "fastnear.com" or a
+name with a look-alike letter count as different operators; a reviewer reading the manifest is the check that they
+name who really runs each endpoint.
 
 `apiRpcFallbacks` (optional, D435): the API's own NEAR RPC fallbacks, 1 to 3 `https` URLs (http only for a loopback
 host in `local*` envs), distinct and none of them `rpc`. The API asks them in this order after `rpc` when an endpoint

@@ -233,7 +233,7 @@ export const journearWordIn = (name: string): boolean => skeletons(name).some((s
 export function brandNameIn(name: string): 'Hana' | 'Journear' | 'Passport Home' | null {
   const skeleton = nameSkeleton(name);
   if (journearWordIn(name)) return 'Journear';
-  if (PASSPORT_HOME_RE.test(skeleton)) return 'Passport Home';
+  if (PASSPORT_HOME_RE.test(skeleton) || PASSPORT_HOME_RE.test(nameSkeleton(withoutNumbers(withoutMarks(name))))) return 'Passport Home';
   if (HANA_RE.test(skeleton)) return 'Hana';
   return null;
 }
@@ -457,19 +457,18 @@ const productSpan = (words: readonly Word[], i: number, after: boolean) => spanA
  * ("Passport Photos Co", "Passport Network") stay allowed.
  */
 export function passportProblemIn(name: string): PassportProblem | null {
-  const plain = passportProblemInWords(name);
+  // Trade-mark signs first (D903 after PR 129's review): NFKC spells "™" as the letters "TM", which glued them to the
+  // words around ("Passport™Wallet" read "PassportTMWallet").
+  // The name as written is read first, so what it alone refuses stays refused ("Passport (TM) Acme" starts with
+  // "Passport" and a bracket); then without the signs.
+  const marked = withoutMarks(name);
+  const plain = passportProblemInWords(name) ?? (marked !== name ? passportProblemInWords(marked) : null);
   if (plain) return plain;
   // D903: the same name with its version numbers taken out. What is left being "Passport" alone makes the number a
   // version of the wallet ("Passport 2.0", "My Passport V2"); anything else wrong with what is left is that rule's
   // ("Passport Pro 2.0" names "Pro", "Passport V2 Wallet" names "Wallet"). Left whole: the name was fine.
   const found: string[] = [];
-  const rest = name
-    .normalize('NFKC')
-    .replace(PASSPORT_GLUED_VERSION, '$1 ')
-    .replace(VERSION_RE, (m, v: string) => {
-      found.push(v.trim());
-      return ' ';
-    });
+  const rest = withoutVersions(marked, found);
   if (found.length === 0) return null;
   const left = passportProblemInWords(rest);
   if (!left) return null;
@@ -477,14 +476,46 @@ export function passportProblemIn(name: string): PassportProblem | null {
 }
 
 /**
+ * The name without trade-mark signs: ™ ℠ ® © and their bracketed letter forms "(TM)", "(SM)", "(R)", "(C)" become a
+ * space (D903 after PR 129's review). Letters standing alone ("TM", "SM") stay: they are skipped only right after
+ * "Passport" (`passportProblemInWords`), so a brand such as "SM Entertainment" or a word such as "Tmall" is untouched.
+ */
+function withoutMarks(name: string): string {
+  return name.replace(/[\u2122\u2120\u00ae\u00a9\u24c7]|[(（]\s*(?:tm|sm|r|c)\s*[)）]/giu, ' ');
+}
+
+/**
+ * The name (NFKC) with every version number (`VERSION_RE`) replaced by a space, each pushed to `found` as written. A
+ * version glued to a word that reads "Passport" on the folded form ("PassportV2", "Pa55port2.0", "Pass portV2") is
+ * split off first.
+ */
+function withoutVersions(name: string, found: string[]): string {
+  const tokens = name.normalize('NFKC').split(/(\s+)/u);
+  for (let t = 0; t < tokens.length; t += 2) {
+    const m = GLUED_VERSION_TAIL.exec(tokens[t]!);
+    if (!m || m.index === 0) continue;
+    const head = tokens[t]!.slice(0, m.index);
+    const prev = t >= 2 ? tokens[t - 2]! : '';
+    if (key(head) === PASSPORT || (prev !== '' && key(prev + head) === PASSPORT)) tokens[t] = `${head} ${m[0]}`;
+  }
+  return tokens.join('').replace(VERSION_RE, (_m, v: string) => {
+    found.push(v.trim());
+    return ' ';
+  });
+}
+
+/** The name with version numbers and whole numbers standing alone taken out: for the "Passport Home" rule ("Passport 2 Home"). */
+const withoutNumbers = (name: string): string => withoutVersions(name, []).replace(/(?<![\p{L}\p{N}])\p{Nd}+(?![\p{L}\p{N}])/gu, ' ');
+
+/**
  * A version number (D903): "v" (or "ver", "ver.", "version") then a number ("V2", "v2.0", "v 3", "Version 2"), or a
  * number with a dot ("2.0", "3.1.4"); a whole word, in brackets or not, a trade mark after it allowed ("2.0™"). A plain
  * number is not one: "Passport 2" is the alone rule's (one digit), and "Passport 24", "Passport 365" or "Passport 2026"
  * are ordinary names. Matched after NFKC, so full-width digits count; any script's decimal digits count.
  */
-const VERSION_RE = /[(\[{]?(?<![\p{L}\p{N}])((?:v|ver\.?|version)\s?\p{Nd}+(?:\.\p{Nd}+)*|\p{Nd}+(?:\.\p{Nd}+)+)(?=(?:TM|SM|tm|sm)?(?![\p{L}\p{N}]|\.\p{Nd}))[)\]}]?/giu;
-/** "Passport" with a version number glued on ("PassportV2", "Passport2.0"): split before VERSION_RE reads it. */
-const PASSPORT_GLUED_VERSION = /(passport)(?=(?:v|ver\.?|version)?\s?\p{Nd})/giu;
+const VERSION_RE = /[(\[{]?(?<![\p{L}\p{N}])((?:v|ver|version)[\s.]{0,3}\p{Nd}+(?:\.\p{Nd}+)*|\p{Nd}+(?:\.\p{Nd}+)+)(?=(?:TM|SM|tm|sm)?(?![\p{L}\p{N}]|\.\p{Nd}))[)\]}]?/giu;
+/** A version number at the end of a word, glued to what is before it ("PassportV2", "Pa55port2.0"); bounded, so linear. */
+const GLUED_VERSION_TAIL = /(?:v|ver|version)\.?\p{Nd}{1,9}(?:\.\p{Nd}{1,9}){0,4}$|(?<!\p{Nd})\p{Nd}{1,9}(?:\.\p{Nd}{1,9}){1,4}$/iu;
 
 /** `passportProblemIn` before version numbers are taken out. */
 function passportProblemInWords(name: string): PassportProblem | null {
@@ -503,7 +534,8 @@ function passportProblemInWords(name: string): PassportProblem | null {
     const w = words[i]!;
     // Run together: "PassportWallet", "WalletPassport", "VerifiedPassport", "PassportPro", "ProPassport".
     if (w.key !== PASSPORT && w.key.startsWith(PASSPORT)) {
-      const rest = w.key.slice(PASSPORT.length);
+      // A trade mark typed between ("PassportTMWallet"): read past it, unless that leaves nothing.
+      const rest = w.key.slice(PASSPORT.length).replace(/^(?:tm|sm)(?=.)/u, '');
       if (productWord(rest, true)) return { kind: 'after', word: w.text };
       if (tierWord(rest) && bareBefore(i) && editionTail(i + 1)) return { kind: 'tier_joined', word: w.text };
       if (isClaim(rest)) return { kind: 'claim', word: w.text };
@@ -519,10 +551,12 @@ function passportProblemInWords(name: string): PassportProblem | null {
     // After it: a one-character word may stand between ("Passport X Wallet", "Passport 2 Pro"), and edition words
     // ("Passport Pro App", "Passport Plus Wallet").
     let at = i + span;
+    // A trade mark written as its own word right after it ("Passport TM Wallet", "Passport SM Pro"; PR 129's review).
+    while (MARKS.has(words[at]?.key ?? '') && words[at + 1]) at++;
     if (oneChar(words[at]) && words[at + 1]) at++;
     const firstAfter = at;
     while (tierWordAt(words[at]) || (at > firstAfter && oneChar(words[at]) && words[at + 1])) at++;
-    const next = productSpan(words, at, true) ?? (at !== i + span ? productSpan(words, i + span, true) : null);
+    const next = productSpan(words, at, true) ?? (at !== i + span ? productSpan(words, i + span, true) : null) ?? (firstAfter !== i + span ? productSpan(words, firstAfter, true) : null);
     if (next) return { kind: 'after', word: next.text };
     // An edition word: only as the end of a name that is "Passport" and edition words ("Passport Pro", "My Passport
     // Plus", "Passport Pro Max™"); with a brand before it or words after it, it is the partner's own ("Acme Passport

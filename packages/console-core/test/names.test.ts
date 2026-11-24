@@ -74,7 +74,8 @@ describe('appNameProblem (D686)', () => {
   it('refuses "Passport Home" (the users\' own wallet page, whose mails an app must not imitate) as its own brand', () => {
     const cyrillicEr = ch(0x0440);
     const cyrillicO = ch(0x043e);
-    for (const name of ['Passport Home', 'passport home', 'PASSPORT HOME', 'PassportHome', 'passport-home', 'P a s s p o r t Home', `Pass${cyrillicEr}ort H${cyrillicO}me`, 'Passp0rt Home', 'My Passport Home', 'Passport Home Rentals']) {
+    // After PR 129's review: a version number, a whole number or a trade mark between the two words too.
+    for (const name of ['Passport Home', 'passport home', 'PASSPORT HOME', 'PassportHome', 'passport-home', 'P a s s p o r t Home', `Pass${cyrillicEr}ort H${cyrillicO}me`, 'Passp0rt Home', 'My Passport Home', 'Passport Home Rentals', 'Passport 2.0 Home', 'Passport v2 Home', 'Passport 2 Home', 'Passport 365 Home', 'Passport™ Home', 'Passport (TM) Home']) {
       expect(brandNameIn(name), name).toBe('Passport Home');
       expect(appNameProblem(name), name).toMatch(/"Passport Home"|imitate/u);
     }
@@ -180,6 +181,11 @@ const PASSPORT_REFUSED: readonly (readonly [string, string | null])[] = [
   ['Passport 2.0™', '2.0'], ['Passport V2 TM', 'V2'], ['Passport ２.０', '2.0'], ['Passport Ｖ２', 'V2'], ['Passport-V2', 'V2'], ['Passport_v2', 'v2'],
   ['V2 Passport', 'V2'], ['2.0 Passport', '2.0'], ['Passport X 2.0', '2.0'], ['Passport (v2)', null], ['Passport [2.0]', null],
   ['Passport Pro 2.0', 'Pro'], ['Passport 2.0 Pro', 'Pro'], ['Passport V2 Wallet', 'Wallet'], ['Passport 2.0 App', 'App'], ['Passport 2.0 | Acme', null],
+  // after PR 129's review: trade marks as signs, spaced, bracketed, as letters, glued; the version rule's gaps
+  ['Passport ™ Wallet', 'Wallet'], ['Passport TM Wallet', 'Wallet'], ['Passport ℠ Wallet', 'Wallet'], ['Passport TM Pro', 'Pro'], ['Passport ™ Pro', 'Pro'],
+  ['Passport™Wallet', 'PassportTMWallet'], ['Passport™V2', 'V2'], ['Passport™2.0', '2.0'], ['Passport® Wallet', 'Wallet'], ['Passport (R) Wallet', 'Wallet'],
+  ['Passport (TM) Wallet', 'Wallet'], ['Passport(SM) Pro', 'Pro'], ['Passport © Wallet', 'Wallet'], ['PassportTMWallet', 'PassportTMWallet'], ['Passport SM Elite', 'Elite'],
+  ['Passport v  2', 'v  2'], ['Passport V.2', 'V.2'], ['Passport v. 2', 'v. 2'], ['Pa55portV2', 'V2'], ['Pa55port2.0', '2.0'], ['Pass portV2', 'V2'], ['Passp0rtV2', 'V2'],
   // the start of another name
   ['Passport, by Acme', null], ['Passport from Acme', null], ['Passport | Acme', null], ['Passport (Acme)', null], ['Passport - Acme', null], ['Passport – Acme', null],
   ['Passport: Acme', null], ['Passport / Acme', null], ['Passport · Acme', null], ['Passport of Acme', null], ['The Passport | Acme', null],
@@ -215,6 +221,10 @@ const PASSPORT_ALLOWED: readonly string[] = [
   'Acme Passport 2.0', 'Acme Passport V2', 'Gitcoin Passport 2.0', 'Human Passport v2', 'WD My Passport V2', 'Passport V2 Travel', 'Passport 2.0 Summit',
   'Web 3.0 Passport', 'Passport 24', 'Passport 10', 'Passport 360', 'Passport 2026', 'Passport 4x4', 'Passport 3D', 'Passport 1.5L', 'Passport MV2',
   'Passport Dev2', 'Passport Vee', 'Passport Volume 2 Books', 'Passport 2 Asia', 'Passport™ Travel', 'Gitcoin Passport™', 'Acme Passport™', 'v2.0 Wallet',
+  // after PR 129's review: letters "tm" or "sm" inside a word, a brand "SM", a trade mark before words of the partner's
+  // own
+  'Passport Tmall', 'Passport Smart', 'PassportSmart', 'PassportTmall', 'SM Passport', 'SM Entertainment Passport', 'Passport TM Travel', 'Passport SMS',
+  'Passport® Travel', 'Acme® Passport',
   // an edition word only as part of a longer word, or not next to "Passport" (the rule is word for word)
   'Passport Protocol', 'Passport Proton', 'Passport Golf', 'Passport Webster', 'Passport Maximus', 'Passport Oneida', 'Passport Cardiff', 'Passport Nexus',
   'Passport Classical Tours', 'Passport Photo Online', 'Passport Photos Online Co', 'Passport Express', 'Passport 365', 'Passport Plumbing', 'Passport Prost',
@@ -276,6 +286,10 @@ describe('D891: "Passport" as the wallet', () => {
     expect(passportProblemIn('Passport Wallet Pro')).toEqual({ kind: 'after', word: 'Wallet' });
     expect(appNameProblem('Passport Pro™')).toMatch(/^The name must not have "Pro" right after "Passport"/u);
     expect(passportProblemIn('Passport Free')).toEqual({ kind: 'claim', word: 'Free' });
+  });
+  it('D903: known misses, recorded in D903: a comma or a space as the version\'s dot, Roman numerals', () => {
+    // Outside the property below on purpose: "Passport 2,0" and "Passport 2 0" compare equal to the refused "Passport 2.0".
+    for (const name of ['Passport 2,0', 'Passport 2 0', 'Passport II']) expect(passportProblemIn(name), name).toBeNull();
   });
   it('D903: a version number with "Passport" alone is a version of the wallet; its message names it as written', () => {
     expect(appNameProblem('Passport 2.0')).toBe('The name must not have a version number such as "2.0" with "Passport": it reads as a version of the wallet, as "Passport 2.0" would. Users call Journear Passport "Passport". Your brand first, as in "Acme Passport", or "Passport" with words of your own, as in "Passport Photos Co", is fine');
@@ -403,6 +417,13 @@ describe('D891: no rule is slow (no catastrophic backtracking)', () => {
       const t = performance.now();
       appNameProblem(name.slice(0, 64));
       expect(performance.now() - t, name).toBeLessThan(20);
+    }
+    // The version and trade-mark steps on 2,000 characters (far past the 64 a name may have): still fast.
+    for (const name of [`Passport ${'v'.repeat(2000)}`, `Passport ${'1.'.repeat(1000)}x`, `Passport${'v.'.repeat(1000)}`, `Pa55port${'9.'.repeat(1000)}`, `${'Pass port'.repeat(220)}V2`, `Passport ${'(TM) '.repeat(400)}`, `${'v  '.repeat(700)}2`]) {
+      const t = performance.now();
+      passportProblemIn(name);
+      brandNameIn(name);
+      expect(performance.now() - t, name.slice(0, 20)).toBeLessThan(200);
     }
   });
 });

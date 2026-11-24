@@ -1032,7 +1032,8 @@ included), since the footprint can't tie a label to such a contract's built-in c
 is couldn't check; the vault reads no code for a request whose network it doesn't check. The two-provider read protects
 only when the two endpoints are independently operated: sandbox-dev's are one operator (FastNear), which the founder
 accepted for testnet (D903); a production network's manifest must name two different operators (`rpcOperator`,
-`rpcFallbackOperator`), checked by the schema and `deploy-check`.
+`rpcFallbackOperator`), checked by the schema and `deploy-check` once the schema admits another network than testnet
+(a declaration a reviewer checks, not proof).
 
 Piece 4 (D899): the partner console's **Request labels** tab on each app (`apps/console/web/src/pages/app/Labels.tsx`,
 its own lazily loaded chunk) lists the app's scope's entries from `GET /api/orgs/:org/scopes/:scope/labels`

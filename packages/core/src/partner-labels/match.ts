@@ -169,7 +169,7 @@ export interface LabelMatch {
   readonly parts: readonly SentencePart[];
   readonly fields: readonly RenderedField[];
   /**
-   * A classic payment's destination, as the address book names it. Its name also ends `parts` (D907): Journear's joining
+   * A classic payment's destination, as the address book names it. Its name also ends `parts`: Journear's joining
    * word for the verb, then this value ("pay the fare to Coffee Club till"); Journear's own "To" row shows the account.
    */
   readonly destination?: RenderedValue & { readonly format: 'account' };

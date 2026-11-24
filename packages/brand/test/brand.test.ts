@@ -235,12 +235,12 @@ describe('components', () => {
       expect(rules[2]!.body).toEqual(['transition-duration:.01ms!important', 'transition-delay:0s!important']);
     });
 
-    it('the loading spinners pulse instead of standing still: a slow fade (2 s a cycle, full to 40% opacity), no turning', () => {
+    it('the loading spinners pulse instead of standing still: a slow fade (2 s a cycle, full to 60% opacity), no turning', () => {
       expect(rules[1]!.selectors).toEqual(SPINNERS);
       // One shorthand: it replaces jp-spin (the turn) by jp-spin-pulse, sets its own duration, count and delay (0 s).
       expect(rules[1]!.body).toEqual([PULSE]);
-      // The pulse changes opacity alone, between full (the element's own, at both ends) and 0.4 at the middle.
-      expect(keyframes('jp-spin-pulse')).toBe('50%{opacity:.4}');
+      // The pulse changes opacity alone, between full (the element's own, at both ends) and 0.6 at the middle.
+      expect(keyframes('jp-spin-pulse')).toBe('50%{opacity:.6}');
       // It outranks the everything-ends-at-once rule (both important: the more specific selector wins in every browser).
       for (const s of SPINNERS) for (const g of GENERIC) expect(beats(specificity(s), specificity(g)), `${s} over ${g}`).toBe(true);
       // Without reduced motion they still turn as before.
@@ -250,7 +250,7 @@ describe('components', () => {
 
     it('the pulse is only for the spinners: every rule that turns is one of them, and nothing else repeats once motion is reduced', () => {
       // Every rule that uses jp-spin is a spinner the pulse rule names, and the pulse rule names nothing else.
-      const turning = outsideRules.filter((r) => /animation:jp-spin\b/u.test(r.body)).flatMap((r) => r.selectors);
+      const turning = outsideRules.filter((r) => /animation:jp-spin\b(?!-pulse)/u.test(r.body)).flatMap((r) => r.selectors);
       expect([...turning].sort()).toEqual([...SPINNERS].sort());
       // jp-spin-pulse is used only by the reduced-motion rule.
       expect(outsideRules.filter((r) => /jp-spin-pulse/u.test(r.body))).toEqual([]);

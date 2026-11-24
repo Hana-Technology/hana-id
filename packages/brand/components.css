@@ -15,7 +15,7 @@
  * loading placeholder stands still and nothing slides or fades. It ends rather than being removed so an element still
  * reaches its final look and code waiting for an animation's end still hears it. The one exception is the loading
  * spinners (.jp-btn .spin, .jp-provider .spin, .jp-iconfield .spin): they stop turning and instead fade slowly between
- * full and 40% opacity (jp-spin-pulse, 2 s a cycle, ease-in-out, for ever), so a long wait never looks like a frozen
+ * full and 60% opacity (jp-spin-pulse, 2 s a cycle, ease-in-out, for ever), so a long wait never looks like a frozen
  * page. Opacity only: nothing turns, moves or changes size. A page with a spinner of its own uses the same declaration.
  */
 .jp-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:var(--jp-control-md);padding:0 16px;border-radius:var(--jp-radius-md);border:1px solid transparent;font:inherit;font-weight:600;font-size:var(--jp-text-sm);cursor:pointer;white-space:nowrap;color:var(--jp-fg);background:transparent;transition:background var(--jp-dur-fast) var(--jp-ease),box-shadow var(--jp-dur-fast) var(--jp-ease),transform var(--jp-dur-fast) var(--jp-ease),border-color var(--jp-dur-fast);user-select:none}
@@ -38,7 +38,7 @@
 .jp-btn[disabled],.jp-btn[aria-disabled="true"]{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
 .jp-btn .spin,.jp-provider .spin{width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:jp-spin .7s linear infinite}
 @keyframes jp-spin{to{transform:rotate(360deg)}}
-@keyframes jp-spin-pulse{50%{opacity:.4}}
+@keyframes jp-spin-pulse{50%{opacity:.6}}
 .jp-icon-btn{width:var(--jp-control-sm);height:var(--jp-control-sm);padding:0;border-radius:var(--jp-radius-sm);display:inline-grid;place-items:center;border:1px solid transparent;background:transparent;color:var(--jp-fg-muted);cursor:pointer}
 .jp-icon-btn:hover{background:var(--jp-bg-subtle);color:var(--jp-fg)}
 .jp-seg{display:inline-flex;padding:3px;border-radius:var(--jp-radius-md);background:var(--jp-bg-subtle);border:1px solid var(--jp-border);gap:2px}

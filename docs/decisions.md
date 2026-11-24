@@ -21029,3 +21029,79 @@ and the quoted words are unchanged, and entries that already said "the user" sta
 "both founders") in the governance and incident documents (`docs/governance-spec.md`, `docs/playbooks.md`,
 `packages/playbooks`, the watchdog's alert recipients, the mainnet council) still names the role that holds the owner
 and council keys and receives the alerts.
+
+
+## The approval window names all of Sodax's EVM chains (branch `feat/name-sodax-evm-chains`), 2026-11-24
+
+From `next` @ 9a0e8df7; not merged, not deployed. D910 was the next free number (no open pull request or remote branch
+held it).
+
+### D910. The approval window names HyperEVM, LightLink, Redbelly Network, Kaia, Hedera and Robinhood Chain, with their own coins, as real-money networks
+- Date 2026-11-24 · Status: **approved by the Tech Lead 2026-11-24** as one of the small Sodax items to start now;
+  built · Relates to D39, D44, D428, D853, D909
+- **The gap** (`docs/sodax-sdk-integration.md`, "Chains"): our one EVM key works on all 14 EVM chains Sodax's SDK lists
+  (`@sodax/types` 2.2.0), but the window named only 8. For the other six it said "A network Journear doesn't know
+  (no. 999)" and "of this network's coin".
+- **Built:** `KNOWN_EVM_MAINNETS` and the native coin table in `packages/core/src/networks.ts` gain the six. Every
+  surface that names a chain reads them through `evmChainInfo`: the approval summary (the network row, the send, the
+  value sent with a call, the fee, "None of your … is used", the one-time setup line), the window's amount headline
+  (a plain transfer only), the auto-approve consent screen (its chain heading and limits), the demo page's label. The
+  explorer table (`EVM_EXPLORERS`) and the verified Sodax contracts already had all six.
+
+  | Chain id | Name shown | Coin | Window label |
+  |---|---|---|---|
+  | 999 | HyperEVM | HYPE | "HyperEVM (real money)" |
+  | 1890 | LightLink | ETH | "LightLink (real money)" |
+  | 151 | Redbelly Network | RBNT | "Redbelly Network (real money)" |
+  | 8217 | Kaia | KAIA | "Kaia (real money)" |
+  | 295 | Hedera | HBAR | "Hedera (real money)" |
+  | 4663 | Robinhood Chain | ETH | "Robinhood Chain (real money)" |
+
+- **Verified on 2026-11-24**, each against the chain's own docs and the public registries (ethereum-lists/chains'
+  `_data/chains/eip155-<id>.json` and chainlist.org's `rpcs.json`), not only Sodax's package:
+  - **999 HyperEVM, HYPE, 18 decimals.** Hyperliquid's docs (hyperliquid.gitbook.io, "HyperEVM"): mainnet chain ID
+    999 (testnet 998), "HYPE is the native gas token on the HyperEVM", 18 decimals. chainlist.org: 999 "HyperEVM", HYPE,
+    18. **Conflict:** ethereum-lists gives 999 to "Wanchain Testnet" (WAN). Named HyperEVM anyway: one chain ID means one
+    signature is valid on both, so "real money" is the cautious label, and HyperEVM is the chain Sodax and its users
+    mean.
+  - **1890 LightLink, ETH, 18.** LightLink's docs (docs.lightlink.io, "Live Networks"): Phoenix Mainnet, chain ID 1890,
+    currency ETH (Pegasus testnet 1891). ethereum-lists and chainlist.org: "Lightlink Phoenix Mainnet", ETH, 18. Shown
+    as "LightLink", the plain name; Phoenix is the mainnet's own name and stays out of the label.
+  - **151 Redbelly Network, RBNT, 18.** Redbelly's docs (vine.redbelly.network/environments): "Redbelly Network
+    Mainnet", chain ID 151, currency RBNT (testnet 153). ethereum-lists and chainlist.org: "Redbelly Network Mainnet",
+    RBNT, 18.
+  - **8217 Kaia, KAIA, 18.** Kaia's docs (docs.kaia.io, "Connecting MetaMask"): "Kaia Mainnet", chain ID 8217, symbol
+    KAIA; "Kaia native coin": 1 KAIA is 10^18 kei. ethereum-lists and chainlist.org: "Kaia Mainnet", KAIA, 18.
+  - **295 Hedera, HBAR, 18 in a transaction.** Hedera's docs (docs.hedera.com/evm/development/json-rpc): mainnet 295
+    (testnet 296, previewnet 297); the relay "uses 18 decimals (weibars) for HBAR on the wire" for a transaction's value,
+    balances and the gas price. docs.hedera.com/evm/differences/hbar-decimals: 1 tinybar is 10^10 weibars; inside a
+    program `msg.value` is in tinybars (8 decimals); a nonzero value under one tinybar is refused by the relay.
+    ethereum-lists and chainlist.org: "Hedera Mainnet", HBAR, 18. Sodax lists HBAR with 8 decimals: its token amounts
+    are in tinybars, as programs see them. The window shows HBAR only from a transaction's value and its fee fields
+    (weibars, 18 decimals, as every other named chain), never from an amount inside a program's call, so the 18 is
+    right where it is used. Not checked: Hedera's own account and fee rules through its relay (as D909 noted); they are
+    the network's behaviour, not its name.
+  - **4663 Robinhood Chain, ETH, 18.** Robinhood's docs (docs.robinhood.com/chain/connecting): network name "Robinhood
+    Chain", chain ID 4663, currency ETH, explorer robinhoodchain.blockscout.com (testnet 46630). ethereum-lists and
+    chainlist.org: "Robinhood Chain", ETH, 18.
+  - Every one of the six: `mainnet: true` in `@sodax/types` 2.2.0's `baseChainInfo`, with the same chain ID, and its
+    native token's symbol the one above.
+- **What naming changes, and what it doesn't.** `KNOWN_EVM_MAINNETS` and the coin table are for display only. Checked
+  every reader: the summary, the amount headline, the consent screen, the demo page's label (`evmChainInfo`), and the
+  EVM delegate deploy script, which refuses a known mainnet (it now refuses six more, stricter). Nothing else keys off
+  a named chain: a test app's rule is `TEST_EVM_CHAINS` (unchanged, 13 chains; none of the six's test networks added),
+  gas sponsorship takes only `TEST_EVM_CHAINS` chains (the manifest schema and the vault), the mainnet demo stays Base
+  and Stellar's public network (`MAINNET_DEMO_EVM_CHAINS` = [8453], tested), auto-approve policies list their own
+  chains, and known tokens and verified contracts have their own tables (no token added). An unknown token, program,
+  call or spender on a named chain reads exactly as on an unnamed one (tested). The partner labels' list of coin words
+  a label may not use (`NATIVE_COINS` in `partner-labels/text-rules.ts`: NEAR, ETH, XLM, BTC) is not keyed by chain and
+  does not hold BNB, POL, S or AVAX either; left as is.
+- **Tests:** core (`networks.test.ts`: the six names, coins and labels, each still refused for a test app and named a
+  mainnet by `mainnetOfRequest`, their test networks still unnamed; `approval-summary.test.ts`: the send, fee and
+  network, and an unknown call, an unlisted token's transfer and an unlimited approve on each, read as on an unnamed
+  chain); web (`approval-design.test.ts`: the amount headline and the consent screen's heading and limits); sodax (new
+  `networks.test.ts`: every EVM chain in the installed `@sodax/types` is named, as real money, with Sodax's coin symbol,
+  Hedera's 8 against our 18 pinned, the mainnet demo still Base only; a `@sodax/types` upgrade that adds an EVM chain
+  fails it until the chain is checked and named); e2e (`approval-summary.spec.ts`: each of the six injected into a live
+  app's real window, its name, coin and fee, the plain-words check, and an unknown call there still the red line).
+- Address impact: none (display only; no key, path or derivation changes).

@@ -17,14 +17,15 @@
 // `hana:approve-request` of kind `evm_sponsored` on the popup's window as a vault would post it (origin vaultOrigin,
 // source the opener).
 import { type Page } from '@playwright/test';
-import { DEMO_CHECK_IN, type NearAction, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey, nearPublicKeyString } from '@hana-id/core';
+import { DEMO_CHECK_IN, type NearAction, approvalContent, base64Encode, encodeNearDelegateAction, encodeNearTransaction, nearImplicitPublicKey, nearPublicKeyString } from '@hana-id/core';
 import { parseFunctionSignature, shortId } from '@hana-id/core/decode';
 import { Account, Address, Asset, Keypair, Networks, Operation, StrKey, TransactionBuilder, nativeToScVal, xdr } from '@stellar/stellar-base';
 import { type EvmSponsorSubject, SPONSOR_DELEGATES, encodeSponsorSubject } from '@hana-id/core/evm-sponsor';
 import { e2eRelayer } from '../src/relayer-key.ts';
-import { E2E_STAMPS, EVM_CHAIN_ID, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { E2E_STAMPS, EVM_CHAIN_ID, LIVE_PARTNER_ORIGIN, LIVE_VAULT_ORIGIN, NEAR_RPC, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { approve, clickLauncher, expect, fontsLoaded, login, newApp, newLiveApp, okValue, openPartner, runAction, test } from './fixtures.ts';
 import { expectEvenDividers } from './divider-checks.ts';
+import { expectPlainWindow } from './plain-checks.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 /** The approval popup's window (`popup,width=420,height=680`, D99). */
@@ -129,6 +130,58 @@ test('raw signing: folded like any other request, the red risk line in view (D81
   await shot(popup, 'raw-signing', browserName);
   await popup.getByText('Show details', { exact: true }).click();
   await expect(hex).toBeVisible();
+});
+
+// ---- the six other EVM chains Sodax lists, injected into the real popup ----
+
+/** Posts an EVM transaction on `chainId` to a live app's popup as its vault would (origin the live vault's, source the opener). */
+async function injectTx(popup: Page, address: string, chainId: number, over: { to?: string; value?: bigint; data?: string } = {}): Promise<void> {
+  const tx = { ...evmTx(over), chainId: `0x${chainId.toString(16)}` };
+  const { bytes } = approvalContent({ v: 1, id: 'chain', method: 'eth_signTransaction', params: { tx: tx as never } });
+  await popup.evaluate(
+    ({ bytes, address, chainId, vaultOrigin, parentOrigin }) => {
+      const id = crypto.randomUUID().replace(/-/gu, '');
+      const data = { v: 1, t: 'hana:approve-request', id, appName: 'E2E Partner', parentOrigin, kind: 'evm_tx', chain: 'evm', address, bytes: new Uint8Array(bytes), context: { chainId }, position: 1, queued: 1 };
+      const event = new MessageEvent('message', { data, origin: vaultOrigin });
+      Object.defineProperty(event, 'source', { value: window.opener });
+      window.dispatchEvent(event);
+    },
+    { bytes: Array.from(bytes), address, chainId, vaultOrigin: LIVE_VAULT_ORIGIN, parentOrigin: LIVE_PARTNER_ORIGIN },
+  );
+}
+
+test('the six other EVM chains Sodax lists: the window names each with its own coin; an unknown call there is still red', async ({ page }) => {
+  await openPartner(page, await newLiveApp(), { live: true });
+  await login(page);
+  const me = (await page.evaluate(() => (window as any).e2e.addresses().evm)) as `0x${string}`;
+  const popup = await popupFor(page, 'send', 'ethSignTx', evmTx());
+  const headline = popup.locator('h2.summary-headline');
+  const fact = (name: string) => popup.locator('dl.summary-facts dt', { hasText: new RegExp(`^${name}$`, 'u') }).locator('xpath=following-sibling::dd[1]');
+  const six: readonly [number, string, string][] = [
+    [999, 'HyperEVM', 'HYPE'],
+    [1890, 'LightLink', 'ETH'],
+    [151, 'Redbelly Network', 'RBNT'],
+    [8217, 'Kaia', 'KAIA'],
+    [295, 'Hedera', 'HBAR'],
+    [4663, 'Robinhood Chain', 'ETH'],
+  ];
+  for (const [chainId, name, coin] of six) {
+    await injectTx(popup, me, chainId);
+    await expect(headline).toHaveText(`E2E Partner wants to send 0.01 ${coin} to ${short(RECIPIENT)}`);
+    await expect(fact('Network')).toHaveText(`${name} (real money)`);
+    await expect(fact('Network fee')).toHaveText(`Up to 0.0001 ${coin}`);
+    await expect(popup.getByText('doesn’t know (no.', { exact: false })).toHaveCount(0);
+    await expect(popup.locator('.danger-box')).toHaveCount(0);
+    await expectPlainWindow(popup);
+
+    // Naming the chain weakens nothing: a call Journear doesn't know is still the red line, and the value sent with it is in the chain's coin.
+    await injectTx(popup, me, chainId, { to: TOKEN, value: 10n ** 18n, data: '0xdeadbeef' });
+    const risk = popup.locator('.danger-box p.risk-lead.summary-warning.cannot-explain');
+    await expect(risk).toBeVisible();
+    await expect(risk).toContainText('Journear can’t check what this does');
+    await expect(popup.locator('div.request')).toContainText(`1 ${coin}`);
+    await expect(fact('Network')).toHaveText(`${name} (real money)`);
+  }
 });
 
 // ---- sponsored EVM actions (D831, D850), injected into the real popup ----

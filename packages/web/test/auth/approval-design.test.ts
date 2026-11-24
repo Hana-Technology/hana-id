@@ -8,6 +8,7 @@ import { Asset, Operation, type xdr } from '@stellar/stellar-base';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { dom } from '../../src/auth/dom.ts';
 import { amountHeadline, renderApproval } from '../../src/auth/render-approval.ts';
+import { evmChainHeading, nativeAmount } from '../../src/auth/render-consent.ts';
 import { ISSUER, OTHER, PASSPHRASE, USER, addSignerOp, changeTrustOp, paymentOp, txBytes } from '../../../core/test/stellar-fixtures.ts';
 
 const EVM = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
@@ -37,6 +38,20 @@ describe('the amount first (amountHeadline)', () => {
   it('never for an EVM contract call (its value says nothing of the tokens it moves), nor on a chain Journear can’t name', () => {
     expect(amountHeadline(evm({ data: '0xa9059cbb' + '00'.repeat(64) }))).toBeNull();
     expect(amountHeadline(evm({}, 987654321))).toBeNull();
+  });
+
+  it('the six other EVM chains Sodax lists: their own coin on a plain transfer, still nothing for a contract call', () => {
+    for (const [id, unit] of [[999, 'HYPE'], [1890, 'ETH'], [151, 'RBNT'], [8217, 'KAIA'], [295, 'HBAR'], [4663, 'ETH']] as const) {
+      expect(amountHeadline(evm({}, id)), String(id)).toEqual({ value: '1', unit });
+      expect(amountHeadline(evm({ data: '0xa9059cbb' + '00'.repeat(64) }, id))).toBeNull();
+    }
+    // The auto-approve consent screen names them the same way: the heading, and limits in the chain's coin.
+    expect(nativeAmount(295, '1500000000000000000')).toBe('1.5 HBAR (1500000000000000000 wei)');
+    expect(nativeAmount(8217, '1000000000000000000')).toBe('1 KAIA (1000000000000000000 wei)');
+    const h2 = evmChainHeading(dom(document), 999);
+    expect(h2.firstChild?.textContent).toBe('HyperEVM (real money)');
+    expect(h2.querySelector('span.chain-id')?.textContent).toBe('network no. 999');
+    expect(evmChainHeading(dom(document), 998).textContent).toBe('Ethereum-style network no. 998');
   });
 
   it('a Stellar transaction of one payment or one account creation; nothing for several operations, account control or another source', () => {

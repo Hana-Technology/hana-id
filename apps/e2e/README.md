@@ -19,7 +19,8 @@ The hosted demo's NEAR card (D750–D754): `tests/demo.spec.ts` writes to the gu
 (`src/server/chain.ts`: users' implicit accounts, `block`, the guestbook's `get_messages`, and the test-only
 `e2e_near_activate` / `e2e_guestbook_add` the mocked relayer routes call, `src/near-relay.ts`, shared with the hand
 browser); `tests/demo-near-shots.spec.ts` saves
-its screens with `HANA_SHOTS_DIR=<dir>` (Chromium only, skipped otherwise).
+its screens with `HANA_SHOTS_DIR=<dir>` (Chromium only, skipped otherwise). With reduced motion (D906) the demo's own
+spinners (`.progress::before`, `.stage::before`) pulse slowly even inside a `.jp-card`, and the results' fade stops.
 
 The stamps site (`apps/stamps`, D798–D802): `tests/stamps.spec.ts` signs in by email, collects Arrival, Sponsored,
 Postcard and Signature through the mocked relayer routes and sees them on the public passport, with no CSP violation
@@ -27,7 +28,8 @@ and nothing of another chain on the page. The mocked chain serves the stamps con
 `get_passport`, `recent`, `totals`, `catalog`, every `collect` rule, the signature's NEP-413 proof checked with ed25519
 as on chain) and the test-only `e2e_stamps_collect` the relayer routes call. Signature's two approvals land in one
 window with no launcher; a second test holds the vault's key check, closes the window after the first approval and
-collects through the slot's Continue (D807).
+collects through the slot's Continue (D807). With reduced motion (D906) a working slot's spinners (its line's and the
+collect button's) pulse slowly while its marching outline stands still.
 
 The support pages (D866): `tests/support-pages.spec.ts` locks an address with wrong codes (the dev envs' backstop),
 sees the sign-in window refuse it, has staff unlock it, opens the mailed link, checks nothing happens before the
@@ -67,9 +69,11 @@ signed-out page only. `tests/home-export.spec.ts` "D893: the browser’s Back ou
 goes Back (the key is erased from the page), then Forward (the page with the move flow collapsed, no key, no new derive).
 `tests/home-devices.spec.ts` opens Devices from its row under "Your account" (one read) and at `/home?view=devices`
 (one read, then Back to the list and Forward without a read). The rows' locator is `homeRow(page, appName)`
-(`tests/home-steps.ts`) or `.home-row[data-scope="…"]`. With reduced motion (D905) its rows test also checks the brand's
-own rule as Home ships it, in all three browsers: a button's spinner (`.jp-btn .spin`) runs once in under a
-millisecond, as does a radio's dot (`::after`), and spins for ever again without it.
+(`tests/home-steps.ts`) or `.home-row[data-scope="…"]`. With reduced motion (D905 as amended by D906) its rows test
+also checks the brand's own rule as Home ships it, in all three browsers: the loading spinners (`.jp-btn .spin`,
+`.jp-provider .spin`, `.jp-iconfield .spin`) run `jp-spin-pulse` for ever (2 s, ease-in-out, keyframes of opacity
+alone), while a radio's dot (`::after`) and the loading placeholder (`.jp-skel`) run once in under a millisecond; without
+reduced motion the spinners turn again (`jp-spin`, keyframes of transform).
 
 A wallet's tabs and the phone's chip (D895): `tests/home.spec.ts` checks the tabs' roles and names, the keyboard (the
 arrows move, Enter and Space open), a history entry only for "Move wallet" (D901: Back from it returns to the tab it

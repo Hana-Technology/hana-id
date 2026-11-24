@@ -731,7 +731,9 @@ Reads `state` from the MPC contract (`manifest.mpc`) at one final block from at 
 (`rpc`, `rpcFallback`, each `--rpc <https url>`, then built-in public endpoints), takes the BLS12-381 G2 public key of
 `ckdDomainId`, and refuses unless every provider reports the same block hash and key. It writes the key to
 `ckdNetworkKey` and the block and provider hosts to `ckdNetworkKeySource` in `envs/<env>.json`, leaving the rest of
-the file as it was (D100). Clients pin this key. If it ever changes, every derived key changes with it.
+the file as it was (D100). On a production network it first refuses, before reading anything, unless the manifest's
+`ckdSourceOperators` names who runs every host it will read and they are three different operators (D904; testnet
+asks nothing). Clients pin this key. If it ever changes, every derived key changes with it.
 
 ### admin
 

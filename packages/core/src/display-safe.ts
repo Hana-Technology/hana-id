@@ -10,9 +10,18 @@
 // Unassigned code points (Cn) aren't refused: what is unassigned depends on the engine's Unicode version, and the
 // policy validator must answer the same in the CLI, the API and every browser. An emoji with a variation selector
 // (U+FE0F) is shown as hex: variation selectors can also smuggle data into text that looks plain.
-const INVISIBLE = String.raw`\p{Cf}\p{Co}\p{Zl}\p{Zp}͏ᅟᅠ឴឵᠋-᠏ㅤ︀-️ﾠ\u{e0100}-\u{e01ef}`;
-const UNSAFE_MULTILINE = new RegExp(String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f${INVISIBLE}]`, 'u');
-const UNSAFE_LINE = new RegExp(String.raw`[\p{Cc}${INVISIBLE}]`, 'u');
+// Escapes only, so this source holds no invisible character.
+
+// The invisible characters, as the body of a character class (for a `u` RegExp): format characters (bidi controls,
+// zero-width characters, tags), private use, line and paragraph separators, and the other default-ignorable code points
+// (the combining grapheme joiner, the Hangul fillers, the Khmer inherent vowels, the Mongolian selectors, every
+// variation selector). Controls are not in it: each rule says which ones it allows.
+const INVISIBLE_CHARS = String.raw`\p{Cf}\p{Co}\p{Zl}\p{Zp}\u{34f}\u{115f}\u{1160}\u{17b4}\u{17b5}\u{180b}-\u{180f}\u{3164}\u{fe00}-\u{fe0f}\u{ffa0}\u{e0100}-\u{e01ef}`;
+
+// The controls multi-line text may not hold, as a character-class body: every one but tab, LF and CR.
+const CONTROLS_BUT_TAB_LF_CR = String.raw`\u{0}-\u{8}\u{b}\u{c}\u{e}-\u{1f}\u{7f}-\u{9f}`;
+const UNSAFE_MULTILINE = new RegExp(`[${CONTROLS_BUT_TAB_LF_CR}${INVISIBLE_CHARS}]`, 'u');
+const UNSAFE_LINE = new RegExp(String.raw`[\p{Cc}${INVISIBLE_CHARS}]`, 'u');
 
 /** Multi-line text (signed messages, Soroban and ABI strings, memos): safe to show as is. Tab, LF and CR are allowed. */
 export const isDisplaySafeText = (text: string): boolean => !UNSAFE_MULTILINE.test(text);

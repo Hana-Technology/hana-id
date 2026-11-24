@@ -157,6 +157,14 @@ describe('fetch-ckd-key', () => {
     expect(h.out.at(-1)).toContain(`was ${OTHER_KEY}: the MPC key changed`);
   });
 
+  it('a placeholder key anywhere UNSET (as the rule and the build read it) is not reported as a changed key (D904)', async () => {
+    for (const placeholder of ['UNSET', 'bls12381g2:UNSET-pin-me']) {
+      const h = harness({ ...base(), ckdNetworkKey: placeholder }, {}, fixtureText().replace(KEY, placeholder));
+      await fetchCkdKey(['sandbox-dev'], h.deps);
+      expect(h.out.at(-1), placeholder).toBe('Wrote ckdNetworkKey and its source to envs/sandbox-dev.json.');
+    }
+  });
+
   it('changes nothing when the key and a source are already recorded, or on --dry-run', async () => {
     const recorded = harness({ ...base(), ckdNetworkKeySource: { blockHeight: 5, blockHash: HASH, rpcs: ['a.fastnear.com', 'rpc.testnet.near.org', 'near-testnet.drpc.org'] } });
     await fetchCkdKey(['sandbox-dev'], recorded.deps);
@@ -171,6 +179,36 @@ describe('fetch-ckd-key', () => {
     const h = harness({ ...base(), ckdNetworkKey: OTHER_KEY }, { 'near-testnet.drpc.org': { key: OTHER_KEY } });
     await expect(fetchCkdKey(['sandbox-dev'], h.deps)).rejects.toThrow(/disagree/u);
     expect(h.written).toEqual([]);
+  });
+
+  it('D904: on a production network refuses before reading unless the hosts are declared and run by three different operators; the map survives the pin', async () => {
+    const OPS = { 'test.rpc.fastnear.com': 'FastNear', 'rpc.testnet.near.org': 'FastNear', 'near-testnet.drpc.org': 'dRPC' };
+    const mainnet = Object.fromEntries(URLS.map((u) => [new URL(u).host, { chainId: 'mainnet' }]));
+    const prod = (ckdSourceOperators?: Record<string, string>) => ({ ...base(), network: 'mainnet', ...(ckdSourceOperators ? { ckdSourceOperators } : {}) }) as unknown as Manifest;
+    const read: string[] = [];
+    const counting = (h: ReturnType<typeof harness>) => ({ ...h.deps, rpc: (url: string) => (read.push(url), h.deps.rpc(url)) });
+    for (const [ops, want] of [
+      [undefined, /ckdSourceOperators must name who runs every ckdNetworkKeySource host on a production network \(mainnet\); none for test\.rpc\.fastnear\.com, rpc\.testnet\.near\.org, near-testnet\.drpc\.org/u],
+      [OPS, /at least 3 different operators on a production network \(mainnet\), got 2 \(FastNear, dRPC\)[\s\S]*Declare each host's operator in envs\/sandbox-dev\.json ckdSourceOperators/u],
+    ] as const) {
+      const h = harness(prod(ops), mainnet);
+      await expect(fetchCkdKey(['sandbox-dev', '--rpc', URLS[2]!], counting(h))).rejects.toThrow(want);
+      expect(h.written).toEqual([]);
+    }
+    expect(read).toEqual([]);
+    // Three operators: read, pinned, and the map (outside the source fetch-ckd-key rewrites) is kept as it was.
+    const three = { ...OPS, 'rpc.testnet.near.org': 'Lava' };
+    const start = `${JSON.stringify({ ...(JSON.parse(fixtureText()) as Record<string, unknown>), ckdSourceOperators: three }, null, 2)}\n`;
+    const h = harness(prod(three), mainnet, start);
+    await fetchCkdKey(['sandbox-dev', '--rpc', URLS[2]!], counting(h));
+    expect(read).toHaveLength(3);
+    const written = JSON.parse(h.written[0]!) as Record<string, unknown>;
+    expect(written.ckdNetworkKeySource).toEqual({ blockHeight: 1000, blockHash: HASH, rpcs: Object.keys(OPS) });
+    expect(written.ckdSourceOperators).toEqual(three);
+    // testnet: nothing asked (sandbox-dev names none).
+    const t = harness(base());
+    await fetchCkdKey(['sandbox-dev', '--dry-run'], t.deps);
+    expect(t.out.at(-1)).toBe('Dry run: manifest not changed.');
   });
 
   it('inserts the source right after ckdNetworkKey and keeps the rest of the file byte-identical', () => {

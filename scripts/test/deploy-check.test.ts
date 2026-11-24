@@ -607,8 +607,10 @@ describe('deployCheck with the dashboard Workers', () => {
 describe('usage capture and Hana’s own org (Hana Home’s billing, D596, D597)', () => {
   const HANA_ORG = 'org_2Yh8sJq4LmHana';
   const production = { ...full, network: 'mainnet' } as unknown as Manifest;
-  /** D903: who runs each NEAR provider, as a production manifest must say. */
-  const OPERATORS = { rpcOperator: 'FastNear', rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear', 'dRPC'] };
+  /** D903: who runs each NEAR provider, as a production manifest must say; D904: and each host the CKD key was read from (synthetic names). */
+  const CKD_OPERATORS = { 'test.rpc.fastnear.com': 'FastNear', 'rpc.testnet.near.org': 'Lava', 'near-testnet.drpc.org': 'dRPC' };
+  // apiRpcFallbacks[0] is rpcFallback's host: one host, one operator (D904 after PR 133's review).
+  const OPERATORS = { rpcOperator: 'FastNear', rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['Lava', 'dRPC'], ckdSourceOperators: CKD_OPERATORS };
   const api = (usageCapture?: boolean) => fullServer(ID).fetchFn && ((async (input: string | URL | Request, init?: RequestInit) => (String(input) === URLS.api ? Response.json({ ok: true, build: ID, ...(usageCapture === undefined ? {} : { usageCapture }) }) : fullServer(ID).fetchFn(input, init))) as typeof fetch);
 
   it('reads usageCapture from the API’s health answer; anything else is "doesn’t say"', async () => {
@@ -659,6 +661,38 @@ describe('usage capture and Hana’s own org (Hana Home’s billing, D596, D597)
     const testnet = await runFull(['sandbox-dev'], api(true));
     expect(testnet.code).toBe(0);
     expect(testnet.out).not.toMatch(/operator/u);
+  });
+
+  it('D904: a production env names who runs each host its CKD key was read from, three different operators; testnet needs none', async () => {
+    const prod = (extra: Record<string, unknown>) => ({ ...production, hanaOrgId: HANA_ORG, ...OPERATORS, ...extra }) as unknown as Manifest;
+    expect(full.ckdNetworkKeySource?.rpcs).toEqual(Object.keys(CKD_OPERATORS));
+    const none = await runFull(['prod'], api(true), { loadManifest: () => prod({ ckdSourceOperators: undefined }) });
+    expect(none.code).toBe(1);
+    expect(none.out).toMatch(/FAIL: manifest: ckdSourceOperators: ckdSourceOperators must name who runs every ckdNetworkKeySource host on a production network \(mainnet\); none for test\.rpc\.fastnear\.com, rpc\.testnet\.near\.org, near-testnet\.drpc\.org/u);
+    // sandbox-dev's real operators: FastNear runs two of its three hosts.
+    const two = await runFull(['prod'], api(true), { loadManifest: () => prod({ apiRpcFallbackOperators: ['Lava', 'FastNear'], ckdSourceOperators: { ...CKD_OPERATORS, 'near-testnet.drpc.org': 'Fast Near' } }) });
+    expect(two.code).toBe(1);
+    expect(two.out).toMatch(/FAIL: manifest: ckdSourceOperators: the pinned CKD key's sources must be run by at least 3 different operators on a production network \(mainnet\), got 2 \(FastNear, Lava\)/u);
+    expect(two.out).not.toMatch(/one host has one operator/u);
+    // Read whatever the groups: it is the manifest's.
+    const onlyApi = await runFull(['prod', '--only', 'api'], api(true), { loadManifest: () => prod({ ckdSourceOperators: { ...CKD_OPERATORS, 'rpc.testnet.near.org': 'dRPC' } }) });
+    expect(onlyApi.out).toMatch(/at least 3 different operators/u);
+    // One host, one operator, on every network (D904 after PR 133's review): the review's case.
+    const conflict = await runFull(['prod'], api(true), { loadManifest: () => prod({ apiRpcFallbackOperators: ['FastNear', 'dRPC'], ckdSourceOperators: { ...CKD_OPERATORS, 'rpc.testnet.near.org': 'Pagoda' } }) });
+    expect(conflict.code).toBe(1);
+    expect(conflict.out).toMatch(/FAIL: manifest: apiRpcFallbackOperators\.0: rpc\.testnet\.near\.org is run by Lava in rpcFallbackOperator but by FastNear in apiRpcFallbackOperators\.0/u);
+    expect(conflict.out).toMatch(/FAIL: manifest: ckdSourceOperators\.rpc\.testnet\.near\.org: rpc\.testnet\.near\.org is run by Lava in rpcFallbackOperator but by Pagoda/u);
+    const testnetConflict = await runFull(['sandbox-dev'], api(true), { loadManifest: () => ({ ...full, rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear', 'dRPC'] }) as Manifest });
+    expect(testnetConflict.code).toBe(1);
+    expect(testnetConflict.out).toMatch(/one host has one operator/u);
+    // A pinned key with no recorded source.
+    const unrecorded = await runFull(['prod'], api(true), { loadManifest: () => prod({ ckdNetworkKeySource: undefined }) });
+    expect(unrecorded.out).toMatch(/FAIL: manifest: ckdNetworkKeySource: ckdNetworkKeySource is required with a pinned ckdNetworkKey/u);
+    expect((await runFull(['prod'], api(true), { loadManifest: () => prod({}) })).code).toBe(0);
+    // sandbox-dev (testnet, two operators behind three hosts, none named) is fine.
+    const testnet = await runFull(['sandbox-dev'], api(true));
+    expect(testnet.code).toBe(0);
+    expect(testnet.out).not.toMatch(/ckdSourceOperators|operators/u);
   });
 
   it('--d1 checks that hanaOrgId is an org that exists and is internal, reading only its kind from the console’s D1', async () => {

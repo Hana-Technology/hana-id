@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { readdirSync } from 'node:fs';
-import { apiRpcFallbacksOf, loadEnv, MAX_API_RPC_FALLBACKS, manifestPath, manifestSchema, nearOperatorProblems, operatorKey } from './index.ts';
+import { isDisplaySafeLine } from '@hana-id/core/display-safe';
+import { apiRpcFallbacksOf, ckdSourceOperatorProblems, duplicateJsonKey, loadEnv, MAX_API_RPC_FALLBACKS, MAX_CKD_SOURCE_OPERATORS, MIN_CKD_SOURCES, manifestPath, manifestSchema, nearOperatorProblems, operatorConflictProblems, operatorKey, parseManifest } from './index.ts';
 
 const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
 
@@ -92,7 +93,8 @@ describe('manifestSchema: who runs the NEAR providers (D903)', () => {
   /** sandbox-dev as parsed, on a production network: the schema admits only testnet today, so the rule is run as the schema runs it. */
   const production = (extra: Record<string, unknown> = {}) => ({ ...manifestSchema.parse({ ...raw(), ...extra }), network: 'mainnet' });
   const paths = (m: Parameters<typeof nearOperatorProblems>[0]) => nearOperatorProblems(m).map((p) => p.path.join('.'));
-  const OPERATORS = { rpcOperator: 'FastNear', rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear', 'dRPC'] };
+  // apiRpcFallbacks[0] is rpcFallback itself, so it names the same operator (one host, one operator: D904 after PR 133's review).
+  const OPERATORS = { rpcOperator: 'FastNear', rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['Lava', 'dRPC'] };
 
   it('every committed env validates as it is (sandbox-dev names no operators: one operator, FastNear, behind both is accepted on testnet)', () => {
     const names = readdirSync(manifestPath('sandbox-dev').replace(/[^/]+$/u, '')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
@@ -132,7 +134,7 @@ describe('manifestSchema: who runs the NEAR providers (D903)', () => {
     expect(paths(production())).toEqual(['rpcOperator', 'rpcFallbackOperator', 'apiRpcFallbackOperators']);
     // One operator behind both, however it is written (a different domain is no proof: near.org's endpoint is FastNear's).
     for (const same of ['FastNear', 'fastnear', ' FASTNEAR ', 'Fast Near', 'Fast-NEAR', 'ＦａｓｔＮｅａｒ']) {
-      const p = nearOperatorProblems(production({ ...OPERATORS, rpcFallbackOperator: same }));
+      const p = nearOperatorProblems(production({ ...OPERATORS, rpcFallbackOperator: same, apiRpcFallbackOperators: [same, 'dRPC'] }));
       expect(p.map((x) => x.path.join('.')), same).toEqual(['rpcFallbackOperator']);
       expect(p[0]!.message, same).toBe('rpc and rpcFallback must be run by different operators on a production network (mainnet) (both are FastNear): one operator behind both makes the two-provider checks one provider’s word (D903)');
     }
@@ -141,14 +143,14 @@ describe('manifestSchema: who runs the NEAR providers (D903)', () => {
     expect(paths(production({ ...OPERATORS, rpcFallbackOperator: undefined }))).toEqual(['rpcFallbackOperator']);
     expect(paths(production({ ...OPERATORS, apiRpcFallbackOperators: undefined }))).toEqual(['apiRpcFallbackOperators']);
     // The API's fallbacks only fail over (never compared), so they may share an operator with rpc.
-    expect(nearOperatorProblems(production({ ...OPERATORS, apiRpcFallbackOperators: ['FastNear', 'FastNear'] }))).toEqual([]);
+    expect(nearOperatorProblems(production({ ...OPERATORS, apiRpcFallbackOperators: ['Lava', 'FastNear'] }))).toEqual([]);
     // No second provider at all: refused (the pages' checks need two).
     const { rpcFallback: _, emailIssuer: _issuer, rpcFallbackOperator: _o, ...one }: Record<string, unknown> = { ...raw(), ...OPERATORS };
     expect(paths({ ...manifestSchema.parse(one), network: 'mainnet' })).toEqual(['rpcFallback']);
     // The message for a missing operator says why.
     expect(nearOperatorProblems(production()).map((p) => p.message)[0]).toBe('rpcOperator is required on a production network (mainnet): name who runs rpc (a different domain is no proof of a different operator, D903)');
     // On testnet the same manifests pass.
-    expect(nearOperatorProblems({ ...production({ ...OPERATORS, rpcFallbackOperator: 'FastNear' }), network: 'testnet' })).toEqual([]);
+    expect(nearOperatorProblems({ ...production({ ...OPERATORS, rpcFallbackOperator: 'FastNear', apiRpcFallbackOperators: ['FastNear', 'dRPC'] }), network: 'testnet' })).toEqual([]);
     expect(nearOperatorProblems({ ...production(), network: 'testnet' })).toEqual([]);
   });
 
@@ -156,6 +158,189 @@ describe('manifestSchema: who runs the NEAR providers (D903)', () => {
     const prod = { ...raw(), network: 'mainnet' };
     expect(manifestSchema.safeParse(prod).success).toBe(false);
     expect(operatorKey(' Fast-NEAR ')).toBe('fastnear');
+  });
+});
+
+describe('operator names: the shared display-safety rule (D904), as the copy refused before', () => {
+  // The schema's own pattern before it used @hana-id/core's rule, as written then.
+  const OLD_UNSAFE_OPERATOR_CHAR = /[\p{Cc}\p{Cf}\p{Co}\p{Zl}\p{Zp}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0\u{e0100}-\u{e01ef}]/u;
+
+  it('accepts and refuses the same code points, alone and inside a name', () => {
+    const differ: number[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      const c = cp >= 0xd800 && cp <= 0xdfff ? String.fromCharCode(cp) : String.fromCodePoint(cp);
+      for (const v of [c, `Fast${c}Near`]) if (isDisplaySafeLine(v) === OLD_UNSAFE_OPERATOR_CHAR.test(v)) differ.push(cp);
+    }
+    expect(differ).toEqual([]);
+  });
+
+  it('the schema gives the same answer and message for a sample of names', () => {
+    const msg = (v: string) => manifestSchema.safeParse({ ...raw(), rpcOperator: v }).error?.issues.map((i) => i.message) ?? [];
+    const unsafe = 'an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character';
+    for (const c of ['\u0000', '\u0085', '\u00ad', '\u034f', '\u061c', '\u115f', '\u17b5', '\u180e', '\u200b', '\u2028', '\u202e', '\u2066', '\u3164', '\ue000', '\ufe0f', '\ufeff', '\uffa0', '\u{e0041}', '\u{e01ef}']) {
+      expect(msg(`Fast${c}Near`), JSON.stringify(c)).toEqual([unsafe]);
+    }
+    // Allowed, as before: the braille blank and unassigned code points (not in the rule), and a lone surrogate (D904, to confirm).
+    for (const ok of ['FastNear', 'Café Nodes', '日本 RPC', 'Fast\u2800Near', 'Fast\u{10ffff}Near', '🚀 Nodes', 'Fast\ud800Near']) expect(msg(ok), ok).toEqual([]);
+  });
+});
+
+describe('manifestSchema: who runs the pinned CKD key\'s sources (D904)', () => {
+  const messages = (m: Record<string, unknown>): string[] => manifestSchema.safeParse(m).error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`) ?? [];
+  /** sandbox-dev as parsed, on a production network (the schema admits only testnet today): the rule as the schema runs it. */
+  const production = (extra: Record<string, unknown> = {}) => ({ ...manifestSchema.parse({ ...raw(), ...extra }), network: 'mainnet' });
+  /** sandbox-dev's recorded hosts: test.rpc.fastnear.com, rpc.testnet.near.org (FastNear runs both), near-testnet.drpc.org. */
+  const hosts = () => (raw().ckdNetworkKeySource as { rpcs: string[] }).rpcs;
+  const named = (a: string, b: string, c: string) => ({ ckdSourceOperators: { 'test.rpc.fastnear.com': a, 'rpc.testnet.near.org': b, 'near-testnet.drpc.org': c } });
+
+  it('every committed env validates as it is; sandbox-dev declares none (two operators behind its three hosts, accepted on testnet)', () => {
+    const names = readdirSync(manifestPath('sandbox-dev').replace(/[^/]+$/u, '')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      const env = loadEnv(name);
+      expect(ckdSourceOperatorProblems(env), name).toEqual([]);
+    }
+    const env = loadEnv('sandbox-dev');
+    expect(env.ckdSourceOperators).toBeUndefined();
+    expect(env.ckdNetworkKeySource?.rpcs).toEqual(['test.rpc.fastnear.com', 'rpc.testnet.near.org', 'near-testnet.drpc.org']);
+    // The same manifest with its true operators declared is still fine on testnet: one operator for two hosts.
+    expect(messages({ ...raw(), ...named('FastNear', 'FastNear', 'dRPC') })).toEqual([]);
+  });
+
+  it('on testnet the map is optional, may be partial, may name one operator for every host, and may declare a host ahead of a pin', () => {
+    expect(messages({ ...raw(), ckdSourceOperators: { 'near-testnet.drpc.org': 'dRPC' } })).toEqual([]);
+    expect(messages({ ...raw(), ...named('FastNear', 'FastNear', 'FastNear') })).toEqual([]);
+    expect(messages({ ...raw(), ckdSourceOperators: { 'rpc.other.example': 'Other' } })).toEqual([]);
+    expect(manifestSchema.parse({ ...raw(), ckdSourceOperators: { 'near-testnet.drpc.org': '  dRPC  ' } }).ckdSourceOperators).toEqual({ 'near-testnet.drpc.org': 'dRPC' });
+    const { ckdNetworkKeySource: _s, ...noSource } = raw();
+    expect(messages({ ...noSource, ...named('FastNear', 'FastNear', 'dRPC') })).toEqual([]);
+  });
+
+  it('everywhere: keys are hosts as recorded, values operator names (the same rules as rpcOperator), 1 to MAX_CKD_SOURCE_OPERATORS hosts', () => {
+    for (const key of ['https://rpc.testnet.near.org', 'rpc.testnet.near.org/', 'near-testnet.drpc.org/?key=abc', 'RPC.TESTNET.NEAR.ORG', '']) {
+      expect(manifestSchema.safeParse({ ...raw(), ckdSourceOperators: { [key]: 'FastNear' } }).success, key).toBe(false);
+    }
+    expect(manifestSchema.safeParse({ ...raw(), ckdSourceOperators: { 'localhost:3030': 'Local' } }).success).toBe(true);
+    for (const bad of ['', '   ', '---', 'x'.repeat(65), 7, 'Fast\u202eraeN', 'Fast\u200bNear', 'Fast\u0007Near', 'Fast\u3164Near']) {
+      expect(manifestSchema.safeParse({ ...raw(), ckdSourceOperators: { 'near-testnet.drpc.org': bad } }).success, JSON.stringify(bad)).toBe(false);
+    }
+    expect(messages({ ...raw(), ckdSourceOperators: { 'near-testnet.drpc.org': 'Fast\u202eraeN' } })).toEqual(['ckdSourceOperators.near-testnet.drpc.org: an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character']);
+    expect(messages({ ...raw(), ckdSourceOperators: {} })).toEqual([`ckdSourceOperators: ckdSourceOperators names 1 to ${MAX_CKD_SOURCE_OPERATORS} hosts`]);
+    const many = (n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`rpc-${i}.example`, `Operator ${i}`]));
+    expect(manifestSchema.safeParse({ ...raw(), ckdSourceOperators: many(MAX_CKD_SOURCE_OPERATORS) }).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...raw(), ckdSourceOperators: many(MAX_CKD_SOURCE_OPERATORS + 1) }).success).toBe(false);
+  });
+
+  it(`on a production network: every recorded host named, and ${MIN_CKD_SOURCES} different operators among them`, () => {
+    expect(MIN_CKD_SOURCES).toBe(3);
+    expect(ckdSourceOperatorProblems(production(named('FastNear', 'Pagoda', 'dRPC')))).toEqual([]);
+    // Nothing declared: every host named in the message.
+    expect(ckdSourceOperatorProblems(production())).toEqual([
+      { path: ['ckdSourceOperators'], message: `ckdSourceOperators must name who runs every ckdNetworkKeySource host on a production network (mainnet); none for ${hosts().join(', ')} (a different domain is no proof of a different operator, D904)` },
+    ]);
+    // One missing.
+    const partial = ckdSourceOperatorProblems(production({ ckdSourceOperators: { 'test.rpc.fastnear.com': 'FastNear', 'near-testnet.drpc.org': 'dRPC' } }));
+    expect(partial.map((p) => p.message)).toEqual([expect.stringContaining('; none for rpc.testnet.near.org (')]);
+    // sandbox-dev's real operators: three domains, two operators. Refused: FastNear alone could not pin a wrong key
+    // (dRPC must agree), but two operators are not the three D100 asks for.
+    expect(ckdSourceOperatorProblems(production(named('FastNear', 'FastNear', 'dRPC')))).toEqual([
+      {
+        path: ['ckdSourceOperators'],
+        message: 'the pinned CKD key\'s sources must be run by at least 3 different operators on a production network (mainnet), got 2 (FastNear, dRPC): every source must agree, so a wrong pin needs only the operators behind them to agree on it (D904)',
+      },
+    ]);
+    // One operator however written (operatorKey: case, spaces, punctuation, width).
+    for (const same of ['fastnear', ' FAST NEAR ', 'Fast-Near', 'ＦａｓｔＮｅａｒ']) {
+      const p = ckdSourceOperatorProblems(production(named('FastNear', same, 'dRPC')));
+      expect(p.map((x) => x.message), same).toEqual([expect.stringContaining('got 2 (FastNear, dRPC)')]);
+    }
+    expect(ckdSourceOperatorProblems(production(named('FastNear', 'FastNear', 'FastNear'))).map((p) => p.message)).toEqual([expect.stringContaining('got 1 (FastNear)')]);
+    // A host declared but not recorded counts for nothing (and is allowed: declared ahead of a re-pin).
+    expect(ckdSourceOperatorProblems(production({ ckdSourceOperators: { ...named('FastNear', 'FastNear', 'dRPC').ckdSourceOperators, 'rpc.other.example': 'Other' } })).map((p) => p.message)).toEqual([expect.stringContaining('got 2')]);
+    // A fourth recorded host of a third operator: fine (more sources of an operator already counted add nothing, and cost nothing).
+    const four = { ...production(named('FastNear', 'FastNear', 'dRPC')), ckdNetworkKeySource: { ...production().ckdNetworkKeySource!, rpcs: [...hosts(), 'rpc.third.example'] } };
+    expect(ckdSourceOperatorProblems({ ...four, ckdSourceOperators: { ...four.ckdSourceOperators!, 'rpc.third.example': 'Third' } })).toEqual([]);
+    // A pinned key needs its source; a placeholder key does not yet (fetch-ckd-key writes both).
+    const { ckdNetworkKeySource: _s, ...unrecorded } = production(named('FastNear', 'Pagoda', 'dRPC'));
+    expect(ckdSourceOperatorProblems(unrecorded)).toEqual([
+      { path: ['ckdNetworkKeySource'], message: 'ckdNetworkKeySource is required with a pinned ckdNetworkKey on a production network (mainnet): pin it with fetch-ckd-key, which records where the key was read (D100, D904)' },
+    ]);
+    expect(ckdSourceOperatorProblems({ ...unrecorded, ckdNetworkKey: 'UNSET-pin-with-fetch-ckd-key' })).toEqual([]);
+    // On testnet the same manifests pass.
+    for (const m of [production(), production(named('FastNear', 'FastNear', 'FastNear')), unrecorded]) expect(ckdSourceOperatorProblems({ ...m, network: 'testnet' })).toEqual([]);
+  });
+
+  it('the schema runs it after the network: a production manifest is refused on its network first today', () => {
+    expect(messages({ ...raw(), network: 'mainnet' })).toEqual(expect.arrayContaining([expect.stringMatching(/^network: /u)]));
+  });
+});
+
+describe('one host, one operator (D904, after PR 133\'s review)', () => {
+  const messages = (m: Record<string, unknown>): string[] => manifestSchema.safeParse(m).error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`) ?? [];
+  const ckd = (a: string, b: string, c: string) => ({ ckdSourceOperators: { 'test.rpc.fastnear.com': a, 'rpc.testnet.near.org': b, 'near-testnet.drpc.org': c } });
+
+  it('every committed env validates and names no host twice with different operators', () => {
+    const names = readdirSync(manifestPath('sandbox-dev').replace(/[^/]+$/u, '')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
+    for (const name of names) expect(operatorConflictProblems(loadEnv(name)), name).toEqual([]);
+  });
+
+  it('the review\'s case: an API fallback named FastNear and the same host as a CKD source named Pagoda is refused, on every network', () => {
+    // sandbox-dev: apiRpcFallbacks[0] and the CKD source rpc.testnet.near.org are one host.
+    const m = { ...raw(), apiRpcFallbackOperators: ['FastNear', 'dRPC'], ...ckd('FastNear', 'Pagoda', 'dRPC') };
+    expect(messages(m)).toEqual(['ckdSourceOperators.rpc.testnet.near.org: rpc.testnet.near.org is run by FastNear in apiRpcFallbackOperators.0 but by Pagoda in ckdSourceOperators.rpc.testnet.near.org: one host has one operator (D904)']);
+    // Without the cross-check the count would pass with three "operators" where there are two.
+    const { apiRpcFallbackOperators: _a, ...withoutApi } = m;
+    const parsed = { ...manifestSchema.parse(withoutApi), apiRpcFallbackOperators: ['FastNear', 'dRPC'], network: 'mainnet' };
+    expect(ckdSourceOperatorProblems(parsed)).toEqual([]);
+    expect(operatorConflictProblems(parsed).map((p) => p.path.join('.'))).toEqual(['ckdSourceOperators.rpc.testnet.near.org']);
+  });
+
+  it('D903\'s own fields against each other, and rpc against a CKD source', () => {
+    // rpcFallback is apiRpcFallbacks[0] in sandbox-dev.
+    expect(messages({ ...raw(), rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear', 'dRPC'] })).toEqual([
+      'apiRpcFallbackOperators.0: rpc.testnet.near.org is run by Lava in rpcFallbackOperator but by FastNear in apiRpcFallbackOperators.0: one host has one operator (D904)',
+    ]);
+    expect(messages({ ...raw(), rpcOperator: 'FastNear', ckdSourceOperators: { 'test.rpc.fastnear.com': 'Pagoda' } })).toEqual([
+      'ckdSourceOperators.test.rpc.fastnear.com: test.rpc.fastnear.com is run by FastNear in rpcOperator but by Pagoda in ckdSourceOperators.test.rpc.fastnear.com: one host has one operator (D904)',
+    ]);
+    // The same operator however written (operatorKey), a host named in one field only, or nothing declared: fine.
+    expect(messages({ ...raw(), rpcOperator: 'FastNear', rpcFallbackOperator: 'fast near', apiRpcFallbackOperators: ['Fast-Near', 'dRPC'], ...ckd('FASTNEAR', 'FastNear', 'drpc') })).toEqual([]);
+    expect(messages({ ...raw(), rpcFallbackOperator: 'Lava' })).toEqual([]);
+    expect(messages({ ...raw(), ...ckd('A', 'B', 'C') })).toEqual([]);
+    // A count mismatch is D903's own refusal, not compared host by host.
+    expect(messages({ ...raw(), rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear'] })).toEqual(['apiRpcFallbackOperators: apiRpcFallbackOperators must name one operator per apiRpcFallbacks URL, in order (2, got 1)']);
+  });
+});
+
+describe('manifests with a key twice in one object (D904, after PR 133\'s review)', () => {
+  const text = () => readFileSync(manifestPath('sandbox-dev'), 'utf8');
+
+  it('finds the first repeated key at any depth, keys compared as JSON reads them', () => {
+    expect(duplicateJsonKey('{"a":"FastNear","b":"FastNear","c":"dRPC","b":"Lava"}')).toBe('b');
+    expect(duplicateJsonKey('{"x":{"a":1,"\\u0061":2}}')).toBe('x.a');
+    expect(duplicateJsonKey('{"x":[{"a":1},{"a":1,"a":2}]}')).toBe('x[1].a');
+    expect(duplicateJsonKey('{"a":1,"a":1}')).toBe('a');
+    expect(duplicateJsonKey('{"ckdSourceOperators":{"rpc.testnet.near.org":"A","rpc.testnet.near.org":"B"}}')).toBe('ckdSourceOperators."rpc.testnet.near.org"');
+    expect(duplicateJsonKey('[{"a":1,"a":2}]')).toBe('$[0].a');
+    // Not duplicates: the same key in different objects, keys that only look alike in a value, escaped quotes and braces.
+    expect(duplicateJsonKey('{"a":{"a":1},"b":{"a":2},"c":[{"a":1},{"a":2}]}')).toBeNull();
+    expect(duplicateJsonKey('{"a":"\\"a\\":1,{\\"a\\"","b":"} , \\"a\\"","c":["a","a"],"d":"\\\\","a2":"x"}')).toBeNull();
+    expect(duplicateJsonKey('{"A":1,"a":2,"a ":3}')).toBeNull();
+    expect(duplicateJsonKey('{}')).toBeNull();
+    expect(duplicateJsonKey('"a"')).toBeNull();
+  });
+
+  it('parseManifest refuses one; every committed env parses to exactly what JSON.parse and the schema give', () => {
+    const t = text();
+    const twice = t.replace('"network": "testnet",', '"network": "testnet",\n  "network": "testnet",');
+    expect(twice).not.toBe(t);
+    expect(() => parseManifest('sandbox-dev', twice)).toThrow('envs/sandbox-dev.json has a key twice in one object (network): JSON keeps only the last, which a reader of the file may not see');
+    const names = readdirSync(manifestPath('sandbox-dev').replace(/[^/]+$/u, '')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
+    for (const name of names) {
+      const own = readFileSync(manifestPath(name), 'utf8');
+      expect(duplicateJsonKey(own), name).toBeNull();
+      expect(loadEnv(name), name).toEqual(manifestSchema.parse(JSON.parse(own)));
+    }
   });
 });
 

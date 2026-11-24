@@ -5,8 +5,9 @@
 // at least MIN_CKD_SOURCES providers (distinct registrable domains: the manifest's `rpc`, `rpcFallback`, any `--rpc`,
 // then the well-known list), each must report the env's chain, the same block hash at that height and the same key,
 // and the block is recorded beside the key. Public data, safe to print; only RPC hosts are printed or recorded (a
-// provider URL can carry an API key).
-import { type Manifest, MIN_CKD_SOURCES, manifestPath, siteOf } from '@hana-id/env';
+// provider URL can carry an API key). On a production network the hosts must also be run by MIN_CKD_SOURCES different
+// operators, as the manifest declares them (`ckdSourceOperators`, D904): a domain is no proof of who runs it.
+import { type Manifest, ckdSourceOperatorProblems, MIN_CKD_SOURCES, manifestPath, siteOf } from '@hana-id/env';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { CliError, parseCli } from './cli.ts';
 import { setManifestObject, setManifestString } from './manifest-edit.ts';
@@ -41,10 +42,10 @@ export const providerOf = (url: string): string => siteOf(new URL(url).origin);
 
 /**
  * The endpoints to read from: the manifest's `rpc` and `rpcFallback`, every `extra` (from `--rpc`), then well-known
- * endpoints of providers not yet present until there are MIN_CKD_SOURCES providers. All https. Throws when fewer
- * providers are available.
+ * endpoints of providers not yet present until there are MIN_CKD_SOURCES providers (none for a network without a
+ * list). All https. Throws when fewer providers are available.
  */
-export function ckdSources(m: Pick<Manifest, 'rpc' | 'rpcFallback' | 'network'>, extra: readonly string[] = [], wellKnown: readonly string[] = WELL_KNOWN_RPCS[m.network]): string[] {
+export function ckdSources(m: Pick<Manifest, 'rpc' | 'rpcFallback' | 'network'>, extra: readonly string[] = [], wellKnown: readonly string[] = WELL_KNOWN_RPCS[m.network] ?? []): string[] {
   const urls: string[] = [];
   for (const u of [m.rpc, ...(m.rpcFallback ? [m.rpcFallback] : []), ...extra]) {
     let url: URL;
@@ -181,6 +182,10 @@ export async function fetchCkdKey(argv: readonly string[], deps: FetchCkdKeyDeps
   if (!envName || args.positionals.length > 1) throw new CliError('Expected exactly one <env>');
   const m = deps.loadManifest(envName);
   const urls = ckdSources(m, args.list('rpc'));
+  // Who runs them (D904): on a production network every host to be read needs its operator in ckdSourceOperators, and
+  // MIN_CKD_SOURCES different ones, before anything is read (the manifest it writes would be refused otherwise).
+  const operatorProblems = ckdSourceOperatorProblems({ ...m, ckdNetworkKeySource: { rpcs: urls.map(hostOf) } });
+  if (operatorProblems.length > 0) throw new CliError(`${operatorProblems.map((p) => p.message).join('\n')}\nDeclare each host's operator in envs/${m.name}.json ckdSourceOperators (or pass --rpc of another operator) first.`);
   deps.log(`Reading ${m.mpc} CKD domain ${m.ckdDomainId} from ${urls.length} RPCs: ${urls.map(hostOf).join(', ')}`);
   const reading = await readCkdKeyAgreed(m, urls.map(deps.rpc), deps.sleep ? { sleep: deps.sleep } : {});
   const source = { blockHeight: reading.blockHeight, blockHash: reading.blockHash, rpcs: reading.hosts };
@@ -194,5 +199,5 @@ export async function fetchCkdKey(argv: readonly string[], deps: FetchCkdKeyDeps
   text = setManifestObject(text, 'ckdNetworkKeySource', source, 'ckdNetworkKey');
   deps.writeManifest(m.name, text);
   if (sameKey) return void deps.log(`envs/${m.name}.json had this key: recorded its source (block ${reading.blockHeight}).`);
-  deps.log(`Wrote ckdNetworkKey and its source to envs/${m.name}.json${m.ckdNetworkKey.startsWith('UNSET') ? '' : ` (was ${m.ckdNetworkKey}: the MPC key changed, every pinned client must update)`}.`);
+  deps.log(`Wrote ckdNetworkKey and its source to envs/${m.name}.json${m.ckdNetworkKey.includes('UNSET') ? '' : ` (was ${m.ckdNetworkKey}: the MPC key changed, every pinned client must update)`}.`);
 }

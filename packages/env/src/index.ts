@@ -1,9 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { duplicateJsonKey } from './json-duplicates.ts';
 import { type Manifest, manifestSchema } from './schema.ts';
 
-export { apiRpcFallbacksOf, DO_LOCATION_HINTS, endpointUrlProblem, MAX_API_RPC_FALLBACKS, MAX_OPERATOR_NAME, type Manifest, manifestSchema, MIN_CKD_SOURCES, nearOperatorProblems, nearRelaySchema, nearSchema, operatorKey, PAGER_PROVIDERS, partnerLabelsProblem } from './schema.ts';
+export { duplicateJsonKey } from './json-duplicates.ts';
+
+export { apiRpcFallbacksOf, ckdSourceOperatorProblems, DO_LOCATION_HINTS, endpointUrlProblem, MAX_API_RPC_FALLBACKS, MAX_CKD_SOURCE_OPERATORS, MAX_OPERATOR_NAME, type Manifest, manifestSchema, MIN_CKD_SOURCES, nearOperatorProblems, nearRelaySchema, operatorConflictProblems, nearSchema, operatorKey, PAGER_PROVIDERS, partnerLabelsProblem } from './schema.ts';
 export {
   checksumEvmAddress,
   EVM_SPONSOR_BOUNDS,
@@ -82,9 +85,16 @@ export function manifestPath(name: string): string {
   return join(repoRoot, 'envs', `${name}.json`);
 }
 
-/** Reads and validates envs/<name>.json. */
+/** Reads and validates envs/<name>.json (`parseManifest`). */
 export function loadEnv(name: string): Manifest {
-  const raw: unknown = JSON.parse(readFileSync(manifestPath(name), 'utf8'));
+  return parseManifest(name, readFileSync(manifestPath(name), 'utf8'));
+}
+
+/** Validates the text of envs/<name>.json: valid JSON with no key twice in one object (D904), then the schema. */
+export function parseManifest(name: string, text: string): Manifest {
+  const raw: unknown = JSON.parse(text);
+  const duplicate = duplicateJsonKey(text);
+  if (duplicate !== null) throw new Error(`envs/${name}.json has a key twice in one object (${duplicate}): JSON keeps only the last, which a reader of the file may not see`);
   const manifest = manifestSchema.parse(raw);
   if (manifest.name !== name) throw new Error(`Manifest ${name}.json declares name "${manifest.name}"`);
   return manifest;

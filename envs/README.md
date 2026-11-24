@@ -1,6 +1,7 @@
 # Environments
 
-One JSON manifest per environment, validated by `packages/env` (`manifestSchema`). Every NEAR account name, endpoint and
+One JSON manifest per environment, validated by `packages/env` (`manifestSchema`; a file with a key twice in one
+object is refused before that, since JSON keeps only the last and a reader may not see it, D904). Every NEAR account name, endpoint and
 Cloudflare resource name comes from here. Names in `sandbox-dev.json` are throwaway; wallets derived on them are
 disposable. Add an environment by copying `sandbox-dev.json`, changing `name` (must match the file name) and the accounts.
 
@@ -198,6 +199,26 @@ the signer's `view_account` when added, 2026-11-06).
 `apiRpcFallbackOperators` (optional on testnet; on a production network required with `apiRpcFallbacks`; D903): who runs
 each `apiRpcFallbacks` URL, one name per URL in the same order. They may share an operator with `rpc` (the API only
 fails over to them and never compares two answers); refused without `apiRpcFallbacks` or with another count.
+
+`ckdNetworkKeySource` (written by `fetch-ckd-key`, D100): where the pinned `ckdNetworkKey` was read, `{blockHeight,
+blockHash, rpcs}`: the final block and the hosts (never URLs) of the sources that all returned the same block hash and
+key there, on at least three registrable domains. `fetch-ckd-key` pins only when every source answers and agrees, so a
+wrong pin needs every source to give the same wrong answer.
+
+`ckdSourceOperators` (optional on testnet, required on a production network; D904): who runs each host the CKD key is
+read from, an object from the host as `ckdNetworkKeySource.rpcs` records it (`"near-testnet.drpc.org"`) to the operator's
+name as its own terms give it (`"dRPC"`), with the same rules and comparison as `rpcOperator`. Keyed by host, not a list
+beside `rpcs`, because `fetch-ckd-key` rewrites the source whole on every pin: a host may be declared before it is first
+read, and the map stays as it is when the key is re-pinned. On any network but testnet the schema, `deploy-check` and
+`fetch-ckd-key` (before it reads anything) refuse a manifest whose pinned key has no recorded source, whose recorded
+hosts aren't all named, or whose hosts are run by fewer than three different operators. On testnet the field may be
+left out, name some hosts only, or name one operator for several; sandbox-dev names none (its three hosts are run by
+two operators: FastNear runs `test.rpc.fastnear.com` and `rpc.testnet.near.org`, dRPC runs `near-testnet.drpc.org`).
+On every network, a host named in two places (`rpc`'s, `rpcFallback`'s or an `apiRpcFallbacks` URL's host and a
+`ckdSourceOperators` key, or two of D903's fields) must name one operator in both (compared the same way), or the
+schema and `deploy-check` refuse it. Nothing but those three reads it, so a change needs no `gen` or redeploy. **Not in force until the schema admits
+another network**, as for `rpcOperator`; and **a declaration, not proof**: a reviewer reading the manifest is the
+check that each name is who really runs the host.
 
 `near` (optional, D740): NEAR as a wallet chain. `near.demoGuestbook` (optional) is the account of the hackathon demo
 contract `contracts/hana-guestbook`, which `deploy-guestbook <env>` deploys (`docs/operations.md` "Hackathon demo

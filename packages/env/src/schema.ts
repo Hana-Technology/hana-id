@@ -1,3 +1,4 @@
+import { isDisplaySafeLine } from '@hana-id/core/display-safe';
 import { urlString, z } from './zod.ts';
 import { adminSchema, consoleSchema, dashboardRules, delayMs, emailSchema, filesSchema, usageSchema } from './dashboard.ts';
 import { CLOUDFLARE_ACCOUNT_ID_RE } from './cloudflare.ts';
@@ -8,6 +9,11 @@ import { hanaOriginProblem, isDevEnv, isLocalEnv, isLoopbackHost, siteOf } from 
 
 /** Independent RPC providers the pinned CKD network key must be read from, all agreeing (OPER-1, D100). */
 export const MIN_CKD_SOURCES = 3;
+
+/** A CKD key source as recorded: a host name with an optional port (no scheme, path or query, which may carry an API key). */
+const CKD_SOURCE_HOST_RE = /^[a-z0-9.-]+(:\d{1,5})?$/u;
+/** At most this many hosts in `ckdSourceOperators` (the recorded sources are at most 10; room to declare ahead of a re-pin). */
+export const MAX_CKD_SOURCE_OPERATORS = 20;
 
 /** At most this many `apiRpcFallbacks`: each can add a per-endpoint timeout to an API call (D435). */
 export const MAX_API_RPC_FALLBACKS = 3;
@@ -322,12 +328,6 @@ export const MAX_OPERATOR_NAME = 64;
  * " Fast Near " and "Fast-NEAR" are one operator.
  */
 export const operatorKey = (name: string): string => name.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
-/**
- * Characters an operator name may not hold (after PR 129's review): controls, format characters (bidi overrides such as
- * U+202E, zero-width), private use, line and paragraph separators and the other invisible fillers, as the app-name rule
- * (`@hana-id/console-core` names.ts `isDisplaySafeName`).
- */
-const UNSAFE_OPERATOR_CHAR = /[\p{Cc}\p{Cf}\p{Co}\p{Zl}\p{Zp}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0\u{e0100}-\u{e01ef}]/u;
 /** An operator name as written: trimmed, 1..MAX_OPERATOR_NAME characters, with a letter or digit, every character display-safe. */
 const operatorName = z
   .string()
@@ -335,7 +335,10 @@ const operatorName = z
   .min(1)
   .max(MAX_OPERATOR_NAME)
   .refine((v) => operatorKey(v) !== '', 'an operator name needs a letter or digit')
-  .refine((v) => !UNSAFE_OPERATOR_CHAR.test(v), 'an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character');
+  // Characters an operator name may not hold (after PR 129's review): controls, format characters (bidi overrides such
+  // as U+202E, zero-width), private use, line and paragraph separators and the other invisible fillers: the one shared
+  // rule, @hana-id/core `isDisplaySafeLine`, as for app names (D904: it was a copy until then).
+  .refine((v) => isDisplaySafeLine(v), 'an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character');
 
 /**
  * The NEAR providers' operators (D903), as a list (empty = fine). Everywhere: an operator is named only for an
@@ -376,6 +379,97 @@ export function nearOperatorProblems(m: {
   return out;
 }
 
+/**
+ * Who runs the pinned CKD key's sources (D904), as a list (empty = fine). `fetch-ckd-key` pins the key only when every
+ * source answers and all of them report the same block hash and the same key (`readCkdKeyAgreed`): one failure or one
+ * disagreement and nothing is written. So a wrong pin needs every source to give the same wrong answer, and what that
+ * costs an attacker is the number of different operators behind the sources, not the number of hosts or domains (two
+ * hosts of one operator are one source of truth; rpc.testnet.near.org is run by FastNear). On a production network
+ * (anything but testnet): a pinned key needs its recorded source, every recorded host needs its operator in
+ * `ckdSourceOperators`, and the hosts must be run by at least MIN_CKD_SOURCES different operators (`operatorKey`), so
+ * a wrong pin needs that many independent operators to give the same wrong answer, as D100 meant by "three independent
+ * providers". On testnet the map is optional, may be partial and may name one operator for several hosts (the founder,
+ * 2026-11-24). Everywhere a host may be declared before it is recorded, so the map can be written before a re-pin.
+ */
+export function ckdSourceOperatorProblems(m: {
+  network: string;
+  ckdNetworkKey: string;
+  ckdNetworkKeySource?: { rpcs: readonly string[] } | undefined;
+  ckdSourceOperators?: Readonly<Record<string, string>> | undefined;
+}): { path: (string | number)[]; message: string }[] {
+  if (m.network === 'testnet') return [];
+  const out: { path: (string | number)[]; message: string }[] = [];
+  const where = `on a production network (${m.network})`;
+  const source = m.ckdNetworkKeySource;
+  if (source === undefined) {
+    if (!m.ckdNetworkKey.includes('UNSET')) out.push({ path: ['ckdNetworkKeySource'], message: `ckdNetworkKeySource is required with a pinned ckdNetworkKey ${where}: pin it with fetch-ckd-key, which records where the key was read (D100, D904)` });
+    return out;
+  }
+  const operators = m.ckdSourceOperators ?? {};
+  const unnamed = source.rpcs.filter((host) => !Object.hasOwn(operators, host));
+  if (unnamed.length > 0) {
+    out.push({ path: ['ckdSourceOperators'], message: `ckdSourceOperators must name who runs every ckdNetworkKeySource host ${where}; none for ${unnamed.join(', ')} (a different domain is no proof of a different operator, D904)` });
+    return out;
+  }
+  // One name per operator, as first written: "FastNear" and "fast near" are one.
+  const distinct = new Map<string, string>();
+  for (const host of source.rpcs) if (!distinct.has(operatorKey(operators[host]!))) distinct.set(operatorKey(operators[host]!), operators[host]!);
+  if (distinct.size < MIN_CKD_SOURCES) {
+    out.push({
+      path: ['ckdSourceOperators'],
+      message: `the pinned CKD key's sources must be run by at least ${MIN_CKD_SOURCES} different operators ${where}, got ${distinct.size} (${[...distinct.values()].join(', ')}): every source must agree, so a wrong pin needs only the operators behind them to agree on it (D904)`,
+    });
+  }
+  return out;
+}
+
+/**
+ * One host, one operator (D904, after PR 133's review): every field that names who runs a host must agree when two of
+ * them name the same host, on every network. The hosts: `rpc`'s (`rpcOperator`), `rpcFallback`'s
+ * (`rpcFallbackOperator`), each `apiRpcFallbacks` URL's (`apiRpcFallbackOperators`, in order, when the counts match) and
+ * each `ckdSourceOperators` key; compared by `operatorKey`. Without it a host named "FastNear" as an API fallback and
+ * "Pagoda" as a CKD source would count as two operators where there is one. Only declared names are compared: a host
+ * named in one field alone, or in none, is not a contradiction.
+ */
+export function operatorConflictProblems(m: {
+  rpc: string;
+  rpcFallback?: string | undefined;
+  apiRpcFallbacks?: readonly string[] | undefined;
+  rpcOperator?: string | undefined;
+  rpcFallbackOperator?: string | undefined;
+  apiRpcFallbackOperators?: readonly string[] | undefined;
+  ckdSourceOperators?: Readonly<Record<string, string>> | undefined;
+}): { path: (string | number)[]; message: string }[] {
+  const hostOf = (url: string): string | null => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return null;
+    }
+  };
+  const named: { host: string; operator: string; path: (string | number)[] }[] = [];
+  const add = (url: string | undefined, operator: string | undefined, path: (string | number)[]) => {
+    const host = url === undefined ? null : hostOf(url);
+    if (host !== null && operator !== undefined) named.push({ host, operator, path });
+  };
+  add(m.rpc, m.rpcOperator, ['rpcOperator']);
+  add(m.rpcFallback, m.rpcFallbackOperator, ['rpcFallbackOperator']);
+  if (m.apiRpcFallbacks !== undefined && m.apiRpcFallbackOperators?.length === m.apiRpcFallbacks.length) {
+    m.apiRpcFallbacks.forEach((url, i) => add(url, m.apiRpcFallbackOperators![i], ['apiRpcFallbackOperators', i]));
+  }
+  for (const [host, operator] of Object.entries(m.ckdSourceOperators ?? {})) named.push({ host, operator, path: ['ckdSourceOperators', host] });
+  const out: { path: (string | number)[]; message: string }[] = [];
+  const first = new Map<string, { operator: string; path: (string | number)[] }>();
+  for (const n of named) {
+    const seen = first.get(n.host);
+    if (seen === undefined) first.set(n.host, n);
+    else if (operatorKey(seen.operator) !== operatorKey(n.operator)) {
+      out.push({ path: n.path, message: `${n.host} is run by ${seen.operator.trim()} in ${seen.path.join('.')} but by ${n.operator.trim()} in ${n.path.join('.')}: one host has one operator (D904)` });
+    }
+  }
+  return out;
+}
+
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 export const manifestSchema = z
   .object({
@@ -402,11 +496,24 @@ export const manifestSchema = z
         blockHeight: z.number().int().nonnegative(),
         blockHash: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u, 'blockHash is a base58 block hash'),
         rpcs: z
-          .array(z.string().regex(/^[a-z0-9.-]+(:\d{1,5})?$/u, 'rpcs are host names (no scheme, path or query)'))
+          .array(z.string().regex(CKD_SOURCE_HOST_RE, 'rpcs are host names (no scheme, path or query)'))
           .min(MIN_CKD_SOURCES)
           .max(10),
       })
       .strict()
+      .optional(),
+    /**
+     * Who runs each host the pinned CKD key may be read from (D904): host (as `ckdNetworkKeySource.rpcs` records it) to
+     * the company or project operating it, as its own terms name it ("FastNear"), not the domain. Keyed by host rather
+     * than a list beside `rpcs`: `fetch-ckd-key` rewrites the source whole, in the order it read, so a list would be
+     * lost or silently paired with other hosts on a re-pin, and a host can be declared before it is first read. Required
+     * for every recorded host on a production network, where they must span MIN_CKD_SOURCES operators
+     * (`ckdSourceOperatorProblems`); optional on testnet. Read by nothing but the manifest's rules, `deploy-check` and
+     * `fetch-ckd-key`'s check before it reads on a production network.
+     */
+    ckdSourceOperators: z
+      .record(z.string().regex(CKD_SOURCE_HOST_RE, 'ckdSourceOperators keys are host names, as ckdNetworkKeySource.rpcs records them (no scheme, path or query)'), operatorName)
+      .refine((r) => Object.keys(r).length >= 1 && Object.keys(r).length <= MAX_CKD_SOURCE_OPERATORS, `ckdSourceOperators names 1 to ${MAX_CKD_SOURCE_OPERATORS} hosts`)
       .optional(),
     /** NEAR RPC: https outside `local*` envs (there, http only for a loopback host). */
     rpc: urlString(),
@@ -609,6 +716,8 @@ export const manifestSchema = z
       else if (m.apiRpcFallbacks?.indexOf(url) !== i) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['apiRpcFallbacks', i], message: `apiRpcFallbacks lists ${url} twice` });
     }
     for (const p of nearOperatorProblems(m)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: p.path, message: p.message });
+    for (const p of ckdSourceOperatorProblems(m)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: p.path, message: p.message });
+    for (const p of operatorConflictProblems(m)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: p.path, message: p.message });
     if (m.emailIssuer && m.rpcFallback === undefined && !isLocalEnv(m.name)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'an env with emailIssuer needs rpcFallback outside local* envs: a linked identity’s path is confirmed on two providers (D263)' });
     }

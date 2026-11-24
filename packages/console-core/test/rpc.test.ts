@@ -1,6 +1,7 @@
 // The RPC input schemas (src/rpc.ts) and the app-name rule (src/names.ts): round trips, refusals, and the name rule
-// equal to @hana-id/core's isDisplaySafeLine on every code point.
+// being @hana-id/core's isDisplaySafeLine itself (D904).
 import { isDisplaySafeLine } from '@hana-id/core';
+import * as displaySafe from '@hana-id/core/display-safe';
 import { describe, expect, it } from 'vitest';
 import {
   APP_NAME_MAX,
@@ -57,13 +58,8 @@ describe('app names', () => {
     for (const bad of ['a‮b', 'a​b', 'a\nb', 'a\u0007b', 'a️b', 'a\u{E0041}b']) expect(normaliseAppName(bad).ok, JSON.stringify(bad)).toBe(false);
   });
 
-  it('the rule equals @hana-id/core isDisplaySafeLine on every code point', () => {
-    const differ: number[] = [];
-    for (let cp = 0; cp <= 0x10ffff; cp++) {
-      if (cp >= 0xd800 && cp <= 0xdfff) continue;
-      const s = String.fromCodePoint(cp);
-      if (isDisplaySafeName(s) !== isDisplaySafeLine(s)) differ.push(cp);
-    }
-    expect(differ).toEqual([]);
+  it('the rule is @hana-id/core isDisplaySafeLine itself (D904: no copy to drift; core\'s and env\'s tests guard what it refuses)', () => {
+    expect(isDisplaySafeName).toBe(displaySafe.isDisplaySafeLine);
+    expect(isDisplaySafeName).toBe(isDisplaySafeLine);
   });
 });

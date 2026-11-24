@@ -36,6 +36,9 @@ ESM only, with TypeScript declarations.
 | `@hana-id/core/support-id` | `supportIdFromSub` on its own (also in the root entry) |
 | `@hana-id/core/mainnet-demo-prices` | the price book of Journear's sandbox mainnet demo: its floor and ceiling per asset and the strict check of a book (no other imports) |
 
+Internal: the package also exports `@hana-id/core/display-safe`. It is used by Journear's own packages, is not part of
+the supported SDK surface, and may change without notice.
+
 The `signers/stellar` and `decode` declarations reference Node's `Buffer` through `@stellar/stellar-base`: if you
 import those in TypeScript, add `@types/node` or keep `skipLibCheck` on.
 

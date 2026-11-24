@@ -102,8 +102,7 @@ export function sessionNoncePreimage(i: { signer: string; scopeId: string; sessi
   return concatBytes(utf8(SESSION_NONCE_DOMAIN), borshString(i.signer), borshString(i.scopeId), i.sessionPublicKey, u64le(i.expiresAtMs), u32le(i.keyIndex), u32le(i.maxUses), i.salt);
 }
 
-// ---- display safety (@hana-id/core display-safe.ts, D118): one-line text with no control or invisible character ----
+// ---- display safety (D118): one-line text with no control or invisible character ----
+// The shared rule itself, from @hana-id/core's subpath (D904: it was a copy until then).
 
-const INVISIBLE = String.raw`\p{Cf}\p{Co}\p{Zl}\p{Zp}͏ᅟᅠ឴឵᠋-᠏ㅤ︀-️ﾠ\u{e0100}-\u{e01ef}`;
-const UNSAFE_LINE = new RegExp(String.raw`[\p{Cc}${INVISIBLE}]`, 'u');
-export const isDisplaySafeLine = (text: string): boolean => !UNSAFE_LINE.test(text);
+export { isDisplaySafeLine } from '@hana-id/core/display-safe';

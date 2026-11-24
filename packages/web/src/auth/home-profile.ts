@@ -1,6 +1,6 @@
 // Passport Home's "Your name" (home-page.ts mounts it as its own view under "Your account", and on each wallet's page,
-// D714, D893): the first and last name the user may set for their apps, both optional, and per app whether that app
-// gets it. Nothing is shared until the user turns it on for an app, on its wallet's page.
+// D714, D893; there, D901, as a part of the card "What these apps get from you"): the first and last name the user may
+// set for their apps, both optional, and per app whether that app gets it. Nothing is shared until the user turns it on for an app, on its wallet's page.
 //
 // Like "Devices and auto-approve" (home-devices.ts, D677's shape), each part starts collapsed: a heading, one sentence and
 // a button. Only that button reads, or opening the view from "Your account" (`openFront`, the user asking); Back and
@@ -199,7 +199,8 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
   let busy: string | null = null;
 
   const frontRoot = d.h('section', { class: 'home-profile', attrs: { id: 'home-profile', 'aria-labelledby': 'home-profile-title' } });
-  const appRoot = d.h('section', { class: 'home-profile home-profile-app', attrs: { id: 'home-app-profile', 'aria-labelledby': 'home-app-profile-title' } });
+  // D901: on a wallet's page, the name is a part of the card "What these apps get from you" (its heading an `h3`).
+  const appRoot = d.h('section', { class: 'home-profile home-profile-app home-gets-part', attrs: { id: 'home-app-profile', 'aria-labelledby': 'home-app-profile-title' } });
 
   /** A button: secondary unless `kind` says otherwise (one primary per view; danger only inside the confirmation). */
   const button = (label: string, id: string, onClick: () => void, o: { cls?: string; disabled?: boolean; describedBy?: string; type?: 'button' | 'submit'; kind?: keyof typeof BTN; sm?: boolean } = {}): HTMLButtonElement => {
@@ -663,8 +664,9 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
 
   function render(where: Where): void {
     const root = where === 'front' ? frontRoot : appRoot;
-    // The view's own heading (D893: the page's `h1` names the view); a section of a wallet's page.
-    const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE) : d.h('h2', { attrs: { id: 'home-app-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE);
+    // The view's own heading (D893: the page's `h1` names the view); on a wallet's page, a part of the card "What these
+    // apps get from you" (D901).
+    const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE) : d.h('h3', { attrs: { id: 'home-app-profile-title', tabindex: '-1' } }, HOME_NAME_TITLE);
     // D897: on a wallet's page, the section's one line in the Security tab's pattern (a read only when asked).
     const about = d.h('p', where === 'front' ? {} : { class: 'home-set-summary', attrs: { id: 'home-app-profile-summary' } }, where === 'front' ? HOME_NAME_TEXT.frontAbout : (appScope?.apps.length ?? 1) > 1 ? HOME_NAME_TEXT.appAboutMany : HOME_NAME_TEXT.appAbout);
     root.replaceChildren();

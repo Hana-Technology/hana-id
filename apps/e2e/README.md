@@ -70,18 +70,23 @@ goes Back (the key is erased from the page), then Forward (the page with the mov
 (`tests/home-steps.ts`) or `.home-row[data-scope="…"]`.
 
 A wallet's tabs and the phone's chip (D895): `tests/home.spec.ts` checks the tabs' roles and names, the keyboard (the
-arrows move, Enter and Space open), one history entry per tab with Back and Forward, and no sideways scroll at 390 px;
-360 and 430 px too, Back to a tab bringing the tab list into view and Shift+Tab back to the open tab; and the chip at
+arrows move, Enter and Space open), a history entry only for "Move wallet" (D901: Back from it returns to the tab it
+was entered from, Addresses ↔ Security and "Move wallet" ↔ another tab, many times, leave one entry over the wallet's),
+and no sideways scroll at 390 px;
+360 and 430 px too, Back from "Move wallet" to a tab bringing the tab list into view and Shift+Tab back to the open tab; and the chip at
 320, 360, 390 and 430 px: hidden until the ending notice is scrolled out of view, then shown at every scroll position on
 the list, Addresses and Security with the last control clear above it, never on Move wallet, pressed it brings the
 notice back with focus on its "Sign in again"; never on a desktop; at 195 px (200 % zoom) the tabs and chip in the window. The Home specs open a tab with `homeTab(page,
 'Addresses' | 'Security' | 'Move wallet')` (`tests/home-steps.ts`): the move flow is on "Move wallet", the devices, ways
-to sign in and name on "Security". `home-shell.spec.ts` measures the guarded Continue on NEAR's confirmation (the
+to sign in and the card "What these apps get from you" (the email sharing and the name, D901) on "Security".
+`tests/home-export.spec.ts` checks that leaving "Move wallet" by Back, another tab or "Your wallets" erases a shown key
+(the real derive, three browsers), and that Forward back to it after another tab shows it collapsed. `home-shell.spec.ts` measures the guarded Continue on NEAR's confirmation (the
 longest, so the Move tab alone scrolls) and the email account's notice with a Security tab button in view.
 
 The Security tab and Home's polish (D897): `tests/home-devices.spec.ts` checks that opening Security makes one devices
 read (none on Back or Forward, one more on the wallet's next visit) with the focus left on the tab, each section's line,
-"Show devices" with no second read, and the device card at 320, 360, 390 and 430 px (each site and date on one line, the
+"Show devices" with no second read, the email part of "What these apps get from you" (D901: its line from that read,
+"Show email sharing", its stop's confirmation, Cancel and outcome in the card, the card's singular title for one app), and the device card at 320, 360, 390 and 430 px (each site and date on one line, the
 app's words on their own line, the full date as the tooltip and the screen reader's text). `tests/home.spec.ts` checks
 every view at 195 px (no sideways scroll, the top bar included, light and dark) and an open device card with long dates
 there, every control at least 44 px tall at 320, 360, 390 and 430 px (an open stop confirmation's "More" included; Sign

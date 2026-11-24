@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-23 (request labels, programs too; app names; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+Last verified against code: 2026-11-24 (request labels; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -85,9 +85,12 @@ refused (when an app is created or renamed, by Journear staff or on **Branding**
   Recovery, Admin, Staff, Service, Auth, Connect, Key, Relayer, Sponsor, Gas or "by" right before or after it, plurals
   too, or ID or "from" right after it ("Passport ID", "Admin Passport"); a word like "verified", "secure" or "safe"
   right next to it; "Passport" followed only by a word that makes it an edition of the wallet (Plus, Pro, Premium,
-  Prime, Max, Ultra, Lite, Mini, Basic, Classic, One or Beta: "Passport Pro", "My Passport Plus", "PassportPlus"), or
-  "Premium", "Pro", "Plus", "Lite", "Ultra" or "Beta" Passport with nothing before it ("Premium Passport"); your brand
-  in front or your own words after it are fine ("Acme Passport Plus", "Passport Mini Golf"); or a name that starts
+  Prime, Max, Ultra, Lite, Mini, Basic, Classic, One, Beta, Elite, Platinum or Deluxe: "Passport Pro", "My Passport
+  Plus", "PassportPlus"), or "Premium", "Pro", "Plus", "Lite", "Ultra" or "Beta" Passport with nothing before it
+  ("Premium Passport"), or "Elite", "Platinum" or "Deluxe" Passport as the whole name ("Elite Passport"); "Passport"
+  with only a version number ("Passport 2.0", "Passport V2", "Passport v2.1", "Passport Version 2"); your brand in
+  front or your own words after it are fine ("Acme Passport Plus", "Passport Mini Golf", "Acme Passport 2.0",
+  "Elite Passport Travel"), and so is a plain number ("Passport 365"); or a name that starts
   with "Passport" followed by a comma, bracket, bar, slash, colon, dash or "by"/"from"/"of" and another name
   ("Passport | Acme"). Your brand first is fine ("Acme Passport", "Gitcoin
   Passport"), and so is "Passport" with words of your own ("Passport Photos Co", "Passport Travel", "Passport Labs");
@@ -913,7 +916,7 @@ exactly one you described, the approval window adds a box under everything Journ
 
 ```
 Coffee Club says: pay for [order] [1042]
-These are Coffee Club's words. Journear hasn't checked them.
+These are Coffee Club's words, not Journear's.
 ```
 
 Journear writes the sentence: the verb and the joining words are Journear's, your phrase and the request's own values

@@ -5,7 +5,7 @@
 import { ApiError, type RelayPayload, type RelayReadResponse, decodeHomeIdentity, encryptRelayPayload, homeMessage, homeNonce, identityKeyHex, parseWindowMessage } from '@hana-id/core';
 import { type Mock, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOME_UNNAMED_APP, homeApi, homeAppName, parseHomeApps, parseHomeConfig } from '../../src/auth/home-api.ts';
-import { HOME_EXPIRY_WARN_MS, HOME_TEXT, coverageText, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, homeViewTitle, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
+import { HOME_EXPIRY_WARN_MS, HOME_TEXT, REWIND_GIVE_UP_MS, coverageText, HOME_LOGIN_LIMIT_MS, type HomePage, homeProblem, homeViewTitle, linkedAppId, startHomePage } from '../../src/auth/home-page.ts';
 import { CLIENT_ID, ENV, EVIL, FakeWindow, type RemoteWindow, type TokenSigner, asWindow, crossOriginWindow, flush, pageText, remoteWindow, resetDom, tokenSigner } from './helpers.ts';
 
 const FILES = 'https://files.hana.test';
@@ -859,7 +859,10 @@ describe('partner strings are text only', () => {
       'H2 Your addresses',
       'H2 Ways to sign in',
       'H2 Devices and auto-approve',
-      'H2 Your name',
+      // D901: one card for what the app gets, its two parts under it (the app is one: "this app").
+      'H2 What this app gets from you',
+      'H3 Your email',
+      'H3 Your name',
       'H2 Move this wallet to another wallet app',
     ]);
     expect(document.title).toBe('App details – Passport Home');
@@ -1352,11 +1355,14 @@ describe('PR 116’s review (D893)', () => {
     await h.signIn();
     row('s3').click();
     expect(document.getElementById('home-app-title')?.textContent).toBe('App details');
-    expect(document.querySelector('#home-app-devices > p')?.textContent).toBe('Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it.');
+    expect(document.querySelector('#home-app-devices > p')?.textContent).toBe('Where you’re signed in to this app with Journear, and what those devices may sign without asking.');
+    // D901: the email, in its own card, says "this app" too.
+    expect(document.getElementById('home-app-email-summary')?.textContent).toBe('Whether you share your email address with this app.');
     expect(document.querySelector('#home-sign-ins > p')?.textContent).toBe('The sign-ins that open a wallet in this app, if you have one.');
     h.click('home-back');
     row('s1').click();
     expect(document.querySelector('#home-app-devices > p')?.textContent).toContain('signed in to this wallet');
+    expect(document.getElementById('home-app-email-summary')?.textContent).toBe('Whether you share your email address with this app.');
     expect(document.querySelector('#home-sign-ins > p')?.textContent).toBe('The sign-ins that open this wallet.');
   });
 
@@ -1369,10 +1375,11 @@ describe('PR 116’s review (D893)', () => {
     hist.hold = true;
     h.click('home-back');
     row('s3').click();
-    // The browser is slow: well past a second, the traversal hasn't landed and no entry was added during it.
+    // The browser is slow: well past a second, the traversal hasn't landed (the browser is still on the wallet's entry)
+    // and no entry was added during it.
     advance(5_000);
     expect(hist.entries).toHaveLength(2);
-    expect(hist.index).toBe(0);
+    expect(hist.index).toBe(1);
     hist.hold = false;
     hist.release();
     await flush();
@@ -1468,41 +1475,233 @@ describe('a wallet’s tabs (D895)', () => {
     expect(document.activeElement?.id).toBe('home-tab-security');
   });
 
-  it('each tab opened is a history entry: Back and Forward move between tabs, then to the list; nothing is read', async () => {
+  it('D901: only “Move wallet” adds a history entry; Addresses and Security replace what it shows; Back from “Move wallet” returns to the tab the person came from; nothing is read', async () => {
     const h = await ready();
     h.answer = LIST;
     await h.signIn();
     const hist = h.win.history;
     (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
-    const calls = h.calls.length;
+    expect(hist.entries).toHaveLength(2);
+    expect(hist.state).toMatch(MARK(1));
+    // Addresses ↔ Security, as often as the person likes: the wallet's one entry, its marker unchanged.
+    for (let i = 0; i < 25; i++) {
+      tab('security').click();
+      tab('addresses').click();
+    }
     tab('security').click();
-    expect(hist.state).toMatch(MARK(2));
+    expect(hist.entries).toHaveLength(2);
+    expect(hist.index).toBe(1);
+    expect(hist.state).toMatch(MARK(1));
+    expect(hist.pushState).toHaveBeenCalledTimes(1);
+    expect(hist.replaceState).not.toHaveBeenCalled();
+    const calls = h.calls.length;
+    // "Move wallet": one entry.
     tab('move').click();
-    expect(hist.state).toMatch(MARK(3));
-    expect(hist.entries).toHaveLength(4);
+    expect(hist.state).toMatch(MARK(2));
+    expect(hist.entries).toHaveLength(3);
+    // Back: the tab the person came from, with the focus on it.
     hist.back();
     await flush();
     expect(h.page.tab).toBe('security');
     expect(document.activeElement?.id).toBe('home-tab-security');
+    // Forward: "Move wallet" again.
+    hist.forward();
+    await flush();
+    expect(h.page.tab).toBe('move');
+    // Another tab from "Move wallet": the browser goes back to the entry it was entered from, which shows that tab; the
+    // page's own popstate changes nothing on screen.
+    tab('addresses').click();
+    expect(h.page.tab).toBe('addresses');
+    expect(hist.go).toHaveBeenLastCalledWith(-1);
+    await flush();
+    expect(hist.index).toBe(1);
+    expect(h.page.tab).toBe('addresses');
+    expect(document.activeElement?.id).toBe('home-tab-addresses');
+    // Forward reaches "Move wallet" again; Back from it, the tab chosen.
+    hist.forward();
+    await flush();
+    expect(h.page.tab).toBe('move');
     hist.back();
     await flush();
     expect(h.page.tab).toBe('addresses');
+    // Back from a tab other than "Move wallet": the list.
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(hist.index).toBe(0);
     hist.forward();
     await flush();
-    expect(h.page.tab).toBe('security');
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('addresses');
+    // Tab changes, Back and Forward read nothing.
+    expect(h.calls).toHaveLength(calls);
+    // "Move wallet" and another tab, back and forth: never more than the wallet's entry and "Move wallet"'s.
+    for (let i = 0; i < 10; i++) {
+      tab('move').click();
+      tab(i % 2 === 0 ? 'security' : 'addresses').click();
+      await flush();
+    }
+    expect(hist.entries.length).toBeLessThanOrEqual(3);
+    expect(hist.index).toBe(1);
     // The same tab again adds nothing.
+    tab('addresses').click();
+    expect(hist.index).toBe(1);
+    // "Your wallets" goes back to the list's own entry.
+    h.click('home-back');
+    expect(hist.go).toHaveBeenLastCalledWith(-1);
+    await flush();
+    expect(h.page.view).toBe('front');
+    expect(hist.index).toBe(0);
+    // Opening the wallet again starts on Addresses.
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(h.page.tab).toBe('addresses');
+  });
+
+  it('D901: “Your wallets” from “Move wallet” goes back past both entries; the entries hold only the marker', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     tab('security').click();
-    expect(hist.entries).toHaveLength(4);
-    // "Your wallets" goes back to the list's own entry, however many tabs were opened.
+    tab('move').click();
+    expect(hist.entries).toHaveLength(3);
     h.click('home-back');
     expect(hist.go).toHaveBeenLastCalledWith(-2);
     await flush();
     expect(h.page.view).toBe('front');
     expect(hist.index).toBe(0);
-    expect(h.calls).toHaveLength(calls);
-    // Opening the wallet again starts on Addresses.
+    for (const e of hist.entries) expect(JSON.stringify(e.state ?? null)).toMatch(/^(null|"home:[A-Za-z0-9_-]{16}:[12]")$/u);
+  });
+
+  it('D901: tabs pressed while the page’s own Back is on its way: one entry for “Move wallet” at most, never the list’s replaced', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
     (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    tab('move').click();
+    hist.hold = true;
+    // Leaving "Move wallet" asks the browser to go back; before it has, "Move wallet" again, then Security.
+    tab('addresses').click();
+    tab('move').click();
+    expect(h.page.tab).toBe('move');
+    hist.release();
+    await flush();
+    // "Move wallet"'s entry, added once the traversal is done.
+    expect(hist.index).toBe(2);
+    expect(hist.state).toMatch(MARK(2));
+    hist.hold = false;
+    hist.back();
+    await flush();
     expect(h.page.tab).toBe('addresses');
+    // "Your wallets" while held, then a tab change on the list's way back can't replace the list's entry.
+    tab('move').click();
+    hist.hold = true;
+    h.click('home-back');
+    expect(h.page.view).toBe('front');
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    tab('security').click();
+    hist.release();
+    await flush();
+    hist.hold = false;
+    expect(h.page.tab).toBe('security');
+    expect(hist.index).toBe(1);
+    expect(hist.state).toMatch(MARK(1));
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+    hist.forward();
+    await flush();
+    expect(h.page.tab).toBe('security');
+  });
+
+  it('D901, PR 130’s review: a traversal that lands after the page stopped waiting leaves “Move wallet”, opened again meanwhile, on screen', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    tab('move').click();
+    hist.hold = true;
+    tab('addresses').click();
+    tab('move').click();
+    h.click('home-export-open');
+    const state = h.page.moving.state;
+    expect(h.page.tab).toBe('move');
+    advance(REWIND_GIVE_UP_MS + 1000);
+    hist.hold = false;
+    hist.release();
+    await flush();
+    // The late landing on the entry "Move wallet" was entered from changes nothing on screen.
+    expect(h.page.tab).toBe('move');
+    expect(h.page.moving.state).toBe(state);
+    expect(document.getElementById('home-export-start')).not.toBeNull();
+    expect(hist.index).toBe(1);
+    // "Move wallet" kept no entry (the page stopped waiting): Back leaves the wallet's page.
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
+  });
+
+  it('D901, PR 130’s review: “Your wallets” pressed before the browser has gone back from “Move wallet” waits for it, then goes on to the list: screen and entry agree', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    tab('move').click();
+    hist.hold = true;
+    tab('addresses').click();
+    // Not landed yet: the browser is still on "Move wallet"'s entry.
+    expect(hist.state).toMatch(MARK(2));
+    h.click('home-back');
+    expect(h.page.view).toBe('front');
+    hist.hold = false;
+    hist.release();
+    await flush();
+    await flush();
+    expect(hist.index).toBe(0);
+    expect(h.page.view).toBe('front');
+    // Back from the list leaves Home; Forward shows the wallet (on the tab chosen) again.
+    hist.back();
+    await flush();
+    expect(hist.left).toBe(1);
+    hist.forward();
+    await flush();
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).toBe('addresses');
+  });
+
+  it('D901, PR 130’s review: a browser that can’t go back (`history.go` throws): “Move wallet” keeps one entry over the wallet’s, however often it is left and entered', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    const hist = h.win.history;
+    const realGo = hist.go.getMockImplementation()!;
+    hist.go.mockImplementation(() => {
+      throw new Error('refused');
+    });
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    for (let i = 0; i < 5; i++) {
+      tab('move').click();
+      expect(h.page.tab).toBe('move');
+      tab(i % 2 === 0 ? 'addresses' : 'security').click();
+      expect(h.page.tab).toBe(i % 2 === 0 ? 'addresses' : 'security');
+    }
+    expect(hist.entries).toHaveLength(3);
+    tab('move').click();
+    expect(hist.entries).toHaveLength(3);
+    expect(hist.index).toBe(2);
+    // The browser's own Back still works: from "Move wallet" to the wallet's entry, then the list.
+    hist.go.mockImplementation(realGo);
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('wallet');
+    expect(h.page.tab).not.toBe('move');
+    hist.back();
+    await flush();
+    expect(h.page.view).toBe('front');
   });
 });
 
@@ -1562,10 +1761,12 @@ describe('the phone’s “Sign in again” chip (D895, as revised after PR 122�
     expect(shown()).toBe(false);
     h.click('home-export-open');
     expect(shown()).toBe(false);
-    // Back to Security: it shows; Forward to Move wallet: it goes, with no scroll event.
+    // Security: it shows; Forward to Move wallet (D901: Security went back to the entry before it): it goes, with no
+    // scroll event.
     h.click('home-tab-security');
     expect(shown()).toBe(true);
-    h.win.history.back();
+    await flush();
+    h.win.history.forward();
     await flush();
     expect(h.page.tab).toBe('move');
     expect(shown()).toBe(false);
@@ -1606,7 +1807,8 @@ describe('PR 122’s review: Back between tabs and the tab stop', () => {
     h.answer = LIST;
     await h.signIn();
     (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
-    document.getElementById('home-tab-security')?.click();
+    // D901: only "Move wallet" has an entry of its own over the wallet's.
+    document.getElementById('home-tab-move')?.click();
     const scrolled = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
     Object.defineProperty(window, 'scrollY', { configurable: true, value: 900 });
     // Every redraw makes a new list: wherever it is drawn, it is 400 px above the window's top.
@@ -1624,11 +1826,12 @@ describe('PR 122’s review: Back between tabs and the tab stop', () => {
     window.matchMedia = ((q: string) => ({ matches: q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
     h.win.history.forward();
     await flush();
-    expect(h.page.tab).toBe('security');
+    expect(h.page.tab).toBe('move');
     expect(scrolled).toHaveBeenLastCalledWith({ top: 492, behavior: 'auto' });
-    // A tab opened by a click doesn't scroll (the person is at the tabs).
+    // A tab opened by a click doesn't scroll (the person is at the tabs), nor does the page's own Back it starts.
     scrolled.mockClear();
     document.getElementById('home-tab-addresses')?.click();
+    await flush();
     expect(scrolled).not.toHaveBeenCalled();
     HTMLElement.prototype.getBoundingClientRect = orig;
     window.matchMedia = realMatch;
@@ -1704,6 +1907,75 @@ describe('D897: the Security tab’s reads, and the badges of a shared wallet', 
     expect([...document.querySelector('#home-coverage')!.children].map((c) => c.className.split(' ')[0])).toEqual(['sr-only', 'badge', 'home-coverage-text']);
     expect(coverageText('partner_client', true, false, 2).badge).toBe('Needs the apps');
     expect(coverageText('partner_client', true, false, 1).badge).toBe('Needs the app');
+  });
+});
+
+describe('D901: one card for what the apps get from the person', () => {
+  const LIST = () => json(200, { scopes: [mine('s1', { apps: [app('Sodax'), app('Sodax Earn')] }), mine('s2')], nextCursor: null });
+  const headings = (): string[] => [...document.querySelectorAll('#home-panel-security h1, #home-panel-security h2, #home-panel-security h3')].map((x) => `${x.tagName} ${x.textContent}`);
+
+  it('Security’s order: Ways to sign in, Devices and auto-approve, then the card with the email and the name; its title plural for a shared wallet, singular for one app', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    h.click('home-tab-security');
+    expect(headings()).toEqual(['H2 Ways to sign in', 'H2 Devices and auto-approve', 'H2 What these apps get from you', 'H3 Your email', 'H3 Your name']);
+    const card = document.getElementById('home-app-gets') as HTMLElement;
+    expect(card.tagName).toBe('SECTION');
+    expect(card.getAttribute('aria-labelledby')).toBe('home-app-gets-title');
+    expect(document.getElementById('home-app-gets-summary')?.textContent).toBe('Your email and your name, if you chose to share them.');
+    // Each part is a section named by its own heading.
+    expect(document.getElementById('home-app-email')?.getAttribute('aria-labelledby')).toBe('home-app-email-title');
+    expect(document.getElementById('home-app-profile')?.getAttribute('aria-labelledby')).toBe('home-app-profile-title');
+    // The devices' line no longer speaks of the email.
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe('Where you’re signed in to this wallet, and what those devices may sign without asking.');
+    h.click('home-back');
+    await flush();
+    (document.querySelector('.home-row[data-scope="s2"]') as HTMLElement).click();
+    h.click('home-tab-security');
+    expect(headings()).toContain('H2 What this app gets from you');
+    expect(HOME_TEXT.getsTitle(1)).toBe('What this app gets from you');
+    expect(HOME_TEXT.getsTitle(2)).toBe('What these apps get from you');
+  });
+
+  it('the Security tab’s one read gives the email part its line; its rows wait for “Show email sharing”, which reads nothing more while fresh; the name reads only on its own button', async () => {
+    const h = await ready();
+    h.answer = LIST;
+    await h.signIn();
+    h.devicesAnswer = () =>
+      json(200, {
+        scopes: [{ scopeId: 's1', apps: [{ appId: 'app_Sodax', name: 'Sodax', status: 'active' }, { appId: 'app_SodaxEarn', name: 'Sodax Earn', status: 'active' }], devices: [], consents: [], email: [{ appId: 'app_Sodax', addresses: ['ada@example.com'] }], more: false, canStop: true }],
+        nextCursor: null,
+      });
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    h.click('home-tab-security');
+    await h.page.idle();
+    expect(h.deviceCalls()).toHaveLength(1);
+    expect(document.getElementById('home-app-devices-summary')?.textContent).toBe('Not signed in to this wallet anywhere right now.');
+    expect(document.getElementById('home-app-email-summary')?.textContent).toBe('Your email is shared with Sodax.');
+    expect(document.getElementById('home-app-email-summary')?.hasAttribute('data-read')).toBe(true);
+    // Not the address until asked.
+    expect(pageText()).not.toContain('ada@example.com');
+    h.click('home-app-email-show');
+    await h.page.idle();
+    expect(h.deviceCalls()).toHaveLength(1);
+    expect(document.querySelector('#home-app-email .home-email')?.textContent).toContain('ada@example.com');
+    expect(document.getElementById('home-stop-email-app-s1-app_Sodax')?.textContent).toBe('Stop sharing email');
+    expect(document.activeElement?.id).toBe('home-app-email-title');
+    // The devices' cards still wait for their own button; the email rows are not in the devices section.
+    expect(h.page.devices.app).toBe('ready');
+    expect(document.getElementById('home-app-devices-show')).not.toBeNull();
+    expect(document.querySelector('#home-app-devices .home-email')).toBeNull();
+    expect(h.nameCalls()).toHaveLength(0);
+    // Leaving the page drops it: next time the email part starts closed again.
+    h.click('home-back');
+    await flush();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    h.click('home-tab-security');
+    await h.page.idle();
+    expect(document.querySelector('#home-app-email .home-email')).toBeNull();
+    expect(document.getElementById('home-app-email-show')).not.toBeNull();
   });
 });
 
@@ -2160,8 +2432,10 @@ describe('“Your name” on the page (home-profile.ts)', () => {
     await h.signIn();
     (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
     const extras = [...(document.getElementById('home-app-extras')?.children ?? [])].map((c) => c.id);
-    // D895: the Security tab holds the ways to sign in, then the devices, then the name (option A's a3).
-    expect(extras.slice(0, 3)).toEqual(['home-sign-ins', 'home-app-devices', 'home-app-profile']);
+    // D895, D901: the Security tab holds the ways to sign in, the devices, then one card for what the apps get: the
+    // email, then the name (option A's a3).
+    expect(extras).toEqual(['home-sign-ins', 'home-app-devices', 'home-app-gets']);
+    expect([...(document.getElementById('home-app-gets')?.children ?? [])].map((c) => c.id)).toEqual(['home-app-gets-title', 'home-app-gets-summary', 'home-app-email', 'home-app-profile']);
     expect(h.nameCalls()).toEqual([]);
     h.nameAnswer = (url) => json(200, { name: ADA, shares: [], more: false, app: { appId: url.searchParams.get('appId'), shared: false } });
     h.click('home-app-profile-show');

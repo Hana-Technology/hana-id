@@ -29,8 +29,8 @@ export function normaliseAppName(input: string): { ok: true; name: string } | { 
 // (D686, D765, D891): a web-address shape; letters that only imitate others (scripts and blocks that exist here only
 // to look like Latin, a word mixing Latin with another alphabet); a check mark, shield or lock; "Hana", "Journear" and
 // "Passport Home"; "Passport" alone or as the wallet (with only a determiner, NEAR or a wallet word around it, a wallet
-// or claim word right before or after it, an edition word such as Pro, Plus or Lite beside it, or as the
-// start of "Passport by/from/| {another name}"); a claim word after sentence punctuation ("Acme. Verified"); and a
+// or claim word right before or after it, an edition word such as Pro, Plus, Lite or Elite beside it, a version
+// number such as 2.0 or V2 with it (D903), or as the start of "Passport by/from/| {another name}"); a claim word after sentence punctuation ("Acme. Verified"); and a
 // vouching word as the last word or after a bracket or bar ("Acme Official", "Acme (Verified)"). "{Brand} Passport" and "Passport" with words of the partner's own stay allowed. The
 // rule applies where an app is named or renamed (the API's create and settings paths, the operator CLI); stored names
 // are never rewritten; the email issuer applies it again when it writes a mail, so a stored name it refuses is shown
@@ -233,7 +233,7 @@ export const journearWordIn = (name: string): boolean => skeletons(name).some((s
 export function brandNameIn(name: string): 'Hana' | 'Journear' | 'Passport Home' | null {
   const skeleton = nameSkeleton(name);
   if (journearWordIn(name)) return 'Journear';
-  if (PASSPORT_HOME_RE.test(skeleton)) return 'Passport Home';
+  if (PASSPORT_HOME_RE.test(skeleton) || PASSPORT_HOME_RE.test(nameSkeleton(withoutNumbers(withoutMarks(name))))) return 'Passport Home';
   if (HANA_RE.test(skeleton)) return 'Hana';
   return null;
 }
@@ -359,7 +359,7 @@ const productWord = (k: string, after: boolean): boolean => inWithPlural((x) => 
  * business words (card, online, web, mobile, cloud, go, next, …) stay allowed. "Free" is a claim word already; "X"
  * and other single letters are the "alone" rule.
  */
-export const APP_NAME_PASSPORT_TIER_WORDS: readonly string[] = Object.freeze(['plus', 'pro', 'premium', 'prime', 'max', 'ultra', 'lite', 'mini', 'basic', 'classic', 'one', 'beta']);
+export const APP_NAME_PASSPORT_TIER_WORDS: readonly string[] = Object.freeze(['plus', 'pro', 'premium', 'prime', 'max', 'ultra', 'lite', 'mini', 'basic', 'classic', 'one', 'beta', 'elite', 'platinum', 'deluxe']);
 /**
  * The only plural read as an edition word: "pros" ("Passport Pros"). The others' plurals are ordinary words
  * ("Passport Basics", "Passport Classics", "Passport Minis", "Ultras", "Premiums", "Ones").
@@ -367,19 +367,27 @@ export const APP_NAME_PASSPORT_TIER_WORDS: readonly string[] = Object.freeze(['p
 const TIER_PLURALS: readonly string[] = ['pros'];
 /** The edition words that also read as one right before "Passport", with nothing else before them ("Premium Passport"). */
 export const APP_NAME_PASSPORT_TIER_WORDS_BEFORE: readonly string[] = Object.freeze(['premium', 'pro', 'plus', 'lite', 'ultra', 'beta']);
+/**
+ * The edition words that read as one right before "Passport" only when the name ends there ("Elite Passport", "My
+ * Deluxe Passport"; D903): with words after it they are the partner's own product ("Elite Passport Travel", "Deluxe
+ * Passport Covers", "Platinum Passport Club").
+ */
+export const APP_NAME_PASSPORT_TIER_WORDS_BEFORE_AT_END: readonly string[] = Object.freeze(['elite', 'platinum', 'deluxe']);
 const TIER = keys([...APP_NAME_PASSPORT_TIER_WORDS, ...TIER_PLURALS]);
 const TIER_BEFORE = keys(APP_NAME_PASSPORT_TIER_WORDS_BEFORE);
+const TIER_BEFORE_AT_END = keys(APP_NAME_PASSPORT_TIER_WORDS_BEFORE_AT_END);
 /**
  * An edition word as compared (after "Passport", or before it when `before`): one of the words or "pros", without a
  * glued trade mark or trailing digits ("Pro™", "Pro2").
  */
-const tierWord = (k: string, before = false): boolean => {
-  const set = before ? TIER_BEFORE : TIER;
+const tierWord = (k: string, before: false | 'before' | 'before_at_end' = false): boolean => {
+  const set = before === 'before' ? TIER_BEFORE : before === 'before_at_end' ? TIER_BEFORE_AT_END : TIER;
   const b = bareKey(k);
   return set.has(b) || set.has(b.replace(/[0-9]+$/u, ''));
 };
 /** The same on a word as written, so a digit the skeleton reads as a letter counts as a digit at its end ("Plus1"). */
-const tierWordAt = (w: Word | undefined, before = false): boolean => w !== undefined && (tierWord(w.key, before) || tierWord(key(w.text.replace(/\p{N}+$/u, '')), before));
+const tierWordAt = (w: Word | undefined, before: false | 'before' | 'before_at_end' = false): boolean =>
+  w !== undefined && (tierWord(w.key, before) || tierWord(key(w.text.replace(/\p{N}+$/u, '')), before));
 /** A word of one character ("X", "2"): skipped between "Passport" and an edition or wallet word ("Passport X Pro"). */
 const oneChar = (w: Word | undefined): boolean => w !== undefined && [...w.text].length === 1;
 /** A trade mark written as its own word ("Passport Pro TM"). */
@@ -406,13 +414,17 @@ export type PassportProblem =
   | { readonly kind: 'alone'; readonly around: string }
   | { readonly kind: 'after' | 'before'; readonly word: string }
   | { readonly kind: 'tier_after' | 'tier_before' | 'tier_joined'; readonly word: string }
+  | { readonly kind: 'version'; readonly word: string }
   | { readonly kind: 'claim'; readonly word: string }
   | { readonly kind: 'then_name' };
 
-/** Where the words at `i` (one word, or two joined: "Pass Port") read "passport"; the span's length, or 0. */
+/**
+ * Where the words at `i` (one word, or two joined: "Pass Port") read "passport", a trade mark NFKC glued on too
+ * ("Passport™ Wallet", "Elite Passport™"; found while building D903); the span's length, or 0.
+ */
 function passportSpan(words: readonly Word[], i: number): number {
-  if (words[i]!.key === PASSPORT) return 1;
-  if (words[i + 1] && words[i]!.key + words[i + 1]!.key === PASSPORT) return 2;
+  if (bareKey(words[i]!.key) === PASSPORT) return 1;
+  if (words[i + 1] && bareKey(words[i]!.key + words[i + 1]!.key) === PASSPORT) return 2;
   return 0;
 }
 
@@ -433,7 +445,11 @@ const productSpan = (words: readonly Word[], i: number, after: boolean) => spanA
  *   X Pro", "Passport Pro™"); "tier_before": one of `APP_NAME_PASSPORT_TIER_WORDS_BEFORE` right before it with only
  *   the prefixes before that ("Premium Passport", "My Pro Passport"); "tier_joined": the same run together
  *   ("PassportPlus", "ProPassport"): an edition of the wallet itself. With a brand of the partner's own or words after
- *   it, it is the partner's product ("Acme Passport Plus", "Capital One Passport", "Passport Mini Golf");
+ *   it, it is the partner's product ("Acme Passport Plus", "Capital One Passport", "Passport Mini Golf"); Elite,
+ *   Platinum and Deluxe before it only when the name ends there (`APP_NAME_PASSPORT_TIER_WORDS_BEFORE_AT_END`, D903);
+ * - "version" (D903): with its version numbers (`VERSION_RE`: "2.0", "V2", "Version 2") taken out, the name is
+ *   "Passport" alone ("Passport 2.0", "My Passport V2"); another rule broken by what is left gives that rule's kind
+ *   ("Passport Pro 2.0" is "tier_after", "Passport V2 Wallet" is "after");
  * - "claim": a claim word right before or after it ("Verified Passport", "Passport Safe");
  * - "then_name": the name starts with "Passport" followed by a separator, "by", "from" or "of" and another name
  *   ("Passport | Acme", "Passport (Acme)", "Passport from Acme"): it reads as "Passport, made by Acme".
@@ -441,6 +457,68 @@ const productSpan = (words: readonly Word[], i: number, after: boolean) => spanA
  * ("Passport Photos Co", "Passport Network") stay allowed.
  */
 export function passportProblemIn(name: string): PassportProblem | null {
+  // Trade-mark signs first (D903 after PR 129's review): NFKC spells "™" as the letters "TM", which glued them to the
+  // words around ("Passport™Wallet" read "PassportTMWallet").
+  // The name as written is read first, so what it alone refuses stays refused ("Passport (TM) Acme" starts with
+  // "Passport" and a bracket); then without the signs.
+  const marked = withoutMarks(name);
+  const plain = passportProblemInWords(name) ?? (marked !== name ? passportProblemInWords(marked) : null);
+  if (plain) return plain;
+  // D903: the same name with its version numbers taken out. What is left being "Passport" alone makes the number a
+  // version of the wallet ("Passport 2.0", "My Passport V2"); anything else wrong with what is left is that rule's
+  // ("Passport Pro 2.0" names "Pro", "Passport V2 Wallet" names "Wallet"). Left whole: the name was fine.
+  const found: string[] = [];
+  const rest = withoutVersions(marked, found);
+  if (found.length === 0) return null;
+  const left = passportProblemInWords(rest);
+  if (!left) return null;
+  return left.kind === 'alone' ? { kind: 'version', word: found[0]! } : left;
+}
+
+/**
+ * The name without trade-mark signs: ™ ℠ ® © and their bracketed letter forms "(TM)", "(SM)", "(R)", "(C)" become a
+ * space (D903 after PR 129's review). Letters standing alone ("TM", "SM") stay: they are skipped only right after
+ * "Passport" (`passportProblemInWords`), so a brand such as "SM Entertainment" or a word such as "Tmall" is untouched.
+ */
+function withoutMarks(name: string): string {
+  return name.replace(/[\u2122\u2120\u00ae\u00a9\u24c7]|[(（]\s*(?:tm|sm|r|c)\s*[)）]/giu, ' ');
+}
+
+/**
+ * The name (NFKC) with every version number (`VERSION_RE`) replaced by a space, each pushed to `found` as written. A
+ * version glued to a word that reads "Passport" on the folded form ("PassportV2", "Pa55port2.0", "Pass portV2") is
+ * split off first.
+ */
+function withoutVersions(name: string, found: string[]): string {
+  const tokens = name.normalize('NFKC').split(/(\s+)/u);
+  for (let t = 0; t < tokens.length; t += 2) {
+    const m = GLUED_VERSION_TAIL.exec(tokens[t]!);
+    if (!m || m.index === 0) continue;
+    const head = tokens[t]!.slice(0, m.index);
+    const prev = t >= 2 ? tokens[t - 2]! : '';
+    if (key(head) === PASSPORT || (prev !== '' && key(prev + head) === PASSPORT)) tokens[t] = `${head} ${m[0]}`;
+  }
+  return tokens.join('').replace(VERSION_RE, (_m, v: string) => {
+    found.push(v.trim());
+    return ' ';
+  });
+}
+
+/** The name with version numbers and whole numbers standing alone taken out: for the "Passport Home" rule ("Passport 2 Home"). */
+const withoutNumbers = (name: string): string => withoutVersions(name, []).replace(/(?<![\p{L}\p{N}])\p{Nd}+(?![\p{L}\p{N}])/gu, ' ');
+
+/**
+ * A version number (D903): "v" (or "ver", "ver.", "version") then a number ("V2", "v2.0", "v 3", "Version 2"), or a
+ * number with a dot ("2.0", "3.1.4"); a whole word, in brackets or not, a trade mark after it allowed ("2.0™"). A plain
+ * number is not one: "Passport 2" is the alone rule's (one digit), and "Passport 24", "Passport 365" or "Passport 2026"
+ * are ordinary names. Matched after NFKC, so full-width digits count; any script's decimal digits count.
+ */
+const VERSION_RE = /[(\[{]?(?<![\p{L}\p{N}])((?:v|ver|version)[\s.]{0,3}\p{Nd}+(?:\.\p{Nd}+)*|\p{Nd}+(?:\.\p{Nd}+)+)(?=(?:TM|SM|tm|sm)?(?![\p{L}\p{N}]|\.\p{Nd}))[)\]}]?/giu;
+/** A version number at the end of a word, glued to what is before it ("PassportV2", "Pa55port2.0"); bounded, so linear. */
+const GLUED_VERSION_TAIL = /(?:v|ver|version)\.?\p{Nd}{1,9}(?:\.\p{Nd}{1,9}){0,4}$|(?<!\p{Nd})\p{Nd}{1,9}(?:\.\p{Nd}{1,9}){1,4}$/iu;
+
+/** `passportProblemIn` before version numbers are taken out. */
+function passportProblemInWords(name: string): PassportProblem | null {
   const words = wordsIn(name);
   if (PASSPORT_ALONE_RE.test(words.map((w) => w.key).join(''))) {
     return { kind: 'alone', around: words.filter((w) => w.key !== PASSPORT && [...w.text].length > 1).map((w) => w.text).join(' ') };
@@ -450,11 +528,14 @@ export function passportProblemIn(name: string): PassportProblem | null {
   const bareBefore = (i: number) => words.slice(0, i).every((w) => PASSPORT_PREFIXES.has(w.key));
   /** Only edition words, one-character words and trade marks from index `i` to the end. */
   const editionTail = (i: number) => words.slice(i).every((w) => tierWordAt(w) || oneChar(w) || MARKS.has(w.key));
+  /** Nothing but trade marks from index `i` to the end (the name ends there). */
+  const marksOnly = (i: number) => words.slice(i).every((w) => MARKS.has(w.key));
   for (let i = 0; i < words.length; i++) {
     const w = words[i]!;
     // Run together: "PassportWallet", "WalletPassport", "VerifiedPassport", "PassportPro", "ProPassport".
     if (w.key !== PASSPORT && w.key.startsWith(PASSPORT)) {
-      const rest = w.key.slice(PASSPORT.length);
+      // A trade mark typed between ("PassportTMWallet"): read past it, unless that leaves nothing.
+      const rest = w.key.slice(PASSPORT.length).replace(/^(?:tm|sm)(?=.)/u, '');
       if (productWord(rest, true)) return { kind: 'after', word: w.text };
       if (tierWord(rest) && bareBefore(i) && editionTail(i + 1)) return { kind: 'tier_joined', word: w.text };
       if (isClaim(rest)) return { kind: 'claim', word: w.text };
@@ -462,7 +543,7 @@ export function passportProblemIn(name: string): PassportProblem | null {
     if (w.key !== PASSPORT && w.key.endsWith(PASSPORT)) {
       const rest = w.key.slice(0, -PASSPORT.length);
       if (productWord(rest, false)) return { kind: 'before', word: w.text };
-      if (tierWord(rest, true) && bareBefore(i)) return { kind: 'tier_joined', word: w.text };
+      if ((tierWord(rest, 'before') || (tierWord(rest, 'before_at_end') && marksOnly(i + 1))) && bareBefore(i)) return { kind: 'tier_joined', word: w.text };
       if (isClaim(rest)) return { kind: 'claim', word: w.text };
     }
     const span = passportSpan(words, i);
@@ -470,10 +551,12 @@ export function passportProblemIn(name: string): PassportProblem | null {
     // After it: a one-character word may stand between ("Passport X Wallet", "Passport 2 Pro"), and edition words
     // ("Passport Pro App", "Passport Plus Wallet").
     let at = i + span;
+    // A trade mark written as its own word right after it ("Passport TM Wallet", "Passport SM Pro"; PR 129's review).
+    while (MARKS.has(words[at]?.key ?? '') && words[at + 1]) at++;
     if (oneChar(words[at]) && words[at + 1]) at++;
     const firstAfter = at;
     while (tierWordAt(words[at]) || (at > firstAfter && oneChar(words[at]) && words[at + 1])) at++;
-    const next = productSpan(words, at, true) ?? (at !== i + span ? productSpan(words, i + span, true) : null);
+    const next = productSpan(words, at, true) ?? (at !== i + span ? productSpan(words, i + span, true) : null) ?? (firstAfter !== i + span ? productSpan(words, firstAfter, true) : null);
     if (next) return { kind: 'after', word: next.text };
     // An edition word: only as the end of a name that is "Passport" and edition words ("Passport Pro", "My Passport
     // Plus", "Passport Pro Max™"); with a brand before it or words after it, it is the partner's own ("Acme Passport
@@ -485,7 +568,7 @@ export function passportProblemIn(name: string): PassportProblem | null {
     if (p1 && p2 && productWord(p2.key + p1.key, false)) return { kind: 'before', word: `${p2.text} ${p1.text}` };
     // Before it: only six of them, and only with nothing but a determiner before ("Premium Passport", "My Pro
     // Passport"); "Capital One Passport" and "Amazon Prime Passport" are brands.
-    if (p1 && tierWordAt(p1, true) && bareBefore(i - 1)) return { kind: 'tier_before', word: p1.text };
+    if (p1 && (tierWordAt(p1, 'before') || (tierWordAt(p1, 'before_at_end') && marksOnly(i + span))) && bareBefore(i - 1)) return { kind: 'tier_before', word: p1.text };
     const claimAfter = i + span < words.length ? claimAt(words, i + span) : null;
     if (claimAfter) return { kind: 'claim', word: claimAfter };
     if (p1 && isClaim(p1.key)) return { kind: 'claim', word: p1.text };
@@ -573,6 +656,8 @@ function passportMessage(problem: PassportProblem): string {
       return `The name must not have "${p.word}" right before "Passport": it reads as a version of the wallet, as "Premium Passport" would. ${PASSPORT_KEEP}`;
     case 'tier_joined':
       return `The name must not have "${p.word}": "Passport" joined with a word like "Pro", "Plus" or "Lite" reads as a version of the wallet. ${PASSPORT_KEEP}`;
+    case 'version':
+      return `The name must not have a version number such as "${p.word}" with "Passport": it reads as a version of the wallet, as "Passport 2.0" would. ${PASSPORT_KEEP}`;
     case 'claim':
       return `The name must not put "${p.word}" next to "Passport": it reads as the wallet vouching for itself. ${PASSPORT_KEEP}`;
     case 'then_name':

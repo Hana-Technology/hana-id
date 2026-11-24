@@ -1,7 +1,7 @@
 // A partner's label in the approval window (D896, piece 3 of D892). The window decodes the request itself, then asks
 // core's matcher whether it is exactly a call one of the app's label documents describes. Only then does it show the
-// partner's sentence, in a box of its own, always headed "{App} says:" and followed by "These are {App}’s words.
-// Journear hasn’t checked them.". Journear's verb and joining words are plain text; the partner's object phrase and
+// partner's sentence, in a box of its own, always headed "{App} says:" and followed by "These are {App}’s words, not
+// Journear’s." (D903). Journear's verb and joining words are plain text; the partner's object phrase and
 // every value are set apart (D885's box decision), so partner words never sit in the flow of Journear's sentences. The
 // box comes after every warning box of the request (render-approval.ts), so no label sits above a warning or pushes
 // one down, and nothing Journear says is removed, reworded or moved: a label only adds.
@@ -191,8 +191,11 @@ function sentenceNodes(d: Dom, parts: readonly SentencePart[], app: string): Chi
 export function labelBox(d: Dom, m: LabelMatch, app: string): HTMLElement {
   const name = app.trim() === '' ? 'The app' : app;
   const says = d.h('p', { class: 'partner-says' }, appName(d, name), LABEL_SAYS, ...sentenceNodes(d, m.parts, name));
-  // core's partnerAttribution, word for word (a test holds them equal), with the name as everywhere else in the window.
-  const attribution = d.h('p', { class: 'partner-attribution' }, 'These are ', appName(d, name), `’s words. ${BRAND.company} hasn’t checked them.`);
+  // core's partnerAttribution, word for word (a test holds them equal), with the name as everywhere else in the window
+  // (D903): "’s" after any name, one ending in "s" too, as the amber line's "{App}’s description"; no name mid-sentence
+  // is "the app".
+  const inLine = app.trim() === '' ? 'the app' : app;
+  const attribution = d.h('p', { class: 'partner-attribution' }, 'These are ', appName(d, inLine), `’s words, not ${BRAND.company}’s.`);
   const inSentence = new Set(m.parts.flatMap((p) => (p.kind === 'value' ? [p.path] : [])));
   const fieldRows = m.fields.filter((f) => !inSentence.has(f.path)).map((f) => row(d, f.label, valueNode(d, f.value, name, true)));
   return d.h(

@@ -8,15 +8,18 @@
 //     wallet), "Your account" (two rows: "Devices and auto-approve" and "Your name", each opening its own view), and
 //     "Other apps" last (find an app by name, and the apps where Journear has no wallet on record for the user);
 //   - a wallet's page, "Wallet details" ("App details" for an app where the user has no wallet): the apps, whether the
-//     wallet needs them, its addresses, its Support ID, then its tools: "Devices and auto-approve" (home-devices.ts),
-//     "Ways to sign in" (home-sign-ins.ts, D874), "Your name" (home-profile.ts, D714) and, last, a collapsed section
-//     that lets the user open the wallet and take its private key to another wallet app (home-export.ts): it does
-//     nothing until the user expands it and signs in again, and nothing in the page's address can open or start it;
+//     wallet needs them, then three tabs (D895): Addresses (its addresses, its Support ID); Security: "Ways to sign in"
+//     (home-sign-ins.ts, D874), "Devices and auto-approve" (home-devices.ts) and one card, "What these apps get from
+//     you" (D901: the email sharing, from home-devices.ts, and "Your name", home-profile.ts, D714); and Move wallet, a
+//     collapsed section that lets the user open the wallet and take its private key to another wallet app
+//     (home-export.ts): it does nothing until the user expands it and signs in again, and nothing in the page's address
+//     can open or start it;
 //   - "Devices and auto-approve" and "Your name" for every wallet.
 // Each view's `h1` names it, and so does the window's title ("Your wallets – Passport Home"). The browser's Back and
 // Forward move between the front page and a view (D893): opening a view adds a history entry at the same address that
 // carries only an opaque marker (`HomeSteps`), so Back returns to "Your wallets" instead of leaving Home and its
-// sign-in; Back from the front page leaves Home as before.
+// sign-in; Back from the front page leaves Home as before. On a wallet's page only entering "Move wallet" adds an entry
+// (D901).
 //
 // Sign-in, with Google or an email code (`SIGN_IN_METHODS`). Google: a click opens a child `/login?mode=home` (as the
 // export window opens its own), which takes `hana:home-params` only from this page, goes to Google with a nonce that
@@ -128,6 +131,12 @@ export const HOME_TEXT = Object.freeze({
   tabs: Object.freeze({ addresses: 'Addresses', security: 'Security', move: 'Move wallet' }) as Readonly<Record<'addresses' | 'security' | 'move', string>>,
   tabsWallet: 'This wallet',
   tabsApp: 'This app',
+  /**
+   * D901: the Security tab's card that holds what the apps get (the email sharing and the name), option A's a3. Plural
+   * for a wallet two or more apps use; "this app" for one (the app is named in the page's head).
+   */
+  getsTitle: (apps: number): string => (apps > 1 ? 'What these apps get from you' : 'What this app gets from you'),
+  getsLine: 'Your email and your name, if you chose to share them.',
   /** The phone's "Sign in again" chip (D895), and what it says to a screen reader beside its words. */
   chip: 'Sign in again',
   chipEnding: `Your sign-in to ${BRAND.home} ends soon.`,
@@ -1133,9 +1142,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   //     page stays the first entry and Back from it still leaves Home; Forward still reaches the view;
   //   - a reload signs out (D553) and keeps no tag: the entries it leaves show the signed-out page; a sign-out or
   //     another account gets a new tag (and the page goes back to its first entry), so an earlier account's entries
-  //     show nothing of it: an entry whose tag isn't this sign-in's is the front page; signed out, the page ignores them.
-  // Leaving a wallet's view, by its way back or by Back, locks and erases a wallet opened in it (home-export.ts
-  // `leave`, D553); Forward shows its page with the move flow closed again, never a key.
+  //     show nothing of it: an entry whose tag isn't this sign-in's is the front page; signed out, the page ignores them;
+  //   - on a wallet's page (D901), only entering "Move wallet" adds an entry; Addresses ↔ Security changes what the
+  //     current entry shows, and leaving "Move wallet" by another tab goes back to the entry it was entered from.
+  // Leaving a wallet's view, or its "Move wallet" tab, by any way (the way back, Back, another tab, Forward elsewhere)
+  // locks and erases a wallet opened in it (home-export.ts `leave`, D553, D895); Forward shows the move flow closed
+  // again, never a key.
   const hist = (): HomeHistory | null => {
     try {
       return (win as { history?: HomeHistory }).history ?? null;
@@ -1150,47 +1162,67 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   /**
    * The page asked the browser to go back (`history.go`): its popstate is the page's own, and a view opened meanwhile
    * adds its entry only once that traversal is done (never during it, however long it takes under load: PR 116's
-   * review). If no popstate has come after `REWIND_GIVE_UP_MS`, the page stops waiting: that view gets no entry (Back
-   * then leaves Home from it, as with a browser that refuses one), and a popstate that still comes for the page's own
-   * traversal, landing on the front page's entry, changes nothing on screen (`lateRewind`).
+   * review). A second way back asked for meanwhile (a tab off "Move wallet", then "Your wallets") waits for the first to
+   * land and then goes on from where the browser really is (PR 130's review: `history.state` changes only when a
+   * traversal lands, and two `go`s in flight are counted differently by different browsers). If no popstate has come
+   * after `REWIND_GIVE_UP_MS`, the page stops waiting: that view gets no entry (Back then leaves its page from it, as
+   * with a browser that refuses one), and a popstate that still comes for the page's own traversal, landing on the entry
+   * it was going to (`lateTarget`: the front page's, or since D901 the tab "Move wallet" was entered from), changes
+   * nothing on screen.
    */
   let rewinding = false;
   let lateRewind = false;
+  /** The step the traversal the page stopped waiting for lands on (0: the front page's entry, which has no marker). */
+  let lateTarget = 0;
   let rewindTimer: ReturnType<typeof setTimeout> | undefined;
   let afterRewind: (() => void) | null = null;
+  /** A way back asked for while another was on its way: where to, and the sign-in's tag it was asked under. */
+  let chained: { to: number; tag: string } | null = null;
   /** Where the front page was scrolled when a view opened over it, and the row that opened it: both come back with it. */
   let frontScroll = 0;
   let frontReturn: string | null = null;
 
   const stepMark = (n: number): string => `home:${stepTag}:${n}`;
-  /** The step an entry's marker names, for this sign-in only; null for anything else (another sign-in's, none). */
-  const stepOf = (state: unknown): number | null => {
+  /** The step an entry's marker names, for this sign-in only (or `tag`'s); null for anything else (another sign-in's, none). */
+  const stepOf = (state: unknown, tag = stepTag): number | null => {
     if (typeof state !== 'string') return null;
     const m = STEP_MARK.exec(state);
-    return m && m[1] === stepTag ? Number(m[2]) : null;
+    return m && m[1] === tag ? Number(m[2]) : null;
   };
-  /** Whether the browser is on the entry the page added for the step on screen (so going back lands on the front page). */
-  const onOwnStep = (): boolean => {
+  /** The step of the entry the browser is on now, by its marker (null: not one of this sign-in's). */
+  const browserStep = (tag = stepTag): number | null => {
     try {
-      return step > 0 && hist()?.state === stepMark(step);
+      return stepOf(hist()?.state ?? null, tag);
     } catch {
-      return false;
+      return null;
     }
   };
-  /** Goes back to the front page's entry, when the browser is on the page's own step; true when it asked. */
-  function rewind(): boolean {
+  /**
+   * Goes back to step `to`'s entry (the front page's by default), when the browser is on one of the page's own entries
+   * past it; true when it asked (or will ask, once a traversal on its way has landed). D901: leaving "Move wallet" by
+   * another tab goes back one step, to the tab it was entered from.
+   */
+  function rewind(to = 0, tag = stepTag): boolean {
     const h = hist();
-    if (!onOwnStep() || typeof h?.go !== 'function') return false;
+    if (typeof h?.go !== 'function' || to < 0) return false;
+    if (rewinding) {
+      chained = { to, tag };
+      return true;
+    }
+    const at = browserStep(tag);
+    if (at === null || at <= to) return false;
     rewinding = true;
     lateRewind = false;
+    lateTarget = to;
     clearTimeout(rewindTimer);
     rewindTimer = setTimeout(() => {
       rewinding = false;
       afterRewind = null;
+      chained = null;
       lateRewind = true;
     }, REWIND_GIVE_UP_MS);
     try {
-      h.go(-step);
+      h.go(to - at);
       return true;
     } catch {
       endRewind();
@@ -1200,6 +1232,10 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function endRewind(): void {
     rewinding = false;
     clearTimeout(rewindTimer);
+    // A way back asked for while this one was on its way: on from where the browser landed (it waits again).
+    const then = chained;
+    chained = null;
+    if (then && rewind(then.to, then.tag)) return;
     const next = afterRewind;
     afterRewind = null;
     next?.();
@@ -1236,8 +1272,11 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     if (rewinding) return endRewind();
     if (lateRewind) {
       lateRewind = false;
-      // The page's own traversal, finished after the page stopped waiting: it lands on the front page's entry.
-      if (stepOf((event as { state?: unknown }).state ?? null) === null) return;
+      // The page's own traversal, finished after the page stopped waiting: it lands on the entry it was going to (the
+      // front page's has no marker). What is on screen stays (PR 130's review: a late landing on the tab "Move wallet"
+      // was entered from flipped "Move wallet", opened again meanwhile, back to that tab).
+      const n = stepOf((event as { state?: unknown }).state ?? null);
+      if (n === (lateTarget === 0 ? null : lateTarget)) return;
     }
     // Signed out (or signing in): nothing of an account is shown, whatever the entry.
     if (stage !== 'signed_in') return;
@@ -1352,15 +1391,73 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     }
   }
 
-  /** A tab of the wallet's page on screen chosen (a click, or Enter or Space on it): its own history entry (D895). */
+  /**
+   * A tab of the wallet's page on screen chosen (a click, or Enter or Space on it). D901 (the founder, 2026-11-24, in
+   * place of D895's entry per tab): only entering "Move wallet" adds a history entry, so Back from it returns to the tab
+   * the person came from. Addresses ↔ Security replaces what the current entry shows (its marker stays: nothing is
+   * written to the browser). Leaving "Move wallet" by another tab goes back to the entry it was entered from, which then
+   * shows the tab chosen, so toggling never piles up entries. Every way out of "Move wallet" locks an opened wallet
+   * (`showView`'s tab branch, `moving.leave()`), whatever happens to the entries.
+   */
   function selectTab(tab: HomeWalletTab): void {
     if (viewing.kind !== 'wallet' || viewing.tab === tab) return;
-    const v: HomeView = { kind: 'wallet', scope: viewing.scope, tab };
-    showView(v, 'tab');
-    addStep(v);
+    const was = viewing;
+    const v: HomeView & { kind: 'wallet' } = { kind: 'wallet', scope: viewing.scope, tab };
+    if (tab === 'move') {
+      // The entry above the wallet's own is "Move wallet"'s, still there because the browser couldn't go back from it
+      // (`leaveMoveStep`'s fallback, PR 130's review): "Move wallet" takes it again instead of adding one more.
+      const below = step >= 2 ? steps[step - 1] : undefined;
+      const cur = steps[step];
+      const slot = !rewinding && below?.kind === 'wallet' && below.scope.scopeId === v.scope.scopeId && cur?.kind === 'wallet' && cur.scope.scopeId === v.scope.scopeId;
+      showView(v, 'tab');
+      if (slot) {
+        const next = steps.slice();
+        next[step] = v;
+        steps = next;
+      } else addStep(v);
+    } else {
+      if (was.tab === 'move') leaveMoveStep(was, v);
+      else replaceStep(v);
+      showView(v, 'tab');
+    }
     // D897: opening Security is the person asking about it: one read of this wallet's devices (never on Back or Forward,
     // never a second time while the wallet's page is open), so its line can say where the wallet is signed in.
     if (tab === 'security') devices.openApp();
+  }
+
+  /**
+   * D901: the wallet's entry on screen now shows `v` (memory only: the entry keeps its marker, nothing is written to the
+   * browser). The front page's step is never replaced: with no entry for this wallet (a browser that refused one),
+   * nothing changes; when the wallet's entry is still waiting for the page's own Back to finish, the entry it gets is
+   * `v`'s.
+   */
+  function replaceStep(v: HomeView & { kind: 'wallet' }): void {
+    const cur = step > 0 ? steps[step] : undefined;
+    if (cur?.kind === 'wallet' && cur.scope.scopeId === v.scope.scopeId) {
+      const next = steps.slice();
+      next[step] = v;
+      steps = next;
+    } else if (rewinding && afterRewind) addStep(v);
+  }
+
+  /**
+   * D901: leaving "Move wallet" for another tab. When "Move wallet" has its own entry over one of the same wallet's tabs,
+   * the browser goes back to that entry (`history.go(-1)`), which now shows `v`; Forward then reaches "Move wallet" again,
+   * collapsed, as after Back. Otherwise (no entry of its own, or the browser can't go back) "Move wallet"'s entry, if it
+   * has one, shows `v` instead, and stays "Move wallet"'s slot: entering "Move wallet" again takes it back rather than
+   * adding another (`selectTab`), so even then there is never more than one entry over the wallet's.
+   */
+  function leaveMoveStep(was: HomeView & { kind: 'wallet' }, v: HomeView & { kind: 'wallet' }): void {
+    const before = step >= 2 ? steps[step - 1] : undefined;
+    const sameWallet = before?.kind === 'wallet' && before.scope.scopeId === was.scope.scopeId;
+    if (steps[step] === was && sameWallet && rewind(step - 1)) {
+      step -= 1;
+      const next = steps.slice();
+      next[step] = v;
+      steps = next;
+      return;
+    }
+    replaceStep(v);
   }
 
   /**
@@ -2334,9 +2431,25 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             : null,
         ),
       ),
-      // Security (D895): who can open this wallet and where it is signed in, then what its apps get (the name). Step 4
-      // fills it out; here it holds the sections that were under the addresses.
-      panel('security', d.h('div', { class: 'home-tools', attrs: { id: 'home-app-extras' } }, signIns.appView(scope), devices.appView(scope), profile.appView(scope))),
+      // Security (D895, D897): who can open this wallet, where it is signed in, then (D901) one card for what its apps
+      // get from the person: the email sharing (read with the devices) and the name, each part with its own button.
+      panel(
+        'security',
+        d.h(
+          'div',
+          { class: 'home-tools', attrs: { id: 'home-app-extras' } },
+          signIns.appView(scope),
+          devices.appView(scope),
+          d.h(
+            'section',
+            { class: 'home-gets', attrs: { id: 'home-app-gets', 'aria-labelledby': 'home-app-gets-title' } },
+            d.h('h2', { attrs: { id: 'home-app-gets-title' } }, HOME_TEXT.getsTitle(scope.apps.length)),
+            d.h('p', { class: 'home-set-summary', attrs: { id: 'home-app-gets-summary' } }, HOME_TEXT.getsLine),
+            devices.emailView(scope),
+            profile.appView(scope),
+          ),
+        ),
+      ),
       // Moving the wallet out, on a tab of its own (never featured: the last tab). Leaving the tab locks it.
       panel('move', d.h('div', { class: 'home-tools' }, moving.view(scope, fromLink))),
     ];
@@ -2344,8 +2457,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   /**
    * The wallet's tabs (D895; WAI-ARIA tabs with manual activation): one tab stop, the arrow keys, Home and End move
-   * between the tabs, Enter or Space (a button's click) opens one. Opening is never automatic on an arrow key: each tab
-   * opened is a history entry, and leaving "Move wallet" locks an opened wallet.
+   * between the tabs, Enter or Space (a button's click) opens one. Opening is never automatic on an arrow key: opening
+   * "Move wallet" is a history entry (D901), and leaving it locks an opened wallet.
    */
   function walletTabs(scope: HomeScope, tab: HomeWalletTab): HTMLElement {
     const icons: Readonly<Record<HomeWalletTab, Parameters<typeof icon>[1]>> = { addresses: 'wallet', security: 'shield', move: 'arrow' };

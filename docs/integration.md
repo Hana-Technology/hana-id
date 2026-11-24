@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-24 (request labels: account names, the example; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+Last verified against code: 2026-11-24 (`sub` on a shared scope; request labels; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -2225,7 +2225,7 @@ past the Journear Passport session:
 |---|---|
 | `iss` | `{Hana API}/v1/identity` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity`; a stable Journear Passport hostname replaces it before any partner goes live) |
 | `aud` | your app id (`app_…`), not your publishable key |
-| `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every other partner; never the Google `sub`. It is also the user's User ID on the partner portal's **Users** page, and their Support ID `HANA-XXXX-XXXX` is its short form, which you can compute yourself to show beside your own records ([Support ID from the `sub`](#support-id-from-sub)) |
+| `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every partner outside your scope, but the same for every app that shares your scope (and so the user's wallet), even another company's; never the Google `sub`. Always check `aud`, so a token minted for another app is never taken as yours. It is also the user's User ID on the partner portal's **Users** page, and their Support ID `HANA-XXXX-XXXX` is its short form, which you can compute yourself to show beside your own records ([Support ID from the `sub`](#support-id-from-sub)) |
 | `sid` | `s1_…`: one per Journear Passport session, shared by its tabs and reloads, new at every interactive login, never repeated |
 | `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
 | `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Journear Passport session proved control of each address's key (a signature bound to this session and app). Stellar and EVM only: the user's NEAR account isn't listed (SDK 0.4.0 changes nothing here); prove it with `hana.near.signMessage` ([section 8, NEAR](#near)) |

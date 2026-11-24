@@ -1114,6 +1114,39 @@ a.explorer {
   color: var(--jp-fg);
 }
 
+/* ---- D901: "What these apps get from you", one card of two parts (the email, the name), each with its own `h3`,
+   line and button; set apart by space, no divider (D888) ---- */
+.home-gets > .home-gets-part {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jp-space-3);
+  min-width: 0;
+  margin-top: var(--jp-space-3);
+}
+
+.home-gets > .home-gets-part > * {
+  margin: 0;
+}
+
+#home-content .home-gets h3 {
+  font-size: var(--jp-text-md);
+  line-height: var(--jp-leading-snug);
+}
+
+.home-gets > .home-gets-part > .home-set-summary {
+  margin-top: calc(-1 * var(--jp-space-2));
+  font-size: var(--jp-text-sm);
+  color: var(--jp-fg-muted);
+}
+
+.home-gets > .home-gets-part > .home-set-summary[data-read] {
+  color: var(--jp-fg);
+}
+
+.home-gets > .home-gets-part > .home-devices-again {
+  margin-top: 0;
+}
+
 /* ---- "Ways to sign in" (home-sign-ins.ts): the devices' cards, one per sign-in ---- */
 .home-sign-in-ic {
   width: 1em;

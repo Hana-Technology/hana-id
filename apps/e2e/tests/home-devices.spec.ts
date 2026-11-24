@@ -399,7 +399,7 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   await shots(page, 'h9-08-stop-refused', browserName);
   stopAnswer = null;
 
-  // A wallet's page: its own devices, its email sharing on, and below them the move.
+  // A wallet's page: its own devices; its email sharing on, in "What these apps get from you" (D901).
   data = devicesFixture(now);
   await page.getByRole('button', { name: 'Your wallets' }).click();
   await page.locator('.home-row[data-scope="s1"]').click();
@@ -408,15 +408,41 @@ test('every screen: devices with their auto-approve and email sharing, each conf
   const appSection = page.locator('#home-app-devices');
   await expect(appSection.locator('.home-device')).toHaveCount(3);
   await expect(appSection.locator('.home-device-app')).toHaveText(['Sodax', 'Sodax Earn', 'Sodax']);
+  await expect(appSection.locator('.home-email')).toHaveCount(0);
+  const card = page.locator('#home-app-gets');
+  await expect(card).toHaveAccessibleName('What these apps get from you');
+  await expect(page.locator('#home-app-email-summary')).toHaveText('Your email is shared with Sodax.');
+  await expect(card.locator('.home-email')).toHaveCount(0);
+  await page.locator('#home-app-email-show').click();
+  await expect(page.locator('#home-app-email-title')).toBeFocused();
+  await expect(card.locator('.home-email')).toContainText('ada.lovelace@example.com');
   await appSection.scrollIntoViewIfNeeded();
   await shots(page, 'h9-09-app-page-devices-email-on', browserName);
+  // Its stop asks first, in the card; Cancel sends nothing; the stop's outcome is said there.
+  const emailStops = stops.length;
+  await page.locator('#home-stop-email-app-s1-app_sodax1').click();
+  await expect(card.locator('.home-confirm')).toContainText('Stop sharing your email with this app?');
+  await expect(page.locator('#home-stop-email-app-s1-app_sodax1-confirm-title')).toBeFocused();
+  await page.locator('#home-stop-email-app-s1-app_sodax1-confirm-cancel').click();
+  expect(stops.length).toBe(emailStops);
+  await page.locator('#home-stop-email-app-s1-app_sodax1').click();
+  await page.locator('#home-stop-email-app-s1-app_sodax1-confirm-go').click();
+  await expect(page.locator('#home-app-email-note')).toContainText('Your email is no longer shared with this app.');
+  await expect(page.locator('#home-app-email-note')).toBeFocused();
+  await expect(card.locator('.home-email')).toHaveCount(0);
+  await expect(page.locator('#home-app-email-summary')).toHaveText('You aren’t sharing your email address with these apps.');
+  expect(stops.slice(emailStops).map((x) => x.path)).toEqual(['/v1/home/email-sharing/revoke']);
+  expect(stops.slice(emailStops).map((x) => x.body)).toEqual([{ appId: 'app_sodax1' }]);
+  await card.scrollIntoViewIfNeeded();
+  await shots(page, 'h9-09b-app-page-email-stopped', browserName);
   await page.getByRole('button', { name: 'Your wallets' }).click();
 
   // An app with email sharing off and only an open tab's auto-approve.
   await page.locator('.home-row[data-scope="s2"]').click();
   await homeTab(page, 'Security');
   await page.locator('#home-app-devices-show').click();
-  await expect(page.locator('#home-email-none')).toHaveText('You aren’t sharing your email address with this app.');
+  await expect(page.locator('#home-app-email-summary')).toHaveText('You aren’t sharing your email address with this app.');
+  await expect(page.locator('#home-app-gets')).toHaveAccessibleName('What this app gets from you');
   await expect(page.locator('#home-app-devices')).toContainText('A tab (may be closed) on https://lumenpay.example');
   await page.locator('#home-app-devices').scrollIntoViewIfNeeded();
   await shots(page, 'h9-10-app-page-tab-consent-email-off', browserName);
@@ -498,7 +524,9 @@ test('the Security tab (D897): one read when it opens, each section’s line wit
   await homeTab(page, 'Security');
   // The one read, by itself; the focus stays on the tab.
   const line = page.locator('#home-app-devices-summary');
-  await expect(line).toHaveText('Signed in to this wallet in 3 places. 1 of them may sign without asking. Your email is shared with Sodax.');
+  await expect(line).toHaveText('Signed in to this wallet in 3 places. 1 of them may sign without asking.');
+  // D901: which app gets the email is said in "What these apps get from you", from the same one read.
+  await expect(page.locator('#home-app-email-summary')).toHaveText('Your email is shared with Sodax.');
   await expect(line).toBeVisible();
   expect(reads).toEqual(['?scopeId=s1']);
   await expect(page.getByRole('tab', { name: 'Security' })).toBeFocused();
@@ -539,9 +567,10 @@ test('the Security tab (D897): one read when it opens, each section’s line wit
     expect(words, `${width}: the app’s words`).toEqual({ display: 'block', inside: true });
   }
   await page.setViewportSize({ width: 1280, height: 800 });
-  // Back and Forward to the tab read nothing; the wallet opened again reads once more when Security opens.
+  // Back and Forward read nothing (D901: Security has no entry of its own, so Back goes to the list); the wallet opened
+  // again reads once more when Security opens.
   await page.goBack();
-  await expect(page.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
   await page.goForward();
   await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
   expect(reads).toEqual(['?scopeId=s1']);

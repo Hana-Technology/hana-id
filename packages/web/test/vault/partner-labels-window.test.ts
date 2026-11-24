@@ -8,7 +8,12 @@ import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { POLICY_FRESH_MS } from '../../src/vault/vault.ts';
 import { PARTNER_LABELS_FRESH_MS, PARTNER_LABELS_WAIT_MS } from '../../src/vault/partner-labels.ts';
 import { Browser, type Google, type Tab, answer, apiError, google, login, openApproval, readyTab, waitLauncher } from './harness.ts';
-import { OTHER, PASSPHRASE, payment, stellarTx } from './chains.ts';
+import { Asset, Operation } from '@stellar/stellar-base';
+import { PASSPHRASE, stellarTx } from './chains.ts';
+
+/** The app's till: a random public key no one has the secret key of (an address book refuses a public seed's account). */
+const TILL = 'GC4OI7BDJ3EGZCOJOA3FNHCHQFQ4OKHXKZK6MXS2WFZBVMZ37I2NS4HC';
+const payment = () => Operation.payment({ destination: TILL, asset: Asset.native(), amount: '1' });
 
 let g: Google;
 const tabs: Tab[] = [];
@@ -25,7 +30,7 @@ afterEach(() => {
 const PAYMENT_DOC = JSON.stringify({
   schema: 'journear-labels/1',
   context: { stellar: { networkPassphrase: PASSPHRASE } },
-  metadata: { addressBook: [{ account: OTHER, name: 'Coffee Club till' }] },
+  metadata: { addressBook: [{ account: TILL, name: 'Coffee Club till' }] },
   display: { formats: { payment: { call: { memo: 'none' }, intent: { verb: 'pay', object: 'the coffee' }, sentence: ['verb', 'object'], fields: [] } } },
 });
 const NEAR_DOC = JSON.stringify({

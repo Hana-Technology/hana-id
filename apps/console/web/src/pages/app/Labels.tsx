@@ -9,13 +9,13 @@
 // Everything a member reads here is `GET /api/orgs/:org/scopes/:scope/labels` (ConsoleRpc.listLabels), judged on the
 // server's clock (D701). Partner text is always rendered as text.
 import type { AppSummary, LabelChangeView, LabelEntryView, LabelListAnswer } from '@hana-id/console-core';
-import { type LabelDocument, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
+import { type LabelDocument, addressBookLines, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
 import { useMemo } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError, getJson, postJson } from '../../api.ts';
 import { clockTime, relative, useApi, useNow, useStepUp, useWrite, when } from '../../lib.tsx';
 import { Badge, Callout, ConfirmButton, Empty, ErrorNote, Loading, Panel, StepUpHint, Why, WriteNote } from '../../ui.tsx';
-import { DiffList, afterEmail } from '../../labels/Diff.tsx';
+import { AccountLines, DiffList, afterEmail } from '../../labels/Diff.tsx';
 import { LabelsEditor, type NearCodeAnswer } from '../../labels/Editor.tsx';
 
 /** D900: a NEAR or Soroban entry shows only while the program runs the code its labels name. */
@@ -65,6 +65,7 @@ function Lines({ v }: { v: LabelChangeView }) {
   if (!doc) return <p className="muted small">Its words can’t be shown here.</p>;
   const lines = previewLabelDocument(doc, appNameOf(v));
   return (
+    <>
     <ul className="labels-lines">
       {lines.map((f) => (
         <li key={f.key}>
@@ -77,6 +78,8 @@ function Lines({ v }: { v: LabelChangeView }) {
         </li>
       ))}
     </ul>
+    <AccountLines accounts={addressBookLines(doc)} />
+    </>
   );
 }
 
@@ -89,10 +92,10 @@ export function waitingState(v: Pick<LabelChangeView, 'state' | 'reviewRequired'
   const lapse = v.lapsesAt ? ` If Journear hasn’t allowed it by ${when(v.lapsesAt)}, it lapses and nothing changes.` : '';
   if (v.state === 'waiting_review') return { badge: 'Held for Journear’s review', line: `Its time has come: Journear reviews it before it goes live.${lapse}` };
   if (v.reviewRequired) {
-    if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear is about to email your security contacts. Journear reviews it first: it goes live only after Journear allows it, at the earliest ${afterEmail(delayMs).replace('the email', 'that email')}.` };
+    if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear emails your security contacts, usually within a few minutes. Journear reviews it first: it goes live only after Journear allows it, at the earliest ${afterEmail(delayMs).replace('the email', 'that email')}.` };
     return { badge: 'Held for Journear’s review', line: `It goes live only after Journear allows it, at the earliest ${clockTime(at, now)} (${relative(at, now)}).` };
   }
-  if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear is about to email your security contacts. It goes live ${afterEmail(delayMs).replace('the email', 'that email')} unless someone cancels it.` };
+  if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear emails your security contacts, usually within a few minutes. It goes live ${afterEmail(delayMs).replace('the email', 'that email')} unless someone cancels it.` };
   return { badge: `Goes live ${clockTime(at, now)}`, line: `It goes live ${relative(at, now)} unless someone cancels it.` };
 }
 

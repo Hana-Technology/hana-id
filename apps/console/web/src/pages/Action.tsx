@@ -10,7 +10,7 @@ import { explain } from '../messages.ts';
 import { Callout, ErrorNote, IconShield, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
 import { identityEmailLabel } from './app/Sessions.tsx';
 import { ConsentPreview } from './Consent.tsx';
-import { type DiffLine, DiffList, afterEmail } from '../labels/Diff.tsx';
+import { type DiffLine, DiffList, afterEmail, AccountLines } from '../labels/Diff.tsx';
 
 interface ActionAnswer {
   id: string;
@@ -82,6 +82,8 @@ export function LabelsReview({ d }: { d: Record<string, unknown> }) {
   const formats = ((d.preview as { formats?: unknown } | undefined)?.formats ?? []) as PreviewFormat[];
   const first = (Array.isArray(d.apps) ? (d.apps as { id?: unknown; name?: unknown }[]).map((a) => str(a.name ?? a.id)).sort()[0] : undefined) ?? 'Your app';
   const name = str((d.preview as { appName?: unknown } | undefined)?.appName ?? first);
+  const raw = (d.preview as { accounts?: unknown } | undefined)?.accounts;
+  const accounts = Array.isArray(raw) ? raw.map(str) : [];
   return (
     <>
       <p>
@@ -102,6 +104,7 @@ export function LabelsReview({ d }: { d: Record<string, unknown> }) {
           </li>
         ))}
       </ul>
+      <AccountLines accounts={accounts} />
     </>
   );
 }

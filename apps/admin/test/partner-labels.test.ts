@@ -121,7 +121,7 @@ describe('the request labels notice', () => {
     const notice = {
       change: { id: 'lc_x1', labelId: 'pl_x', orgId: 'org_x', scopeId: 'sx', environment: 'test', apps: [{ id: 'app_a', name: 'Stamps' }, { id: 'app_b', name: 'Club' }], proposedAt: Date.UTC(2026, 10, 23, 9, 0) },
       contacts: [],
-      preview: { appName: 'Stamps', context: 'NEAR test network, x.testnet', examples: true, formats: [{ key: 'collect', line: 'Stamps says: claim the stamp “Arrival”', sentence: '', parts: [], fields: [{ label: 'Stamp', value: '“Arrival”' }] }] },
+      preview: { appName: 'Stamps', context: 'NEAR test network, x.testnet', examples: true, formats: [{ key: 'collect', line: 'Stamps says: claim the stamp “Arrival”', sentence: '', parts: [], fields: [{ label: 'Stamp', value: '“Arrival”' }] }], accounts: [] },
       diff: [
         { change: 'changed', key: 'collect', before: 'Stamps says: collect the stamp “Arrival”', after: 'Stamps says: claim the stamp “Arrival”' },
         { change: 'same', key: 'redeem', before: 'Stamps says: redeem', after: 'Stamps says: redeem' },
@@ -136,6 +136,28 @@ describe('the request labels notice', () => {
     expect(m.text).not.toContain('redeem');
     expect([durationWords(60_000), durationWords(86_400_000), durationWords(90 * 60_000), durationWords(7 * 86_400_000), durationWords(1000)]).toEqual(['1 minute', '1 day', '1 hour 30 minutes', '7 days', 'less than a minute']);
     expect([nameList(['A']), nameList(['A', 'B']), nameList(['A', 'B', 'C'])]).toEqual(['A', 'A and B', 'A, B and C']);
+  });
+
+  it('a payment: the line ends with the till’s name, every account is listed with its name and whole address, and a renamed one is a change (PR 135’s review)', () => {
+    const TILL = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
+    const KIOSK = 'GCVFJJYF75734IR7PQB2IOI3C3RDQ66D6OMVMJG2DRO4VBN66ODCE76B';
+    const notice = {
+      change: { id: 'lc_p1', labelId: 'pl_p', orgId: 'org_p', scopeId: 'sp', environment: 'test', apps: [{ id: 'app_p', name: 'Harbour Pay' }], proposedAt: Date.UTC(2026, 10, 24, 9, 0) },
+      contacts: [],
+      preview: { appName: 'Harbour Pay', context: 'Stellar test network, payments', examples: true, formats: [{ key: 'payment', line: `Harbour Pay says: pay for order “1042” to “Harbour till” (${TILL})`, sentence: '', parts: [], fields: [] }], accounts: [`Account “Harbour till” (${TILL})`, `Account “Harbour stall” (${KIOSK})`] },
+      diff: [
+        { change: 'same', key: '(contract)', before: 'Stellar test network, payments', after: 'Stellar test network, payments' },
+        { change: 'same', key: `(account) ${TILL}`, before: `Account “Harbour till” (${TILL})`, after: `Account “Harbour till” (${TILL})` },
+        { change: 'changed', key: `(account) ${KIOSK}`, before: `Account “Harbour kiosk” (${KIOSK})`, after: `Account “Harbour stall” (${KIOSK})` },
+        { change: 'same', key: 'payment', before: 'x', after: 'x' },
+      ],
+    } as never;
+    const m = labelsProposed({ env: 'sandbox-test', consoleOrigin: CONSOLE }, notice, { cancelUrl: `${CONSOLE}/cancel/lc_p1#t=${'A'.repeat(43)}`, delayMs: 86_400_000 });
+    expect(m.text).toContain(`Harbour Pay says: pay for order “1042” to “Harbour till” (${TILL})`);
+    expect(m.text).toContain('The accounts and the names users can be shown for them:');
+    expect(m.text).toContain(`- Account “Harbour till” (${TILL})\n- Account “Harbour stall” (${KIOSK})`);
+    expect(m.text).toContain(`- Changed: Account “Harbour kiosk” (${KIOSK}) → Account “Harbour stall” (${KIOSK})`);
+    expect(m.html).toContain('Harbour stall');
   });
 });
 

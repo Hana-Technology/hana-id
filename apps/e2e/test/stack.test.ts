@@ -402,7 +402,7 @@ describe('the Hana API: apps/api’s Worker, /v1/login and /v1/derive mocked', (
     const { api } = setup();
     const { appId, pk } = api.createApp({ origins: [PARTNER_ORIGIN] });
     const { pk: otherPk } = api.createApp({ origins: [PARTNER_ORIGIN] });
-    const text = JSON.stringify({ schema: 'journear-labels/1', context: { stellar: { networkPassphrase: 'Test SDF Network ; September 2015' } }, metadata: { addressBook: [{ account: 'GD6ROJBYLKQMOW3E7N4M2YBPUHMZD7PL65VRHRMO24BOVSBV5H3BQRSL', name: 'Coffee Club till' }] }, display: { formats: { payment: { call: { memo: 'none' }, intent: { verb: 'pay', object: 'the coffee' }, sentence: ['verb', 'object'], fields: [] } } } });
+    const text = JSON.stringify({ schema: 'journear-labels/1', context: { stellar: { networkPassphrase: 'Test SDF Network ; September 2015' } }, metadata: { addressBook: [{ account: 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS', name: 'Coffee Club till' }] }, display: { formats: { payment: { call: { memo: 'none' }, intent: { verb: 'pay', object: 'the coffee' }, sentence: ['verb', 'object'], fields: [] } } } });
     const seeded = await call(api, '/__e2e/labels', { method: 'POST', body: { appId, text } });
     expect(seeded.status).toBe(201);
     const { labelId } = (await seeded.json()) as { labelId: string };

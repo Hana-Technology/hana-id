@@ -21,7 +21,8 @@ const SIZES = { phone: { width: 390, height: 844 }, desktop: { width: 1280, heig
 /** The vault's freshness window for labels (packages/web vault/partner-labels.ts PARTNER_LABELS_FRESH_MS). */
 const LABELS_FRESH_MS = 10_000;
 /** The app's till (in its address book), another account (not), and an issuer of a "USDC" that isn't Circle's. */
-const TILL = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 31)).publicKey();
+/** A random public key no one has the secret key of (a label's address book refuses an account of a public seed). */
+const TILL = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
 const STRANGER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 32)).publicKey();
 const FAKE_USDC_ISSUER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 33)).publicKey();
 
@@ -131,10 +132,15 @@ test.describe('partner labels in the approval window (D896)', () => {
     const box = popup.locator('div.partner-label');
     await expect(box).toHaveAttribute('role', 'group');
     await expect(box).toHaveAttribute('aria-label', 'What Coffee Club says');
-    await expect(box.locator('p.partner-says')).toHaveText('Coffee Club says: pay for order 1042');
+    // D907: the sentence ends with Journear's joining word and the till's name from the address book.
+    await expect(box.locator('p.partner-says')).toHaveText('Coffee Club says: pay for order 1042 to Coffee Club till');
+    await expect(box.locator('p.partner-says span.partner-value.partner-words').last()).toHaveText('Coffee Club till');
     await expect(box.locator('p.partner-attribution')).toHaveText('These are Coffee Club’s words, not Journear’s.');
-    // The memo is in the sentence (no row repeats it); no partner "To" row.
+    // The memo is in the sentence (no row repeats it); no partner "To" row: the box holds no account, and Journear's
+    // own To row, above it, the till's account whole.
     await expect(box.locator('dl')).toHaveCount(0);
+    await expect(box).not.toContainText(TILL);
+    await expect(popup.locator('dl.id-rows code.id-full')).toHaveText(TILL);
     await expect(popup.locator('h2.summary-headline')).toHaveText(/^Coffee Club wants to send 2\.5 XLM to /u);
     // Journear's headline, facts and memo row, the test-app note, then the box, then only the details.
     expect(await order(popup)).toEqual(['summary-headline', 'jp-kv', 'headline', 'summary-line', 'jp-kv', 'jp-kv', 'note', 'partner-label', 'request-details']);
@@ -151,6 +157,7 @@ test.describe('partner labels in the approval window (D896)', () => {
     // 3. Described, but not as described (an id memo where the label says text): the amber line, no partner words.
     popup = await popupFor(page, 'pay-id', payment(stellar, { memo: Memo.id('1042') }));
     await expect(popup.locator('div.partner-label')).toHaveCount(0);
+    await expect(popup.locator('body')).not.toContainText('Coffee Club till');
     await expect(popup.locator('.risk-box.warning-box p.risk-lead.partner-mismatch')).toHaveText(
       'Coffee Club describes this kind of request, but this one doesn’t match, so Journear isn’t showing Coffee Club’s description. If you’re not sure what this does, reject it.',
     );
@@ -161,6 +168,7 @@ test.describe('partner labels in the approval window (D896)', () => {
     const NOT_LISTED = 'This isn’t one of the accounts Coffee Club has listed for payments. If you expected to pay Coffee Club, don’t approve.';
     popup = await popupFor(page, 'pay-stranger', payment(stellar, { to: STRANGER }));
     await expect(popup.locator('div.partner-label')).toHaveCount(0);
+    await expect(popup.locator('body')).not.toContainText('Coffee Club till');
     await expect(popup.locator('h2.summary-headline + .risk-box.danger-box p.risk-lead')).toHaveText(NOT_LISTED);
     await expect(popup.getByRole('alert')).toHaveCount(1);
     await expect(popup.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
@@ -178,7 +186,7 @@ test.describe('partner labels in the approval window (D896)', () => {
     const muxedTill = new MuxedAccount(new Account(TILL, '0'), '77').accountId();
     popup = await popupFor(page, 'pay-muxed', payment(stellar, { to: muxedTill }));
     await expect(popup.locator('.partner-not-listed, .partner-mismatch')).toHaveCount(0);
-    await expect(popup.locator('p.partner-says')).toHaveText('Coffee Club says: pay for order 1042');
+    await expect(popup.locator('p.partner-says')).toHaveText('Coffee Club says: pay for order 1042 to Coffee Club till');
     await expect(popup.locator('dl.id-rows code.id-full')).toHaveText(muxedTill);
     await expect(popup.locator('div.partner-label')).not.toContainText(TILL);
     await check(popup, 'muxed-till', browserName);
@@ -214,13 +222,14 @@ test.describe('partner labels in the approval window (D896)', () => {
   test('a long label wraps inside its box at a phone’s width, its values whole; its one row', async ({ page, browserName }) => {
     test.setTimeout(180_000);
     const app = await newApp({ name: 'Riverside Coffee Club Kiosk' });
-    await seedLabel(app, paymentDoc({ name: 'Riverside Kiosk Coffee Club Till', object: 'the large breakfast set order', label: 'Kiosk order reference', row: true }));
+    // D907: the phrase and the longest name share the sentence's 40 characters (13 + 27).
+    await seedLabel(app, paymentDoc({ name: 'Riverside Kiosk Coffee Club', object: 'the breakfast', label: 'Kiosk order reference', row: true }));
     await openPartner(page, app);
     const { stellar } = await login(page);
     const memo = 'A1B2C3D4E5F6G7H8J9K0L1M2N3P4';
     const popup = await popupFor(page, 'pay-long', payment(stellar, { memo: Memo.text(memo) }));
     const box = popup.locator('div.partner-label');
-    await expect(box.locator('p.partner-says')).toHaveText('Riverside Coffee Club Kiosk says: pay for the large breakfast set order');
+    await expect(box.locator('p.partner-says')).toHaveText('Riverside Coffee Club Kiosk says: pay for the breakfast to Riverside Kiosk Coffee Club');
     await expect(box.locator('dl.partner-fields dt')).toHaveText(['Kiosk order reference']);
     await expect(box.locator('dl.partner-fields dd')).toHaveText(memo);
     await popup.setViewportSize(SIZES.phone);

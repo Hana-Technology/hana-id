@@ -125,6 +125,8 @@ export interface LabelPreview {
   /** Always shown with the preview: the values are made-up examples. */
   examples: true;
   formats: LabelPreviewFormat[];
+  /** Every account of the address book, its name and account whole ("Account “Coffee Club till” (G…)"), in order. */
+  accounts: string[];
 }
 
 /** One line of a version against the version it would replace. */

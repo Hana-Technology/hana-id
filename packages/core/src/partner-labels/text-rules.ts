@@ -39,6 +39,10 @@ export type PartnerTextCode =
   | 'text_ownership'
   | 'text_other_name'
   | 'text_row_word'
+  | 'text_self'
+  | 'text_outcome'
+  | 'text_authority'
+  | 'text_says'
   | 'text_jargon';
 
 export interface PartnerTextProblem {
@@ -208,6 +212,17 @@ const ROW_WORDS = denyList([
   'inflation', 'ledger', 'ledgers', 'paying', 'size', 'transaction', 'transactions', 'hash',
 ]);
 
+/**
+ * Words for the people in a payment, or for money coming back, in an object phrase or an account's name ("pay to me",
+ * "Return to sender", "this account", "the user"): with Journear's "to {name}" they could say the money goes back to
+ * the user. Whole words, compared as the other lists.
+ */
+const SELF_WORDS = denyList(['me', 'us', 'we', 'our', 'ours', 'user', 'users', 'this', 'sender', 'senders', 'holder', 'holders', 'back', 'return', 'returns', 'returned', 'reversal', 'reversals', 'reversed', 'undo', 'undone', 'chargeback', 'chargebacks']);
+/** Authorities an account's name may not claim to be (a bare "Bank" is a bank name, refused with the other names). */
+const AUTHORITY_WORDS = denyList(['police', 'government', 'govt', 'gov', 'revenue', 'customs', 'court', 'courts', 'ministry', 'embassy', 'irs', 'hmrc', 'lhdn', 'taxoffice', 'taxman']);
+/** "Says" in a phrase or a name would read as another speaker inside the line "{App} says: …". */
+const SAYS_WORDS = denyList(['says', 'said', 'saying']);
+
 /** Words that would stand in for the window's own computed text ("your account") or speak to the user. */
 const YOU_WORDS = new Set(['you', 'your', 'yours', 'yourself', 'youre', 'u', 'ur']);
 
@@ -239,6 +254,8 @@ const BRAND_WORDS = Object.freeze(['journear', 'passport']);
 /** Lures and outcome words an id value may not be (`idValueProblem`). */
 const LURE_WORDS: ReadonlySet<string> = new Set(['paid', 'bonus', 'gift', 'prize', 'reward', 'cashback', 'airdrop', 'claim', 'claimed', 'done', 'success', 'successful', 'scam', 'free', 'refund', 'refunded', 'approved', 'verified', 'complete', 'completed', 'won', 'winner']);
 const NATIVE_COINS = Object.freeze(['NEAR', 'ETH', 'Ether', 'XLM', 'Lumens', 'BTC', 'Bitcoin']);
+/** The lures and outcomes an account's name may not hold either, in compared form. */
+const OUTCOME: ReadonlySet<string> = new Set([...LURE_WORDS, 'thanks', 'thank', 'welcome', 'settled', 'cleared', 'confirmed'].map((w) => cf(w)));
 
 function reviewedNames(): { words: Set<string>; long: string[] } {
   const names = new Set<string>([DEMO_CHECK_IN_NAME]);
@@ -321,6 +338,16 @@ export function partnerTextProblem(text: unknown, role: PartnerTextRole): Partne
     return problem('text_other_name', 'Don’t name a currency, a token, a wallet, an exchange, a payment brand or a bank: the window names what moves, from the request.');
   }
   if (all.some((w) => YOU_WORDS.has(w))) return problem('text_you', 'Don’t write “you” or “your”: the window says “your account” itself, only where it is true.');
+  if ((role === 'object' || role === 'addressName') && denied(cw, SELF_WORDS) !== null) {
+    return problem('text_self', 'Don’t write “me”, “us”, “user”, “this”, “sender”, “back”, “return”, “undo” or similar: the window says who pays whom itself.');
+  }
+  if ((role === 'object' || role === 'addressName') && cw.some((w) => SAYS_WORDS.exact.has(w))) return problem('text_says', 'Don’t write “says”: the window says who is speaking.');
+  if (role === 'addressName' && cw.some((w) => OUTCOME.has(w) || (w.endsWith('s') && OUTCOME.has(w.slice(0, -1))))) {
+    return problem('text_outcome', 'Don’t name an account with an outcome (paid, done, success, complete, approved, …): the window says what happens.');
+  }
+  if (role === 'addressName' && denied(cw, AUTHORITY_WORDS) !== null) {
+    return problem('text_authority', 'Don’t name an account as an authority (police, government, tax office, customs, court, …): users could think they must pay it.');
+  }
   for (const m of MEANING) if (denied(cw, m.list) !== null) return problem(m.code, m.message);
   if (role === 'fieldLabel' && cw.some((w) => ROW_WORDS.exact.has(w))) {
     return problem('text_row_word', 'Don’t name a row with the window’s own row names or words for amounts, accounts, fees or networks (To, From, Amount, Total, Network, Memo, Token, Account, Price, …): those rows are Journear’s.');
@@ -372,3 +399,10 @@ export function idValueProblem(value: string): boolean {
   const ui = MEANING.find((m) => m.code === 'text_ui_word')!.list;
   return words.some((w) => ui.exact.has(w));
 }
+
+/**
+ * A name in the form two names are compared in, so names that read alike are one: folded (accents, strokes, NFKC),
+ * look-alike letters mapped and "rn" read as "m" (core's name skeleton, which also drops spaces and marks), then digits
+ * read as letters, i and l as one, u and v as one ("Coffee Club tiIl" is "Coffee Club till").
+ */
+export const partnerLookalikeKey = (name: string): string => cf(nameSkeleton(name));

@@ -256,6 +256,9 @@ export function labelsProposed(c: MailContext, n: LabelNotice, o: { cancelUrl: s
       blocks.push({ kind: 'p', text: oneLine(f.line, 300) });
       if (f.fields.length) blocks.push({ kind: 'list', items: f.fields.map((x) => `${oneLine(x.label, 120)}: ${oneLine(x.value, 200)}`) });
     }
+    // Every listed account's name and account whole: the lines show one example account only.
+    const accounts = Array.isArray(n.preview.accounts) ? n.preview.accounts : [];
+    if (accounts.length) blocks.push({ kind: 'p', text: 'The accounts and the names users can be shown for them:' }, { kind: 'list', items: accounts.map((a) => oneLine(a, 200)) });
   } else blocks.push({ kind: 'p', text: 'What users would see can’t be shown in this email. An owner can read the labels in the console.' });
   const changed = n.diff.filter((d) => d.change !== 'same');
   blocks.push({ kind: 'p', text: 'What changes:' }, changed.length ? { kind: 'list', items: changed.map(diffWords) } : { kind: 'p', text: 'Nothing users see changes: every line stays as it is now.' });

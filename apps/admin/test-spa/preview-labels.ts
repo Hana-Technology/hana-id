@@ -33,19 +33,27 @@ const stampsPreview = (stamp: string, verb = 'collect'): LabelPreview => ({
     { key: 'collect', line: `${STAMPS.name} says: ${verb} the stamp “${stamp}”`, sentence: `${verb} the stamp “${stamp}”`, parts: [{ kind: 'verb', text: verb }, { kind: 'object', text: 'the stamp' }, { kind: 'value', text: `“${stamp}”` }], fields: [{ label: 'Stamp', value: `“${stamp}”` }] },
     { key: 'redeem', line: `${STAMPS.name} says: redeem 3 stamps for a free coffee`, sentence: 'redeem 3 stamps for a free coffee', parts: [{ kind: 'verb', text: 'redeem' }, { kind: 'value', text: '3' }, { kind: 'object', text: 'stamps for a free coffee' }], fields: [{ label: 'Stamps', value: '3' }, { label: 'Reward', value: 'Free coffee' }] },
   ],
+  accounts: [],
 });
-const payPreview = (amount: string, verb = 'pay'): LabelPreview => ({
+/** Harbour Pay's two tills (random public keys no one has the secret key of). */
+export const HARBOUR_TILL = 'GDGXQACKG7AOXXIO4JFXPVAOUHWB2VBNI62EQ6HHYWWVCRDQX3OEH5GS';
+export const HARBOUR_KIOSK = 'GCVFJJYF75734IR7PQB2IOI3C3RDQ66D6OMVMJG2DRO4VBN66ODCE76B';
+/** A classic payment's preview, as the API answers it (core's plain form; its accounts in the address book's order). */
+const payPreview = (verb = 'pay', kiosk = 'Harbour kiosk'): LabelPreview => ({
   appName: PAY.name,
-  context: 'NEAR test network, harbour-pay.testnet',
+  context: 'Stellar test network, payments',
   examples: true,
-  formats: [{ key: 'pay', line: `${PAY.name} says: ${verb} ${amount} to the merchant`, sentence: `${verb} ${amount} to the merchant`, parts: [{ kind: 'verb', text: verb }, { kind: 'value', text: amount }, { kind: 'object', text: 'to the merchant' }], fields: [{ label: 'Amount', value: amount }, { label: 'Merchant', value: 'Corner Café' }] }],
+  formats: [{ key: 'payment', line: `${PAY.name} says: ${verb} for order “1042” to “Harbour till” (${HARBOUR_TILL})`, sentence: `${verb} for order “1042” to “Harbour till” (${HARBOUR_TILL})`, parts: [{ kind: 'verb', text: verb }, { kind: 'word', text: 'for' }, { kind: 'object', text: 'order' }, { kind: 'value', text: '“1042”' }, { kind: 'word', text: 'to' }, { kind: 'value', text: `“Harbour till” (${HARBOUR_TILL})` }], fields: [{ label: 'Order', value: '“1042”' }] }],
+  accounts: [`Account “Harbour till” (${HARBOUR_TILL})`, `Account “${kiosk}” (${HARBOUR_KIOSK})`],
 });
 
 /** The API's diff (apps/api/src/labels/document.ts `diffOf`): what it describes first, then each line with its rows. */
 const textOf = (f: LabelPreview['formats'][number]): string => [f.line, ...f.fields.map((x) => `${x.label}: ${x.value}`)].join(' · ');
 function diffOf(before: LabelPreview | null, after: LabelPreview): LabelDiffLine[] {
-  const b = new Map<string, string>(before ? [['(contract)', before.context], ...before.formats.map((f): [string, string] => [f.key, textOf(f)])] : []);
-  const a = new Map<string, string>([['(contract)', after.context], ...after.formats.map((f): [string, string] => [f.key, textOf(f)])]);
+  // Each account by its account (the text after the name), as the API keys them.
+  const acc = (p: LabelPreview): [string, string][] => p.accounts.map((x) => [`(account) ${x.slice(x.lastIndexOf('(') + 1, -1)}`, x]);
+  const b = new Map<string, string>(before ? [['(contract)', before.context], ...acc(before), ...before.formats.map((f): [string, string] => [f.key, textOf(f)])] : []);
+  const a = new Map<string, string>([['(contract)', after.context], ...acc(after), ...after.formats.map((f): [string, string] => [f.key, textOf(f)])]);
   return [...new Set([...b.keys(), ...a.keys()])].map((key) => {
     const x = b.get(key) ?? null;
     const y = a.get(key) ?? null;
@@ -89,8 +97,8 @@ function initial(now: number): Map<string, LabelFeedItem> {
       change: view(now, 'lc_previewreview', { labelId: 'pl_01jdzharbour', orgId: HARBOUR, scopeId: 's01jdzharbour', apps: [PAY], state: 'waiting_review', proposedAt: now - 26 * HOUR, notifiedAt: now - 26 * HOUR + 4 * MIN, activeFrom: now - 2 * HOUR, lapsesAt: now - 2 * HOUR + 7 * DAY, reviewRequired: true, previousId: 'lc_previewlive' }),
       labelsVersion: 7,
       entryVersion: 0,
-      preview: payPreview('12.50 USDC'),
-      diff: diffOf(payPreview('12.50 USDC', 'send'), payPreview('12.50 USDC')),
+      preview: payPreview('pay', 'Harbour stall'),
+      diff: diffOf(payPreview('send'), payPreview('pay', 'Harbour stall')),
     },
     {
       change: view(now, 'lc_previewproposed', { labelId: 'pl_01jdzstamps2', state: 'proposed', proposedAt: now - 3 * MIN, notifiedAt: null, activeFrom: null, lapsesAt: now - 3 * MIN + 7 * DAY, previousId: 'lc_previewold' }),
@@ -103,8 +111,8 @@ function initial(now: number): Map<string, LabelFeedItem> {
       change: view(now, 'lc_previewlive', { labelId: 'pl_01jdzharbour', orgId: HARBOUR, scopeId: 's01jdzharbour', apps: [PAY], state: 'in_force', proposedAt: now - 9 * DAY, notifiedAt: now - 9 * DAY + 5 * MIN, activeFrom: now - 8 * DAY, served: true }),
       labelsVersion: 7,
       entryVersion: 0,
-      preview: payPreview('12.50 USDC', 'send'),
-      diff: diffOf(null, payPreview('12.50 USDC', 'send')),
+      preview: payPreview('send'),
+      diff: diffOf(null, payPreview('send')),
     },
     {
       change: view(now, 'lc_previewblocked', { labelId: 'pl_01jdzstamps3', state: 'blocked', proposedAt: now - 3 * DAY, notifiedAt: now - 3 * DAY + 5 * MIN, activeFrom: now - 2 * DAY, blockedAt: now - 2 * DAY - 3 * HOUR, blockNote: 'The line says “collect a stamp” but the call sends 5 NEAR', endedAt: now - 2 * DAY - 3 * HOUR }),

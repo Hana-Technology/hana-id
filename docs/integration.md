@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-24 (request labels; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+Last verified against code: 2026-11-24 (request labels: account names, the example; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -915,13 +915,17 @@ are yours.
 exactly one you described, the approval window adds a box under everything Journear says:
 
 ```
-Coffee Club says: pay for [order] [1042]
+Coffee Club says: pay for [order] [1042] to [Coffee Club till]
 These are Coffee Club's words, not Journear's.
 ```
 
 Journear writes the sentence: the verb and the joining words are Journear's, your phrase and the request's own values
-are set apart. Your words never replace, soften or move Journear's lines or warnings; amounts, recipients and the fee
-always come from the request itself. A request that doesn't match your description never shows your words.
+are set apart. For a payment, Journear ends the sentence with the name you gave the account it goes to, after its own
+joining word: "to" (pay, send, donate, deposit, repay, lend), "from" (buy) or "with" (stake, bid), as "pay to Coffee
+Club till" with no phrase. Those are the only verbs a payment can use: sell, borrow, withdraw, unstake and swap would say
+the money comes the other way. Journear's own To line, above your box, still shows the
+account's full address. Your words never replace, soften or move Journear's lines or warnings; amounts, recipients and
+the fee always come from the request itself. A request that doesn't match your description never shows your words.
 
 **Where.** Open your app, then the **Request labels** tab. Labels belong to the app's scope (the apps that share your
 users' wallets); each set is attached to the apps you choose, and users see your words under the name of the app they're using. Anyone in your
@@ -952,27 +956,42 @@ while the request runs exactly that code:
   describes this kind of request, but this one doesn't match, …") until new labels with the new code hash go live after
   their wait. Propose the new labels first, and upgrade soon after they go live.
 
-**Writing them: a form, not JSON.** The editor is a form; you never have to write the document by hand.
+**Writing them: a form, not JSON.** The editor is a form; you never have to write the document by hand. For
+payments, **See an example** fills a new form with a made-up coffee shop (an account named "Coffee Club till", "pay for
+the order", an order number as the memo, XLM only, at most 50 XLM, a 0.01 XLM network fee) to show how it works. It
+leaves the account itself empty: add one of your own Stellar accounts before you can review. If you've already typed
+something, the page asks before it replaces it. While any of the example is left, the page says it is an example:
+replace the name, the phrase and the limits with yours too. A NEAR program or a Soroban contract has no example, since its labels need your own account and
+code.
 
 1. **What your labels describe**: payments to your Stellar accounts, a NEAR program (its account and code hash) or a
    Soroban contract (its contract id and Wasm hash). The network is your app's: test apps describe the test networks.
 2. **Apps**: the apps these labels are for (1 to 8).
-3. **Your accounts**: the accounts your requests pay or name, each with the name users see for it. A payment shows
-   your words only when it goes to one of them.
+3. **Your accounts**: the accounts your requests pay or name, each with its **Name shown to users** (up to 32
+   characters, held to the same rules as your phrase). A payment shows your words only when it goes to one of them, and
+   then ends with that account's name. For a program, an account value in your sentence shows as its name alone, and
+   in a row as its name with the full address under it. For a payment, your phrase and your longest account name
+   together can be at most 40 characters, since the sentence shows both. Two names can't read the same ("Coffee Club
+   till" and "Coffee Club tiIl"), and a test or example account whose secret key is public (such as one made from a
+   seed of one repeated byte) can't be listed. The review page and the security email list every account with its
+   name and full address, and say when one is renamed or changed.
 4. **For each request**: the verb, from Journear's list (add, bid, book, borrow, buy, cancel, check in, collect, create,
    deposit, donate, join, leave, lend, list, pay, redeem, register, remove, renew, repay, sell, send, sign up, stake,
    subscribe, swap, unstake, unsubscribe, vote, withdraw; a verb that says nothing moves, such as "collect", can't
    describe a request that moves money); your phrase (up to 30 characters, plain words, as "order" or "the stamp");
    when it matches (for a payment: the memo it carries, the assets, the highest amount and the highest network fee;
    for a program: the NEAR it attaches, the most gas, every argument and its limits); the values users see (in the
-   sentence, or as up to 3 rows under it); and the sentence's order.
+   sentence, or as up to 3 rows under it: a payment's memo label, as "Order", shows to users as its own line, with the
+   memo under it, only when the memo isn't in your sentence); and the sentence's order.
 5. **Advanced**: the document's text (`journear-labels/1`), if you'd rather edit it. The form follows when it can show
    what you wrote, and says so when it can't.
 
 Every problem shows beside the field that caused it as you type, in the same words Journear's servers use. The rules,
 in short: plain Latin letters, digits, spaces and a few marks; no links, no amounts or account-like text, no "you" or
 "your", no claims ("free", "safe", "verified", "official", "guaranteed", "refund", …), no negations ("no", "never",
-"nothing", …), no names of Journear or of tokens, networks, wallets and exchanges, and no crypto jargon from Journear's
+"nothing", …), no words for the people in a payment or for money coming back in a phrase or an account's name ("me",
+"us", "user", "this", "sender", "back", "return", "undo", …), no "says", and in an account's name no outcomes ("paid",
+"done", "success", …) or authorities ("police", "government", "tax office", "customs", "court", …), no names of Journear or of tokens, networks, wallets and exchanges, and no crypto jargon from Journear's
 plain-words list.
 
 **The preview.** Beside the form (under it on a phone) is the approval window itself, drawn by Journear's own window
@@ -1005,7 +1024,8 @@ would mislead users.** The page and the email name your environment's delay. If 
 changes, the page says so: a change then goes live only after Journear allows it, at the earliest the security delay
 after the email, and lapses if it isn't allowed within 7 days of that time.
 
-**On the tab**, each set of labels shows its state: **Live** (and what users see now), **Waiting for the email**,
+**On the tab**, each set of labels shows its state: **Live** (and what users see now), **Waiting for the email**
+(Journear sends it to your security contacts, usually within a few minutes),
 **Goes live {time}**, **Held for Journear's review** (a waiting change shows what it changes for users), and for the last 14 days the changes that ended: **Blocked by
 Journear** with Journear's note, **Cancelled**, **Lapsed**, **Replaced**, **Removed**. **Switched off by Journear**
 means your users see the plain window for those requests; ask Journear security before changing them. While Journear

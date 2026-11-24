@@ -73,7 +73,7 @@ describe('the approval page with partner labels (D896)', () => {
     const m = request({ partnerLabels: [PAYMENT_TEXT] });
     send(m);
     const box = document.querySelector('div.partner-label');
-    expect(box?.querySelector('p.partner-says')?.textContent).toBe('Coffee Club says: pay for order 1042');
+    expect(box?.querySelector('p.partner-says')?.textContent).toBe('Coffee Club says: pay for order 1042 to Coffee Club till');
     expect(box?.querySelector('p.partner-attribution')?.textContent).toBe(partnerAttribution('Coffee Club'));
     vi.advanceTimersByTime(GUARD_DELAY_MS);
     win.dispatch('pointermove', { pointerType: 'mouse', movementX: 3, movementY: 1 });

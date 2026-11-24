@@ -2,7 +2,7 @@
 // own field renderer and plain form, so the console's and the staff feed's preview is what a real match shows.
 import { describe, expect, it } from 'vitest';
 import { labelLinePlainText, labelRequestOf, matchLabel, previewLabelDocument } from '../src/partner-labels/match.ts';
-import { ME, PAYMENT_DOC_JSON, SOROBAN_DOC_JSON, STAMPS_DOC_JSON, STAMPS_HASH, fn, nearDecoded, parsed } from './partner-labels-fixtures.ts';
+import { ME, OTHER, PAYMENT_DOC_JSON, SOROBAN_DOC_JSON, STAMPS_DOC_JSON, STAMPS_HASH, fn, nearDecoded, parsed } from './partner-labels-fixtures.ts';
 
 describe('previewLabelDocument', () => {
   it('a NEAR format reads exactly as a real match of the same values does', () => {
@@ -17,7 +17,7 @@ describe('previewLabelDocument', () => {
 
   it('a Soroban format: "your account" for an isSelf argument, an amount within its bounds; a payment: the order as code', () => {
     expect(previewLabelDocument(parsed(SOROBAN_DOC_JSON), 'Pool').map((f) => [f.key, f.line, f.fields])).toMatchSnapshot();
-    expect(previewLabelDocument(parsed(PAYMENT_DOC_JSON), 'Coffee Club').map((f) => [f.key, f.line, f.fields])).toEqual([['payment', 'Coffee Club says: pay for order “1042”', [{ label: 'Order', value: '“1042”' }]]]);
+    expect(previewLabelDocument(parsed(PAYMENT_DOC_JSON), 'Coffee Club').map((f) => [f.key, f.line, f.fields])).toEqual([['payment', `Coffee Club says: pay for order “1042” to “Coffee Club till” (${OTHER})`, [{ label: 'Order', value: '“1042”' }]]]);
   });
 
   it('is deterministic and pure (the same document gives the same preview)', () => {

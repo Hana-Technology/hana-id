@@ -2840,6 +2840,8 @@ function labelPreviewBlock(preview) {
       { class: 'label-lines' },
       (preview.formats || []).map((f) => h('li', {}, h('p', { class: 'label-line' }, f.line), f.fields && f.fields.length ? h('dl', { class: 'label-rows' }, f.fields.flatMap((x) => [h('dt', {}, x.label), h('dd', {}, x.value)])) : '')),
     ),
+    // Every listed account's name and account whole: the lines show one example account only.
+    Array.isArray(preview.accounts) && preview.accounts.length ? [h('p', { class: 'hint' }, 'The accounts and the names users can be shown for them:'), h('ul', { class: 'label-accounts' }, preview.accounts.map((a) => h('li', {}, a)))] : '',
   );
 }
 

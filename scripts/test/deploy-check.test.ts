@@ -607,6 +607,8 @@ describe('deployCheck with the dashboard Workers', () => {
 describe('usage capture and Hana’s own org (Hana Home’s billing, D596, D597)', () => {
   const HANA_ORG = 'org_2Yh8sJq4LmHana';
   const production = { ...full, network: 'mainnet' } as unknown as Manifest;
+  /** D903: who runs each NEAR provider, as a production manifest must say. */
+  const OPERATORS = { rpcOperator: 'FastNear', rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear', 'dRPC'] };
   const api = (usageCapture?: boolean) => fullServer(ID).fetchFn && ((async (input: string | URL | Request, init?: RequestInit) => (String(input) === URLS.api ? Response.json({ ok: true, build: ID, ...(usageCapture === undefined ? {} : { usageCapture }) }) : fullServer(ID).fetchFn(input, init))) as typeof fetch);
 
   it('reads usageCapture from the API’s health answer; anything else is "doesn’t say"', async () => {
@@ -629,15 +631,34 @@ describe('usage capture and Hana’s own org (Hana Home’s billing, D596, D597)
     const off = await runFull(['sandbox-dev'], api(false));
     expect(off.code).toBe(0);
     expect(off.out).toMatch(/note: usage capture is off in the API/u);
-    const prodOff = await runFull(['prod'], api(false), { loadManifest: () => ({ ...production, hanaOrgId: HANA_ORG }) as Manifest });
+    const prodOff = await runFull(['prod'], api(false), { loadManifest: () => ({ ...production, ...OPERATORS, hanaOrgId: HANA_ORG }) as Manifest });
     expect(prodOff.code).toBe(1);
     expect(prodOff.out).toMatch(/FAIL: api: usage capture is off/u);
-    const prodOn = await runFull(['prod'], api(true), { loadManifest: () => ({ ...production, hanaOrgId: HANA_ORG }) as Manifest });
+    const prodOn = await runFull(['prod'], api(true), { loadManifest: () => ({ ...production, ...OPERATORS, hanaOrgId: HANA_ORG }) as Manifest });
     expect(prodOn.code).toBe(0);
     // A production env must name Hana's own org.
-    const noOrg = await runFull(['prod'], api(true), { loadManifest: () => production });
+    const noOrg = await runFull(['prod'], api(true), { loadManifest: () => ({ ...production, ...OPERATORS }) as Manifest });
     expect(noOrg.code).toBe(1);
     expect(noOrg.out).toMatch(/FAIL: manifest: no hanaOrgId on a production network/u);
+  });
+
+  it('D903: a production env names two different operators for its NEAR providers; testnet needs none', async () => {
+    const prod = (extra: Record<string, unknown>) => ({ ...production, hanaOrgId: HANA_ORG, ...extra }) as unknown as Manifest;
+    const none = await runFull(['prod'], api(true), { loadManifest: () => prod({}) });
+    expect(none.code).toBe(1);
+    expect(none.out).toMatch(/FAIL: manifest: rpcOperator: rpcOperator is required on a production network \(mainnet\)/u);
+    expect(none.out).toMatch(/FAIL: manifest: rpcFallbackOperator: rpcFallbackOperator is required/u);
+    const same = await runFull(['prod'], api(true), { loadManifest: () => prod({ ...OPERATORS, rpcFallbackOperator: 'fast near' }) });
+    expect(same.code).toBe(1);
+    expect(same.out).toMatch(/FAIL: manifest: rpcFallbackOperator: rpc and rpcFallback must be run by different operators on a production network \(mainnet\) \(both are FastNear\)/u);
+    // Read whatever the groups: it is the manifest's.
+    const onlyApi = await runFull(['prod', '--only', 'api'], api(true), { loadManifest: () => prod({ ...OPERATORS, rpcFallbackOperator: 'FastNear' }) });
+    expect(onlyApi.out).toMatch(/must be run by different operators/u);
+    expect((await runFull(['prod'], api(true), { loadManifest: () => prod(OPERATORS) })).code).toBe(0);
+    // sandbox-dev (testnet, FastNear behind both, no operators named) is fine.
+    const testnet = await runFull(['sandbox-dev'], api(true));
+    expect(testnet.code).toBe(0);
+    expect(testnet.out).not.toMatch(/operator/u);
   });
 
   it('--d1 checks that hanaOrgId is an org that exists and is internal, reading only its kind from the console’s D1', async () => {

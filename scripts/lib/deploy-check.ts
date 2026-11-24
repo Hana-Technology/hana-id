@@ -48,7 +48,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type Manifest, emailIssuerUrl, loadEnv, repoRoot } from '@hana-id/env';
+import { type Manifest, emailIssuerUrl, loadEnv, nearOperatorProblems, repoRoot } from '@hana-id/env';
 import { BUILD_PATH, BUILD_VAR, type BuildId, ISSUER_HEALTH_PATH, parseBuildId, parseBuildMeta, parseVaultBanner } from '@hana-id/env/build-id';
 import { type LocalBuild, localBuild } from '@hana-id/env/local-build';
 import { SPONSOR_DELEGATES } from '@hana-id/core/evm-sponsor';
@@ -586,6 +586,9 @@ export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps
   }
   // Hana's own org for the Home derives no partner pays for: a production network must name one.
   if (isProductionNetwork(m) && m.hanaOrgId === undefined && selection.groups.includes('api')) failures.push('manifest: no hanaOrgId on a production network: the Hana Home derives Hana pays for would be recorded for org_legacy');
+  // Who runs the NEAR providers (D903): on a production network two named, different operators. The schema refuses it
+  // too; checked again here, as the other production rules are, whatever groups are read.
+  if (isProductionNetwork(m)) for (const p of nearOperatorProblems(m)) failures.push(`manifest: ${p.path.join('.')}: ${p.message}`);
 
   // EVM sponsorship (D849): only for a manifest with evm.sponsor, so an env without it prints nothing new.
   const evmRead = selection.groups.includes('evm') && m.evm?.sponsor !== undefined;

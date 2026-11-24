@@ -209,6 +209,8 @@ describe('the editor', () => {
     });
     expect(box.querySelector('p.partner-says')?.textContent).toBe('Coffee Club says: pay for order 1042');
     expect(box.getAttribute('aria-label')).toBe('What Coffee Club says');
+    // D903: the line under the partner's words, the window's own.
+    expect(box.querySelector('p.partner-attribution')?.textContent).toBe('These are Coffee Club’s words, not Journear’s.');
     // A claim word: core's refusal beside the phrase, the field marked, Review off, the preview gone.
     fireEvent.change(phrase(), { target: { value: 'free order' } });
     await waitFor(() => expect(phrase().getAttribute('aria-invalid')).toBe('true'));

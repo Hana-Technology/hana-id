@@ -709,8 +709,9 @@ button.home-row:focus-visible {
   max-width: 180px;
 }
 
-/* Reduced motion: the placeholders stand still. The system's own rule shortens every animation to 0.01 ms but keeps
-   `.jp-skel`'s infinite repeats, which then flicker (PR 116's review: Firefox and WebKit). */
+/* Reduced motion: the placeholders stand still. The brand's own rule (components.css) now ends `.jp-skel`'s animation
+   at once and runs it once (D905); before, it kept the infinite repeats, which flickered (PR 116's review: Firefox and
+   WebKit). Home's own rule is kept so the placeholders stay still whatever the brand's rule does. */
 @media (prefers-reduced-motion: reduce) {
   .home .home-skeleton-line {
     animation: none;

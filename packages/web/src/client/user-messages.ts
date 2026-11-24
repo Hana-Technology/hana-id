@@ -131,7 +131,7 @@ const BY_REASON: Readonly<Record<string, Readonly<Record<string, string>>>> = Ob
 });
 
 /**
- * The sponsored action's reasons (gas-free EVM actions: the vault's `evm-sponsor.ts` refusals and the API codes it passes
+ * The sponsored action's reasons (gas sponsorship for EVM actions: the vault's `evm-sponsor.ts` refusals and the API codes it passes
  * on as `data.reason`), each with the vault's own sentence (`SPONSOR_TEXT`), copied word for word so the partner's text
  * and the approval window agree. They come with 4100, `rate_limited`, `api_unavailable`, `session_ended` or `busy`, and
  * are read after the per-code reasons above. `reverted` and `not_executed` take the sentence that is true whether or

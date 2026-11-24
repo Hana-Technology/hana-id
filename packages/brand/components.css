@@ -9,6 +9,11 @@
  * cards and tables (.jp-card, .jp-table-wrap, .jp-table, .jp-kv, .jp-stats), navigation (.jp-tabs, .jp-crumbs,
  * .jp-pager, .jp-steps), states (.jp-empty, .jp-skel), and the login modal (.jp-modal, .jp-provider, .jp-confirm).
  * The design system's page (linked from docs/decisions.md D765) shows each one's markup.
+ *
+ * Reduced motion (the last rule, D905): when the person's system asks for less motion, every animation and transition
+ * here and on anything inside a .jp-* element ends at once (0.01 ms, run once, no delay), so a spinner or a loading
+ * placeholder stands still and nothing slides or fades. It ends rather than being removed so an element still reaches
+ * its final look and code waiting for an animation's end still hears it.
  */
 .jp-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:var(--jp-control-md);padding:0 16px;border-radius:var(--jp-radius-md);border:1px solid transparent;font:inherit;font-weight:600;font-size:var(--jp-text-sm);cursor:pointer;white-space:nowrap;color:var(--jp-fg);background:transparent;transition:background var(--jp-dur-fast) var(--jp-ease),box-shadow var(--jp-dur-fast) var(--jp-ease),transform var(--jp-dur-fast) var(--jp-ease),border-color var(--jp-dur-fast);user-select:none}
 .jp-btn:active{transform:translateY(1px) scale(.99)}
@@ -340,4 +345,5 @@ textarea.jp-input{overflow:hidden;transition:height var(--jp-dur-fast)}
 .jp-stat .v{font-size:var(--jp-text-2xl)}
 @media (pointer:coarse){.jp-input{font-size:16px}
 .jp-addr .jp-icon-btn{width:32px;height:32px}}
-@media (prefers-reduced-motion:reduce){[class^="jp-"],[class*=" jp-"],[class^="jp-"]::before,[class*=" jp-"]::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+@media (prefers-reduced-motion:reduce){[class^="jp-"],[class*=" jp-"],[class^="jp-"]::before,[class^="jp-"]::after,[class*=" jp-"]::before,[class*=" jp-"]::after,[class^="jp-"] *,[class*=" jp-"] *,[class^="jp-"] *::before,[class^="jp-"] *::after,[class*=" jp-"] *::before,[class*=" jp-"] *::after{animation-duration:.01ms!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:.01ms!important;transition-delay:0s!important}
+.jp-slider::-webkit-slider-thumb{transition-duration:.01ms!important;transition-delay:0s!important}}

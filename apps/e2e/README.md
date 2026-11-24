@@ -67,7 +67,9 @@ signed-out page only. `tests/home-export.spec.ts` "D893: the browser’s Back ou
 goes Back (the key is erased from the page), then Forward (the page with the move flow collapsed, no key, no new derive).
 `tests/home-devices.spec.ts` opens Devices from its row under "Your account" (one read) and at `/home?view=devices`
 (one read, then Back to the list and Forward without a read). The rows' locator is `homeRow(page, appName)`
-(`tests/home-steps.ts`) or `.home-row[data-scope="…"]`.
+(`tests/home-steps.ts`) or `.home-row[data-scope="…"]`. With reduced motion (D905) its rows test also checks the brand's
+own rule as Home ships it, in all three browsers: a button's spinner (`.jp-btn .spin`) runs once in under a
+millisecond, as does a radio's dot (`::after`), and spins for ever again without it.
 
 A wallet's tabs and the phone's chip (D895): `tests/home.spec.ts` checks the tabs' roles and names, the keyboard (the
 arrows move, Enter and Space open), a history entry only for "Move wallet" (D901: Back from it returns to the tab it
@@ -117,7 +119,7 @@ not have been cancelled", the row kept, Show again. Option A's test now gives it
 With `HANA_CANCEL_SHOTS_DIR=<dir>` (Chromium) it saves each of these screens at 390 and 1280 px, light (`cancel-offer`,
 `cancel-confirm`, `cancel-signing-in`, `cancel-working`, `cancel-done`, `cancel-nothing-changed`, `cancel-unknown`).
 
-Gas-free EVM actions (D838, D847, D851, D855, D856): `tests/evm-sponsor.spec.ts` runs `hana.evm.sendSponsored` from a
+EVM gas sponsorship (D838, D847, D851, D855, D856): `tests/evm-sponsor.spec.ts` runs `hana.evm.sendSponsored` from a
 click through the vault's prepare, one approval and send against apps/api's **own** sponsorship routes (the session
 proof, the allowlist and every check) and the **real relayer object** (`EvmRelayer`, in memory), which signs with the
 stack's relayer key (`src/relayer-key.ts`: made at the first run, kept in `.build/`, never committed; the bundles pin

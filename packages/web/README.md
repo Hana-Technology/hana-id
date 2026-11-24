@@ -240,7 +240,10 @@ device out (the `disconnect` event then has `reason: 'signed_out'` too): ask the
 `login_timeout`, `rate_limited`, `login_cancelled` (the user closed the window or you cancelled; with `data.reason:
 'link_remove'` the user removed a linked sign-in method: not a failure, so show `userMessage` as information). NEAR
 refusals carry `data.reason` (`near_key_unknown`: call `activate()` first; `near_account_unrecorded` from the relay
-just after a login: retry for about 20 s).
+just after a login: retry for about 20 s). `delegate_nonce_used` from the relay: nothing was sent. This nonce, or a
+later one, was already used (another tab, an earlier try, or this same action sent before). Check whether the call
+already ran; if not, build a new delegate action with a nonce above `data.accessKeyNonce` and ask the user to approve
+it.
 
 To show an error to your user, use `error.userMessage` (SDK 0.5.0) on a `HanaError`, `HanaSponsorError` or
 `ProviderRpcError`: a plain sentence worked out from `code` and `data.reason` alone ("You rejected this in Journear

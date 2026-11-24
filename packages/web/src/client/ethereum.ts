@@ -7,7 +7,7 @@
 // | eth_chainId, wallet_switchEthereumChain | among `evm.chains`, answered here; an unknown chain is 4902; a test app (pk_test_) switching to a chain outside the testnet list (except a mainnet its vault said the app's demo allows, D428) is 4100 `mainnet_not_allowed` (D39) |
 // | eth_sendTransaction | fill (evm-tx.ts) from the current chain's RPC → vault eth_signTransaction (approval) → eth_sendRawTransaction, one at a time per chain; a filled nonce is never below one past the last one broadcast here. A test app on a mainnet chain is refused before anything is filled (4100 `mainnet_not_allowed`; the vault refuses it too) |
 // | eth_signTransaction, personal_sign, eth_signTypedData_v4 | the vault, with approval (the transaction is filled first) |
-// | wallet_getCapabilities, wallet_sendCalls, wallet_getCallsStatus | EIP-5792 (version 2.0.0) over the gas-free actions only (`hana.evm.sendSponsored`, D838): `atomic: supported` on the configured chains the vault sponsors; a batch on any other chain is 5710. `eth_sendTransaction` is never sponsored |
+// | wallet_getCapabilities, wallet_sendCalls, wallet_getCallsStatus | EIP-5792 (version 2.0.0) over the sponsored actions only (`hana.evm.sendSponsored`, D838): `atomic: supported` on the configured chains the vault sponsors; a batch on any other chain is 5710. `eth_sendTransaction` is never sponsored |
 // | eth_sign and other signing or wallet methods | 4200 |
 // | read-only methods (READ_ONLY_METHODS) | forwarded to the current chain's rpcUrl |
 // | eth_sendRawTransaction | forwarded to the current chain's rpcUrl: it broadcasts what the dapp already signed |
@@ -398,7 +398,7 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
     return hash as Hex;
   }
 
-  // ---- EIP-5792: the gas-free actions as batches (D838) ----
+  // ---- EIP-5792: the sponsored actions as batches (D838) ----
 
   /** The configured chains the vault sponsors (a batch can be sent, and its receipt read, only there). */
   #batchChains(): number[] {
@@ -423,7 +423,7 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
 
   /**
    * wallet_sendCalls([{version: "2.0.0", id?, from?, chainId, atomicRequired, calls, capabilities?}]) → `{id}`: the
-   * calls as one gas-free action (hana.evm.sendSponsored: the approval window, then Journear's relayer). Resolves once
+   * calls as one sponsored action (hana.evm.sendSponsored: the approval window, then Journear's relayer). Resolves once
    * the batch ran. Value must be 0 on every call; a capability the provider doesn't have is 5700 unless `optional`.
    */
   #sendCalls(params: unknown): Promise<{ id: string }> {

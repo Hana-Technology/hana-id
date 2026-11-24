@@ -2200,6 +2200,8 @@ describe('L3: never send what the relayer would refuse', () => {
     const r = await send(s, signedSend(s.user).body);
     const b = await body(r);
     expect([r.status, b.code, b.retryAfterS]).toEqual([503, 'gas_price_too_high', 15]);
+    // The base fee is just under the relayer's starting cap: too high for sponsorship, not moving (D905).
+    expect(b.error).toBe('Gas prices are too high for sponsorship right now, try again later');
     expect(s.relayer.sends).toEqual([]);
     expect(await hits(`evm-sponsor:user:${s.userId}`, `evm-sponsor:${LOCAL_CHAIN}:attempts`)).toBe(0);
   });

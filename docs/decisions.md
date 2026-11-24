@@ -21031,3 +21031,47 @@ and the quoted words are unchanged, and entries that already said "the user" sta
 and council keys and receives the alerts. Since branch `docs/readiness-owner-column`, the Owner column of
 `docs/mainnet-readiness.md` tells the two apart row by row: "Tech Lead" for technical and operational work, "founder"
 for business-owner matters (legal, contracts, the company, the brand, owner and council keys).
+
+## The partner platform: the Tech Lead's answers of 2026-11-24 (branch `docs/partner-platform-spec`)
+
+From `next` @ 6f51a033; docs only, not merged, not built, not deployed. Numbered D913: parallel branches may take D910
+to D912.
+
+### D913. Real-money demo swaps stay a staff switch per partner app; each app on a shared scope gets its own User ID, with linking for the scope's owner and staff; npm and the licence parked; the small items started; the platform API built on the origin recommendation
+- Date 2026-11-24 · Status: points 2 to 6 **decided by the Tech Lead 2026-11-24**; the design that carries them out
+  **proposed, not built** (`docs/partner-platform-spec.md`, with its open questions for the Tech Lead) · Relates to
+  D51, D127, D346, D356, D428, D704, D708, D760, D894, D909 · Built: nothing
+- Point 1 (one wallet across all of the network's partner sites, one app per partner, all on the network's one scope
+  and organisation) is D909, unchanged.
+- **2. Real-money demo swaps** (the mainnet demo, D428) stay a **staff switch per partner app**, for a short pilot
+  list, and are never part of the network's portal switch or the platform API. D428 is unchanged (partners never see
+  or set it).
+- **3. Each app on a shared scope gets its own User ID** in the identity token (today `sub` is per scope, so every
+  partner backend gets the same ID for a person). The Tech Lead then asked: "if Sodax wanted to diagnose one user
+  across multiple Sodax partner apps, is it still possible? some sort of linking is needed?" **Answer, in plain
+  words:** yes. The person's IDs on each of the network's apps all come from one ID of the person on the network's
+  scope, which only Journear can compute. So the network's owners (in our partner portal) and Journear staff (in the
+  admin portal) can look a person up by any one app's User ID or Support ID and see that person's IDs on the
+  network's other apps, each lookup audited and rate limited; a partner can't turn its IDs into another partner's.
+  **Honestly:** on a shared wallet the wallet addresses are the same on every site and are in every identity token,
+  so partners who compare addresses can match users anyway. Per-app IDs remove the ready-made join key (the shared
+  `sub` and Support ID); they are not privacy between partners. That doesn't change the recommendation to build
+  them, as long as they are never described as privacy between sites. Existing apps keep their IDs exactly: only
+  apps created on a scope that staff mark for it get per-app IDs (spec, Part B).
+- **4. npm publishing and the core package's licence:** parked.
+- **5. Start the small items now:** naming the six EVM chains Sodax uses that our approval window doesn't name yet,
+  and a "this wallet is also used on other apps" line in our windows (both on other branches); and build the portal
+  connection (the platform API) on the recommendation below, to be adjusted after the Tech Lead has talked to the
+  network.
+- **6. Who vouches for a partner's web address** (parked in D909): build on the recommendation for now, adjust later.
+  The recommendation: the network vouches for every partner site it adds (it is the customer and the scope's owner);
+  a site added through the network's backend takes effect only after the usual guarded-change delay (at least 24 h on
+  a production network; 60 s on the dev testnet env) with the usual announcement to the org's security contacts and
+  its cancel link; Journear keeps a per-partner-app off switch and can revoke the network's credential at once; every
+  call is audited.
+- **Recommended in the spec, for the Tech Lead to confirm** (its "Open questions"): per-org request signing with
+  ECDSA P-256 (a timestamp and a single-use nonce on every request, the public key registered with us, the private key
+  in the network's KMS) over OAuth client-credentials tokens; registration by staff or by an on-chain owner, either way
+  announced and delayed; keys expiring after a year; linking in the portal only, owners only; a per-app Support ID.
+- Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation. The per-app User ID
+  is an off-chain pseudonym; its layout becomes final, for the partners that store it, from the day it ships.

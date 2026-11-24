@@ -3,11 +3,14 @@
 Sodax is a cross-chain swap SDK: `@sodax/sdk`, its wallet kit `@sodax/wallet-sdk-react` and `@sodax/dapp-kit`. The
 aim (D909): our SDK inside Sodax's SDK, switched on from Sodax's partner portal, so that a Sodax partner turns on
 sign-in with Google or email with a switch. This page says what works today, what is missing, who would build what,
-the risks and the questions to settle with Sodax. Decision: D909 in `decisions.md`.
+the risks and the questions to settle with Sodax. Decisions: D909 and D913 in `decisions.md`. The build spec for the
+portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
 Last verified: 2026-11-24 (branch `feat/name-sodax-evm-chains`, from `next`, not merged, not deployed: the approval
 window names all 14 of Sodax's EVM chains, D910; "Chains", the summary's last row and "Who builds what" updated);
-2026-11-24 (branch `docs/sodax-sdk-integration`, from `next`, not merged, not deployed: written from
+2026-11-24 (branch `docs/partner-platform-spec`, from `next`, not merged, docs only: the Tech Lead's
+answers of 2026-11-24 (D913) in the status line, sections 3, 4, 5 and "Open", and links to `partner-platform-spec.md`;
+nothing else re-checked); 2026-11-24 (branch `docs/sodax-sdk-integration`, from `next`, not merged, not deployed: written from
 the code and a local test against Sodax's public packages at 2.2.0, their latest release; `2.3.0-rc.4` lists the same
 chains); after PR 136's review: claims about Sodax's packages marked tested, read in source or inferred; the
 address-freeze wording; facts on the origin exception, demo prices and partner labels).
@@ -15,7 +18,8 @@ address-freeze wording; facts on the origin exception, demo prices and partner l
 **Status in one line:** the Tech Lead decided that every Sodax partner site shares one wallet (one app per partner, all
 in Sodax's organisation on one scope). Test and live apps never share a scope (D51), so that is one test scope now and
 a separate live scope, with different addresses, later. Nothing for the portal switch is built. Who vouches for each
-partner's web address is parked until it is settled with Sodax.
+partner's web address: built on the recommendation (Sodax vouches; every address waits the usual delay and
+announcement), to be adjusted after the Tech Lead has talked to Sodax (D913); the spec is `partner-platform-spec.md`.
 
 ## Summary
 
@@ -107,7 +111,8 @@ a protected environment, and removing `"private": true` (`operations.md`, "Publi
   origin of the scope has been in force (or a user has a session in it), and for a staff-created app it applies only
   when that create made the scope. So on a shared scope every later partner's addresses wait the full delay.
 
-**The smallest safe design** (not built; to settle with Sodax and after the origin question):
+**The smallest safe design** (not built; the full build spec, with its threat model, endpoints and build plan, is
+`partner-platform-spec.md`, D913; to be adjusted after the Tech Lead has talked to Sodax):
 
 1. **Who calls.** Sodax's backend gets a service credential bound to Sodax's organisation and scope: a signing key
    whose public half Journear staff register, each request signed with a time and a single-use number (no shared
@@ -151,7 +156,9 @@ partner site opens the same wallet without a word about it. Only Passport Home l
 1. A line in the sign-in window when the wallet is shared: "This wallet is also used on {other apps}." (wording to
    decide), and in the approval window.
 2. The identity token's User ID is the same for a user across every app of a scope, so every Sodax partner's backend
-   can match the same person across sites. Decide whether that is wanted, or whether partners need a per-app id.
+   can match the same person across sites. Decided (D913): each app on a shared scope gets its own User ID, with
+   linking for Sodax and Journear staff (`partner-platform-spec.md` Part B). The wallet addresses stay the same on
+   every site, so partners who compare addresses can still match users.
 3. Partner portal members belong to the whole organisation: a Sodax partner given portal access would see every
    other Sodax partner's apps and users. Per-app access doesn't exist.
 4. Security contacts are per organisation: a web address added for one partner's app is announced to Sodax's
@@ -182,8 +189,8 @@ can be moved from any of those sites, one approved transaction at a time, with n
 above $10 never blocks. The addresses also change at the address freeze (the production MPC network), so users would
 have to move funds out themselves. Sodax partners swap on many chains; the demo covers two.
 
-**For Sodax's portal switch to include it**, D428 would have to change: it rejected letting partners set it. The
-recommendation is to keep it a staff switch per partner app, after a check with that partner, and out of the service
+**For Sodax's portal switch to include it**, D428 would have to change: it rejected letting partners set it. Decided
+(D913): it stays a staff switch per partner app, for a short pilot list, and out of Sodax's switch and the service
 API; real swaps for Sodax partners wait for live keys.
 
 ## 6. Chains
@@ -260,8 +267,9 @@ be tried, on each chain's own test network.
 
 ## Open (for the Tech Lead)
 
-- Who vouches for each partner's web address (parked, D909).
-- Whether the mainnet demo stays a staff switch per partner app (recommended) or joins Sodax's switch (amends D428).
-- Whether to build the service API now or after the origin question.
-- Publishing the SDK (registry, licence of `@hana-id/core`), needed before Sodax can depend on it.
-- Whether partners on a shared scope get a per-app User ID.
+Answered by the Tech Lead on 2026-11-24 (D913): the mainnet demo stays a staff switch per partner app; each app on a
+shared scope gets its own User ID, with linking for Sodax and staff; the service API is built now on the origin
+recommendation, to be adjusted after the talk with Sodax. Still open:
+
+- Publishing the SDK (registry, licence of `@hana-id/core`), needed before Sodax can depend on it: parked (D913).
+- The spec's own questions (`partner-platform-spec.md`, "Open questions for the Tech Lead").

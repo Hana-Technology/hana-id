@@ -1046,11 +1046,11 @@ export interface WindowMessageMap {
     exit?: true;
   };
   /**
-   * Hana Home page → its own sign-in child (`/login?mode=home`), to cancel one link that is still waiting (D902, D898
-   * option B): a Google sign-in whose nonce is the contract's `link_change` "cancel" nonce over (signer, scope, root,
-   * member, epoch, salt), which the child recomputes from these fields (links.ts `linkChangeNonce`), so the child never
-   * sends Google a nonce for any other change. The shared Google client only (no `exit`: the exit client can't make
-   * link changes, D468). Carries relayKey; taken only from the same-origin opener on the Home page. It names no app.
+   * Hana Home page → its own sign-in child (`/login?mode=home`), to cancel one link that is still waiting: a Google
+   * sign-in whose nonce is the contract's `link_change` "cancel" nonce over (signer, scope, root, member, epoch, salt),
+   * which the child recomputes from these fields (`linkChangeNonce`), so the child never sends Google a nonce for any
+   * other change. The shared Google client only (no `exit`: the exit client can't make link changes). Carries relayKey;
+   * taken only from the same-origin opener on the Home page. It names no app.
    */
   'hana:home-cancel-params': {
     signer: string;

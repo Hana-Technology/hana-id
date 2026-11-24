@@ -347,7 +347,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         d.h('p', { class: 'asker' }, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', originText(d, msg.parentOrigin));
       // D912: the other apps that use this wallet, as the vault sent them (none: nothing drawn, the screen as before).
       // Not in export mode: that sign-in only confirms it's you for the key window, which has its own words.
-      const shared = () => (mode === 'export' ? null : sharedWalletLine(d, msg.otherApps));
+      const shared = () => (mode === 'export' ? null : sharedWalletLine(d, msg.otherApps, msg.otherAppsUnknown));
       // Email is offered only by the vault or the export window, only for an env with an email issuer.
       const methods: readonly LoginMethod[] = msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
       /** The email context: the email step's facts, and (batch 8b) the follow-up mode's, which a Google login needs too. */
@@ -362,6 +362,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
               ...(msg.logoUrl ? { logoUrl: msg.logoUrl } : {}),
               // D912: for the email step's screens, which show the same line (not in export mode).
               ...(msg.otherApps && mode !== 'export' ? { otherApps: { count: msg.otherApps.count, names: [...msg.otherApps.names] } } : {}),
+              ...(msg.otherAppsUnknown && mode !== 'export' ? { otherAppsUnknown: true as const } : {}),
               parentOrigin: msg.parentOrigin,
               scopeId: msg.scopeId,
               sessionPublicKey: Uint8Array.from(msg.sessionPublicKey),

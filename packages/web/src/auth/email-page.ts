@@ -548,7 +548,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
    * in export mode. The follow-up screens keep the header alone: they may be about another wallet or a link.
    */
   const signInHeader = (): HTMLElement[] => {
-    const shared = ctx.exportMode ? null : sharedWalletLine(d, ctx.otherApps);
+    const shared = ctx.exportMode ? null : sharedWalletLine(d, ctx.otherApps, ctx.otherAppsUnknown);
     return shared ? [header(), shared] : [header()];
   };
   /** A notice; `retry` (a transient failure) adds "Try again", which repeats the request that failed. */

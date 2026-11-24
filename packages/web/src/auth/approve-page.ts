@@ -589,7 +589,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         { class: 'panel approve' },
         header(msg, msg.queued > 1 || msg.position > 1 ? `Request ${msg.position} of ${msg.queued}` : undefined),
         // D912: right under who is asking, before anything else: the other apps that use this wallet (none: nothing).
-        sharedWalletLine(d, msg.otherApps),
+        sharedWalletLine(d, msg.otherApps, msg.otherAppsUnknown),
         accountLine(d, msg.chain, msg.address),
         msg.emailShared ? emailSharedLine(msg.appName) : null,
         // D808: the plain summary first, then the warnings and these notes (never folded), then the details, where the
@@ -637,7 +637,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         'section',
         { class: 'panel consent' },
         header(msg),
-        sharedWalletLine(d, msg.otherApps),
+        sharedWalletLine(d, msg.otherApps, msg.otherAppsUnknown),
         testAppNote(msg),
         policy
           ? renderPolicy(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })

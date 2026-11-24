@@ -4,8 +4,9 @@
 //
 // Who counts: the other apps of the app's scope (one scope is one wallet: the same sign-in gives the same addresses on
 // every app of it) that are not deleted, not suspended (any suspension bit, or the legacy status column, as the gate's
-// appSuspended) and have at least one web address in force now (`active_from <= now`: an app no site can use yet uses
-// no wallet; it counts from the read after its first address takes effect). Test and live apps are never on one scope
+// appSuspended), have had a sign-in (`first_login_at`, as Passport Home lists apps to people outside the scope, D462:
+// an unreleased app's name is never shown to whoever opens a window; it counts from the read after its first sign-in)
+// and have at least one web address in force now (`active_from <= now`: an app no site can use yet uses no wallet). Test and live apps are never on one scope
 // (D51), so a count is always of apps of the same kind. One statement, from D1 only (no chain read), on every read, so
 // a suspension, a deletion or a new address is in the next answer, as the app's own name and settings are.
 //
@@ -31,6 +32,7 @@ export async function readOtherApps(db: D1Database, app: Pick<App, 'id' | 'scope
       `SELECT a.name AS name, COUNT(*) OVER () AS total
          FROM apps a
         WHERE a.scope_id = ?1 AND a.id <> ?2 AND a.deleted_at IS NULL AND a.suspended_by = 0 AND a.status = 'active'
+          AND a.first_login_at IS NOT NULL
           AND EXISTS (SELECT 1 FROM app_origins o WHERE o.app_id = a.id AND o.active_from IS NOT NULL AND o.active_from <= ?3)
         ORDER BY a.created_at, a.id
         LIMIT ?4`,

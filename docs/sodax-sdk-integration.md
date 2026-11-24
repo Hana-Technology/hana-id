@@ -6,7 +6,8 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909 and D913 in `decisions.md`. The build spec for the
 portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-24 (branch `feat/shared-wallet-line`, from `next`, not merged, not deployed: the sign-in and
+Last verified: 2026-11-24 (branch `feat/shared-wallet-line`, after PR 141's review: section 4's count and "may" line,
+D912); 2026-11-24 (branch `feat/shared-wallet-line`, from `next`, not merged, not deployed: the sign-in and
 approval windows now say when the wallet is also used on other apps, D912: the summary's row, section 4, section 7);
 2026-11-24 (branch `feat/name-sodax-evm-chains`, from `next`, not merged, not deployed: the approval
 window names all 14 of Sodax's EVM chains, D910; "Chains", the summary's last row and "Who builds what" updated);
@@ -145,9 +146,11 @@ weeks with its review), plus the origin decision.
 window "From {App}" with the web address; when other apps share the wallet, each adds right under that "This wallet is
 also used on 2 other apps." with "See which": the other apps' names (at most 5, then "and N more apps") and "Any of
 them can ask you to approve payments from this wallet, so check who is asking each time." Counted: the scope's other
-apps that aren't suspended or deleted and have a web address in force. The names come from Journear's own data, on the
+apps that aren't suspended or deleted, have had a sign-in and have a web address in force. When Journear can't tell
+(no answer yet, none kept), the windows say "This wallet may also be used on other apps.". The names come from Journear's own data, on the
 vault's read of the app only; the partner page never gets them. A Google-only app's sign-in window goes straight to
-Google, so there the line shows only for a moment; partners with email sign-in show it on the chooser. Passport Home
+Google, and any partner can send its sign-in straight to Google (`method: 'google'`), so there the line shows only for
+a moment; the approval window is the screen relied on. Passport Home
 still lists the apps that use a wallet. The line must be live before the partner platform is switched on for any organisation
 (`partner-platform-spec.md` N6, D913).
 

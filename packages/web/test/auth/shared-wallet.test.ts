@@ -45,12 +45,15 @@ describe('the line (shared-wallet.ts)', () => {
     expect(SHARED_WALLET_TEXT.line(1)).toBe('This wallet is also used on 1 other app.');
     expect(SHARED_WALLET_TEXT.line(2)).toBe('This wallet is also used on 2 other apps.');
     const d = dom(document);
-    const el = sharedWalletLine(d, TWO)!;
+    const el = sharedWalletLine(d, TWO) as HTMLDetailsElement;
     document.getElementById('app')!.append(el);
     expect(el.tagName).toBe('DETAILS');
     expect(el.open).toBe(false);
     expect(el.querySelector('summary')!.textContent).toBe('This wallet is also used on 2 other apps. See which');
-    expect([...el.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['Stamp Trail', 'Coffee Club']);
+    // Each name is the partner's words: quoted, in the partner-words box, never in Journear's sentence.
+    expect([...el.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['“Stamp Trail”', '“Coffee Club”']);
+    expect([...el.querySelectorAll('li > span.partner-words')].map((n) => n.textContent)).toEqual(['Stamp Trail', 'Coffee Club']);
+    expect(el.querySelector('summary .partner-words')).toBeNull();
     expect(el.querySelector('.shared-wallet-note')!.textContent).toBe(SHARED_WALLET_TEXT.note);
     // Journear's note in muted text, never a coloured alert.
     expect(el.querySelector('.jp-alert')).toBeNull();
@@ -61,7 +64,9 @@ describe('the line (shared-wallet.ts)', () => {
     const el = sharedWalletLine(dom(document), MANY)!;
     expect(el.querySelector('.shared-wallet-line')!.textContent).toBe('This wallet is also used on 8 other apps.');
     const items = [...el.querySelectorAll('li')].map((li) => li.textContent);
-    expect(items).toEqual([...MANY.names, 'and 3 more apps']);
+    expect(items).toEqual([...MANY.names.map((n) => `“${n}”`), 'and 3 more apps']);
+    // "and 3 more apps" is Journear's: not set apart as partner words (so a name can't pass for it unmarked).
+    expect(el.querySelector('li.shared-wallet-more .partner-words')).toBeNull();
     expect(items.length).toBe(OTHER_APPS_NAMES_MAX + 1);
     expect(sharedWalletLine(dom(document), { count: 6, names: MANY.names })!.querySelector('li.shared-wallet-more')!.textContent).toBe('and 1 more app');
   });
@@ -69,11 +74,29 @@ describe('the line (shared-wallet.ts)', () => {
   it('a partner’s name is only ever text: markup stays text, and an unsafe name never reaches the window', () => {
     const el = sharedWalletLine(dom(document), { count: 1, names: ['<img src=x onerror=alert(1)>'] })!;
     expect(el.querySelector('img')).toBeNull();
-    expect(el.querySelector('li')!.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(el.querySelector('li .partner-words')!.textContent).toBe('<img src=x onerror=alert(1)>');
     // The window takes only display-safe names: a bidi override, a control or an invisible character is refused as a
     // whole (the vault replaces such a name by "Unnamed app" before it sends it).
-    for (const bad of ['Pay‮gnp.exe', 'Zero​width', 'Tab\there', ' padded ', '']) expect(sharedWalletLine(dom(document), { count: 1, names: [bad] })).toBeNull();
-    expect(sharedWalletLine(dom(document), { count: 1, names: [HOME_UNNAMED_APP] })!.querySelector('li')!.textContent).toBe(HOME_UNNAMED_APP);
+    for (const bad of ['Pay\u202Egnp.exe', 'Zero\u200Bwidth', 'Tab\there', ' padded ', '']) expect(sharedWalletLine(dom(document), { count: 1, names: [bad] })).toBeNull();
+    expect(sharedWalletLine(dom(document), { count: 1, names: [HOME_UNNAMED_APP] })!.querySelector('li .partner-words')!.textContent).toBe(HOME_UNNAMED_APP);
+    // A name written to read as Journear's words is still shown as the app's own, quoted and boxed.
+    const lure = sharedWalletLine(dom(document), { count: 1, names: ['and 40 more apps'] })!;
+    expect(lure.querySelector('li')!.textContent).toBe('“and 40 more apps”');
+    expect(lure.querySelector('li .partner-words')).not.toBeNull();
+  });
+
+  it('no answer at all: the “may also be used” line, in the same place and style, with no list; never beside the apps', () => {
+    expect(SHARED_WALLET_TEXT.unknown).toBe('This wallet may also be used on other apps.');
+    const el = sharedWalletLine(dom(document), undefined, true)!;
+    expect(el.tagName).toBe('P');
+    expect(el.id).toBe('shared-wallet');
+    expect(el.className).toBe('shared-wallet shared-wallet-unknown');
+    expect(el.textContent).toBe('This wallet may also be used on other apps.');
+    expect(el.querySelector('summary, li')).toBeNull();
+    // The apps win over the flag (the validators refuse both together anyway); anything but `true` draws nothing.
+    expect(sharedWalletLine(dom(document), TWO, true)!.tagName).toBe('DETAILS');
+    expect(sharedWalletLine(dom(document), undefined, 'yes')).toBeNull();
+    expect(sharedWalletLine(dom(document), undefined, false)).toBeNull();
   });
 
   it.each([
@@ -136,7 +159,10 @@ describe('the sign-in window (/login)', () => {
   it('the auth-params validator takes the field, and only of its shape', () => {
     expect(parseWindowMessage(authParams({ otherApps: TWO }), ['hana:auth-params'])).not.toBeNull();
     expect(parseWindowMessage(authParams({ otherApps: { count: 0, names: [] } }), ['hana:auth-params'])).toBeNull();
-    expect(parseWindowMessage(authParams({ otherApps: { count: 2, names: ['Pay‮gnp'] } }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(authParams({ otherApps: { count: 2, names: ['Pay\u202Egnp'] } }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(authParams({ otherAppsUnknown: true }), ['hana:auth-params'])).not.toBeNull();
+    expect(parseWindowMessage(authParams({ otherAppsUnknown: false }), ['hana:auth-params'])).toBeNull();
+    expect(parseWindowMessage(authParams({ otherAppsUnknown: true, otherApps: TWO }), ['hana:auth-params'])).toBeNull();
   });
 
   it('the chooser: the line right under who is asking, before the buttons', async () => {
@@ -163,6 +189,17 @@ describe('the sign-in window (/login)', () => {
     (document.getElementById('continue-email') as HTMLButtonElement).click();
     expect(s.win.location.assigned).toEqual([`${EMAIL_PATH}#${params.relayId}`]);
     expect(readEmailContext(s.win.sessionStorage, params.relayId, NOW)!.context.otherApps).toEqual(TWO);
+  });
+
+  it('no answer (otherAppsUnknown): the “may” line on the chooser, handed to the email step', async () => {
+    const s = loginSetup();
+    const params = authParams({ methods: ['google', 'email'], otherAppsUnknown: true });
+    s.win.message(params, ENV.vaultOrigin, s.vault);
+    await s.page.done;
+    expect(document.querySelector('p.asker')!.nextElementSibling).toBe(line());
+    expect(line()!.textContent).toBe('This wallet may also be used on other apps.');
+    (document.getElementById('continue-email') as HTMLButtonElement).click();
+    expect(readEmailContext(s.win.sessionStorage, params.relayId, NOW)!.context.otherAppsUnknown).toBe(true);
   });
 
   it('a Google-only app on its way to Google shows it too', async () => {
@@ -193,7 +230,7 @@ describe('the sign-in window (/login)', () => {
 
 // ---- the email step ----
 
-function emailSetup(otherApps?: unknown) {
+function emailSetup(otherApps?: unknown, unknown?: true) {
   const p = authParams();
   const relayId = p.relayId;
   const win = new FakeWindow(EMAIL_PATH, '', `#${relayId}`);
@@ -212,6 +249,7 @@ function emailSetup(otherApps?: unknown) {
         pk: PK,
         appName: 'Partner App',
         ...(otherApps === undefined ? {} : { otherApps }),
+        ...(unknown ? { otherAppsUnknown: true } : {}),
         parentOrigin: PARTNER,
         scopeId: 's1',
         sessionPublicKey: Buffer.from(p.sessionPublicKey).toString('base64url'),
@@ -255,6 +293,13 @@ describe('the sign-in window (/login/email)', () => {
     await flush();
     expect(s.page.stage).toBe('code');
     expect(document.querySelector('p.asker')!.nextElementSibling).toBe(line());
+  });
+
+  it('no answer (otherAppsUnknown in the context): the “may” line on the address step', async () => {
+    emailSetup(undefined, true);
+    await flush();
+    expect(document.querySelector('p.asker')!.nextElementSibling).toBe(line());
+    expect(line()!.textContent).toBe('This wallet may also be used on other apps.');
   });
 
   it('an app alone: no line on the address step, the screen as before', async () => {
@@ -333,6 +378,11 @@ describe('the approval window (/approve)', () => {
     expect(parseWindowMessage(consentRequest({ otherApps: TWO }), ['hana:consent-request'])).not.toBeNull();
     expect(parseWindowMessage(evmRequest({ otherApps: { count: 1, names: [] } }), ['hana:approve-request'])).toBeNull();
     expect(parseWindowMessage(consentRequest({ otherApps: { count: 7, names: TWO.names } }), ['hana:consent-request'])).toBeNull();
+    for (const [m, t] of [[evmRequest, 'hana:approve-request'], [consentRequest, 'hana:consent-request']] as const) {
+      expect(parseWindowMessage(m({ otherAppsUnknown: true }), [t])).not.toBeNull();
+      expect(parseWindowMessage(m({ otherAppsUnknown: 1 }), [t])).toBeNull();
+      expect(parseWindowMessage(m({ otherAppsUnknown: true, otherApps: TWO }), [t])).toBeNull();
+    }
   });
 
   it('a request: the line with "From {App}", right under the box, before the account line and the summary', () => {
@@ -361,6 +411,16 @@ describe('the approval window (/approve)', () => {
     expect(withLine.indexOf('details.shared-wallet')).toBe(withLine.indexOf('header.app') + 1);
     // Every alert comes after the line in the page.
     for (const a of document.querySelectorAll('.jp-alert')) expect(line()!.compareDocumentPosition(a) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('no answer (otherAppsUnknown): the “may” line in the same place, on a request and the consent screen', () => {
+    send(evmRequest({ otherAppsUnknown: true }));
+    expect(document.querySelector('header.app')!.nextElementSibling).toBe(line());
+    expect(line()!.textContent).toBe('This wallet may also be used on other apps.');
+    expect(line()!.nextElementSibling!.className).toBe('account');
+    resetDom();
+    send(consentRequest({ otherAppsUnknown: true }));
+    expect(document.querySelector('header.app')!.nextElementSibling).toBe(line());
   });
 
   it('the consent screen for automatic approvals: the line under who is asking', () => {

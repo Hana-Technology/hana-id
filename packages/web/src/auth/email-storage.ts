@@ -44,6 +44,8 @@ export interface EmailContext {
   logoUrl?: string;
   /** D912: the other apps that use this wallet, as auth-params carried them (shown under who is asking). */
   otherApps?: OtherApps;
+  /** D912: the vault had no answer about the other apps (the line says the wallet may be shared). */
+  otherAppsUnknown?: true;
   parentOrigin: string;
   scopeId: string;
   sessionPublicKey: Uint8Array;
@@ -130,6 +132,7 @@ function decode(raw: string | null): Stored | null {
       typeof c.appName === 'string' &&
       (c.logoUrl === undefined || isLogoUrl(c.logoUrl)) &&
       (c.otherApps === undefined || isOtherApps(c.otherApps)) &&
+      (c.otherAppsUnknown === undefined || (c.otherAppsUnknown === true && c.otherApps === undefined)) &&
       typeof c.parentOrigin === 'string' &&
       typeof c.scopeId === 'string' &&
       typeof c.sessionPublicKey === 'string' &&

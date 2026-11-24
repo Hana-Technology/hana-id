@@ -1,18 +1,42 @@
 // The shared-wallet line (D912) in the real windows, on the local stack: apps on one scope share one wallet, so the
 // sign-in window and the approval window of each say "This wallet is also used on N other apps." under who is asking,
-// with the other apps' names behind "See which" (from Journear's own GET /v1/app, the vault's read only). Counted: the
-// scope's other apps that are not suspended and have a web address in force. The partner page never learns any of it:
-// not from its own GET /v1/app, not from anything the vault or the windows post to it. An app alone sees no change.
+// with the other apps' names (quoted, as their own words) behind "See which" (from Journear's own GET /v1/app, the
+// vault's read only). Counted: the scope's other apps that are not suspended, have had a sign-in (`launched` here: the
+// stack's mocked /v1/login doesn't record one) and have a web address in force. The partner page never learns any of
+// it: not from its own GET /v1/app, not from anything the vault or the windows post to it (the approval and consent
+// windows and a rejected request's error included). An app alone sees no change. When the vault's reads are refused
+// (PR 141's review: a page using up GET /v1/app), a new tab uses the answer the vault origin kept, and with nothing kept
+// the windows say "This wallet may also be used on other apps." (the stack doesn't enforce rate limits, so the refusal
+// is routed in the browser; the per-IP windows themselves are tested in apps/api).
 //
 // With HANA_SHOTS_DIR=<dir> (Chromium) the last test saves both windows at 390 and 1280 px, light and dark, named
 // `<label>-<window>-<width>-<scheme>.png` with HANA_SHOTS_LABEL as the label ("after" by default; "before" is the same
 // test run on a build without the line, where it saves the same screens and checks nothing about the line), and with
 // the names open (`after-<window>-open-…`).
-import type { Page } from '@playwright/test';
-import { API_URL, PARTNER_ORIGIN } from '../src/stack.ts';
-import { chooseAccount, clickAction, clickLauncher, expect, fontsLoaded, newApp, okValue, openPartner, reject, runAction, settled, test } from './fixtures.ts';
+import type { BrowserContext, Page } from '@playwright/test';
+import { API_URL, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
+import { chooseAccount, clickAction, clickLauncher, expect, fontsLoaded, newApp, okValue, openPartner, reject, runAction, settled, test, vaultFrame } from './fixtures.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
+
+/** A policy for the consent window (any valid one: the window is what matters here). */
+const POLICY = {
+  v: 1,
+  label: 'Deposits',
+  maxConsentMs: 3_600_000,
+  limits: { perDayCount: 3 },
+  evm: {
+    chains: [
+      {
+        chainId: 8453,
+        maxValueWei: '1000',
+        maxValueWeiPerDay: '3000',
+        maxFeeWei: '1000',
+        contracts: [{ address: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Example vault', selectors: [{ selector: '0xb6b55f25', signature: 'deposit(uint256)', addressArgs: 'self-or-listed' }] }],
+      },
+    ],
+  },
+};
 const LABEL = process.env.HANA_SHOTS_LABEL ?? 'after';
 const BEFORE = LABEL === 'before';
 
@@ -83,12 +107,13 @@ async function approvalWindow(page: Page, name = 'sig'): Promise<Page> {
 
 const summary = (popup: Page) => popup.locator('#shared-wallet > summary');
 
-test('two apps on one scope: both windows say the wallet is also used on the other; suspended and address-less apps don’t count', async ({ page }) => {
+test('two apps on one scope: both windows say the wallet is also used on the other; suspended, address-less and never-signed-in apps don’t count', async ({ page }) => {
   const scope = freshScope();
   const me = await newApp({ scopeId: scope, name: 'Coffee Club', loginMethods: 'google,email' });
-  await newApp({ scopeId: scope, name: 'Stamp Trail', origins: ['https://stamps.e2e-shared.test'] });
-  await newApp({ scopeId: scope, name: 'Closed Shop', origins: ['https://closed.e2e-shared.test'], status: 'suspended' });
-  await newApp({ scopeId: scope, name: 'Not Yet Open', origins: [] });
+  await newApp({ scopeId: scope, name: 'Stamp Trail', origins: ['https://stamps.e2e-shared.test'], launched: true });
+  await newApp({ scopeId: scope, name: 'Closed Shop', origins: ['https://closed.e2e-shared.test'], status: 'suspended', launched: true });
+  await newApp({ scopeId: scope, name: 'Not Yet Open', origins: [], launched: true });
+  await newApp({ scopeId: scope, name: 'Unreleased Beta', origins: ['https://beta.e2e-shared.test'] });
   await openPartner(page, me);
 
   // The sign-in window: the line right under who is asking, before the buttons.
@@ -99,10 +124,12 @@ test('two apps on one scope: both windows say the wallet is also used on the oth
   // The names are folded until asked for.
   await expect(signIn.locator('.shared-wallet-apps')).toBeHidden();
   await summary(signIn).click();
-  await expect(signIn.locator('.shared-wallet-apps li')).toHaveText(['Stamp Trail']);
+  await expect(signIn.locator('.shared-wallet-apps li')).toHaveText(['“Stamp Trail”']);
+  await expect(signIn.locator('.shared-wallet-apps li .partner-words')).toHaveText(['Stamp Trail']);
   await expect(signIn.locator('.shared-wallet-note')).toHaveText('Any of them can ask you to approve payments from this wallet, so check who is asking each time.');
   await expect(signIn.locator('body')).not.toContainText('Closed Shop');
   await expect(signIn.locator('body')).not.toContainText('Not Yet Open');
+  await expect(signIn.locator('body')).not.toContainText('Unreleased Beta');
   await finishSignIn(page, signIn);
 
   // The approval window: with "From {App}", right under its box, before the account line; the same sentence.
@@ -112,16 +139,16 @@ test('two apps on one scope: both windows say the wallet is also used on the oth
   await expect(summary(approval)).toHaveText('This wallet is also used on 1 other app. See which');
   expect(await approval.locator('header.app #shared-wallet, .partner-labels #shared-wallet').count()).toBe(0);
   await summary(approval).click();
-  await expect(approval.locator('.shared-wallet-apps li')).toHaveText(['Stamp Trail']);
+  await expect(approval.locator('.shared-wallet-apps li')).toHaveText(['“Stamp Trail”']);
   await reject(approval);
   expect((await settled(page, 'sig')).state).toBe('error');
 });
 
 test('the partner page never learns which other apps share the wallet: not from GET /v1/app, not from any message', async ({ page }) => {
   const scope = freshScope();
-  const me = await newApp({ scopeId: scope, name: 'Coffee Club', loginMethods: 'google,email' });
+  const me = await newApp({ scopeId: scope, name: 'Coffee Club', loginMethods: 'google,email', settings: { autoApprovePolicy: POLICY } });
   const secret = `Hidden Partner ${Math.random().toString(36).slice(2, 8)}`;
-  await newApp({ scopeId: scope, name: secret, origins: ['https://hidden.e2e-shared.test'] });
+  await newApp({ scopeId: scope, name: secret, origins: ['https://hidden.e2e-shared.test'], launched: true });
   await recordPartnerMessages(page);
   await openPartner(page, me);
 
@@ -140,13 +167,22 @@ test('the partner page never learns which other apps share the wallet: not from 
   // The windows show it (so it was there to leak)...
   const signIn = await signInWindow(page);
   await summary(signIn).click();
-  await expect(signIn.locator('.shared-wallet-apps li')).toHaveText([secret]);
+  await expect(signIn.locator('.shared-wallet-apps li .partner-words')).toHaveText([secret]);
   await finishSignIn(page, signIn);
   const approval = await approvalWindow(page);
   await summary(approval).click();
-  await expect(approval.locator('.shared-wallet-apps li')).toHaveText([secret]);
+  await expect(approval.locator('.shared-wallet-apps li .partner-words')).toHaveText([secret]);
+  // Reject: the partner page gets the request's error (4001) on its port.
   await reject(approval);
-  await settled(page, 'sig');
+  expect((await settled(page, 'sig')).state).toBe('error');
+  // The consent window for automatic approvals shows it too (in the same window, still open after the answer); declined.
+  await runAction(page, 'consent', 'requestAutoApprove');
+  const consent = approval;
+  await expect(consent.getByRole('heading', { name: 'Allow automatic approvals?' })).toBeVisible();
+  await summary(consent).click();
+  await expect(consent.locator('.shared-wallet-apps li .partner-words')).toHaveText([secret]);
+  await consent.getByRole('button', { name: 'Don’t allow' }).click();
+  await settled(page, 'consent');
 
   // ...and nothing the partner page received, on its window or its port to the vault, carries it.
   const seen = await partnerSaw(page);
@@ -165,7 +201,7 @@ test('the partner page never learns which other apps share the wallet: not from 
 test('an app alone on its scope: no line in either window, the screens as before', async ({ page }) => {
   const me = await newApp({ scopeId: freshScope(), name: 'Coffee Club', loginMethods: 'google,email' });
   // Another scope's app never counts.
-  await newApp({ scopeId: freshScope(), name: 'Stamp Trail', origins: ['https://stamps.e2e-shared.test'] });
+  await newApp({ scopeId: freshScope(), name: 'Stamp Trail', origins: ['https://stamps.e2e-shared.test'], launched: true });
   await openPartner(page, me);
   const signIn = await signInWindow(page);
   expect(await signIn.locator('.shared-wallet').count()).toBe(0);
@@ -178,6 +214,46 @@ test('an app alone on its scope: no line in either window, the screens as before
   await expect(approval.locator('body')).not.toContainText('also used');
   expect(await approval.locator('header.app + p.account').count()).toBe(1);
   await reject(approval);
+});
+
+/** Refuses every GET /v1/app the vault makes in this browser context (429), as if a partner page had used them up. */
+async function refuseVaultReads(context: BrowserContext): Promise<void> {
+  await context.route(`${API_URL}/v1/app**`, (route) =>
+    route.request().headers()['origin'] === VAULT_ORIGIN
+      ? route.fulfill({ status: 429, headers: { 'access-control-allow-origin': VAULT_ORIGIN, 'content-type': 'application/json' }, body: JSON.stringify({ error: 'Rate limit exceeded', code: 'rate_limited', requestId: 'rq_e2e' }) })
+      : route.continue(),
+  );
+}
+
+test('PR 141’s review: with the vault’s reads refused, a new tab uses the kept answer; with nothing kept, the “may” line', async ({ page, context }) => {
+  const scope = freshScope();
+  const me = await newApp({ scopeId: scope, name: 'Coffee Club', loginMethods: 'google,email' });
+  await newApp({ scopeId: scope, name: 'Stamp Trail', origins: ['https://stamps.e2e-shared.test'], launched: true });
+  await openPartner(page, me);
+  const signIn = await signInWindow(page);
+  await finishSignIn(page, signIn);
+
+  // Every read of the vault's from now on is refused.
+  await refuseVaultReads(context);
+  // A new tab of the same browser: its vault unlocks from storage and knows the line from the answer it kept.
+  const tab2 = await context.newPage();
+  await openPartner(tab2, me);
+  const kept = await approvalWindow(tab2, 'kept');
+  await expect(summary(kept)).toHaveText('This wallet is also used on 1 other app. See which');
+  await summary(kept).click();
+  await expect(kept.locator('.shared-wallet-apps li .partner-words')).toHaveText(['Stamp Trail']);
+  await reject(kept);
+  await settled(tab2, 'kept');
+
+  // Nothing kept (the vault origin's storage cleared) and still refused: the windows say the wallet may be shared.
+  await vaultFrame(tab2).evaluate(() => localStorage.clear());
+  const tab3 = await context.newPage();
+  await openPartner(tab3, me);
+  const unknown = await approvalWindow(tab3, 'unknown');
+  await expect(unknown.locator('header.app + p#shared-wallet.shared-wallet-unknown')).toHaveText('This wallet may also be used on other apps.');
+  if (SHOTS && test.info().project.name === 'chromium') await shots(unknown, `${LABEL}-approval-unknown`);
+  await reject(unknown);
+  await settled(tab3, 'unknown');
 });
 
 // ---- the Tech Lead's screenshots ----
@@ -199,7 +275,7 @@ async function shots(popup: Page, name: string): Promise<void> {
   await popup.emulateMedia({ colorScheme: 'light' });
 }
 
-test('the screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, browserName }) => {
+test('the screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, browser, browserName }) => {
   test.skip(!SHOTS || browserName !== 'chromium', 'HANA_SHOTS_DIR, Chromium only');
   test.setTimeout(180_000);
   const scope = freshScope();
@@ -208,7 +284,7 @@ test('the screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, browserName })
     ['Stamp Trail', 'stamps'],
     ['Kite Pay', 'kite'],
   ] as const)
-    await newApp({ scopeId: scope, name, origins: [`https://${host}.e2e-shared.test`] });
+    await newApp({ scopeId: scope, name, origins: [`https://${host}.e2e-shared.test`], launched: true });
   await openPartner(page, me);
   expect(PARTNER_ORIGIN).toMatch(/^http:\/\/localhost:/u);
 
@@ -228,4 +304,25 @@ test('the screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, browserName })
     await shots(approval, `${LABEL}-approval-open`);
   }
   await reject(approval);
+
+  if (BEFORE) return;
+  // The sign-in window's “may” line: a browser whose vault reads come back without the field (no answer) and keeps none.
+  const other = await browser.newContext();
+  try {
+    await other.route(`${API_URL}/v1/app**`, async (route) => {
+      if (route.request().headers()['origin'] !== VAULT_ORIGIN) return route.continue();
+      const res = await route.fetch();
+      const body = (await res.json()) as Record<string, unknown>;
+      delete body.otherApps;
+      return route.fulfill({ response: res, json: body });
+    });
+    const p2 = await other.newPage();
+    await openPartner(p2, me);
+    const unknownSignIn = await signInWindow(p2);
+    await expect(unknownSignIn.locator('p.asker + p#shared-wallet.shared-wallet-unknown')).toHaveText('This wallet may also be used on other apps.');
+    await shots(unknownSignIn, `${LABEL}-sign-in-unknown`);
+    await unknownSignIn.close();
+  } finally {
+    await other.close();
+  }
 });

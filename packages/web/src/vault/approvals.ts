@@ -45,7 +45,7 @@ import {
 import type { MainnetDemoPriceBook } from '@hana-id/core/mainnet-demo-prices';
 import type { AutoApprovePolicyV1 } from '@hana-id/core/policy';
 import { VaultError } from './errors.ts';
-import { otherAppsField } from './other-apps.ts';
+import { windowOtherApps } from './other-apps.ts';
 import type { Launcher, LauncherHandle } from './launcher.ts';
 import { type Timers, type WindowMessageEvent, type WindowRef, randomHex128 } from './runtime.ts';
 
@@ -482,7 +482,7 @@ export class Approvals {
     // The labels never cost the request: should the popup's validator refuse the message with them, it goes without.
     // Nor does the shared-wallet line (D912): last, without it too.
     if (labels.texts.length > 0 && !parseWindowMessage(m, [m.t])) m = this.message(item, position, queued, true);
-    if (m.otherApps !== undefined && !parseWindowMessage(m, [m.t])) m = this.message(item, position, queued, true, NO_LABELS, false);
+    if ((m.otherApps !== undefined || m.otherAppsUnknown !== undefined) && !parseWindowMessage(m, [m.t])) m = this.message(item, position, queued, true, NO_LABELS, false);
     popup.postMessage(m, this.d.authOrigin);
   }
 
@@ -513,13 +513,17 @@ export class Approvals {
     return true;
   }
 
-  /** D912: the message's `otherApps`, only when the vault knows of other apps on the wallet (other-apps.ts). */
-  private otherAppsField(): { otherApps?: OtherApps } {
+  /**
+   * D912: the message's `otherApps` when the vault knows of other apps on the wallet, `otherAppsUnknown` when it has no
+   * answer at all (after the one wait), nothing when it knows the app is alone (other-apps.ts `windowOtherApps`).
+   */
+  private otherAppsField(): { otherApps?: OtherApps; otherAppsUnknown?: true } {
+    const source = this.d.otherApps;
+    if (!source) return {};
     try {
-      const known = this.d.otherApps?.current();
-      return known && known !== 'unknown' ? otherAppsField(known) : {};
+      return windowOtherApps(source.current());
     } catch {
-      return {};
+      return { otherAppsUnknown: true };
     }
   }
 

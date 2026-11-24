@@ -288,8 +288,11 @@ export async function appGate(request: Request, env: Env, ctx: Ctx, kind: 'relay
     // The link relays (links.ts) count in windows of their own, with their own caps, adds and removals apart.
     // The NEAR relay's per-IP windows hold across every app (D736): one IP can't take 30 a minute from each of many keys.
     // EVM sponsorship's (D847) the same way: one for prepare and send, one for status.
+    // D912 (after PR 141's review): GET /v1/app from a Journear page (the vault's and the auth pages' own reads, `caller.page`)
+    // counts in a window of its own, so a partner page's reads from the same IP can't use up the vault's (its policy, raw
+    // signing, consent, share and other-apps reads).
     const window =
-      kind === 'relay' ? `${app.id}:minute` : kind === 'config' ? `${app.id}:config:minute` : kind === 'near' ? 'near-relay:minute' : kind === 'near-activate' ? 'near-activate:minute' : kind === 'evm-sponsor' ? 'evm-sponsor:minute' : kind === 'evm-sponsor-status' ? 'evm-sponsor:status:minute' : `${app.id}:${kind}:minute`;
+      kind === 'relay' ? `${app.id}:minute` : kind === 'config' ? (caller.page ? `${app.id}:config:hana:minute` : `${app.id}:config:minute`) : kind === 'near' ? 'near-relay:minute' : kind === 'near-activate' ? 'near-activate:minute' : kind === 'evm-sponsor' ? 'evm-sponsor:minute' : kind === 'evm-sponsor-status' ? 'evm-sponsor:status:minute' : `${app.id}:${kind}:minute`;
     // The NEAR relay's own windows (near/relay-config.ts, D736): a relay or activation flood never uses up logins'.
     const max =
       kind === 'link' ? LINK_ADDS_PER_IP_MINUTE : kind === 'link-change' ? LINK_CHANGES_PER_IP_MINUTE : kind === 'near' ? NEAR_RELAY_LIMITS.perIpPerMinute : kind === 'near-activate'

@@ -59,6 +59,8 @@ describe('GET /v1/app otherApps (D912)', () => {
     await onScope(scope, 1, { suspendedBy: 1 });
     await onScope(scope, 1, { suspendedBy: 4 });
     await onScope(scope, 1, { status: 'suspended' });
+    // An app no one has signed in to yet (D462: its name is never shown to people outside the scope).
+    await onScope(scope, 1, { firstLogin: null });
     // No web address at all, and one whose only address is still in its waiting period (or not announced yet).
     await onScope(scope, 1, { origins: [] });
     const [waiting] = await onScope(scope, 1, { origins: [] });
@@ -86,7 +88,7 @@ describe('GET /v1/app otherApps (D912)', () => {
   it('the names go out as stored (JSON data): the vault and the windows hold them to the display rule', async () => {
     const scope = `s${uid()}`;
     const [me, other] = await onScope(scope, 2);
-    const odd = 'Pay‮gnp <b>exe</b>';
+    const odd = 'Pay\u202Egnp <b>exe</b>';
     await env.DB.prepare('UPDATE apps SET name = ?1 WHERE id = ?2').bind(odd, other!.id).run();
     expect((await read(me!)).otherApps).toEqual({ count: 1, names: [odd] });
   });
@@ -99,9 +101,41 @@ describe('GET /v1/app otherApps (D912)', () => {
       expect(b).not.toHaveProperty('otherApps');
       expect(JSON.stringify(b)).not.toContain(nameOf(other!));
     }
-    // A partner page's own Origin, with the vault's headers otherwise: still none.
+    // A partner page's own Origin, with the vault's headers otherwise: answered (a partner page may read its config), and
+    // still none.
     const res = await call('/v1/app', { method: 'GET', headers: { ...hanaHeaders(me!, ORIGIN) } });
-    expect(JSON.stringify(await body(res))).not.toContain(nameOf(other!));
+    expect(res.status).toBe(200);
+    const b = await body(res);
+    expect(b).not.toHaveProperty('otherApps');
+    expect(JSON.stringify(b)).not.toContain(nameOf(other!));
+  });
+
+  it('an app no one has signed in to yet is neither counted nor named; it counts from its first sign-in', async () => {
+    const scope = `s${uid()}`;
+    const [me] = await onScope(scope, 1);
+    const [fresh] = await onScope(scope, 1, { firstLogin: null });
+    expect((await read(me!)).otherApps).toEqual({ count: 0, names: [] });
+    await env.DB.prepare('UPDATE apps SET first_login_at = ?1 WHERE id = ?2').bind(Date.now(), fresh!.id).run();
+    expect((await read(me!)).otherApps).toEqual({ count: 1, names: [nameOf(fresh!)] });
+  });
+
+  it('a partner page can’t use up the vault’s reads: Journear pages count in a per-IP window of their own (PR 141’s review)', async () => {
+    const scope = `s${uid()}`;
+    const [me, other] = await onScope(scope, 2);
+    chain({ [`${uid()}.apps.googleusercontent.com`]: me!.scope });
+    const ip = `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
+    const get = (headers: Record<string, string>) => call('/v1/app', { method: 'GET', headers: { ...headers, 'cf-connecting-ip': ip } });
+    // The partner page reads its own config until its window is used up (the free plan's 20 a minute).
+    let partner = 0;
+    for (; partner < 40; partner++) if ((await get(appHeaders(me!))).status === 429) break;
+    expect(partner).toBe(20);
+    expect((await get(appHeaders(me!))).status).toBe(429);
+    // The vault, from the same IP, still reads: its own window, and the line's apps with it.
+    const vault = await get(hanaHeaders(me!, VAULT));
+    expect(vault.status).toBe(200);
+    expect((await body(vault)).otherApps).toEqual({ count: 1, names: [nameOf(other!)] });
+    // The export window (the auth origin) counts with the Journear pages too.
+    expect((await get(hanaHeaders(me!, AUTH))).status).toBe(200);
   });
 
   it('a failed read leaves the field out (no answer, never “alone”), and the rest of the answer stands', async () => {

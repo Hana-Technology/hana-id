@@ -1022,6 +1022,11 @@ export interface WindowMessageMap {
     emailShare?: true;
     /** The other apps that use this wallet (OtherApps), shown under who is asking. Only when there is one. */
     otherApps?: OtherApps;
+    /**
+     * The vault doesn't know whether other apps use this wallet (no answer yet, none kept): the window says they may.
+     * Never beside `otherApps`.
+     */
+    otherAppsUnknown?: true;
   };
   /**
    * Hana Home page → its own sign-in child (`/login?mode=home`), in answer to the child's `hana:auth-hello`. The nonce
@@ -1161,6 +1166,11 @@ export interface WindowMessageMap {
     partnerLabelFacts?: { near: { account: string; codeHash: string } };
     /** The other apps that use this wallet (OtherApps), shown under who is asking. Only when there is one. */
     otherApps?: OtherApps;
+    /**
+     * The vault doesn't know whether other apps use this wallet (no answer yet, none kept): the window says they may.
+     * Never beside `otherApps`.
+     */
+    otherAppsUnknown?: true;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -1219,6 +1229,8 @@ export interface WindowMessageMap {
     logoUrl?: string;
     /** The other apps that use this wallet (as in hana:approve-request). */
     otherApps?: OtherApps;
+    /** As in hana:approve-request. */
+    otherAppsUnknown?: true;
   };
   /** Approval popup → vault: Allow (guarded like Approve) or Decline, with consentDigest of what it rendered. */
   'hana:consent-result': { id: string; allowed: boolean; digest: Uint8Array };
@@ -1316,9 +1328,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
   'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:auth-params': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl', 'emailShare', 'otherApps']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl', 'emailShare', 'otherApps', 'otherAppsUnknown']) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
-    (m.otherApps === undefined || isOtherApps(m.otherApps)) &&
+    otherAppsFields(m) &&
     (m.emailShare === undefined || (m.emailShare === true && m.task === undefined)) &&
     (m.followKey === undefined || (isBytes(m.followKey, 32, 32) && (Array.isArray(m.methods) || m.task !== undefined || m.emailRecord === true))) &&
     (m.emailRecord === undefined || (m.emailRecord === true && m.followKey !== undefined && m.methods === undefined && m.task === undefined)) &&
@@ -1390,8 +1402,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels', 'partnerLabelFacts', 'otherApps'])) return false;
-    if (m.otherApps !== undefined && !isOtherApps(m.otherApps)) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels', 'partnerLabelFacts', 'otherApps', 'otherAppsUnknown'])) return false;
+    if (!otherAppsFields(m)) return false;
     if (m.partnerLabels !== undefined && !isLabelTexts(m.partnerLabels)) return false;
     if (m.partnerLabelFacts !== undefined && (m.partnerLabels === undefined || !isLabelFacts(m.partnerLabelFacts))) return false;
     if (m.mainnetDemo !== undefined && (m.mainnetDemo !== true || m.testApp !== true)) return false;
@@ -1431,8 +1443,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isWalletChain(m.chain) &&
     isAddressFor(m.chain, m.address),
   'hana:consent-request': (m) =>
-    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'mainnetDemo', 'logoUrl', 'otherApps']) &&
-    (m.otherApps === undefined || isOtherApps(m.otherApps)) &&
+    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'mainnetDemo', 'logoUrl', 'otherApps', 'otherAppsUnknown']) &&
+    otherAppsFields(m) &&
     (m.testApp === undefined || m.testApp === true) &&
     (m.mainnetDemo === undefined || (m.mainnetDemo === true && m.testApp === true)) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
@@ -1475,6 +1487,12 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
  * names, each a non-empty display-safe line of at most OTHER_APP_NAME_MAX units (no control, bidi or invisible
  * character), nothing else.
  */
+/** A window message's `otherApps` (OtherApps) or `otherAppsUnknown` (exactly true), at most one of them. */
+function otherAppsFields(m: Obj): boolean {
+  if (m.otherAppsUnknown !== undefined && (m.otherAppsUnknown !== true || m.otherApps !== undefined)) return false;
+  return m.otherApps === undefined || isOtherApps(m.otherApps);
+}
+
 export function isOtherApps(v: unknown): v is OtherApps {
   if (!isPlainObject(v) || !exactKeys(v, ['count', 'names'])) return false;
   if (!isInt(v.count, 1, OTHER_APPS_COUNT_MAX) || !Array.isArray(v.names)) return false;

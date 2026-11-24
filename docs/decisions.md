@@ -9560,7 +9560,7 @@ suspended app's Home logins (D586's `suspended` line, built as "Hana pays"), to 
 
 | Was | Now | Source |
 |---|---|---|
-| D896 (after PR 123's review): no address book name for a classic payment; the partner's box showed nothing of the destination | A matching payment's sentence ends with Journear's joining word for the verb and the address book's name of the destination's base account ("pay the fare to Coffee Club till"), set apart as a partner value; still no partner "To" row; the name counts in the sentence's 40 partner characters (D907, founder 2026-11-24 "go with A") | `packages/core/src/partner-labels/words.ts` `PAYMENT_DESTINATION_WORDS`, `match.ts` `destinationParts`, `schema.ts` `sentenceTextFits` |
+| D896 (after PR 123's review): no address book name for a classic payment; the partner's box showed nothing of the destination | A matching payment's sentence ends with Journear's joining word for the verb and the address book's name of the destination's base account ("pay the fare to Coffee Club till"), set apart as a partner value; still no partner "To" row; the name counts in the sentence's 40 partner characters (D907, Tech Lead 2026-11-24 "go with A") | `packages/core/src/partner-labels/words.ts` `PAYMENT_DESTINATION_WORDS`, `match.ts` `destinationParts`, `schema.ts` `sentenceTextFits` |
 | D905 (item 2): under reduced motion a loading spinner stands still (a still three-quarter ring), as every other animation of the brand's components ends at once | The loading spinners stop turning and fade slowly instead: opacity between full and 0.6, 2 s a cycle, ease-in-out, for ever (`jp-spin-pulse`); everything else still ends at once (D906, founder 2026-11-24) | `packages/brand/components.css` (and its admin copy by `sync-brand`), `apps/demo/src/style.css`, `apps/stamps/src/ui.css` |
 | D100 (and D903's open point): the pinned CKD key's sources counted only by registrable domain (≥ 3), so two of them can be one operator | On a production network also by declared operator: every recorded host named in `ckdSourceOperators`, ≥ 3 different operators (D904, founder 2026-11-24); testnet as before | `packages/env/src/schema.ts` `ckdSourceOperatorProblems`, `scripts/lib/deploy-check.ts`, `scripts/lib/ckd.ts` |
 | D896/D899: the line under a partner's words: "These are {App}’s words. Journear hasn’t checked them." | "These are {App}’s words, not Journear’s." (D903, founder 2026-11-24) | `packages/core/src/partner-labels/words.ts` `partnerAttribution`, `packages/web/src/auth/render-labels.ts` `labelBox` |
@@ -20749,7 +20749,7 @@ From `next` @ 7ecaae60; not merged, not deployed. No `envs/` value, route, key, 
 From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) merged in; not merged, not deployed. Numbered D907, after D906.
 
 ### D907. A matching classic payment's sentence ends with Journear's joining word and the address book's name of the destination: "Stamp Rally says: pay the fare to Coffee Club till"
-- Date 2026-11-24 · Status: the direction **decided by the founder 2026-11-24** ("go with A"); the joining words, the
+- Date 2026-11-24 · Status: the direction **decided by the Tech Lead 2026-11-24** ("go with A"); the joining words, the
   forms with and without a phrase, the length rule and the editor's words decided while building, **to confirm** (the
   list at the end) · Amends D896 (after PR 123's review: "No partner 'To' row … the address book's name is not shown
   for a classic payment"), with a row of "Superseded or amended" · Built: `packages/core/src/partner-labels/words.ts`
@@ -20761,11 +20761,11 @@ From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) merged in; not merged, not
   `partner-labels-preview.test.ts`; `packages/web/test/auth/render-labels.test.ts`, `approve-page-labels.test.ts`;
   `apps/console/web/test/labels.test.tsx`; `apps/e2e/tests/partner-labels-window.spec.ts`,
   `partner-labels-console.spec.ts`.
-- **Why (found by the founder in a hand test, 2026-11-24).** The console's "Your accounts" asked for each account's
+- **Why (found by the Tech Lead in a hand test, 2026-11-24).** The console's "Your accounts" asked for each account's
   "Its name for users", but for a classic payment the name went nowhere: the matcher built `destination`, and the
   window's box, by D896's review decision, has no partner "To" row (one beside Journear's own "To" row could be read as
   Journear's). The editor's preview read "Stamp Rally says: pay" with no name.
-- **The founder's choice (A):** the name goes inside the partner's sentence, in the partner's box, for a matching
+- **The Tech Lead's choice (A):** the name goes inside the partner's sentence, in the partner's box, for a matching
   classic payment; "These are {App}'s words, not Journear's." stays under it; Journear's own "To" line with the full
   address stays exactly as it is, above the box; still no partner "To" row.
 - **What is built.** For a payment that matches, core appends two parts to the sentence: Journear's joining word for the
@@ -20829,14 +20829,14 @@ From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) merged in; not merged, not
   not built.
 
 ### D908. The Request labels form: "See an example" for payments, the memo label's hint, and how soon the email goes out
-- Date 2026-11-24 · Status: the three changes **approved by the founder 2026-11-24** ("yes all"); the wording, the
+- Date 2026-11-24 · Status: the three changes **approved by the Tech Lead 2026-11-24** ("yes all"); the wording, the
   example's shape and the cadence line decided while building, **to confirm** (the list at the end) · Built:
   `apps/console/web/src/labels/model.ts` (`EXAMPLE_WORDS`, `exampleDraft`, `exampleLeft`, `isEmptyDraft`; `EXAMPLE_ACCOUNT`
   removed after PR 135's review), `Editor.tsx`
   (`EXAMPLE_BUTTON`, `EXAMPLE_INTRO`, `EXAMPLE_CONFIRM`, `EXAMPLE_NOTE`, `MEMO_LABEL_HINT`; the button, the in-page
   question and the note in `LabelsEditor`), `apps/console/web/src/pages/app/Labels.tsx` (`waitingState`). Tests:
   `apps/console/web/test/labels-model.test.tsx`, `labels.test.tsx`, `apps/e2e/tests/partner-labels-console.spec.ts`.
-- **1. "See an example"** (the founder found the fields hard to fill cold). On a new entry's form, for payments only, a
+- **1. "See an example"** (the Tech Lead found the fields hard to fill cold). On a new entry's form, for payments only, a
   button "See an example" with "Fills the form with a made-up coffee shop, to show how it works. You then replace it
   with your own." It fills (as corrected after PR 135's review, below: **the account is left empty**; the first build put
   `GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP` there, wrongly called "no one's real account": it is the
@@ -20944,7 +20944,7 @@ From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) merged in; not merged, not
 7. **LOW: screen readers hear the name run into the sentence.** Not built: the window sets every partner value (the
    phrase, an enumeration label, an id, an amount) apart only visually, with nothing announced between them; adding
    hidden quotation marks around the name alone would make it announced differently from every other partner value,
-   and around all of them would change what is announced today. For the founder: whether to announce a boundary
+   and around all of them would change what is announced today. For the Tech Lead: whether to announce a boundary
    (hidden quotation marks, or "named …") around every partner value in the window's sentence.
 8. **LOW: name rules.** Two names that read alike are one name: compared on core's name skeleton (look-alike letters,
    "rn" as "m", spaces dropped) with digits read as letters and i/l and u/v as one (`partnerLookalikeKey`): "Coffee Club

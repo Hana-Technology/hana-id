@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseLabelDocument } from '@hana-id/core/partner-labels';
 import { nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
-import { BOOK_NAME_HINT, BOOK_NAME_LABEL, CODE_TIED_NEAR, CODE_TIED_SOROBAN, NEAR_LIVE_RELAYED, CODE_TIED_TITLE, PAYMENT_NAME_NOTE, SOROBAN_SOFT_VERBS, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
+import { BOOK_NAME_HINT, BOOK_NAME_LABEL, EXAMPLE_BUTTON, EXAMPLE_CONFIRM, EXAMPLE_INTRO, EXAMPLE_NOTE, MEMO_LABEL_HINT, CODE_TIED_NEAR, CODE_TIED_SOROBAN, NEAR_LIVE_RELAYED, CODE_TIED_TITLE, PAYMENT_NAME_NOTE, SOROBAN_SOFT_VERBS, SUGGEST_FEE, WARN_ADDRESS_BOOK, WARN_MUXED, WARN_PAYMENT_RED } from '../src/labels/Editor.tsx';
 import { labelsWait, labelsWaitReview } from '../src/pages/Action.tsx';
 import { CODE_TIED_NOTE, ENTRY_OFF, NOT_ENABLED, NOT_ENABLED_PROPOSE, ORG_OFF, guardedWait, reviewOn, waitingState } from '../src/pages/app/Labels.tsx';
 import { EXAMPLE_MARK } from '../src/window/frame.ts';
@@ -283,6 +283,49 @@ describe('the editor', () => {
     expect(BOOK_NAME_HINT.soroban).toBe(BOOK_NAME_HINT.near);
   });
 
+  it('D908: “See an example” fills an empty form at once; a typed form is asked first, in the page; the example says it is one and passes every check', async () => {
+    signedIn();
+    const confirmSpy = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirmSpy);
+    await newEditor();
+    const button = screen.getByRole('button', { name: EXAMPLE_BUTTON });
+    expect(screen.getByText(EXAMPLE_INTRO)).toBeTruthy();
+    expect(screen.queryByText(EXAMPLE_NOTE)).toBeNull();
+    // An empty form: filled at once, no question.
+    fireEvent.click(button);
+    expect(screen.queryByText(EXAMPLE_CONFIRM)).toBeNull();
+    expect((screen.getByLabelText('Account 1') as HTMLInputElement).value).toBe(TILL);
+    expect((screen.getByLabelText(new RegExp(BOOK_NAME_LABEL, 'u')) as HTMLInputElement).value).toBe('Coffee Club till');
+    expect(phrase().value).toBe('the order');
+    expect(screen.getByText(EXAMPLE_NOTE)).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('No problems: ready to review.'));
+    // The window's preview: the sentence with the name, the memo as its own row under its label (not in the sentence).
+    await waitFor(() => expect(inWin('.window-preview div.partner-label p.partner-says')?.textContent).toBe('Coffee Club says: pay for the order to Coffee Club till'));
+    expect([...(win()?.querySelectorAll('.window-preview dl.partner-fields dt') ?? [])].map((n) => n.textContent)).toEqual(['Order']);
+    expect([...(win()?.querySelectorAll('.window-preview dl.partner-fields dd') ?? [])].map((n) => n.textContent)).toEqual(['1042']);
+    expect(screen.getByText(MEMO_LABEL_HINT)).toBeTruthy();
+    // Something typed: asked first; "Keep what I typed" changes nothing.
+    fireEvent.change(phrase(), { target: { value: 'my coffee' } });
+    fireEvent.change(phrase(), { target: { value: 'the coffee' } });
+    fireEvent.click(screen.getByRole('button', { name: EXAMPLE_BUTTON }));
+    expect(screen.getByText(EXAMPLE_CONFIRM)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep what I typed' }));
+    expect(screen.queryByText(EXAMPLE_CONFIRM)).toBeNull();
+    expect(phrase().value).toBe('the coffee');
+    // Asked again, and replaced only on the yes.
+    fireEvent.click(screen.getByRole('button', { name: EXAMPLE_BUTTON }));
+    fireEvent.click(screen.getByRole('button', { name: 'Replace with the example' }));
+    expect(phrase().value).toBe('the order');
+    expect(confirmSpy).not.toHaveBeenCalled();
+    // The note goes once the account is the partner's own.
+    fireEvent.change(screen.getByLabelText('Account 1'), { target: { value: 'GD6ROJBYLKQMOW3E7N4M2YBPUHMZD7PL65VRHRMO24BOVSBV5H3BQRSL' } });
+    expect(screen.queryByText(EXAMPLE_NOTE)).toBeNull();
+    // No example for a NEAR program.
+    fireEvent.click(screen.getByLabelText(/A NEAR program/u));
+    expect(screen.queryByRole('button', { name: EXAMPLE_BUTTON })).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
   it('the advanced text round-trips with the form; a text the form can’t show is said', async () => {
     signedIn();
     await newEditor();
@@ -454,8 +497,8 @@ describe('after PR 126’s review', () => {
     for (const delay of [60_000, DAY]) {
       const words = delay === DAY ? '1 day' : '1 minute';
       const v = (state: string, reviewRequired: boolean) => waitingState({ state: state as never, reviewRequired, activeFrom: state === 'proposed' ? null : at, lapsesAt: NOW + 3 * DAY }, NOW, delay);
-      expect(v('proposed', false)).toEqual({ badge: 'Waiting for the email', line: `Journear is about to email your security contacts. It goes live ${words} after that email unless someone cancels it.` });
-      expect(v('proposed', true)).toEqual({ badge: 'Waiting for the email', line: `Journear is about to email your security contacts. Journear reviews it first: it goes live only after Journear allows it, at the earliest ${words} after that email.` });
+      expect(v('proposed', false)).toEqual({ badge: 'Waiting for the email', line: `Journear emails your security contacts, usually within a few minutes. It goes live ${words} after that email unless someone cancels it.` });
+      expect(v('proposed', true)).toEqual({ badge: 'Waiting for the email', line: `Journear emails your security contacts, usually within a few minutes. Journear reviews it first: it goes live only after Journear allows it, at the earliest ${words} after that email.` });
       expect(v('announced', false).badge).toMatch(/^Goes live /u);
       expect(v('announced', false).line).toMatch(/^It goes live in 2 h 0 min unless someone cancels it\.$/u);
       expect(v('announced', true).badge).toBe('Held for Journear’s review');

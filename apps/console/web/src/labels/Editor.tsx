@@ -10,7 +10,7 @@
 import { FORMAT_ARG_TYPES, type FieldFormat, LABEL_LIMITS, type LabelDocument, PARTNER_CONNECTORS, PARTNER_VERBS, parseLabelDocument, previewLabelDocument } from '@hana-id/core/partner-labels';
 import { type ReactNode, useId, useMemo, useState } from 'react';
 import { Callout, ChoiceCards, Field } from '../ui.tsx';
-import { type ArgDraft, ARG_TYPES, type Draft, type Environment, type FieldDraft, type FormatDraft, type LabelKind, type PartDraft, argFamily, emptyArg, emptyDraft, emptyField, emptyFormat, fromDocumentText, toDocumentText } from './model.ts';
+import { type ArgDraft, ARG_TYPES, type Draft, type Environment, type FieldDraft, type FormatDraft, type LabelKind, type PartDraft, EXAMPLE_ACCOUNT, argFamily, emptyArg, emptyDraft, emptyField, emptyFormat, exampleDraft, fromDocumentText, isEmptyDraft, toDocumentText } from './model.ts';
 import { LabelsPreview } from './Preview.tsx';
 import { type Problem, problemsOf } from './problems.ts';
 import { NEAR_DECIMALS, STELLAR_DECIMALS, TGAS_DECIMALS, toDisplay, toRaw } from './units.ts';
@@ -28,6 +28,13 @@ export const BOOK_NAME_HINT: Readonly<Record<LabelKind, string>> = Object.freeze
   near: 'Shown in your sentence in place of the account’s address, as “Coffee Club till”. In a row, the full address shows under it. Up to 32 characters.',
   soroban: 'Shown in your sentence in place of the account’s address, as “Coffee Club till”. In a row, the full address shows under it. Up to 32 characters.',
 });
+/** D908 (to confirm): the example button, what it does, the question before it replaces a typed form, and the note while the example is in the form. */
+export const EXAMPLE_BUTTON = 'See an example';
+export const EXAMPLE_INTRO = 'Fills the form with a made-up coffee shop, to show how it works. You then replace it with your own.';
+export const EXAMPLE_CONFIRM = 'This replaces what you’ve typed with the example. Replace it?';
+export const EXAMPLE_NOTE = 'This is an example, not your labels. Before you review, change the account to one of your own Stellar accounts, and the name, phrase and limits to yours.';
+/** D908 (to confirm): the memo's row label, true in the window and its preview (a row only when the sentence doesn't show the memo). */
+export const MEMO_LABEL_HINT = 'Shown to users as its own line, with the memo under it, when the memo isn’t in your sentence. Up to 24 characters, as “Order”.';
 /** D907: under a payment's sentence parts, what Journear adds at the end. */
 export const PAYMENT_NAME_NOTE = 'Journear ends the sentence with the name of the account the payment goes to, from your accounts, as “to Coffee Club till”.';
 export const WARN_PAYMENT_RED =
@@ -762,7 +769,7 @@ function FormatEditor({ d, f, fi, env, set, errs, removable, appName }: { d: Dra
               </select>
             )}
           </Field>
-          <Field label="Its label for users" hint="Up to 24 characters, as “Order”.">
+          <Field label="Its label for users" hint={MEMO_LABEL_HINT}>
             {(c) => <input {...c} className="jp-input" value={f.fields[0]!.label} onChange={(e) => set((x) => void (x.fields[0]!.label = e.target.value))} />}
           </Field>
         </div>
@@ -856,7 +863,17 @@ export function LabelsEditor(p: EditorProps) {
   const [appIds, setAppIds] = useState<string[]>([...p.initialApps]);
   /** The text names another network than the scope's: the form will write the scope's (said before it does). */
   const [otherNetwork, setOtherNetwork] = useState(start.network);
+  /** "See an example" on a form with something typed: asked in the page first, never replaced without a yes. */
+  const [askExample, setAskExample] = useState(false);
   const id = useId();
+  const fillExample = () => {
+    const ex = draft ? exampleDraft(draft.kind) : null;
+    if (!ex) return;
+    setDraft(ex);
+    setText(toDocumentText(ex, env));
+    setOtherNetwork(false);
+    setAskExample(false);
+  };
 
   const set = (f: (d: Draft) => void) => {
     if (!draft) return;
@@ -921,6 +938,35 @@ export function LabelsEditor(p: EditorProps) {
               setText(toDocumentText(next, env));
             }}
           />
+        )}
+        {draft && !p.existing && !blocked && exampleDraft(draft.kind) && (
+          <div className="labels-example">
+            <button type="button" className="jp-btn jp-btn-secondary jp-btn-sm" aria-describedby={`${id}-example`} onClick={() => (isEmptyDraft(draft) ? fillExample() : setAskExample(true))}>
+              {EXAMPLE_BUTTON}
+            </button>
+            <span id={`${id}-example`} className="muted small">
+              {' '}
+              {EXAMPLE_INTRO}
+            </span>
+            {askExample && (
+              <Callout tone="warn" role="alert">
+                <p>{EXAMPLE_CONFIRM}</p>
+                <p className="labels-example-choice">
+                  <button type="button" className="jp-btn jp-btn-secondary jp-btn-sm" onClick={fillExample}>
+                    Replace with the example
+                  </button>{' '}
+                  <button type="button" className="jp-btn jp-btn-ghost jp-btn-sm" onClick={() => setAskExample(false)}>
+                    Keep what I typed
+                  </button>
+                </p>
+              </Callout>
+            )}
+          </div>
+        )}
+        {draft && draft.addressBook.some((e) => e.account === EXAMPLE_ACCOUNT) && (
+          <Callout tone="warn" role="note" title="An example">
+            <p>{EXAMPLE_NOTE}</p>
+          </Callout>
         )}
         {draft && draft.kind !== 'stellar' && (
           <Callout tone="info" title={CODE_TIED_TITLE}>

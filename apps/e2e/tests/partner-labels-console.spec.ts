@@ -122,6 +122,27 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   expect((await labels(lane, { action: 'state' })).state.versions).toEqual([expect.objectContaining({ changeId: proposed[0]!.changeId, state: 'cancelled' })]);
 });
 
+test('“See an example” fills the form with a sample that passes every check, and says it is an example (D908)', async ({ page, lane }, info) => {
+  const origin = consoleOf(info);
+  const r = await labels(lane, { action: 'reset' });
+  await openTab(page, origin, r.state);
+  await page.getByRole('link', { name: 'New request labels' }).click();
+  await page.getByLabel(/Your phrase/u).fill('the coffee');
+  // Something typed: asked in the page first; keeping it changes nothing.
+  await page.getByRole('button', { name: 'See an example' }).click();
+  await expect(page.getByText('This replaces what you’ve typed with the example. Replace it?')).toBeVisible();
+  await page.getByRole('button', { name: 'Keep what I typed' }).click();
+  await expect(page.getByLabel(/Your phrase/u)).toHaveValue('the coffee');
+  await page.getByRole('button', { name: 'See an example' }).click();
+  await page.getByRole('button', { name: 'Replace with the example' }).click();
+  await expect(page.getByLabel(/Your phrase/u)).toHaveValue('the order');
+  await expect(page.getByLabel('Account 1', { exact: true })).toHaveValue(TILL);
+  await expect(page.getByText(/This is an example, not your labels/u)).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: /problem|ready/u })).toHaveText('No problems: ready to review.');
+  await expect(box(page).locator('p.partner-says')).toHaveText('Stamp Rally says: pay for the order to Coffee Club till');
+  await expect(box(page).locator('dl.partner-fields dt')).toHaveText(['Order']);
+});
+
 test('a change Journear blocked is listed with Journear’s note', async ({ page, lane }, info) => {
   const origin = consoleOf(info);
   await labels(lane, { action: 'reset' });

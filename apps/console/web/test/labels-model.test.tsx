@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { GUESTBOOK_DOC_JSON, PAYMENT_DOC_JSON, SOROBAN_DOC_JSON, STAMPS_DOC_JSON } from '../../../../packages/core/test/partner-labels-fixtures.ts';
 import { labelOutcome } from '../../../../packages/web/src/auth/render-labels.ts';
 import { EXAMPLE_STRANGER, EXAMPLE_USER, paymentExample } from '../src/labels/examples.ts';
-import { ARG_TYPES, type Draft, emptyArg, emptyDraft, emptyField, emptyFormat, fromDocumentText, toDocumentText } from '../src/labels/model.ts';
+import { ARG_TYPES, type Draft, EXAMPLE_ACCOUNT, emptyArg, emptyDraft, emptyField, emptyFormat, exampleDraft, fromDocumentText, isEmptyDraft, toDocumentText } from '../src/labels/model.ts';
 import { draftProblems, keyOfPath, problemsOf, problemsOfApi } from '../src/labels/problems.ts';
 import { toDisplay, toRaw } from '../src/labels/units.ts';
 
@@ -225,5 +225,39 @@ describe('the preview’s example payments, as the approval window reads them', 
   it('the example user is a fixed account, decoded as the window decodes', () => {
     expect(EXAMPLE_USER).toMatch(/^G[A-Z2-7]{55}$/u);
     expect(typeof decodeApprovalRequest).toBe('function');
+  });
+});
+
+describe('D908: the example the form can be filled with', () => {
+  it('passes the form’s own checks on a test and a live app, and is exactly the founder’s sample', () => {
+    for (const env of ['test', 'live'] as const) {
+      const d = exampleDraft('stellar')!;
+      const text = toDocumentText(d, env);
+      expect(problemsOf(text, d), env).toEqual([]);
+      const doc = parsed(text);
+      expect(doc.metadata.addressBook).toEqual([{ account: EXAMPLE_ACCOUNT, name: 'Coffee Club till' }]);
+      const f = doc.formats.payment!;
+      expect(f.intent).toEqual({ verb: 'pay', object: 'the order' });
+      expect(f.chain === 'stellar' && f.call).toEqual({ memo: 'id', assets: ['native'], amountAtMost: '500000000', feeAtMost: '100000' });
+      expect(f.fields).toEqual([{ path: 'memo', label: 'Order', params: { format: 'orderNumber' } }]);
+      // The text reads back to the same draft (the form shows exactly the example).
+      const back = fromDocumentText(text, env);
+      expect(back.ok && back.draft).toEqual(d);
+      // The window's own outcome for the preview's example payment: the partner's box.
+      const ex = paymentExample(doc, 'match');
+      if (!ex.ok) throw new Error(ex.why);
+      expect(labelOutcome(ex.decoded, [doc], { user: EXAMPLE_USER, networkChecked: false, reviewedNear: [] }).kind).toBe('match');
+    }
+  });
+  it('no example for a NEAR program or a Soroban contract (they need the partner’s own account and code)', () => {
+    expect(exampleDraft('near')).toBeNull();
+    expect(exampleDraft('soroban')).toBeNull();
+  });
+  it('a new form is empty; anything typed, or the example, is not', () => {
+    for (const k of ['stellar', 'near', 'soroban'] as const) expect(isEmptyDraft(emptyDraft(k))).toBe(true);
+    const typed = emptyDraft('stellar');
+    typed.formats[0]!.object = 'o';
+    expect(isEmptyDraft(typed)).toBe(false);
+    expect(isEmptyDraft(exampleDraft('stellar')!)).toBe(false);
   });
 });

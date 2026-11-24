@@ -125,6 +125,30 @@ export function emptyDraft(kind: LabelKind): Draft {
   return { kind, nearAccount: '', codeHash: '', contract: '', wasmHash: '', addressBook: [], enums: [], formats: kind === 'stellar' ? [emptyFormat('stellar')] : [] };
 }
 
+/**
+ * The example a partner can fill the form with ("See an example"): the made-up account the tests use (an account made
+ * from no one's key: nobody's real account) named "Coffee Club till", paying for "the order" with an order number as
+ * its memo, XLM only, at most 50 XLM and a 0.01 XLM network fee. Only for payments: a NEAR program's or a Soroban
+ * contract's labels need the partner's own account and code, which no example can know. Null for those kinds.
+ */
+export const EXAMPLE_ACCOUNT = 'GBBQI276ICJLH2KJSTVNUFO4YIGYVKQHWZMP2OKU5OHA564L3SS55TZP';
+export function exampleDraft(kind: LabelKind): Draft | null {
+  if (kind !== 'stellar') return null;
+  const f = emptyFormat('stellar');
+  f.verb = 'pay';
+  f.object = 'the order';
+  f.memo = 'id';
+  f.assets = ['native'];
+  f.amountAtMost = '500000000';
+  f.feeAtMost = '100000';
+  f.fields = [{ ...emptyField('memo', 'orderNumber'), label: 'Order' }];
+  f.sentence = [{ kind: 'verb' }, { kind: 'word', word: 'for' }, { kind: 'object' }];
+  return { ...emptyDraft('stellar'), addressBook: [{ account: EXAMPLE_ACCOUNT, name: 'Coffee Club till' }], formats: [f] };
+}
+
+/** Whether a draft is still exactly a new one of its kind (nothing typed yet). */
+export const isEmptyDraft = (d: Draft): boolean => JSON.stringify(d) === JSON.stringify(emptyDraft(d.kind));
+
 /** The network a scope's documents describe (the API refuses any other, D894). */
 export const nearNetworkOf = (e: Environment): 'testnet' | 'mainnet' => (e === 'test' ? 'testnet' : 'mainnet');
 export const stellarNetworkOf = (e: Environment): string => (e === 'test' ? LABEL_STELLAR_NETWORKS.test : LABEL_STELLAR_NETWORKS.public);

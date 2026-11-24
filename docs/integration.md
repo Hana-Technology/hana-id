@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-24 (request labels, a payment's account name; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+Last verified against code: 2026-11-24 (request labels: account names, the example; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -955,7 +955,13 @@ while the request runs exactly that code:
   describes this kind of request, but this one doesn't match, …") until new labels with the new code hash go live after
   their wait. Propose the new labels first, and upgrade soon after they go live.
 
-**Writing them: a form, not JSON.** The editor is a form; you never have to write the document by hand.
+**Writing them: a form, not JSON.** The editor is a form; you never have to write the document by hand. For
+payments, **See an example** fills a new form with a made-up coffee shop (an example account named "Coffee Club till",
+"pay for the order", an order number as the memo, XLM only, at most 50 XLM, a 0.01 XLM network fee) to show how it
+works; if you've already typed something, the page asks before it replaces it. While the example's account is in the
+form, the page says it is an example: replace the account with one of your own, and the words and limits with yours,
+before you review. A NEAR program or a Soroban contract has no example, since its labels need your own account and
+code.
 
 1. **What your labels describe**: payments to your Stellar accounts, a NEAR program (its account and code hash) or a
    Soroban contract (its contract id and Wasm hash). The network is your app's: test apps describe the test networks.
@@ -971,7 +977,8 @@ while the request runs exactly that code:
    describe a request that moves money); your phrase (up to 30 characters, plain words, as "order" or "the stamp");
    when it matches (for a payment: the memo it carries, the assets, the highest amount and the highest network fee;
    for a program: the NEAR it attaches, the most gas, every argument and its limits); the values users see (in the
-   sentence, or as up to 3 rows under it); and the sentence's order.
+   sentence, or as up to 3 rows under it: a payment's memo label, as "Order", shows to users as its own line, with the
+   memo under it, only when the memo isn't in your sentence); and the sentence's order.
 5. **Advanced**: the document's text (`journear-labels/1`), if you'd rather edit it. The form follows when it can show
    what you wrote, and says so when it can't.
 
@@ -1011,7 +1018,8 @@ would mislead users.** The page and the email name your environment's delay. If 
 changes, the page says so: a change then goes live only after Journear allows it, at the earliest the security delay
 after the email, and lapses if it isn't allowed within 7 days of that time.
 
-**On the tab**, each set of labels shows its state: **Live** (and what users see now), **Waiting for the email**,
+**On the tab**, each set of labels shows its state: **Live** (and what users see now), **Waiting for the email**
+(Journear sends it to your security contacts, usually within a few minutes),
 **Goes live {time}**, **Held for Journear's review** (a waiting change shows what it changes for users), and for the last 14 days the changes that ended: **Blocked by
 Journear** with Journear's note, **Cancelled**, **Lapsed**, **Replaced**, **Removed**. **Switched off by Journear**
 means your users see the plain window for those requests; ask Journear security before changing them. While Journear

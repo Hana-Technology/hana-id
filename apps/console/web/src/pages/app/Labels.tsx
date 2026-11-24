@@ -89,10 +89,10 @@ export function waitingState(v: Pick<LabelChangeView, 'state' | 'reviewRequired'
   const lapse = v.lapsesAt ? ` If Journear hasn’t allowed it by ${when(v.lapsesAt)}, it lapses and nothing changes.` : '';
   if (v.state === 'waiting_review') return { badge: 'Held for Journear’s review', line: `Its time has come: Journear reviews it before it goes live.${lapse}` };
   if (v.reviewRequired) {
-    if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear is about to email your security contacts. Journear reviews it first: it goes live only after Journear allows it, at the earliest ${afterEmail(delayMs).replace('the email', 'that email')}.` };
+    if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear emails your security contacts, usually within a few minutes. Journear reviews it first: it goes live only after Journear allows it, at the earliest ${afterEmail(delayMs).replace('the email', 'that email')}.` };
     return { badge: 'Held for Journear’s review', line: `It goes live only after Journear allows it, at the earliest ${clockTime(at, now)} (${relative(at, now)}).` };
   }
-  if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear is about to email your security contacts. It goes live ${afterEmail(delayMs).replace('the email', 'that email')} unless someone cancels it.` };
+  if (v.state === 'proposed') return { badge: 'Waiting for the email', line: `Journear emails your security contacts, usually within a few minutes. It goes live ${afterEmail(delayMs).replace('the email', 'that email')} unless someone cancels it.` };
   return { badge: `Goes live ${clockTime(at, now)}`, line: `It goes live ${relative(at, now)} unless someone cancels it.` };
 }
 

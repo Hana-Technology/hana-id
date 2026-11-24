@@ -160,7 +160,7 @@ answer is encrypted to the browser's ephemeral BLS key `a`.
 | Session key | Ed25519, non-extractable WebCrypto | Vault memory; IndexedDB record in `'session'` mode | vault | ≤ the session (≤ 23 h 50 min app setting, ≤ 24 h on chain) |
 | `K_s` | 32-byte AES-GCM key per share | D1 only as `share_enc` under `VAULT_KEK`; vault memory briefly | API generates, vault uses | Ends with the share (idle ≤ `idle_ttl_ms`, absolute ≤ `session_ttl_ms`, revoke) |
 | `COINGECKO_API_KEY` (API Worker, optional, D436) | CoinGecko API key (Pro or Demo); may be shared with other Hana projects | Worker secret; `.secrets/<env>/coingecko-api-key` if a copy is kept | the user | Only in CoinGecko's header, for a demo app in a dev env; a leak costs CoinGecko quota, nothing of Hana's |
-| `EVM_SPONSOR_RPC_<chainId>` (API Worker, required for each sponsored chain outside `local*` envs: the API keeps sponsorship off and `deploy-check` fails without it, D851 as amended; D847; not live) | an RPC provider URL with its API key | Worker secret, set by the founder | the API's sponsorship reads | Never logged or answered (the client logs endpoint indexes only); the manifest's `rpc`/`rpcFallback` carry no key. Rotate at the provider, then `wrangler secret put` |
+| `EVM_SPONSOR_RPC_<chainId>` (API Worker, required for each sponsored chain outside `local*` envs: the API keeps sponsorship off and `deploy-check` fails without it, D851 as amended; D847; not live) | an RPC provider URL with its API key | Worker secret, set by the Tech Lead | the API's sponsorship reads | Never logged or answered (the client logs endpoint indexes only); the manifest's `rpc`/`rpcFallback` carry no key. Rotate at the provider, then `wrangler secret put` |
 | `VAULT_KEK`, `VAULT_KEK_PREVIOUS` | AES-256-GCM, `<id>:<base64>` | Worker secrets; `.secrets/<env>/vault-kek` (and `vault-kek.previous`), 0600, the only copy | Hana | Generated and set by `scripts/vault-kek.ts init` (wrangler stdin, never printed, file never overwritten). Rotate with `vault-kek rotate`: old value → `VAULT_KEK_PREVIOUS`, new id in `VAULT_KEK`; unlocks and the hourly cron re-wrap (`apps/api/src/vault/kek.ts`, `vault/cron.ts`) |
 | `relayKey`, `relayReadKey` | 32-byte AES-GCM key / read capability | Vault memory; `relayKey` also in the login popup's `sessionStorage` until `/login/callback` reads it (`packages/web/src/auth/login-storage.ts`) | vault, login popup | One login; slot lives 120 s |
 | Session-pool keys `RELAYER_KEYS` | ed25519 function-call keys on `relayer`, receiver `signer` | Worker secret; `.secrets/<env>/relayer-keys.json` | Hana | Default 3 × 2 NEAR. `deploy-contract` deletes and re-adds. The watchdog alerts on each key's remaining allowance and the account's balance (D150, read-only) |
@@ -1676,7 +1676,7 @@ handshake removes the frame and closes its port, as `destroy()` does.
   and the tests check no valid request ever gets it. The page builds each screen before switching to it: a failure shows the refusal with no
   Approve, never the previous screen, and Reject and Approve answer only the request they were drawn for. The technical details are a native `<details>`, always folded at first,
   for every request, raw signing included, and the user can always open them; nothing a partner controls changes that.
-  Trade-off, the founder's decision (D810, 2026-11-17): for exactly the requests Journear can't explain, the technical
+  Trade-off, the Tech Lead's decision (D810, 2026-11-17): for exactly the requests Journear can't explain, the technical
   facts are one tap away rather than on screen, and the risk is stated in plain words above them instead ("Journear
   can’t check what this does (reason). It could take your money or tokens. If you’re not sure, reject it.", amber
   ones ending "Approve only if you expected this from {App}."; raw signing: "Signing this could hand over your whole
@@ -1816,7 +1816,7 @@ handshake removes the frame and closes its port, as `destroy()` does.
   shown field, returns every true value (`values`), marks token amounts as the partner's description, allows one
   short partner phrase per sentence, and adds deny-lists for negations, the window's own words, amounts in words,
   money, phishing, ownership and other currency, wallet and bank names; it requires the vault to have checked the
-  NEAR network and validates the code hash it is given. A word filter is a first filter, not a guarantee; the founder
+  NEAR network and validates the code hash it is given. A word filter is a first filter, not a guarantee; the Tech Lead
   chose a staff veto over required review (D894, below). Who ties a label to code: D900, below.
 - **Partner labels: storage, the guarded change, the staff veto (D894).** Invariants, all enforced in the API:
   (1) only an on-chain `Owner::Oidc` of the scope proposes or removes, with a step-up the API verifies itself, bound by
@@ -1836,7 +1836,7 @@ handshake removes the frame and closes its port, as `destroy()` does.
   depends on the hourly job's timing); staff never cancel a label change (they Block, with a note), and no proposal is
   taken while an org's or everyone's labels are switched off; every staff act is in the staff audit log first and in
   the API's ledger.
-  Accepted (founder, option 1): a mildly misleading phrase that passes the text rules can go live if nobody looks during
+  Accepted (the Tech Lead, option 1): a mildly misleading phrase that passes the text rules can go live if nobody looks during
   the wait; it is always the partner's attributed words beside the request's true values and every warning. Residual,
   as for origins and policies: a D1 write can skip all of it; drift (`labels/drift.ts`) reports it within the hour
   unless the ledger and the switch log are forged too (the vault's own parser and text rules, not its re-hash, bound
@@ -1889,7 +1889,7 @@ handshake removes the frame and closes its port, as `destroy()` does.
   hash, the plain window, silently. **This protects against one bad provider only when the two endpoints are
   independently operated; sandbox-dev's are not** (`rpc` test.rpc.fastnear.com and `rpcFallback`
   rpc.testnet.near.org are both run by FastNear; `independentEndpoints` compares URLs only), which weakens D263's and
-  D729's two-provider checks the same way. Settled by the founder 2026-11-24 (D903): accepted on testnet, so on a
+  D729's two-provider checks the same way. Settled by the Tech Lead 2026-11-24 (D903): accepted on testnet, so on a
   testnet env these checks (and a NEAR label's code hash) rest on one operator, and this is no longer a blocker for
   switching labels on there; on a production network the manifest must name who runs each endpoint (`rpcOperator`,
   `rpcFallbackOperator`, compared ignoring case, spaces and punctuation) and the two must differ, or the schema and

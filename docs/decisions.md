@@ -1,7 +1,7 @@
 # Decision log
 
 One entry per decision: what was decided, when, why, what was rejected, its status, and where it is written down.
-Last verified against code: 2026-11-24 (branch `feat/payment-account-name`, from `next`, not merged, not deployed: D907 and D908 at the end (D908: the console's "See an example", the memo label's hint, the waiting card's email line), a matching payment's sentence ends with the destination's address book name, with a row of "Superseded or amended" for D896); 2026-11-24 (branch `docs/sodax-sdk-integration`, after PR 136's review: D909's decided, direction and parked items split, two standing decisions written down, the address-freeze wording, tested/read/inferred marks); 2026-11-24 (branch `docs/sodax-sdk-integration`, from `next`, not merged, not deployed, docs only: D909 at the end, the Tech Lead's shared wallet for Sodax partners and the Sodax SDK findings); 2026-11-24 (branch `chore/confirmations-pulse`, after PR 134's review: D906's pulse low point 0.6 and wording); 2026-11-24 (branch `chore/confirmations-pulse`, from `next`, not merged, not deployed: D906 at the end, the founder's "confirm all" for eight points of D901 to D905 with a dated note under each, the loading spinners' pulse under reduced motion, a row of "Superseded or amended" for D905's still spinner); 2026-11-24 (branch `feat/key-source-operators-text-safety`, from `next`, not merged, not deployed, after PR 133's review: D904's founder points, the two checks built after review, the proof list corrected); 2026-11-24 (branch `feat/key-source-operators-text-safety`, from `next`, not merged, not deployed: D904, after D905 at the end, a row of "Superseded or amended" for D100's count of the CKD key's sources); 2026-11-24 (branch `feat/dev-wording-reduced-motion`, from `next`, not merged, not deployed: D905 at the end: developer-side "gas sponsorship" and the brand's reduced-motion rule, with PR 132's review fixes); 2026-11-24 (branch `feat/home-cancel-waiting-sign-in`, from `next`, not merged, not deployed: D902 at the end, after D903, with its review amendments); 2026-11-24 (branch `feat/labels-line-names-provider-rule`, from `next`, not merged, not deployed: D903, with notes in D891 and D900 and three rows of "Superseded or amended"); 2026-11-23 (branch `feat/partner-labels-window`, from `next`, not merged, not deployed, after PR 123's review: D896 rewritten with the review's 12 fixes and the commit review's two findings, a piece-4 note on D894; before it: D896, partner labels piece 3: the vault's fresh labels to the approval window, the window's box after every warning, the amber and red lines, the `app.renamed` recommendation, the list to confirm); 2026-11-23 (branch `fix/app-name-passport-tiers`, from `next`, not merged, not deployed: a dated note on D891, the founder's "Refuse" for edition words beside "Passport" ("Passport Plus", "Passport Pro", "Passport One") and "narrow it" to 12 words, PR 117's review fixed, the positions to confirm); 2026-11-23 (branch `feat/unreadable-message-one-box`, from `next`, not merged, not deployed: a dated note on D886, the founder's one amber box for a message Journear can't read, and their "ok for two" for keeping the note about networks as its own box; PR 118's review: a row of "Superseded or amended" for D810's sentence, a correction of D886's colour list); 2026-11-23 (branch `docs/batch-confirmed-2026-11-23`, from `next`, not merged, not deployed, docs only: the founder's "confirm the batch" and "confirm 1 to 8", recorded in "Confirmed in one batch, 2026-11-23" with the list "Open for the founder as of 2026-11-23"; dated notes splitting what was confirmed from what stays open on D843, D864, D865, D873 to D881, D884 to D886, D888, D890 and D891; D892's verb list and review step decided by the founder; no behaviour changed); 2026-11-23 (branch `feat/partner-labels-core`, from `next`, not merged, not deployed: D892, the founder's adoption of the partner-labels proposal's 12 recommendations, and piece 1, the label format, text rules and matcher in core, wired to nothing; the schema, rules, limits and codes to confirm, the verb list and the single meaning of "checked by Journear" for the founder to confirm; amended after PR 114's review: precedence for Journear's own reading, every true value returned, deny-lists, network and code-hash inputs, the open review-step decision); 2026-11-23 (branch `fix/console-auth-token-test-clock`, from `next`, not merged, not deployed: a dated note on D712, tests only); 2026-11-23 (branch `fix/app-name-passport`, from `next`, not merged, not deployed: D891, "Passport" alone refused as an app name, decided by the founder; after PR 112's review the wallet-like forms on both sides, imitation letters, check marks, claim words after punctuation and vouching words last, to confirm; amends D686/D765 with a row of "Superseded or amended" and a note on D884); 2026-11-23 (branch `feat/home-shell-step1`, from `next`, not merged, not deployed: D888, Passport Home's structure A and the founder's two related decisions, decided 2026-11-23; step 1's shell, amended after PR 109's review, to confirm; notes on D553 and D878); 2026-11-23 (branch `feat/evm-relayer-auto-resume`, from `next`, not merged, not deployed: D890, decided by the founder, its details to confirm, amending D851 and answering D882's open question, with a row of "Superseded or amended"); 2026-11-23 (branch `feat/demo-plain-wording-2`, from `next`, not merged, not deployed: D889, the hosted demo's NEAR card in plain words, to confirm; dated notes of the founder's 2026-11-23 decisions on D884 ("Sponsored by {App}" stays; "Passport" alone refused, not built), D879 (the partner side says "gas sponsorship", built in the partner docs), D793 (the NEAR relay put-back rides with the December deploy), D874 (Home's Cancel and Remove, decided, not built) and D885 (item 11 left for now; item 12's chain facts confirmed by the on-chain check of 2026-11-23, recorded)); 2026-11-23 (branch `feat/remove-findable`, from `next`, not merged, not deployed: D887, decided by the founder (the button, then "Don’t recognise it?" after PR 108's review), the labels, names, outline and the other two banners to confirm; amends D875 and D881, with notes on both and a row of "Superseded or amended"); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: D884 and D886, decided by the founder, the details to confirm, D886 with notes on D35 and D813; amends D858 and D877, with notes on D850, D853, D858 and D877 and a row of "Superseded or amended"); 2026-11-19 (branch `fix/e2e-local-alarm-cadence`, from `next`, not merged, not deployed: D882, the local stack's alarm decided while building, to confirm, and the open question on backing off while paused); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: D879, decided by the founder, the reworded sentences to confirm, with notes on D843 and D853 and a row of "Superseded or amended"; amended after its review: the scoped "affects" line, "the relayer wallet", "gas price limit", "a little ETH for gas", "NEAR relay: a billing record is late"); 2026-11-19 (branch `feat/unbroken-address-copy`, from `next`, not merged, not deployed: D876, D877 and D878, decided or asked for by the founder, the details to confirm, amended after PR 101's review (counterparty rows' layout, decided by the founder to stay in one piece, and the groups switch, the hint's words and order, the mono values, the kept spaces); amends D859, D850 and D858, with two rows of "Superseded or amended"); 2026-11-19 (branch `test/e2e-hand-browser`, from `next`, not merged, not deployed: D880, test tooling, the founder's request, its details to confirm); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, from `next`, not merged, not deployed: D875, decided by the founder, its details to confirm, amended after PR 100's review, with a row of "Superseded or amended" and amendments to D259 and D874); 2026-11-19 (branch `feat/home-sign-in-list`, from `next`, not merged, not deployed, after its independent review: D874 amended, to confirm); 2026-11-19 (branch `feat/home-sign-in-list`, from `next`, not merged, not deployed: D874, Passport Home's "Ways to sign in", read-only, to confirm); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: D872, the direction confirmed by the user, the details decided while building, to confirm; amends D280/D380 and D425; amended after review (items 8–11, to confirm) and item 12, the deploy after Neon's reset, confirmed by the user 2026-11-19); 2026-11-18 (branch `fix/evm-sponsor-gas-limit-not-users-fault`, not merged, not deployed: D847 amended, a refusal over the gas Journear set is not the user's failure, to confirm); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`, not merged, not deployed: D868 new, the anvil lane, to confirm); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: after its re-check: D843 items 19–22 (the leak mark, the tick, the token, a fresh view) and D851’s note; D843 new, amended after its independent review (items 11–18), D851's note that the staff methods are reached through AdminRpc only); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`, not merged, not deployed: D851 amended, the read endpoint `EVM_SPONSOR_RPC_<chainId>` enforced outside `local*` envs by the API and `deploy-check`, to confirm); 2026-11-18 (branch `feat/near-relay-billing`: D863's amendment after the independent review of PR 77 confirmed by the user; the re-check's amendment still to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` and `next` @ 0a636344 merged: D863 amended after the re-check of 2e5b8dc0, to confirm: the last included transaction per key must have a record, a refused parked row is a miss, what billing can rely on); 2026-11-18 (branch `feat/near-relay-billing`, after its independent review: D863 amended (the cron's own client and budget, records final at once, the nonce check, parked writes, the plain wording), to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` merged: D863 confirmed by the user 2026-11-18); 2026-11-18 (branch `feat/near-relay-billing`, not merged, not deployed: D863 new); 2026-11-18 (branch `feat/evm-sponsor-api`: the amendments of D847 (up to the re-review of a0a83e25), D848, D851 (items up to 18) and D852 confirmed by the user; D847's final-check amendment still to confirm); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ 0a636344 merged: D847 amended after the final check of 811a0c1e, to confirm: no billing correction for a relayer replay, no nonce floor rise from a head read, two known items); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ af938240 merged: D847 and D848 amended while integrating the relayer (D851) and the vault (D856), to confirm: the session proof checked, M2 closed, rejected batches by cause, the relayer's funds and the per-app slot, the authorization rule, gas from the relayer's intrinsic gas, success at head as an accepted risk, the e2e on the real routes); 2026-11-18 (branch `feat/evm-sponsor-api`: D832, D840, D847, D848 confirmed by the user 2026-11-18; D847 and D848 amended for the simplified relayer (D851); D852 new, the billing records); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: D834, D836, D847 and D848 amended (M1–M3, L1–L5, the relayer's final interface), open items before mainnet recorded); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed: D832, D840, D847, D848 new and D836's addendum (the L1 fee in the reservation), decided while building, to confirm; the section heading and intro name them); 2026-11-18 (branch `feat/link-member-banner`: D865 confirmed by the user 2026-11-18, its later amendments to confirm; the re-check's fixes (the `link_remove` message, D158's residual noted)); 2026-11-18 (branch `feat/link-member-banner`, `next` @ its latest merged in: D865 amended by the review's three recommendations, decided by the user 2026-11-18 (Not now and Don't ask again, no notice for case A's silent hosted link, D864's corrected texts with Remove from its late screen), and its `link_remove` message; D864 amended); 2026-11-18 (branch `feat/link-member-banner`, from `feat/link-cancel-by-email` (PR 83), not merged, not deployed: D865 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D259's banner rule and D864's "not done" (a), with a row of "Superseded or amended"); 2026-11-18 (branch `fix/evm-relayer-unaccepted-first`, from `next`, not merged, not deployed: D851 item 18 new (an untaken batch cancelled early only after two runs and with a later record waiting, two Base Sepolia measurements owed, the pools' 7702 texts, no backoff, `oldestUnacceptedMs`, refusals returned as values), D834 and D836 amended (tip cap, batch size, `deadlineMaxS` ≤ 300), to confirm); 2026-11-18 (branch `fix/evm-relayer-account-next`, from `next`, not merged, not deployed: D851 item 17 new, the account's earlier batch checked on demand at send, to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`: D864 confirmed by the user 2026-11-18, its review amendments (the cancelled and late screens' words, `link_pending`'s `userMessage`) to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`, from `next` @ 2b25fc75, not merged, not deployed: D864 new, the cancel-by-email path owed since D259 decided by the user 2026-11-18, details decided while building, to confirm; D259's and D862's "not built" and "open" notes amended; a row of "Superseded or amended"); 2026-11-18 (branch `feat/plain-wording-other`, with `next` @ af938240 merged (PRs 75, 76, 79): D861 and D862 confirmed by the user 2026-11-18, their review amendments to confirm; D861's sponsored reasons read from PR 76's `evm-sponsor.ts`, the signing-domain message reworded); 2026-11-18 (branch `feat/plain-wording-other`, from `next`, not merged, not deployed: D861 new, a plain sentence in SDK errors approved in principle by the founder 2026-11-18, its shape decided while building, to confirm; D862 new, decided while building, to confirm; two rows of "Superseded or amended" for D419's user-mail banner and D670's notice button); 2026-11-18 (branch `fix/evm-relayer-halt-narrowing`, from `next`, not merged, not deployed: D851 item 16 narrowed (halts on the trusted endpoint's own refusal only, a first version's replacement refusal confirmed by its pending count, `fee_cap_too_low` only when a version is required), to confirm); 2026-11-18 (branch `fix/evm-relayer-fee-refusals`, from `next`, not merged, not deployed: D851 item 16 new (fee refusals of a batch are cause `pricing`, `fees_too_low` before anything is stored; after its review: cancels priced from a fresh base fee, `fee_cap_too_low`, a first version's `replacement_underpriced` is the relayer's), to confirm; PR 75 confirmed by the user); 2026-11-18 (branch `feat/evm-sponsor-vault`, with `next` @ e3b6b761 merged: D838, D855 and D856 confirmed by the user 2026-11-18, their review amendments to confirm; D838 moved into number order); 2026-11-18 (branch `chore/ci-on-next`, from `next`, not merged, CI not switched on: D857 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D387 and D383 with a row of "Superseded or amended"; D841's CI note done); 2026-11-18 (branch `feat/evm-relayer-simple`, after its re-review: D851 amended (each refusal's cause; `relayer_cannot_send` with the code replaces `rejected_unsent`; `rejection` in `send`'s answer)); 2026-11-18 (branch `feat/evm-relayer-simple`, after its independent review: D851 amended (no user-triggerable halt, the at-once cancel, intrinsic gas, `staffCancel` instead of `never_sent`, adopt only upwards, one batch per account, finality needs the confirmed count, hourly checks, hashes only after final, `evmOps`)); 2026-11-18 (branch `feat/evm-relayer-simple`, not merged, not deployed: D851 new, the simplified fail-stop relayer decided by the user 2026-11-18, details decided while building, to confirm; D837 (PR 70's self-repairing relayer, never merged) written down as superseded by D851, with a row of "Superseded or amended"); 2026-11-18 (branch `feat/evm-sponsor-vault`, re-check of PR 76: D855 amended (the setup needs both endpoints, `rpcFallback` required outside `local*` envs, the capped read, privacy)); 2026-11-18 (branch `chore/ci-on-next`, after its independent review: D857 confirmed by the user 2026-11-18, the review's changes under "Amended while building", to confirm (`develop`'s nightly until `next` merges, the existing $0 budget, the founder's settings, Foundry by checksum, no pnpm cache in the `evm` and publish builds, two residuals); D841's CI note); 2026-11-18 (branch `feat/evm-sponsor-vault`, after its independent review: D855 amended (the vault reads the account's setup itself, the setup's own failure text, the cross-tab slot, the floor and its open item), D856 with the API's five additions); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged, not deployed: D838 new (no transparent sponsoring decided by the user 2026-11-17, the rest to confirm), D855 and D856 new, decided while building, to confirm; D850's `SPONSORED_NOT_YET` replaced, D855); 2026-11-17 (branch `feat/approval-plain-summary`: D814 amended by the founder (a control bullet whose step's line is in view is dropped)); 2026-11-17 (branch `feat/approval-plain-summary`, review of 5ef13452: D814 amended (whole control keys, spender markers, native sums, directions)); 2026-11-17 (branch `feat/approval-plain-summary`: D814 new, decided by the user, details to confirm, amending D809 and D813; D810's steps line); 2026-11-17 (branch `feat/approval-plain-summary`, final review: D810 and D811 notes on Soroban contract creation and NEAR key allowances); 2026-11-17 (branch `feat/approval-plain-summary`: D808–D813 confirmed by the user, D810 amended by the user (details always folded, risk lines in plain words, red or amber)); 2026-11-17 (branch `feat/approval-plain-summary`, after its third security review: D809, D810, D813 amended (muxed accounts, the red fallback and its test, the always-listed steps)); 2026-11-17 (branch `feat/approval-plain-summary`, after its second security review: D809, D810, D811, D813 amended (value steps always listed, the XLM leaving line, offer prices, a total summary, ERC-1155 batches, withdraw, the page's screen built before it switches)); 2026-11-17 (branch `feat/approval-plain-summary`, after its security review: D809–D813 amended (authorizations, offers, pools, claimants, caps, banners first, approve 0, thresholds, witness, NEP-413)); 2026-11-17 (branch `feat/approval-plain-summary`, from `next`, not merged, not deployed: D808–D811 decided by the user 2026-11-17, their details and D812–D813 decided while building, to confirm; three rows of "Superseded or amended" for D723, D110 and D765); 2026-11-17 (branch `feat/evm-deploy-scripts`, not merged, not deployed: D849, decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ 8d2c435b merged: D834's placeholder sentence after core's 31337 entry became the real pin, its rule tested with a fixture table; the EVM entries in number order under one heading); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ d39d1d69 merged: D841 and D845 confirmed by the user 2026-11-17; D846 amended: the 31337 pin is the delegate's deterministic deployment, the placeholder mechanism tested on a fixture table; the EVM section's heading and intro cover D833, D841, D845, D846); 2026-11-17 (branch `feat/evm-delegate-contract`, after its independent audit: D841 and D845 amended (ERC-1271's compact form and the new address, no fallback's consequences, explorer verification, the duties checklist, the gas numbers, more tests), details decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, not merged, not deployed: D841 and D845 new, the EVM delegate contract (WP0 of the EVM gas sponsorship builds); location, licence and a fresh self-hosted delegate decided by the user 2026-11-17, details decided while building, to confirm); 2026-11-17 (branch `feat/evm-sponsor-manifest`, after `next` @ d39d1d69 merged in: D833, D834, D835, D836 and D846 confirmed by the user 2026-11-17, open items kept; the entries in number order under one heading; D835 adds exact calldata and `maxDataBytes`; D834 wires core's pinned table and refuses its placeholder outside `local*` envs); 2026-11-17 (branch `feat/evm-sponsor-manifest`, not merged, not deployed: D834–D836 new, the founder's choices decided by the user 2026-11-17, the details decided while building, to confirm; the other numbers of D830–D846 are other packages'); 2026-11-17 (branch `feat/evm-sponsor-core`, not merged, not deployed: D833 and D846 new, details decided while building, to confirm; D846 after its independent review: the placeholder refused by default, read-once copies everywhere, call targets, deadline and minGas, key errors, the next layers' list); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: D31 and D765 reworded before the repository went public, the decisions unchanged); 2026-11-13 (branch `fix/stamps-signature-two-step`, not merged, not deployed: D807 new, found by the user's hand check 2026-11-13, details decided while building, to confirm); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: D793 new, asked for by the user, the SendGrid plan and its recent volume stated by the user (Essentials 50K, shared; sized to 30%, the user's choice), values and the two testnet overrides decided while building, confirmed by the user 2026-11-13, amended after its security review; D792 is another branch's); 2026-11-13 (branch `merge/stamps-all`, not merged, not deployed: D805 and D806 new, the app name chosen by the user 2026-11-13, the rest decided while integrating, to confirm; D794–D797 from `feat/stamps-contract`); 2026-11-13 (branch `feat/stamps-art`, not merged, not deployed: D803 and D804 new, decided while building the passport stamps demo's UI, to confirm); 2026-11-13 (branch `feat/stamps-site`, not merged, not deployed: D798–D802 new, asked for by the user 2026-11-13, details to confirm); 2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-122026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-12); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D786's note after the security review); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D784–D787 new, decided while building, to confirm); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: D789 new, asked for by the user, details decided while building, to confirm, amending D765, D770, D773 and D774, with a row of "Superseded or amended"); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-12 (branch `docs/near-partner-guide`: D778 new, decided while building, to confirm; numbered after the rebrand's D765–D777); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: D779–D783 new (first numbered D768–D774, renumbered after the rebrand took D765–D777); D781 corrected after the branch's security review, L1); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-11 (branch `feat/near-demo`, not merged, not deployed: D750–D754 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): D730–D739 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-directory`, after its security review, not merged, not deployed: D762 and D763 new, from the review, to confirm; D756 to D758 amended (the lookup never picks, "listed", the vault's SDK gate, the migration first); D764 reserved); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: D755–D761 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D762–D764 reserved); 2026-11-11 (branch `feat/near-core`, not merged, not deployed: D720–D728 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D726 after the branch's automated security review; D729 the full security review's fixes, amending D723 and D726); 2026-11-11 (branch `feat/near-guestbook`, not merged, not deployed: D740–D744 new, asked for by the user, details to confirm); 2026-11-11 (branch `merge/partner-start-and-email-flow`: D707, D711, D712 and D713 confirmed by the user 2026-11-11); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: D711 and D713 new, proposed; D712 taken by `test/flaky-pass-1111`, so the live state is D713; after review: the hostile-value tests attributed, Execute's line, "any owner"); 2026-11-11 (branch `docs/partner-start-here`, not merged, docs only: D707, the sign-in guidance decided by the user, the page asked for by the user, its wording to confirm); 2026-11-11 (branch `test/flaky-pass-1111`: D712 new, to confirm); 2026-11-11 (branch `docs/google-email-change-open-items`: D709 and D710 new, open items logged at the user's request: a changed Google address blocked from email sign-in by a full account, and a second wallet from an email login before the next Google login); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11; D708 new, decided by the user: auto-approved Sodax swaps deferred, with what they would take); 2026-11-11 (branch `release/sdk-0.3.1`, not merged: D705 SDK 0.3.1 decided by the user, amending D695's "no SDK version bump", with a row of "Superseded or amended"; D706, the user's 2026-11-10 "keep sending files", written down); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: D704 asked for by the user, details proposed, amending D700 with a row of "Superseded or amended"; after review: the HTML budget and row counts, well-formed cuts, the error-level log, the security digest's last line; the plain-word rows chosen and confirmed by the user, a second row of "Superseded or amended" for D697; after the re-review: D703 amended (null as "none", quoting, `…Start`/`asOf`, depth) with a row of "Superseded or amended", a title for every code, `APP_CHANGE_KINDS`); 2026-11-11 (branch `merge/dry-run-fixes`: D697, D699, D700, D701 and D703 confirmed by the user 2026-11-11; D700's digests to be designed, asked for by the user, on a later branch); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: D701 and D703 proposed, D702 confirmed by the user 2026-11-11, amending D357's setup; after review: D701's server clock and latest policy, D702's network refine and wording); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: D696 confirmed by the user; D697 proposed; D698 confirmed by the user, D242 amended for testnet only; D699 and D700 asked for by the user, D674 and D697 amended, two rows of "Superseded or amended"; after the branch's review D698 and D700 amended: the gate re-checked at acceptance, unlinked JSON, invalid times refused); 2026-11-11 (branch `fix/signed-out-reason`, not merged, not deployed: D695 new, confirmed by the user 2026-11-11); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: D680 confirmed by the user; after the security review D681, D683 confirmed, D682 amended (3-minute grace), D684 built (idle slow-down), D690–D694 new; after the re-review D681–D683, D690 and D693 amended; a row of "Superseded or amended" for D465 and D662); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D679 confirmed by the user, D673 superseded by D685 (decided by the user), D670 and D671 amended; D686–D689 from the security review, confirmed by the user 2026-11-10; two rows of "Superseded or amended"); 2026-11-10 (branch `feat/html-emails-ui`, not merged, not deployed: D689 from the security review, proposed, amending D678); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D675 (designed HTML emails: D670 and D672 asked for by the user, details proposed; D671, D673–D675 proposed), D419 amended with a row of "Superseded or amended"; D676–D678 asked for by the user, details proposed; D679 proposed, not built; D575 amended, D623 noted, a row of "Superseded or amended"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: D651–D652 confirmed by the user, D653–D655 declined for now, D656–D659 after the security review; D653–D659 confirmed by the user 2026-11-10); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: D570–D573; a row of "Superseded or amended" for D85); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: D585–D594 new; notes on D461 and D526; four rows of "Superseded or amended"; after the independent review: D595–D599 new; D587 and D591 corrected; four more rows of "Superseded or amended"; D585–D599 confirmed by the user 2026-11-10, D605 new and confirmed); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `docs/tidy-deployed-1110`: this header only, no entry changed: the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `feat/hana-home-h5`, not merged, not deployed: D537's exception worded for a session with no share, meaning unchanged); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D538 and the amendments confirmed by the user, D539 new and confirmed, D532 amended for the policy's check); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: H5's security review: D536–D538 new, D532, D534, D535 amended); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D535 new, with two rows of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: D520–D529 confirmed, D540–D543 decided by the user; open item 4 closed by D520; H3's security review: D524 corrected); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 amended (the per-app first-login marker, the exposure closed); D500–D503 and D510–D513 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 (exposure), D500 (staleness, overlay), D502, D510, D513: H2's and H4's security reviews; no new number); 2026-11-09 (branch `test/flake-fixes`, not merged, not deployed: D495 new, D493 and D494 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: H6's security review: D493, D494 amended with the combined alarm, the alarm's known limits, unreadable pins, the email Home audience on the exit list; D474's note and a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: D493, D494 new (decided while building, to confirm); H6 built: the exit client, D468, D480–D491); 2026-11-09 (branch `fix/demo-swap-hub-wallet`, not merged, not deployed: every Sodax deposit's spoke `to` and a swap's intent bound to the user's own addresses, the popup's swap line, `mainnet_demo_wrong_destination`, D492, amending D429 point 3 and D476's note, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the; 2026-11-18 (branch `fix/evm-sponsor-consumed-elsewhere-not-charged`, from `next`, not merged, not deployed, after its review: D869's correction path, the closed-slot watch and the in-place schema edits; earlier: D869 new, confirmed by the user 2026-11-18; D852 and D847 amended by it); 2026-11-18 (branch `feat/demo-gas-free-card`: D867, the hosted demo's gas-free check-in card, amended after the review of PR 91, confirmed by the user 2026-11-18); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`, not merged, not deployed: D851 amended, the read endpoint `EVM_SPONSOR_RPC_<chainId>` enforced outside `local*` envs by the API and `deploy-check`, to confirm); 2026-11-18 (branch `feat/near-relay-billing`: D863's amendment after the independent review of PR 77 confirmed by the user; the re-check's amendment still to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` and `next` @ 0a636344 merged: D863 amended after the re-check of 2e5b8dc0, to confirm: the last included transaction per key must have a record, a refused parked row is a miss, what billing can rely on); 2026-11-18 (branch `feat/near-relay-billing`, after its independent review: D863 amended (the cron's own client and budget, records final at once, the nonce check, parked writes, the plain wording), to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` merged: D863 confirmed by the user 2026-11-18); 2026-11-18 (branch `feat/near-relay-billing`, not merged, not deployed: D863 new); 2026-11-18 (branch `feat/evm-sponsor-api`: the amendments of D847 (up to the re-review of a0a83e25), D848, D851 (items up to 18) and D852 confirmed by the user; D847's final-check amendment still to confirm); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ 0a636344 merged: D847 amended after the final check of 811a0c1e, to confirm: no billing correction for a relayer replay, no nonce floor rise from a head read, two known items); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ af938240 merged: D847 and D848 amended while integrating the relayer (D851) and the vault (D856), to confirm: the session proof checked, M2 closed, rejected batches by cause, the relayer's funds and the per-app slot, the authorization rule, gas from the relayer's intrinsic gas, success at head as an accepted risk, the e2e on the real routes); 2026-11-18 (branch `feat/evm-sponsor-api`: D832, D840, D847, D848 confirmed by the user 2026-11-18; D847 and D848 amended for the simplified relayer (D851); D852 new, the billing records); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: D834, D836, D847 and D848 amended (M1–M3, L1–L5, the relayer's final interface), open items before mainnet recorded); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed: D832, D840, D847, D848 new and D836's addendum (the L1 fee in the reservation), decided while building, to confirm; the section heading and intro name them); 2026-11-18 (branch `feat/link-member-banner`: D865 confirmed by the user 2026-11-18, its later amendments to confirm; the re-check's fixes (the `link_remove` message, D158's residual noted)); 2026-11-18 (branch `feat/link-member-banner`, `next` @ its latest merged in: D865 amended by the review's three recommendations, decided by the user 2026-11-18 (Not now and Don't ask again, no notice for case A's silent hosted link, D864's corrected texts with Remove from its late screen), and its `link_remove` message; D864 amended); 2026-11-18 (branch `feat/link-member-banner`, from `feat/link-cancel-by-email` (PR 83), not merged, not deployed: D865 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D259's banner rule and D864's "not done" (a), with a row of "Superseded or amended"); 2026-11-18 (branch `fix/evm-relayer-unaccepted-first`, from `next`, not merged, not deployed: D851 item 18 new (an untaken batch cancelled early only after two runs and with a later record waiting, two Base Sepolia measurements owed, the pools' 7702 texts, no backoff, `oldestUnacceptedMs`, refusals returned as values), D834 and D836 amended (tip cap, batch size, `deadlineMaxS` ≤ 300), to confirm); 2026-11-18 (branch `fix/evm-relayer-account-next`, from `next`, not merged, not deployed: D851 item 17 new, the account's earlier batch checked on demand at send, to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`: D864 confirmed by the user 2026-11-18, its review amendments (the cancelled and late screens' words, `link_pending`'s `userMessage`) to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`, from `next` @ 2b25fc75, not merged, not deployed: D864 new, the cancel-by-email path owed since D259 decided by the user 2026-11-18, details decided while building, to confirm; D259's and D862's "not built" and "open" notes amended; a row of "Superseded or amended"); 2026-11-18 (branch `feat/plain-wording-other`, with `next` @ af938240 merged (PRs 75, 76, 79): D861 and D862 confirmed by the user 2026-11-18, their review amendments to confirm; D861's sponsored reasons read from PR 76's `evm-sponsor.ts`, the signing-domain message reworded); 2026-11-18 (branch `feat/plain-wording-other`, from `next`, not merged, not deployed: D861 new, a plain sentence in SDK errors approved in principle by the founder 2026-11-18, its shape decided while building, to confirm; D862 new, decided while building, to confirm; two rows of "Superseded or amended" for D419's user-mail banner and D670's notice button); 2026-11-18 (branch `fix/evm-relayer-halt-narrowing`, from `next`, not merged, not deployed: D851 item 16 narrowed (halts on the trusted endpoint's own refusal only, a first version's replacement refusal confirmed by its pending count, `fee_cap_too_low` only when a version is required), to confirm); 2026-11-18 (branch `fix/evm-relayer-fee-refusals`, from `next`, not merged, not deployed: D851 item 16 new (fee refusals of a batch are cause `pricing`, `fees_too_low` before anything is stored; after its review: cancels priced from a fresh base fee, `fee_cap_too_low`, a first version's `replacement_underpriced` is the relayer's), to confirm; PR 75 confirmed by the user); 2026-11-18 (branch `feat/evm-sponsor-vault`, with `next` @ e3b6b761 merged: D838, D855 and D856 confirmed by the user 2026-11-18, their review amendments to confirm; D838 moved into number order); 2026-11-18 (branch `chore/ci-on-next`, from `next`, not merged, CI not switched on: D857 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D387 and D383 with a row of "Superseded or amended"; D841's CI note done); 2026-11-18 (branch `feat/evm-relayer-simple`, after its re-review: D851 amended (each refusal's cause; `relayer_cannot_send` with the code replaces `rejected_unsent`; `rejection` in `send`'s answer)); 2026-11-18 (branch `feat/evm-relayer-simple`, after its independent review: D851 amended (no user-triggerable halt, the at-once cancel, intrinsic gas, `staffCancel` instead of `never_sent`, adopt only upwards, one batch per account, finality needs the confirmed count, hourly checks, hashes only after final, `evmOps`)); 2026-11-18 (branch `feat/evm-relayer-simple`, not merged, not deployed: D851 new, the simplified fail-stop relayer decided by the user 2026-11-18, details decided while building, to confirm; D837 (PR 70's self-repairing relayer, never merged) written down as superseded by D851, with a row of "Superseded or amended"); 2026-11-18 (branch `feat/evm-sponsor-vault`, re-check of PR 76: D855 amended (the setup needs both endpoints, `rpcFallback` required outside `local*` envs, the capped read, privacy)); 2026-11-18 (branch `chore/ci-on-next`, after its independent review: D857 confirmed by the user 2026-11-18, the review's changes under "Amended while building", to confirm (`develop`'s nightly until `next` merges, the existing $0 budget, the founder's settings, Foundry by checksum, no pnpm cache in the `evm` and publish builds, two residuals); D841's CI note); 2026-11-18 (branch `feat/evm-sponsor-vault`, after its independent review: D855 amended (the vault reads the account's setup itself, the setup's own failure text, the cross-tab slot, the floor and its open item), D856 with the API's five additions); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged, not deployed: D838 new (no transparent sponsoring decided by the user 2026-11-17, the rest to confirm), D855 and D856 new, decided while building, to confirm; D850's `SPONSORED_NOT_YET` replaced, D855); 2026-11-17 (branch `feat/approval-plain-summary`: D814 amended by the founder (a control bullet whose step's line is in view is dropped)); 2026-11-17 (branch `feat/approval-plain-summary`, review of 5ef13452: D814 amended (whole control keys, spender markers, native sums, directions)); 2026-11-17 (branch `feat/approval-plain-summary`: D814 new, decided by the user, details to confirm, amending D809 and D813; D810's steps line); 2026-11-17 (branch `feat/approval-plain-summary`, final review: D810 and D811 notes on Soroban contract creation and NEAR key allowances); 2026-11-17 (branch `feat/approval-plain-summary`: D808–D813 confirmed by the user, D810 amended by the user (details always folded, risk lines in plain words, red or amber)); 2026-11-17 (branch `feat/approval-plain-summary`, after its third security review: D809, D810, D813 amended (muxed accounts, the red fallback and its test, the always-listed steps)); 2026-11-17 (branch `feat/approval-plain-summary`, after its second security review: D809, D810, D811, D813 amended (value steps always listed, the XLM leaving line, offer prices, a total summary, ERC-1155 batches, withdraw, the page's screen built before it switches)); 2026-11-17 (branch `feat/approval-plain-summary`, after its security review: D809–D813 amended (authorizations, offers, pools, claimants, caps, banners first, approve 0, thresholds, witness, NEP-413)); 2026-11-17 (branch `feat/approval-plain-summary`, from `next`, not merged, not deployed: D808–D811 decided by the user 2026-11-17, their details and D812–D813 decided while building, to confirm; three rows of "Superseded or amended" for D723, D110 and D765); 2026-11-17 (branch `feat/evm-deploy-scripts`, not merged, not deployed: D849, decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ 8d2c435b merged: D834's placeholder sentence after core's 31337 entry became the real pin, its rule tested with a fixture table; the EVM entries in number order under one heading); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ d39d1d69 merged: D841 and D845 confirmed by the user 2026-11-17; D846 amended: the 31337 pin is the delegate's deterministic deployment, the placeholder mechanism tested on a fixture table; the EVM section's heading and intro cover D833, D841, D845, D846); 2026-11-17 (branch `feat/evm-delegate-contract`, after its independent audit: D841 and D845 amended (ERC-1271's compact form and the new address, no fallback's consequences, explorer verification, the duties checklist, the gas numbers, more tests), details decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, not merged, not deployed: D841 and D845 new, the EVM delegate contract (WP0 of the EVM gas sponsorship builds); location, licence and a fresh self-hosted delegate decided by the user 2026-11-17, details decided while building, to confirm); 2026-11-17 (branch `feat/evm-sponsor-manifest`, after `next` @ d39d1d69 merged in: D833, D834, D835, D836 and D846 confirmed by the user 2026-11-17, open items kept; the entries in number order under one heading; D835 adds exact calldata and `maxDataBytes`; D834 wires core's pinned table and refuses its placeholder outside `local*` envs); 2026-11-17 (branch `feat/evm-sponsor-manifest`, not merged, not deployed: D834–D836 new, the founder's choices decided by the user 2026-11-17, the details decided while building, to confirm; the other numbers of D830–D846 are other packages'); 2026-11-17 (branch `feat/evm-sponsor-core`, not merged, not deployed: D833 and D846 new, details decided while building, to confirm; D846 after its independent review: the placeholder refused by default, read-once copies everywhere, call targets, deadline and minGas, key errors, the next layers' list); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: D31 and D765 reworded before the repository went public, the decisions unchanged); 2026-11-13 (branch `fix/stamps-signature-two-step`, not merged, not deployed: D807 new, found by the user's hand check 2026-11-13, details decided while building, to confirm); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: D793 new, asked for by the user, the SendGrid plan and its recent volume stated by the user (Essentials 50K, shared; sized to 30%, the user's choice), values and the two testnet overrides decided while building, confirmed by the user 2026-11-13, amended after its security review; D792 is another branch's); 2026-11-13 (branch `merge/stamps-all`, not merged, not deployed: D805 and D806 new, the app name chosen by the user 2026-11-13, the rest decided while integrating, to confirm; D794–D797 from `feat/stamps-contract`); 2026-11-13 (branch `feat/stamps-art`, not merged, not deployed: D803 and D804 new, decided while building the passport stamps demo's UI, to confirm); 2026-11-13 (branch `feat/stamps-site`, not merged, not deployed: D798–D802 new, asked for by the user 2026-11-13, details to confirm); 2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-122026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the founder's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-12); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D786's note after the security review); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D784–D787 new, decided while building, to confirm); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: D789 new, asked for by the user, details decided while building, to confirm, amending D765, D770, D773 and D774, with a row of "Superseded or amended"); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-12 (branch `docs/near-partner-guide`: D778 new, decided while building, to confirm; numbered after the rebrand's D765–D777); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: D779–D783 new (first numbered D768–D774, renumbered after the rebrand took D765–D777); D781 corrected after the branch's security review, L1); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-11 (branch `feat/near-demo`, not merged, not deployed: D750–D754 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): D730–D739 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-directory`, after its security review, not merged, not deployed: D762 and D763 new, from the review, to confirm; D756 to D758 amended (the lookup never picks, "listed", the vault's SDK gate, the migration first); D764 reserved); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: D755–D761 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D762–D764 reserved); 2026-11-11 (branch `feat/near-core`, not merged, not deployed: D720–D728 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D726 after the branch's automated security review; D729 the full security review's fixes, amending D723 and D726); 2026-11-11 (branch `feat/near-guestbook`, not merged, not deployed: D740–D744 new, asked for by the user, details to confirm); 2026-11-11 (branch `merge/partner-start-and-email-flow`: D707, D711, D712 and D713 confirmed by the user 2026-11-11); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: D711 and D713 new, proposed; D712 taken by `test/flaky-pass-1111`, so the live state is D713; after review: the hostile-value tests attributed, Execute's line, "any owner"); 2026-11-11 (branch `docs/partner-start-here`, not merged, docs only: D707, the sign-in guidance decided by the user, the page asked for by the user, its wording to confirm); 2026-11-11 (branch `test/flaky-pass-1111`: D712 new, to confirm); 2026-11-11 (branch `docs/google-email-change-open-items`: D709 and D710 new, open items logged at the user's request: a changed Google address blocked from email sign-in by a full account, and a second wallet from an email login before the next Google login); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11; D708 new, decided by the user: auto-approved Sodax swaps deferred, with what they would take); 2026-11-11 (branch `release/sdk-0.3.1`, not merged: D705 SDK 0.3.1 decided by the user, amending D695's "no SDK version bump", with a row of "Superseded or amended"; D706, the user's 2026-11-10 "keep sending files", written down); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: D704 asked for by the user, details proposed, amending D700 with a row of "Superseded or amended"; after review: the HTML budget and row counts, well-formed cuts, the error-level log, the security digest's last line; the plain-word rows chosen and confirmed by the user, a second row of "Superseded or amended" for D697; after the re-review: D703 amended (null as "none", quoting, `…Start`/`asOf`, depth) with a row of "Superseded or amended", a title for every code, `APP_CHANGE_KINDS`); 2026-11-11 (branch `merge/dry-run-fixes`: D697, D699, D700, D701 and D703 confirmed by the user 2026-11-11; D700's digests to be designed, asked for by the user, on a later branch); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: D701 and D703 proposed, D702 confirmed by the user 2026-11-11, amending D357's setup; after review: D701's server clock and latest policy, D702's network refine and wording); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: D696 confirmed by the user; D697 proposed; D698 confirmed by the user, D242 amended for testnet only; D699 and D700 asked for by the user, D674 and D697 amended, two rows of "Superseded or amended"; after the branch's review D698 and D700 amended: the gate re-checked at acceptance, unlinked JSON, invalid times refused); 2026-11-11 (branch `fix/signed-out-reason`, not merged, not deployed: D695 new, confirmed by the user 2026-11-11); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: D680 confirmed by the user; after the security review D681, D683 confirmed, D682 amended (3-minute grace), D684 built (idle slow-down), D690–D694 new; after the re-review D681–D683, D690 and D693 amended; a row of "Superseded or amended" for D465 and D662); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D679 confirmed by the user, D673 superseded by D685 (decided by the user), D670 and D671 amended; D686–D689 from the security review, confirmed by the user 2026-11-10; two rows of "Superseded or amended"); 2026-11-10 (branch `feat/html-emails-ui`, not merged, not deployed: D689 from the security review, proposed, amending D678); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D675 (designed HTML emails: D670 and D672 asked for by the user, details proposed; D671, D673–D675 proposed), D419 amended with a row of "Superseded or amended"; D676–D678 asked for by the user, details proposed; D679 proposed, not built; D575 amended, D623 noted, a row of "Superseded or amended"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: D651–D652 confirmed by the user, D653–D655 declined for now, D656–D659 after the security review; D653–D659 confirmed by the user 2026-11-10); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: D570–D573; a row of "Superseded or amended" for D85); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: D585–D594 new; notes on D461 and D526; four rows of "Superseded or amended"; after the independent review: D595–D599 new; D587 and D591 corrected; four more rows of "Superseded or amended"; D585–D599 confirmed by the user 2026-11-10, D605 new and confirmed); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `docs/tidy-deployed-1110`: this header only, no entry changed: the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `feat/hana-home-h5`, not merged, not deployed: D537's exception worded for a session with no share, meaning unchanged); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D538 and the amendments confirmed by the user, D539 new and confirmed, D532 amended for the policy's check); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: H5's security review: D536–D538 new, D532, D534, D535 amended); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D535 new, with two rows of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: D520–D529 confirmed, D540–D543 decided by the user; open item 4 closed by D520; H3's security review: D524 corrected); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 amended (the per-app first-login marker, the exposure closed); D500–D503 and D510–D513 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 (exposure), D500 (staleness, overlay), D502, D510, D513: H2's and H4's security reviews; no new number); 2026-11-09 (branch `test/flake-fixes`, not merged, not deployed: D495 new, D493 and D494 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: H6's security review: D493, D494 amended with the combined alarm, the alarm's known limits, unreadable pins, the email Home audience on the exit list; D474's note and a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: D493, D494 new (decided while building, to confirm); H6 built: the exit client, D468, D480–D491); 2026-11-09 (branch `fix/demo-swap-hub-wallet`, not merged, not deployed: every Sodax deposit's spoke `to` and a swap's intent bound to the user's own addresses, the popup's swap line, `mainnet_demo_wrong_destination`, D492, amending D429 point 3 and D476's note, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
+Last verified against code: 2026-11-24 (branch `docs/tech-lead-wording`, from `next`, not merged, not deployed, docs only: the note at the end, entries that named "the founder" as the one who decided now say "the Tech Lead"; no decision changed); 2026-11-24 (branch `feat/payment-account-name`, from `next`, not merged, not deployed: D907 and D908 at the end (D908: the console's "See an example", the memo label's hint, the waiting card's email line), a matching payment's sentence ends with the destination's address book name, with a row of "Superseded or amended" for D896); 2026-11-24 (branch `docs/sodax-sdk-integration`, after PR 136's review: D909's decided, direction and parked items split, two standing decisions written down, the address-freeze wording, tested/read/inferred marks); 2026-11-24 (branch `docs/sodax-sdk-integration`, from `next`, not merged, not deployed, docs only: D909 at the end, the Tech Lead's shared wallet for Sodax partners and the Sodax SDK findings); 2026-11-24 (branch `chore/confirmations-pulse`, after PR 134's review: D906's pulse low point 0.6 and wording); 2026-11-24 (branch `chore/confirmations-pulse`, from `next`, not merged, not deployed: D906 at the end, the Tech Lead's "confirm all" for eight points of D901 to D905 with a dated note under each, the loading spinners' pulse under reduced motion, a row of "Superseded or amended" for D905's still spinner); 2026-11-24 (branch `feat/key-source-operators-text-safety`, from `next`, not merged, not deployed, after PR 133's review: D904's points for the Tech Lead, the two checks built after review, the proof list corrected); 2026-11-24 (branch `feat/key-source-operators-text-safety`, from `next`, not merged, not deployed: D904, after D905 at the end, a row of "Superseded or amended" for D100's count of the CKD key's sources); 2026-11-24 (branch `feat/dev-wording-reduced-motion`, from `next`, not merged, not deployed: D905 at the end: developer-side "gas sponsorship" and the brand's reduced-motion rule, with PR 132's review fixes); 2026-11-24 (branch `feat/home-cancel-waiting-sign-in`, from `next`, not merged, not deployed: D902 at the end, after D903, with its review amendments); 2026-11-24 (branch `feat/labels-line-names-provider-rule`, from `next`, not merged, not deployed: D903, with notes in D891 and D900 and three rows of "Superseded or amended"); 2026-11-23 (branch `feat/partner-labels-window`, from `next`, not merged, not deployed, after PR 123's review: D896 rewritten with the review's 12 fixes and the commit review's two findings, a piece-4 note on D894; before it: D896, partner labels piece 3: the vault's fresh labels to the approval window, the window's box after every warning, the amber and red lines, the `app.renamed` recommendation, the list to confirm); 2026-11-23 (branch `fix/app-name-passport-tiers`, from `next`, not merged, not deployed: a dated note on D891, the Tech Lead's "Refuse" for edition words beside "Passport" ("Passport Plus", "Passport Pro", "Passport One") and "narrow it" to 12 words, PR 117's review fixed, the positions to confirm); 2026-11-23 (branch `feat/unreadable-message-one-box`, from `next`, not merged, not deployed: a dated note on D886, the Tech Lead's one amber box for a message Journear can't read, and their "ok for two" for keeping the note about networks as its own box; PR 118's review: a row of "Superseded or amended" for D810's sentence, a correction of D886's colour list); 2026-11-23 (branch `docs/batch-confirmed-2026-11-23`, from `next`, not merged, not deployed, docs only: the Tech Lead's "confirm the batch" and "confirm 1 to 8", recorded in "Confirmed in one batch, 2026-11-23" with the list "Open for the Tech Lead as of 2026-11-23"; dated notes splitting what was confirmed from what stays open on D843, D864, D865, D873 to D881, D884 to D886, D888, D890 and D891; D892's verb list and review step decided by the Tech Lead; no behaviour changed); 2026-11-23 (branch `feat/partner-labels-core`, from `next`, not merged, not deployed: D892, the Tech Lead's adoption of the partner-labels proposal's 12 recommendations, and piece 1, the label format, text rules and matcher in core, wired to nothing; the schema, rules, limits and codes to confirm, the verb list and the single meaning of "checked by Journear" for the Tech Lead to confirm; amended after PR 114's review: precedence for Journear's own reading, every true value returned, deny-lists, network and code-hash inputs, the open review-step decision); 2026-11-23 (branch `fix/console-auth-token-test-clock`, from `next`, not merged, not deployed: a dated note on D712, tests only); 2026-11-23 (branch `fix/app-name-passport`, from `next`, not merged, not deployed: D891, "Passport" alone refused as an app name, decided by the Tech Lead; after PR 112's review the wallet-like forms on both sides, imitation letters, check marks, claim words after punctuation and vouching words last, to confirm; amends D686/D765 with a row of "Superseded or amended" and a note on D884); 2026-11-23 (branch `feat/home-shell-step1`, from `next`, not merged, not deployed: D888, Passport Home's structure A and the Tech Lead's two related decisions, decided 2026-11-23; step 1's shell, amended after PR 109's review, to confirm; notes on D553 and D878); 2026-11-23 (branch `feat/evm-relayer-auto-resume`, from `next`, not merged, not deployed: D890, decided by the Tech Lead, its details to confirm, amending D851 and answering D882's open question, with a row of "Superseded or amended"); 2026-11-23 (branch `feat/demo-plain-wording-2`, from `next`, not merged, not deployed: D889, the hosted demo's NEAR card in plain words, to confirm; dated notes of the Tech Lead's 2026-11-23 decisions on D884 ("Sponsored by {App}" stays; "Passport" alone refused, not built), D879 (the partner side says "gas sponsorship", built in the partner docs), D793 (the NEAR relay put-back rides with the December deploy), D874 (Home's Cancel and Remove, decided, not built) and D885 (item 11 left for now; item 12's chain facts confirmed by the on-chain check of 2026-11-23, recorded)); 2026-11-23 (branch `feat/remove-findable`, from `next`, not merged, not deployed: D887, decided by the Tech Lead (the button, then "Don’t recognise it?" after PR 108's review), the labels, names, outline and the other two banners to confirm; amends D875 and D881, with notes on both and a row of "Superseded or amended"); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: D884 and D886, decided by the Tech Lead, the details to confirm, D886 with notes on D35 and D813; amends D858 and D877, with notes on D850, D853, D858 and D877 and a row of "Superseded or amended"); 2026-11-19 (branch `fix/e2e-local-alarm-cadence`, from `next`, not merged, not deployed: D882, the local stack's alarm decided while building, to confirm, and the open question on backing off while paused); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: D879, decided by the Tech Lead, the reworded sentences to confirm, with notes on D843 and D853 and a row of "Superseded or amended"; amended after its review: the scoped "affects" line, "the relayer wallet", "gas price limit", "a little ETH for gas", "NEAR relay: a billing record is late"); 2026-11-19 (branch `feat/unbroken-address-copy`, from `next`, not merged, not deployed: D876, D877 and D878, decided or asked for by the Tech Lead, the details to confirm, amended after PR 101's review (counterparty rows' layout, decided by the Tech Lead to stay in one piece, and the groups switch, the hint's words and order, the mono values, the kept spaces); amends D859, D850 and D858, with two rows of "Superseded or amended"); 2026-11-19 (branch `test/e2e-hand-browser`, from `next`, not merged, not deployed: D880, test tooling, the Tech Lead's request, its details to confirm); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, from `next`, not merged, not deployed: D875, decided by the Tech Lead, its details to confirm, amended after PR 100's review, with a row of "Superseded or amended" and amendments to D259 and D874); 2026-11-19 (branch `feat/home-sign-in-list`, from `next`, not merged, not deployed, after its independent review: D874 amended, to confirm); 2026-11-19 (branch `feat/home-sign-in-list`, from `next`, not merged, not deployed: D874, Passport Home's "Ways to sign in", read-only, to confirm); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: D872, the direction confirmed by the user, the details decided while building, to confirm; amends D280/D380 and D425; amended after review (items 8–11, to confirm) and item 12, the deploy after Neon's reset, confirmed by the user 2026-11-19); 2026-11-18 (branch `fix/evm-sponsor-gas-limit-not-users-fault`, not merged, not deployed: D847 amended, a refusal over the gas Journear set is not the user's failure, to confirm); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`, not merged, not deployed: D868 new, the anvil lane, to confirm); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: after its re-check: D843 items 19–22 (the leak mark, the tick, the token, a fresh view) and D851’s note; D843 new, amended after its independent review (items 11–18), D851's note that the staff methods are reached through AdminRpc only); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`, not merged, not deployed: D851 amended, the read endpoint `EVM_SPONSOR_RPC_<chainId>` enforced outside `local*` envs by the API and `deploy-check`, to confirm); 2026-11-18 (branch `feat/near-relay-billing`: D863's amendment after the independent review of PR 77 confirmed by the user; the re-check's amendment still to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` and `next` @ 0a636344 merged: D863 amended after the re-check of 2e5b8dc0, to confirm: the last included transaction per key must have a record, a refused parked row is a miss, what billing can rely on); 2026-11-18 (branch `feat/near-relay-billing`, after its independent review: D863 amended (the cron's own client and budget, records final at once, the nonce check, parked writes, the plain wording), to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` merged: D863 confirmed by the user 2026-11-18); 2026-11-18 (branch `feat/near-relay-billing`, not merged, not deployed: D863 new); 2026-11-18 (branch `feat/evm-sponsor-api`: the amendments of D847 (up to the re-review of a0a83e25), D848, D851 (items up to 18) and D852 confirmed by the user; D847's final-check amendment still to confirm); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ 0a636344 merged: D847 amended after the final check of 811a0c1e, to confirm: no billing correction for a relayer replay, no nonce floor rise from a head read, two known items); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ af938240 merged: D847 and D848 amended while integrating the relayer (D851) and the vault (D856), to confirm: the session proof checked, M2 closed, rejected batches by cause, the relayer's funds and the per-app slot, the authorization rule, gas from the relayer's intrinsic gas, success at head as an accepted risk, the e2e on the real routes); 2026-11-18 (branch `feat/evm-sponsor-api`: D832, D840, D847, D848 confirmed by the user 2026-11-18; D847 and D848 amended for the simplified relayer (D851); D852 new, the billing records); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: D834, D836, D847 and D848 amended (M1–M3, L1–L5, the relayer's final interface), open items before mainnet recorded); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed: D832, D840, D847, D848 new and D836's addendum (the L1 fee in the reservation), decided while building, to confirm; the section heading and intro name them); 2026-11-18 (branch `feat/link-member-banner`: D865 confirmed by the user 2026-11-18, its later amendments to confirm; the re-check's fixes (the `link_remove` message, D158's residual noted)); 2026-11-18 (branch `feat/link-member-banner`, `next` @ its latest merged in: D865 amended by the review's three recommendations, decided by the user 2026-11-18 (Not now and Don't ask again, no notice for case A's silent hosted link, D864's corrected texts with Remove from its late screen), and its `link_remove` message; D864 amended); 2026-11-18 (branch `feat/link-member-banner`, from `feat/link-cancel-by-email` (PR 83), not merged, not deployed: D865 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D259's banner rule and D864's "not done" (a), with a row of "Superseded or amended"); 2026-11-18 (branch `fix/evm-relayer-unaccepted-first`, from `next`, not merged, not deployed: D851 item 18 new (an untaken batch cancelled early only after two runs and with a later record waiting, two Base Sepolia measurements owed, the pools' 7702 texts, no backoff, `oldestUnacceptedMs`, refusals returned as values), D834 and D836 amended (tip cap, batch size, `deadlineMaxS` ≤ 300), to confirm); 2026-11-18 (branch `fix/evm-relayer-account-next`, from `next`, not merged, not deployed: D851 item 17 new, the account's earlier batch checked on demand at send, to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`: D864 confirmed by the user 2026-11-18, its review amendments (the cancelled and late screens' words, `link_pending`'s `userMessage`) to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`, from `next` @ 2b25fc75, not merged, not deployed: D864 new, the cancel-by-email path owed since D259 decided by the user 2026-11-18, details decided while building, to confirm; D259's and D862's "not built" and "open" notes amended; a row of "Superseded or amended"); 2026-11-18 (branch `feat/plain-wording-other`, with `next` @ af938240 merged (PRs 75, 76, 79): D861 and D862 confirmed by the user 2026-11-18, their review amendments to confirm; D861's sponsored reasons read from PR 76's `evm-sponsor.ts`, the signing-domain message reworded); 2026-11-18 (branch `feat/plain-wording-other`, from `next`, not merged, not deployed: D861 new, a plain sentence in SDK errors approved in principle by the Tech Lead 2026-11-18, its shape decided while building, to confirm; D862 new, decided while building, to confirm; two rows of "Superseded or amended" for D419's user-mail banner and D670's notice button); 2026-11-18 (branch `fix/evm-relayer-halt-narrowing`, from `next`, not merged, not deployed: D851 item 16 narrowed (halts on the trusted endpoint's own refusal only, a first version's replacement refusal confirmed by its pending count, `fee_cap_too_low` only when a version is required), to confirm); 2026-11-18 (branch `fix/evm-relayer-fee-refusals`, from `next`, not merged, not deployed: D851 item 16 new (fee refusals of a batch are cause `pricing`, `fees_too_low` before anything is stored; after its review: cancels priced from a fresh base fee, `fee_cap_too_low`, a first version's `replacement_underpriced` is the relayer's), to confirm; PR 75 confirmed by the user); 2026-11-18 (branch `feat/evm-sponsor-vault`, with `next` @ e3b6b761 merged: D838, D855 and D856 confirmed by the user 2026-11-18, their review amendments to confirm; D838 moved into number order); 2026-11-18 (branch `chore/ci-on-next`, from `next`, not merged, CI not switched on: D857 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D387 and D383 with a row of "Superseded or amended"; D841's CI note done); 2026-11-18 (branch `feat/evm-relayer-simple`, after its re-review: D851 amended (each refusal's cause; `relayer_cannot_send` with the code replaces `rejected_unsent`; `rejection` in `send`'s answer)); 2026-11-18 (branch `feat/evm-relayer-simple`, after its independent review: D851 amended (no user-triggerable halt, the at-once cancel, intrinsic gas, `staffCancel` instead of `never_sent`, adopt only upwards, one batch per account, finality needs the confirmed count, hourly checks, hashes only after final, `evmOps`)); 2026-11-18 (branch `feat/evm-relayer-simple`, not merged, not deployed: D851 new, the simplified fail-stop relayer decided by the user 2026-11-18, details decided while building, to confirm; D837 (PR 70's self-repairing relayer, never merged) written down as superseded by D851, with a row of "Superseded or amended"); 2026-11-18 (branch `feat/evm-sponsor-vault`, re-check of PR 76: D855 amended (the setup needs both endpoints, `rpcFallback` required outside `local*` envs, the capped read, privacy)); 2026-11-18 (branch `chore/ci-on-next`, after its independent review: D857 confirmed by the user 2026-11-18, the review's changes under "Amended while building", to confirm (`develop`'s nightly until `next` merges, the existing $0 budget, the Tech Lead's settings, Foundry by checksum, no pnpm cache in the `evm` and publish builds, two residuals); D841's CI note); 2026-11-18 (branch `feat/evm-sponsor-vault`, after its independent review: D855 amended (the vault reads the account's setup itself, the setup's own failure text, the cross-tab slot, the floor and its open item), D856 with the API's five additions); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged, not deployed: D838 new (no transparent sponsoring decided by the user 2026-11-17, the rest to confirm), D855 and D856 new, decided while building, to confirm; D850's `SPONSORED_NOT_YET` replaced, D855); 2026-11-17 (branch `feat/approval-plain-summary`: D814 amended by the Tech Lead (a control bullet whose step's line is in view is dropped)); 2026-11-17 (branch `feat/approval-plain-summary`, review of 5ef13452: D814 amended (whole control keys, spender markers, native sums, directions)); 2026-11-17 (branch `feat/approval-plain-summary`: D814 new, decided by the user, details to confirm, amending D809 and D813; D810's steps line); 2026-11-17 (branch `feat/approval-plain-summary`, final review: D810 and D811 notes on Soroban contract creation and NEAR key allowances); 2026-11-17 (branch `feat/approval-plain-summary`: D808–D813 confirmed by the user, D810 amended by the user (details always folded, risk lines in plain words, red or amber)); 2026-11-17 (branch `feat/approval-plain-summary`, after its third security review: D809, D810, D813 amended (muxed accounts, the red fallback and its test, the always-listed steps)); 2026-11-17 (branch `feat/approval-plain-summary`, after its second security review: D809, D810, D811, D813 amended (value steps always listed, the XLM leaving line, offer prices, a total summary, ERC-1155 batches, withdraw, the page's screen built before it switches)); 2026-11-17 (branch `feat/approval-plain-summary`, after its security review: D809–D813 amended (authorizations, offers, pools, claimants, caps, banners first, approve 0, thresholds, witness, NEP-413)); 2026-11-17 (branch `feat/approval-plain-summary`, from `next`, not merged, not deployed: D808–D811 decided by the user 2026-11-17, their details and D812–D813 decided while building, to confirm; three rows of "Superseded or amended" for D723, D110 and D765); 2026-11-17 (branch `feat/evm-deploy-scripts`, not merged, not deployed: D849, decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ 8d2c435b merged: D834's placeholder sentence after core's 31337 entry became the real pin, its rule tested with a fixture table; the EVM entries in number order under one heading); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ d39d1d69 merged: D841 and D845 confirmed by the user 2026-11-17; D846 amended: the 31337 pin is the delegate's deterministic deployment, the placeholder mechanism tested on a fixture table; the EVM section's heading and intro cover D833, D841, D845, D846); 2026-11-17 (branch `feat/evm-delegate-contract`, after its independent audit: D841 and D845 amended (ERC-1271's compact form and the new address, no fallback's consequences, explorer verification, the duties checklist, the gas numbers, more tests), details decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, not merged, not deployed: D841 and D845 new, the EVM delegate contract (WP0 of the EVM gas sponsorship builds); location, licence and a fresh self-hosted delegate decided by the user 2026-11-17, details decided while building, to confirm); 2026-11-17 (branch `feat/evm-sponsor-manifest`, after `next` @ d39d1d69 merged in: D833, D834, D835, D836 and D846 confirmed by the user 2026-11-17, open items kept; the entries in number order under one heading; D835 adds exact calldata and `maxDataBytes`; D834 wires core's pinned table and refuses its placeholder outside `local*` envs); 2026-11-17 (branch `feat/evm-sponsor-manifest`, not merged, not deployed: D834–D836 new, the Tech Lead's choices decided by the user 2026-11-17, the details decided while building, to confirm; the other numbers of D830–D846 are other packages'); 2026-11-17 (branch `feat/evm-sponsor-core`, not merged, not deployed: D833 and D846 new, details decided while building, to confirm; D846 after its independent review: the placeholder refused by default, read-once copies everywhere, call targets, deadline and minGas, key errors, the next layers' list); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: D31 and D765 reworded before the repository went public, the decisions unchanged); 2026-11-13 (branch `fix/stamps-signature-two-step`, not merged, not deployed: D807 new, found by the user's hand check 2026-11-13, details decided while building, to confirm); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: D793 new, asked for by the user, the SendGrid plan and its recent volume stated by the user (Essentials 50K, shared; sized to 30%, the user's choice), values and the two testnet overrides decided while building, confirmed by the user 2026-11-13, amended after its security review; D792 is another branch's); 2026-11-13 (branch `merge/stamps-all`, not merged, not deployed: D805 and D806 new, the app name chosen by the user 2026-11-13, the rest decided while integrating, to confirm; D794–D797 from `feat/stamps-contract`); 2026-11-13 (branch `feat/stamps-art`, not merged, not deployed: D803 and D804 new, decided while building the passport stamps demo's UI, to confirm); 2026-11-13 (branch `feat/stamps-site`, not merged, not deployed: D798–D802 new, asked for by the user 2026-11-13, details to confirm); 2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the Tech Lead's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-122026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the Tech Lead's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-12); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D786's note after the security review); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D784–D787 new, decided while building, to confirm); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: D789 new, asked for by the user, details decided while building, to confirm, amending D765, D770, D773 and D774, with a row of "Superseded or amended"); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-12 (branch `docs/near-partner-guide`: D778 new, decided while building, to confirm; numbered after the rebrand's D765–D777); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: D779–D783 new (first numbered D768–D774, renumbered after the rebrand took D765–D777); D781 corrected after the branch's security review, L1); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-11 (branch `feat/near-demo`, not merged, not deployed: D750–D754 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): D730–D739 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-directory`, after its security review, not merged, not deployed: D762 and D763 new, from the review, to confirm; D756 to D758 amended (the lookup never picks, "listed", the vault's SDK gate, the migration first); D764 reserved); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: D755–D761 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D762–D764 reserved); 2026-11-11 (branch `feat/near-core`, not merged, not deployed: D720–D728 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D726 after the branch's automated security review; D729 the full security review's fixes, amending D723 and D726); 2026-11-11 (branch `feat/near-guestbook`, not merged, not deployed: D740–D744 new, asked for by the user, details to confirm); 2026-11-11 (branch `merge/partner-start-and-email-flow`: D707, D711, D712 and D713 confirmed by the user 2026-11-11); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: D711 and D713 new, proposed; D712 taken by `test/flaky-pass-1111`, so the live state is D713; after review: the hostile-value tests attributed, Execute's line, "any owner"); 2026-11-11 (branch `docs/partner-start-here`, not merged, docs only: D707, the sign-in guidance decided by the user, the page asked for by the user, its wording to confirm); 2026-11-11 (branch `test/flaky-pass-1111`: D712 new, to confirm); 2026-11-11 (branch `docs/google-email-change-open-items`: D709 and D710 new, open items logged at the user's request: a changed Google address blocked from email sign-in by a full account, and a second wallet from an email login before the next Google login); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11; D708 new, decided by the user: auto-approved Sodax swaps deferred, with what they would take); 2026-11-11 (branch `release/sdk-0.3.1`, not merged: D705 SDK 0.3.1 decided by the user, amending D695's "no SDK version bump", with a row of "Superseded or amended"; D706, the user's 2026-11-10 "keep sending files", written down); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: D704 asked for by the user, details proposed, amending D700 with a row of "Superseded or amended"; after review: the HTML budget and row counts, well-formed cuts, the error-level log, the security digest's last line; the plain-word rows chosen and confirmed by the user, a second row of "Superseded or amended" for D697; after the re-review: D703 amended (null as "none", quoting, `…Start`/`asOf`, depth) with a row of "Superseded or amended", a title for every code, `APP_CHANGE_KINDS`); 2026-11-11 (branch `merge/dry-run-fixes`: D697, D699, D700, D701 and D703 confirmed by the user 2026-11-11; D700's digests to be designed, asked for by the user, on a later branch); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: D701 and D703 proposed, D702 confirmed by the user 2026-11-11, amending D357's setup; after review: D701's server clock and latest policy, D702's network refine and wording); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: D696 confirmed by the user; D697 proposed; D698 confirmed by the user, D242 amended for testnet only; D699 and D700 asked for by the user, D674 and D697 amended, two rows of "Superseded or amended"; after the branch's review D698 and D700 amended: the gate re-checked at acceptance, unlinked JSON, invalid times refused); 2026-11-11 (branch `fix/signed-out-reason`, not merged, not deployed: D695 new, confirmed by the user 2026-11-11); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: D680 confirmed by the user; after the security review D681, D683 confirmed, D682 amended (3-minute grace), D684 built (idle slow-down), D690–D694 new; after the re-review D681–D683, D690 and D693 amended; a row of "Superseded or amended" for D465 and D662); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D679 confirmed by the user, D673 superseded by D685 (decided by the user), D670 and D671 amended; D686–D689 from the security review, confirmed by the user 2026-11-10; two rows of "Superseded or amended"); 2026-11-10 (branch `feat/html-emails-ui`, not merged, not deployed: D689 from the security review, proposed, amending D678); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D675 (designed HTML emails: D670 and D672 asked for by the user, details proposed; D671, D673–D675 proposed), D419 amended with a row of "Superseded or amended"; D676–D678 asked for by the user, details proposed; D679 proposed, not built; D575 amended, D623 noted, a row of "Superseded or amended"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: D651–D652 confirmed by the user, D653–D655 declined for now, D656–D659 after the security review; D653–D659 confirmed by the user 2026-11-10); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: D570–D573; a row of "Superseded or amended" for D85); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: D585–D594 new; notes on D461 and D526; four rows of "Superseded or amended"; after the independent review: D595–D599 new; D587 and D591 corrected; four more rows of "Superseded or amended"; D585–D599 confirmed by the user 2026-11-10, D605 new and confirmed); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `docs/tidy-deployed-1110`: this header only, no entry changed: the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `feat/hana-home-h5`, not merged, not deployed: D537's exception worded for a session with no share, meaning unchanged); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D538 and the amendments confirmed by the user, D539 new and confirmed, D532 amended for the policy's check); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: H5's security review: D536–D538 new, D532, D534, D535 amended); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D535 new, with two rows of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: D520–D529 confirmed, D540–D543 decided by the user; open item 4 closed by D520; H3's security review: D524 corrected); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 amended (the per-app first-login marker, the exposure closed); D500–D503 and D510–D513 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 (exposure), D500 (staleness, overlay), D502, D510, D513: H2's and H4's security reviews; no new number); 2026-11-09 (branch `test/flake-fixes`, not merged, not deployed: D495 new, D493 and D494 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: H6's security review: D493, D494 amended with the combined alarm, the alarm's known limits, unreadable pins, the email Home audience on the exit list; D474's note and a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: D493, D494 new (decided while building, to confirm); H6 built: the exit client, D468, D480–D491); 2026-11-09 (branch `fix/demo-swap-hub-wallet`, not merged, not deployed: every Sodax deposit's spoke `to` and a swap's intent bound to the user's own addresses, the popup's swap line, `mainnet_demo_wrong_destination`, D492, amending D429 point 3 and D476's note, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the; 2026-11-18 (branch `fix/evm-sponsor-consumed-elsewhere-not-charged`, from `next`, not merged, not deployed, after its review: D869's correction path, the closed-slot watch and the in-place schema edits; earlier: D869 new, confirmed by the user 2026-11-18; D852 and D847 amended by it); 2026-11-18 (branch `feat/demo-gas-free-card`: D867, the hosted demo's gas-free check-in card, amended after the review of PR 91, confirmed by the user 2026-11-18); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`, not merged, not deployed: D851 amended, the read endpoint `EVM_SPONSOR_RPC_<chainId>` enforced outside `local*` envs by the API and `deploy-check`, to confirm); 2026-11-18 (branch `feat/near-relay-billing`: D863's amendment after the independent review of PR 77 confirmed by the user; the re-check's amendment still to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` and `next` @ 0a636344 merged: D863 amended after the re-check of 2e5b8dc0, to confirm: the last included transaction per key must have a record, a refused parked row is a miss, what billing can rely on); 2026-11-18 (branch `feat/near-relay-billing`, after its independent review: D863 amended (the cron's own client and budget, records final at once, the nonce check, parked writes, the plain wording), to confirm); 2026-11-18 (branch `feat/near-relay-billing`, with `feat/evm-sponsor-api` merged: D863 confirmed by the user 2026-11-18); 2026-11-18 (branch `feat/near-relay-billing`, not merged, not deployed: D863 new); 2026-11-18 (branch `feat/evm-sponsor-api`: the amendments of D847 (up to the re-review of a0a83e25), D848, D851 (items up to 18) and D852 confirmed by the user; D847's final-check amendment still to confirm); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ 0a636344 merged: D847 amended after the final check of 811a0c1e, to confirm: no billing correction for a relayer replay, no nonce floor rise from a head read, two known items); 2026-11-18 (branch `feat/evm-sponsor-api`, with `next` @ af938240 merged: D847 and D848 amended while integrating the relayer (D851) and the vault (D856), to confirm: the session proof checked, M2 closed, rejected batches by cause, the relayer's funds and the per-app slot, the authorization rule, gas from the relayer's intrinsic gas, success at head as an accepted risk, the e2e on the real routes); 2026-11-18 (branch `feat/evm-sponsor-api`: D832, D840, D847, D848 confirmed by the user 2026-11-18; D847 and D848 amended for the simplified relayer (D851); D852 new, the billing records); 2026-11-17 (branch `feat/evm-sponsor-api`, after its independent review: D834, D836, D847 and D848 amended (M1–M3, L1–L5, the relayer's final interface), open items before mainnet recorded); 2026-11-17 (branch `feat/evm-sponsor-api`, not merged, not deployed: D832, D840, D847, D848 new and D836's addendum (the L1 fee in the reservation), decided while building, to confirm; the section heading and intro name them); 2026-11-18 (branch `feat/link-member-banner`: D865 confirmed by the user 2026-11-18, its later amendments to confirm; the re-check's fixes (the `link_remove` message, D158's residual noted)); 2026-11-18 (branch `feat/link-member-banner`, `next` @ its latest merged in: D865 amended by the review's three recommendations, decided by the user 2026-11-18 (Not now and Don't ask again, no notice for case A's silent hosted link, D864's corrected texts with Remove from its late screen), and its `link_remove` message; D864 amended); 2026-11-18 (branch `feat/link-member-banner`, from `feat/link-cancel-by-email` (PR 83), not merged, not deployed: D865 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D259's banner rule and D864's "not done" (a), with a row of "Superseded or amended"); 2026-11-18 (branch `fix/evm-relayer-unaccepted-first`, from `next`, not merged, not deployed: D851 item 18 new (an untaken batch cancelled early only after two runs and with a later record waiting, two Base Sepolia measurements owed, the pools' 7702 texts, no backoff, `oldestUnacceptedMs`, refusals returned as values), D834 and D836 amended (tip cap, batch size, `deadlineMaxS` ≤ 300), to confirm); 2026-11-18 (branch `fix/evm-relayer-account-next`, from `next`, not merged, not deployed: D851 item 17 new, the account's earlier batch checked on demand at send, to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`: D864 confirmed by the user 2026-11-18, its review amendments (the cancelled and late screens' words, `link_pending`'s `userMessage`) to confirm); 2026-11-18 (branch `feat/link-cancel-by-email`, from `next` @ 2b25fc75, not merged, not deployed: D864 new, the cancel-by-email path owed since D259 decided by the user 2026-11-18, details decided while building, to confirm; D259's and D862's "not built" and "open" notes amended; a row of "Superseded or amended"); 2026-11-18 (branch `feat/plain-wording-other`, with `next` @ af938240 merged (PRs 75, 76, 79): D861 and D862 confirmed by the user 2026-11-18, their review amendments to confirm; D861's sponsored reasons read from PR 76's `evm-sponsor.ts`, the signing-domain message reworded); 2026-11-18 (branch `feat/plain-wording-other`, from `next`, not merged, not deployed: D861 new, a plain sentence in SDK errors approved in principle by the Tech Lead 2026-11-18, its shape decided while building, to confirm; D862 new, decided while building, to confirm; two rows of "Superseded or amended" for D419's user-mail banner and D670's notice button); 2026-11-18 (branch `fix/evm-relayer-halt-narrowing`, from `next`, not merged, not deployed: D851 item 16 narrowed (halts on the trusted endpoint's own refusal only, a first version's replacement refusal confirmed by its pending count, `fee_cap_too_low` only when a version is required), to confirm); 2026-11-18 (branch `fix/evm-relayer-fee-refusals`, from `next`, not merged, not deployed: D851 item 16 new (fee refusals of a batch are cause `pricing`, `fees_too_low` before anything is stored; after its review: cancels priced from a fresh base fee, `fee_cap_too_low`, a first version's `replacement_underpriced` is the relayer's), to confirm; PR 75 confirmed by the user); 2026-11-18 (branch `feat/evm-sponsor-vault`, with `next` @ e3b6b761 merged: D838, D855 and D856 confirmed by the user 2026-11-18, their review amendments to confirm; D838 moved into number order); 2026-11-18 (branch `chore/ci-on-next`, from `next`, not merged, CI not switched on: D857 new, decided by the user 2026-11-18, details decided while building, to confirm, amending D387 and D383 with a row of "Superseded or amended"; D841's CI note done); 2026-11-18 (branch `feat/evm-relayer-simple`, after its re-review: D851 amended (each refusal's cause; `relayer_cannot_send` with the code replaces `rejected_unsent`; `rejection` in `send`'s answer)); 2026-11-18 (branch `feat/evm-relayer-simple`, after its independent review: D851 amended (no user-triggerable halt, the at-once cancel, intrinsic gas, `staffCancel` instead of `never_sent`, adopt only upwards, one batch per account, finality needs the confirmed count, hourly checks, hashes only after final, `evmOps`)); 2026-11-18 (branch `feat/evm-relayer-simple`, not merged, not deployed: D851 new, the simplified fail-stop relayer decided by the user 2026-11-18, details decided while building, to confirm; D837 (PR 70's self-repairing relayer, never merged) written down as superseded by D851, with a row of "Superseded or amended"); 2026-11-18 (branch `feat/evm-sponsor-vault`, re-check of PR 76: D855 amended (the setup needs both endpoints, `rpcFallback` required outside `local*` envs, the capped read, privacy)); 2026-11-18 (branch `chore/ci-on-next`, after its independent review: D857 confirmed by the user 2026-11-18, the review's changes under "Amended while building", to confirm (`develop`'s nightly until `next` merges, the existing $0 budget, the Tech Lead's settings, Foundry by checksum, no pnpm cache in the `evm` and publish builds, two residuals); D841's CI note); 2026-11-18 (branch `feat/evm-sponsor-vault`, after its independent review: D855 amended (the vault reads the account's setup itself, the setup's own failure text, the cross-tab slot, the floor and its open item), D856 with the API's five additions); 2026-11-18 (branch `feat/evm-sponsor-vault`, not merged, not deployed: D838 new (no transparent sponsoring decided by the user 2026-11-17, the rest to confirm), D855 and D856 new, decided while building, to confirm; D850's `SPONSORED_NOT_YET` replaced, D855); 2026-11-17 (branch `feat/approval-plain-summary`: D814 amended by the Tech Lead (a control bullet whose step's line is in view is dropped)); 2026-11-17 (branch `feat/approval-plain-summary`, review of 5ef13452: D814 amended (whole control keys, spender markers, native sums, directions)); 2026-11-17 (branch `feat/approval-plain-summary`: D814 new, decided by the user, details to confirm, amending D809 and D813; D810's steps line); 2026-11-17 (branch `feat/approval-plain-summary`, final review: D810 and D811 notes on Soroban contract creation and NEAR key allowances); 2026-11-17 (branch `feat/approval-plain-summary`: D808–D813 confirmed by the user, D810 amended by the user (details always folded, risk lines in plain words, red or amber)); 2026-11-17 (branch `feat/approval-plain-summary`, after its third security review: D809, D810, D813 amended (muxed accounts, the red fallback and its test, the always-listed steps)); 2026-11-17 (branch `feat/approval-plain-summary`, after its second security review: D809, D810, D811, D813 amended (value steps always listed, the XLM leaving line, offer prices, a total summary, ERC-1155 batches, withdraw, the page's screen built before it switches)); 2026-11-17 (branch `feat/approval-plain-summary`, after its security review: D809–D813 amended (authorizations, offers, pools, claimants, caps, banners first, approve 0, thresholds, witness, NEP-413)); 2026-11-17 (branch `feat/approval-plain-summary`, from `next`, not merged, not deployed: D808–D811 decided by the user 2026-11-17, their details and D812–D813 decided while building, to confirm; three rows of "Superseded or amended" for D723, D110 and D765); 2026-11-17 (branch `feat/evm-deploy-scripts`, not merged, not deployed: D849, decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ 8d2c435b merged: D834's placeholder sentence after core's 31337 entry became the real pin, its rule tested with a fixture table; the EVM entries in number order under one heading); 2026-11-17 (branch `feat/evm-delegate-contract`, with `next` @ d39d1d69 merged: D841 and D845 confirmed by the user 2026-11-17; D846 amended: the 31337 pin is the delegate's deterministic deployment, the placeholder mechanism tested on a fixture table; the EVM section's heading and intro cover D833, D841, D845, D846); 2026-11-17 (branch `feat/evm-delegate-contract`, after its independent audit: D841 and D845 amended (ERC-1271's compact form and the new address, no fallback's consequences, explorer verification, the duties checklist, the gas numbers, more tests), details decided while building, to confirm); 2026-11-17 (branch `feat/evm-delegate-contract`, not merged, not deployed: D841 and D845 new, the EVM delegate contract (WP0 of the EVM gas sponsorship builds); location, licence and a fresh self-hosted delegate decided by the user 2026-11-17, details decided while building, to confirm); 2026-11-17 (branch `feat/evm-sponsor-manifest`, after `next` @ d39d1d69 merged in: D833, D834, D835, D836 and D846 confirmed by the user 2026-11-17, open items kept; the entries in number order under one heading; D835 adds exact calldata and `maxDataBytes`; D834 wires core's pinned table and refuses its placeholder outside `local*` envs); 2026-11-17 (branch `feat/evm-sponsor-manifest`, not merged, not deployed: D834–D836 new, the Tech Lead's choices decided by the user 2026-11-17, the details decided while building, to confirm; the other numbers of D830–D846 are other packages'); 2026-11-17 (branch `feat/evm-sponsor-core`, not merged, not deployed: D833 and D846 new, details decided while building, to confirm; D846 after its independent review: the placeholder refused by default, read-once copies everywhere, call targets, deadline and minGas, key errors, the next layers' list); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: D31 and D765 reworded before the repository went public, the decisions unchanged); 2026-11-13 (branch `fix/stamps-signature-two-step`, not merged, not deployed: D807 new, found by the user's hand check 2026-11-13, details decided while building, to confirm); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: D793 new, asked for by the user, the SendGrid plan and its recent volume stated by the user (Essentials 50K, shared; sized to 30%, the user's choice), values and the two testnet overrides decided while building, confirmed by the user 2026-11-13, amended after its security review; D792 is another branch's); 2026-11-13 (branch `merge/stamps-all`, not merged, not deployed: D805 and D806 new, the app name chosen by the user 2026-11-13, the rest decided while integrating, to confirm; D794–D797 from `feat/stamps-contract`); 2026-11-13 (branch `feat/stamps-art`, not merged, not deployed: D803 and D804 new, decided while building the passport stamps demo's UI, to confirm); 2026-11-13 (branch `feat/stamps-site`, not merged, not deployed: D798–D802 new, asked for by the user 2026-11-13, details to confirm); 2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the Tech Lead's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-122026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed2026-11-13 (branch `chore/pre-public-tidy`, not merged, not deployed: D791 new, decided while building, confirmed by the user 2026-11-13; D120's Source names Wend's backend service, not a private repository's name; D708 reworded at the user's request, the decision unchanged; D792 new, asked for by the user: one email vector's input replaced, nothing else changed); 2026-11-13 (branch `docs/hackathon-submission`, second pass: D746 decided by the user (the baseline stated, both tags), D747 decided by the user (BUSL 1.1 and Apache-2.0, parameters and licensor confirmed; `@hana-id/core` open)); 2026-11-13 (branch `docs/hackathon-submission`, docs only: D745–D749 new on `develop` (first written on the unmerged `docs/near-hackathon`), rewritten with the Tech Lead's statements of 2026-11-13: D745, D747 and D748 decided while building, to confirm; D746 open, decided by the user at submission; D749 confirmed 2026-11-12); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D786's note after the security review); 2026-11-12 (branch `feat/admin-near-relay-tile`, not merged, not deployed: D784–D787 new, decided while building, to confirm); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: D789 new, asked for by the user, details decided while building, to confirm, amending D765, D770, D773 and D774, with a row of "Superseded or amended"); 2026-11-12 (branch `fix/sdk-near-relay-error-details`, not merged, not deployed: D788 new, decided while building, to confirm; D784–D787 are another branch's); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-12 (branch `docs/near-partner-guide`: D778 new, decided while building, to confirm; numbered after the rebrand's D765–D777); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: D779–D783 new (first numbered D768–D774, renumbered after the rebrand took D765–D777); D781 corrected after the branch's security review, L1); 2026-11-11 (branch `feat/profile-names`, not deployed: D714 new, confirmed by the user 2026-11-12); 2026-11-11 (branch `feat/near-demo`, not merged, not deployed: D750–D754 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-relayer`, not merged, not deployed, on `feat/near-directory` 9cb4cc68, after three security reviews (in-flight cap, per-app caps and budgets, the per-sender nonce floor): D730–D739 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm); 2026-11-11 (branch `feat/near-directory`, after its security review, not merged, not deployed: D762 and D763 new, from the review, to confirm; D756 to D758 amended (the lookup never picks, "listed", the vault's SDK gate, the migration first); D764 reserved); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: D755–D761 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D762–D764 reserved); 2026-11-11 (branch `feat/near-core`, not merged, not deployed: D720–D728 new, asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon), details decided while building, to confirm; D726 after the branch's automated security review; D729 the full security review's fixes, amending D723 and D726); 2026-11-11 (branch `feat/near-guestbook`, not merged, not deployed: D740–D744 new, asked for by the user, details to confirm); 2026-11-11 (branch `merge/partner-start-and-email-flow`: D707, D711, D712 and D713 confirmed by the user 2026-11-11); 2026-11-11 (branch `fix/console-email-login-flow`, not merged, not deployed: D711 and D713 new, proposed; D712 taken by `test/flaky-pass-1111`, so the live state is D713; after review: the hostile-value tests attributed, Execute's line, "any owner"); 2026-11-11 (branch `docs/partner-start-here`, not merged, docs only: D707, the sign-in guidance decided by the user, the page asked for by the user, its wording to confirm); 2026-11-11 (branch `test/flaky-pass-1111`: D712 new, to confirm); 2026-11-11 (branch `docs/google-email-change-open-items`: D709 and D710 new, open items logged at the user's request: a changed Google address blocked from email sign-in by a full account, and a second wallet from an email login before the next Google login); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11; D708 new, decided by the user: auto-approved Sodax swaps deferred, with what they would take); 2026-11-11 (branch `release/sdk-0.3.1`, not merged: D705 SDK 0.3.1 decided by the user, amending D695's "no SDK version bump", with a row of "Superseded or amended"; D706, the user's 2026-11-10 "keep sending files", written down); 2026-11-11 (branch `merge/designed-digests`: D704 and D703's amendment (a null field reads "none") confirmed by the user 2026-11-11); 2026-11-11 (branch `feat/designed-digests`, not merged, not deployed: D704 asked for by the user, details proposed, amending D700 with a row of "Superseded or amended"; after review: the HTML budget and row counts, well-formed cuts, the error-level log, the security digest's last line; the plain-word rows chosen and confirmed by the user, a second row of "Superseded or amended" for D697; after the re-review: D703 amended (null as "none", quoting, `…Start`/`asOf`, depth) with a row of "Superseded or amended", a title for every code, `APP_CHANGE_KINDS`); 2026-11-11 (branch `merge/dry-run-fixes`: D697, D699, D700, D701 and D703 confirmed by the user 2026-11-11; D700's digests to be designed, asked for by the user, on a later branch); 2026-11-11 (branch `fix/console-getting-started`, not merged, not deployed: D701 and D703 proposed, D702 confirmed by the user 2026-11-11, amending D357's setup; after review: D701's server clock and latest policy, D702's network refine and wording); 2026-11-11 (branch `feat/admin-pending-invites`, not merged, not deployed: D696 confirmed by the user; D697 proposed; D698 confirmed by the user, D242 amended for testnet only; D699 and D700 asked for by the user, D674 and D697 amended, two rows of "Superseded or amended"; after the branch's review D698 and D700 amended: the gate re-checked at acceptance, unlinked JSON, invalid times refused); 2026-11-11 (branch `fix/signed-out-reason`, not merged, not deployed: D695 new, confirmed by the user 2026-11-11); 2026-11-10 (branch `feat/signout-reach`, not merged, not deployed: D680 confirmed by the user; after the security review D681, D683 confirmed, D682 amended (3-minute grace), D684 built (idle slow-down), D690–D694 new; after the re-review D681–D683, D690 and D693 amended; a row of "Superseded or amended" for D465 and D662); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D679 confirmed by the user, D673 superseded by D685 (decided by the user), D670 and D671 amended; D686–D689 from the security review, confirmed by the user 2026-11-10; two rows of "Superseded or amended"); 2026-11-10 (branch `feat/html-emails-ui`, not merged, not deployed: D689 from the security review, proposed, amending D678); 2026-11-10 (branch `feat/html-emails`, not merged, not deployed: D670–D675 (designed HTML emails: D670 and D672 asked for by the user, details proposed; D671, D673–D675 proposed), D419 amended with a row of "Superseded or amended"; D676–D678 asked for by the user, details proposed; D679 proposed, not built; D575 amended, D623 noted, a row of "Superseded or amended"); 2026-11-10 (branch `feat/partner-onboarding`, not merged, not deployed: D651–D652 confirmed by the user, D653–D655 declined for now, D656–D659 after the security review; D653–D659 confirmed by the user 2026-11-10); 2026-11-10 (branch `fix/testing-1110`, not merged, not deployed: D570–D573; a row of "Superseded or amended" for D85); 2026-11-10 (branch `feat/hana-home-h11`, not merged, not deployed: D585–D594 new; notes on D461 and D526; four rows of "Superseded or amended"; after the independent review: D595–D599 new; D587 and D591 corrected; four more rows of "Superseded or amended"; D585–D599 confirmed by the user 2026-11-10, D605 new and confirmed); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `docs/tidy-deployed-1110`: this header only, no entry changed: the separate "Last verified" lines left by merges folded into this one, exact duplicates dropped; the "not merged, not deployed" notes in the older clauses are history); 2026-11-10 (branch `feat/hana-home-h3`, not merged, not deployed: D544, D545; D527, D540, D541, D543 amended); 2026-11-10 (branch `feat/hana-home-h5`, not merged, not deployed: D537's exception worded for a session with no share, meaning unchanged); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D538 and the amendments confirmed by the user, D539 new and confirmed, D532 amended for the policy's check); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: H5's security review: D536–D538 new, D532, D534, D535 amended); 2026-11-09 (branch `feat/hana-home-h5`, not merged, not deployed: D530–D535 new, with two rows of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h3`, not merged, not deployed: D520–D529 confirmed, D540–D543 decided by the user; open item 4 closed by D520; H3's security review: D524 corrected); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 amended (the per-app first-login marker, the exposure closed); D500–D503 and D510–D513 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h2-h4`, not merged, not deployed: D462 (exposure), D500 (staleness, overlay), D502, D510, D513: H2's and H4's security reviews; no new number); 2026-11-09 (branch `test/flake-fixes`, not merged, not deployed: D495 new, D493 and D494 confirmed by the user); 2026-11-09 (branch `feat/hana-home-h6-2`, not merged, not deployed: H6's security review: D493, D494 amended with the combined alarm, the alarm's known limits, unreadable pins, the email Home audience on the exit list; D474's note and a row of "Superseded or amended"); 2026-11-09 (branch `feat/hana-home-h6`, not merged, not deployed: D493, D494 new (decided while building, to confirm); H6 built: the exit client, D468, D480–D491); 2026-11-09 (branch `fix/demo-swap-hub-wallet`, not merged, not deployed: every Sodax deposit's spoke `to` and a swap's intent bound to the user's own addresses, the popup's swap line, `mainnet_demo_wrong_destination`, D492, amending D429 point 3 and D476's note, with a row of "Superseded or amended"); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge-2`, not merged: D476 after its security review: the spoke `to` bound to the signing address's own hub wallet, the corrected popup and recovery claims, the `tokenInfo` read); 2026-11-09 (branch `feat/mainnet-demo-usdc-bridge`, not merged: D476, asked for by the user 2026-11-09, amending D429 point 3, with a row of "Superseded or amended"); 2026-11-09 (branch `docs/hana-home-h6-design`, not merged: D480–D489 new, the rows for D460, D464 and D468, statuses confirmed by the user for D436, D445, D446, D448–D457, D470, D471, D473–D475; no code changed); 2026-11-09 (branch `feat/hana-home-h1-2`, not merged: H1's security review, D475 new, D473 and D474 amended); 2026-11-09 (branch `feat/hana-home-h1`, not merged: D473, D474); 2026-11-09 (branch `fix/approval-waiting-screen`, not merged: D471, asked for by the user, the consent wording and the Close now guard to confirm); 2026-11-09 (branch `docs/hana-home-h0`, not merged: D460–D466, D411's status; no code changed); 2026-11-09 (branch `fix/batch-9-review`, not merged: D444 and D446 amended); 2026-11-09 (branch `feat/email-login-9`, not merged: D444–D448); 2026-10-28 (commit 58edee9); D449 and D450 (branch `feat/test-page-command`, decided while building, to confirm) on 2026-11-09; 2026-11-09 (branch `chore/zod-4`, not merged: D470); D451–D457 (branch `fix/before-mainnet-sweep`, decided while building, to confirm, with a row of "Superseded or amended") on 2026-11-09; 2026-11-09: D438–D443 confirmed by the user, D442 amended; 2026-11-09: 184 readings settled in the user's bulk decision review (17 after reading the review's note, 163 in bulk on its recommendation, 4 retired as replaced), each status says which; D437, D431's confirmation and D435's System status note (branch `chore/status-access-followups`, with rows of "Superseded or amended") on 2026-11-09; D432 (branch `fix/watchdog-new-key-grace`, asked for by the user as D422's follow-up, the design to confirm, amending D153 and D422's watchdog rule, with a row of "Superseded or amended") on 2026-11-06; D433 (branch `feat/user-events-retention`, decided while building, to confirm) on 2026-11-06, amending D430 and D361, with a row of "Superseded or amended"; D434 (branch `feat/issuer-readonly-rpc`, readiness row 7.1d: the issuer's read-only `IssuerRpc`, decided while building, to confirm) on 2026-11-06, superseding D251, with a row of "Superseded or amended"; D435 (branch `feat/api-near-rpc-fallback`, asked for by the user, the mechanics to confirm) on 2026-11-06, amending D261, with a row of "Superseded or amended"; D425 (branch `feat/admin-system-status`, asked for by the user, the checks and thresholds to confirm with the screenshots, extending D420) on 2026-11-06; D424 (branch `fix/session-expiry-ux`, asked for by the user, design choices to confirm, extending D420 and D421) on 2026-11-06; D423 (branch `chore/verify-parallel`, asked for by the user, amending D413, with a row of "Superseded or amended") on 2026-11-06; D422 (branch `fix/google-key-hysteresis`, proposed by the assistant and approved by the user, amending D153 and the JWKS cron's removal grace, with a row of "Superseded or amended") on 2026-11-06; D421 (branch `feat/console-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D420 (branch `feat/admin-ux-redesign`, asked for by the user, design choices to confirm) on 2026-11-06; D419 (branch `feat/env-alert-label`, asked for by the user, implementation choices to confirm) on 2026-11-06; D418 (branch `fix/hyperdrive-account-id-hint`, decided by the user, C16 after the pilot) on 2026-11-06; D417 (branch `docs/personal-account-free-tier`, decided by the user) on 2026-11-06; D416 (branch `feat/console-remove-audience`, decided while building, to confirm) on 2026-11-06, extending D238; D415 (branch `docs/auto-deploy-intent`, decided by the user, intent only, not built) on 2026-11-06; D414 (branch `feat/m4-personal-account`, decided by the user) on 2026-11-05, amending D404, with a row of "Superseded or amended"; D401 amended (branch `fix/sendgrid-suppression`: alerts and blocking notices bypass SendGrid's suppression lists, a security review fix) on 2026-11-05; D401 (branch `feat/sandbox-dev-dashboard-blocks`, asked for by the user: SendGrid for every Hana email; the isolate memo to confirm) and D402 (same branch, agreed by the user: sandbox-dev's 1-day statement lock) on 2026-11-05, amending D87, D279, D308 and settling D194's open point, with rows of "Superseded or amended"; D413 (branch `feat/local-verify`, asked for by the user, confirmed by the user) on 2026-11-05, amending D387, with a row of "Superseded or amended"; D410 and D412 (branch `fix/security-review-1105`: a security review's fixes, to confirm) on 2026-11-05, amending D224, D391, D392, D396, D399 and D403, with two rows of "Superseded or amended"; D411 (branch `docs/email-sharing-decisions`, decided by the user, not built) on 2026-11-05, amending D127's email questions, with a row of "Superseded or amended"; D404 (branch `feat/account-migration`: testnet's move to company accounts decided by the user, the custom-domain placements, `cloudflare.accountId`, `env-secrets`, `d1-move`, `issuer:iss` and the runbook to confirm) on 2026-11-05, amending D230, with a row of "Superseded or amended"; D406 (branch `feat/deploy-check-all-workers`, asked for by the user, implementation choices to confirm) on 2026-11-05, amending D384, with a row of "Superseded or amended"; D409 (branch `feat/access-setup`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D88 for `sandbox*` and D284, with a row of "Superseded or amended"; D405 (branch `feat/sdk-error-request-id`, C15's follow-up, the API request ID in the SDK's errors: decided while building, to confirm) on 2026-11-05, extending D393; D408 (branch `docs/zero-trust-free-guard`, decided by the user) on 2026-11-05; D403 (branch `fix/usage-setup-neon-api-passwords`, decided by the user, implementation choices to confirm) on 2026-11-05, amending D224, with a row of "Superseded or amended"; D400 (branch `fix/popup-signal-before-navigate`, decided while fixing what D398 found, to confirm) on 2026-11-05, amending D347 and resolving D398's "Found while testing", with a row of "Superseded or amended"; D399 (branch `feat/batch-c-15-screen`, the Support ID lookup's screen: decided while building, to confirm) on 2026-11-05, amending D396 and D392, with rows of "Superseded or amended"; D398 (branch `fix/popup-early-close-deadline`, asked for by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D387 (branch `chore/ci-cost`, decided by the user) on 2026-11-05, amending D382 and D383, with a row of "Superseded or amended"; D411 and D438–D443 (brought up to date with `develop` @ a3de75e on `feat/email-sharing-2`, 2026-11-09: the branch's decisions renumbered D438–D443 from D420–D425, migration 0014; D411 point 9 amended again: the user approved merging it in the next batch; D438–D443 still to confirm) on 2026-11-09; D411 built and D438–D443 (branch `feat/email-sharing`, decided while building, to confirm; not merged) on 2026-11-06, with D411's row of "Superseded or amended" updated and a new row; D436 (branch `feat/mainnet-demo-live-prices`, asked for by the user 2026-11-09, the mechanics to confirm, amending D429's price table, with a row of "Superseded or amended") on 2026-11-09; D394–D397, D393 (branch `feat/batch-c-15`, the Support ID lookup and the SDK gate: decided while building, to confirm; D386 (branch `feat/coop-canary`, agreed by the user) on 2026-11-05, amending D347, with a row of "Superseded or amended"; D385 (branch `fix/webcrypto-linux-webkit`, decided while following up D381, to confirm) on 2026-11-05, with D381's addendum and a row of "Superseded or amended"; D384 (branch `feat/deploy-build-check`, asked for by the
 user, implementation choices to confirm) on 2026-11-05; D383 (branch `chore/ci-cost`, asked for by the user) on 2026-11-05, amending D382, with a row of "Superseded or amended"; D382 (branch `chore/identity-probe-hourly`, confirmed by the user) on 2026-11-05, amending D210, with a row of "Superseded or amended"; D381 (branch `fix/e2e-flakes`, decided while fixing CI's Playwright
 flakes, to confirm) on 2026-11-05; D380 (branch `fix/admin-cron-budget`, decided while
 building, to confirm) on 2026-11-04, amending D280, D322 and D360, with a row of "Superseded or amended"; D347 and D348 (branch `fix/google-cancel-back-to-chooser`,
@@ -6477,7 +6477,7 @@ follow-up there.
   separate public repo for the probe (it publishes what the probe looks like, and GitHub pauses scheduled workflows
   after 60 days without activity).
 - Amended 2026-11-18 by D857: with the repository public, CI comes back before mainnet, at no cost, for `next` as
-  well, when the founder switches it on; the probe stays off and still moves to Lambda.
+  well, when the Tech Lead switches it on; the probe stays off and still moves to Lambda.
 ## A quick close on Google's page (branch `fix/popup-early-close-deadline`), 2026-11-05
 
 ### D398. A close inside D347's COOP window ends the login after 90 s without an answer, not after 5 minutes
@@ -8822,7 +8822,7 @@ Readiness rows 6.4 and 6.6. All decided while building, confirmed by the user 20
 - Decision: `pnpm audit --prod` and `cargo audit` on all three lockfiles; anything not triaged, triaged for another
   place or past its `reviewBy` fails. In `--full` only (before deploys), not `--quick` or the default tier: it needs
   the network and an advisory can fail it with no change in the branch. cargo-audit in CI is the pinned release binary
-  with a checksum, like cargo-near. Dependabot alerts are a repository setting for the founder (off on 2026-11-09).
+  with a checksum, like cargo-near. Dependabot alerts are a repository setting for the Tech Lead (off on 2026-11-09).
 
 ### D455. One relay per signed request across isolates, in the relayer key objects
 - Date 2026-11-09 · Status: decided while building, confirmed by the user 2026-11-09 · Built on `fix/before-mainnet-sweep`
@@ -9561,9 +9561,9 @@ suspended app's Home logins (D586's `suspended` line, built as "Hana pays"), to 
 | Was | Now | Source |
 |---|---|---|
 | D896 (after PR 123's review): no address book name for a classic payment; the partner's box showed nothing of the destination | A matching payment's sentence ends with Journear's joining word for the verb and the address book's name of the destination's base account ("pay the fare to Coffee Club till"), set apart as a partner value; still no partner "To" row; the name counts in the sentence's 40 partner characters (D907, Tech Lead 2026-11-24 "go with A") | `packages/core/src/partner-labels/words.ts` `PAYMENT_DESTINATION_WORDS`, `match.ts` `destinationParts`, `schema.ts` `sentenceTextFits` |
-| D905 (item 2): under reduced motion a loading spinner stands still (a still three-quarter ring), as every other animation of the brand's components ends at once | The loading spinners stop turning and fade slowly instead: opacity between full and 0.6, 2 s a cycle, ease-in-out, for ever (`jp-spin-pulse`); everything else still ends at once (D906, founder 2026-11-24) | `packages/brand/components.css` (and its admin copy by `sync-brand`), `apps/demo/src/style.css`, `apps/stamps/src/ui.css` |
-| D100 (and D903's open point): the pinned CKD key's sources counted only by registrable domain (≥ 3), so two of them can be one operator | On a production network also by declared operator: every recorded host named in `ckdSourceOperators`, ≥ 3 different operators (D904, founder 2026-11-24); testnet as before | `packages/env/src/schema.ts` `ckdSourceOperatorProblems`, `scripts/lib/deploy-check.ts`, `scripts/lib/ckd.ts` |
-| D896/D899: the line under a partner's words: "These are {App}’s words. Journear hasn’t checked them." | "These are {App}’s words, not Journear’s." (D903, founder 2026-11-24) | `packages/core/src/partner-labels/words.ts` `partnerAttribution`, `packages/web/src/auth/render-labels.ts` `labelBox` |
+| D905 (item 2): under reduced motion a loading spinner stands still (a still three-quarter ring), as every other animation of the brand's components ends at once | The loading spinners stop turning and fade slowly instead: opacity between full and 0.6, 2 s a cycle, ease-in-out, for ever (`jp-spin-pulse`); everything else still ends at once (D906, the Tech Lead 2026-11-24) | `packages/brand/components.css` (and its admin copy by `sync-brand`), `apps/demo/src/style.css`, `apps/stamps/src/ui.css` |
+| D100 (and D903's open point): the pinned CKD key's sources counted only by registrable domain (≥ 3), so two of them can be one operator | On a production network also by declared operator: every recorded host named in `ckdSourceOperators`, ≥ 3 different operators (D904, the Tech Lead 2026-11-24); testnet as before | `packages/env/src/schema.ts` `ckdSourceOperatorProblems`, `scripts/lib/deploy-check.ts`, `scripts/lib/ckd.ts` |
+| D896/D899: the line under a partner's words: "These are {App}’s words. Journear hasn’t checked them." | "These are {App}’s words, not Journear’s." (D903, the Tech Lead 2026-11-24) | `packages/core/src/partner-labels/words.ts` `partnerAttribution`, `packages/web/src/auth/render-labels.ts` `labelBox` |
 | D891 as narrowed: Elite, Platinum, Deluxe and version numbers ("Passport 2.0", "Passport V2") beside "Passport" pass | Refused: the three as edition words (before "Passport" only when the name ends there), a version number with "Passport" alone (D903) | `packages/console-core/src/names.ts` |
 | D900 item 1: one operator behind both NEAR providers, a must-fix before any env turns labels on | Accepted on testnet; on a production network the manifest names two different operators (`rpcOperator`, `rpcFallbackOperator`), refused by the schema and `deploy-check` otherwise (D903) | `packages/env/src/schema.ts` `nearOperatorProblems`, `scripts/lib/deploy-check.ts` |
 | D810: a message that isn't text: "Journear can’t check what this does (the message isn’t readable text). Approve only if you expected this from {App}." (amber), with the window's own line "This message isn’t readable text, so it’s shown in its raw form." under it | One amber box: "Journear can’t read this message, so it’s shown below in its raw form. Approve only if you expected this from {App}." (still amber; the window's own line is gone) | D886's note of 2026-11-23; `packages/core/src/decode/summary.ts` `unreadableMessage`, `packages/web/src/auth/render-approval.ts` `message` |
@@ -9718,7 +9718,7 @@ suspended app's Home logins (D586's `suspended` line, built as "Hana pays"), to 
 | D259: a login names its own method in the banners only when it made the link (`self && !fresh` skipped), so an active member's sign-in opens the shared wallet with nothing said; D864 (a): a member can't remove itself | Before an active member's sign-in opens the shared wallet, its own notice: **Remove this email** (a confirmation, one more sign-in, `unlink_identity` by the member) or **Keep it** (not asked again in that browser) (D865) | `packages/web/src/vault/login.ts` `memberNotice`, `MemberRemove`; `auth/email-page.ts` |
 | D259 / D862: a pending link is cancelled only by a sign-in of the wallet's active method (the Google account); the pending notice says to sign in with that Google account | The email that waits to join cancels it from its own sign-in: the refused sign-in shows the link with "Cancel this link" (one more code); the notice says to sign in with this email (D864) | `packages/web/src/vault/login.ts` `LinkWaiting`, `auth/email-page.ts`, `apps/email-issuer/src/mail.ts` `linkNoticeMail` |
 | D259: Remove offered to the wallet's own sign-in only for 7 days after an added sign-in started (`RECENT_LINK_MS`); D874: after them Home says "Nothing can remove it now"; the active link notice mail says "Within 7 days" | At any age: past the 7 days the sign-in window shows the root one quiet line with Remove until Done is pressed on it in that browser, then closes by itself; Home and the mail point there (D875) | `packages/web/src/vault/login.ts` `Afterword`, `packages/web/src/auth/email-page.ts` `showDone`, `home-sign-ins.ts` `pointerFor`, `apps/email-issuer/src/mail.ts` |
-| D859: a whole value in groups of four characters, spaced by CSS; the account row without a copy button | One piece on nearly even lines, the label above (the counterparty rows too, the founder's decision; groups one switch away); the details' "Your account" row has Copy (D876) | `packages/web/src/auth/render-approval.ts` `fullId`, `auth/approve-page.ts` `accountRow` |
+| D859: a whole value in groups of four characters, spaced by CSS; the account row without a copy button | One piece on nearly even lines, the label above (the counterparty rows too, the Tech Lead's decision; groups one switch away); the details' "Your account" row has Copy (D876) | `packages/web/src/auth/render-approval.ts` `fullId`, `auth/approve-page.ts` `accountRow` |
 | D850: the sponsored fee row "none. Journear pays it for you."; every row value in mono; "Local test network (Hardhat, Anvil)" | "✓ **Free.** Journear pays it for you."; words in the text face, exact values mono; "Local test network" (D877) | `packages/core/src/decode/summary.ts` `SPONSORED_FEE`, `networks.ts` `evmChainInfo` |
 
 ## Proposed, not yet confirmed
@@ -10148,7 +10148,7 @@ below.
 - Date 2026-11-10 · Status: built on `feat/hana-home-h7`; **confirmed by the user 2026-11-10** · Built: `home-page.ts` (`linkedAppId`) · For D502 ("found … by its `appId` (the partner's link)")
 - Decision: `/home?appId=<app id>` (exactly that one parameter, of the app id's form) opens that app's page after sign-in, with one `GET /v1/home/apps?appId=` read. Anything else in the query is ignored. The page never changes its own URL.
 - Why: an app id is public and can't be walked (D502); nothing of the user's is in the link.
-- Note 2026-11-23 (D893, the founder's "Back inside Home" of D888): the page now adds same-URL history entries when a
+- Note 2026-11-23 (D893, the Tech Lead's "Back inside Home" of D888): the page now adds same-URL history entries when a
   view opens (`pushState` with no URL), each holding only an opaque marker, so the browser's Back returns to "Your
   wallets"; the URL still never changes, and the link still only chooses the wallet's page (it opens with an entry
   over the list).
@@ -11172,7 +11172,7 @@ builds is the main session's spec (relayer build D730–D739, contract build D74
 
 Asked for by the user 2026-11-11 (NEAR support for the NEAR hackathon). First written on `docs/near-hackathon`
 (2026-11-11, paused by the user 2026-11-12, never merged); rewritten on `docs/hackathon-submission` on 2026-11-13
-against what sandbox-dev runs (`develop` 1ac3bc36) and the event's pages read that day, with the founder's statements
+against what sandbox-dev runs (`develop` 1ac3bc36) and the event's pages read that day, with the Tech Lead's statements
 of 2026-11-13.
 
 ### D745. The hackathon write-up: a judges' section at the top of the root README, the detail in `docs/hackathon*.md`
@@ -11183,16 +11183,16 @@ of 2026-11-13.
   when it was folded into D747 and `LICENSING.md`)
 - Confirmed by the user 2026-11-13.
 - Note 2026-11-13 (branch `docs/hackathon-stamps`, asked for by the user): the write-up now leads with the NEAR-only
-  stamps demo (`apps/stamps`, `contracts/hana-stamps`, D794–D807), deployed, hand-checked by the founder and locked on
+  stamps demo (`apps/stamps`, `contracts/hana-stamps`, D794–D807), deployed, hand-checked by the Tech Lead and locked on
   testnet that day. The README's "Reproduce it" is A the stamps site (its "do X, see Y" steps, view calls anyone can
-  run, the founder's run's transactions), B the hosted demo (unchanged, the broader one), C local; the claim table has
+  run, the Tech Lead's run's transactions), B the hosted demo (unchanged, the broader one), C local; the claim table has
   rows for the stamps contract's rules, its on-chain NEP-413 check and vector, the relay paying for it and the lock;
   the video's shot list is on the stamps site. The layout above is unchanged.
-- Note 2026-11-13 (the same branch): the founder's answers that day, recorded in `docs/hackathon.md` and
+- Note 2026-11-13 (the same branch): the Tech Lead's answers that day, recorded in `docs/hackathon.md` and
   `docs/hackathon-public-checklist.md`: nobody on the team enters a second project (Q-015 met); the owners of the
   earlier proof of concept agree to `legacy/` being public; the two admin Google accounts are secured with strong
   sign-in; the tracks are chosen and the form filled in by the colleague who submits, its lead (no form value goes in
-  the repository); the stamps contract stays as deployed and locked, with its 120-second Layover wait; the founder runs
+  the repository); the stamps contract stays as deployed and locked, with its 120-second Layover wait; the Tech Lead runs
   the final steps on 2026-11-13 (deploy, branch clean-up, tags, public flip, secret scanning and push protection), then
   the colleague records, posts and submits (checklist step 11).
 - Decision: the root README opens with a section for judges and the screening agents (Claude Code and Codex, the
@@ -11201,7 +11201,7 @@ of 2026-11-13.
   measured on 2026-11-13); the window's facts; what is judged and the other chains; the AI use and libraries; the
   tracks with what they don't meet; ten lines of limits. The developer README follows under "Developer reference" with
   its headings and anchors unchanged (the playbooks' docs check reads its commands). `TODO(submit)` marks only what
-  the team does before submitting; the founder's 2026-11-13 steps are among them: the repository is flipped public
+  the team does before submitting; the Tech Lead's 2026-11-13 steps are among them: the repository is flipped public
   "towards the end, but not now", and a colleague records the video.
 - Why: the rules want the disclosures (other chains, libraries, AI code, the diff link) in the README, and the README
   written for a machine reader ("do X - see Y", "No marketing"). A root `HACKATHON.md` would share its name with the
@@ -11274,7 +11274,7 @@ of 2026-11-13.
 
 ### D748. What is submitted: the whole repository; NEAR is the judged integration; Stellar, EVM and Sodax disclosed
 - Date 2026-11-11, rewritten 2026-11-13 · Status: **decided while building, to confirm; 2026-11-12: not confirmed as
-  first written; 2026-11-13: the founder: the whole repository is submitted, NEAR is the judged integration, and
+  first written; 2026-11-13: the Tech Lead: the whole repository is submitted, NEAR is the judged integration, and
   Stellar, EVM and Sodax are disclosed as other chains** · Built: `README.md` "What is judged, and the other chains"
   and "Tracks", `docs/hackathon.md` "Other chains" and "Tracks, against their prompts"
 - Confirmed by the user 2026-11-13.
@@ -11292,7 +11292,7 @@ of 2026-11-13.
 
 ### D749. The public-repo checklist lists personal data and internal docs as the user's decisions; nothing changed
 - Date 2026-11-11, refreshed 2026-11-13 · Status: **decided while building, confirmed by the user 2026-11-12;
-  2026-11-13: the founder flips the repository public "towards the end, but not now"** · Built:
+  2026-11-13: the Tech Lead flips the repository public "towards the end, but not now"** · Built:
   `docs/hackathon-public-checklist.md`
 - Decision: before the repository goes public, the checklist has the secrets scan over every branch (run separately on
   2026-11-13; its outcome is a placeholder until the report is in), the branches, pull requests and CI logs that
@@ -11300,7 +11300,7 @@ of 2026-11-13.
   describe open security items, the GitHub settings, the tags, the licence, every placeholder, and keeping the hosted
   demo up and within its email and relay limits through judging (the real values from the code and the manifest). The
   branch changes none of them.
-- Why: each is a trade-off only the founder can make (privacy, candour, history rewrites); the checklist makes them
+- Why: each is a trade-off only the Tech Lead can make (privacy, candour, history rewrites); the checklist makes them
   visible before the flip, when they are still cheap.
 - Address impact: none.
 
@@ -11938,7 +11938,7 @@ testnet-only manifest overrides whose absence leaves every env as it was.
 - Decision, abuse: a testnet-only `emailIssuer.tighterLimits` lowers the per-IP `start` window (sandbox-dev: 10 per 10 min, 30 a day; dev envs 30 and 300), `resend` (10 per 10 min; 30), code mails per address from one requester (5 per 15 min, 15 a day; 20 and 100) and the per-prefix `start` day (IPv4 /24, IPv6 /56 and /48: 100; 1000 in every env, so one /48 could otherwise fill the pool). The issuer applies each as the lower of it and the env's own limit, so it can't loosen anything and needs no network gate; absent or malformed, the env's set (D340) is unchanged. One IP can then cause at most 90 code mails a day (30 starts with up to 2 resends each), under a third of the general pool, one prefix at most 300: using up a day takes several addresses and prefixes. A room of judges behind one conference Wi-Fi address shares 30 sign-ins a day (10 per 10 minutes), a venue with several addresses in one /24 shares 100; IPv6 devices each have their own /64. Either override set but malformed (or the shares off testnet) logs one `config_ignored` warning per isolate with the var's name and reason, never its value.
 - Decision, NEAR relay (sized for 200 new users a day doing about five writes each; measured on testnet 2026-11-13 by read-only RPC: an activation 0.007115 NEAR, a guestbook relay 0.000239, so a new user ≈ 0.0083 NEAR and 200 ≈ 1.7 NEAR a day): `appDailyBudgetNear` 3 (1 would stop at about 120 new users), `dailyBudgetNear` 6 (3 left for partners' apps), `activationsPerAppPerDay` 300 (300 × 0.0071 = 2.1 NEAR, inside 3), `lowBalanceNear` 9 (`inFlightNear` 3 + `dailyBudgetNear` 6: the hourly event and the System status tile turn amber with a full worst-case day still covered). Unchanged: `perSenderPerDay` 50, `perAppPerDay` 2000, `relaysPerDay` 10000, `relaysPerMinute` 200, `inFlightNear` 3, `maxGasTgas` 10, `activationsPerDay` 1000. The relay account must hold at least 3 + 9 + 6 = 18 NEAR, or with the low-balance line at 9 `near_relay_balance_low` fires every day; the top-up target is 25 (it held 9.985 on 2026-11-13). Every relay needs a signed-in user, so a stranger's spend through one app is bounded by its 3 NEAR a day (testnet NEAR).
 - Put back on 2026-11-26 (after judging ends about 2026-11-25): the relay's four values to 1, 5, 200 and 2, `gen`, deploy the API; the email budget, `appShares` and `tighterLimits` reviewed with the user then.
-- **Note, decided by the founder 2026-11-23** (the founder's answers of 2026-11-23 to the coordinator's five numbered questions: "1 yes, 2 leave, 3 yes, 4 yes, 5 leave"; recorded on branch `feat/demo-plain-wording-2`): the NEAR relay limits' put-back is **left for the December deploy of `next`**, not a separate small API deploy on 2026-11-26. Until then sandbox-dev keeps the judging-week values (3, 6, 300, 9). `docs/go-live-after-freeze.md` 1.1a puts the four values back on `next` (`appDailyBudgetNear` 1, `dailyBudgetNear` 5, `activationsPerAppPerDay` 200, `lowBalanceNear` 2) and phase 3 deploys them; its 0.9 and 5.3 say so. This also replaces D872 item 12's plan of an API-only deploy from the commit the API runs.
+- **Note, decided by the Tech Lead 2026-11-23** (the Tech Lead's answers of 2026-11-23 to the coordinator's five numbered questions: "1 yes, 2 leave, 3 yes, 4 yes, 5 leave"; recorded on branch `feat/demo-plain-wording-2`): the NEAR relay limits' put-back is **left for the December deploy of `next`**, not a separate small API deploy on 2026-11-26. Until then sandbox-dev keeps the judging-week values (3, 6, 300, 9). `docs/go-live-after-freeze.md` 1.1a puts the four values back on `next` (`appDailyBudgetNear` 1, `dailyBudgetNear` 5, `activationsPerAppPerDay` 200, `lowBalanceNear` 2) and phase 3 deploys them; its 0.9 and 5.3 say so. This also replaces D872 item 12's plan of an API-only deploy from the commit the API runs.
 - Mainnet: production's SendGrid plan needs a monthly quota above all its mail together (31 × the issuer's 1.3 × `dailySendBudget`, the admin Worker's notices, the watchdog's alerts) with overage billing in mind (readiness 4.9); `appShares` and `tighterLimits` are testnet only (a production equivalent is a separate decision). The relay's mainnet limits stay row 1.21's decision.
 - Rejected: a budget sized to the whole 50,000 (it is shared); a new D1 plan for the hackathon app (hand-written SQL on the live D1, no audit, and it moves the login quotas); raising the 2% constant or loosening the 80% reserve (every env); changing `DEV_LIMITS` in code (every `local*`/`sandbox*` env).
 - Address impact: none.
@@ -12114,7 +12114,7 @@ The three builds merged (contract, site, art) and reconciled. Current state: `ap
 - Not changed: the SDK and the vault (no auto-approval, no skipped confirmation, nothing a ticket allows widened).
 - Rejected: a Journear "starter NEAR" drip, for now (the relay's `activationYocto` can send up to 0.01 NEAR to new
   accounts by manifest, but it shares the sponsored-relay budget and reaches no existing account; a once-per-user drip
-  is a new API route, about a day's work): the founder's call after the deadline.
+  is a new API route, about a day's work): the Tech Lead's call after the deadline.
 - Possible later (SDK/vault): the approval window could say "One more approval is coming…" (and hold its idle close)
   while the vault prepares a follow-up from the same page, instead of "You can go back to Stamp Trail"; or a request
   flag letting the page say the next request is a follow-up.
@@ -12122,7 +12122,7 @@ The three builds merged (contract, site, art) and reconciled. Current state: `ap
 
 ## The approval window in plain words (branch `feat/approval-plain-summary`), 2026-11-17
 
-The founder's decision after stakeholder feedback: Journear Passport's users aren't Web3 users, and an approval window
+The Tech Lead's decision after stakeholder feedback: Journear Passport's users aren't Web3 users, and an approval window
 that decodes or shows a transaction's raw payload confuses them. Current state: `docs/architecture.md` "Signing:
 approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
 
@@ -12143,7 +12143,7 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   "Hide details" while open). The details always start folded, for every request (D810 as amended by the user). No
   partner setting: a partner setting that starts the details open may come later, and
   nothing a partner controls may ever reduce what a user can see.
-- Why: the founder's audience; the facts a user decides on stay in view, the rest is one click away for those who
+- Why: the Tech Lead's audience; the facts a user decides on stay in view, the rest is one click away for those who
   want it.
 - Not changed: what is decoded, what the vault checks and signs, the approval digest, the Approve guard (D36, D113:
   opening or closing the details neither arms nor resets it, a test checks), auto-approve.
@@ -12169,7 +12169,7 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   offers, claimable balances and claiming them, merges, pool operations, contract calls, token transfers and
   approvals, trust lines, sponsorships begun or revoked; every NEAR action but account creation: transfers, every
   function call (one with no deposit can still move tokens held in that contract), key, stake and contract changes)
-  are listed first. Since D814 (the founder's decision after seeing the 100-step screen) the steps are grouped in at
+  are listed first. Since D814 (the Tech Lead's decision after seeing the 100-step screen) the steps are grouped in at
   most four lines, with a red or amber line for any left out; the numbered list (up to 20 value steps, then five
   others) it replaced is history. A
   Stellar transaction with such steps on the user's account says "XLM leaving your account: up to N" (payments,
@@ -12185,7 +12185,7 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   start folded, raw signing included; first built as "open when Journear can't explain, never foldable for raw
   signing"), confirmed with that amendment · Built: `summarizeApproval`'s `explainable`, `cannotTell`,
   `stepsNotListed`, the `raw_signing` line; `render-approval.ts` `detailsSection`.
-- The founder's reasoning, in their words: "if we open automatically when we can't explain the request in plain words
+- The Tech Lead's reasoning, in their words: "if we open automatically when we can't explain the request in plain words
   or it's too many steps or raw signing, what makes you think that the user knows what they're looking at? I think
   it's better to hide and then clearly state the risks. If we just expand and show everything it makes the user even
   more confused."
@@ -12230,7 +12230,7 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   contract creation's authorizations (above), and a NEAR function-call key's fee allowance, now in its line ("…,
   spending up to 0.25 NEAR on fees", or "with no limit on the NEAR it spends on fees"). The rest keep a visible line or
   a red warning for anything that decides what the user gives up.
-- Trade-off, the founder's: the technical facts are one tap away, not on screen, for exactly the requests Journear
+- Trade-off, the Tech Lead's: the technical facts are one tap away, not on screen, for exactly the requests Journear
   can't explain; the risk is stated in plain words instead.
 - The rule (the security review of
   2026-11-17): when the summary can't carry every term that decides what the user gives up, the request is not
@@ -12247,7 +12247,7 @@ approval popup vs auto-approve", `docs/security.md` "Browser (`packages/web`)".
   Explainable, each with its deciding terms in the summary: Stellar payments, account creation, path payments (the
   most paid, the least received), offers (the least a sell returns, the most a buy costs, at the offer's price, and
   which existing offer it changes), claimable balances (who can claim), trust lines and the rest of the classic
-  operations (D110); a NEAR function call with JSON arguments ("use {contract} ({method})", the founder's example), its
+  operations (D110); a NEAR function call with JSON arguments ("use {contract} ({method})", the Tech Lead's example), its
   arguments folded (an accepted trade-off). The summary is total: if building it fails on any value the decoders let
   through, the request gets "{App} wants you to approve a request Journear can't explain" with a red "Journear
 couldn’t read this request. Reject it unless you are certain.", not explainable (reworded under D853: "{App} wants you
@@ -12410,7 +12410,7 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   claimable balances, offers selling the coin), so a 1,000,000 XLM path payment outranks a 1 XLM payment group. A
   buy offer's received amount rounds down and its cost up; a clawback or a token transfer reaching the user rounds
   down. A left-out approval of 0 reads as taking a permission back.
-- Amended by the founder (2026-11-17, after seeing the 100-action screen show the same key twice): a control bullet
+- Amended by the Tech Lead (2026-11-17, after seeing the 100-action screen show the same key twice): a control bullet
   is dropped when its step's own line is in view, as that line names the same key, signer or address in full. The
   match is on the step (its operation or action), not on similar text: the summary reports which steps its visible
   lines show (`shownSteps`: the headline of a single-step request, or every step of a visible group), and the page
@@ -12433,7 +12433,7 @@ e2e approval tests build is checked never to be that fallback, so the catch can'
   weight drops its bullet as before. After PR 72's review: every signing-threshold change keeps its bullet too, "Changes
   the signing thresholds: wrong values can lock you out of the account", since whether new thresholds lock the user out
   depends on the account's current signers and weights, which the request doesn't carry.
-- Why: the founder's audience; a long numbered list or a stack of red boxes hides the one fact that matters.
+- Why: the Tech Lead's audience; a long numbered list or a stack of red boxes hides the one fact that matters.
 - Address impact: none.
 
 
@@ -12607,7 +12607,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   within `maxDataBytes`. The demo's `checkIn()` is `exactCalldata: ["0x183ff085"]`, `maxDataBytes: 4`.
 - Address impact: none.
 
-### D836. Sponsorship limits: the founder's budgets, per-app below the env's, hard bounds on every number
+### D836. Sponsorship limits: the Tech Lead's budgets, per-app below the env's, hard bounds on every number
 - Date 2026-11-17 · Status: 0.02 test ETH a day overall and 0.01 per app decided by the user 2026-11-17; the other
   numbers and the bounds decided while building, confirmed by the user 2026-11-17 · Built: as D834.
 - Decision: per chain, all required but `rpcFallback` and `requireKnownAccount` (default true; false testnet only), no
@@ -12676,14 +12676,14 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   with per-run budgets.
 - Why it was replaced: each review round's fixes opened new edge cases (which endpoint's word counts, evidence read
   from an account the user controls, a record moved while an older copy could still land, gap fills racing late
-  transactions, budgets leaving records unchecked). The founder chose a design that does only what is safe on its own
+  transactions, budgets leaving records unchecked). The Tech Lead chose a design that does only what is safe on its own
   evidence and stops for a person otherwise (D851).
 - Kept in D851: the serialised critical section, persist (and `storage.sync()`) before every broadcast, the
   in-object check of the Execute and the authorization, the fee headroom rule, the fake chain and a trimmed RPC client.
 
 ### D838. The SDK's gas-free actions: `hana.evm.sendSponsored` by name, EIP-5792 over the same, never transparent sponsoring
 - Date 2026-11-18 · Status: no transparent sponsoring of `eth_sendTransaction` **decided by the user 2026-11-17** (the
-  founder agreed to this design point); the rest decided while building, **confirmed by the user 2026-11-18** · Built on `feat/evm-sponsor-vault`
+  Tech Lead agreed to this design point); the rest decided while building, **confirmed by the user 2026-11-18** · Built on `feat/evm-sponsor-vault`
   (from `next` @ c6b434f4), not merged, not deployed: `packages/web/src/client/evm-sponsor.ts` (`HanaEvm`,
   `HanaSponsorError`, `isHanaSponsorError`, `EvmSponsorErrorData`, `sponsoredCalls`, `NOT_OFFERED`), `client.ts`
   (`hana.evm`, `sponsoredChains` from `ready`), `ethereum.ts` (`wallet_getCapabilities`, `wallet_sendCalls`,
@@ -12716,7 +12716,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   elsewhere (unsupported chains omitted, as the EIP says). No `paymasterService` (ERC-7677) is offered: Journear's relayer
   is not an app-chosen paymaster. viem 2.57.7's own `sendCalls`, `getCapabilities` and `getCallsStatus` run against it in
   the e2e suite.
-- Never transparent: `eth_sendTransaction` stays the ordinary path (the user's own fee). Why (the founder's point): a
+- Never transparent: `eth_sendTransaction` stays the ordinary path (the user's own fee). Why (the Tech Lead's point): a
   sponsored action is a different thing for the user (one approval that may set up the account, Journear pays) and
   for the page (allowlisted calls only, no value); silently turning a transaction into one would change what the user
   approves and what the page gets back (a relayer's hash, not the user's own transaction).
@@ -12735,13 +12735,13 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 
 ### D841. The EVM delegate: `contracts/evm-delegate` (Foundry, MIT), its fixed interface, deployed by CREATE2 at a predicted address
 - Date 2026-11-17 · Status: **confirmed by the user 2026-11-17** (location, licence and a revised, freshly deployed self-hosted delegate decided by the user 2026-11-17; the interface from the shared spec; the toolchain, dependency pinning, CREATE2 salts, artifacts and verify wiring decided while building, then confirmed) · Built: `contracts/evm-delegate` (`src/HanaDelegateExecutor.sol`, `src/demo/CheckIn.sol`, `test/*.t.sol`, `test/utils/`, `scripts/generate.mjs`, `artifacts/HanaDelegateExecutor.json`, `artifacts/CheckIn.json`, `test/vectors/execute-v1.json`, `foundry.toml`, `package.json`, `README.md`, `LICENSE`), `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `scripts/ci-changes.mjs` (`EVM_DIR`, `evmChanged`), `scripts/verify.mjs` (the `evm` step), `scripts/test/ci-changes.test.ts`, `scripts/test/verify.test.ts`, `LICENSING.md`
-- Decision, the contract: `HanaDelegateExecutor`, revised from Hana's earlier MIT-licensed delegate (the founder approved publishing the revision), and the demo target `CheckIn` (`checkIn()`, a count per caller in `checkIns(address)`, `CheckedIn(address indexed account, uint256 count)`, not payable). solc 0.8.28 pinned, EVM version `prague` (Base Sepolia runs it; solc emits no Prague-only opcode for this code, the setting matters for the EIP-7702 tests), optimizer 10 000 runs, no via-IR, and no metadata hash or CBOR trailer, so the bytecode (and the address) depends only on the code, the settings and OpenZeppelin, not on comments or paths. No owner, initializer or upgrade path.
+- Decision, the contract: `HanaDelegateExecutor`, revised from Hana's earlier MIT-licensed delegate (the Tech Lead approved publishing the revision), and the demo target `CheckIn` (`checkIn()`, a count per caller in `checkIns(address)`, `CheckedIn(address indexed account, uint256 count)`, not payable). solc 0.8.28 pinned, EVM version `prague` (Base Sepolia runs it; solc emits no Prague-only opcode for this code, the setting matters for the EIP-7702 tests), optimizer 10 000 runs, no via-IR, and no metadata hash or CBOR trailer, so the bytecode (and the address) depends only on the code, the settings and OpenZeppelin, not on comments or paths. No owner, initializer or upgrade path.
 - The interface (the shared spec's, which the core signer, relayer and vault code against): `struct Call { address to; uint256 value; bytes data; }`; domain `EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 salt)` with name `HanaDelegateExecutor`, version `1`, `verifyingContract` = the account (`address(this)` under the delegation), `salt` = the implementation's address left-padded (an immutable set to `address(this)` at deployment); `Execute(Call[] calls,uint256 nonce,uint256 deadline,address relayer,uint256 minGas)Call(address to,uint256 value,bytes data)`; `execute(Call[],uint256,uint256,address,uint256,bytes)` = `0x440dfe2d`, `nonce()`, `incrementNonce()`; `Executed(bytes32 indexed digest, uint256 nonce, uint256 callCount)`; errors `Expired`, `InvalidNonce`, `InvalidSignature`, `EmptyBatch`, `OnlyEOA`, `WrongRelayer`, `InsufficientGas`, `CallFailed(uint256 index, bytes reason)`. Settled while building: the ABI name of `execute`'s second parameter is `nonce_` (it would shadow the `nonce()` getter; names are not part of the selector or the encoding); added, nothing changed: `eip712Domain()` (ERC-5267, `fields` 0x1f), `NonceIncremented(uint256 newNonce)` from the earlier contract, OpenZeppelin's `ReentrancyGuardReentrantCall()` (seen only inside a `CallFailed` reason), the ERC-721/1155 receiver functions, `isValidSignature`, `supportsInterface`, `receive()`. The WP1 vector's `contract` block matches all of it (`test/Vectors.t.sol` checks it first).
 - Dependencies: the directory is a private pnpm workspace package, `@hana-id/evm-delegate` (`"license": "MIT"`), so `corepack pnpm install`, which every checkout runs anyway, fetches what `forge` needs and the root lockfile pins it with integrity hashes: `@openzeppelin/contracts` 5.7.0 from npm as a runtime dependency (the 7-day release-age rule applies and `pnpm audit --prod`, so `pnpm deps:audit`, reports its advisories), `forge-std` v1.12.0 from GitHub commit `7117c90c8cf6c68e5acce4f09a6b24715cea4de6` as a git-hosted tarball (tests only), `viem` 2.57.7 for the generator. `foundry.toml` remaps both Solidity packages into `node_modules/`. The package has no `test` script, so `pnpm -r test` never needs Foundry.
 - Deployment (not done here): the deterministic deployment proxy `0x4e59b44847b379578588920cA78FbF26c0B4956C` (CREATE2), salt `keccak256("hana-id/evm-delegate/HanaDelegateExecutor/v1")` → `0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA`, runtime code hash `0xfcc832fe6c7167e0d45589881b103fed92b3a44fe3dd5d489f43e9d44b1e5fd2`; `CheckIn` with `keccak256("hana-id/evm-delegate/CheckIn/v1")` → `0xa84BBd91a395ae028eE2890DcA0e20570C1Aa39e`, `0x807946bfc8ed8e9b3fe9ef6bdeed6c9dfa519084bcda4a5b17c2059c96d0bb56`. Anyone can deploy the same code to the same address on any chain and check it from the source. **Any change to the code, the compiler settings or OpenZeppelin moves the implementation's address and hash**: say so on the branch, and update every pinned copy (the core signer's table, the manifest's `delegate`).
 - Checked-in outputs: `artifacts/<name>.json` (`contractName`, `source`, `license`, `compiler`, `create2` {deployer, saltLabel, salt, initCodeHash, address}, `runtimeCodeHash` (of the code at that address, the immutable filled in), `eip712` (the delegate's name, version, salt and type strings), `abi`, `bytecode`, `deployedBytecode`, `immutableReferences`), written by `pnpm --filter @hana-id/evm-delegate run generate`. `test/Artifacts.t.sol` fails when they are stale and deploys both through the proxy (Foundry's test chain has its canonical code; the test checks it) to prove the address, the code hash and that the deployed code is the artifact's with only the immutable filled; `generate.mjs --check` compares every byte (the ABI too) and that the README's table quotes both addresses and hashes.
 - The test vector: `test/vectors/execute-v1.json` is a byte-for-byte copy of the TypeScript signer's `packages/core/test/vectors/evm-sponsor-v1.json` (WP1, branch `feat/evm-sponsor-core`, generated there with viem only): **the core file is the source**. `test/Vectors.t.sol` checks the `contract` block against the contract (type hashes, function, selector), recomputes each case's domain separator, struct hash, digest, RFC 6979 signature and calldata, and runs the calldata from the vector's relayer against the contract deployed at the case's implementation (`deployCodeTo`, so the immutable salt is that address), CheckIn where a call is `checkIn()`, the value case funded. `test_vector_isTheCoreFile` and `generate.mjs --check` fail if the copies differ or the core file is missing (`generate` copies the core file over).
-- Verify: a new step `evm` in phase 1, a lane of its own beside the typecheck and the Rust contract: `forge fmt --check`, `forge test`, `node scripts/generate.mjs --check`, in `contracts/evm-delegate`. It runs when a file there, the lockfile, the core vector or the CI and verify definitions change, never in `--quick`; without `forge` on the PATH, or before `pnpm install`, it is skipped and the summary says why (the browsers and cargo-near are the other optional toolchains). `classify` no longer counts `contracts/evm-delegate/` as Rust or web, so an EVM-only change doesn't run the Rust lanes. CI is off (D387): there is no CI job for it; add one (Foundry's toolchain action pinned to a commit) when CI is turned back on, before mainnet. Done 2026-11-18 (D857, branch `chore/ci-on-next`): CI's `evm` job, gated on `evmChanged`, runs the same three commands with Foundry 1.5.1 from its release tarball, checksum-verified against a sha256 pinned in the workflow; it runs once the founder switches CI on.
+- Verify: a new step `evm` in phase 1, a lane of its own beside the typecheck and the Rust contract: `forge fmt --check`, `forge test`, `node scripts/generate.mjs --check`, in `contracts/evm-delegate`. It runs when a file there, the lockfile, the core vector or the CI and verify definitions change, never in `--quick`; without `forge` on the PATH, or before `pnpm install`, it is skipped and the summary says why (the browsers and cargo-near are the other optional toolchains). `classify` no longer counts `contracts/evm-delegate/` as Rust or web, so an EVM-only change doesn't run the Rust lanes. CI is off (D387): there is no CI job for it; add one (Foundry's toolchain action pinned to a commit) when CI is turned back on, before mainnet. Done 2026-11-18 (D857, branch `chore/ci-on-next`): CI's `evm` job, gated on `evmChanged`, runs the same three commands with Foundry 1.5.1 from its release tarball, checksum-verified against a sha256 pinned in the workflow; it runs once the Tech Lead switches CI on.
 - Why: pnpm over git submodules (an extra init in every clone and worktree, gitlinks in `git ls-files`), soldeer (a second registry and lock that `pnpm audit` doesn't see) or vendoring (forge-std is about 1 MB); the npm package named `forge-std` is not its authors', hence GitHub. CREATE2 through the standard proxy, so the address is predictable, the same on every chain and checkable by anyone. MIT so that the code holding authority over a user's account can be read, verified and reused.
 - Explorer verification: the metadata is stripped, so a Sourcify exact (full) match is not available; verify with the standard-JSON input (`forge verify-contract`, or `forge build --build-info`) and the settings above (README "Deployment").
 - After the independent audit (2026-11-17, no Critical or High; fit to merge and to deploy on Base Sepolia for testing): `isValidSignature` also accepts the 64-byte ERC-2098 compact form (D845), which changed the bytecode, so the address and code hash above are the new ones (the first build's were `0x9Da1…b762` / `0x710d…26ba`, pinned nowhere). More tests (the gas floor at its exact boundary, a target that swallows an inner out-of-gas, the authorization in the same transaction, 1 to 8 calls of any data length, value running out partway, a failing call after others with the cap), measured gas numbers in the README for the relayer's budget, and the duties checklist.
@@ -12783,7 +12783,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   longer a placeholder but the delegate's deterministic deployment, `0xfC5e59d87a21045E5A480cFD75fcf1b010e8e4AA` with
   runtime code hash `0xfcc832fe6c7167e0d45589881b103fed92b3a44fe3dd5d489f43e9d44b1e5fd2`, `placeholder: false`
   (anyone can deploy it on a local node through the deterministic deployment proxy; the local lane does). Still no Base
-  Sepolia entry: it is added by the deploy's own change once the founder has deployed and the on-chain code hash is
+  Sepolia entry: it is added by the deploy's own change once the Tech Lead has deployed and the on-chain code hash is
   checked. `test/evm-sponsor.test.ts` fails when a non-placeholder entry and
   `contracts/evm-delegate/artifacts/HanaDelegateExecutor.json` disagree on the address or the code hash. The
   placeholder mechanism and its refusals are unchanged, tested against a fixture table
@@ -13054,7 +13054,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Amendment, 2026-11-18 (branch `fix/evm-sponsor-gas-limit-not-users-fault`; decided while building, **to confirm**): a
   batch the network refuses over its gas (`gas_limit`) is not the user's failure. The gas is the handler's own
   (`sponsorGasLimit`, bounded by the relayer's checks), so such a refusal is a gas-model or settings fault on our side,
-  and the founder's rule is that failures not of the user's making are not counted against them. Of the two ways, the
+  and the Tech Lead's rule is that failures not of the user's making are not counted against them. Of the two ways, the
   smaller: the relayer keeps the cause `request` (the batch is cancelled at once and the relayer never halts, so no user
   can pause it; making it `pricing` would also change how the relayer reprices its own cancels and give the "fees too
   high" sentence), and only the handler treats `request:gas_limit` as ours: `503 relayer_unavailable` ("This action
@@ -13073,7 +13073,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   `checkEvmSponsorRelay`), `src/index.ts` (the cron), `packages/console-core/src/types.ts` (`SECURITY_EVENT_KINDS`),
   `src/audit-words.ts`, `scripts/lib/uid-erase.ts`; tests `apps/api/test/evm-sponsor.test.ts`,
   `test/migration-0003.test.ts`, `test/migration-0006.test.ts`, `scripts/test/uid-erase.test.ts`. Migration 0022 is
-  applied by the founder (local only here; nothing remote).
+  applied by the Tech Lead (local only here; nothing remote).
 - Decision: `evm_sponsor_sends`, one row per send that reached the relayer step, written **before** the relayer is asked
   (no row, no send: `503 audit_unavailable`): `id` (`es_` + 32 hex), app, chain, account, the directory user (NULL
   without one; `REFERENCES end_users ON DELETE CASCADE`), digest, `executeNonce`, hash, relayer nonce, reserved and
@@ -13223,7 +13223,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   `maxFeePerGasGwei`, doubled on an OP Stack chain as a margin for the L1 data fee, which comes on top and which these
   numbers don't bound; the message says so; below `lowBalanceEth` a warning), and code at every allowlisted target. `--only evm` and
   `--skip evm` work as for the other groups.
-- Why: the founder deploys once, by hand, with a key that must never be in a file the scripts read; an artifact
+- Why: the Tech Lead deploys once, by hand, with a key that must never be in a file the scripts read; an artifact
   pinned in core is only safe if what is on chain is that artifact, so every step compares hashes rather than
   trusting a receipt; a plan that runs first makes a wrong chain or a mismatch visible before anything is sent.
 - Rejected: `forge script` broadcasting (it would compile at deploy time, so the deployed code could differ from the
@@ -13231,7 +13231,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   verification by default (it needs a network and an explorer key, and a failure there is not a deploy failure);
   deploying the proxy ourselves on a chain without it (the addresses would no longer be the ones anyone can derive).
 - Timing (the independent review, 2026-11-17): the runbook's steps 1 to 3 (keystore, faucet, plan) may be done any
-  time; from step 4 on, only on the founder's explicit go-ahead and not before 2026-11-26, the hackathon demos staying
+  time; from step 4 on, only on the Tech Lead's explicit go-ahead and not before 2026-11-26, the hackathon demos staying
   unchanged to 2026-11-25. The contract deploy touches none of sandbox-dev's services but is part of that frozen
   sequence. Keys and URLs with keys go into the shell with `read -rs … ; export …`, never typed on a command line.
 - Address impact: none for users (no derivation input changes). The contracts' addresses are the ones D841 predicts.
@@ -13297,7 +13297,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   audience (they don't know what gas is) and protected only users without ETH. A standing "free doesn't mean safe" line
   on every sponsored approval would sit on harmless check-ins and dilute the warnings that matter (D809, D814's one
   box per colour). To revisit if an app's allowlist ever takes a selector that grants or moves tokens (`approve`,
-  `transfer`, `permit`, `setApprovalForAll`): proposed rule, such a selector needs the founder's sign-off in the
+  `transfer`, `permit`, `setApprovalForAll`): proposed rule, such a selector needs the Tech Lead's sign-off in the
   manifest change. Raw signing after the setup: it could sign an Execute digest (D833), but it could already sign any
   transaction's hash, so the setup adds no exposure.
 - Also on this branch (D810 amended): a NEAR standard value-moving call with arguments that aren't exactly the
@@ -13500,7 +13500,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   input could have caused; re-review: treating every refusal alike (either users can halt it, or our own faults go
   unnoticed).
 - Address impact: none.
-- Amended by D890 (2026-11-23, decided by the founder): "Nothing clears a halt by itself" has one exception. A pause
+- Amended by D890 (2026-11-23, decided by the Tech Lead): "Nothing clears a halt by itself" has one exception. A pause
   for money (`relayer_cannot_send` · `insufficient_funds`) ends by itself on an alarm run once the wallet is refilled,
   only when every check of D890 passes (not `leakSeen`; the run's own verdict is staffResume's; the counts explained by
   our own records; no code at the relayer's address; the one other endpoint agreeing; at most 3 a UTC day, never within
@@ -13514,7 +13514,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Date 2026-11-18 · Status: **decided by the user 2026-11-18** · Applies to every text a user sees: the approval
   window, Passport Home, the login and email pages, the launcher, errors shown to users, the demo sites, the partner
   SDK's default texts.
-- Decision, in the founder's words: "our audience is not native Web3 users and might be very non-technical savvy so we
+- Decision, in the Tech Lead's words: "our audience is not native Web3 users and might be very non-technical savvy so we
   want to keep it as simple and as layman as possible (remember this style for all future wordings)". So: say what
   happens to the user's money, tokens or account in everyday words; no chain jargon above the fold (gas, nonce,
   calldata, selector, contract call, EIP numbers, "upgrade", "smart account"), which may appear only in the folded
@@ -13547,7 +13547,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 - Amended by D879 (2026-11-19): the staff admin portal is not an end user's surface. There, "gas" may be used where it
   is clearer (the feature is "Gas sponsorship"; "gas prices", "gas price limit", "a little ETH for gas"); every other staff text
   stays plain, and nothing an end user reads changes ("free network fees", "no network fee").
-- Amended by D884 (2026-11-19): the founder's own words for a fee the user doesn't pay, "Free. Sponsored by {App}.",
+- Amended by D884 (2026-11-19): the Tech Lead's own words for a fee the user doesn't pay, "Free. Sponsored by {App}.",
   and the relayed NEAR note's "sponsored by {App}" use "sponsored", which the word list bans; both are only in the
   folded details, where the list doesn't apply. Above the fold "sponsor" and "sponsored" stay banned (the tests still
   check every main view).
@@ -13668,7 +13668,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   taken with `ifAvailable` (`Locks.requestIfAvailable`; after the review of PR 76), and by a set in the vault first.
   Without the Web Locks API (old browsers: `localLocks`) the slot is per frame, and the API's `nonce_stale` refuses a
   racing tab ("Your account changed…").
-- The words (the founder's plain-wording rule, 2026-11-18): every refusal a page may show is one plain sentence from
+- The words (the Tech Lead's plain-wording rule, 2026-11-18): every refusal a page may show is one plain sentence from
   `SPONSOR_TEXT` (no gas, nonce, relayer, contract or delegate; tested), e.g. "Your account was set up by another wallet
   app, so Journear can’t pay network fees for it. Nothing was sent." (D840), "Your last action is still going through.
   Wait for it to finish, then try again.", "Your device’s clock is wrong. Set it to the right time, then try again."
@@ -13710,10 +13710,10 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 
 ## CI back on for `next`, at no cost (branch `chore/ci-on-next`), 2026-11-18
 
-### D857. CI ready to switch on for `next`, free while the repository is public; the founder switches it on
+### D857. CI ready to switch on for `next`, free while the repository is public; the Tech Lead switches it on
 - Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (decided by the user 2026-11-18: CI back on for
   `next`; it must cost nothing; `next` among the branches checked after a merge; saved test reports expire after 3
-  days; the founder enables the workflow; the details below confirmed 2026-11-18, "confirm D857"; the changes after
+  days; the Tech Lead enables the workflow; the details below confirmed 2026-11-18, "confirm D857"; the changes after
   the branch's independent review, under "Amended while building", to confirm) · Built:
   `.github/workflows/ci.yml`, `scripts/ci-changes.mjs` (`evm` output, no schedule), `scripts/test/workflows.test.ts`
   (new; `yaml` 2.9.1 as a dev dependency of `@hana-id/scripts`), `scripts/test/ci-changes.test.ts`,
@@ -13744,7 +13744,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   (a newer push to the same branch or PR cancels the older run). (9) The identity probe stays disabled (D387; Lambda
   before mainnet). (10) `pnpm verify` stays the gate before a merge, CI on or not; its default tier is what CI runs on
   a PR.
-- Who does what: the founder checks the organisation's $0 Actions budget is in place (it already is) and changes the
+- Who does what: the Tech Lead checks the organisation's $0 Actions budget is in place (it already is) and changes the
   repository settings listed in docs/operations.md "CI and git", then switches CI on (`gh workflow enable CI -R
   Hana-Technology/hana-id`, or Actions → CI → Enable workflow). Assistants never enable, run or disable a workflow,
   nor change repository or organisation settings.
@@ -13756,10 +13756,10 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
   and `test-results/`, no cap, 7 days, or 3 once the repository's retention is 3): about 10–40 MB for one or two
   failing tests, up to several hundred MB if a whole browser fails. Free compute, nothing deployed, no secret read.
   (b) **The $0 budget already exists**: organisation scope, Actions, $0, stop usage on, alerts to two members (read
-  through the API 2026-11-18), beside $0 stop budgets for Packages, Codespaces and Git LFS; the founder's step became
+  through the API 2026-11-18), beside $0 stop budgets for Packages, Codespaces and Git LFS; the Tech Lead's step became
   checking it. Open point, settled by the first run: whether a $0 stop budget blocks free public-repository runs; if
   it does (every job fails at once without a runner, a billing annotation), untick "stop usage" on it and keep the
-  alerts. (c) Settings for the founder before switching on: artifact and log retention 3 days (caps every
+  alerts. (c) Settings for the Tech Lead before switching on: artifact and log retention 3 days (caps every
   workflow's `retention-days`, a fork PR's edited copy and `develop`'s nightly included); fork PR approval for all
   external contributors; the default `GITHUB_TOKEN` read-only; optionally an allowed-actions list and SHA pinning
   required. (d) Foundry from its release tarball (`foundry_v1.5.1_linux_amd64.tar.gz`), checked against a sha256
@@ -13787,7 +13787,7 @@ Current state of the delegate: `contracts/evm-delegate/README.md`, `docs/securit
 ## The approval window in plain words, and three display changes (branch `feat/plain-approval-wording`), 2026-11-18
 
 The plain-wording pass of D853 over the approval window (recorded under D853 and D810), then three display changes the
-founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`packages/web`)".
+Tech Lead approved on 2026-11-18. Current state: `docs/security.md` "Browser (`packages/web`)".
 
 ### D858. The relayed NEAR approval says "someone else pays" once, and its one real risk in amber
 - Date 2026-11-18 · Status: **decided by the user 2026-11-18**; corrected by the coordinator the same day after an
@@ -13907,7 +13907,7 @@ founder approved on 2026-11-18. Current state: `docs/security.md` "Browser (`pac
   a sentence is no stronger a check for that user than the grouped row.
 - Address impact: none.
 - Amended 2026-11-19 by D876: whole values are shown in one piece (no groups of four; for the counterparty rows the
-  founder's decision for the counterparty rows too; groups one switch away), the label above, and the details' "Your account" row has Copy.
+  Tech Lead's decision for the counterparty rows too; groups one switch away), the label above, and the details' "Your account" row has Copy.
 
 ### D860. A reviewed list of well-known tokens: "5 USDC" instead of units
 - Date 2026-11-18 · Status: **decided by the user 2026-11-18**; details decided while building, **confirmed by the user 2026-11-18** (PR 80 approved); the review amendments of PR 80 amended while building, to confirm · Amends
@@ -13967,7 +13967,7 @@ redeployed after judging.
 
 ### D861. SDK errors carry a plain sentence for the user, `userMessage`, beside the developer's `message`
 - Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (a plain sentence in the SDK's errors approved in
-  principle by the founder 2026-11-18, the shape below confirmed with PR 78); the review amendments and the merge with
+  principle by the Tech Lead 2026-11-18, the shape below confirmed with PR 78); the review amendments and the merge with
   PR 76 below amended while building, to confirm · Built: `packages/web/src/client/user-messages.ts` (new:
   `userMessageFor`, `DEFAULT_USER_MESSAGE`), `client/errors.ts` (`HanaError.userMessage`, `ProviderRpcError.userMessage`,
   getters), `src/index.ts` (exports `userMessageFor`); `packages/brand/src/plain-words.ts` (new, `@hana-id/brand/plain-words`:
@@ -14008,7 +14008,7 @@ redeployed after judging.
   (the row of "Superseded or amended"). Passport Home's coverage badges read "Safe if the app closes", "Needs the app",
   "Can’t be opened here" (the other apps' "Supported" too, one set of words), their sentences say what happens if the
   app shuts down, without making the risk smaller.
-- Why: the founder's rule (D853) is for every text an end user reads, and a partner page is where most users meet an
+- Why: the Tech Lead's rule (D853) is for every text an end user reads, and a partner page is where most users meet an
   error. Computing the sentence in the SDK from the code keeps it safe to show (nothing a page receives can put words
   in it) and needs no change to the vault's port replies, whose strict shape (`exactKeys`) an older SDK would refuse.
 - Rejected: rewording `message` itself (partners log and some may match it; the guide quotes it as the developer's
@@ -14048,7 +14048,7 @@ redeployed after judging.
   by D259 and never built. The test names them as not built (and fails once one is served, so the list shrinks), and
   "Staff calls" says not to use `admin/unlock` or `admin/unsuppress` for a real user until they are. **Closed
   2026-11-18 by D866** (decided by the user: build them): both pages are served, the test has no exception left.
-- Open, for the founder: the pending link's email holder has no way to cancel it unless they also hold the Google
+- Open, for the Tech Lead: the pending link's email holder has no way to cancel it unless they also hold the Google
   account; the planned email-side cancel page (a code to the address) would close that gap, and is the larger fix.
   **Closed 2026-11-18 by D864** (decided by the user: build it): the email's own sign-in shows the waiting link with a
   button to cancel it, and the pending notice's "Not you?" now sends the reader there (D864 has the new words; the
@@ -14065,7 +14065,7 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
 ### D864. The email that waits to join a wallet can cancel the link from its own sign-in
 - Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (decided 2026-11-18, "ok go ahead with this": build
   the cancel-by-email path owed since D259; the details confirmed with the PR, "confirm D864"); the review amendments
-  below amended while building, to confirm; their `cancelled` and `now_active` words **confirmed by the founder
+  below amended while building, to confirm; their `cancelled` and `now_active` words **confirmed by the Tech Lead
   2026-11-23** (the linking flows hand-tested on the local stack 2026-11-19 and 2026-11-23: "the whole flow for step 2
   testing seems ok", "ok I just tested this step 3, it looks good", "ok step 4 looks good", "step 5 looks good";
   "confirm the batch"); their SDK sentence for `link_pending` was replaced by D881 item 8, still open there · Built: `packages/core/src/relay.ts` (notices
@@ -14138,7 +14138,7 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
   (denial of service only: the owner can link again with a code and their Google account, and that reader could
   already sign in with the email once the link was active). No identity can cancel another's link: the offer, the
   vault's check and the contract all bind the member to the signed-in email.
-- Not done, for the founder: (a) after the waiting period the email holder can't remove the link themselves, though
+- Not done, for the Tech Lead: (a) after the waiting period the email holder can't remove the link themselves, though
   the contract allows `unlink_identity` by the member itself (the API too, tested); offering "Remove this email from
   that wallet" on the `now_active` screen would be one more branch of the same mechanism. (b) An email sign-in of an
   active member opens the root's wallet with no banner about its own recent link (D259 names the signing-in method
@@ -14156,7 +14156,7 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
   itself (D865, item 3 of its amendment has the words).
 - Rejected: a `/link/cancel` page reached from the mail (a link in a security mail is what phishing copies, D862; it
   would need an issuer path for the identity key and a code anyway); accepting the sign-in's own token (needs a
-  contract change: a session nonce isn't a `link_change` proof, and a founder decision and redeploy); continuing the
+  contract change: a session nonce isn't a `link_change` proof, and a Tech Lead decision and redeploy); continuing the
   sign-in after a cancel (the login already ended for the partner; the email would then face case B's choice anyway).
 - Address impact: none.
 - Note 2026-11-19 (D881): the banner's own "Cancel this link" (by an active sign-in of the wallet) now ends on a result
@@ -14173,7 +14173,7 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
   `sponsor-settle.ts` (`moveRow`'s billing statement, `settleFromReceipt`, `settleFromRelayerCost`, `settleAsCharge`),
   `sponsor.ts` (the cron: `mirrorEvmBilling`, `lateBilling`); tests `apps/api/test/evm-sponsor.test.ts` ("billing
   records"), `apps/api/test-usage/evm-sponsored.test.ts`, `scripts/test/uid-erase.test.ts`. Local only: neither
-  migration is applied anywhere; the founder applies D1 and Neon migrations.
+  migration is applied anywhere; the Tech Lead applies D1 and Neon migrations.
 - What exists today: the usage ledger (Neon, `usage.events`, `usage.gas_settlements`, the monthly statements of D92 and
   D325) records the login pool's relayed calls (`login`, `session`, `derive`, `revoke`, `unlock`, `owner_action`, and
   the link and Home ones), each with its NEAR transaction and the settled gas. **The NEAR meta-transaction relay (D736)
@@ -14215,7 +14215,7 @@ From `next` @ 2b25fc75 (PR 78 merged in), not merged, not deployed.
 ## NEAR relay billing records (branch `feat/near-relay-billing`), 2026-11-18
 
 From `feat/evm-sponsor-api` @ 69ee88aa (to merge after PR #71, whose migrations it follows), not merged, not
-deployed. The founder, 2026-11-18: "go ahead with NEAR billing records".
+deployed. The Tech Lead, 2026-11-18: "go ahead with NEAR billing records".
 
 ### D863. The NEAR meta-transaction relay leaves a permanent billing record per transaction, as EVM sponsorship does
 - Date 2026-11-18 · Status: the requirement decided by the user 2026-11-18; the details decided while building,
@@ -14312,7 +14312,7 @@ From `feat/link-cancel-by-email` (PR 83) @ 88104036, then `next` @ 6db2bb8b merg
   notice with Remove, the reviewer's M1 on PR 83; the review's three recommendations below, "Amended after PR 85's
   review", decided by the user 2026-11-18, "yes to all three"; confirmed with the PR, "confirm D865"); the review
   amendments' items 4 and 5 and the re-check's fixes amended while building, to confirm; the member's screens as they
-  stood **confirmed by the founder 2026-11-23** (the linking flows hand-tested on the local stack 2026-11-19 and
+  stood **confirmed by the Tech Lead 2026-11-23** (the linking flows hand-tested on the local stack 2026-11-19 and
   2026-11-23, steps 2 to 5: "ok step 4 looks good", "step 5 looks good"; "confirm the batch"); item 4 (the partner
   page's message after "Remove", not reported on), item 5 and the re-check's fixes (behind the scenes) still open · Built: `packages/core/src/relay.ts` (notices
   `member_link`, `member_remove`, `member_removed`; the answer `{choice}`), `packages/web/src/vault/login.ts`
@@ -14377,7 +14377,7 @@ From `feat/link-cancel-by-email` (PR 83) @ 88104036, then `next` @ 6db2bb8b merg
   8. **Partner signals**: none new beyond the `login_cancelled` reason; `linkChanged` belongs to a session's own
      wallet, and this login opens none.
 - Not done: the D864 notice mail's active advice and its "now_active" screen still tell the email's holder not to
-  sign in with that email; with this notice, signing in is now the way to remove it (a wording change for the founder).
+  sign in with that email; with this notice, signing in is now the way to remove it (a wording change for the Tech Lead).
   After "Keep it" this browser never asks again, so a user who kept it to move money out first removes it from another
   browser (no settings page lists links).
 - Rejected: a 7-day window (the contract sets none; the risk lasts as long as the link); asking after the login (the
@@ -14485,7 +14485,7 @@ From `next` @ 0a636344; not merged, not deployed.
      what the user gets and does. The admin portal has no button for these calls (they are `cloudflared access curl`,
      `docs/operations.md` "Staff calls"), so `apps/admin` is unchanged.
   10. **Words (D853)**: the pages' and mails' texts are in `SUPPORT_TEXT` (support-page.ts) and `mail.ts`; the page's
-      done lines are the founder's ("Your email is unlocked. You can sign in again." / "Thanks: this email is confirmed.
+      done lines are the Tech Lead's ("Your email is unlocked. You can sign in again." / "Thanks: this email is confirmed.
       We’ll send sign-in codes to it again."), each followed by what to do next and nothing to press; expired and used
       say "Ask the app’s support to send a new email."; the confirm page adds "If our emails land in your spam folder,
       mark them as “not spam”. Otherwise we may have to stop sending them again." The mails say what the button does,
@@ -14514,7 +14514,7 @@ From `next` @ 0a636344; not merged, not deployed.
      (an active grant with a ticket the owner hadn't used up is still the one spent).
   2. **Passport Home takes no unlock** (D619, confirmed by the user, stands: Home keeps nothing in storage and its start
      takes no owner proof). The staff note and the runbook say "It works for signing in to an app, not to Passport
-     Home yet"; a user locked out of Home waits for midnight UTC. Changing it is the founder's call (read, never write,
+     Home yet"; a user locked out of Home waits for midnight UTC. Changing it is the Tech Lead's call (read, never write,
      the auth origin's `hana.ug` from `/home`). Confirmed 2026-11-18: Passport Home is not covered for now.
   3. **The staff place comes back only when the provider clearly refused the mail** (an HTTP error answer, a missing key,
      or the staff pool spent). A timeout or a network error may have sent it: `{mailed: false, reason: "unsure"}`, the
@@ -14539,7 +14539,7 @@ From `next` @ 0a636344; not merged, not deployed.
 
 ### D843. The relayer's admin tile, its events and the staff tools in the admin portal, in plain words
 - Date 2026-11-18 · Status: building the admin tile, events and staff tools **decided by the user 2026-11-18**; the
-  details below decided while building, to confirm; what the founder's hand test showed **confirmed by the founder
+  details below decided while building, to confirm; what the Tech Lead's hand test showed **confirmed by the Tech Lead
   2026-11-23** (hand-tested on the local stack 2026-11-19 and 2026-11-23: "for test 4 I think it looks clear", "test 4
   looks good"; "confirm the batch"), the rest still open (the dated note after "Rejected" below) · Built (not deployed, nothing live): `packages/console-core/src/
   evm-relay.ts` (the views and inputs), `health.ts` (`ApiSystemStatus.evmRelay`), `staff.ts` (the audit actions),
@@ -14635,7 +14635,7 @@ From `next` @ 0a636344; not merged, not deployed.
       `EVM_SPONSOR_RPC_<chainId>`: the tile's own "Not set up" case with the upload step (`readEndpoint: 'missing'`).
   18. **(L2) Closing a slot and billing.** In the code reviewed, `settleAsCharge(consumed_elsewhere)` kept the full
       reservation as the send's cost (counted on the app's and the env's day budgets) and wrote a billing record with
-      that amount under the partner's app. Open question put to the founder, answered 2026-11-18: the partner is not
+      that amount under the partner's app. Open question put to the Tech Lead, answered 2026-11-18: the partner is not
       charged (D869, a separate PR); the Close tool already says "The user's action in it is marked as not done. The
       app is not charged: Journear covers it."
   19. **(Re-check M, 2026-11-18) A leak seen during any pause.** The thief case: a pause for money, then someone with
@@ -14666,7 +14666,7 @@ From `next` @ 0a636344; not merged, not deployed.
   retrying a failed tool call (whether it acted is in its own log); showing the users' accounts (staff see a user only
   through the audited Users screen).
 - **2026-11-23, the batch confirmation** ("confirm the batch", the note "Confirmed in one batch, 2026-11-23" at the
-  end of this file): **confirmed by the founder** as hand-tested on the page (as renamed by D879): item 2 for the states
+  end of this file): **confirmed by the Tech Lead** as hand-tested on the page (as renamed by D879): item 2 for the states
   the hand test reached, items 3 and 4, item 5 as far as Resume, and the out-of-money steps with item 19's first step,
   through out of money → refill → Resume as it was then (D890 changed that flow later). **Still open**: items 1, 6, 7, 8,
   12, 15, 16, 21 and 22 (behind the scenes, never on a screen); item 9 (the events' words on Feed and notices); items
@@ -14683,7 +14683,7 @@ From `next` @ 0a636344; not merged, not deployed.
 From `next` @ 9a4db48f, then `next` @ 25aaada3 and c0f14a8e merged in; not merged, not deployed.
 
 ### D867. A "Check in" card on the hosted demo shows and hand-tests a gas-free action, only where the env sponsors it
-- Date 2026-11-18 · Status: asked for by the founder (a way to see and hand-test a gas-free action); everything below
+- Date 2026-11-18 · Status: asked for by the Tech Lead (a way to see and hand-test a gas-free action); everything below
   decided while building and amended after the independent review of PR 91 (below); **confirmed by the user
   2026-11-18** ("confirm D867": the card and its words as in the screenshots, only where sponsorship is set up and the
   app allowed, visible with a note and the button off when paused or the day's budget is used up, the waiting line a
@@ -14733,7 +14733,7 @@ From `next` @ 9a4db48f, then `next` @ 25aaada3 and c0f14a8e merged in; not merge
 - The local stack: the demo's build has the stack's chain as `evmSponsor`, the API allowlists the demo's app (DEMO_PK)
   for the exact check-in, and the mocked chain runs and counts it, so a person can sign in with email, press Check in,
   approve and see the result (docs/operations.md "Trying the gas-free check-in by hand on the local stack").
-- Rejected: a disabled or "coming soon" card where the env doesn't sponsor (the founder asked for absence); a
+- Rejected: a disabled or "coming soon" card where the env doesn't sponsor (the Tech Lead asked for absence); a
   hard-coded chain or address in the demo; a new SDK event for "approved, now sending" (a protocol change for a demo
   stage; the focus-based stage says what is true either way); reading the count through a new RPC (the page's provider
   and CSP already have the chain's RPC).
@@ -14742,7 +14742,7 @@ From `next` @ 9a4db48f, then `next` @ 25aaada3 and c0f14a8e merged in; not merge
   time); (2) the stage after the user is back says only what is true whether or not they approved ("If you approved
   it, …"; it said "Checking you in" when nothing may have been approved); (3) the done line is "Done. You checked in.
   Journear paid the network fee, so it cost you nothing." (the colon sentence first built was the build brief's, not
-  the founder's); (4) docs/integration.md's button runs after `hana.ready` with the user signed in (before that
+  the Tech Lead's); (4) docs/integration.md's button runs after `hana.ready` with the user signed in (before that
   `sponsorship()` answers `chain_not_enabled` and the button never appears), uses `e.userMessage ?? userMessageFor(e?.code,
   e?.data)` and marks the UI helpers as the partner's own; (5) after Done the count is read again 4 s later
   (`GAS_FREE_RECOUNT_MS`) and on the next return to the page, for the same account only, and never shown lower than
@@ -14757,7 +14757,7 @@ From `next` @ 9a4db48f, then `next` @ 25aaada3 and c0f14a8e merged in; not merge
 ## A slot lost to Journear's own key is not charged (branch `fix/evm-sponsor-consumed-elsewhere-not-charged`), 2026-11-18
 
 ### D869. A sponsored action lost to a transaction Journear's relayer didn't send is not charged to the partner
-- Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (the founder's words: "go with your recommendation:
+- Date 2026-11-18 · Status: **confirmed by the user 2026-11-18** (the Tech Lead's words: "go with your recommendation:
   not charged"); the review amendments below to confirm; answering the open question of D843's review (item 18) · Built (not deployed): `apps/api/src/evm/
   sponsor-settle.ts` (`settleNotCharged`; `settleAsCharge` keeps `lost` only; the window names shared with
   `sponsor.ts`), tests `apps/api/test/evm-sponsor.test.ts` ("D869: …"), `evm-sponsor-relayer.test.ts` (the real relayer's
@@ -14878,7 +14878,7 @@ deployed. SDK 0.5.0 has never been sent to a partner (its commits are on `next` 
      the NEAR relay's reasons, the vault's other NEAR refusals, the sandbox mainnet demo's reasons, the API's app-setup
      refusals (`missing_key`, `unknown_app`, `scope_conflict`), `email_sharing_unavailable` (`off`, `no_address`), and
      `login_cancelled`'s `popup_closed`, `email_consent_declined` and `google_account_mismatch`. Plain by D853 and the
-     shared word list (tested); the sentences are listed for the founder in the PR.
+     shared word list (tested); the sentences are listed for the Tech Lead in the PR.
   5. The vault's comment that a partner may show a refusal's `message` as it is now says to show `userMessage` (D861).
 - **Amended after PR 94's independent review (2026-11-18, to confirm):**
   1. **A NEAR relay result that may follow its send says to check first** (H1): `relayer_unavailable` (the key object
@@ -15005,7 +15005,7 @@ code two classifier variants and the settlement's bound on a receipt's gas price
   2. **A manifest setting, testnet only.** `admin.opsEveryMinutes`: 5 (default; absent) or 15. 15 is refused outright
      on any network but testnet, with no acknowledgement field: the stricter option, because a production network gets
      5-minute monitoring whatever its Neon plan and changing that is its own decision (a testnet staging env may use
-     it, as the founder said). Today the schema admits testnet only, so the rule is the guard for when it doesn't.
+     it, as the Tech Lead said). Today the schema admits testnet only, so the rule is the guard for when it doesn't.
      sandbox-dev sets 15. The generated admin config gains `OPS_EVERY_MINUTES: "15"` only off the default.
   3. **An estimate, not Neon's figure.** `usage.neonPlan` (`{computeHoursPerMonth, computeUnits}`; sandbox-dev 100 and
      0.25) gives both Workers `NEON_PLAN`. Every ledger connection is noted in the API's D1 as awake from its opening to
@@ -15025,7 +15025,7 @@ code two classifier variants and the settlement's bound on a receipt's gas price
   6. **Migration 0023 edited in place**: `neon_compute`, `neon_admin_runs` and the `neon_compute_high` kind in
      `security_events`' CHECK. 0022 and 0023 are applied nowhere yet and were edited in place before; no new migration
      that would need applying before the freeze ends.
-  7. **Interim, by hand (done 2026-11-19 at the founder's request).** The deployed sandbox-dev admin Worker's triggers
+  7. **Interim, by hand (done 2026-11-19 at the Tech Lead's request).** The deployed sandbox-dev admin Worker's triggers
      changed to `*/30` + `*/15` (`wrangler triggers deploy`, triggers only; code 9d09e6b2 of 2026-11-13). The Worker's
      dispatch runs every trigger other than `*/15 * * * *` as the five-minute job (by exclusion), so notices, the feed
      and the watcher run every 30 minutes there, and **the `*/15` trigger must never be edited by hand**: changed, it
@@ -15075,9 +15075,9 @@ code two classifier variants and the settlement's bound on a receipt's gas price
 From `next` @ 675d03a1; not merged, not deployed.
 
 ### D874. Passport Home lists the ways to sign in to each app's wallet, read-only, with where each can be cancelled or removed
-- Date 2026-11-19 · Status: **decided by the founder 2026-11-19** (build "a place to see and manage" the links, the
+- Date 2026-11-19 · Status: **decided by the Tech Lead 2026-11-19** (build "a place to see and manage" the links, the
   reviewer's suggestion after D864 and D865); the details below **decided while building, to confirm**; the list as
-  the hand test showed it **confirmed by the founder 2026-11-23** (hand-tested on the local stack: "I just tested
+  the hand test showed it **confirmed by the Tech Lead 2026-11-23** (hand-tested on the local stack: "I just tested
   passport home, looks ok."; "confirm the batch"), the parts not seen still open (the dated note at the end) · Built:
   `packages/web/src/auth/home-sign-ins.ts` (`signInModel`, `mayCancel`, `mayRemove`, `pointerFor`, `SIGN_IN_TEXT`,
   `startHomeSignIns`), `home-page.ts` (mounted on each app's page, between "Devices and auto-approve" and "Your name"),
@@ -15120,7 +15120,7 @@ From `next` @ 675d03a1; not merged, not deployed.
      (D616) mints only `identity` and `derive` codes, and its normal route needs a publishable key. Home's identity
      token (its nonce commits to the Home key) and a stolen Home session can do nothing here. So doing it in Home needs
      an API change (a Home-gated relay route that checks the same `link_change` proof) and an issuer change (a Home
-     `link_change` kind); the founder's brief said to stop and report that part. Nothing was weakened: no new path.
+     `link_change` kind); the Tech Lead's brief said to stop and report that part. Nothing was weakened: no new path.
   4. **Where each change can be made today** (`pointerFor`), only where the contract allows the viewer (`mayCancel`:
      the waiting one itself, or any active sign-in; `mayRemove`: the root, or the member itself; never the root, so a
      wallet always keeps a way in): a waiting email, viewed by itself, "Didn't set this up? Sign in to this app with
@@ -15139,16 +15139,16 @@ From `next` @ 675d03a1; not merged, not deployed.
      added sign-in viewed by another added one, "Only the sign-in this wallet was made with, or this sign-in itself, can
      remove it.". Risks (a waiting link, a sign-in nothing can remove now) are in amber boxes; the rest is plain text.
      `BANNER_REMOVE_MS` equals the vault's `RECENT_LINK_MS` (a test).
-- Why: the founder asked for one place to see who can open a wallet. D619/D553 (Home keeps nothing, takes no owner
+- Why: the Tech Lead asked for one place to see who can open a wallet. D619/D553 (Home keeps nothing, takes no owner
   proof) are kept: the list is public chain data read on a press and held in memory only. Acting needs proofs Home
   can't get without new server routes; pointing to the flows that already require them keeps the security bar.
-- For the founder: (a) whether to build Home's Cancel and Remove: a Home-gated `POST /v1/home/link/{cancel,unlink}`
+- For the Tech Lead: (a) whether to build Home's Cancel and Remove: a Home-gated `POST /v1/home/link/{cancel,unlink}`
   that verifies the same fresh `link_change` token (Google re-sign-in with `max_age=0`, as Home's derive does; for
   email, an issuer Home route kind `link_change` over the commitment the page computes), prechecks as `links.ts` does,
   revokes the account's shares (D233) and bills the scope's org as `home_login` does (D586); without a device ticket
   (D619) a code drain on the mailbox would block it. (b) The gap this list makes visible: after the banner's 7 days
   the wallet's own sign-in can remove an added one nowhere (the contract allows it). (c) The words in item 4.
-- **Note, decided by the founder 2026-11-23** (the founder's answers of 2026-11-23 to the coordinator's five numbered questions: "1 yes, 2 leave, 3 yes, 4 yes, 5 leave"; recorded on branch `feat/demo-plain-wording-2`): (a) **yes**: Cancel and Remove inside Passport Home will be
+- **Note, decided by the Tech Lead 2026-11-23** (the Tech Lead's answers of 2026-11-23 to the coordinator's five numbered questions: "1 yes, 2 leave, 3 yes, 4 yes, 5 leave"; recorded on branch `feat/demo-plain-wording-2`): (a) **yes**: Cancel and Remove inside Passport Home will be
   built, **after** the Home restructure, in its Security tab, as its own security-reviewed change. Decided, not built.
 - Rejected: Home calling the app-gated relays with an app's publishable key and a partner origin it doesn't have;
   reading the issuer's directory to name other sign-ins (would reveal someone else's address); reading on every Home
@@ -15175,7 +15175,7 @@ From `next` @ 675d03a1; not merged, not deployed.
      move your money to a different wallet that only you can open. Moving this wallet to another wallet app won't help."
      (app support and Journear staff can't remove a sign-in: the contract needs the acting person's token; moving the
      wallet out exports the same key, which the other sign-in still opens). The 7-day limit itself is unchanged here
-     (whether to drop it is with the founder); a test still holds `BANNER_REMOVE_MS` to `RECENT_LINK_MS`.
+     (whether to drop it is with the Tech Lead); a test still holds `BANNER_REMOVE_MS` to `RECENT_LINK_MS`.
   4. **Words**: "Each of these opens the same wallet, or will once it stops waiting. Anyone who can sign in with one of
      them can use the money in it."; an automatic Google member "Added automatically at a sign-in, because this Google
      account uses the same email address as this wallet." (case A always matches on the address; no hedge); a waiting
@@ -15190,11 +15190,11 @@ From `next` @ 675d03a1; not merged, not deployed.
   you're not sure, remove it.", softer for an automatic Google link, and "Once you press Done in the sign-in window,
   that browser stops offering Remove. Not offered? Try signing in in a private window."), plain, not amber. The
   first-7-days row loses "before {date}". `BANNER_REMOVE_MS` is gone; Home reads core's `RECENT_LINK_MS`.
-- **2026-11-23, the batch confirmation** ("confirm the batch"): **confirmed by the founder**: the section, its Show
+- **2026-11-23, the batch confirmation** ("confirm the batch"): **confirmed by the Tech Lead**: the section, its Show
   and Show again, and the lines and words the hand test showed for the wallet's own sign-in and an added one. **Still
   open**: the two "couldn't check / couldn't confirm" messages and the both-providers rule behind them (amendment 1);
   the lines only some viewers get (a waiting Google account viewing itself, an added sign-in viewing another, "Not
-  asked? Try signing in in a private window."), which is the rest of (c) of "For the founder". (a) is decided (the
+  asked? Try signing in in a private window."), which is the rest of (c) of "For the Tech Lead". (a) is decided (the
   note above); (b) was answered by D875.
 
 ## The staff admin portal on the local stack (branch `test/e2e-admin-portal`), 2026-11-19
@@ -15203,8 +15203,8 @@ From `next` @ 675d03a1, not merged, nothing deployed. Tests, the local stack and
 new tests found (item 7).
 
 ### D873. The staff admin portal runs in the local stack, behind a stand-in for Cloudflare Access
-- Date 2026-11-19 · Status: the requirement decided by the founder 2026-11-19 ("run the admin portal in the local
-  setup"); the details decided while building, to confirm; **confirmed by the founder 2026-11-23** (the founder ran
+- Date 2026-11-19 · Status: the requirement decided by the Tech Lead 2026-11-19 ("run the admin portal in the local
+  setup"); the details decided while building, to confirm; **confirmed by the Tech Lead 2026-11-23** (the Tech Lead ran
   the staff admin page's hand test on it, 2026-11-19 and 2026-11-23; "confirm the batch") · Built: `apps/e2e/src/server/admin-lane.ts`,
   `admin-lane-worker.ts`, `access.ts`, `lane-evm.ts`, `lane-clock.ts`, `lane-clock-install.ts`, `pglite-wire.ts`,
   `src/staff-demo.ts` (the `staff-demo` script), `src/ports.ts` and `src/stack.ts` (the lanes' ports), `issuer.ts` (the
@@ -15215,7 +15215,7 @@ new tests found (item 7).
   the staff admin portal by hand on the local stack", "Free network fees in the admin portal"), `docs/architecture.md`,
   `docs/api.md`, `apps/e2e/README.md`.
 - Why: the admin's pages, the gas-sponsorship staff tools merged 2026-11-18 (D843) among them, had unit tests but no
-  browser test against real services, and the founder could not click through them. Two independent reviews flagged it.
+  browser test against real services, and the Tech Lead could not click through them. Two independent reviews flagged it.
 - Decision:
   1. **What runs.** apps/admin's REAL Worker and SPA (`public/`, with the assets binding's single-page fallback) on
      their own origin, one LANE per origin: `http://127.0.0.1:<base+33>` for a person's hand test, base+34, +35, +36
@@ -15313,9 +15313,9 @@ new tests found (item 7).
 From `next` @ 57bfa1e2, not merged, nothing deployed.
 
 ### D875. The wallet's own sign-in can remove an added sign-in at any age, from the sign-in window
-- Date 2026-11-19 · Status: **decided by the founder 2026-11-19** ("Drop the sign-in window's 7-day limit on Remove for
+- Date 2026-11-19 · Status: **decided by the Tech Lead 2026-11-19** ("Drop the sign-in window's 7-day limit on Remove for
   the wallet's own sign-in"); the design below and the details under "To confirm" **decided while building, to
-  confirm**; the removal at any age as hand-tested **confirmed by the founder 2026-11-23** (hand-tested on the local
+  confirm**; the removal at any age as hand-tested **confirmed by the Tech Lead 2026-11-23** (hand-tested on the local
   stack 2026-11-19 and 2026-11-23 with D881's screens: "Step 1 looks good.", "I carried on and it looks ok to me";
   "confirm the batch"), the split at the end of "To confirm" · Built: `packages/core/src/relay.ts` (`RECENT_LINK_MS`, `isRecentLink`, now the one value the vault, the
   sign-in window and Passport Home read), `packages/web/src/vault/login.ts` (`Afterword.banners`),
@@ -15381,7 +15381,7 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
      {app} the way you first signed in to this wallet. The Journear Passport sign-in window usually shows the new
      sign-in with a button to remove it. If it doesn't, “Ways to sign in” in Passport Home tells you how to remove it."
      (tests: it names no 7 days; Home's section title is the one the mail names).
-- Why: the founder wants the dead end gone with no weaker proof; the contract always allowed it. A full banner at
+- Why: the Tech Lead wants the dead end gone with no weaker proof; the contract always allowed it. A full banner at
   every sign-in would hold every sign-in of most two-way wallets (an extra press forever) and train people to press
   Done without reading; the first 7 days keep the loud notice, which is where a link nobody made shows up.
 - Rejected: (a) dropping the 7-day filter alone (a full banner at every sign-in, holding the window every time);
@@ -15391,7 +15391,7 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
   window; (d) Home arming the next sign-in through the auth origin's storage: works only in the same browser, and
   Home stores nothing (D874); (e) a new `quiet`/`linkId` field on the banner: `isFollowNotice` checks banner keys
   exactly, so an older window would refuse the notice during a deploy; (f) Remove in Passport Home itself: an API and
-  an issuer route (D874 item 3, still with the founder); (g) an auto-closing screen (a timed screen people can't
+  an issuer route (D874 item 3, still with the Tech Lead); (g) an auto-closing screen (a timed screen people can't
   read at their pace).
 - Security: nothing weakened or added: same nonce, commitment, proof check, relay route and contract check; the
   window's storage only decides whether a line is shown, never what is removed (a planted or cleared key hides the
@@ -15410,7 +15410,7 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
   close button leaves the line to be shown again, so someone who always closes it that way sees it every time.
   **2026-11-23** ("confirm the batch"): the design as hand-tested (Remove offered to the wallet's own sign-in for an
   added one of any age, as a quiet line until Done) and the words of (3) that the hand test showed (the line, the
-  note, Home's sentences, since reworded by D887) **confirmed by the founder**; still open: (1), (2), (4), (5), (6),
+  note, Home's sentences, since reworded by D887) **confirmed by the Tech Lead**; still open: (1), (2), (4), (5), (6),
   (7) and the notice mail's words in (3).
 - Note 2026-11-19 (D881): the line's Remove now asks first (Go back marks nothing seen) and ends on what became of it;
   a failed or unknown removal leaves the line to be shown at the next sign-in, as before.
@@ -15423,11 +15423,11 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
 ## The approval window's whole account, fee row and guard line (branch `feat/unbroken-address-copy`), 2026-11-19
 
 ### D876. A whole address or key is shown in one piece, and the user's own account has Copy
-- Date 2026-11-19 · Status: **decided by the founder 2026-11-19** (hand-testing the approval window: "I think this
+- Date 2026-11-19 · Status: **decided by the Tech Lead 2026-11-19** (hand-testing the approval window: "I think this
   looks very weird. just go with option 2 and show as one unbroken line with a copy"); the details decided while
   building and amended after PR 101's review, to confirm; the counterparty rows in one piece too **decided by the
-  founder 2026-11-19** after comparing both looks ("for the recpient address go option 1 unbroken"); the details as
-  seen **confirmed by the founder 2026-11-23** (hand-tested: "both unbroken address and the hint under Approve looks
+  Tech Lead 2026-11-19** after comparing both looks ("for the recpient address go option 1 unbroken"); the details as
+  seen **confirmed by the Tech Lead 2026-11-23** (hand-tested: "both unbroken address and the hint under Approve looks
   good."; "confirm the batch"), the split at the end of "To confirm" · Amends D859 (its groups of four; its "no copy button" for the account row) · Built on
   `feat/unbroken-address-copy` (from `next` @ 8908a3a0), not merged, not deployed:
   `packages/web/src/auth/render-approval.ts` (`fullId`, `COUNTERPARTY_GROUPS`), `auth/approve-page.ts` (`accountRow`,
@@ -15450,11 +15450,11 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
   and the value under it across the whole width: at 390 px an EVM address is one line, a Stellar account (56) and a
   NEAR implicit account (64) two nearly even lines (28/28, 32/32); at 320 px or zoomed, more even lines. No character
   is emphasised.
-- The counterparty rows stay in one piece (the founder's decision above). Groups for them remain one switch away, should
+- The counterparty rows stay in one piece (the Tech Lead's decision above). Groups for them remain one switch away, should
   that ever be reversed: `COUNTERPARTY_GROUPS` in `render-approval.ts` (`false`)
   adds the class `grouped` to those rows' values, and `code.id-full.grouped > .grp:not(:last-child)` spaces the spans
   by CSS (`margin-inline-end`); the text, the copy and the line breaks stay exactly as they are. The user's own account
-  never groups. Both looks are in the screenshots for the founder.
+  never groups. Both looks are in the screenshots for the Tech Lead.
 - Copy (the details' "Your account" row only): a small secondary button (`aria-label` "Copy your account") that writes
   the account, and only it, to the clipboard, inside the click. Under it, a line says "Copied" for 3 s; when the
   browser has no clipboard here or refuses, "Couldn’t copy. Select your account above and copy it yourself.", which
@@ -15470,7 +15470,7 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
 - Given up: comparing a long value by eye in blocks of four (D859's reason), for the user's own account and
   the counterparty rows. D859's other protections stay: the whole value is always in view above the fold, unfolded,
   labelled, the same value the decoder read, and a look-alike can't hide behind a shared short form (numbered).
-- Rejected: (1) keeping the groups everywhere (the founder: "looks very weird"); (2) wrapping at any character (lone
+- Rejected: (1) keeping the groups everywhere (the Tech Lead: "looks very weird"); (2) wrapping at any character (lone
   characters, a first line that reads like the end); (3) a cut middle with "…" (this is the one place the whole value
   is shown); (4) a horizontal scroll strip; (5) Copy on every whole-value row; (6) emphasising the first and last
   characters.
@@ -15481,14 +15481,14 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
   (3) the label above the value on every whole-value row; (4) the value at the rows' size (13 px; 14 px on a phone);
   (5) the space kept under Copy for the refusal's sentence (two lines on a phone) even when nothing is said.
   **2026-11-23** ("confirm the batch"): (1), (3), (4), (5) and, of (2), "Copy" and "Copied" **confirmed by the
-  founder** (hand-tested); still open: of (2), the button's spoken name "Copy your account" and the refusal "Couldn’t
+  Tech Lead** (hand-tested); still open: of (2), the button's spoken name "Copy your account" and the refusal "Couldn’t
   copy. …" (shown only when copying fails).
 
 ### D877. The approval window's facts read as words; the free fee says "Free." first; the local network's short name
-- Date 2026-11-19 · Status: **asked for by the founder 2026-11-19** (hand-testing the sponsored check-in: "can the
+- Date 2026-11-19 · Status: **asked for by the Tech Lead 2026-11-19** (hand-testing the sponsored check-in: "can the
   'Network fee' section be revised? currently looks a bit odd esp in readability"); the details decided while
   building and amended after PR 101's review, to confirm; the fee and network rows as later changed by D884
-  **confirmed by the founder 2026-11-23** (hand-tested: "yes first row network fee looks as you expected."; "confirm
+  **confirmed by the Tech Lead 2026-11-23** (hand-tested: "yes first row network fee looks as you expected."; "confirm
   the batch"), the split at the end of "To confirm" · Amends D850 (its fee row's words), D858 (the relayed fee
   row's first letter) · Built on `feat/unbroken-address-copy`: `packages/core/src/decode/summary.ts` (`SPONSORED_FEE`,
   `RELAYED_FEE`, `rowValue`, `ApprovalSummary.freeFee`, the unknown-network texts), `packages/core/src/networks.ts`
@@ -15519,23 +15519,23 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
   (4) Chains 31337 and 1337 read "Local test network" (was "… (Hardhat, Anvil)" and "… (Ganache, Geth dev)"); only the
   label changes; `TEST_EVM_CHAINS` and every real network's name are unchanged. (5) An unknown network reads "A network
   Journear doesn’t know (no. N)" / "A Stellar network Journear doesn’t know: …".
-- Copy on the "Program" row (the founder's screenshot): none (D876 "to confirm" 2); the row follows D876's layout.
+- Copy on the "Program" row (the Tech Lead's screenshot): none (D876 "to confirm" 2); the row follows D876's layout.
 - Nothing shown or hidden changed, nor the order of anything, nor any warning's words.
 - Address impact: none.
 - To confirm: (1) which values are mono (the list above); (2) "Free." / "Free for you." in bold with the check mark in
   the row, rather than a box or a larger line; (3) the mark in the text colour on a window with a red box (amber
   windows keep the green); (4) both local chains named the same; (5) the capitalised fee and unknown-network values.
   **2026-11-23** ("confirm the batch"): (2) as moved by D884 and (4) ("Local test network") **confirmed by the
-  founder** (hand-tested); still open: (1), (3) (a window with a red box) and (5).
+  Tech Lead** (hand-tested); still open: (1), (3) (a window with a red box) and (5).
 - Amended 2026-11-19 by D884: a free fee is no longer in the main view; it is the first row of the folded details,
   "✓ **Free.** Sponsored by {App}." for both kinds (was "Journear pays it for you." / "Free for you. Someone else
   pays it."), with this decision's look kept there: the mark, "Free." in bold, words in the text face, the mark in the
   text colour on a window with a red box.
 
 ### D878. A line under a guarded button says what turns it on
-- Date 2026-11-19 · Status: **decided by the founder 2026-11-19** ("go with 1": the button "disables itself, then
+- Date 2026-11-19 · Status: **decided by the Tech Lead 2026-11-19** ("go with 1": the button "disables itself, then
   re-enables after a while, it's very random" with nothing explaining it); the details decided while building and
-  amended after PR 101's review, to confirm; the line under Approve as seen **confirmed by the founder 2026-11-23**
+  amended after PR 101's review, to confirm; the line under Approve as seen **confirmed by the Tech Lead 2026-11-23**
   (hand-tested: "both unbroken address and the hint under Approve looks good."; "confirm the batch"), the split at
   the end of "To confirm" · Extends D36, D113, D430 (changes neither) · Built on
   `feat/unbroken-address-copy`: `packages/web/src/auth/guard-hint.ts` (new: `GuardHint`, `GUARD_HINT_TEXT`, `AWAY_MS`,
@@ -15592,15 +15592,15 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
   Passport Home, with the space of its longest sentence kept; (7) `aria-describedby` rather than a live region;
   (8) the same line on Share email and the export screens.
   **2026-11-23** ("confirm the batch"): (2), (6) in the approval popup, and of (1) the mouse line ("{B} turns on when
-  you move your mouse.") **confirmed by the founder** (hand-tested); still open: the rest of (1) (the touch, keyboard,
+  you move your mouse.") **confirmed by the Tech Lead** (hand-tested); still open: the rest of (1) (the touch, keyboard,
   Enter and "isn’t in front" lines), (3), (4), (5), (7), (8) and (6) on Passport Home.
 
 ## A hand-test browser for sign-ins and NEAR actions (branch `test/e2e-hand-browser`), 2026-11-19
 
 ### D880. A hand-test browser: the suite's own Google stub and NEAR relay, for a person on the local stack
-- Date 2026-11-19 · Status: the requirement asked for by the founder 2026-11-19 (hand-test the flows that need two
+- Date 2026-11-19 · Status: the requirement asked for by the Tech Lead 2026-11-19 (hand-test the flows that need two
   sign-ins and the NEAR relay on the local stack); the details decided while building, to confirm; **confirmed by the
-  founder 2026-11-23** as used for every hand test of 2026-11-19 and 2026-11-23 ("confirm the batch"), but for "To
+  Tech Lead 2026-11-23** as used for every hand test of 2026-11-19 and 2026-11-23 ("confirm the batch"), but for "To
   confirm" (4) · Built:
   `apps/e2e/src/hand-test.ts`, `src/hand-browser.ts` (the `hand-browser` script), `src/browser-routes.ts`
   (`routeStubs`, moved from `tests/fixtures.ts`), `src/near-relay.ts` (the relay mock, moved out of
@@ -15653,8 +15653,8 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
 - Address impact: none (no path, key or derivation changed).
 - To confirm (decided while building): (1) six accounts and their names; (2) a new tag per launch by default (`--tag`
   to come back); (3) the demo's test app with email on for the specs too (item 6); (4) the hand browser's own spec
-  runs in Chromium only. **2026-11-23** ("confirm the batch"): (1), (2) and (3) **confirmed by the founder** (used in
-  the hand tests); (4) still open (test tooling the founder doesn't see).
+  runs in Chromium only. **2026-11-23** ("confirm the batch"): (1), (2) and (3) **confirmed by the Tech Lead** (used in
+  the hand tests); (4) still open (test tooling the Tech Lead doesn't see).
   Seen while checking, not changed (product code): after the email's own sign-in during a waiting link (D864), the demo
   page behind the window says "Something went wrong (link_pending)…" rather than a plain message.
 
@@ -15663,9 +15663,9 @@ From `next` @ 57bfa1e2, not merged, nothing deployed.
 From `next` @ a8692ea0; not merged, not deployed.
 
 ### D879. Staff call EVM gas sponsorship "Gas sponsorship"; users keep "free network fees"
-- Date 2026-11-19 · Status: **decided by the founder 2026-11-19**, after hand-testing the staff admin portal's page at
+- Date 2026-11-19 · Status: **decided by the Tech Lead 2026-11-19**, after hand-testing the staff admin portal's page at
   `/free-network-fees/<chainId>`; the reworded sentences below decided while building, to confirm; the term as seen on
-  the renamed page **confirmed by the founder 2026-11-23** (hand-tested; "confirm the batch"), the split at the end of
+  the renamed page **confirmed by the Tech Lead 2026-11-23** (hand-tested; "confirm the batch"), the split at the end of
   "To confirm" · Built: display
   text and one route only. `apps/admin/src/evm-relay.ts` (the title, the path, the steps and answers), `status.ts`
   (the tile), `public/app.js` (the page, its tools and route), `packages/console-core/src/audit-words.ts` (the
@@ -15678,7 +15678,7 @@ From `next` @ a8692ea0; not merged, not deployed.
   portal (D843)", the relayer's table and steps, the alerts table, "Trying the staff admin portal by hand on the local
   stack"), `docs/architecture.md`, `docs/go-live-after-freeze.md` (4.16, the alerts table, question 5), `docs/api.md`,
   `docs/security.md`, `apps/admin/README.md`, `apps/e2e/README.md`.
-- Decision, in the founder's words: "instead of 'free network fees' I think 'gas sponsorship' is a clearer term for
+- Decision, in the Tech Lead's words: "instead of 'free network fees' I think 'gas sponsorship' is a clearer term for
   admin side (you can maintain free network fees for user side as it's likely clearer to non-Web3 users for this
   term)". So:
   1. **Staff side: one term, "Gas sponsorship".** A name in titles ("Gas sponsorship (Base Sepolia)", "the Gas
@@ -15767,12 +15767,12 @@ From `next` @ a8692ea0; not merged, not deployed.
   names such as `chain_not_sponsored`, `app_not_sponsored`, `sponsorship_paused`, `sponsorship_unconfigured`; the
   API's `sponsorship_paused` error string says "Free network fees are paused for now". `docs/go-live-after-freeze.md`
   keeps its "gas-free action(s)" wording (its glossary's "Relayer" and the phase headings) for the same reason: that is
-  the partner-side term, which the founder decides separately.
+  the partner-side term, which the Tech Lead decides separately.
   **2026-11-23** ("confirm the batch"): of (1), the term on the page, the tile and its titles, "Gas sponsorship is
-  stopped for everyone" and the scoped "affects" line **confirmed by the founder** (hand-tested); still open: the rest
+  stopped for everyone" and the scoped "affects" line **confirmed by the Tech Lead** (hand-tested); still open: the rest
   of (1) ("gas prices" and "gas price limit", shown only when gas prices are above the limit; "a little ETH for gas",
   on the rarely needed Fill a gap), (2) and (3). (4) is decided (the note below).
-- **Note, decided by the founder 2026-11-23** (the founder's answers of 2026-11-23 to the coordinator's five numbered questions: "1 yes, 2 leave, 3 yes, 4 yes, 5 leave"; recorded on branch `feat/demo-plain-wording-2`): (4) **yes**, the partner guide says "gas sponsorship" too.
+- **Note, decided by the Tech Lead 2026-11-23** (the Tech Lead's answers of 2026-11-23 to the coordinator's five numbered questions: "1 yes, 2 leave, 3 yes, 4 yes, 5 leave"; recorded on branch `feat/demo-plain-wording-2`): (4) **yes**, the partner guide says "gas sponsorship" too.
   Built on that branch, partner docs only: `docs/integration.md` (section 8's heading "Gas sponsorship (not live)",
   with the old anchor `gas-free-actions-not-live` kept so links still land; the 0.5.0 upgrade note "gas sponsorship
   for EVM actions (sponsored actions)"; "sponsored action(s)" wherever the feature is named to developers; a sentence
@@ -15794,12 +15794,12 @@ From `next` @ a8692ea0; not merged, not deployed.
 ## The sign-in window says what a link did, asks before Remove, and says what became of it (branch `feat/link-notice-wording`), 2026-11-19
 
 ### D881. The notice after a link names the wallet and why; Remove asks first; Remove and Cancel end on their outcome; the window's title is the screen's
-- Date 2026-11-19 · Status: **decided by the founder 2026-11-19** (the notice, from the hand test: "the messaage feel
+- Date 2026-11-19 · Status: **decided by the Tech Lead 2026-11-19** (the notice, from the hand test: "the messaage feel
   confusing, it says 'opens this wallet too' but doesn't say what wallet etc"; the Remove confirmation and result:
   "yeah I think we need a confirmation screen as you suggested, it's too abrupt and I didn't even know what happened";
   the guestbook: "yes change the guestbook one to match the check in card"); every sentence below decided while
   building and amended after PR 105's independent review, **to confirm**; the notice, Remove's confirmation and the
-  results the hand test reached **confirmed by the founder 2026-11-23** (hand-tested on the local stack: "Step 1
+  results the hand test reached **confirmed by the Tech Lead 2026-11-23** (hand-tested on the local stack: "Step 1
   looks good."; "I carried on and it looks ok to me"; "confirm the batch"), the split at the end of "To confirm" · Built: display text, screens and the
   window's title only, in the sign-in window's pages, Passport Home's one sentence, the SDK's one sentence and the
   hosted demo; no vault, API, issuer or contract change, nothing new in the vault's notices.
@@ -15944,20 +15944,20 @@ From `next` @ a8692ea0; not merged, not deployed.
      than the guestbook needs, and Journear pays only up to that." (was "Journear’s relayer refused the request’s gas:
      it pays for at most what the guestbook needs."), `near_delegate_test_app_action` / `_receiver` "a test app’s
      request that Journear pays for…" (was "gasless request"), `near_send_failed` "…Use “Write to the guestbook (no
-     NEAR needed)” instead." (was "Use the gasless write instead."). Left, listed for the founder: the NEAR card's
+     NEAR needed)” instead." (was "Use the gasless write instead."). Left, listed for the Tech Lead: the NEAR card's
      other refusals still say "Journear’s relayer" (about 20 sentences in `errors.ts` `RELAYER_REASONS` and
      `nearMessage`: a tester-facing error table, its own pass), and "NEAR testnet" throughout the demo; the stamps site
      needed nothing (its user text was reworded under D853; `STAMP_PROOFS`' "pays the gas" is its deliberate technical
      legend), nor did the demo's diagnostics.
 - Why: the notice was the only word that a second way into the wallet now exists, and it named neither the wallet nor
-  the reason; a Remove with no question and no result left the founder not knowing what happened.
+  the reason; a Remove with no question and no result left the Tech Lead not knowing what happened.
 - Rejected: a new field in the vault's notices (the email address, the stop's reason): an older window rejects a
   notice with an unknown key (`isFollowNotice`) during a deploy, and the vault would have to read or send the address;
   an amber box for the notice (a harmless event shouldn't look like a warning); a confirmation for Cancel (the safe
   action); a timed press guard on Remove it (none in the sign-in window today; D865's once-flag kept); a title per
   page file (the class of problem is one file, many screens); "Journear couldn't be reached" for every unknown outcome
   (Journear did answer for some of those codes).
-- Not changed, listed for the founder (the same unclear "this wallet" with nothing to point to, or close to it):
+- Not changed, listed for the Tech Lead (the same unclear "this wallet" with nothing to point to, or close to it):
   the waiting line "An email will be able to open this wallet from {date}." / "A Google account will…"; D875's "An
   email address also opens this wallet, since {date}."; the non-fresh recent line "A sign-in method was added: {email
   | Google} on {date}."; `linkAccount`'s proof title "Sign in with the {Google | email} that opens this wallet" (also
@@ -15974,7 +15974,7 @@ From `next` @ a8692ea0; not merged, not deployed.
   sentence included; "will be asked to sign in again" with no time; the codes in the "nothing changed" group above;
   showing the masked address only in case A not hosted; the window's title following the heading on the four sign-in
   pages only; the Home pointer only when no older line is shown.
-  **2026-11-23** ("confirm the batch"): **confirmed by the founder** (hand-tested): item 1's notices and the Home
+  **2026-11-23** ("confirm the batch"): **confirmed by the Tech Lead** (hand-tested): item 1's notices and the Home
   pointer under them; item 3's confirmation; item 5's working lines and the "removed" and "cancelled" results with the
   "Devices signed in…" line and "Didn’t add it yourself? …" on the result only; "here" for the wallet; "money" over
   "funds"; "will be asked to sign in again" with no time; the masked address only in case A not hosted. **Still
@@ -15993,7 +15993,7 @@ From `next` @ 365ded2d; not merged, not deployed.
 
 ### D882. The local stack's relayer alarm: only a change from outside the alarm comes soon; while halted the product runs every 15 s
 - Date 2026-11-19 · Status: the finding and the local fix decided while building (test tooling and tests only, no
-  product code), to confirm; one open question for the founder (below) · Built: `apps/e2e/src/server/workers.ts`
+  product code), to confirm; one open question for the Tech Lead (below) · Built: `apps/e2e/src/server/workers.ts`
   (`MemoryStorage`: `setAlarm`, `sync`, `runAlarm`; `MemoryNamespace` routes a direct `alarm()` call through
   `runAlarm`); tests `apps/e2e/test/stack.test.ts` ("soonAlarmMs: only a change from outside the handler fires soon"),
   `apps/api/test/evm-relayer.test.ts` ("while halted, the alarm comes back on its own cadence", and the next alarm
@@ -16036,7 +16036,7 @@ From `next` @ 365ded2d; not merged, not deployed.
   Fill a gap, Cancel, Close, Set the next slot number and Resume after a refill. The hosted demo's gas-free check-in
   never waited on the relayer's alarm: the send request itself polls the chain for the receipt (`waitForReceipt`) and
   answers "done"; the relayer's own record settles on the run 250 ms after the send.
-- Open question for the founder (product, not changed): should the relayer back off while it is paused with a
+- Open question for the Tech Lead (product, not changed): should the relayer back off while it is paused with a
   transaction no endpoint took? Today it tries every 15 s for as long as the pause lasts (5,760 tries a day of RPC
   calls and `evm_relay_rebroadcast` warnings). Backing off (up to 5 minutes, as for an accepted record) would cut that,
   but a refill or a fix would then be noticed up to 5 minutes later unless staff press Resume (Resume checks the
@@ -16060,12 +16060,12 @@ From `next` @ 365ded2d; not merged, not deployed.
 From `next` @ 032711e8; not merged, not deployed.
 
 ### D884. A fee the user doesn't pay is only in the folded details: "Free. Sponsored by {App}."
-- Date 2026-11-19 · Status: **decided by the founder 2026-11-19** while hand-testing a relayed NEAR approval: (1) "for
+- Date 2026-11-19 · Status: **decided by the Tech Lead 2026-11-19** while hand-testing a relayed NEAR approval: (1) "for
   'network fee' it currently says 'free for you. Someone else pays it.'. Can we word it something like 'Sponsored by
   [XXX]' where [XXX] could be the partner's name?" and (2) "I'm thinking if we should move network fee into 'Show
   details' as regular users might not be interested, unless the network fee is not free."; the table below proposed by
   the coordinator, answered "go"; the details decided while building, to confirm; the free fee's row under "Show
-  details" **confirmed by the founder 2026-11-23** (hand-tested: "yes first row network fee looks as you expected.";
+  details" **confirmed by the Tech Lead 2026-11-23** (hand-tested: "yes first row network fee looks as you expected.";
   "confirm the batch"), the split at the end of "To confirm" · Amends D858 and D877 (and D853's
   word list for this one line) · Built: `packages/core/src/decode/summary.ts` (`FREE_FEE`; `SPONSORED_FEE` and
   `RELAYED_FEE` are it), `packages/web/src/auth/render-approval.ts` (`renderApproval`'s fee rows, `sponsorText`,
@@ -16121,7 +16121,7 @@ From `next` @ 032711e8; not merged, not deployed.
   no Approve: the page's claim of sponsorship is never taken), and the outer transaction of a NEAR delegate action is
   signed and paid by whoever relays it, never the user's account (nearcore). `freeFee` is set by the summary from the
   decoded kind alone (`summary.ts` `sponsoredAction`, `nearActions` with `relayed`), never from anything the page or
-  the vault sends. So "Sponsored by {App}" is an attribution, as the founder asked, not a fact the window checked.
+  the vault sends. So "Sponsored by {App}" is an attribution, as the Tech Lead asked, not a fact the window checked.
 - Why naming the app is fair, case by case (the code today):
   - EVM, Journear's relayer: its wallet pays the gas on the chain; only apps on the sponsorship allowlist get it
     (`apps/api/src/evm/sponsor-config.ts:88-89`); every settled send writes a billing record carrying the app and its
@@ -16174,7 +16174,7 @@ From `next` @ 032711e8; not merged, not deployed.
 - No name to show (empty or blank; not reachable today, every popup message carries a registered name): "Free.
   Sponsored by the app." and "… sponsored by the app." in the relayed note (`NO_APP_NAME`): whole and true sentences.
 - Address impact: none (display only; nothing that is signed, decoded or derived changed; no guard changed).
-- Rejected: "Free for you. {App} pays it." in the main view (the founder chose the details, and "pays" claims more
+- Rejected: "Free for you. {App} pays it." in the main view (the Tech Lead chose the details, and "pays" claims more
   than the window knows); "Sponsored by" alone (says nothing a user can use, and the word list's jargon without a
   name); hiding the Network row too (which network is a safety fact); keeping "Journear pays it for you." for EVM
   (true on the chain, but the two free kinds should read the same and the partner is the sponsor in the business
@@ -16198,15 +16198,15 @@ From `next` @ 032711e8; not merged, not deployed.
   details say "Sponsored by Journear demo.": both true, the demo being Journear's own app; the card speaks after the
   action ran, the window never claims zero cost (D858). The SDK's default user messages say "Journear's free network
   fees…" (`packages/web/src/client/user-messages.ts`): left for the partner-side terms (D879's open question 4).
-  **2026-11-23** ("confirm the batch"): (1) and (2) **confirmed by the founder** (hand-tested); (7) decided (the note
+  **2026-11-23** ("confirm the batch"): (1) and (2) **confirmed by the Tech Lead** (hand-tested); (7) decided (the note
   below); still open: (3), (4), (5), (6), (8) and (9).
 - After the review of PR 107 (2026-11-19):
-  - The attribution: "Sponsored by {App}" was built as the founder asked. The founder was told on 2026-11-19 that
+  - The attribution: "Sponsored by {App}" was built as the Tech Lead asked. The Tech Lead was told on 2026-11-19 that
     partners are not charged yet (an earlier statement in this work that they are billed was wrong: today Journear's
     relayers pay, and the cost is recorded against the app). Keeping it, softening it (for example "Free for you,
-    through {App}.") or dropping the name is the founder's open decision. The reviewer's point: any page can ask for a
+    through {App}.") or dropping the name is the Tech Lead's open decision. The reviewer's point: any page can ask for a
     NEAR delegate signature, so any app gets "Sponsored by {App}" on one; it costs the user nothing either way.
-  - **Decided by the founder 2026-11-23** (asked "Sponsored fees: are partners meant to pay eventually?", answered
+  - **Decided by the Tech Lead 2026-11-23** (asked "Sponsored fees: are partners meant to pay eventually?", answered
     "yes"): "Network fee: ✓ Free. Sponsored by {App}." **stays as built**; the softer "Free for you, through {App}." is
     rejected, and the name is not dropped. It names the app that arranged the free fee and that will be charged for it
     once partner billing is switched on; until then Journear's relayer pays and the cost is recorded against the app,
@@ -16221,7 +16221,7 @@ From `next` @ 032711e8; not merged, not deployed.
     read this request" box. Follow-ups.
   - Follow-up for the app-name rules (not built here): registration allows names shaped like "Word. Sentence" and
     "Passport" alone (`packages/console-core/src/names.ts` `appNameProblem`), so "Sponsored by Passport." could read
-    as the wallet itself. **Decided by the founder 2026-11-23** (answer 4 of the founder's answers of 2026-11-23 to the coordinator's five numbered questions: "1 yes, 2 leave, 3 yes, 4 yes, 5 leave"; recorded on branch `feat/demo-plain-wording-2`): **yes**, refuse "Passport" alone as an app
+    as the wallet itself. **Decided by the Tech Lead 2026-11-23** (answer 4 of the Tech Lead's answers of 2026-11-23 to the coordinator's five numbered questions: "1 yes, 2 leave, 3 yes, 4 yes, 5 leave"; recorded on branch `feat/demo-plain-wording-2`): **yes**, refuse "Passport" alone as an app
     name. Decided, not built here: another branch builds it in `packages/console-core` (`names.ts`).
     Built by D891 (2026-11-23, branch `fix/app-name-passport`): "Passport" alone or as the wallet is refused, and a
     claim word beside sentence punctuation; other "Word. Sentence" names stay allowed (real names carry the punctuation).
@@ -16232,7 +16232,7 @@ From `next` @ 032711e8; not merged, not deployed.
     ones included. Sign only if you know why you’re signing it, and don’t keep real money in this account."), in amber
     like the line above it that says the message can't be read (never calmer than it). Tested for `personal_sign`, a
     Stellar message and a NEAR message, test and live apps (D886).
-- Note, 2026-11-23 (branch `fix/approval-double-divider`, PR 110, amended after its review the same day; the founder's
+- Note, 2026-11-23 (branch `fix/approval-double-divider`, PR 110, amended after its review the same day; the Tech Lead's
   hand test on `next` @ 0c47747b: "there looks like there's 2 lines between 'Program' and 'Network' rows"): every
   facts list (`dl.jp-kv`, base.css) drew a rule above and below itself, so wherever two lists met (the sponsored
   check-in's "Program" row, D876, then its "Network" row, D877, once this decision took the free fee out of the main
@@ -16261,10 +16261,10 @@ From `next` @ 032711e8; not merged, not deployed.
   boxes).
 
 ### D886. A message being signed comes right after the headline; one note about networks, true for test and live apps
-- Date 2026-11-19 · Status: **asked for by the founder 2026-11-19** while hand-testing a Stellar message on the hosted
+- Date 2026-11-19 · Status: **asked for by the Tech Lead 2026-11-19** while hand-testing a Stellar message on the hosted
   demo ("I feel the layout is a bit confusing with the 'This signature isn't tied to one network.' in between the
   header and the message being signed. Should we re-arrange this?"); the order and the sentences decided while
-  building, to confirm; the order and the merged note **confirmed by the founder 2026-11-23** (hand-tested: "yes the
+  building, to confirm; the order and the merged note **confirmed by the Tech Lead 2026-11-23** (hand-tested: "yes the
   message signing note from step 2 is clear."; "confirm the batch"), the split at the end of "To confirm" · Amends D35 (the line's words) and D813 (the order within the request's own facts) · Built on
   the same branch as D884: `packages/web/src/auth/render-approval.ts` (`message`, `MESSAGE_LABEL`, `NO_NETWORK_NOTE`,
   `NO_NETWORK_TEST_APP_NOTE`, `RAW_NO_NETWORK_NOTE`, `RAW_NO_NETWORK_TEST_APP_NOTE`, `TYPED_DATA_NO_CHAIN`,
@@ -16318,7 +16318,7 @@ From `next` @ 032711e8; not merged, not deployed.
   for a test app's message (amber would say a harmless sign-in is a risk; the advice covers the case); (4) one merged
   box for a test app's message instead of the plain note; (5) the amber box staying before the message on NEP-413.
   **2026-11-23** ("confirm the batch"): (1), (3), (4) and, of (2), the test app's message note **confirmed by the
-  founder** (hand-tested on the hosted demo's test app); still open: the rest of (2) (a live app's message, raw
+  Tech Lead** (hand-tested on the hosted demo's test app); still open: the rest of (2) (a live app's message, raw
   signing, typed data) and (5).
 - Amended 2026-11-19 by D885: the Signature stamp's own message, exactly (for the build's reviewed stamps account,
   naming the user's account, no callback), has neither the NEP-413 amber lines nor the "counts on every network" note:
@@ -16339,7 +16339,7 @@ From `next` @ 032711e8; not merged, not deployed.
   (screens: `approval-shots/divider-fix/after/msg-personal-sign-unreadable-test-phone.png`,
   `dividers-personal-sign-unreadable-*`).
 - Note, 2026-11-23 (branch `feat/unreadable-message-one-box`, from `next`, not merged, not deployed): **decided by the
-  founder 2026-11-23**. Asked "Unreadable messages: merge the two amber boxes into one? Proposed text: 'Journear can't
+  Tech Lead 2026-11-23**. Asked "Unreadable messages: merge the two amber boxes into one? Proposed text: 'Journear can't
   read this message, so it's shown below in its raw form. Approve only if you expected this from {App}.'", they
   answered "Yes". Built: the summary's amber line for a message Journear can't read is now that sentence
   (`packages/core/src/decode/summary.ts` `unreadableMessage`, `UNREADABLE_MESSAGE_LEAD`; was "Journear can’t check what
@@ -16358,10 +16358,10 @@ From `next` @ 032711e8; not merged, not deployed.
     Sign only if you know why you’re signing it."; test app "This app is a test version, but your signature counts on
     every network, real-money ones included. Sign only if you know why you’re signing it, and don’t keep real money in
     this account." (the page's own test-app note is left out, as before).
-  Not folded into the box (**decided by the founder 2026-11-23**: asked "Unreadable messages: is two amber boxes
+  Not folded into the box (**decided by the Tech Lead 2026-11-23**: asked "Unreadable messages: is two amber boxes
   acceptable where you approved one? It was three and is now two: the main warning above the message, and the 'your
   signature counts on every network' note below it. Folding the note into the main box would put it back above the
-  message…", they answered "ok for two."): the note about networks stays its own amber box after the raw form. Why: (1) the founder's
+  message…", they answered "ok for two."): the note about networks stays its own amber box after the raw form. Why: (1) the Tech Lead's
   request that started D886 was to take the network sentence out from between the headline and the message, and the
   box must stay above the message (D809, D813), so folding the note in would put it back there; (2) the box is one lead
   plus short bullets (D814), so the note would either lose words as a bullet or make a second long lead; (3) it is
@@ -16373,12 +16373,12 @@ From `next` @ 032711e8; not merged, not deployed.
   "the app"), `approval-summary.spec.ts` ("D886": `personal_sign` text and bytes, Stellar), screens
   `approval-plain-shots.spec.ts` ("unreadable messages", before and after in
   `hana-id-review-files/approval-shots/unreadable-one-box/`). Nothing left to confirm: the box and its sentence, and
-  the two amber boxes, are both the founder's.
+  the two amber boxes, are both the Tech Lead's.
   - Correction to this decision's text above: "a red line first (raw signing, a look-alike NEP-413 recipient, a message
     Journear can't read)" lists the last wrongly. A message Journear can't read has always had an amber line, never a
     red one (D810; `cannotCheck('warning', …)` in `summary.ts`); only raw signing and a look-alike recipient are red.
   - What the review of PR 118 (independent, 2026-11-23) established: the one statement dropped is "Journear can’t check
-    what this does", by the founder's chosen text. The lines left ("Journear can’t read this message", "Approve only if
+    what this does", by the Tech Lead's chosen text. The lines left ("Journear can’t read this message", "Approve only if
     you expected this from {App}", and the note's "Sign only if you know why you’re signing it") still tell the user
     not to rely on Journear here. A known limit, unchanged and said by neither the old text nor the new: a
     `personal_sign` of a 32-byte hash can authorise something elsewhere (a hash signed as a message); amber stays
@@ -16386,14 +16386,14 @@ From `next` @ 032711e8; not merged, not deployed.
 
 ## Journear's reviewed NEAR calls (branch `feat/near-reviewed-calls`), 2026-11-19
 
-From `next` @ 032711e8, not merged, not deployed. Step 1 of a longer plan the founder agreed to on 2026-11-19 ("yes"):
+From `next` @ 032711e8, not merged, not deployed. Step 1 of a longer plan the Tech Lead agreed to on 2026-11-19 ("yes"):
 hand-reviewed entries for NEAR contract calls, Journear's own demos first. A later step (not this branch) may let
 partners declare structured labels of their own, attributed to them.
 
 ### D885. Journear's own demo contracts' calls read in plain words, as checked by Journear; anything else reads as before
 - Date 2026-11-19 · Status: step 1 **decided by the user 2026-11-19**; the binding, the match rule, the readings and
   the amber decisions decided while building, **to confirm** (list at the end); the plain readings as seen
-  **confirmed by the founder 2026-11-23** (hand-tested on the stamps site and the guestbook: "This is so much
+  **confirmed by the Tech Lead 2026-11-23** (hand-tested on the stamps site and the guestbook: "This is so much
   better."; "confirm the batch"), the split at the end of "To confirm" · Amends D858 (the acts-as-you line, for
   these calls only) · Built on `feat/near-reviewed-calls`: `packages/core/src/reviewed-near-calls.ts`
   (`REVIEWED_NEAR_CONTRACTS`, `REVIEWED_NEAR_DEPLOYS`, `REVIEWED_STAMP_TITLES`, `REVIEWED_NEAR_MAX_GAS`,
@@ -16412,7 +16412,7 @@ partners declare structured labels of their own, attributed to them.
   core's `REVIEWED_NEAR_BUILD`, `files`, `accountSha256`, `reviewedText`, `COMBINING_RUN`, `QUOTE_LIKE`, the verified
   proof, `gen-envs`' enforced pin, `div.summary-quote` (approval.css), `ZERO_COST_ALLOWED_REVIEWED`; tests
   `scripts/test/reviewed-near-check.test.ts`, `deploy-check.test.ts`, `verify.test.ts`.
-- Cause (the founder's hand test of the stamps demo, 2026-11-19): collecting a stamp read "Stamp Trail wants to use
+- Cause (the Tech Lead's hand test of the stamps demo, 2026-11-19): collecting a stamp read "Stamp Trail wants to use
   `e2e-stamps.testnet` (`collect`)" with the amber "This acts as you: `e2e-stamps.testnet` can use anything you keep
   with it.": a contract account and a method name, and a risk that isn't there, where the gas-free EVM check-in reads
   "Journear demo wants to check you in … It uses **Journear demo check-in** (0xa84B…a39e, checked by Journear)".
@@ -16449,7 +16449,7 @@ partners declare structured labels of their own, attributed to them.
     a deposit on `collect`), no promise of any kind (no transfer, no cross-contract call, no deploy). sandbox-dev's
     `near.demoStamps` was deployed 2026-11-13 by `deploy-stamps` (deploy and `new()` in one transaction, the code hash
     checked against its build: `9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA`) and **locked** the same day after the
-    founder's hand check (lock transaction `wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU`, `view_access_key_list` `[]`;
+    Tech Lead's hand check (lock transaction `wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU`, `view_access_key_list` `[]`;
     `docs/operations.md` "Hosted stamps demo", `docs/hackathon.md`).
   - `contracts/hana-guestbook/src/lib.rs`: the same (no owner, no upgrade, nothing payable, no promise). sandbox-dev's
     `near.demoGuestbook`: code hash `2cGY7mcQevAjB5nssu8VNYkkSiqSiSdimB98QYXbKJxb`, **locked** 2026-11-12 (lock
@@ -16482,7 +16482,7 @@ partners declare structured labels of their own, attributed to them.
   manifest account other than the one checked. `docs/go-live-after-freeze.md` 1.6a runs it before the first pages
   deploy that carries this change; `docs/operations.md` "Reviewed NEAR calls: adding one" has it run before each later
   pages deploy and monthly. **Last on-chain check:** 2026-11-23, sandbox-dev, passed (exit 0), from `next` @ 0c47747b
-  at the founder's instruction ("run it"); its output (here and in operations):
+  at the Tech Lead's instruction ("run it"); its output (here and in operations):
 
   ```text
   near-reviewed  checked at 2026-11-23T03:25:31.878Z
@@ -16639,9 +16639,9 @@ partners declare structured labels of their own, attributed to them.
   Journear's own apps (per app + contract), so a hostile app can't put its words under "checked by Journear"; the
   trade-off: app ids would have to reach the build (they are D1 data, per env, not manifest data), a partner's app
   making the same call would read as today's screen although its effect is identical, and the other entries (no
-  free text) gain nothing from it. **Decided for now by the founder 2026-11-23** (answer 5, "leave"): the friendly
+  free text) gain nothing from it. **Decided for now by the Tech Lead 2026-11-23** (answer 5, "leave"): the friendly
   reading of the free-text entries (the guestbook message, the postcard note) stays per contract, for any app, until
-  partners exist; (12) **for the founder, facts only the chain or the deploy history can tell**:
+  partners exist; (12) **for the Tech Lead, facts only the chain or the deploy history can tell**:
   that `hana-id-stamps-dev1.testnet` and `hana-id-guestbook-dev1.testnet` still have no access key, use no global
   contract and run the code hashes above: **confirmed on chain 2026-11-23** (the check above, both endpoints); still
   not established: which commit each deploy built (the files are unchanged since both, and they rebuild to the
@@ -16651,7 +16651,7 @@ partners declare structured labels of their own, attributed to them.
   collect this one stamp." (test app: "This app is a test version, so don’t keep real money in this account. This
   signature names your account and the stamps program, which accepts it only from your account, to collect this one
   stamp."); the labels "The note" and "The message" in the style of D886's message label.
-  **2026-11-23** ("confirm the batch"): (3), (4), (5), (6) and (13) **confirmed by the founder** (hand-tested); (11)
+  **2026-11-23** ("confirm the batch"): (3), (4), (5), (6) and (13) **confirmed by the Tech Lead** (hand-tested); (11)
   decided for now, (12)'s chain facts confirmed on chain (both above); still open: (1), (2), (7), (8), (9), (10) and
   (12)'s "which commit each deploy built".
 
@@ -16662,7 +16662,7 @@ D881 left, listed there (the NEAR card's refusals that still said "Journear's re
 page).
 
 ### D889. The demo's NEAR card says what happened in plain words, checks first when a send may have gone out, and names networks as the approval window does
-- Date 2026-11-23 · Status: the rule is the founder's standing one (D853, D879: on the user side "network fee", never
+- Date 2026-11-23 · Status: the rule is the Tech Lead's standing one (D853, D879: on the user side "network fee", never
   gas, relayer or testnet; D881 listed this pass); every sentence below decided while building, **to confirm** · Built:
   display text only, in `apps/demo/src/errors.ts` (`NEAR_VAULT_REASONS`, `RELAYER_REASONS`, `RELAY_REFUSED`,
   `RELAY_DOWN`, `CHECK_LIST`, `nearMessage`), `near-card.ts` (`STAGES`, `guestbookDone`, `NEAR_NETWORK_LABEL`,
@@ -16860,7 +16860,7 @@ page).
     Refresh to check whether it went through, then try again.") already says to check, so nothing false is shown.
 - The stamps site (re-checked after PRs 106 and 107): its texts don't contradict the window's headline ("collect the
   {stamp} stamp for you") or its network name. One mismatch, already listed in D884 (9): the window's details say
-  "Free. Sponsored by Stamp Trail." (kept, decided by the founder 2026-11-23, D884's note) while the
+  "Free. Sponsored by Stamp Trail." (kept, decided by the Tech Lead 2026-11-23, D884's note) while the
   site says Journear pays ("Fare paid": "Free for you: Journear pays the network fee, so you need no NEAR."; the
   chop's "Free: Journear paid the network fee"; the stage "Sending it for free: Journear pays the network fee…";
   several refusals "Journear pays only…"). True today (Journear's relay pays during the pilot), but beside "Sponsored by
@@ -16883,7 +16883,7 @@ page).
   the behaviour above (the list read before the second approval, no automatic retry when it can't be read).
 - Address impact: none (display text only).
 
-Also recorded on this branch (docs only, 2026-11-23, at the coordinator's request): the founder's decisions noted on
+Also recorded on this branch (docs only, 2026-11-23, at the coordinator's request): the Tech Lead's decisions noted on
 D884 (two notes), D879, D793 (with `docs/go-live-after-freeze.md` 1.1a, 0.9 and 5.3), D874 and D885 (item 11), D872
 item 12's pointer; the partner docs' "gas sponsorship" (D879's note); and the first run of `check-reviewed-near
 sandbox-dev` (D885 "Last on-chain check", `docs/operations.md`, go-live 1.6a's note).
@@ -16893,7 +16893,7 @@ sandbox-dev` (D885 "Last on-chain check", `docs/operations.md`, go-live 1.6a's n
 From `next` @ 0c47747b; not merged, not deployed.
 
 ### D887. A banner's Remove or Cancel is a small outlined button on its own line, after "Don't recognise it?"
-- Date 2026-11-23 · Status: **decided by the founder 2026-11-23**: the button and its question (hand test of flow E:
+- Date 2026-11-23 · Status: **decided by the Tech Lead 2026-11-23**: the button and its question (hand test of flow E:
   "I was testing around 6 in Step 2 but didn't notice the 'Remove'. where was it?"; to the proposal "a small button,
   plus 'Didn't add it?' in front of it": "yes let's do it"), then the question's words, after PR 108's review ('Change
   to "Don't recognise it?"'); the labels, the accessible names, the outline, the same treatment for the other two
@@ -16909,7 +16909,7 @@ From `next` @ 0c47747b; not merged, not deployed.
   `architecture.md`, `operations.md` (hand-test flows A, D, E and F), `integration.md`, `apps/e2e/README.md`.
 - Context: D875's older line ended its sentence with **Remove** drawn as a link (`button.link`: the link colour,
   underlined, no box), as D259's banners end theirs with **Remove** and **Cancel this link**. Looking for it on
-  purpose, the founder didn't see it.
+  purpose, the Tech Lead didn't see it.
 - Decision:
   1. **The older line**: the sentence as before ("An email address also opens this wallet, since {date}." / "A Google
      account …"), alone in its paragraph. Under it, on its own line: "Don’t recognise it?" and the design system's
@@ -16917,7 +16917,7 @@ From `next` @ 0c47747b; not merged, not deployed.
      touch screen from the tokens). With two older lines each sentence has its own pair under it (8 px between a
      sentence and its pair, 16 px between lines). The muted note and **Done** follow as before; Done stays the one
      primary button (large, filled, last). The line has no box, colour, icon or amber.
-  2. **The question** (the founder's choice after review): "Don’t recognise it?" rather than "Didn’t add it?",
+  2. **The question** (the Tech Lead's choice after review): "Don’t recognise it?" rather than "Didn’t add it?",
      because it is true in every case the window can't tell apart: the person added the sign-in, it was added
      automatically (a Google account with the wallet's own address, D119, which the notice doesn't mark), or someone
      else added it. "Didn’t add it?" was untrue for the automatic link (the email's next sign-in read "A sign-in method
@@ -16984,7 +16984,7 @@ From `next` @ 0c47747b; not merged, not deployed.
   "… Remove" after the question (reads as a list; "Remove it" answers it); a name that is only "Remove it" (two
   lines' buttons can't be told apart out of context); an `aria-label` that doesn't start with the visible words
   (a voice user's "Remove it" wouldn't match); "Didn’t add it?" (untrue for an automatic link; replaced by the
-  founder); an "automatic" flag in the notice so the window could ask differently (not display-only: a new notice
+  Tech Lead); an "automatic" flag in the notice so the window could ask differently (not display-only: a new notice
   field, which an older window refuses during a deploy, D875 (e)); restyling the system's secondary button for
   every page.
 - Address impact: none (display only; no path, key or derivation input changes).
@@ -17002,12 +17002,12 @@ From `next` @ 0c47747b; not merged, not deployed.
 From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywhere).
 
 ### D890. A pause for money ends by itself after a refill, on the relayer's own evidence only (the one exception to "nothing clears a halt by itself")
-- Date 2026-11-23 · Status: the automatic restart **decided by the founder 2026-11-23**, after hand-testing an
+- Date 2026-11-23 · Status: the automatic restart **decided by the Tech Lead 2026-11-23**, after hand-testing an
   out-of-money pause ("Why can't we auto resume after refilling? why did we decide we need someone to look at it before
   resuming?"; to the proposal below: "yes I want this"), with three staff-page fixes from the same test (a fresh
   "Check again" on the tile, the out-of-money steps reworded so nobody sends money twice, the tile's words once the
-  money is there); the checks beyond the founder's four, the bounds, the cadence, the second endpoint, the amounts and
-  the sentences decided while building, to confirm; three of them **confirmed by the founder 2026-11-23** from their
+  money is there); the checks beyond the Tech Lead's four, the bounds, the cadence, the second endpoint, the amounts and
+  the sentences decided while building, to confirm; three of them **confirmed by the Tech Lead 2026-11-23** from their
   description, not hand-tested ("confirm 1 to 8": the daily and 30-minute bounds, the relayer-code check on every run,
   shipping switched off), the split at the end of "To confirm" · Built: `apps/api/src/evm-relayer.ts` (`#autoRestart`,
   `#autoCheck`, `#autoBlocked`, `#resumeVerdict` and `#endHalt` shared with `staffResume`, the money cadence in
@@ -17022,7 +17022,7 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   `test-anvil/halts.test.ts` (9d, 9e), `apps/admin/test/evm-relay.test.ts`, `status.test.ts`,
   `test-spa/evm-relay.test.ts`, `apps/e2e/tests/admin-portal.spec.ts`. Current state: `docs/security.md` "The EVM
   relayer object", `docs/architecture.md`, `docs/operations.md` "EVM sponsorship relay", `docs/go-live-after-freeze.md`.
-- The founder's four conditions, as agreed: (1) the only pause reason is out of money; (2) no sign of the key being
+- The Tech Lead's four conditions, as agreed: (1) the only pause reason is out of money; (2) no sign of the key being
   used elsewhere was seen during the pause; (3) the wallet is back above the low-balance mark; (4) a fresh check finds
   nothing else wrong. Every other pause reason keeps waiting for a person, exactly as before.
 - **The argument.** A thief draining the wallet must move its money, and an account's money moves only in these ways.
@@ -17148,7 +17148,7 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   this.#afterBroadcast(…)` in `#sendLocked` skipped the broadcast because `code` was already set). Now it is broadcast
   at once, as D851 item 2 says, and its own refusal counts only when the batch's didn't.
 - **Amended after its security review (2026-11-23; the coordinator's call with the reviewer's recommendation, to
-  confirm by the founder; the review found the restart stricter than staff Resume, and "no halt and no resume by a
+  confirm by the Tech Lead; the review found the restart stricter than staff Resume, and "no halt and no resume by a
   user's request", the bounds, the atomicity and the migration sound).** Safe to merge; NOT to be switched on before
   the checks on Base Sepolia (go-live) are recorded. Changes:
   1. *A common race read as a disagreement.* Our own waiting transaction often lands between the trusted endpoint's read
@@ -17206,24 +17206,24 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   fake chain can't stage without many dozens of records) and an eviction in the middle of a check (the check writes
   nothing before its one final write, so an eviction then leaves the pause exactly as it was; tested between checks).
 - Rejected: restarting by itself for any other reason (each needs a person's judgement, D851); the balance alone (the
-  thief case: money there says nothing about who moved it); the second endpoint for staff Resume too (the founder kept
+  thief case: money there says nothing about who moved it); the second endpoint for staff Resume too (the Tech Lead kept
   Resume as it is; a person can look at the explorer); backing off to 5 minutes while paused for money (a refill noticed
   up to 5 minutes late); the event raised by the relayer object itself (D1 writes inside the relayer's queue; the cron
   already reads its status every 15 minutes); a minimum of `lowBalanceEth` + `dailyBudgetEth` (the old "1.01": not a
   minimum).
 - Address impact: none (no path, key or derivation input changes).
-- To confirm: (1) the checks beyond the founder's four (the counts explained by our own records, no code at the
+- To confirm: (1) the checks beyond the Tech Lead's four (the counts explained by our own records, no code at the
   relayer's address, the second endpoint); (2) the bounds: 3 a UTC day, 30 minutes since the last restart, 60 s into a
   pause; (3) the cadence (15 s for 10 minutes, then 60 s); (4) the amounts (restart: the low-balance mark plus what waits
   at the gas price limit; Resume: what waits at its own fees plus one action's worst cost) and rounding up; (5) the
   sentences above, the labels "Paused: needs money" and "Restarting by itself", "network server(s)"; (6) Check again's
-  10 s floor and the 15 s "old reading" note; (7) the event's title and its "info" playbook; (8) **for the founder**:
+  10 s floor and the 15 s "old reading" note; (7) the event's title and its "info" playbook; (8) **for the Tech Lead**:
   should staff Resume and every run also check the relayer's own code (today only the automatic restart does: code at
   its address is a leaked key whatever the pause), and should the at-send cancel be broadcast at once (above); (9) on
   Base Sepolia before enabling: that a deposit transaction from L1 raises the relayer's L2 count (above), and the second
   provider's `pending` count behaviour (D851 item 18's checks, now for `rpcFallback` too).
   **2026-11-23** ("confirm 1 to 8", from the description, not hand-tested; quoted in "Confirmed in one batch,
-  2026-11-23" at the end of this file): **confirmed by the founder**: of (2), at most 3 automatic restarts a UTC day
+  2026-11-23" at the end of this file): **confirmed by the Tech Lead**: of (2), at most 3 automatic restarts a UTC day
   and a person needed when it runs out again within 30 minutes ("At most 3 automatic restarts a day. If it runs out
   again within 30 minutes, a person is needed."); of (8), the relayer-code check on every run, amendment 2 ("The
   planted-code check runs on every check, not only at restart."); amendment 10, shipping switched off behind
@@ -17235,10 +17235,10 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
 ## Passport Home's structure (option A), and step 1: the shell (branch `feat/home-shell-step1`), 2026-11-23
 
 ### D888. Passport Home takes structure A; step 1 is its shell: a top bar that holds who is signed in, Sign out and the sign-in's notice and covers nothing, the guard started over by any change of layout, one section pattern, one 1040 px width
-- Date 2026-11-23 · Status: the structure, "wallet" as the main noun and Back inside Home **decided by the founder
-  2026-11-23**; step 1's details decided while building, to confirm; two of them **confirmed by the founder
+- Date 2026-11-23 · Status: the structure, "wallet" as the main noun and Back inside Home **decided by the Tech Lead
+  2026-11-23**; step 1's details decided while building, to confirm; two of them **confirmed by the Tech Lead
   2026-11-23** from their description, not hand-tested ("confirm 1 to 8": the desktop shift when the notice appears,
-  the guard starting over), the split at the end of "To confirm (the founder)" · From the Passport Home design review of
+  the guard starting over), the split at the end of "To confirm (the Tech Lead)" · From the Passport Home design review of
   2026-11-19 (three structures A, B, C; its "Step 1: the shell, no wording change" and its quick wins) · Built on
   `feat/home-shell-step1`: `packages/web/src/auth/home-page.ts` (`topBar`, `HOME_SKIP_TEXT`, `renderAccount`,
   `replaceWho`, `renderShell`, `COPY_FAILED`, `appPage`, `frontPage`), `auth/css/home.css` (the shell, the section
@@ -17246,7 +17246,7 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   `packages/web/test/auth/home-page.test.ts` ("the shell (D888)"), `home-export.test.ts` ("D888: a change of layout
   around the move flow starts the guard over"; a selector), `apps/e2e/tests/home-shell.spec.ts` (new, three browsers).
   Notes on D553 and D878.
-- **The founder's decisions** (2026-11-23):
+- **The Tech Lead's decisions** (2026-11-23):
   1. **Structure A** ("for the home structure I like option C but let's go with A, as you said C could be added
      later"): the user's wallets as a list, then one wallet's page with tabs Addresses / Security / Move wallet; "Your
      account" for what covers every wallet (Devices, Your name); "Other apps" last. Built in the review's five steps.
@@ -17343,7 +17343,7 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   (its lines were counted with `getClientRects()` on a flex item, always one: the bar went 123 → 103 → 95 px for an
   email user at 390 px across the end and a sign-in again, moving everything below); and that the guard didn't start
   over when the notice went. The coordinator decided the design change above (the notice in the bar, the bar sticky
-  only on a desktop, option A's phone bar), **to confirm with the founder**.
+  only on a desktop, option A's phone bar), **to confirm with the Tech Lead**.
 - **Amended again after PR 109's second review (2026-11-23).** Scrolled on a desktop, Chromium and Firefox kept a control
   just under the bar in place while the bar grew over it (measured: a Copy button at y = 80 under the 64 px bar; the
   notice's text at its centre once the bar was 130 px): scroll anchoring is now off under the stuck bar. A phone's toast
@@ -17377,7 +17377,7 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   the top of the page's content; it answers the user's own action on the front page, and on an app's page it starts
   the guard over.
 - Address impact: none (no path, key or derivation input changes).
-- To confirm (the founder): (1) **the notice as a row of the top bar** (the bar grows; nothing covered), the bar
+- To confirm (the Tech Lead): (1) **the notice as a row of the top bar** (the bar grows; nothing covered), the bar
   **sticky only on a desktop** (a mouse and a window of at least 641 × 600 px) and **scrolling with the page on phones
   and tablets**, and option A's phone bar (lockup and Sign out, then who is signed in on its own line); (2) in Safari,
   what is in view moving by the bar's change when the notice comes or goes (the guard starts over); (3) a sign-in
@@ -17391,14 +17391,14 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   page scrolling by what WebKit didn't anchor; (12) the catch-all: any input after a guarded button moved needs a fresh
   wait and arming gesture (after Show key wraps a long key on a phone, Copy key needs one more).
   **2026-11-23** ("confirm 1 to 8", from the description, not hand-tested; quoted in "Confirmed in one batch,
-  2026-11-23" at the end of this file): **confirmed by the founder**: of (11), on a desktop what is in view moving
+  2026-11-23" at the end of this file): **confirmed by the Tech Lead**: of (11), on a desktop what is in view moving
   down when the bar grows ("On desktop, content shifts down when the 'sign-in ends soon' notice appears. It's safe,
   but you can see it happen."); (4) and (12), the guard starting over on any change of layout ("In the move-wallet
   flow, the guard resets whenever anything around it shifts, so someone may occasionally need to move the mouse once
   more."). Still open: (1) (the notice in the bar, the bar sticky only with a mouse and a window of at least
   641 × 600 px, the phone bar), (2), (3), (5), (6), (7), (8) and (b) below (the empty lines kept under the addresses,
   most on a narrow phone), (9), (10), and of (11) the phone's scrolling. Of the list below, (a)'s "Sign in again" chip
-  was decided by the founder 2026-11-23 (to be built in step 3; recorded on step 2's branch,
+  was decided by the Tech Lead 2026-11-23 (to be built in step 3; recorded on step 2's branch,
   `feat/home-step2-wallet-list`, D893).
 - To confirm, not built (for step 2 or 3): (a) on a phone, a user scrolled down gets no sign on screen that the sign-in
   is ending or has ended (as before this change; screen readers hear the live region), and the move flow's refusal
@@ -17422,7 +17422,7 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
   wallet (step 3); (2) the Security tab's contents (step 4: the ways to sign in, the devices for that wallet, the name it
   gets); (3) Cancel and Remove of a sign-in inside Home (decided, later, as its own security-reviewed change: today Home
   only says where each can be done, D874); (4) a small "Sign in again" chip for a phone user scrolled down when the
-  sign-in ends (item (a) above): **decided by the founder 2026-11-23 ("Yes"), to be built in step 3**, not in step 2:
+  sign-in ends (item (a) above): **decided by the Tech Lead 2026-11-23 ("Yes"), to be built in step 3**, not in step 2:
   on phones only, shown only while the bar's notice is not in view, covering no control and never where a guarded
   button can be, taking the person to the notice and its "Sign in again"; if it changes layout near a guarded button it
   starts the move flow's guard over, as every other change of layout does; (5) QR codes for the addresses; (6) a timer that shows how long the sign-in has left.
@@ -17432,10 +17432,10 @@ From `next` @ 0c47747b; not merged, not deployed (gas sponsorship is off everywh
 From `next` @ e20a1c00; not merged, not deployed.
 
 ### D891. An app may not be named "Passport", or read as the wallet or as Journear vouching for it
-- Date 2026-11-23 · Status: the "Passport" rule **decided by the founder 2026-11-23** ("4 yes" to "Refuse "Passport"
+- Date 2026-11-23 · Status: the "Passport" rule **decided by the Tech Lead 2026-11-23** ("4 yes" to "Refuse "Passport"
   alone as an app name. With "Sponsored by {App}", an app named "Passport" would read as the wallet itself
   sponsoring."); refusing an edition word beside it ("Passport Plus", "Passport Pro", "Passport One") **decided by
-  the founder 2026-11-23** ("Refuse", then "narrow it", note below), its positions to confirm; which other forms count
+  the Tech Lead 2026-11-23** ("Refuse", then "narrow it", note below), its positions to confirm; which other forms count
   as the wallet, the punctuation rule, the imitation-letter rule and the vouching rule
   decided while building and after PR 112's review, **to confirm** (list at the end) · Amends D686 as extended by D765
   ("Passport" on its own stayed allowed), with a row of "Superseded or amended"; answers D884's follow-up for the
@@ -17477,7 +17477,7 @@ From `next` @ e20a1c00; not merged, not deployed.
        support, help, security, team, official, pay, vault, verify, recovery, admin, staff, service, auth, connect,
        key, relayer, sponsor, gas, by; ID and from after it only ("Passport Wallets", "Passport ID", "Passport Keys",
        "Admin Passport", "Wallet by Passport");
-     - *an edition word* (founder 2026-11-23, narrowed the same day, note below): plus, pro, premium, prime, max,
+     - *an edition word* (the Tech Lead 2026-11-23, narrowed the same day, note below): plus, pro, premium, prime, max,
        ultra, lite, mini, basic, classic, one, beta (and "pros") as the last words of a name that is "Passport" and
        them ("Passport Pro", "My Passport Plus", "Passport Pro Max", "Passport X Pro", "Passport Pro™"), run together
        ("PassportPlus"), or premium, pro, plus, lite, ultra or beta right before it with nothing but a determiner
@@ -17518,7 +17518,7 @@ From `next` @ e20a1c00; not merged, not deployed.
 - Sentence-shaped names with no listed word ("Acme. Sign it", "Acme. Nothing leaves your account", "Acme. Sent for
   you") can't be closed by any word list. The remaining defence is how the **window** sets the name apart: today its
   own bold `strong.app-name`, bidi-isolated (D884); quoting the name inside Journear's own sentences (such as the fee
-  line) is an open option for a later approval-window change (for the founder, below).
+  line) is an open option for a later approval-window change (for the Tech Lead, below).
 - Awkward real names (tested, `names.test.ts` "awkward real-world names"): allowed "Yahoo!", "Yahoo! Japan", "Yum!
   Brands", "Jeopardy!", "Panic! at the Disco", "Westward Ho!", "Guess?", "Who? Weekly", "Dr. Martens", "Dr. Oetker",
   "Mr. Porter", "Mrs. Fields", "St. Ives", "Wait. What", "Re: Store", "E*TRADE", "Toys R Us", 'Toys"R"Us', "AT&T",
@@ -17554,7 +17554,7 @@ From `next` @ e20a1c00; not merged, not deployed.
   ("P" × 64, "p a s s p o r t " × 4, ". " × 32, "Wallet Passport " × 4, …) and requires each under 20 ms (each takes
   well under 1 ms).
 - What it misses: claim words and imitation outside these lists and blocks; sentence-shaped names without a listed
-  word (above); edition words outside the list and version forms (open for the founder, note below).
+  word (above); edition words outside the list and version forms (open for the Tech Lead, note below).
 - Follow-up (recorded, not built here): three implementations of the same idea will drift: console-core's
   `nameSkeleton`, core's `nameSkeleton` (verified-contracts.ts, a different table) and PR 114's partner-label folding
   (`foldLetters`, `DIGIT_FOLD`), with word splitting written twice, two claim vocabularies and `CHECK_MARKS` not
@@ -17562,12 +17562,12 @@ From `next` @ e20a1c00; not merged, not deployed.
   already imports `@hana-id/core/support-id`) should hold the merged confusables, skeleton, word splitting, claim
   stems, brand words and check marks, each rule keeping its own policy, with one test tying them together.
 - **2026-11-23** ("confirm 1 to 8", from the description, not hand-tested; quoted in "Confirmed in one batch,
-  2026-11-23" at the end of this file): of the list below, (3), (4) and (5) **confirmed by the founder**: "Letters
+  2026-11-23" at the end of this file): of the list below, (3), (4) and (5) **confirmed by the Tech Lead**: "Letters
   from alphabets used only to imitate ours are refused." (rule 3); "Names ending in a vouching word are refused: 'Acme
   Verified', 'Acme Official'." (rule 7); "'Passports' and 'Passport's' are refused.". Still open: (1), (2) and (6).
-  (7), the tier words, was answered "Refuse" by the founder 2026-11-23; its word list is being settled on
+  (7), the tier words, was answered "Refuse" by the Tech Lead 2026-11-23; its word list is being settled on
   `fix/app-name-passport-tiers` (in flight, not recorded here).
-- To confirm (founder): (1) the wallet-like forms (rule 5) and the "starts with Passport, then another name"
+- To confirm (the Tech Lead): (1) the wallet-like forms (rule 5) and the "starts with Passport, then another name"
   principle; (2) the claim-word-after-punctuation rule (6) instead of refusing punctuation or handling it in the
   window only; (3) the imitation-letter rule (3); (4) the vouching rule (7), reasoning: a vouching word last reads as
   an endorsement in "From {App}" and "Sponsored by {App}.", while at the start it is part of a brand; (5) refusing
@@ -17576,7 +17576,7 @@ From `next` @ e20a1c00; not merged, not deployed.
   rule's positions and plurals (note 2026-11-23 below; refusing them, and the narrowed list, are decided).
 - Address impact: none (names don't enter any path).
 - **2026-11-23, edition words (branch `fix/app-name-passport-tiers`, from `next`, not merged, not deployed).**
-  - The decisions, the founder's: asked "App names such as 'Passport Plus', 'Passport Pro' and 'Passport One': allow
+  - The decisions, the Tech Lead's: asked "App names such as 'Passport Plus', 'Passport Pro' and 'Passport One': allow
     or refuse? They're allowed today. I recommend refusing them, because they read as tiers of the wallet itself.",
     they answered **"Refuse"**. The first build refused 21 words on both sides and caught real companies
     (PassportCard, Mobile Passport, Passport Online); asked how wide it should go, with the recommendation "narrowing it
@@ -17622,8 +17622,8 @@ From `next` @ e20a1c00; not merged, not deployed.
     the joined message said 'must not be "…"' for a longer name: now 'must not have "…"'.
   - WD's "WD My Passport Ultra": with a brand in front it passes (the reviewer's suggestion, chosen: "{Brand} Passport
     Ultra" reads as the brand's product, as "Acme Passport Plus" does); "My Passport Ultra" with no brand stays refused.
-    For the founder.
-  - Open for the founder, not built: version forms ("Passport II", "Passport 2.0", "Passport V2") and other edition
+    For the Tech Lead.
+  - Open for the Tech Lead, not built: version forms ("Passport II", "Passport 2.0", "Passport V2") and other edition
     words (Platinum, Elite, Ultimate, Deluxe, Enterprise, Uno, Première) pass today. **Answered 2026-11-24 (D903):**
     Elite, Platinum, Deluxe and version numbers ("Passport 2.0", "Passport V2") are refused; the rest still pass.
 
@@ -17659,11 +17659,11 @@ From `next` @ e20a1c00; not merged, not deployed. Pure code in `packages/core/sr
 no screen, vault, API, console or manifest reads it, and core's entry points don't export it yet.
 
 ### D892. Partners describe their own calls in structured labels; piece 1 is the format, the text rules and the matcher
-- Date 2026-11-23 · Status: the direction **decided by the founder 2026-11-23**, who adopted all 12 recommendations of
+- Date 2026-11-23 · Status: the direction **decided by the Tech Lead 2026-11-23**, who adopted all 12 recommendations of
   the partner-labels proposal ("let's go with your recommendations on this"); this piece's schema, rules, limits and
-  codes decided while building, **to confirm**; the verb list **to confirm by the founder**, then **decided by the
-  founder 2026-11-23** ("Keep the jargon verbs"), as was the review step ("go with 1": a staff veto, with no required
-  review; the note on "Open, with the founder" below; built in D894) · Built:
+  codes decided while building, **to confirm**; the verb list **to confirm by the Tech Lead**, then **decided by the
+  Tech Lead 2026-11-23** ("Keep the jargon verbs"), as was the review step ("go with 1": a staff veto, with no required
+  review; the note on "Open, with the Tech Lead" below; built in D894) · Built:
   `packages/core/src/partner-labels/` (`words.ts` `PARTNER_VERBS`, `PARTNER_CONNECTORS`, `partnerAttribution`;
   `text-rules.ts` `partnerTextProblem`, `PARTNER_TEXT_MAX`, `PARTNER_JARGON`; `schema.ts` `parseLabelDocument`,
   `LABEL_LIMITS`, `LABEL_SCHEMA`, `isNearCodeHash`, `isWasmHash`; `match.ts` `labelRequestOf`, `matchLabel`,
@@ -17783,13 +17783,13 @@ Each rule, with its reason; the first rule a text breaks is its answer, with a s
     run in capitals, and no two short runs of capitals and digits ("GBX3 KQ2M"). An amount or an account written as
     text could be taken for the true value beside it.
 11. **No plain-words jargon** (`text_jargon`): the plain-words list (D853), copied into core (it has no runtime
-    dependency on the brand package; a test keeps the two equal), so partner text meets the founder's plain-wording
+    dependency on the brand package; a test keeps the two equal), so partner text meets the Tech Lead's plain-wording
     rule too.
 - Not a separate rule because the allowlist covers it: markup, line breaks, quotation marks, emoji, check marks,
   combining runs, bidi and zero-width characters, full-width and mixed-script text. Free prose isn't possible: the
   verb and the joining words are Journear's, and the object is one short phrase.
 
-#### The verb list (decided by the founder 2026-11-23: "Keep the jargon verbs", see the open list below)
+#### The verb list (decided by the Tech Lead 2026-11-23: "Keep the jargon verbs", see the open list below)
 - `PARTNER_VERBS` (31, after PR 114's review): add, bid, book, borrow, buy, cancel, check in, collect, create,
   deposit, donate, join, leave, lend, list, pay, redeem, register, remove, renew, repay, sell, send, sign up, stake,
   subscribe, swap, unstake, unsubscribe, vote, withdraw. **Soft verbs** (`SOFT_VERBS`, say no value moves; allowed
@@ -17797,7 +17797,7 @@ Each rule, with its reason; the first rule a text breaks is its answer, with a s
   cancel, check in, collect, create, join, leave, list, redeem, register, remove, renew, sign up, subscribe,
   unsubscribe, vote. The others say value moves (pay, send, buy, sell, donate, deposit, bid, stake, unstake, lend,
   borrow, repay, swap, withdraw). **stake, unstake, swap, lend, borrow, repay**: jargon for non-crypto people, kept
-  for now, **founder to confirm**; **decided by the founder 2026-11-23**: kept ("Keep the jargon verbs").
+  for now, **the Tech Lead to confirm**; **decided by the Tech Lead 2026-11-23**: kept ("Keep the jargon verbs").
 - Left out, with the reason: **approve** (the window's own button is "Approve", and token approvals are a warned kind
   of request: "{App} says: approve …" above an Approve button reads as Journear asking), **burn** (on the plain-words
   list), **mint** (crypto jargon; "create" says it), **bridge** (jargon, and its effect is on another network the
@@ -17866,7 +17866,7 @@ Each rule, with its reason; the first rule a text breaks is its answer, with a s
   clock or randomness in the module; not exported from core yet).
 - Address impact: none (display only, and not yet displayed; nothing signed, decoded or derived changes).
 
-#### What "checked by Journear" asserts today (for the founder to confirm, before partner text sits beside it)
+#### What "checked by Journear" asserts today (for the Tech Lead to confirm, before partner text sits beside it)
 - Where it appears and what it asserts, from the code:
   1. A program's name in the approval window, "{name} ({address}, checked by Journear)" (`decode/summary.ts`
      `spenderOf`), and the consent screen's "✓ {name}" with the title "Checked by Journear" (`render-consent.ts`
@@ -17987,7 +17987,7 @@ while building, **to confirm**:
 - **Versioning** (for piece 2): the server stores the document's text and its schema version; the window re-parses
   it with its own parser and falls back to the plain view for a version it doesn't know; the server checks that the
   document's network matches the environment's (testnet documents only on test apps).
-- **"checked by Journear", tightened** (proposed, for the founder): it is attached only to a closed list of facts
+- **"checked by Journear", tightened** (proposed, for the Tech Lead): it is attached only to a closed list of facts
   Journear confirmed from its own sources, never the app's word: which contract this is (on Journear's list), which
   token, which network. That covers the ✓ mark, the negative forms "(not checked by Journear)" and the consent
   screen's collision texts ("not the {name} Journear checked", "not a {protocol} program Journear checked"), which
@@ -17995,13 +17995,13 @@ while building, **to confirm**:
   value inside a partner sentence, even one Journear formatted. The consent screen's "checked by Journear ({decoder})"
   is the one use that contradicts it (it vouches for Journear's decoder); proposed rewording "read by Journear
   ({decoder})", for a later change.
-- **Open, with the founder (not built)**: (a) whether a person at Journear reviews each new or changed object phrase,
+- **Open, with the Tech Lead (not built)**: (a) whether a person at Journear reviews each new or changed object phrase,
   enumeration label and address name during the 24-hour delay, with these rules as a first filter (the reviewer's
   recommendation; it adds a staff step the proposal said wasn't needed), or whether object phrases come from a fixed
   vocabulary instead; (b) the final verb list; (c) whether to plan the single-transfer sub-invocation rule for
-  Soroban (item 15). **2026-11-23:** (a) and (b) **decided by the founder**: (a) "go with 1": a staff veto, with no
+  Soroban (item 15). **2026-11-23:** (a) and (b) **decided by the Tech Lead**: (a) "go with 1": a staff veto, with no
   required review; (b) the list above, the jargon verbs kept ("Keep the jargon
-  verbs"); the reason given to the founder for (b): they are the honest words for what those apps do, and dropping
+  verbs"); the reason given to the Tech Lead for (b): they are the honest words for what those apps do, and dropping
   them would push partners to vaguer verbs. (a) is built in D894, which records the accepted risk. (c) is still open.
 - **Follow-up (from PR 112's review, recorded in D891 too)**: the same idea now has three implementations that will
   drift: the merged D891 rules in `packages/console-core/src/names.ts` (its `nameSkeleton` with core's confusables
@@ -18020,7 +18020,7 @@ while building, **to confirm**:
   network, code-hash, `at`, `-0`, empty-argument and classification cases; dormancy).
 
 ### D893. Passport Home step 2: "Your wallets" as rows, "Your account" with two views, "wallet" as the main noun, and the browser's Back inside Home
-- Date 2026-11-23 · Status: structure A, "wallet" as the main noun and Back inside Home **decided by the founder
+- Date 2026-11-23 · Status: structure A, "wallet" as the main noun and Back inside Home **decided by the Tech Lead
   2026-11-23** (D888's decisions 1 to 3); everything below decided while building, **to confirm** (the list at the end)
   · Built on `feat/home-step2-wallet-list` (from `next`), not merged, not deployed: `packages/web/src/auth/home-page.ts`
   (`HOME_TEXT`, `homeViewTitle`, `scopeRow`, `accountRow`, `stateBox`, `loadingRows`, `noticeSlot`, `backLink`,
@@ -18172,7 +18172,7 @@ while building, **to confirm**:
   step 3 puts there); the catch-all is unchanged and covers every guarded button. A step 1 race is fixed (D888's note):
   on a phone, the page scrolled a second time by a bar change the browser had already anchored for, wherever the page
   had room below (14–15 px on the longer front page at 320 px, caught by `home-shell.spec.ts`).
-- **Why**: what people own is a wallet and several apps can share one (the founder); a list of rows reads as "my
+- **Why**: what people own is a wallet and several apps can share one (the Tech Lead); a list of rows reads as "my
   wallets" at a glance where cards with mono origins read as a directory; "Your account" puts what covers every wallet
   in one place without making the front page long; Back is what people press, and leaving Home lost the 15-minute
   sign-in.
@@ -18187,7 +18187,7 @@ while building, **to confirm**:
   as "opening the view is asking" (to confirm); (h) changing the move flow's heading levels: `home-export.ts` changes
   only for Back or the lock, which needed none.
 - Not built here (D888's open list): tabs (step 3); the Security tab's contents (step 4); Cancel and Remove inside Home;
-  the phone "Sign in again" chip (**decided by the founder 2026-11-23, to be built in step 3**: shown only while the
+  the phone "Sign in again" chip (**decided by the Tech Lead 2026-11-23, to be built in step 3**: shown only while the
   bar's notice is out of view, covering no control and never where a guarded button can be, taking the person to the
   notice; any change of layout it makes near a guarded button starts the guard over); QR codes; a sign-in timer.
 - **After PR 116's review (2026-11-23)**, applied on the same branch:
@@ -18223,7 +18223,7 @@ while building, **to confirm**:
      browser that refuses one), and a popstate that still arrives for the page's own traversal changes nothing. Unit
      tests with delayed popstates.
   8. **Wording.** The devices' view: "For any other app, find it on “Your wallets”, under “Other apps”, and open it."
-- **The review's conclusions, for the founder**: after the 15-minute sign-in ends, Back and Forward re-show only views
+- **The review's conclusions, for the Tech Lead**: after the 15-minute sign-in ends, Back and Forward re-show only views
   already in the page's memory: no more than one click away before this change, and consistent with D553 ("everything
   on screen stays"). On a shared computer, Sign out and another account's sign-in drop the remembered views and make a
   new tag; Forward after Sign out stayed on the signed-out page in Chromium, Firefox and WebKit. With the back-forward
@@ -18241,7 +18241,7 @@ while building, **to confirm**:
   specs in Chromium, Firefox and WebKit (Back and Forward between the list, a wallet and Devices; Back from the list
   leaving Home; Back after the end and after Sign out; Back out of an opened wallet with its key shown, Forward without
   it; `?view=devices` with Back and Forward). The plain-words check reads every new string (`HOME_TEXT` included).
-- **To confirm (the founder)**: (1) the rows (one button each; the tile with a placeholder; the apps' names joined by
+- **To confirm (the Tech Lead)**: (1) the rows (one button each; the tile with a placeholder; the apps' names joined by
   " · "; where the first app runs in a muted mono line with "and N more"; the badge at the right, under the text on a
   phone); (2) "Your wallets"'s sentence "Your wallets in the apps you use with Journear. Apps that share a wallet are
   listed together. Open a wallet to see its addresses."; (3) "Your account" and its two rows' lines "Where you’re signed
@@ -18277,9 +18277,9 @@ and which stay open; nothing in those entries was rewritten.
 
 ### The batch confirmation ("confirm the batch")
 - Date 2026-11-23 · Source: conversation. Asked by the coordinator: '"Confirm the batch" settles everything you've
-  seen and tested. I'd then bring you separately the handful you haven't seen'. The founder's answer, verbatim:
+  seen and tested. I'd then bring you separately the handful you haven't seen'. The Tech Lead's answer, verbatim:
   "confirm the batch."
-- What it confirms: what the founder saw and hand-tested on the local stack on 2026-11-19 and 2026-11-23, in their
+- What it confirms: what the Tech Lead saw and hand-tested on the local stack on 2026-11-19 and 2026-11-23, in their
   words:
   - D843, the staff admin page for gas sponsorship ("for test 4 I think it looks clear"; "test 4 looks good"),
     out of money → refill → Resume as it was then;
@@ -18300,13 +18300,13 @@ and which stay open; nothing in those entries was rewritten.
   - D885, plain words for the stamps and guestbook approvals ("This is so much better.");
   - D864 and D865, the linking flows as they stood ("the whole flow for step 2 testing seems ok", "ok I just tested
     this step 3, it looks good", "ok step 4 looks good", "step 5 looks good").
-- What it doesn't confirm: anything in those entries the founder didn't see (a sentence shown only when something
+- What it doesn't confirm: anything in those entries the Tech Lead didn't see (a sentence shown only when something
   fails, a rarely used tool, a choice behind the scenes). Where an entry's "to confirm" list mixed the two, its note
-  splits it; what stays open is in "Open for the founder as of 2026-11-23" below.
+  splits it; what stays open is in "Open for the Tech Lead as of 2026-11-23" below.
 
 ### Eight more, confirmed from their description ("confirm 1 to 8")
-- Date 2026-11-23 · Source: conversation. After "confirm the batch" the coordinator put eight items the founder had
-  not seen, each with the recommendation built in, and the founder answered, verbatim: "confirm 1 to 8". Confirmed
+- Date 2026-11-23 · Source: conversation. After "confirm the batch" the coordinator put eight items the Tech Lead had
+  not seen, each with the recommendation built in, and the Tech Lead answered, verbatim: "confirm 1 to 8". Confirmed
   from the description, not hand-tested. As put:
   - The relayer's automatic restart (D890): 1. "At most 3 automatic restarts a day. If it runs out again within 30
     minutes, a person is needed." 2. "The planted-code check runs on every check, not only at restart." 3. "It ships
@@ -18317,8 +18317,8 @@ and which stay open; nothing in those entries was rewritten.
     but you can see it happen." 8. "In the move-wallet flow, the guard resets whenever anything around it shifts, so
     someone may occasionally need to move the mouse once more."
 
-### Decided by the founder in conversation the same day (recorded in their entries)
-- Checked on `next`, each says "decided by the founder 2026-11-23": D887 ("Don't recognise it?" and the small Remove
+### Decided by the Tech Lead in conversation the same day (recorded in their entries)
+- Checked on `next`, each says "decided by the Tech Lead 2026-11-23": D887 ("Don't recognise it?" and the small Remove
   button); D888 (structure A, "wallet" as the main noun, Back inside Home); D884 ("Sponsored by {App}" stays: partners
   are meant to pay eventually); D879 (the partner guide says "gas sponsorship"); D793 (the relay limits' put-back goes
   with the December deploy); D874 (Cancel and Remove inside Home, to be built later); D891 (refuse "Passport" alone);
@@ -18331,7 +18331,7 @@ and which stay open; nothing in those entries was rewritten.
   message Journear can't read, with the approved sentence, and two amber boxes accepted ("ok for two.";
   `feat/unreadable-message-one-box`).
 
-### Open for the founder as of 2026-11-23
+### Open for the Tech Lead as of 2026-11-23
 Each line names the decision, says in plain words what is still open, and gives the recommendation where the entry
 has one. Everything here was decided while building and is built (or proposed) as the entry describes; nothing here
 changes an address.
@@ -18445,7 +18445,7 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
 `partnerLabels.enabled` on, which no checked-in manifest does (only the local e2e stack's lane runs with it on).
 
 ### D894. Partner labels live in D1 as guarded changes of their own table, with a staff veto and no required review; delivered only by a fresh `GET /v1/app`, nothing rendered yet
-- Date 2026-11-23 · Status: the staff veto (option 1) **decided by the founder 2026-11-23** ("go with 1"); the rest of
+- Date 2026-11-23 · Status: the staff veto (option 1) **decided by the Tech Lead 2026-11-23** ("go with 1"); the rest of
   the design decided while building, within D892's adopted recommendations, **to confirm** (the list at the end) ·
   Built: `apps/api/migrations/0025_partner_labels.sql`; `apps/api/src/labels/` (`sql.ts` the predicates, `store.ts`
   views and the plan read, `document.ts` parse, network rule, preview and diff, `propose.ts` ConsoleRpc's list,
@@ -18461,8 +18461,8 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
   (the vault's type and pure check, called by nothing); `apps/console` (`actions.ts` kinds `labels.set` and
   `labels.remove`, `audit.ts`, migration `0004_label_step_ups.sql`); `apps/admin` (the staff screen, its tools, the
   notices, the blocked mail, the status tile: below); `apps/e2e` (the lane's labels and the hand-test scenarios).
-- **The founder's decision (option 1, "Staff veto, no required review").** Asked whether a person at Journear must review
-  each label change during its 24-hour wait, the founder chose, in their words, "go with 1", of: "1. Staff veto, no
+- **The Tech Lead's decision (option 1, "Staff veto, no required review").** Asked whether a person at Journear must review
+  each label change during its 24-hour wait, the Tech Lead chose, in their words, "go with 1", of: "1. Staff veto, no
   required review … Each label change appears in the staff feed during its 24-hour wait, showing exactly what users
   would see. If nobody objects, it goes live. If someone does, one press blocks it. … It can be tightened later with no
   rebuild. If a partner abuses it, required review can be switched on for that partner or for everyone." Their reason:
@@ -18631,14 +18631,14 @@ deployed env changes: every proposal is refused and `GET /v1/app` carries nothin
 
 #### Rejected
 - Reusing `guarded_changes` (above). Storing the parsed document (the server stores the text and the schema version, and
-  every reader re-parses with its own parser, D892's versioning rule). Required review by default (the founder's option
+  every reader re-parses with its own parser, D892's versioning rule). Required review by default (the Tech Lead's option
   1). A staff proposal or expedite path for labels (nothing in the threat model needs it; staff only ever turn labels
   off). An "Unblock" for a blocked change (blocked is final; the partner proposes again and waits again). A waiver
   (`no_session`, `loopback`) for label changes. Serving labels on every `GET /v1/app` read, or from the isolate cache
   (only the vault needs them; a switch must reach the next read).
 - Address impact: none (nothing signed, decoded or derived changes; nothing is rendered yet).
 
-#### To confirm (with the founder), as the security review framed them
+#### To confirm (with the Tech Lead), as the security review framed them
 1. The limits above. 2. The two names: staff say "partner labels", partners read "request labels"; each screen and mail
 that uses one explains it once ("the words the approval window shows your users for your app’s requests"; the staff
 screen: "…(partners call them request labels)"). 3. A change held for review lapses 7 days after its time (the partner
@@ -18725,7 +18725,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   `previewLabels` gained read-only fields).
 
 ### D895. Passport Home step 3: a wallet's page as three tabs (Addresses, Security, Move wallet), the phone's "Sign in again" chip, and the move flow in wallet words
-- Date 2026-11-23 · Status: the tabs and the chip **decided by the founder 2026-11-23** (structure A, D888; the chip's
+- Date 2026-11-23 · Status: the tabs and the chip **decided by the Tech Lead 2026-11-23** (structure A, D888; the chip's
   "Yes", D888's open list); the details below decided while building, **to confirm** (the list at the end) · Built on
   `feat/home-step3-wallet-view` (from `next`), not merged, not deployed: `packages/web/src/auth/home-page.ts`
   (`HOME_WALLET_TABS`, `walletTabs`, `selectTab`, `showView`'s tab branch, `appPage`, the chip: `updateChip`,
@@ -18831,7 +18831,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 - **Not in this step** (D888's list): the Security tab's deeper content (step 4); polish (step 5); Cancel and Remove of
   a sign-in inside Home (decided, later, its own security-reviewed change); QR codes; a sign-in timer.
 - Address impact: none (no path, key or derivation input changes).
-- **To confirm (the founder)**: (1) the tabs' names and order, Move wallet set apart on the right on a wider screen;
+- **To confirm (the Tech Lead)**: (1) the tabs' names and order, Move wallet set apart on the right on a wider screen;
   (2) Addresses open by default every time a wallet opens; (3) manual activation (the arrows move, Enter or Space
   opens); (4) one history entry per tab opened; (5) leaving "Move wallet" locks an opened wallet (a stricter rule than
   before, where only leaving the page did) and the two sentences that now say so ("when you leave “Move wallet”");
@@ -18845,7 +18845,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   closes"); (12) the copy line without its reserved space on this page; (13) Back to a tab scrolling the tab list into
   view.
 - Note 2026-11-24 (D901): (a) decided, an entry only for "Move wallet"; (b) the name "Move wallet" kept.
-- **For the founder to decide**: (a) one history entry per tab opened (now) versus an entry only when entering "Move
+- **For the Tech Lead to decide**: (a) one history entry per tab opened (now) versus an entry only when entering "Move
   wallet", with Addresses ↔ Security replacing the current entry (the reviewer notes 50 toggles leave 50 entries,
   though "Your wallets" rewinds them all at once); (b) whether the tab's name "Move wallet" reads as if the wallet
   leaves Journear (it doesn't: the wallet keeps working in its apps; the key is copied to another wallet app).
@@ -18956,7 +18956,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 
 #### Every new sentence (exact)
 - The box: "{App} says: " followed by the sentence's parts; "These are {App}’s words. Journear hasn’t checked them."
-  (the founder's alternative, listed by the review: "These are {App}’s words, not Journear’s."); its name for screen
+  (the Tech Lead's alternative, listed by the review: "These are {App}’s words, not Journear’s."); its name for screen
   readers "What {App} says".
 - Amber, a described request that doesn't match (`LABEL_MISMATCH`, reworded after the review): "{App} describes this
   kind of request, but this one doesn’t match, so Journear isn’t showing {App}’s description. If you’re not sure what
@@ -18985,7 +18985,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   attacker: memo `99999` to a listed till matches ("{App} says: pay for order 99999"), and so does the till's M… form
   with id 99. Journear's own Memo and To rows still show those values, and the partner box never shows the address.
   Guidance for piece 4, shown where a partner adds an address-book entry: "List only accounts that only you control,
-  never a shared deposit address." The alternative for the founder, beside the muxed item below: refuse to match a
+  never a shared deposit address." The alternative for the Tech Lead, beside the muxed item below: refuse to match a
   muxed destination at all (the plain window).
 
 #### The security argument
@@ -19076,7 +19076,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   window's "From {App}" and is held to D891's rules, the attribution is true under any name, and a hold would make a
   typo fix take labels off for a day. Needs an API change and the admin feed: a later branch.
 
-#### To confirm (with the founder)
+#### To confirm (with the Tech Lead)
 1. The code-hash decision: no NEAR or Soroban label shows until piece 5; classic payments render now.
 2. `couldnt_check` is silent (the plain window, no line).
 3. The freshness value: 10 s, as policies; the one fresh read waited for at most 3 s; no read when the last answer had
@@ -19219,7 +19219,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   stays inside "Devices and auto-approve" (a3 moves it, with the name, into "What these apps get from you": that moves a
   stop's confirmation, so it waits for a decision).
 - Address impact: none (no path, key or derivation input changes).
-- **To confirm (the founder)**: (1) opening the Security tab reads the devices once by itself (D893's "opening the view
+- **To confirm (the Tech Lead)**: (1) opening the Security tab reads the devices once by itself (D893's "opening the view
   is asking"), the cards still behind "Show devices", which reads again after a minute; (2) **the summary shown without
   a press on a screen others may see**: on opening Security, how many places the wallet is signed in and which app
   gets the email are on screen; (3) the wording of every new line above ("places", "Not kept signed in…", "A tab that
@@ -19229,7 +19229,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   ring; (10) the bar's layout (Google's line on the first row from 380 px, Sign out under it below 300 px, its tap
   area); (11) 44 px controls on any narrow window, not only touch screens; (12) "Show again" small at the top.
 - Note 2026-11-24 (D901): decided, one card; built as D901 describes.
-- **For the founder to decide**: whether email sharing and the name move into one card "What these apps get from you"
+- **For the Tech Lead to decide**: whether email sharing and the name move into one card "What these apps get from you"
   (a3), leaving "Devices and auto-approve" to devices and auto-approve alone (a stop's confirmation moves with it).
 - **After PR 124's review (2026-11-23)**, applied on the same branch: an open card at 195 px no longer scrolls sideways;
   the email line names the app; "this app" on an app's page; "places" for sign-ins; no contradiction with a tab's
@@ -19241,13 +19241,13 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 - **Not verified**: real iOS Safari and Android browsers, real screen readers (names and descriptions checked in the
   browsers' accessibility trees), browser text-only zoom, landscape phones.
 
-### D898. Cancelling a waiting sign-in from Passport Home: option A built (Home opens the app to cancel it); cancelling inside Home waits for the founder
+### D898. Cancelling a waiting sign-in from Passport Home: option A built (Home opens the app to cancel it); cancelling inside Home waits for the Tech Lead
 - Date 2026-11-23 · Status: **option A built** (the coordinator, 2026-11-23: "Build OPTION A now"), its details
-  **decided while building, to confirm**; options B and B+email **for the founder** (nothing of them built). Branch
+  **decided while building, to confirm**; options B and B+email **for the Tech Lead** (nothing of them built). Branch
   `feat/home-waiting-sign-in-actions` (from `next`), not merged, not deployed. Built: `packages/web/src/auth/home-sign-ins.ts`
   (`cancelTarget`, `isPlainHttpsOrigin`, `openToCancel`, `SIGN_IN_TEXT.cancelOpen*`), `css/home.css`; tests
   `packages/web/test/auth/home-sign-ins.test.ts` ("D898 option A …"), e2e `apps/e2e/tests/home-sign-ins.spec.ts` ("D898
-  option A …", three browsers). No API, issuer, vault or contract change. Follows the founder's "Cancel/Remove inside Home: yes,
+  option A …", three browsers). No API, issuer, vault or contract change. Follows the Tech Lead's "Cancel/Remove inside Home: yes,
   later" (D888's open list, D895 and D897's "not in this step").
 - **How it works today** (read from the code and D259, D864, D874, D875, D881, D887):
   1. A *waiting* sign-in is a pending member (`Standing::Pending`, `links.rs`): an explicit link (`linkAccount`) or an
@@ -19302,11 +19302,11 @@ labels now shown to users", "Request labels proposed: shown to users after the w
     recognise it?", a small outlined **Open {App} to cancel it** that opens the app's first web address in a new tab
     (where the sign-in window offers Cancel), and the steps in a sentence. No new authority, no new route, nothing to
     review beyond a link. It doesn't make cancelling one press from Home.
-  - **B. Cancel inside Home, Google on the shared client first** (**for the founder**): items 1 and 2 above (a new API route, a new child mode),
+  - **B. Cancel inside Home, Google on the shared client first** (**for the Tech Lead**): items 1 and 2 above (a new API route, a new child mode),
     Home's confirmation, result and failure screens in D881's words (below). Authority equal to the window's plus Home's
     session and the "same identity, active, member pending" checks (stricter). Covers wallets on the shared Google
     client; others keep today's pointer, and the row says which applies. Its own security review.
-  - **B+email** (**for the founder**): B plus the issuer's `link-change` kind (item 3), so an email owner can cancel from Home too. A second
+  - **B+email** (**for the Tech Lead**): B plus the issuer's `link-change` kind (item 3), so an email owner can cancel from Home too. A second
     service changes; larger review.
   - **C. Both A and B**: A everywhere B can't reach.
 - **Recommendation**: **C, built in two changes**: A now (it helps every wallet today, with nothing new to trust), then B
@@ -19341,7 +19341,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
 - **To confirm**: for A, (1) the sentences above; (2) the first active app with a plain https address (a paused or closed
   app is skipped; an app that is first in the listing but has no address gives way to the next); (3) the address as
   text under the link; (4) no link for `http:` addresses (the local stack's own apps show today's sentence). **For the
-  founder**: B or B+email; for B, the words above, the "same identity as Home's" rule (stricter than the window, where
+  Tech Lead**: B or B+email; for B, the words above, the "same identity as Home's" rule (stricter than the window, where
   any active method of the login may prove), and Google-only at first.
 
 ### D899. Partner labels piece 4: the console's Request labels tab, a form (never JSON by hand) with core's own problems, the approval window's own preview, and the review before D894's fresh sign-in
@@ -19496,7 +19496,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   a new `security_events` kind needs that table rebuilt by a migration (its kinds are a CHECK, as 0023–0025 did), plus
   the admin feed. Left for a branch of its own; the recommendation stands.
 
-#### To confirm (with the founder)
+#### To confirm (with the Tech Lead)
 1. Every sentence above, exactly.
 2. Journear's note on a blocked change shown in the console (to every member, viewers included), for 14 days.
 3. The 14 days and the 5 ended versions per entry the tab lists; removed entries listed for 14 days.
@@ -19578,7 +19578,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
     organisation can read this note; it is kept in the audit log)", and the tool's line says the note goes to the
     security contacts by email and to everyone in the organisation on the console's Request labels tab for 14 days.
 
-#### For the founder (as the review framed them)
+#### For the Tech Lead (as the review framed them)
 1. Journear's block note is visible to every member of the partner's organisation, viewers included, on the console,
    for 14 days (until now only the security contacts got it, by email).
 2. Viewers can read the text of waiting changes (and of the version in force), not only owners.
@@ -19597,7 +19597,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   the code hash from the two NEAR providers it already reads and already requires to agree for a test app's delegate
   action (the manifest's `rpc` and `rpcFallback`, D263, D729), and only decides whether the partner's box may show.
   (After PR 128's review: "two providers" protects only when the two endpoints are independently operated; sandbox-dev's
-  are one operator today. **Settled by the founder 2026-11-24 (D903):** one operator is accepted on testnet, so it is
+  are one operator today. **Settled by the Tech Lead 2026-11-24 (D903):** one operator is accepted on testnet, so it is
   no longer a blocker for switching labels on in a testnet env; a production network must name two different
   operators in its manifest, checked by the schema and `deploy-check` once the schema admits another network.)
   Soroban: no read at all; the code comes from the transaction the user signs, and the network refuses to run it on
@@ -19746,7 +19746,7 @@ labels now shown to users", "Request labels proposed: shown to users after the w
   upgrades. The preview draws the real window for both: an example call that matches, one that doesn't (another code),
   built and decoded as the window does.
 
-#### To confirm (with the founder)
+#### To confirm (with the Tech Lead)
 1. The design above: NEAR's code hash read by the vault from both of its providers at final finality, agreeing, no
    global contract; Soroban's from the footprint's one `ContractCode`; anything else the plain window, silently.
 2. The 3 s bound (the existing wait, shared) and the 10 s cache, failures cached too.
@@ -19854,7 +19854,7 @@ sound, and asked for these:
 1. **One operator behind both NEAR providers.** The two-provider guarantee holds only when the endpoints are run by
    different operators; sandbox-dev's are not (both FastNear). The threat table, security.md and
    `docs/go-live-after-freeze.md` (question 7) say so; it also weakens D263's and D729's checks. **A must-fix before
-   any env turns labels on, and a founder decision:** (a) a second, independently operated testnet RPC provider
+   any env turns labels on, and a Tech Lead decision:** (a) a second, independently operated testnet RPC provider
    (recommended); (b) a self-hosted node; (c) accept it for testnet with the wording softened. `envs/` is unchanged.
    **Decided 2026-11-24 (D903): (c) for testnet, enforced on production:** "for 2nd NEAR provider, can we just do 1 on
    testnet? but enforce this only on production." On testnet the checks rest on one operator, said plainly; a
@@ -19890,7 +19890,7 @@ sound, and asked for these:
 8. **`no_contract_code` is couldn't check** (the plain window, not amber): an account with no code of its own (or a
    global contract on a node that omits the fields) ties the label to nothing. The vault's and the console's tests now
    use nearcore's real shapes (all-1s with the global field set; the fields omitted).
-9. **For the founder** (added to the list below).
+9. **For the Tech Lead** (added to the list below).
 10. The partner-labels module's header no longer counts its importers (core's dormancy test lists them).
 
 #### To confirm (added after PR 128's review)
@@ -19906,8 +19906,8 @@ sound, and asked for these:
 14. The Soroban allowance residual under value verbs.
 
 ### D901. Passport Home: a history entry only for "Move wallet"; the email sharing and the name in one card, "What these apps get from you"
-- Date 2026-11-24 · Status: both **decided by the founder 2026-11-24** ("go with your recommendations": D895's "For the
-  founder to decide" (a), and D897's "For the founder to decide"); D895 (b), the tab's name "Move wallet", **kept** by the
+- Date 2026-11-24 · Status: both **decided by the Tech Lead 2026-11-24** ("go with your recommendations": D895's "For the
+  Tech Lead to decide" (a), and D897's "For the Tech Lead to decide"); D895 (b), the tab's name "Move wallet", **kept** by the
   same answer; the details below decided while building, **to confirm** (the list at the end) · Built on
   `feat/home-back-and-sharing-card` (from `next`), not merged, not deployed: `packages/web/src/auth/home-page.ts`
   (`selectTab`, `replaceStep`, `leaveMoveStep`, `rewind(to)`, the Security panel's card, `HOME_TEXT.getsTitle`,
@@ -19999,7 +19999,7 @@ sound, and asked for these:
      account, so it offers no stop for now. Show your devices again in a moment." (the account view keeps "…and shows
      no email sharing here for now…", where the email is listed).
   7. Kept, still to confirm: "Show email sharing" offered when the line already says nothing is shared (e). (Confirmed by
-     the founder 2026-11-24: the D906 note under "To confirm" below.)
+     the Tech Lead 2026-11-24: the D906 note under "To confirm" below.)
   Each fix was checked to make its test fail when undone.
 - **Headings now** (Security): `h2` "Ways to sign in", "Devices and auto-approve", "What these apps get from you"; `h3`
   "Your email", "Your name" (D895's "No `h3` on the page" no longer holds).
@@ -20010,7 +20010,7 @@ sound, and asked for these:
 - **Screenshots** (not in the repo): `~/Documents/hana-id-review-files/home-review/back-and-card/{before,after}/`,
   the Security tab closed and open, a wallet of two apps and of one, 1280 px and 390 px (light, and 390 px dark).
 - Address impact: none (no path, key or derivation input changes).
-- **To confirm (the founder)**: (a) another tab pressed on "Move wallet" goes back to the entry "Move wallet" was
+- **To confirm (the Tech Lead)**: (a) another tab pressed on "Move wallet" goes back to the entry "Move wallet" was
   entered from (so Forward returns to "Move wallet") instead of replacing "Move wallet"'s entry; (b) "What this app gets
   from you" as the singular title, also on "App details"; (c) the card keeping a separate button per part ("Show email
   sharing", "Show name sharing") instead of a3's single "Show sharing" (one button would change when the name is read);
@@ -20018,7 +20018,7 @@ sound, and asked for these:
   (e) "Show email sharing" is offered even when the line already says nothing is shared (pressing it then shows only
   "Show again"); (f) the account view "Devices and auto-approve" keeping the email with the devices; (g) the card's line
   "Your email and your name, if you chose to share them." (a3's words).
-- Note 2026-11-24 (D906): (e) **confirmed by the founder** ("confirm all"): "Show email sharing" stays offered even when
+- Note 2026-11-24 (D906): (e) **confirmed by the Tech Lead** ("confirm all"): "Show email sharing" stays offered even when
   the line already says nothing is shared (also item 7 of the review fixes above). (a), (b), (c), (d), (f) and (g) stay
   open.
 - **Not verified**: real iOS Safari and Android browsers (Playwright's WebKit and Chromium only), real screen readers
@@ -20031,7 +20031,7 @@ From `next` @ 65209713; not merged, not deployed. No manifest turns `partnerLabe
 is unchanged.
 
 ### D903. "These are {App}'s words, not Journear's."; Elite, Platinum, Deluxe and version numbers refused beside "Passport"; one NEAR operator accepted on testnet, two different ones required on production
-- Date 2026-11-24 · Status: items 1 to 4 **decided by the founder 2026-11-24**; the details listed under "To confirm"
+- Date 2026-11-24 · Status: items 1 to 4 **decided by the Tech Lead 2026-11-24**; the details listed under "To confirm"
   decided while building · Amends D896 and D899 (the line), D891 as narrowed (the edition words, the version forms)
   and D900 (item 1, "To confirm" 11), with rows of "Superseded or amended" · Built: `packages/core/src/partner-labels/words.ts`
   (`partnerAttribution`), `packages/web/src/auth/render-labels.ts` (`labelBox`), `apps/console/web/src/pages/app/Labels.tsx`
@@ -20046,7 +20046,7 @@ is unchanged.
 - **Address impact: none.** Nothing signed, decoded, derived or digested changes: the line is display text, app names
   enter no path, and the operator fields are read only by the manifest's rules and `deploy-check`.
 
-**1. The line under a partner's words (founder 2026-11-24).** In the approval window's partner box, and so in the
+**1. The line under a partner's words (the Tech Lead 2026-11-24).** In the approval window's partner box, and so in the
 console's preview of it (the same renderer), the attribution is now:
 
 > These are {App}’s words, not Journear’s.
@@ -20060,7 +20060,7 @@ mid-sentence; it said "The app’s" before). The console's intro on the Request 
 quote the new sentence. Tested: markup, quotes, a right-to-left name, 64 characters, an "s" ending, a name ending in
 "’s" ("Ben & Jerry’s’s", left as written: see To confirm), each only ever text.
 
-**2. App names: more edition words, and version numbers (founder 2026-11-24).** D891's edition rule (as narrowed) gains
+**2. App names: more edition words, and version numbers (the Tech Lead 2026-11-24).** D891's edition rule (as narrowed) gains
 **Elite, Platinum and Deluxe**:
 - after "Passport", as the other edition words: "Passport Elite", "My Passport Platinum", "Passport Deluxe™",
   "PassportElite" refused; "Acme Passport Elite", "Passport Elite Travel", "Passport Platinum Club" allowed;
@@ -20117,8 +20117,8 @@ Passport", or "Passport" with words of your own, as in "Passport Photos Co", is 
   version ("Passport 10"); a comma or a space as the version's dot ("Passport 2,0", "Passport 2 0": a comma would
   also refuse "Passport 1,000", and "2 0" can't be told from the plain "20").
 
-**3. NEAR providers: one operator accepted on testnet, two different ones required on production (founder
-2026-11-24).** The founder's words: "for 2nd NEAR provider, can we just do 1 on testnet? but enforce this only on
+**3. NEAR providers: one operator accepted on testnet, two different ones required on production (the Tech Lead
+2026-11-24).** The Tech Lead's words: "for 2nd NEAR provider, can we just do 1 on testnet? but enforce this only on
 production." So (D900 item 1, option (c), enforced on production):
 - **Testnet**: accepted as it is. sandbox-dev's `rpc` (test.rpc.fastnear.com) and `rpcFallback` (rpc.testnet.near.org)
   are both run by FastNear; there the "both providers agree" checks (a member's path, D263; a test app's delegate
@@ -20152,7 +20152,7 @@ production." So (D900 item 1, option (c), enforced on production):
   pinned CKD key's sources (`ckdNetworkKeySource.rpcs`, ≥ 3 "providers") are counted by registrable domain, so two of
   them can be one operator in the same way; a production re-pin should count operators (mainnet-readiness 2.12).
 
-**4. Confirmed as built (founder 2026-11-24), no change:**
+**4. Confirmed as built (the Tech Lead 2026-11-24), no change:**
 - the red line stays when users of an app with a payment description pay other people (D896, "To confirm" 13: kept;
   no "my users also pay other people" option);
 - a staff Block stays final, with no Unblock (D894);
@@ -20172,7 +20172,7 @@ production." So (D900 item 1, option (c), enforced on production):
   read "These are Your wallet’s words, not Acme’s words, not Journear’s." A name with "Journear" is refused, and the
   name stays bold and isolated, so it can't pass as Journear's own words; not a regression (the old line had the same
   shape); (10) "Passport Home" refused with a number or trade mark between the words.
-- Note 2026-11-24 (D906): two points **confirmed by the founder** ("confirm all"): (8) the real product names refused as
+- Note 2026-11-24 (D906): two points **confirmed by the Tech Lead** ("confirm all"): (8) the real product names refused as
   versions ("Passport V8", "Passport V60", "Passport 24.7", "Passport 1.1.1.1") are kept refused; and "Passport 2,0" and
   "Passport 2 0" (a comma or a space as the version's dot, in "What it still misses" above) still pass, left as is. The
   other points of this list stay open.
@@ -20183,7 +20183,7 @@ From `next` @ 65209713, with `next` @ 52d34b41 (D901, D903) merged in; not merge
 anywhere. Numbered D902 when it was built; it sits after D903, which reached `next` first.
 
 ### D902. Passport Home cancels a waiting sign-in itself (D898's option B): Google on the shared client, a fresh Google proof of the same account, Home's own route, stricter than the window
-- Date 2026-11-24 · Status: **B decided by the founder 2026-11-24** ("build D898's option B", through the coordinator's
+- Date 2026-11-24 · Status: **B decided by the Tech Lead 2026-11-24** ("build D898's option B", through the coordinator's
   brief: B only, Google on the shared client, D898's words, B+email not built); every detail below **decided while
   building, to confirm** (the list at the end) · Built: `apps/api/src/home/link-cancel.ts` (new: `POST
   /v1/home/link/cancel`), `apps/api/src/links.ts` (`precheckChange` exported with `activeActor`, `linkRootWindow`),
@@ -20321,7 +20321,7 @@ anywhere. Numbered D902 when it was built; it sits after D903, which reached `ne
      enforced: Google sends no `auth_time` with `max_age=0` (as recorded for Home's derive, D604), the page checks it only
      when present and the server not at all. No server-side check is added while Google doesn't send the claim.
 - Note 2026-11-24 (D906): the sentence of item 3 above, "Devices already signed in to this wallet stay signed in until
-  their sign-in ends." (shown after a cancel when the devices could not be signed out), is **confirmed by the founder**
+  their sign-in ends." (shown after a cancel when the devices could not be signed out), is **confirmed by the Tech Lead**
   ("confirm all"). Every other point to confirm in this entry, (1) to (10) and the other amendments, stays open.
 - **Not verified** (nothing here was run against them): real Google (only the local stand-in, which accepts
   `prompt=select_account` with `max_age=0`); the real `hana-signer` contract and real session-pool relayer keys (only the
@@ -20334,7 +20334,7 @@ anywhere. Numbered D902 when it was built; it sits after D903, which reached `ne
 From `next` @ 663520d0; not merged, not deployed.
 
 ### D905. The developer side says "gas sponsorship" (users keep "free network fees"); every animation of the brand's components ends at once when the system asks for reduced motion
-- Date 2026-11-24 · Status: item 1 **decided by the founder** (the words of 2026-11-19 in D879, and the answer "4 yes"
+- Date 2026-11-24 · Status: item 1 **decided by the Tech Lead** (the words of 2026-11-19 in D879, and the answer "4 yes"
   of 2026-11-23 in D879's note: the partner side says "gas sponsorship" too); the strings below, the
   `delegate_nonce_used` sentence and item 2 **decided while building, to confirm** (the list at the end) · Built:
   `apps/api/src/evm/sponsor.ts` (three `error` strings), `packages/web/src/client/client.ts`, `ethereum.ts`,
@@ -20345,7 +20345,7 @@ From `next` @ 663520d0; not merged, not deployed.
   `packages/brand/test/brand.test.ts`, `apps/e2e/tests/home.spec.ts`, `apps/api/test/evm-sponsor.test.ts`; docs
   `architecture.md`, `security.md`, `operations.md`, `go-live-after-freeze.md`, `README.md`, `apps/e2e/README.md`. No
   code, field, route, event or reason name changed; no `envs/` value.
-- **1. The words a developer reads.** The founder's words (D879): "instead of 'free network fees' I think 'gas
+- **1. The words a developer reads.** The Tech Lead's words (D879): "instead of 'free network fees' I think 'gas
   sponsorship' is a clearer term for admin side (you can maintain free network fees for user side as it's likely
   clearer to non-Web3 users for this term)". The admin portal changed then (D879), the partner guide and
   `partner-start-here.md` on 2026-11-23 (D879's note). This entry does the rest: the API's error texts, the SDK's type
@@ -20414,7 +20414,7 @@ From `next` @ 663520d0; not merged, not deployed.
   no user ever sees them; the sample partner repo matches only its chain readers' messages (`BUSY_TEXT`); the guide
   tells partners to match on `code` and `data.reason`, never on text.
 - **Left as they are, and why:**
-  1. Everything a wallet user reads (the founder's rule): the SDK's `userMessage` sentences and the vault's
+  1. Everything a wallet user reads (the Tech Lead's rule): the SDK's `userMessage` sentences and the vault's
      `SPONSOR_TEXT` ("Free network fees aren’t offered on this network.", "Journear’s free network fees for this app
      are used up for today. Try again tomorrow.", "Free network fees aren’t available for your account right now. Try
      again later.", "This action is too big for free network fees.", "Free network fees are paused right now. Try again
@@ -20489,13 +20489,13 @@ From `next` @ 663520d0; not merged, not deployed.
   (items 9 to 11) and "Gas sponsorship for EVM actions" in the SDK's tooltips; (3) the `delegate_nonce_used` sentence;
   (4) `NOT_OFFERED` left as the user's words (left 2); (5) the demo card's internal name left (left 6) and the sample
   repo left (left 7); (6) the reduced-motion rule: everything inside a `.jp-*` element, ended at once rather than
-  removed, the toast's bar empty under reduced motion; (7) **for the founder, behaviour not changed:** under reduced
+  removed, the toast's bar empty under reduced motion; (7) **for the Tech Lead, behaviour not changed:** under reduced
   motion a spinner becomes a still three-quarter ring. Where it is the only sign that something is happening (the
   partner console's sign-in button while it works, `apps/console/web/src/pages/SignIn.tsx`, and the email sign-in
   test's button, `apps/console/web/src/pages/app/EmailLogin.tsx`), a long wait can look stuck. The other choice is to
   keep loading spinners moving under reduced motion, slower or as a gentle pulse, and stop only the rest; (8) item 3a,
   "too high for sponsorship" with its 15 s retry kept.
-- Note 2026-11-24 (D906): **answered by the founder** ("confirm all"): (7) reduced motion: the loading spinners now
+- Note 2026-11-24 (D906): **answered by the Tech Lead** ("confirm all"): (7) reduced motion: the loading spinners now
   fade slowly instead of standing still (built in D906, which amends item 2's still ring); and the two developer
   messages reworded to "Gas prices are too high for sponsorship right now, try again later" (text 2 and item 3a) are
   confirmed. Still open: (1) for texts 1 and 3 ("Gas sponsorship is paused for now", "Gas prices are moving too fast
@@ -20509,7 +20509,7 @@ From `next` @ 663520d0, with `next` @ f8c5c51d (D905) merged in; not merged, not
 every committed env validates as it is. Numbered D904 when it was built; it sits after D905, which reached `next` first.
 
 ### D904. The pinned CKD key's sources: accepted on testnet, three different operators required on production (as D903 for the NEAR providers); the text-safety checks in one shared module
-- Date 2026-11-24 · Status: item 1 **decided by the founder 2026-11-24** ("go": D903's open point treated as D903 treats
+- Date 2026-11-24 · Status: item 1 **decided by the Tech Lead 2026-11-24** ("go": D903's open point treated as D903 treats
   the NEAR providers: accept on testnet, enforce on production); item 2 a refactor with **no behaviour change**; the
   details under "To confirm" decided while building · Amends D100 (the sources' count on a production network) and
   closes D903's open point (item 3, last bullet), with a row of "Superseded or amended" · Built:
@@ -20528,7 +20528,7 @@ every committed env validates as it is. Numbered D904 when it was built; it sits
   reads `ckdNetworkKeySource` or the new field (only the manifest's rules, `deploy-check` and `fetch-ckd-key` do), and
   the display-safety refactor changes no accepted or refused text (proven below), and no text enters a derivation.
 
-**1. Who runs the pinned CKD key's sources (founder 2026-11-24).**
+**1. Who runs the pinned CKD key's sources (the Tech Lead 2026-11-24).**
 - **What reads the sources, and the quorum**: `ckdNetworkKeySource` is written and read only by `fetch-ckd-key`
   (`scripts/lib/ckd.ts`) and checked by the schema; no page, Worker or derivation reads it (the vault trusts the pinned
   `ckdNetworkKey` alone). `readCkdKeyAgreed` asks every source at once and needs **all of them**: each must answer,
@@ -20577,7 +20577,7 @@ every committed env validates as it is. Numbered D904 when it was built; it sits
   workspace dependencies and now depends on `@hana-id/core` (no cycle: core depends on no workspace package; checked on
   every `package.json`). The source now spells the default-ignorable code points as escapes (it held the invisible
   characters themselves). The shipped SDK gains one entry point (after PR 133's review marked internal in `packages/core/README.md`, not a
-  supported export: the founder's point A below); its declarations
+  supported export: the Tech Lead's point A below); its declarations
   carry no internal reference (the pack check's rule), and after PR 133's review the shipped file says nothing about
   which workspace packages call it (that is here and in the module's test).
 - **Moved onto it** (each was a copy of the same rule): the app-name rule's `isDisplaySafeName`
@@ -20614,12 +20614,12 @@ every committed env validates as it is. Numbered D904 when it was built; it sits
   - Hand-written lists: `packages/console-core/src/labels.ts` `labelNote` (a staff note on a label), `evm-relay.ts`
     `isPlainNote`, `apps/admin/src/plain.ts` (`plainString`): narrower ranges (no private use, tags, variation selectors
     or Hangul fillers; `plain.ts` keeps tab, LF and CR and only the bidi controls of Cf).
-- **For the founder**: (A) the subpath `@hana-id/core/display-safe`: **(a)** internal and unlisted, as built (the
+- **For the Tech Lead**: (A) the subpath `@hana-id/core/display-safe`: **(a)** internal and unlisted, as built (the
   export exists for Journear's own packages; `packages/core/README.md` says it is not part of the supported SDK surface
   and may change without notice; the pack check still loads it), or **(b)** a supported partner export (a row in the
   README's table and in the partner guide). (B) **Three different operators on production, not two**: with unanimity
   two operators already stop one liar; three keep D100's margin against two colluding.
-- Note 2026-11-24 (D906): both points **confirmed by the founder** ("confirm all"): (A) **(a)**, the subpath
+- Note 2026-11-24 (D906): both points **confirmed by the Tech Lead** ("confirm all"): (A) **(a)**, the subpath
   `@hana-id/core/display-safe` stays internal, not a supported partner export (as built); (B) three different operators
   for the pinned CKD key's sources on production, kept at three. The list below stays open.
 - **To confirm** (decided while building): (1) the field name `ckdSourceOperators` and its shape, a map from host to
@@ -20661,12 +20661,12 @@ every committed env validates as it is. Numbered D904 when it was built; it sits
   production path ran only against fake endpoints; no real mainnet RPC operator list was drawn up; the differential run
   covers the callers above, not the rules left as they are.
 
-## The founder's "confirm all" for D901 to D905; loading spinners pulse under reduced motion (branch `chore/confirmations-pulse`), 2026-11-24
+## The Tech Lead's "confirm all" for D901 to D905; loading spinners pulse under reduced motion (branch `chore/confirmations-pulse`), 2026-11-24
 
 From `next` @ 7ecaae60; not merged, not deployed. No `envs/` value, route, key, field or user-facing text changes.
 
-### D906. Eight points of D901 to D905 confirmed by the founder; under reduced motion the loading spinners fade slowly instead of standing still
-- Date 2026-11-24 · Status: the eight points below **confirmed by the founder 2026-11-24** (their reply: "confirm all");
+### D906. Eight points of D901 to D905 confirmed by the Tech Lead; under reduced motion the loading spinners fade slowly instead of standing still
+- Date 2026-11-24 · Status: the eight points below **confirmed by the Tech Lead 2026-11-24** (their reply: "confirm all");
   item 5 built here, amending D905 (item 2, "To confirm" 7), with a row of "Superseded or amended"; the pulse's values
   and the details under "To confirm" decided while building · Built: `packages/brand/components.css` (`@keyframes
   jp-spin-pulse` and the spinners' rule at the end of the reduced-motion block), `apps/admin/public/app.css` (its copy,
@@ -21018,3 +21018,14 @@ From `next` @ 7ecaae60, with `next` @ adc40e36 (D906) and 9750f25f (D909) merged
 9. **INFO:** no decision number in the comments added or changed in core (they ship in source maps).
 - Address impact: none (display, the parser's refusals and console text; nothing signed, decoded or derived changes).
 
+
+## "The Tech Lead", not "the founder", 2026-11-24
+
+Branch `docs/tech-lead-wording`, from `next`; docs only, not deployed. Not numbered: a wording correction, not a
+decision. Source: conversation, 2026-11-24 ("don't refer me as the founder, I'm just the Tech Lead"). Entries and notes
+that named "the founder" as the person who decided, confirmed, asked for, reviewed or hand-tested something now say
+"the Tech Lead", here and in the other docs and code comments that used the word that way. Who decided what, the dates
+and the quoted words are unchanged, and entries that already said "the user" stay as written. "Founders" ("a founder",
+"both founders") in the governance and incident documents (`docs/governance-spec.md`, `docs/playbooks.md`,
+`packages/playbooks`, the watchdog's alert recipients, the mainnet council) still names the role that holds the owner
+and council keys and receives the alerts.

@@ -10,7 +10,7 @@
 // change not served a millisecond before its time and served at it (the text's sha256 the delivered one), "Live" on its
 // page.
 //
-// With HANA_SHOTS_DIR=<dir> (Chromium only) the last test saves the founder's screenshots there, light theme, full
+// With HANA_SHOTS_DIR=<dir> (Chromium only) the last test saves the Tech Lead's screenshots there, light theme, full
 // page, 1366 and 390 px wide: the feed and a change's Block confirmation, the blocked change, a change waiting for Allow
 // (required review), and System status's Partner labels tile with every partner label switched off.
 import { createHash } from 'node:crypto';
@@ -179,7 +179,7 @@ async function shots(page: Page, name: string, open: () => Promise<void>): Promi
   }
 }
 
-test('the founder’s screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, lane }, info: TestInfo) => {
+test('the Tech Lead’s screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, lane }, info: TestInfo) => {
   test.skip(!SHOTS || info.project.name !== 'chromium', 'screenshots only with HANA_SHOTS_DIR, in Chromium');
   mkdirSync(SHOTS!, { recursive: true });
   try {

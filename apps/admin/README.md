@@ -217,7 +217,7 @@ Partners write the words the approval window shows for their apps' requests ("{A
 paid”"; partners call them **request labels**, staff **partner labels**). An on-chain owner proposes a set in the
 console; it is a guarded change: the admin's 5-minute job emails the org's security contacts and the alias, and the
 change goes live `appChangeDelayMs` after that email. **Every change shows here for its whole wait. Nothing is needed
-for it to go live**; staff stop one that would mislead users (the founder's "go with 1": a staff veto, not a staff
+for it to go live**; staff stop one that would mislead users (the Tech Lead's "go with 1": a staff veto, not a staff
 approval), unless the required-review switch is on.
 
 **The screen** (nav **Security → Partner labels**, `/labels`; `GET /api/labels`: `AdminRpc.labelQueue`, the orgs'

@@ -331,7 +331,7 @@ export async function settleAsCharge(env: Env, row: SendRow, status: 'lost'): Pr
 /**
  * A slot used up by a transaction Journear's relayer did not send (`consumed_elsewhere`: staff closed the relayer's
  * record after the relayer itself stopped on it; a leaked or misused relayer key), so the user's action never ran.
- * Journear's own loss, not the partner's (D869, the founder's decision): the row settles at 0 with its billing record
+ * Journear's own loss, not the partner's (D869, the Tech Lead's decision): the row settles at 0 with its billing record
  * (outcome `consumed_elsewhere`, settled 0, no cost figures: a billing job never bills it, the monthly view shows it
  * apart, counted), the amount set aside goes back to the app's and the env's day budgets, and the user's and the app's
  * day counts, the user's attempts and failure slot are given back (none of it was their doing). Once: the row moves

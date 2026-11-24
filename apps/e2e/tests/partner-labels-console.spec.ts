@@ -8,7 +8,7 @@
 // partner's box; the amber and red lines), Review → the confirmation page's diff → Confirm with Google → proposed, the
 // change waiting with its go-live time once announced, Cancel; and a change Journear blocked, with its note.
 //
-// With HANA_SHOTS_DIR=<dir> (Chromium only) the last test saves the founder's screenshots there, at 390 and 1280 px,
+// With HANA_SHOTS_DIR=<dir> (Chromium only) the last test saves the Tech Lead's screenshots there, at 390 and 1280 px,
 // light and dark.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -239,7 +239,7 @@ async function whole(page: Page, size: { width: number; height: number }, path: 
   await page.setViewportSize(size);
 }
 
-test('the founder’s screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, lane }, info) => {
+test('the Tech Lead’s screenshots (HANA_SHOTS_DIR, Chromium)', async ({ page, lane }, info) => {
   test.skip(!SHOTS || info.project.name !== 'chromium', 'screenshots only with HANA_SHOTS_DIR, in Chromium');
   test.setTimeout(240_000);
   mkdirSync(SHOTS!, { recursive: true });

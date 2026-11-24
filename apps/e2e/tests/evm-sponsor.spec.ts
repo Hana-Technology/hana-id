@@ -9,7 +9,7 @@
 // through (`busy`), EIP-5792 through viem's own sendCalls, and the generic typed-data path still refusing the
 // delegate's domain (D833).
 //
-// With HANA_SHOTS_DIR=<dir> (Chromium only) it saves the windows for the founder: sponsored-first-time(-details),
+// With HANA_SHOTS_DIR=<dir> (Chromium only) it saves the windows for the Tech Lead: sponsored-first-time(-details),
 // sponsored-later, sponsored-token-first-time, sponsored-token-later, sponsored-unknown-call and
 // sponsored-approve-warning.
 import { type Page } from '@playwright/test';

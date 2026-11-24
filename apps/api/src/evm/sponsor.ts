@@ -1,6 +1,6 @@
 // EVM gas sponsorship (D830–D848, D856; docs/api.md "EVM gas sponsorship"): a Journear user's EVM account runs a batch
 // of allowlisted calls through the EIP-7702 delegate (contracts/evm-delegate) while Journear's relayer pays the network
-// fee, within daily budgets. Base Sepolia only for now, testnet only, not live until the founder deploys it.
+// fee, within daily budgets. Base Sepolia only for now, testnet only, not live until the Tech Lead deploys it.
 //
 // - POST /v1/evm/sponsor/prepare reads what the vault needs to sign: the account's delegation, its transaction nonce
 //   and its delegate nonce, the relayer and implementation, the gas floor and deadline window. No signing here.

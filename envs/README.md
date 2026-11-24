@@ -177,7 +177,7 @@ trimmed, 1 to 64 characters with a letter or digit and no control, bidi, zero-wi
 test app's delegate action, D729; a partner label's NEAR code hash, D900) protect only when the two are run by
 different operators, so on any network but testnet the schema and `deploy-check` refuse a manifest without
 `rpcFallback`, without either operator, or with one operator for both (compared ignoring case, spaces and punctuation:
-"FastNear", "fast near" and "Fast-NEAR" are one). On testnet one operator behind both is accepted (the founder,
+"FastNear", "fast near" and "Fast-NEAR" are one). On testnet one operator behind both is accepted (the Tech Lead,
 2026-11-24) and the fields may be left out or name the same operator; sandbox-dev names none. `rpcFallbackOperator` is
 refused without `rpcFallback`. Nothing but the manifest's rules and `deploy-check` reads them, so a change needs no
 `gen` or redeploy. **Not in force until the schema admits another network:** `network` accepts only `testnet` today,

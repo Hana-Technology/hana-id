@@ -97,7 +97,7 @@ directory, D269; dev-env limits, D340), the demo with email login and linking, a
 | `@hana-id/react` (`HanaProvider`, `useHana`, `useWallet`), `@hana-id/sodax` (Stellar and EVM wallet-provider adapters) | `develop` (packaging from `feat/sdk-packaging`) | Code done; tarballs as `@hana-id/web`, not published |
 | `admin app:settings` | `develop` | Code done |
 | `apps/smoke` | `develop` | `/` logs in through `@hana-id/web` (the vault); `/direct.html` keeps the split path for the ship gate, signing in with Google's implicit flow, `scope=openid` only (D271) |
-| `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job: Chromium on a PR, all three after a merge, D857; CI disabled since 2026-11-05, D387, ready for the founder to switch on) | `develop` | Code done. On `next` (D873, not merged): the staff admin portal too, apps/admin's real Worker and SPA per browser in a worker thread of the stack, behind a stand-in for Cloudflare Access whose tokens the Worker's own Access check verifies, bound to the real `AdminRpc` (with the real EVM relayer on a chain the stack's controls drive), `StaffRpc`, the issuer's `DirectoryRpc` and a PGlite ledger over a loopback wire-protocol listener; a hand-test lane and `staff-demo` (`apps/e2e/README.md`). On `test/e2e-hand-browser` (D880, not merged): `hand-browser`, a headed Chromium with the suite's own Google stub and NEAR relay routes (shared modules the specs use too) for trying sign-ins, links and the NEAR sites by hand; test tooling only, no bundle changes |
+| `apps/e2e` (Playwright: Chromium, WebKit, Firefox; local builds against the real API Worker; CI job: Chromium on a PR, all three after a merge, D857; CI disabled since 2026-11-05, D387, ready for the Tech Lead to switch on) | `develop` | Code done. On `next` (D873, not merged): the staff admin portal too, apps/admin's real Worker and SPA per browser in a worker thread of the stack, behind a stand-in for Cloudflare Access whose tokens the Worker's own Access check verifies, bound to the real `AdminRpc` (with the real EVM relayer on a chain the stack's controls drive), `StaffRpc`, the issuer's `DirectoryRpc` and a PGlite ledger over a loopback wire-protocol listener; a hand-test lane and `staff-demo` (`apps/e2e/README.md`). On `test/e2e-hand-browser` (D880, not merged): `hand-browser`, a headed Chromium with the suite's own Google stub and NEAR relay routes (shared modules the specs use too) for trying sign-ins, links and the NEAR sites by hand; test tooling only, no bundle changes |
 | Developer dashboard, admin console, billing-grade usage (batch C; `docs/batch-c-spec.md`, `docs/batch-c-build-plan.md`) | `develop`: C1–C15 | C1 (manifest fields, the Neon ledger schema, `console-core`), C2 (`packages/oidc`), C3 (migration 0006, the gate on `app_keys` and `scopes`, the CLI on it), C4 (usage capture, `session_markers`) and C5 (below) merged. **Running on sandbox-dev** (2026-11-03): migrations 0006, 0009 and 0010 applied (after a rehearsal on a scratch D1; a Time Travel bookmark from before 0006 and an export backup are kept in `.secrets`), the API has the hot DB on (milestone M1, `docs/operations.md` "Hot DB migration 0006 and the new gate"). Since then C6–C15 are merged, with C8b; the console, console-auth, files and admin Workers run on sandbox-dev since M4 (2026-11-06), usage capture on (`docs/operations.md` "What sandbox-dev runs"). C16 (CLI completion) is deferred; C17 and what is left for production: `docs/mainnet-readiness.md` row 7.3 |
 | Batch C5: the API's `ConsoleRpc` and `AdminRpc` entrypoints (CAS writes on `app_changes`, keys, settings, staff proposals, notice ack, cancel, expedite, the breaker and hot-DB budget) and drift detection | `develop` (from `feat/batch-c-5`) | Merged and in the sandbox-dev API; the console (C7) and admin (C8) Workers bind them there since M4 |
 | Batch C6: member proposals (`ConsoleRpc.changeOrigins` / `proposeChange`, the API's own step-up check), `ConsoleRpc.ownerAction`, the owner-action precheck's nonce recompute, the safety budget and `owner_cap` events, the owner-pool allowance alert, the console sink scope in `deploy-contract` | `develop` (from `feat/batch-c-6-merge`) | Merged; in the sandbox-dev API, and the sink plan run there 2026-11-06 (sink `s3`, D416; milestone M3) |
@@ -878,7 +878,7 @@ most the fee can be as `dl.jp-kv` rows, then the amber lines: the spend warnings
 leaving the account, a NEP-413 recipient, a message's text, a Stellar memo), the page's notes (test-app note or
 mainnet demo banner, the out-of-policy line as a warning alert); and last the technical details in a native
 `<details>` ("Show details"/"Hide details": nonces, hashes, gas, the operation and action lists, raw arguments,
-typed-data trees, the Support ID). The details always start folded, raw signing included (D810, the founder's
+typed-data trees, the Support ID). The details always start folded, raw signing included (D810, the Tech Lead's
 decision): a request the summary can't explain (whenever it can't carry every term that decides what the user gives
 up, e.g. a Soroban call whose authorizations hold anything but that call, a pool deposit, steps left out) states its
 risk in a plain line above them, red where what can't be read could move value or control with no visible bound
@@ -888,7 +888,7 @@ D860: Circle's USDC and EURC where Circle lists them, wrapped NEAR, the Stellar 
 is the real USDC token (…)."; any other amount reads "N units of an unlisted token" with a line that
 Journear can't tell what it is worth. Addresses and keys in sentences are short, each written out once in its own
 labelled row (D859), the label above it, in one piece on nearly even lines (D876; spacing them in groups of four
-was rejected by the founder for the counterparty rows too, and stays one constant away, `COUNTERPARTY_GROUPS`); the details' first row
+was rejected by the Tech Lead for the counterparty rows too, and stays one constant away, `COUNTERPARTY_GROUPS`); the details' first row
 is the user's whole account with a Copy button (D876).
 The facts' values are words in the text face, only exact values (addresses, keys, hashes, amounts, numbers) in mono;
 a fee row in the main view means the user pays it: a fee the user doesn't pay (a sponsored EVM action, a relayed NEAR
@@ -901,7 +901,7 @@ Rows come and go without doubling a line: one rule where two lists of rows meet,
 edge, the same space on each side, no list without rows, and every operation after the first its own rule
 (`auth/css/approval.css` "the dividers", D884's note). A message Journear can't read: one amber box under the headline,
 "Journear can’t read this message, so it’s shown below in its raw form. Approve only if you expected this from {App}."
-(the founder's decision 2026-11-23; on NEAR its "proves to" line is the box's bullet), then "The message" right above
+(the Tech Lead's decision 2026-11-23; on NEAR its "proves to" line is the box's bullet), then "The message" right above
 its raw form, then the amber note about networks, as before (D886's notes). Reject (secondary) and Approve (primary) side by side, with the guard's line
 under them that says what turns the button on (D878; the guard is called first, the hint after it in a try/catch). Opening or closing the details doesn't
 touch the guard; the overflow note is measured again when they toggle.
@@ -985,7 +985,7 @@ the diff and a cancel link → `ackLabelNotice`); in force `appChangeDelayMs` la
 or the link while waiting; lapsed after 7 days without a notice; removed at once by an owner (`removeLabels`, kind
 `labels.remove`, the same proof). Staff see every waiting change in the admin portal's Partner labels screen for its
 whole wait with the preview, the diff and when it goes live, and may **Block** it (before or after it takes effect;
-nothing is needed for it to go live, the founder's option 1); with **required review** on for an org or for everyone
+nothing is needed for it to go live, the Tech Lead's option 1); with **required review** on for an org or for everyone
 (default off) a change waits for a staff **Allow** and lapses 7 days after its time without one; **kill switches** (an
 entry, an org, everyone) turn labels off at once, and back on only to what passed the guarded path (`label_controls`,
 `label_control_log`). The hourly job records versions in force (`labels.activated`, the `label_live` event) and the
@@ -1037,7 +1037,7 @@ described function or method) is decided before the code; the parser refuses the
 zeros) and reserves every state-changing Stellar asset contract function (`SAC_STATE_CHANGING`, protocol 26's `trust`
 included), since the footprint can't tie a label to such a contract's built-in code; an account with no code of its own
 is couldn't check; the vault reads no code for a request whose network it doesn't check. The two-provider read protects
-only when the two endpoints are independently operated: sandbox-dev's are one operator (FastNear), which the founder
+only when the two endpoints are independently operated: sandbox-dev's are one operator (FastNear), which the Tech Lead
 accepted for testnet (D903); a production network's manifest must name two different operators (`rpcOperator`,
 `rpcFallbackOperator`), checked by the schema and `deploy-check` once the schema admits another network than testnet
 (a declaration a reviewer checks, not proof).

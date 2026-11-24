@@ -1030,5 +1030,5 @@ Free: faucets, Blockscout and Basescan verification, standard GitHub runners on 
    heavily rate-limited). Every check that asks "both providers" (a test app's network and delegate checks, D263/D729,
    and the code hash a NEAR request label is tied to, D900) then rests on one operator, and the docs say so. It was to
    be settled before any env turns request labels on; the options were (a) a second provider run by another company,
-   (b) a self-hosted testnet node, (c) accept it for testnet, with the docs saying one operator. The founder chose (c),
+   (b) a self-hosted testnet node, (c) accept it for testnet, with the docs saying one operator. The Tech Lead chose (c),
    enforced on production only. `envs/sandbox-dev.json` is unchanged.

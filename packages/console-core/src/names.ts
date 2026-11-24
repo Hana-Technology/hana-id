@@ -354,7 +354,7 @@ const productWord = (k: string, after: boolean): boolean => inWithPlural((x) => 
 /**
  * Words that only make sense as an edition of a product: as the last words of a name that is "Passport" and them
  * ("Passport Pro", "My Passport Lite", "Passport Pro Max") or run together with it ("PassportPlus") they make it read
- * as an edition of the wallet itself (decided by the founder 2026-11-23, narrowed the same day, D891). Ordinary
+ * as an edition of the wallet itself (decided by the Tech Lead 2026-11-23, narrowed the same day, D891). Ordinary
  * business words (card, online, web, mobile, cloud, go, next, …) stay allowed. "Free" is a claim word already; "X"
  * and other single letters are the "alone" rule.
  */

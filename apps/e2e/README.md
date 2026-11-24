@@ -160,7 +160,7 @@ with one full-access key, the mainnet demo's Stellar payment, and raw signing (f
 `nearSignDelegate` and `nearSignMessage` actions with requests the test builds.
 
 The plain-wording review (D853, D858–D860): `tests/approval-plain-shots.spec.ts` saves, with `HANA_SHOTS_DIR=<dir>`
-(Chromium only, skipped otherwise), the screens the founder reviews: the stamps demo's relayed NEAR call for a test app
+(Chromium only, skipped otherwise), the screens the Tech Lead reviews: the stamps demo's relayed NEAR call for a test app
 and a live app, an EVM transfer of a listed token (USDC on Base Sepolia, posted to the popup as its vault would: the
 partner page knows only the local chain) and of an unlisted one, an unlimited permission, an unknown call, a NEAR
 full-access key, a Stellar payment, the sponsored check-in and the screen after Reject; and, for D884 (where the network
@@ -522,7 +522,7 @@ the lane's clock frozen, a change not served a millisecond before its `active_fr
 the delivered one) and "Live" on its page. The browser's `Date` is fixed at the lane's time (`page.clock.setFixedTime`),
 as the pages' "in 24 h" and "Live" are worked out against the reader's clock; the staff member signs in again after
 the lane's clock moves a day (the stand-in's token ends 24 h after the lane's clock). With `HANA_SHOTS_DIR=<dir>`
-(Chromium) its last test saves the founder's screenshots there, light theme, the whole page at 1366 and 390 px wide (the
+(Chromium) its last test saves the Tech Lead's screenshots there, light theme, the whole page at 1366 and 390 px wide (the
 viewport made as tall as the page, so the sticky sidebar stays put; each also fails if the page is wider than the
 screen): `01-feed`, `01-change-block` (the confirmation open), `02-blocked` (and `02-blocked-answer-1366`, the answer
 at the top), `03-review-allow` and `03-review-feed` (required review, waiting for Allow), `04-status` and
@@ -546,7 +546,7 @@ the console's `__Host-…; Secure` cookies to `e2e-host-…` without `Secure` on
 (an account, the phrase, the memo, the sentence's order by its buttons, the suggested fee), the window's own preview
 (the partner's box; the amber and red lines), a claim word refused beside its field, Review → the confirmation's diff →
 Confirm with Google → proposed, the change waiting with its time once the lane announces it, Cancel; and a change
-staff blocked, listed with its note. With `HANA_SHOTS_DIR=<dir>` (Chromium) its last test saves the founder's
+staff blocked, listed with its note. With `HANA_SHOTS_DIR=<dir>` (Chromium) its last test saves the Tech Lead's
 screenshots, at 1280 and 390 px, light and dark: `01-editor-match`, `01-editor-mismatch`, `01-editor-not-listed`,
 `02-editor-problem`, `03-review`, `04-list`, `05-list-blocked`, `06-editor-near`.
 
@@ -567,7 +567,7 @@ the sponsorship's events with their playbooks on Feed and notices and Security &
 status; the
 staff unlock and unsuppress (the issuer's routes, no admin page) in the audit log. Every page is watched: a console
 error, an uncaught error, a CSP violation or a cookie set by the Worker fails it, except WebKit's own `<select>` CSP
-report (D873 item 8). With `HANA_SHOTS_DIR=<dir>` (Chromium) it saves the founder's screens (desktop, light).
+report (D873 item 8). With `HANA_SHOTS_DIR=<dir>` (Chromium) it saves the Tech Lead's screens (desktop, light).
 
 ## Live mode: `pk_live_` apps
 

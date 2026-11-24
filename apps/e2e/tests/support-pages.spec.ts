@@ -10,7 +10,7 @@
 //   staff unsuppress mails a link; the press; codes arrive again and the sign-in works.
 //
 // With HANA_SHOTS_DIR=<dir> (Chromium) it also saves the pages at phone width (before the press, after it, expired)
-// and the two mails, for the founder.
+// and the two mails, for the Tech Lead.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';

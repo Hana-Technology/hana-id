@@ -335,7 +335,7 @@ test('the automatic same-address link (case A), then the email’s next sign-in:
   await expect(rows(home).nth(1)).toContainText('Added automatically at a sign-in, because this Google account uses the same email address as this wallet.');
 
   // D887: the email's next sign-in (the wallet's own) shows the Google account added in the last 7 days, with the
-  // founder's question, true here too (the person did sign in with Google, but the window can't tell an automatic
+  // Tech Lead's question, true here too (the person did sign in with Google, but the window can't tell an automatic
   // link): "Don't recognise it?" and Remove it, which asks first.
   await demo.bringToFront();
   await signOut(demo);

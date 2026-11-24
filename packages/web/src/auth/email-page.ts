@@ -231,7 +231,7 @@ export const olderLinkText = (provider: string, since: string): string => `${pro
 export const OLDER_LINK_NOTE = `After you press Done, this browser won’t show this again. ${BRAND.home} lists the ways to sign in to your wallet.`;
 
 /**
- * D887 (decided by the founder 2026-11-23: "a small button, plus 'Didn't add it?' in front of it", then, the same day,
+ * D887 (decided by the Tech Lead 2026-11-23: "a small button, plus 'Didn't add it?' in front of it", then, the same day,
  * 'Change to "Don't recognise it?"'): a banner's or an older line's Remove or Cancel is a small outlined button on its
  * own line under the sentence, after "Don't recognise it?", which is true whoever added the sign-in (the user, a
  * same-address automatic link, or someone else). Not on a way to sign in this sign-in just added: the button stands
@@ -279,7 +279,7 @@ export const FRESH_TEXT = Object.freeze({
 export const kindName = (provider: string): string => (provider === 'google' ? 'Google account' : 'email address');
 
 /**
- * D881 (decided by the founder 2026-11-19: "we need a confirmation screen … it's too abrupt and I didn't even know what
+ * D881 (decided by the Tech Lead 2026-11-19: "we need a confirmation screen … it's too abrupt and I didn't even know what
  * happened"): a banner's Remove asks first, and a Remove or Cancel ends on a screen that says what became of it.
  */
 export const CHANGE_TEXT = Object.freeze({

@@ -47,15 +47,15 @@ answered on 2026-11-13. The page `https://nearhackathon.com/request-changes` is 
 |---|---|---|---|
 | Q-001 | "Yes, from the announcement on 2026-10-19 … The window runs from then to 2026-11-14. Earlier commits are baseline." | README "What was built in the hackathon window"; [Baseline](#baseline-what-is-stated-and-why) below | Met: first commit 2026-10-26, none earlier on any branch; the README states what that commit imports and treats it as baseline (D746) |
 | Q-002 | "Existing product on another chain? Allowed. Only the NEAR integration built in the window is judged. Disclose in README." | README "What is judged, and the other chains"; [Other chains](#other-chains) | Met: the whole repository is submitted, NEAR is the judged integration, Stellar, EVM and Sodax disclosed (D748) |
-| Q-003 | "New repo required? No. Dedicated branch, or tags pre-hackathon and hackathon-submission, plus a README section linking the diff." | README "What was built in the hackathon window": the link `compare/pre-hackathon...hackathon-submission`; [Git tags](#git-tags-the-rules-name) | Met once the founder pushes the two tags: `pre-hackathon` on `e0c831fc`, `hackathon-submission` on the final submitted commit (decided 2026-11-13, D746); `TODO(submit)` in the checklist, step 6 |
+| Q-003 | "New repo required? No. Dedicated branch, or tags pre-hackathon and hackathon-submission, plus a README section linking the diff." | README "What was built in the hackathon window": the link `compare/pre-hackathon...hackathon-submission`; [Git tags](#git-tags-the-rules-name) | Met once the Tech Lead pushes the two tags: `pre-hackathon` on `e0c831fc`, `hackathon-submission` on the final submitted commit (decided 2026-11-13, D746); `TODO(submit)` in the checklist, step 6 |
 | Q-004 | "Old project as-is: no. New feature in the window: yes, if separated per Q-003. No minimum code size." | as Q-003 | Met once the tags are pushed: the baseline commit is separated from the window's work by them |
 | Q-005 | "All allowed, including own pre-hackathon libs and AI code. List in README; own old libs count as baseline." | README "AI tools and third-party code" (AI, the libraries, our own earlier code); [Third-party code](#third-party-code), [AI tools](#ai-tools), [Baseline](#baseline-what-is-stated-and-why) | Met |
 | Q-010 | "Testnet-only projects eligible? Yes, all tracks." | everything here is testnet | Met |
 | Q-011 | "Mandatory integrations? None. Hints are hints. Own contract on NEAR that fits the track is enough." | `contracts/hana-signer`, `contracts/hana-stamps`, `contracts/hana-guestbook` | Met |
 | Q-012 | "Local-only demo OK? Yes: public repo, reproducible README, X post with a video; screenshots are not enough when judges cannot open the demo. Hosted demo is a plus; keep it up to 2026-11-18, ideally 2026-11-25." | README "Reproduce it" (A the stamps site with its view calls, B the hosted demo with its view calls, C local); [The hosted demos](#the-hosted-demos) below; [`hackathon-demo-script.md`](hackathon-demo-script.md) | Reproducible README: in. Public repo: `TODO(submit)` (flipped near the end, D749). Video and X post: `TODO(submit)` (a colleague records it, on the stamps site). Demo uptime: checklist step 9 |
 | Q-013 | "Team keeps all rights; organizers get non-exclusive promo rights to name, screenshots, video, repo link." | `LICENSE`, `LICENSING.md` | Information: the Business Source License keeps the licensor's rights and grants no trademark right |
-| Q-014 | "License? Any. MIT is fine. Repo stays public through judging; add a LICENSE file." | `LICENSE` (Business Source License 1.1), `LICENSING.md` (the SDK packages under Apache-2.0, third-party material), README "AI tools and third-party code" | Met: decided by the founder 2026-11-13 (D747) |
-| Q-015 | "Allowed if projects are independent and disclosed: each README names the other project. Not the same project twice. One person, at most 2 different projects." | not applicable: nobody on the team enters another project (the founder, 2026-11-13) | Met |
+| Q-014 | "License? Any. MIT is fine. Repo stays public through judging; add a LICENSE file." | `LICENSE` (Business Source License 1.1), `LICENSING.md` (the SDK packages under Apache-2.0, third-party material), README "AI tools and third-party code" | Met: decided by the Tech Lead 2026-11-13 (D747) |
+| Q-015 | "Allowed if projects are independent and disclosed: each README names the other project. Not the same project twice. One person, at most 2 different projects." | not applicable: nobody on the team enters another project (the Tech Lead, 2026-11-13) | Met |
 | Q-017 | as in the table above | README "For judges and screening agents" | The README is written for it: claims with files and checks, "do X, see Y" steps |
 | Procedure 1 | "it must be public by 2026-11-14T23:59:00Z. Judges cannot open a private one." | | `TODO(submit)`: the repository is private (checked 2026-11-13 with `gh repo view`) |
 | Procedure 2 | the X post's four tips: lead with the user problem, "Show one complete moment", "Explain NEAR’s role concretely … Avoid a vague "powered by NEAR"", "Link the demo and public repo, and ask a genuine question" | [`hackathon-demo-script.md`](hackathon-demo-script.md) | Drafts in; posting `TODO(submit)` |
@@ -116,9 +116,9 @@ Q-012: "Hosted demo is a plus; keep it up to 2026-11-18, ideally 2026-11-25." Bo
 | Code | `apps/stamps` (D798–D807); its app is Stamp Trail | `apps/demo` |
 | Contract | `contracts/hana-stamps` at `near.demoStamps` (`hana-id-stamps-dev1.testnet`), deployed and locked 2026-11-13: zero access keys, code hash `9pjHDkQQ5j37cU8kiVcnebh22788f6vAkS5JAY1pSNvA`, lock transaction `wUxYjzymRJ825xVs5zzr386LBfLocVsZz1fo1jAXDfU`; about 19.9 NEAR for its storage | `contracts/hana-guestbook` at `near.demoGuestbook`, locked 2026-11-12 |
 | What a judge does | sign in by email, six stamps: five relayed with zero NEAR (Arrival, Fare paid, Signature with a NEP-413 message verified on chain, Postcard, Layover after 120 s of block time), one paid with testnet NEAR from NEAR's docs faucet (Own fare); a public passport page and a recent-stamps feed read from chain | sign in by email; a gasless guestbook write; a NEP-413 signature; a signed transaction; the Stellar and EVM addresses; the key export from Passport Home |
-| Checked on testnet | the founder's hand-checked run of all six stamps, 2026-11-13 (the account `cceaf5d3…` and its transactions, README "Reproduce it" A) | the founder's run of 2026-11-12 (README "Reproduce it" B) |
+| Checked on testnet | the Tech Lead's hand-checked run of all six stamps, 2026-11-13 (the account `cceaf5d3…` and its transactions, README "Reproduce it" A) | the Tech Lead's run of 2026-11-12 (README "Reproduce it" B) |
 
-The founder decided on 2026-11-13 to keep the locked contract as it is, with its 120-second Layover wait. A redeploy
+The Tech Lead decided on 2026-11-13 to keep the locked contract as it is, with its 120-second Layover wait. A redeploy
 would have to go to a new account, since the locked one can't change: `near.demoStamps` and `near.relay.receivers` in `envs/sandbox-dev.json`, the API's `gen` and
 deploy, the site's deploy (`docs/operations.md` "Hosted stamps demo"), and the account and the wait as the README, this
 page, the checklist and the demo script state them.
@@ -126,8 +126,8 @@ page, the checklist and the demo script state them.
 ## Git tags the rules name
 
 Q-003 offers "Dedicated branch, or tags pre-hackathon and hackathon-submission, plus a README section linking the
-diff". Decided by the founder 2026-11-13 (D746): both tags, as Q-003 names them. The repository has no tags today
-(`git ls-remote --tags origin` printed nothing on 2026-11-13). The founder creates and pushes them; this branch
+diff". Decided by the Tech Lead 2026-11-13 (D746): both tags, as Q-003 names them. The repository has no tags today
+(`git ls-remote --tags origin` printed nothing on 2026-11-13). The Tech Lead creates and pushes them; this branch
 creates none (`TODO(submit)`, checklist step 6).
 
 - **`pre-hackathon`** on `e0c831fc`, the first commit, which holds the baseline ([Baseline](#baseline-what-is-stated-and-why)).
@@ -164,7 +164,7 @@ A moved tag changes what the compare link shows; anyone who fetched the old tag 
 
 ## Baseline: what is stated and why
 
-Decided by the founder 2026-11-13 (D746): the README states the baseline. Its wording, in "What was built in the
+Decided by the Tech Lead 2026-11-13 (D746): the README states the baseline. Its wording, in "What was built in the
 hackathon window":
 
 > The first commit, `e0c831fc` (2026-10-26), started this repository from our earlier proof of concept,
@@ -370,12 +370,12 @@ and anyone can read them" and for "a README section on failure cases".
 
 ## What the submission cannot meet yet
 
-- **A public repository** by 2026-11-14T23:59:00Z: private on 2026-11-13 (`gh repo view`); the founder flips it
+- **A public repository** by 2026-11-14T23:59:00Z: private on 2026-11-13 (`gh repo view`); the Tech Lead flips it
   on 2026-11-13 after the final deploy, the branch clean-up and the tags ([`hackathon-public-checklist.md`](hackathon-public-checklist.md)
   step 11, the runbook; D749).
 - **The video, the X post and the submission**: the colleague who submits records, posts and submits, after the flip
   ([`hackathon-demo-script.md`](hackathon-demo-script.md)).
-- **The tags** (Q-003): decided, pushed by the founder (D746).
+- **The tags** (Q-003): decided, pushed by the Tech Lead (D746).
 - **Google sign-in for judges**: Journear's Google client is in Google's testing mode, so only listed testers can use
   it. Judges use email sign-in, which works for any address.
 - **Capacity during judging** (D793): 200 code emails a day for Stamp Trail and 100 for the hosted demo's app, within

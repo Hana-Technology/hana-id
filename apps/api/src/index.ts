@@ -19,6 +19,7 @@ import { HOME_CONFIG_ENDPOINT, handleHomeConfig } from './home/config.ts';
 import { HOME_DEVICES_ENDPOINT, handleHomeDevices } from './home/devices.ts';
 import { handleHomeRevoke, isHomeRevokeEndpoint } from './home/revoke.ts';
 import { HOME_LOGIN_ENDPOINT, handleHomeLogin } from './home/login.ts';
+import { HOME_LINK_CANCEL_ENDPOINT, handleHomeLinkCancel } from './home/link-cancel.ts';
 import { HOME_NAME_SHARING_ENDPOINT, HOME_PROFILE_ENDPOINT, handleHomeNameSharing, handleHomeProfileGet, handleHomeProfileSet } from './home/profile.ts';
 import { homePreflight } from './home/identity.ts';
 import { syncIssuerKeys } from './issuer-keys.ts';
@@ -245,6 +246,12 @@ export default {
         // Hana Home's derive (H3): a Home identity, no app gate, relayed through the Home pool.
         if (request.method === 'OPTIONS') return homePreflight(request, env);
         if (request.method === 'POST') return await handleHomeLogin(request, env, requestId, ctx);
+        return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
+      }
+      if (pathname === HOME_LINK_CANCEL_ENDPOINT) {
+        // Passport Home cancels a waiting link (D902): a Home identity and a fresh Google proof of the same account, no app gate.
+        if (request.method === 'OPTIONS') return homePreflight(request, env);
+        if (request.method === 'POST') return await handleHomeLinkCancel(request, env, requestId, ctx);
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'POST, OPTIONS' });
       }
       if (IDENTITY_PUBLIC_ENDPOINTS.includes(pathname)) {

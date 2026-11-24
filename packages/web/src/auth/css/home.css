@@ -1216,6 +1216,20 @@ a.explorer {
   font-size: var(--jp-text-xs);
 }
 
+/* D902: Home's own "Cancel this link": its steps in the row's box, a little air between the lines and before the
+   buttons. */
+.home-sign-in-risk.home-sign-in-cancel .body > * + * {
+  margin-top: var(--jp-space-1);
+}
+
+.home-sign-in-risk.home-sign-in-cancel .actions {
+  margin-top: var(--jp-space-3);
+}
+
+.home-sign-in-risk.home-sign-in-cancel .home-sign-in-cancel-title {
+  margin: 0 !important;
+}
+
 /* A stop's confirmation, under its row: what it does and doesn't, then the stop itself (the only danger button). */
 .home-confirm {
   display: grid;

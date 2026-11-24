@@ -218,7 +218,8 @@ test('case B waiting, cancelled from a Google sign-in (D864), with Passport Home
   await expect(rows(home)).toHaveCount(2);
   await expect(rows(home).nth(1)).toContainText('Another email address');
   await expect(rows(home).nth(1)).toContainText('Waiting');
-  await expect(rows(home).nth(1)).toContainText('choose “Cancel this link”');
+  // D902: Ben's wallet is on the shared Google client and Home is signed in with Google: Home's own Cancel this link.
+  await expect(rows(home).nth(1).getByRole('button', { name: 'Cancel this link for the email address', exact: true })).toBeVisible();
 
   await demo.bringToFront();
   await signOut(demo);

@@ -23,11 +23,15 @@
 //                                         use and key index 0 in one scope, whose nonce this window recomputes, and
 //                                         Google is asked to sign the user in again (`max_age=0`). Either message
 //                                         may name Hana Home's exit client (`exit`): Google then answers to
-//                                         `/home/callback` (D491), the only page that takes an exit token.
+//                                         `/home/callback` (D491), the only page that takes an exit token. To cancel
+//                                         one waiting link (D902) Hana Home sends `hana:home-cancel-params`: the
+//                                         contract's `link_change` "cancel" nonce for one root, member and epoch,
+//                                         which this window recomputes, for the shared Google client only, with the
+//                                         account chooser and `max_age=0`.
 //
 // SECURITY: auth-params carries relayKey, the one session secret that crosses postMessage. It is accepted only from
 // the authenticated sender, kept only in sessionStorage, and the in-memory copy is zeroed.
-import { type LoginMethod, type WindowMessage, homeNonce, isTestPublishableKey, parseWindowMessage, sessionNonce } from '@hana-id/core';
+import { type LoginMethod, type WindowMessage, fromHex, homeNonce, isTestPublishableKey, linkChangeNonce, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import { BRAND } from '@hana-id/brand';
 import { type Dom, SIGN_IN_WINDOW, dom, errorView, originText } from './dom.ts';
@@ -54,6 +58,8 @@ export const EXPORT_PATH = '/export';
 export const HOME_PATH = '/home';
 /** The email step (auth/email-page.ts), reached by navigating this window; the fragment names the login (`#<relayId>`). */
 export const EMAIL_PATH = '/login/email';
+/** The heading of Hana Home's sign-in to cancel a waiting link (D898's words for option B, D902). */
+export const HOME_CANCEL_SIGN_IN_TITLE = 'Sign in with Google to confirm it’s you';
 
 export interface LoginPageDeps {
   win: PageWindow;
@@ -150,11 +156,13 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       // Hana Home's sign-in: its own message, from the same-origin opener at /home, and nothing else.
       const home = parseWindowMessage(e.data, ['hana:home-params']);
       const derive = home ? null : parseWindowMessage(e.data, ['hana:home-derive-params']);
-      if ((!home && !derive) || !fromPreparer(e, 'home')) return;
+      const cancel = home || derive ? null : parseWindowMessage(e.data, ['hana:home-cancel-params']);
+      if ((!home && !derive && !cancel) || !fromPreparer(e, 'home')) return;
       accepted = true;
       stop();
       if (home) checkHome(home);
       else if (derive) checkHomeDerive(derive);
+      else if (cancel) checkHomeCancel(cancel);
       return;
     }
     const msg = parseWindowMessage(e.data, ['hana:auth-params']);
@@ -224,6 +232,36 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       }
       const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: true, exit: msg.exit === true });
       d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Choose your Google account again'), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+      state = { stage: 'redirecting', mode: 'home', url };
+      finish(state);
+      win.location.assign(url);
+    } catch (err) {
+      const e = err instanceof PageError ? err : new PageError('config_mismatch', uncheckedStop(BRAND.home));
+      fail(e.code, 'Sign-in stopped', e.message);
+    } finally {
+      msg.relayKey.fill(0);
+    }
+  }
+
+  /**
+   * Hana Home cancelling one waiting link (`home` mode, `hana:home-cancel-params`, D902): the nonce must be the
+   * contract's `link_change` "cancel" nonce of the message's own scope, root, member, epoch and salt on the pinned
+   * SIGNER, so this window never sends Google a nonce for any other change (the action is fixed here, never read from the
+   * message). Google only, the shared client (no exit), with the account chooser and `max_age=0`. No app is named.
+   */
+  function checkHomeCancel(msg: WindowMessage<'hana:home-cancel-params'>): void {
+    state = { stage: 'checking', mode: 'home' };
+    try {
+      if (msg.signer !== env.signer) throw new PageError('config_mismatch', safetyStop(BRAND.home));
+      const nonce = linkChangeNonce(env.signer, msg.scopeId, 'cancel', fromHex(msg.rootKey), fromHex(msg.memberKey), msg.epoch, msg.salt);
+      if (nonce !== msg.nonce) throw new PageError('config_mismatch', safetyStop(BRAND.home));
+      try {
+        storeLoginEntry(win.sessionStorage, msg.relayId, msg.relayKey, now());
+      } catch {
+        throw new PageError('storage_unavailable', STORAGE_BLOCKED);
+      }
+      const url = googleAuthUrl({ clientId: msg.clientId, authOrigin: env.authOrigin, nonce, state: msg.relayId, forceReauth: true, exit: false });
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, HOME_CANCEL_SIGN_IN_TITLE), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
       state = { stage: 'redirecting', mode: 'home', url };
       finish(state);
       win.location.assign(url);

@@ -430,6 +430,23 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
     expect(issued.statement.totals.rows.map((r) => [r.kind, r.scopeId])).toEqual([['home', 'sgone'], ['home', 'ssusp']]);
   });
 
+  it('D902: a Passport Home link cancel (kind `scope`, no app) of a scope the org has no app in is refused on a partner’s statement, never billed', async () => {
+    // HANA_ORG_ID wrongly naming a partner: another partner's Home cancel lands on this org, as a `scope` row.
+    const WRONG = 'org_cancelwrongly';
+    await insertEvent(db, { org: WRONG, app: null, endpoint: 'home_link_cancel', scope: 'sothers', at: utc('2025-02-10T10:00:00Z'), relayed: true });
+    // And one of the org's own owner actions, in its own scope: that one is the org's to pay.
+    await insertEvent(db, { org: WRONG, endpoint: 'owner_action', scope: 'sown', at: utc('2025-02-10T11:00:00Z'), relayed: true });
+    const rows = { dayRows: await store.report(WRONG, '2025-02-01', '2025-02-28', 'day', null, AT), monthRows: await store.report(WRONG, '2025-02-01', '2025-02-28', 'month', null, AT) };
+    expect(rows.monthRows.map((r) => [r.kind, r.app_id, r.scope_id]).sort()).toEqual([['scope', null, 'sothers'], ['scope', null, 'sown']]);
+    const base = { orgId: WRONG, orgName: 'A partner', month: FEB, asOf: AT, network: 'testnet' };
+    const ownApp = new Map([['app_own', { name: 'Own', environment: 'live', scopeId: 'sown' }]]);
+    expect(() => buildStatement({ ...base, apps: ownApp, ...rows })).toThrow(/Scope-level events \(owner actions or Passport Home link cancels\) of scope sothers are recorded for org_cancelwrongly, which has no app in that scope/u);
+    // Only its own scope's rows: built. Journear's own (internal) org may carry any scope's.
+    const own = { dayRows: rows.dayRows.filter((r) => r.scope_id === 'sown'), monthRows: rows.monthRows.filter((r) => r.scope_id === 'sown') };
+    expect(buildStatement({ ...base, apps: ownApp, ...own }).totals.sum.ownerActions).toBe(1);
+    expect(buildStatement({ ...base, apps: new Map(), internal: true, ...rows }).lines).toBeGreaterThan(0);
+  });
+
   it('staff’s ledger CSV names a Home derive’s transaction (to reconcile against the chain); the partner’s rows never do', async () => {
     const staff = (await ledgerCsv(store, PARTNER, FEB, AT))!;
     const homeLine = staff.csv.split('\n').find((l) => l.includes(',home_login,ok,'))!.split(',');
@@ -455,7 +472,10 @@ describe('Hana Home logins on a statement (D461, D585–D588)', () => {
     expect(view.summary.map(([k]) => k)).not.toContain('Passport Home logins');
     expect(view.notes.join(' ')).not.toMatch(/Hana Home/u);
     // And its stored totals carry no Home field at all: the shape a reader from before this change expects.
-    const withApp = buildStatement({ orgId: 'org_plain', orgName: 'Plain', month: FEB, asOf: AT, network: 'mainnet', apps: new Map(), dayRows: [], monthRows: await store.report('org_acme', '2025-01-01', '2025-01-31', 'month', null, null) });
+    const acmeRows = await store.report('org_acme', '2025-01-01', '2025-01-31', 'month', null, null);
+    // The org's apps in each scope its rows name (a scope-level row of a scope with none of its apps is refused, D902).
+    const acmeApps = new Map([...new Set(acmeRows.map((r) => r.scope_id))].map((scopeId, k) => [`app_acme${k}`, { name: 'Acme', environment: 'live', scopeId }]));
+    const withApp = buildStatement({ orgId: 'org_plain', orgName: 'Plain', month: FEB, asOf: AT, network: 'mainnet', apps: acmeApps, dayRows: [], monthRows: acmeRows });
     expect(withApp.totals.rows.length).toBeGreaterThan(0);
     expect(JSON.stringify(withApp.totals)).not.toContain('homeLogins');
     expect(JSON.stringify(withApp.totals)).not.toContain('"home"');

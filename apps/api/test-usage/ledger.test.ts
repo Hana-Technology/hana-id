@@ -128,6 +128,24 @@ describe('the writer role', () => {
     expect(await direct('owner_action', null)).toBeNull();
   });
 
+  it('records Passport Home’s cancel of a waiting link (migrations-usage 0011, D902): home_link_cancel, a scope and no app, without a uid', async () => {
+    const e = event({ endpoint: 'home_link_cancel', app_id: null, uid: undefined, org_id: 'org_hana', scope_id: 'scancel', request_id: 'home-link-cancel-0001' });
+    expect(usageEventV1.safeParse(strip(e)).success).toBe(true);
+    expect(await asWriter(() => record(e))).toBe(true);
+    const [row] = await db.query<{ endpoint: string; app_id: string | null; org_id: string; scope_id: string; uid: unknown; relayed: boolean }>("SELECT endpoint, app_id, org_id, scope_id, uid, relayed FROM usage.events WHERE request_id = 'home-link-cancel-0001'");
+    expect(row).toEqual({ endpoint: 'home_link_cancel', app_id: null, org_id: 'org_hana', scope_id: 'scancel', uid: null, relayed: true });
+    // With an app it is refused, by the function and by the table's own rule, as a Home derive is.
+    const withApp = strip(event({ endpoint: 'home_link_cancel', uid: undefined }));
+    expect(usageEventV1.safeParse(withApp).success).toBe(false);
+    expect((await failure(record(withApp)))?.code).toBe('22023');
+    const direct = (app: string | null) =>
+      failure(db.query("INSERT INTO usage.events (request_id, at, org_id, app_id, scope_id, endpoint, outcome, status, latency_ms, relayed) VALUES ($1, now(), 'o', $2, 's', 'home_link_cancel', 'ok', 200, 1, false)", [`direct-cancel-${app}`, app]));
+    expect((await direct('app_a'))?.code).toBe('23514');
+    expect(await direct(null)).toBeNull();
+    // A uid is never carried by it.
+    expect((await failure(record(strip(event({ endpoint: 'home_link_cancel', app_id: null })))))?.code).toBe('22023');
+  });
+
   it('records events through record_event', async () => {
     expect(await asWriter(() => record(event()))).toBe(true);
   });
@@ -306,6 +324,8 @@ describe('record_event', () => {
       event({ endpoint: 'owner_action', app_id: null, uid: undefined }),
       event({ endpoint: 'home_login', app_id: null, uid: undefined }),
       event({ endpoint: 'home_login', app_id: null, uid: undefined, outcome: 'error', code: 'ckd_failed', status: 502 }),
+      event({ endpoint: 'home_link_cancel', app_id: null, uid: undefined }),
+      event({ endpoint: 'home_link_cancel', app_id: null, uid: undefined, outcome: 'rejected', code: 'contract_rejected', status: 422 }),
       event({ outcome: 'rejected', code: 'contract_rejected', status: 400, uid: undefined }),
       event({ outcome: 'error', code: 'timeout', status: 504, uid: undefined }),
       event({ latency_ms: 0, status: 599, at_ms: NOW }),

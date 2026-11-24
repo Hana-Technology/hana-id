@@ -73,9 +73,9 @@ const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const isSalt = (v: unknown): v is number[] => Array.isArray(v) && v.length >= 16 && v.length <= 64 && v.every((b) => Number.isInteger(b) && b >= 0 && b <= 255);
-const isEpoch = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
-const isMemberKey = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/u.test(v);
+export const isSalt = (v: unknown): v is number[] => Array.isArray(v) && v.length >= 16 && v.length <= 64 && v.every((b) => Number.isInteger(b) && b >= 0 && b <= 255);
+export const isEpoch = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
+export const isMemberKey = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/u.test(v);
 const onlyKeys = (o: Record<string, unknown>, keys: string[]): boolean => Object.keys(o).length === keys.length && keys.every((k) => k in o);
 
 type LinkBody = { kind: 'link'; accountJwt: string; newJwt: string; epoch: number; salt: number[] } | { kind: 'cancel' | 'unlink'; jwt: string; memberKey: string; epoch: number; salt: number[] };
@@ -138,8 +138,21 @@ async function precheckLink(env: Env, scopeId: string, a: LoginToken, n: LoginTo
   return { root: who.account?.root ?? rootRef };
 }
 
-/** cancel_link's and unlink_identity's rules (links.rs), from the account the acting identity is in. */
-async function precheckChange(env: Env, scopeId: string, action: 'cancel' | 'unlink', j: LoginToken, memberKey: string, epoch: number, salt: Uint8Array): Promise<LinkRefusal | { root: { provider: string; sub: string } }> {
+/**
+ * cancel_link's and unlink_identity's rules (links.rs), from the account the acting identity is in. `activeActor`
+ * (Passport Home's cancel, D902) is stricter than the contract: the acting identity is never the pending member itself
+ * and never pending, so only a sign-in that already opens the wallet cancels another one's link.
+ */
+export async function precheckChange(
+  env: Env,
+  scopeId: string,
+  action: 'cancel' | 'unlink',
+  j: LoginToken,
+  memberKey: string,
+  epoch: number,
+  salt: Uint8Array,
+  opts: { activeActor?: boolean } = {},
+): Promise<LinkRefusal | { root: { provider: string; sub: string } }> {
   const who = await read(env, scopeId, j);
   if (!who) return unavailable;
   const account = who.account;
@@ -153,6 +166,9 @@ async function precheckChange(env: Env, scopeId: string, action: 'cancel' | 'unl
   if (j.nonce !== expected) return refused('link_mismatch', 'Link nonce doesn’t match');
   const self = who.identity.key;
   if (action === 'cancel') {
+    // Home's rule (D902): never the waiting sign-in itself. A pending actor cancelling another member is then refused
+    // by the contract's own rule just below, as for the window.
+    if (opts.activeActor && self === memberKey) return refused('not_allowed', 'Passport Home cancels another sign-in’s link only');
     if (self !== memberKey) {
       if (who.identity.status === 'pending') return { status: 409, code: 'link_pending', error: 'Sign-in method link is pending' };
     }
@@ -170,9 +186,10 @@ async function precheckChange(env: Env, scopeId: string, action: 'cancel' | 'unl
 /**
  * Revokes every live vault share of `root`'s path in `scopeId`, in every app of the scope (key_index
  * 0..SHARE_KEY_INDEXES-1). Logged with its count only; a failure is logged and never fails the answer (the link
- * change is already on chain, and the shares end at their own limits).
+ * change is already on chain, and the shares end at their own limits). True when the revocation was written (D902:
+ * Home says devices will be asked to sign in again only then).
  */
-export async function revokeAccountShares(env: Env, scopeId: string, root: { provider: string; sub: string }, ctx: { requestId: string; endpoint: string; appId?: string }, now = Date.now()): Promise<void> {
+export async function revokeAccountShares(env: Env, scopeId: string, root: { provider: string; sub: string }, ctx: { requestId: string; endpoint: string; appId?: string }, now = Date.now()): Promise<boolean> {
   try {
     const hashes = await Promise.all(Array.from({ length: SHARE_KEY_INDEXES }, (_, k) => sha256(new TextEncoder().encode(`${scopeId}#${root.provider}#${root.sub}#${k}`))));
     const marks = hashes.map((_, i) => `?${i + 3}`).join(', ');
@@ -183,8 +200,10 @@ export async function revokeAccountShares(env: Env, scopeId: string, root: { pro
       .bind(now, scopeId, ...hashes)
       .run();
     log({ event: 'link_shares_revoked', requestId: ctx.requestId, appId: ctx.appId, endpoint: ctx.endpoint, removed: res.meta.changes ?? 0 });
+    return true;
   } catch {
     log({ event: 'link_shares_revoke_failed', requestId: ctx.requestId, appId: ctx.appId, endpoint: ctx.endpoint, code: 'internal' }, 'error');
+    return false;
   }
 }
 
@@ -194,15 +213,23 @@ const pair = (minute: number, day: number): Limit[] => [
 ];
 
 /**
+ * The account's own window (`link-root:<scope>:<root ik>`): adds, or changes (cancels and unlinks). Passport Home's cancel
+ * (home/link-cancel.ts, D902) counts in the same changes window, so an account's 100 a day are shared by every route.
+ */
+export function linkRootWindow(scopeId: string, rootIk: string, add: boolean): OwnerActionWindow {
+  return {
+    subject: `link-root:${scopeId}:${rootIk}`,
+    label: add ? 'links per account' : 'link changes per account',
+    limits: add ? pair(LINK_ADDS_PER_ROOT_MINUTE, LINK_ADDS_PER_ROOT_DAY).map((l) => ({ ...l, name: `add:${l.name}` })) : pair(LINK_CHANGES_PER_ROOT_MINUTE, LINK_CHANGES_PER_ROOT_DAY).map((l) => ({ ...l, name: `change:${l.name}` })),
+  };
+}
+
+/**
  * The link limits (see the constants), asked once every check has passed, narrowest first; a refusal takes the earlier
  * windows' hits back (handlers.ts `hitAll`). Null when the request may be relayed.
  */
 async function linkLimits(env: Env, ctx: Ctx, app: App, add: boolean, rootIk: string): Promise<Response | null> {
-  const root: OwnerActionWindow = {
-    subject: `link-root:${app.scope_id}:${rootIk}`,
-    label: add ? 'links per account' : 'link changes per account',
-    limits: add ? pair(LINK_ADDS_PER_ROOT_MINUTE, LINK_ADDS_PER_ROOT_DAY).map((l) => ({ ...l, name: `add:${l.name}` })) : pair(LINK_CHANGES_PER_ROOT_MINUTE, LINK_CHANGES_PER_ROOT_DAY).map((l) => ({ ...l, name: `change:${l.name}` })),
-  };
+  const root = linkRootWindow(app.scope_id, rootIk, add);
   const windows: OwnerActionWindow[] = add
     ? [root, { subject: `app:${app.id}:link-adds`, label: 'app links', limits: pair(LINK_ADDS_PER_APP_MINUTE, LINK_ADDS_PER_APP_DAY) }, { subject: 'link-global', label: 'links', limits: [{ name: 'day', windowMs: DAY, max: LINK_ADDS_GLOBAL_DAY }] }]
     : [root];

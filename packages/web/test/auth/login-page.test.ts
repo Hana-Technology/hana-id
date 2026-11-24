@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // /login (docs/batch-b-spec.md "Login" steps 3–5, "Tests → Web unit → Login popup"): the sender checks in each opener
 // mode, the signer and nonce checks, no API call (D77), the COOP error, the sessionStorage entry and the Google request.
-import { homeNonce, relayIdFor, sessionNonce } from '@hana-id/core';
+import { fromHex, homeNonce, linkChangeNonce, relayIdFor, sessionNonce } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HELLO_TIMEOUT_MS, openerMode, startLoginPage } from '../../src/auth/login-page.ts';
 import { LOGIN_ENTRY_PREFIX } from '../../src/auth/login-storage.ts';
@@ -398,6 +398,68 @@ describe('/login?mode=home', () => {
     expect(url.searchParams.get('redirect_uri')).toBe(`${ENV.authOrigin}/home/callback`);
     expect(url.searchParams.get('max_age')).toBe('0');
     expect(JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + msg.relayId) as string)).toMatchObject({ ex: 1, n: msg.nonce });
+  });
+
+  // D902: Home's cancel of one waiting link: the window recomputes the link_change nonce itself, shared client only.
+  const cancelMsg = (over: Record<string, unknown> = {}) => {
+    const salt = crypto.getRandomValues(new Uint8Array(32));
+    const rootKey = 'a1'.repeat(32);
+    const memberKey = 'b2'.repeat(32);
+    return {
+      v: 1,
+      t: 'hana:home-cancel-params',
+      signer: ENV.signer,
+      clientId: 'shared-client.apps.googleusercontent.com',
+      scopeId: 's1',
+      rootKey,
+      memberKey,
+      epoch: 7,
+      salt,
+      nonce: linkChangeNonce(ENV.signer, 's1', 'cancel', fromHex(rootKey), fromHex(memberKey), 7, salt),
+      relayId: relayIdFor(crypto.getRandomValues(new Uint8Array(32))),
+      relayKey: crypto.getRandomValues(new Uint8Array(32)),
+      ...over,
+    };
+  };
+
+  it('D902: a cancel’s sign-in: the recomputed link_change nonce, the shared client at /login/callback, the chooser and max_age=0, a plain entry', async () => {
+    const s = home();
+    const msg = cancelMsg();
+    s.win.message(msg, ENV.authOrigin, s.opener);
+    expect((await s.page.done).stage).toBe('redirecting');
+    const url = new URL(s.win.location.assigned[0] as string);
+    expect(url.searchParams.get('redirect_uri')).toBe(`${ENV.authOrigin}/login/callback`);
+    expect(url.searchParams.get('client_id')).toBe('shared-client.apps.googleusercontent.com');
+    expect(url.searchParams.get('nonce')).toBe(msg.nonce);
+    expect(url.searchParams.get('prompt')).toBe('select_account');
+    expect(url.searchParams.get('max_age')).toBe('0');
+    expect(url.searchParams.get('login_hint')).toBeNull();
+    const entry = JSON.parse(s.win.sessionStorage.getItem(LOGIN_ENTRY_PREFIX + msg.relayId) as string) as Record<string, unknown>;
+    expect(entry.ex).toBeUndefined();
+    expect(msg.relayKey.every((b) => b === 0)).toBe(true);
+    expect(pageText()).toContain('Sign in with Google to confirm it’s you');
+  });
+
+  it.each([
+    ['a nonce for the unlink of the same member', (m: ReturnType<typeof cancelMsg>) => ({ nonce: linkChangeNonce(ENV.signer, 's1', 'unlink', fromHex(m.rootKey), fromHex(m.memberKey), 7, m.salt) })],
+    ['a nonce over another epoch', () => ({ epoch: 8 })],
+    ['a nonce over another member', (m: ReturnType<typeof cancelMsg>) => ({ memberKey: 'c3'.repeat(32), nonce: m.nonce })],
+    ['another signer', () => ({ signer: 'other-signer.testnet' })],
+  ] as [string, (m: ReturnType<typeof cancelMsg>) => Record<string, unknown>][])('D902: refuses %s, before Google, storing nothing', async (_, change) => {
+    const s = home();
+    const base = cancelMsg();
+    s.win.message({ ...base, ...change(base) }, ENV.authOrigin, s.opener);
+    expect((await s.page.done).stage).toBe('error');
+    expect(s.win.location.assigned).toEqual([]);
+    expect(s.win.sessionStorage.length).toBe(0);
+  });
+
+  it('D902: the exit client is never taken for a cancel (the message has no exit flag)', async () => {
+    const s = home();
+    s.win.message(cancelMsg({ exit: true }), ENV.authOrigin, s.opener);
+    await flush();
+    expect(s.page.state.stage).toBe('connecting');
+    expect(s.win.sessionStorage.length).toBe(0);
   });
 
   it('refuses an exit flag that isn’t exactly true', async () => {

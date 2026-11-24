@@ -21032,10 +21032,80 @@ and council keys and receives the alerts. Since branch `docs/readiness-owner-col
 `docs/mainnet-readiness.md` tells the two apart row by row: "Tech Lead" for technical and operational work, "founder"
 for business-owner matters (legal, contracts, the company, the brand, owner and council keys).
 
+## The partner platform: the Tech Lead's answers of 2026-11-24 (branch `docs/partner-platform-spec`)
+
+From `next` @ 6f51a033; docs only, not merged, not built, not deployed. Numbered D913: parallel branches may take D910
+to D912. Revised after PR 139's security review (same day).
+
+### D913. Real-money demo swaps stay a staff switch per partner app; each app on a shared scope gets its own User ID, with linking for the scope's owner and staff; npm and the licence parked; the small items started; the platform API built on the origin recommendation; the spec's eleven questions answered
+- Date 2026-11-24 · Status: points 2 to 6 and the eleven answers **decided by the Tech Lead 2026-11-24**; question 8
+  **to re-confirm with the Tech Lead before piece P9 is built** (the security review advises against it); the design
+  that carries them out **proposed, not built** (`docs/partner-platform-spec.md`, with nine further open questions)
+  · Relates to D39, D51, D127, D346, D356, D394, D428, D704, D708, D760, D835, D894, D909 · Built: nothing
+- **In the Tech Lead's words** (2026-11-24). Point 1 (one wallet across all of the network's partner sites, one app
+  per partner, all on the network's one scope and organisation) is D909, unchanged.
+  - **2.** Real-money demo swaps (the mainnet demo, D428) stay a **staff switch per partner app**, for a short pilot
+    list, and are never part of the network's portal switch. D428 is unchanged.
+  - **3.** Each app on a shared scope gets **its own User ID** in the identity token (today `sub` is per scope, so
+    every partner backend gets the same ID for a person). Then the question: "if Sodax wanted to diagnose one user
+    across multiple Sodax partner apps, is it still possible? some sort of linking is needed?"
+  - **4.** npm publishing and the core package's licence: parked.
+  - **5.** Start the small items now (naming the six EVM chains our approval window doesn't name yet; a "this wallet
+    is also used on other apps" line in our windows; both on other branches) and build the portal connection on the
+    recommendation of point 6, to be adjusted after the Tech Lead has talked to the network.
+  - **6.** Who vouches for a partner's web address (parked in D909): build on the recommendation for now, adjust
+    later. The recommendation: the network vouches for every partner site it adds (it is the customer and the scope's
+    owner); a site added through the network's backend takes effect only after the usual guarded-change delay (at
+    least 24 h on a production network; 60 s on the dev testnet env) with the usual announcement to the org's
+    security contacts and its cancel link; Journear keeps a per-partner-app off switch and can revoke the network's
+    credential at once; every call is audited.
+- **The spec's answer to the linking question** (proposed, in plain words): yes. The person's IDs on each of the
+  network's apps all come from one ID of the person on the network's scope, which only Journear can compute. So the
+  network's owners (in our partner portal) and Journear staff (in the admin portal) can look a person up by any one
+  app's User ID or Support ID and see that person's IDs on the network's other apps, each lookup audited, rate limited
+  and alerted on in volume; a partner can't turn its IDs into another partner's. **Honestly:** on a shared wallet the
+  wallet addresses are the same on every site and are in every identity token, so partners who compare addresses can
+  match users anyway. Per-app IDs remove the ready-made join key (the shared `sub` and Support ID) and protect a
+  partner that forgets to check `aud`; they are not privacy between partners. Existing apps keep their IDs exactly:
+  only apps created on a scope that staff mark for it get per-app IDs.
+- **The spec's eleven questions, answered by the Tech Lead** ("yes all" to the recommendations, 2026-11-24):
+  1. requests are signed with ECDSA P-256 (ES256) only;
+  2. the network's on-chain owners may register a platform key themselves, and it still waits the delay;
+  3. platform keys expire after one year;
+  4. no user lookup from the network's backend for now: linking is in our partner portal only;
+  5. the cross-app view of one person is for the network's owners only, not its viewers;
+  6. keep per-app User IDs, knowing partners can still match people by wallet address;
+  7. a per-app Support ID as well;
+  8. staff may restore, without the 24 h wait, an origin a stolen key removed. **The security review of PR 139 advises
+     against it** (finding M1: a restore that skips the delay is the one path by which an origin comes into force
+     with no time to object, and a staffer tricked by someone posing as the network could use it). **To re-confirm
+     with the Tech Lead before P9 is built**; if built, only in the review's narrowed form: only an origin whose
+     removal was by the `platform` actor, on the same app, in force when removed, within 7 days; only once that key
+     is revoked or the org's platform switch is off; with a notice to the org's security contacts and owners before
+     the origin is back; and with two people (one staff member proposes, a second approves, each with a reason);
+  9. report a partner origin with no sign-in for 60 days to the network and staff, as a later piece;
+  10. tell users in Passport Home that the network can see which of its sites they use;
+  11. staff may **not** expedite a platform-proposed origin.
+- **Proposed in the spec, not the Tech Lead's own words** (built on his answers above): per-org request signing
+  rather than OAuth client-credentials tokens (follows from answer 1), with the env, method, path, body hash, a
+  timestamp and a single-use nonce signed; registration by an owner of each scope or by staff with the owner's
+  acceptance or a second staff member; the platform's reach (its own org, its scopes, test only, only apps it
+  created) held in the SQL of every read and write; auto-approve refused in code on a shared scope before the
+  platform is on for any org; the quotas, data model, endpoints and build plan. PR 139's security review findings
+  (H1 to H3, M1 to M9, L1 to L16) are folded in as requirements, each tied to the piece it gates.
+- **Open, for the Tech Lead** (the spec's N1 to N9, each with its recommendation): the platform acts only on apps it
+  created (no); the same model for the future live scope (yes, with its own review); a platform minimum delay on dev
+  envs (24 h everywhere but `local*`); auto-approve refused in code on shared scopes (yes); owner acceptance of a
+  staff-registered key (yes); the "also used on other apps" line before the platform is on (yes); the network giving
+  one partner another's ID (no); platform test apps in Passport Home on dev envs (yes); key notices to the org's
+  owners (yes).
+- Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation. The per-app User ID
+  is an off-chain pseudonym; its layout becomes final, for the partners that store it, from the day it ships.
+
 ## The shared-wallet line (branch `feat/shared-wallet-line`), 2026-11-24
 
-From `next` @ 9a0e8df7, with `next` @ 6f51a033 merged in; not merged, not deployed. Numbered D912: D910 and D911 are
-taken by branches open beside it.
+From `next` @ 9a0e8df7, with `next` @ 6f51a033 and 29d6e88f merged in; not merged, not deployed. Numbered D912 when it
+was built (D910 and D911 are taken by branches open beside it); it sits after D913, which reached `next` first.
 
 ### D912. The sign-in and approval windows say when the wallet is also used on other apps: "This wallet is also used on 2 other apps.", with the names behind "See which"
 - Date 2026-11-24 · Status: **asked for by the Tech Lead 2026-11-24** (after D909's shared wallet for every Sodax partner
@@ -21110,6 +21180,11 @@ taken by branches open beside it.
   before Google's page (the chooser is where it stays on screen); a tab left open keeps the count it read until the
   vault reads the app again (an app added meanwhile shows from then); a consent to automatic approvals given while the
   scope had N apps isn't asked again when another joins (auto-approved Sodax swaps stay deferred, D708).
+- **A gate for the partner platform (D913):** `docs/partner-platform-spec.md` makes this line a condition of the
+  platform switch (its question N6, answered yes by the Tech Lead 2026-11-24; its build order: "The platform switch
+  stays off for every org until P0 is deployed, N3 is decided and, per N6, the "also used on other apps" line has
+  shipped"). So this line must be deployed and live in an env before the partner platform is switched on for any
+  organisation there; merging this branch alone doesn't meet the gate.
 - **Address impact: none** (display and one read of D1; nothing signed, decoded or derived changes).
 - **To confirm** (decided while building): (1) the words, "apps" and "payments" included; (2) the placement, right
   under who is asking and outside its box, on the screens listed above; (3) the counting rule: not suspended, not

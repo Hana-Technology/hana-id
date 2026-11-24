@@ -76,7 +76,7 @@ export {
   type NearSignTransactionResult,
 } from './client/near.ts';
 export type { NearNetwork } from '@hana-id/core';
-// `hana.evm`: gas-free EVM actions (D838; not live: no environment sponsors a chain yet).
+// `hana.evm`: gas sponsorship for EVM actions (D838; not live: no environment sponsors a chain yet).
 export {
   HanaEvm,
   HanaSponsorError,

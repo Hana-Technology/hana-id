@@ -9,7 +9,7 @@
 //   hana.logout(); hana.exportKey(chain); hana.revokeOtherDevices();
 //   await hana.getIdentityToken();  // a short-lived JWT for the partner's backend, or null (no popup; any handler)
 //   await hana.getProfile();        // the name the user shared with this app, from that token, or null
-//   hana.stellar; hana.ethereum; hana.near; hana.evm (gas-free EVM actions, not live); hana.signRaw(params);
+//   hana.stellar; hana.ethereum; hana.near; hana.evm (gas sponsorship for EVM actions, not live); hana.signRaw(params);
 //
 // The client holds no key material and no token: it mounts the vault iframe (vault-connection.ts), opens the login
 // popup (login.ts) and, inside the user's click, the approval popup for signing requests (approval-window.ts, D99),
@@ -222,7 +222,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   readonly ethereum: HanaEthereumProvider;
   /** NEAR: the implicit account, transactions, delegate actions, NEP-413 messages and the relay. */
   readonly near: HanaNear;
-  /** Gas-free EVM actions (not live yet): `sendSponsored`, `sponsorship`, `sponsoredChains`. */
+  /** Gas sponsorship for EVM actions (not live yet): `sendSponsored`, `sponsorship`, `sponsoredChains`. */
   readonly evm: HanaEvm;
   readonly vaultOrigin: string;
   readonly authOrigin: string;
@@ -296,7 +296,7 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.ethereum = new HanaEthereumProvider(
       {
         evmAddress: () => this.#addresses?.evm ?? null,
-        // EIP-5792 (wallet_sendCalls): the same gas-free actions, never a transparent sponsoring of eth_sendTransaction.
+        // EIP-5792 (wallet_sendCalls): the same sponsored actions, never a transparent sponsoring of eth_sendTransaction.
         sponsoredChains: () => this.#sponsoredChains,
         sendSponsored: (p) => this.evm.sendSponsored(p),
         ready: () => this.ready,

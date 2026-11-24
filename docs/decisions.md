@@ -21078,7 +21078,9 @@ taken by branches open beside it.
   app"; the app still counts), and they reach the page only as text nodes.
 - **How it reaches the windows:** `GET /v1/app` carries `otherApps: {count, names}` only on the vault's own read
   (`Origin: VAULT_ORIGIN`), from one D1 statement on every read (no cache, as `partnerLabels`; phase `otherApps`); `count`
-  0 for an app alone; a failed read leaves the field out (log `other_apps_unavailable`). The vault keeps the latest
+  0 for an app alone; a failed read leaves the field out (log `other_apps_unavailable`). Its cost: one more statement
+  on the vault's read (H9's minute read included, `apps/api/test/home-devices.test.ts` now counts 8 and 9), about 3 rows
+  read for an app alone and about 2 more per other app and its addresses (through the `apps_scope_id` index). The vault keeps the latest
   answer that had it (an answer without it, a failed read, keeps what it knew) and passes it, only when `count` is at
   least 1, in `hana:auth-params` (from the login's own read, as the logo) and in each `hana:approve-request` and
   `hana:consent-request`, all posted to the auth origin only. The login popup hands it to the email step in its own

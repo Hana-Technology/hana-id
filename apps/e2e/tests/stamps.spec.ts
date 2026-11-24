@@ -238,6 +238,41 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
   }
 });
 
+test('reduced motion (D906): a working stamp’s spinners pulse slowly instead of turning; its marching outline stands still', async ({ page }) => {
+  await newApp(STAMPS_APP);
+  await page.goto(`${STAMPS_ORIGIN}/`);
+  await expect(page.locator('.pp').first()).toBeAttached();
+  const motion = () =>
+    page.evaluate(() => {
+      const root = document.querySelector('.pp')!;
+      const slot = document.createElement('div');
+      slot.className = 'pp-slot';
+      slot.dataset['status'] = 'working';
+      const text = slot.appendChild(document.createElement('p'));
+      text.className = 'pp-text';
+      const svg = slot.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'svg'));
+      const sil = svg.appendChild(document.createElementNS('http://www.w3.org/2000/svg', 'path'));
+      sil.setAttribute('class', 'pp-sil');
+      const button = slot.appendChild(document.createElement('button'));
+      button.className = 'jp-btn jp-btn-primary pp-btn pp-collect';
+      const spin = button.appendChild(document.createElement('span'));
+      spin.className = 'spin';
+      root.append(slot);
+      const of = (s: CSSStyleDeclaration) => ({ name: s.animationName, count: s.animationIterationCount, seconds: parseFloat(s.animationDuration) });
+      const out = { spins: [of(getComputedStyle(text, '::before')), of(getComputedStyle(spin))], sil: getComputedStyle(sil).animationName };
+      slot.remove();
+      return out;
+    });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const reduced = await motion();
+  for (const s of reduced.spins) expect(s).toEqual({ name: 'jp-spin-pulse', count: 'infinite', seconds: 2 });
+  expect(reduced.sil).toBe('none');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const moving = await motion();
+  expect(moving.spins.map((s) => [s.name, s.count])).toEqual([['jp-spin', 'infinite'], ['jp-spin', 'infinite']]);
+  expect(moving.sil).toBe('pp-march');
+});
+
 test('the Signature stamp’s second step after its window was closed in between: Continue in the slot opens it, the message is not signed again (D807)', async ({ page }, info) => {
   test.setTimeout(120_000);
   await newApp(STAMPS_APP);

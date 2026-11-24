@@ -95,9 +95,15 @@ section.jp-card { margin: 0 0 var(--jp-space-4); padding: var(--jp-space-6); gap
 .stage { font-weight: var(--jp-weight-semibold); }
 .progress::before, .stage::before { content: ''; flex: none; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--jp-primary); border-right-color: transparent; animation: jp-spin 0.7s linear infinite; }
 
-/* Reduced motion: the brand's rule (components.css) already ends every animation inside a .jp-* element; the demo's own
-   spinner and the results' fade stand still wherever they sit. */
-@media (prefers-reduced-motion: reduce) { .progress::before, .stage::before, .result { animation: none; } }
+/* Reduced motion: the brand's rule (components.css) already ends every animation inside a .jp-* element; the results'
+   fade stands still wherever it sits. The demo's own spinner pulses slowly instead of turning, with the brand's
+   declaration for its spinners (D906): a still ring could look stuck. `body` puts the spinner above the brand's rule
+   for everything inside a .jp-* element (also important, and as specific without it), and the results' rule above
+   `.result`'s own animation further down this file (as `.result` alone it lost to it, D906). */
+@media (prefers-reduced-motion: reduce) {
+  body .result { animation: none; }
+  body .progress::before, body .stage::before { animation: jp-spin-pulse 2s ease-in-out infinite !important; }
+}
 
 /* ---- addresses: mono key/value rows with a chain badge ---- */
 .jp-kv.addresses { gap: var(--jp-space-4) var(--jp-space-5); align-items: start; }

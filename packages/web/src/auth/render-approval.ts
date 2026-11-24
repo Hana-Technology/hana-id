@@ -6,7 +6,7 @@
 // the most the fee can be), then every warning and danger line, the page's notes, the facts a user decides on (the NEAR
 // leaving the account, a NEP-413 recipient, a message's text), and last the technical details in a native
 // `<details>` the user can always open ("Show details"). The details always start folded, raw signing included (the
-// founder's decision, D810): a request Journear can't explain states its risk in plain words above them instead.
+// Tech Lead's decision, D810): a request Journear can't explain states its risk in plain words above them instead.
 // Nothing a partner controls decides what is folded.
 import { isDisplaySafeLine } from '@hana-id/core';
 import { type ApprovalSummary, type IdRole, type SummaryPart, type SummaryText, type SummaryWarning, displayUnits, isLongId, nearDisplay, shortId, summarizeApproval, summaryString } from '@hana-id/core/decode';
@@ -517,7 +517,7 @@ export const MESSAGE_LABEL = 'The message';
  * A message being signed: its label, then the message itself (D886: right after the headline and the facts). One that
  * isn't readable text: the label right above its raw form. That it isn't readable is said once, in the amber box
  * above (the summary's line, "Journear can’t read this message, so it’s shown below in its raw form. …"; the
- * founder's decision 2026-11-23, D886's note: it replaced a second amber line here).
+ * Tech Lead's decision 2026-11-23, D886's note: it replaced a second amber line here).
  */
 function message(d: Dom, m: DecodedMessage): HTMLElement[] {
   const label = d.h('p', { class: 'message-label' }, MESSAGE_LABEL);
@@ -1259,7 +1259,7 @@ class IdBook {
 
 /**
  * Whether the rows under the sentences ("To", "Key", "Program", …) space their whole values in groups of four (D876:
- * off: the founder chose one piece for them too, 2026-11-19; kept as a switch). The user's own account never is.
+ * off: the Tech Lead chose one piece for them too, 2026-11-19; kept as a switch). The user's own account never is.
  */
 export const COUNTERPARTY_GROUPS = false;
 
@@ -1382,7 +1382,7 @@ export const DETAILS_LABELS = { show: 'Show details', hide: 'Hide details' } as 
 
 /**
  * The technical details: a native `<details>` the user opens and closes (keyboard and screen readers get its
- * expanded state from the browser). Always folded at first, for every request, raw signing included (the founder's
+ * expanded state from the browser). Always folded at first, for every request, raw signing included (the Tech Lead's
  * decision, D810): the risks are stated in plain words above it. Nothing a partner controls changes that, and the user
  * can always open it. Opening or closing it never touches the Approve guard: it is ordinary content.
  */

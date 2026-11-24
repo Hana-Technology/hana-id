@@ -827,7 +827,7 @@ describe('/approve', () => {
         for (const testApp of [false, true]) {
           send(make(testApp ? { testApp: true } : {}));
           const at = `${kind}, ${testApp ? 'test' : 'live'} app`;
-          // The founder's decision (2026-11-23): the amber box's lead says it once, naming the app as the window does.
+          // The Tech Lead's decision (2026-11-23): the amber box's lead says it once, naming the app as the window does.
           const box = document.querySelector('.request > .risk-box.warning-box');
           const lead = box?.querySelector('p.risk-lead');
           expect(lead?.textContent, at).toBe('Journear can’t read this message, so it’s shown below in its raw form. Approve only if you expected this from Partner App.');

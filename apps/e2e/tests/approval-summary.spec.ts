@@ -3,14 +3,14 @@
 // visible while the details are closed; opening them doesn't touch the Approve guard.
 //
 // With HANA_SHOTS_DIR set (Chromium only), `screens for review` also saves each case's window at the real popup's
-// size (420 × 680, the whole page) for the founder:
+// size (420 × 680, the whole page) for the Tech Lead:
 //
 //   HANA_SHOTS_DIR=<dir> corepack pnpm exec playwright test --project=chromium tests/approval-summary.spec.ts
 //
-// The details always start folded (D810, the founder's decision); a request Journear can't explain states its risk
+// The details always start folded (D810, the Tech Lead's decision); a request Journear can't explain states its risk
 // above them.
 //
-// Sponsored EVM actions (D850): the real flow, from the partner page's click to the vault's send, and the founder's
+// Sponsored EVM actions (D850): the real flow, from the partner page's click to the vault's send, and the Tech Lead's
 // sponsored-*.png screens, are in tests/evm-sponsor.spec.ts (D855). This file keeps the render-level test that injects
 // subjects straight into the popup (every summary case, and requests the vault would never build, such as a relayer
 // that isn't the build's, which the popup must refuse): it opens the popup with an ordinary request, then dispatches a
@@ -230,7 +230,7 @@ test('a sponsored action: the calls’ own summary and warnings, the fee line, t
   await popup.close();
 });
 
-// ---- the founder's screens ----
+// ---- the Tech Lead's screens ----
 
 const NEAR_HEIGHT = 200_000_000n;
 const NEAR_BLOCK = new Uint8Array(32).fill(0x2a);
@@ -307,7 +307,7 @@ test('D886: a message comes right after the headline, then one note about networ
     await expect(popup.getByText('works only with test money', { exact: false })).toHaveCount(0);
     await done(page, popup, name);
   }
-  // D886's notes (2026-11-23): a message Journear can't read: one amber box that says so (the founder's decision),
+  // D886's notes (2026-11-23): a message Journear can't read: one amber box that says so (the Tech Lead's decision),
   // then the label right above its raw form, then the note about networks, kept word for word.
   for (const [name, action, arg] of [['evm-raw', 'personalSign', 'pay\u202eevil'], ['evm-bytes', 'personalSignHex', '0xff00fe0180c1'], ['stellar-raw', 'stellarSignMessage', 'pay\u202eevil']] as const) {
     const popup = await popupFor(page, name, action, arg);

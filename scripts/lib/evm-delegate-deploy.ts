@@ -269,7 +269,7 @@ export function checkInEntry(chainId: number, checkIn: Pick<DelegateArtifact, 'a
   return `  ${chainId}: Object.freeze({ address: '${checkIn.address}', runtimeCodeHash: '${checkIn.runtimeCodeHash}' }), // ${chainName(chainId)}, code hash checked on ${today}`;
 }
 
-/** The manifest block with the real addresses; `<…>` marks what the founder fills in. The numbers are D836's. */
+/** The manifest block with the real addresses; `<…>` marks what the Tech Lead fills in. The numbers are D836's. */
 export function manifestTemplate(chainId: number, delegate: string, checkIn: string, rpc: { rpc: string; rpcFallback: string } | undefined): string {
   const r = rpc ?? { rpc: '<https RPC of a DNS name, no path, no API key>', rpcFallback: '<another provider, same rules>' };
   return [

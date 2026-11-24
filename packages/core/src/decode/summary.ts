@@ -8,7 +8,7 @@
 // `explainable` is false when Journear can't say in plain words what the request does (an unknown contract function,
 // raw bytes, typed data it can't summarise, a Soroban call that isn't a token transfer or approval, more steps than it
 // lists): the summary then states the risk in plain words, red where the unreadable part could move value or control
-// with no visible bound, amber otherwise (D810). The popup's technical details always start folded (the founder's
+// with no visible bound, amber otherwise (D810). The popup's technical details always start folded (the Tech Lead's
 // decision, D810); the user can always open them. Nothing here replaces a fact, it only says it plainly first.
 //
 // Token amounts: only a token on Journear's reviewed list (known-tokens.ts, D860: Circle's USDC and EURC where Circle
@@ -205,7 +205,7 @@ export const cannotTell = (level: RiskLevel, reason?: string): SummaryWarning =>
 
 /**
  * A message Journear can't read (not plain text): it can't say what signing it does. One amber box above the message
- * says it and where the raw form is (the founder's decision 2026-11-23, D886's note: it replaced this line's earlier
+ * says it and where the raw form is (the Tech Lead's decision 2026-11-23, D886's note: it replaced this line's earlier
  * "Journear can’t check what this does (the message isn’t readable text). …" and the window's own line under it).
  */
 const UNREADABLE_MESSAGE_LEAD = 'Journear can’t read this message, so it’s shown below in its raw form';
@@ -638,7 +638,7 @@ const chainName = (chainId: number): string => evmChainInfo(chainId)?.name ?? 't
 
 /**
  * The one-time setup note (amber): only when the approval also signs the account's EIP-7702 authorization.
- * Never the words "upgrade" or "smart account" (the founder's rule): what it does for the user, in their terms.
+ * Never the words "upgrade" or "smart account" (the Tech Lead's rule): what it does for the user, in their terms.
  */
 export const accountSetupNote = (chainId: number): SummaryWarning => ({
   level: 'warning',

@@ -1044,7 +1044,7 @@ describe('review 3: the user’s account in muxed form is the user’s (1)', () 
 });
 
 
-// ---- the founder's decision of 2026-11-17 (D810): the details always start folded, so each case that used to open
+// ---- the Tech Lead's decision of 2026-11-17 (D810): the details always start folded, so each case that used to open
 // them states its risk in plain words, red where the unreadable part could move value or control with no visible bound.
 
 
@@ -1076,7 +1076,7 @@ describe('final review: contract creation on Stellar lists its authorizations; N
   });
 });
 
-// ---- the founder's decision of 2026-11-17 (D814): multi-step requests in at most four grouped lines, amounts shown
+// ---- the Tech Lead's decision of 2026-11-17 (D814): multi-step requests in at most four grouped lines, amounts shown
 // conservatively. ----
 
 describe('D814: amounts as shown', () => {

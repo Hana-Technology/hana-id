@@ -51,7 +51,7 @@ const TECHNICAL = new Set([
   'Environment … · app …… · @hana-id/web … · EVM: … (…) · NEAR: testnet${config.near.guestbook ? ',
 ]);
 
-/** Outside the NEAR card, not in D889's scope: listed for the founder (vault, EVM, explorer, declined). */
+/** Outside the NEAR card, not in D889's scope: listed for the Tech Lead (vault, EVM, explorer, declined). */
 const LATER = new Set([
   'Connecting to the Journear vault…',
   'The Journear vault reported an error. Reload the page.',

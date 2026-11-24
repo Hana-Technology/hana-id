@@ -7,7 +7,7 @@
 //
 // Both NEAR providers are read, each alone, and must agree (D874 as amended); a failed read shows no list.
 //
-// With HANA_SHOTS_DIR set (Chromium only), the founder's screens are saved there at phone width (390), light:
+// With HANA_SHOTS_DIR set (Chromium only), the Tech Lead's screens are saved there at phone width (390), light:
 // `home-sign-ins-one`, `home-sign-ins-several-waiting`, `home-sign-ins-member`, `remove-confirmation` and
 // `remove-result` (the sign-in window's own screens the line points to), `home-sign-ins-after-remove`,
 // `home-sign-ins-read-failed`, and D875's `home-sign-ins-member-older` and `sign-in-older-line` (the wallet's own

@@ -84,7 +84,7 @@ export const STAGES = {
 } as const;
 
 /**
- * D881 (decided by the founder 2026-11-19: "change the guestbook one to match the check in card"): a written guestbook
+ * D881 (decided by the Tech Lead 2026-11-19: "change the guestbook one to match the check in card"): a written guestbook
  * message, in the gas-free check-in card's words. Journear's NEAR relay sent it and paid the fee; the first write after
  * this page created the account says so too.
  */

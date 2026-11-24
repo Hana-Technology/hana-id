@@ -228,7 +228,7 @@ describe('dashboard blocks', () => {
       expect(opsEveryMinutesProblem({ network, admin: { opsEveryMinutes: 5 } }), network).toBeNull();
       expect(opsEveryMinutesProblem({ network, admin: {} }), network).toBeNull();
     }
-    // Any testnet env may (a staging env too): the founder's rule is testnet and staging, never production.
+    // Any testnet env may (a staging env too): the Tech Lead's rule is testnet and staging, never production.
     expect(opsEveryMinutesProblem({ network: 'testnet', admin: { opsEveryMinutes: 15 }, usage: { neonPlan: {} } })).toBeNull();
     // The schema runs it (dashboardRules): today the manifest's network is testnet only, so a mainnet manifest fails
     // on its network first; the rule is what refuses 15 once a production network is admitted.

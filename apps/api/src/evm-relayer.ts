@@ -51,7 +51,7 @@
 //   staffAdoptNonce(n)  no unmined record, n ≥ nextNonce (so above every record), latest == pending == n.
 //   staffResume         only with `keyConfirmed` once the pause is marked `leakSeen` (a leak-type reason or condition
 //                       seen during it, or a staff Close/Fill/AdoptNonce done during it): `key_confirmation_required`.
-// THE ONE AUTOMATIC RESTART (D890, the founder's decision; amended after its security review): a pause for money
+// THE ONE AUTOMATIC RESTART (D890, the Tech Lead's decision; amended after its security review): a pause for money
 // (`relayer_cannot_send` · `insufficient_funds`) ends by itself on an alarm run (never on a request) only when ALL
 // hold: the chain's `autoRestart` is on (default off); the only reason is money and no other condition was seen
 // during the pause (`otherSeen`); not `leakSeen`; fewer than 3 automatic restarts this UTC day; the pause began 30

@@ -1,4 +1,4 @@
-// The approval window's screens for the plain-wording review (D853, D858–D860), saved for the founder at the real
+// The approval window's screens for the plain-wording review (D853, D858–D860), saved for the Tech Lead at the real
 // popup's size (420 × 680, the whole page); D884's (where the network fee is) also at 390 px and with the details
 // open. Runs only with HANA_SHOTS_DIR set, in Chromium:
 //
@@ -284,7 +284,7 @@ test.describe('plain-wording screens', () => {
     });
   }
 
-  // D886's note of 2026-11-23 (the founder's one amber box): every kind of message Journear can't read, for a test app
+  // D886's note of 2026-11-23 (the Tech Lead's one amber box): every kind of message Journear can't read, for a test app
   // and a live app, at a phone's width and the desktop popup's size, folded: `unreadable-{kind}-{test|live}-{size}.png`.
   for (const live of [false, true]) {
     test(`unreadable messages, ${live ? 'a live app' : 'a test app'} (D886)`, async ({ page }) => {

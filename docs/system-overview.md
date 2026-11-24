@@ -1,6 +1,6 @@
 # Hana ID: a candid system briefing
 
-A private briefing for the founder: how Hana ID works, what it protects, where it is weak, and how to answer hard
+A private briefing for the Tech Lead: how Hana ID works, what it protects, where it is weak, and how to answer hard
 questions honestly. It states every gap plainly. Decide later what to share outside the company.
 
 Last verified: 2026-11-18 (branch `chore/ci-on-next`, not merged: the CI line, ready to switch on, D857); 2026-11-17 (branch `feat/approval-plain-summary`, not merged, not deployed: 2.4's plain summary, details always folded, D808–D813); 2026-11-13 (branch `chore/pre-public-wording`, not merged, not deployed: section 3's billing line (the usage ledger) reworded before the repository went public, no behaviour change); 2026-11-13 (branch `chore/judging-week-limits`, not merged, not deployed: section 6's email budget, 333 a day within 30% of a shared SendGrid plan, D793); 2026-11-12 (branch `feat/near-move-wallet`, not merged, not deployed: section 4e, Passport Home's "Move this wallet" offers the NEAR key, D779); 2026-11-12 (branch `feat/journear-design`, not merged, not deployed: the product's names users read, the user's line in section 1, the export's three steps and checkbox in 2.6, D765); 2026-11-12 (branch `docs/near-deployed`, docs only: the login's step 8, NEAR's key merged and on sandbox-dev since 2026-11-12); 2026-11-11 (branch `feat/near-directory`, not merged, not deployed: the NEAR account beside Stellar and EVM where this briefing names a user's chains: derivation, the NEAR halt row, export, shutdown, Q18, PRK); 2026-11-10 against `origin/develop` @ 5bbd2a60 (branch `docs/system-overview`: new doc, written from the
@@ -19,7 +19,7 @@ the glossary: every term in bold is there.
 
 **The four facts to keep in mind throughout**
 
-1. Everything runs on NEAR **testnet** only, in one environment (**sandbox-dev**), on the founder's personal
+1. Everything runs on NEAR **testnet** only, in one environment (**sandbox-dev**), on the Tech Lead's personal
    Cloudflare, Neon and Google accounts, on free tiers.
 2. **No external audit** has happened. Every security review so far is internal.
 3. Mainnet readiness: **50 of 132** checklist rows are done (19) or built (31). 54 are not built, 23 need a decision.
@@ -183,7 +183,7 @@ bytes itself and shows what is being signed: first one plain sentence ("App want
 the network and the most the fee can be, and every warning (who controls the account, raw signing, a permission to
 spend the user's tokens, or "Journear can't explain this request"), with the technical details folded behind "Show
 details", always folded at first; a request Journear can't explain, raw signing included, states its risk in a plain
-line above them instead (the founder's decision; D808–D813). The
+line above them instead (the Tech Lead's decision; D808–D813). The
 Approve button is guarded: it arms only 1 s after the window shows and
 after a real mouse, touch or keyboard gesture, so a page can't trick a click onto it. The vault re-checks that what was
 approved is exactly what was queued, then signs locally. `personal_sign` and Stellar messages always need the popup.
@@ -220,7 +220,7 @@ sandbox-dev) accepts for **every** scope, whatever the partner does. Exit sessio
 
 Honest state: Home batches H1–H8 and H11 (the server side, the exit client, the Home page, export from Home and Home
 billing) are live on sandbox-dev, deployed on 10 November from `develop` at 5bbd2a60, every Worker on that commit. That
-day the founder signed in to Home with Google, saw the same wallet addresses as in the partner app, and did one real
+day the Tech Lead signed in to Home with Google, saw the same wallet addresses as in the partner app, and did one real
 key export from Home on testnet; the exported key matched the one the app's own export gives, and an export reached
 from a link was refused as designed. That is one account, through Google and Hana's shared login only: an email user's
 Home sign-in and the exit route have not been tried live. H9 (devices and stopping auto-approve, device sessions and
@@ -366,7 +366,7 @@ SendGrid, RPC providers) are trusted for specific things listed below.
 - **If compromised:** **one signer today.** Whoever can read the issuer's secrets can mint a token for any email user
   and open their wallet, without the user. Before mainnet: the key moves to AWS KMS (code built, not wired), and a second,
   independent co-signer is designed with its decisions confirmed. Its first two batches (the contract's governed policy
-  change and the co-signer's core) are built on branches and parked, by the founder's choice on 10 November, to put
+  change and the co-signer's core) are built on branches and parked, by the Tech Lead's choice on 10 November, to put
   partner testing on testnet first; they are not merged and not security-reviewed. Email login still has one signer.
 
 ### The identity token (for partners' backends)
@@ -608,7 +608,7 @@ anything. After a forged key, the runbook retires older sessions before unpausin
 - **Identity tokens:** testnet key is a Worker secret; partners must not rely on them for value yet.
 - **Home billing:** strangers can run up a partner's Home line (about $10 a day at the default ceiling); left uncapped
   for now, to settle before mainnet.
-- **CI is off** (ready to switch on at no cost while the repository is public, D857; the founder's step): checks run
+- **CI is off** (ready to switch on at no cost while the repository is public, D857; the Tech Lead's step): checks run
   locally (`pnpm verify`) before merges; nothing enforces them until it is on.
 
 Sources: `docs/security.md` "Trust roots", "What a compromise gives", "The exit client", "Hana Home's derive", "Hana
@@ -847,7 +847,7 @@ demo, on a public but unlisted Sodax sample site with a permanent warning; Hana 
 client, the Home page, export from Home, Home billing), deployed on 10 November from `develop` at 5bbd2a60 with every
 Worker on that commit.
 
-**Tried live on 10 November:** the founder signed in to Hana Home with Google, saw the same wallet addresses as in the
+**Tried live on 10 November:** the Tech Lead signed in to Hana Home with Google, saw the same wallet addresses as in the
 partner app, and did one real key export from Home on testnet. The exported key matched the app's own export; an export
 reached from a link was refused as designed. That is one account, through Google and the shared login only. An email
 user's Home sign-in and the exit route have not been tried live.
@@ -857,7 +857,7 @@ and email sharing from Home) and H10 (email users in Home, and Home through the 
 security-reviewed with fixes in; the fixes that let partners self-onboard (built 10 November).
 
 **Built on branches and parked:** the email co-signer's first two batches (the contract's governed policy change, the
-co-signer's core). Its design and decisions are confirmed. The founder parked it on 10 November to put partner testing
+co-signer's core). Its design and decisions are confirmed. The Tech Lead parked it on 10 November to put partner testing
 first; it is not merged and not security-reviewed, so email login still has one signer.
 
 **Built, waiting for production setup:** AWS KMS signers for the email issuer and identity token (code only, tested

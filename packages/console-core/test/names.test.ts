@@ -1,6 +1,6 @@
 // D686 (as extended by D765): an app's name may not look like a web address or hold "Hana", "Journear" or "Passport Home"
 // (any case, accents, look-alike letters, letters split by spaces or punctuation); since D891 not "Passport" alone or as
-// the wallet (since the founder's 2026-11-23 answers, nor as an edition of it: "Passport Pro"), no imitation letters or
+// the wallet (since the Tech Lead's 2026-11-23 answers, nor as an edition of it: "Passport Pro"), no imitation letters or
 // badges, no claim word after sentence punctuation, no vouching word at the end.
 // normalisePartnerAppName is what the API and the CLI apply when an app is named.
 import { describe, expect, it } from 'vitest';
@@ -147,7 +147,7 @@ const PASSPORT_REFUSED: readonly (readonly [string, string | null])[] = [
   // a claim word next to it
   ['Passport Verified', 'Verified'], ['Passport Secure', 'Secure'], ['Passport Safe', 'Safe'], ['Verified Passport', 'Verified'], ['Secure Passport', 'Secure'],
   ['Trusted Passport', 'Trusted'], ['Passport Free', 'Free'], ['VerifiedPassport', 'VerifiedPassport'], ['Passport Certified', 'Certified'],
-  // an edition word after it (the founder's decision 2026-11-23, narrowed the same day), "Pros", look-alikes, split and
+  // an edition word after it (the Tech Lead's decision 2026-11-23, narrowed the same day), "Pros", look-alikes, split and
   // joined letters too; six of them before it; run together
   ['Passport Plus', 'Plus'], ['Passport Pro', 'Pro'], ['Passport One', 'One'], ['Passport Lite', 'Lite'], ['Passport Mini', 'Mini'], ['Passport Max', 'Max'],
   ['Passport Ultra', 'Ultra'], ['Passport Prime', 'Prime'], ['Passport Premium', 'Premium'], ['Passport Basic', 'Basic'], ['Passport Classic', 'Classic'],
@@ -166,7 +166,7 @@ const PASSPORT_REFUSED: readonly (readonly [string, string | null])[] = [
   ['Passport Pro App', 'App'], ['Passport Plus Wallet', 'Wallet'], ['Passport One Login', 'Login'], ['Passport X Wallet', 'Wallet'], ['Passport Wallet™', 'Wallet'],
   ['PassportWallet™', 'PassportWallet'], ['Acme Passport Pro App', 'App'],
   ['Passport+', null], ['Passport X', null], ['Passport Free', 'Free'],
-  // D903 (founder 2026-11-24): Elite, Platinum and Deluxe as edition words; before "Passport" only when the name ends
+  // D903 (the Tech Lead 2026-11-24): Elite, Platinum and Deluxe as edition words; before "Passport" only when the name ends
   // there; a trade mark glued on "Passport" no longer hides the word next to it
   ['Passport Elite', 'Elite'], ['Passport Platinum', 'Platinum'], ['Passport Deluxe', 'Deluxe'], ['My Passport Elite', 'Elite'], ['Passport ELITE', 'ELITE'],
   ['Passport Platinum™', 'Platinum'], ['Passport Pro Platinum', 'Pro'], ['Passport Deluxe Max', 'Deluxe'], ['PassportElite', 'PassportElite'],
@@ -197,7 +197,7 @@ const PASSPORT_ALLOWED: readonly string[] = [
   'Passport Byron Bay', 'Passport Payroll', 'Passport 2 Asia', 'Near Passport Office Cafe', 'Pet Passport', 'Culture Passport', 'Gitcoin Passport',
   'Human Passport', 'Holonym Passport', 'World ID Passport', 'Galxe Passport', 'Immutable Passport', 'Passport XYZ', 'WD My Passport', 'Passport Co',
   'Passport-Health', 'Passport & Co', 'Acme Passport', 'Passport Photo Booth', 'Passport Rewards Club',
-  // ordinary business words, allowed again when the founder narrowed the rule (2026-11-23), real names among them
+  // ordinary business words, allowed again when the Tech Lead narrowed the rule (2026-11-23), real names among them
   'Passport Card', 'PassportCard', 'PassportCard Nomads', 'Passport Online', 'US Passport Online', 'Mobile Passport', 'Mobile Passport Control', 'Passport Mobile',
   'Passport Next Door', 'Passport Goes Global', 'Passport Go', 'Passport Web', 'Passport Cloud', 'Passport Desktop', 'Passport Extension', 'Cloud Passport',
   'Next Passport', 'Passport Next', 'Passport Cards',
@@ -209,7 +209,7 @@ const PASSPORT_ALLOWED: readonly string[] = [
   'Capital One Passport', 'HBO Max Passport', 'Amazon Prime Passport', 'Disney Plus Passport', 'Xbox One Passport', 'Acme Passport Plus', 'WD My Passport Ultra',
   'Mobile Passport Plus', 'Acme ProPassport', 'Passport Mini Golf', 'Passport Max Fitness', 'Passport Classic Cars', 'Passport One Travel', 'Passport Basic Training',
   'Passport Prime Rib', 'PassportPro Tools', 'Passport Keyes', 'Passport Boxes',
-  // open for the founder, not built: Roman numerals and other edition words
+  // open for the Tech Lead, not built: Roman numerals and other edition words
   'Passport II', 'Passport III', 'Passport Ultimate', 'Passport Enterprise', 'Passport Uno', 'Passport Gold',
   // D903: Elite, Platinum and Deluxe with a brand of the partner's own, words after them, or as part of a longer word;
   // before "Passport" with words after it
@@ -249,7 +249,7 @@ describe('D891: "Passport" as the wallet', () => {
     expect(appNameProblem('Passport (Acme)')).toMatch(/^The name must not start with "Passport" followed by another name/u);
     expect(appNameProblem('Verified Passport')).toMatch(/^The name must not put "Verified" next to "Passport"/u);
   });
-  it('an edition word is refused right after "Passport" or joined to it; six of them before it too (founder 2026-11-23, narrowed)', () => {
+  it('an edition word is refused right after "Passport" or joined to it; six of them before it too (the Tech Lead 2026-11-23, narrowed)', () => {
     expect([...APP_NAME_PASSPORT_TIER_WORDS]).toEqual(['plus', 'pro', 'premium', 'prime', 'max', 'ultra', 'lite', 'mini', 'basic', 'classic', 'one', 'beta', 'elite', 'platinum', 'deluxe']);
     expect([...APP_NAME_PASSPORT_TIER_WORDS_BEFORE]).toEqual(['premium', 'pro', 'plus', 'lite', 'ultra', 'beta']);
     expect([...APP_NAME_PASSPORT_TIER_WORDS_BEFORE_AT_END]).toEqual(['elite', 'platinum', 'deluxe']);

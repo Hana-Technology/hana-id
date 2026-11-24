@@ -1,7 +1,7 @@
 // The plain-wording rule's check (D853): no chain jargon in what the approval window says in Journear's own words.
 // The words are the one shared list (`@hana-id/brand/plain-words`, which holds the plain-wording brief's "instead of"
 // column); a summary may use them only in the folded details, which the summary never holds but for one text: a free
-// fee ("Free. Sponsored by {App}.", the founder's words, D884), which the page shows only in the details. Shared by
+// fee ("Free. Sponsored by {App}.", the Tech Lead's words, D884), which the page shows only in the details. Shared by
 // every test file that builds summaries (core and web) and by the e2e checks.
 import type { ApprovalSummary, SummaryText } from './entries.ts';
 

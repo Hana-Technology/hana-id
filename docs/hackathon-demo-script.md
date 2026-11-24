@@ -13,7 +13,7 @@ stamps site's labels in `apps/stamps/src/ui/labels.ts`, `src/view.ts`, `src/coll
 window's NEAR headings in `packages/web/src/auth/render-approval.ts`, the admin's NEAR relay tile in
 `apps/admin/src/status.ts`; the stamps site, its public passport page and the hosted demo answered 200 the same day; the
 contract's views and keys read from a public RPC. The clicks were not recorded end to end by this branch: that needs a
-real inbox. The founder's hand-checked run of all six stamps on testnet is the account `cceaf5d3…` in the README's
+real inbox. The Tech Lead's hand-checked run of all six stamps on testnet is the account `cceaf5d3…` in the README's
 "Reproduce it" A); 2026-11-13 (branch `docs/hackathon-submission`: the first version, on the hosted demo).
 
 ## Before recording

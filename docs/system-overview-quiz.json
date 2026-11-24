@@ -105,7 +105,7 @@
       "Live on mainnet for Sodax users"
     ],
     "answer": 1,
-    "explanation": "Batches H1 to H8 and H11 (the server side, the exit client, the Home page, export from Home and Home billing) were deployed to sandbox-dev on 10 November. That day the founder signed in with Google, saw the same addresses as in the partner app, and did one real export that matched the app's own export. An email user's Home sign-in and the exit route haven't been tried live: H9 and H10 are built and reviewed but still being merged, and H12, which links Home from the consent and approval screens, hasn't started."
+    "explanation": "Batches H1 to H8 and H11 (the server side, the exit client, the Home page, export from Home and Home billing) were deployed to sandbox-dev on 10 November. That day the Tech Lead signed in with Google, saw the same addresses as in the partner app, and did one real export that matched the app's own export. An email user's Home sign-in and the exit route haven't been tried live: H9 and H10 are built and reviewed but still being merged, and H12, which links Home from the consent and approval screens, hasn't started."
   },
   {
     "topic": "What Hana can do",
@@ -297,7 +297,7 @@
       "Production on testnet with a 99.9% uptime SLA"
     ],
     "answer": 1,
-    "explanation": "Everything runs on sandbox-dev, on NEAR testnet and the founder's personal accounts. The external audit is a hard gate before live keys and has no auditor named. CI has been off since 5 November; pnpm verify runs the checks locally before merges."
+    "explanation": "Everything runs on sandbox-dev, on NEAR testnet and the Tech Lead's personal accounts. The external audit is a hard gate before live keys and has no auditor named. CI has been off since 5 November; pnpm verify runs the checks locally before merges."
   },
   {
     "topic": "Cost and scale",

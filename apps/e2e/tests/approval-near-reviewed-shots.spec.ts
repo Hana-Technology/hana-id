@@ -1,4 +1,4 @@
-// The approval window's screens for Journear's reviewed NEAR calls (D885), saved for the founder: every stamp the
+// The approval window's screens for Journear's reviewed NEAR calls (D885), saved for the Tech Lead: every stamp the
 // stamps site collects through an approval (both of the Signature stamp's), the hosted demo's guestbook write
 // (relayed and the user's own transaction), and near-misses that keep today's screen. Light scheme, at a phone's
 // width (390 px) and the desktop popup's size (420 × 680), each with its details folded and open. Runs only with

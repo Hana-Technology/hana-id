@@ -695,7 +695,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   view()?.addEventListener('scroll', onScroll, { passive: true });
   view()?.addEventListener('resize', () => chipSoon(), { passive: true });
 
-  // ---- the phone's "Sign in again" chip (D895; decided by the founder 2026-11-23, D888's open list) ----
+  // ---- the phone's "Sign in again" chip (D895; decided by the Tech Lead 2026-11-23, D888's open list) ----
   // On a phone or a tablet the bar scrolls away with the page, so someone scrolled down sees no sign that the sign-in
   // is ending or has ended. The chip shows whenever: signed in, the bar's notice offers "Sign in again", the bar isn't
   // stuck (a phone or a tablet), the notice is scrolled out of view, and the open view isn't a wallet's "Move wallet"
@@ -1392,7 +1392,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   }
 
   /**
-   * A tab of the wallet's page on screen chosen (a click, or Enter or Space on it). D901 (the founder, 2026-11-24, in
+   * A tab of the wallet's page on screen chosen (a click, or Enter or Space on it). D901 (the Tech Lead, 2026-11-24, in
    * place of D895's entry per tab): only entering "Move wallet" adds a history entry, so Back from it returns to the tab
    * the person came from. Addresses ↔ Security replaces what the current entry shows (its marker stays: nothing is
    * written to the browser). Leaving "Move wallet" by another tab goes back to the entry it was entered from, which then

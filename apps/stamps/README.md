@@ -1,7 +1,7 @@
 # @hana-id/stamps
 
 **Journear Passport stamps**: a NEAR-only testnet demo site for the NEAR hackathon (D798–D802), whose app is named
-**Stamp Trail** (the name the Journear Passport window shows: the founder's choice, 2026-11-13). A passport booklet:
+**Stamp Trail** (the name the Journear Passport window shows: the Tech Lead's choice, 2026-11-13). A passport booklet:
 sign in with email (or Google) through Journear Passport, get a NEAR account with no seed phrase and zero NEAR, and
 collect stamps, each one a real NEAR testnet transaction to the stamps contract (`contracts/hana-stamps`,
 `near.demoStamps` in the manifest) approved in the Journear Passport window, most of them paid by Journear's relayer.
@@ -124,7 +124,7 @@ explorer is NearBlocks testnet; the faucet link is NEAR's docs faucet, `https://
 
 ## Deploy
 
-The founder's steps, in order, with every command: `docs/operations.md` "Hosted stamps demo" ("Setting it up"). In
+The Tech Lead's steps, in order, with every command: `docs/operations.md` "Hosted stamps demo" ("Setting it up"). In
 short:
 
 1. **The contract**: `contracts/hana-stamps` deployed on `near.demoStamps` (funded to about 20 NEAR), the API

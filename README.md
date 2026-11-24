@@ -358,7 +358,7 @@ Rust through `rustup` (`contracts/hana-signer/rust-toolchain.toml` pins 1.85.1 w
     admin's NEAR relay tile and SDK 0.4.1.
   - 2026-11-13: the passport stamps: the `hana-stamps` contract and `deploy-stamps` (D794–D797), the NEAR-only site
     `apps/stamps` with its e2e spec and real-node test (D798–D802, D805–D807) and its booklet art drawn in code
-    (D803, D804); the contract deployed, hand-checked by the founder and locked on testnet the same day, the site
+    (D803, D804); the contract deployed, hand-checked by the Tech Lead and locked on testnet the same day, the site
     deployed with its app Stamp Trail; sandbox-dev's limits for the judging week (D793); the licences and this
     write-up (D745–D749).
 - The work after the baseline, as the rules ask (Q-003: tags `pre-hackathon` on the first commit and
@@ -541,7 +541,7 @@ cd contracts/hana-signer && cargo test
 ```
 
 CI was turned off on 2026-11-05 (D387) and is ready to switch on at no cost while the repository is public (D857); the
-founder switches it on. Either way `pnpm verify` is the gate before a merge (`docs/operations.md` "CI and git", D413).
+Tech Lead switches it on. Either way `pnpm verify` is the gate before a merge (`docs/operations.md` "CI and git", D413).
 `pnpm verify --quick` while working; `pnpm verify` before every merge into `develop`; `pnpm verify --full` before a
 deploy. `pnpm verify:install-hook` (optional) makes a push to `develop` or `main` run `--quick` first.
 

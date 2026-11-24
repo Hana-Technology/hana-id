@@ -527,7 +527,7 @@ function lowProblem(balance: bigint, low: bigint, w: Words, s: Severity): ExtraP
 export const AUTO_RESTART_NAME = 'Restarted by itself after a refill';
 export const TOOL_NAMES: Readonly<Record<EvmRelayTool, string>> = Object.freeze({ resume: 'Resume', cancel: 'Cancel this slot', close: 'Close as “used by something else”', fill: 'Fill a gap', adopt_nonce: 'Set the next slot number' });
 
-/** What closing a slot does to the books (the founder's decision D869: the partner is not charged for a slot lost to Journear's own key). */
+/** What closing a slot does to the books (the Tech Lead's decision D869: the partner is not charged for a slot lost to Journear's own key). */
 export const CLOSE_BILLING = 'The user’s action in it is marked as not done. The app is not charged: Journear covers it.';
 
 export interface RecordPlain {

@@ -1,6 +1,6 @@
 // The fixed words of a partner label (D892): the verbs a partner may pick and the few joining words a sentence may
 // hold. They are Journear's words, not the partner's: a label names one of them, and the window writes it. The verb
-// list is the founder's to confirm (D892 "The verb list"); every word here passes the partner text rules too (a test).
+// list is the Tech Lead's to confirm (D892 "The verb list"); every word here passes the partner text rules too (a test).
 // Pure data, no imports.
 
 /**

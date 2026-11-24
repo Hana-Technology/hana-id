@@ -1,6 +1,6 @@
 // The approval and consent windows' dividers (D884's note, 2026-11-23): wherever two ruled blocks meet there is one
 // line with the same space on each side, no rule against a box's border or a group's edge, and no ruled block around
-// nothing (tests/divider-checks.ts measures what the browser draws). The founder's case first: the sponsored check-in,
+// nothing (tests/divider-checks.ts measures what the browser draws). The Tech Lead's case first: the sponsored check-in,
 // where the "Program" row's rule and the "Network" row's rule were two lines 12 px apart. Then a few windows that put
 // each kind of neighbour next to a ruled block: a red box with its own rows, a quoted note, a signed message's box (and
 // one Journear can't read), the user's own transaction's actions, a Stellar payment and the consent screen's contract
@@ -104,7 +104,7 @@ test('one divider where ruled blocks meet, on each kind of approval', async ({ p
     minGas: 100_000n,
     ...over,
   });
-  // The founder's case: "Program", then "Network" (later), and the first time's amber box.
+  // The Tech Lead's case: "Program", then "Network" (later), and the first time's amber box.
   await injectSponsored(popup, subject({}));
   await expect(popup.locator('dl.id-rows dt')).toHaveText(['Program']);
   await expect(popup.locator('dl.summary-facts dt')).toHaveText(['Network']);

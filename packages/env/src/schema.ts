@@ -348,7 +348,7 @@ const operatorName = z
  * hash) protect only when the two endpoints are run by different operators, and a different domain is no proof
  * (rpc.testnet.near.org is run by FastNear). With `apiRpcFallbacks`, `apiRpcFallbackOperators` is required there too
  * (the API only fails over to them, never compares answers, so they may share an operator). On testnet one operator
- * behind both is accepted (the founder, 2026-11-24): the fields are optional and may name the same operator.
+ * behind both is accepted (the Tech Lead, 2026-11-24): the fields are optional and may name the same operator.
  */
 export function nearOperatorProblems(m: {
   network: string;
@@ -388,7 +388,7 @@ export function nearOperatorProblems(m: {
  * (anything but testnet): a pinned key needs its recorded source, every recorded host needs its operator in
  * `ckdSourceOperators`, and the hosts must be run by at least MIN_CKD_SOURCES different operators (`operatorKey`), so
  * a wrong pin needs that many independent operators to give the same wrong answer, as D100 meant by "three independent
- * providers". On testnet the map is optional, may be partial and may name one operator for several hosts (the founder,
+ * providers". On testnet the map is optional, may be partial and may name one operator for several hosts (the Tech Lead,
  * 2026-11-24). Everywhere a host may be declared before it is recorded, so the map can be written before a re-pin.
  */
 export function ckdSourceOperatorProblems(m: {

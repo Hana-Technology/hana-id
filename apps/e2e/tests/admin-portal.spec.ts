@@ -15,7 +15,7 @@
 // and the note; the sponsorship's security events with their playbooks; and the staff side of the support pages
 // (unlock and unsuppress are the email issuer's staff routes, with no admin page: their audit rows here).
 //
-// With HANA_SHOTS_DIR=<dir> (Chromium only) it saves the founder's screenshots there (desktop, light theme).
+// With HANA_SHOTS_DIR=<dir> (Chromium only) it saves the Tech Lead's screenshots there (desktop, light theme).
 import { createPrivateKey, generateKeyPairSync, sign } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';

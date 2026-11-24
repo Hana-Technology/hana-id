@@ -1857,16 +1857,17 @@ handshake removes the frame and closes its port, as `destroy()` does.
   most 128 units, exactly min(count, 5) of them), shown only as text nodes, each quoted in the partner-words box so a
   name can't pass for Journear's words ("and 40 more apps" as a name is shown quoted and boxed); (5) a partner page
   can't make the line disappear: the vault's `GET /v1/app` counts in a per-IP window of its own
-  (`<appId>:config:hana:minute`, apart from the partner page's), the vault keeps its last answer in its own origin's
-  storage (7 days; a count of 0 too), and with no answer at all the windows say "This wallet may also be used on other
-  apps." rather than nothing; an app the vault knows is alone shows nothing; (6) the line never weakens a warning:
+  (`<appId>:config:hana:minute`, apart from the partner page's), the vault keeps its last answer naming other apps in
+  its own origin's storage (24 hours; a count of 0 is never kept, so a kept answer never proves "alone"), and with no
+  fresh read and nothing kept the windows say "This wallet may also be used on other apps." rather than nothing; only a
+  fresh read of 0 shows nothing; (6) the line never weakens a warning:
   muted text outside the app's box, before every alert, which keeps its order and colours
   (`packages/web/test/auth/shared-wallet.test.ts`); (7) it never costs a request: a request waits at most 3 s once for
   a read, and a message the window would refuse goes without the line. Residual: `Origin` is a browser's guarantee, so
   a client outside a browser that forges the vault's origin with an app's publishable key (public) can read the count
   and names of the apps on that scope that have had a sign-in; a partner page can still load many vault frames to use
-  up the vault's own window from one IP, which the kept answer and the "may" line cover; a kept answer can be up to 7
-  days old while reads are refused, and an open tab keeps what it last read.
+  up the vault's own window from one IP, which the kept answer and the "may" line cover; a kept answer can be up to 24
+  hours old while reads are refused, and an open tab keeps what it last read.
 - **Partner labels in the approval window (D896, as amended after PR 123's review).** Invariants: (1) a label is
   shown only from the vault's own `GET /v1/app` read younger than 10 s (`PARTNER_LABELS_FRESH_MS`) when the window gets
   the request; older, one fresh read (at most 3 s), else none; a failed, late or empty read is the plain window, never an

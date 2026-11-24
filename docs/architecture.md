@@ -1083,10 +1083,12 @@ wallet, so check who is asking each time."). Code: `packages/web/src/auth/shared
   statement a read, field left out on a failed read → the vault keeps the latest answer that had it
   (`vault/other-apps.ts`, names cut by Passport Home's `homeAppName`) → `hana:auth-params` (the login popup, which hands
   it to the email step in its sessionStorage context) and each `hana:approve-request` / `hana:consent-request`, only
-  when `count` ≥ 1. The vault keeps the last answer in the vault origin's localStorage (`hana.other-apps.<appId>`, a
-  count of 0 too, used for 7 days, replaced by every read), so a new tab starts out knowing. A request queued while the
-  vault knows nothing waits once, at most 3 s, for a read (`approvals.ts` `otherAppsWait`); still nothing, the windows
-  get `otherAppsUnknown` and say "This wallet may also be used on other apps." (no list). A Journear page's
+  when `count` ≥ 1. The vault keeps the last answer that named other apps in the vault origin's localStorage
+  (`hana.other-apps.<appId>`, used for 24 hours, replaced by every read; a count of 0 is never kept, a fresh 0 deletes
+  it), so a new tab whose reads fail still shows the line. A request queued while the vault has no fresh read and
+  nothing kept waits once, at most 3 s, for a read (`approvals.ts` `otherAppsWait`); still nothing, the windows get
+  `otherAppsUnknown` and say "This wallet may also be used on other apps." (no list). Only a fresh read of 0 shows
+  nothing. A Journear page's
   `GET /v1/app` counts in a per-IP window of its own (`<appId>:config:hana:minute`), so a partner page can't use up the
   vault's reads.
 - Screens: /login's chooser and its "Continuing to Google…", /login/email's address, code and wait screens and its

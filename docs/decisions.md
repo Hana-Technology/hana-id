@@ -21284,7 +21284,7 @@ was built (D910 and D911 are taken by branches open beside it); it sits after D9
   not suspended, not deleted, a web address in force, and a sign-in recorded (this last part follows PR 141's review and
   the main session's recommendation, pending the Tech Lead's confirmation; the D462-exact alternative, apps no one has
   signed in to shown only on a read that carries a valid live share of a user of the scope, is not built); (4) the cap,
-  5 names then "and N more apps"; (5) the names quoted in the partner-words box; (6) the kept answer's 7 days.
+  5 names then "and N more apps"; (5) the names quoted in the partner-words box; (6) the kept answer's 24 hours, and 0 never kept; (7) the "may" line's words.
 
 #### After PR 141's security review (2026-11-24): what changed, each decided while building, **to confirm**
 1. **MEDIUM (M1): a hostile partner page could hide the line in its own approval window.** `GET /v1/app` counted every
@@ -21295,19 +21295,28 @@ was built (D910 and D911 are taken by branches open beside it); it sits after D9
    window of its own, `<appId>:config:hana:minute`, with the same cap, so the partner page's reads can't use it up; that
    one window serves the vault's policy, raw-signing, consent, share and other-apps reads alike (tested: 20 partner reads
    from one IP, the 21st refused, the vault's and the export window's still answered with the apps); (b) the vault
-   keeps its last answer in the vault origin's localStorage (`hana.other-apps.<appId>`, the vault frame's own storage in
-   the partner site's partition, which the partner page can't read or write), a count of 0 too, with when it was read;
-   **staleness rule:** used only while younger than 7 days (`OTHER_APPS_KEPT_MS`, on the vault's server-corrected clock;
-   one from the future, unreadable or older is deleted), replaced by the next successful read, one entry per app id
-   (overwritten, never appended), so it can't grow without bound; a new tab starts out knowing; (c) when the vault still
-   has no answer after the one wait and nothing kept, the windows get `otherAppsUnknown` and say **"This wallet may also
-   be used on other apps."** in the same place and style, with no "See which"; an app the vault knows is alone (a read or
-   a kept count of 0) still shows nothing. The sign-in window does the same from the vault's knowledge when its read had
-   no field. Reproduced: `packages/web/test/vault/other-apps.test.ts` (every read refused with 429: a new tab shows the
-   kept apps; nothing kept: the "may" line), `apps/api/test/other-apps.test.ts` (the exhaustion attempt) and
+   keeps its last answer that named other apps in the vault origin's localStorage (`hana.other-apps.<appId>`, the vault
+   frame's own storage in the partner site's partition, which the partner page can't read or write), with when it was
+   read. **A kept answer never proves "alone"** (corrected the same day after an automated check of the first fix, which
+   also kept a count of 0: an app joining the scope later could then be hidden behind an old "alone" while a hostile page
+   blocked the reads): a count of 0 is never kept, and a fresh read of 0 deletes the entry. **Staleness rule:** a kept
+   count of 1 or more is used only while younger than **24 hours** (`OTHER_APPS_KEPT_MS`, on the vault's
+   server-corrected clock: about the longest a vault session lives, the contract's 24 h less 10 min, so it covers one
+   sign-in's tabs and the next day's return while an answer that may be stale, an app added or removed since, is never
+   shown longer; it can only over-warn or under-count, never hide the line); one older, from the future or unreadable is
+   deleted; the next successful read replaces it; one entry per app id (overwritten, never appended), so it can't grow
+   without bound. (c) When the vault has no fresh read in this session and nothing kept, a request waits once (3 s) and
+   then the windows get `otherAppsUnknown` and say **"This wallet may also be used on other apps."** in the same place
+   and style, with no "See which". **Only a fresh successful read saying 0 shows nothing.** So an app alone on its
+   wallet shows nothing in the normal case; its users see the "may" line only when the vault's reads failed (refused,
+   late or without the field) in that vault session and the 3 s wait ran out (the sign-in window too, when its read had
+   no field). The sign-in window takes the vault's knowledge the same way. Reproduced and covered:
+   `packages/web/test/vault/other-apps.test.ts` (a fresh 0 shows nothing; every read refused with 429: a new tab shows
+   the kept apps and names; a fresh 0 before (nothing kept) or an older kept 0 plus a failed read: the "may" line; a kept
+   answer past 24 hours is ignored and deleted), `apps/api/test/other-apps.test.ts` (the exhaustion attempt) and
    `apps/e2e/tests/shared-wallet.spec.ts` (the vault's reads routed to 429 in the browser: the stack doesn't enforce rate
    limits). Residual: a partner page can still load many vault frames to use up the vault's own window from one IP;
-   the kept answer and the "may" line cover that, and a kept answer can then be up to 7 days old.
+   the kept answer and the "may" line cover that, and a kept answer can then be up to 24 hours old.
 2. **MEDIUM (M2): apps no one had signed in to were counted and named**, showing an unreleased app's name to anyone who
    opened a window on any site of the scope and undoing D462. Now only apps with `first_login_at` count, in the count and
    the names. The residual above corrected.

@@ -252,7 +252,7 @@ async function keptTab(browser: Browser, kept: Kept): Promise<Tab> {
 }
 
 describe('the last answer, kept on the vault origin (PR 141’s review, M1)', () => {
-  it('each answer is kept under the app’s id, a count of 0 too, with when it was read', async () => {
+  it('an answer naming other apps is kept under the app’s id with when it was read; a fresh 0 deletes it, never kept', async () => {
     const browser = new Browser();
     const kept = new Kept();
     browser.backend.app = { ...browser.backend.app, otherApps: SHARED };
@@ -260,10 +260,18 @@ describe('the last answer, kept on the vault origin (PR 141’s review, M1)', ()
     const stored = JSON.parse(kept.getItem(`${OTHER_APPS_KEY_PREFIX}${APP_ID}`)!) as Record<string, unknown>;
     expect(stored).toMatchObject({ v: 1, ...SHARED });
     expect(typeof stored.at).toBe('number');
+    expect([...kept.map.keys()]).toEqual([`${OTHER_APPS_KEY_PREFIX}${APP_ID}`]);
     browser.backend.app = { ...browser.backend.app, otherApps: { count: 0, names: [] } };
     await t.vault['refreshPolicy']();
-    expect(JSON.parse(kept.getItem(`${OTHER_APPS_KEY_PREFIX}${APP_ID}`)!)).toMatchObject({ count: 0, names: [] });
-    expect([...kept.map.keys()]).toEqual([`${OTHER_APPS_KEY_PREFIX}${APP_ID}`]);
+    expect(kept.map.size).toBe(0);
+  });
+
+  it('a fresh read of 0 shows nothing (the normal case for an app alone): no line, no “may” line', async () => {
+    const browser = new Browser();
+    const t = await keptTab(browser, new Kept());
+    const req = await approveRequest(t);
+    expect(req).not.toHaveProperty('otherApps');
+    expect(req).not.toHaveProperty('otherAppsUnknown');
   });
 
   it('the attack: a partner page that uses up GET /v1/app (429) no longer hides the line, a new tab uses the kept answer', async () => {
@@ -294,10 +302,11 @@ describe('the last answer, kept on the vault origin (PR 141’s review, M1)', ()
     for (const name of SHARED.names) expect(partnerSaw(t)).not.toContain(name);
   });
 
-  it('a kept count of 0 is remembered: an app the vault knows is alone shows nothing, even when reads fail', async () => {
+  it('a kept answer never proves “alone”: after a fresh 0 (nothing kept) and a failed read, a new tab shows the “may” line', async () => {
     const browser = new Browser();
     const kept = new Kept();
     await keptTab(browser, kept);
+    expect(kept.map.size).toBe(0);
     browser.backend.overrides.set('/v1/app', () => apiError(429, 'rate_limited'));
     const t2 = openTab(browser, { googleJwk: g.jwk, options: { keptStore: kept } });
     tabs.push(t2);
@@ -305,7 +314,33 @@ describe('the last answer, kept on the vault origin (PR 141’s review, M1)', ()
     await t2.ready();
     const req = await approveRequest(t2);
     expect(req).not.toHaveProperty('otherApps');
-    expect(req).not.toHaveProperty('otherAppsUnknown');
+    expect(req.otherAppsUnknown).toBe(true);
+  });
+
+  it('a kept count of 0 (an older entry) is ignored and deleted: with a failed read, the “may” line', async () => {
+    const browser = new Browser();
+    const kept = new Kept();
+    kept.setItem(`${OTHER_APPS_KEY_PREFIX}${APP_ID}`, JSON.stringify({ v: 1, count: 0, names: [], at: browser.timers.now }));
+    browser.backend.overrides.set('/v1/app', () => apiError(429, 'rate_limited'));
+    const t = openTab(browser, { googleJwk: g.jwk, options: { keptStore: kept } });
+    tabs.push(t);
+    expect(kept.map.size).toBe(0);
+    t.vault['otherApps'] = null;
+    expect(t.vault['otherAppsForWindow']()).toBe('unknown');
+  });
+
+  it('an expired kept answer is ignored: with a failed read, the “may” line, not the old names', async () => {
+    const browser = new Browser();
+    const kept = new Kept();
+    browser.backend.app = { ...browser.backend.app, otherApps: SHARED };
+    await keptTab(browser, kept);
+    browser.backend.overrides.set('/v1/app', () => apiError(429, 'rate_limited'));
+    browser.timers.advance(OTHER_APPS_KEPT_MS + 1_000);
+    // A page loaded now inlines the server's time now.
+    const t2 = openTab(browser, { googleJwk: g.jwk, config: makeConfig({ serverTimeMs: browser.timers.now }), options: { keptStore: kept } });
+    tabs.push(t2);
+    expect(kept.map.size).toBe(0);
+    expect(t2.vault['otherAppsForWindow']()).toBe('unknown');
   });
 
   it('the next successful read replaces the kept answer', async () => {
@@ -338,7 +373,14 @@ describe('the last answer, kept on the vault origin (PR 141’s review, M1)', ()
     // A kept unsafe name is cut again on reading, as a served one.
     kept.setItem(key, JSON.stringify({ v: 1, count: 1, names: ['Pay\u202Egnp'], at: now }));
     expect(readKeptOtherApps(kept, APP_ID, now)?.apps.names).toEqual([HOME_UNNAMED_APP]);
-    expect(OTHER_APPS_KEPT_MS).toBe(7 * 24 * 3_600_000);
+    // A count of 0 is never used from storage (deleted), and a fresh 0 deletes what was kept.
+    kept.setItem(key, JSON.stringify({ v: 1, count: 0, names: [], at: now }));
+    expect(readKeptOtherApps(kept, APP_ID, now)).toBeNull();
+    expect(kept.getItem(key)).toBeNull();
+    keepOtherApps(kept, APP_ID, SHARED, now);
+    keepOtherApps(kept, APP_ID, { count: 0, names: [] }, now);
+    expect(kept.getItem(key)).toBeNull();
+    expect(OTHER_APPS_KEPT_MS).toBe(24 * 3_600_000);
     // No store (the browser refused it): nothing kept, nothing read.
     expect(readKeptOtherApps(null, APP_ID, now)).toBeNull();
     keepOtherApps(null, APP_ID, SHARED, now);

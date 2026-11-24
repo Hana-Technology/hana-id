@@ -728,7 +728,7 @@ export class Vault {
     o.host.onVisibilityChange?.(() => this.onVisibilityChange());
     // A back/forward-cache restore: its timers were frozen, so it is checked as a tab shown again (D681).
     o.host.onPageRestore?.(() => this.onVisibilityChange());
-    // D912: the last answer about the other apps this vault origin kept for the app (any read replaces it: `sent` is -∞).
+    // D912: the last answer naming other apps this vault origin kept (never a count of 0; any read replaces it: `sent` -∞).
     const kept = readKeptOtherApps(o.keptStore, o.config.appId, this.clock.now());
     if (kept) this.otherApps = { apps: kept.apps, sent: Number.NEGATIVE_INFINITY };
     this.constructedAt = this.perfNow();

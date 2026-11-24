@@ -73,12 +73,15 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   const r = await labels(lane, { action: 'reset' });
   await openTab(page, origin, r.state);
   await expect(page.getByText(/Request labels are your own words for your app’s requests/u)).toBeVisible();
+  await expect(page.getByText(/with “These are Stamp Rally’s words, not Journear’s\.” Your words never replace/u)).toBeVisible();
   await page.getByRole('link', { name: 'New request labels' }).click();
   await expect(page.getByRole('heading', { name: 'New request labels' })).toBeVisible();
   await fillPayment(page);
   // The approval window's own box, with the example memo.
   await expect(box(page).locator('p.partner-says')).toHaveText('Stamp Rally says: pay for order 1042');
   await expect(box(page)).toHaveAttribute('aria-label', 'What Stamp Rally says');
+  // D903: the line under the partner's words, as the window says it.
+  await expect(box(page).locator('p.partner-attribution')).toHaveText('These are Stamp Rally’s words, not Journear’s.');
   await page.getByLabel('A payment that doesn’t match').check();
   await expect(page.locator('.window-preview .partner-mismatch')).toContainText('Stamp Rally describes this kind of request, but this one doesn’t match');
   await expect(box(page)).toHaveCount(0);

@@ -27,7 +27,7 @@ import { type ChainOwner, ChainOwnerGate, useChainOwner } from './ChainOwner.tsx
 // ---- the sentences (D899, to confirm) ----
 
 export const LABELS_INTRO =
-  'Request labels are your own words for your app’s requests. When a user approves a request that matches one exactly, the approval window adds “{App} says: …” under everything Journear says, with “These are {App}’s words. Journear hasn’t checked them.” Your words never replace or soften Journear’s warnings.';
+  'Request labels are your own words for your app’s requests. When a user approves a request that matches one exactly, the approval window adds “{App} says: …” under everything Journear says, with “These are {App}’s words, not Journear’s.” Your words never replace or soften Journear’s warnings.';
 export const NOT_ENABLED = 'Request labels aren’t switched on here yet. You can prepare and preview them.';
 export const NOT_ENABLED_PROPOSE = 'Proposing them isn’t possible until Journear switches request labels on here.';
 export const ORG_OFF: Readonly<Record<'org' | 'all', string>> = Object.freeze({

@@ -315,6 +315,67 @@ export function partnerLabelsProblem(m: { network: string; partnerLabels?: { ena
   return `partnerLabels.enabled is for testnet only (D894): turning partner labels on for ${m.network} needs its own decision first`;
 }
 
+/** The longest operator name (`rpcOperator`, `rpcFallbackOperator`, `apiRpcFallbackOperators`). */
+export const MAX_OPERATOR_NAME = 64;
+/**
+ * An operator name as compared (D903): NFKC, lower case, letters and digits only, so "FastNear", "FASTNEAR",
+ * " Fast Near " and "Fast-NEAR" are one operator.
+ */
+export const operatorKey = (name: string): string => name.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+/**
+ * Characters an operator name may not hold (after PR 129's review): controls, format characters (bidi overrides such as
+ * U+202E, zero-width), private use, line and paragraph separators and the other invisible fillers, as the app-name rule
+ * (`@hana-id/console-core` names.ts `isDisplaySafeName`).
+ */
+const UNSAFE_OPERATOR_CHAR = /[\p{Cc}\p{Cf}\p{Co}\p{Zl}\p{Zp}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0\u{e0100}-\u{e01ef}]/u;
+/** An operator name as written: trimmed, 1..MAX_OPERATOR_NAME characters, with a letter or digit, every character display-safe. */
+const operatorName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_OPERATOR_NAME)
+  .refine((v) => operatorKey(v) !== '', 'an operator name needs a letter or digit')
+  .refine((v) => !UNSAFE_OPERATOR_CHAR.test(v), 'an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character');
+
+/**
+ * The NEAR providers' operators (D903), as a list (empty = fine). Everywhere: an operator is named only for an
+ * endpoint the manifest has, and `apiRpcFallbackOperators` names one per `apiRpcFallbacks` URL, in order. On a
+ * production network (anything but testnet): `rpcFallback`, `rpcOperator` and `rpcFallbackOperator` are required,
+ * and the two operators must differ (`operatorKey`): the pages' "both providers agree" checks (D263, D729, D900's code
+ * hash) protect only when the two endpoints are run by different operators, and a different domain is no proof
+ * (rpc.testnet.near.org is run by FastNear). With `apiRpcFallbacks`, `apiRpcFallbackOperators` is required there too
+ * (the API only fails over to them, never compares answers, so they may share an operator). On testnet one operator
+ * behind both is accepted (the founder, 2026-11-24): the fields are optional and may name the same operator.
+ */
+export function nearOperatorProblems(m: {
+  network: string;
+  rpcFallback?: string | undefined;
+  apiRpcFallbacks?: readonly string[] | undefined;
+  rpcOperator?: string | undefined;
+  rpcFallbackOperator?: string | undefined;
+  apiRpcFallbackOperators?: readonly string[] | undefined;
+}): { path: (string | number)[]; message: string }[] {
+  const out: { path: (string | number)[]; message: string }[] = [];
+  const at = (path: (string | number)[], message: string) => out.push({ path, message });
+  if (m.rpcFallbackOperator !== undefined && m.rpcFallback === undefined) at(['rpcFallbackOperator'], 'rpcFallbackOperator names the operator of rpcFallback, which the manifest doesn’t have');
+  if (m.apiRpcFallbackOperators !== undefined) {
+    if (m.apiRpcFallbacks === undefined) at(['apiRpcFallbackOperators'], 'apiRpcFallbackOperators names the operators of apiRpcFallbacks, which the manifest doesn’t have');
+    else if (m.apiRpcFallbackOperators.length !== m.apiRpcFallbacks.length) {
+      at(['apiRpcFallbackOperators'], `apiRpcFallbackOperators must name one operator per apiRpcFallbacks URL, in order (${m.apiRpcFallbacks.length}, got ${m.apiRpcFallbackOperators.length})`);
+    }
+  }
+  if (m.network === 'testnet') return out;
+  const where = `on a production network (${m.network})`;
+  if (m.rpcFallback === undefined) at(['rpcFallback'], `rpcFallback is required ${where}: the pages confirm what they read on two providers run by different operators (D263, D729, D900, D903)`);
+  if (m.rpcOperator === undefined) at(['rpcOperator'], `rpcOperator is required ${where}: name who runs rpc (a different domain is no proof of a different operator, D903)`);
+  if (m.rpcFallback !== undefined && m.rpcFallbackOperator === undefined) at(['rpcFallbackOperator'], `rpcFallbackOperator is required ${where}: name who runs rpcFallback (D903)`);
+  if (m.rpcOperator !== undefined && m.rpcFallbackOperator !== undefined && operatorKey(m.rpcOperator) === operatorKey(m.rpcFallbackOperator)) {
+    at(['rpcFallbackOperator'], `rpc and rpcFallback must be run by different operators ${where} (both are ${m.rpcOperator.trim()}): one operator behind both makes the two-provider checks one provider’s word (D903)`);
+  }
+  if (m.apiRpcFallbacks !== undefined && m.apiRpcFallbackOperators === undefined) at(['apiRpcFallbackOperators'], `apiRpcFallbackOperators is required ${where}: name who runs each apiRpcFallbacks URL, in order (D903)`);
+  return out;
+}
+
 /** One environment's accounts and endpoints. Every account name the code uses comes from here. */
 export const manifestSchema = z
   .object({
@@ -358,6 +419,14 @@ export const manifestSchema = z
      */
     rpcFallback: urlString().optional(),
     /**
+     * Who runs `rpc` and `rpcFallback` (D903): the company or project operating each endpoint, as its own terms name
+     * it ("FastNear"), not the domain. Required on a production network, where the two must differ
+     * (`nearOperatorProblems`); optional on testnet, where one operator behind both is accepted. Never read by code
+     * but the manifest's rules and `deploy-check`.
+     */
+    rpcOperator: operatorName.optional(),
+    rpcFallbackOperator: operatorName.optional(),
+    /**
      * The API's own NEAR RPC fallbacks (D435), asked in this order after `rpc` when an endpoint gives no JSON-RPC
      * answer (a network error, a timeout, HTTP 5xx or 429, a body that isn't JSON-RPC, a node with no synced block);
      * never for a JSON-RPC answer, an error answer included. 1–MAX_API_RPC_FALLBACKS https URLs (http only for a
@@ -366,6 +435,8 @@ export const manifestSchema = z
      * API reads it (`NEAR_RPC_FALLBACKS`): the pages, the watchdog and the admin Worker keep `rpc` and `rpcFallback`.
      */
     apiRpcFallbacks: z.array(urlString()).min(1).max(MAX_API_RPC_FALLBACKS).optional(),
+    /** Who runs each `apiRpcFallbacks` URL, in order (D903): required with it on a production network, optional on testnet. */
+    apiRpcFallbackOperators: z.array(operatorName).min(1).max(MAX_API_RPC_FALLBACKS).optional(),
     /** The API's base URL: https outside `local*` envs (there, http only for a loopback host). */
     apiUrl: urlString(),
     /**
@@ -537,6 +608,7 @@ export const manifestSchema = z
       else if (url === m.rpc) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['apiRpcFallbacks', i], message: 'apiRpcFallbacks must not repeat rpc (it is always asked first)' });
       else if (m.apiRpcFallbacks?.indexOf(url) !== i) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['apiRpcFallbacks', i], message: `apiRpcFallbacks lists ${url} twice` });
     }
+    for (const p of nearOperatorProblems(m)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: p.path, message: p.message });
     if (m.emailIssuer && m.rpcFallback === undefined && !isLocalEnv(m.name)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['rpcFallback'], message: 'an env with emailIssuer needs rpcFallback outside local* envs: a linked identity’s path is confirmed on two providers (D263)' });
     }

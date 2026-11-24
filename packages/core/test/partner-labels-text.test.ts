@@ -45,7 +45,7 @@ describe('partner text: what passes', () => {
     for (const w of PARTNER_VERBS) expect(['text_ui_word', undefined], w).toContain(partnerTextProblem(w, 'object')?.code);
     expect(PARTNER_VERBS.filter((w) => partnerTextProblem(w, 'object') !== null)).toEqual(['cancel', 'sign up']);
     for (const w of PARTNER_CONNECTORS) expect(partnerTextProblem(w, 'object'), w).toBeNull();
-    expect(partnerAttribution('Stamp Trail')).toBe('These are Stamp Trail’s words. Journear hasn’t checked them.');
+    expect(partnerAttribution('Stamp Trail')).toBe('These are Stamp Trail’s words, not Journear’s.');
   });
 
   it('the jargon list is the plain-words list, word for word (core has no runtime dependency on the brand package)', () => {

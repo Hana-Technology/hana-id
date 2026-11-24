@@ -65,4 +65,4 @@ export type PartnerConnector = (typeof PARTNER_CONNECTORS)[number];
 export const isPartnerConnector = (v: unknown): v is PartnerConnector => typeof v === 'string' && (PARTNER_CONNECTORS as readonly string[]).includes(v);
 
 /** What the window says under a partner's sentence, every time. */
-export const partnerAttribution = (appName: string): string => `These are ${appName}’s words. Journear hasn’t checked them.`;
+export const partnerAttribution = (appName: string): string => `These are ${appName}’s words, not Journear’s.`;

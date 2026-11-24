@@ -468,7 +468,25 @@ describe('the window’s own sentences', () => {
     expect(LABEL_MISMATCH.short).toEqual(['Doesn’t match how ', app, ' describes this kind of request']);
     expect(LABEL_NOT_LISTED.full).toEqual(['This isn’t one of the accounts ', app, ' has listed for payments. If you expected to pay ', app, ', don’t approve.']);
     expect(LABEL_NOT_LISTED.short).toEqual(['Not one of the accounts ', app, ' has listed for payments']);
-    expect(partnerAttribution(APP)).toBe('These are Coffee Club’s words. Journear hasn’t checked them.');
+    expect(partnerAttribution(APP)).toBe('These are Coffee Club’s words, not Journear’s.');
+  });
+
+  it('D903: the attribution names the app as the window does everywhere: text only, bold and isolated, "’s" after any name', () => {
+    // A name ending in "s" keeps "’s" (one app, as "{App}’s description" in the amber line); markup, quotes, a
+    // right-to-left name and a 64-character name are only ever text.
+    const rtl = 'نادي القهوة';
+    for (const app of ['Coffee Beans', 'Ben & Jerry’s', '<img src=x onerror=alert(1)>', 'Acme "Club"', rtl, 'W'.repeat(64)]) {
+      const el = render(payment(), [PAYMENT], {}, app);
+      const line = el.querySelector('div.partner-label p.partner-attribution')!;
+      expect(line.textContent, app).toBe(partnerAttribution(app));
+      expect(line.querySelectorAll('*').length, app).toBe(1);
+      expect(line.querySelector('strong.app-name')?.textContent, app).toBe(app);
+    }
+    expect(partnerAttribution('Coffee Beans')).toBe('These are Coffee Beans’s words, not Journear’s.');
+    // No name (only spaces): "The app" heads the box, "the app" mid-sentence.
+    const el = render(payment(), [PAYMENT], {}, '   ');
+    expect(text(el.querySelector('p.partner-says strong.app-name'))).toBe('The app');
+    expect(text(el.querySelector('p.partner-attribution'))).toBe('These are the app’s words, not Journear’s.');
   });
 });
 

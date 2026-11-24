@@ -96,7 +96,10 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
 
   await page.getByRole('button', { name: 'Review the change' }).click();
   await expect(page.getByRole('heading', { name: 'Propose request labels' })).toBeVisible();
-  await expect(page.locator('.labels-diff [data-change="added"]')).toHaveCount(2);
+  // What they describe, the account (its name and whole address) and the payment's line (after PR 135's review).
+  await expect(page.locator('.labels-diff [data-change="added"]')).toHaveCount(3);
+  await expect(page.locator('.labels-diff')).toContainText(`Account “Stamp Rally till” (${TILL})`);
+  await expect(page.locator('.labels-accounts li')).toHaveText([`Account “Stamp Rally till” (${TILL})`]);
   // The lane's delay is the admin env's 24 h: the notices' words for it, "1 day".
   await expect(page.getByText(/goes live 1 day after the email unless someone cancels it; Journear may block it if it would mislead users/u)).toBeVisible();
   await page.getByRole('button', { name: 'Confirm with Google' }).click();
@@ -114,7 +117,7 @@ test('fills the form, sees the preview, proposes with a fresh sign-in, sees it w
   await expect(waiting).toContainText(`Account “Stamp Rally till” (${TILL})`);
   await expect(waiting).toContainText(/It goes live in (?:23 h|1 d 0 h|24 h)/u);
   await expect(page.locator('.labels-entry .jp-badge').filter({ hasText: /^Goes live / })).toBeVisible();
-  await expect(waiting.locator('[data-change="added"]')).toHaveCount(2);
+  await expect(waiting.locator('[data-change="added"]')).toHaveCount(3);
   await expect(page.getByText(/goes live 1 day after the email unless someone cancels it\. Journear may block it/u)).toBeVisible();
   await waiting.getByRole('button', { name: 'Cancel this change' }).click();
   await waiting.getByRole('button', { name: 'Cancel it now' }).click();

@@ -1,7 +1,9 @@
 // Passport Home's "Devices and auto-approve" (home-page.ts mounts it as its own view under "Your account", for every
 // wallet, and on each wallet's page, D893): where the user is signed in to their apps with Journear, which of those
 // devices may sign without asking, and the apps they share their email with, each with a way to stop it
-// (docs/hana-home-spec.md F5, D45, D98 item 9, D411 point 6).
+// (docs/hana-home-spec.md F5, D45, D98 item 9, D411 point 6). On a wallet's page (D901) the email sharing is drawn apart
+// (`emailView`), as the email part of the card "What these apps get from you", from the same read: its own line, its
+// own "Show email sharing" (the same rule as "Show devices") and "Stop sharing email" with its confirmation.
 //
 // It reads `GET /v1/home/devices` only when the user asks: "Show devices", opening the view from "Your account"
 // (`openFront`), which the page also does once after sign-in when it was opened at `/home?view=devices` (the address
@@ -26,11 +28,16 @@ import type { GestureCheck, PageWindow } from './page-window.ts';
 import { BTN, alert, icon } from './ui.ts';
 
 export const HOME_DEVICES_TITLE = 'Devices and auto-approve';
-/** What the section says on an app's page where Journear has no wallet of the user's on record (no wallet called theirs). */
-export const HOME_DEVICES_APP_INTRO = 'Where you’re signed in to this app with Journear, what those devices may sign without asking, and whether you share your email with it.';
-/** What the section says on a wallet's page (D893: "this wallet", and the app or apps that use it). */
-export const HOME_DEVICES_WALLET_INTRO = (apps: number): string =>
-  `Where you’re signed in to this wallet, what those devices may sign without asking, and whether you share your email with ${apps > 1 ? 'these apps' : 'the app'}.`;
+/**
+ * What the section says on an app's page where Journear has no wallet of the user's on record (no wallet called theirs).
+ * D901: the email sharing is in "What this app gets from you", so the devices' sentence no longer names it.
+ */
+export const HOME_DEVICES_APP_INTRO = 'Where you’re signed in to this app with Journear, and what those devices may sign without asking.';
+/** What the section says on a wallet's page (D893: "this wallet"; D901: the email is in its own card). */
+export const HOME_DEVICES_WALLET_INTRO = 'Where you’re signed in to this wallet, and what those devices may sign without asking.';
+/** D901: the email sharing's part of "What these apps get from you" on a wallet's page. */
+export const HOME_EMAIL_TITLE = 'Your email';
+export const HOME_EMAIL_SHOW = 'Show email sharing';
 /** The one query `/home` takes for this section (exactly it): open it after sign-in. */
 export const HOME_DEVICES_VIEW = 'devices';
 
@@ -135,6 +142,14 @@ export interface HomeDevices {
   openApp(): void;
   /** Whether the wallet's page shows the details (true once "Show devices" is pressed). */
   readonly appExpanded: boolean;
+  /**
+   * D901: the email part of the wallet's "What these apps get from you" card, for `scope` (the same scope as `appView`;
+   * the same element each time). It shows what the devices' read says about the email; its rows, each with "Stop
+   * sharing email", wait for "Show email sharing" (the same rule as "Show devices": the tab's read while fresh).
+   */
+  emailView(scope: HomeScope): HTMLElement;
+  /** Whether the email part shows its rows (true once "Show email sharing" is pressed). */
+  readonly emailExpanded: boolean;
   /** The user left an app's page: its section closes, and opening the page again reads it again. */
   leaveApp(): void;
   /** Another account, or signed out: everything is dropped and both views close. */
@@ -157,9 +172,18 @@ interface View {
   readAtMs: number | null;
   /** The Security tab's own read failed (D897): said quietly, never as an alert nobody asked for. */
   quietFailed: boolean;
+  /** D901 (a wallet's page only): the email part shows its rows ("Show email sharing" pressed). */
+  emailExpanded: boolean;
+  /** D901: the sentence after an email stop on a wallet's page, said in the email part. */
+  emailNote: string | null;
+  /** D901: which part of a wallet's page a refusal shows in: where the person acted. */
+  problemAt: Part;
 }
 
-const newView = (): View => ({ state: 'closed', scopes: [], nextCursor: null, problem: null, busy: null, notes: new Map(), expanded: true, readAtMs: null, quietFailed: false });
+/** D901: a wallet's page has two parts that show this section's read: the devices, and the email in its own card. */
+type Part = 'devices' | 'email';
+
+const newView = (): View => ({ state: 'closed', scopes: [], nextCursor: null, problem: null, busy: null, notes: new Map(), expanded: true, readAtMs: null, quietFailed: false, emailExpanded: false, emailNote: null, problemAt: 'devices' });
 
 /** D897: "Show devices" shows the Security tab's read only while it is at most this old; older, the press reads again. */
 export const DEVICES_FRESH_MS = 60_000;
@@ -232,11 +256,11 @@ export interface DevicesSummaryScope {
 
 /**
  * The section's one line on a wallet's page (D897), from its one read: where the wallet is signed in (a "place" is one
- * sign-in: one browser on one site for one app, so one laptop in two apps is two places), what may sign without asking,
- * and which app gets the email. `mine`: the person's own wallet ("this wallet"), else an app's page ("this app").
- * `nameOf`: an app's name (partner text, only ever set as text).
+ * sign-in: one browser on one site for one app, so one laptop in two apps is two places) and what may sign without
+ * asking. `mine`: the person's own wallet ("this wallet"), else an app's page ("this app"). D901: which app gets the email
+ * is said in "What these apps get from you" (`emailSummary`), no longer here.
  */
-export function devicesSummary(s: DevicesSummaryScope, mine = true, nameOf: (appId: string) => string = (id) => s.apps.find((a) => a.appId === id)?.name ?? 'an app'): string {
+export function devicesSummary(s: DevicesSummaryScope, mine = true): string {
   const thing = mine ? 'this wallet' : 'this app';
   const n = s.devices.length;
   const k = s.devices.filter((x) => x.consent !== null).length;
@@ -249,13 +273,29 @@ export function devicesSummary(s: DevicesSummaryScope, mine = true, nameOf: (app
     else parts.push(k === 0 ? 'Each asks you before signing.' : `${k} of them may sign without asking.`);
   }
   if (t > 0) parts.push(`${t === 1 ? 'A tab' : `${t} tabs`} that may still be open can${n > 0 ? ' also' : ''} sign without asking.`);
-  const shared = s.email ?? [];
-  if (shared.length > 0) {
-    const names = shared.map((e) => nameOf(e.appId));
-    const to = s.apps.length <= 1 && mine ? 'the app' : s.apps.length <= 1 ? 'this app' : names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.length} apps`;
-    parts.push(`Your email is shared with ${to}.`);
-  }
   return parts.join(' ');
+}
+
+/** D901: how the email part names the apps: "the app" (a wallet of one app), "this app" (an app's page), "these apps". */
+const emailWho = (apps: number, mine: boolean): string => (apps > 1 ? 'these apps' : mine ? 'the app' : 'this app');
+
+/** D901: what the email part says before anything is read (or when the read failed). */
+export function emailAbout(apps: number, mine = true): string {
+  return `Whether you share your email address with ${emailWho(apps, mine)}.`;
+}
+
+/**
+ * D901: the email part's one line, from the devices' read (the sentences D897's line and the devices section said):
+ * which app gets the email ("Your email is shared with Sodax."), that none does, or that Passport Home can't tell.
+ * `nameOf`: an app's name (partner text, only ever set as text).
+ */
+export function emailSummary(s: Pick<DevicesSummaryScope, 'apps' | 'email'>, mine = true, nameOf: (appId: string) => string = (id) => s.apps.find((a) => a.appId === id)?.name ?? 'an app'): string {
+  const who = emailWho(s.apps.length, mine);
+  if (s.email === null) return `Passport Home can’t tell right now whether you share your email with ${who}.`;
+  if (s.email.length === 0) return `You aren’t sharing your email address with ${who}.`;
+  const names = s.email.map((e) => nameOf(e.appId));
+  const to = s.apps.length <= 1 ? who : names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.length} apps`;
+  return `Your email is shared with ${to}.`;
 }
 
 /**
@@ -297,6 +337,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
 
   const frontRoot = d.h('section', { class: 'home-devices', attrs: { id: 'home-devices', 'aria-labelledby': 'home-devices-title' } });
   const appRoot = d.h('section', { class: 'home-devices home-devices-app', attrs: { id: 'home-app-devices', 'aria-labelledby': 'home-app-devices-title' } });
+  /** D901: the email part of the wallet's "What these apps get from you" card. */
+  const emailRoot = d.h('section', { class: 'home-gets-part home-email-part', attrs: { id: 'home-app-email', 'aria-labelledby': 'home-app-email-title' } });
 
   /** A button that acts only on a real click: secondary unless `kind` says otherwise (danger only inside a confirmation). */
   const button = (label: string, id: string, onClick: () => void, o: { cls?: string; disabled?: boolean; describedBy?: string; kind?: keyof typeof BTN; sm?: boolean } = {}): HTMLButtonElement => {
@@ -360,8 +402,11 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     }
   }
 
-  /** `quiet`: read because the Security tab opened (D897), so the focus stays where the person left it. */
-  async function load(where: Where, more = false, quiet = false): Promise<void> {
+  /**
+   * `quiet`: read because the Security tab opened (D897), so the focus stays where the person left it. `part`: on a
+   * wallet's page, where the person asked (D901: the devices, or the email part), so a refusal and the focus land there.
+   */
+  async function load(where: Where, more = false, quiet = false, part: Part = 'devices'): Promise<void> {
     const view = views[where];
     if (view.busy) return;
     const scopeId = appScope?.scopeId;
@@ -369,6 +414,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     if (!query) return;
     view.busy = more ? 'more' : 'load';
     view.problem = null;
+    view.problemAt = part;
     view.quietFailed = false;
     if (!more && view.state === 'closed') view.state = 'loading';
     confirm = null;
@@ -383,6 +429,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       view.state = 'ready';
       if (!more) {
         view.notes.clear();
+        view.emailNote = null;
         view.readAtMs = now();
       }
     } else {
@@ -394,7 +441,7 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       }
     }
     render(where);
-    if (page && !more && !quiet) focusHeading(where === 'front' ? 'home-devices-title' : 'home-app-devices-title');
+    if (page && !more && !quiet) focusHeading(where === 'front' ? 'home-devices-title' : part === 'email' ? 'home-app-email-title' : 'home-app-devices-title');
   }
 
   /** Applies a stop to whatever either view shows of it. */
@@ -414,10 +461,14 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     const key = stopKey(stop, scopeId);
     if (stopping || confirm?.key !== key) return;
     const view = views[where];
+    // D901: on a wallet's page an email stop is made, and answered, in the email part of its own card.
+    const inEmail = where === 'app' && stop.kind === 'email';
     stopping = key;
     view.problem = null;
+    view.problemAt = inEmail ? 'email' : 'devices';
     // The last stop's sentence goes: what is said next is this stop's outcome alone.
     view.notes.delete(scopeId);
+    view.emailNote = null;
     render(where);
     const at = epoch;
     const result: HomeStopResult | null = await send(view, (id) => deps.api.stop(id, stop));
@@ -426,11 +477,13 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     confirm = null;
     if (result) {
       applyStop(stop, scopeId);
-      view.notes.set(scopeId, stopDoneText(stop.kind, typeof result.revoked === 'number' ? result.revoked > 0 : result.revoked));
+      const done = stopDoneText(stop.kind, typeof result.revoked === 'number' ? result.revoked > 0 : result.revoked);
+      if (inEmail) view.emailNote = done;
+      else view.notes.set(scopeId, done);
     }
     render('front');
     render('app');
-    focus(result ? `home-devices-note-${where}-${scopeId}` : `home-devices-problem-${where}`);
+    focus(inEmail ? (result ? 'home-app-email-note' : 'home-app-email-problem') : result ? `home-devices-note-${where}-${scopeId}` : `home-devices-problem-${where}`);
   }
 
   function ask(where: Where, key: string, focusId: string): void {
@@ -560,10 +613,12 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     );
   }
 
+  /**
+   * The apps the email is shared with, each a card with "Stop sharing email". Unknown or none: nothing here (the front
+   * page says it once for all, in `body`; on a wallet's page the email part's line says it, D901).
+   */
   function emailBlock(where: Where, s: HomeDeviceScope, showApp: boolean): Child[] {
-    // Unknown here: the app's page says so; the front page says it once for all (body).
-    if (s.email === null) return where === 'app' ? [d.h('p', { class: 'muted', attrs: { id: 'home-email-unknown-app' } }, 'Passport Home can’t tell right now whether you share your email with this app.')] : [];
-    if (s.email.length === 0) return where === 'app' ? [d.h('p', { class: 'muted', attrs: { id: 'home-email-none' } }, 'You aren’t sharing your email address with this app.')] : [];
+    if (s.email === null || s.email.length === 0) return [];
     return s.email.map((e) => {
       const lineId = `home-email-${where}-${s.scopeId}-${e.appId}`;
       const stop: HomeStop = { kind: 'email', appId: e.appId };
@@ -620,15 +675,16 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
           : null,
       s.more ? d.h('p', { class: 'muted' }, `Passport Home shows the ${HOME_DEVICES_MAX} most recent here; others are signed in too. Sign out the ones you don’t use, then show your devices again.`) : null,
       s.devices.some((x) => x.lastUsedAtMs !== null) ? d.h('p', { class: 'muted home-last-used-note' }, '“Last opened or approved here” doesn’t count requests the app signed by itself.') : null,
-      ...emailBlock(where, s, showApp),
+      // D901: on a wallet's page the email sharing is in its own card ("What these apps get from you", `emailBody`).
+      ...(where === 'front' ? emailBlock(where, s, showApp) : []),
     );
   }
 
-  const problemView = (where: Where, p: HomeProblem): HTMLElement =>
+  const problemView = (where: Where, p: HomeProblem, id = `home-devices-problem-${where}`): HTMLElement =>
     alert(
       d,
       'danger',
-      { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id: `home-devices-problem-${where}`, tabindex: '-1' } },
+      { tag: 'div', class: 'home-problem', attrs: { role: 'alert', id, tabindex: '-1' } },
       d.h('p', {}, p.text),
       d.h('p', { class: 'code muted' }, supportCode(p.code)),
       p.requestId ? d.h('p', { class: 'code muted' }, supportRequest(p.requestId)) : null,
@@ -637,7 +693,8 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
   function body(where: Where): Child[] {
     const view = views[where];
     const ids = where === 'front' ? { show: 'home-devices-show', again: 'home-devices-refresh' } : { show: 'home-app-devices-show', again: 'home-app-devices-refresh' };
-    const out: Child[] = [view.problem ? problemView(where, view.problem) : null];
+    // D901: a refusal of what the person asked in the email part shows there, not here.
+    const out: Child[] = [view.problem && (where === 'front' || view.problemAt === 'devices') ? problemView(where, view.problem) : null];
     if (view.state === 'closed' && view.quietFailed) out.push(d.h('p', { class: 'muted', attrs: { id: `home-devices-quiet-${where}` } }, 'Passport Home couldn’t check this just now. “Show devices” tries again.'));
     if (view.state === 'closed') {
       out.push(
@@ -696,6 +753,43 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     return out;
   }
 
+  /**
+   * D901: the email part of a wallet's "What these apps get from you" card, from the same read as the devices: its line
+   * (what the read says about the email, or what the part is about), then "Show email sharing" until pressed, then the
+   * apps the email is shared with, each with "Stop sharing email" and its confirmation, and "Show again".
+   */
+  function emailBody(): Child[] {
+    const view = views.app;
+    const out: Child[] = [view.problem && view.problemAt === 'email' ? problemView('app', view.problem, 'home-app-email-problem') : null];
+    const show = (): void => {
+      view.emailExpanded = true;
+      // Asking about the email isn't asking for the devices' cards: they keep waiting for "Show devices".
+      if (view.state === 'closed') view.expanded = false;
+      // The same rule as "Show devices" (D897): the tab's read while it is at most a minute old, else a new read.
+      if (view.state !== 'ready' || view.readAtMs === null || now() - view.readAtMs > DEVICES_FRESH_MS) {
+        deps.track(load('app', false, false, 'email'));
+        return;
+      }
+      render('app');
+      focus('home-app-email-title');
+    };
+    if (view.state !== 'ready') {
+      if (view.state === 'closed' && view.quietFailed) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-email-quiet' } }, `Passport Home couldn’t check this just now. “${HOME_EMAIL_SHOW}” tries again.`));
+      out.push(d.h('div', { class: 'actions start' }, button(view.busy ? 'Loading…' : HOME_EMAIL_SHOW, 'home-app-email-show', show, { disabled: view.busy !== null })));
+      return out;
+    }
+    if (!view.emailExpanded) {
+      out.push(d.h('div', { class: 'actions start' }, button(HOME_EMAIL_SHOW, 'home-app-email-show', show, { disabled: view.busy !== null })));
+      return out;
+    }
+    out.push(d.h('div', { class: 'actions start home-devices-again' }, button(view.busy === 'load' ? 'Loading…' : 'Show again', 'home-app-email-refresh', () => deps.track(load('app', false, false, 'email')), { disabled: view.busy !== null || stopping !== null, sm: true })));
+    const s = view.scopes[0];
+    // A stop's outcome stays here, beside what it changed (D765), not in a toast.
+    out.push(d.h('p', { class: view.emailNote ? 'home-devices-note jp-alert jp-alert-success' : 'home-devices-note', attrs: { role: 'status', id: 'home-app-email-note', tabindex: '-1' } }, ...(view.emailNote ? [icon(d, 'check-c'), d.h('span', { class: 'body' }, view.emailNote)] : [])));
+    if (s) out.push(...emailBlock('app', s, s.apps.length > 1));
+    return out;
+  }
+
   function render(where: Where): void {
     const root = where === 'front' ? frontRoot : appRoot;
     const intro =
@@ -703,15 +797,24 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
         ? 'Where you’re signed in to your apps with Journear, which of those devices may sign for you without asking, and the apps you share your email with.'
         : appScope?.mine === false
           ? HOME_DEVICES_APP_INTRO
-          : HOME_DEVICES_WALLET_INTRO(appScope?.apps.length ?? 1);
+          : HOME_DEVICES_WALLET_INTRO;
     // The view's own heading for every wallet (D893: the page's `h1` names the view); a section of a wallet's page.
     const heading = where === 'front' ? d.h('h1', { attrs: { id: 'home-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE) : d.h('h2', { attrs: { id: 'home-app-devices-title', tabindex: '-1' } }, HOME_DEVICES_TITLE);
     // D897: on a wallet's page, once read, the one line says where the wallet is signed in (in place of the intro).
     const scope = where === 'app' && views.app.state === 'ready' ? views.app.scopes[0] : undefined;
-    const line = scope ? devicesSummary(stillTrue(scope, now()), appScope?.mine !== false, (appId) => nameOf(scope, appId)) : intro;
+    const mine = appScope?.mine !== false;
+    const line = scope ? devicesSummary(stillTrue(scope, now()), mine) : intro;
     root.replaceChildren();
     schedule();
-    for (const c of [heading, d.h('p', { class: 'home-set-summary', attrs: { id: where === 'front' ? 'home-devices-about' : 'home-app-devices-summary', ...(scope ? { 'data-read': '' } : {}) } }, line), ...body(where)]) if (c !== null && c !== undefined && c !== false) root.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
+    const put = (to: HTMLElement, children: Child[]): void => {
+      for (const c of children) if (c !== null && c !== undefined && c !== false) to.append(typeof c === 'string' ? deps.win.document.createTextNode(c) : c);
+    };
+    put(root, [heading, d.h('p', { class: 'home-set-summary', attrs: { id: where === 'front' ? 'home-devices-about' : 'home-app-devices-summary', ...(scope ? { 'data-read': '' } : {}) } }, line), ...body(where)]);
+    if (where !== 'app') return;
+    // D901: the email part, drawn with the devices it is read with. Its line says what the read says about the email.
+    const emailLine = scope ? emailSummary(scope, mine, (appId) => nameOf(scope, appId)) : emailAbout(appScope?.apps.length ?? 1, mine);
+    emailRoot.replaceChildren();
+    put(emailRoot, [d.h('h3', { attrs: { id: 'home-app-email-title', tabindex: '-1' } }, HOME_EMAIL_TITLE), d.h('p', { class: 'home-set-summary', attrs: { id: 'home-app-email-summary', ...(scope ? { 'data-read': '' } : {}) } }, emailLine), ...emailBody()]);
   }
 
   // ---- D897: what is on screen stays true: drawn again (no request) when the page is seen again, at midnight, and when
@@ -727,11 +830,12 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
     for (const where of ['front', 'app'] as const) {
       const view = views[where];
       if (view.state !== 'ready' || view.busy !== null || stopping !== null) continue;
-      const root = where === 'front' ? frontRoot : appRoot;
+      const roots = where === 'front' ? [frontRoot] : [appRoot, emailRoot];
+      const inside = (el: Element | null): boolean => el !== null && roots.some((r) => r.contains(el));
       const had = deps.win.document.activeElement;
-      const keep = had && root.contains(had) && had.id ? had.id : null;
+      const keep = had && inside(had) && had.id ? had.id : null;
       render(where);
-      if (keep && !root.contains(deps.win.document.activeElement)) focus(keep);
+      if (keep && !inside(deps.win.document.activeElement)) focus(keep);
     }
     schedule();
   }
@@ -751,6 +855,16 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
   deps.win.document.addEventListener('visibilitychange', () => {
     if (deps.win.document.visibilityState === 'visible') refresh();
   });
+
+  /** A wallet's page's scope: another one starts both parts closed again; the same one keeps what they show. */
+  function useScope(scope: HomeScope): void {
+    if (appScope?.scopeId !== scope.scopeId) {
+      appScope = scope;
+      views.app = newView();
+      if (confirm?.where === 'app') confirm = null;
+      render('app');
+    } else appScope = scope;
+  }
 
   render('front');
   render('app');
@@ -794,13 +908,15 @@ export function startHomeDevices(deps: HomeDevicesDeps): HomeDevices {
       deps.track(load('app', false, true));
     },
     appView(scope) {
-      if (appScope?.scopeId !== scope.scopeId) {
-        appScope = scope;
-        views.app = newView();
-        if (confirm?.where === 'app') confirm = null;
-        render('app');
-      } else appScope = scope;
+      useScope(scope);
       return appRoot;
+    },
+    emailView(scope) {
+      useScope(scope);
+      return emailRoot;
+    },
+    get emailExpanded() {
+      return views.app.emailExpanded;
     },
     leaveApp() {
       appScope = null;

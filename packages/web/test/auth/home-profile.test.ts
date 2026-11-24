@@ -533,7 +533,10 @@ describe('sharing per app', () => {
     h.mountApp();
     expect(h.calls).toEqual([]);
     const root = document.getElementById('home-app-profile')!;
-    expect([...root.children].map((c) => c.tagName)).toEqual(['H2', 'P', 'DIV']);
+    // D901: on a wallet's page the name is a part of the card "What these apps get from you": its heading an h3.
+    expect([...root.children].map((c) => c.tagName)).toEqual(['H3', 'P', 'DIV']);
+    expect(root.classList.contains('home-gets-part')).toBe(true);
+    expect(root.getAttribute('aria-labelledby')).toBe('home-app-profile-title');
     expect(text('home-app-profile-title')).toBe(HOME_NAME_TITLE);
     h.answer = () => json(200, profile({ app: { appId: 'app_sodax1', shared: false } }));
     h.click('home-app-profile-show');

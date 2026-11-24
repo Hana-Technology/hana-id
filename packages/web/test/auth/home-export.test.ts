@@ -1121,7 +1121,15 @@ describe('the secret’s life', () => {
   });
 
   it.each([
-    ['another tab', async (h: H) => h.click('home-tab-addresses')],
+    // D901: another tab sends the browser back to the entry "Move wallet" was entered from (its popstate is the page's own).
+    ['another tab (Addresses)', async (h: H) => {
+      h.click('home-tab-addresses');
+      await flush();
+    }],
+    ['another tab (Security)', async (h: H) => {
+      h.click('home-tab-security');
+      await flush();
+    }],
     ['the browser’s Back', async (h: H) => {
       h.win.history.back();
       await flush();
@@ -1130,21 +1138,21 @@ describe('the secret’s life', () => {
       h.click('home-back');
       await flush();
     }],
-    ['the browser’s Forward to a tab opened after it', async (h: H) => {
-      h.win.history.forward();
+    ['another tab, where the browser refused “Move wallet” its own entry', async (h: H) => {
+      h.click('home-tab-security');
       await flush();
     }],
-  ] as const)('D895: leaving “Move wallet” by %s erases the opened key, from the page and from memory', async (name, leave) => {
+  ] as const)('D895, D901: leaving “Move wallet” by %s erases the opened key, from the page and from memory', async (name, leave) => {
     const h = start();
-    if (name.startsWith('the browser’s Forward')) {
-      // Move wallet, then Security, then Back to Move wallet: Forward from there leaves it for Security.
-      await h.toApp();
-      h.click('home-tab-security');
-      h.win.history.back();
-      await flush();
-      expect(h.page.tab).toBe('move');
-      await h.open();
-    } else await h.unlock();
+    if (name.includes('refused')) {
+      // A browser that refuses the entry "Move wallet" would add (Safari's limit on calls): the tab still opens.
+      const real = h.win.history.pushState.getMockImplementation()!;
+      h.win.history.pushState.mockImplementation((data: unknown, unused: string, url?: string | null) => {
+        if (typeof data === 'string' && data.endsWith(':2')) throw new Error('refused');
+        return real(data, unused, url);
+      });
+    }
+    await h.unlock();
     expect(h.page.tab).toBe('move');
     const r = h.reveal('evm');
     pressEl(h, r.toggle);
@@ -1158,6 +1166,28 @@ describe('the secret’s life', () => {
     expect(r.secret.textContent).toBe('••••••••');
     expect(document.documentElement.outerHTML).not.toContain(key);
     expect(document.querySelector('#home-export .secret')).toBeNull();
+    if (name.startsWith('another tab (')) {
+      // D901: the tab chosen is on the entry "Move wallet" was entered from; Forward reaches "Move wallet" again,
+      // collapsed, never the key; Back from there returns to the tab chosen.
+      expect(h.win.history.index).toBe(1);
+      h.win.history.forward();
+      await flush();
+      expect(h.page.tab).toBe('move');
+      expect(h.page.moving.state).toBe('closed');
+      expect(h.page.moving.holdsSecret).toBe(false);
+      expectCollapsed();
+      expect(document.documentElement.outerHTML).not.toContain(key);
+      h.win.history.back();
+      await flush();
+      expect(h.page.tab).toBe(name.includes('Addresses') ? 'addresses' : 'security');
+    }
+    if (name.includes('refused')) {
+      // No entry of its own: nothing was added for "Move wallet" or the tab, and Back from the tab leaves the wallet.
+      expect(h.win.history.entries).toHaveLength(2);
+      h.win.history.back();
+      await flush();
+      expect(h.page.view).toBe('front');
+    }
   });
 
   it('collapsed, the section has the devices section’s shape; Close collapses it and gives focus back to its button', async () => {

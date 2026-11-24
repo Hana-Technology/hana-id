@@ -417,7 +417,7 @@ test('rows: a screen reader’s name and description; the placeholders stand sti
 
 // ---- D895: a wallet's tabs, and the phone's "Sign in again" chip ----
 
-test('a wallet’s tabs: roles and names, the keyboard, one history entry each, and no sideways scroll on a phone (D895)', async ({ page, context }) => {
+test('a wallet’s tabs: roles and names, the keyboard, a history entry only for “Move wallet” (D901), and no sideways scroll on a phone (D895)', async ({ page, context }) => {
   const requests: string[] = [];
   await routeApps(context, (url) => {
     requests.push(url.search);
@@ -432,6 +432,8 @@ test('a wallet’s tabs: roles and names, the keyboard, one history entry each, 
   await expect(page.getByRole('tabpanel', { name: 'Addresses' })).toBeVisible();
   await expect(page.getByRole('tabpanel', { name: 'Security' })).toBeHidden();
   const sent = requests.length;
+  // The entries with the wallet's open (D901: the tabs add one only for "Move wallet").
+  const entries = await page.evaluate(() => history.length);
   // The keyboard: Tab reaches the open tab; the arrows move between tabs without opening one; Enter opens it.
   await page.getByRole('tab', { name: 'Addresses' }).focus();
   await page.keyboard.press('ArrowRight');
@@ -445,18 +447,33 @@ test('a wallet’s tabs: roles and names, the keyboard, one history entry each, 
   await page.keyboard.press('Space');
   await expect(page.getByRole('tab', { name: 'Move wallet' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('heading', { level: 2, name: 'Move this wallet to another wallet app' })).toBeVisible();
-  // One entry per tab opened, at the same address; Back and Forward move between them, then to the list.
-  expect(await page.evaluate(() => history.state as unknown)).toMatch(/^home:[A-Za-z0-9_-]{16}:3$/u);
+  // D901: Security replaced what the wallet's entry shows; only "Move wallet" added one, at the same address. Back from
+  // it: the tab the person came from; Back again: the list.
+  expect(await page.evaluate(() => history.state as unknown)).toMatch(/^home:[A-Za-z0-9_-]{16}:2$/u);
+  expect(await page.evaluate(() => history.length)).toBe(entries + 1);
   expect(page.url()).toBe(`${AUTH_ORIGIN}/home`);
   await page.goBack();
   await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
-  await page.goBack();
-  await expect(page.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
-  await page.goForward();
-  await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
-  await page.goBack();
+  await expect(page.getByRole('tab', { name: 'Security' })).toBeFocused();
   await page.goBack();
   await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+  // Addresses ↔ Security, many times: no entry; then "Move wallet" and another tab, many times: still one entry over
+  // the wallet's (the other tab goes back to it).
+  for (let i = 0; i < 6; i++) {
+    await homeTab(page, 'Addresses');
+    await homeTab(page, 'Security');
+  }
+  for (let i = 0; i < 4; i++) {
+    await homeTab(page, 'Move wallet');
+    await homeTab(page, i % 2 === 0 ? 'Addresses' : 'Security');
+    await expect.poll(() => page.evaluate(() => history.state as unknown)).toMatch(/^home:[A-Za-z0-9_-]{16}:1$/u);
+  }
+  expect(await page.evaluate(() => history.length)).toBe(entries + 1);
+  await page.goBack();
+  await expect(page.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  expect(page.url()).toBe(`${AUTH_ORIGIN}/home`);
   expect(requests.length).toBe(sent);
   // Phones: the three tabs fit, nothing scrolls sideways.
   await page.locator('.home-row[data-scope="s1"]').click();
@@ -469,12 +486,14 @@ test('a wallet’s tabs: roles and names, the keyboard, one history entry each, 
       expect(box && box.x >= 0 && box.x + box.width <= width, `${width} ${name}`).toBe(true);
     }
   }
-  // PR 122's review: Back from further down the page brings the tab list into view, with focus on the tab.
+  // PR 122's review: Back from further down the page brings the tab list into view, with focus on the tab (D901: Back
+  // from "Move wallet", the one tab with an entry of its own; its intro opened makes the page long).
   await page.setViewportSize({ width: 390, height: 360 });
   await homeTab(page, 'Addresses');
-  await homeTab(page, 'Security');
+  await homeTab(page, 'Move wallet');
+  await page.locator('#home-export-open').click();
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  await expect(page.getByRole('tab', { name: 'Security' })).not.toBeInViewport();
+  await expect(page.getByRole('tab', { name: 'Move wallet' })).not.toBeInViewport();
   await page.goBack();
   await expect(page.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tab', { name: 'Addresses' })).toBeFocused();

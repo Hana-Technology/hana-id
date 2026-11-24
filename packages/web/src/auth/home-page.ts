@@ -8,15 +8,18 @@
 //     wallet), "Your account" (two rows: "Devices and auto-approve" and "Your name", each opening its own view), and
 //     "Other apps" last (find an app by name, and the apps where Journear has no wallet on record for the user);
 //   - a wallet's page, "Wallet details" ("App details" for an app where the user has no wallet): the apps, whether the
-//     wallet needs them, its addresses, its Support ID, then its tools: "Devices and auto-approve" (home-devices.ts),
-//     "Ways to sign in" (home-sign-ins.ts, D874), "Your name" (home-profile.ts, D714) and, last, a collapsed section
-//     that lets the user open the wallet and take its private key to another wallet app (home-export.ts): it does
-//     nothing until the user expands it and signs in again, and nothing in the page's address can open or start it;
+//     wallet needs them, then three tabs (D895): Addresses (its addresses, its Support ID); Security: "Ways to sign in"
+//     (home-sign-ins.ts, D874), "Devices and auto-approve" (home-devices.ts) and one card, "What these apps get from
+//     you" (D901: the email sharing, from home-devices.ts, and "Your name", home-profile.ts, D714); and Move wallet, a
+//     collapsed section that lets the user open the wallet and take its private key to another wallet app
+//     (home-export.ts): it does nothing until the user expands it and signs in again, and nothing in the page's address
+//     can open or start it;
 //   - "Devices and auto-approve" and "Your name" for every wallet.
 // Each view's `h1` names it, and so does the window's title ("Your wallets – Passport Home"). The browser's Back and
 // Forward move between the front page and a view (D893): opening a view adds a history entry at the same address that
 // carries only an opaque marker (`HomeSteps`), so Back returns to "Your wallets" instead of leaving Home and its
-// sign-in; Back from the front page leaves Home as before.
+// sign-in; Back from the front page leaves Home as before. On a wallet's page only entering "Move wallet" adds an entry
+// (D901).
 //
 // Sign-in, with Google or an email code (`SIGN_IN_METHODS`). Google: a click opens a child `/login?mode=home` (as the
 // export window opens its own), which takes `hana:home-params` only from this page, goes to Google with a nonce that
@@ -128,6 +131,12 @@ export const HOME_TEXT = Object.freeze({
   tabs: Object.freeze({ addresses: 'Addresses', security: 'Security', move: 'Move wallet' }) as Readonly<Record<'addresses' | 'security' | 'move', string>>,
   tabsWallet: 'This wallet',
   tabsApp: 'This app',
+  /**
+   * D901: the Security tab's card that holds what the apps get (the email sharing and the name), option A's a3. Plural
+   * for a wallet two or more apps use; "this app" for one (the app is named in the page's head).
+   */
+  getsTitle: (apps: number): string => (apps > 1 ? 'What these apps get from you' : 'What this app gets from you'),
+  getsLine: 'Your email and your name, if you chose to share them.',
   /** The phone's "Sign in again" chip (D895), and what it says to a screen reader beside its words. */
   chip: 'Sign in again',
   chipEnding: `Your sign-in to ${BRAND.home} ends soon.`,
@@ -1117,9 +1126,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   //     page stays the first entry and Back from it still leaves Home; Forward still reaches the view;
   //   - a reload signs out (D553) and keeps no tag: the entries it leaves show the signed-out page; a sign-out or
   //     another account gets a new tag (and the page goes back to its first entry), so an earlier account's entries
-  //     show nothing of it: an entry whose tag isn't this sign-in's is the front page; signed out, the page ignores them.
-  // Leaving a wallet's view, by its way back or by Back, locks and erases a wallet opened in it (home-export.ts
-  // `leave`, D553); Forward shows its page with the move flow closed again, never a key.
+  //     show nothing of it: an entry whose tag isn't this sign-in's is the front page; signed out, the page ignores them;
+  //   - on a wallet's page (D901), only entering "Move wallet" adds an entry; Addresses ↔ Security changes what the
+  //     current entry shows, and leaving "Move wallet" by another tab goes back to the entry it was entered from.
+  // Leaving a wallet's view, or its "Move wallet" tab, by any way (the way back, Back, another tab, Forward elsewhere)
+  // locks and erases a wallet opened in it (home-export.ts `leave`, D553, D895); Forward shows the move flow closed
+  // again, never a key.
   const hist = (): HomeHistory | null => {
     try {
       return (win as { history?: HomeHistory }).history ?? null;
@@ -1161,10 +1173,13 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       return false;
     }
   };
-  /** Goes back to the front page's entry, when the browser is on the page's own step; true when it asked. */
-  function rewind(): boolean {
+  /**
+   * Goes back to step `to`'s entry (the front page's by default), when the browser is on the page's own step; true when
+   * it asked. D901: leaving "Move wallet" by another tab goes back one step, to the tab it was entered from.
+   */
+  function rewind(to = 0): boolean {
     const h = hist();
-    if (!onOwnStep() || typeof h?.go !== 'function') return false;
+    if (!onOwnStep() || typeof h?.go !== 'function' || to < 0 || to >= step) return false;
     rewinding = true;
     lateRewind = false;
     clearTimeout(rewindTimer);
@@ -1174,7 +1189,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
       lateRewind = true;
     }, REWIND_GIVE_UP_MS);
     try {
-      h.go(-step);
+      h.go(to - step);
       return true;
     } catch {
       endRewind();
@@ -1336,15 +1351,63 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     }
   }
 
-  /** A tab of the wallet's page on screen chosen (a click, or Enter or Space on it): its own history entry (D895). */
+  /**
+   * A tab of the wallet's page on screen chosen (a click, or Enter or Space on it). D901 (the founder, 2026-11-24, in
+   * place of D895's entry per tab): only entering "Move wallet" adds a history entry, so Back from it returns to the tab
+   * the person came from. Addresses ↔ Security replaces what the current entry shows (its marker stays: nothing is
+   * written to the browser). Leaving "Move wallet" by another tab goes back to the entry it was entered from, which then
+   * shows the tab chosen, so toggling never piles up entries. Every way out of "Move wallet" locks an opened wallet
+   * (`showView`'s tab branch, `moving.leave()`), whatever happens to the entries.
+   */
   function selectTab(tab: HomeWalletTab): void {
     if (viewing.kind !== 'wallet' || viewing.tab === tab) return;
-    const v: HomeView = { kind: 'wallet', scope: viewing.scope, tab };
-    showView(v, 'tab');
-    addStep(v);
+    const was = viewing;
+    const v: HomeView & { kind: 'wallet' } = { kind: 'wallet', scope: viewing.scope, tab };
+    if (tab === 'move') {
+      showView(v, 'tab');
+      addStep(v);
+    } else {
+      if (was.tab === 'move') leaveMoveStep(was, v);
+      else replaceStep(v);
+      showView(v, 'tab');
+    }
     // D897: opening Security is the person asking about it: one read of this wallet's devices (never on Back or Forward,
     // never a second time while the wallet's page is open), so its line can say where the wallet is signed in.
     if (tab === 'security') devices.openApp();
+  }
+
+  /**
+   * D901: the wallet's entry on screen now shows `v` (memory only: the entry keeps its marker, nothing is written to the
+   * browser). The front page's step is never replaced: with no entry for this wallet (a browser that refused one),
+   * nothing changes; when the wallet's entry is still waiting for the page's own Back to finish, the entry it gets is
+   * `v`'s.
+   */
+  function replaceStep(v: HomeView & { kind: 'wallet' }): void {
+    const cur = step > 0 ? steps[step] : undefined;
+    if (cur?.kind === 'wallet' && cur.scope.scopeId === v.scope.scopeId) {
+      const next = steps.slice();
+      next[step] = v;
+      steps = next;
+    } else if (rewinding && afterRewind) addStep(v);
+  }
+
+  /**
+   * D901: leaving "Move wallet" for another tab. When "Move wallet" has its own entry over one of the same wallet's tabs,
+   * the browser goes back to that entry (`history.go(-1)`), which now shows `v`; Forward then reaches "Move wallet" again,
+   * collapsed, as after Back. Otherwise (no entry of its own, or the browser can't go back) "Move wallet"'s entry, if it
+   * has one, shows `v` instead.
+   */
+  function leaveMoveStep(was: HomeView & { kind: 'wallet' }, v: HomeView & { kind: 'wallet' }): void {
+    const before = step >= 2 ? steps[step - 1] : undefined;
+    const sameWallet = before?.kind === 'wallet' && before.scope.scopeId === was.scope.scopeId;
+    if (steps[step] === was && sameWallet && rewind(step - 1)) {
+      step -= 1;
+      const next = steps.slice();
+      next[step] = v;
+      steps = next;
+      return;
+    }
+    replaceStep(v);
   }
 
   /**
@@ -2317,9 +2380,25 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             : null,
         ),
       ),
-      // Security (D895): who can open this wallet and where it is signed in, then what its apps get (the name). Step 4
-      // fills it out; here it holds the sections that were under the addresses.
-      panel('security', d.h('div', { class: 'home-tools', attrs: { id: 'home-app-extras' } }, signIns.appView(scope), devices.appView(scope), profile.appView(scope))),
+      // Security (D895, D897): who can open this wallet, where it is signed in, then (D901) one card for what its apps
+      // get from the person: the email sharing (read with the devices) and the name, each part with its own button.
+      panel(
+        'security',
+        d.h(
+          'div',
+          { class: 'home-tools', attrs: { id: 'home-app-extras' } },
+          signIns.appView(scope),
+          devices.appView(scope),
+          d.h(
+            'section',
+            { class: 'home-gets', attrs: { id: 'home-app-gets', 'aria-labelledby': 'home-app-gets-title' } },
+            d.h('h2', { attrs: { id: 'home-app-gets-title' } }, HOME_TEXT.getsTitle(scope.apps.length)),
+            d.h('p', { class: 'home-set-summary', attrs: { id: 'home-app-gets-summary' } }, HOME_TEXT.getsLine),
+            devices.emailView(scope),
+            profile.appView(scope),
+          ),
+        ),
+      ),
       // Moving the wallet out, on a tab of its own (never featured: the last tab). Leaving the tab locks it.
       panel('move', d.h('div', { class: 'home-tools' }, moving.view(scope, fromLink))),
     ];
@@ -2327,8 +2406,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
 
   /**
    * The wallet's tabs (D895; WAI-ARIA tabs with manual activation): one tab stop, the arrow keys, Home and End move
-   * between the tabs, Enter or Space (a button's click) opens one. Opening is never automatic on an arrow key: each tab
-   * opened is a history entry, and leaving "Move wallet" locks an opened wallet.
+   * between the tabs, Enter or Space (a button's click) opens one. Opening is never automatic on an arrow key: opening
+   * "Move wallet" is a history entry (D901), and leaving it locks an opened wallet.
    */
   function walletTabs(scope: HomeScope, tab: HomeWalletTab): HTMLElement {
     const icons: Readonly<Record<HomeWalletTab, Parameters<typeof icon>[1]>> = { addresses: 'wallet', security: 'shield', move: 'arrow' };

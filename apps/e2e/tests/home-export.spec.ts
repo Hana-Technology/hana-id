@@ -261,7 +261,7 @@ test('D893, D895: the browser’s Back out of an open wallet’s “Move wallet�
   expect(await home.evaluate(() => ({ session: sessionStorage.length, local: localStorage.length, url: location.href, state: history.state as unknown }))).toEqual({ session: 0, local: 0, url: `${AUTH_ORIGIN}/home`, state: null });
 });
 
-test('D895: leaving “Move wallet” by another tab, by “Your wallets” or by Forward erases the opened key from the page', async ({ page, context, google, requests, browserName }) => {
+test('D895, D901: leaving “Move wallet” by another tab or by “Your wallets” erases the opened key from the page; Forward back to it shows it collapsed', async ({ page, context, google, requests, browserName }) => {
   test.setTimeout(180_000);
   freshAccounts(google);
   const scopeId = newScope(browserName);
@@ -305,16 +305,25 @@ test('D895: leaving “Move wallet” by another tab, by “Your wallets” or b
   await expect(home.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
   await gone(key);
 
-  // Forward to a tab opened after it: Move wallet, Security, Back to Move wallet, open it there, then Forward.
+  // D901: Security, then "Move wallet" (the one entry), open it, then Addresses: the browser goes back to the entry
+  // "Move wallet" was entered from, which shows Addresses. Forward: "Move wallet" again, collapsed, no key. Back:
+  // Addresses; Back again: the list (Addresses and Security left no entry of their own).
   await home.locator(`.home-row[data-scope="${scopeId}"]`).click();
-  await homeTab(home, 'Move wallet');
   await homeTab(home, 'Security');
-  await home.goBack();
-  await expect(home.getByRole('tab', { name: 'Move wallet' })).toHaveAttribute('aria-selected', 'true');
   key = await showKey();
-  await home.goForward();
-  await expect(home.getByRole('tab', { name: 'Security' })).toHaveAttribute('aria-selected', 'true');
+  expect(await home.evaluate(() => history.state as unknown)).toMatch(/^home:[A-Za-z0-9_-]{16}:2$/u);
+  await homeTab(home, 'Addresses');
   await gone(key);
+  await expect.poll(() => home.evaluate(() => history.state as unknown)).toMatch(/^home:[A-Za-z0-9_-]{16}:1$/u);
+  await home.goForward();
+  await expect(home.getByRole('tab', { name: 'Move wallet' })).toHaveAttribute('aria-selected', 'true');
+  await expect(s.open).toBeVisible();
+  await gone(key);
+  await home.goBack();
+  await expect(home.getByRole('tab', { name: 'Addresses' })).toHaveAttribute('aria-selected', 'true');
+  await home.goBack();
+  await expect(home.getByRole('heading', { level: 1, name: 'Your wallets' })).toBeVisible();
+  await expectNoKey(home, key);
   // Three opens, three derives; nothing kept anywhere.
   expect(homeLogins(requests)).toBe(3);
   expect(await home.evaluate(() => ({ session: sessionStorage.length, local: localStorage.length }))).toEqual({ session: 0, local: 0 });

@@ -175,6 +175,35 @@ test('the demo writes to the guestbook when clicked before Hana recorded the NEA
   expect(relayer.problems).toEqual([]);
 });
 
+test('reduced motion (D906): the demo’s spinners pulse slowly instead of turning, even inside a card; the results’ fade stops', async ({ page }) => {
+  await openDemo(page);
+  const motion = () =>
+    page.evaluate(() => {
+      // Inside a .jp-card, where the brand's rule for everything inside a .jp-* element reaches them too.
+      const card = document.createElement('div');
+      card.className = 'jp-card';
+      const progress = card.appendChild(document.createElement('p'));
+      progress.className = 'progress';
+      const stage = card.appendChild(document.createElement('p'));
+      stage.className = 'stage';
+      const result = card.appendChild(document.createElement('div'));
+      result.className = 'result';
+      document.body.append(card);
+      const of = (s: CSSStyleDeclaration) => ({ name: s.animationName, count: s.animationIterationCount, seconds: parseFloat(s.animationDuration), easing: s.animationTimingFunction });
+      const out = { spins: [of(getComputedStyle(progress, '::before')), of(getComputedStyle(stage, '::before'))], result: getComputedStyle(result).animationName };
+      card.remove();
+      return out;
+    });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const reduced = await motion();
+  for (const s of reduced.spins) expect(s).toEqual({ name: 'jp-spin-pulse', count: 'infinite', seconds: 2, easing: 'ease-in-out' });
+  expect(reduced.result).toBe('none');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const moving = await motion();
+  for (const s of moving.spins) expect(s).toMatchObject({ name: 'jp-spin', count: 'infinite', seconds: 0.7 });
+  expect(moving.result).toBe('jp-fade');
+});
+
 test('the demo explains a blocked popup, then signs in through the Hana button', async ({ page }) => {
   await page.addInitScript((origin) => {
     // What a popup blocker does: the SDK falls back to the vault's "Sign in with Journear Passport" launcher.

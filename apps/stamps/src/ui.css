@@ -373,6 +373,10 @@ a.pp-r-acct { display: inline-flex; align-items: center; min-height: 44px; }
   .pp-r-time { grid-area: m; }
 }
 
+/* Reduced motion: nothing moves, except the loading spinners (the working slot's and the collect button's), which
+   pulse slowly instead of turning, with the brand's declaration for its spinners (D906): a still ring could look stuck.
+   Their selectors outrank the rule for everything. */
 @media (prefers-reduced-motion: reduce) {
   .pp *, .pp *::before, .pp *::after { animation: none !important; transition: none !important; }
+  .pp .pp-slot[data-status='working'] .pp-text::before, .pp .jp-btn .spin { animation: jp-spin-pulse 2s ease-in-out infinite !important; }
 }

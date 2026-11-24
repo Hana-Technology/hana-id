@@ -1856,6 +1856,9 @@ body:has(.jp-savebar) .toast-region {
 .steps input {
   width: min(28rem, 100%);
 }
+/* Reduced motion: everything ends at once. The console's loading spinners are the brand's (`.jp-btn .spin`), whose own
+   reduced-motion rule (components.css, D906) turns them into a slow pulse instead; this rule's `*` outranks nothing,
+   so the pulse stays. Keep it that way: no spinner selector here, no `animation` or `animation-name`. */
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

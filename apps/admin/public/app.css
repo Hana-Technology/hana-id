@@ -263,10 +263,13 @@
  * .jp-pager, .jp-steps), states (.jp-empty, .jp-skel), and the login modal (.jp-modal, .jp-provider, .jp-confirm).
  * The design system's page (linked from docs/decisions.md D765) shows each one's markup.
  *
- * Reduced motion (the last rule, D905): when the person's system asks for less motion, every animation and transition
- * here and on anything inside a .jp-* element ends at once (0.01 ms, run once, no delay), so a spinner or a loading
- * placeholder stands still and nothing slides or fades. It ends rather than being removed so an element still reaches
- * its final look and code waiting for an animation's end still hears it.
+ * Reduced motion (the last rule, D905 as amended by D906): when the person's system asks for less motion, every
+ * animation and transition here and on anything inside a .jp-* element ends at once (0.01 ms, run once, no delay), so a
+ * loading placeholder stands still and nothing slides or fades. It ends rather than being removed so an element still
+ * reaches its final look and code waiting for an animation's end still hears it. The one exception is the loading
+ * spinners (.jp-btn .spin, .jp-provider .spin, .jp-iconfield .spin): they stop turning and instead fade slowly between
+ * full and 40% opacity (jp-spin-pulse, 2 s a cycle, ease-in-out, for ever), so a long wait never looks like a frozen
+ * page. Opacity only: nothing turns, moves or changes size. A page with a spinner of its own uses the same declaration.
  */
 .jp-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:var(--jp-control-md);padding:0 16px;border-radius:var(--jp-radius-md);border:1px solid transparent;font:inherit;font-weight:600;font-size:var(--jp-text-sm);cursor:pointer;white-space:nowrap;color:var(--jp-fg);background:transparent;transition:background var(--jp-dur-fast) var(--jp-ease),box-shadow var(--jp-dur-fast) var(--jp-ease),transform var(--jp-dur-fast) var(--jp-ease),border-color var(--jp-dur-fast);user-select:none}
 .jp-btn:active{transform:translateY(1px) scale(.99)}
@@ -288,6 +291,7 @@
 .jp-btn[disabled],.jp-btn[aria-disabled="true"]{opacity:.45;cursor:not-allowed;box-shadow:none;transform:none}
 .jp-btn .spin,.jp-provider .spin{width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:jp-spin .7s linear infinite}
 @keyframes jp-spin{to{transform:rotate(360deg)}}
+@keyframes jp-spin-pulse{50%{opacity:.4}}
 .jp-icon-btn{width:var(--jp-control-sm);height:var(--jp-control-sm);padding:0;border-radius:var(--jp-radius-sm);display:inline-grid;place-items:center;border:1px solid transparent;background:transparent;color:var(--jp-fg-muted);cursor:pointer}
 .jp-icon-btn:hover{background:var(--jp-bg-subtle);color:var(--jp-fg)}
 .jp-seg{display:inline-flex;padding:3px;border-radius:var(--jp-radius-md);background:var(--jp-bg-subtle);border:1px solid var(--jp-border);gap:2px}
@@ -599,6 +603,7 @@ textarea.jp-input{overflow:hidden;transition:height var(--jp-dur-fast)}
 @media (pointer:coarse){.jp-input{font-size:16px}
 .jp-addr .jp-icon-btn{width:32px;height:32px}}
 @media (prefers-reduced-motion:reduce){[class^="jp-"],[class*=" jp-"],[class^="jp-"]::before,[class^="jp-"]::after,[class*=" jp-"]::before,[class*=" jp-"]::after,[class^="jp-"] *,[class*=" jp-"] *,[class^="jp-"] *::before,[class^="jp-"] *::after,[class*=" jp-"] *::before,[class*=" jp-"] *::after{animation-duration:.01ms!important;animation-delay:0s!important;animation-iteration-count:1!important;transition-duration:.01ms!important;transition-delay:0s!important}
+.jp-btn .spin,.jp-provider .spin,.jp-iconfield .spin{animation:jp-spin-pulse 2s ease-in-out infinite!important}
 .jp-slider::-webkit-slider-thumb{transition-duration:.01ms!important;transition-delay:0s!important}}
 /* ==== end of @hana-id/brand ==== */
 

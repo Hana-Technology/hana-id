@@ -25,9 +25,36 @@ describe('ui.css', () => {
     expect(rules).not.toMatch(/@import|url\(|https?:/u);
   });
 
-  it('stops every animation and transition under reduced motion', () => {
+  describe('reduced motion (D905, the spinners as amended by D906)', () => {
     const block = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/u.exec(rules)?.[1] ?? '';
-    expect(block).toMatch(/\.pp \*, \.pp \*::before, \.pp \*::after \{ animation: none !important; transition: none !important; \}/u);
+    const inBlock = [...block.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((m) => ({ selectors: m[1]!.trim().split(/,\s*/u), body: m[2]!.trim() }));
+    const brand = readFileSync(join(root, '..', '..', 'packages', 'brand', 'components.css'), 'utf8');
+    /** The brand's declaration for its spinners under reduced motion (components.css). */
+    const pulse = /\.jp-btn \.spin,\.jp-provider \.spin,\.jp-iconfield \.spin\{animation:([^!}]+)!important\}/u.exec(brand)?.[1];
+    const SPINNERS = [".pp .pp-slot[data-status='working'] .pp-text::before", '.pp .jp-btn .spin'];
+
+    it('stops every animation and transition, except the loading spinners', () => {
+      expect(inBlock[0]).toEqual({ selectors: ['.pp *', '.pp *::before', '.pp *::after'], body: 'animation: none !important; transition: none !important;' });
+      expect(inBlock).toHaveLength(2);
+    });
+
+    it('the loading spinners pulse with the brand’s declaration (opacity only, no turning), above the rule for everything', () => {
+      expect(pulse).toBe('jp-spin-pulse 2s ease-in-out infinite');
+      expect(inBlock[1]).toEqual({ selectors: SPINNERS, body: `animation: ${pulse} !important;` });
+      // Without reduced motion the working slot's spinner turns, and the collect button's is the brand's .jp-btn .spin.
+      expect(rules).toContain(".pp-slot[data-status='working'] .pp-text::before { content: ''; flex: none; width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--jp-primary); border-right-color: transparent; animation: jp-spin 0.8s linear infinite; }");
+      expect(rules).toContain(".pp-slot[data-status='working'] .pp-collect .spin { display: inline-block; }");
+    });
+
+    it('only the spinners: the working slot’s marching outline, the inked stamp and every other motion stay still', () => {
+      const outside = rules.replace(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/u, '');
+      const moving = [...outside.matchAll(/([^{}@]+)\{([^{}]*)\}/gu)].filter((m) => /(?:^|;)\s*animation:/u.test(m[2]!)).map((m) => m[1]!.trim());
+      // Each is reached by `.pp *` (all of the stamps UI sits in .pp); of them, only the spinner is in the pulse rule.
+      expect(moving.length).toBeGreaterThan(3);
+      const pulsing = moving.filter((s) => SPINNERS.some((p) => p === `.pp ${s}`));
+      expect(pulsing).toEqual([".pp-slot[data-status='working'] .pp-text::before"]);
+      expect(moving).toContain(".pp-slot[data-status='working'] .pp-sil");
+    });
   });
 
   it('follows a forced theme as well as the system’s', () => {

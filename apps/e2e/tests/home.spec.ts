@@ -392,7 +392,7 @@ test('a link’s wallet never pulls the person out of a view opened while the li
   await expect(page.locator('.home-row[data-scope="s1"]')).toBeVisible();
 });
 
-test('rows: a screen reader’s name and description; the placeholders stand still with reduced motion', async ({ page, context }) => {
+test('rows: a screen reader’s name and description; the placeholders stand still and the spinners pulse with reduced motion', async ({ page, context }) => {
   let hold: ((v: unknown) => void) | null = null;
   await routeApps(context, () => ({ status: 200, body: LIST }));
   await context.route(`${HOME_APPS}**`, async (route) => {
@@ -404,32 +404,53 @@ test('rows: a screen reader’s name and description; the placeholders stand sti
   await signIn(page);
   await expect(page.locator('#home-loading')).toBeVisible();
   expect(await page.locator('.home-skeleton-line').first().evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
-  // D905: the brand's own rule as the page ships it: a button's spinner and a radio's dot run once, at once.
+  // D905 as amended by D906: the brand's own rule as the page ships it. The loading spinners (a button's, a login
+  // provider's, an icon field's) fade slowly instead of turning, for ever: opacity only, no transform. Nothing else
+  // keeps moving: a radio's dot and the loading placeholder (`.jp-skel`, the other one that repeats) run once, at once.
   const motion = () =>
     page.evaluate(() => {
       const button = document.createElement('button');
       button.className = 'jp-btn';
       const spin = button.appendChild(document.createElement('span'));
       spin.className = 'spin';
+      const provider = document.createElement('button');
+      provider.className = 'jp-provider';
+      const providerSpin = provider.appendChild(document.createElement('span'));
+      providerSpin.className = 'spin';
+      const field = document.createElement('div');
+      field.className = 'jp-iconfield';
+      const fieldSpin = field.appendChild(document.createElement('span'));
+      fieldSpin.className = 'spin';
       const check = document.createElement('label');
       check.className = 'jp-check';
       const radio = check.appendChild(document.createElement('input'));
       radio.type = 'radio';
       radio.checked = true;
-      document.body.append(button, check);
-      const s = getComputedStyle(spin);
-      const out = { name: s.animationName, count: s.animationIterationCount, seconds: parseFloat(s.animationDuration), dot: parseFloat(getComputedStyle(radio, '::after').animationDuration) };
+      const skel = document.createElement('div');
+      skel.className = 'jp-skel';
+      document.body.append(button, provider, field, check, skel);
+      const of = (el: Element) => {
+        const s = getComputedStyle(el);
+        const keyframes = el.getAnimations().flatMap((a) => (a.effect as KeyframeEffect).getKeyframes());
+        const props = [...new Set(keyframes.flatMap((k) => Object.keys(k).filter((p) => !['offset', 'computedOffset', 'easing', 'composite'].includes(p))))].sort();
+        return { name: s.animationName, count: s.animationIterationCount, seconds: parseFloat(s.animationDuration), easing: s.animationTimingFunction, props };
+      };
+      const out = { spins: [of(spin), of(providerSpin), of(fieldSpin)], skel: of(skel), dot: parseFloat(getComputedStyle(radio, '::after').animationDuration) };
       button.remove();
+      provider.remove();
+      field.remove();
       check.remove();
+      skel.remove();
       return out;
     });
-  const still = await motion();
-  expect([still.name, still.count]).toEqual(['jp-spin', '1']);
-  expect(still.seconds).toBeLessThan(0.001);
-  expect(still.dot).toBeLessThan(0.001);
+  const reduced = await motion();
+  for (const s of reduced.spins) expect(s).toEqual({ name: 'jp-spin-pulse', count: 'infinite', seconds: 2, easing: 'ease-in-out', props: ['opacity'] });
+  expect(reduced.dot).toBeLessThan(0.001);
+  expect([reduced.skel.name, reduced.skel.count]).toEqual(['jp-sk', '1']);
+  expect(reduced.skel.seconds).toBeLessThan(0.001);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   expect(await page.locator('.home-skeleton-line').first().evaluate((el) => getComputedStyle(el).animationName)).not.toBe('none');
-  expect(await motion()).toMatchObject({ name: 'jp-spin', count: 'infinite', seconds: 0.7 });
+  for (const s of (await motion()).spins) expect(s).toMatchObject({ name: 'jp-spin', count: 'infinite', seconds: 0.7, props: ['transform'] });
   (hold as unknown as (v: unknown) => void)(null);
   const s1 = page.locator('.home-row[data-scope="s1"]');
   await expect(s1).toHaveAccessibleName('Sodax, Sodax Earn (Paused), Safe if the apps close');

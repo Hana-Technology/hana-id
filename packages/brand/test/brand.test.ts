@@ -199,28 +199,69 @@ describe('components', () => {
     for (const s of selectors) for (const part of s.split(',')) expect(part, s).toMatch(/\.jp-|\[class[*^]=" ?jp-"\]/u);
   });
 
-  describe('reduced motion (D905)', () => {
+  describe('reduced motion (D905, the spinners as amended by D906)', () => {
     const block = /@media \(prefers-reduced-motion:reduce\)\{([\s\S]*)\}$/u.exec(css.trimEnd())?.[1] ?? '';
     const rules = [...block.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((m) => ({ selectors: m[1]!.trim().split(','), body: m[2]!.split(';') }));
     const JP = ['[class^="jp-"]', '[class*=" jp-"]'];
     /** Every .jp-* element, its ::before and ::after, everything inside it, and their ::before and ::after. */
     const GENERIC = JP.flatMap((j) => [j, `${j}::before`, `${j}::after`, `${j} *`, `${j} *::before`, `${j} *::after`]);
     const THUMB = '.jp-slider::-webkit-slider-thumb';
+    /** The loading spinners: the only pieces that keep moving under reduced motion, as a slow opacity pulse (D906). */
+    const SPINNERS = ['.jp-btn .spin', '.jp-provider .spin', '.jp-iconfield .spin'];
+    const PULSE = 'animation:jp-spin-pulse 2s ease-in-out infinite!important';
+    const outside = css
+      .replace(/\/\*[\s\S]*?\*\//gu, '')
+      .replace(/@keyframes[^{]*\{(?:[^{}]*\{[^}]*\})*[^}]*\}/gu, '')
+      .replace(/@media \(prefers-reduced-motion:reduce\)\{[\s\S]*$/u, '');
+    const outsideRules = [...outside.matchAll(/([^{}@]+)\{([^{}]*)\}/gu)].map((m) => ({ selectors: m[1]!.trim().split(',').map((x) => x.trim()), body: m[2]! }));
+    /** [ids, classes + attributes + pseudo-classes, types + pseudo-elements] of the simple selectors used here. */
+    const specificity = (sel: string): [number, number, number] => {
+      const pseudoEl = (sel.match(/::[a-z-]+/gu) ?? []).length;
+      const rest = sel.replace(/::[a-z-]+/gu, '');
+      const ids = (rest.match(/#[\w-]+/gu) ?? []).length;
+      const classes = (rest.match(/\.[\w-]+|\[[^\]]*\]|:[a-z-]+/gu) ?? []).length;
+      const types = (rest.replace(/\[[^\]]*\]/gu, '').match(/(?:^|[\s>+~])[a-z][\w-]*/gu) ?? []).length;
+      return [ids, classes, types + pseudoEl];
+    };
+    const beats = (a: [number, number, number], b: [number, number, number]) => a[0] > b[0] || (a[0] === b[0] && (a[1] > b[1] || (a[1] === b[1] && a[2] > b[2])));
+    const keyframes = (name: string) => new RegExp(`@keyframes ${name}\\{((?:[^{}]*\\{[^}]*\\})*)\\}`, 'u').exec(css)?.[1] ?? '';
 
     it('is the last rule: on and inside a .jp-* element every animation and transition ends at once, runs once and waits for nothing', () => {
-      expect(rules.map((r) => r.selectors.length)).toEqual([12, 1]);
+      expect(rules.map((r) => r.selectors.length)).toEqual([12, 3, 1]);
       expect([...rules[0]!.selectors].sort()).toEqual([...GENERIC].sort());
       expect(rules[0]!.body).toEqual(['animation-duration:.01ms!important', 'animation-delay:0s!important', 'animation-iteration-count:1!important', 'transition-duration:.01ms!important', 'transition-delay:0s!important']);
       // The slider's thumb has a rule of its own: a browser that doesn't know the pseudo-element drops only that one.
-      expect(rules[1]!.selectors).toEqual([THUMB]);
-      expect(rules[1]!.body).toEqual(['transition-duration:.01ms!important', 'transition-delay:0s!important']);
+      expect(rules[2]!.selectors).toEqual([THUMB]);
+      expect(rules[2]!.body).toEqual(['transition-duration:.01ms!important', 'transition-delay:0s!important']);
+    });
+
+    it('the loading spinners pulse instead of standing still: a slow fade (2 s a cycle, full to 40% opacity), no turning', () => {
+      expect(rules[1]!.selectors).toEqual(SPINNERS);
+      // One shorthand: it replaces jp-spin (the turn) by jp-spin-pulse, sets its own duration, count and delay (0 s).
+      expect(rules[1]!.body).toEqual([PULSE]);
+      // The pulse changes opacity alone, between full (the element's own, at both ends) and 0.4 at the middle.
+      expect(keyframes('jp-spin-pulse')).toBe('50%{opacity:.4}');
+      // It outranks the everything-ends-at-once rule (both important: the more specific selector wins in every browser).
+      for (const s of SPINNERS) for (const g of GENERIC) expect(beats(specificity(s), specificity(g)), `${s} over ${g}`).toBe(true);
+      // Without reduced motion they still turn as before.
+      for (const s of SPINNERS) expect(outsideRules.some((r) => r.selectors.includes(s) && /animation:jp-spin \.7s linear infinite/u.test(r.body)), s).toBe(true);
+      expect(keyframes('jp-spin')).toBe('to{transform:rotate(360deg)}');
+    });
+
+    it('the pulse is only for the spinners: every rule that turns is one of them, and nothing else repeats once motion is reduced', () => {
+      // Every rule that uses jp-spin is a spinner the pulse rule names, and the pulse rule names nothing else.
+      const turning = outsideRules.filter((r) => /animation:jp-spin\b/u.test(r.body)).flatMap((r) => r.selectors);
+      expect([...turning].sort()).toEqual([...SPINNERS].sort());
+      // jp-spin-pulse is used only by the reduced-motion rule.
+      expect(outsideRules.filter((r) => /jp-spin-pulse/u.test(r.body))).toEqual([]);
+      // Every other rule that repeats for ever (the placeholder's shimmer) is covered by the generic rule, which runs it once.
+      const forever = outsideRules.filter((r) => /infinite/u.test(r.body)).flatMap((r) => r.selectors);
+      expect(forever.filter((s) => !SPINNERS.includes(s))).toEqual(['.jp-skel']);
+      // Inside the block, only the spinner rule names an animation or keeps a repeat.
+      expect(rules.filter((r) => r.body.some((d) => /^animation(?:-name)?:|infinite/u.test(d))).map((r) => r.selectors)).toEqual([SPINNERS]);
     });
 
     it('reaches every rule that moves something: its element is a .jp-* element or inside one, and any pseudo-element is covered', () => {
-      const outside = css
-        .replace(/\/\*[\s\S]*?\*\//gu, '')
-        .replace(/@keyframes[^{]*\{(?:[^{}]*\{[^}]*\})*[^}]*\}/gu, '')
-        .replace(/@media \(prefers-reduced-motion:reduce\)\{[\s\S]*$/u, '');
       const moving = [...outside.matchAll(/([^{}@]+)\{([^{}]*)\}/gu)].filter((m) => /(?:^|;)(?:animation|transition)(?:-duration)?:(?!none\b)/u.test(m[2]!));
       // The spinners, the placeholder's shimmer, the toasts, the modal, the fades and shakes, and every transition.
       expect(moving.length).toBeGreaterThan(30);
@@ -231,7 +272,8 @@ describe('components', () => {
           if (pseudo !== undefined && pseudo !== 'before' && pseudo !== 'after') expect(part).toBe(THUMB);
         }
       }
-      // The three that repeat for ever (two spinners and the placeholder), where running once is what makes them stand still.
+      // The three that repeat for ever (two spinner rules and the placeholder): the placeholder runs once and stands still,
+      // the spinners pulse (above).
       for (const s of ['.jp-btn .spin', '.jp-iconfield .spin', '.jp-skel']) expect(moving.some((m) => m[1]!.trim().split(',').includes(s) && /infinite/u.test(m[2]!)), s).toBe(true);
     });
   });

@@ -2,6 +2,8 @@
 // after 5 s unless hovered, a danger one stays), the save bar on saved settings (up at the first change, counts,
 // Discard, Save), fields checked once they are left (validate on blur), the optional fields marked, choice cards, the
 // stats strip, the lockup drawn from the brand's own files, and the new names.
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { LOCKUP, MARK_BRACKET, MARK_CARD } from '@hana-id/brand';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
@@ -270,5 +272,38 @@ describe('the look', () => {
     expect(table.parentElement!.className).toContain('jp-table-wrap');
     expect(screen.getByRole('columnheader', { name: 'Sent' }).className).toBe('num');
     expect(screen.getByRole('group', { name: 'The last 14 days' }).textContent).toContain('5.0%');
+  });
+});
+
+describe('reduced motion (D905, the spinners as amended by D906)', () => {
+  // happy-dom replaces URL, so the paths are joined from this file's directory.
+  const webDir = join(import.meta.dirname, '..', 'src');
+  const css = readFileSync(join(webDir, 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//gu, '');
+  const brand = readFileSync(join(import.meta.dirname, '..', '..', '..', '..', 'packages', 'brand', 'components.css'), 'utf8');
+  const sources = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? sources(join(dir, e.name)) : /\.tsx?$/u.test(e.name) ? [join(dir, e.name)] : []));
+
+  it('the console’s own rule ends everything at once and leaves the brand’s spinner pulse to win', () => {
+    const blocks = [...css.matchAll(/@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/gu)].map((m) => m[1]!);
+    expect(blocks).toHaveLength(1);
+    const rules = [...blocks[0]!.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((m) => ({ selector: m[1]!.trim(), body: m[2]!.trim().split(/;\s*/u).filter(Boolean) }));
+    // `*` has no specificity, so the brand's `.jp-btn .spin` rule (also important) outranks it; it never names an animation.
+    expect(rules).toEqual([{ selector: '*', body: ['transition: none !important', 'animation-duration: 0.01ms !important'] }]);
+    expect(brand).toContain('.jp-btn .spin,.jp-provider .spin,.jp-iconfield .spin{animation:jp-spin-pulse 2s ease-in-out infinite!important}');
+  });
+
+  it('every spinner the console draws is the brand’s: a .spin inside a .jp-btn button', () => {
+    let found = 0;
+    for (const f of sources(webDir)) {
+      const text = readFileSync(f, 'utf8');
+      for (const m of text.matchAll(/className="spin"/gu)) {
+        found++;
+        const before = text.slice(0, m.index);
+        const button = before.slice(before.lastIndexOf('<button'));
+        expect(button, f).toMatch(/^<button[^>]*className="jp-btn\b/u);
+        expect(button, f).not.toContain('</button>');
+      }
+    }
+    // The sign-in button and the email sign-in test's Execute button.
+    expect(found).toBe(2);
   });
 });

@@ -29,6 +29,32 @@ describe('the stylesheet', () => {
   });
 });
 
+describe('reduced motion (D905, the spinners as amended by D906)', () => {
+  const rules = css.replace(/\/\*[\s\S]*?\*\//gu, '');
+  const block = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/u.exec(rules)?.[1] ?? '';
+  const inBlock = [...block.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((m) => ({ selectors: m[1]!.trim().split(/,\s*/u), body: m[2]!.trim() }));
+  /** The brand's declaration for its spinners under reduced motion (components.css). */
+  const pulse = /\.jp-btn \.spin,\.jp-provider \.spin,\.jp-iconfield \.spin\{animation:([^!}]+)!important\}/u.exec(brandFile('components.css'))?.[1];
+
+  it('the demo’s spinner pulses with the brand’s declaration, above the brand’s rule for everything inside a .jp-* element', () => {
+    expect(pulse).toBe('jp-spin-pulse 2s ease-in-out infinite');
+    // The spinner as it turns without reduced motion: its two places.
+    expect(rules).toContain('.progress::before, .stage::before { content: \'\'; flex: none; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--jp-primary); border-right-color: transparent; animation: jp-spin 0.7s linear infinite; }');
+    // `body` adds a type to the brand's `[class*=" jp-"] *::before` (0,1,1), so the pulse wins whatever the order.
+    expect(inBlock).toContainEqual({ selectors: ['body .progress::before', 'body .stage::before'], body: `animation: ${pulse} !important;` });
+  });
+
+  it('nothing else moves: the results’ fade stops, and only the spinner names an animation', () => {
+    // `body` puts it above `.result`'s own animation, which comes later in the file.
+    expect(inBlock).toContainEqual({ selectors: ['body .result'], body: 'animation: none;' });
+    expect(inBlock).toHaveLength(2);
+    // Every animation that repeats for ever in the demo's own rules is that spinner.
+    const outside = rules.replace(/@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\n\}/u, '');
+    const forever = [...outside.matchAll(/([^{}@]+)\{([^{}]*)\}/gu)].filter((m) => /infinite/u.test(m[2]!)).map((m) => m[1]!.trim());
+    expect(forever).toEqual(['.progress::before, .stage::before']);
+  });
+});
+
 describe('the page', () => {
   it('draws the Journear lockup with the brand’s geometry (D789), outlined, and the favicon is the brand’s mark', () => {
     const lockup = /<svg class="lockup"[\s\S]*?<\/svg>/u.exec(html)![0];

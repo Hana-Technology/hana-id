@@ -609,6 +609,19 @@ test('D902: Cancel this link in Home: asks first, a fresh Google sign-in of the 
   await home.locator('#home-sign-in-cancel-back').click();
   await expect(panel).toHaveCount(0);
   await offer.click();
+  // D901's tabs and Back: another tab and back keeps the step (nothing has been opened or sent); the browser's Back leaves
+  // the wallet's page and ends it; coming back shows the list from memory with the row as it was.
+  await homeTab(home, 'Addresses');
+  await homeTab(home, 'Security');
+  await expect(panel).toHaveAttribute('data-stage', 'confirm');
+  await home.goBack();
+  await expect(home.locator('#home-sign-ins')).toHaveCount(0);
+  await openApp(home, scopeId, name);
+  await expect(signInRows(home)).toHaveCount(2);
+  await expect(panel).toHaveCount(0);
+  expect(home.context().pages().filter((p) => p.url().includes('/login'))).toEqual([]);
+  await offer.click();
+  await expect(panel).toHaveAttribute('data-stage', 'confirm');
 
   // The request is held until the "Cancelling the link" screen is seen (then sent on, unchanged).
   let release: () => void = () => undefined;

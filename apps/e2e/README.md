@@ -108,7 +108,8 @@ exactly (`ALLOWED_BROWSER_LINES`: the D347 signal refused when its opener isn't 
 font download of the origin's own IBM Plex files). With `HANA_SHOTS_DIR=<dir>` (Chromium) it saves the screens at 390 px, light (D875's `home-sign-ins-member-older` and
 `sign-in-older-line` among them).
 D902 (D898 option B): a waiting email in a wallet on the shared Google client shows Home's own **Cancel this link**
-(44 px on a phone; no "sign out of it first"); the confirmation and Go back; Cancel the link opens the child, Google's
+(44 px on a phone; no "sign out of it first"); the confirmation and Go back; another tab and back keeps the step, the
+browser's Back ends it (D901's rules); Cancel the link opens the child, Google's
 chooser (`max_age=0`), then "Cancelling the link" (the request held until seen), "Link cancelled", the line and the row
 changed without a reload, one `POST /v1/home/link/cancel`, and Show again agreeing; another Google account at the
 check: "Nothing changed", nothing sent, the row as it was; an answer nobody can read (a routed `504 timeout`): "It may

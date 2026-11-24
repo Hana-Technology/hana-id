@@ -2,7 +2,7 @@
 // wallet on Journear's shared Google client. The same `cancel_link` the sign-in window's "Cancel this link" relays through
 // `POST /v1/link/cancel`, without an app: Home has no publishable key and no partner page, and must not borrow one.
 //
-//   POST /v1/home/link/cancel  {jwt, memberKey, epoch, salt, scopeId}  → cancel_link  200 {result: null, nearTx}
+//   POST /v1/home/link/cancel  {jwt, memberKey, epoch, salt, scopeId}  → cancel_link  200 {result: null, nearTx, sharesRevoked}
 //
 // What stands in for the app gate is the person, twice: a live Passport Home sign-in (homeGate: `Origin === AUTH_ORIGIN`,
 // the per-IP limit, the Home token, its key's signature over this exact body, a counter used once), and a fresh Google
@@ -14,7 +14,8 @@
 //   1. the gate;
 //   2. the Home sign-in is a Google one (an email owner cancels in the app's own sign-in window, as before);
 //   3. the body's shape, exactly these five fields;
-//   4. the proof: genuine and unexpired (login-token.ts, no app), with a nonce;
+//   4. the proof: genuine and unexpired (login-token.ts, no app), with a nonce; a refused proof answers 403 with its
+//      code (never 401, which on a Home route means Home's own sign-in ended);
 //   5. the proof is the same identity as Home's sign-in (provider and `sub`), never another account;
 //   6. the proof's audience is a shared Google client in force (never a scope's own client, never the exit client, which
 //      can't make link changes, D468), admitted for this scope (shared login on), and the contract not paused with the
@@ -112,8 +113,10 @@ async function homeLinkCancel(request: Request, env: Env, ctx: Ctx, exec: Execut
   if ('error' in body) return reject(ctx, 400, 'bad_request', body.error);
 
   // 4. A genuine, unexpired token with a nonce (no app to hold it to).
+  // A refused proof is 403, never 401: 401 on a Home route means Home's own sign-in has ended, and the page signs the
+  // person out of Home for it (an unknown kid after Google rotates its keys must not do that). Its code is kept.
   const verified = await verifyLoginToken(env, body.jwt, now, { anyLoginMethod: true, exec });
-  if (!verified.ok) return loginTokenRefusal(ctx, verified);
+  if (!verified.ok) return loginTokenRefusal(ctx, verified.status === 401 ? { ...verified, status: 403 } : verified);
   const token = verified.token;
   if (token.nonce === null) return reject(ctx, 400, 'nonce_mismatch', 'The ID token has no nonce');
 
@@ -192,8 +195,9 @@ async function homeLinkCancel(request: Request, env: Env, ctx: Ctx, exec: Execut
   lapRelay(ctx, result);
   if (!result.ok && NOT_EXECUTED.has(result.code)) await unclaim();
   if (!result.ok) return relayFailure(ctx, env, result, panicKey);
-  await revokeAccountShares(env, body.scopeId, checked.root, ctx);
+  // Whether the account's devices will be asked to sign in again: the page says so only when this is true (D902).
+  const sharesRevoked = await revokeAccountShares(env, body.scopeId, checked.root, ctx);
   // The wallet directory (D314): the account as the chain has it now; the member this cancel removed, in case it can't read.
   await inBackground(exec, () => syncAccount(env, body.scopeId, checked.root, [{ provider: token.provider, sub: token.sub }], { requestId, endpoint: ctx.endpoint }, { hint: { memberKey: body.memberKey, action: 'cancel' } }));
-  return done(ctx, 200, { result: null, nearTx: result.nearTx });
+  return done(ctx, 200, { result: null, nearTx: result.nearTx, sharesRevoked });
 }

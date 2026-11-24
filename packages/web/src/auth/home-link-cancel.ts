@@ -74,6 +74,8 @@ export const CANCEL_TEXT = Object.freeze({
   working: 'This takes a few seconds…',
   doneTitle: 'Link cancelled',
   devices: 'Devices signed in to this wallet will be asked to sign in again.',
+  /** When Journear couldn't sign those devices out (the cancel itself is done). */
+  devicesStay: 'Devices already signed in to this wallet stay signed in until their sign-in ends.',
   nothingTitle: 'Nothing changed',
   stillWaiting: 'The link is still waiting.',
   changed: 'The ways to sign in to this wallet may have changed since this page showed them.',
@@ -138,12 +140,33 @@ const NOTHING_CODES: Readonly<Record<string, NothingGroup>> = Object.freeze({
   origin_not_allowed: 'now',
 });
 
+/**
+ * The codes Home's own gate answers 401 with (apps/api home/identity.ts `homeGate`: its own, and the Home token's
+ * verification, which it turns into 401): Home's sign-in has ended. The route answers a refused proof with 403, so a 401
+ * with one of these codes is never about the proof.
+ */
+export const HOME_GATE_401_CODES: ReadonlySet<string> = new Set([
+  'missing_home_identity',
+  'invalid_home_identity',
+  'not_a_home_client',
+  'nonce_mismatch',
+  'home_identity_expired',
+  'invalid_signature',
+  'invalid_token',
+  'token_expired',
+  'token_stale',
+  'bad_token',
+  'unsupported_issuer',
+  'token_has_pii',
+]);
+
 /** What an answer of `POST /v1/home/link/cancel` that wasn't a success means (fail closed: unknown unless certain). */
 export function cancelOutcome(err: unknown): CancelOutcome {
   if (!(err instanceof ApiError)) return { kind: 'unknown', code: 'api_unavailable' };
   const code = /^[a-z][a-z0-9_]{0,63}$/u.test(err.code) ? err.code : 'error';
-  // Every credential refusal of Home's own sign-in is a 401, before anything is read.
-  if (err.status === 401) return { kind: 'nothing', group: 'signed_out', code };
+  // Home's own sign-in refused (before anything is read): only the gate's 401s sign the person out of Home. Any other
+  // 401 relayed nothing either, but isn't a reason to end Home's sign-in.
+  if (err.status === 401) return HOME_GATE_401_CODES.has(code) ? { kind: 'nothing', group: 'signed_out', code } : { kind: 'nothing', group: 'now', code };
   // A known rule of the contract refused it in its own receipt: reverted, so nothing changed (panics.ts, `reason`).
   if (code === 'contract_rejected' && typeof err.details.reason === 'string') return { kind: 'nothing', group: 'changed', code };
   const group = Object.hasOwn(NOTHING_CODES, code) ? NOTHING_CODES[code] : undefined;
@@ -249,6 +272,8 @@ export function startHomeLinkCancel(deps: HomeLinkCancelDeps): HomeLinkCancel {
   let scope: HomeScope | null = null;
   let row: CancelRow | null = null;
   let outcome: CancelOutcome | null = null;
+  /** After a cancel: whether the API signed the wallet's devices out (its `sharesRevoked`). */
+  let devicesOut = false;
   let pending: Pending | null = null;
   let child: Window | null = null;
   let childName: string | null = null;
@@ -302,6 +327,7 @@ export function startHomeLinkCancel(deps: HomeLinkCancelDeps): HomeLinkCancel {
     scope = null;
     row = null;
     outcome = null;
+    devicesOut = false;
   }
   /** Ends what is in progress on an outcome screen (nothing is sent after this). */
   function finish(o: CancelOutcome | 'done'): void {
@@ -493,8 +519,9 @@ export function startHomeLinkCancel(deps: HomeLinkCancelDeps): HomeLinkCancel {
     if (!c) return;
     if (!live || live.identity !== p.identity || !live.identity.usable || live.sub !== p.sub) return nothing('signed_out', 'home_signed_out');
     const body = { jwt: token, memberKey: p.row.key, epoch: c.epoch, salt: Array.from(c.salt), scopeId: p.scope.scopeId };
+    let answer: { sharesRevoked: boolean };
     try {
-      await deps.api.linkCancel(p.identity, body);
+      answer = await deps.api.linkCancel(p.identity, body);
     } catch (err) {
       body.jwt = '';
       if (run !== mine) return;
@@ -506,6 +533,7 @@ export function startHomeLinkCancel(deps: HomeLinkCancelDeps): HomeLinkCancel {
     // The cancel is on chain: what the section shows changes even if the user has left this app's page meanwhile.
     deps.cancelled(p.scope.scopeId, p.row.key);
     if (run !== mine) return;
+    devicesOut = answer.sharesRevoked;
     finish('done');
   }
 
@@ -560,7 +588,7 @@ export function startHomeLinkCancel(deps: HomeLinkCancelDeps): HomeLinkCancel {
           'success',
           title(CANCEL_TEXT.doneTitle),
           d.h('p', { attrs: { id: 'home-sign-in-cancel-what' } }, cancelDoneText(kind)),
-          d.h('p', {}, CANCEL_TEXT.devices),
+          d.h('p', { attrs: { id: 'home-sign-in-cancel-devices' } }, devicesOut ? CANCEL_TEXT.devices : CANCEL_TEXT.devicesStay),
           d.h('div', { class: 'actions start' }, button(CANCEL_TEXT.close, 'home-sign-in-cancel-close', closeResult)),
         );
       case 'nothing': {

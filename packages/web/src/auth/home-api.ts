@@ -323,7 +323,7 @@ export interface HomeApi extends HomeDevicesApi, HomeProfileApi {
    * proof of the same account. The body carries that proof; it goes only to the API and is never logged. Sent once, never
    * repeated here.
    */
-  linkCancel(identity: HomeIdentity, body: HomeLinkCancelBody): Promise<{ nearTx: string | null }>;
+  linkCancel(identity: HomeIdentity, body: HomeLinkCancelBody): Promise<{ nearTx: string | null; sharesRevoked: boolean }>;
 }
 
 /** `POST /v1/home/link/cancel`'s body (D902): the proof, the waiting member, the account's epoch, the salt, the scope. */
@@ -696,7 +696,8 @@ export function homeApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...a
       const out = await parseApiResponse(await fetchFn(url.toString(), init({ method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', [HOME_IDENTITY_HEADER]: header }, body: bytes })));
       // Only the route's own answer is believed: anything else can't say the link was cancelled.
       if (out.result !== null || !('result' in out) || (out.nearTx !== undefined && out.nearTx !== null && typeof out.nearTx !== 'string')) throw bad('/v1/home/link/cancel');
-      return { nearTx: typeof out.nearTx === 'string' ? out.nearTx : null };
+      // `sharesRevoked` only when the API says so: anything else never claims devices will be signed out.
+      return { nearTx: typeof out.nearTx === 'string' ? out.nearTx : null, sharesRevoked: out.sharesRevoked === true };
     },
   };
 }

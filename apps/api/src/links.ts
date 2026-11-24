@@ -166,10 +166,9 @@ export async function precheckChange(
   if (j.nonce !== expected) return refused('link_mismatch', 'Link nonce doesn’t match');
   const self = who.identity.key;
   if (action === 'cancel') {
-    if (opts.activeActor) {
-      if (self === memberKey) return refused('not_allowed', 'Passport Home cancels another sign-in’s link only');
-      if (who.identity.status === 'pending') return { status: 409, code: 'link_pending', error: 'Sign-in method link is pending' };
-    }
+    // Home's rule (D902): never the waiting sign-in itself. A pending actor cancelling another member is then refused
+    // by the contract's own rule just below, as for the window.
+    if (opts.activeActor && self === memberKey) return refused('not_allowed', 'Passport Home cancels another sign-in’s link only');
     if (self !== memberKey) {
       if (who.identity.status === 'pending') return { status: 409, code: 'link_pending', error: 'Sign-in method link is pending' };
     }
@@ -187,9 +186,10 @@ export async function precheckChange(
 /**
  * Revokes every live vault share of `root`'s path in `scopeId`, in every app of the scope (key_index
  * 0..SHARE_KEY_INDEXES-1). Logged with its count only; a failure is logged and never fails the answer (the link
- * change is already on chain, and the shares end at their own limits).
+ * change is already on chain, and the shares end at their own limits). True when the revocation was written (D902:
+ * Home says devices will be asked to sign in again only then).
  */
-export async function revokeAccountShares(env: Env, scopeId: string, root: { provider: string; sub: string }, ctx: { requestId: string; endpoint: string; appId?: string }, now = Date.now()): Promise<void> {
+export async function revokeAccountShares(env: Env, scopeId: string, root: { provider: string; sub: string }, ctx: { requestId: string; endpoint: string; appId?: string }, now = Date.now()): Promise<boolean> {
   try {
     const hashes = await Promise.all(Array.from({ length: SHARE_KEY_INDEXES }, (_, k) => sha256(new TextEncoder().encode(`${scopeId}#${root.provider}#${root.sub}#${k}`))));
     const marks = hashes.map((_, i) => `?${i + 3}`).join(', ');
@@ -200,8 +200,10 @@ export async function revokeAccountShares(env: Env, scopeId: string, root: { pro
       .bind(now, scopeId, ...hashes)
       .run();
     log({ event: 'link_shares_revoked', requestId: ctx.requestId, appId: ctx.appId, endpoint: ctx.endpoint, removed: res.meta.changes ?? 0 });
+    return true;
   } catch {
     log({ event: 'link_shares_revoke_failed', requestId: ctx.requestId, appId: ctx.appId, endpoint: ctx.endpoint, code: 'internal' }, 'error');
+    return false;
   }
 }
 

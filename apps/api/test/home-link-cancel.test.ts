@@ -11,13 +11,13 @@ import { env } from 'cloudflare:workers';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fromHex, sha256 } from '../src/bytes.ts';
-import { HOME_LINK_CANCEL_ENDPOINT, HOME_LINK_CANCEL_PER_IP_MINUTE, toHomeLinkCancel } from '../src/home/link-cancel.ts';
+import { HOME_LINK_CANCEL_ENDPOINT, HOME_LINK_CANCEL_PER_IP_MINUTE, HOME_LINK_CANCEL_PER_KEY_MINUTE, toHomeLinkCancel } from '../src/home/link-cancel.ts';
 import { clearLinkViewCaches } from '../src/link-views.ts';
 import { POOL_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
 import { linkChangeNonce } from '../src/session-crypto.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { type EmailChain, emailAud, emailEnv, emailToken, ikSync, withEmail } from './email-helpers.ts';
-import { GOOGLE_ISS, call, chain, google, seedApp, uid } from './helpers.ts';
+import { GOOGLE_ISS, call, chain, google, seedApp, startOfMinuteClock, uid } from './helpers.ts';
 import { hanaHeaders } from './login-helpers.ts';
 import { ledger } from './usage-ledger.ts';
 
@@ -149,6 +149,7 @@ describe('POST /v1/home/link/cancel: the cancel', () => {
     expect(r.status, JSON.stringify(b)).toBe(200);
     expect(b.result).toBeNull();
     expect(typeof b.nearTx).toBe('string');
+    expect(b.sharesRevoked).toBe(true);
     expect(cancels()).toHaveLength(1);
     const tx = cancels()[0]!;
     expect(tx.args).toEqual({ scope_id: scope, jwt, member_key: memberKey(), epoch: 1, salt });
@@ -171,6 +172,26 @@ describe('POST /v1/home/link/cancel: the cancel', () => {
       expect(text).not.toContain(jwt);
       expect(text).not.toContain(memberKey());
     }
+  });
+
+  it('the answer says whether the account’s devices were signed out: false when the revocation couldn’t be written (the cancel itself stands)', async () => {
+    const real = env.DB;
+    const DB = new Proxy(real, {
+      get(target, prop) {
+        if (prop === 'prepare') return (sql: string) => {
+          if (sql.includes('UPDATE vault_shares SET revoked_at')) throw new Error('D1 down');
+          return target.prepare(sql);
+        };
+        const v = Reflect.get(target, prop);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const r = await cancel(bodyOf(await proof()), { env: { DB } });
+    const b = await json(r);
+    expect(r.status, JSON.stringify(b)).toBe(200);
+    expect(b.sharesRevoked).toBe(false);
+    expect(cancels()).toHaveLength(1);
   });
 
   it('an active member of the wallet (not its root) cancels another waiting sign-in', async () => {
@@ -260,8 +281,10 @@ describe('POST /v1/home/link/cancel: the body and the proof', () => {
   });
 
   it('a proof that isn’t genuine, has no nonce, or carries more than the allowed claims is refused', async () => {
+    // A proof that doesn't verify is 403 with its code, never 401: a 401 on a Home route means Home's own sign-in ended,
+    // and the page would sign the person out of Home for it.
     const forged = (await proof()).replace(/\.[^.]+$/u, '.AAAA');
-    expect((await cancel(bodyOf(forged))).status).toBeGreaterThanOrEqual(400);
+    expect(await refusal(await cancel(bodyOf(forged)))).toEqual([403, 'invalid_token', undefined]);
     expect(await refusal(await cancel(bodyOf(await proof({ nonce: null }))))).toEqual([400, 'nonce_mismatch', undefined]);
     const pii = await cancel(bodyOf(await proof({ claims: { email: 'a@example.com' } })));
     expect([pii.status, (await json(pii)).code]).toEqual([400, 'token_has_pii']);
@@ -345,7 +368,17 @@ describe('POST /v1/home/link/cancel: the chain’s rules, stricter than the wind
 });
 
 describe('POST /v1/home/link/cancel: once only, the limits, a failed relay', () => {
-  it('one relay per proof: the same proof again from Home, or through the window’s /v1/link/cancel, is refused while the first stands', async () => {
+  /** A fresh proof (its own salt) and its body. */
+  const freshProof = async (): Promise<{ jwt: string; salt: number[]; raw: string }> => {
+    const s2 = Array.from(crypto.getRandomValues(new Uint8Array(32)));
+    const nonce = await linkChangeNonce(env.SIGNER_ACCOUNT, scope, 'cancel', fromHex(rootKey()), fromHex(memberKey()), 1, Uint8Array.from(s2));
+    const jwt = await google.sign({ iss: GOOGLE_ISS, aud: SHARED, sub: G, nonce, exp: Math.floor(Date.now() / 1000) + 600 });
+    return { jwt, salt: s2, raw: JSON.stringify({ jwt, memberKey: memberKey(), epoch: 1, salt: s2, scopeId: scope }) };
+  };
+  /** The window's route with the same proof, from the app's vault (a fresh IP each time). */
+  const viaWindow = (app: { key: string }, p: { jwt: string; salt: number[] }) => call('/v1/link/cancel', { headers: hanaHeaders(app), body: { jwt: p.jwt, memberKey: memberKey(), epoch: 1, salt: p.salt }, env: emailEnv() });
+
+  it('one relay per proof, Home first: the same proof again from Home, or through the window’s /v1/link/cancel, is refused while the first stands', async () => {
     const app = await seedApp({ scope });
     const jwt = await proof();
     expect((await cancel(bodyOf(jwt))).status).toBe(200);
@@ -355,7 +388,17 @@ describe('POST /v1/home/link/cancel: once only, the limits, a failed relay', () 
     expect(cancels()).toHaveLength(1);
   });
 
-  it('a relay that certainly didn’t run gives the proof back (it can be sent again); a contract refusal is reverted and says why', async () => {
+  it('one relay per proof, window first: a proof the window’s route relayed is refused by Home', async () => {
+    const app = await seedApp({ scope });
+    const p = await freshProof();
+    const first = await viaWindow(app, p);
+    expect(first.status, JSON.stringify(await first.clone().json())).toBe(200);
+    expect(await refusal(await cancel(p.raw))).toEqual([409, 'link_in_flight', undefined]);
+    expect(cancels()).toHaveLength(1);
+  });
+
+  it('a relay that certainly didn’t run gives the proof back (it can be sent again); a contract refusal is reverted, says why, and keeps the proof claimed', async () => {
+    const app = await seedApp({ scope });
     const jwt = await proof();
     const noKey = await cancel(bodyOf(jwt), { env: { RELAYER_KEYS: '[]' } });
     expect([noKey.status, (await json(noKey)).code]).toEqual([503, 'relayer_unconfigured']);
@@ -368,18 +411,63 @@ describe('POST /v1/home/link/cancel: once only, the limits, a failed relay', () 
     expect(await refusal(late)).toEqual([422, 'contract_rejected', 'stale_epoch']);
     expect(cancels()).toHaveLength(1);
     expect(ledger.events.filter((e) => e.scope_id === scope).map((e) => [e.endpoint, e.outcome, e.relayed]).at(-1)).toEqual(['home_link_cancel', 'rejected', true]);
+    // A transaction that ran stays claimed: the same proof can't be relayed again, by Home or by the window.
+    near.contract.cancel_link = () => null;
+    expect(await refusal(await cancel(bodyOf(jwt)))).toEqual([409, 'link_in_flight', undefined]);
+    const window = await call('/v1/link/cancel', { headers: hanaHeaders(app), body: { jwt, memberKey: memberKey(), epoch: 1, salt }, env: emailEnv() });
+    expect([window.status, (await json(window)).code]).toEqual([409, 'link_in_flight']);
+    expect(cancels()).toHaveLength(1);
   });
 
-  it('the account’s link changes per minute are shared with the window’s route', async () => {
-    let last: Response | null = null;
-    for (let i = 0; i < 11; i++) {
-      const s = Array.from(crypto.getRandomValues(new Uint8Array(32)));
-      const nonce = await linkChangeNonce(env.SIGNER_ACCOUNT, scope, 'cancel', fromHex(rootKey()), fromHex(memberKey()), 1, Uint8Array.from(s));
-      const jwt = await google.sign({ iss: GOOGLE_ISS, aud: SHARED, sub: G, nonce, exp: Math.floor(Date.now() / 1000) + 600 });
-      last = await cancel(JSON.stringify({ jwt, memberKey: memberKey(), epoch: 1, salt: s, scopeId: scope }));
-      if (last.status === 429) break;
-    }
-    expect(await refusal(last!)).toEqual([429, 'rate_limited', undefined]);
+  it('an outcome nobody knows (the transaction timed out) keeps the proof claimed', async () => {
+    const p = await freshProof();
+    const id = await newIdentity({ sub: G });
+    const header = id.sign(p.raw);
+    near.sendTxTimesOut = true;
+    near.txPollFailures = 1000;
+    // Every poll fails; run the clock fast so the relay gives up on its outcome deadline (as owner-actions.test.ts does).
+    const realNow = Date.now.bind(Date);
+    let skew = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + (skew += 10_000));
+    const r = await post(p.raw, header);
+    clock.mockRestore();
+    const b = await json(r);
+    expect([r.status, b.code], JSON.stringify(b)).toEqual([504, 'timeout']);
+    near.sendTxTimesOut = false;
+    near.txPollFailures = 0;
+    expect(await refusal(await cancel(p.raw))).toEqual([409, 'link_in_flight', undefined]);
+    expect(cancels()).toHaveLength(1);
+  });
+
+  it('the account’s link changes per minute are shared with the window’s route: Home’s fill the window’s', async () => {
+    await startOfMinuteClock();
+    const app = await seedApp({ scope });
+    for (let i = 0; i < 10; i++) expect((await cancel((await freshProof()).raw)).status, `Home ${i}`).toBe(200);
+    expect(await refusal(await cancel((await freshProof()).raw))).toEqual([429, 'rate_limited', undefined]);
+    const window = await viaWindow(app, await freshProof());
+    expect([window.status, (await json(window)).code]).toEqual([429, 'rate_limited']);
     expect(cancels()).toHaveLength(10);
+  });
+
+  it('the account’s link changes per minute are shared with the window’s route: the window’s fill Home’s', async () => {
+    await startOfMinuteClock();
+    const app = await seedApp({ scope });
+    for (let i = 0; i < 10; i++) {
+      const r = await viaWindow(app, await freshProof());
+      expect(r.status, `window ${i}: ${JSON.stringify(await r.clone().json())}`).toBe(200);
+    }
+    expect(await refusal(await cancel((await freshProof()).raw))).toEqual([429, 'rate_limited', undefined]);
+    expect(cancels()).toHaveLength(10);
+  });
+
+  it('per Home key: the sixth request in a minute is refused, even from another IP', async () => {
+    await startOfMinuteClock();
+    const id = await newIdentity({ sub: G });
+    for (let i = 0; i < HOME_LINK_CANCEL_PER_KEY_MINUTE; i++) expect((await post('{}', id.sign('{}'))).status, `request ${i}`).toBe(400);
+    const r = await post('{}', id.sign('{}'));
+    const b = await json(r);
+    expect([r.status, b.code, b.error]).toEqual([429, 'rate_limited', 'Rate limit exceeded (per Home key per minute)']);
+    // Another Home key is unaffected.
+    expect((await post('{}', (await newIdentity({ sub: G })).sign('{}'))).status).toBe(400);
   });
 });

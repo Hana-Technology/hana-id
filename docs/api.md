@@ -1639,8 +1639,10 @@ scope, root, member, epoch, salt); `memberKey` 64 lowercase hex; `epoch` a u64; 
 key's signature over this body, single use: `403 origin_not_allowed`, `429 rate_limited`, `401 missing_home_identity` /
 `invalid_home_identity` / `invalid_signature` / `nonce_mismatch` / `home_identity_expired` / `not_a_home_client`, `409
 counter_reused`); (2) the Home identity is a Google one (`403 google_only`); (3) the shape (`400 bad_request`); (4) the
-token (`verifyLoginToken` with no app: its refusals, e.g. `invalid_token`, `token_expired`, `token_has_pii`; no nonce:
-`400 nonce_mismatch`); (5) its `(provider, sub)` equals the Home identity's (`403 home_account_mismatch`); (6) its `aud`
+token (`verifyLoginToken` with no app: its refusals with their codes, e.g. `invalid_token`, `token_expired`,
+`token_has_pii`; **a proof refusal is never 401**: what `verifyLoginToken` answers 401 (`invalid_token`, `token_stale`)
+is answered **403** here, since a 401 on a Home route means Home's own sign-in ended and the page then signs the person
+out of Home; no nonce: `400 nonce_mismatch`); (5) its `(provider, sub)` equals the Home identity's (`403 home_account_mismatch`); (6) its `aud`
 is a shared Google client in force (`403 not_shared_client`; a scope's own client and the exit client never are),
 admitted for this scope (`checkClientScope`: `403 unknown_scope`, `shared_login_disabled`), the contract not paused and
 the token's kid active (`503 paused`, `issuer_key_pending`); a view that can't be read is `502 near_unavailable`; (7) the
@@ -1650,7 +1652,9 @@ epoch is the account's (`stale_epoch`) and the member is pending (`no_such_membe
 member of another account); (8) the panic cache; one relay per proof across isolates and across this route and
 `/v1/link/cancel` (the `link-tokens` claim: `409 link_in_flight`; `503 rate_limiter_unavailable`); the account's
 link-change windows (`429 rate_limited`, the claim released). Then one `cancel_link` from the **session** pool (the
-method the window uses; the Home pool still relays derives only). `200 {result: null, nearTx}`; a relay failure as
+method the window uses; the Home pool still relays derives only). `200 {result: null, nearTx, sharesRevoked}`
+(`sharesRevoked`: whether the account's vault shares were revoked; false when that write failed, which never fails the
+answer: the cancel is on chain); a relay failure as
 `/v1/link/cancel` (`relayFailure`: a known contract rule as `contract_rejected` with its `reason`, reverted; a state panic
 as `409 link_pending` / `links_unavailable`; otherwise the relay's code). After a success: every vault share of the
 account root's path in every app of the scope revoked (`revokeAccountShares`, as `/v1/link/cancel`), the wallet

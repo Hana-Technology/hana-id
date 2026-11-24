@@ -1236,9 +1236,17 @@ section.
 ### Passport Home's cancel of a waiting link (D902, D898 option B; `POST /v1/home/link/cancel`, `home-link-cancel.ts`; not deployed)
 
 The window's Cancel moved into Home for one case: a waiting email or Google account of a wallet on the shared Google
-client, cancelled by a Google sign-in that already opens it. Authority is the window's (a fresh Google sign-in over the
+client, cancelled by a Google sign-in that already opens it. Authority is the window's (a Google sign-in over the
 contract's `link_change` "cancel" nonce, which the contract verifies) plus Home's live session and three stricter rules.
 Nothing about the delay, what a waiting sign-in can do, paths or keys changes.
+
+**The Google sign-in is asked to be fresh, not proved fresh.** The child asks Google for `max_age=0` and the account
+chooser, but Google sends no `auth_time` even with `max_age=0` (as for Home's derive and the export window, above and
+D604), the page checks `auth_time` only when it is present, and the API doesn't check it at all (nothing to check). So
+what holds is: a stolen Home session alone (its key and token) can't make the proof, because the proof is a new Google ID
+token over this change's nonce; but anyone who can drive the victim's browser while it is signed in to Google gets one
+with one click in the chooser, exactly as for Home's derive and export. No server-side `auth_time` check is added while
+Google doesn't send the claim.
 
 | Invariant | Enforced by |
 |---|---|
@@ -1246,11 +1254,15 @@ Nothing about the delay, what a waiting sign-in can do, paths or keys changes.
 | A cancel can't be forged from another site or replayed: no cookie; `Origin` must be the auth origin; the Home key (in page memory) signs the exact body with a counter used once; the proof's nonce commits to one root, member, epoch and salt, and the first cancel moves the epoch; one relay per proof across isolates and across this route and `/v1/link/cancel` (`link-tokens` claim) | `homeGate`; `home/link-cancel.ts`; tests "the Home gate", "once only" |
 | Only the shared Google client: a scope's own client and the exit client (which can't make link changes, D468) are refused, and the client must be admitted for the scope (shared login on). Email Home sign-ins are refused (B+email isn't built) | `isSharedClient`, `checkClientScope`, `google_only`; tests "only the shared Google client", "an email Home sign-in" |
 | The page sends nothing it can't account for: the child recomputes the nonce from the root, member and epoch it was given (the action is fixed to "cancel"); the page takes the root and epoch from a fresh read on both providers (they must agree) and refuses unless the row is still waiting and the viewer active; Google's token is checked against Google's keys for that client, that nonce and Home's own `sub` before the one request; the request is never sent twice | `login-page.ts` `checkHomeCancel`, `home-link-cancel.ts`; `login-page.test.ts`, `home-link-cancel.test.ts` |
-| Fail closed and truthful: "Link cancelled" only on the route's `200 {result: null}`; "Nothing changed" only for codes refused before the relay or a contract rule that reverted; everything else (no answer, a timeout, an odd answer) is "It may not have been cancelled" with Show again, and the row stays | `cancelOutcome`; `home-link-cancel.test.ts` "the API's answer … picks its screen" |
+| Fail closed and truthful: "Link cancelled" only on the route's `200 {result: null}`; "Nothing changed" only for codes refused before the relay or a contract rule that reverted; everything else (no answer, a timeout, an odd answer) is "It may not have been cancelled" with Show again, and the row stays. "Devices … will be asked to sign in again" only when the route says `sharesRevoked: true` (else "… stay signed in until their sign-in ends") | `cancelOutcome`; `home-link-cancel.test.ts` "the API's answer … picks its screen", "Link cancelled says devices …" |
+| A refused proof never ends Home's sign-in: the route answers a proof the API can't verify (an unknown key after Google rotates, a forged signature) with 403 and its code, never 401; the page treats a 401 as "Home's sign-in ended" only for Home's own gate's codes (`HOME_GATE_401_CODES`) | `home/link-cancel.ts`; `cancelOutcome`; API test "a proof that isn't genuine …", web tests "a refused proof (403 invalid_token) …", "a 401 that isn't Home's own gate …" |
+| A one-relay-per-proof claim is kept whenever the transaction may have run (`contract_rejected`, a timeout), and released only when it certainly didn't, in both orders across this route and `/v1/link/cancel` | `home/link-cancel.ts`; API tests "one relay per proof, Home first / window first", "keeps the proof claimed", "an outcome nobody knows" |
+| Partner statements: the ledger writes a Home cancel for Journear's own org as a `scope` row with no app. A partner's statement refuses any row with no app of a scope where the org has no app (deleted ones included), so a mis-set `HANA_ORG_ID` can't bill a partner for others' cancels | `apps/admin/src/statement.ts` `buildStatement`; `test-ops/statements.test.ts` "D902: a Passport Home link cancel …" |
 | No partner billed or named: no app gate, no publishable key; the relay's usage event `home_link_cancel` is Journear's own org's (so the nonce check explains the session key's nonce) | `home/link-cancel.ts`, migrations-usage 0011; API test "one event for Journear's own org" |
 | Nothing secret logged or kept: no token, `sub`, identity key or path in a log line, an answer or the usage event; the page keeps the proof in memory until the request is sent, zeroes the relay keys and salt, writes nothing to storage or the address | `home/link-cancel.ts`; test "logs nothing of the user"; `home-link-cancel.test.ts` (storage empty) |
 
-Residual: a stolen Home session plus control of the victim's Google account can cancel a waiting link, which the same
+Residual: a stolen Home session plus control of the victim's Google session (one click in the chooser) can cancel a
+waiting link, which the same
 attacker could already do in the sign-in window (and cancelling is the safe side). Two NEAR providers lying alike could
 show a wrong root or epoch; the API and the contract refuse a nonce that doesn't match the chain, so the cost is a
 refused attempt. Home cancels share the session pool and the account's link-change windows with the window's route;

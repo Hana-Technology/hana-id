@@ -70,12 +70,18 @@ export function buildStatement(i: StatementInputs): { csv: string; totals: State
   const appOf = (r: ReportSqlRow) => (r.app_id === null ? undefined : i.apps.get(r.app_id));
   const environmentOf = (r: ReportSqlRow) => appOf(r)?.environment ?? envOfScope.get(r.scope_id) ?? '';
 
-  // A partner pays only for Home logins of its own scopes. A Home row of any other scope means the ledger put it on the
-  // wrong org (the API's HANA_ORG_ID naming a partner's org, or a forged event): refuse rather than bill it.
+  // A partner pays only for rows of its own scopes. A row with no app (a Home login, kind `home`; or kind `scope`: an
+  // owner action, or a Passport Home link cancel, D902, which the API writes for Journear's own org) of any scope where
+  // the org has no app, deleted ones included, means the ledger put it on the wrong org (the API's HANA_ORG_ID naming a
+  // partner's org, or a forged event): refuse rather than bill it. A partner's own owner actions are always of a scope
+  // it has an app in.
   if (!i.internal) {
     const own = new Set([...i.apps.values()].map((a) => a.scopeId));
-    const foreign = [...i.dayRows, ...i.monthRows].find((r) => reportRowKind(r) === 'home' && !own.has(r.scope_id));
-    if (foreign) throw new StatementRefused(`Passport Home logins of scope ${foreign.scope_id} are recorded for ${i.orgId}, which has no app in that scope: not issued (check the API's HANA_ORG_ID and the ledger)`);
+    const foreign = [...i.dayRows, ...i.monthRows].find((r) => r.app_id === null && !own.has(r.scope_id));
+    if (foreign) {
+      const what = reportRowKind(foreign) === 'home' ? 'Passport Home logins' : 'Scope-level events (owner actions or Passport Home link cancels)';
+      throw new StatementRefused(`${what} of scope ${foreign.scope_id} are recorded for ${i.orgId}, which has no app in that scope: not issued (check the API's HANA_ORG_ID and the ledger)`);
+    }
   }
 
   const cells = (r: ReportSqlRow, day: string, total: boolean): string[] => {

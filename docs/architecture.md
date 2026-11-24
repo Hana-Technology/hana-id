@@ -1712,7 +1712,8 @@ again, stricter than the window's route (the same identity as Home's, a shared c
 member, the member pending in the actor's own account), relays one `cancel_link` from the session pool, revokes the
 account's vault shares in every app of the scope, syncs the wallet directory and writes one `home_link_cancel` usage
 event for Journear's own org. Outcomes: "Link cancelled" (the summary line and the row change at once, the row goes on
-Close), "Nothing changed" (refused before anything was sent, or by the contract, which reverts), "It may not have been
+Close; "Devices signed in to this wallet will be asked to sign in again." only when the route answers
+`sharesRevoked: true`, else "Devices already signed in to this wallet stay signed in until their sign-in ends."), "Nothing changed" (refused before anything was sent, or by the contract, which reverts), "It may not have been
 cancelled" (anything else; **Show again** reads the list). Not changed: the delay, what a waiting sign-in can do,
 derivation paths and keys (address impact: none).
 

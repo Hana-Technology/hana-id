@@ -9,8 +9,8 @@ import { jargonIn } from '@hana-id/brand/plain-words';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ServerClock } from '../../src/auth/clock.ts';
 import { dom } from '../../src/auth/dom.ts';
-import type { HomeConfig, HomeIdentity, HomeLinkCancelBody, HomeScope } from '../../src/auth/home-api.ts';
-import { CANCEL_TEXT, cancelButtonName, cancelConfirmText, cancelDoneText, cancelOutcome, nothingLines } from '../../src/auth/home-link-cancel.ts';
+import { type HomeConfig, type HomeIdentity, type HomeLinkCancelBody, type HomeScope, homeApi } from '../../src/auth/home-api.ts';
+import { CANCEL_TEXT, HOME_GATE_401_CODES, cancelButtonName, cancelConfirmText, cancelDoneText, cancelOutcome, nothingLines } from '../../src/auth/home-link-cancel.ts';
 import { HOME_CANCEL_SIGN_IN_TITLE } from '../../src/auth/login-page.ts';
 import { type HomeSignIns, type HomeSignInsWho, SIGN_IN_TEXT, startHomeSignIns } from '../../src/auth/home-sign-ins.ts';
 import type { NearReader } from '../../src/auth/near-rpc.ts';
@@ -71,7 +71,7 @@ interface H {
   calls: { method: string; args: unknown }[];
   sent: { identity: HomeIdentity; body: HomeLinkCancelBody }[];
   /** What `linkCancel` does (resolves by default). */
-  reply: () => Promise<{ nearTx: string | null }>;
+  reply: () => Promise<{ nearTx: string | null; sharesRevoked: boolean }>;
   signedOut: number;
   identity: HomeIdentity;
   signer: TokenSigner;
@@ -97,7 +97,7 @@ async function harness(o: Opts = {}): Promise<H> {
   let relayResolve: ((v: RelayReadResponse) => void) | null = null;
   const signer = await tokenSigner();
   const win = new FakeWindow('/home', '');
-  const h = { chain: waiting(), chain2: null, win, child: null, calls: [], sent: [], signedOut: 0, signer, identity: fakeIdentity(), reply: async () => ({ nearTx: 'tx1' }) } as unknown as H;
+  const h = { chain: waiting(), chain2: null, win, child: null, calls: [], sent: [], signedOut: 0, signer, identity: fakeIdentity(), reply: async () => ({ nearTx: 'tx1', sharesRevoked: true }) } as unknown as H;
   const at = (second: boolean) => async (method: string, args: unknown): Promise<unknown> => {
     h.calls.push({ method: `${second ? 'second' : 'primary'}:${method}`, args });
     const a = args as Record<string, string>;
@@ -461,6 +461,7 @@ describe('the cancel', () => {
     ['the contract’s own refusal (reverted)', new ApiError(422, 'contract_rejected', 'x', 'tx', null, { reason: 'no_such_member' }), 'nothing', CANCEL_TEXT.changed],
     ['link_pending', new ApiError(409, 'link_pending', 'x', null, null), 'nothing', CANCEL_TEXT.changed],
     ['the same account check', new ApiError(403, 'home_account_mismatch', 'x', null, null), 'nothing', CANCEL_TEXT.notYou],
+    ['a proof that doesn’t verify (403, e.g. an unknown key after Google rotates)', new ApiError(403, 'invalid_token', 'x', null, null), 'nothing', CANCEL_TEXT.notYou],
     ['a limit', new ApiError(429, 'rate_limited', 'x', null, null), 'nothing', CANCEL_TEXT.notNow],
     ['paused', new ApiError(503, 'paused', 'x', null, null), 'nothing', CANCEL_TEXT.notNow],
     ['a relay that never ran', new ApiError(503, 'relayer_unconfigured', 'x', null, null), 'nothing', CANCEL_TEXT.notNow],
@@ -511,6 +512,69 @@ describe('the cancel', () => {
     expect(panelText()).toContain('Your sign-in to Passport Home has ended.');
   });
 
+  it('a 401 that isn’t Home’s own gate never signs the person out of Home', async () => {
+    const h = await harness();
+    h.reply = () => Promise.reject(new ApiError(401, 'something_else', 'x', null, null));
+    await h.start();
+    h.hello();
+    await h.google();
+    expect(stageOf()).toBe('nothing');
+    expect(h.signedOut).toBe(0);
+    expect(panelText()).toContain(CANCEL_TEXT.notNow);
+    expect(panelText()).not.toContain('Your sign-in to Passport Home has ended.');
+  });
+
+  it('a refused proof (403 invalid_token) says it couldn’t check it was you, and never signs the person out of Home', async () => {
+    const h = await harness();
+    h.reply = () => Promise.reject(new ApiError(403, 'invalid_token', 'x', null, null));
+    await h.start();
+    h.hello();
+    await h.google();
+    expect(stageOf()).toBe('nothing');
+    expect(h.signedOut).toBe(0);
+    expect(panelText()).toContain(CANCEL_TEXT.notYou);
+  });
+
+  it('Link cancelled says devices will be asked to sign in again only when the API signed them out; otherwise that they stay signed in', async () => {
+    const h = await harness();
+    h.reply = async () => ({ nearTx: 'tx1', sharesRevoked: false });
+    await h.start();
+    h.hello();
+    await h.google();
+    expect(stageOf()).toBe('done');
+    expect(document.getElementById('home-sign-in-cancel-devices')?.textContent).toBe(CANCEL_TEXT.devicesStay);
+    expect(panelText()).not.toContain(CANCEL_TEXT.devices);
+    h.click('home-sign-in-cancel-close');
+
+    resetDom();
+    const yes = await harness();
+    await yes.start();
+    yes.hello();
+    await yes.google();
+    expect(document.getElementById('home-sign-in-cancel-devices')?.textContent).toBe(CANCEL_TEXT.devices);
+  });
+
+  it('the fresh read finds this sign-in itself waiting now (no longer one that opens the wallet): Nothing changed, nothing posted', async () => {
+    // An email wallet: Home's Google account an active member, another email waiting.
+    const E2 = { provider: 'email', sub: `e1.${'C'.repeat(43)}` };
+    const h = await harness();
+    h.chain = { opened: new Set([key(E)]), accounts: [{ root: E, members: [{ who: G, effectiveAtMs: T0 - 1000, active: true }, { who: E2, effectiveAtMs: T0 + 3_600_000, active: false }], epoch: 3 }] };
+    await h.show();
+    expect(document.getElementById('home-sign-in-cancel-open-2')).not.toBeNull();
+    // Before the press, the chain answers with this sign-in waiting too (the other one still waiting).
+    h.chain = { opened: new Set([key(E)]), accounts: [{ root: E, members: [{ who: G, effectiveAtMs: T0 + 3_600_000, active: false }, { who: E2, effectiveAtMs: T0 + 3_600_000, active: false }], epoch: 3 }] };
+    h.click('home-sign-in-cancel-open-2');
+    h.child = remoteWindow({ location: { pathname: '/login', search: '?mode=home' } as never });
+    h.win.openResult = h.child;
+    h.click('home-sign-in-cancel-go');
+    await h.idle();
+    expect(stageOf()).toBe('nothing');
+    expect(panelText()).toContain(CANCEL_TEXT.changed);
+    expect(panelText()).toContain('Error code (for support): sign_ins_changed');
+    expect(h.child?.received).toEqual([]);
+    expect(h.sent).toEqual([]);
+  });
+
   it('Home signed in again meanwhile (another identity): nothing is sent with the old one', async () => {
     const h = await harness();
     await h.start();
@@ -540,6 +604,34 @@ describe('the cancel', () => {
   });
 });
 
+describe('homeApi().linkCancel (D902)', () => {
+  const body: HomeLinkCancelBody = { jwt: 'eyJ.a.b', memberKey: key(E), epoch: 2, salt: Array.from(new Uint8Array(32).fill(1)), scopeId: S };
+  const api = (answer: unknown, status = 200) => {
+    const sent: { url: string; init: RequestInit }[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      sent.push({ url, init });
+      return new Response(JSON.stringify(answer), { status, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    return { sent, api: homeApi(ENV.apiUrl, fetchFn) };
+  };
+
+  it('signs and sends exactly the five fields to /v1/home/link/cancel, once, and believes only {result: null}', async () => {
+    const a = api({ result: null, nearTx: 'tx9', sharesRevoked: true });
+    expect(await a.api.linkCancel(fakeIdentity(), body)).toEqual({ nearTx: 'tx9', sharesRevoked: true });
+    expect(a.sent).toHaveLength(1);
+    expect(a.sent[0]!.url).toBe(`${new URL(ENV.apiUrl).origin}/v1/home/link/cancel`);
+    expect(JSON.parse(new TextDecoder().decode(a.sent[0]!.init.body as Uint8Array))).toEqual(body);
+    expect((a.sent[0]!.init.headers as Record<string, string>)['x-hana-home']).toBe('h');
+    // Devices are said to be signed out only when the API says exactly so.
+    expect((await api({ result: null, nearTx: 'tx9' }).api.linkCancel(fakeIdentity(), body)).sharesRevoked).toBe(false);
+    expect((await api({ result: null, nearTx: 'tx9', sharesRevoked: 'yes' }).api.linkCancel(fakeIdentity(), body)).sharesRevoked).toBe(false);
+    // Any other success body can't say it was cancelled.
+    await expect(api({ nearTx: 'tx9' }).api.linkCancel(fakeIdentity(), body)).rejects.toMatchObject({ code: 'bad_response' });
+    await expect(api({ result: 1 }).api.linkCancel(fakeIdentity(), body)).rejects.toMatchObject({ code: 'bad_response' });
+    await expect(api({ error: 'x', code: 'invalid_token' }, 403).api.linkCancel(fakeIdentity(), body)).rejects.toMatchObject({ status: 403, code: 'invalid_token' });
+  });
+});
+
 describe('the words', () => {
   it('are D898’s for option B, and plain (D853)', () => {
     expect(CANCEL_TEXT.button).toBe('Cancel this link');
@@ -566,7 +658,11 @@ describe('the words', () => {
     expect(cancelOutcome(new Error('x'))).toEqual({ kind: 'unknown', code: 'api_unavailable' });
     expect(cancelOutcome(new ApiError(500, 'internal', 'x', null, null))).toEqual({ kind: 'unknown', code: 'internal' });
     expect(cancelOutcome(new ApiError(422, 'Bad Code', 'x', null, null))).toEqual({ kind: 'unknown', code: 'error' });
-    expect(cancelOutcome(new ApiError(401, 'anything', 'x', null, null))).toEqual({ kind: 'nothing', group: 'signed_out', code: 'anything' });
+    // A 401 signs out of Home only with one of the gate's own codes; any other 401 relayed nothing but ends nothing.
+    expect(cancelOutcome(new ApiError(401, 'anything', 'x', null, null))).toEqual({ kind: 'nothing', group: 'now', code: 'anything' });
+    for (const code of HOME_GATE_401_CODES) expect(cancelOutcome(new ApiError(401, code, 'x', null, null)), code).toEqual({ kind: 'nothing', group: 'signed_out', code });
+    // The route answers a refused proof with 403: its code says it wasn't this sign-in's, Home's own sign-in is kept.
+    expect(cancelOutcome(new ApiError(403, 'invalid_token', 'x', null, null))).toEqual({ kind: 'nothing', group: 'you', code: 'invalid_token' });
     expect(cancelOutcome(new ApiError(422, 'contract_rejected', 'x', 'tx', null, { reason: 'stale_epoch' }))).toEqual({ kind: 'nothing', group: 'changed', code: 'contract_rejected' });
     expect(cancelOutcome(new ApiError(403, 'not_shared_client', 'x', null, null))).toEqual({ kind: 'nothing', group: 'you', code: 'not_shared_client' });
   });

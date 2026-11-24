@@ -8,7 +8,9 @@ the risks and the questions to settle with Sodax. Decision: D909 in `decisions.m
 Last verified: 2026-11-24 (branch `docs/sodax-sdk-integration`, from `next`, not merged, not deployed: written from
 the code and a local test against Sodax's public packages at 2.2.0, their latest release; `2.3.0-rc.4` lists the same
 chains); after PR 136's review: claims about Sodax's packages marked tested, read in source or inferred; the
-address-freeze wording; facts on the origin exception, demo prices and partner labels).
+address-freeze wording; facts on the origin exception, demo prices and partner labels).; 2026-11-24 (branch `feat/shared-wallet-line`, from `next`, not merged,
+not deployed: the sign-in and approval windows now say when the wallet is also used on other apps, D912: the summary's
+row, section 4, section 7)
 
 **Status in one line:** the Tech Lead decided that every Sodax partner site shares one wallet (one app per partner, all
 in Sodax's organisation on one scope). Test and live apps never share a scope (D51), so that is one test scope now and
@@ -22,7 +24,7 @@ partner's web address is parked until it is settled with Sodax.
 | Our wallet in Sodax's EVM wallet list | **Works with no Sodax-specific code**: create the client and "Journear Passport" appears (EIP-6963) |
 | Our wallet in Sodax's Stellar wallet list | **Needs a change in Sodax's kit**: its Stellar Wallets Kit can't take an extra module |
 | Signing through Sodax's own wallet providers | **Works** on EVM and (with the change above) on Stellar; a test app is refused on mainnets, as designed |
-| One wallet across partner sites | **Works** (one scope); **nothing tells the user** the wallet is shared |
+| One wallet across partner sites | **Works** (one scope); the sign-in and approval windows say the wallet is also used on other apps (D912) |
 | A switch in Sodax's portal | **Missing**: no service-to-service API exists; apps are made by Journear staff |
 | Our SDK on npm | **No** (tarballs, D706) |
 | Real swaps for Sodax partners | Only through the staff-only mainnet demo (Base and Stellar, $9.99 a transaction); real launch needs live keys |
@@ -132,22 +134,28 @@ weeks with its review), plus the origin decision.
 
 ## 4. One wallet across partner sites
 
-**What users see today.** The sign-in window says "Signing in to {App} at {web address}" and the approval window
-"From {App}" with the web address. Neither says that the wallet is also used on other sites. Signing in on a second
-partner site opens the same wallet without a word about it. Only Passport Home lists the apps that use a wallet.
+**What users see today (D912).** The sign-in window says "Signing in to {App} at {web address}" and the approval
+window "From {App}" with the web address; when other apps share the wallet, each adds right under that "This wallet is
+also used on 2 other apps." with "See which": the other apps' names (at most 5, then "and N more apps") and "Any of
+them can ask you to approve payments from this wallet, so check who is asking each time." Counted: the scope's other
+apps that aren't suspended or deleted and have a web address in force. The names come from Journear's own data, on the
+vault's read of the app only; the partner page never gets them. A Google-only app's sign-in window goes straight to
+Google, so there the line shows only for a moment; partners with email sign-in show it on the chooser. Passport Home
+still lists the apps that use a wallet.
 
 **What must stay off for apps on a shared scope** (each is per app today, but every one reaches the same funds):
 
-- auto-approve policies, until the user is told which other sites share the wallet and a policy can't outlast that
-  (auto-approved Sodax swaps stay deferred, D708);
+- auto-approve policies: the consent screen now names the other apps (D912), but a consent given while the scope
+  had N apps isn't asked again when another joins, so a policy can outlast what the user was told (auto-approved Sodax
+  swaps stay deferred, D708);
 - raw signing (already refused for test apps);
 - the mainnet demo, except under staff's per-app rule (section 5);
 - gas sponsorship for EVM actions (not live), until each partner's sponsored calls are reviewed.
 
 **Gaps before real money:**
 
-1. A line in the sign-in window when the wallet is shared: "This wallet is also used on {other apps}." (wording to
-   decide), and in the approval window.
+1. ~~A line in the sign-in and approval windows when the wallet is shared.~~ Built (D912): "This wallet is also used
+   on 2 other apps." with the names behind "See which"; its words, placement, counting rule and cap are to confirm.
 2. The identity token's User ID is the same for a user across every app of a scope, so every Sodax partner's backend
    can match the same person across sites. Decide whether that is wanted, or whether partners need a per-app id.
 3. Partner portal members belong to the whole organisation: a Sodax partner given portal access would see every
@@ -155,7 +163,8 @@ partner site opens the same wallet without a word about it. Only Passport Home l
 4. Security contacts are per organisation: a web address added for one partner's app is announced to Sodax's
    contacts, not to that partner.
 5. One partner's compromised site can ask the user to approve moves from the shared wallet; the user's only guard is
-   reading the app's name and web address in the approval window. Who vouches for each address (parked) decides how
+   reading the app's name and web address in the approval window, now with the line that the wallet is also used on
+   other apps (D912). Who vouches for each address (parked) decides how
    much that is worth.
 6. Signing out on one site doesn't sign out the others (each site has its own session). Passport Home lists the
    devices signed in to the wallet and signs each out.
@@ -226,7 +235,7 @@ be tried, on each chain's own test network.
 
 | Who | What |
 |---|---|
-| Journear | The service API and its staff screens (section 3); the shared-wallet line in our windows; the per-app answers in section 4; the EVM chain names; publishing the SDK; then chains in the order above |
+| Journear | The service API and its staff screens (section 3); the per-app answers in section 4 (the shared-wallet line in our windows is built, D912); the EVM chain names; publishing the SDK; then chains in the order above |
 | Sodax | Load our SDK when the switch is on; create the client with the partner's key; accept extra Stellar Wallets Kit modules and keep wallet error codes; the portal switch and its call to our API |
 | Each Sodax partner | Its page meets our page requirements (popups allowed, the frame not blocked; `integration.md` section 5) |
 | The Tech Lead | The decisions in "Open" below |

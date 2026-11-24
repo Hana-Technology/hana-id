@@ -49,6 +49,22 @@ export const APPROVAL_LABELS_MAX = 16;
  */
 export const APPROVE_REQUEST_MAX_BYTES = APPROVAL_MESSAGE_MAX_BYTES + APPROVAL_LABELS_MAX_BYTES + 1024;
 const MAX_DEPTH = 24;
+/**
+ * The other apps that use the same wallet as the app a window is for (the apps of its scope): how many there are, and
+ * the names of the first OTHER_APPS_NAMES_MAX, as the vault read them from Journear's own `GET /v1/app` and cut them
+ * for display (an unsafe name already replaced by Journear's words). Present in a window message only when there is at
+ * least one, so an app alone on its scope sends exactly the message older pages take. Never sent to the partner page.
+ */
+export interface OtherApps {
+  count: number;
+  names: string[];
+}
+/** How many other apps a window names at most; the rest are counted ("and 3 more"). */
+export const OTHER_APPS_NAMES_MAX = 5;
+/** The largest count a window takes (a scope holds far fewer apps; the bound only keeps the message honest). */
+export const OTHER_APPS_COUNT_MAX = 10_000;
+/** A name as the vault cuts it for display (60 characters and "…", each at most two UTF-16 units), with room. */
+export const OTHER_APP_NAME_MAX = 128;
 
 // ---- errors ----
 
@@ -1004,6 +1020,8 @@ export interface WindowMessageMap {
      * `/share-email?from=login`, where the vault shows the email sharing sheet if this user hasn't answered it yet.
      */
     emailShare?: true;
+    /** The other apps that use this wallet (OtherApps), shown under who is asking. Only when there is one. */
+    otherApps?: OtherApps;
   };
   /**
    * Hana Home page → its own sign-in child (`/login?mode=home`), in answer to the child's `hana:auth-hello`. The nonce
@@ -1141,6 +1159,8 @@ export interface WindowMessageMap {
      * at a final block. Only beside `partnerLabels`; the popup uses it only when `account` is the request's receiver.
      */
     partnerLabelFacts?: { near: { account: string; codeHash: string } };
+    /** The other apps that use this wallet (OtherApps), shown under who is asking. Only when there is one. */
+    otherApps?: OtherApps;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -1197,6 +1217,8 @@ export interface WindowMessageMap {
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
+    /** The other apps that use this wallet (as in hana:approve-request). */
+    otherApps?: OtherApps;
   };
   /** Approval popup → vault: Allow (guarded like Approve) or Decline, with consentDigest of what it rendered. */
   'hana:consent-result': { id: string; allowed: boolean; digest: Uint8Array };
@@ -1294,8 +1316,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
   'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:auth-params': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl', 'emailShare']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl', 'emailShare', 'otherApps']) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
+    (m.otherApps === undefined || isOtherApps(m.otherApps)) &&
     (m.emailShare === undefined || (m.emailShare === true && m.task === undefined)) &&
     (m.followKey === undefined || (isBytes(m.followKey, 32, 32) && (Array.isArray(m.methods) || m.task !== undefined || m.emailRecord === true))) &&
     (m.emailRecord === undefined || (m.emailRecord === true && m.followKey !== undefined && m.methods === undefined && m.task === undefined)) &&
@@ -1367,7 +1390,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels', 'partnerLabelFacts'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels', 'partnerLabelFacts', 'otherApps'])) return false;
+    if (m.otherApps !== undefined && !isOtherApps(m.otherApps)) return false;
     if (m.partnerLabels !== undefined && !isLabelTexts(m.partnerLabels)) return false;
     if (m.partnerLabelFacts !== undefined && (m.partnerLabels === undefined || !isLabelFacts(m.partnerLabelFacts))) return false;
     if (m.mainnetDemo !== undefined && (m.mainnetDemo !== true || m.testApp !== true)) return false;
@@ -1407,7 +1431,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isWalletChain(m.chain) &&
     isAddressFor(m.chain, m.address),
   'hana:consent-request': (m) =>
-    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'mainnetDemo', 'logoUrl']) &&
+    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'mainnetDemo', 'logoUrl', 'otherApps']) &&
+    (m.otherApps === undefined || isOtherApps(m.otherApps)) &&
     (m.testApp === undefined || m.testApp === true) &&
     (m.mainnetDemo === undefined || (m.mainnetDemo === true && m.testApp === true)) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
@@ -1444,6 +1469,18 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:email-revoke': (m) => exactKeys(m, ['v', 't']),
   'hana:email-revoked': (m) => exactKeys(m, ['v', 't', 'ok']) && typeof m.ok === 'boolean',
 };
+
+/**
+ * OtherApps as a window takes it: a count of at least one, and exactly the first min(count, OTHER_APPS_NAMES_MAX)
+ * names, each a non-empty display-safe line of at most OTHER_APP_NAME_MAX units (no control, bidi or invisible
+ * character), nothing else.
+ */
+export function isOtherApps(v: unknown): v is OtherApps {
+  if (!isPlainObject(v) || !exactKeys(v, ['count', 'names'])) return false;
+  if (!isInt(v.count, 1, OTHER_APPS_COUNT_MAX) || !Array.isArray(v.names)) return false;
+  if (v.names.length !== Math.min(v.count as number, OTHER_APPS_NAMES_MAX)) return false;
+  return v.names.every((n) => isStr(n, 1, OTHER_APP_NAME_MAX) && n.trim() === n && isDisplaySafeLine(n));
+}
 
 /** 1 to APPROVAL_LABELS_MAX non-empty texts, together at most APPROVAL_LABELS_MAX_BYTES of UTF-8. */
 function isLabelTexts(v: unknown): v is string[] {

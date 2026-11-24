@@ -15,7 +15,7 @@
 //   store holds no address), and when it lapses (24 h after the mail). /login/email sends it with each `start` while it lasts: the issuer counts it only for that exact address,
 //   once, and ignores it otherwise. It can't sign anyone in either. Dropped after a sign-in with that address, or once
 //   it lapsed.
-import { RELAY_ID_PATTERN, type LoginMethod, base64UrlDecode, base64UrlEncode, isEmailHint, isLogoUrl, sha256, utf8 } from '@hana-id/core';
+import { RELAY_ID_PATTERN, type LoginMethod, type OtherApps, base64UrlDecode, base64UrlEncode, isEmailHint, isLogoUrl, isOtherApps, sha256, utf8 } from '@hana-id/core';
 import { LOGIN_ENTRY_MAX_AGE_MS } from './login-storage.ts';
 
 export const EMAIL_ENTRY_PREFIX = 'hana.email.';
@@ -42,6 +42,8 @@ export interface EmailContext {
   appName: string;
   /** Batch C11: the app's logo URL as auth-params carried it (shown only from the build's files origin, logo.ts). */
   logoUrl?: string;
+  /** D912: the other apps that use this wallet, as auth-params carried them (shown under who is asking). */
+  otherApps?: OtherApps;
   parentOrigin: string;
   scopeId: string;
   sessionPublicKey: Uint8Array;
@@ -127,6 +129,7 @@ function decode(raw: string | null): Stored | null {
       typeof c.pk === 'string' &&
       typeof c.appName === 'string' &&
       (c.logoUrl === undefined || isLogoUrl(c.logoUrl)) &&
+      (c.otherApps === undefined || isOtherApps(c.otherApps)) &&
       typeof c.parentOrigin === 'string' &&
       typeof c.scopeId === 'string' &&
       typeof c.sessionPublicKey === 'string' &&

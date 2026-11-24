@@ -44,6 +44,7 @@ import {
   type AccountResult,
   type AppConfig,
   type ApprovalSubject,
+  type OtherApps,
   type WalletChain,
   logoUrlOn,
   type LoginMethod,
@@ -116,6 +117,7 @@ import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, 
 import { type IssuerApi, issuerApi } from './issuer.ts';
 import type { GoogleEmailFlow } from '../auth/google.ts';
 import { NearView } from './near.ts';
+import { OTHER_APPS_WAIT_MS, readServedOtherApps } from './other-apps.ts';
 import { isLoopbackHost } from '../client/urls.ts';
 import {
   type ConsentV1,
@@ -659,6 +661,11 @@ export class Vault {
    */
   private labels: { docs: VerifiedLabel[]; at: number; sent: number } | null = null;
   /**
+   * D912: the other apps that use this wallet, from the latest GET /v1/app answer that had them (other-apps.ts), with
+   * when that read was sent (perfNow); null until one did. An answer without them (a failed read) keeps what is known.
+   */
+  private otherApps: { apps: OtherApps; sent: number } | null = null;
+  /**
    * D900: what the vault last read of a labelled NEAR contract's code, by account: the hash both providers agreed on, or
    * null (couldn't check), with when that read was sent (as `labels`). Used only while younger than NEAR_CODE_FRESH_MS.
    */
@@ -814,6 +821,10 @@ export class Vault {
         forRequest: (subject) => this.labelsForWindow(subject),
         refresh: (subject) => this.refreshLabels(subject),
       },
+      otherApps: {
+        current: () => this.otherAppsForWindow(),
+        refresh: () => this.refreshOtherApps(),
+      },
     });
     port.onmessage = (m) => void this.onPortMessage(m.data);
     // Before storage and the unlock: the SDK's answer deadline only covers the frame's load and this hello.
@@ -951,6 +962,7 @@ export class Vault {
         this.statusFailures = 0;
         this.logoUrl = logoUrlOn(this.env.filesOrigin, app.logoUrl, this.config.appId);
         this.applyServedLabels(app, at, sent);
+        this.applyServedOtherApps(app, sent);
         this.applyServedPolicy(app, at, sent);
         this.applyServedRawSign(app, at);
         this.applyServedConsent(app, consentId, at, sent);
@@ -969,6 +981,32 @@ export class Vault {
       });
     }
     return this.appConfigPromise;
+  }
+
+  // ---- the other apps that use this wallet (D912) ----
+
+  /** Keeps the other apps GET /v1/app (sent at `sent`) served; no answer, or a read sent before the one kept, changes nothing. */
+  private applyServedOtherApps(app: AppConfig, sent: number): void {
+    const apps = readServedOtherApps(app.otherApps);
+    if (!apps || (this.otherApps && this.otherApps.sent > sent)) return;
+    this.otherApps = { apps, sent };
+  }
+
+  /**
+   * What the approval window gets: the apps last served, or 'unknown' before any answer had them (the queue then waits
+   * once for a read, at most OTHER_APPS_WAIT_MS: `refreshOtherApps`).
+   */
+  private otherAppsForWindow(): OtherApps | 'unknown' {
+    return this.otherApps?.apps ?? 'unknown';
+  }
+
+  /** A fresh GET /v1/app for the other apps, waited for at most OTHER_APPS_WAIT_MS; never rejects. */
+  private refreshOtherApps(): Promise<void> {
+    let timer: unknown = null;
+    const late = new Promise<void>((resolve) => {
+      timer = this.timers.setTimeout(resolve, OTHER_APPS_WAIT_MS);
+    });
+    return Promise.race([this.refreshPolicy().catch(() => undefined), late]).finally(() => this.timers.clearTimeout(timer));
   }
 
   // ---- partner labels (D896) ----

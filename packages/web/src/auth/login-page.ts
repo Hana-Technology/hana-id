@@ -45,6 +45,7 @@ import { type FollowEntry, addLoginTimings, storeLoginEntry } from './login-stor
 import { appLogo } from './logo.ts';
 import { type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed } from './page-window.ts';
 import { markEmailShare } from './share-handoff.ts';
+import { sharedWalletLine } from './shared-wallet.ts';
 import { icon } from './ui.ts';
 import { vaultSignals } from './vault-signal.ts';
 
@@ -344,6 +345,9 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       // The app's logo (batch C11), when the preparer sent one on this build's files origin.
       const intro = () =>
         d.h('p', { class: 'asker' }, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', originText(d, msg.parentOrigin));
+      // D912: the other apps that use this wallet, as the vault sent them (none: nothing drawn, the screen as before).
+      // Not in export mode: that sign-in only confirms it's you for the key window, which has its own words.
+      const shared = () => (mode === 'export' ? null : sharedWalletLine(d, msg.otherApps));
       // Email is offered only by the vault or the export window, only for an env with an email issuer.
       const methods: readonly LoginMethod[] = msg.methods && env.emailIssuerUrl ? msg.methods : ['google'];
       /** The email context: the email step's facts, and (batch 8b) the follow-up mode's, which a Google login needs too. */
@@ -356,6 +360,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
               pk: msg.pk,
               appName: msg.appName,
               ...(msg.logoUrl ? { logoUrl: msg.logoUrl } : {}),
+              // D912: for the email step's screens, which show the same line (not in export mode).
+              ...(msg.otherApps && mode !== 'export' ? { otherApps: { count: msg.otherApps.count, names: [...msg.otherApps.names] } } : {}),
               parentOrigin: msg.parentOrigin,
               scopeId: msg.scopeId,
               sessionPublicKey: Uint8Array.from(msg.sessionPublicKey),
@@ -393,7 +399,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         // D400: it navigates once the vault acked (or after SIGNAL_ACK_WAIT_MS): Chromium drops the signal's source
         // when the navigation starts in the same task.
         if (tell || mode !== 'export') signals.post('google');
-        d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'), intro(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+        d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, mode === 'export' ? 'Confirm it’s you' : 'Signing in'), intro(), shared(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
         state = { stage: 'redirecting', mode, url };
         void signals.leave(() => {
           finish(state);
@@ -441,7 +447,7 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
         chosen();
         toEmail();
       });
-      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), intro(), d.h('div', { class: 'providers' }, google, email)));
+      d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Sign in'), intro(), shared(), d.h('div', { class: 'providers' }, google, email)));
       state = { stage: 'choosing', mode };
       finish(state);
     } catch (err) {

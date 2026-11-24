@@ -113,6 +113,7 @@ import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow, 
 import { type TakenLogin, peekLogin, storeLoginEntry, takeLogin, zeroTaken } from './login-storage.ts';
 import { type PageWindow, childFrame, isFramed } from './page-window.ts';
 import { closeOrShare } from './share-handoff.ts';
+import { sharedWalletLine } from './shared-wallet.ts';
 import { vaultSignals } from './vault-signal.ts';
 import { BTN, alert, icon } from './ui.ts';
 
@@ -541,6 +542,15 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
 
   const header = () =>
     d.h('p', { class: 'asker' }, appLogo(d, env, ctx.logoUrl), 'Signing in to ', d.h('strong', {}, ctx.appName), ' at ', originText(d, ctx.parentOrigin));
+  /**
+   * D912: who is asking, then the shared-wallet line, on the screens that sign in to this app's wallet (the address,
+   * the code, the busy screens between them, the chooser again and the way to Google); none when the app is alone, or
+   * in export mode. The follow-up screens keep the header alone: they may be about another wallet or a link.
+   */
+  const signInHeader = (): HTMLElement[] => {
+    const shared = ctx.exportMode ? null : sharedWalletLine(d, ctx.otherApps);
+    return shared ? [header(), shared] : [header()];
+  };
   /** A notice; `retry` (a transient failure) adds "Try again", which repeats the request that failed. */
   const message = (text: string | null, id: string, retry?: () => void) => {
     if (!text) return null;
@@ -635,7 +645,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         : startAs.kind === 'link' && startAs.purpose === 'link_new'
           ? d.h('p', {}, 'Enter the email you want to add. It can open this wallet after a waiting period.')
           : null;
-    d.show(d.h('section', { class: 'panel email-step' }, d.h('h1', {}, addressTitle()), header(), explain, form));
+    d.show(d.h('section', { class: 'panel email-step' }, d.h('h1', {}, addressTitle()), ...signInHeader(), explain, form));
     try {
       input.focus();
     } catch {
@@ -704,7 +714,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       e.preventDefault();
       submitCode();
     });
-    d.show(d.h('section', { class: 'panel email-step' }, d.h('h1', {}, 'Check your email'), header(), form));
+    d.show(d.h('section', { class: 'panel email-step' }, d.h('h1', {}, 'Check your email'), ...signInHeader(), form));
     try {
       input.focus();
     } catch {
@@ -713,9 +723,10 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
     settle('code');
   }
 
-  function busy(title: string, text: string, s: EmailStage): void {
+  /** `ownWallet`: false for a follow-up's change (a banner's Remove or Cancel), which shows who is asking alone (D912). */
+  function busy(title: string, text: string, s: EmailStage, ownWallet = true): void {
     enter(s === 'sending' ? 'emailStart' : s === 'verifying' ? 'emailVerify' : null);
-    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, title), header(), d.h('p', { class: 'muted' }, text)));
+    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, title), ...(ownWallet ? signInHeader() : [header()]), d.h('p', { class: 'muted' }, text)));
     stage = s;
   }
 
@@ -1028,7 +1039,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
       : googleTokenFirstUrl({ clientId, authOrigin: env.authOrigin, state });
     leaving = true;
     clearT(deadlineTimer);
-    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), header(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
+    d.show(d.h('section', { class: 'panel' }, d.h('h1', {}, 'Signing in'), ...signInHeader(), d.h('p', { class: 'muted' }, 'Continuing to Google…')));
     tellVaultThen('google', () => win.location.assign(url));
   }
 
@@ -1061,7 +1072,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
         'section',
         { class: 'panel' },
         d.h('h1', {}, 'Sign in'),
-        header(),
+        ...signInHeader(),
         alert(d, 'info', { class: 'note', attrs: { role: 'status', id: 'google-cancelled' } }, GOOGLE_CANCELLED_TEXT),
         d.h('div', { class: 'providers' }, ...buttons),
       ),
@@ -1716,7 +1727,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   function changeBusy(slot: number, s: EmailStage): boolean {
     const a = actionAt(slot);
     if (!a) return false;
-    busy(a.kind === 'unlink' ? CHANGE_TEXT.removingTitle(kindName(a.provider)) : CHANGE_TEXT.cancellingTitle, CHANGE_TEXT.working, s);
+    busy(a.kind === 'unlink' ? CHANGE_TEXT.removingTitle(kindName(a.provider)) : CHANGE_TEXT.cancellingTitle, CHANGE_TEXT.working, s, false);
     return true;
   }
 

@@ -22,8 +22,20 @@ browser); `tests/demo-near-shots.spec.ts` saves
 its screens with `HANA_SHOTS_DIR=<dir>` (Chromium only, skipped otherwise). With reduced motion (D906) the demo's own
 spinners (`.progress::before`, `.stage::before`) pulse slowly even inside a `.jp-card`, and the results' fade stops.
 
+The shared-wallet line (D912): `tests/shared-wallet.spec.ts` puts two apps on a scope of their own (with a suspended
+one and one with no web address, which don't count) and sees "This wallet is also used on 1 other app." under who is
+asking in the sign-in window's chooser and the approval window, the other app named behind "See which"; an app alone on
+its scope sees neither the line nor any change; and the partner page's own `GET /v1/app` and every message it receives
+(on its window and its MessagePorts, recorded from before its scripts run) carry neither the field nor the other app's
+name while both windows show it. With `HANA_SHOTS_DIR=<dir>` (Chromium) its last test saves both windows at 390 and
+1280 px, light and dark, as `<label>-sign-in-…` and `<label>-approval-…` (and `-open-` with the names shown), the label
+`HANA_SHOTS_LABEL` or "after"; "before" is the same test run on a build without the line. Every app a spec makes is on
+the `e2e` scope unless it names another, the demo's and the stamps site's included, so their windows show the line
+too.
+
 The stamps site (`apps/stamps`, D798–D802): `tests/stamps.spec.ts` signs in by email, collects Arrival, Sponsored,
-Postcard and Signature through the mocked relayer routes and sees them on the public passport, with no CSP violation
+Postcard and Signature through the mocked relayer routes (with the shared-wallet line on its chooser, its email step and each
+approval, D912: it creates the demo's app on the same scope first) and sees them on the public passport, with no CSP violation
 and nothing of another chain on the page. The mocked chain serves the stamps contract (`src/server/stamps-contract.ts`:
 `get_passport`, `recent`, `totals`, `catalog`, every `collect` rule, the signature's NEP-413 proof checked with ed25519
 as on chain) and the test-only `e2e_stamps_collect` the relayer routes call. Signature's two approvals land in one

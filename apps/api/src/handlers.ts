@@ -1,5 +1,6 @@
 // Request handlers: app endpoints (publishable key + origin), owner actions (OIDC proof in args), health.
 import { type DeliveredLabel, deliveredLabels } from './labels/deliver.ts';
+import { type OtherApps, readOtherApps } from './other-apps.ts';
 import { identityRoot } from '@hana-id/core/identity';
 import { appIdentityEmail } from './identity/email.ts';
 import { JwksUnavailableError } from '@hana-id/oidc';
@@ -403,7 +404,17 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
   // from D1 on every request (a staff switch or block is in the next read). A failed read leaves the field out.
   const vaultRead = !!env.VAULT_ORIGIN && request.headers.get('origin') === env.VAULT_ORIGIN;
   const labelsRead: Promise<DeliveredLabel[] | undefined> = vaultRead ? timed('labels', deliveredLabels(env, app.id, Date.now())).then((r) => (r.ok ? r.value : undefined)) : Promise.resolve(undefined);
-  const [settingsDone, chainDone, demoPrices, consent, share, partnerLabels] = await Promise.all([settingsRead, chainRead, pricesRead, consentRead, shareRead, labelsRead]);
+  // D912: the other apps that use this app's wallet, only on the vault's own read (never a partner page's, which must not
+  // learn them), from D1 on every request. A failed read leaves the field out, which the vault takes as no answer (it
+  // keeps what it last knew), never as "alone".
+  const otherAppsRead: Promise<OtherApps | undefined> = vaultRead
+    ? timed('otherApps', readOtherApps(env.DB, app, Date.now())).then((r) => {
+        if (r.ok) return r.value;
+        log({ event: 'other_apps_unavailable', requestId, appId: app.id, endpoint: ctx.endpoint }, 'warn');
+        return undefined;
+      })
+    : Promise.resolve(undefined);
+  const [settingsDone, chainDone, demoPrices, consent, share, partnerLabels, otherApps] = await Promise.all([settingsRead, chainRead, pricesRead, consentRead, shareRead, labelsRead, otherAppsRead]);
   if (!settingsDone.ok) return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
   const [settings, methods, identityEmail, mainnetDemo] = settingsDone.value;
   const autoApprovePolicy: AppSettings['autoApprovePolicy'] = settings?.autoApprovePolicy ?? null;
@@ -457,6 +468,8 @@ export async function handleAppConfig(request: Request, env: Env, requestId: str
       ...(share ? { share } : {}),
       // D894: only on the vault's read with PARTNER_LABELS on; the vault passes it to the approval window (D896).
       ...(partnerLabels ? { partnerLabels } : {}),
+      // D912: only on the vault's read; `count` 0 when the app is alone on its scope.
+      ...(otherApps ? { otherApps } : {}),
     });
   } catch {
     return reject(ctx, 502, 'near_unavailable', 'Could not read the app registry');

@@ -9,7 +9,7 @@ import { REVIEWED_STAMP_TITLES, type ReviewedStampId } from '@hana-id/core';
 import { routeNearRelayer } from '../src/near-relay.ts';
 import { E2E_STAMPS, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, STAMPS_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
 import { expectPlainWindow } from './plain-checks.ts';
-import { STAMPS_APP, approve, clickClosing, clickUntilTaken, expect, newApp, test } from './fixtures.ts';
+import { DEMO_APP, STAMPS_APP, approve, clickClosing, clickUntilTaken, expect, newApp, test } from './fixtures.ts';
 
 /** Records every CSP violation on the site's own document (the page CSP must allow everything the page does). */
 async function recordCspViolations(page: Page): Promise<void> {
@@ -66,11 +66,19 @@ async function codeFor(to: string, previous: number): Promise<string> {
   return m[1]!;
 }
 
-/** The popup's chooser → email → address → code → Continue; the popup closes. */
+/** D912: the stamps site's app shares the stack's `e2e` scope with the hosted demo's (and the specs' own apps). */
+const SHARED_LINE = /^This wallet is also used on \d+ other apps?\. See which$/u;
+
+/**
+ * The popup's chooser → email → address → code → Continue; the popup closes. On the way, the sign-in window says the
+ * wallet is also used on other apps (D912), on the chooser and on the email step, right under who is asking.
+ */
 async function emailLogin(popup: Page, to: string): Promise<void> {
   await expect(popup.locator('#continue-email')).toBeVisible();
+  await expect(popup.locator('p.asker + #shared-wallet > summary')).toHaveText(SHARED_LINE);
   await popup.click('#continue-email');
   await popup.waitForURL(/\/login\/email#/u);
+  await expect(popup.locator('p.asker + #shared-wallet > summary')).toHaveText(SHARED_LINE);
   await popup.fill('#email-address', to);
   const before = ((await (await fetch(`${ISSUER_URL}/__e2e/outbox?to=${encodeURIComponent(to)}`)).json()) as unknown[]).length;
   await clickUntilTaken(popup, '#email-send');
@@ -116,6 +124,8 @@ async function collectWith(page: Page, id: ReviewedStampId, open: Page | null, n
  */
 async function expectReviewedStamp(window: Page, id: ReviewedStampId, note?: string): Promise<void> {
   await expect(window.locator('h2.summary-headline')).toHaveText(`Stamp Trail wants to collect the ${REVIEWED_STAMP_TITLES[id]} stamp for you`);
+  // D912: the approval window says the wallet is shared too, with "From Stamp Trail", before the amber or red boxes.
+  await expect(window.locator('header.app + #shared-wallet > summary')).toHaveText(SHARED_LINE);
   if (note !== undefined) await expect(window.locator('div.summary-quote')).toHaveText(note);
   await expect(window.locator('p.summary-line').last()).toHaveText(`It uses Journear demo stamps (${E2E_STAMPS}, checked by Journear).`);
   await expect(window.locator('.warning-box')).toHaveCount(0);
@@ -134,6 +144,8 @@ async function expectReviewedSignatureMessage(window: Page): Promise<void> {
 test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature with zero NEAR, then the public passport', async ({ page }, info) => {
   test.setTimeout(150_000);
   await newApp(STAMPS_APP);
+  // The hosted demo's app on the same scope, so the stamps site's wallet is shared whichever spec ran first (D912).
+  await newApp(DEMO_APP);
   const relayer = await routeNearRelayer(page, ['stamps']);
   await recordCspViolations(page);
   await recordSlotStates(page);
@@ -240,6 +252,8 @@ test('the stamps site: email sign-in, Arrival, Sponsored, Postcard and Signature
 
 test('reduced motion (D906): a working stamp’s spinners pulse slowly instead of turning; its marching outline stands still', async ({ page }) => {
   await newApp(STAMPS_APP);
+  // The hosted demo's app on the same scope, so the stamps site's wallet is shared whichever spec ran first (D912).
+  await newApp(DEMO_APP);
   await page.goto(`${STAMPS_ORIGIN}/`);
   await expect(page.locator('.pp').first()).toBeAttached();
   const motion = () =>
@@ -276,6 +290,8 @@ test('reduced motion (D906): a working stamp’s spinners pulse slowly instead o
 test('the Signature stamp’s second step after its window was closed in between: Continue in the slot opens it, the message is not signed again (D807)', async ({ page }, info) => {
   test.setTimeout(120_000);
   await newApp(STAMPS_APP);
+  // The hosted demo's app on the same scope, so the stamps site's wallet is shared whichever spec ran first (D912).
+  await newApp(DEMO_APP);
   const relayer = await routeNearRelayer(page, ['stamps']);
   // The vault's own read of the key before it queues a delegate action (checkNearDelegate), held 4 s when armed: time
   // for the user to close the window after the first approval, before the second request reaches it.

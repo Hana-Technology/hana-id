@@ -7,13 +7,13 @@
 //   batch itself and answers `{ transactionHash, status: 'executed' }` once the batch ran. The signatures never reach
 //   this page. Call it synchronously in the click, as login(): the window opens in that click (D99).
 // - sponsorship(chainId): `{ available, reason?, remainingToday? }` from GET {apiUrl}/v1/evm/sponsor/status, so a page
-//   can say before the click whether the action is free today.
+//   can say before the click whether the action is sponsored today.
 //
 // A refusal is a HanaSponsorError: the vault's code (4001 the user rejected, 4100 refused, `busy`, `rate_limited`,
 // `session_ended`, `api_unavailable`), the developer's `message`, `userMessage` (the plain sentence a page shows its
 // users, from `code` and `data.reason`: user-messages.ts SPONSOR_REASONS), and `data` (EvmSponsorErrorData) with only
 // fields of exact shapes (D788). Ordinary `eth_sendTransaction` is never sponsored:
-// a page asks for a gas-free action by name (D838).
+// a page asks for a sponsored action by name (D838).
 import { ErrorCode, type PortMethod, type PortParamsMap, type PortResultMap, isApiRequestId, isEvmAddress } from '@hana-id/core';
 import { HanaError, RpcCode, asHanaError, markSponsored } from './errors.ts';
 import { type SponsorReason, type SponsorshipReason } from './user-messages.ts';
@@ -33,7 +33,7 @@ export interface EvmSponsorHost {
   fetch: FetchLike;
 }
 
-/** One call of a gas-free action: a contract and its calldata. `value` must be 0 (or left out). */
+/** One call of a sponsored action: a contract and its calldata. `value` must be 0 (or left out). */
 export interface SponsoredCall {
   to: string;
   data: string;
@@ -93,7 +93,7 @@ export class HanaSponsorError extends HanaError {
 }
 
 /**
- * `data` of the `ProviderRpcError` that `hana.ethereum`'s `wallet_sendCalls` rejects with when the gas-free action
+ * `data` of the `ProviderRpcError` that `hana.ethereum`'s `wallet_sendCalls` rejects with when the sponsored action
  * fails: the HanaSponsorError's own `data` for a numeric code (4001, 4100), or, for a string code (`busy`,
  * `rate_limited`, `session_ended`, `api_unavailable`), that code with the request ID and the `data` inside.
  */

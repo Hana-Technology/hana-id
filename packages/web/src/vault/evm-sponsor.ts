@@ -1,8 +1,9 @@
-// The vault's sponsored EVM action (`evm_sendSponsored`, docs/decisions.md D855, D856; docs/architecture.md "Gas-free
-// EVM actions"): a batch of calls Journear's relayer sends for the user through the pinned EIP-7702 delegate, the
-// network fee paid by Journear. The vault builds everything the user signs from its own build manifest and the pinned
-// delegate table, treats the API's prepare answer as hints it checks, shows one approval, signs only the bytes that
-// approval showed, and posts the signatures to the API itself (D832): they never reach the partner page.
+// The vault's sponsored EVM action (`evm_sendSponsored`, docs/decisions.md D855, D856; docs/architecture.md "EVM gas
+// sponsorship: the vault and the SDK"): a batch of calls Journear's relayer sends for the user through the pinned
+// EIP-7702 delegate, the network fee paid by Journear. The vault builds everything the user signs from its own build
+// manifest and the pinned delegate table, treats the API's prepare answer as hints it checks, shows one approval, signs
+// only the bytes that approval showed, and posts the signatures to the API itself (D832): they never reach the partner
+// page.
 //
 //   preflight (no network)  → the build sponsors the chain (HanaEnv.evmSponsor, the pinned non-placeholder delegate,
 //                             never a local chain outside a local build, testnets only), the calls are well formed

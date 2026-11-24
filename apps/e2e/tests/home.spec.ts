@@ -404,8 +404,32 @@ test('rows: a screen reader’s name and description; the placeholders stand sti
   await signIn(page);
   await expect(page.locator('#home-loading')).toBeVisible();
   expect(await page.locator('.home-skeleton-line').first().evaluate((el) => getComputedStyle(el).animationName)).toBe('none');
+  // D905: the brand's own rule as the page ships it: a button's spinner and a radio's dot run once, at once.
+  const motion = () =>
+    page.evaluate(() => {
+      const button = document.createElement('button');
+      button.className = 'jp-btn';
+      const spin = button.appendChild(document.createElement('span'));
+      spin.className = 'spin';
+      const check = document.createElement('label');
+      check.className = 'jp-check';
+      const radio = check.appendChild(document.createElement('input'));
+      radio.type = 'radio';
+      radio.checked = true;
+      document.body.append(button, check);
+      const s = getComputedStyle(spin);
+      const out = { name: s.animationName, count: s.animationIterationCount, seconds: parseFloat(s.animationDuration), dot: parseFloat(getComputedStyle(radio, '::after').animationDuration) };
+      button.remove();
+      check.remove();
+      return out;
+    });
+  const still = await motion();
+  expect([still.name, still.count]).toEqual(['jp-spin', '1']);
+  expect(still.seconds).toBeLessThan(0.001);
+  expect(still.dot).toBeLessThan(0.001);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   expect(await page.locator('.home-skeleton-line').first().evaluate((el) => getComputedStyle(el).animationName)).not.toBe('none');
+  expect(await motion()).toMatchObject({ name: 'jp-spin', count: 'infinite', seconds: 0.7 });
   (hold as unknown as (v: unknown) => void)(null);
   const s1 = page.locator('.home-row[data-scope="s1"]');
   await expect(s1).toHaveAccessibleName('Sodax, Sodax Earn (Paused), Safe if the apps close');

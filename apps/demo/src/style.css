@@ -95,7 +95,9 @@ section.jp-card { margin: 0 0 var(--jp-space-4); padding: var(--jp-space-6); gap
 .stage { font-weight: var(--jp-weight-semibold); }
 .progress::before, .stage::before { content: ''; flex: none; width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--jp-primary); border-right-color: transparent; animation: jp-spin 0.7s linear infinite; }
 
-@media (prefers-reduced-motion: reduce) { .progress::before, .stage::before { animation: none; } }
+/* Reduced motion: the brand's rule (components.css) already ends every animation inside a .jp-* element; the demo's own
+   spinner and the results' fade stand still wherever they sit. */
+@media (prefers-reduced-motion: reduce) { .progress::before, .stage::before, .result { animation: none; } }
 
 /* ---- addresses: mono key/value rows with a chain badge ---- */
 .jp-kv.addresses { gap: var(--jp-space-4) var(--jp-space-5); align-items: start; }

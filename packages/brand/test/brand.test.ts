@@ -199,6 +199,48 @@ describe('components', () => {
     for (const s of selectors) for (const part of s.split(',')) expect(part, s).toMatch(/\.jp-|\[class[*^]=" ?jp-"\]/u);
   });
 
+  describe('reduced motion (D905)', () => {
+    const block = /@media \(prefers-reduced-motion:reduce\)\{([\s\S]*)\}$/u.exec(css.trimEnd())?.[1] ?? '';
+    const rules = [...block.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((m) => ({ selectors: m[1]!.trim().split(','), body: m[2]!.split(';') }));
+    const JP = ['[class^="jp-"]', '[class*=" jp-"]'];
+    /** Every .jp-* element, its ::before and ::after, everything inside it, and their ::before and ::after. */
+    const GENERIC = JP.flatMap((j) => [j, `${j}::before`, `${j}::after`, `${j} *`, `${j} *::before`, `${j} *::after`]);
+    const THUMB = '.jp-slider::-webkit-slider-thumb';
+
+    it('is the last rule: on and inside a .jp-* element every animation and transition ends at once, runs once and waits for nothing', () => {
+      expect(rules.map((r) => r.selectors.length)).toEqual([12, 1]);
+      expect([...rules[0]!.selectors].sort()).toEqual([...GENERIC].sort());
+      expect(rules[0]!.body).toEqual(['animation-duration:.01ms!important', 'animation-delay:0s!important', 'animation-iteration-count:1!important', 'transition-duration:.01ms!important', 'transition-delay:0s!important']);
+      // The slider's thumb has a rule of its own: a browser that doesn't know the pseudo-element drops only that one.
+      expect(rules[1]!.selectors).toEqual([THUMB]);
+      expect(rules[1]!.body).toEqual(['transition-duration:.01ms!important', 'transition-delay:0s!important']);
+    });
+
+    it('reaches every rule that moves something: its element is a .jp-* element or inside one, and any pseudo-element is covered', () => {
+      const outside = css
+        .replace(/\/\*[\s\S]*?\*\//gu, '')
+        .replace(/@keyframes[^{]*\{(?:[^{}]*\{[^}]*\})*[^}]*\}/gu, '')
+        .replace(/@media \(prefers-reduced-motion:reduce\)\{[\s\S]*$/u, '');
+      const moving = [...outside.matchAll(/([^{}@]+)\{([^{}]*)\}/gu)].filter((m) => /(?:^|;)(?:animation|transition)(?:-duration)?:(?!none\b)/u.test(m[2]!));
+      // The spinners, the placeholder's shimmer, the toasts, the modal, the fades and shakes, and every transition.
+      expect(moving.length).toBeGreaterThan(30);
+      for (const m of moving) {
+        for (const part of m[1]!.trim().split(',').map((s) => s.trim())) {
+          expect(part.split(/\s+/u)[0], part).toMatch(/^[a-z]*\.jp-/u);
+          const pseudo = /::([a-z-]+)$/u.exec(part)?.[1];
+          if (pseudo !== undefined && pseudo !== 'before' && pseudo !== 'after') expect(part).toBe(THUMB);
+        }
+      }
+      // The two that repeat for ever, where running once is what makes them stand still.
+      for (const s of ['.jp-btn .spin', '.jp-iconfield .spin', '.jp-skel']) expect(moving.some((m) => m[1]!.trim().split(',').includes(s) && /infinite/u.test(m[2]!)), s).toBe(true);
+    });
+  });
+
+  it('the logo files and the inline mark move nothing: no animation, no style, no script', () => {
+    const svgs = [...LOGO_FILES.flatMap((f) => [logoFile(f), text(`logo/${f}`)]), markSvg(), markSvg({ mono: true, label: 'Journear Passport' })];
+    for (const svg of svgs) expect(svg).not.toMatch(/<animate|<set\b|<style|<script|animation|transition|@keyframes/iu);
+  });
+
   it('the AA fixes: the danger button reads --jp-on-danger, the primary badge --jp-link (both pairs are in the tokens’ AA list)', () => {
     expect(css).toContain('.jp-btn-danger{background:var(--jp-danger);color:var(--jp-on-danger)}');
     expect(css).toContain('.jp-badge-primary{background:var(--jp-primary-soft);color:var(--jp-link);border-color:transparent}');

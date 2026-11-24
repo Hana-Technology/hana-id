@@ -369,7 +369,7 @@ async function relayerBalance(rpc: SponsorChainPort, chainId: number, relayer: H
 }
 
 /** The relayer is paused for new sends (halted, or short of funds): the same plain answer for both. */
-const paused = (ctx: Ctx): Response => done(ctx, 503, { error: 'Free network fees are paused for now, try again later', code: 'sponsorship_paused', retryAfterS: 300 }, { 'retry-after': '300' });
+const paused = (ctx: Ctx): Response => done(ctx, 503, { error: 'Gas sponsorship is paused for now, try again later', code: 'sponsorship_paused', retryAfterS: 300 }, { 'retry-after': '300' });
 
 /** The relayer can't cover `need` (wei): the day's `evm_relay_balance_low` (the cron's event), so staff top it up before the relayer itself runs dry. */
 async function balanceShort(env: Env, ctx: Ctx, chain: Readonly<EvmSponsorChainConfig>, relayer: string, balance: bigint, need: bigint, now: number): Promise<void> {
@@ -562,7 +562,7 @@ function rejectionAnswer(ctx: Ctx, kind: RejectionKind, code = ''): Response {
   // failure, with its own plain sentence.
   if (code === 'authority_reserved') return done(ctx, 422, { error: 'The account has other transactions waiting: nothing ran', code: 'account_pending' });
   if (kind === 'request') return done(ctx, 422, { error: 'The network refused this batch: nothing ran', code: 'not_executed' });
-  if (kind === 'pricing') return done(ctx, 503, { error: 'Network fees are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
+  if (kind === 'pricing') return done(ctx, 503, { error: 'Gas prices are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
   return paused(ctx);
 }
 
@@ -655,9 +655,9 @@ function refusalAnswer(ctx: Ctx, code: string, reason: string | null): Response 
       log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'relayer_halted' }, 'error');
       return paused(ctx);
     case 'fees_too_high':
-      return done(ctx, 503, { error: 'Network fees are too high right now, try again later', code: 'gas_price_too_high', retryAfterS: 30 }, { 'retry-after': '30' });
+      return done(ctx, 503, { error: 'Gas prices are too high for sponsorship right now, try again later', code: 'gas_price_too_high', retryAfterS: 30 }, { 'retry-after': '30' });
     case 'fees_too_low':
-      return done(ctx, 503, { error: 'Network fees are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
+      return done(ctx, 503, { error: 'Gas prices are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
     case 'daily_cap':
       log({ event: 'evm_sponsor_relayer_refused', requestId: ctx.requestId, endpoint: ctx.endpoint, code: 'daily_cap' }, 'error');
       return done(ctx, 429, { error: 'The daily sponsorship budget is used up, try again later', code: 'budget_exhausted', retryAfterS: 3600 }, { 'retry-after': '3600' });
@@ -919,11 +919,11 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   // The relayer's own fee floor (`feesTooLow`, the same rule): what it would refuse is never sent to it.
   if (fees.ok && feesTooLow(fees, baseFee)) {
     await giveBackOwn();
-    return done(ctx, 503, { error: 'Network fees are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
+    return done(ctx, 503, { error: 'Gas prices are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
   }
   if (!fees.ok) {
     await giveBackOwn();
-    return done(ctx, 503, { error: 'Network fees are too high right now, try again later', code: 'gas_price_too_high', retryAfterS: 30 }, { 'retry-after': '30' });
+    return done(ctx, 503, { error: 'Gas prices are too high for sponsorship right now, try again later', code: 'gas_price_too_high', retryAfterS: 30 }, { 'retry-after': '30' });
   }
   let chainNonce: bigint | null;
   let l1Bound: bigint;

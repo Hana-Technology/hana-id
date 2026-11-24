@@ -141,7 +141,7 @@ try {
           react: pin(reactDev, 'react'),
           'react-dom': pin(reactDev, 'react-dom'),
           ...Object.fromEntries(GUIDE_NEAR_JS.map((name) => [name, pin(scriptsDeps, name)])),
-          // viem, for the gas-free section's EIP-5792 sample, at the version @hana-id/core's tests use.
+          // viem, for the gas sponsorship section's EIP-5792 sample, at the version @hana-id/core's tests use.
           viem: pin(coreDev, 'viem'),
         },
         // @types/node: @stellar/stellar-base's declarations (behind @hana-id/core/signers/stellar and /decode)

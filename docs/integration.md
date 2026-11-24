@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-24 (request labels: account names, the example; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+Last verified against code: 2026-11-24 (Hedera's auto-approve limits in weibars; request labels: account names, the example; app names); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -1804,7 +1804,7 @@ gets the popup. A changed policy is treated as no policy until the page reloads,
 | `stellar.networkPassphrases`, `maxFeeStroops` | the networks, and the most fee one transaction may pay |
 | `stellar.contracts[].functions[]` | Soroban functions by name; the whole authorization tree must stay inside listed contracts and functions |
 | `stellar.changeTrustAssets` | `CODE:ISSUER`: `changeTrust` is the only classic operation a policy can cover |
-| `evm.chains[]` | per `chainId`: `maxValueWei` per transaction and `maxValueWeiPerDay` of native spend, where spend is the value **plus the maximum fee** (gas limit × max fee per gas, or gas price); `maxFeeWei` caps the fee alone per transaction. So `maxValueWei` must be at least `maxFeeWei` (the validator refuses less: such a rule could never auto-approve a call at its fee cap), even if your calls send no value (the example allows fees only: 20 calls at up to 0.00005 ETH). The consent screen shows these as "Maximum value plus network fees, per transaction / per day" |
+| `evm.chains[]` | per `chainId`: `maxValueWei` per transaction and `maxValueWeiPerDay` of native spend, where spend is the value **plus the maximum fee** (gas limit × max fee per gas, or gas price); `maxFeeWei` caps the fee alone per transaction. So `maxValueWei` must be at least `maxFeeWei` (the validator refuses less: such a rule could never auto-approve a call at its fee cap), even if your calls send no value (the example allows fees only: 20 calls at up to 0.00005 ETH). The consent screen shows these as "Maximum value plus network fees, per transaction / per day". On Hedera (chain 295) these limits are in weibars (18 decimals, as Hedera's JSON-RPC relay counts HBAR), not tinybars (8 decimals), though other tools list HBAR with 8: 1 HBAR is `"1000000000000000000"` |
 | `evm.chains[].contracts[].selectors[]` | the 4-byte `selector` and its canonical `signature`; calldata must decode against it |
 | `evm.chains[].typedData` | `(verifyingContract, primaryType)` pairs for EIP-712 (permit-style signatures are never covered by default) |
 | `addresses` (either chain) | extra addresses allowed as call arguments |

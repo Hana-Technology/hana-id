@@ -110,6 +110,12 @@ describe('chain names and native coins, from Hana’s own tables', () => {
     expect(Object.keys(TEST_EVM_CHAINS)).toHaveLength(13);
   });
 
+  it('999 is never a test chain: a Wanchain test network still runs on it, but the same signature is good on HyperEVM', () => {
+    expect(Object.hasOwn(TEST_EVM_CHAINS, 999)).toBe(false);
+    expect(isTestEvmChain(999)).toBe(false);
+    expect(evmChainInfo(999)?.label).toBe('HyperEVM (real money)');
+  });
+
   it('every listed chain has a label, and an unknown or malformed id has none', () => {
     for (const id of [...Object.keys(TEST_EVM_CHAINS), ...Object.keys(KNOWN_EVM_MAINNETS)]) expect(evmChainInfo(Number(id))?.label).toBeTruthy();
     for (const id of [0, 999_999, -1, 1.5, Number.NaN]) expect(evmChainInfo(id)).toBeNull();

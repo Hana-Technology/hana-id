@@ -37,8 +37,8 @@ export const TEST_EVM_CHAINS: Readonly<Record<number, string>> = Object.freeze({
  * EVM mainnets Hana can name, by chain ID. For display only: it allows nothing (a test app signs for none of them
  * outside the mainnet demo's own list). It holds every EVM chain Sodax's SDK lists (@sodax/types 2.2.0), each checked
  * against the chain's own docs and the public chain registries. 999 is HyperEVM in its docs and on chainlist.org, and
- * an old Wanchain test network in ethereum-lists: one number, so one signature is good on both, and "real money" is
- * the safe name for it.
+ * a Wanchain test network that is still running in ethereum-lists: one number, so one signature is good on both, and
+ * "real money" is the safe name for it. 999 must never join TEST_EVM_CHAINS.
  */
 export const KNOWN_EVM_MAINNETS: Readonly<Record<number, string>> = Object.freeze({
   1: 'Ethereum',

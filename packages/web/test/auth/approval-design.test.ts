@@ -46,8 +46,11 @@ describe('the amount first (amountHeadline)', () => {
       expect(amountHeadline(evm({ data: '0xa9059cbb' + '00'.repeat(64) }, id))).toBeNull();
     }
     // The auto-approve consent screen names them the same way: the heading, and limits in the chain's coin.
-    expect(nativeAmount(295, '1500000000000000000')).toBe('1.5 HBAR (1500000000000000000 wei)');
+    // Hedera's raw number is in weibars (18 decimals, as its relay counts HBAR), the HBAR figure the same.
+    expect(nativeAmount(295, '1500000000000000000')).toBe('1.5 HBAR (1500000000000000000 weibars)');
+    expect(nativeAmount(296, '1500000000000000000')).toBe('1.5 of this network’s own coin (1500000000000000000 wei)');
     expect(nativeAmount(8217, '1000000000000000000')).toBe('1 KAIA (1000000000000000000 wei)');
+    expect(nativeAmount(8453, '100000')).toBe('0.0000000000001 ETH (100000 wei)');
     const h2 = evmChainHeading(dom(document), 999);
     expect(h2.firstChild?.textContent).toBe('HyperEVM (real money)');
     expect(h2.querySelector('span.chain-id')?.textContent).toBe('network no. 999');

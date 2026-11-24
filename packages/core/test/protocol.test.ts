@@ -335,6 +335,20 @@ const VALID_WINDOW: Record<WindowMessageType, Record<string, unknown>> = {
     relayId: AUTH_PARAMS.relayId,
     relayKey: new Uint8Array(32),
   },
+  'hana:home-cancel-params': {
+    v: 1,
+    t: 'hana:home-cancel-params',
+    signer: 'hana-signer.testnet',
+    clientId: 'shared.apps.googleusercontent.com',
+    scopeId: 's1',
+    rootKey: 'a'.repeat(64),
+    memberKey: 'b'.repeat(64),
+    epoch: 3,
+    salt: new Uint8Array(32),
+    nonce: 'A'.repeat(43),
+    relayId: AUTH_PARAMS.relayId,
+    relayKey: new Uint8Array(32),
+  },
   'hana:auth-progress': { v: 1, t: 'hana:auth-progress', stage: 'email_code' },
   'hana:auth-progress-ack': { v: 1, t: 'hana:auth-progress-ack', stage: 'google' },
   'hana:approve-hello': { v: 1, t: 'hana:approve-hello' },
@@ -451,6 +465,25 @@ describe('window messages', () => {
     ['a Home key', { homePublicKey: new Uint8Array(32) }],
   ])('home-derive-params refuses %s', (_, change) => {
     expect(parseWindowMessage({ ...VALID_WINDOW['hana:home-derive-params'], ...change }, ['hana:home-derive-params'])).toBeNull();
+  });
+
+  // D902: Home's cancel of one waiting link: one scope, one root, one member, one epoch; the shared client only.
+  it.each([
+    ['an upper-case key', { memberKey: 'B'.repeat(64) }],
+    ['a short key', { rootKey: 'a'.repeat(63) }],
+    ['the root as the member', { memberKey: 'a'.repeat(64) }],
+    ['a negative epoch', { epoch: -1 }],
+    ['a fractional epoch', { epoch: 1.5 }],
+    ['an epoch as text', { epoch: '3' }],
+    ['a 3-byte salt', { salt: new Uint8Array(3) }],
+    ['a bad scope', { scopeId: 'S 1' }],
+    ['a short nonce', { nonce: 'n'.repeat(42) }],
+    ['the exit client', { exit: true }],
+    ['a session key', { sessionPublicKey: new Uint8Array(32) }],
+    ['an app name', { appName: 'Partner' }],
+    ['a login hint', { loginHint: '123' }],
+  ])('home-cancel-params refuses %s', (_, change) => {
+    expect(parseWindowMessage({ ...VALID_WINDOW['hana:home-cancel-params'], ...change }, ['hana:home-cancel-params'])).toBeNull();
   });
 
   // H10: either message may name Hana Home's exit client (`exit: true`, answered at /home/callback); nothing else.

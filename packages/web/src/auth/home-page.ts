@@ -847,6 +847,22 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     ended: () => session === 'ended',
     track,
     now: () => clock.now(),
+    // D902: "Cancel this link" for a waiting sign-in of a wallet on the shared Google client, by a Google sign-in.
+    cancel: {
+      authOrigin: env.authOrigin,
+      sleep,
+      api,
+      relay: deps.relay,
+      jwks,
+      clock,
+      config: () => config,
+      signingIn: () => signingIn,
+      onSignedOut: () => endSession(),
+      session: () => {
+        checkSession();
+        return identity && identity.usable && account?.provider === 'google' ? { identity, sub: account.sub } : null;
+      },
+    },
   });
 
   // ---- small view parts ----
@@ -1602,6 +1618,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
   function onMessage(event: Event): void {
     const e = event as MessageEvent;
     if (moving.onMessage(e)) return;
+    if (signIns.onMessage(e)) return;
     const p = pending;
     if (!p || p.helloAccepted || child === null || e.source !== child || e.origin !== env.authOrigin) return;
     if (!parseWindowMessage(e.data, ['hana:auth-hello'])) return;

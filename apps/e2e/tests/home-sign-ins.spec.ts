@@ -15,8 +15,8 @@
 import type { BrowserContext, Page, TestInfo } from '@playwright/test';
 import type { GoogleStub } from '../src/google-stub.ts';
 import { API_URL, AUTH_ORIGIN, ISSUER_URL, NEAR_RPC, NEAR_RPC_FALLBACK, PARTNER_ORIGIN, VAULT_ORIGIN } from '../src/stack.ts';
-import { type App, clickAction, clickClosing, clickMayClose, actionUnderSentence, clickUntilTaken, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, seenText, test, waitPersisted, walletDirectory } from './fixtures.ts';
-import { homeTab, signIn } from './home-steps.ts';
+import { type App, chooseAccount, clickAction, clickClosing, clickMayClose, actionUnderSentence, clickUntilTaken, closeOf, errorOf, expect, newApp, okValue, openPartner, peek, runAction, seenText, test, waitPersisted, walletDirectory } from './fixtures.ts';
+import { HOME_CORS, homeTab, signIn } from './home-steps.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 const PHONE = { width: 390, height: 844 };
@@ -244,10 +244,12 @@ test('a waiting link shows as waiting with where to cancel it; cancelled there (
   await expect(waiting).toContainText('Another email address');
   await expect(waiting).toContainText('Waiting');
   await expect(waiting).toContainText('Starts opening this wallet on');
-  await expect(waiting.locator('.home-sign-in-risk')).toContainText('Don’t recognise it? Sign in to this app the way you signed in here, and choose “Cancel this link”.');
+  // D902: a wallet on the shared Google client, viewed by its Google sign-in: Home's own Cancel this link (tested below).
+  await expect(waiting.locator('.home-sign-in-risk p')).toHaveText(['Don’t recognise it? If you’re not sure, cancel it.', 'Cancel this link']);
+  await expect(waiting.getByRole('button', { name: 'Cancel this link for the email address', exact: true })).toBeVisible();
   // The other sign-in's address is never on the page.
   expect(await home.locator('#home-sign-ins').textContent()).not.toContain('@');
-  expect(await sectionButtons(home)).toEqual(['Show again']);
+  expect(await sectionButtons(home)).toEqual(['Cancel this link', 'Show again']);
   await shot(home, 'home-sign-ins-several-waiting', browserName);
 
   // Where the line points: a sign-in to the app with this Google account, and its banner's Cancel this link.
@@ -472,7 +474,11 @@ test('D898 option A: a waiting link has “Open {App} to cancel it”, which ope
   await context.route(`${API_URL}/v1/home/apps**`, async (route) => {
     const res = await route.fetch();
     const body = (await res.json()) as { scopes?: { scopeId: string; apps: { origins: string[] }[] }[] };
-    for (const s of body.scopes ?? []) if (s.scopeId === scopeId) for (const a of s.apps) a.origins = [CANCEL_HERE];
+    // D902: a wallet on its own Google client (not the shared one), so Home can't cancel it itself and option A applies.
+    for (const s of (body.scopes ?? []) as { scopeId: string; coverage?: string; apps: { origins: string[] }[] }[]) if (s.scopeId === scopeId) {
+      s.coverage = 'hana_client';
+      for (const a of s.apps) a.origins = [CANCEL_HERE];
+    }
     await route.fulfill({ response: res, json: body });
   });
   const opened: string[] = [];
@@ -539,4 +545,177 @@ test('D898 option A: a waiting link has “Open {App} to cancel it”, which ope
   // Home is where it was.
   await expect(link).toBeVisible();
   expect(problems()).toEqual([]);
+});
+
+// ---- D902 (D898 option B): Home's own "Cancel this link", for a wallet on the shared Google client ----
+
+/** Screens of D902 at phone (390) and desktop (1280) width, light (Chromium only, with HANA_CANCEL_SHOTS_DIR). */
+const CANCEL_SHOTS = process.env.HANA_CANCEL_SHOTS_DIR;
+async function cancelShot(page: Page, name: string, browserName: string): Promise<void> {
+  for (const [label, size] of [['phone', PHONE], ['desktop', { width: 1280, height: 800 }]] as const) {
+    await page.setViewportSize(size);
+    await page.emulateMedia({ colorScheme: 'light' });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${name} ${label}: no sideways scroll`).toBe(true);
+    if (CANCEL_SHOTS && browserName === 'chromium') {
+      await page.locator('#home-sign-ins').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${CANCEL_SHOTS}/${name}-${label}.png`, fullPage: true, animations: 'disabled' });
+    }
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+}
+
+const CANCEL_ROUTE = `${API_URL}/v1/home/link/cancel`;
+/** The POSTs Home made to its cancel route. */
+function cancelPosts(page: Page): () => number {
+  let n = 0;
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && r.url() === CANCEL_ROUTE) n += 1;
+  });
+  return () => n;
+}
+
+test('D902: Cancel this link in Home: asks first, a fresh Google sign-in of the same account, one request, Link cancelled; the line and the row change without a reload; NEAR agrees', async ({ page, context, google, browserName }, info) => {
+  test.setTimeout(180_000);
+  const problems = await watchAuthPages(context);
+  const { scopeId, name } = await waitingEmail(page, google, info, browserName, 'b');
+
+  const home = await context.newPage();
+  const posts = cancelPosts(home);
+  await home.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(home);
+  await openApp(home, scopeId, name);
+  await home.locator('#home-sign-ins-show').click();
+  await expect(signInRows(home)).toHaveCount(2);
+  await expect(home.locator('#home-sign-ins-waiting-line')).toHaveText('1 more starts opening it soon. Check it below.');
+  const waiting = home.locator('#home-sign-ins-list > li[data-role="waiting"]');
+  const offer = waiting.getByRole('button', { name: 'Cancel this link for the email address', exact: true });
+  await expect(offer).toHaveText('Cancel this link');
+  await expect(offer).toHaveClass(/jp-btn-secondary jp-btn-sm/u);
+  // Nothing sends the person to the app any more for this row.
+  await expect(home.locator('#home-sign-ins-sign-out-first')).toHaveCount(0);
+  await expect(home.locator('#home-sign-ins-read-only')).toContainText('Passport Home can cancel a link that is still waiting, but can’t remove a sign-in yet.');
+  await home.setViewportSize(PHONE);
+  expect((await offer.boundingBox())!.height, 'the button is 44 px tall on a phone').toBeGreaterThanOrEqual(43.5);
+  await cancelShot(home, 'cancel-offer', browserName);
+
+  // 1. It asks first.
+  await offer.click();
+  const panel = home.locator('.home-sign-in-cancel');
+  await expect(panel).toHaveAttribute('data-stage', 'confirm');
+  await expect(home.locator('#home-sign-in-cancel-title')).toHaveText('Cancel this link?');
+  await expect(panel).toContainText('The email address will never open this wallet. You can’t undo this: it can only be added again, and then it waits again.');
+  await cancelShot(home, 'cancel-confirm', browserName);
+  // Go back changes nothing.
+  await home.locator('#home-sign-in-cancel-back').click();
+  await expect(panel).toHaveCount(0);
+  await offer.click();
+
+  // The request is held until the "Cancelling the link" screen is seen (then sent on, unchanged).
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  await home.route(CANCEL_ROUTE, async (route) => {
+    if (route.request().method() === 'POST') await held;
+    await route.continue();
+  });
+
+  // 2. Cancel the link: the child in the click, Google's chooser (shared client, max_age=0), the same account.
+  const childP = home.waitForEvent('popup');
+  await home.locator('#home-sign-in-cancel-go').click();
+  const child = await childP;
+  await child.waitForURL(/accounts\.google\.com/u);
+  await expect(home.locator('#home-sign-in-cancel-title')).toHaveText('Sign in with Google to confirm it’s you');
+  await cancelShot(home, 'cancel-signing-in', browserName);
+  const login = google.requests.at(-1)!;
+  expect(login.ok && [login.request.kind, login.request.maxAge]).toEqual(['login', '0']);
+  await chooseAccount(child, 0);
+  await expect(home.locator('#home-sign-in-cancel-title')).toHaveText('Cancelling the link');
+  await expect(panel).toContainText('This takes a few seconds…');
+  await cancelShot(home, 'cancel-working', browserName);
+  release();
+
+  // 3. Link cancelled; the line and the row at once.
+  await expect(home.locator('#home-sign-in-cancel-title')).toHaveText('Link cancelled', { timeout: 30_000 });
+  await expect(home.locator('#home-sign-in-cancel-what')).toHaveText('The email address won’t open this wallet.');
+  await expect(panel).toContainText('Devices signed in to this wallet will be asked to sign in again.');
+  await expect(home.locator('#home-sign-ins-summary')).toHaveText('1 sign-in opens this wallet.');
+  await expect(home.locator('#home-sign-ins-waiting-line')).toHaveCount(0);
+  await expect(home.locator('#home-sign-ins-list > li[data-role="cancelled"]')).toHaveCount(1);
+  await cancelShot(home, 'cancel-done', browserName);
+  await home.locator('#home-sign-in-cancel-close').click();
+  await expect(signInRows(home)).toHaveCount(1);
+  expect(posts()).toBe(1);
+  // NEAR agrees: read again, one sign-in.
+  await home.locator('#home-sign-ins-again').click();
+  await expect(signInRows(home)).toHaveCount(1);
+  await expect(signInRows(home).first()).toHaveAttribute('data-role', 'first');
+  expect(posts()).toBe(1);
+  expect(await home.evaluate(() => location.href)).toBe(`${AUTH_ORIGIN}/home`);
+  expect(problems()).toEqual([]);
+});
+
+test('D902: another Google account at the check is never sent: Nothing changed, the link still waits, the row as it was', async ({ page, context, google, browserName }, info) => {
+  test.setTimeout(180_000);
+  const problems = await watchAuthPages(context);
+  const { scopeId, name } = await waitingEmail(page, google, info, browserName, 'm');
+  google.accounts = [...google.accounts, { sub: newSub(), label: 'OTHER', email: outside(info, 'other'), emailVerified: true }];
+
+  const home = await context.newPage();
+  const posts = cancelPosts(home);
+  await home.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(home);
+  await openApp(home, scopeId, name);
+  await home.locator('#home-sign-ins-show').click();
+  const waiting = home.locator('#home-sign-ins-list > li[data-role="waiting"]');
+  await waiting.getByRole('button', { name: 'Cancel this link for the email address', exact: true }).click();
+  const childP = home.waitForEvent('popup');
+  await home.locator('#home-sign-in-cancel-go').click();
+  await chooseAccount(await childP, 1);
+  await expect(home.locator('#home-sign-in-cancel-title')).toHaveText('Nothing changed', { timeout: 30_000 });
+  const panel = home.locator('.home-sign-in-cancel');
+  await expect(panel).toContainText('The link is still waiting.');
+  await expect(panel).toContainText('If you picked a different Google account, try again with the one you signed in with here.');
+  await expect(panel).toContainText('Error code (for support): home_account_mismatch');
+  await cancelShot(home, 'cancel-nothing-changed', browserName);
+  expect(posts()).toBe(0);
+  await home.locator('#home-sign-in-cancel-close').click();
+  await expect(waiting).toHaveAttribute('data-role', 'waiting');
+  await expect(home.locator('#home-sign-ins-waiting-line')).toBeVisible();
+  // NEAR agrees: still two, one waiting.
+  await home.locator('#home-sign-ins-again').click();
+  await expect(home.locator('#home-sign-ins-list > li[data-role="waiting"]')).toHaveCount(1);
+  expect(problems()).toEqual([]);
+});
+
+test('D902: an answer nobody can read: It may not have been cancelled, and Show again reads NEAR, where the link still waits', async ({ page, context, google, browserName }, info) => {
+  test.setTimeout(180_000);
+  const problems = await watchAuthPages(context);
+  const { scopeId, name } = await waitingEmail(page, google, info, browserName, 'u');
+
+  const home = await context.newPage();
+  await home.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(home);
+  await openApp(home, scopeId, name);
+  await home.locator('#home-sign-ins-show').click();
+  // The API's answer is lost on the way (a gateway timeout instead of its JSON): nobody can say what happened.
+  await home.route(CANCEL_ROUTE, async (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: HOME_CORS });
+    return route.fulfill({ status: 504, headers: { ...HOME_CORS, 'content-type': 'application/json' }, body: JSON.stringify({ error: 'Timed out', code: 'timeout' }) });
+  });
+  await home.locator('#home-sign-ins-list > li[data-role="waiting"]').getByRole('button', { name: 'Cancel this link for the email address', exact: true }).click();
+  const childP = home.waitForEvent('popup');
+  await home.locator('#home-sign-in-cancel-go').click();
+  await chooseAccount(await childP, 0);
+  await expect(home.locator('#home-sign-in-cancel-title')).toHaveText('It may not have been cancelled', { timeout: 30_000 });
+  await expect(home.locator('.home-sign-in-cancel')).toContainText('Something went wrong, so we can’t tell whether the link was cancelled. Choose “Show again” to check.');
+  await expect(home.locator('.home-sign-in-cancel')).toContainText('Error code (for support): timeout');
+  // The row is not dropped on a guess.
+  await expect(home.locator('#home-sign-ins-waiting-line')).toBeVisible();
+  await cancelShot(home, 'cancel-unknown', browserName);
+  await home.locator('#home-sign-in-cancel-again').click();
+  await expect(home.locator('#home-sign-ins-list > li[data-role="waiting"]')).toHaveCount(1);
+  await expect(home.locator('.home-sign-in-cancel')).toHaveCount(0);
+  // The one line the routed 504 itself makes the browser print (the resource load), and nothing else.
+  expect(problems().filter((p) => !p.endsWith('Failed to load resource: the server responded with a status of 504 (Gateway Timeout)'))).toEqual([]);
 });

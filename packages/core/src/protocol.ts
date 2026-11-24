@@ -206,6 +206,8 @@ export const isScopeId = (v: unknown): v is string => typeof v === 'string' && /
 const isAppName = (v: unknown): v is string => isStr(v, 1, 200) && isDisplaySafeLine(v);
 const isClientId = (v: unknown): v is string => isStr(v, 1, 256);
 const isNonce = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{43}$/u.test(v);
+/** An identity key as the chain's views give it: 32 bytes, lowercase hex. */
+const isIdentityKeyHex = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{64}$/u.test(v);
 const isRelayId = (v: unknown): v is string => typeof v === 'string' && RELAY_ID_PATTERN.test(v);
 
 /** The sign-in methods (`GET /v1/app` `loginMethods`, migration 0010 `apps.login_methods`), in their fixed order. */
@@ -1044,6 +1046,27 @@ export interface WindowMessageMap {
     exit?: true;
   };
   /**
+   * Hana Home page → its own sign-in child (`/login?mode=home`), to cancel one link that is still waiting (D902, D898
+   * option B): a Google sign-in whose nonce is the contract's `link_change` "cancel" nonce over (signer, scope, root,
+   * member, epoch, salt), which the child recomputes from these fields (links.ts `linkChangeNonce`), so the child never
+   * sends Google a nonce for any other change. The shared Google client only (no `exit`: the exit client can't make
+   * link changes, D468). Carries relayKey; taken only from the same-origin opener on the Home page. It names no app.
+   */
+  'hana:home-cancel-params': {
+    signer: string;
+    clientId: string;
+    scopeId: string;
+    /** The account root's identity key, hex. */
+    rootKey: string;
+    /** The waiting member's identity key, hex. */
+    memberKey: string;
+    epoch: number;
+    salt: Uint8Array;
+    nonce: string;
+    relayId: string;
+    relayKey: Uint8Array;
+  };
+  /**
    * Login popup → vault: the popup is about to navigate to Google (`google`, from any Hana page, every time), it is
    * back from Google on Hana's callback with its opener (`back`), the code was sent (`email_code`, from
    * `/login/email`), or the popup relayed its answer and is closing itself (`relayed`). A signal only: it carries nothing, and the vault takes it only from the window its pending login answered.
@@ -1323,6 +1346,19 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isScopeId(m.scopeId) &&
     isBytes(m.sessionPublicKey, 32, 32) &&
     isMs(m.expiresAtMs) &&
+    isBytes(m.salt, SALT_MIN_BYTES, SALT_MAX_BYTES) &&
+    isNonce(m.nonce) &&
+    isRelayId(m.relayId) &&
+    isBytes(m.relayKey, 32, 32),
+  'hana:home-cancel-params': (m) =>
+    exactKeys(m, ['v', 't', 'signer', 'clientId', 'scopeId', 'rootKey', 'memberKey', 'epoch', 'salt', 'nonce', 'relayId', 'relayKey']) &&
+    isNearAccountId(m.signer) &&
+    isClientId(m.clientId) &&
+    isScopeId(m.scopeId) &&
+    isIdentityKeyHex(m.rootKey) &&
+    isIdentityKeyHex(m.memberKey) &&
+    m.rootKey !== m.memberKey &&
+    isMs(m.epoch) &&
     isBytes(m.salt, SALT_MIN_BYTES, SALT_MAX_BYTES) &&
     isNonce(m.nonce) &&
     isRelayId(m.relayId) &&

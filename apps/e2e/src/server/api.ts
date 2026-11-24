@@ -15,6 +15,12 @@
 // with the test MPC, instead of signing a NEAR transaction. HOME_RELAYER_KEYS holds one throwaway key per stack, which
 // only routes (relayer-pool.ts claimKeyIndex) and never signs.
 //
+// POST /v1/home/link/cancel (Passport Home's cancel of a waiting link, D902) is NOT mocked either: the Worker's handler
+// runs whole (the Home gate, the proof's RS256 check and nonce, the shared client, the chain prechecks, the claims and
+// limits, the shares' revocation, the directory sync). The stand-in answers only its `cancel_link` on the `session` pool
+// (`relayCancel`), applied to the mocked chain; RELAYER_KEYS holds one throwaway key for that, which never signs, and
+// any other session-pool method still answers `relayer_unconfigured`, as before (those routes are mocked above).
+//
 // EVM gas sponsorship (/v1/evm/sponsor/*, D847, D851, D856) is the Worker's own: its routes, the session proof and the
 // real EvmRelayer object (EVM_RELAYER, in memory, its alarm run soon after a change), signing with the stack's relayer
 // key (src/relayer-key.ts) and broadcasting to the mocked EVM chain (partner.ts MockEvm), which mines each sponsored
@@ -250,9 +256,11 @@ export class MockApi {
     if (this.control && this.evm) env.EVM_RELAYER = new MemoryNamespace(api.EvmRelayer, () => env, { soonAlarmMs: 250 });
     // The `home` pool (POST /v1/home/login, the Worker's own handler): one throwaway key, and the object that relays.
     env.HOME_RELAYER_KEYS = JSON.stringify([`ed25519:${base58.encode(crypto.getRandomValues(new Uint8Array(64)))}`]);
+    // The `session` pool, for the Worker's own POST /v1/home/link/cancel only (D902): one throwaway key.
+    env.RELAYER_KEYS = JSON.stringify([`ed25519:${base58.encode(crypto.getRandomValues(new Uint8Array(64)))}`]);
     env.RELAYER_KEY = {
       idFromName: (name: string): string => name,
-      get: (_id: string) => ({ relay: async (pool: unknown, _keyIndex: unknown, call: { method: string; args: Body }) => this.relayHome(pool, call) }),
+      get: (_id: string) => ({ relay: async (pool: unknown, _keyIndex: unknown, call: { method: string; args: Body }) => (pool === 'session' ? this.relayCancel(call) : this.relayHome(pool, call)) }),
     };
     this.env = env;
   }
@@ -523,6 +531,29 @@ export class MockApi {
     const nearTx = this.chain.newTxHash();
     this.chain.txs.set(nearTx, result);
     return { ok: true, result, nearTx };
+  }
+
+  /**
+   * The RelayerKey object's `relay` for the `session` pool, `cancel_link` only (D902): the Worker's
+   * /v1/home/link/cancel verified the proof (RS256, its nonce over this root, member and epoch) and prechecked the
+   * contract's rules before it got here. Applied to the mocked chain as links.rs would: the epoch must be the account's
+   * and the member still pending, else the contract's panic (reverted). Anything else on this pool is answered as an
+   * unconfigured relayer, as before D902.
+   */
+  private relayCancel(call: { method: string; args: Body }): Body {
+    if (call.method !== 'cancel_link') return { ok: false, status: 503, code: 'relayer_unconfigured', error: 'The relayer is not configured' };
+    const a = call.args;
+    const who = tokenIdentity(a.jwt);
+    const panic = (error: string): Body => ({ ok: false, status: 422, code: 'contract_rejected', error, executor: E2E_ENV.signer, nearTx: this.chain.newTxHash() });
+    if (!who || typeof a.member_key !== 'string' || !isInt(a.epoch)) return panic('Malformed arguments');
+    this.chain.relayed.push({ method: 'cancel_link', tokens: [relayedToken(who)] });
+    const found = this.chain.accountOf(a.member_key);
+    if (!found) return panic('No such member');
+    if (found.account.epoch !== a.epoch) return panic('Wrong epoch');
+    const member = found.account.members.find((m) => m.key === a.member_key);
+    if (!member || this.chain.isActive(member)) return panic('No such member');
+    if (!this.chain.unlink(a.member_key, false)) return panic('No such member');
+    return { ok: true, result: null, nearTx: this.chain.newTxHash() };
   }
 
   private async derive(ctx: ApiCtx, b: Body): Promise<Response> {

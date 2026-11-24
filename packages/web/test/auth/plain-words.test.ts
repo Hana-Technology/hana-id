@@ -33,6 +33,8 @@ const FILES = [
   'auth/home-profile.ts',
   // D874: the ways to sign in to an app's wallet.
   'auth/home-sign-ins.ts',
+  // D902: Home's own "Cancel this link".
+  'auth/home-link-cancel.ts',
   'client/user-messages.ts',
   'vault/approvals.ts',
   // The sponsored action's words (SPONSOR_TEXT: the vault's errors and the approval flow's notes). client/evm-sponsor.ts's

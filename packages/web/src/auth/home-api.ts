@@ -318,6 +318,21 @@ export interface HomeApi extends HomeDevicesApi, HomeProfileApi {
    * `scopeId`. The body carries the per-app sign-in's token; it goes only to the API and is never logged.
    */
   login(identity: HomeIdentity, body: HomeLoginBody): Promise<LoginResponse>;
+  /**
+   * `POST /v1/home/link/cancel` (D902), signed by `identity`: one `cancel_link` of a waiting link, with a fresh Google
+   * proof of the same account. The body carries that proof; it goes only to the API and is never logged. Sent once, never
+   * repeated here.
+   */
+  linkCancel(identity: HomeIdentity, body: HomeLinkCancelBody): Promise<{ nearTx: string | null }>;
+}
+
+/** `POST /v1/home/link/cancel`'s body (D902): the proof, the waiting member, the account's epoch, the salt, the scope. */
+export interface HomeLinkCancelBody {
+  jwt: string;
+  memberKey: string;
+  epoch: number;
+  salt: number[];
+  scopeId: string;
 }
 
 /** `/v1/login`'s body without what a Home derive can't carry (a link, an export label), plus the scope. */
@@ -672,6 +687,16 @@ export function homeApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...a
       }
       if (!isLoginResponse(out)) throw bad('/v1/home/login');
       return out;
+    },
+    async linkCancel(identity, body) {
+      const url = new URL(`${base}/v1/home/link/cancel`);
+      // The key signs these exact bytes, so the same bytes are sent.
+      const bytes = new TextEncoder().encode(JSON.stringify({ jwt: body.jwt, memberKey: body.memberKey, epoch: body.epoch, salt: body.salt, scopeId: body.scopeId }));
+      const header = await identity.header('POST', url, bytes);
+      const out = await parseApiResponse(await fetchFn(url.toString(), init({ method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json', [HOME_IDENTITY_HEADER]: header }, body: bytes })));
+      // Only the route's own answer is believed: anything else can't say the link was cancelled.
+      if (out.result !== null || !('result' in out) || (out.nearTx !== undefined && out.nearTx !== null && typeof out.nearTx !== 'string')) throw bad('/v1/home/link/cancel');
+      return { nearTx: typeof out.nearTx === 'string' ? out.nearTx : null };
     },
   };
 }

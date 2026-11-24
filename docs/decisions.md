@@ -19890,3 +19890,123 @@ sound, and asked for these:
 13. Stellar asset contracts handled by reserving their state-changing functions rather than refused by address.
 14. The Soroban allowance residual under value verbs.
 
+
+## Cancelling a waiting sign-in inside Passport Home (branch `feat/home-cancel-waiting-sign-in`), 2026-11-24
+
+From `next` @ 65209713; not merged, not deployed, no migration applied anywhere.
+
+### D902. Passport Home cancels a waiting sign-in itself (D898's option B): Google on the shared client, a fresh Google proof of the same account, Home's own route, stricter than the window
+- Date 2026-11-24 · Status: **B decided by the founder 2026-11-24** ("build D898's option B", through the coordinator's
+  brief: B only, Google on the shared client, D898's words, B+email not built); every detail below **decided while
+  building, to confirm** (the list at the end) · Built: `apps/api/src/home/link-cancel.ts` (new: `POST
+  /v1/home/link/cancel`), `apps/api/src/links.ts` (`precheckChange` exported with `activeActor`, `linkRootWindow`),
+  `apps/api/src/index.ts`, `apps/api/src/usage/event.ts`, `packages/console-core/src/usage-event.ts` (endpoint
+  `home_link_cancel`, appless), `apps/api/migrations-usage/0011_home_link_cancels.sql` (new, **not applied anywhere**,
+  listed in `go-live-after-freeze.md` 1.1), `packages/core/src/protocol.ts` (`hana:home-cancel-params`),
+  `packages/web/src/auth/login-page.ts` (`checkHomeCancel`, `HOME_CANCEL_SIGN_IN_TITLE`), `home-api.ts` (`linkCancel`),
+  `home-link-cancel.ts` (new: the flow), `home-sign-ins.ts` (which rows offer it, the row's steps, the line and the row
+  after a cancel), `home-page.ts` (its deps, the messages); tests `apps/api/test/home-link-cancel.test.ts` (new),
+  `apps/api/test-usage/ledger.test.ts`, `scripts/test/usage-migrate.test.ts`, `packages/core/test/protocol.test.ts`,
+  `packages/web/test/auth/home-link-cancel.test.ts` (new), `login-page.test.ts`, `plain-words.test.ts`,
+  `apps/e2e/tests/home-sign-ins.spec.ts` ("D902 …", three browsers; option A's test now gives its wallet a coverage
+  other than shared), `apps/e2e/src/server/api.ts` (the local stack runs the Worker's route whole; its relayer stand-in
+  applies `cancel_link` on the session pool to the mocked chain, every other session-pool method still unconfigured); docs `architecture.md`, `security.md`, `api.md`, `operations.md` (hand-test F, step 5a),
+  `go-live-after-freeze.md`, `README.md`, `apps/e2e/README.md`. No contract, issuer or vault change; no `envs/` value.
+- **Which rows**: a waiting email or Google account (`pointerFor` `cancel_at_sign_in`: the viewer already opens the
+  wallet and is not the waiting one), Home signed in with Google, the wallet's coverage `shared` with a client (the
+  listing's `googleClientId`, else Home's shared client). Every other row keeps D898 option A's "Open {App} to cancel it"
+  or the plain sentence: email sign-ins (B+email is not built), wallets on a partner's or Hana's own client, the exit
+  client. The section's last line reads "Passport Home can cancel a link that is still waiting, but can’t remove a
+  sign-in yet." where any row offers it (else the old line), and "If you’re already signed in to this app, sign out of it
+  first." is not said for such a row.
+- **The flow** (`home-link-cancel.ts`; one at a time; nothing is sent to the API before step 5):
+  1. **Cancel this link** (small outlined, named "Cancel this link for the {email address | Google account}") under
+     "Don’t recognise it? If you’re not sure, cancel it." opens the confirmation in the row: "Cancel this link?"; "The
+     {kind} will never open this wallet. You can’t undo this: it can only be added again, and then it waits again.";
+     muted "Sign in with Google to confirm it’s you"; **Cancel the link** (the one danger button) and **Go back**
+     (nothing changes).
+  2. **Cancel the link** opens `/login?mode=home` in the click (before any await), then, while it loads: the wallet's
+     ways to sign in read again on both providers alone (they must agree, as the list's own read), and on NEAR
+     `get_scope.allow_shared` and the client among `get_config.shared_clients`. The row must still be waiting, the viewer
+     still active; the root and the epoch for the nonce come from this read, never from the list on screen (a stale
+     page can't send a stale nonce). Otherwise the child closes with nothing posted.
+  3. The child's hello gets `hana:home-cancel-params` {signer, clientId, scopeId, rootKey, memberKey, epoch, salt (32
+     bytes), nonce, relayId, relayKey}; the child recomputes `linkChangeNonce(signer, scope, "cancel", root, member,
+     epoch, salt)` itself (the action fixed, never read from the message) and goes to Google: the shared client,
+     `/login/callback`, the account chooser (`prompt=select_account`, no `login_hint`), `max_age=0`. Its heading: "Sign in
+     with Google to confirm it’s you". Home's row shows the same heading, "A Google window is open. Choose the Google
+     account you signed in with here." and **Go back** (closes the child; nothing sent).
+  4. Google's answer through the login relay (5 minutes at most): checked against Google's keys for that client, that
+     nonce, the claim allow-list, a fresh `auth_time` when present, and the same `sub` as Home's sign-in; Home's
+     identity must still be the one the flow started with. The row: "Cancelling the link" / "This takes a few seconds…".
+  5. One `POST /v1/home/link/cancel` signed by the Home key; never sent again by the page.
+  6. Outcomes, each with **Close**: "Link cancelled" / "The {kind} won’t open this wallet." / "Devices signed in to this
+     wallet will be asked to sign in again." (the API revokes the account's shares); the summary line recounts at once
+     and the row shows only its name and the result until Close, then is gone (no reload, no chain read). **"Nothing
+     changed"**, with the reason: not this sign-in ("The link is still waiting." "We couldn’t check it was you." "If you
+     picked a different Google account, try again with the one you signed in with here."), the sign-ins changed ("The
+     ways to sign in to this wallet may have changed since this page showed them." "Close this, then choose “Show again”
+     to see them as they are now."), refused before anything was sent ("The link is still waiting." "Journear couldn’t do
+     this just now. Try again later."), the check didn't finish ("The link is still waiting." "Google didn’t finish
+     checking it’s you.", or the blocked-window sentence), Home's sign-in ended (its own sentence; Home is told). **"It
+     may not have been cancelled"**: "Something went wrong, so we can’t tell whether the link was cancelled. Choose “Show
+     again” to check." with **Show again** (reads the list on both providers) and Close; the row is kept. Each failure
+     shows "Error code (for support): {code}". "Nothing changed" is said only for codes refused before the relay, or a
+     contract rule that reverted (`contract_rejected` with a `reason`, `link_pending`); anything else, a network failure
+     or an answer that isn't `{result: null}` is "It may not have been cancelled" (`cancelOutcome`).
+- **The route's contract** (`POST /v1/home/link/cancel`, body exactly `{jwt, memberKey, epoch, salt, scopeId}`; `200
+  {result: null, nearTx}`), checks in order, each refusing with nothing relayed: (1) `homeGate` (Origin = auth origin,
+  10/min per IP, the Home token, the Home key's signature over this body, 5/min per Home key, the counter used once);
+  (2) the Home identity is Google (`403 google_only`); (3) the shape (`400 bad_request`); (4) the proof genuine,
+  unexpired, allow-listed claims, with a nonce (`verifyLoginToken`, no app); (5) the proof's `(provider, sub)` equals
+  Home's (`403 home_account_mismatch`); (6) its `aud` a shared Google client in force (`403 not_shared_client`), admitted
+  for the scope (`checkClientScope`), not paused, its kid active (`chainGate`); (7) the chain now (`precheckChange`,
+  `activeActor`): member in the proof identity's account, the nonce that change's, the identity not the member (`422
+  not_allowed`) and not pending (`409 link_pending`), the epoch current, the member pending; (8) the panic cache, one
+  relay per proof (the `link-tokens` claim shared with `/v1/link/cancel`: `409 link_in_flight`), the account's
+  link-change windows shared with the window's route (10/min, 100 a day). Then `cancel_link` from the session pool; the
+  account root's vault shares revoked in every app of the scope; the directory synced with the member as the hint; one
+  usage event `home_link_cancel` for Journear's own org.
+- **Threats** (who could try what, and what stops them):
+
+  | Who, trying what | What stops it |
+  |---|---|
+  | Another website posting to the route (CSRF) | No cookie; `Origin` must be the auth origin; every request is signed by the Home key, which lives only in Home's page memory |
+  | Someone replaying a captured request or proof | The Home counter is single use; the proof's nonce names one epoch and the first cancel moves it; one relay per proof across isolates and both routes (`link-tokens`) |
+  | A page left open for hours (a stale list) | The root and epoch come from a fresh two-provider read at the press; the API and the contract check the epoch and that the member is still pending |
+  | A cancel aimed at another wallet's waiting sign-in | The member must be in the proof identity's own account; the nonce commits to that root and member; the contract checks it again |
+  | A different Google account than Home's session | The page compares `sub`s before sending; the API refuses `home_account_mismatch`; Home's identity must be unchanged since the flow started |
+  | A stolen Home session (key and token) alone | Can't make a `link_change` proof: that needs a fresh Google sign-in of the same account over this change's nonce |
+  | The waiting sign-in itself, or another waiting one, cancelling from Home | Refused (`not_allowed`, `link_pending`): Home is stricter than the contract and the window |
+  | A token of a partner's own client or the exit client | `not_shared_client`; the exit client can't make link changes on chain either |
+  | The waiting period ending during the flow | The fresh read refuses an active row; the API's precheck and the contract refuse an active member (reverted): "Nothing changed" |
+  | Double-submit (two presses, two tabs) | One flow at a time per page; the request is sent once; the second copy of a proof is `link_in_flight` |
+  | A flood draining the session pool | Per-IP and per-Home-key minutes, the account's change windows; a precheck refuses anything that isn't a live pending link (no gas), and pending links are bounded by the add limits |
+  | A lying or stale NEAR provider | Both providers must agree for the page; a wrong root or epoch only makes the API or the contract refuse |
+  | Logs or the ledger leaking identities | No token, `sub`, identity key or path logged, returned or in the usage event (tested) |
+- **Why the usage ledger changed** (decided while building): every relay must have a ledger row, or the admin's daily
+  nonce check raises `nonce_unexplained` for the session key; a `link_cancel` row needs an app (a partner would be named
+  and billed). So a new appless endpoint `home_link_cancel`, written for Journear's own org (`HANA_ORG_ID`, else
+  `org_legacy`), through migrations-usage 0011 (widens the two checks and `record_event`; the reports and settlement
+  unchanged: it is a `scope` row of Journear's org, from the session pool). **0011 must be applied before an API with
+  this route is deployed**; it is applied nowhere now.
+- Rejected: relaying through the Home pool (its keys' `method_names` would need a deploy step, and D456 keeps each pool
+  to what it relays; the session pool already relays `cancel_link`); calling `/v1/link/cancel` with an app's key
+  (D874); a `login_hint` (D898 item 2: Home shows the chooser; the API's `sub` check covers a wrong pick); refreshing the
+  list from the flow's read (a row that vanished would lose its result screen; Show again reads); a usage event under a
+  partner's app.
+- Not changed: the delay, what a waiting sign-in can do, derivation paths, keys, the contract, the issuer, the vault, the
+  sign-in window's own Cancel. **Address impact: none** (no path, key or derivation input changes; a cancel only
+  removes a member that never opened anything).
+- **To confirm** (decided while building): (1) the sentences not in D898: "A Google window is open. Choose the Google
+  account you signed in with here.", "Devices signed in to this wallet will be asked to sign in again." on the result,
+  each "Nothing changed" reason line above, "Close this, then choose “Show again” …", and the section's last line "Passport
+  Home can cancel a link that is still waiting, but can’t remove a sign-in yet."; (2) "Sign in with Google to confirm
+  it’s you" as both the confirmation's muted line and the sign-in step's heading (Home's row and the child window);
+  (3) the screens inside the row (the row keeps its name; a cancelled row shows only its name and the result until
+  Close); (4) Cancel the link as a danger button (D881's Cancel asked nothing; D898's B asks first); (5) the fresh
+  two-provider read before Google, and its root and epoch used for the nonce; (6) the codes in each outcome group (an
+  unknown contract refusal is "It may not have been cancelled", though it reverted); (7) limits: 10/min per IP, 5/min
+  per Home key, the account's change windows shared with the window; (8) the session pool, and the usage endpoint
+  `home_link_cancel` for Journear's own org (migration 0011); (9) the coverage rule: `shared` only, whatever client the
+  wallet's own sign-ins use; (10) Google only: an email owner keeps option A or the sentence (B+email later, or never).

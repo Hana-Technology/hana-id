@@ -2,12 +2,13 @@
 // user's wallet in that app (a Google account, an email address), which one they are signed in with now, how each
 // was added, a link still waiting to start, and where each can be cancelled or removed.
 //
-// READ ONLY, by design (D874, D619): Passport Home can't cancel or remove a sign-in. The contract wants a fresh token of
-// the acting sign-in whose nonce commits to that one change (`link_change`), relayed by `POST /v1/link/cancel` or
-// `/unlink`. Those relays are app-gated (a publishable key, and a partner origin of that app in
-// `x-hana-parent-origin`), which Home has neither of, and the email issuer's Home route mints only Home's own
-// `identity` and `derive` codes, never a `link_change` one. Doing it here needs an API and an issuer change (a Home
-// route behind Home's gate for both), which D874 left to the founder. So each line says where the change can be made
+// One change only (D902, D898 option B): a link that is still waiting can be cancelled here, by a Google sign-in that
+// already opens a wallet on Journear's shared Google client ("Cancel this link", home-link-cancel.ts: a fresh Google
+// sign-in of the same account over that change's `link_change` nonce, and `POST /v1/home/link/cancel`, Home's own route).
+// Nothing else is changed from here (D874, D619): no removal, and no cancel for an email sign-in or a wallet on another
+// client, since the contract wants a fresh token of the acting sign-in whose nonce commits to that one change, the
+// app-gated relays (`/v1/link/cancel`, `/unlink`) need a publishable key and a partner origin Home has neither of, and
+// the email issuer's Home route mints no `link_change` code. So every other line says where the change can be made
 // today: the sign-in window's banners (D259: Cancel by any active sign-in; Remove by the wallet's own sign-in, at every
 // sign-in for 7 days, then until Done is pressed on it in that browser, D875), the waiting email's own sign-in (D864), and the member's own
 // sign-in (D865). A line never points to a change the contract would refuse (`mayCancel`, `mayRemove`: links.rs
@@ -34,6 +35,7 @@ import { type AccountView, type IdentityView, ViewShapeError, identityKeyHex, is
 import { type Child, type Dom, addressText, maskedAddress, originText, supportCode } from './dom.ts';
 import { plainProblem } from './home-problems.ts';
 import type { HomeApp, HomeScope } from './home-api.ts';
+import { type CancelRead, type HomeLinkCancel, type HomeLinkCancelDeps, cancelOffer, startHomeLinkCancel } from './home-link-cancel.ts';
 import type { NearReader } from './near-rpc.ts';
 import type { GestureCheck, PageWindow } from './page-window.ts';
 import { BTN, alert, icon } from './ui.ts';
@@ -73,7 +75,8 @@ export interface SignInViewer {
   readonly kind: SignInKind;
 }
 
-export type SignInModel = { readonly state: 'no_wallet' } | { readonly state: 'list'; readonly viewer: SignInViewer; readonly rows: readonly SignInRow[] };
+/** `epoch`: the account's (0 with no account yet), which a cancel's nonce commits to (D902). */
+export type SignInModel = { readonly state: 'no_wallet' } | { readonly state: 'list'; readonly viewer: SignInViewer; readonly rows: readonly SignInRow[]; readonly epoch: number };
 
 const kindOf = (provider: string): SignInKind => (provider === 'google' || provider === 'email' ? provider : 'other');
 
@@ -86,7 +89,7 @@ export function signInModel(scopeId: string, me: { provider: string; sub: string
   const myKey = identityKeyHex(scopeId, me.provider, me.sub);
   if (identity.key !== myKey) throw new ViewShapeError('get_identity key');
   if (identity.status === 'own') {
-    if (account === null) return identity.opened ? { state: 'list', viewer: { key: myKey, role: 'first', kind: kindOf(me.provider) }, rows: [{ key: myKey, kind: kindOf(me.provider), role: 'first', you: true, sinceMs: null, auto: null }] } : { state: 'no_wallet' };
+    if (account === null) return identity.opened ? { state: 'list', viewer: { key: myKey, role: 'first', kind: kindOf(me.provider) }, rows: [{ key: myKey, kind: kindOf(me.provider), role: 'first', you: true, sinceMs: null, auto: null }], epoch: 0 } : { state: 'no_wallet' };
     if (account.root.provider !== me.provider || account.root.sub !== me.sub) throw new ViewShapeError('get_account root');
   } else {
     const root = identity.root;
@@ -104,7 +107,7 @@ export function signInModel(scopeId: string, me: { provider: string; sub: string
     .sort((a, b) => (a.sinceMs ?? 0) - (b.sinceMs ?? 0));
   const all = [rootRow, ...members];
   const you = all.find((r) => r.you) as SignInRow;
-  return { state: 'list', viewer: { key: myKey, role: you.role, kind: you.kind }, rows: [you, ...all.filter((r) => !r.you)] };
+  return { state: 'list', viewer: { key: myKey, role: you.role, kind: you.kind }, rows: [you, ...all.filter((r) => !r.you)], epoch: account.epoch };
 }
 
 // ---- the contract's rules (links.rs; contracts/hana-signer/src/tests/email.rs "Cancel and unlink") ----
@@ -186,6 +189,8 @@ export const SIGN_IN_TEXT = Object.freeze({
   byHand: 'Added by hand in the app, after both sign-ins were checked.',
   shared: 'Each of these opens the same wallet, or will once it stops waiting. Anyone who can sign in with one of them can use the money in it.',
   readOnly: 'Passport Home can show these, but can’t cancel or remove them yet.',
+  /** D902: where a row offers "Cancel this link" here. */
+  readOnlyCancel: 'Passport Home can cancel a link that is still waiting, but can’t remove a sign-in yet.',
   privacy: 'Journear doesn’t show the addresses of your other sign-ins, only what kind they are.',
   cancelOwnEmail: 'Didn’t set this up? Sign in to this app with this email and choose “Cancel this link”. If you’re not sure, cancel it.',
   cancelOwnNone: 'Only the email this wallet was made with can cancel this. If you didn’t set this up, don’t add money to that wallet.',
@@ -326,7 +331,14 @@ export interface HomeSignInsDeps {
   track: (p: Promise<unknown>) => void;
   now: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * What "Cancel this link" needs (D902): the page's origin, the Home API, the login relay, Google's keys, the server
+   * clock, Home's settings and its live Google sign-in. Absent: no row offers it (each keeps option A or its sentence).
+   */
+  cancel?: HomeSignInsCancelDeps;
 }
+
+export type HomeSignInsCancelDeps = Pick<HomeLinkCancelDeps, 'authOrigin' | 'api' | 'relay' | 'jwks' | 'clock' | 'config' | 'signingIn' | 'onSignedOut' | 'session' | 'sleep'>;
 
 export type HomeSignInsState = 'closed' | 'loading' | 'ready' | 'failed';
 
@@ -343,11 +355,17 @@ export interface HomeSignIns {
   sessionEnded(): void;
   /** Another account, or signed out: everything read is dropped. */
   reset(): void;
+  /** A message to the page: true when it was the cancel's sign-in child's hello (D902). */
+  onMessage(e: MessageEvent): boolean;
+  /** The cancel's step on screen (D902), or null. */
+  readonly cancelStage: HomeLinkCancel['stage'];
 }
 
 interface Entry {
   who: HomeSignInsWho;
   model: SignInModel;
+  /** Rows cancelled here since this was read (D902): no longer shown or counted, but for the result on screen. */
+  gone: Set<string>;
 }
 
 export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
@@ -363,6 +381,52 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
   const cache = new Map<string, Entry>();
 
   const root = d.h('section', { class: 'home-devices home-sign-ins', attrs: { id: 'home-sign-ins', 'aria-labelledby': 'home-sign-ins-title' } });
+
+  /** D902: Home's own "Cancel this link", for the rows it may offer it on (`cancelHere`). */
+  const flow: HomeLinkCancel | null = deps.cancel
+    ? startHomeLinkCancel({
+        ...deps.cancel,
+        win: deps.win,
+        d,
+        signer: deps.signer,
+        near: deps.near,
+        isGesture,
+        track: deps.track,
+        read: async (scopeId) => {
+          const who = deps.session();
+          if (!who) return { ok: false, code: 'home_signed_out' };
+          const answer = await readViews(scopeId, who).catch(() => SIGN_INS_UNREADABLE);
+          if (typeof answer === 'string') return { ok: false, code: answer };
+          if (answer.state !== 'list') return { ok: false, code: 'sign_ins_changed' };
+          const first = answer.rows.find((r) => r.role === 'first');
+          return first
+            ? { ok: true, rootKey: first.key, epoch: answer.epoch, viewerKey: answer.viewer.key, viewerActive: answer.viewer.role !== 'waiting', waiting: answer.rows.filter((r) => r.role === 'waiting').map((r) => r.key) }
+            : ({ ok: false, code: 'sign_ins_changed' } satisfies CancelRead);
+        },
+        cancelled: (scopeId, key) => {
+          cache.get(scopeId)?.gone.add(key);
+        },
+        showAgain: () => deps.track(load()),
+        changed: () => render(),
+      })
+    : null;
+
+  /**
+   * Whether Home offers its own "Cancel this link" on `row` (D902): a waiting email or Google account the viewer may
+   * cancel (`cancel_at_sign_in`: an active sign-in of the wallet, not the waiting one), viewed by a Google sign-in, in a
+   * wallet on the shared Google client.
+   */
+  const cancelHere = (entry: Entry, viewer: SignInViewer, row: SignInRow, pointer: SignInPointer | null): boolean =>
+    flow !== null &&
+    scope !== null &&
+    pointer?.kind === 'cancel_at_sign_in' &&
+    entry.who.provider === 'google' &&
+    viewer.kind === 'google' &&
+    (row.kind === 'email' || row.kind === 'google') &&
+    flow.clientFor(scope) !== null;
+  /** The rows on screen: those not cancelled here, and the one whose result is still shown. */
+  const shownRows = (entry: Entry, rows: readonly SignInRow[]): SignInRow[] =>
+    rows.filter((r) => !entry.gone.has(r.key) || (flow?.stage !== null && flow?.scopeId === scope?.scopeId && flow?.rowKey === r.key));
 
   const button = (label: string, id: string, onClick: () => void, o: { disabled?: boolean } = {}): HTMLButtonElement => {
     const b = d.h('button', { class: `${BTN.secondary}`, attrs: { type: 'button', id } }, label);
@@ -436,7 +500,7 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     if (at !== epoch || scope?.scopeId !== scopeId) return;
     const model = typeof answer === 'string' ? null : answer;
     if (model) {
-      cache.set(scopeId, { who, model });
+      cache.set(scopeId, { who, model, gone: new Set() });
       state = 'ready';
     } else {
       // A failed read is never kept: the next press reads again.
@@ -455,6 +519,36 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     const pointer = pointerFor(viewer, row, deps.now());
     const how = pointer ? pointerText(pointer, row) : null;
     const target = cancelTarget(scope);
+    // D902: Home's own cancel. While its flow is on this row, the row's box is the flow's step; a row cancelled here
+    // shows only its name and the result until Close.
+    const here = cancelHere(entry, viewer, row, pointer);
+    const step = here && scope ? (flow?.panel(scope.scopeId, row.key, i) ?? null) : null;
+    if (entry.gone.has(row.key)) {
+      return d.h(
+        'li',
+        { class: 'home-device home-sign-in jp-card', attrs: { 'data-kind': row.kind, 'data-role': 'cancelled', 'data-you': 'false' } },
+        d.h('div', { class: 'jp-setting home-setting' }, d.h('span', { class: 'home-setting-text' }, d.h('p', { class: 'home-device-name' }, icon(d, row.kind === 'email' ? 'mail' : 'google', 'home-sign-in-ic'), d.h('strong', { attrs: { id: nameId } }, rowName(row, null))))),
+        step,
+      );
+    }
+    const busy = flow?.stage === 'signing_in' || flow?.stage === 'working';
+    const offer =
+      here && !step && scope
+        ? alert(
+            d,
+            'warning',
+            { tag: 'div', class: 'home-sign-in-how home-sign-in-risk' },
+            ...cancelOffer(
+              d,
+              row.kind as 'email' | 'google',
+              i,
+              (e) => {
+                if (isGesture(e) && scope) flow?.ask(scope, { key: row.key, kind: row.kind as 'email' | 'google' });
+              },
+              busy,
+            ),
+          )
+        : null;
     const name = address ? addressText(d, address, 'strong', nameId) : d.h('strong', { attrs: { id: nameId } }, rowName(row, null));
     const badges: Child[] = [
       row.you ? d.h('span', { class: 'jp-badge jp-badge-success home-sign-in-you' }, SIGN_IN_TEXT.youBadge) : null,
@@ -475,7 +569,7 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
           how && !how.risk ? d.h('div', { class: 'home-sign-in-how' }, ...how.lines.map((t, j) => d.h('p', { class: j === 0 ? '' : 'muted' }, t))) : null,
         ),
       ),
-      how && how.risk ? alert(d, 'warning', { tag: 'div', class: 'home-sign-in-how home-sign-in-risk' }, ...(pointer?.kind === 'cancel_at_sign_in' && target ? openToCancel(target, i) : how.lines.map((t) => d.h('p', {}, t)))) : null,
+      step ?? offer ?? (how && how.risk ? alert(d, 'warning', { tag: 'div', class: 'home-sign-in-how home-sign-in-risk' }, ...(pointer?.kind === 'cancel_at_sign_in' && target ? openToCancel(target, i) : how.lines.map((t) => d.h('p', {}, t)))) : null),
     );
   }
 
@@ -515,12 +609,16 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     const out: Child[] = [problem];
     if (entry.model.state === 'no_wallet') out.push(d.h('p', { class: 'muted', attrs: { id: 'home-sign-ins-none' } }, SIGN_IN_TEXT.noWallet));
     else {
-      const { viewer, rows } = entry.model;
-      if (rows.length > 1) out.push(d.h('p', { attrs: { id: 'home-sign-ins-shared' } }, SIGN_IN_TEXT.shared));
+      const { viewer } = entry.model;
+      const rows = shownRows(entry, entry.model.rows);
+      const live = rows.filter((r) => !entry.gone.has(r.key));
+      if (live.length > 1) out.push(d.h('p', { attrs: { id: 'home-sign-ins-shared' } }, SIGN_IN_TEXT.shared));
       out.push(d.h('ul', { class: 'home-device-list home-sign-in-list', attrs: { id: 'home-sign-ins-list' } }, ...rows.map((r, i) => rowView(entry, r, viewer, i))));
-      // Said once, where any line sends the user to the app's sign-in: the app shows it only to someone signed out.
-      if (rows.some((r) => pointerSignsIn(pointerFor(viewer, r, deps.now())))) out.push(d.h('p', { attrs: { id: 'home-sign-ins-sign-out-first' } }, SIGN_IN_TEXT.signOutFirst));
-      out.push(d.h('p', { class: 'muted', attrs: { id: 'home-sign-ins-read-only' } }, SIGN_IN_TEXT.readOnly, ' ', rows.length > 1 ? SIGN_IN_TEXT.privacy : null));
+      // Said once, where any line sends the user to the app's sign-in: the app shows it only to someone signed out. A row
+      // Home cancels itself (D902) sends nobody there.
+      const here = (r: SignInRow): boolean => cancelHere(entry, viewer, r, pointerFor(viewer, r, deps.now()));
+      if (live.some((r) => !here(r) && pointerSignsIn(pointerFor(viewer, r, deps.now())))) out.push(d.h('p', { attrs: { id: 'home-sign-ins-sign-out-first' } }, SIGN_IN_TEXT.signOutFirst));
+      out.push(d.h('p', { class: 'muted', attrs: { id: 'home-sign-ins-read-only' } }, live.some(here) ? SIGN_IN_TEXT.readOnlyCancel : SIGN_IN_TEXT.readOnly, ' ', rows.length > 1 ? SIGN_IN_TEXT.privacy : null));
     }
     out.push(d.h('div', { class: 'actions start' }, button(SIGN_IN_TEXT.again, 'home-sign-ins-again', () => deps.track(load()))));
     return out;
@@ -533,7 +631,8 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
   function summary(): Child[] {
     const entry = scope && state === 'ready' ? cache.get(scope.scopeId) : undefined;
     if (!entry || entry.model.state === 'no_wallet') return [scope?.mine === false ? SIGN_IN_TEXT.introApp : SIGN_IN_TEXT.intro];
-    const out = signInSummary(entry.model.rows.filter((r) => r.role !== 'waiting').length, entry.model.rows.filter((r) => r.role === 'waiting').length);
+    const rows = entry.model.rows.filter((r) => !entry.gone.has(r.key));
+    const out = signInSummary(rows.filter((r) => r.role !== 'waiting').length, rows.filter((r) => r.role === 'waiting').length);
     return out.waiting ? [out.line, ' ', d.h('span', { class: 'home-set-attn', attrs: { id: 'home-sign-ins-waiting-line' } }, icon(d, 'warn'), out.waiting)] : [out.line];
   }
 
@@ -568,6 +667,7 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
       return root;
     },
     leaveApp() {
+      flow?.leave();
       scope = null;
       if (state === 'loading') state = 'closed';
       epoch += 1;
@@ -575,7 +675,14 @@ export function startHomeSignIns(deps: HomeSignInsDeps): HomeSignIns {
     sessionEnded() {
       render();
     },
+    onMessage(e) {
+      return flow?.onMessage(e) ?? false;
+    },
+    get cancelStage() {
+      return flow?.stage ?? null;
+    },
     reset() {
+      flow?.drop();
       epoch += 1;
       cache.clear();
       scope = null;

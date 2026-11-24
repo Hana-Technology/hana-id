@@ -84,6 +84,38 @@ describe('chain names and native coins, from Hana’s own tables', () => {
     expect(evmChainInfo(43113)?.nativeSymbol).toBe('AVAX');
   });
 
+  it('names the six other EVM chains Sodax lists, each with its own coin, as real money (checked against each chain’s docs and chainlist.org)', () => {
+    const six: readonly [number, string, string][] = [
+      [999, 'HyperEVM', 'HYPE'],
+      [1890, 'LightLink', 'ETH'],
+      [151, 'Redbelly Network', 'RBNT'],
+      [8217, 'Kaia', 'KAIA'],
+      [295, 'Hedera', 'HBAR'],
+      [4663, 'Robinhood Chain', 'ETH'],
+    ];
+    for (const [id, name, nativeSymbol] of six) {
+      expect(KNOWN_EVM_MAINNETS[id], String(id)).toBe(name);
+      expect(evmChainInfo(id)).toEqual({ label: `${name} (real money)`, name, testnet: false, nativeSymbol });
+      // Naming a chain allows nothing: a test app still refuses it, and every request on it names a mainnet.
+      expect(isTestEvmChain(id)).toBe(false);
+      expect(mainnetOfRequest(req('eth_signTransaction', { tx: tx(id) }))).toEqual({ chain: 'evm', chainId: id });
+      expect(mainnetOfRequest(req('eth_signTypedData_v4', [EVM, typed({ name: 'X', chainId: id })]))).toEqual({ chain: 'evm', chainId: id });
+    }
+    expect(Object.keys(KNOWN_EVM_MAINNETS)).toHaveLength(14);
+    // Their test networks stay unnamed and refused: none is on the test list.
+    for (const id of [998, 1891, 153, 1001, 296, 46630]) {
+      expect(evmChainInfo(id), String(id)).toBeNull();
+      expect(isTestEvmChain(id)).toBe(false);
+    }
+    expect(Object.keys(TEST_EVM_CHAINS)).toHaveLength(13);
+  });
+
+  it('999 is never a test chain: a Wanchain test network still runs on it, but the same signature is good on HyperEVM', () => {
+    expect(Object.hasOwn(TEST_EVM_CHAINS, 999)).toBe(false);
+    expect(isTestEvmChain(999)).toBe(false);
+    expect(evmChainInfo(999)?.label).toBe('HyperEVM (real money)');
+  });
+
   it('every listed chain has a label, and an unknown or malformed id has none', () => {
     for (const id of [...Object.keys(TEST_EVM_CHAINS), ...Object.keys(KNOWN_EVM_MAINNETS)]) expect(evmChainInfo(Number(id))?.label).toBeTruthy();
     for (const id of [0, 999_999, -1, 1.5, Number.NaN]) expect(evmChainInfo(id)).toBeNull();

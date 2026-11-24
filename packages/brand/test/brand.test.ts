@@ -231,7 +231,7 @@ describe('components', () => {
           if (pseudo !== undefined && pseudo !== 'before' && pseudo !== 'after') expect(part).toBe(THUMB);
         }
       }
-      // The two that repeat for ever, where running once is what makes them stand still.
+      // The three that repeat for ever (two spinners and the placeholder), where running once is what makes them stand still.
       for (const s of ['.jp-btn .spin', '.jp-iconfield .spin', '.jp-skel']) expect(moving.some((m) => m[1]!.trim().split(',').includes(s) && /infinite/u.test(m[2]!)), s).toBe(true);
     });
   });

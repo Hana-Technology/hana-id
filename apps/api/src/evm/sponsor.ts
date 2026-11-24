@@ -917,9 +917,11 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   if (gasLimit > chain.maxGasPerTx) return done(ctx, 403, { error: 'The batch needs more gas than one sponsored transaction may use', code: 'gas_too_high', maxGas: chain.maxGasPerTx.toString() });
   const fees = sponsorFees(baseFee, chain);
   // The relayer's own fee floor (`feesTooLow`, the same rule): what it would refuse is never sent to it.
+  // With the fee capped at the relayer's starting cap, this happens when the base fee is just under that cap (within
+  // about 1/9): gas prices too high for sponsorship, not moving. Its short retry is kept: one block can bring it back.
   if (fees.ok && feesTooLow(fees, baseFee)) {
     await giveBackOwn();
-    return done(ctx, 503, { error: 'Gas prices are moving too fast right now, try again shortly', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
+    return done(ctx, 503, { error: 'Gas prices are too high for sponsorship right now, try again later', code: 'gas_price_too_high', retryAfterS: 15 }, { 'retry-after': '15' });
   }
   if (!fees.ok) {
     await giveBackOwn();

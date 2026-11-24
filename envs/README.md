@@ -168,7 +168,22 @@ polling) only when `rpc` errors or doesn't answer within 8 s; each read's answer
 into the pages and joins `rpc` in their CSP (`NEAR_RPC_FALLBACK` in the generated Worker configs), so a change needs
 `gen`, a page build and a redeploy of the API and both page Workers (`docs/decisions.md` D65). sandbox-dev uses
 `https://rpc.testnet.near.org` (primary `test.rpc.fastnear.com`; the fallback answered in ~3.5 s when probed, slow but
-fine for a fallback).
+fine for a fallback). Both are run by one operator, FastNear: a different domain is no proof of a different operator.
+
+`rpcOperator`, `rpcFallbackOperator` (optional on testnet, required on a production network; D903): who runs `rpc` and
+`rpcFallback`, the company or project operating each endpoint as its own terms name it ("FastNear"), not the domain;
+trimmed, 1 to 64 characters with a letter or digit and no control, bidi, zero-width or other invisible character. The pages' "both providers agree" checks (a member's path, D263; a
+test app's delegate action, D729; a partner label's NEAR code hash, D900) protect only when the two are run by
+different operators, so on any network but testnet the schema and `deploy-check` refuse a manifest without
+`rpcFallback`, without either operator, or with one operator for both (compared ignoring case, spaces and punctuation:
+"FastNear", "fast near" and "Fast-NEAR" are one). On testnet one operator behind both is accepted (the founder,
+2026-11-24) and the fields may be left out or name the same operator; sandbox-dev names none. `rpcFallbackOperator` is
+refused without `rpcFallback`. Nothing but the manifest's rules and `deploy-check` reads them, so a change needs no
+`gen` or redeploy. **Not in force until the schema admits another network:** `network` accepts only `testnet` today,
+so a production manifest is refused before this rule runs (it is tested on hand-built production manifests). **A
+declaration, not proof:** the names are compared as written, so "FastNear" and "FastNear Inc", "fastnear.com" or a
+name with a look-alike letter count as different operators; a reviewer reading the manifest is the check that they
+name who really runs each endpoint.
 
 `apiRpcFallbacks` (optional, D435): the API's own NEAR RPC fallbacks, 1 to 3 `https` URLs (http only for a loopback
 host in `local*` envs), distinct and none of them `rpc`. The API asks them in this order after `rpc` when an endpoint
@@ -179,6 +194,10 @@ build. Every provider listed is trusted like `rpc` for the API's views whenever 
 providers you would accept as `rpc`; keep provider API keys out of these URLs (the manifest is committed). sandbox-dev:
 `https://rpc.testnet.near.org`, then `https://near-testnet.drpc.org` (both answered `status` with `chain_id` testnet and
 the signer's `view_account` when added, 2026-11-06).
+
+`apiRpcFallbackOperators` (optional on testnet; on a production network required with `apiRpcFallbacks`; D903): who runs
+each `apiRpcFallbacks` URL, one name per URL in the same order. They may share an operator with `rpc` (the API only
+fails over to them and never compares two answers); refused without `apiRpcFallbacks` or with another count.
 
 `near` (optional, D740): NEAR as a wallet chain. `near.demoGuestbook` (optional) is the account of the hackathon demo
 contract `contracts/hana-guestbook`, which `deploy-guestbook <env>` deploys (`docs/operations.md` "Hackathon demo

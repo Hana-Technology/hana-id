@@ -132,7 +132,7 @@ test.describe('partner labels in the approval window (D896)', () => {
     await expect(box).toHaveAttribute('role', 'group');
     await expect(box).toHaveAttribute('aria-label', 'What Coffee Club says');
     await expect(box.locator('p.partner-says')).toHaveText('Coffee Club says: pay for order 1042');
-    await expect(box.locator('p.partner-attribution')).toHaveText('These are Coffee Club’s words. Journear hasn’t checked them.');
+    await expect(box.locator('p.partner-attribution')).toHaveText('These are Coffee Club’s words, not Journear’s.');
     // The memo is in the sentence (no row repeats it); no partner "To" row.
     await expect(box.locator('dl')).toHaveCount(0);
     await expect(popup.locator('h2.summary-headline')).toHaveText(/^Coffee Club wants to send 2\.5 XLM to /u);

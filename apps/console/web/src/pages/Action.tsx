@@ -85,7 +85,7 @@ export function LabelsReview({ d }: { d: Record<string, unknown> }) {
   return (
     <>
       <p>
-        For <strong>{appList(d.apps)}</strong>. These are the words the approval window shows your users for your app’s requests, as “{name} says: …”, always with “These are {name}’s words. Journear hasn’t checked them.”
+        For <strong>{appList(d.apps)}</strong>. These are the words the approval window shows your users for your app’s requests, as “{name} says: …”, always with “These are {name}’s words, not Journear’s.”
       </p>
       <h3 className="h-sub">What changes for users</h3>
       <DiffList diff={diff} />

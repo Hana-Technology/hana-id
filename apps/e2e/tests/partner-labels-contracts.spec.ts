@@ -132,7 +132,7 @@ test.describe('partner labels for NEAR programs and Soroban contracts (D900)', (
     let popup = await popupFor(page, 'collect', 'nearSignDelegate', collect);
     const box = popup.locator('div.partner-label');
     await expect(box.locator('p.partner-says')).toHaveText('Club Trail says: collect the stamp Fare paid');
-    await expect(box.locator('p.partner-attribution')).toHaveText('These are Club Trail’s words. Journear hasn’t checked them.');
+    await expect(box.locator('p.partner-attribution')).toHaveText('These are Club Trail’s words, not Journear’s.');
     await expect(popup.locator('.risk-box.warning-box p.risk-lead')).toHaveText(/^This acts as you/u);
     const kids = await order(popup);
     expect(kids.indexOf('partner-label')).toBeGreaterThan(kids.findIndex((k) => k === 'risk-box'));

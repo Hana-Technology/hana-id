@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { apiRpcFallbacksOf, loadEnv, MAX_API_RPC_FALLBACKS, manifestPath, manifestSchema } from './index.ts';
+import { readdirSync } from 'node:fs';
+import { apiRpcFallbacksOf, loadEnv, MAX_API_RPC_FALLBACKS, manifestPath, manifestSchema, nearOperatorProblems, operatorKey } from './index.ts';
 
 const raw = () => JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
 
@@ -83,6 +84,78 @@ describe('manifestSchema: rpcFallback', () => {
     expect(sameProvider.success).toBe(false);
     expect(sameProvider.error?.issues.map((i) => i.message).join()).toContain('another provider');
     expect(manifestSchema.safeParse({ ...base, rpcFallback: 'https://rpc.testnet.near.org' }).success).toBe(true);
+  });
+});
+
+describe('manifestSchema: who runs the NEAR providers (D903)', () => {
+  const messages = (m: Record<string, unknown>): string[] => manifestSchema.safeParse(m).error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`) ?? [];
+  /** sandbox-dev as parsed, on a production network: the schema admits only testnet today, so the rule is run as the schema runs it. */
+  const production = (extra: Record<string, unknown> = {}) => ({ ...manifestSchema.parse({ ...raw(), ...extra }), network: 'mainnet' });
+  const paths = (m: Parameters<typeof nearOperatorProblems>[0]) => nearOperatorProblems(m).map((p) => p.path.join('.'));
+  const OPERATORS = { rpcOperator: 'FastNear', rpcFallbackOperator: 'Lava', apiRpcFallbackOperators: ['FastNear', 'dRPC'] };
+
+  it('every committed env validates as it is (sandbox-dev names no operators: one operator, FastNear, behind both is accepted on testnet)', () => {
+    const names = readdirSync(manifestPath('sandbox-dev').replace(/[^/]+$/u, '')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5));
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(() => loadEnv(name), name).not.toThrow();
+    const env = loadEnv('sandbox-dev');
+    expect(env.rpcOperator).toBeUndefined();
+    expect(env.rpcFallbackOperator).toBeUndefined();
+    expect(nearOperatorProblems(env)).toEqual([]);
+  });
+
+  it('on testnet the fields are optional and may name one operator for both', () => {
+    expect(messages({ ...raw(), rpcOperator: 'FastNear', rpcFallbackOperator: 'FastNear', apiRpcFallbackOperators: ['FastNear', 'dRPC'] })).toEqual([]);
+    expect(manifestSchema.parse({ ...raw(), rpcOperator: '  FastNear  ' }).rpcOperator).toBe('FastNear');
+    expect(messages({ ...raw(), rpcOperator: 'FastNear' })).toEqual([]);
+  });
+
+  it('everywhere: a name for an endpoint the manifest has, one per API fallback, with a letter or digit, at most 64 characters', () => {
+    const { rpcFallback: _, emailIssuer: _issuer, ...noFallback } = raw();
+    expect(messages({ ...noFallback, rpcFallbackOperator: 'Lava' })).toEqual(['rpcFallbackOperator: rpcFallbackOperator names the operator of rpcFallback, which the manifest doesn’t have']);
+    const { apiRpcFallbacks: _a, ...noApi } = raw();
+    expect(messages({ ...noApi, apiRpcFallbackOperators: ['dRPC'] })).toEqual(['apiRpcFallbackOperators: apiRpcFallbackOperators names the operators of apiRpcFallbacks, which the manifest doesn’t have']);
+    expect(messages({ ...raw(), apiRpcFallbackOperators: ['dRPC'] })).toEqual(['apiRpcFallbackOperators: apiRpcFallbackOperators must name one operator per apiRpcFallbacks URL, in order (2, got 1)']);
+    for (const bad of ['', '   ', '---', 'x'.repeat(65), 7]) expect(manifestSchema.safeParse({ ...raw(), rpcOperator: bad }).success, String(bad)).toBe(false);
+    // Not display-safe (after PR 129's review): a bidi override, zero-width characters, a control, a line separator.
+    for (const bad of ['Fast\u202eraeN', '\u202eFastNear', 'Fast\u200bNear', 'FastNear\u200d', 'Fast\u0007Near', 'Fast\u2028Near', 'Fast\u3164Near', 'Fast\ufe0fNear']) {
+      expect(messages({ ...raw(), rpcOperator: bad }), JSON.stringify(bad)).toEqual(['rpcOperator: an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character']);
+      expect(manifestSchema.safeParse({ ...raw(), apiRpcFallbackOperators: ['dRPC', bad] }).success, JSON.stringify(bad)).toBe(false);
+    }
+    for (const ok of ['FastNear', 'dRPC', 'Lava Network', 'Ankr (Mainnet)', 'Café Nodes', 'Москва RPC']) expect(messages({ ...raw(), rpcOperator: ok }), ok).toEqual([]);
+    expect(manifestSchema.safeParse({ ...raw(), apiRpcFallbackOperators: [] }).success).toBe(false);
+  });
+
+  it('on a production network: both operators named, and different; the API fallbacks named too', () => {
+    expect(nearOperatorProblems(production(OPERATORS))).toEqual([]);
+    // Nothing declared: refused, each field named.
+    expect(paths(production())).toEqual(['rpcOperator', 'rpcFallbackOperator', 'apiRpcFallbackOperators']);
+    // One operator behind both, however it is written (a different domain is no proof: near.org's endpoint is FastNear's).
+    for (const same of ['FastNear', 'fastnear', ' FASTNEAR ', 'Fast Near', 'Fast-NEAR', 'ＦａｓｔＮｅａｒ']) {
+      const p = nearOperatorProblems(production({ ...OPERATORS, rpcFallbackOperator: same }));
+      expect(p.map((x) => x.path.join('.')), same).toEqual(['rpcFallbackOperator']);
+      expect(p[0]!.message, same).toBe('rpc and rpcFallback must be run by different operators on a production network (mainnet) (both are FastNear): one operator behind both makes the two-provider checks one provider’s word (D903)');
+    }
+    // One missing.
+    expect(paths(production({ ...OPERATORS, rpcOperator: undefined }))).toEqual(['rpcOperator']);
+    expect(paths(production({ ...OPERATORS, rpcFallbackOperator: undefined }))).toEqual(['rpcFallbackOperator']);
+    expect(paths(production({ ...OPERATORS, apiRpcFallbackOperators: undefined }))).toEqual(['apiRpcFallbackOperators']);
+    // The API's fallbacks only fail over (never compared), so they may share an operator with rpc.
+    expect(nearOperatorProblems(production({ ...OPERATORS, apiRpcFallbackOperators: ['FastNear', 'FastNear'] }))).toEqual([]);
+    // No second provider at all: refused (the pages' checks need two).
+    const { rpcFallback: _, emailIssuer: _issuer, rpcFallbackOperator: _o, ...one }: Record<string, unknown> = { ...raw(), ...OPERATORS };
+    expect(paths({ ...manifestSchema.parse(one), network: 'mainnet' })).toEqual(['rpcFallback']);
+    // The message for a missing operator says why.
+    expect(nearOperatorProblems(production()).map((p) => p.message)[0]).toBe('rpcOperator is required on a production network (mainnet): name who runs rpc (a different domain is no proof of a different operator, D903)');
+    // On testnet the same manifests pass.
+    expect(nearOperatorProblems({ ...production({ ...OPERATORS, rpcFallbackOperator: 'FastNear' }), network: 'testnet' })).toEqual([]);
+    expect(nearOperatorProblems({ ...production(), network: 'testnet' })).toEqual([]);
+  });
+
+  it('the schema runs it: a production manifest fails on its network first today, and on the operators as well once that is admitted', () => {
+    const prod = { ...raw(), network: 'mainnet' };
+    expect(manifestSchema.safeParse(prod).success).toBe(false);
+    expect(operatorKey(' Fast-NEAR ')).toBe('fastnear');
   });
 });
 

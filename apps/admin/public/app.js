@@ -2096,11 +2096,42 @@ function expediteControl(c) {
 
 // ---- audit ----
 
+/**
+ * D925 after PR 153's review: a person's audit reference (`lr1_…`, from the Support ID lookup) filters the audit to the
+ * network owners' look-ups of them. It is held here, in memory only, and sent in a POST body: never in the address bar,
+ * the history, a link or the CSV's URL (as the Users screen's queries, D410).
+ */
+const auditState = { target: '' };
+
+/** The CSV of the filtered audit with the person's reference, fetched by POST and saved from memory. */
+async function downloadAuditCsv(query, target) {
+  for (;;) {
+    const res = await send('POST', `/api/audit.csv?${query}`, JSON.stringify({ target }));
+    if (res === EXPIRED) {
+      await session.waitForSignIn();
+      continue;
+    }
+    session.answered();
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new ApiError(res.status, data?.error?.code || 'error', data?.error?.message || `HTTP ${res.status}`);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = h('a', { href: url, download: 'audit.csv' });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    return;
+  }
+}
+
 async function auditPage(main) {
   const params = new URLSearchParams(location.search);
-  const keys = ['orgId', 'appId', 'actorKind', 'actorId', 'action', 'target'];
-  // `target` (D925): a person's audit reference (`lr1_…`, from the Support ID lookup): the network owners' look-ups of them.
-  const labels = { orgId: 'Organisation id', appId: 'App id', actorKind: 'Done by', actorId: 'Actor id or email', action: 'Action', target: 'Person’s audit reference' };
+  // Never a person's reference from the URL (an old link's `target` is dropped).
+  params.delete('target');
+  const keys = ['orgId', 'appId', 'actorKind', 'actorId', 'action'];
+  const labels = { orgId: 'Organisation id', appId: 'App id', actorKind: 'Done by', actorId: 'Actor id or email', action: 'Action' };
   const filterForm = h(
     'form',
     {
@@ -2116,6 +2147,7 @@ async function auditPage(main) {
           const v = filterForm.elements[k].value;
           if (v) q.set(k, String(Date.parse(`${v}T00:00:00Z`)));
         }
+        auditState.target = filterForm.elements.target.value.trim();
         history.pushState(null, '', `/audit?${q}`);
         render();
       },
@@ -2123,19 +2155,34 @@ async function auditPage(main) {
     keys.map((k) =>
       k === 'actorKind'
         ? field({ name: k, type: 'select', label: labels[k], optional: false, value: params.get(k) || '', options: [{ value: '', label: 'Anyone' }, { value: 'hana', label: `${BRAND.company} staff` }, { value: 'member', label: 'Members' }, { value: 'system', label: 'System' }, { value: 'link', label: 'Account link' }, { value: 'platform', label: ACTOR.platform }] })
-        : field({ name: k, label: labels[k], optional: false, value: params.get(k) || '', placeholder: k === 'action' ? 'e.g. invite.issue' : k === 'orgId' ? 'org_…' : k === 'target' ? 'lr1_…' : '' }),
+        : field({ name: k, label: labels[k], optional: false, value: params.get(k) || '', placeholder: k === 'action' ? 'e.g. invite.issue' : k === 'orgId' ? 'org_…' : '' }),
     ),
+    field({ name: 'target', label: 'Person’s audit reference', optional: false, value: auditState.target, placeholder: 'lr1_…', help: 'From a Support ID lookup: the network owners’ look-ups of that person. Kept on this page only, never in the address.' }),
     field({ name: 'from', type: 'date', label: 'From', optional: false, size: 'narrow', value: params.get('from') ? new Date(Number(params.get('from'))).toISOString().slice(0, 10) : '' }),
     field({ name: 'to', type: 'date', label: 'To', optional: false, size: 'narrow', value: params.get('to') ? new Date(Number(params.get('to'))).toISOString().slice(0, 10) : '' }),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('primary') }, 'Filter'), [...params.keys()].length ? h('a', { href: '/audit', 'data-link': true, class: btn('ghost') }, 'Clear filters') : ''),
+    h(
+      'div',
+      { class: 'form-actions' },
+      h('button', { type: 'submit', class: btn('primary') }, 'Filter'),
+      [...params.keys()].length || auditState.target
+        ? h('a', { href: '/audit', 'data-link': true, class: btn('ghost'), onclick: () => (auditState.target = '') }, 'Clear filters')
+        : '',
+    ),
   );
   const csv = new URLSearchParams(params);
   csv.delete('cursor');
   main.append(
-    pageHead('Audit log', { subtitle: 'Who did what in the partner console and here, and every staff read of the user directory.', actions: [h('a', { href: `/api/audit.csv?${csv}`, download: true, class: btn('secondary') }, 'Download CSV')] }),
+    pageHead('Audit log', {
+      subtitle: 'Who did what in the partner console and here, and every staff read of the user directory.',
+      actions: [
+        auditState.target
+          ? h('button', { type: 'button', class: btn('secondary'), onclick: () => downloadAuditCsv(csv, auditState.target).catch((err) => main.prepend(errorBox(err))) }, 'Download CSV')
+          : h('a', { href: `/api/audit.csv?${csv}`, download: true, class: btn('secondary') }, 'Download CSV'),
+      ],
+    }),
     panel('Filter', { hint: 'The CSV has the console rows below and, with an organisation filter, its app changes too.' }, filterForm),
   );
-  const data = await api('GET', `/api/audit?${params}`);
+  const data = auditState.target ? await api('POST', `/api/audit?${params}`, { target: auditState.target }) : await api('GET', `/api/audit?${params}`);
   main.append(
     panel(
       'Console audit',

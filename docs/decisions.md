@@ -22587,8 +22587,8 @@ L9 and N7). D925 is the number the caller assigned for this piece.
      from the Unix epoch): slow harvesting under 200 a day (199 a day is about 1 400 a week) now alerts. Why 500: honest
      support work is one look-up for a ticket that needs the cross-app view; 500 a week is about 70 a working day, well
      above any network we expect on testnet, and a quarter of what the daily threshold allows a week. Each event is
-     now written only by the look-up that crosses its threshold (the RateLimiter names a soft window once per window),
-     not `INSERT OR IGNORE` on every later look-up; `CONSOLE_COSTS.linkUser` is 4 (the read and up to three event
+     now written once a window, not `INSERT OR IGNORE` on every later look-up (amended below, item 11: a failed write is
+     retried); `CONSOLE_COSTS.linkUser` is 4 (the read and up to three event
      writes). A member's event is filed under no org (their limits follow them across orgs) with `memberId` and
      `crossedInOrg`; staff see every org their look-ups touched in the console audit by actor (the playbook says so).
      Still unalerted: under 30 an hour per owner, 200 a day and 500 a week per org (about 2 000 people a month).
@@ -22621,6 +22621,23 @@ L9 and N7). D925 is the number the caller assigned for this piece.
       `operations.md` with 0031, for the deploy list.
   Tests added for the review's gaps: the RPC throwing; a panel look-up with an app's code; a scope moved between orgs;
   Home's `sharedScope` on other people's listings; the e2e specs in all three browsers.
+- **After the automated review of PR 153's fixes (2026-11-25)**, two medium findings:
+  11. **A failed alert write is retried, not lost.** The soft window was named only by the hit that crossed it, so an
+      `INSERT` that failed lost the window's alert. Now `hit` names a soft window on every hit past its max until the
+      caller marks it written (`RateLimiter.markAlerted`, after the `INSERT` succeeded; a marker per window, deleted two
+      windows on): one bounded attempt per look-up while it fails, none once written; the event's id still makes a
+      repeat a no-op. Tests: the crossing write fails and the next look-up writes it, then no further write in the
+      window, for a member's hour and an org's week.
+  12. **A person's audit reference never sits in a URL.** The admin's audit filter took `target` from the query string
+      and put it in the address bar and the CSV link. Now the GET forms ignore a `target` parameter; the page holds the
+      reference in memory ("Person’s audit reference", "Kept on this page only, never in the address."), sends it in a
+      POST body (`POST /api/audit`, `POST /api/audit.csv`) and downloads that CSV from memory; an old link's `target` is
+      dropped. Tests: the page's address, history state, links and API paths never carry it; the routes ignore it in the
+      query and filter by it in the body, the CSV included. Checked: the console's Audit page has no person filter; the
+      linking view's look-ups are POST bodies, and its SPA keeps the open person in memory. **Not changed, and found:**
+      opening a person (the Users list, and "Open this person") reads `GET /api/orgs/:org/users/:userId`, the user
+      detail route of D310, whose path carries the scope-level User ID (the fetch's URL, not the address bar): a
+      pre-existing route; moving it to a POST body is a separate change to confirm (the Tech Lead).
 - **For the Tech Lead to decide knowingly** (the reviewer's view with each):
   - **No fresh sign-in (step-up) for a look-up.** The reviewer agrees: a look-up reads, the audit and limits bound it,
     and a Google confirmation per look-up would make support work slow. A middle ground: require a console sign-in

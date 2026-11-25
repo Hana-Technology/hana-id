@@ -84,24 +84,36 @@ export async function admitLinkLookup(env: Env, a: { memberId: string; orgId: st
     await member.unhit(LINK_MEMBER_LIMITS, now);
     return refuse('rate_limited', 'Your organisation has made too many look-ups today: try again tomorrow');
   }
-  // Only the look-up that crosses a threshold writes its event (the RateLimiter names a soft window once per window).
-  if (m.soft?.includes('alert-hour')) await volumeEvent(env.DB, { limit: 'member_hour', orgId: a.orgId, memberId: a.memberId, windowMs: HOUR_MS, threshold: LINK_ALERT_MEMBER_PER_HOUR }, now);
-  if (o.soft?.includes('alert-day')) await volumeEvent(env.DB, { limit: 'org_day', orgId: a.orgId, memberId: null, windowMs: DAY_MS, threshold: LINK_ALERT_ORG_PER_DAY }, now);
-  if (o.soft?.includes('alert-week')) await volumeEvent(env.DB, { limit: 'org_week', orgId: a.orgId, memberId: null, windowMs: WEEK_MS, threshold: LINK_ALERT_ORG_PER_WEEK }, now);
+  // A window past its threshold is named until its event is written (`markAlerted` after the INSERT succeeded): one
+  // bounded attempt per look-up while it fails, none once written (the id derived from the window makes a repeat a
+  // no-op either way).
+  const memberWritten: string[] = [];
+  const orgWritten: string[] = [];
+  if (m.soft?.includes('alert-hour') && (await volumeEvent(env.DB, { limit: 'member_hour', orgId: a.orgId, memberId: a.memberId, windowMs: HOUR_MS, threshold: LINK_ALERT_MEMBER_PER_HOUR }, now))) memberWritten.push('alert-hour');
+  if (o.soft?.includes('alert-day') && (await volumeEvent(env.DB, { limit: 'org_day', orgId: a.orgId, memberId: null, windowMs: DAY_MS, threshold: LINK_ALERT_ORG_PER_DAY }, now))) orgWritten.push('alert-day');
+  if (o.soft?.includes('alert-week') && (await volumeEvent(env.DB, { limit: 'org_week', orgId: a.orgId, memberId: null, windowMs: WEEK_MS, threshold: LINK_ALERT_ORG_PER_WEEK }, now))) orgWritten.push('alert-week');
+  try {
+    if (memberWritten.length) await member.markAlerted(LINK_MEMBER_LIMITS, memberWritten, now);
+    if (orgWritten.length) await org.markAlerted(LINK_ORG_LIMITS, orgWritten, now);
+  } catch {
+    // Not marked: the next look-up writes again, a no-op by the event's id, and marks it then.
+    log({ event: 'console_rpc', method: 'linkUser', outcome: 'error', code: 'volume_mark_failed' }, 'error');
+  }
 }
 
 /** At most this many `link_lookup_volume` writes one look-up can make (one per soft window): counted in its cost. */
 export const LINK_ALERT_WRITES_MAX = 3;
 
 /**
- * One `link_lookup_volume` event, written by the look-up that crosses a threshold (once per window; its id is still
- * derived from the window, so a retry can't write a second). An org's events carry its `org_id`; a member's is filed
+ * One `link_lookup_volume` event per window, written by the first look-up past a threshold whose write succeeds (each
+ * look-up past it tries once until one does; its id is derived from the window, so a repeat writes nothing). True when
+ * the write succeeded. An org's events carry its `org_id`; a member's is filed
  * under no org (a member's limits follow them across orgs): its detail names the member and the org whose look-up
  * crossed it, and staff see every org the member's look-ups touched in the console audit (actor = the member).
  * `detail_json` holds the window and the threshold, never a person's ID. A failure is logged, never thrown: the alert
  * must not stop a look-up the limits allowed.
  */
-async function volumeEvent(db: D1Database, e: { limit: 'member_hour' | 'org_day' | 'org_week'; orgId: string; memberId: string | null; windowMs: number; threshold: number }, now: number): Promise<void> {
+async function volumeEvent(db: D1Database, e: { limit: 'member_hour' | 'org_day' | 'org_week'; orgId: string; memberId: string | null; windowMs: number; threshold: number }, now: number): Promise<boolean> {
   const windowStart = Math.floor(now / e.windowMs) * e.windowMs;
   const member = e.memberId !== null;
   try {
@@ -114,8 +126,10 @@ async function volumeEvent(db: D1Database, e: { limit: 'member_hour' | 'org_day'
         JSON.stringify({ limit: e.limit, windowStart, windowMs: e.windowMs, threshold: e.threshold, ...(member ? { memberId: e.memberId, crossedInOrg: e.orgId } : {}) }),
       )
       .run();
+    return true;
   } catch {
     log({ event: 'console_rpc', method: 'linkUser', outcome: 'error', code: 'volume_event_failed' }, 'error');
+    return false;
   }
 }
 

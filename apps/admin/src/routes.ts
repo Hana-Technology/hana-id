@@ -97,7 +97,8 @@ export const ownersOf = (members: MemberView[]): MemberView[] => members.filter(
 /** The audit filters from the query string (all optional; the RPC's schema checks each). */
 export function auditFilters(url: URL): Record<string, unknown> {
   const f: Record<string, unknown> = {};
-  for (const k of ['orgId', 'appId', 'actorKind', 'actorId', 'action', 'target']) {
+  // Never `target` (a person's audit reference, D925): it isn't taken from a URL at all; the POST forms take it in the body.
+  for (const k of ['orgId', 'appId', 'actorKind', 'actorId', 'action']) {
     const v = url.searchParams.get(k);
     if (v) f[k] = v;
   }
@@ -106,6 +107,32 @@ export function auditFilters(url: URL): Record<string, unknown> {
     if (v !== undefined) f[k] = v;
   }
   return f;
+}
+
+/**
+ * The URL's filters plus the body's `target` (D925 after PR 153's review): a person's audit reference stays out of every
+ * URL (browser history, logs, referrers), as the Users screen's queries do (D410). The RPC's schema checks its form.
+ */
+const auditFiltersWithTarget = (c: RouteCtx): Record<string, unknown> => ({ ...auditFilters(c.url), ...(c.body.target !== undefined ? { target: c.body.target } : {}) });
+
+/** The audit view's answer for `filters` (GET with the URL's, POST with the body's `target` too). */
+async function auditRoute(c: RouteCtx, filters: Record<string, unknown>): Promise<Response> {
+  const ctx = staffCtx(c.staff);
+  const cursor = c.url.searchParams.get('cursor');
+  const changesBefore = intParam(c.url.searchParams.get('changesBefore'));
+  let audit, changes: { ok: true; changes: AppChange[] } | { ok: false; code: string; error?: string } | null = null;
+  try {
+    [audit, changes] = await Promise.all([
+      c.env.CONSOLE.queryAudit({ ...ctx, filters, limit: 100, ...(cursor ? { cursor } : {}) }),
+      typeof filters.orgId === 'string' ? c.env.API.listChanges({ ...ctx, orgId: filters.orgId, limit: 100, ...(changesBefore !== undefined ? { beforeSeq: changesBefore } : {}) }) : Promise.resolve(null),
+    ]);
+  } catch (err) {
+    log({ event: 'bff', route: 'GET|POST /api/audit', requestId: c.staff.requestId, outcome: 'error', code: 'upstream_unavailable', error: errorName(err) }, 'error');
+    return errorResponse('upstream_unavailable');
+  }
+  if (!audit.ok) return errorResponse(audit.code, audit.error);
+  if (changes && !changes.ok) return errorResponse(changes.code as Parameters<typeof errorResponse>[0], changes.error);
+  return json(200, { rows: audit.rows as AuditRow[], ...(audit.next ? { next: audit.next } : {}), changes: changes?.changes ?? null, directory: await directoryAudit(c) });
 }
 
 /**
@@ -279,27 +306,13 @@ const ROUTES: Route[] = [
   {
     method: 'GET',
     pattern: '/api/audit',
-    handler: async (c) => {
-      const ctx = staffCtx(c.staff);
-      const filters = auditFilters(c.url);
-      const cursor = c.url.searchParams.get('cursor');
-      const changesBefore = intParam(c.url.searchParams.get('changesBefore'));
-      let audit, changes: { ok: true; changes: AppChange[] } | { ok: false; code: string; error?: string } | null = null;
-      try {
-        [audit, changes] = await Promise.all([
-          c.env.CONSOLE.queryAudit({ ...ctx, filters, limit: 100, ...(cursor ? { cursor } : {}) }),
-          typeof filters.orgId === 'string' ? c.env.API.listChanges({ ...ctx, orgId: filters.orgId, limit: 100, ...(changesBefore !== undefined ? { beforeSeq: changesBefore } : {}) }) : Promise.resolve(null),
-        ]);
-      } catch (err) {
-        log({ event: 'bff', route: 'GET /api/audit', requestId: c.staff.requestId, outcome: 'error', code: 'upstream_unavailable', error: errorName(err) }, 'error');
-        return errorResponse('upstream_unavailable');
-      }
-      if (!audit.ok) return errorResponse(audit.code, audit.error);
-      if (changes && !changes.ok) return errorResponse(changes.code as Parameters<typeof errorResponse>[0], changes.error);
-      return json(200, { rows: audit.rows as AuditRow[], ...(audit.next ? { next: audit.next } : {}), changes: changes?.changes ?? null, directory: await directoryAudit(c) });
-    },
+    handler: (c) => auditRoute(c, auditFilters(c.url)),
   },
+  // D925 after PR 153's review: the same, with a person's audit reference (`target`) in the body, never in the URL.
+  { method: 'POST', pattern: '/api/audit', handler: (c) => auditRoute(c, auditFiltersWithTarget(c)) },
   { method: 'GET', pattern: '/api/audit.csv', handler: (c) => auditCsv(c.env, c.staff, auditFilters(c.url)) },
+  { method: 'POST', pattern: '/api/audit.csv', handler: (c) => auditCsv(c.env, c.staff, auditFiltersWithTarget(c)) },
+
 
   // ---- the feed's and the notices' state ----
   { method: 'GET', pattern: '/api/security', handler: (c) => securityView(c.env, c.staff) },

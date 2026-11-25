@@ -1957,7 +1957,7 @@ A `shared_scope_unmarked` security event: the ledger says a scope was marked as 
 
 `link-lookup-volume` · warning
 
-A `link_lookup_volume` security event: an owner of a network's organisation looked up more than 30 people across the organisation's apps in a clock hour (`member_hour`, filed under no organisation: an owner's limits follow them across organisations), or the organisation's owners more than 200 in a UTC day (`org_day`) or 500 in a week (`org_week`), in the partner console (“This person on your apps” and the search by an app's ID). It is an alert, written once by the look-up that crosses the threshold, not a refusal: the limits (60 an hour and 300 a day per owner, 1 000 a day per organisation) refuse past them on their own.
+A `link_lookup_volume` security event: an owner of a network's organisation looked up more than 30 people across the organisation's apps in a clock hour (`member_hour`, filed under no organisation: an owner's limits follow them across organisations), or the organisation's owners more than 200 in a UTC day (`org_day`) or 500 in a week (`org_week`), in the partner console (“This person on your apps” and the search by an app's ID). It is an alert, written once a window (a failed write is retried by the next look-up), not a refusal: the limits (60 an hour and 300 a day per owner, 1 000 a day per organisation) refuse past them on their own.
 
 **Signals**
 

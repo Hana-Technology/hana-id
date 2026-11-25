@@ -682,8 +682,9 @@ owner ─session─▶ console Worker POST /api/orgs/:org/users/link {query, pur
                      own flood limit (10/min a member); a frozen org: 403, recorded
                   1. API ConsoleRpc.linkUser                     RateLimiter console-link:<member> (60/h, 300/day) and
                                                                  console-link-org:<org> (1 000/day), before the read;
-                                                                 crossing 30/h, 200/day or 500/week: one
-                                                                 link_lookup_volume event (the feed emails it)
+                                                                 past 30/h, 200/day or 500/week: one
+                                                                 link_lookup_volume event a window (retried
+                                                                 until written; the feed emails it)
                                                                  hot DB, one SELECT: end_users | end_user_apps by a
                                                                  whole User ID or Support ID, held to the org's marked
                                                                  scopes and live apps of the org on the person's scope

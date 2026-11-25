@@ -211,19 +211,26 @@ describe('counters', () => {
 });
 
 describe('fixed windows with a soft limit (D925: the linking view’s volume alert)', () => {
-  it('a soft window never refuses: the hit that crosses its max names it in `soft` (once per window) and still counts; a hard window still refuses and counts nothing', async () => {
+  it('a soft window never refuses and still counts; past its max it is named on every hit until its alert is marked written, then not again in that window; a hard window still refuses and counts nothing', async () => {
     const stub = newStub();
     const limits: Limit[] = [
-      { name: 'hard', windowMs: MINUTE, max: 5 },
+      { name: 'hard', windowMs: MINUTE, max: 6 },
       { name: 'alert', windowMs: MINUTE, max: 2, soft: true },
     ];
     const answers = [];
-    for (let i = 0; i < 6; i++) answers.push(await stub.hit(limits, NOW + i));
-    // Named only by the hit that crosses it (the third: the count was exactly 2), so its alert is written once.
-    expect(answers).toEqual([{ ok: true }, { ok: true }, { ok: true, soft: ['alert'] }, { ok: true }, { ok: true }, { ok: false, limit: 'hard', retryAfterS: 60 }]);
-    // The next window crosses again.
+    for (let i = 0; i < 4; i++) answers.push(await stub.hit(limits, NOW + i));
+    // Named from the third hit (the count was 2) and on the fourth (its alert not written yet: a retry).
+    expect(answers).toEqual([{ ok: true }, { ok: true }, { ok: true, soft: ['alert'] }, { ok: true, soft: ['alert'] }]);
+    await stub.markAlerted(limits, ['alert'], NOW + 4);
+    expect(await stub.hit(limits, NOW + 5)).toEqual({ ok: true });
+    expect(await stub.hit(limits, NOW + 6)).toEqual({ ok: true });
+    expect(await stub.hit(limits, NOW + 7)).toEqual({ ok: false, limit: 'hard', retryAfterS: 60 });
+    // The next window: named again once past it, until marked.
     for (let i = 0; i < 2; i++) await stub.hit(limits, NOW + MINUTE + i);
     expect(await stub.hit(limits, NOW + MINUTE + 5)).toEqual({ ok: true, soft: ['alert'] });
+    // A marker two windows old is deleted by the next mark.
+    await stub.markAlerted(limits, ['alert'], NOW + 3 * MINUTE);
+    expect((await keys(stub)).filter((k) => k.startsWith('alerted:'))).toEqual([`alerted:alert@${Math.floor((NOW + 3 * MINUTE) / MINUTE) * MINUTE}`]);
     // Without a soft window, `hit` answers as before.
     const plain = newStub();
     expect(await plain.hit(WINDOW, NOW)).toEqual({ ok: true });

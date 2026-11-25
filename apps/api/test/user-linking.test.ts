@@ -266,6 +266,51 @@ describe('the limits and the volume alert (counted before the read)', () => {
     expect(await events(org)).toHaveLength(1);
   });
 
+  it('an alert whose write fails is written by the next look-up past the threshold; once written, no further writes in that window (the member’s hour, the org’s day and week)', async () => {
+    const org = newOrg();
+    const m = `usr_${uid()}`;
+    const real = env.DB.prepare.bind(env.DB);
+    let failNext = 0;
+    let writes = 0;
+    const spy = vi.spyOn(env.DB, 'prepare').mockImplementation((sql: string) => {
+      if (sql.includes('INTO security_events')) {
+        writes++;
+        if (failNext > 0) {
+          failNext--;
+          return { bind: () => ({ run: () => Promise.reject(new Error('D1_ERROR: storage write failed')) }) } as unknown as D1PreparedStatement;
+        }
+      }
+      return real(sql);
+    });
+    const memberEvents = () => allEvents().then((r) => r.filter((e) => JSON.parse(e.detail_json).memberId === m));
+    for (let i = 0; i < LINK_ALERT_MEMBER_PER_HOUR; i++) await admit(m, org, T + i);
+    // The crossing look-up's write fails: no event, and the look-up itself still answers.
+    failNext = 1;
+    expect(await admit(m, org, T + 100)).toBe('ok');
+    expect(await memberEvents()).toEqual([]);
+    // The next one writes it.
+    expect(await admit(m, org, T + 101)).toBe('ok');
+    expect(await memberEvents()).toHaveLength(1);
+    // Then nothing more in the window.
+    const after = writes;
+    for (let i = 0; i < 5; i++) await admit(m, org, T + 200 + i);
+    expect(writes).toBe(after);
+    // The org's week (fixed 7-day windows): its crossing write fails, the next look-up writes it, then no more.
+    const WEEK = 7 * DAY;
+    const weekStart = Math.floor(T / WEEK) * WEEK + 2 * WEEK;
+    const o2 = newOrg();
+    for (let n = 0; n < LINK_ALERT_ORG_PER_WEEK; n++) await admit(`usr_f${o2}${Math.floor(n / 20)}`, o2, weekStart + Math.floor(n / 150) * DAY + HOUR + (n % 150));
+    failNext = 1;
+    await admit(`usr_${uid()}`, o2, weekStart + 4 * DAY);
+    expect(await events(o2)).toEqual([]);
+    await admit(`usr_${uid()}`, o2, weekStart + 4 * DAY + 1);
+    expect((await events(o2)).map((e) => JSON.parse(e.detail_json).limit)).toEqual(['org_week']);
+    const w2 = writes;
+    for (let i = 0; i < 3; i++) await admit(`usr_${uid()}`, o2, weekStart + 5 * DAY + i);
+    expect(writes).toBe(w2);
+    spy.mockRestore();
+  });
+
   it(`the week: an org that stays under ${LINK_ALERT_ORG_PER_DAY} a day but passes ${LINK_ALERT_ORG_PER_WEEK} in a week alerts once`, async () => {
     const org = newOrg();
     const WEEK = 7 * DAY;

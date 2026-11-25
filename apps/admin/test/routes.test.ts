@@ -294,6 +294,32 @@ describe('audit and CSV', () => {
     expect([...ats].sort().reverse()).toEqual(ats);
   });
 
+  it('D925 after PR 153’s review: a person’s audit reference filters only from a POST body, never from a URL; the CSV too', async () => {
+    const org = await seedConsoleOrg();
+    const ref = 'lr1_AbCdEfGhIjKlMnOpQrStUA';
+    const other = 'lr1_ZyXwVuTsRqPoNmLkJiHgFA';
+    for (const [target, rid] of [[ref, `req_lk_${Date.now()}a`], [other, `req_lk_${Date.now()}b`]] as const)
+      await env.CONSOLE_TEST_DB.prepare(
+        "INSERT INTO audit_log (at, actor_kind, actor_id, actor_email, org_id, action, target, details_json, request_id, outcome) VALUES (?, 'member', 'usr_owner1', 'owner@partner.example', ?, 'users.link_view', ?, '{\"by\":\"panel\",\"kind\":\"userId\",\"of\":\"scope\"}', ?, 'ok')",
+      )
+        .bind(Date.now(), org, target, rid)
+        .run();
+    // In the body: only that person's rows.
+    const posted = await json<{ rows: { target: string }[] }>(await adminRequest(`/api/audit?orgId=${org}`, { body: { target: ref } }));
+    expect(posted.rows.map((r) => r.target)).toEqual([ref]);
+    // In the URL: ignored, as if not given (both rows).
+    const fromUrl = await json<{ rows: { target: string }[] }>(await adminRequest(`/api/audit?orgId=${org}&target=${ref}`));
+    expect(fromUrl.rows.map((r) => r.target).sort()).toEqual([ref, other].sort());
+    // Not a reference: refused by the RPC's schema (a User ID is never a filter).
+    expect((await adminRequest(`/api/audit?orgId=${org}`, { body: { target: 'u1_AbCdEfGhIjKlMnOpQrStUA' } })).status).toBe(400);
+    // The CSV: by POST with the body's reference, and the GET form ignores one in its URL.
+    const csv = await (await adminRequest(`/api/audit.csv?orgId=${org}`, { body: { target: ref } })).text();
+    expect(csv).toContain(ref);
+    expect(csv).not.toContain(other);
+    const csvGet = await (await adminRequest(`/api/audit.csv?orgId=${org}&target=${ref}`)).text();
+    expect(csvGet).toContain(other);
+  });
+
   it('csvCell: quoting and the formula prefix, numbers untouched', () => {
     expect(csvCell('=cmd|calc')).toBe("'=cmd|calc");
     expect(csvCell('@x')).toBe("'@x");
@@ -350,7 +376,9 @@ describe('the route table', () => {
         "POST /api/changes/:id/cancel",
         "POST /api/changes/:id/expedite",
         "GET /api/audit",
+        "POST /api/audit",
         "GET /api/audit.csv",
+        "POST /api/audit.csv",
         "GET /api/security",
         "GET /api/monitoring",
         "GET /api/monitoring/alerts",

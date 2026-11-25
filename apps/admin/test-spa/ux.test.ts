@@ -359,3 +359,24 @@ describe('the audit page names and filters every actor kind (D916)', () => {
 });
 
 const main = (s: ReturnType<typeof boot>) => s.main();
+
+describe('the audit page’s person filter (D925 after PR 153’s review)', () => {
+  it('keeps a person’s audit reference out of every URL: sent in a POST body, the address, links and the CSV link without it; one in an old URL is dropped', async () => {
+    const REF = 'lr1_AbCdEfGhIjKlMnOpQrStUA';
+    const s = boot(`/audit?orgId=org_lumen&target=${REF}`, (c) => (c.path.startsWith('/api/audit') ? { body: { rows: [], changes: null, directory: null } } : { status: 404, body: { error: { code: 'not_found', message: 'x' } } }));
+    await vi.waitFor(() => expect(s.text()).toContain('Audit log'));
+    // An old URL's target is never read: the first read is the GET without it.
+    expect(s.api().filter((c) => c.path.startsWith('/api/audit')).map((c) => [c.method, c.path])).toEqual([['GET', '/api/audit?orgId=org_lumen']]);
+    (s.form().querySelector('[name="target"]') as unknown as HTMLInputElement).value = ` ${REF} `;
+    s.submit();
+    await vi.waitFor(() => expect(s.api().some((c) => c.method === 'POST' && c.path.startsWith('/api/audit?'))).toBe(true));
+    const post = s.api().find((c) => c.method === 'POST' && c.path.startsWith('/api/audit?'))!;
+    expect(post.body).toEqual({ target: REF });
+    expect(post.path).not.toContain('lr1_');
+    expect(s.w.location.href).not.toContain('lr1_');
+    expect(JSON.stringify(s.w.history.state ?? null)).not.toContain('lr1_');
+    await vi.waitFor(() => expect(main(s).querySelector('a[href^="/api/audit.csv"]')).toBeNull());
+    for (const a of main(s).querySelectorAll('a')) expect(a.getAttribute('href') ?? '').not.toContain('lr1_');
+    expect([...main(s).querySelectorAll('button')].some((b) => b.textContent === 'Download CSV')).toBe(true);
+  });
+});

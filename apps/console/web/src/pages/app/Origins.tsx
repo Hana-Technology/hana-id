@@ -3,6 +3,8 @@
 // active after the delay; at most 20 per request), shown only to an on-chain owner of the app's scope (the API refuses
 // anyone else, `not_owner`; ChainOwner.tsx says who can instead). The form flags a path or too many origins once the
 // field is left (validate on blur), and never sends either.
+// D931: a web address that came into force by a confirmation says when, and whether an owner or Journear staff
+// confirmed it; the waiting list (Changes.tsx) links each one that waits for a confirmation to its page.
 import type { GuardedChange } from '@hana-id/console-core';
 import { useState } from 'react';
 import { postJson } from '../../api.ts';

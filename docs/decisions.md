@@ -22221,6 +22221,43 @@ this branch fixes it. The deploy list it produced is kept outside the repository
   name (recommended `sandbox-dev-<date>`); (3) Sodax's test scope: not marked as a shared wallet in this deploy
   (recommended; the mark is one way, D915); (4) the Sodax sample site's address, to check it before and after the
   deploy (it isn't in this repository).
+- **After PR 151's review (2026-11-25)**, on the same branch (the review got no damaged 0027 past `ledger-check` from
+  any starting level, nor a good one rolled back; each fix below has its test; each **to confirm (the Tech Lead)**):
+  1. *M1:* `gen`'s refusal and the checklist no longer say `usage-setup <env> hyperdrive` prints the writer id (it
+     creates configs, needs the token file the runbook deletes, and its "already exists" hint would break the deployed
+     `USAGE_DB`): they point to the read-only `wrangler hyperdrive list` and the row named `usage.writerHyperdrive`,
+     never the admin's.
+  2. *M2:* the checklist's D1 restore after a `ROLL BACK` is to 2.6's bookmark; 1.8's only for damage found before 2.5.
+  3. *M3:* after a ledger rollback, "Re-run afterwards" steps 2 to 5 only, never step 1 (it would re-apply the
+     migrations at once, with no snapshot or bookmark); 0027 waits for the cause, a new rehearsal, snapshot and bookmark.
+  4. *M4:* `wrangler d1 export --remote` takes the live database offline while it runs (wrangler's prompt says so):
+     sign-ins fail for its duration; the rehearsal runs at a quiet hour, from 2026-11-26 (the demos' freeze has ended).
+     The rehearsal's row count is a read-only `COUNT` query (`wrangler d1 info` gives no row counts).
+  5. *L1:* the snapshot's schema read matches the three tables' names in any case (`lower(tbl_name)`,
+     `instr(lower(sql), …)`): a `RAISE(IGNORE)` trigger `ON APP_CHANGES` was invisible.
+  6. *L2:* every snapshot records the commit and whether `apps/api/migrations` was dirty, and the database's
+     `d1_migrations`; compare refuses to judge (verdict "can't judge", exit 2) a dirty checkout or snapshot, another
+     commit (unless `--other-commit`, which prints both), a database migration this checkout lacks, or no
+     `d1_migrations`. "Unknown level" is its own verdict (exit 3), not ROLL BACK; but after 0027 a kind list other than
+     0027's is that rebuild's damage, so ROLL BACK. The snapshot format is now `hana-id/ledger-check/v3`. The
+     checklist's 1.4 checks the checkout's migrations are clean and the rehearsed ones.
+  7. *L3:* the step list's test flags any CREATE, DROP, ALTER or RENAME into `security_events` (any case, quoting or
+     name) in every file from 0022, and the "writes no ledger row" check covers every migration after 0021, 0027 and
+     0030 included.
+  8. *L4:* an unknown level reports only that, not `app_changes` and `guarded_changes` as changed. *L5:* a snapshot
+     already taken after 0027 is warned about, and "identical" says it proves nothing.
+  9. *L6:* the checklist's retention check applies on any day the month's run hasn't completed, not only the 1st.
+  10. *L7:* the playbooks `near-relay-budget-high` and `near-relay-balance-low` and `mainnet-readiness.md` 1.21 give
+     sandbox-dev's values after judging (5 and 2 NEAR); `docs/playbooks.md` regenerated.
+  11. *L8:* the names test's 2,000-character block holds the doubling ratio under 8 (catches cubic growth) and each call
+     under 2 s. *L9:* `clickToClose` requires the window open and the button visible before the click and accepts only
+     the "has been closed" error. *L10:* the vault-consents check refuses any timer over 0 ms.
+  12. *L11:* `deploy-check <env> --usage-binding` reads the `USAGE_DB` id from `apps/api/wrangler.jsonc` and asks
+     `wrangler hyperdrive get <id>` (a new read-only remote call) for its name, which must be `usage.writerHyperdrive`
+     (the admin's config named as such). Tested against fixtures only: **untried against Cloudflare**, in particular
+     the shape of wrangler's output.
+  13. *Nits:* 0030 in the lists of additive migrations; the deploy list's `migrations list` before the bookmark.
+  14. Merged `next` @ `2545dee2` (PR 152, D923) in; D923 sits before this entry.
 - Address impact: **none.** Checked: no file under `contracts/hana-signer` changes between `develop` and `next` or on
   this branch; `packages/core/src/ckd.ts`, `derivation.ts`, `layouts.ts`, `wallet-record.ts` and
   `packages/web/src/vault/record.ts` are unchanged; the manifest's `ckdNetworkKey` is unchanged; this branch touches a

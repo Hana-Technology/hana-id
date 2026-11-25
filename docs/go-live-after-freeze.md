@@ -1,6 +1,6 @@
 # Go-live checklist: the first sandbox-dev deploy after the freeze
 
-Last verified against code: 2026-11-25 (branch `fix/deploy-readiness`, from `next` @ `ca37652b` with `4776f6af` merged in, not merged, nothing run against any service: 0.10 the rehearsal; 1.1 and 1.1a done on `next`; phase 2 rewritten for ledger 0009 to 0011, D1 0022 to 0027 and 0030 with the snapshot, bookmark and comparison, console 0004, the retention wait; where P2's and P6's migrations go; `gen`'s refusal in 1.7; the rollback rows, the admin's `*/30`; "If Neon's allowance is used up", D924); 2026-11-24 (branch `feat/dev-wording-reduced-motion`, from `next`, not merged, not deployed: "sponsored action" for "gas-free action" in phase 4's row, the glossary, its heading and 4.15, D905); 2026-11-24 (branch `feat/home-cancel-waiting-sign-in`, from `next`, not merged, not deployed: ledger migration 0011 listed in 1.1, not applied anywhere, D902); 2026-11-24 (branch `feat/labels-line-names-provider-rule`, from `next`, not merged, not deployed: question 7 settled, D903); 2026-11-23 (branch `feat/partner-labels-contracts`, from `next`, not merged, not deployed: question 7, a second NEAR testnet provider, D900); 2026-11-23 (branch `feat/partner-labels-storage`, from `next`, not merged, not deployed: 2.1's list may also show `0025_partner_labels.sql` and the console's `0004_label_step_ups.sql`, both additive and unused while `partnerLabels.enabled` stays absent, D894); 2026-11-23 (branch `feat/evm-relayer-auto-resume`, from `next`, not merged, not deployed: 4.16's out-of-money pause that restarts by itself after a refill, the tile's Check again, migration 0024, the alerts table's `evm_relay_auto_resumed`, D890); 2026-11-23 (branch `feat/demo-plain-wording-2`, from `next`, not merged, not deployed: 1.1a, the NEAR relay's limits back with this deploy, D793's note; 1.6a run once on 2026-11-23; phase 4 named gas sponsorship); 2026-11-19 (branch `feat/near-reviewed-calls`, from `next`, not merged, not deployed: 1.6a, the reviewed NEAR contracts checked on chain before the pages deploy, and 3.12's stamps approval reads as reviewed, D885); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: 3.12's stamps check and 5.5's quoted heading after D884); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
+Last verified against code: 2026-11-25 (branch `fix/deploy-readiness`, after PR 151's review: 1.4's migrations check, 1.7's id from `wrangler hyperdrive list`, 0.10's export offline and row count, 2.0's retention on any day, 2.7's new verdicts, the restore to 2.6's bookmark and re-run steps 2 to 5 only, 0030 additive, D924); 2026-11-25 (branch `fix/deploy-readiness`, from `next` @ `ca37652b` with `4776f6af` merged in, not merged, nothing run against any service: 0.10 the rehearsal; 1.1 and 1.1a done on `next`; phase 2 rewritten for ledger 0009 to 0011, D1 0022 to 0027 and 0030 with the snapshot, bookmark and comparison, console 0004, the retention wait; where P2's and P6's migrations go; `gen`'s refusal in 1.7; the rollback rows, the admin's `*/30`; "If Neon's allowance is used up", D924); 2026-11-24 (branch `feat/dev-wording-reduced-motion`, from `next`, not merged, not deployed: "sponsored action" for "gas-free action" in phase 4's row, the glossary, its heading and 4.15, D905); 2026-11-24 (branch `feat/home-cancel-waiting-sign-in`, from `next`, not merged, not deployed: ledger migration 0011 listed in 1.1, not applied anywhere, D902); 2026-11-24 (branch `feat/labels-line-names-provider-rule`, from `next`, not merged, not deployed: question 7 settled, D903); 2026-11-23 (branch `feat/partner-labels-contracts`, from `next`, not merged, not deployed: question 7, a second NEAR testnet provider, D900); 2026-11-23 (branch `feat/partner-labels-storage`, from `next`, not merged, not deployed: 2.1's list may also show `0025_partner_labels.sql` and the console's `0004_label_step_ups.sql`, both additive and unused while `partnerLabels.enabled` stays absent, D894); 2026-11-23 (branch `feat/evm-relayer-auto-resume`, from `next`, not merged, not deployed: 4.16's out-of-money pause that restarts by itself after a refill, the tile's Check again, migration 0024, the alerts table's `evm_relay_auto_resumed`, D890); 2026-11-23 (branch `feat/demo-plain-wording-2`, from `next`, not merged, not deployed: 1.1a, the NEAR relay's limits back with this deploy, D793's note; 1.6a run once on 2026-11-23; phase 4 named gas sponsorship); 2026-11-19 (branch `feat/near-reviewed-calls`, from `next`, not merged, not deployed: 1.6a, the reviewed NEAR contracts checked on chain before the pages deploy, and 3.12's stamps approval reads as reviewed, D885); 2026-11-19 (branch `feat/free-fee-in-details`, from `next`, not merged, not deployed: 3.12's stamps check and 5.5's quoted heading after D884); 2026-11-19 (branch `feat/admin-gas-sponsorship-wording`, from `next`, not merged, not deployed: 4.16, the alerts table and question 5 name the staff tile, page and alerts "Gas sponsorship", D879; after its review: the relayer wallet's and the NEAR relay's billing alert titles in the alerts table and phase 3's step 6; its "gas-free" wording, the partner-side term, unchanged); 2026-11-19 (branch `feat/unbroken-address-copy`, not merged: the hand-test step's fee row words, D877); 2026-11-19 (branch `feat/remove-added-sign-in-any-age`, not merged: phase 3's note on deploying the vault and the sign-in pages together, D875); 2026-11-19 (branch `fix/neon-compute-wakeups`, after review: the deploy waits for Neon's reset (expected 2026-12-01), your decision of 2026-11-19; 2.0's pre-flight; "If Neon's allowance is used up" rewritten (only 2.4–2.6 and 3.11a need Neon; options (a) chosen and (b) the fallback, its frozen-files warning); 0.9 and 5.3: the NEAR relay's limits a separate API deploy on 2026-11-26, to plan; D872); 2026-11-19 (branch `fix/neon-compute-wakeups`, from `next`, not merged, not deployed: 1.11 and 3.11a Neon's compute before and after, 2.4's "can't connect", phase 3 row 7 resets the hand-edited triggers, "If Neon's allowance is used up", D872); 2026-11-18 (branch `test/evm-sponsor-anvil-lane`: 4.6's `cast` commands, written in the runbook and rehearsed on anvil; what the anvil lane already rehearsed and what still needs Base Sepolia, D868); 2026-11-18 (branch `feat/admin-evm-sponsor`, from `next`, not merged, not deployed: 4.16, the relayer's state on the admin portal's Free network fees tile and page, and their deploy order, D843); 2026-11-18 (branch `fix/deploy-check-sponsor-rpc`: 4.12 and 4.14 with the read endpoint
 enforced, D851 as amended); 2026-11-18 (branch `docs/go-live-checklist`, with `next` @ 9a4db48f merged in (PRs 71, 77,
 85 and 86 merged), docs only, nothing run against any service, testnet or account; every command, flag, path,
 migration, secret and alert name checked against the scripts and the runbook on that commit).
@@ -18,7 +18,7 @@ stop and ask.
 confirm the date in Neon's console), not in the last days of November, and the ledger migrations are not applied
 ahead of time. Both public demos (the stamps site and the hosted demo) must keep working exactly as they are until the
 end of 2026-11-25 in any case. The NEAR relay's limits go back with this deploy, not as a separate step (your decision of
-2026-11-23, D793): 1.1a put the values back on `next` (D924), phase 3 deploys them. Phase 0 changes nothing of sandbox-dev and can be done any
+2026-11-23, D793): 1.1a put the values back on `next` (D924), phase 3 deploys them. Phase 0 changes nothing of sandbox-dev's data (0.10's export takes its database offline for a few seconds) and can be done any
 time. Phases 1 to 5 wait for you to say "go ahead deploy".
 
 ## Overview
@@ -62,9 +62,9 @@ Nothing in this list needs to be rushed.
   (wrangler migration `v3`).
 - **CI**: GitHub's automatic checks on every pull request and push.
 
-## Phase 0: before the day (changes nothing of sandbox-dev)
+## Phase 0: before the day (changes nothing of sandbox-dev's data)
 
-Each step can be done on any day. None of them deploys, migrates or uploads anything.
+Each step can be done on any day. None of them deploys, migrates or uploads anything to sandbox-dev. One reads it in a way users notice: 0.10's export makes its database unavailable while it runs (sign-ins fail for those seconds).
 
 ### 0.1 Install Foundry 1.5.1
 
@@ -202,10 +202,14 @@ migration on a scratch copy of sandbox-dev's D1, restore drill included: the run
 (for example 0.2's folder; run `gen` there with `--d1-id <the env's database id>` and `--usage-hyperdrive-id off`: that
 config is never deployed). It needs no Neon, so it can be done before the reset.
 
-Before you start (read-only): `corepack pnpm --dir apps/api exec wrangler d1 info hana-id-sandbox-dev` (its size) and
-`… wrangler d1 list` (fewer than 10 databases, the Free plan's limit). The copy and the migrations count against D1's
+Before you start (read-only): the row count query of [Ledger rebuild](operations.md#ledger-rebuild-hot-db-migration-0027-d916)
+"What the rehearsal costs on the Free plan" (`wrangler d1 info` gives the size, not the rows) and `corepack pnpm --dir
+apps/api exec wrangler d1 list` (fewer than 10 databases, the Free plan's limit). The copy and the migrations count against D1's
 free 100,000 rows written a day for the whole account; past it, D1 refuses writes until 00:00 UTC and sign-ins fail.
-If the database holds many thousands of rows, rehearse on another UTC day than the deploy. Do it at a quiet hour. **Not
+If the database holds many thousands of rows, rehearse on another UTC day than the deploy. **Step a's export takes
+sandbox-dev's database offline while it runs**: wrangler asks you to confirm and says so; every sign-in and app request
+fails until it finishes (seconds for a small database). Do it at a quiet hour; the demos' judging freeze ended on
+2026-11-25, so any day from the 26th. **Not
 tested:** importing an export into a database whose triggers check each row (0006's, 0013's): if step a's import fails
 with a trigger's message, stop, delete the scratch database and ask; nothing touched sandbox-dev.
 
@@ -303,7 +307,17 @@ corepack pnpm install --frozen-lockfile
 git log -1 --format='%h %s'
 ```
 
-You see: the merge commit of 1.2 ("Merge pull request #… from Hana-Technology/next").
+You see: the merge commit of 1.2 ("Merge pull request #… from Hana-Technology/next"). Then:
+
+```sh
+git status --porcelain -- apps/api/migrations
+git diff --stat <the commit you rehearsed on in 0.10> HEAD -- apps/api/migrations
+```
+
+You see: nothing from either (no uncommitted migration, and the migrations are the ones 0.10 rehearsed). `ledger-check`
+records the commit and whether `apps/api/migrations` is dirty in every snapshot, and its compare refuses to judge
+("can't judge", exit 2) a dirty checkout, a snapshot from another commit, or a database with a migration this checkout
+doesn't have (D924): take 2.5 and run 2.7 from this checkout, at this commit.
 
 ### 1.5 Every check (`verify --full`)
 
@@ -354,8 +368,12 @@ You see: `wrote …apps/api/wrangler.jsonc (env sandbox-dev, worker hana-id-api-
 placeholder id" in it, then `usage capture: on (USAGE_DB → Hyperdrive …)`, then two `wrote …` lines for the page
 Workers. If it says placeholder or `usage capture: off`: stop and ask (the config lost the database or ledger link).
 Since D924 `gen` refuses, and writes nothing, rather than drop the ledger link silently: if it says "has a usage
-ledger … but no writer Hyperdrive id is known", pass `--usage-hyperdrive-id <writer id>` (the `USAGE_DB` id of the last
-config; `usage-setup sandbox-dev hyperdrive` prints it).
+ledger … but no writer Hyperdrive id is known", read the id with `corepack pnpm --dir apps/api exec wrangler hyperdrive
+list` (read-only): the row named `hana-id-usage-writer-sandbox-dev` (the manifest's `usage.writerHyperdrive`), **never**
+`hana-id-usage-admin-sandbox-dev`; then `gen sandbox-dev --usage-hyperdrive-id <that id>`. Don't run `usage-setup … hyperdrive`
+for it: it creates configs, needs the token file the runbook has you delete, and its "already exists" hint (delete the
+config) would break the deployed API's `USAGE_DB`. After the deploy, `deploy-check sandbox-dev --usage-binding` checks
+the binding names the writer config (D924, untried against Cloudflare).
 
 ### 1.8 Take the restore point (Time Travel bookmark)
 
@@ -418,9 +436,10 @@ first: if it fails, nothing of sandbox-dev has changed yet.
 
 1. Neon's console, the project: the compute is not suspended for its allowance, and **Usage** shows what is left of
    this period's 100 compute-hours.
-2. **If today is the 1st** (the likely reset day): the admin portal's **Retention** screen shows this month's run `ok`.
-   The monthly job starts at 01:00 UTC (09:00 in Malaysia) and needs Neon; while it runs, 2.7's comparison would count
-   its deletions as lost rows ([Ledger rebuild](operations.md#ledger-rebuild-hot-db-migration-0027-d916) step 2). A
+2. **The monthly retention job is not running**: the admin portal's **Retention** screen shows this month's run `ok`.
+   It is due from the 1st at 01:00 UTC (09:00 in Malaysia) until a run of the month completes, on any day (a `failed`
+   or `partial` run keeps it due), and it needs Neon; while it runs, 2.7's comparison would count its deletions as
+   lost rows ([Ledger rebuild](operations.md#ledger-rebuild-hot-db-migration-0027-d916) step 2). A
    `failed` run is retried an hour later; wait for `ok`.
 
 What to do:
@@ -517,7 +536,8 @@ corepack pnpm --filter @hana-id/scripts run ledger-check sandbox-dev compare --r
 are on `apps`, not compared), then `Verdict: identical` or `Verdict: kept` (rows the
 running API wrote since, each named). `Verdict: ROLL BACK`: stop; the rollback is the runbook's
 [Ledger rebuild, Rolling back](operations.md#ledger-rebuild-hot-db-migration-0027-d916), with the assistant.
-`Verdict: migration 0027 is not applied`: 2.6 didn't apply it; nothing to undo; ask.
+`Verdict: migration 0027 is not applied`: 2.6 didn't apply it; nothing to undo; ask. `Verdict: can't judge` (exit 2) or
+`Verdict: unknown level` (exit 3): **not** a rollback; nothing was compared or nothing was found damaged; ask (D924).
 
 ### 2.8 Confirm D1, then the console's D1
 
@@ -1009,13 +1029,17 @@ your notes; anything that asks for money; any message this list doesn't mention.
 |---|---|---|
 | 0 | Nothing to undo. The plan sent nothing. GitHub settings change back in the same place. | The keystore and the provider account are yours; keep them. |
 | 1 | If you stop before phase 2, just don't deploy: nothing on sandbox-dev changed. A wrong tag: `git push origin :refs/tags/sandbox-dev-<yyyy-mm-dd>`. | Undoing the merge into `develop` is a revert PR; ask the assistant. |
-| 2 | Nothing to undo after a success: the ledger's three and D1's 0022 to 0026 and console 0004 only add (tables, columns, triggers, kinds), 0027 keeps every row, and the old API, console and admin work on all of them (D916). | A failed migration (`❌`), or 2.7's `ROLL BACK`: stop and ask. The Time Travel restore (below, to 2.6's bookmark) is a last resort: it loses every write after the bookmark (sign-ins, new wallets, app changes, suspensions) and needs the admin feed's cursor lowered at once (`ledger-check sandbox-dev feed-cursor`, a Neon connection). The ledger's migrations have no down files and stay. |
+| 2 | Nothing to undo after a success: the ledger's three and D1's 0022 to 0026, 0030 and console 0004 only add (tables, columns, triggers, kinds), 0027 keeps every row, and the old API, console and admin work on all of them (D916). | A failed migration (`❌`), or 2.7's `ROLL BACK`: stop and ask. The Time Travel restore (below, to 2.6's bookmark) is a last resort: it loses every write after the bookmark (sign-ins, new wallets, app changes, suspensions) and needs the admin feed's cursor lowered at once (`ledger-check sandbox-dev feed-cursor`, a Neon connection). The ledger's migrations have no down files and stay. |
 | 3 | Roll each Worker back to its previous version, in the reverse order of the table (stamps site first, files last): `corepack pnpm --dir apps/api exec wrangler rollback` for the API, `corepack pnpm --dir apps/api exec wrangler rollback --name hana-id-vault-sandbox-dev` and `… --name hana-id-auth-sandbox-dev` for the two page Workers, and `wrangler rollback` from each other app's own folder (`apps/files`, `apps/email-issuer`, `apps/console`, `apps/console-auth`, `apps/admin`, `apps/watchdog`, `apps/demo`, `apps/stamps`). wrangler shows the version it goes back to and asks first. Or redeploy every piece from a checkout at the commit you wrote down in 1.6. | The phase 2 migrations stay: the older code works with them. After a rollback, `deploy-check sandbox-dev --skip-head` checks the pieces agree. **The admin Worker:** a rollback doesn't bring back the hand-set `*/30` trigger; old code with `*/5` opens Neon every 5 minutes (D872), so after rolling it back run `corepack pnpm exec wrangler triggers deploy --triggers "*/30 * * * *" "*/15 * * * *"` from `apps/admin` (never change `*/15`). |
 | 4 | **The off switch**: `corepack pnpm --dir apps/api exec wrangler secret delete EVM_RELAY_KEYS`. The read endpoint stays: it is required, and replacing it is the same `wrangler secret put EVM_SPONSOR_RPC_84532` with the new URL. | After 4.13, fix forward: don't roll the API back past the deploy that created the relayer. A rollback never undoes a Durable Object (wrangler says so), so the old code would run beside the relayer's stored state; use the off switch. |
 | 5 | CI off: `gh workflow disable CI -R Hana-Technology/hana-id`. Limits or email budget: a PR with the old values, then the same `gen` and deploy. | |
 
 **The D1 restore** (only with the assistant, only if the data is damaged): runbook
-[Restoring a D1 database (Time Travel)](operations.md#restoring-a-d1-database-time-travel), with the bookmark of 1.8.
+[Restoring a D1 database (Time Travel)](operations.md#restoring-a-d1-database-time-travel). For a `ROLL BACK` of 2.7, or
+damage found after 2.5: **2.6's bookmark**, as [Ledger rebuild, Rolling back](operations.md#ledger-rebuild-hot-db-migration-0027-d916)
+says (2.5's snapshot holds the rows written up to it; a restore to 1.8's earlier bookmark loses some of them, and the
+check after the restore then says ROLL BACK again). 1.8's bookmark only for damage found before 2.5. After the restore,
+that section's steps 2 to 5 of "Re-run afterwards" only, never its step 1 (it would re-apply the migrations at once).
 It exports the damaged state first, restores in place, and lists what to re-run afterwards.
 
 **What cannot be undone:**

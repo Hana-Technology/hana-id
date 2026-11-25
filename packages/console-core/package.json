@@ -10,7 +10,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
-    "gen-vectors": "node scripts/gen-vectors.mjs"
+    "gen-vectors": "node scripts/gen-vectors.mjs && node scripts/gen-platform-request-vectors.mjs"
   },
   "dependencies": { "@hana-id/core": "workspace:*", "@hana-id/env": "workspace:*", "zod": "^4.6.6" },
   "devDependencies": { "typescript": "^5.7.0", "vitest": "^3.2.0", "@types/node": "^22.0.0" }

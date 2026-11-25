@@ -14,6 +14,8 @@ export const AUDIT_KEEP_MONTHS = 60;
  * audit; deleted outright (a row without its user or address has no use). See the decision in docs/decisions.md.
  */
 export const USER_EVENTS_KEEP_MONTHS = 24;
+/** D927: the platform API's call log (`platform_calls`, migration 0032): 13 months, its delete trigger's constant. */
+export const PLATFORM_CALLS_KEEP_MONTHS = 13;
 /** An app's per-user rows (ledger `app_users`, the wallet directory of a scope left without apps) after its deletion. */
 export const DELETED_APP_GRACE_MS = 30 * 24 * 60 * 60_000;
 /** Rows one purge call may delete per table (one D1 batch). */
@@ -31,6 +33,8 @@ export function monthsBefore(t: number, months: number): number {
 export const auditCutoff = (now: number): number => monthsBefore(now, AUDIT_KEEP_MONTHS);
 /** The user events cutoff at `now`: events older than this may be deleted. */
 export const userEventsCutoff = (now: number): number => monthsBefore(now, USER_EVENTS_KEEP_MONTHS);
+/** The platform call log's cutoff at `now`: rows older than this may be deleted. */
+export const platformCallsCutoff = (now: number): number => monthsBefore(now, PLATFORM_CALLS_KEEP_MONTHS);
 /** Apps deleted at or before this are past their 30 days. */
 export const deletedAppCutoff = (now: number): number => now - DELETED_APP_GRACE_MS;
 
@@ -51,6 +55,9 @@ export const purgeDirectoryInput = ctx.extend({ before: ms, limit: batch }).stri
  */
 export const purgeUserEventsInput = ctx.extend({ before: ms, deletedBefore: ms, limit: batch }).strict();
 
+/** D927: AdminRpc.purgePlatformCalls: up to `limit` platform calls older than `before` (clamped to 13 months ago). */
+export const purgePlatformCallsInput = ctx.extend({ before: ms, limit: batch }).strict();
+
 export type PurgeAuditInput = z.infer<typeof purgeAuditInput>;
 export type DeletedAppsInput = z.infer<typeof deletedAppsInput>;
 export type PurgeDirectoryInput = z.infer<typeof purgeDirectoryInput>;
@@ -60,6 +67,9 @@ export type PurgeUserEventsInput = z.infer<typeof purgeUserEventsInput>;
 export interface ApiPurgeAuditResult {
   appChanges: number;
   guardedChanges: number;
+}
+export interface PurgePlatformCallsResult {
+  platformCalls: number;
 }
 export interface ConsolePurgeAuditResult {
   auditLog: number;

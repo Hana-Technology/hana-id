@@ -182,7 +182,7 @@ beforeAll(async () => {
   expect(beforeRows.security_events!.length).toBe(OLD_EVENT_KINDS.length);
   expect(maxSeqBefore).toBe(90000);
 
-  await applyD1Migrations(db, migrations);
+  await applyD1Migrations(db, migrations.slice(0, at + 1));
 });
 
 describe('migration 0027_platform_actor', () => {
@@ -346,7 +346,7 @@ describe('migration 0027_platform_actor', () => {
   it('applying the migrations again changes nothing (each file once, in name order)', async () => {
     const before = (await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name);
     const rows = await rowsOf('app_changes');
-    await applyD1Migrations(db, env.TEST_MIGRATIONS);
+    await applyD1Migrations(db, env.TEST_MIGRATIONS.filter((m) => m.name <= FILE));
     expect((await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name)).toEqual(before);
     expect(before).toContain(FILE);
     expect(await rowsOf('app_changes')).toEqual(rows);

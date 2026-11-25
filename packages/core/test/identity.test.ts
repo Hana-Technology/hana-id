@@ -22,6 +22,13 @@ import {
   identitySigningInput,
   identitySub,
   identitySubBytes,
+  APP_USER_ID_MODES,
+  IDENTITY_APP_SUB_LABEL,
+  appSub,
+  appSubBytes,
+  isAppUserIdMode,
+  subBytesForApp,
+  subForApp,
   identityTokenHeader,
   identityTokenPayload,
   isIdentityTokenResponse,
@@ -35,6 +42,7 @@ import {
   walletProofMessage,
   walletProofsHash,
 } from '../src/identity.ts';
+import { decodeIdentitySub, supportIdFromSub } from '../src/support-id.ts';
 import { type Example, readJson } from './helpers.ts';
 
 interface IdentityVectors {
@@ -53,6 +61,7 @@ interface IdentityVectors {
   layouts: Record<string, Example>;
   subs: Record<string, Example & { path: string; sub: string; sub_bytes_hex: string }>;
   sids: Record<string, Example & { app_id: string; sid: string }>;
+  app_subs: Record<string, Example & { scope_id: string; app_id: string; scope_sub: string; app_sub_bytes_hex: string; app_sub: string; support_id: string; scope_support_id: string }>;
   thumbprint: { jwk: { kty: 'EC'; crv: 'P-256'; x: string; y: string }; input: string; kid: string };
   claims: { input: Record<string, unknown> & { jti_hex: string; login_methods_unsorted: string[]; wallets: { stellar: string; evm: string } }; json: string; header_json: string; signing_input: string };
 }
@@ -171,6 +180,82 @@ describe('sub and sid (vectors)', () => {
 
   it('borsh framing: moving bytes between scope, provider and sub changes the id', () => {
     expect(identitySub(KEY, 's1', { provider: 'google', sub: 'ab' })).not.toBe(identitySub(KEY, 's1g', { provider: 'oogle', sub: 'ab' }));
+  });
+});
+
+describe('the per-app User ID (D919, vectors)', () => {
+  const k0 = () => identityRoot(V.subs.google_k0!.path, V.scope_id)!;
+
+  it('appSub matches the independent generator byte for byte, from the scope-level sub’s 16 bytes', () => {
+    for (const ex of Object.values(V.app_subs)) {
+      const scopeBytes = decodeIdentitySub(ex.scope_sub);
+      expect(toHex(appSubBytes(KEY, ex.scope_id, ex.app_id, scopeBytes))).toBe(ex.app_sub_bytes_hex);
+      expect(appSub(KEY, ex.scope_id, ex.app_id, scopeBytes)).toBe(ex.app_sub);
+      expect(toHex(utf8(IDENTITY_APP_SUB_LABEL)) + '00').toBe(ex.parts[0]![1] + ex.parts[1]![1]);
+      expect(ex.app_sub).toHaveLength(25);
+      // The Support ID of an 'app' app is the short form of its own sub (B4), as a partner computes it.
+      expect(supportIdFromSub(ex.app_sub)).toBe(ex.support_id);
+      expect(supportIdFromSub(ex.scope_sub)).toBe(ex.scope_support_id);
+    }
+    // The vectors' scope subs are the subs vectors' own (the same person).
+    expect(V.app_subs.app!.scope_sub).toBe(V.subs.google_k0!.sub);
+    expect(V.app_subs.other_scope!.scope_sub).toBe(V.subs.google_other_scope!.sub);
+    expect(V.app_subs.email_root!.scope_sub).toBe(V.subs.email_root!.sub);
+  });
+
+  it('two apps of one scope give one person different IDs, neither the scope-level one; another scope differs too', () => {
+    const a = V.app_subs.app!;
+    const b = V.app_subs.other_app!;
+    expect(a.app_sub).not.toBe(b.app_sub);
+    expect(a.support_id).not.toBe(b.support_id);
+    for (const ex of Object.values(V.app_subs)) {
+      expect(ex.app_sub).not.toBe(ex.scope_sub);
+      expect(ex.support_id).not.toBe(ex.scope_support_id);
+    }
+    expect(V.app_subs.other_scope!.app_sub).not.toBe(a.app_sub);
+  });
+
+  it("subForApp: 'scope' is exactly today's sub (bytes and string), 'app' is appSub; any other mode throws", () => {
+    const root = k0();
+    expect(APP_USER_ID_MODES).toEqual(['scope', 'app']);
+    expect(toHex(subBytesForApp(KEY, { scopeId: V.scope_id, appId: V.app_id, userIds: 'scope' }, root))).toBe(V.subs.google_k0!.sub_bytes_hex);
+    expect(subForApp(KEY, { scopeId: V.scope_id, appId: V.app_id, userIds: 'scope' }, root)).toBe(identitySub(KEY, V.scope_id, root));
+    expect(subForApp(KEY, { scopeId: V.scope_id, appId: V.app_id, userIds: 'app' }, root)).toBe(V.app_subs.app!.app_sub);
+    expect(subForApp(KEY, { scopeId: V.scope_id, appId: V.app_subs.other_app!.app_id, userIds: 'app' }, root)).toBe(V.app_subs.other_app!.app_sub);
+    expect(toHex(subBytesForApp(KEY, { scopeId: V.scope_id, appId: V.app_id, userIds: 'app' }, root))).toBe(V.app_subs.app!.app_sub_bytes_hex);
+    for (const bad of ['', 'APP', 'Scope', 'pairwise', 'app ', null, undefined, 1]) {
+      expect(isAppUserIdMode(bad)).toBe(false);
+      expect(() => subForApp(KEY, { scopeId: V.scope_id, appId: V.app_id, userIds: bad as string }, root)).toThrow(TypeError);
+    }
+  });
+
+  it("an existing ('scope') app's sub and Support ID are pinned: today's values, unchanged by this layout", () => {
+    // Literals copied from identity-v1.json as it stood before D919 (its subs entries are unchanged by the generator).
+    expect(V.subs.google_k0!.sub).toBe('u1_EcoIFjT5lAWZsk0862e8Tg');
+    expect(V.subs.google_other_scope!.sub).toBe('u1_xzCAqD02ukshAKyIyhQeLw');
+    expect(V.subs.email_root!.sub).toBe('u1_ZdB8b0cpdCh3XzeilneuDQ');
+    expect(subForApp(KEY, { scopeId: V.scope_id, appId: V.app_id, userIds: 'scope' }, k0())).toBe('u1_EcoIFjT5lAWZsk0862e8Tg');
+    expect(supportIdFromSub(subForApp(KEY, { scopeId: V.scope_id, appId: 'app_anything', userIds: 'scope' }, k0()))).toBe(supportIdFromSub('u1_EcoIFjT5lAWZsk0862e8Tg'));
+  });
+
+  it('needs the server’s key: another key gives another ID, and nothing of the scope-level ID shows in it', () => {
+    const a = V.app_subs.app!;
+    const scopeBytes = decodeIdentitySub(a.scope_sub);
+    const otherKey = new Uint8Array(32).fill(9);
+    expect(appSub(otherKey, a.scope_id, a.app_id, scopeBytes)).not.toBe(a.app_sub);
+    expect(appSub(new Uint8Array(32), a.scope_id, a.app_id, scopeBytes)).not.toBe(a.app_sub);
+    expect(a.app_sub.slice(3)).not.toContain(a.scope_sub.slice(3, 9));
+    expect(() => appSub(new Uint8Array(31), a.scope_id, a.app_id, scopeBytes)).toThrow('32 bytes');
+    expect(() => appSub(KEY, a.scope_id, a.app_id, scopeBytes.subarray(0, 15))).toThrow('16 bytes');
+    expect(() => appSub(KEY, a.scope_id, '', scopeBytes)).toThrow('appId');
+  });
+
+  it('borsh framing and domain separation: no app ID equals a sub or sid, and moving bytes between scope and app changes it', () => {
+    const scopeBytes = decodeIdentitySub(V.app_subs.app!.scope_sub);
+    expect(appSub(KEY, 's1', 'app_x', scopeBytes)).not.toBe(appSub(KEY, 's1a', 'pp_x', scopeBytes));
+    // The sub label's MAC over the same scope bytes is not the app label's.
+    expect(appSub(KEY, 's1', 'app_x', scopeBytes)).not.toBe(identitySub(KEY, 's1', { provider: 'app_x', sub: 'x' }));
+    expect(appSub(KEY, V.scope_id, V.app_id, scopeBytes).slice(3)).not.toBe(identitySid(KEY, V.app_id, PK7).slice(3));
   });
 });
 

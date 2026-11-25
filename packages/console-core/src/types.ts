@@ -255,6 +255,12 @@ export const appDetail = appSummary
     sharedScope: z.boolean().optional(),
     createdByKind: z.enum(APP_CREATOR_KINDS).optional(),
     sharedWallet: z.boolean().optional(),
+    /**
+     * D919 (migration 0030): which User ID the app gives its users, fixed at creation: `scope`, the person's one User ID
+     * for every app of the scope; `app`, an ID of the app's own (an app created on a scope marked as shared). An API
+     * before 0030's build omits it.
+     */
+    userIds: z.enum(['scope', 'app']).optional(),
     changes: z.array(guardedChange),
     keys: z.array(keyView),
   })

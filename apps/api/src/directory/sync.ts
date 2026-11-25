@@ -10,6 +10,9 @@
 // `unlinked` or `cancelled` until then. A root never moves (a root has a wallet, and an identity with a wallet can't
 // join an account, links.rs), but the rule needs no exception for it.
 //
+// After a login on an app (`at.appId`), the same batch also upserts the person's row for that app in `end_user_apps`
+// (migration 0030, D919): written only when the app's scope is marked as shared, as the statement itself checks.
+//
 // SECURITY: tokens are only ever passed as their verified (provider, sub); nothing here logs a sub or a key.
 import type { Env } from '../env.ts';
 import { type AccountView, getAccount, getIdentity } from '../link-views.ts';
@@ -24,6 +27,8 @@ import {
   noteDirectoryUnavailable,
   upsertIdentity,
   upsertUser,
+  upsertUserApp,
+  userAppIds,
   writeDirectory,
 } from './store.ts';
 
@@ -31,6 +36,14 @@ export interface SyncAt {
   requestId: string;
   endpoint: string;
   appId?: string;
+}
+
+/** The person's `end_user_apps` row for the app signed in on (none for Passport Home's own logins: no app). */
+function appRow(env: Env, internalId: string, scopeId: string, root: IdentityRef, appId: string | undefined, at: number): D1PreparedStatement[] {
+  if (!appId) return [];
+  const app = { id: appId, scope_id: scopeId };
+  const ids = userAppIds(env, app, root);
+  return ids ? [upsertUserApp(env.DB, internalId, app, ids, at)] : [];
 }
 
 /** Runs `p` after the response when an execution context is there, else awaits it. Never rejects. */
@@ -48,7 +61,14 @@ export async function inBackground(exec: ExecutionContext | undefined, p: () => 
  * verified tokens gave. `hint`: the member a cancel or unlink just removed. Returns false when nothing could be
  * written.
  */
-export async function syncAccount(env: Env, scopeId: string, root: IdentityRef, known: readonly IdentityRef[], at: SyncAt, opts: { hint?: { memberKey: string; action: 'cancel' | 'unlink' } } = {}): Promise<boolean> {
+export async function syncAccount(
+  env: Env,
+  scopeId: string,
+  root: IdentityRef,
+  known: readonly IdentityRef[],
+  at: SyncAt,
+  opts: { hint?: { memberKey: string; action: 'cancel' | 'unlink' }; signedInApp?: string } = {},
+): Promise<boolean> {
   let account: AccountView | null;
   const readAt = Date.now();
   try {
@@ -93,6 +113,7 @@ export async function syncAccount(env: Env, scopeId: string, root: IdentityRef, 
     );
   }
   stmts.push(markRemovedMembers(env.DB, scopeId, user.internalId, members.map((m) => m.key), readAt, opts.hint));
+  stmts.push(...appRow(env, user.internalId, scopeId, truth, opts.signedInApp, readAt));
   return writeDirectory(env, stmts, at);
 }
 
@@ -112,7 +133,7 @@ export async function syncAfterLogin(env: Env, scopeId: string, token: IdentityR
       log({ event: 'directory_sync_failed', requestId: at.requestId, endpoint: at.endpoint, appId: at.appId, code: 'near_unavailable' }, 'warn');
       return false;
     }
-    return syncAccount(env, scopeId, root, [token, link], at);
+    return syncAccount(env, scopeId, root, [token, link], at, { ...(at.appId ? { signedInApp: at.appId } : {}) });
   }
   if (!standing.confirmed || standing.pending) return false;
   const root = standing.member?.root ?? token;
@@ -135,5 +156,6 @@ export async function syncAfterLogin(env: Env, scopeId: string, token: IdentityR
       ),
     );
   }
+  stmts.push(...appRow(env, user.internalId, scopeId, root, at.appId, now));
   return writeDirectory(env, stmts, at);
 }

@@ -590,7 +590,7 @@ async function appEndpoint(request: Request, env: Env, endpoint: AppEndpoint, ct
     // The user's Support ID (C15, D276 as amended by D346), from the new session's own path (the chain's answer: its
     // account root's, for a member), the same code the wallet directory stores for that user.
     const root = identityRoot(result.result.path, app.scope_id);
-    const supportId = root ? await sessionSupportId(env, app.scope_id, root) : undefined;
+    const supportId = root ? await sessionSupportId(env, app, root) : undefined;
     return done(ctx, 200, { result: result.result, nearTx: result.nearTx, ...(supportId ? { supportId } : {}) });
   }
 

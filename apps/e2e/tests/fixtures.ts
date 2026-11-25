@@ -183,6 +183,8 @@ export interface WalletDirectoryUser {
   scopeId: string;
   wallets: { chain: string; address: string }[];
   identities: { provider: string; sub: string | null; role: string; status: string }[];
+  /** D919: the apps of a shared scope the user signed in on, with that app's User ID and Support code. */
+  apps: { appId: string; appSub: string; supportCode: string }[];
 }
 
 export async function walletDirectory(address: string): Promise<WalletDirectoryUser[]> {

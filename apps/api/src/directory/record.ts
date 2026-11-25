@@ -21,7 +21,8 @@
 //      D346) (`directory_unavailable`, 503);
 //   7. the session on chain is live, in the app's scope (identity/token.ts checkChainSession, re-read fresh before
 //      refusing) and its path is exactly the record's (`session_mismatch`): another session's path is refused;
-//   8. one D1 batch: the user (the path's account root, D312), both wallets, the root's identity row; then the NEAR
+//   8. one D1 batch: the user (the path's account root, D312), both wallets, the root's identity row, and on a scope
+//      marked as shared the person's row for this app (`end_user_apps`, migration 0030, D919); then the NEAR
 //      wallet, its own statement (D756): before migration 0019 its CHECK refuses 'near', and that must not cost the
 //      Stellar and EVM rows. The answer says whether it landed (`near: true | false`, only when the body had one).
 //
@@ -47,7 +48,7 @@ import { readJson } from '../http.ts';
 import { checkChainSession } from '../identity/token.ts';
 import { vaultApp, vaultLimits } from '../vault/endpoints.ts';
 import { log } from '../log.ts';
-import { directoryUser, identityKeyHex, noteDirectoryUnavailable, upsertIdentity, upsertUser, upsertWallet, writeDirectory } from './store.ts';
+import { directoryUser, identityKeyHex, noteDirectoryUnavailable, upsertIdentity, upsertUser, upsertUserApp, upsertWallet, userAppIds, writeDirectory } from './store.ts';
 
 export const WALLET_RECORD_ENDPOINT = '/v1/wallets/record';
 
@@ -134,8 +135,9 @@ export async function handleWalletRecord(request: Request, env: Env, requestId: 
   lap(ctx, 'records');
 
   const user = await directoryUser(env, app.scope_id, root);
-  if (typeof user === 'string') {
-    noteDirectoryUnavailable({ requestId, endpoint: ctx.endpoint, appId: app.id }, user);
+  const appIds = userAppIds(env, app, root);
+  if (typeof user === 'string' || !appIds) {
+    noteDirectoryUnavailable({ requestId, endpoint: ctx.endpoint, appId: app.id }, typeof user === 'string' ? user : 'bad_sub_key');
     return reject(ctx, 503, 'directory_unavailable', 'The wallet directory is unavailable in this environment');
   }
 
@@ -168,6 +170,8 @@ export async function handleWalletRecord(request: Request, env: Env, requestId: 
       upsertWallet(env.DB, user.internalId, { chain: 'evm', address: addresses.evm, keyIndex }, req.issuedAtMs),
       // The path's owner is the account root, as the chain's session says.
       upsertIdentity(env.DB, { scopeId: app.scope_id, identityKey: await identityKeyHex(app.scope_id, root), internalId: user.internalId, provider: root.provider, sub: root.sub, role: 'root', status: 'active', effectiveAt: null }, now),
+      // D919: this app's row for the person, only on a scope marked as shared (the statement checks it).
+      upsertUserApp(env.DB, user.internalId, app, appIds, req.issuedAtMs),
     ],
     { requestId, endpoint: ctx.endpoint, appId: app.id },
   );

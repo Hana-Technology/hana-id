@@ -440,6 +440,24 @@ describe('staff web addresses on a shared wallet: four eyes', () => {
     expect(await one('SELECT active_from FROM guarded_changes WHERE id = ?1', q2.id)).toEqual({ active_from: Date.now() });
   });
 
+  it('no restore without the wait (A14): a web address removed from a platform app comes back only as a staff proposal that waits 24 h or a second person', async () => {
+    const net = await network();
+    const app = await platformApp(net);
+    const set = await proposed(net, app, 1);
+    await ok(confirm(net, app, set.changes));
+    const ver = (await one<{ v: number }>('SELECT origins_version AS v FROM apps WHERE id = ?1', app)).v;
+    await ok(adminOn().removeOrigins({ ...hana(), orgId: net.org, appId: app, remove: [set.changes[0]!.origin], expectedVersion: ver }));
+    const back = await ok(adminOn().addOrigins({ ...hana(), orgId: net.org, appId: app, add: [set.changes[0]!.origin], expectedVersion: ver + 1 }));
+    const id = back.changes[0]!.id;
+    expect(await one('SELECT COUNT(*) AS n FROM staff_origin_waits WHERE change_id = ?1', id)).toEqual({ n: 1 });
+    await announce(id);
+    const g = await one<{ notified_at: number; active_from: number; waiver: string | null }>('SELECT notified_at, active_from, waiver FROM guarded_changes WHERE id = ?1', id);
+    expect(g.active_from - g.notified_at).toBe(DAY);
+    expect(g.waiver).toBeNull();
+    expect((await no(adminOn().expediteChange({ ...hana(), changeId: id, reason: 'Restore it now please, it was removed by mistake' }))).code).toBe('forbidden');
+    expect((await no(staffConfirm({ ...net, site: { ...net.site, id: app } } as Net, [id], hana()))).code).toBe('forbidden');
+  });
+
   it('staff never confirm a platform proposal; a staff proposal on a plain scope needs no second person', async () => {
     const net = await network();
     const app = await platformApp(net);

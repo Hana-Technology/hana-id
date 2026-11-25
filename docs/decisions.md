@@ -23846,3 +23846,19 @@ number the caller assigned.
   6. **The tab's name** in `packages/web/README.md`, `partner-start-here.md` and `operations.md`'s onboarding table.
   To confirm (the Tech Lead), added to the list above: the lower-bound wording (item 2) and the take-over's title and
   words (items 3 and 4).
+
+## The owner's confirmation of web addresses, and four eyes on staff ones on a shared wallet (branch `feat/owner-confirmation`), 2026-11-25
+
+From `feat/platform-screens` @ fed39677 (PR 158, not yet in `next`); not merged, not deployed, migrations applied
+nowhere. Piece P10 of `partner-platform-spec.md` (A15, A7, A11; the Tech Lead's D914 and D917; what D929 and D930 left
+for it). D931 is the number the caller assigned; API migration 0034 and console migration 0007.
+
+### D931. An owner who is an on-chain owner of the scope confirms, with a fresh sign-in bound to exactly those web addresses, what the platform asked for, and it works at once; staff web addresses on a shared wallet need a second person too, else 24 h; the database lets nothing in early without a recorded confirmation
+- Date 2026-11-25 · Status: **built** (the design is the spec's A15, A7, A11 and the Tech Lead's D914 and D917); every
+  point under "Decided while building" is **to confirm (the Tech Lead)** · Relates to D89, D244, D912, D914, D917, D918,
+  D924, D927, D929, D930 · Built: API `src/changes/confirm.ts`, `changes/{origins,lifecycle,admin,apps,views}.ts`,
+  `guarded/config.ts`, `platform/{ops,activity}.ts`, `rpc/{console,admin}.ts`, migration 0034; console-core
+  `origin-confirm.ts`, `layouts.ts` (`originConfirmDigest`, the `originRemove` link), `types.ts`, `audit-words.ts`,
+  `platform-activity.ts`, the vectors; the console's `src/confirmations.ts`, `actions.ts` (kind `origin.confirm`),
+  `writes.ts`, `index.ts`, `env.ts`, migration 0007; `packages/env` (`schema.ts`, `local-build.ts`); the CLI
+  (`scripts/lib/admin-apps.ts`, `admin-sql.ts`); `scripts/lib/ledger-check.ts`, `scripts/ledger-check.ts`

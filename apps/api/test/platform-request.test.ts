@@ -669,7 +669,8 @@ describe('GET /v1/platform/credential and the call log', () => {
     });
     noCors(r.headers);
     expect(row.last_used_at).toBe(now);
-    await send(k, { now: now + MIN });
+    // The same clock hour (freshNow is a second into a minute, so a second later is always the same hour).
+    await send(k, { now: now + 1000 });
     expect((await keyRow(k.id)).last_used_at).toBe(now);
     await send(k, { now: now + HOUR });
     expect((await keyRow(k.id)).last_used_at).toBe(now + HOUR);
@@ -1212,5 +1213,63 @@ describe('the second review', () => {
   it('N6: one local* predicate for the platform minimum and the published-key rule', () => {
     for (const e of [{ ENV_NAME: 'local-test', NETWORK: 'testnet' }, { ENV_NAME: 'local', NETWORK: 'testnet' }]) expect(isLocalTestEnv(e)).toBe(true);
     for (const e of [{ ENV_NAME: 'local-test', NETWORK: 'mainnet' }, { ENV_NAME: 'sandbox-dev', NETWORK: 'testnet' }, { NETWORK: 'testnet' }, { ENV_NAME: 'xlocal', NETWORK: 'testnet' }]) expect(isLocalTestEnv(e)).toBe(false);
+  });
+});
+
+describe('the review of the second round', () => {
+  it('past a full IP window, unlisted ids get the uniform 401 at once: no body read, no D1 read, no verification, the same bytes', async () => {
+    const now = freshNow();
+    const ip = freshIp();
+    const other = (await keyPair()).privateKey;
+    const stranger = { id: 'pkc_7Hq2Vx9Lm4Rt8Kc', privateKey: other };
+    const normal = await send(stranger, { now, method: 'POST', path: '/v1/platform/credential/revoke', ray: 'r2-ray' });
+    await failIp(ip, now);
+    // The list is loaded (by the request above); then nothing of the hot DB, the body or the crypto is touched.
+    const count: DbCount = { reads: 0, batches: 0, statements: 0 };
+    const verify = vi.spyOn(crypto.subtle, 'verify');
+    const importKey = vi.spyOn(crypto.subtle, 'importKey');
+    let pulls = 0;
+    for (let i = 0; i < 20; i++) {
+      const signed = await send(stranger, { now: now + 1, method: 'POST', path: '/v1/platform/credential/revoke', ip, ray: 'r2-ray' });
+      expect([signed.status, signed.text, signed.headers]).toEqual([normal.status, normal.text, normal.headers]);
+    }
+    verify.mockClear();
+    importKey.mockClear();
+    for (let i = 0; i < 20; i++) {
+      const req = (await send(stranger, { now: now + 2, ip, ray: 'r2-ray' })).request();
+      const body = new ReadableStream({
+        pull(c) {
+          pulls++;
+          c.enqueue(utf8('{}'));
+          c.close();
+        },
+      }, { highWaterMark: 0 });
+      const headers = new Headers(req.headers);
+      headers.set('content-type', 'application/json');
+      const r = await read(await deliver(new Request('https://api.test/v1/platform/credential/revoke', { method: 'POST', headers, body, duplex: 'half' } as RequestInit), now + 2, { DB: countingDb(env.DB, count) }));
+      expect([r.status, r.text, r.headers]).toEqual([normal.status, normal.text, normal.headers]);
+    }
+    expect(pulls).toBe(0);
+    expect(count).toEqual({ reads: 0, batches: 0, statements: 0 });
+    expect(verify).not.toHaveBeenCalled();
+    expect(importKey).not.toHaveBeenCalled();
+  });
+
+  it('a burst of platform kill switches at their maximum leaves the console’s kill-switch reserve untouched', async () => {
+    const now = freshNow();
+    const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
+    const consoleOrg = (await orgApp()).org;
+    const consoleOrgs = await Promise.all(Array.from({ length: 6 }, async () => (await orgApp()).org));
+    // The console's ordinary calls take its global bucket to its reserve (20 of 60) and are then refused.
+    let refused = false;
+    for (let i = 0; i < 60 && !refused; i++) await admitMemberCall(env, { org: consoleOrgs[i % 6]!, cost: 1 }, now).catch(() => (refused = true));
+    expect(refused).toBe(true);
+    // Platform kill switches, as many as they are allowed, from many orgs at once.
+    let kills = 0;
+    for (let i = 0; i < 40; i++) if ((await obj.platformAdmit({ org: (await orgApp()).org, cost: 6, killSwitch: true, limits: PLATFORM_LIMITS }, now)).ok) kills++;
+    expect(kills).toBeGreaterThan(0);
+    // The console's reserve is all still there: a console kill switch of 12 (its org's share) goes through, an ordinary call still doesn't.
+    await expect(admitMemberCall(env, { org: consoleOrg, cost: 1 }, now)).rejects.toMatchObject({ code: 'rate_limited' });
+    expect(await admitMemberCall(env, { org: consoleOrg, cost: 12, killSwitch: true }, now)).toMatchObject({ reserveUsed: 12 });
   });
 });

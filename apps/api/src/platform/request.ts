@@ -4,8 +4,8 @@
 //
 //   1. Per IP, requests not admitted: a `hit` on `platform:ip:<subject>` (30 a minute, not pinned; IPv4 by address,
 //      IPv6 by /48), given back once the request is admitted (after 8), so only failures and refusals use it. When that
-//      window is full: a key id not on the isolate's list of announced keys (known-keys.ts) goes on to the one 401 with
-//      no D1 read and no key object (N4); a listed id goes on under its own overflow window for this IP subject
+//      window is full: a key id not on the isolate's list of announced keys (known-keys.ts) gets the one 401 at once,
+//      with no body read, no D1 read and no verification (N4); a listed id goes on under its own overflow window for this IP subject
 //      (`platform:keyfail:<keyId>:<subject>`, pinned, 20 a minute, N1); past that, a self-revoke's signature is checked
 //      against the listed point (CPU only), a valid one going on and a failed one counted (60 a minute per key and
 //      subject, the CPU bound); anything else is 429 (M2; F2; after the second review, N1).
@@ -106,9 +106,10 @@ export const PLATFORM_WINDOWS = {
  * statements a second, burst 40, the last 10 for kill switches: both of its keys at their full 60 a minute); the
  * platform's own global bucket (10 statements a second, burst 60, the last 15 for kill switches, at most 8 of them an
  * org a minute); the console's global bucket charged too: an ordinary platform call never takes it below 30 of its 60
- * tokens, so the console always keeps at least half its burst, and a platform kill switch is never refused by it
- * (charged, clamped at 0: N2), bounded by the platform's own reserve, each org's share of it and the breaker; its own
- * breaker (10 per org, 30 across orgs an hour). To confirm (the Tech Lead): the numbers.
+ * tokens, so the console always keeps at least half its burst; a platform kill switch neither reads nor charges it (N2
+ * and its review: a console flood can't refuse it, and it never spends the console's kill-switch reserve), bounded by
+ * the org's bucket, the platform's own bucket and reserve, each org's share of it and the breaker; its own breaker (10
+ * per org, 30 across orgs an hour). To confirm (the Tech Lead): the numbers.
  */
 export const PLATFORM_LIMITS = {
   perOrg: { ratePerS: 8, burst: 40, reserve: 10 },
@@ -346,8 +347,9 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   };
   const isKnown = async (): Promise<boolean> => (await listed()) !== undefined;
 
-  // 1. The per-IP window of requests not admitted. Past it: an id not on the list goes on to the one 401 (N4: no D1
-  // read, no key object, the same answer as any authentication failure); a listed id under its own overflow window for
+  // 1. The per-IP window of requests not admitted. Past it: an id not on the list (or no well-formed id) gets the one 401
+  // at once, with no body read, no D1 read and no verification (N4 and its review: the same bytes as any authentication
+  // failure, the work bounded); a listed id under its own overflow window for
   // this IP subject (N1: one address can't spend another's); past that too, a self-revoke is still checked, its
   // signature against the listed point before any refusal (`preauth`, N1); anything else is 429.
   let slot: { obj: DurableObjectStub<RateLimiter>; limits: Limit[] } | null = null;
@@ -365,7 +367,7 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
         log({ event: 'platform', requestId, code: 'key_overflow_full', platformKeyId: sentKeyId!, ...(prefix ? { ipPrefix: prefix } : {}) }, 'warn');
         return finish(limited('platform:ip', r.retryAfterS, 'Too many failed requests from this address: try again in a minute'));
       }
-    }
+    } else return finish(UNAUTHENTICATED('unlisted_past_full_window'));
   } catch {
     log({ event: 'platform', requestId, outcome: 'error', code: 'ip_limiter_failed' }, 'error');
     if (!revokePath) return finish(unavailable());

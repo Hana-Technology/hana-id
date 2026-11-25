@@ -50,10 +50,11 @@ export type ConsoleLimit = 'budget_org' | 'budget' | 'budget_reserve' | 'link' |
 /**
  * D927 (after PR 156's review, F3; the second review, N2): one platform request's admission, on the same `console-rpc`
  * object as the console's. The platform's own keys for its org buckets, its own global bucket and its own breaker
- * (M3); and the console's global bucket (`console:bucket`) charged too. An ordinary platform call never takes it below
- * `sharedFloor`, so the console always keeps the top of its bucket. A platform kill switch is never refused by it (a
- * console flood must not hold back a platform kill switch): it is charged, clamped at 0, and bounded instead by the
- * platform's own bucket, its reserve and each org's share of that (`reserveShare`), and by the breaker.
+ * (M3). An ordinary platform call also charges the console's global bucket (`console:bucket`) and never takes it below
+ * `sharedFloor`, so the console always keeps the top of its bucket. A platform kill switch neither reads nor charges
+ * `console:bucket` (the second review, N2, and its review): a console flood can't refuse it, and it can't spend the
+ * console's own kill-switch reserve; it is bounded by the org's bucket, the platform's own bucket and reserve with each
+ * org's share of it (`reserveShare`), and the breaker.
  */
 export interface PlatformAdmission {
   org: string;
@@ -366,7 +367,7 @@ export class RateLimiter extends DurableObject<Env> {
     if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) return refuse('budget_reserve', (taken[0]!.at + share.windowMs - now) / 1000);
     kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
     kv.put('platform:bucket', { tokens: platformTokens - r.cost, at: now });
-    kv.put('console:bucket', { tokens: Math.max(0, sharedTokens - r.cost), at: now });
+    if (!r.killSwitch) kv.put('console:bucket', { tokens: sharedTokens - r.cost, at: now });
     if (reserveUsed > 0) kv.put(shareKey, [...taken, { at: now, n: reserveUsed }]);
     if (r.breaker) {
       kv.put(bOrgKey, [...bOrg, now]);

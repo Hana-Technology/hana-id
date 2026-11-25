@@ -21894,6 +21894,8 @@ PR 135's review" list, D910, D914); D912 is recorded on its own branch.
   accounts. "Likely" is the Tech Lead's word: nothing is deployed until they say "go ahead deploy", and the deploy
   still needs `verify --full` on the deploy commit, the Neon usage figure, and the migrations applied by the Tech
   Lead. What the deploy holds is whatever is merged into `next` by then; pieces still in review wait for the next one.
+- **Amended by D921 (2026-11-25):** the deploy no longer starts on 2026-11-26; it waits for Neon's monthly allowance
+  to reset (98% used). The readiness half of this entry stands.
 - Address impact: **none** (docs only).
 
 ### D921. The next sandbox-dev deploy waits for Neon's monthly allowance to reset (amends D920's deploy timing)

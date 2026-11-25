@@ -23532,3 +23532,120 @@ A dated note sits under each entry it confirms (D914, D915, D916, D918, D919, D9
     (confirmed here).
 - Address impact: **none.** Display wording, rules already built and records of answers; nothing touches the
   contract, a key, a path or an address derivation.
+
+## The platform API's app operations (branch `feat/platform-ops`), 2026-11-25
+
+From `next` @ bcb121bd; not merged, not deployed, migration applied nowhere. Piece P4 of `partner-platform-spec.md`
+(findings H1, H2, L3, L4, L15, L16, M7). D929 is the number the caller assigned; API migration 0033.
+
+### D929. A network's backend creates and manages its partners' test apps with its platform key, only on apps it created, on its own scopes; every web address it proposes waits 24 h, held by the database; nothing it sends confirms, waives or speeds anything
+- Date 2026-11-25 · Status: **built** (the design is the spec's A1, A4, A5, A8 and A9, the Tech Lead's D913, D914, D917,
+  D926 and D928); every point marked "to confirm (the Tech Lead)" below was decided while building · Relates to D915,
+  D916, D918, D919, D922, D924, D925, D926, D927, D928 · Built: `apps/api/src/platform/ops.ts`, `routes.ts`,
+  `refusal.ts`, `events.ts`, `request.ts`; the reach in `apps/api/src/changes/{cas,apps,lifecycle}.ts`; the platform's
+  proposals in `origins.ts`; the partner bit's holder in `suspension.ts`; the platform minimum in `lifecycle.ts`
+  `ackNotice`; migration 0033; console-core `platform-ops.ts` and `names.ts` `appNameLookalikeKey`; the CLI's refusal
+  (`scripts/lib/admin-apps.ts`, `admin-sql.ts`); `ledger-check`'s later-migration rule; the admin's retention step
+- **What it does.** Nine routes under `/v1/platform/…` (`docs/api.md` "Platform app operations"): list and read the
+  apps (an allowlisted view), create a test app on a scope staff marked as shared (its User ID mode and creator from
+  the scope's row in the batch, its first key, its web addresses as platform proposals), propose and remove web
+  addresses, cancel the platform's own waiting ones, suspend and resume, create and revoke publishable keys. **Only on
+  the reach** (H1): apps the key's org created through the platform, on a test scope the key names, not deleted;
+  anything else answers exactly as an app that doesn't exist. Every write reuses the console's and staff's writer;
+  the reach is a property of the writer (`Writer.reach`) that every plan read and commit row adds, with the key in
+  force and the org's switch on and, but for a kill switch, not frozen, so a state that moves between the read and the
+  batch writes nothing. A web address the platform proposes waits **at least 24 h after its announcement** in every env
+  but a `local*` test env (`isLocalTestEnv`), with no waiver and no expedite; the database holds that time. The
+  cancel finds only the platform's own waiting web addresses (H2). Idempotency for the ledger's life (L3); the partner
+  bit's holder (L4); look-alike names on one scope (L15); `INSERT … SELECT` of the mode (L16); the live rules (M7).
+  **Nothing it sends confirms anything or brings a web address into force sooner**: that is P10's owner confirmation.
+- **Tests.** `apps/api/test/platform-ops.test.ts` (46: the create and every refusal, one answer for every scope it
+  can't use; the live rules on a test scope; look-alike names; the mode and creator from the batch; the app limit at
+  and past 10, a deletion freeing a place, staff raising it; the creation windows (2 an hour, 5 a UTC day, refusals not
+  counted, the quota event once); the widget's origin on two apps and in each app's 20; the waiting cap; the view's
+  allowlist and states; the list's reach, pages, filter and refusals; **the reach** for every route on a live app, a
+  staff-created app, another scope and another org, byte for byte against an app that doesn't exist, nothing changed;
+  **the scope given to another org between the read and the batch**, for every write; **the 24 h**: the ack, the gate
+  not a millisecond early, no `no_session` on an unused scope, staff's expedite `forbidden`, a second ack, the hourly
+  job before time, no platform route; **19 bare D1 writes** that would bring one in sooner, each refused; a `local*`
+  env's own delay; a member's proposal unchanged; proposals counted per address, 20 an hour, 30 a day; remove; **H2**:
+  a member's, staff's and a policy change `not_found` byte for byte, the other key's proposal cancelled; **L4**: the
+  platform's own suspension, a member's, a member taking it over (`takenOver`), a take-over between the read and the
+  batch, Journear's bits, a suspension older than 0033; keys to 5 and the last one's warning; **idempotency for every
+  write**: the retry's first result and nothing written, another body or path `idempotency_conflict`, the other key
+  `conflict`, after 7 days `already_applied`, two orgs under one key, a refused write's key reused; the switch off, a
+  freeze and the key revoked between the read and the batch for every write (the kill switches go ahead while frozen);
+  the key expiring inside the write by the database's clock; a frozen org's kill switches and refusals; switched off;
+  **two keys racing** for the last app and for one web address; the breaker at 10 with a refund; the reserve after an
+  emptied bucket, the console's budget untouched; every route within its cost with rows read pinned; a retry's cost;
+  revocation by the key, an owner and staff, the switch-off and the freeze cancelling what these operations wrote;
+  the "also used on other apps" line over ten platform apps; the operations' import allowlist),
+  `migration-0033.test.ts` (rows, every table, index, trigger and view of before, only its own objects, the ledger's
+  tables' shape kept; `platform_requests` against insert, update, replace, upsert, delete-then-insert and an early
+  delete; the waits and the change's every rule by bare writes; the partner bit's rules and a replacing insert; applied
+  again; every trigger after the last migration with a `LATER` list), `platform-request.test.ts` (the eleven routes,
+  no template naming a confirm, the costs, the routes' allowlist with each addition justified),
+  `platform-keys.test.ts` (its platform proposals now written as P4 writes them), `scripts/test/admin-apps.test.ts`
+  (the CLI refusing a platform proposal, writing nothing), `scripts/test/ledger-check.test.ts` (a later migration's
+  trigger required only once applied), the admin's retention tests (`platformRequestsDeleted`).
+- **Decided while building, to confirm (the Tech Lead):**
+  1. **The earliest time in a table of its own** (`platform_origin_waits`: the proposing key, the wait from the
+     announcement, the earliest time written once by the ack), not A7's `guarded_changes.unconfirmed_active_from`:
+     `ledger-check` (0027's deploy step, D924) refuses any later migration that reshapes the ledger's tables, and 0033
+     may be applied in the same deploy as 0027. Ten triggers on `guarded_changes` and two on `app_origins` hold it
+     (matched by app and web address, so clearing `change_id` doesn't help). P10 replaces
+     `guarded_changes_platform_not_early` and the two `app_origins_platform_not_early*` with versions that allow the
+     confirmation's time, and should keep its confirmation record out of `guarded_changes` too (or teach `ledger-check`).
+  2. **`ledger-check` requires a later migration's objects only once the database recorded that migration** (with no
+     record, only those of 0027 and before): 0033's triggers name `guarded_changes`, and a snapshot pair around 0027
+     alone read them as missing. The reference now carries the file that created each object. **Open, for P10:** an
+     object a later migration replaces is compared to its final SQL, so a database between 0033 and P10's migration
+     would read P10's replaced triggers as changed.
+  3. **The key's expiry is also checked by the database's clock** in each write's commit (a key that expires between
+     the read and the batch writes nothing).
+  4. **Proposals counted per web address, 20 an hour** (A5 says 10; a create may carry 20, the widget's origin and a
+     partner's pages: one full app's worth fits) and 30 a UTC day; at most 30 waiting across the org, refused as `429
+     platform:waiting_origins` with a retry of an hour. Creations 2 a clock hour, 5 a UTC day. Fixed windows; only
+     committed writes count.
+  5. **Idempotency's answers**: the body, method or path checked before the key (another body is
+     `idempotency_conflict` from either key; the same from the other key `conflict`); a record older than 7 days is
+     ignored even before the purge; a refused or failed write records nothing, so its key can be used again; two
+     copies of one request at once: one writes, the other `already_applied` (it has no read left for a replay); a retry
+     of a proposal whose quota window is full gets the `429` before its replay. The records are purged in
+     `AdminRpc.purgePlatformCalls`' batch (`platformRequests`), not a method of their own.
+  6. **The view**: the 20 newest publishable keys; web addresses from the gate's rows; `confirmedAt` null until P10;
+     `byJournear` for bits 1 and 2 together; the list ordered by app id, its `cursor` an app id, 50 a page.
+  7. **Create**: one `forbidden` for every scope it can't use (not on the key, not the org's, not a test scope, not
+     marked, none); the look-alike check against every app of the scope not deleted, any creator (the network's own
+     site included), and two creates racing on one scope held by the scope's apps as read; the app limit counts
+     undeleted platform-created apps (a deleted one frees its place).
+  8. **The partner bit**: staff setting bit 4 hold it as a member would; a member's take-over writes its row only when
+     the platform held it; NULL with the bit set reads as a member's (no backfill); a trigger keeps the holder only
+     while the bit is set, and a replacing insert can't change it or `created_by_kind` (beyond the spec: the reach
+     rests on the creator).
+  9. **Which writes are kill switches**: remove, cancel, suspend (`true`) and key revoke (allowed while frozen, the
+     platform's reserve); the breaker counts remove, suspend and key revoke, not the cancel (A5 lists those three).
+     Resume and a new key are refused while frozen.
+  10. **Costs**: create 13, proposals 12, remove and cancel 11, suspend and the two key routes 10, the reads 5 (each
+      within `PLATFORM_DB_LIMITS`' 12 through the hot DB, plus the announced keys' list read outside it; the route
+      table's `cost` may now exceed 12 by that one read). A replay of an app that has left the reach is `not_found`.
+  11. **A platform proposal written before 0033** (no wait; none exist) can never be announced: fail closed.
+  12. **Words** of the refusals (plain, for a developer: "Your platform key can create apps only on its own scopes
+      that Journear marked as a shared wallet", "The name reads like another app’s on this scope", "A member of your
+      organisation suspended this app in the partner portal: only a member can resume it", the Idempotency-Key
+      messages) and the two new codes `idempotency_conflict` and `app_limit` (console-core `PLATFORM_ERROR_STATUS`).
+- **Found in the spec** (its design not changed beyond the points above): (a) A7's earliest time on
+  `guarded_changes` against `ledger-check`'s hold on that table (point 1; P10's `confirmed_*` columns meet the same);
+  (b) A5's 10 proposals an hour against A8's 20 web addresses in a create (point 4); (c) A5's worked budget (create 8
+  statements) leaves out the waits, the request's record and the announced keys' list (point 10); (d) A4.2's test
+  "moves an app's scope between the plan read and the batch" can't be written as such: an app with its own User IDs
+  never changes scope (0030's trigger), so the test gives the scope to another org instead; (e) A5 names no window
+  for the waiting cap (point 4); (f) the P4 row's "staff proposals on a flagged scope or platform-created app waiting
+  the minimum … (with P10)" is P10's (A15: "Built in P10"), not built here; (g) the admin Worker's announcement
+  email still states the env's own delay and the waiver sentence for a platform proposal (P10 gives it the wait line
+  and the Confirm link; P5 the words), so on a dev env the email says a minute where the change waits a day: the
+  platform switch stays off until P10, as the gates say.
+- **Left for later pieces**: the screens and emails (P5); the network's guide around these routes (P8); the owner's
+  confirmation, the email's wait line and Confirm link, the `local*` guard and staff proposals' four eyes (P10).
+- Address impact: **none.** No contract call, no key, path, address or existing ID changes: an app created here
+  gets its own User IDs exactly as any new app on a marked scope does (D919).

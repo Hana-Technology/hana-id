@@ -3,7 +3,7 @@
 // plain line under who is asking, the same sentence in both, with the apps' names one tap away:
 //
 //   This wallet is also used on 2 other apps. See which
-//     · “Stamp Trail”      (each name quoted, in the partner-words box: the partner's text, not Journear's)
+//     · “Stamp Trail”      (each name quoted, marks and name together in the partner-words box: the partner's text)
 //     · “Coffee Club”
 //     Any of them can ask you to approve payments from this wallet, so check who is asking each time.
 //
@@ -40,7 +40,9 @@ export function sharedWalletLine(d: Dom, otherApps: unknown, unknown?: unknown):
     return otherApps === undefined && unknown === true ? d.h('p', { class: 'shared-wallet shared-wallet-unknown', attrs: { id: 'shared-wallet' } }, SHARED_WALLET_TEXT.unknown) : null;
   }
   const { count, names } = otherApps as OtherApps;
-  const items = names.map((n) => d.h('li', {}, '“', d.h('span', { class: 'partner-words' }, homeAppName(n)), '”'));
+  // The quotation marks sit inside the box, in the one text node with the name, so they hug it (no box padding or
+  // border between a mark and the name) and a wrapped name keeps them on its first and last line.
+  const items = names.map((n) => d.h('li', {}, d.h('span', { class: 'partner-words' }, `“${homeAppName(n)}”`)));
   if (count > names.length) items.push(d.h('li', { class: 'shared-wallet-more' }, SHARED_WALLET_TEXT.more(count - names.length)));
   return d.h(
     'details',

@@ -33,7 +33,9 @@ with the vault's reads refused (a routed 429: the stack doesn't enforce rate lim
 apps/api), a new tab uses the answer the vault origin kept, and with nothing kept the window says "This wallet may also
 be used on other apps.". With `HANA_SHOTS_DIR=<dir>` (Chromium) it saves both windows at 390 and 1280 px, light and
 dark, as `<label>-sign-in-…` and `<label>-approval-…` (`-open-` with the names shown, `-unknown-` with the "may" line),
-the label `HANA_SHOTS_LABEL` or "after"; "before" is the same test run on a build without the line. The stack's demo and
+the label `HANA_SHOTS_LABEL` or "after"; "before" is the same test run on a build without the line. Each name's quotation
+marks are checked to be drawn inside its box (`marksHugNames`), also for a long name that wraps, an Arabic one and a
+mixed-script one at 390 and 1280 px (saved as `after-sign-in-long-names-open-…`). The stack's demo and
 stamps apps share the `e2e` scope but have no recorded sign-in, so their windows show no line.
 
 The stamps site (`apps/stamps`, D798–D802): `tests/stamps.spec.ts` signs in by email, collects Arrival, Sponsored,

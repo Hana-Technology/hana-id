@@ -107,6 +107,44 @@ async function approvalWindow(page: Page, name = 'sig'): Promise<Page> {
 
 const summary = (popup: Page) => popup.locator('#shared-wallet > summary');
 
+/**
+ * Each listed name's quotation marks hug it (PR 141's screenshots showed “ Stamp Trail ” with gaps): the list item holds
+ * only the name's box, the box one text node, and both marks are drawn inside the box (inside one of its line fragments
+ * when a long name wraps), never outside its border with the box's padding between them and the name.
+ */
+async function marksHugNames(popup: Page): Promise<void> {
+  const off = await popup.evaluate(() => {
+    const out: string[] = [];
+    const boxes = [...document.querySelectorAll('.shared-wallet-apps li:not(.shared-wallet-more)')].map((li) => {
+      if (li.childNodes.length !== 1) out.push(`item not the box alone: ${li.textContent}`);
+      return li.firstElementChild;
+    });
+    if (boxes.length === 0) out.push('no names');
+    for (const box of boxes) {
+      const text = box?.firstChild;
+      if (!box || !box.classList.contains('partner-words') || box.childNodes.length !== 1 || !(text instanceof Text)) {
+        out.push(`box not one text node: ${box?.textContent}`);
+        continue;
+      }
+      const frags = [...box.getClientRects()];
+      for (const [at, mark] of [
+        [0, '“'],
+        [text.data.length - 1, '”'],
+      ] as const) {
+        if (text.data[at] !== mark) out.push(`${mark} missing: ${text.data}`);
+        const range = document.createRange();
+        range.setStart(text, at);
+        range.setEnd(text, at + 1);
+        const g = range.getBoundingClientRect();
+        const inside = frags.some((f) => g.left >= f.left - 1 && g.right <= f.right + 1 && g.top >= f.top - 1 && g.bottom <= f.bottom + 1);
+        if (!inside) out.push(`${mark} outside the box: ${text.data}`);
+      }
+    }
+    return out;
+  });
+  expect(off).toEqual([]);
+}
+
 test('two apps on one scope: both windows say the wallet is also used on the other; suspended, address-less and never-signed-in apps don’t count', async ({ page }) => {
   const scope = freshScope();
   const me = await newApp({ scopeId: scope, name: 'Coffee Club', loginMethods: 'google,email' });
@@ -125,7 +163,8 @@ test('two apps on one scope: both windows say the wallet is also used on the oth
   await expect(signIn.locator('.shared-wallet-apps')).toBeHidden();
   await summary(signIn).click();
   await expect(signIn.locator('.shared-wallet-apps li')).toHaveText(['“Stamp Trail”']);
-  await expect(signIn.locator('.shared-wallet-apps li .partner-words')).toHaveText(['Stamp Trail']);
+  await expect(signIn.locator('.shared-wallet-apps li .partner-words')).toHaveText(['“Stamp Trail”']);
+  await marksHugNames(signIn);
   await expect(signIn.locator('.shared-wallet-note')).toHaveText('Any of them can ask you to approve payments from this wallet, so check who is asking each time.');
   await expect(signIn.locator('body')).not.toContainText('Closed Shop');
   await expect(signIn.locator('body')).not.toContainText('Not Yet Open');
@@ -140,6 +179,7 @@ test('two apps on one scope: both windows say the wallet is also used on the oth
   expect(await approval.locator('header.app #shared-wallet, .partner-labels #shared-wallet').count()).toBe(0);
   await summary(approval).click();
   await expect(approval.locator('.shared-wallet-apps li')).toHaveText(['“Stamp Trail”']);
+  await marksHugNames(approval);
   await reject(approval);
   expect((await settled(page, 'sig')).state).toBe('error');
 });
@@ -167,11 +207,11 @@ test('the partner page never learns which other apps share the wallet: not from 
   // The windows show it (so it was there to leak)...
   const signIn = await signInWindow(page);
   await summary(signIn).click();
-  await expect(signIn.locator('.shared-wallet-apps li .partner-words')).toHaveText([secret]);
+  await expect(signIn.locator('.shared-wallet-apps li .partner-words')).toHaveText([`“${secret}”`]);
   await finishSignIn(page, signIn);
   const approval = await approvalWindow(page);
   await summary(approval).click();
-  await expect(approval.locator('.shared-wallet-apps li .partner-words')).toHaveText([secret]);
+  await expect(approval.locator('.shared-wallet-apps li .partner-words')).toHaveText([`“${secret}”`]);
   // Reject: the partner page gets the request's error (4001) on its port.
   await reject(approval);
   expect((await settled(page, 'sig')).state).toBe('error');
@@ -180,7 +220,7 @@ test('the partner page never learns which other apps share the wallet: not from 
   const consent = approval;
   await expect(consent.getByRole('heading', { name: 'Allow automatic approvals?' })).toBeVisible();
   await summary(consent).click();
-  await expect(consent.locator('.shared-wallet-apps li .partner-words')).toHaveText([secret]);
+  await expect(consent.locator('.shared-wallet-apps li .partner-words')).toHaveText([`“${secret}”`]);
   await consent.getByRole('button', { name: 'Don’t allow' }).click();
   await settled(page, 'consent');
 
@@ -241,7 +281,7 @@ test('PR 141’s review: with the vault’s reads refused, a new tab uses the ke
   const kept = await approvalWindow(tab2, 'kept');
   await expect(summary(kept)).toHaveText('This wallet is also used on 1 other app. See which');
   await summary(kept).click();
-  await expect(kept.locator('.shared-wallet-apps li .partner-words')).toHaveText(['Stamp Trail']);
+  await expect(kept.locator('.shared-wallet-apps li .partner-words')).toHaveText(['“Stamp Trail”']);
   await reject(kept);
   await settled(tab2, 'kept');
 
@@ -254,6 +294,39 @@ test('PR 141’s review: with the vault’s reads refused, a new tab uses the ke
   if (SHOTS && test.info().project.name === 'chromium') await shots(unknown, `${LABEL}-approval-unknown`);
   await reject(unknown);
   await settled(tab3, 'unknown');
+});
+
+test('long, right-to-left and mixed-script names: the quotation marks stay inside each name’s box, wrapped or not, at 390 and 1280 px', async ({ page }) => {
+  const scope = freshScope();
+  const me = await newApp({ scopeId: scope, name: 'Coffee Club', loginMethods: 'google,email' });
+  const names = [
+    // Longer than the window shows (cut to 60 characters and "…"), and wider than the list at 390 px: it wraps.
+    'The Extraordinarily Long Named Neighbourhood Loyalty Rewards Programme For Testing',
+    'مقهى النجمة',
+    'Café 東京 Pay مقهى',
+  ];
+  for (const [i, name] of names.entries()) await newApp({ scopeId: scope, name, origins: [`https://n${i}.e2e-shared.test`], launched: true });
+  await openPartner(page, me);
+  const signIn = await signInWindow(page);
+  await summary(signIn).click();
+  await expect(signIn.locator('.shared-wallet-apps li')).toHaveCount(3);
+  for (const size of SIZES) {
+    await signIn.setViewportSize(size);
+    await marksHugNames(signIn);
+  }
+  // The long name does wrap at 390 px (so the check above covered a wrapped box).
+  await signIn.setViewportSize(SIZES[0]);
+  const lines = await signIn.locator('.shared-wallet-apps .partner-words', { hasText: 'Extraordinarily' }).evaluate((el) => el.getClientRects().length);
+  expect(lines).toBeGreaterThan(1);
+  if (SHOTS && test.info().project.name === 'chromium') await shots(signIn, `${LABEL}-sign-in-long-names-open`);
+  await finishSignIn(page, signIn);
+  const approval = await approvalWindow(page);
+  await summary(approval).click();
+  for (const size of SIZES) {
+    await approval.setViewportSize(size);
+    await marksHugNames(approval);
+  }
+  await reject(approval);
 });
 
 // ---- the Tech Lead's screenshots ----

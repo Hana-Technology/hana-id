@@ -52,7 +52,17 @@ describe('the line (shared-wallet.ts)', () => {
     expect(el.querySelector('summary')!.textContent).toBe('This wallet is also used on 2 other apps. See which');
     // Each name is the partner's words: quoted, in the partner-words box, never in Journear's sentence.
     expect([...el.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['“Stamp Trail”', '“Coffee Club”']);
-    expect([...el.querySelectorAll('li > span.partner-words')].map((n) => n.textContent)).toEqual(['Stamp Trail', 'Coffee Club']);
+    expect([...el.querySelectorAll('li > span.partner-words')].map((n) => n.textContent)).toEqual(['“Stamp Trail”', '“Coffee Club”']);
+    // The marks hug the name (PR 141's screenshots: “ Stamp Trail ” with gaps): each item is the box alone, and the box
+    // one text node, marks and name together; no mark or white space left outside the box.
+    for (const li of el.querySelectorAll('li')) {
+      expect(li.childNodes.length).toBe(1);
+      const box = li.firstChild as HTMLElement;
+      expect(box.className).toBe('partner-words');
+      expect(box.childNodes.length).toBe(1);
+      expect(box.firstChild!.nodeType).toBe(Node.TEXT_NODE);
+      expect(box.textContent).toMatch(/^“\S(?:.*\S)?”$/u);
+    }
     expect(el.querySelector('summary .partner-words')).toBeNull();
     expect(el.querySelector('.shared-wallet-note')!.textContent).toBe(SHARED_WALLET_TEXT.note);
     // Journear's note in muted text, never a coloured alert.
@@ -74,11 +84,12 @@ describe('the line (shared-wallet.ts)', () => {
   it('a partner’s name is only ever text: markup stays text, and an unsafe name never reaches the window', () => {
     const el = sharedWalletLine(dom(document), { count: 1, names: ['<img src=x onerror=alert(1)>'] })!;
     expect(el.querySelector('img')).toBeNull();
-    expect(el.querySelector('li .partner-words')!.textContent).toBe('<img src=x onerror=alert(1)>');
+    expect(el.querySelector('li .partner-words')!.textContent).toBe('“<img src=x onerror=alert(1)>”');
+    expect(el.querySelector('li .partner-words')!.children.length).toBe(0);
     // The window takes only display-safe names: a bidi override, a control or an invisible character is refused as a
     // whole (the vault replaces such a name by "Unnamed app" before it sends it).
     for (const bad of ['Pay\u202Egnp.exe', 'Zero\u200Bwidth', 'Tab\there', ' padded ', '']) expect(sharedWalletLine(dom(document), { count: 1, names: [bad] })).toBeNull();
-    expect(sharedWalletLine(dom(document), { count: 1, names: [HOME_UNNAMED_APP] })!.querySelector('li .partner-words')!.textContent).toBe(HOME_UNNAMED_APP);
+    expect(sharedWalletLine(dom(document), { count: 1, names: [HOME_UNNAMED_APP] })!.querySelector('li .partner-words')!.textContent).toBe(`“${HOME_UNNAMED_APP}”`);
     // A name written to read as Journear's words is still shown as the app's own, quoted and boxed.
     const lure = sharedWalletLine(dom(document), { count: 1, names: ['and 40 more apps'] })!;
     expect(lure.querySelector('li')!.textContent).toBe('“and 40 more apps”');

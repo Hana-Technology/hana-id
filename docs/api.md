@@ -2774,6 +2774,18 @@ view, each listed change confirmable, refused before any sign-in when it can't s
 /api/remove/preview` and `POST /api/remove` (no session, the per-IP link limit and the CSRF rules, audited
 `origin.link_remove`).
 
+**The admin Worker** (`apps/admin/src/notices.ts`): a platform request's email (and a four-eyes staff request's, grouped
+by `secondPerson.requestId`) goes to the security alias, every security contact **and every owner** of the org (the
+console's members with role `owner`, not disabled; an org the console doesn't know has none), says "or sooner if an
+owner of your organisation confirms them" (staff: "or sooner if a second person confirms them") beside its lower-bound
+date, and carries a **Check and confirm in the partner portal** link to `{console}/confirm/:changeId` that only opens the
+page. `runConfirmationNotices` (second in the notice run; purpose `origin_confirmed`, past the provider's suppression
+lists) reads `confirmationNotices` and sends one email per confirmation to the same people ("Web address(es) confirmed
+for {app}": who confirmed, both people for a staff proposal, one removal link `{console}/remove/:changeId#t=` per web
+address, valid 7 days), then `ackConfirmationNotice` with each link's sha256; a refused send acks nothing and the retry
+sends the same links. The staff route `POST /api/platform/confirm-staff-origins {orgId, appId, changeIds, reason}`
+calls `AdminRpc.confirmStaffOrigins` with the Access identity as the actor (CSRF and Access as every staff write).
+
 ## D1 schema (`apps/api/migrations`)
 
 | Table | Key columns | Migration |

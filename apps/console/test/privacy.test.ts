@@ -40,6 +40,7 @@ describe('audit details', () => {
         "app.suspended": [
           "code",
           "suspendedBy",
+          "takenOver",
         ],
         "app.turned_off": [
           "code",

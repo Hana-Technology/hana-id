@@ -12,7 +12,9 @@ import { beforeAll, describe, expect, it } from 'vitest';
 const db = env.MIGRATION_DB;
 const FILE = '0005_platform_key_step_ups.sql';
 const NEW_KINDS = ['platform.key_add', 'platform.key_accept', 'platform.key_confirm'];
-const OLD_KINDS = STEP_UP_KINDS.filter((k) => !NEW_KINDS.includes(k));
+/** Kinds later migrations add (0007: `origin.confirm`, D931): not in 0005's list. */
+const LATER_KINDS = ['origin.confirm'];
+const OLD_KINDS = STEP_UP_KINDS.filter((k) => !NEW_KINDS.includes(k) && !LATER_KINDS.includes(k));
 const now = Date.now();
 type Obj = { type: string; name: string; tbl_name: string; sql: string | null };
 const schemaOf = async (d: D1Database) => new Map((await d.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE '_cf_%' ORDER BY name").all<Obj>()).results.map((r) => [r.name, r]));
@@ -103,9 +105,9 @@ describe('console migration 0005_platform_key_step_ups', () => {
     expect((await db.prepare(READERS_SQL).all()).results).toEqual([]);
   });
 
-  it('the kind list is STEP_UP_KINDS: the new kinds go in, an unknown one is refused, the owner-action CHECK holds', async () => {
+  it('the kind list is STEP_UP_KINDS (less the kinds later migrations add): the new kinds go in, an unknown one is refused, the owner-action CHECK holds', async () => {
     const sql = (await schemaOf(db)).get('pending_actions')!.sql!;
-    expect([.../kind\s+TEXT NOT NULL CHECK \(kind IN \(([^)]*)\)\)/u.exec(sql)![1]!.matchAll(/'([^']*)'/gu)].map((m) => m[1])).toEqual([...STEP_UP_KINDS]);
+    expect([.../kind\s+TEXT NOT NULL CHECK \(kind IN \(([^)]*)\)\)/u.exec(sql)![1]!.matchAll(/'([^']*)'/gu)].map((m) => m[1])).toEqual(STEP_UP_KINDS.filter((k) => !LATER_KINDS.includes(k)));
     const insert = (kind: string, owner = false) =>
       db
         .prepare('INSERT INTO pending_actions (id, user_id, session_hash, org_id, kind, action_json, digest, google_nonce, scope_id, near_action_nonce, near_args, created_at, expires_at, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')

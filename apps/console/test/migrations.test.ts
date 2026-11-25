@@ -40,7 +40,7 @@ async function checkList(table: string, column: string): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  expect(env.TEST_MIGRATIONS.map((m) => m.name)).toEqual(['0001_init.sql', '0002_invites_kind_audit_request.sql', '0003_cron_runs.sql', '0004_label_step_ups.sql', '0005_platform_key_step_ups.sql', '0006_audit_actor_index.sql']);
+  expect(env.TEST_MIGRATIONS.map((m) => m.name)).toEqual(['0001_init.sql', '0002_invites_kind_audit_request.sql', '0003_cron_runs.sql', '0004_label_step_ups.sql', '0005_platform_key_step_ups.sql', '0006_audit_actor_index.sql', '0007_origin_confirm_step_up.sql']);
   await applyD1Migrations(db, env.TEST_MIGRATIONS);
 });
 

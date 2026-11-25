@@ -29,6 +29,8 @@ import {
   STEP_UP_KINDS,
   appIdInput,
   b64url,
+  guardedChangeIdInput,
+  ORIGIN_CONFIRM_MAX,
   canonicalize,
   clientProofNonce,
   emailClientAudOf,
@@ -59,6 +61,7 @@ import {
   platformKeyLabel,
 } from '@hana-id/console-core';
 import { abilityFor, fourEyesProblem } from './platform-keys.ts';
+import { buildConfirmation } from './confirmations.ts';
 import { issuesAsZod3, z } from '@hana-id/env/zod';
 import { type Writer, auditInsert, entry } from './audit.ts';
 import { flowState } from './auth-flow.ts';
@@ -142,6 +145,8 @@ const params = {
   'platform.key_add': z.object({ scopeIds: z.array(scopeIdInput).min(1).max(2), label: z.string().min(1).max(160), publicKey: z.string().min(1).max(2048) }).strict(),
   'platform.key_accept': z.object({ keyId: platformKeyIdInput }).strict(),
   'platform.key_confirm': z.object({ keyId: platformKeyIdInput }).strict(),
+  // D931: an owner's confirmation of web addresses of one request on one app (1 to 20, each ticked by the owner).
+  'origin.confirm': z.object({ appId: appIdInput, changeIds: z.array(guardedChangeIdInput).min(1).max(ORIGIN_CONFIRM_MAX) }).strict(),
   'org.policy': z
     .object({
       requiredHd: z
@@ -180,6 +185,8 @@ export const RETURN_PAGES = {
   'platform.key_add': ['platform-keys'],
   'platform.key_accept': ['platform-keys'],
   'platform.key_confirm': ['platform-keys'],
+  // D931: the app's Web addresses tab.
+  'origin.confirm': ['origins'],
 } as const satisfies Record<StepUpKind, readonly string[]>;
 type ReturnPage = (typeof RETURN_PAGES)[StepUpKind][number];
 const APP_PAGES: ReadonlySet<string> = new Set(['origins', 'signing', 'suspend', 'sessions', 'email', 'labels']);
@@ -440,6 +447,12 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
         decoded: { keyId: k.id, label: k.label, thumbprint: k.thumbprint, scopeIds: k.scopes, proposedByKind: k.proposedByKind, proposedAt: k.proposedAt, fourEyes: k.fourEyes, ...(k.activeFrom !== undefined ? { activeFrom: k.activeFrom } : {}) },
         digest,
       };
+    }
+    case 'origin.confirm': {
+      // D931: from the API's view, exactly these changes, each confirmable, by an owner who is an on-chain owner of the
+      // scope; the nonce is the API's `origin.confirm` layout over them (confirmations.ts).
+      const b = await buildConfirmation(env, c, ctx, { appId: p.appId as string, changeIds: p.changeIds as string[] }, (code, message) => no(code as ErrorCode, message));
+      return { action: { ...base, ...b.action }, decoded: b.decoded, digest: b.digest };
     }
     case 'member.invite': {
       const open = await env.CONSOLE_DB.prepare(`SELECT COUNT(*) AS n FROM invites WHERE org_id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ${lit(now)}`).bind(c.orgId).first<number>('n');
@@ -911,6 +924,14 @@ async function runApiKind(env: Env, w: Writer, a: LiveAction, act: Record<string
       const r = await env.API.acceptPlatformKey({ ...ctx, orgId, keyId: act.key_id as string, stepUpJwt: jwt });
       await auditOutcome(env, w, a, 'platform_key.accepted', { ok: r.ok, details: r.ok ? { keyId: r.key.id } : { code: r.code, keyId: act.key_id as string } });
       return r.ok ? { status: 'ok', keyId: r.key.id } : failed(r.code, r.error);
+    }
+    case 'origin.confirm': {
+      // D931: the API verifies the token itself (its nonce over exactly these changes, the on-chain owner uncached, single
+      // use) and holds every rule in its commit; the step-up's id is the confirmation's evidence reference.
+      const ids = act.change_ids as string[];
+      const r = await env.API.confirmOrigins({ ...ctx, orgId, appId: appId!, changeIds: ids, stepUpJwt: jwt, stepUpId: a.id });
+      await auditOutcome(env, w, a, 'origin.confirmed', { appId, ok: r.ok, details: r.ok ? { confirmed: ids.length, requestId: act.request_id as string } : { code: r.code } });
+      return r.ok ? { status: 'ok', confirmedAt: r.confirmedAt, confirmed: ids.length } : failed(r.code, r.error);
     }
     case 'platform.key_confirm': {
       // The person checks again, at the moment of the confirmation (a role or a membership can change in 5 minutes).

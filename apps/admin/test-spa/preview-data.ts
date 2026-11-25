@@ -581,3 +581,18 @@ export function emailLinks(days: number) {
     ],
   };
 }
+
+/** D918: an org's platform keys as `GET /api/orgs/:org/platform` answers staff (their emails included). */
+export function orgPlatform(orgId: string) {
+  const now = Date.now();
+  const D = 86_400_000;
+  const T = (x: string) => x.repeat(43).slice(0, 43);
+  return {
+    platform: { orgId, enabled: true, frozen: false, maxApps: 10, creationsPerDay: 5, proposalsPerDay: 30, setBy: 'access-sub', setAt: now - 30 * D },
+    keys: [
+      { id: 'pkc_Wa9Gh6Tn1sLk2V', orgId, label: 'Key sent by email', thumbprint: T('Pz5Lq8Wc3Nb6Vt0_'), scopes: ['s_lumen_test'], status: 'awaiting_acceptance', state: 'awaiting_acceptance', fourEyes: false, proposedByKind: 'hana', proposedBy: '7335d417-61da-459d-899c-0a01c76a2b94', proposedByEmail: 'ops@journear.example', proposedAt: now - 30 * 60_000 },
+      { id: 'pkc_Wk7Hq2Lm9Xc4Pz', orgId, label: 'Production backend', thumbprint: T('Nq3vTz8kLm2Xb7Wp_'), scopes: ['s_lumen_test'], status: 'active', state: 'in_force', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Dm7Vx2Kp4r', proposedAt: now - 40 * D, notifiedAt: now - 40 * D, activeFrom: now - 40 * D, expiresAt: now + 325 * D, confirmedKind: 'confirm', confirmedBy: 'usr_Ak3Pz8Qw2n', confirmedAt: now - 40 * D },
+      { id: 'pkc_Wr2Sm9Lk2Vb7qX', orgId, label: 'Old laptop key', thumbprint: T('Ty6Mn1Qx4Kc9Rb2-'), scopes: ['s_lumen_test'], status: 'revoked', state: 'revoked', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Ak3Pz8Qw2n', proposedAt: now - 90 * D, activeFrom: now - 89 * D, revokedAt: now - 41 * D, revokedByKind: 'member' },
+    ],
+  };
+}

@@ -21879,6 +21879,296 @@ PR 135's review" list, D910, D914); D912 is recorded on its own branch.
 - Address impact: **none.** Display wording, parser rules already built and off-chain design; nothing touches the
   contract, a key, a path or an address derivation.
 
+## Platform keys: the credential's life cycle and records (branch `feat/platform-keys`), 2026-11-25
+
+From `next` @ e59e9c64; not merged, not deployed, migrations applied nowhere. Piece P2 of
+`docs/partner-platform-spec.md` (A3, A5, A6, A7; findings M5 and L6; the Tech Lead's rules of 2026-11-25, D914 and
+D917). D918 is the number the caller assigned; API migration 0028 and console migration 0005 (0030 is held by piece P6).
+
+### D918. A network's backend gets platform keys: registered by an owner of each scope or by staff, announced, confirmed (four eyes on mainnet) or in force after 24 h, stopped at once with everything they left waiting; nothing authenticates with one yet
+- Date 2026-11-25 · Status: **built** (the design is the Tech Lead's D913, D914 and D917 and the spec's A3 and A7); the
+  points marked "to confirm (the Tech Lead)" below were decided while building · Relates to D89, D90, D244, D343, D356,
+  D894, D913, D914, D915, D916, D917 · Built: API migration 0028, console migration 0005, `apps/api/src/platform/`,
+  `packages/console-core/src/platform-keys.ts`, `apps/console/src/platform-keys.ts`, the console's Platform keys
+  pages, `apps/admin/src/email/platform-messages.ts`, `apps/admin/src/platform.ts`, the admin's routes, notices and panel
+- **What it does.** A platform key is a network's backend's ECDSA P-256 public key for one org, one env and one or two
+  of its test scopes; only the public half is ever sent or stored. **Nothing can authenticate with a key after this
+  piece**: there is no `/v1/platform` route (piece P3). Built:
+  - **Migration 0028** (additive): `platform_keys` (the spec's A7 columns plus those below) and `platform_orgs`, four
+    indexes, six triggers (`platform_keys_insert`: the scopes are distinct test scopes of the org and a key starts as
+    its registrant left it; `_fixed`: the key, its registrant, `four_eyes` and `min_delay_ms` never change;
+    `_confirm_fixed`: the acceptance and the confirmation written once, a confirmation only of a waiting announced key,
+    an acceptance only of a key awaiting it; `_not_early`; `_status_moves`: forward only, never back from cancelled,
+    revoked or expired; `_no_early_delete`: 60 months after it stopped). Four eyes as a CHECK (console user, Google
+    `sub` and email key all differ from the registrant's). Nothing elsewhere reads the tables; no trigger of 0028 reads
+    the ledger's tables.
+  - **Registration** by an on-chain owner of each scope (`ConsoleRpc.proposePlatformKey`, step-up `platform.key_add`)
+    or by staff (`AdminRpc.registerPlatformKey`, `awaiting_acceptance` until an owner of each scope accepts it,
+    `ConsoleRpc.acceptPlatformKey`, step-up `platform.key_accept`, which counts as its confirmation, or a second staff
+    member approves it, `AdminRpc.approvePlatformKey`, never the registrant: another Access subject and another email).
+    The step-up layout: d = sha256(domain ‖ borsh(signer) ‖ borsh(env) ‖ borsh(org) ‖ borsh(key id, "" for a
+    registration) ‖ borsh(thumbprint) ‖ borsh(sorted scopes) ‖ borsh(label)), domains `hana-id/console-key-add/v1`,
+    `…-accept/v1`, `…-confirm/v1`, vectors from the independent generator. Refused: within 7 days of a
+    security-contact change; a frozen org; no security contact; a live or foreign scope; a public key registered
+    before; two keys already in force, waiting or awaiting acceptance (`key_limit`); a private key (with words that
+    say so, never echoed); a label that isn't one display-safe line of 1–40 characters or names Journear or looks like
+    an address.
+  - **The announcement** (`AdminRpc.platformKeyNotices` → the admin Worker's email to the alias, every security contact
+    and every owner, naming who registered and who accepted → `ackPlatformKeyNotice`, `system` only): the key's
+    unconfirmed date = the ack + the greater of `APP_CHANGE_DELAY_MS`, the 24 h platform minimum (`local*` testnet envs:
+    their own delay) and the key's stored `min_delay_ms`. The email: the fingerprint, who registered it, the wait in
+    hours ("24 hours from now, or sooner if an owner of your organisation confirms it"; on mainnet "another owner …
+    The owner who registered it can't confirm it"), a Confirm link that only opens the console page, the cancel link.
+    A staff key an owner accepted is in force at the ack, and its email says so and carries the stop link instead.
+  - **The confirmation** (`ConsoleRpc.confirmPlatformKey`, step-up `platform.key_confirm`; a member actor only): a
+    console owner of an active org who is an on-chain owner of each scope, for a waiting announced key before its
+    date; in force at once. On mainnet (`four_eyes`, from `NETWORK`) never the registrant: refused by the API and by
+    the CHECK; the console also refuses another account with the same email (dots and `+tags` aside) and an owner newer
+    than the key. The commit predicate repeats every rule, so a cancel or a stop that lands first wins.
+  - **The notice of a confirmation** with a one-click stop link valid 7 days (`/revoke-platform-key/:id#t=`, a GET
+    stops nothing), `ackPlatformKeyConfirmNotice`; **the notice of a stop or an expiry** listing the web addresses it
+    cancelled and the org's other waiting keys; **the expiry warnings** 30 and 7 days before.
+  - **Cancel** of a waiting key: an owner, staff, the announcement's link (`/cancel-platform-key/:id#t=`). **Stop**,
+    immediate, any state: an owner (a kill switch, frozen orgs too, the breaker), staff (with a reason), the stop link,
+    and the key itself (the writer takes a `platform` actor for its own id only; P3 wires its route).
+  - **What a stop, an expiry, the switch-off and a freeze cancel, in the same batch:** every waiting `origin_add` the
+    platform proposed with that key (for the switch-off and the freeze: any key) on the org's apps: one
+    `change.cancelled` row (`<request id>:cancelled`, the reason, the changes), the origin rows removed, each app's
+    origins version bumped; an origin in force stays. The switch-off and the freeze also cancel the org's waiting keys.
+  - **The org's switch** (`AdminRpc.setPlatformOrg`): off at once; on only with `reviewedKeys` naming every key in
+    force, waiting or awaiting acceptance (the review, L5), checked again in the commit; refused while frozen. **The
+    freeze mirror** (`AdminRpc.setPlatformOrgFrozen`): the admin's freeze route mirrors after the console's freeze
+    (`502 mirror_failed` if it didn't land), and an hourly check repeats it from complete lists of both sides.
+  - **The hourly job** (API): records keys in force, expires them a year after they came in (with the cancels above),
+    lapses a key not accepted or not announced within 7 days.
+  - **Console**: `/orgs/:org/platform-keys` (the keys, Register, Stop), one key's page (Accept, Confirm with the reason
+    shown when not allowed, Cancel, Stop), `/confirm-platform-key/:id` (finds the org, opens the page; GETs only), the
+    two link pages; the action page for the three kinds shows the fingerprint. **Admin**: the org page's Platform keys
+    panel (register, approve, stop, cancel, the switch with its review).
+  - Words: "platform key", "fingerprint", "wallet settings (scope)", "Stop this key"; plain throughout.
+- **Tests.** `apps/api/test/platform-keys.test.ts` (each registration route; the nonce bound to env, signer, org,
+  scopes, thumbprint and label, a token of another kind or key refused; one owner of only one of two scopes refused; a
+  staff key unusable until accepted, the registering staffer refused by id and by email, a second staffer approving;
+  the 7-day rule for registration and confirmation; the quota; the 24 h on a dev env with no waiver and its activation;
+  a `local*` env's own delay; bare writes bringing a key in early refused; the link cancel; on a dev env the
+  registrant's confirmation in force at once; on a production env the registrant's refused by the API and by the
+  CHECK, a second owner's in force, one owner only waits, an email twin refused; a confirmation racing a stop and a
+  cancel, each order; nothing a platform actor presents confirms, accepts or registers; no `/v1/platform` route; each
+  stop route cancelling waiting web addresses with one ledger row naming the stopper, one in force left; expiry; the
+  switch-off, the review on, the freeze mirror; every notice kind and ack; the lapse; each console method within
+  its hot-DB cost), `migration-0028.test.ts` (rows and every schema object of before kept, only the new objects added,
+  no new trigger reads the ledger, the CHECK lists console-core's, each table rule against bare writes),
+  `apps/console/test/migration-0005.test.ts` (every row of every kind back unchanged, columns, index, the table's SQL
+  less only the kinds, no reader in `sqlite_schema`, the kinds STEP_UP_KINDS, five damaged copies aborting the file
+  untouched), `apps/console/test/platform-keys.test.ts` (the routes through the real API; refusals before any sign-in;
+  acceptance and confirmation through the fresh sign-in; four eyes' person checks before the sign-in and again in the
+  callback; GETs changing nothing; CSRF on every POST; the link pages; no email of another org's user or a departed
+  member through any route), `web/test/platform-keys.test.tsx`, `apps/admin/test/platform-keys.test.ts`,
+  `freeze-mirror.test.ts`, `test-spa/platform-keys.test.ts`, console-core `platform-keys.test.ts` (the parser, the
+  vectors, the label, the email key), `rpc-cas.test.ts`'s budget list, `scripts/test/hot-db-reads.test.ts` (four eyes
+  and the 24 h on every mainnet manifest).
+- **Decided while building, to confirm (the Tech Lead):**
+  1. **Status `expired`**, beyond A7's list: a key a year in force ends as `expired` (not `revoked`), so the screens and
+     the stop notice say what happened.
+  2. **`min_delay_ms` written once at registration**, beyond A7: the env's wait for an unconfirmed key, ≥ 24 h on
+     mainnet (CHECK), and a CHECK that the announcement's unconfirmed date is never sooner; with the `local*` rule in
+     code (`platformMinDelayMs`: 0 only for a `local*` name on `testnet`, 24 h for anything else, a missing name
+     included). The rest of the spec's proposed `local*` guard (the manifest rule, the deploy wrapper) is left to P10,
+     which the build plan gives it to.
+  3. **The email key stored in the API** (`proposer_email_key`, `confirmed_email_key`), so the API itself refuses a
+     same-email confirmation on mainnet, not only the console (A3 put the email check in the console only). The member
+     actor carries the session's email; staff's own email is stored for the notice (`proposer_email`, `accepted_email`).
+  4. **One person's step-up per key, all scopes**: `confirmStepUpScopes` checks the owner of each scope and reserves the
+     token once (A3 said `confirmStepUp` once per scope, unchanged, which would reserve the token on the first scope and
+     refuse it on the second); `confirmStepUp` now calls it with one scope, unchanged in behaviour.
+  5. **The confirm layout also binds the label** (A3 listed signer, env, org, key id, thumbprint and scopes): every
+     step-up kind uses one layout with its own domain.
+  6. **No `platform.key_revoke` step-up kind.** A6 lists it for the `pending_actions` rebuild, but A3 makes an owner's
+     revocation a kill switch with no fresh sign-in; the rebuild adds the three kinds that are step-ups.
+  7. **Registration is allowed while the org's switch is off** (it is how a network is onboarded: register, then staff
+     switch on); the switch-on review then names every key in force, waiting or awaiting acceptance (A3's L5 names keys
+     in force only), so a key registered while off is reviewed too.
+  8. **A key in force at once** (a staff key an owner accepted) gets the stop link in its announcement, and that
+     announcement counts as its confirmation notice (no second email).
+  9. **The stop notice lists the org's waiting keys, each announced one with its own cancel link** (A3): the links'
+     tokens are never stored, only their hashes, but a token is `HMAC(CANCEL_LINK_KEY, domain ‖ key id)`, so the admin
+     Worker computes it again for the notice. A key not announced yet has no link (it is announced with one later); the
+     notice says so and points to the partner portal. (Corrected after PR 149's review: the first build said the links
+     couldn't be included.)
+  10. **Lapse**: a key not accepted, or not announced, within 7 days of its registration is cancelled by the hourly
+      job, as a guarded change is (the spec is silent).
+  11. **Who may confirm a key a second staff member approved on mainnet**: any owner of each scope (none of them
+      registered it), still holding the owner-since rule; and an owner's acceptance of a staff key on mainnet is
+      refused when the owner's email is the registering staffer's.
+  12. **The freeze mirror's check** runs in the admin's 5-minute run at the top of the hour with what budget is left,
+      reads every page of the console's organisations and of the mirror rows (20 pages each at most), fixes 10 a run,
+      logs a backlog or a short read at error level, and never unfreezes from a list it couldn't read in full. The
+      console enforces a freeze at the point of use (`orgs.status`) without the mirror; the API's writers and, from
+      P3, its request check read the mirror. A missing mirror row is "not frozen", so a frozen org without one is a fix.
+  13. **People named on the screens and in the notices are the org's current members only**, a departed registrant
+      reads "a former member"; four eyes reads a departed registrant's address for its comparison only (after the
+      automated review's finding, below).
+  14. **Words** of the emails, the screens and the refusals (plain, to be read again with P5's screens), and the
+      label rule (the app name's display-safe rule, the brand and address refusals, 40 characters).
+  15. **The key's stop link** (A3's proposal, still to confirm per D917) is built as proposed: 7 days, single use, a GET
+      stops nothing.
+- **Found in the spec** (its design not changed): (a) point 4 (`confirmStepUp` unchanged can't serve two scopes);
+  (b) point 6 (A6's `platform.key_revoke` against A3's kill switch); (c) A7's status list has no end for an expired
+  key (point 1); (d) A7's `platform_keys_not_early` trigger fires only when `unconfirmed_active_from` was set before the
+  update, so the ack itself could write a short wait: replaced by CHECKs on the row as written and a fixed unconfirmed
+  date (point 2); (e) withdrawn after PR 149's review: A3's stop notice "with its cancel link" is buildable, as the link tokens are
+  deterministic (point 9);
+  (f) A7's `CHECK (accepted_by_kind IS NULL OR accepted_by_kind = 'member' OR accepted_by IS NOT proposed_by)` holds
+  only the Access subject, not D917's "different email": the email key is held too (point 3).
+- **After two automated findings on the branch (2026-11-25)**: (1) the console's people lookup was not scoped to the
+  org: it now joins the org's members, a test shows another org's user and a departed member yield no email through
+  any route; the admin's notices already named people from that org's members, and an unknown one reads "a former
+  member". (2) The freeze mirror's check compared one page of each list: it now pages both to the end (point 12), with
+  tests for a frozen org on a later page, an org missing from the mirror, more differences than the cap, and a short
+  read. The other new reads were checked for the same pattern: the notices page (20) and the hourly job (100 of each)
+  drain over the next runs, oldest first; `listPlatformKeys` shows the 50 newest keys (at most 2 are live), and the
+  switch-on review is checked against every key in SQL, so a key the page didn't show makes the switch-on refuse
+  (`conflict`) rather than pass.
+- **After PR 149's review (2026-11-25)**, each of its findings 1 to 11 fixed, with tests:
+  1. **No REPLACE of a key or an org row.** `INSERT OR REPLACE` deletes the row it collides with without firing a DELETE
+     trigger, so it could bring a revoked key back under its id or erase a key by reusing its public key. The insert
+     trigger now refuses any insert whose id, public key, thumbprint or request id is already held, and an update
+     trigger refuses a link hash another row holds; `platform_orgs` has the same insert rule (the freeze and the switch
+     can't be reset by a REPLACE), and a new row never starts with the switch on.
+  2. **The database's own clock for an announcement and a key in force.** A trigger on the first write of
+     `notified_at` refuses one more than 5 minutes before the database's now and an unconfirmed date sooner than the
+     key's wait from it, less 2 minutes; `active` needs `active_from` (CHECK), and a move to `active` without a
+     confirmation is refused before `active_from` (plus the same 2 minutes). The skew: the Worker's and D1's clocks
+     agree within seconds; 2 minutes absorbs that and a slow batch with room to spare while being negligible against
+     the 24 h minimum; 5 minutes covers the admin's send-then-ack (the ack is written after the emails, at most a
+     5-minute run) without letting an announcement be dated meaningfully earlier.
+  3. **Owner since without a break.** `ownerSince` reads only grants not applied yet, and takes the later of
+     `role_since` and the grant's time, so a member demoted after an old grant, or removed and added again, counts from
+     the latest start of their ownership.
+  4. **The freeze mirror ordered** (superseded by the second review's state machine, below). The staff route freezes the API's mirror first (it only tightens), then the console
+     (whatever the API answered); it unfreezes the console first, then the mirror. The hourly check reads the console
+     again just before an unfreeze, and the unfreeze is a compare-and-swap on the mirror row's version. Hardened after
+     an automated finding: point 4a below.
+  5. **The stop notice carries the waiting keys' cancel links** (point 9 corrected, and (e) withdrawn). No other notice
+     relied on the same premise: the announcement, the confirmation and the expiry warnings already compute theirs.
+  6. **Four eyes fails closed**: on every network but `testnet`, a missing or unknown one included (the API's config
+     and the console's step-up screens alike).
+  7. **An owner's stop of a platform key is never refused by the console's shared budget or its breaker**: another org's
+     calls (or this org's other changes) must never leave an owner unable to stop a stolen key. It has limits of its own
+     instead (point 7a below). **To confirm (the Tech Lead).** **Open point:** the existing `revokeKey` (a publishable
+     key) is a kill switch held to the shared breaker (5 destructive calls per org an hour, 20 across orgs), so a burst
+     elsewhere can refuse it; not changed here.
+  8. **A contact change between registration and announcement holds the announcement**: within 7 days of a change of
+     the org's security contacts, a waiting key is left off the notices page and its ack is refused (`conflict`), so the
+     announcement goes to the contacts as they are once the 7 days have passed, never to a list just changed. (Chosen
+     over mailing the removed contacts too: the API doesn't keep the removed addresses.)
+  9. **The table holds four eyes' people**: a four-eyes confirmation needs `confirmed_email_key`, a staff acceptance
+     `accepted_email_key`, every registration `proposer_email_key` (CHECKs); `platform_orgs`' switch goes on only with
+     a review naming exactly the org's current keys, never while frozen (trigger). `security.md` says what the database
+     holds and what it leaves to code (an unfreeze's order, who may switch off).
+  10. **The acceptance screen runs the person checks** (four eyes: not the registrant's email) before any sign-in. The
+      owner-since rule is not applied to an acceptance: a staff key is accepted by the org it is for, and refusing a
+      newer owner would leave an org whose only owners are new unable to accept its own key; four eyes still keeps the
+      registrant (staff) and the accepting owner apart.
+  11. **A failing notice can't starve the others**: each failed send is recorded on the key (`notice_failures`,
+      `notice_failed_at`), the key waits 5 minutes per failure (at most an hour) before it is offered again, failures
+      come after every other notice, and from the 12th the admin logs `notice_stuck` at error level.
+  - Tests added beside each: a confirmation racing a switch-off or a freeze (it loses: nothing confirmed, the key
+    cancelled), a stop after the breaker and the budget are exhausted, both REPLACE shapes, back-dating and an early
+    `active`, the NULL email keys, the switch-on trigger, `ownerSince` with an applied grant, a demotion and a removal
+    and re-adding, the notice's backoff and order, and 0028 and 0030 applied in name order on a populated database.
+  - **For the Tech Lead to decide knowingly** (kept as built): registration is allowed while the org's switch is off
+    (point 7); a key staff register is in force at once when an owner accepts it (D914's 21); the `local*` exception to
+    the 24 h minimum is held by the env's name only until P10's guard, so P10 must be deployed before the platform is
+    switched on anywhere (now in the spec's gates row); the freeze mirror can lag the console by up to an hour when its
+    write fails (P3's request check reads the mirror: until a run repairs it, a frozen org's in-force keys would be
+    accepted by P3, and the console's own freeze still refuses its owners); a second registration of the same public
+    key is `conflict` naming the thumbprint, as before.
+- **After two automated findings on the review's fixes (2026-11-25)**:
+  - 7a. **The stop's own limits** (`platform/revoke-guard.ts`; it fails open if the limiter errors, second review 4), **to confirm (the Tech Lead)**. Per member 20 a minute
+    and 100 an hour, per org 40 a minute and 200 an hour, each checked before any database work on an object keyed by
+    that member or org alone; a real incident (each of the 2 keys stopped several times over by every owner) stays far
+    below them. A repeat that changes nothing (the key not found, or already stopped) is answered from that key's
+    marker for 15 minutes without the database, and counted. A global ceiling of 300 no-ops a minute across orgs: past
+    it a no-op answers `rate_limited` and is logged at error level; a stop that changes something is never refused by
+    it. Stops that succeed are counted for an alert: 3 in an org or 10 across orgs within 10 minutes is logged
+    (`platform_key_revoke_burst`), never refused. **What can be refused:** an owner past their own limits, an org past
+    its own (both only by that org's own owners' calls), and a no-op past the global ceiling. **What can't:** a stop by
+    an owner of one org because of any other org's calls, or because of the shared budget or the breaker. An org's
+    owners who exhaust their own org's limits hold back its stops for up to the hour; the emailed stop link (its own
+    per-IP limits) and staff's stop (AdminRpc, uncounted) still work.
+  - 4a. **The unfreeze is ordered, not only re-checked.** Every freeze of the mirror writes `platform_orgs.frozen_at`
+    (a freeze that finds the row frozen too), and an unfreeze names when the console's org became active
+    (`consoleActiveSince`, the console's last freeze or unfreeze, from its audit log, else its creation; required).
+    The API accepts the unfreeze only if the mirror's last freeze is before that time, in the plan read and in the
+    commit predicate; for the hourly check also only once the freeze is older than 10 minutes (`UNFREEZE_GRACE_MS`:
+    a staff route call is two RPCs, seconds, and the check's run is two paged lists and at most 10 writes, under a
+    minute; 10 minutes is many times both, and a real unfreeze waits at most one more run). As the staff route freezes
+    the mirror first, a freeze racing the check's unfreeze at any point either lands its mirror write before the
+    unfreeze's commit (refused) or after it (frozen again). The test interleaves both halves of a staff freeze at every
+    point of the check's unfreeze path. **The remaining window, for P3:** a staff freeze whose mirror write fails (an
+    error-level log, and the route answers 502) and whose console freeze lands after the check read the console can
+    leave the mirror unfrozen while the console is frozen until the next run (at most an hour), which then freezes it
+    and logs `mirror_was_unfrozen` at error level. **Superseded the same day** by the second review's rule (below):
+    this ordering could leave the mirror frozen for good, and two staff at once could still unfreeze it wrongly.
+- **After the second review of the fix commits (2026-11-25)**, all eight findings fixed, with tests:
+  1. and 2. **The freeze mirror, as a state machine** (replaces 4 and 4a above; `consoleActiveSince`, `statusSince` and
+     the ordering condition are gone). The console's `orgs.status` is the truth; the API's `platform_orgs` holds the
+     mirror (`frozen`, `frozen_at`, `version`). Its moves:
+     - *freeze* (staff, or the hourly check after reading the console frozen): always written, `frozen_at` = now (on a
+       row already frozen too);
+     - *unfreeze* (staff, or the check, each only after reading the console active just before): refused while
+       `frozen_at` is less than 10 minutes old (`PLATFORM_UNFREEZE_GRACE_MS`, console-core `mirrorUnfreeze`, the one
+       rule for every caller), in the plan read and the commit predicate; the check's is also a compare-and-swap on the
+       version it listed;
+     - the staff freeze route: mirror, console, mirror again; if the console's freeze fails the answer says the keys
+       were stopped anyway (`console_freeze_failed`) and the check turns them back on if the org stays active;
+     - the staff unfreeze route: console, a fresh read, mirror; inside the grace the mirror stays frozen and the answer
+       says so (`mirror_held`);
+     - the check: for each difference, a fresh console read, then the write towards it. Tightening wins on
+       uncertainty: where the list said frozen it freezes unless the fresh read says active, and also when the console
+       can't be read (logged at error level), which is safe because a mirror frozen while the console is active is
+       always repaired by a later check without touching the console (I2); an unfreeze needs a successful read saying
+       active, the grace and the compare-and-swap (added after a further automated finding the same day).
+     **Invariants**: (I1) the mirror is never unfrozen while the console is frozen beyond one check, and never
+     silently: an unfreeze needs a console read showing active and a freeze older than the grace, and every staff
+     console freeze is preceded by a mirror freeze, so a racing unfreeze lands inside the grace; it can happen only
+     when the staff route's mirror writes fail (logged at error level, answered 502), or a call stalls longer than the
+     grace between its read and its write, and the next check freezes it (`mirror_was_unfrozen`, error level).
+     (I2) the mirror is frozen while the console is active at most the grace plus one check, and always repairable
+     without touching the console: `frozen_at` moves only with a freeze, which follows a console freeze or a read of
+     one, so once the grace has passed the next check's unfreeze is accepted. **Proof**:
+     `apps/admin/test/freeze-mirror-interleavings.test.ts` runs the real staff route and the real check against a model
+     of the console and of the API's rule, over every ordering of two staff members' calls (freeze and unfreeze, two
+     freezes, two unfreezes) and one check's, from four starting states, with no failure or any one call failing,
+     unreachable or refusing (the console unreadable at each step among them; 667,833 runs); after each it asserts I1 (or an error-level log) and that one check after the grace reaches the
+     console's state with no console write. With the grace set to 0 it finds finding 2's ordering at once. The API's
+     commit predicate is raced in `apps/api/test/platform-keys.test.ts`. **Remaining windows**: I1's above (a failed
+     mirror write or a stalled call: up to one hourly check, error-logged), and I2's (after a freeze whose console half
+     failed, or an unfreeze within 10 minutes of a freeze: up to 10 minutes plus one check, about 70 minutes). A held
+     unfreeze repeats only if a new freeze lands in each window, itself logged; the grace (10 min) is shorter than the
+     time between checks (an hour), so a hold never outlasts one check on its own.
+  3. **The hold after a contact change no longer outlives the lapse.** The lapse now runs 7 days from the later of the
+     registration and the end of the hold (the last security-contact change + 7 days), and never past 28 days after the
+     registration however often the contacts change (`PLATFORM_KEY_HOLD_MAX_MS`). (The review proposed measuring it
+     from the change itself; that would end at the very time the hold does, racing the announcement, so it runs from
+     the hold's end.) A held key's view carries `heldUntil`; the console says "Waiting until {date}: your security
+     contacts changed recently." (or "Can be accepted from {date}…"), the admin panel "held until {date}".
+  4. **An owner's stop fails open if its own limiter errors**: logged at error level (`revoke_limiter_failed`), the stop
+     goes ahead; a refusal by the limits themselves stays a refusal.
+  5. **`platform_orgs` can't be moved or judged by a supplied time**: a trigger refuses any change of `org_id` (so no
+     rename of a row whose switch is on, and no `UPDATE OR REPLACE` onto a frozen org's row); the switch-on trigger
+     judges key expiry by the database's clock, not `set_at`.
+  6. **A key's year is fixed**: a CHECK holds `expires_at = active_from + 365 days`, and a trigger keeps both dates of a
+     key once recorded in force (`platform_keys_life_fixed`).
+  7. **Every way a notice can't go out is recorded as a failure** (owners unreadable, email not rendered, a recipient
+     refused), so none of them can starve the notices page.
+  8. **0028's header names every trigger** a future rebuild of either table must create again, and
+     `migration-0028.test.ts` checks after the last migration that every one is there with 0028's SQL (a later
+     migration that adds a trigger on these tables names it in the test's `LATER` list); `operations.md` says the same.
+- Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation: off-chain records of
+  which public keys may later act for an org's backend.
+
 ## Per-app User IDs on a shared scope (branch `feat/app-user-ids`), 2026-11-25
 
 From `next` @ e59e9c64; not merged, not deployed, migration applied nowhere. Piece P6 of `partner-platform-spec.md`

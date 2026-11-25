@@ -53,6 +53,18 @@ export const APP_CHANGE_KINDS = [
   'labels.switched_on',
   'labels.review_on',
   'labels.review_off',
+  // D918: a platform key's life and the org's platform switch (org-level rows, no app). A key's waiting web addresses
+  // cancelled with it are one `change.cancelled` row (its `reason` says why).
+  'platform.key_proposed',
+  'platform.key_accepted',
+  'platform.key_announced',
+  'platform.key_confirmed',
+  'platform.key_cancelled',
+  'platform.key_active',
+  'platform.key_revoked',
+  'platform.key_expired',
+  'platform.org_switch',
+  'platform.org_frozen',
 ] as const;
 export type AppChangeKind = (typeof APP_CHANGE_KINDS)[number];
 
@@ -120,6 +132,24 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'org.unfrozen': 'Organisation unfrozen',
   'scope.assigned': 'Scope moved to this organisation',
   'scope.app_user_ids': 'Scope marked as a shared wallet',
+  // Platform keys (D918): a network's backend's keys, and Journear's switch for the organisation.
+  'platform.key_proposed': 'Platform key registered',
+  'platform.key_accepted': 'Platform key accepted',
+  'platform.key_announced': 'Platform key announced by email',
+  'platform.key_confirmed': 'Platform key confirmed',
+  'platform.key_cancelled': 'Platform key cancelled',
+  'platform.key_active': 'Platform key in force',
+  'platform.key_revoked': 'Platform key stopped',
+  'platform.key_expired': 'Platform key expired',
+  'platform.org_switch': 'Platform keys switched on or off by Journear',
+  'platform.org_frozen': 'Platform keys frozen with the organisation',
+  'platform_key.proposed': 'Platform key registered',
+  'platform_key.accepted': 'Platform key accepted',
+  'platform_key.confirmed': 'Platform key confirmed',
+  'platform_key.cancelled': 'Platform key cancelled',
+  'platform_key.revoked': 'Platform key stopped',
+  'platform_key.link_cancel': 'Platform key cancelled from an emailed link',
+  'platform_key.link_revoke': 'Platform key stopped from an emailed link',
   'migration.baseline': 'Migration baseline recorded',
   'owner_action.relayed': 'On-chain owner action sent',
   'owner_action.executed': 'On-chain owner action executed',

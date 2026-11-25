@@ -72,6 +72,20 @@ import {
   labelNoticesInput,
   labelQueueInput,
   labelStaffActInput,
+  ackPlatformKeyConfirmNoticeInput,
+  ackPlatformKeyEndNoticeInput,
+  ackPlatformKeyExpiryNoticeInput,
+  ackPlatformKeyNoticeInput,
+  notePlatformKeyNoticeFailureInput,
+  adminRevokePlatformKeyInput,
+  approvePlatformKeyInput,
+  listPlatformKeysInput,
+  platformKeyInput,
+  platformKeyNoticesInput,
+  platformOrgsInput,
+  registerPlatformKeyInput,
+  setPlatformOrgFrozenInput,
+  setPlatformOrgInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -108,6 +122,23 @@ import { ackLabelNotice, labelNotices } from '../labels/lifecycle.ts';
 export const STAFF_NO_LABEL_CANCEL = 'Staff don’t cancel request label changes: open it on Partner labels and use Block this change, with a note';
 import { labelControl, labelControls, labelDetail, labelQueue, labelStaffAct } from '../labels/staff.ts';
 import { refuse } from '../changes/cas.ts';
+import {
+  ackPlatformKeyConfirmNotice,
+  ackPlatformKeyEndNotice,
+  ackPlatformKeyExpiryNotice,
+  ackPlatformKeyNotice,
+  approvePlatformKey,
+  cancelPlatformKey,
+  getPlatformKey,
+  listPlatformKeys,
+  notePlatformKeyNoticeFailure,
+  platformKeyNotices,
+  platformOrgs,
+  registerPlatformKey,
+  revokePlatformKey,
+  setPlatformOrg,
+  setPlatformOrgFrozen,
+} from '../platform/keys.ts';
 import { adminRun, noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
@@ -262,6 +293,77 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** A switch: off or back on (an entry, an org, everyone), or review required (an org, everyone). */
   labelControl(c: unknown) {
     return runRpc(this.env, 'admin.labelControl', labelControlInput, c, { actors: HANA }, ({ input, db, w }) => labelControl(db, w, input));
+  }
+
+  // ---- platform keys (D918): staff's registration (held until an owner accepts it or a second staff member approves
+  // it), revocation and cancel, the org's switch and the freeze mirror, and the notices' page and acks ----
+
+  listPlatformKeys(c: unknown) {
+    return runRpc(this.env, 'admin.listPlatformKeys', listPlatformKeysInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db, w }) => listPlatformKeys(db, input.orgId, w.now, true));
+  }
+
+  getPlatformKey(c: unknown) {
+    return runRpc(this.env, 'admin.getPlatformKey', platformKeyInput, c, { actors: HANA }, async ({ input, db, w }) => ({ key: await getPlatformKey(db, input.orgId, input.keyId, w.now, true) }));
+  }
+
+  /** After checking the key's thumbprint with the network out of band (the reason says how): `awaiting_acceptance`. */
+  registerPlatformKey(c: unknown) {
+    return runRpc(this.env, 'admin.registerPlatformKey', registerPlatformKeyInput, c, { actors: HANA }, ({ input, db, w }) =>
+      registerPlatformKey(db, this.env, w, { orgId: input.orgId, scopeIds: input.scopeIds, label: input.label, publicKey: input.publicKey, by: { kind: 'hana', reason: input.reason } }),
+    );
+  }
+
+  /** A second staff member, never the one who registered it. */
+  approvePlatformKey(c: unknown) {
+    return runRpc(this.env, 'admin.approvePlatformKey', approvePlatformKeyInput, c, { actors: HANA }, ({ input, db, w }) => approvePlatformKey(db, w, input));
+  }
+
+  revokePlatformKey(c: unknown) {
+    return runRpc(this.env, 'admin.revokePlatformKey', adminRevokePlatformKeyInput, c, { actors: HANA }, ({ input, db, w }) => revokePlatformKey(db, w, input));
+  }
+
+  cancelPlatformKey(c: unknown) {
+    return runRpc(this.env, 'admin.cancelPlatformKey', platformKeyInput, c, { actors: HANA }, ({ input, db, w }) => cancelPlatformKey(db, w, input));
+  }
+
+  /** The org's platform switch; turning it on needs every key in force or waiting reviewed (L5). */
+  setPlatformOrg(c: unknown) {
+    return runRpc(this.env, 'admin.setPlatformOrg', setPlatformOrgInput, c, { actors: HANA }, ({ input, db, w }) => setPlatformOrg(db, w, input));
+  }
+
+  /** The admin Worker's mirror of a console freeze (staff's route, and its hourly reconciliation as `system`). */
+  setPlatformOrgFrozen(c: unknown) {
+    return runRpc(this.env, 'admin.setPlatformOrgFrozen', setPlatformOrgFrozenInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db, w }) => setPlatformOrgFrozen(db, w, input));
+  }
+
+  platformOrgs(c: unknown) {
+    return runRpc(this.env, 'admin.platformOrgs', platformOrgsInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db }) => platformOrgs(db, input.limit, input.cursor));
+  }
+
+  platformKeyNotices(c: unknown) {
+    return runRpc(this.env, 'admin.platformKeyNotices', platformKeyNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ notices: await platformKeyNotices(db, this.env, input.limit, w.now) }));
+  }
+
+  /** Only the notice cron, after every send was accepted: starts the key's wait (or puts an accepted staff key in force). */
+  ackPlatformKeyNotice(c: unknown) {
+    return runRpc(this.env, 'admin.ackPlatformKeyNotice', ackPlatformKeyNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackPlatformKeyNotice(db, this.env, w, input));
+  }
+
+  /** The notice cron: a notice's sends failed; it is retried later, after every other (answers the failures in a row). */
+  notePlatformKeyNoticeFailure(c: unknown) {
+    return runRpc(this.env, 'admin.notePlatformKeyNoticeFailure', notePlatformKeyNoticeFailureInput, c, { actors: SYSTEM }, ({ input, db, w }) => notePlatformKeyNoticeFailure(db, w, input));
+  }
+
+  ackPlatformKeyConfirmNotice(c: unknown) {
+    return runRpc(this.env, 'admin.ackPlatformKeyConfirmNotice', ackPlatformKeyConfirmNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackPlatformKeyConfirmNotice(db, w, input));
+  }
+
+  ackPlatformKeyEndNotice(c: unknown) {
+    return runRpc(this.env, 'admin.ackPlatformKeyEndNotice', ackPlatformKeyEndNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackPlatformKeyEndNotice(db, w, input));
+  }
+
+  ackPlatformKeyExpiryNotice(c: unknown) {
+    return runRpc(this.env, 'admin.ackPlatformKeyExpiryNotice', ackPlatformKeyExpiryNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackPlatformKeyExpiryNotice(db, w, input));
   }
 
   setSecurityContacts(c: unknown) {

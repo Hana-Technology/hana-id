@@ -36,6 +36,9 @@ const TITLES: Record<string, string> = {
   'org.policy': 'Require a Google Workspace domain',
   'labels.set': 'Propose request labels',
   'labels.remove': 'Remove request labels',
+  'platform.key_add': 'Register a platform key',
+  'platform.key_accept': 'Accept a platform key',
+  'platform.key_confirm': 'Confirm a platform key',
 };
 
 const GUARDED = new Set(['origin.add', 'policy.set', 'raw_sign.on']);
@@ -109,8 +112,36 @@ export function LabelsReview({ d }: { d: Record<string, unknown> }) {
   );
 }
 
+/** D918: a platform key as its action shows it: the label, the fingerprint and the wallet settings it is for. */
+function KeyDecoded({ kind, d }: { kind: string; d: Record<string, unknown> }) {
+  const scopes = Array.isArray(d.scopeIds) ? (d.scopeIds as unknown[]).map(str) : [];
+  return (
+    <>
+      <p>
+        {kind === 'platform.key_add'
+          ? 'A key your organisation’s backend uses to manage its test apps on Journear Passport. Check that the fingerprint matches the one your backend team gave you.'
+          : kind === 'platform.key_accept'
+            ? 'Journear registered this key for your organisation. Accept it only if your backend team gave Journear this key: check the fingerprint with them.'
+            : 'Confirm this key only if you know it is your organisation’s. Once you confirm, your backend can use it straight away.'}
+      </p>
+      <dl className="facts jp-kv key-facts">
+        <dt>Label</dt>
+        <dd>{str(d.label)}</dd>
+        <dt>Fingerprint</dt>
+        <dd className="mono">{str(d.thumbprint)}</dd>
+        <dt>{scopes.length > 1 ? 'Wallet settings (scopes)' : 'Wallet settings (scope)'}</dt>
+        <dd className="mono">{scopes.join(', ')}</dd>
+      </dl>
+    </>
+  );
+}
+
 export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> }) {
   switch (kind) {
+    case 'platform.key_add':
+    case 'platform.key_accept':
+    case 'platform.key_confirm':
+      return <KeyDecoded kind={kind} d={d} />;
     case 'labels.set':
       return <LabelsReview d={d} />;
     case 'labels.remove':
@@ -251,6 +282,12 @@ export const labelsWaitReview = (delayMs: number | null | undefined): string =>
 function takesEffect(kind: string, d: Record<string, unknown>): string {
   if (kind === 'labels.set') return d.reviewRequired === true ? labelsWaitReview(d.delayMs as number | null) : labelsWait(d.delayMs as number | null);
   if (kind === 'labels.remove') return 'At once, when you confirm. Removing is final: to use labels again, propose new ones, which wait again.';
+  if (kind === 'platform.key_add')
+    return d.fourEyes === true
+      ? 'Not at once. After you confirm, Journear emails your security contacts and owners. Another owner can confirm it; if nobody does, it starts working 24 hours after that email. Any owner can cancel it until then.'
+      : 'Not at once. After you confirm, Journear emails your security contacts and owners. An owner can confirm it then (you too); if nobody does, it starts working 24 hours after that email. Any owner can cancel it until then.';
+  if (kind === 'platform.key_accept') return 'It starts working once Journear has emailed your security contacts and owners about it, usually within a few minutes. Any owner can stop it at once afterwards.';
+  if (kind === 'platform.key_confirm') return 'At once, when you confirm. Journear then emails your security contacts and owners, with a link that stops the key.';
   if (GUARDED.has(kind))
     return 'Not at once. After you confirm, it is announced by email to your organisation’s security contacts and takes effect after the security delay (24 hours on production deployments). Any owner can cancel it until then, from the app’s page or the email.';
   if (kind === 'member.invite') return 'The invite email goes out after every owner and your security contacts have been told. The link works once, for that address only.';
@@ -282,12 +319,12 @@ const TAB_LABEL: Record<string, string> = { origins: 'Origins', signing: 'Signin
  * the members page. Anything else (another origin, `//host`, a path with `..`, an unknown page) is ignored, so the link
  * can never leave the console whatever the answer says (D711).
  */
-const SAFE_RETURN = /^\/orgs\/[A-Za-z0-9_]{1,128}(?:\/apps\/[A-Za-z0-9_]{1,128}\/(origins|signing|suspend|sessions|email|labels)|\/scopes\/([A-Za-z0-9_]{1,128})|\/(members))$/u;
+const SAFE_RETURN = /^\/orgs\/[A-Za-z0-9_]{1,128}(?:\/apps\/[A-Za-z0-9_]{1,128}\/(origins|signing|suspend|sessions|email|labels)|\/scopes\/([A-Za-z0-9_]{1,128})|\/(members)|\/(platform-keys))$/u;
 
 export function safeReturn(v: unknown): { to: string; label: string } | null {
   const m = typeof v === 'string' ? SAFE_RETURN.exec(v) : null;
   if (!m) return null;
-  const label = m[1] ? `Back to ${TAB_LABEL[m[1]]}` : m[2] ? 'Back to the scope' : 'Back to members';
+  const label = m[1] ? `Back to ${TAB_LABEL[m[1]]}` : m[2] ? 'Back to the scope' : m[4] ? 'Back to platform keys' : 'Back to members';
   return { to: v as string, label };
 }
 
@@ -372,6 +409,9 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
           {GUARDED.has(a.kind) && a.outcome?.noChange !== true ? ' It is now announced and takes effect after the security delay; you can follow it, or cancel it, on the app’s page.' : ''}
           {a.kind === 'labels.set' && a.outcome?.noChange !== true ? ` Proposed. Journear emails your security contacts; ${a.decoded.reviewRequired === true ? `it goes live only after Journear allows it, at the earliest ${afterEmail(a.decoded.delayMs as number | null)}` : `it goes live ${afterEmail(a.decoded.delayMs as number | null)} unless someone cancels it`}. You can follow it, or cancel it, on the Request labels tab.` : ''}
           {a.kind === 'labels.remove' ? ' Removed: your users see the plain approval window for these requests.' : ''}
+          {a.kind === 'platform.key_add' ? ' Registered. Journear emails your security contacts and owners; it starts working when an owner confirms it after that email, or 24 hours after it.' : ''}
+          {a.kind === 'platform.key_accept' ? ' Accepted. It starts working once Journear has emailed your security contacts and owners.' : ''}
+          {a.kind === 'platform.key_confirm' ? ' Confirmed: the key works now.' : ''}
         </Callout>
       )}
       {a.status === 'failed' && (

@@ -24,6 +24,7 @@ function api(app: Record<string, unknown>, write: (c: Call) => Answer = () => ({
     if (c.path.startsWith('/api/apps/app_pay')) return { body: { app: { ...BASE, settings: SETTINGS, ...app } } };
     if (c.path === '/api/orgs/org_lumen') return org();
     if (c.path === '/api/orgs/org_lumen/changes') return { body: { changes: [] } };
+    if (c.path === '/api/orgs/org_lumen/platform') return { body: { keys: [], platform: { orgId: 'org', enabled: false, frozen: false, maxApps: 10, creationsPerDay: 5, proposalsPerDay: 30, setBy: null, setAt: null } } };
     return { status: 404, body: { error: { code: 'not_found', message: 'Not found' } } };
   };
 }

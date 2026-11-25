@@ -231,7 +231,7 @@ export interface CreatedAction {
  * checks against the kind's allowlist and turns into a path itself; `appId` names the app whose tab it is.
  */
 export interface ReturnTo {
-  page: 'origins' | 'signing' | 'suspend' | 'sessions' | 'email' | 'labels' | 'scope' | 'members';
+  page: 'origins' | 'signing' | 'suspend' | 'sessions' | 'email' | 'labels' | 'scope' | 'members' | 'platform-keys';
   appId?: string;
 }
 

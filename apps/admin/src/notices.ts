@@ -357,10 +357,11 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
    */
   const noteFailure = async (n: PlatformKeyNotice, code: string, f: Record<string, unknown> = {}, level: 'warn' | 'error' = 'warn') => {
     out.failed++;
-    const noted = budget.fits(1, 1) ? await env.API.notePlatformKeyNoticeFailure({ ...systemCtx(), keyId: n.key.id }).catch(() => null) : null;
+    const { id, orgId } = n.key;
+    const noted = budget.fits(1, 1) ? await env.API.notePlatformKeyNoticeFailure({ ...systemCtx(), keyId: id }).catch(() => null) : null;
     const failures = noted?.ok ? noted.failures : (n.failures ?? 0) + 1;
     const stuck = failures >= STUCK_AFTER;
-    log({ event: 'notice', step: 'platform_key', target: n.key.id, orgId: n.key.orgId, outcome: 'rejected', code: stuck ? 'notice_stuck' : code, count: failures, ...f, ...(stuck ? { error: code } : {}) }, stuck ? 'error' : level);
+    log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'rejected', code: stuck ? 'notice_stuck' : code, count: failures, ...f, ...(stuck ? { error: code } : {}) }, stuck ? 'error' : level);
   };
   for (const n of page.notices) {
     const id = n.key.id;

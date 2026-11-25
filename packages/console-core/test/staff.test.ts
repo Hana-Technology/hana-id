@@ -40,6 +40,9 @@ describe('the other inputs', () => {
     expect(auditFilters.safeParse({ orgId: 'org_a', action: 'invite.issued', from: 0, to: 1 }).success).toBe(true);
     expect(auditFilters.safeParse({ action: "x' OR 1" }).success).toBe(false);
     expect(auditFilters.safeParse({ email: 'a@b.example' }).success).toBe(false);
+    // D916: staff can filter (and export) the platform's app changes; an unknown kind is refused.
+    for (const k of ['member', 'hana', 'system', 'link', 'platform']) expect(auditFilters.safeParse({ actorKind: k }).success, k).toBe(true);
+    expect(auditFilters.safeParse({ actorKind: 'robot' }).success).toBe(false);
     expect(queryAuditInput.safeParse({ ...staff, filters: {}, cursor: '0', limit: 10 }).success).toBe(false);
     expect(queryAuditInput.safeParse({ ...staff, filters: {}, cursor: '12', limit: 501 }).success).toBe(false);
   });

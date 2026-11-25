@@ -10,10 +10,18 @@ import type { DatabaseSync } from 'node:sqlite';
 import { APP_CHANGE_KINDS, SECURITY_EVENT_KINDS } from '@hana-id/console-core';
 import { describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
-import { type LedgerCheckDeps, type LedgerSnapshot, KIND_TRIGGERS, LEDGER_TABLES, compareSnapshots, ledgerCheck, pageSql, takeSnapshot } from '../lib/ledger-check.ts';
+import { type FeedState, type LedgerCheckDeps, type LedgerSnapshot, FEED_CURSOR_KEYS, KIND_TRIGGERS, LEDGER_TABLES, compareSnapshots, ledgerCheck, lifecycleProblem, pageSql, takeSnapshot } from '../lib/ledger-check.ts';
 import { MIGRATIONS_DIR, newHotDb } from './hot-db.ts';
+import { repoRoot } from '@hana-id/env';
 
 const MIGRATION = readFileSync(join(MIGRATIONS_DIR, '0027_platform_actor.sql'), 'utf8');
+/**
+ * The migration with its own copy check switched off: what a rebuild without it would leave, so these tests show
+ * ledger-check catches the damage by itself (apps/api/test/migration-0027.test.ts shows the check aborts the file).
+ */
+const UNCHECKED = MIGRATION.replaceAll('CHECK (ok = 1)', 'CHECK (ok IN (0, 1))');
+/** A statement run on a table's copy right after it was copied (a rebuild that damages the copy). */
+const afterCopy = (table: 'guarded_changes' | 'security_events' | 'app_changes', stmt: string) => (sql: string) => sql.replace(`FROM ${table};`, `FROM ${table};\n${stmt};`);
 const MONTH = 31 * 86_400_000;
 const NOW = Date.UTC(2026, 10, 25, 3, 0);
 /** A value that must never appear in a snapshot (it is in a row's detail). */
@@ -70,7 +78,7 @@ function populated(): DatabaseSync {
 }
 
 const reader = (db: DatabaseSync) => (s: string) => db.prepare(s).all() as Record<string, unknown>[];
-const snap = (db: DatabaseSync, pageSize = 7): Promise<LedgerSnapshot> => takeSnapshot(reader(db), { env: 'sandbox-dev', remote: true, now: new Date(NOW), pageSize });
+const snap = (db: DatabaseSync, pageSize = 7): Promise<LedgerSnapshot> => takeSnapshot(reader(db), { env: 'sandbox-dev', database: 'hana-id-sandbox-dev', remote: true, now: new Date(NOW), pageSize });
 
 describe('ledger-check: snapshot and compare around migration 0027', () => {
   it('the real migration: identical (every row, seq, index and trigger); the kind triggers new since', async () => {
@@ -99,8 +107,21 @@ describe('ledger-check: snapshot and compare around migration 0027', () => {
     expect(text).not.toContain('sub-1"');
   });
 
-  it('a rebuild that loses a row, changes one, renumbers seq, or drops or alters an index or trigger: roll back', async () => {
+  it('a rebuild that loses a row, changes one, moves a job-written column as no job does, renumbers seq, drops a table rule, or drops or alters an index or trigger: roll back', async () => {
     const broken: [string, (sql: string) => string, RegExp][] = [
+      // A job-written column moved by the rebuild, not by a job (PR 143's review, F1): each reproduced as "kept" before.
+      ['active_from copied from notified_at', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET active_from = notified_at'), /MOVED WRONG: \d+ row\(s\) .*active_from changed/u],
+      ['every cancel link hash lost', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET cancel_token_hash = NULL'), /MOVED WRONG: .*cancel_token_hash cleared/u],
+      ['cancelled changes made pending again', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'pending' WHERE status = 'cancelled'"), /MOVED WRONG: .*status cancelled → pending/u],
+      ['ended changes made active again', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'active', ended_at = NULL WHERE status = 'ended'"), /MOVED WRONG: .*status ended → active/u],
+      ['every event unsent again', afterCopy('security_events', 'UPDATE security_events_new SET notified_at = NULL'), /security_events: .*\n {2}MOVED WRONG: \d+ row\(s\) .*notified_at cleared/u],
+      ['an announcement without its time', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET notified_at = 1 WHERE notified_at IS NULL'), /MOVED WRONG: .*notified_at set without active_from/u],
+      ['a cancel with nobody who cancelled', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'cancelled' WHERE status = 'pending'"), /MOVED WRONG: .*cancelled without cancelled_at and cancelled_by/u],
+      // A table's own rules dropped by the rebuild (F3): each came back "identical" before.
+      ['the status CHECK dropped', (s) => s.replace("status                TEXT NOT NULL CHECK (status IN ('pending', 'active', 'cancelled', 'ended')),", 'status                TEXT NOT NULL,'), /CHANGED table guarded_changes/u],
+      ['json_valid dropped', (s) => s.replace("detail_json TEXT NOT NULL CHECK (json_valid(detail_json)), -- allowlisted fields only", 'detail_json TEXT NOT NULL, -- allowlisted fields only'), /CHANGED table app_changes/u],
+      ['a NOT NULL dropped', (s) => s.replace('  at          INTEGER NOT NULL,\n  org_id      TEXT NOT NULL,\n  app_id      TEXT,', '  at          INTEGER,\n  org_id      TEXT NOT NULL,\n  app_id      TEXT,'), /CHANGED table app_changes/u],
+      ['a new event kind left out', (s) => s.replace("'platform_auth_failures', 'link_lookup_volume')", "'platform_auth_failures')"), /CHANGED table security_events/u],
       ['a lost ledger row', (s) => s.replace('FROM app_changes;', 'FROM app_changes WHERE seq <> 70000;'), /app_changes: .*\n {2}LOST: 1 row\(s\)/u],
       ['a lost guarded change', (s) => s.replace('FROM guarded_changes;', "FROM guarded_changes WHERE id <> 'gc_007';"), /LOST: 1 row\(s\) of before are gone \(first ids: gc_007\)/u],
       ['a changed ledger row', (s) => s.replace('SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, actor_kind', "SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, CASE actor_kind WHEN 'link' THEN 'system' ELSE actor_kind END"), /CHANGED: \d+ row\(s\) differ in a column no job writes \(the table is append-only\)/u],
@@ -112,8 +133,8 @@ describe('ledger-check: snapshot and compare around migration 0027', () => {
     for (const [what, mutate, finding] of broken) {
       const db = populated();
       const before = await snap(db);
-      const bad = mutate(MIGRATION);
-      expect(bad, what).not.toBe(MIGRATION);
+      const bad = mutate(UNCHECKED);
+      expect(bad, what).not.toBe(UNCHECKED);
       db.exec(bad);
       const c = compareSnapshots(before, await snap(db));
       expect(c.verdict, what).toBe('roll_back');
@@ -134,9 +155,49 @@ describe('ledger-check: snapshot and compare around migration 0027', () => {
     expect(c.verdict).toBe('kept');
     const text = c.lines.join('\n');
     expect(text).toContain('guarded_changes: 36 → 36 rows; hash changed');
-    expect(text).toMatch(/1 row\(s\) moved on by a job since \(they differ only in columns a job writes: status, waiver, notified_at, active_from, cancel_token_hash, .*first ids: gc_001\)/u);
-    expect(text).toMatch(/security_events: .*\n {2}1 row\(s\) moved on by a job since \(they differ only in columns a job writes: notified_at; first ids: se_drift\)\.\n {2}1 row\(s\) written since/u);
+    expect(text).toMatch(/1 row\(s\) moved on by a job since \(only as the jobs move them: status, waiver, notified_at, active_from, cancel_token_hash, .*first ids: gc_001\)/u);
+    expect(text).toMatch(/security_events: .*\n {2}1 row\(s\) moved on by a job since \(only as the jobs move them: notified_at; first ids: se_drift\)\.\n {2}1 row\(s\) written since/u);
     expect(text).toMatch(/app_changes: \d+ → \d+ rows, max\(seq\) 70000 → 70001; hash changed .*\n {2}1 row\(s\) written since/u);
+  });
+
+  it('every move the jobs make, alone or several between the snapshots, is kept: ack, expedite, activation, end, cancel', async () => {
+    const db = populated();
+    const before = await snap(db);
+    db.exec(MIGRATION);
+    // gc_001: pending, not announced → announced (the API's ack), then expedited, then activated.
+    db.exec("UPDATE guarded_changes SET notified_at = 10, active_from = 99, waiver = NULL, cancel_token_hash = randomblob(32) WHERE id = 'gc_001'");
+    db.exec("UPDATE guarded_changes SET active_from = 11, expedited_by = 'staff', expedite_reason = 'asked' WHERE id = 'gc_001'");
+    db.exec("UPDATE guarded_changes SET status = 'active', activated_recorded_at = 12 WHERE id = 'gc_001'");
+    // gc_002: pending and announced → in force, then closed by a removal (pending → ended).
+    db.exec("UPDATE guarded_changes SET status = 'ended', ended_at = 13 WHERE id = 'gc_002'");
+    // gc_003: pending, not announced → cancelled by the hourly job.
+    db.exec("UPDATE guarded_changes SET status = 'cancelled', cancelled_by = 'system', cancelled_at = 14 WHERE id = 'gc_003'");
+    // gc_004..: active → ended (a replaced policy).
+    db.exec("UPDATE guarded_changes SET status = 'ended', ended_at = 15 WHERE status = 'active' AND id <> 'gc_001'");
+    // The CLI's announce (no cancel link hash) of another unannounced one.
+    db.exec("UPDATE guarded_changes SET notified_at = 16, active_from = 17, waiver = 'no_session' WHERE id = 'gc_013'");
+    const c = compareSnapshots(before, await snap(db));
+    expect(c.lines.join('\n')).not.toContain('MOVED WRONG');
+    expect(c.verdict).toBe('kept');
+  });
+
+  it('lifecycleProblem: each rule by itself', () => {
+    const t = LEDGER_TABLES.find((x) => x.name === 'guarded_changes')!;
+    const row = (o: Record<string, string | null>) => t.mutable.map((c) => (Object.hasOwn(o, c) ? o[c]! : null));
+    const pending = row({ status: 'pending' });
+    const announced = row({ status: 'pending', notified_at: 'n', active_from: 'a', cancel_token_hash: 'h' });
+    expect(lifecycleProblem(t, pending, announced)).toBeNull();
+    expect(lifecycleProblem(t, announced, row({ status: 'pending', notified_at: 'n', active_from: 'b', cancel_token_hash: 'h', expedited_by: 's', expedite_reason: 'r' }))).toBeNull();
+    expect(lifecycleProblem(t, announced, row({ status: 'pending', notified_at: 'n', active_from: 'b', cancel_token_hash: 'h' }))).toBe('active_from changed');
+    expect(lifecycleProblem(t, announced, row({ status: 'pending', notified_at: 'n', active_from: 'a', cancel_token_hash: 'h', expedited_by: 's' }))).toBe('expedited_by and expedite_reason apart');
+    expect(lifecycleProblem(t, announced, row({ status: 'active', notified_at: 'n', active_from: 'a', cancel_token_hash: 'h' }))).toBe('activated without activated_recorded_at');
+    expect(lifecycleProblem(t, announced, row({ status: 'pending', notified_at: 'n', active_from: 'a', cancel_token_hash: 'h', ended_at: 'e' }))).toBe('ended_at set with status pending');
+    expect(lifecycleProblem(t, pending, row({ status: 'pending', waiver: 'w' }))).toBe('announced without notified_at');
+    expect(lifecycleProblem(t, row({ status: 'ended', ended_at: 'e' }), row({ status: 'cancelled', ended_at: 'e', cancelled_at: 'c', cancelled_by: 'b' }))).toBe('status ended → cancelled');
+    const se = LEDGER_TABLES.find((x) => x.name === 'security_events')!;
+    expect(lifecycleProblem(se, [null], ['x'])).toBeNull();
+    expect(lifecycleProblem(se, ['x'], ['y'])).toBe('notified_at changed');
+    expect(lifecycleProblem(se, ['x'], [null])).toBe('notified_at cleared');
   });
 
   it('a lifecycle update can’t hide a fixed column’s change, and a job can’t make a lost row look kept', async () => {
@@ -162,19 +223,31 @@ describe('ledger-check: snapshot and compare around migration 0027', () => {
 
   it('pages by key in order with escaped keys, blobs as hex', () => {
     const t = LEDGER_TABLES.find((x) => x.name === 'guarded_changes')!;
-    expect(pageSql(t, undefined, 2)).toMatch(/^SELECT id, app_id, .*hex\(cancel_token_hash\) AS cancel_token_hash, .* FROM guarded_changes ORDER BY id LIMIT 2$/u);
+    expect(pageSql(t, undefined, 2)).toMatch(/^SELECT id, app_id, .*CASE WHEN cancel_token_hash IS NULL THEN NULL ELSE hex\(cancel_token_hash\) END AS cancel_token_hash, .* FROM guarded_changes ORDER BY id LIMIT 2$/u);
     expect(pageSql(t, "gc_'x", 2)).toContain("WHERE id > 'gc_''x' ORDER BY id LIMIT 2");
     expect(pageSql(LEDGER_TABLES[0]!, 41, 500)).toBe('SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id FROM app_changes WHERE seq > 41 ORDER BY seq LIMIT 500');
   });
 });
 
 describe('ledger-check: the CLI', () => {
-  const setup = (db: DatabaseSync) => {
+  const setup = (db: DatabaseSync, o: { network?: string; feed?: Map<string, string> } = {}) => {
     const files = new Map<string, unknown>();
     const lines: string[] = [];
+    const reads: string[] = [];
+    const feed = o.feed ?? new Map<string, string>();
+    let closed = 0;
     let t = NOW;
     const deps: LedgerCheckDeps = {
-      read: (_env, s) => reader(db)(s),
+      manifest: () => ({ network: o.network ?? 'testnet', d1Name: 'hana-id-sandbox-dev' }),
+      read: (_env, d1Name, s) => {
+        reads.push(d1Name);
+        return reader(db)(s);
+      },
+      feedState: async (): Promise<FeedState> => ({
+        get: async (keys) => new Map(keys.filter((k) => feed.has(k)).map((k) => [k, feed.get(k)!])),
+        set: async (k, v) => void feed.set(k, v),
+        close: async () => void (closed += 1),
+      }),
       secretsEnvDir: (env) => `/repo/.secrets/${env}`,
       writeJson: (f, v) => files.set(f, JSON.parse(JSON.stringify(v))),
       readJson: (f) => {
@@ -184,12 +257,12 @@ describe('ledger-check: the CLI', () => {
       log: (l) => lines.push(l),
       now: () => new Date((t += 60_000)),
     };
-    return { files, lines, deps };
+    return { files, lines, reads, feed, closed: () => closed, deps };
   };
 
   it('snapshot, migrate, compare: exit 0, files under .secrets/<env>/, hashes printed, no row printed', async () => {
     const db = populated();
-    const { files, lines, deps } = setup(db);
+    const { files, lines, reads, deps } = setup(db);
     expect(await ledgerCheck(['sandbox-dev', 'snapshot', '--remote'], deps)).toBe(0);
     const [first] = [...files.keys()];
     expect(first).toMatch(/^\/repo\/\.secrets\/sandbox-dev\/ledger-snapshot-20261125T030100000Z\.json$/u);
@@ -198,9 +271,10 @@ describe('ledger-check: the CLI', () => {
     expect([...files.keys()][1]).toMatch(/ledger-after-/u);
     const out = lines.join('\n');
     expect(out).toMatch(/app_changes: \d+ rows, max\(seq\) 70000, sha256 [0-9a-f]{64}/u);
-    expect(out).toContain("0027's kind triggers present");
+    expect(out).toContain("0027's triggers present");
     expect(out).toContain('Verdict: identical.');
     expect(out).not.toContain(SECRETISH);
+    expect(new Set(reads)).toEqual(new Set(['hana-id-sandbox-dev']));
   });
 
   it('exit 1 on a broken rebuild or a migration not applied; a snapshot of the other database or env refused', async () => {
@@ -212,10 +286,63 @@ describe('ledger-check: the CLI', () => {
     expect(lines.join('\n')).toContain('migration 0027 is not applied');
     await expect(ledgerCheck(['sandbox-dev', 'compare', '--before', '/repo/.secrets/sandbox-dev/b.json'], deps)).rejects.toThrow(/run compare with --remote/u);
     await expect(ledgerCheck(['local', 'compare', '--remote', '--before', '/repo/.secrets/sandbox-dev/b.json'], deps)).rejects.toThrow(/a snapshot of sandbox-dev, not local/u);
+    await expect(ledgerCheck(['sandbox-dev', 'compare', '--remote', '--d1-name', 'hana-id-sandbox-dev-rehearsal-0027', '--before', '/repo/.secrets/sandbox-dev/b.json'], deps)).rejects.toThrow(/a snapshot of hana-id-sandbox-dev, not hana-id-sandbox-dev-rehearsal-0027/u);
     await expect(ledgerCheck(['sandbox-dev', 'compare', '--remote'], deps)).rejects.toThrow(CliError);
     await expect(ledgerCheck(['sandbox-dev', 'apply'], deps)).rejects.toThrow(CliError);
-    db.exec(MIGRATION.replace('FROM security_events;', "FROM security_events WHERE id <> 'se_drift';"));
+    files.set('/repo/.secrets/sandbox-dev/v1.json', { ...(files.get('/repo/.secrets/sandbox-dev/b.json') as object), format: 'hana-id/ledger-check/v1' });
+    await expect(ledgerCheck(['sandbox-dev', 'compare', '--remote', '--before', '/repo/.secrets/sandbox-dev/v1.json'], deps)).rejects.toThrow(/not a hana-id\/ledger-check\/v2 snapshot/u);
+    db.exec(UNCHECKED.replace('FROM security_events;', "FROM security_events WHERE id <> 'se_drift';"));
     expect(await ledgerCheck(['sandbox-dev', 'compare', '--remote', '--before', '/repo/.secrets/sandbox-dev/b.json'], deps)).toBe(1);
     expect(lines.at(-1)).toMatch(/Verdict: ROLL BACK/u);
+  });
+
+  it('--d1-name reads a rehearsal database (remote only); anything else, and a mainnet env, refused', async () => {
+    const db = populated();
+    const { reads, deps } = setup(db);
+    expect(await ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--d1-name', 'hana-id-sandbox-dev-rehearsal-0027'], deps)).toBe(0);
+    expect(new Set(reads)).toEqual(new Set(['hana-id-sandbox-dev-rehearsal-0027']));
+    await expect(ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--d1-name', 'hana-id-sandbox-dev'], deps)).rejects.toThrow(/containing "rehearsal"/u);
+    await expect(ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--d1-name', 'hana-id-mainnet-rehearsal'], deps)).rejects.toThrow(/production/u);
+    await expect(ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--d1-name', 'Rehearsal;DROP'], deps)).rejects.toThrow(/containing "rehearsal"/u);
+    await expect(ledgerCheck(['sandbox-dev', 'snapshot', '--d1-name', 'hana-id-sandbox-dev-rehearsal-0027'], deps)).rejects.toThrow(/add --remote/u);
+    await expect(ledgerCheck(['prod', 'snapshot', '--remote'], setup(db, { network: 'mainnet' }).deps)).rejects.toThrow(/mainnet env/u);
+  });
+
+  it('feed-cursor: lowers the admin feed’s cursor (and an unfinished first walk) to the snapshot’s max(seq), at most the restored one, never raises it; a dry run without --yes', async () => {
+    const db = populated(); // max(seq) 70000 when the snapshot is taken
+    const feed = new Map([[FEED_CURSOR_KEYS[0], '70012'], [FEED_CURSOR_KEYS[1], '69000']]);
+    const s = setup(db, { feed });
+    await ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--out', '/repo/.secrets/sandbox-dev/b.json'], s.deps);
+    // After the restore the API already wrote two rows (70001, 70002): the cursor goes to the snapshot's 70000, so they are emailed.
+    db.exec(`INSERT INTO app_changes (at, org_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (${NOW}, 'org_a', 'app.renamed', '{}', 'system', 'x', 'req_r1'), (${NOW}, 'org_a', 'app.renamed', '{}', 'system', 'x', 'req_r2')`);
+    const run = (...extra: string[]) => ledgerCheck(['sandbox-dev', 'feed-cursor', '--remote', '--before', '/repo/.secrets/sandbox-dev/b.json', ...extra], s.deps);
+    expect(await run()).toBe(0);
+    expect(feed.get(FEED_CURSOR_KEYS[0])).toBe('70012');
+    expect(s.lines.join('\n')).toContain('has max(seq) 70002; the snapshot before the migration had 70000: the cursor goes no higher than 70000.');
+    expect(s.lines.join('\n')).toContain('feed.app_changes.seq: 70012 → 70000 (planned).');
+    expect(s.lines.join('\n')).toContain('Dry run: nothing written.');
+    expect(await run('--yes')).toBe(0);
+    expect(feed.get(FEED_CURSOR_KEYS[0])).toBe('70000');
+    expect(feed.get(FEED_CURSOR_KEYS[1])).toBe('69000');
+    expect(s.lines.join('\n')).toContain('feed.app_changes.seq.init: 69000, at or below 70000: left as it is.');
+    expect(s.closed()).toBe(2);
+    expect(await run('--yes')).toBe(0);
+    expect(s.lines.at(-1)).toBe('Nothing to lower.');
+    // Without the snapshot it falls back to the current max(seq), and says what that risks.
+    feed.set(FEED_CURSOR_KEYS[0], '70100');
+    expect(await ledgerCheck(['sandbox-dev', 'feed-cursor', '--remote', '--yes'], s.deps)).toBe(0);
+    expect(feed.get(FEED_CURSOR_KEYS[0])).toBe('70002');
+    expect(s.lines.join('\n')).toContain('No --before: rows the API wrote since the restore');
+    await expect(ledgerCheck(['sandbox-dev', 'feed-cursor'], s.deps)).rejects.toThrow(/--remote/u);
+    await expect(ledgerCheck(['sandbox-dev', 'feed-cursor', '--remote', '--d1-name', 'x-rehearsal'], s.deps)).rejects.toThrow(/rehearsal copy/u);
+    feed.set(FEED_CURSOR_KEYS[0], 'garbage');
+    await expect(run('--yes')).rejects.toThrow(/not a seq/u);
+  });
+
+  it('reads through apiPrivateD1Execute, never d1Execute: no row in wrangler’s log file (PR 143’s review, F4)', () => {
+    const cli = readFileSync(join(repoRoot, 'scripts', 'ledger-check.ts'), 'utf8');
+    expect(cli).toMatch(/apiPrivateD1Execute\(/u);
+    expect(cli).not.toMatch(/\bd1Execute\(/u);
+    expect(cli).not.toMatch(/console\.log\([^)]*row/iu);
   });
 });

@@ -13,7 +13,7 @@
 -- the app's.
 
 CREATE TABLE platform_calls (
-  seq        INTEGER PRIMARY KEY,
+  seq        INTEGER PRIMARY KEY CHECK (seq > 0),
   at         INTEGER NOT NULL,
   org_id     TEXT NOT NULL CHECK (org_id GLOB 'org_*'),
   key_id     TEXT NOT NULL CHECK (key_id GLOB 'pkc_*'),
@@ -30,8 +30,11 @@ CREATE INDEX platform_calls_org ON platform_calls (org_id, seq);
 CREATE INDEX platform_calls_at ON platform_calls (at);
 
 -- An INSERT OR REPLACE naming a `seq` already held would delete that row without a DELETE trigger firing: refused.
+-- In a BEFORE INSERT trigger an automatic rowid reads as -1, so the rule looks only at a `seq` the writer named (> 0;
+-- the CHECK keeps every stored `seq` above 0, so no row can sit at -1 and block every automatic insert: after PR 156's
+-- review, F6).
 CREATE TRIGGER platform_calls_no_replace BEFORE INSERT ON platform_calls
-  WHEN NEW.seq IS NOT NULL AND EXISTS (SELECT 1 FROM platform_calls WHERE seq = NEW.seq)
+  WHEN NEW.seq > 0 AND EXISTS (SELECT 1 FROM platform_calls WHERE seq = NEW.seq)
 BEGIN
   SELECT RAISE(ABORT, 'platform_calls is append-only');
 END;

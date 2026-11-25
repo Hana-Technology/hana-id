@@ -79,6 +79,25 @@ describe('migration 0032', () => {
     expect(await refusal('DELETE FROM platform_calls WHERE seq = ?1', seq)).toMatch(/kept 13 months/u);
   });
 
+  it('no row can sit at seq ≤ 0 and block every automatic insert (after PR 156\'s review, F6)', async () => {
+    // In a BEFORE INSERT trigger an automatic rowid reads as -1: a stored -1 would make every later insert a "replace".
+    for (const seq of [-1, 0]) expect(await refusal("INSERT INTO platform_calls (seq, at, org_id, key_id, method, route, status, request_id) VALUES (?1, 1, 'org_a', 'pkc_4Rm8Vq2Lz7Wx9Kd', 'GET', '/v1/platform/x', 200, 'r')", seq), String(seq)).toMatch(/CHECK constraint failed/u);
+    expect(await insert({ request_id: 'automatic-1' })).toBe('accepted');
+    expect(await insert({ request_id: 'automatic-2' })).toBe('accepted');
+    const { seq } = (await db.prepare("SELECT seq FROM platform_calls WHERE request_id = 'automatic-2'").first<{ seq: number }>())!;
+    expect(seq).toBeGreaterThan(0);
+  });
+
+  it('0027\'s app_changes_no_replace has the pattern F6 fixed here (an open point of D927, for a later migration): a bare row at seq -1 blocks the ledger', async () => {
+    const ledgerInsert = (rid: string) => refusal("INSERT INTO app_changes (at, org_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (1, 'org_a', 'app.created', '{}', 'hana', 's', ?1)", rid);
+    expect(await ledgerInsert('ok-before')).toBe('accepted');
+    expect(await refusal("INSERT INTO app_changes (seq, at, org_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (-1, 0, 'org_a', 'app.created', '{}', 'hana', 's', 'bad-minus-one')")).toBe('accepted');
+    expect(await ledgerInsert('blocked')).toMatch(/already recorded/u);
+    // Only a bare D1 write can do it (nothing in the code names a seq); deleting the row (its `at` 0 is past 60 months) restores it.
+    expect(await refusal('DELETE FROM app_changes WHERE seq = -1')).toBe('accepted');
+    expect(await ledgerInsert('ok-after')).toBe('accepted');
+  });
+
   it('a row past 13 months may go, and the purge takes exactly those, oldest first, up to its limit', async () => {
     const old = Date.now() - 400 * DAY;
     for (let i = 0; i < 3; i++) expect(await insert({ at: old + i, request_id: `old-${i}` })).toBe('accepted');

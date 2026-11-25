@@ -14,7 +14,8 @@ import { Sessions } from './pages/app/Sessions.tsx';
 import { Signing } from './pages/app/Signing.tsx';
 import { Suspend } from './pages/app/Suspend.tsx';
 import { Audit } from './pages/Audit.tsx';
-import { CancelChange, CancelOwner } from './pages/Cancel.tsx';
+import { CancelChange, CancelOwner, CancelPlatformKey, RevokePlatformKey } from './pages/Cancel.tsx';
+import { ConfirmPlatformKey, PlatformKeyPage, PlatformKeys } from './pages/PlatformKeys.tsx';
 import { Members } from './pages/Members.tsx';
 import { ScopePage } from './pages/Scope.tsx';
 import { StatementPage, Statements } from './pages/Statements.tsx';
@@ -46,6 +47,9 @@ export function App() {
       <Route path="/invite" element={<Invite />} />
       <Route path="/cancel/:changeId" element={<CancelChange />} />
       <Route path="/cancel-owner/:grantId" element={<CancelOwner />} />
+      <Route path="/cancel-platform-key/:keyId" element={<CancelPlatformKey />} />
+      <Route path="/revoke-platform-key/:keyId" element={<RevokePlatformKey />} />
+      <Route path="/confirm-platform-key/:keyId" element={<Framed>{() => <ConfirmPlatformKey />}</Framed>} />
       <Route path="/actions/:id" element={<Framed>{(me) => <ActionPage me={me} />}</Framed>} />
       <Route path="/" element={<Home />} />
       <Route path="/orgs/:org" element={<OrgShell />}>
@@ -65,6 +69,8 @@ export function App() {
         </Route>
         <Route path="scopes/:scope" element={<ScopePage />} />
         <Route path="members" element={<Members />} />
+        <Route path="platform-keys" element={<PlatformKeys />} />
+        <Route path="platform-keys/:keyId" element={<PlatformKeyPage />} />
         <Route path="usage" element={<Usage />} />
         <Route path="statements" element={<Statements />} />
         <Route path="statements/:month" element={<StatementPage />} />

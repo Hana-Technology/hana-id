@@ -24,6 +24,7 @@ import { requestInfo } from './request-info.ts';
 import { type Session } from './sessions.ts';
 import { completeSignIn, logout } from './sign-in.ts';
 import { runOrgRoute, writeRoutesFor } from './writes.ts';
+import { findOrgRoute, linkRoute } from './platform-keys.ts';
 import { CONSOLE_LIMIT_PERIOD_S } from './limits.ts';
 
 export { AuthHandler } from './auth-handler.ts';
@@ -43,6 +44,9 @@ const API_ROUTES: Record<string, Partial<Record<string, Handler>>> = {
   '/api/auth/complete': { GET: completeSignIn },
   '/api/cancel': { POST: cancelChangeLink },
   '/api/owner-grants/cancel': { POST: cancelOwnerGrantLink },
+  // D918: a platform key's emailed links (no session: the token is the proof).
+  '/api/platform-keys/cancel': { POST: linkRoute('cancel') },
+  '/api/platform-keys/revoke': { POST: linkRoute('revoke') },
 };
 
 /** The routes that need a session (401 `unauthenticated` without one). */
@@ -53,18 +57,22 @@ const SESSION_ROUTES: Record<string, Partial<Record<string, SessionHandler>>> = 
 
 /** `/api/actions/:id` (GET: the outcome) and `/api/actions/:id/google` (POST: the fresh sign-in's start). */
 const ACTION_ROUTE = /^\/api\/actions\/([^/]{1,64})(\/google)?$/u;
+/** `/api/platform-keys/:id/org` (GET): which of the member's organisations a key is in (the Confirm link's page, D918). */
+const KEY_ORG_ROUTE = /^\/api\/platform-keys\/([^/]{1,64})\/org$/u;
 
 async function api(request: Request, env: Env, url: URL): Promise<Response> {
   const info = requestInfo(request);
   const plain = API_ROUTES[url.pathname];
   const withSession = SESSION_ROUTES[url.pathname];
   const action = ACTION_ROUTE.exec(url.pathname);
+  const keyOrg = KEY_ORG_ROUTE.exec(url.pathname);
   const write = plain || withSession || isOrgReadPath(url.pathname) ? null : writeRoutesFor(url.pathname, env);
   const routes =
     plain ??
     withSession ??
     (isOrgReadPath(url.pathname) ? { GET: true } : undefined) ??
     (action ? (action[2] ? { POST: true } : { GET: true }) : undefined) ??
+    (keyOrg ? { GET: true } : undefined) ??
     (write ? Object.fromEntries(write.defs.map((d) => [d.method, true])) : undefined);
   if (!routes) return errorResponse('not_found');
   if (!Object.hasOwn(routes, request.method)) return errorResponse('method_not_allowed', undefined, { allow: Object.keys(routes).join(', ') });
@@ -76,6 +84,7 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
   if (!session) return errorResponse('unauthenticated', 'Sign in again');
   if (withSession) return withSession[request.method]!(request, env, info, session);
   if (action) return action[2] ? startStepUp(env, info, session, action[1]!) : actionStatus(env, session, action[1]!);
+  if (keyOrg) return findOrgRoute(env, info, session, keyOrg[1]!);
   if (write) {
     const [membership] = await memberships(env, session, now, write.orgId);
     if (!membership) return errorResponse('not_found');

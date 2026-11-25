@@ -68,6 +68,10 @@ function demoAction(id: string, now: number): ActionRecord | undefined {
       return { id, kind: 'origin.add', status: 'ok', decoded: originDecoded, expiresAt: now - 60_000, outcome: { status: 'ok', version: 8, changeId: 'gc_Ch4kq81Ns' } };
     case 'act_demo_failed':
       return { id, kind: 'member.remove', status: 'failed', decoded: { userId: 'usr_Sm9Lk2Vb7q', email: 'sam.okafor@examplelabs.example' }, expiresAt: now - 60_000, outcome: { status: 'failed', code: 'sub_mismatch' } };
+    case 'act_demo_key_add':
+      return { id, kind: 'platform.key_add', status: 'pending', decoded: { scopeIds: ['s_lumen_test'], label: 'Production backend', thumbprint: F.platformKeys(now)[0]!.thumbprint, fourEyes: false }, expiresAt, returnTo: `/orgs/${F.ORG_ID}/platform-keys` };
+    case 'act_demo_key_confirm':
+      return { id, kind: 'platform.key_confirm', status: 'pending', decoded: { keyId: 'pkc_Ws4Bn8Rt5Wp1Qa', label: 'Standby key', thumbprint: F.platformKeys(now)[1]!.thumbprint, scopeIds: ['s_lumen_test', 's_rewards_test'], proposedByKind: 'member', fourEyes: true }, expiresAt, returnTo: `/orgs/${F.ORG_ID}/platform-keys` };
     case 'act_demo_expired':
       return { id, kind: 'raw_sign.on', status: 'expired', decoded: { appId: app.id, appName: app.name, settingsVersion: 12 }, expiresAt: now - 30_000 };
     default:
@@ -119,6 +123,13 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
     }
     case 'org.policy':
       return { requiredHd: params.requiredHd ?? null };
+    case 'platform.key_add':
+      return { scopeIds: params.scopeIds, label: params.label, thumbprint: 'Xk2Lq7Vb9Nm4Wc1Rt8Pz5Hd3Gf6Js0Ya2Ue7Ok4Ib9', fourEyes: false };
+    case 'platform.key_accept':
+    case 'platform.key_confirm': {
+      const k = F.platformKeys(now).find((x) => x.id === params.keyId);
+      return k ? { keyId: k.id, label: k.label, thumbprint: k.thumbprint, scopeIds: k.scopes, proposedByKind: k.proposedByKind, fourEyes: k.fourEyes } : {};
+    }
     case 'owner_action':
       return { scopeId: params.scopeId, actionNonce: 6, method: params.method, ...(params.aud ? { aud: params.aud, provider: String(params.aud).startsWith('email:') ? 'email' : 'google', immediate: true } : {}), ...(params.change ? { change: (params.change as { kind?: string }).kind === 'AddEmailClient' ? { kind: 'AddClient', provider: 'email', aud: `email:${String(params.scopeId)}` } : params.change } : {}) };
     default:
@@ -131,8 +142,9 @@ function returnFor(orgId: string, kind: string, params: Record<string, unknown>,
   const page = typeof r === 'object' && r !== null ? (r as { page?: unknown }).page : undefined;
   const appId = typeof params.appId === 'string' ? params.appId : typeof r === 'object' && r !== null && typeof (r as { appId?: unknown }).appId === 'string' ? (r as { appId: string }).appId : undefined;
   const def: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.resume': 'suspend', 'app.settings': 'sessions', owner_action: 'scope' };
-  const p = typeof page === 'string' && ['origins', 'signing', 'suspend', 'sessions', 'email', 'scope', 'members'].includes(page) ? page : (def[kind] ?? 'members');
+  const p = typeof page === 'string' && ['origins', 'signing', 'suspend', 'sessions', 'email', 'scope', 'members', 'platform-keys'].includes(page) ? page : (def[kind] ?? (kind.startsWith('platform.') ? 'platform-keys' : 'members'));
   if (p === 'members') return `/orgs/${orgId}/members`;
+  if (p === 'platform-keys') return `/orgs/${orgId}/platform-keys`;
   if (p === 'scope') return `/orgs/${orgId}/scopes/${String(params.scopeId)}`;
   return appId && F.appDetails(Date.now()).some((x) => x.id === appId) ? `/orgs/${orgId}/apps/${appId}/${p}` : `/orgs/${orgId}`;
 }
@@ -166,7 +178,9 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
     }
     return ok(a);
   }
-  if (path === '/api/cancel' || path === '/api/owner-grants/cancel') return scenario === 'errors' ? fail(409, 'not_pending', 'not_pending') : ok({});
+  if (path === '/api/cancel' || path === '/api/owner-grants/cancel' || path === '/api/platform-keys/cancel' || path === '/api/platform-keys/revoke') return scenario === 'errors' ? fail(409, 'not_pending', 'not_pending') : ok({});
+  const keyOrg = /^\/api\/platform-keys\/([^/]+)\/org$/u.exec(path);
+  if (keyOrg) return F.platformKeys(now).some((k) => k.id === keyOrg[1]) ? ok({ orgId: F.ORG_ID }) : fail(404, 'not_found', 'Not found');
 
   const m = ORG_PATH.exec(path);
   if (!m) return fail(404, 'not_found', 'Not found');
@@ -195,6 +209,13 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   }
   if (rest === '/members') return ok(scenario === 'new-org' ? { members: [F.members(now).members[0]!], invites: [], grants: [] } : F.members(now));
   if (rest === '/audit') return ok(F.audit(now));
+  // D918: the org's platform keys and one key's page.
+  if (rest === '/platform-keys') return ok({ keys: apps.length ? F.platformKeys(now) : [], platform: { enabled: true, frozen }, scopes: apps.filter((a) => a.environment === 'test').map((a) => a.scopeId), people: F.PLATFORM_PEOPLE, role, now });
+  const keyM = /^\/platform-keys\/([^/]+)$/u.exec(rest);
+  if (keyM) {
+    const k = F.platformKeys(now).find((x) => x.id === keyM[1]);
+    return k ? ok({ key: k, people: F.PLATFORM_PEOPLE, role, ...F.platformKeyAbilities(k.id, role, frozen), now }) : fail(404, 'not_found', 'No such platform key in this organisation');
+  }
   // `not-chain-owner`: an owner in the console whose Google account isn't an on-chain owner of the scope (D652).
   if (rest.startsWith('/scopes/')) return ok(F.scope(now, scenario !== 'not-chain-owner'));
   if (rest === '/usage') {

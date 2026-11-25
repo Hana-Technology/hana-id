@@ -74,6 +74,11 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'GET', path: `${o}/governance/pending-upgrades` },
     { method: 'GET', path: `${o}/users` },
     { method: 'GET', path: `${o}/users/u1_AAAAAAAAAAAAAAAAAAAAAA` },
+    // D918: platform keys (an unknown key: the route's role and frozen rules still apply first).
+    { method: 'GET', path: `${o}/platform-keys` },
+    { method: 'GET', path: `${o}/platform-keys/pkc_Unknown1Unknown1` },
+    { method: 'POST', path: `${o}/platform-keys/pkc_Unknown1Unknown1/revoke`, body: {} },
+    { method: 'POST', path: `${o}/platform-keys/pkc_Unknown1Unknown1/cancel`, body: {} },
   ];
 }
 
@@ -142,7 +147,7 @@ describe('the role matrix (spec "Roles and permissions")', () => {
     }
     const open = ROUTE_TABLE.filter((r) => r.frozenOk && r.method === 'POST').map((r) => r.pattern);
     expect(open.sort()).toEqual(
-      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$'].sort(),
+      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/platform-keys\\/(pkc_[1-9A-HJ-NP-Za-km-z]{12,17})\\/revoke$', '^\\/platform-keys\\/(pkc_[1-9A-HJ-NP-Za-km-z]{12,17})\\/cancel$'].sort(),
     );
   });
 

@@ -42,7 +42,11 @@ import type {
   PreviewLabelsInput,
   ProposeLabelsInput,
   RemoveLabelsInput,
+  PlatformKeyView,
+  PlatformOrgView,
 } from '@hana-id/console-core';
+import type { z } from '@hana-id/env/zod';
+import type { listPlatformKeysInput, platformKeyByLinkInput, platformKeyInput, proposePlatformKeyInput, revokePlatformKeyInput, stepUpPlatformKeyInput } from '@hana-id/console-core';
 import type { ConsoleUsersClient } from './users.ts';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -85,6 +89,16 @@ export interface ConsoleRpcClient {
   previewLabels(c: PreviewLabelsInput): Answer<LabelPreviewAnswer>;
   proposeLabels(c: ProposeLabelsInput): Answer<{ version: number; change: LabelChangeView | null; preview: LabelPreview; noChange: boolean }>;
   removeLabels(c: RemoveLabelsInput): Answer<{ version: number }>;
+  // D918: platform keys (the step-up kinds `platform.key_add`, `platform.key_accept`, `platform.key_confirm`; platform-keys.ts).
+  listPlatformKeys(c: z.infer<typeof listPlatformKeysInput>): Answer<{ keys: PlatformKeyView[]; platform: PlatformOrgView }>;
+  getPlatformKey(c: z.infer<typeof platformKeyInput>): Answer<{ key: PlatformKeyView }>;
+  proposePlatformKey(c: z.infer<typeof proposePlatformKeyInput>): Answer<{ key: PlatformKeyView }>;
+  acceptPlatformKey(c: z.infer<typeof stepUpPlatformKeyInput>): Answer<{ key: PlatformKeyView }>;
+  confirmPlatformKey(c: z.infer<typeof stepUpPlatformKeyInput>): Answer<{ key: PlatformKeyView }>;
+  cancelPlatformKey(c: z.infer<typeof platformKeyInput>): Answer<{ key: PlatformKeyView }>;
+  revokePlatformKey(c: z.infer<typeof revokePlatformKeyInput>): Answer<{ key: PlatformKeyView }>;
+  cancelPlatformKeyByLink(c: z.infer<typeof platformKeyByLinkInput>): Answer<{ key: { id: string; label: string; state: 'cancelled' | 'revoked' } }>;
+  revokePlatformKeyByLink(c: z.infer<typeof platformKeyByLinkInput>): Answer<{ key: { id: string; label: string; state: 'cancelled' | 'revoked' } }>;
 }
 
 export interface Env {

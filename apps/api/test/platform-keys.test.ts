@@ -783,6 +783,19 @@ describe('the org’s platform switch and the freeze mirror', () => {
     expect((await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)).toEqual({ orgId: r.app.org, enabled: false, frozen: false });
   });
 
+  it('platformOrgs pages in id order with a cursor until the end', async () => {
+    const all: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 1000; i++) {
+      const page = await ok(adminOn().platformOrgs({ ...system(), limit: 2, ...(cursor ? { cursor } : {}) }));
+      all.push(...page.orgs.map((o) => o.orgId));
+      if (!page.next) break;
+      cursor = page.next;
+    }
+    const direct = (await rows<{ org_id: string }>('SELECT org_id FROM platform_orgs ORDER BY org_id')).map((r) => r.org_id);
+    expect(all).toEqual(direct);
+  });
+
   it('a frozen org keeps its kill switches: revoke and cancel still work', async () => {
     const r = await setup();
     const k = (await ok(memberRegister(r))).key;

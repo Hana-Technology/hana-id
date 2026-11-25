@@ -282,7 +282,7 @@ export const ackPlatformKeyNoticeInput = ctx.extend({ ...keyId, cancelTokenHash:
 export const ackPlatformKeyConfirmNoticeInput = ctx.extend({ ...keyId, revokeTokenHash: b64url32 }).strict();
 export const ackPlatformKeyEndNoticeInput = ctx.extend(keyId).strict();
 export const ackPlatformKeyExpiryNoticeInput = ctx.extend({ ...keyId, stage: z.union([z.literal(30), z.literal(7)]) }).strict();
-export const platformOrgsInput = ctx.extend({ limit: z.number().int().min(1).max(500) }).strict();
+export const platformOrgsInput = ctx.extend({ limit: z.number().int().min(1).max(500), cursor: z.string().regex(/^org_[A-Za-z0-9]{1,64}$/u).optional() }).strict();
 
 // ---- views ----
 

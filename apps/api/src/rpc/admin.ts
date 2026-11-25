@@ -335,7 +335,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   }
 
   platformOrgs(c: unknown) {
-    return runRpc(this.env, 'admin.platformOrgs', platformOrgsInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db }) => platformOrgs(db, input.limit));
+    return runRpc(this.env, 'admin.platformOrgs', platformOrgsInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db }) => platformOrgs(db, input.limit, input.cursor));
   }
 
   platformKeyNotices(c: unknown) {

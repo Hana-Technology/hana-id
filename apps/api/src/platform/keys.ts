@@ -698,10 +698,11 @@ export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: str
   return { changed: true };
 }
 
-/** AdminRpc.platformOrgs: the orgs with a switch row (the admin Worker's freeze reconciliation reads them). */
-export async function platformOrgs(db: HotDb, limit: number): Promise<{ orgs: { orgId: string; enabled: boolean; frozen: boolean }[] }> {
-  const rows = await db.all<{ org_id: string; enabled: number; frozen: number }>(q`SELECT org_id, enabled, frozen FROM platform_orgs ORDER BY org_id LIMIT ${limit}`);
-  return { orgs: rows.map((r) => ({ orgId: r.org_id, enabled: r.enabled === 1, frozen: r.frozen === 1 })) };
+/** AdminRpc.platformOrgs: the orgs with a switch row, in id order from after `cursor`, `next` while more remain (the admin Worker's freeze check pages through them all). */
+export async function platformOrgs(db: HotDb, limit: number, cursor?: string): Promise<{ orgs: { orgId: string; enabled: boolean; frozen: boolean }[]; next?: string }> {
+  const rows = await db.all<{ org_id: string; enabled: number; frozen: number }>(q`SELECT org_id, enabled, frozen FROM platform_orgs WHERE org_id > ${cursor ?? ''} ORDER BY org_id LIMIT ${limit + 1}`);
+  const page = rows.slice(0, limit);
+  return { orgs: page.map((r) => ({ orgId: r.org_id, enabled: r.enabled === 1, frozen: r.frozen === 1 })), ...(rows.length > limit ? { next: page[page.length - 1]!.org_id } : {}) };
 }
 
 // ---- notices ----

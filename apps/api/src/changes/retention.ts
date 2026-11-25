@@ -6,13 +6,14 @@
 //   purgeDirectory  the wallet directory (migration 0011) of every scope whose apps were all deleted 30 days ago or more,
 //                   and the email consents (migration 0014, D411), name shares (0021, D714) and per-app sign-in rows
 //                   (`end_user_apps`, 0030, D919) of every app deleted 30 days ago or more
+//   purgePlatformCalls platform_calls (migration 0032, D927) older than 13 months, in batches
 //   purgeUserEvents user_events (migration 0013: key exports, mainnet demo signatures) older than 24 months, and those
 //                   of a scope left without apps (purgeDirectory's rule)
 //
 // Each clamps the caller's `before` to its own period in SQL (`unixepoch('now', …)`: the same clock as the
 // app_changes trigger), so even a compromised admin Worker can't purge rows D90 still keeps. Nothing here reads or
 // changes what derivation depends on: paths and identities are on chain; these rows are indexes and history.
-import { DELETED_APP_GRACE_MS, type ApiPurgeAuditResult, type DeletedAppsResult, type PurgeDirectoryResult, type PurgeUserEventsResult } from '@hana-id/console-core';
+import { DELETED_APP_GRACE_MS, type ApiPurgeAuditResult, type DeletedAppsResult, type PurgeDirectoryResult, type PurgePlatformCallsResult, type PurgeUserEventsResult } from '@hana-id/console-core';
 import type { HotDb } from './db.ts';
 import { DRIFT_LEDGER_KINDS, SHARED_SCOPE_LEDGER_KIND } from './drift.ts';
 import { type Q, q, raw } from './sql.ts';
@@ -163,6 +164,24 @@ export async function purgeUserEvents(db: HotDb, i: { before: number; deletedBef
     return { expired: expired!.meta.changes ?? 0, deadScopes: scopes!.meta.changes ?? 0 };
   } catch (err) {
     if (noUserEventsTable(err)) return { expired: 0, deadScopes: 0 };
+    throw err;
+  }
+}
+
+const noPlatformCallsTable = (err: unknown): boolean => /no such table: platform_calls\b/u.test(String((err as { message?: unknown } | null)?.message ?? ''));
+
+/**
+ * D927: the platform API's call log older than min(before, 13 months ago by the database's clock), up to `limit` rows, oldest first (the table's
+ * delete trigger refuses younger rows whoever asks). An env without migration 0032 has nothing to purge: zero.
+ */
+export async function purgePlatformCalls(db: HotDb, i: { before: number; limit: number }): Promise<PurgePlatformCallsResult> {
+  // By the database's clock, as the delete trigger judges it (the user events' rule, above).
+  const cutoff = q`MIN(${i.before}, unixepoch('now', '-13 months') * 1000)`;
+  try {
+    const [r] = await db.batch([q`DELETE FROM platform_calls WHERE seq IN (SELECT c.seq FROM platform_calls c WHERE c.at < ${cutoff} ORDER BY c.seq LIMIT ${i.limit})`]);
+    return { platformCalls: r!.meta.changes ?? 0 };
+  } catch (err) {
+    if (noPlatformCallsTable(err)) return { platformCalls: 0 };
     throw err;
   }
 }

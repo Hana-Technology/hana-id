@@ -23065,6 +23065,234 @@ From `next` @ 287ec88e; not merged, docs only. D926 is the number the caller ass
   two apps may list the same origin (no uniqueness across apps in the schema; two test apps both listing the widget's
   origin worked in D923's test).
 - Address impact: **none** (docs only; no contract, key, path, derivation or origin changed).
+
+## The platform API's request authentication and admission (branch `feat/platform-auth`), 2026-11-25
+
+From `next` @ 2d309362, `origin/next` @ 75c5de42 merged in; not merged, not deployed, migration applied nowhere. Piece
+P3 of `docs/partner-platform-spec.md` (A3 "The request", A5, A7, A8; findings M2, M3, M4, L1, L2, L5, L8). D927 is the
+number the caller assigned; API migration 0032 (0031 is piece P7's).
+
+### D927. A network's backend signs each request with its platform key (plain ES256 over the env, the method, the one parsed path, the body, the time and a single-use nonce); one identical 401 for every authentication failure; a valid key behind a failing IP still gets in; the platform's breaker is its own; the key can read and stop itself, nothing more yet
+- Date 2026-11-25 · Status: **built** (the design is the spec's A3 and A5, the Tech Lead's D913 question 1 and D917);
+  the points marked "to confirm (the Tech Lead)" below were decided while building · Relates to D913, D914, D916, D917,
+  D918, D925, D926 · Built: `apps/api/src/platform/request.ts`, `routes.ts`, migration 0032, console-core
+  `platform-request.ts` and `scripts/gen-platform-request-vectors.mjs`, the namespaced admission in
+  `apps/api/src/rate-limiter.ts`, `AdminRpc.purgePlatformCalls` and the admin's retention step
+- **What it does.** `{API}/v1/platform/…` takes a request from a network's backend only (no CORS; an `Origin` is
+  refused), signed with a platform key in force here (D918). The canonical message: ten lines joined by `\n`
+  (`journear-platform-v1`, `ENV_NAME`, `SIGNER_ACCOUNT`, the method, the path and query as parsed once, the key id, the
+  timestamp, the nonce, the `Idempotency-Key` or an empty line, the body's sha256 in lowercase hex); headers
+  `Journear-Key-Id`, `Journear-Timestamp`, `Journear-Nonce`, `Journear-Signature`, `Idempotency-Key`; the signature
+  plain ES256, raw `r ‖ s`, both S values, DER refused (M4). The checks in A3's order: (1) the per-IP window, (2) no
+  `Origin`, (3) the method, path, query, route, header size, body rules and header forms, (4) ±60 s, (5) the key in
+  force and the signature, (6) the org's switch and freeze, (7) the nonce, (8) the key's and the org's limits; then the
+  body is parsed, the route runs within `PLATFORM_DB_LIMITS` (3 reads, 2 batches, 12 statements) and the call is
+  recorded. Two routes: `GET /v1/platform/credential` (the key's own state) and `POST /v1/platform/credential/revoke`
+  (it stops at once and cancels what it left waiting, with the `platform` actor; allowed while switched off or frozen,
+  L5). No route registers, accepts, confirms or brings back a key, confirms a web address, or reaches ConsoleRpc or
+  AdminRpc. The reference signer (`signPlatformRequest`, with `derToRawSignature`) is in console-core for P8's guide.
+- **Tests.** `apps/api/test/platform-request.test.ts` (the independent vectors through the real handler: GET and high
+  S verify, DER and both other-env vectors refused, a signed revoke; every refusal in order, each check answering
+  before the next; the clock ±60 s both ways; timestamps, nonces, ids and signatures of the wrong shape or size; `//`,
+  `%2F`, `%2E`, a trailing slash, bad queries, a query on a write, and dot segments as the parser resolves them; PUT,
+  DELETE, PATCH, HEAD, OPTIONS; non-JSON, encoded, oversized and streamed bodies and oversized headers refused before
+  any import or verification; another `ENV_NAME` or `SIGNER_ACCOUNT`, a key pair registered elsewhere; a body, path,
+  query, Idempotency-Key, timestamp or nonce changed after signing; malleability (both S, s = n, s = 0, zeros, swapped,
+  DER, padding, the standard alphabet); the identical 401 byte for byte across eight causes with the same crypto work;
+  the auth-failure event; the IP window with admitted requests, failures, the overflow and its residual; refusals after
+  a valid signature counted; the IP prefix; the self-revoke with the switch off (ledger rows, cancelled origin) and while
+  frozen; no switch row; a key expiring, stopped, frozen or switched off between two requests; two keys of one org; the
+  credential view and the call log with `last_used_at` once an hour; the quota event; each route within its cost, the
+  revoke's failed batch included; the org's bucket; the platform's breaker against the console's both ways and its
+  refund; the nonce object pinned, held to timestamp + 120 s, its size bound; each limiter failing, and every limiter
+  failing for the self-revoke; the reach walk over every route and a path named after every ConsoleRpc and AdminRpc
+  method, every RPC method spied), `migration-0032.test.ts` (every row and object of before kept, only its own added, no
+  trigger reading another table, each CHECK and trigger against bare writes, the purge's 13 months and limit, an env
+  without it), console-core `platform-request.test.ts` (the committed vectors current with the generator, each case's
+  message, hash, raw and DER forms, the signer, the DER parser's refusals, every rule), the admin's
+  `test-ops/retention.test.ts` and `budget.test.ts` (the new step, its cutoff and its call), `platform-keys.test.ts`
+  (an unsigned request authenticates nothing).
+- **Decided while building, to confirm (the Tech Lead):**
+  1. **An overflow window for M2** (superseded after PR 156's review, F2, below: the overflow is per key now). A3's check 1 as written (a hit, refused when full) would refuse a valid key whose
+     IP someone else filled with failures, which M2 says must not happen. Built: when the IP's window is full the
+     request is still checked, under one window shared by every IP (`platform:ip-overflow`, 120 a minute, pinned);
+     admitted, it gives that slot back. **Residual:** a flood from many IPs that also fills the overflow refuses a
+     valid key behind a full IP for up to a minute (logged `ip_overflow_full`); keys behind other IPs are unaffected.
+  2. **The IP window counts every request not admitted**, given back only once the request passes check 8, not as soon
+     as the signature verifies (A3): a valid signature refused at 6, 7 or 8 (switch off, frozen, replay, over quota)
+     uses it too, so a replayer of a captured request or a key over its quota can't make unbounded D1 reads.
+  3. **`platform_calls` holds the calls admitted** (checks 1 to 8 passed), whatever the route then answered; a valid
+     signature refused at 6, 7 or 8 is counted and logged, not stored (A7/L7 said every call past the signature, which
+     would let a replayer or a key over its quota write to the hot DB without limit).
+  4. **A frozen org** answers `403 forbidden` to every route but the self-revoke (check 6 names only the switch; A4.3
+     keeps only the kill switches for a frozen org). The freeze is read from the API's mirror: it lags a console freeze
+     only when the staff route's mirror writes fail, then up to the next hourly check (D918's I1, error-logged).
+  5. **The self-revoke** (narrowed after PR 156's review, F1 and F4, below) skips the key's and the org's limits (it can succeed once per key), goes ahead when any
+     limiter errors, the per-IP one included (logged at error level; a replay of it could only stop the same key), and
+     takes an `Idempotency-Key` without needing one (a kill switch kept simple; with one, the ledger request id is A9's
+     `pf_…`, without one a random `pf_…`). Every other route fails closed (`503 rate_limiter_unavailable`).
+  6. **The nonce object's size bound** (a valid self-revoke outside it since PR 156's review, F1): at most 300 fresh nonces a minute per key (`429 rate_limited`, `platform:nonce`),
+     held until timestamp + 120 s; the nonce comes before the quota (A3's order), so the bound is on the object itself.
+  7. **The numbers** (changed after PR 156's review, F3, below): the org's bucket 5 statements a second, burst 40, 10 kept for kill switches, under the console's
+     global bucket (shared, as A5 says); the per-key windows and the breaker as A5 (60 a minute, 2 000 a UTC day; 10 per
+     org, 30 across orgs an hour); `platform:key:<keyId>` and the overflow pinned like the nonce object; the per-IP one
+     not. Route costs: 3 for the credential, 10 for the revoke; `HotDb` gained a whole-call statement ceiling.
+  8. **Shapes**: every header together at most 16 KiB; `content-type` `application/json` or `application/json;
+     charset=utf-8`, without case; a POST's body a JSON object (`{}` for none; anything else `400` after admission, and
+     recorded); an unknown route `404` and a known route's other method `405` with `allow`, both before authentication
+     (the routes are public); `www-authenticate: Journear-Signature` on the 401.
+  9. **Events**: `platform_auth_failures` once an hour per key (the 10th failed signature in a minute for a known id;
+     counted after the answer, so a known and an unknown id take the same time); `platform_quota` for the first refusal
+     of each limit in a clock hour.
+  10. **Records**: `platform_calls.request_id` is the answer's `requestId` (`x-request-id`), not the ledger's;
+      `ip_prefix` an IPv4 /24 or IPv6 /48; the table append-only (no update, no replace, no delete before 13 months) and
+      purged by the monthly retention job (`AdminRpc.purgePlatformCalls`, step `platform_calls`). A read whose call
+      can't be recorded answers 500; a committed write is answered (its ledger row records it).
+  11. **The credential view** adds the key's `thumbprint` to A8's fields.
+  12. **The vectors carry no private key** (the secret scan flags one; nothing needs it): the generator derives it from
+      a fixed string. The test env's names are the vectors' (`sandbox-test`, `signer.test.near`).
+- **Found in the spec** (its design not changed beyond the points above): (a) **dot segments can't be refused as
+  written**: the runtime parses `request.url` (WHATWG URL) before the Worker sees it, resolving `.`, `..` and `%2E`; so
+  the path rule refuses what survives (`//`, `%2F`, a trailing slash), a request signed over a dot path fails its
+  signature (the message is built from the one parse), and one escaping `/v1/platform` is another route's. Likewise
+  HTTP trims spaces around a header value, so a padded timestamp arrives without them. (b) M2 against check 1's
+  hit-first (point 1). (c) L7's "every call past the signature" against an unbounded write (point 3). (d) The unhit at
+  verification against valid-signature floods (point 2). (e) The nonce object's size has no bound before check 8
+  (point 6). (f) Check 6 is silent on a frozen org (point 4). (g) A5 gives no numbers for the org's bucket (point 7).
+  (h) A9's "every write needs an Idempotency-Key" against the self-revoke as a kill switch (point 5).
+- **Left for later pieces**: the app operations and the reach filter (P4); the console's activity screen and the
+  playbooks for `platform_auth_failures` and `platform_quota` (P5); the network's guide around the reference signer and
+  vectors (P8). The platform switch stays off for every org until P4 and P10 are deployed (the spec's gates).
+- **After PR 156's review (2026-11-25)**, each of its findings F1 to F11 fixed, with tests (`platform-request.test.ts`
+  "after PR 156's review", `migration-0032.test.ts`, console-core `platform-keys.test.ts`); all **to confirm (the Tech
+  Lead)**:
+  1. **F1, the self-revoke's limits.** Its body is parsed and checked right after check 6. Only a **valid** self-revoke
+     (a JSON object with at most a valid `reason`) reserves its nonce outside the 300-a-minute cap and skips check 8
+     (it can succeed once per key); if it then doesn't stop the key (a concurrent revoke landed first, an error) it is
+     charged to the key's windows after all. An invalid one is an ordinary call: check 8's key windows hold it (60 a
+     minute), and if admitted it answers 400 and is recorded like any admitted call. So a key's holder can no longer
+     write unbounded `platform_calls` rows, and a thief filling the nonce cap can't hold back the network's own stop
+     (`request.ts` `validRevoke`, `routes.ts` `selfRevoke`/`validate`, `rate-limiter.ts` `reserveNonce` with an empty cap).
+  2. **F2, the overflow is per key, and only for announced keys.** Past a full per-IP window, a request goes on only
+     if its key id is on the isolate's list of keys announced here and not stopped (`platform/known-keys.ts`: read from
+     D1 at most every 30 s per isolate; a random id never reaches D1 or a key's object), under that key's own overflow
+     window (`platform:keyfail:<keyId>`, pinned, 20 a minute, given back on admission); past that, a self-revoke under
+     its pre-authentication window (10 a minute), so its signature is checked before any refusal. The global overflow
+     window is gone. **Verified from Cloudflare's docs** (its HTTP headers reference): every cross-zone Worker
+     subrequest arrives with `CF-Connecting-IP` `2a06:98c0:3600::103`, so every Worker, attacker or network backend,
+     is one IP subject here. **The true residual:** someone who knows a key's id and fails from the same IP subject (a
+     shared cloud NAT, or any Worker) can fill that key's overflow and pre-authentication windows and lock it out
+     from that subject, its self-revoke included, for up to a minute at a time; it works from any other IP, and owners
+     and staff stop it in the portals. Stated in the spec's A2 and A3, `security.md`, `api.md` and `operations.md`.
+     **Also:** a newly announced key authenticates up to 30 s after its announcement (the list's age); and the timing
+     now says whether a key id is announced here (one D1 read or none), acceptable as ids are 96 random bits.
+  3. **F3, the platform's own global bucket.** `RateLimiter.platformAdmit` replaces the namespaced `consoleAdmit`
+     (which is back as it was): the org's bucket (8 statements a second, burst 40, 10 kept: both keys at their full
+     rate), the platform's global bucket (`platform:bucket`, 10 a second, burst 60, 15 kept for kill switches, at most 8
+     of them an org a minute), and the console's `console:bucket` charged too but never below 30 of its 60 tokens by an
+     ordinary platform call and never below 20 (the console's kill-switch reserve) by a platform kill switch. So the
+     platform's kill switches spend only the platform's reserve, and one org can no longer hold two shares of the
+     console's 20-token reserve (the console's share keys stay the console's). Test: six orgs flooding leave a console
+     call of another org admitted. The route costs are now 4 and 11 (the announced list's read, once every 30 s, is
+     counted in).
+  4. **F4, one Idempotency-Key for both keys' self-revokes.** The self-revoke's request id is `pf_` +
+     base64url(sha256(org ‖ 0x00 ‖ key id ‖ 0x00 ‖ Idempotency-Key))[0..32]: each key's stop is its own operation.
+     **The rule for P4's writes:** A9's org-wide id stays for app writes (a retry with the org's other key is
+     `conflict`, and the ledger row means it applied), kill switches included; only the self-revoke names its key.
+  5. **F5, unauthenticated work.** Unknown ids never reach D1 (point 2); a known key's failures go to its failure
+     object, not the one its admitted calls use, and stop calling it for the rest of the minute once its alert fired
+     (an isolate map of at most 1 000 entries); the per-IP window's IPv6 subject is now a /48 (chosen: a /64 per
+     subject let one /48 holder spread 65 536 windows; the collateral of a coarser subject, other tenants of a /48, no
+     longer locks out a valid key, since its own overflow admits it). `operations.md` now has the Cloudflare
+     rate-limiting rule the Tech Lead configures before the platform is on anywhere (Free plan, checked in Cloudflare's
+     docs: one rule per zone, counting by IP only, a 10 s period, a 10 s timeout; proposed 100 requests per 10 s per IP,
+     Block); a gate in the spec.
+  6. **F6, `platform_calls_no_replace`.** `CHECK (seq > 0)` on the table and `WHEN NEW.seq > 0 AND EXISTS (…)` on the
+     trigger (an automatic rowid reads as −1 in a BEFORE INSERT trigger, so one row at −1 would block every insert);
+     0032 isn't applied anywhere, so its file is changed. **Open point:** 0027's `app_changes_no_replace` has the same
+     pattern (`… OR EXISTS (SELECT 1 FROM app_changes WHERE seq = NEW.seq)`): one ledger row at `seq = -1` would make
+     every automatic ledger insert abort, so every write of the API would fail. **Exploitable** only by a bare D1 write
+     (the Cloudflare account, the CLI): no code path names a `seq`; a row with an old `at` can be deleted to recover, one
+     with a recent `at` only by a migration (the 60-month delete trigger). The fix, for a later migration: drop and
+     create the trigger with `WHEN EXISTS (… request_id …) OR (NEW.seq > 0 AND EXISTS (… seq = NEW.seq))`, keeping
+     `ledger-check`'s trigger list current (0027 is applied in no deployed env yet, but its file is reviewed and
+     rehearsed, so it isn't changed here). `migration-0032.test.ts` shows the hazard on 0027 and its absence on 0032.
+  7. **F7, the dummy key.** A point hashed to the curve (x = sha256("journear-platform-v1 dummy verification key 4") mod
+     p, even y; the test recomputes it), not the generator; a key's own point is used only when it is in force, exactly
+     65 bytes and imports. Test: a signature made with private key 1 never authenticates for an unknown, an in-force or
+     a waiting key id.
+  8. **F8, published private keys.** `KNOWN_PRIVATE_PLATFORM_KEYS` (console-core: the generator, its double, the test
+     vectors' key, each derived in a test) is refused at registration in every env but a `local*` testnet env.
+  9. **F9, the docs**: the residual (point 2); "can succeed once per key" covering the failure path (point 1); any answer
+     after check 7, a 429 at check 8 included, has used the nonce, so a retry is signed again; "a 401 after you sent a
+     revoke means it stopped: check the key in the partner portal"; F4's rule.
+  10. **F10, tests**: a static import allowlist of `routes.ts` (a route importing a confirm, accept, approve, register or
+      propose function, a dynamic import or an RPC module fails it); the real router (an OPTIONS with an Origin 403 with
+      no CORS header, a signed replay 409); F1 to F4's tests.
+  11. **F11**: when the platform admission throws or the call log can't be written, the key's window charge and the
+      last-used marker are given back.
+  - Not changed: the reviewer's other checks (the signature, replay, isolation, the identical 401 body and headers, a
+    signer written from `api.md` alone, `derToRawSignature` against 3 000 node signatures) found them sound.
+- **After the second review of PR 156 (2026-11-25)**: F4 to F8, F10 and F11 confirmed closed; N1 to N6 fixed, with tests
+  (`platform-request.test.ts` "scenario B", "B2", "the pre-auth check's CPU bound", "N4", "N2", "the second review"),
+  N7 recorded; all **to confirm (the Tech Lead)**:
+  1. **N1, the self-revoke past full windows.** F2's pre-auth window was charged before any signature work and was per
+     key only, so forged revokes from anywhere could fill it. Now the announced-key list (`known-keys.ts`) carries each
+     key's public point and dates; past a full IP window and the key's overflow, a self-revoke's signature is checked
+     against the listed point (CPU only, no D1 read): a valid one goes on to the real check 5 (which still decides: a
+     key stopped since the list was read fails there, tested), a failed one is counted on
+     `platform:keyfail:<keyId>:<subject>` (60 a minute), and past 60 failures revokes from that key and subject are
+     refused unchecked (the CPU bound). The overflow window is per key **and IP subject**, so one address can't spend
+     another's. Scenario B (30 junk, 20 bad signatures naming the key, 10 forged revokes, then the holder's valid revoke
+     from that IP) and B2 (the attacker on another IP, the victim's IP full of junk) both stop the key.
+     **The residuals, truthfully:** someone who knows a key's id and sends from the **same IP subject** can hold that
+     key's ordinary calls out of that subject a minute at a time (20 requests), and its self-revoke with over 60 forged
+     revokes a minute; and (N5) on a shared egress address, any tenant can trip the Cloudflare edge rule (100 per 10 s
+     per IP, Block 10 s) for all of them, self-revokes included.
+  2. **N2, a console flood starving platform kill switches.** A platform kill switch is never refused by the console's
+     bucket now: charged, clamped at 0 (`rate-limiter.ts` `platformAdmit`); bounded by the org's bucket, the platform's
+     own bucket and reserve with each org's share, and the breaker (the "never below 20" floor is gone). Tested with a
+     sustained console flood from four orgs: ten platform kill switches of cost 11, ten admitted. `security.md`'s
+     sentence on what gates them corrected.
+  3. **N3, valid self-revokes while the revocation can't land.** A per-key window that only valid self-revokes count
+     (`revoke:minute`, 10 a minute on the key's object), checked before check 8 is skipped (a limiter error lets the stop
+     go ahead); a thief fills it only by sending valid revokes, which stop the key. Tested with the revocation's batch
+     failing: 10 recorded 500s, then 429, the key still active, a valid revoke the next minute stops it.
+  4. **N4, the status code as an oracle.** Past a full IP window an id not on the list now goes on to the one 401 (same
+     body, headers and work: a verification against the dummy point, no D1 read), not a 429. **What stays observable:**
+     the D1 read's timing, and a listed id's own overflow filling (a 429 after 20 requests naming it from one subject)
+     where an unlisted one keeps getting the 401: someone who already holds a key id can learn whether it is still
+     announced. Ids are 96 random bits, so nobody else learns anything. Stated in `security.md` and `api.md`.
+  5. **N5, the edge rule against Workers.** `operations.md`, `api.md`'s Platform API section and the spec's "What the
+     network builds" (a note for P8's guide): a production backend needs a dedicated egress IP; what we observe (the
+     edge rule's blocks, `platform_auth_failures`) and can't prevent (one tenant of a shared address tripping the block
+     for the others; telling them apart).
+  6. **N6.** The routes' import allowlist now checks every form (named, default, namespace, `export … from`,
+     `export *`, a bare `import '…'`, a dynamic import, `require`), with a test of each form; `platformSettle` refunds
+     only when it finds and removes that admission's reserve-share entry, so a second settle of the same `at` refunds
+     nothing (tested); the published-key rule and the platform minimum share one predicate (`guarded/config.ts`
+     `isLocalTestEnv`).
+  - **After an automated review of these fixes (2026-11-25)**, two more, with tests:
+    - **The unlisted id's work.** N4's first fix let an id not on the list, past a full IP window, go on to the body
+      read and a dummy verification with no bound. Now it gets the uniform 401 at once (the same bytes as any
+      authentication failure) with no body read, no D1 read and no verification: tested with 40 requests (zero body
+      pulls, zero D1 statements, zero imports and verifications, the bytes equal to a normal 401's). Faster than a real
+      verification, a timing difference only past a full IP window, revealing only "not on the list".
+    - **The console's kill-switch reserve.** N2's first fix charged a platform kill switch against `console:bucket`
+      clamped at 0, so a burst of them could eat the console's own reserve. Now a platform kill switch neither reads nor
+      charges `console:bucket`: a console flood can't refuse it, and it never spends the console's reserve. Tested both
+      ways (a sustained console flood: platform kill switches admitted; the console's bucket at its reserve and a burst
+      of platform kill switches at their maximum: a console kill switch still takes its share of the reserve). Worst
+      case on the hot database (`security.md`): the platform's bucket bounds all its calls, so its kill switches add at
+      most 660 statements in a first minute and 600 a minute after, and, held by the breaker in P4, 360 an hour.
+  7. **N7, recorded:** the announced-key list costs one D1 read per isolate every 30 s, which any request (even one
+     refused at check 1) can be the one to trigger, and is charged to no bucket; a newly announced key is unusable for
+     every request for up to 30 s; waiting keys (before their date) and expired keys not yet marked by the hourly job
+     are on the list (check 5 refuses them). The "Last verified" stamps of this branch said 2026-11-26: corrected to
+     2026-11-25, the commits' date.
+- Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation: request checks,
+  limiter state and an off-chain call log.
+
 - Note 2026-11-26 (D928): three follow-ups **answered by the Tech Lead and done**: the personal commit email on the
   fork's two commits, "it's fine" (left as is); the fork's workflows, "switch them off" (GitHub Actions disabled on
   `Hana-Technology/sodax-sdks`; none had run); pushing the example, "yes" (`sodax-bundle-example` pushed to the private

@@ -4,7 +4,7 @@
 // idempotence, its failure email, and that it stays within the 15-minute run's call budget (D280).
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { TestDb } from '../../api/test-usage/db.ts';
-import { RETENTION_BATCH, userEventsCutoff } from '@hana-id/console-core';
+import { RETENTION_BATCH, platformCallsCutoff, userEventsCutoff } from '@hana-id/console-core';
 import type { Env } from '../src/env.ts';
 import { outbound } from '../src/email/sender.ts';
 import { type LedgerStore, ledgerSource } from '../src/ledger.ts';
@@ -48,7 +48,7 @@ const env = { ENV_NAME: 'sandbox-test', CONSOLE_ORIGIN: 'https://console.test', 
 type Ans = { ok: false; code: string } | ({ ok: true } & Record<string, unknown>);
 
 /** AdminRpc and StaffRpc as the job calls them: answers set per test, every call recorded with its input. */
-function fakeRpcs(o: { deleted?: string[][]; full?: boolean; fail?: Partial<Record<'deletedApps' | 'purgeDirectory' | 'userEvents' | 'apiAudit' | 'consoleAudit', string>> } = {}) {
+function fakeRpcs(o: { deleted?: string[][]; full?: boolean; fail?: Partial<Record<'deletedApps' | 'purgeDirectory' | 'userEvents' | 'platformCalls' | 'apiAudit' | 'consoleAudit', string>> } = {}) {
   const calls: { method: string; input: Record<string, unknown> }[] = [];
   const full = o.full ?? false;
   const pages = [...(o.deleted ?? [])];
@@ -69,6 +69,7 @@ function fakeRpcs(o: { deleted?: string[][]; full?: boolean; fail?: Partial<Reco
         }),
       purgeDirectory: (c: unknown) => answer('purgeDirectory', c as Record<string, unknown>, 'purgeDirectory', () => ({ scopes: 1, users: n(2), wallets: n(3), identities: n(2) })),
       purgeUserEvents: (c: unknown) => answer('purgeUserEvents', c as Record<string, unknown>, 'userEvents', () => ({ expired: n(4), deadScopes: n(1) })),
+      purgePlatformCalls: (c: unknown) => answer('purgePlatformCalls', c as Record<string, unknown>, 'platformCalls', () => ({ platformCalls: n(6) })),
       // The 15-minute run's link-rate read (D448): not the retention job's, so not in `calls`.
       linkStats: async () => ({ ok: true, rows: [] }) as Ans as never,
       purgeAudit: (c: unknown) => answer('apiPurgeAudit', c as Record<string, unknown>, 'apiAudit', () => ({ appChanges: n(5), guardedChanges: n(1) })),
@@ -96,7 +97,7 @@ describe('when the monthly job runs', () => {
     expect(first).toMatchObject({ ran: true, status: 'ok', error: null });
     const [run] = await runsOf('2031-01');
     expect(run).toMatchObject({ status: 'ok', startedAt: t + 5 * MIN, finishedAt: t + 5 * MIN, error: null, alertedAt: null });
-    expect(run!.rows).toMatchObject({ directoryUsers: 2, directoryWallets: 3, userEventsExpired: 4, userEventsDeadScopes: 1, appChangesDeleted: 5, guardedChangesDeleted: 1, auditLogDeleted: 7, ownerGrantsDeleted: 0, calls: 5 });
+    expect(run!.rows).toMatchObject({ directoryUsers: 2, directoryWallets: 3, userEventsExpired: 4, userEventsDeadScopes: 1, platformCallsDeleted: 6, appChangesDeleted: 5, guardedChangesDeleted: 1, auditLogDeleted: 7, ownerGrantsDeleted: 0, calls: 6 });
     expect(run!.rows.due).toEqual({ statements: 0, rates: 0, rateOverrides: 0, oldestStatement: null });
 
     // Idempotent: every later run of the month does nothing and calls nothing.
@@ -120,6 +121,9 @@ describe('when the monthly job runs', () => {
     expect(byMethod.purgeDirectory).toMatchObject({ before: t - 30 * DAY });
     expect(byMethod.purgeUserEvents).toMatchObject({ before: Date.UTC(2029, 2, 1, 1, 1), deletedBefore: t - 30 * DAY, limit: RETENTION_BATCH, actor: { kind: 'system' } });
     expect(byMethod.purgeUserEvents!.before).toBe(userEventsCutoff(t));
+    // D927: the platform API's call log, 13 months.
+    expect(byMethod.purgePlatformCalls).toMatchObject({ before: Date.UTC(2030, 1, 1, 1, 1), limit: RETENTION_BATCH, actor: { kind: 'system' } });
+    expect(byMethod.purgePlatformCalls!.before).toBe(platformCallsCutoff(t));
   });
 
   it('purges the ledger’s app_users of the deleted apps it is given and keeps the cursor for next month', async () => {
@@ -211,7 +215,7 @@ describe('a failure (spec "Email": direct retention_failed)', () => {
     expect(out).toMatchObject({ ran: true, status: 'failed', error: 'directory: internal' });
     // The other steps did their part.
     expect(out.rows).toMatchObject({ appChangesDeleted: 5, auditLogDeleted: 7 });
-    expect(failing.calls.map((c) => c.method)).toEqual(['deletedApps', 'purgeDirectory', 'purgeUserEvents', 'apiPurgeAudit', 'consolePurgeAudit']);
+    expect(failing.calls.map((c) => c.method)).toEqual(['deletedApps', 'purgeDirectory', 'purgeUserEvents', 'purgePlatformCalls', 'apiPurgeAudit', 'consolePurgeAudit']);
     expect(out.rows).toMatchObject({ userEventsExpired: 4 });
 
     const email = new FakeEmail();

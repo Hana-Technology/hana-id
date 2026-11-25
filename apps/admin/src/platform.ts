@@ -1,6 +1,6 @@
 // The freeze mirror's hourly check (D918): the console holds an org's freeze (`orgs.status`), and the API holds its
 // mirror (`platform_orgs.frozen`), which cancels the org's waiting platform keys and the platform's waiting web
-// addresses, and which piece P3's request check will read. The staff route mirrors at once (routes.ts); this check
+// addresses, and which the platform API's request check reads (D927). The staff route mirrors at once (routes.ts); this check
 // repeats any mirror that didn't land.
 //
 // Every fix reads the console again just before its write (freeze and unfreeze alike); an unfreeze is a

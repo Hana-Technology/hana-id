@@ -261,6 +261,8 @@ describe('migration 0030_app_user_ids', () => {
 
   // Last: it applies every file again on the same database.
   it('applying the migrations again changes nothing', async () => {
+    // Up to the last migration first (a later one may add its own triggers: 0032's, D927), then again.
+    await applyD1Migrations(db, env.TEST_MIGRATIONS);
     const apps = (await db.prepare('SELECT * FROM apps ORDER BY id').all()).results;
     const schema = await everyTriggerAndView();
     await applyD1Migrations(db, env.TEST_MIGRATIONS);

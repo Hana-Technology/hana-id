@@ -622,10 +622,11 @@ describe('an owner’s confirmation', () => {
     expect('acceptPlatformKey' in AdminRpc.prototype).toBe(false);
   });
 
-  it('no /v1/platform route exists yet (P3 builds request authentication)', async () => {
-    for (const [method, path] of [['GET', '/v1/platform/credential'], ['POST', '/v1/platform/credential/revoke'], ['POST', '/v1/platform/keys/x/confirm']] as const) {
-      expect((await call(path, { method, ...(method === 'POST' ? { body: {} } : {}) })).status, path).toBe(404);
+  it('an unsigned request to the platform API (D927, piece P3) authenticates nothing; no route confirms', async () => {
+    for (const [method, path] of [['GET', '/v1/platform/credential'], ['POST', '/v1/platform/credential/revoke']] as const) {
+      expect((await call(path, { method, ...(method === 'POST' ? { body: {} } : {}) })).status, path).toBe(401);
     }
+    expect((await call('/v1/platform/keys/x/confirm', { method: 'POST', body: {} })).status).toBe(404);
   });
 });
 
@@ -693,7 +694,7 @@ describe('revocation', () => {
     expect((await rows<{ status: string; cancelled_by: string }>('SELECT status, cancelled_by FROM guarded_changes WHERE id = ?1', p2))[0]).toEqual({ status: 'cancelled', cancelled_by: 'link' });
     expect(await no(byLink(revoke.token))).toMatchObject({ code: 'conflict' });
 
-    // The key itself (piece P3's self-revoke route will call this writer), only its own id, also with the switch off.
+    // The key itself (the platform API's self-revoke calls this writer, D927), only its own id, also with the switch off.
     const r3 = { ...r, publicKey: await newPublicKey() };
     const k3 = await inForce(r3);
     const p3 = await platformProposal(r.app, k3.id, 'https://k.partner.example');

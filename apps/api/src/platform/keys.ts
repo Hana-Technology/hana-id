@@ -1,5 +1,5 @@
 // Platform keys (D918; docs/partner-platform-spec.md A3, A7): a network's backend's request-signing keys, their life
-// and their records. Nothing authenticates with a key yet (piece P3); this is the credential's life cycle:
+// and their records (a key in force authenticates the platform API: platform/request.ts, D927). The life cycle:
 //
 // - registration by an on-chain owner of each scope it names (ConsoleRpc.proposePlatformKey: the step-up of kind
 //   `platform.key_add`, its nonce over the signer, env, org, scopes, thumbprint and label, `confirmStepUpScopes` once
@@ -36,6 +36,7 @@ import {
   PLATFORM_KEY_LIFETIME_MS,
   PLATFORM_KEY_REVOKE_LINK_MS,
   PLATFORM_KEY_WORDS,
+  KNOWN_PRIVATE_PLATFORM_KEYS,
   PLATFORM_KEYS_PER_ORG,
   bytesEqual,
   fromB64url,
@@ -50,7 +51,7 @@ import {
   sortedScopes,
 } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
-import { fourEyesNetwork, platformMinDelayMs } from '../guarded/config.ts';
+import { fourEyesNetwork, isLocalTestEnv, platformMinDelayMs } from '../guarded/config.ts';
 import { type Writer, actorId, commitOn, committed, expectReplay, refuse, refuseReplay, replayRow, runWrite } from '../changes/cas.ts';
 import type { HotDb } from '../changes/db.ts';
 import { requireChangeConfig } from '../changes/origins.ts';
@@ -297,6 +298,10 @@ export async function registerPlatformKey(db: HotDb, env: Env, w: Writer, i: { o
   const parsed = await parsePlatformPublicKey(i.publicKey);
   if (!parsed.ok) return refuse('bad_request', parsed.problem);
   const key = parsed.key;
+  // A key whose private half is published (a test key) is refused outside a `local*` test env (F8).
+  if (KNOWN_PRIVATE_PLATFORM_KEYS[key.thumbprint] && !isLocalTestEnv(env)) {
+    return refuse('bad_request', 'This public key’s private key is published (it is a test key). Make a new key pair and paste its public key.');
+  }
   // WebCrypto's own import as a second check of the point (it refuses one off the curve).
   try {
     await crypto.subtle.importKey('jwk', { ...key.jwk, ext: true }, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']);
@@ -601,6 +606,15 @@ const revocable = (k: PlatformKeyRow): boolean => k.status === 'awaiting_accepta
  * (`platform`, its own id only: piece P3's `POST /v1/platform/credential/revoke`, allowed while the switch is off).
  */
 export async function revokePlatformKey(db: HotDb, w: Writer, i: { orgId: string; keyId: string; reason?: string | undefined }) {
+  const { kind } = await revokePlatformKeyNow(db, w, i);
+  return { key: await getPlatformKey(db, i.orgId, i.keyId, w.now, kind === 'hana') };
+}
+
+/**
+ * The revocation itself (one plan read and one batch), with no read back: `revokePlatformKey` reads the key back for
+ * the screens; the key's own `POST /v1/platform/credential/revoke` (D927) answers only when, within its hot-DB budget.
+ */
+export async function revokePlatformKeyNow(db: HotDb, w: Writer, i: { orgId: string; keyId: string; reason?: string | undefined }): Promise<{ kind: Revoker; revokedAt: number }> {
   expectReplay(w, ['platform.key_revoked']);
   const kind = w.actor.kind as Actor['kind'] | 'platform';
   if (kind !== 'member' && kind !== 'hana' && kind !== 'platform') return refuse('forbidden', 'Only an owner, Journear staff or the key itself stop a platform key');
@@ -610,7 +624,7 @@ export async function revokePlatformKey(db: HotDb, w: Writer, i: { orgId: string
   if (!revocable(key)) refuse('conflict', `This key is already ${key.status}`);
   const reason = i.reason?.trim() ? i.reason.trim() : null;
   await runWrite(db, w, revokeStatements(w, key, kind, reason, raw('1')));
-  return { key: await getPlatformKey(db, i.orgId, key.id, w.now, kind === 'hana') };
+  return { kind, revokedAt: w.now };
 }
 
 /**

@@ -1,0 +1,201 @@
+{
+  "format": "journear-platform-v1",
+  "note": "Test vectors for the platform API request signature (docs/api.md \"Platform API\"). The key is a test key whose private half is derived in the generator from a fixed string: never use it.",
+  "env": {
+    "envName": "sandbox-test",
+    "signerAccount": "signer.test.near"
+  },
+  "key": {
+    "keyId": "pkc_7Hq2Vx9Lm4Rt8Kd",
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "ueowcpD9Nj-M1kx84EQdShLN5FNLOZGq_BV2Mag8554",
+      "y": "2VAmr271NMsFT1bwCVSOVltiZojmM2vFVc1H8RIJWaM"
+    },
+    "publicKeyHex": "04b9ea307290fd363f8cd64c7ce0441d4a12cde4534b3991aafc157631a83ce79ed95026af6ef534cb054f56f009548e565b626688e6336bc555cd47f1120959a3",
+    "thumbprint": "mBMTrRfEY-gb-MFa4zaRAQqG1zZ4kbkKiLo_qps_BTo"
+  },
+  "timestampMs": 1800000000000,
+  "cases": [
+    {
+      "name": "get",
+      "method": "GET",
+      "path": "/v1/platform/credential",
+      "headers": {
+        "Journear-Key-Id": "pkc_7Hq2Vx9Lm4Rt8Kd",
+        "Journear-Timestamp": "1800000000000",
+        "Journear-Nonce": "bnD_IjxMcS9K5mfMEgob0A",
+        "Journear-Signature": "OZ1vG7QLbCUTva67I4ZAFy-AvNjCjrB_fGfj6sgZ7HYr_ODtKPnO9iji4poWHGjdS58Il2oICw2KVm9-J3vZTA"
+      },
+      "body": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signedFor": {
+        "envName": "sandbox-test",
+        "signerAccount": "signer.test.near"
+      },
+      "message": "journear-platform-v1\nsandbox-test\nsigner.test.near\nGET\n/v1/platform/credential\npkc_7Hq2Vx9Lm4Rt8Kd\n1800000000000\nbnD_IjxMcS9K5mfMEgob0A\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signatureRawHex": "399d6f1bb40b6c2513bdaebb238640172f80bcd8c28eb07f7c67e3eac819ec762bfce0ed28f9cef628e2e29a161c68dd4b9f08976a080b0d8a566f7e277bd94c",
+      "signatureDerHex": "30440220399d6f1bb40b6c2513bdaebb238640172f80bcd8c28eb07f7c67e3eac819ec7602202bfce0ed28f9cef628e2e29a161c68dd4b9f08976a080b0d8a566f7e277bd94c",
+      "highS": false,
+      "expect": "verifies"
+    },
+    {
+      "name": "get_query",
+      "method": "GET",
+      "path": "/v1/platform/apps?scopeId=s1abc&cursor=app_9xYz",
+      "headers": {
+        "Journear-Key-Id": "pkc_7Hq2Vx9Lm4Rt8Kd",
+        "Journear-Timestamp": "1800000000000",
+        "Journear-Nonce": "elr67dSOXvSkYa0K4WK84A",
+        "Journear-Signature": "4rYUuuL5n35PO4oHAKz2YGbdgWsBn0pr8_NW8WTBZeYqD9vTEvm4EYodR-lbj8BQbn1X-arKGvoyAWsHAcRgHg"
+      },
+      "body": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signedFor": {
+        "envName": "sandbox-test",
+        "signerAccount": "signer.test.near"
+      },
+      "message": "journear-platform-v1\nsandbox-test\nsigner.test.near\nGET\n/v1/platform/apps?scopeId=s1abc&cursor=app_9xYz\npkc_7Hq2Vx9Lm4Rt8Kd\n1800000000000\nelr67dSOXvSkYa0K4WK84A\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signatureRawHex": "e2b614bae2f99f7e4f3b8a0700acf66066dd816b019f4a6bf3f356f164c165e62a0fdbd312f9b8118a1d47e95b8fc0506e7d57f9aaca1afa32016b0701c4601e",
+      "signatureDerHex": "3045022100e2b614bae2f99f7e4f3b8a0700acf66066dd816b019f4a6bf3f356f164c165e602202a0fdbd312f9b8118a1d47e95b8fc0506e7d57f9aaca1afa32016b0701c4601e",
+      "highS": false,
+      "expect": "verifies"
+    },
+    {
+      "name": "post_body",
+      "method": "POST",
+      "path": "/v1/platform/credential/revoke",
+      "headers": {
+        "Journear-Key-Id": "pkc_7Hq2Vx9Lm4Rt8Kd",
+        "Journear-Timestamp": "1800000000000",
+        "Journear-Nonce": "DOVxPqhn-Tbuhep12YLDVw",
+        "Journear-Signature": "vt-dzTXqSQJsaD9u_-t8nqk7DlCrgnL9FDhv66otUPdU0ZelZA6l-hOAcDoaDcgFEgCw9iRrfzp6khs8Lzif5g",
+        "content-type": "application/json"
+      },
+      "body": "{\"reason\":\"Moving to the standby key\"}",
+      "bodySha256": "16a2527059b3a1d2c18c6a08179ee91d0d02d9c4abc5566829b90c25800be037",
+      "signedFor": {
+        "envName": "sandbox-test",
+        "signerAccount": "signer.test.near"
+      },
+      "message": "journear-platform-v1\nsandbox-test\nsigner.test.near\nPOST\n/v1/platform/credential/revoke\npkc_7Hq2Vx9Lm4Rt8Kd\n1800000000000\nDOVxPqhn-Tbuhep12YLDVw\n\n16a2527059b3a1d2c18c6a08179ee91d0d02d9c4abc5566829b90c25800be037",
+      "signatureRawHex": "bedf9dcd35ea49026c683f6effeb7c9ea93b0e50ab8272fd14386febaa2d50f754d197a5640ea5fa1380703a1a0dc8051200b0f6246b7f3a7a921b3c2f389fe6",
+      "signatureDerHex": "3045022100bedf9dcd35ea49026c683f6effeb7c9ea93b0e50ab8272fd14386febaa2d50f7022054d197a5640ea5fa1380703a1a0dc8051200b0f6246b7f3a7a921b3c2f389fe6",
+      "highS": false,
+      "expect": "verifies"
+    },
+    {
+      "name": "post_idempotency",
+      "method": "POST",
+      "path": "/v1/platform/credential/revoke",
+      "headers": {
+        "Journear-Key-Id": "pkc_7Hq2Vx9Lm4Rt8Kd",
+        "Journear-Timestamp": "1800000000000",
+        "Journear-Nonce": "KI-DKBwJhE9EIP1K-7zt4A",
+        "Journear-Signature": "ao56vUEzMzIHORmNHAlgMYTYlW2HQqtyc1V2ljCc2kpq0hIWLjFs_AcUPgep40wL4Yqb6_OCIlABPMsNKTb03A",
+        "Idempotency-Key": "op-2026-11-25-0001",
+        "content-type": "application/json"
+      },
+      "body": "{}",
+      "bodySha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "signedFor": {
+        "envName": "sandbox-test",
+        "signerAccount": "signer.test.near"
+      },
+      "message": "journear-platform-v1\nsandbox-test\nsigner.test.near\nPOST\n/v1/platform/credential/revoke\npkc_7Hq2Vx9Lm4Rt8Kd\n1800000000000\nKI-DKBwJhE9EIP1K-7zt4A\nop-2026-11-25-0001\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "signatureRawHex": "6a8e7abd413333320739198d1c09603184d8956d8742ab7273557696309cda4a6ad212162e316cfc07143e07a9e34c0be18a9bebf3822250013ccb0d2936f4dc",
+      "signatureDerHex": "304402206a8e7abd413333320739198d1c09603184d8956d8742ab7273557696309cda4a02206ad212162e316cfc07143e07a9e34c0be18a9bebf3822250013ccb0d2936f4dc",
+      "highS": false,
+      "expect": "verifies"
+    },
+    {
+      "name": "high_s",
+      "method": "GET",
+      "path": "/v1/platform/credential",
+      "headers": {
+        "Journear-Key-Id": "pkc_7Hq2Vx9Lm4Rt8Kd",
+        "Journear-Timestamp": "1800000000000",
+        "Journear-Nonce": "T10oZu0vyzPVTVbF-P8oSw",
+        "Journear-Signature": "qnA1RHj0Nq0LeL962FlGJzE8wLUwvIZjMmi0mxOKYI7I2S5rO9EjTNL6yh8uPHhTn6HqS8PT2iFq9djK68BFPA"
+      },
+      "body": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signedFor": {
+        "envName": "sandbox-test",
+        "signerAccount": "signer.test.near"
+      },
+      "message": "journear-platform-v1\nsandbox-test\nsigner.test.near\nGET\n/v1/platform/credential\npkc_7Hq2Vx9Lm4Rt8Kd\n1800000000000\nT10oZu0vyzPVTVbF-P8oSw\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signatureRawHex": "aa70354478f436ad0b78bf7ad8594627313cc0b530bc86633268b49b138a608ec8d92e6b3bd1234cd2faca1f2e3c78539fa1ea4bc3d3da216af5d8caebc0453c",
+      "signatureDerHex": "3046022100aa70354478f436ad0b78bf7ad8594627313cc0b530bc86633268b49b138a608e022100c8d92e6b3bd1234cd2faca1f2e3c78539fa1ea4bc3d3da216af5d8caebc0453c",
+      "highS": true,
+      "expect": "verifies"
+    },
+    {
+      "name": "der",
+      "method": "GET",
+      "path": "/v1/platform/credential",
+      "headers": {
+        "Journear-Key-Id": "pkc_7Hq2Vx9Lm4Rt8Kd",
+        "Journear-Timestamp": "1800000000000",
+        "Journear-Nonce": "smbwPV_N3vlqd_iMeCn17A",
+        "Journear-Signature": "MEUCIQD8uOPi4v_-FFcm1hMcIQhPlF6oicxqG1tVyHrjiywTAgIgfHDNEyWhRUGUVydoMitIEeefyvmi_sdkUWXyMhg2JVI"
+      },
+      "body": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signedFor": {
+        "envName": "sandbox-test",
+        "signerAccount": "signer.test.near"
+      },
+      "message": "journear-platform-v1\nsandbox-test\nsigner.test.near\nGET\n/v1/platform/credential\npkc_7Hq2Vx9Lm4Rt8Kd\n1800000000000\nsmbwPV_N3vlqd_iMeCn17A\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signatureRawHex": "fcb8e3e2e2fffe145726d6131c21084f945ea889cc6a1b5b55c87ae38b2c13027c70cd1325a1454194572768322b4811e79fcaf9a2fec7645165f23218362552",
+      "signatureDerHex": "3045022100fcb8e3e2e2fffe145726d6131c21084f945ea889cc6a1b5b55c87ae38b2c130202207c70cd1325a1454194572768322b4811e79fcaf9a2fec7645165f23218362552",
+      "highS": false,
+      "expect": "refused"
+    },
+    {
+      "name": "other_env_name",
+      "method": "GET",
+      "path": "/v1/platform/credential",
+      "headers": {
+        "Journear-Key-Id": "pkc_7Hq2Vx9Lm4Rt8Kd",
+        "Journear-Timestamp": "1800000000000",
+        "Journear-Nonce": "YCBf8cCyxaPmYsI-l-kzJQ",
+        "Journear-Signature": "HYbvOBRbMvBMY945-lF1hkj3XTICem8MvVo9XafV2S1FJ-m8eb6tk4a1DVOQTfsNykoyH9iVUGU5KFNqwEsQsQ"
+      },
+      "body": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signedFor": {
+        "envName": "sandbox-other",
+        "signerAccount": "signer.test.near"
+      },
+      "message": "journear-platform-v1\nsandbox-other\nsigner.test.near\nGET\n/v1/platform/credential\npkc_7Hq2Vx9Lm4Rt8Kd\n1800000000000\nYCBf8cCyxaPmYsI-l-kzJQ\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signatureRawHex": "1d86ef38145b32f04c63de39fa51758648f75d32027a6f0cbd5a3d5da7d5d92d4527e9bc79bead9386b50d53904dfb0dca4a321fd89550653928536ac04b10b1",
+      "signatureDerHex": "304402201d86ef38145b32f04c63de39fa51758648f75d32027a6f0cbd5a3d5da7d5d92d02204527e9bc79bead9386b50d53904dfb0dca4a321fd89550653928536ac04b10b1",
+      "highS": false,
+      "expect": "refused"
+    },
+    {
+      "name": "other_signer_account",
+      "method": "GET",
+      "path": "/v1/platform/credential",
+      "headers": {
+        "Journear-Key-Id": "pkc_7Hq2Vx9Lm4Rt8Kd",
+        "Journear-Timestamp": "1800000000000",
+        "Journear-Nonce": "sI3wXfstVtMjk09t87A-YA",
+        "Journear-Signature": "yYa4sEDqxxNVAKd2zQNon7S1dKkQr9WoD1LQ5x4C7FE1-JxyF0b2JUn-0Fvl1_649-rZTaNa8NgGVwYV9o0NDg"
+      },
+      "body": "",
+      "bodySha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signedFor": {
+        "envName": "sandbox-test",
+        "signerAccount": "signer.other.near"
+      },
+      "message": "journear-platform-v1\nsandbox-test\nsigner.other.near\nGET\n/v1/platform/credential\npkc_7Hq2Vx9Lm4Rt8Kd\n1800000000000\nsI3wXfstVtMjk09t87A-YA\n\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "signatureRawHex": "c986b8b040eac7135500a776cd03689fb4b574a910afd5a80f52d0e71e02ec5135f89c721746f62549fed05be5d7feb8f7ead94da35af0d806570615f68d0d0e",
+      "signatureDerHex": "3045022100c986b8b040eac7135500a776cd03689fb4b574a910afd5a80f52d0e71e02ec51022035f89c721746f62549fed05be5d7feb8f7ead94da35af0d806570615f68d0d0e",
+      "highS": false,
+      "expect": "refused"
+    }
+  ]
+}

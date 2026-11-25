@@ -48,6 +48,31 @@ export interface ConsoleAdmission {
 export type ConsoleLimit = 'budget_org' | 'budget' | 'budget_reserve' | 'link' | 'breaker_org' | 'breaker_global';
 
 /**
+ * D927 (after PR 156's review, F3; the second review, N2): one platform request's admission, on the same `console-rpc`
+ * object as the console's. The platform's own keys for its org buckets, its own global bucket and its own breaker
+ * (M3). An ordinary platform call also charges the console's global bucket (`console:bucket`) and never takes it below
+ * `sharedFloor`, so the console always keeps the top of its bucket. A platform kill switch neither reads nor charges
+ * `console:bucket` (the second review, N2, and its review): a console flood can't refuse it, and it can't spend the
+ * console's own kill-switch reserve; it is bounded by the org's bucket, the platform's own bucket and reserve with each
+ * org's share of it (`reserveShare`), and the breaker.
+ */
+export interface PlatformAdmission {
+  org: string;
+  cost: number;
+  killSwitch?: boolean;
+  breaker?: boolean;
+  limits: {
+    perOrg: Bucket & { reserve: number };
+    platform: Bucket & { reserve: number; reserveShare: { windowMs: number; max: number } };
+    /** The console's global bucket, as CONSOLE_LIMITS.global (its rate and burst), and the floor ordinary platform calls leave. */
+    shared: Bucket & { sharedFloor: number };
+    breaker: { windowMs: number; perOrg: number; global: number };
+  };
+}
+export type PlatformLimit = 'budget_org' | 'budget_platform' | 'budget_shared' | 'budget_reserve' | 'breaker_org' | 'breaker_global';
+export type PlatformAdmitResult = { ok: true; reserveUsed: number } | { ok: false; limit: PlatformLimit; retryAfterS: number; notify: boolean };
+
+/**
  * `notify`: the first breaker refusal of this limit (the org's, or the global one) in this clock hour, the only one the
  * caller writes a security event for.
  */
@@ -302,6 +327,87 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /**
+   * D927: the platform's admission (PlatformAdmission). All of it is taken or nothing is. `notify`: the first refusal of
+   * this limit for this org in this clock hour (the caller's `platform_quota` event).
+   */
+  platformAdmit(r: PlatformAdmission, now: number = Date.now()): PlatformAdmitResult {
+    const kv = this.ctx.storage.kv;
+    const hour = Math.floor(now / 3_600_000);
+    const refuse = (limit: PlatformLimit, waitS: number): PlatformAdmitResult => {
+      const key = `platform:noticed:${limit}:${r.org}`;
+      const notify = kv.get<number>(key) !== hour;
+      if (notify) kv.put(key, hour);
+      return { ok: false, limit, retryAfterS: Math.max(1, Math.ceil(waitS)), notify };
+    };
+    const fill = (key: string, b: Bucket) => {
+      const st = kv.get<{ tokens: number; at: number }>(key) ?? { tokens: b.burst, at: now };
+      return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
+    };
+    const L = r.limits;
+    const orgKey = `platform:bucket:org:${r.org}`;
+    const orgTokens = fill(orgKey, L.perOrg);
+    const platformTokens = fill('platform:bucket', L.platform);
+    const sharedTokens = fill('console:bucket', L.shared);
+    const recent = (key: string) => (kv.get<number[]>(key) ?? []).filter((t) => t > now - L.breaker.windowMs);
+    const bOrgKey = `platform:breaker:org:${r.org}`;
+    const bOrg = r.breaker ? recent(bOrgKey) : [];
+    const bGlobal = r.breaker ? recent('platform:breaker:global') : [];
+    const until = (oldest: number | undefined) => ((oldest ?? now) + L.breaker.windowMs - now) / 1000;
+    if (r.breaker && bOrg.length >= L.breaker.perOrg) return refuse('breaker_org', until(bOrg[0]));
+    if (r.breaker && bGlobal.length >= L.breaker.global) return refuse('breaker_global', until(bGlobal[0]));
+    const orgFloor = r.killSwitch ? 0 : L.perOrg.reserve;
+    const platformFloor = r.killSwitch ? 0 : L.platform.reserve;
+    if (orgTokens - r.cost < orgFloor) return refuse('budget_org', (r.cost + orgFloor - orgTokens) / L.perOrg.ratePerS);
+    if (platformTokens - r.cost < platformFloor) return refuse('budget_platform', (r.cost + platformFloor - platformTokens) / L.platform.ratePerS);
+    if (!r.killSwitch && sharedTokens - r.cost < L.shared.sharedFloor) return refuse('budget_shared', (r.cost + L.shared.sharedFloor - sharedTokens) / L.shared.ratePerS);
+    const reserveUsed = r.killSwitch ? Math.max(0, r.cost - Math.max(0, platformTokens - L.platform.reserve)) : 0;
+    const shareKey = `platform:reserve:org:${r.org}`;
+    const share = L.platform.reserveShare;
+    const taken = (kv.get<{ at: number; n: number }[]>(shareKey) ?? []).filter((e) => e.at > now - share.windowMs);
+    if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) return refuse('budget_reserve', (taken[0]!.at + share.windowMs - now) / 1000);
+    kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
+    kv.put('platform:bucket', { tokens: platformTokens - r.cost, at: now });
+    if (!r.killSwitch) kv.put('console:bucket', { tokens: sharedTokens - r.cost, at: now });
+    if (reserveUsed > 0) kv.put(shareKey, [...taken, { at: now, n: reserveUsed }]);
+    if (r.breaker) {
+      kv.put(bOrgKey, [...bOrg, now]);
+      kv.put('platform:breaker:global', [...bGlobal, now]);
+    }
+    return { ok: true, reserveUsed };
+  }
+
+  /**
+   * D927: a platform call admitted at `at` that changed nothing: its breaker slot back, and the platform reserve tokens
+   * it took back to the platform's reserve, charged to its org's own bucket instead (as consoleSettle does). The refund
+   * happens only for the reserve-share entry of that admission, found and removed, so a second settle of the same `at`
+   * refunds nothing (the second review, N6).
+   */
+  platformSettle(s: { org: string; at: number; breaker: boolean; reserveUsed: number; limits: PlatformAdmission['limits'] }, now: number = Date.now()): void {
+    const kv = this.ctx.storage.kv;
+    if (s.breaker) {
+      for (const key of [`platform:breaker:org:${s.org}`, 'platform:breaker:global']) {
+        const list = kv.get<number[]>(key) ?? [];
+        const i = list.indexOf(s.at);
+        if (i >= 0) kv.put(key, [...list.slice(0, i), ...list.slice(i + 1)]);
+      }
+    }
+    if (s.reserveUsed > 0) {
+      const shareKey = `platform:reserve:org:${s.org}`;
+      const list = kv.get<{ at: number; n: number }[]>(shareKey) ?? [];
+      const i = list.findIndex((e) => e.at === s.at && e.n === s.reserveUsed);
+      if (i < 0) return;
+      kv.put(shareKey, [...list.slice(0, i), ...list.slice(i + 1)]);
+      const fill = (key: string, b: Bucket) => {
+        const st = kv.get<{ tokens: number; at: number }>(key) ?? { tokens: b.burst, at: now };
+        return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
+      };
+      kv.put('platform:bucket', { tokens: Math.min(s.limits.platform.burst, fill('platform:bucket', s.limits.platform) + s.reserveUsed), at: now });
+      const orgKey = `platform:bucket:org:${s.org}`;
+      kv.put(orgKey, { tokens: fill(orgKey, s.limits.perOrg) - s.reserveUsed, at: now });
+    }
+  }
+
+  /**
    * An amount budget over fixed windows (the NEAR relay's daily spend, D736): adds `amount` to the window's total when
    * the total stays at most `max`, else refuses and adds nothing. Amounts are non-negative integers as decimal strings
    * (yoctoNEAR exceeds 2^53). `spent` is the window's total after the call. Keys are `budget:<name>@<start>`.
@@ -389,6 +495,33 @@ export class RateLimiter extends DurableObject<Env> {
     let held = kv.get<number>(`qn:${name}`) ?? 0;
     for (const k of keys) if (k.startsWith(`q:${name}:`) && kv.delete(k)) held--;
     kv.put(`qn:${name}`, Math.max(0, held));
+  }
+
+  /**
+   * D927: one platform request's nonce (A3 check 7), on the key's own `platform-nonce:<keyId>` object. `replayed` while
+   * an unexpired marker for it exists; else, if `cap` still has room (the object's size bound: fresh nonces a window) or
+   * `cap` is empty (a valid self-revoke, which can succeed once per key: F1), the marker is held until `untilMs` and the
+   * answer is `ok`; else `full`, and nothing is written. Atomic in the object.
+   */
+  reserveNonce(nonce: string, untilMs: number, cap: Limit[], now: number = Date.now()): 'ok' | 'replayed' | 'full' {
+    const kv = this.ctx.storage.kv;
+    const until = kv.get<number>(`mark:n:${nonce}`);
+    if (until !== undefined && until > now) return 'replayed';
+    if (cap.length > 0 && !this.hit(cap, now).ok) return 'full';
+    kv.put(`mark:n:${nonce}`, untilMs);
+    void this.scheduleMarkerSweep(untilMs);
+    return 'ok';
+  }
+
+  /**
+   * D927: `hit(limits)` and, only when it counted, a test-and-set of the marker `mark` until `untilMs` (`reserve`): one
+   * call for a platform key's request windows and its once-an-hour `last_used_at` write. `marked` is true when this call
+   * set the marker.
+   */
+  hitMark(limits: Limit[], mark: string, untilMs: number, now: number = Date.now()): HitResult & { marked?: boolean } {
+    const r = this.hit(limits, now);
+    if (!r.ok) return r;
+    return { ...r, marked: this.reserve(mark, untilMs, now) };
   }
 
   /** Drops a marker (a reservation whose relay definitely did not execute). */

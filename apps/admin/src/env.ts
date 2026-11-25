@@ -32,6 +32,7 @@ import type {
   OwnerGrantView,
   PendingUpgradesView,
   PurgeDirectoryResult,
+  PurgePlatformCallsResult,
   PurgeUserEventsResult,
   RpcFail,
   RpcOk,
@@ -121,6 +122,8 @@ export interface AdminRpcClient {
   purgeDirectory(c: unknown): Answer<PurgeDirectoryResult>;
   /** user_events (migration 0013) past 24 months, and those of scopes left without apps (readiness 7.17). */
   purgeUserEvents(c: unknown): Answer<PurgeUserEventsResult>;
+  /** D927: the platform API's call log (migration 0032) past 13 months. */
+  purgePlatformCalls(c: unknown): Answer<PurgePlatformCallsResult>;
   /** The wallet directory (D310, D315, D346): users with their three ids, identities (with subs) and wallets. */
   listUsers(c: unknown): Answer<{ users: StaffUser[]; nextCursor: string | null }>;
   getUser(c: unknown): Answer<{ user: StaffUser }>;

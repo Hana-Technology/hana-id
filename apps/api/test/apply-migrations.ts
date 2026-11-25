@@ -6,6 +6,7 @@ import { clearJwksCache } from '@hana-id/oidc';
 import { clearNotedTokenKids } from '../src/key-observations.ts';
 import { clearLinkViewCaches } from '../src/link-views.ts';
 import { clearPanicCache } from '../src/panic-cache.ts';
+import { clearAlerted, clearKnownKeyIds } from '../src/platform/known-keys.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { resetLedger } from './usage-ledger.ts';
 
@@ -21,6 +22,9 @@ beforeEach(() => {
   clearLinkViewCaches();
   clearPanicCache();
   clearGovernanceCache();
+  // D927: the platform API's isolate list of announced keys and its alert marks.
+  clearKnownKeyIds();
+  clearAlerted();
   // The usage ledger is in memory (usage-ledger.ts): empty, and the fake transport back in place, for every test.
   resetLedger();
 });

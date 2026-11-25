@@ -21,7 +21,11 @@ are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece i
 **Piece P1 built** (branch `feat/platform-actor`, D916). **Piece P2 built** (2026-11-25, branch `feat/platform-keys`,
 D918, not merged, not deployed): platform keys' life cycle and records (migrations 0028 and console 0005); where it
 differs from this spec is listed in D918. Their current state is in `api.md`, `architecture.md`, `security.md` and
-`operations.md`; every other piece is still proposed. **Piece P6 built** (2026-11-25, branch `feat/app-user-ids`, D919, not merged, not deployed): per-app User
+`operations.md`; every other piece is still proposed. **Piece P3 built** (2026-11-25, branch `feat/platform-auth`,
+D927, not merged, not deployed): request authentication and admission, `GET /credential` and the self-revoke, with
+migration **0032** (`platform_calls`); where it differs from this spec is listed in D927 (the per-IP overflow window,
+the IP window counting every request not admitted, `platform_calls` holding only admitted calls, the self-revoke's
+limits and fail-open). **Piece P6 built** (2026-11-25, branch `feat/app-user-ids`, D919, not merged, not deployed): per-app User
 IDs as B2 to B4 and B7 describe, with migration **0030** (0028 and 0029 are piece P2's); its current state is
 in the same docs and `integration.md`. Where it differs from Part B, D919 says so (the triggers' insert rule, the
 `'scope'` app on a marked scope having an `end_user_apps` row, the erase script's inputs). **Piece P7 built**
@@ -31,7 +35,7 @@ Passport Home's line); its current state is in `api.md`, `architecture.md`, `sec
 it differs from B6, D925 says so (Home's line names no network, the audit row's app, the staff lookup listing an
 ambiguous code's matches).
 
-Last verified: 2026-11-26 (branch `docs/confirmations-1126`, from `next`, not merged, docs only: the standby-key advice (A3), the org cap of 10 platform-created apps (A5) and Home's count and 100 cap ("Passport Home's apps", A11's open item) confirmed by the Tech Lead, D928; the "still to confirm" line under D914's confirmations; no other design text changed); 2026-11-25 (branch `feat/app-user-linking`, after PR 153's review: piece P7's migrations in its status line, D925; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged: the status line of piece P7, D925; no other text changed); 2026-11-25 (branch `feat/platform-keys`: the status line (P2 built, D918), and after PR 149's review the gates row's `local*` guard; no other design text changed); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: a partner on the network's own widget (A4.5, A5, A8, A10, A13, A15, the build plan's later pieces P11 and P12, "What the network builds"), D926); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
+Last verified: 2026-11-25 (branch `feat/platform-auth`, after the second review of PR 156: A2's flooding row and A3's check 1 residual restated, the network's dedicated egress IP (a note for P8), D927); 2026-11-25 (branch `feat/platform-auth`, after PR 156's review: A2's flooding row and A3's check 1 as built, with the residual, and the gates row's Cloudflare rule, D927); 2026-11-26 (branch `docs/confirmations-1126`, from `next`, not merged, docs only: the standby-key advice (A3), the org cap of 10 platform-created apps (A5) and Home's count and 100 cap ("Passport Home's apps", A11's open item) confirmed by the Tech Lead, D928; the "still to confirm" line under D914's confirmations; no other design text changed); 2026-11-25 (branch `feat/platform-auth`: the status line (P3 built, D927); no design text changed); 2026-11-25 (branch `feat/app-user-linking`, after PR 153's review: piece P7's migrations in its status line, D925; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged: the status line of piece P7, D925; no other text changed); 2026-11-25 (branch `feat/platform-keys`: the status line (P2 built, D918), and after PR 149's review the gates row's `local*` guard; no other design text changed); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: a partner on the network's own widget (A4.5, A5, A8, A10, A13, A15, the build plan's later pieces P11 and P12, "What the network builds"), D926); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
 Lead's confirmations of D914's proposals and the four-eyes rule for staff proposals on a shared scope (D917) folded
 into A2, A3, A6, A7, A8, A11, A14, A15 and the build plan; the admin portal's identity checked in
 `apps/admin/src/access.ts`); 2026-11-25 (branch `docs/platform-answers`, after PR 142's review: its 16 findings folded in (revocation
@@ -225,7 +229,7 @@ network partner is created by Journear staff, as today.
 | **A confirmation after the app left the platform's reach** (deleted, moved, its scope dropped from the key, suspended by Journear) | An origin in force on an app the platform should no longer touch | The same commit predicate holds the proposing key's reach (A4.2) and refuses an app Journear suspended (bit 1 or 2); a refused confirmation leaves the proposal as it was (still waiting, still cancellable) |
 | **A leaked request log** at the network or in transit | A captured signed request | No bearer secret in any header; the signature covers the body and a single-use nonce, so a logged request can't be reused or altered |
 | **Our D1 read by an attacker** | The registered public keys and the call log | Public keys sign nothing; nothing secret of the network is stored on our side |
-| **Flooding the platform route** | Spend the hot DB or the limiter objects; lock the network out from a shared egress IP | Failures are limited per IP and counted only while they fail (M2), so a valid key is never locked out by others behind the same IP; successes are limited per key; the org's own bucket under the global one keeps the kill-switch reserve (A5) |
+| **Flooding the platform route** | Spend the hot DB or the limiter objects; lock the network out from a shared egress IP | Failures are limited per IP and counted only while they fail (M2); past a full IP window only a key id announced here goes on, under that key's own overflow window, so a random id costs nothing and a valid key isn't locked out by others behind the same IP (as built, D927 after PR 156's review, F2); successes are limited per key; the platform's own global bucket and a floor in the console's keep the console's budget and its kill-switch reserve (F3); a Cloudflare rate-limiting rule at the edge (a gate, F5). **Residuals** (as built, after the second review of PR 156): someone who knows a key's id and sends from the same IP subject can hold its ordinary calls out of that subject a minute at a time, and its self-revoke with over 60 forged revokes a minute; any tenant of a shared egress address (every Cloudflare Worker reaches us as one address; a cloud NAT) can trip the edge rule for all of them. So a production backend needs a dedicated egress IP. It works from any other IP, and owners and staff stop it in the portals |
 
 ## A3. Authentication
 
@@ -295,7 +299,11 @@ message)`.
 
 1. **Per IP, failures only**: a `hit` on `platform:ip:<ipSubject>` (30 a minute), given back (`unhit`) as soon as the
    signature verifies; so only failing requests use the window, and a network whose backends share an egress IP with
-   someone failing can still always reach its kill switches. Not pinned (as today's per-IP limiters).
+   someone failing can still always reach its kill switches. Not pinned (as today's per-IP limiters). **As built (D927,
+   to confirm):** given back once the request is admitted; past a full window an id not announced here gets the one 401,
+   an announced one goes on under its own overflow window for that IP subject, and a self-revoke's signature is checked
+   (CPU only) before any refusal; "always" holds except against someone who knows the key's id and shares its IP
+   subject, or the edge rule tripped on a shared egress address (the residuals in A2's flooding row).
 2. A request with an `Origin` header: `403 browser_refused`, with no CORS headers (the platform API is never for
    browsers).
 3. The method, content type, encoding, path, query and header shapes above (`400 bad_request` for the path and query;
@@ -1408,7 +1416,7 @@ review.
 | P4 | H1 (the reach filter in every plan read and commit predicate), H2 (cancel held to platform-proposed origin adds), M7 (live origin rules), L3 (idempotency for the ledger's lifetime, the rotated-key retry), L4 (who holds the partner bit), L15 (look-alike names within the scope), L16 (`INSERT … SELECT` of the app's mode) |
 | P5 | L7 (what is recorded and what is only counted), L14 (one email per request, lower quotas), H3's mainnet demo warning |
 | P10 | M6 (decided as N3: the owner's confirmation and its threats, A2 and A15), PR 142's review (the set write, the removal link, revocation cancelling waiting proposals, the database's earliest time, the `local*` guard) |
-| Before the platform switch is on for any org | P0 (H3, in code), the key confirmation (P2), the platform minimum (P4), the owner's confirmation of origins (P10, M6) and P10's `local*` guard (until then the 24 h platform minimum's `local*` exception is held by the env's name only: D918, after PR 149's review), each built, reviewed and deployed; the "also used on other apps" line (N6) |
+| Before the platform switch is on for any org | the Cloudflare rate-limiting rule on `/v1/platform/*` (D927 after PR 156's review, F5; `operations.md` "Platform API"), P0 (H3, in code), the key confirmation (P2), the platform minimum (P4), the owner's confirmation of origins (P10, M6) and P10's `local*` guard (until then the 24 h platform minimum's `local*` exception is held by the env's name only: D918, after PR 149's review), each built, reviewed and deployed; the "also used on other apps" line (N6) |
 | P6 and P7 | M8 (retention and erasure), L9 (lookup volume alerts, the data-sharing rule N7), L12 (the `aud` benefit and the guide), L10 (the vectors' path) |
 | None | M1 (staff restore): closed by refusing the restore (question 8, A14) |
 | This branch | L11 (`docs/integration.md`'s `sub` row corrected), L13 (D913 split into the Tech Lead's words, their answers and what is only proposed) |
@@ -1443,7 +1451,8 @@ line has shipped.
    least two owners, and keep **a second key registered and in force as a standby**, so an urgent rotation needs no
    wait at all (A3).
 2. **The request signer** (the canonical message, plain ES256, the DER-to-raw conversion if its KMS answers DER, a
-   fresh nonce, the timestamp from a synchronised clock) and an `Idempotency-Key` per operation, resent unchanged on
+   fresh nonce, the timestamp from a synchronised clock), called from **a dedicated egress IP** in production, never a
+   shared one such as Cloudflare Workers' (a note for P8's guide: D927 after the second review of PR 156) and an `Idempotency-Key` per operation, resent unchanged on
    retries from the same key.
 3. **Its portal switch:** on → create the partner's app with its exact HTTPS origins after checking the partner
    controls them (and, for a partner on the network's widget, the widget's origin too, A13); store the app id and publishable key in the partner's configuration; show "Waiting for your owner

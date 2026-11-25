@@ -13,6 +13,7 @@ import {
   b64url,
   fromHex,
   hex,
+  KNOWN_PRIVATE_PLATFORM_KEYS,
   jwkThumbprint,
   linkToken,
   linkTokenHash,
@@ -127,5 +128,34 @@ describe('labels, people and words', () => {
       expect(ACTION_TITLES[k], k).toBeTruthy();
     }
     expect(STEP_UP_KINDS).toEqual(expect.arrayContaining(['platform.key_add', 'platform.key_accept', 'platform.key_confirm']));
+  });
+});
+
+describe('public keys whose private halves are published (D927, F8)', () => {
+  const p = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn;
+  const G: [bigint, bigint] = [0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296n, 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5n];
+  const mod = (x: bigint) => ((x % p) + p) % p;
+  const pow = (b: bigint, e: bigint) => {
+    let r = 1n;
+    b = mod(b);
+    while (e > 0n) {
+      if (e & 1n) r = (r * b) % p;
+      b = (b * b) % p;
+      e >>= 1n;
+    }
+    return r;
+  };
+  const double = ([x, y]: [bigint, bigint]): [bigint, bigint] => {
+    const l = mod((3n * x * x - 3n) * pow(2n * y, p - 2n));
+    const x3 = mod(l * l - 2n * x);
+    return [x3, mod(l * (x - x3) - y)];
+  };
+  const b64 = (v: bigint) => Buffer.from(v.toString(16).padStart(64, '0'), 'hex').toString('base64url');
+  const tp = (P: [bigint, bigint]) => jwkThumbprint(b64(P[0]), b64(P[1]));
+
+  it('lists the generator, its double and the test vectors’ key, each derived here', async () => {
+    const vectors = (await import('./platform-request-vectors.json', { with: { type: 'json' } })).default as { key: { jwk: { x: string; y: string } } };
+    const expected = [await tp(G), await tp(double(G)), await jwkThumbprint(vectors.key.jwk.x, vectors.key.jwk.y)];
+    expect(Object.keys(KNOWN_PRIVATE_PLATFORM_KEYS).sort()).toEqual([...expected].sort());
   });
 });

@@ -17,6 +17,7 @@ export * from './origins.ts';
 export * from './owner-actions.ts';
 export * from './partner.ts';
 export * from './platform-keys.ts';
+export * from './platform-request.ts';
 export * from './reports.ts';
 export * from './retention.ts';
 export * from './rpc.ts';

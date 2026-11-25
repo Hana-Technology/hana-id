@@ -48,6 +48,8 @@ export interface LogFields {
   labelChangeId?: string;
   /** D918: a platform key's id (`pkc_…`), never the key or its thumbprint. */
   platformKeyId?: string;
+  /** D927: a platform request's caller as an IPv4 /24 or IPv6 /48 (never the full address). */
+  ipPrefix?: string;
   lapsed?: number;
   what?: string;
   activated?: number;

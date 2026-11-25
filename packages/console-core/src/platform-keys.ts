@@ -1,7 +1,7 @@
 // Platform keys (D918; docs/partner-platform-spec.md A3 "Registration, rotation, revocation", "An owner's confirmation
 // of a key", A7): a network's backend signs its requests to the platform API with an ECDSA P-256 key whose public half
 // is registered here for one organisation, one env and one or two of its test scopes. Only the public key is ever sent
-// or stored; nothing can authenticate with a key yet (piece P3). This module holds what the API, the console and the
+// or stored; a key in force authenticates the platform API (platform-request.ts, D927). This module holds what the API, the console and the
 // admin Worker share: the words, the limits, the key's parsing and RFC 7638 thumbprint, the label rule, the step-up
 // layouts' inputs, the RPC inputs and the views.
 import { z } from '@hana-id/env/zod';
@@ -200,6 +200,18 @@ export async function parsePlatformPublicKey(input: string): Promise<PlatformKey
   }
   return { ok: false, problem: PLATFORM_KEY_WORDS.notAKey };
 }
+
+/**
+ * Public keys whose private halves are published (D927, after PR 156's review, F8), by RFC 7638 thumbprint: anyone can
+ * sign with them, so a registration of one is refused in every env but a `local*` test env. The P-256 generator
+ * (private key 1) and its double (private key 2), and the platform request vectors' test key (its private key derives
+ * from a public string in scripts/gen-platform-request-vectors.mjs). test/platform-keys.test.ts derives each.
+ */
+export const KNOWN_PRIVATE_PLATFORM_KEYS: Readonly<Record<string, string>> = {
+  'xx0BcA-wMohw8atYDJOe6peGModklG2wRHBlXHMvl0M': 'the P-256 generator point (private key 1)',
+  AhqHzaYXA5MzmDCrsseUsVBGKyfhDhvekx0THjH_xIE: 'twice the P-256 generator (private key 2)',
+  'mBMTrRfEY-gb-MFa4zaRAQqG1zZ4kbkKiLo_qps_BTo': 'the platform request test vectors’ key',
+};
 
 /** The key's point from its stored 65 bytes, as a JWK (for WebCrypto's import, and the staff view). */
 export function rawToJwk(raw: Uint8Array): { crv: 'P-256'; kty: 'EC'; x: string; y: string } {

@@ -209,3 +209,19 @@ describe('counters', () => {
     expect((await stub.hit(one, NOW + MINUTE)).ok).toBe(true);
   });
 });
+
+describe('fixed windows with a soft limit (D925: the linking view’s volume alert)', () => {
+  it('a soft window never refuses: at its max it is named in `soft` and still counts; a hard window still refuses and counts nothing', async () => {
+    const stub = newStub();
+    const limits: Limit[] = [
+      { name: 'hard', windowMs: MINUTE, max: 5 },
+      { name: 'alert', windowMs: MINUTE, max: 2, soft: true },
+    ];
+    const answers = [];
+    for (let i = 0; i < 6; i++) answers.push(await stub.hit(limits, NOW + i));
+    expect(answers).toEqual([{ ok: true }, { ok: true }, { ok: true, soft: ['alert'] }, { ok: true, soft: ['alert'] }, { ok: true, soft: ['alert'] }, { ok: false, limit: 'hard', retryAfterS: 60 }]);
+    // Without a soft window, `hit` answers as before.
+    const plain = newStub();
+    expect(await plain.hit(WINDOW, NOW)).toEqual({ ok: true });
+  });
+});

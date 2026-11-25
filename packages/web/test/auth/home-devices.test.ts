@@ -66,7 +66,7 @@ interface Harness {
   mountApp(scopeId?: string): void;
 }
 
-const homeScope = (scopeId: string): HomeScope => ({ scopeId, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: [], logoUrl: null }] });
+const homeScope = (scopeId: string): HomeScope => ({ scopeId, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], sharedScope: false, apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: [], logoUrl: null }] });
 
 async function start(o: { search?: string; isGesture?: boolean } = {}): Promise<Harness> {
   const win = new FakeWindow('/home', o.search ?? '');

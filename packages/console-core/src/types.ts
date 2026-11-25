@@ -76,6 +76,8 @@ export const RPC_CODES = [
   'passkeys_required',
   /** D894: a partner label document the parser or the server's rules refuse (the problems are listed in `error`). */
   'label_invalid',
+  /** D925: a Support ID that more than one person of the org holds (40 bits collide rarely): ask for the User ID. */
+  'ambiguous',
   'internal',
 ] as const;
 export type RpcCode = (typeof RPC_CODES)[number];
@@ -99,6 +101,7 @@ export const RPC_HTTP_STATUS: Record<RpcCode, number> = {
   not_pending: 409,
   conflict: 409,
   key_limit: 409,
+  ambiguous: 409,
   no_security_contact: 409,
   owner_nonce_mismatch: 409,
   passkeys_required: 403,

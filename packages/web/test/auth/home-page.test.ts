@@ -530,6 +530,27 @@ describe('your apps', () => {
     expect(document.getElementById('home-others-empty')?.classList.contains('jp-empty')).toBe(true);
   });
 
+  it('D925: a wallet several partners’ apps share says the company behind them can see which they use, and labels its Support ID as Journear’s own', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: [app('Sodax'), app('Stamp Rally')], sharedScope: true }), mine('s2', { apps: [app('Old Exchange')] })], nextCursor: null });
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(document.getElementById('home-shared-seen')?.textContent).toBe('The company behind these apps can see which of them you use with this wallet.');
+    const support = document.getElementById('home-support-id')!.closest('.home-support')!;
+    expect(support.querySelector('h2')?.textContent).toBe('Journear Support ID');
+    expect(document.getElementById('home-support-line')?.textContent).toBe('Give this only to Journear support. If an app’s support team asks for your Support ID, give them the one that app shows you.');
+  });
+
+  it('D925: an ordinary wallet keeps the usual Support ID words and has no line about the company behind its apps', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s2', { apps: [app('Old Exchange')] })], nextCursor: null });
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s2"]') as HTMLElement).click();
+    expect(document.getElementById('home-shared-seen')).toBeNull();
+    expect(document.getElementById('home-support-id')!.closest('.home-support')!.querySelector('h2')?.textContent).toBe('Support ID');
+    expect(document.getElementById('home-support-line')?.textContent).toBe('Give this to the app’s support team if you need help. It doesn’t reveal your email or your Google account.');
+  });
+
   it('opens an app’s page: addresses, an explorer link for Stellar only, the Support ID, copy', async () => {
     const h = await ready();
     h.answer = LIST;
@@ -894,6 +915,9 @@ describe('partner strings are text only', () => {
     expect(page.scopes[2]?.apps.map((a) => a.name)).toEqual(['ok', 'Unnamed app']);
     expect(() => parseHomeApps({ scopes: 'x' })).toThrow(ApiError);
     expect(() => parseHomeApps({ scopes: [], nextCursor: '<b>' })).toThrow(ApiError);
+    // D925: `sharedScope` only when the API says exactly true (an older API sends none).
+    const marks = parseHomeApps({ scopes: [mine('s1', { sharedScope: true }), mine('s2', { sharedScope: 'yes' }), mine('s3')], nextCursor: null });
+    expect(marks.scopes.map((x) => x.sharedScope)).toEqual([true, false, false]);
     expect(() => parseHomeConfig({ serverTimeMs: 1, signer: 'Not An Account', sharedGoogleClientId: null })).toThrow(ApiError);
   });
 });

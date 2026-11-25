@@ -491,13 +491,42 @@ export const userGet = (provider: string, sub: string) => ({
   ],
 });
 
-export const supportLookup = (askedIds: number) => ({
+/**
+ * D925: a person on a test scope several of a network's partner apps share, found by one partner app's own Support ID
+ * (the preview answers it for the query `HANA-7Q2M-K4XP`): which code matched, and each app's IDs for them.
+ */
+const sharedMatch = {
+  user: { ...walletUser, userId: 'u1_Jt4wN8pR2xK6mB9qZ3vL7a', supportId: 'HANA-1K8D-W3QA', scopeId: 's7c3d9e1f5a2b8', orgId: 'org_01jd2sodaxnet' },
+  matchedBy: { of: 'app', appId: 'app_01jd5stamps' },
+  userApps: [
+    { appId: 'app_01jd5stamps', userId: 'u1_Hx2cV6nT9bQ4wK8mR3zP5g', supportId: 'HANA-7Q2M-K4XP', firstSeenAt: ago(4 * DAY), lastSeenAt: ago(2 * HOUR) },
+    { appId: 'app_01jd4coffee', userId: 'u1_Pz8kW3mQ6vB2nX9tR5cL4w', supportId: 'HANA-C5RN-8YTE', firstSeenAt: ago(9 * DAY), lastSeenAt: ago(DAY) },
+    { appId: 'app_01jd2sodaxweb', userId: 'u1_Jt4wN8pR2xK6mB9qZ3vL7a', supportId: 'HANA-1K8D-W3QA', firstSeenAt: ago(20 * DAY), lastSeenAt: ago(5 * DAY) },
+  ],
+  apps: [
+    { appId: 'app_01jd2sodaxweb', name: 'Sodax web', orgId: 'org_01jd2sodaxnet', environment: 'test', persistence: 'session', deletedAt: null },
+    { appId: 'app_01jd4coffee', name: 'Coffee Club', orgId: 'org_01jd2sodaxnet', environment: 'test', persistence: 'session', deletedAt: null },
+    { appId: 'app_01jd5stamps', name: 'Stamp Rally', orgId: 'org_01jd2sodaxnet', environment: 'test', persistence: 'session', deletedAt: null },
+  ],
+  shares: [],
+  changes: [],
+};
+
+export const supportLookup = (askedIds: number, query = '') => ({
+  ...(query.replace(/[\s-]/gu, '').toUpperCase() === 'HANA7Q2MK4XP'
+    ? { query: { kind: 'supportId', code: '7Q2MK4XP' }, since: ago(30 * DAY), days: 30, matches: [sharedMatch], truncated: false, ledger: { available: true }, activity: [[]], requests: askedIds ? [] : null, requestsNotFound: [], emails: [] }
+    : supportLookupPlain(askedIds)),
+});
+
+const supportLookupPlain = (askedIds: number) => ({
   query: { kind: 'supportId', code: '2750G5HM' },
   since: ago(30 * DAY),
   days: 30,
   matches: [
     {
       user: walletUser,
+      matchedBy: { of: 'scope', appId: null },
+      userApps: [],
       apps: [{ appId: 'app_01jcblumen', name: 'Lumen Pay checkout', orgId: 'org_01jc8lumenpay', environment: 'live', persistence: 'session', deletedAt: null }],
       shares: [{ appId: 'app_01jcblumen', keyIndex: 0, createdAt: ago(3 * HOUR), idleUntil: NOW + 21 * HOUR, absExpiresAt: NOW + 6 * DAY, revokedAt: null, live: true }],
       changes: orgChanges('org_01jc8lumenpay').changes.slice(0, 2),

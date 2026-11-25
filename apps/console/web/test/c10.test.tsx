@@ -580,3 +580,98 @@ describe('the Users screen (D310, D346)', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 });
+
+describe('one person across the org’s apps (D925)', () => {
+  const PERSON = { userId: 'u1_AbCdEfGhIjKlMnOpQrStUv', supportId: 'HANA-ABCD-EFGH', scopeId: 's1', createdAt: 0, lastSeenAt: 0, accounts: [{ kind: 'google', status: 'active' }], wallets: [], email: null, name: null, sharedScope: true };
+  const LINK = {
+    userId: PERSON.userId,
+    supportId: PERSON.supportId,
+    scopeId: 's1',
+    match: { kind: 'supportId', of: 'app', appId: 'app_stamps' },
+    apps: [
+      { appId: 'app_stamps', appName: 'Stamp Rally', userId: 'u1_ZyXwVuTsRqPoNmLkJiHgFA', supportId: 'HANA-7Q2M-K4XP', firstSeenAt: Date.UTC(2026, 10, 20), lastSeenAt: Date.UTC(2026, 10, 24) },
+      { appId: 'app_coffee', appName: 'Coffee Club', userId: PERSON.userId, supportId: PERSON.supportId, firstSeenAt: Date.UTC(2026, 10, 1), lastSeenAt: Date.UTC(2026, 10, 2) },
+    ],
+    truncated: false,
+  };
+  const setUp = (role: 'owner' | 'viewer') => {
+    routes['/api/me'] = { body: { ...ME, features: { users: true } } };
+    routes['/api/orgs/org_a'] = { body: org(role) };
+    routes['/api/orgs/org_a/apps'] = { body: { apps: [{ ...APP, sharedScope: true }] } };
+    routes['/api/orgs/org_a/users'] = { body: { users: [PERSON] } };
+    routes[`/api/orgs/org_a/users/${PERSON.userId}`] = { body: { user: { ...PERSON, emails: [] } } };
+    routes['/api/orgs/org_a/users/link'] = () => ({ body: { link: LINK } });
+  };
+
+  it('the list and the detail label a shared wallet’s IDs as the person’s for all your apps', async () => {
+    setUp('viewer');
+    at('/orgs/org_a/users');
+    expect(await screen.findByText(PERSON.userId)).toBeTruthy();
+    expect(screen.getAllByText('all your apps')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: `Open ${PERSON.userId}` }));
+    expect(await screen.findByText('User ID (all your apps)')).toBeTruthy();
+    expect(screen.getByText('Support ID (all your apps)')).toBeTruthy();
+  });
+
+  it('a viewer: no search across apps, and the detail says only owners can see each app’s ID; nothing is asked of the server', async () => {
+    setUp('viewer');
+    at('/orgs/org_a/users');
+    fireEvent.click(await screen.findByRole('button', { name: `Open ${PERSON.userId}` }));
+    expect(await screen.findByText('Only owners can see this person’s ID on each of your apps.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show their ID on each app' })).toBeNull();
+    expect(screen.queryByText('Find a person by an app’s ID')).toBeNull();
+    expect(calls.some((c) => c.url === '/api/orgs/org_a/users/link')).toBe(false);
+  });
+
+  it('an owner opens “This person on your apps”: one POST (purpose panel), each app’s IDs, the sharing rule beside them', async () => {
+    setUp('owner');
+    at('/orgs/org_a/users');
+    fireEvent.click(await screen.findByRole('button', { name: `Open ${PERSON.userId}` }));
+    // Nothing is looked up until the owner asks.
+    fireEvent.click(await screen.findByRole('button', { name: 'Show their ID on each app' }));
+    const section = (await screen.findByRole('heading', { name: 'This person on your apps' })).closest('section')!;
+    await waitFor(() => expect(within(section).getByText('u1_ZyXwVuTsRqPoNmLkJiHgFA')).toBeTruthy());
+    expect(bodyOf('/api/orgs/org_a/users/link')).toEqual({ query: PERSON.userId, purpose: 'panel' });
+    expect(within(section).getByText('HANA-7Q2M-K4XP')).toBeTruthy();
+    expect(within(section).getByText('Stamp Rally')).toBeTruthy();
+    expect(within(section).getByText('Never give one partner another partner’s ID for the same person. Each partner should only see its own.')).toBeTruthy();
+    expect(within(section).getByText('Only owners can see this. Each look-up is recorded in your Audit.')).toBeTruthy();
+  });
+
+  it('an owner finds a person by an app’s Support ID: one POST (purpose search), which code it is, and Open this person', async () => {
+    setUp('owner');
+    at('/orgs/org_a/users');
+    const box = await screen.findByLabelText('User ID or Support ID from one of your apps');
+    fireEvent.change(box, { target: { value: 'hana-7q2m-k4xp' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    expect(await screen.findByText('This is the Support ID Stamp Rally has for this person.')).toBeTruthy();
+    expect(bodyOf('/api/orgs/org_a/users/link')).toEqual({ query: 'hana-7q2m-k4xp', purpose: 'search' });
+    fireEvent.click(screen.getByRole('button', { name: 'Open this person' }));
+    expect(await screen.findByText('User ID (all your apps)')).toBeTruthy();
+  });
+
+  it('a refusal reads in plain words: not found, ambiguous, the limits', async () => {
+    setUp('owner');
+    let answer: { status: number; body: unknown } = { status: 404, body: { error: { code: 'not_found', message: 'Not found' } } };
+    routes['/api/orgs/org_a/users/link'] = () => answer;
+    at('/orgs/org_a/users');
+    const box = await screen.findByLabelText('User ID or Support ID from one of your apps');
+    fireEvent.change(box, { target: { value: 'HANA-ZZZZ-ZZZZ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    expect(await screen.findByText('Not found, or you aren’t a member of it.')).toBeTruthy();
+    answer = { status: 409, body: { error: { code: 'ambiguous', message: 'More than one person has this Support ID: ask for their User ID' } } };
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    expect(await screen.findByText('More than one person has this Support ID. Ask for their User ID instead.')).toBeTruthy();
+  });
+
+  it('an org with no shared wallet: no search across apps, even for an owner', async () => {
+    setUp('owner');
+    routes['/api/orgs/org_a/apps'] = { body: { apps: [APP] } };
+    routes['/api/orgs/org_a/users'] = { body: { users: [{ ...PERSON, sharedScope: false }] } };
+    at('/orgs/org_a/users');
+    expect(await screen.findByText(PERSON.userId)).toBeTruthy();
+    await waitFor(() => expect(calls.some((c) => c.url === '/api/orgs/org_a/apps')).toBe(true));
+    expect(screen.queryByText('Find a person by an app’s ID')).toBeNull();
+    expect(screen.queryByText('all your apps')).toBeNull();
+  });
+});

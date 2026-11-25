@@ -11,6 +11,7 @@ export * from './issuer-apps.ts';
 export * from './jcs.ts';
 export * from './labels.ts';
 export * from './layouts.ts';
+export * from './linking.ts';
 export * from './names.ts';
 export * from './origins.ts';
 export * from './owner-actions.ts';

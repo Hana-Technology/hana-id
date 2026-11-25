@@ -86,6 +86,11 @@ export interface HomeScope {
   /** The user's addresses on record here; empty when there are none. */
   addresses: HomeAddress[];
   apps: HomeApp[];
+  /**
+   * Journear marked this wallet's apps as several partners' (D915): the organisation behind them can see which of them
+   * the person uses, and each app made after the mark shows its own Support ID (D919, D925). False from an older API.
+   */
+  sharedScope: boolean;
 }
 
 export interface HomeAppsPage {
@@ -156,6 +161,7 @@ function parseScope(v: unknown): HomeScope | null {
     supportId: v.mine && typeof v.supportId === 'string' && SUPPORT_ID_RE.test(v.supportId) ? v.supportId : null,
     addresses: v.mine ? parseAddresses(v.addresses) : [],
     apps,
+    sharedScope: v.sharedScope === true,
   };
 }
 

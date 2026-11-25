@@ -237,6 +237,19 @@ describe('GET /v1/home/apps: the list and the overlay', () => {
     expect(other).not.toHaveProperty('addresses');
   });
 
+  it('D925: each listing says whether its apps share a wallet several partners use (a marked scope), mine or not', async () => {
+    const marked = await seedApp({ sharedScope: true });
+    const plain = await seedApp();
+    near.allowShared.add(marked.scope).add(plain.scope);
+    await seedUser(marked.scope);
+    await seedUser(plain.scope);
+    const id = await newIdentity();
+    expect(await one(id, marked.scope)).toMatchObject({ mine: true, sharedScope: true });
+    expect(await one(id, plain.scope)).toMatchObject({ mine: true, sharedScope: false });
+    const stranger = await newIdentity({ sub: `nobody-${uid()}` });
+    expect(await one(stranger, marked.scope)).toMatchObject({ mine: false, sharedScope: true });
+  });
+
   it('only addresses at key_index 0, the ones Home can derive', async () => {
     const app = await seedApp();
     await seedUser(app.scope, { wallets: [{ chain: 'stellar', address: `G${'C'.repeat(55)}`, keyIndex: 3 }, { chain: 'evm', address: `0x${'b'.repeat(40)}` }] });

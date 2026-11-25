@@ -32,7 +32,7 @@ import { policyCheckRoute } from './policy.ts';
 import { pendingUpgradesRoute } from './governance.ts';
 import { ledgerCsvRoute, statementFileRoute, statementViewRoute, statementsRoute, usageRoute } from './reports.ts';
 import { helperRoute, scopeOfOrg, scopeRoute } from './scopes.ts';
-import { usersRoute, usersScreenOn } from './users.ts';
+import { linkRoute, usersRoute, usersScreenOn } from './users.ts';
 
 export interface RouteCall {
   request: Request;
@@ -340,6 +340,8 @@ const ROUTES: OrgRouteDef[] = [
   // ---- end users (D310, behind USERS_SCREEN) ----
   { method: 'GET', re: /^\/users$/u, role: 'viewer', frozenOk: true, enabled: usersScreenOn, run: (c) => usersRoute(c.env, c.url, c.info, { ...ctxOf(c), orgId: c.caller.orgId }, undefined) },
   { method: 'GET', re: /^\/users\/([^/]{1,64})$/u, role: 'viewer', frozenOk: true, enabled: usersScreenOn, run: (c) => usersRoute(c.env, c.url, c.info, { ...ctxOf(c), orgId: c.caller.orgId }, c.m[1]) },
+  // D925: one person across the org's apps (owners only, D913 question 5; a read, so a frozen org keeps it).
+  { method: 'POST', re: /^\/users\/link$/u, role: 'owner', frozenOk: true, enabled: usersScreenOn, run: (c) => linkRoute(c.env, c.request, c.info, { ...ctxOf(c), orgId: c.caller.orgId }, writerOf(c), c.caller.session.hd) },
 ];
 
 const ORG_PREFIX = /^\/api\/orgs\/(org_[A-Za-z0-9]{1,64})(\/.*)$/u;

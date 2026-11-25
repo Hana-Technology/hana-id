@@ -9,7 +9,7 @@ export interface Limit {
   name: string;
   windowMs: number;
   max: number;
-  /** hitSliding only: a soft limit never refuses; past it, its name is reported in `soft` (an alert, not a breaker). */
+  /** A soft limit never refuses; past it, its name is reported in `soft` (an alert, not a breaker): `hitSliding`, and `hit` (D925). */
   soft?: boolean;
 }
 
@@ -88,12 +88,16 @@ export class RateLimiter extends DurableObject<Env> {
       const key = `${l.name}@${start}`;
       return { l, key, start, count: kv.get<number>(key) ?? 0 };
     });
+    // A soft window never refuses: one already at its max is reported in `soft` (an alert, D925) and still counts.
+    const soft: string[] = [];
     for (const s of slots) {
-      if (s.count >= s.l.max) return { ok: false, limit: s.l.name, retryAfterS: Math.max(1, Math.ceil((s.start + s.l.windowMs - now) / 1000)) };
+      if (s.count < s.l.max) continue;
+      if (s.l.soft) soft.push(s.l.name);
+      else return { ok: false, limit: s.l.name, retryAfterS: Math.max(1, Math.ceil((s.start + s.l.windowMs - now) / 1000)) };
     }
     for (const s of slots) kv.put(s.key, s.count + 1);
     this.prune(limits, now);
-    return { ok: true };
+    return soft.length > 0 ? { ok: true, soft } : { ok: true };
   }
 
   /**

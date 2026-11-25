@@ -321,4 +321,9 @@ export interface PartnerUser {
   emails?: PartnerEmailShare[];
   /** The name the user shared from Hana Home with one of the org's live apps in this scope (D714), or null ("Not shared"). */
   name: ProfileNameView | null;
+  /**
+   * The user's scope is marked as shared (D915): its User ID and Support ID here are the person's ones for the whole
+   * scope ("User ID (all your apps)"), and apps made after the mark give them IDs of their own (D919, D925).
+   */
+  sharedScope: boolean;
 }

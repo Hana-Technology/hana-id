@@ -14,6 +14,11 @@
 // is hidden: turn it on once that env's API runs D346.
 import {
   type ConsoleGetUserInput,
+  type ConsoleLinkUserInput,
+  type LinkedApp,
+  type UserLinkView,
+  LINK_APPS_MAX,
+  linkUserBody,
   type ConsoleListUsersInput,
   type PartnerUser,
   type RpcFail,
@@ -24,10 +29,12 @@ import {
   isDisplaySafeName,
 } from '@hana-id/console-core';
 import { normalizeProfileName } from '@hana-id/core/identity';
+import { type Writer, auditInsert, entry } from './audit.ts';
 import type { Env } from './env.ts';
-import { errorResponse, json } from './http.ts';
+import { errorResponse, json, readJson } from './http.ts';
 import type { RequestInfo } from './links.ts';
 import { log } from './log.ts';
+import { frag, ownerNow } from './sql.ts';
 
 /** The partner user as ConsoleRpc answers it (console-core `PartnerUser`). */
 export type PartnerUserIn = PartnerUser;
@@ -56,6 +63,8 @@ export interface PartnerUserOut {
   emails?: { appId: string; appName: string; email: string; sharedAt: number }[];
   /** The name shared from Passport Home with one of the org's live apps (D714), or null ("Not shared"). */
   name: { givenName: string | null; familyName: string | null } | null;
+  /** The scope is marked as shared (D915): these are the person's IDs for every app made before the mark (D925). */
+  sharedScope: boolean;
 }
 
 /**
@@ -166,7 +175,8 @@ export function partnerUserView(u: unknown): PartnerUserOut | null {
   // Missing (an API before profile names): not shared. Malformed: the row is dropped, as for `email`.
   const name = sharedName(r.name);
   if (name === undefined) return null;
-  return { userId: r.userId, supportId: r.supportId, scopeId: r.scopeId, createdAt, lastSeenAt, accounts, wallets, email, ...(emails ? { emails } : {}), name };
+  // Missing (an API before D925): not marked.
+  return { userId: r.userId, supportId: r.supportId, scopeId: r.scopeId, createdAt, lastSeenAt, accounts, wallets, email, ...(emails ? { emails } : {}), name, sharedScope: r.sharedScope === true };
 }
 
 export const usersScreenOn = (env: Pick<Env, 'USERS_SCREEN'>): boolean => env.USERS_SCREEN === '1';
@@ -212,4 +222,105 @@ export async function usersRoute(env: Pick<Env, 'USERS_SCREEN' | 'API'>, url: UR
     else log({ event: 'users_shape', requestId: info.requestId, outcome: 'error', code: 'bad_row' }, 'error');
   }
   return json(200, { users, ...(r.nextCursor ? { next: r.nextCursor } : {}) });
+}
+
+// ---- linking one person across the org's apps (D925; docs/partner-platform-spec.md piece P7, B6) ----
+
+/** ConsoleRpc's linking read (apps/api/src/directory/link.ts). */
+export interface ConsoleLinkClient {
+  linkUser(c: ConsoleLinkUserInput): Promise<RpcOk<{ link: unknown }> | RpcFail>;
+}
+
+/** What the console answers for a lookup: exactly these fields (console-core `UserLinkView`), nothing else. */
+export type UserLinkOut = UserLinkView;
+
+/**
+ * A lookup's answer as an owner may see it, rebuilt field by field, or null when it doesn't have the expected form
+ * (dropped and logged, never passed through): the person's scope-level User ID and Support ID, the scope, which kind of
+ * code matched (and the app it is the own code of), and per app its id, name, User ID, Support ID and two times.
+ */
+export function userLinkView(u: unknown): UserLinkOut | null {
+  if (typeof u !== 'object' || u === null) return null;
+  const r = u as Record<string, unknown>;
+  if (typeof r.userId !== 'string' || !USER_ID_RE.test(r.userId) || typeof r.supportId !== 'string' || !SUPPORT_ID_RE.test(r.supportId)) return null;
+  if (typeof r.scopeId !== 'string' || !SCOPE_RE.test(r.scopeId) || typeof r.truncated !== 'boolean' || !Array.isArray(r.apps) || r.apps.length > LINK_APPS_MAX) return null;
+  const m = (r.match ?? {}) as Record<string, unknown>;
+  if ((m.kind !== 'userId' && m.kind !== 'supportId') || (m.of !== 'scope' && m.of !== 'app')) return null;
+  const matchApp = m.of === 'app' ? (typeof m.appId === 'string' && APP_ID_RE.test(m.appId) ? m.appId : undefined) : m.appId === null ? null : undefined;
+  if (matchApp === undefined) return null;
+  const apps: LinkedApp[] = [];
+  for (const a of r.apps as unknown[]) {
+    const x = (a ?? {}) as Record<string, unknown>;
+    const first = time(x.firstSeenAt);
+    const last = time(x.lastSeenAt);
+    if (typeof x.appId !== 'string' || !APP_ID_RE.test(x.appId) || typeof x.userId !== 'string' || !USER_ID_RE.test(x.userId)) return null;
+    if (typeof x.supportId !== 'string' || !SUPPORT_ID_RE.test(x.supportId) || first === null || last === null) return null;
+    apps.push({ appId: x.appId, appName: isAppName(x.appName) ? x.appName : UNNAMED_APP, userId: x.userId, supportId: x.supportId, firstSeenAt: first, lastSeenAt: last });
+  }
+  return { userId: r.userId, supportId: r.supportId, scopeId: r.scopeId, match: { kind: m.kind, of: m.of, appId: matchApp }, apps, truncated: r.truncated };
+}
+
+/** The linking client, when the Users screen is on and the API binding has the read; else null (the route is 404). */
+export function linkClient(env: Pick<Env, 'USERS_SCREEN' | 'API'>): ConsoleLinkClient | null {
+  const api = env.API as Partial<ConsoleLinkClient>;
+  return usersScreenOn(env) && typeof api.linkUser === 'function' ? (api as ConsoleLinkClient) : null;
+}
+
+/**
+ * The audit row's guard: the acting member is an owner of the org now (`ownerNow`, the same rule as every owner write),
+ * not disabled, and the org's Workspace rule holds for the session's domain. Read in the insert itself, so a member
+ * demoted, removed or disabled since the request began gets no row, and so no answer.
+ */
+const ownerGuard = (orgId: string, userId: string, hd: string | null, now: number) =>
+  frag(
+    `EXISTS (SELECT 1 FROM members m JOIN orgs o ON o.id = m.org_id JOIN console_users cu ON cu.id = m.user_id
+       WHERE m.org_id = ? AND m.user_id = ? AND cu.disabled_at IS NULL AND (o.required_hd IS NULL OR o.required_hd = ?) AND ${ownerNow('m', now)})`,
+    orgId,
+    userId,
+    hd,
+  );
+
+/**
+ * `POST /api/orgs/:org/users/link {query, purpose}` (owner): one person of the org's marked scopes, by a whole User ID
+ * or Support ID (the scope's or one app's own), with that person's ID on each of the org's apps (D925). In order:
+ *
+ *   1. the route matrix: an owner now (a viewer is `403 forbidden` before anything is read or counted);
+ *   2. `ConsoleRpc.linkUser`: counted for the member and the org, then one SELECT held to the org's marked scopes;
+ *   3. the `users.link_view` audit row, written only while the member is still an owner (`ownerGuard`, read in the
+ *      insert): target the person's scope-level User ID (none when nothing was found), the app whose own code matched,
+ *      what opened it and the kind of code; no other identifier. A refusal is recorded the same way, with its code;
+ *   4. only then the answer, rebuilt field by field. An audit row that can't be written, or a guard that no longer holds,
+ *      means no answer (`internal`, `forbidden`): the lookup's count stays spent.
+ *
+ * POST, so no code lands in a URL; the query is never logged or stored.
+ */
+export async function linkRoute(env: Env, request: Request, info: RequestInfo, ctx: UsersCtx & { orgId: string }, w: Writer, hd: string | null): Promise<Response> {
+  const client = linkClient(env);
+  if (!client) return errorResponse('not_found');
+  const b = await readJson(request);
+  if (!b.ok) return errorResponse(b.code);
+  const body = linkUserBody.safeParse(b.value);
+  if (!body.success) return errorResponse('bad_request', 'Expected {query, purpose}');
+  const r = await client.linkUser({ ...ctx, query: body.data.query, purpose: body.data.purpose });
+  const view = r.ok ? userLinkView(r.link) : null;
+  if (r.ok && !view) log({ event: 'users_shape', requestId: info.requestId, outcome: 'error', code: 'bad_link' }, 'error');
+  const code = !r.ok ? r.code : view ? null : 'internal';
+  const details: Record<string, string> = { by: body.data.purpose, ...(view ? { kind: view.match.kind, of: view.match.of } : { code: code! }) };
+  let recorded: number;
+  try {
+    const res = await auditInsert(
+      env.CONSOLE_DB,
+      entry(w, 'users.link_view', { orgId: ctx.orgId, appId: view?.match.appId ?? null, target: view?.userId ?? null, outcome: view ? 'ok' : 'failed', details }),
+      ownerGuard(ctx.orgId, ctx.actor.id, hd, w.now),
+    ).run();
+    recorded = res.meta.changes;
+  } catch (err) {
+    log({ event: 'audit_write_failed', requestId: info.requestId, error: err instanceof Error ? err.name : 'unknown' }, 'error');
+    return errorResponse('internal', 'The look-up couldn’t be recorded, so nothing is shown. Try again.');
+  }
+  log({ event: 'console_rpc', method: 'linkUser', requestId: info.requestId, orgId: ctx.orgId, outcome: view ? 'ok' : 'rejected', ...(code ? { code } : {}) });
+  if (recorded !== 1) return errorResponse('forbidden', 'Only an owner of the organisation can do this');
+  // The API's own words for a limit or an ambiguous code (fixed texts, never the query); every other refusal its code.
+  if (!view) return !r.ok ? errorResponse(r.code, r.code === 'rate_limited' || r.code === 'ambiguous' ? r.error : undefined) : errorResponse('internal');
+  return json(200, { link: view });
 }

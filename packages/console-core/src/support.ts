@@ -37,6 +37,8 @@ export const SUPPORT_DAYS_MAX = 731;
 export const SUPPORT_ACTIVITY_MAX = 400;
 /** Matches resolved in full (a 40-bit code shared by more is a sign of something else: `truncated`). */
 export const SUPPORT_MATCHES_MAX = 10;
+/** Apps of a marked scope listed per match with the IDs each gives the person (D925), most recently used first. */
+export const SUPPORT_USER_APPS_MAX = 100;
 /** app_changes rows per match's scope, newest first. */
 export const SUPPORT_CHANGES_MAX = 50;
 /** Vault shares listed per match. */
@@ -121,8 +123,24 @@ export interface UserShare {
   revokedAt: number | null;
 }
 
+/** One app of a marked scope the person signed in on, with the User ID and Support ID it gives them (D925). */
+export interface SupportUserApp {
+  appId: string;
+  userId: string;
+  supportId: string;
+  firstSeenAt: number;
+  lastSeenAt: number;
+}
+
 export interface SupportMatch {
   user: StaffUser;
+  /**
+   * Which of the person's codes the query is (D925): the scope's (`end_users`, every app of before and every app on an
+   * unmarked scope) or one app's own (`end_user_apps`, an app made after its scope was marked); null for an internal id.
+   */
+  matchedBy: { of: 'scope' | 'app'; appId: string | null } | null;
+  /** The apps of a marked scope the person signed in on, each with its IDs, most recently used first (empty elsewhere). */
+  userApps: SupportUserApp[];
   apps: SupportApp[];
   shares: SupportShare[];
   /** The scope's apps' changes in the window, newest first, at most SUPPORT_CHANGES_MAX. */

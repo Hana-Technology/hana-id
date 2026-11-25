@@ -832,6 +832,32 @@ tr.failed td {
   margin: 0;
   min-width: 0;
 }
+/* D925: one person across the org's apps (the Users screen's detail and the owners' search). */
+.person-apps {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--jp-border);
+}
+.person-apps h3 {
+  margin: 0 0 6px;
+  font-size: var(--jp-text-md, 1rem);
+}
+.person-apps > p,
+.find-result > p {
+  margin: 0 0 12px;
+}
+.link-rule {
+  margin: 12px 0;
+}
+.find-result {
+  margin-top: 16px;
+}
+.find-result .facts {
+  margin-bottom: 12px;
+}
+.find-result .jp-btn {
+  margin-top: 12px;
+}
 .facts-panel {
   padding: 18px 20px;
   background: var(--jp-surface);

@@ -74,6 +74,7 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'GET', path: `${o}/governance/pending-upgrades` },
     { method: 'GET', path: `${o}/users` },
     { method: 'GET', path: `${o}/users/u1_AAAAAAAAAAAAAAAAAAAAAA` },
+    { method: 'POST', path: `${o}/users/link`, body: { query: 'u1_AAAAAAAAAAAAAAAAAAAAAA', purpose: 'panel' } },
   ];
 }
 
@@ -142,7 +143,7 @@ describe('the role matrix (spec "Roles and permissions")', () => {
     }
     const open = ROUTE_TABLE.filter((r) => r.frozenOk && r.method === 'POST').map((r) => r.pattern);
     expect(open.sort()).toEqual(
-      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$'].sort(),
+      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/users\\/link$'].sort(),
     );
   });
 

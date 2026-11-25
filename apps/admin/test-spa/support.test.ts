@@ -203,6 +203,35 @@ describe('the Support ID lookup screen', () => {
     expect(s.text()).toContain('No key export and no mainnet demo signature in the last 24 months.');
   });
 
+  it('D925: says which of the person’s codes matched (an app’s own, or the scope’s) and lists each app’s IDs for them', async () => {
+    const view = unboundView();
+    const m = view.matches[0]! as Record<string, unknown>;
+    m.apps = [
+      { appId: 'app_1', name: 'Wallet App 1', orgId: 'org_1', environment: 'test', persistence: 'session', deletedAt: null },
+      { appId: 'app_stamps', name: 'Stamp Rally', orgId: 'org_1', environment: 'test', persistence: 'session', deletedAt: null },
+    ];
+    m.matchedBy = { of: 'app', appId: 'app_stamps' };
+    m.userApps = [
+      { appId: 'app_stamps', userId: 'u1_ZyXwVuTsRqPoNmLkJiHgFA', supportId: 'HANA-7Q2M-K4XP', firstSeenAt: T - DAY, lastSeenAt: T },
+      { appId: 'app_1', userId: 'u1_AAAAAAAAAAAAAAAAAAAA1A', supportId: 'HANA-2750-G5HM', firstSeenAt: T - 9 * DAY, lastSeenAt: T - DAY },
+    ];
+    const s = boot('/support', () => ({ body: view }));
+    await vi.waitFor(() => expect(s.text()).toContain('Support ID lookup'));
+    s.field('query').value = 'HANA-7Q2M-K4XP';
+    s.field('ticket').value = 'ZD-1234';
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('This person on each app'));
+    const t = s.text();
+    expect(t).toContain('This app’s own code: Stamp Rally');
+    for (const want of ['u1_ZyXwVuTsRqPoNmLkJiHgFA', 'HANA-7Q2M-K4XP', 'Never give one partner another partner’s ID for the same person.']) expect(t, want).toContain(want);
+    // The scope's own code says so; a person with no per-app rows has no such table.
+    m.matchedBy = { of: 'scope', appId: null };
+    m.userApps = [];
+    s.submit();
+    await vi.waitFor(() => expect(s.text()).toContain('The scope’s code'));
+    expect(s.text()).not.toContain('This person on each app');
+  });
+
   it('shows the route’s refusal and keeps the form', async () => {
     const s = boot('/support', () => ({ status: 400, body: { error: { code: 'bad_request', message: 'ticket: a support reference' } } }));
     await vi.waitFor(() => expect(s.form()).toBeTruthy());

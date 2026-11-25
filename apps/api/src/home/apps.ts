@@ -125,6 +125,8 @@ interface AppJson {
 interface ScopeRow {
   scope_id: string;
   environment: 'test' | 'live';
+  /** The scope's mark (D915): several partners' apps share this wallet, and the scope's owner can see which of them a person used (D925). */
+  app_user_ids: number | null;
   apps_json: string;
   held_json: string;
 }
@@ -135,7 +137,7 @@ interface ScopeRow {
  * can't say which app they used); otherwise only apps with a first login.
  */
 const scopeColumns = (now: number, allApps: Q): Q =>
-  q`s.scope_id, s.environment,
+  q`s.scope_id, s.environment, s.app_user_ids,
     (SELECT json_group_array(json_object('id', a.id, 'name', a.name, 'status', a.status, 'suspended_by', a.suspended_by, 'deleted_at', a.deleted_at,
         'logo_key', a.logo_key, 'google_web_client_id', a.google_web_client_id,
         'origins', json((SELECT json_group_array(o.origin) FROM (SELECT origin FROM app_origins WHERE app_id = a.id AND active_from <= ${now} ORDER BY origin LIMIT ${HOME_ORIGINS_PER_APP}) o))))
@@ -271,6 +273,9 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
       mine: entry !== undefined,
       coverage: route.coverage,
       googleClientId: route.googleClientId,
+      // D913 question 10, D925: Home tells the person that the scope's owner can see which of its apps they use, and
+      // that its Support ID is Journear's (each app of a marked scope may show its own).
+      sharedScope: r.app_user_ids === 1,
       ...(entry ? { supportId: formatSupportId(entry.supportCode), addresses: entry.addresses } : {}),
       apps: apps.map((a) => ({ appId: a.id, name: a.name, status: appStatus(a), environment: r.environment, origins: a.origins, logoUrl: logoUrl(env.FILES_ORIGIN, a.logo_key) ?? null })),
     };

@@ -10,7 +10,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { APP_CHANGE_KINDS, SECURITY_EVENT_KINDS } from '@hana-id/console-core';
 import { describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
-import { type FeedState, type LedgerCheckDeps, type LedgerSnapshot, FEED_CURSOR_KEYS, KIND_TRIGGERS, LEDGER_TABLES, SECURITY_EVENT_KINDS_AT_0021, SECURITY_EVENT_KIND_STEPS, compareSnapshots, expectedTableSql, ledgerCheck, lifecycleProblem, pageSql, referenceSchema, securityEventsLevel, takeSnapshot } from '../lib/ledger-check.ts';
+import { type Checkout, type FeedState, type LedgerCheckDeps, type LedgerSnapshot, FEED_CURSOR_KEYS, VERDICT_EXIT, KIND_TRIGGERS, LEDGER_TABLES, SECURITY_EVENT_KINDS_AT_0021, SECURITY_EVENT_KIND_STEPS, compareSnapshots, expectedTableSql, ledgerCheck, lifecycleProblem, pageSql, referenceSchema, securityEventsLevel, takeSnapshot } from '../lib/ledger-check.ts';
 import { MIGRATIONS_DIR, newHotDb } from './hot-db.ts';
 import { repoRoot } from '@hana-id/env';
 
@@ -302,7 +302,7 @@ describe('ledger-check: the CLI', () => {
     await expect(ledgerCheck(['sandbox-dev', 'compare', '--remote'], deps)).rejects.toThrow(CliError);
     await expect(ledgerCheck(['sandbox-dev', 'apply'], deps)).rejects.toThrow(CliError);
     files.set('/repo/.secrets/sandbox-dev/v1.json', { ...(files.get('/repo/.secrets/sandbox-dev/b.json') as object), format: 'hana-id/ledger-check/v1' });
-    await expect(ledgerCheck(['sandbox-dev', 'compare', '--remote', '--before', '/repo/.secrets/sandbox-dev/v1.json'], deps)).rejects.toThrow(/not a hana-id\/ledger-check\/v2 snapshot/u);
+    await expect(ledgerCheck(['sandbox-dev', 'compare', '--remote', '--before', '/repo/.secrets/sandbox-dev/v1.json'], deps)).rejects.toThrow(/not a hana-id\/ledger-check\/v3 snapshot/u);
     db.exec(UNCHECKED.replace('FROM security_events;', "FROM security_events WHERE id <> 'se_drift';"));
     expect(await ledgerCheck(['sandbox-dev', 'compare', '--remote', '--before', '/repo/.secrets/sandbox-dev/b.json'], deps)).toBe(1);
     expect(lines.at(-1)).toMatch(/Verdict: ROLL BACK/u);
@@ -378,9 +378,14 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
     // here until its step is added.
     let kinds = [...SECURITY_EVENT_KINDS_AT_0021];
     const steps: { migration: string; added: string[] }[] = [];
+    // Any statement that creates, drops, alters or renames into `security_events` (any case, any quoting, any copy's
+    // name) marks a file that changes the table (after PR 151's review, L3); each must be a step with its kind list.
+    const touches = /\b(?:CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?["'`\[]?security_events\w*|\bRENAME\s+TO\s+["'`\[]?security_events\b/iu;
     for (const f of FILES.filter((n) => n >= '0022')) {
-      const sql = readFileSync(join(MIGRATIONS_DIR, f), 'utf8');
+      const sql = readFileSync(join(MIGRATIONS_DIR, f), 'utf8').replace(/--[^\n]*/gu, '');
+      if (!touches.test(sql)) continue;
       const create = /CREATE TABLE security_events_new \(([\s\S]*?)\n\);/u.exec(sql);
+      expect(create, `${f} changes security_events but not as a known rebuild (CREATE TABLE security_events_new …)`).not.toBeNull();
       if (!create) continue;
       const now = kindsIn(create[0]);
       expect(now.slice(0, kinds.length), f).toEqual(kinds);
@@ -388,12 +393,20 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
       kinds = now;
     }
     expect(steps).toEqual(SECURITY_EVENT_KIND_STEPS.map((x) => ({ migration: x.migration, added: [...x.added] })));
-    // 0022 to 0026 write no row of the three tables and leave app_changes and guarded_changes alone.
-    for (const level of ['0022', '0023', '0024', '0025', '0026']) {
-      const sql = readFileSync(join(MIGRATIONS_DIR, file(level)), 'utf8').replace(/--[^\n]*/gu, '');
-      expect(sql, level).not.toMatch(/\b(INSERT INTO|UPDATE|DELETE FROM|ALTER TABLE|DROP TABLE|CREATE TABLE)\s+"?(app_changes|guarded_changes)\b/iu);
-      expect(sql, level).not.toMatch(/\b(INSERT INTO|UPDATE|DELETE FROM)\s+"?security_events\b(?!_new)/iu);
+    // No migration after 0021 writes a row of the three tables (only their rebuilds' own copies, `…_new`), 0027 included,
+    // and none but 0027 creates, drops or alters app_changes or guarded_changes (after PR 151's review, L3: a row
+    // written above max(seq) would read as "kept").
+    const write = /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+["'`\[]?(?:app_changes|guarded_changes|security_events)\b(?!_)/iu;
+    const shape = /\b(?:CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?["'`\[]?(?:app_changes|guarded_changes)\b(?!_)|\bRENAME\s+TO\s+["'`\[]?(?:app_changes|guarded_changes)\b/iu;
+    for (const f of FILES.filter((n) => n >= '0022')) {
+      const sql = readFileSync(join(MIGRATIONS_DIR, f), 'utf8').replace(/--[^\n]*/gu, '');
+      expect(sql, `${f} writes a ledger row`).not.toMatch(write);
+      if (!f.startsWith('0027')) expect(sql, `${f} reshapes app_changes or guarded_changes`).not.toMatch(shape);
     }
+    // The patterns themselves catch the forms a review named: another case, quoting, OR REPLACE.
+    for (const bad of ['insert into APP_CHANGES (seq) values (1)', 'INSERT OR REPLACE INTO "guarded_changes" VALUES (1)', 'update `security_events` set x = 1', 'DELETE FROM [app_changes]']) expect(bad).toMatch(write);
+    for (const bad of ['ALTER TABLE "APP_CHANGES" ADD COLUMN x', 'drop table if exists guarded_changes', 'ALTER TABLE x RENAME TO app_changes']) expect(bad).toMatch(shape);
+    for (const bad of ['CREATE TABLE "Security_Events_copy" (x)', 'DROP TABLE security_events', 'ALTER TABLE security_events_x RENAME TO "security_events"']) expect(bad).toMatch(touches);
     // The table SQL itself, level by level on the real files: each step is the before-SQL with exactly its kinds added.
     for (const level of LEVELS) {
       const db = newHotDb({ before: next(level) });
@@ -479,7 +492,7 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
     expect(c.verdict).toBe('kept');
   });
 
-  it('an unknown kind list, a level going backwards, or kinds at 0027 without its triggers: rollback; an object no migration creates: rollback', async () => {
+  it('an unknown kind list before 0027: its own verdict, nothing else reported CHANGED; kinds at 0027 without its triggers, or an object no migration creates: rollback', async () => {
     const seSql = (sql: string) => ({ type: 'table', table: 'security_events', sql });
     const db = populated('0024');
     const before = await snap(db);
@@ -487,7 +500,14 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
     expect(expectedTableSql('security_events', before.schema.security_events!.sql!, false, '0022')).toBeNull();
     const odd = { ...before, schema: { ...before.schema, security_events: seSql(before.schema.security_events!.sql!.replace("'neon_compute_high'", "'neon_compute_high', 'made_up'")) } };
     expect(securityEventsLevel(odd.schema.security_events.sql)).toBeNull();
-    expect(compareSnapshots(before, odd as LedgerSnapshot, REFERENCE).verdict).toBe('roll_back');
+    const unknown = compareSnapshots(before, odd as LedgerSnapshot, REFERENCE);
+    expect(unknown.verdict).toBe('unknown_level');
+    expect(unknown.lines.join('\n')).toContain("UNKNOWN LEVEL: security_events' kind list after is at no migration level");
+    expect(unknown.lines.join('\n')).not.toMatch(/CHANGED table (app_changes|guarded_changes)/u);
+    // The same unknown list before the snapshot: also its own verdict, and only that.
+    const unknownBefore = compareSnapshots(odd as LedgerSnapshot, before, REFERENCE);
+    expect(unknownBefore.verdict).toBe('unknown_level');
+    expect(unknownBefore.lines.join('\n')).not.toMatch(/CHANGED/u);
     const level0027 = expectedTableSql('security_events', before.schema.security_events!.sql!, false, '0027')!;
     const noTriggers = { ...before, schema: { ...before.schema, security_events: seSql(level0027) } };
     const c = compareSnapshots(before, noTriggers as LedgerSnapshot, REFERENCE);
@@ -529,5 +549,140 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
     const cli = readFileSync(join(repoRoot, 'scripts', 'ledger-check.ts'), 'utf8');
     expect(cli).toMatch(/cwd: invocationDir\(\)/u);
     expect(cli).toMatch(/referenceSchema: \(\) => referenceSchema\(/u);
+  });
+});
+
+describe('ledger-check after PR 151’s review (D924)', () => {
+  const FILES = readdirSync(MIGRATIONS_DIR).filter((n) => n.endsWith('.sql')).sort();
+  const REFERENCE = referenceSchema(MIGRATIONS_DIR);
+  const applyRange = (db: DatabaseSync, from: string, to: string) => {
+    for (const f of FILES) if (f >= from && f < to) db.exec(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'));
+  };
+  /** wrangler's own table: the migrations the database recorded, by name. */
+  const recordApplied = (db: DatabaseSync, upTo: string) => {
+    db.exec('CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TEXT)');
+    const ins = db.prepare('INSERT OR IGNORE INTO d1_migrations (name, applied_at) VALUES (?, ?)');
+    for (const f of FILES) if (f < upTo) ins.run(f, 'x');
+  };
+
+  it('L1: an index or trigger on the tables in another case, or another table’s trigger naming them in capitals, is in the snapshot and caught', async () => {
+    for (const [what, extra, finding] of [
+      ['a RAISE(IGNORE) trigger ON APP_CHANGES', 'CREATE TRIGGER quiet_drop BEFORE INSERT ON APP_CHANGES BEGIN SELECT RAISE(IGNORE); END;', /UNEXPECTED trigger quiet_drop \(on (APP_CHANGES|app_changes)\)/u],
+      ['a scopes trigger writing APP_CHANGES', "CREATE TRIGGER sneaky_scope AFTER UPDATE ON scopes BEGIN DELETE FROM APP_CHANGES WHERE seq < 0; END;", /UNEXPECTED trigger sneaky_scope \(on scopes\)/u],
+      ['an index on Guarded_Changes', 'CREATE INDEX odd_index ON Guarded_Changes (proposed_at);', /UNEXPECTED index odd_index/u],
+    ] as const) {
+      const db = populated('0022');
+      const before = await snap(db);
+      applyRange(db, '0022', '0027');
+      db.exec(`${UNCHECKED}\n${extra}`);
+      const c = compareSnapshots(before, await snap(db), REFERENCE);
+      expect(c.verdict, what).toBe('roll_back');
+      expect(c.lines.join('\n'), what).toMatch(finding);
+    }
+  });
+
+  it('L5: a snapshot already taken after 0027 is warned about, and “identical” says it proves nothing', async () => {
+    const db = populated();
+    db.exec(MIGRATION);
+    const a = await snap(db);
+    const c = compareSnapshots(a, await snap(db), REFERENCE);
+    expect(c.verdict).toBe('identical');
+    expect(c.lines.join('\n')).toContain("WARNING: the snapshot before already has 0027's triggers");
+    expect(c.lines.at(-1)).toContain('says nothing about the migration itself');
+  });
+
+  describe('L2: the checkout and the database must belong to the snapshots (exit 2, “can’t judge”)', () => {
+    const run = () => {
+      const db = populated('0022');
+      recordApplied(db, '0022');
+      const files = new Map<string, unknown>();
+      const lines: string[] = [];
+      let t = NOW;
+      const co: Checkout = { commit: 'a'.repeat(40), migrationsDirty: false, migrationFiles: FILES };
+      const deps: LedgerCheckDeps = {
+        manifest: () => ({ network: 'testnet', d1Name: 'hana-id-sandbox-dev' }),
+        read: (_e, _d, st) => reader(db)(st),
+        feedState: async () => ({ get: async () => new Map(), set: async () => undefined, close: async () => undefined }),
+        secretsEnvDir: (env) => `/repo/.secrets/${env}`,
+        writeJson: (f, v) => files.set(f, JSON.parse(JSON.stringify(v))),
+        readJson: (f) => files.get(f),
+        log: (l) => lines.push(l),
+        now: () => new Date((t += 60_000)),
+        referenceSchema: () => REFERENCE,
+        checkout: () => ({ ...co }),
+      };
+      const migrate = () => {
+        applyRange(db, '0022', '0028');
+        recordApplied(db, '0028');
+      };
+      return { db, files, lines, co, deps, migrate };
+    };
+    const B = '/repo/.secrets/sandbox-dev/b.json';
+    const compare = (deps: LedgerCheckDeps, ...extra: string[]) => ledgerCheck(['sandbox-dev', 'compare', '--remote', '--before', B, ...extra], deps);
+
+    it('the snapshot records the commit, whether the migrations were dirty, and what the database recorded; the same commit compares', async () => {
+      const r = run();
+      expect(await ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--out', B], r.deps)).toBe(0);
+      const snapFile = r.files.get(B) as LedgerSnapshot;
+      expect(snapFile.checkout).toEqual({ commit: 'a'.repeat(40), migrationsDirty: false });
+      expect(snapFile.applied).toEqual(FILES.filter((f) => f < '0022'));
+      r.migrate();
+      expect(await compare(r.deps)).toBe(VERDICT_EXIT.identical);
+      expect(r.lines.at(-1)).toContain('Verdict: identical');
+    });
+
+    it('another commit: can’t judge (exit 2), unless --other-commit, which prints both commits', async () => {
+      const r = run();
+      await ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--out', B], r.deps);
+      r.migrate();
+      r.co.commit = 'b'.repeat(40);
+      expect(await compare(r.deps)).toBe(2);
+      expect(r.lines.join('\n')).toMatch(/CAN'T JUDGE: the snapshot before was taken at a{40}, this checkout is at b{40}/u);
+      expect(r.lines.at(-1)).toContain("Verdict: can't judge");
+      expect(await compare(r.deps, '--other-commit')).toBe(0);
+      expect(r.lines.join('\n')).toMatch(/--other-commit: the snapshot before is from a{40}, this checkout is b{40}/u);
+    });
+
+    it('uncommitted migrations, now or when the snapshot was taken: can’t judge, even with --other-commit', async () => {
+      const r = run();
+      r.co.migrationsDirty = true;
+      await ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--out', B], r.deps);
+      expect(r.lines.join('\n')).toContain('WARNING: apps/api/migrations has uncommitted changes');
+      r.migrate();
+      expect(await compare(r.deps, '--other-commit')).toBe(2);
+      r.co.migrationsDirty = false;
+      expect(await compare(r.deps, '--other-commit')).toBe(2);
+      expect(r.lines.join('\n')).toContain('taken from a checkout with uncommitted changes in apps/api/migrations');
+    });
+
+    it('a migration the database recorded that this checkout doesn’t have, or no d1_migrations: can’t judge', async () => {
+      const r = run();
+      await ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--out', B], r.deps);
+      r.migrate();
+      r.db.exec("INSERT INTO d1_migrations (name, applied_at) VALUES ('0031_from_elsewhere.sql', 'x')");
+      expect(await compare(r.deps)).toBe(2);
+      expect(r.lines.join('\n')).toContain("the database recorded migration(s) this checkout doesn't have: 0031_from_elsewhere.sql");
+      r.db.exec('DROP TABLE d1_migrations');
+      expect(await compare(r.deps)).toBe(2);
+      expect(r.lines.join('\n')).toContain('the database has no d1_migrations table');
+    });
+
+    it('a locally edited 0027, applied and used as the reference, is refused (dirty), never “identical”', async () => {
+      const r = run();
+      await ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--out', B], r.deps);
+      applyRange(r.db, '0022', '0027');
+      r.db.exec(`${UNCHECKED}\nCREATE TRIGGER quiet BEFORE INSERT ON app_changes BEGIN SELECT RAISE(IGNORE); END;`);
+      recordApplied(r.db, '0028');
+      r.co.migrationsDirty = true; // the edit is in apps/api/migrations
+      expect(await compare(r.deps)).toBe(2);
+      expect(r.lines.join('\n')).not.toContain('Verdict: identical');
+    });
+
+    it('the CLI checks the real git checkout (rev-parse HEAD, status --porcelain apps/api/migrations) and passes --other-commit', () => {
+      const cli = readFileSync(join(repoRoot, 'scripts', 'ledger-check.ts'), 'utf8');
+      expect(cli).toMatch(/git\('rev-parse', 'HEAD'\)/u);
+      expect(cli).toMatch(/git\('status', '--porcelain', '--untracked-files=all', '--', 'apps\/api\/migrations'\)/u);
+      expect(VERDICT_EXIT).toEqual({ identical: 0, kept: 0, roll_back: 1, not_applied: 1, cannot_judge: 2, unknown_level: 3 });
+    });
   });
 });

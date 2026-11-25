@@ -38,7 +38,7 @@ import { CliError, parseCli } from './cli.ts';
 import { type SqlParam, sqlValue } from './sql.ts';
 
 export const LEDGER_CHECK_USAGE = `Usage: ledger-check.ts <env> snapshot [--remote] [--d1-name <name>] [--out <file>]
-       ledger-check.ts <env> compare --before <snapshot file> [--remote] [--d1-name <name>] [--out <file>]
+       ledger-check.ts <env> compare --before <snapshot file> [--remote] [--d1-name <name>] [--out <file>] [--other-commit]
        ledger-check.ts <env> feed-cursor --remote --before <snapshot file> [--yes]
   snapshot     reads app_changes, guarded_changes and security_events (every row, in key order), their SQL, indexes and
                triggers; writes counts, max(seq), hashes and statuses (never a row's value) to .secrets/<env>/ (0600)
@@ -49,7 +49,10 @@ export const LEDGER_CHECK_USAGE = `Usage: ledger-check.ts <env> snapshot [--remo
                (ops.state feed.app_changes.seq, and its .init) to the snapshot's max(seq) (--before; at most the
                restored max(seq)); without --yes, shows the plan
   --remote     the deployed database (default: local, wrangler dev's state, as admin.ts)
-  --d1-name    a rehearsal database (its name must contain "rehearsal"; remote only), instead of the env's own`;
+  --d1-name    a rehearsal database (its name must contain "rehearsal"; remote only), instead of the env's own
+  --other-commit  compare a snapshot taken at another commit (both commits are printed)
+  exit codes   0 identical or kept; 1 roll back or not applied; 2 can't judge (another commit, uncommitted
+               migrations, a migration the checkout doesn't have); 3 unknown level`;
 
 /** A table the check reads: its key (the order rows are read and hashed in), its columns, and those jobs update. */
 export interface LedgerTable {
@@ -169,7 +172,7 @@ export interface TableSnapshot {
   byKey: Record<string, RowMark>;
 }
 
-export const SNAPSHOT_FORMAT = 'hana-id/ledger-check/v2';
+export const SNAPSHOT_FORMAT = 'hana-id/ledger-check/v3';
 
 export interface LedgerSnapshot {
   format: typeof SNAPSHOT_FORMAT;
@@ -181,6 +184,17 @@ export interface LedgerSnapshot {
   tables: Record<string, TableSnapshot>;
   /** The three tables, their indexes and their triggers (automatic indexes have no SQL: null), by name. */
   schema: Record<string, { type: string; table: string; sql: string | null }>;
+  /** The migrations the database has recorded (`d1_migrations`, by name), or null without that table (a test). */
+  applied: string[] | null;
+  /** The checkout the snapshot was taken from (the CLI): its commit and whether its `apps/api/migrations` was dirty. */
+  checkout: { commit: string; migrationsDirty: boolean } | null;
+}
+
+/** The checkout `ledger-check` runs from: HEAD, whether `apps/api/migrations` has changes, and its migration files. */
+export interface Checkout {
+  commit: string;
+  migrationsDirty: boolean;
+  migrationFiles: string[];
 }
 
 /** Runs one SELECT on the API's D1 and returns its rows (apiPrivateD1Execute, or node:sqlite in tests). */
@@ -215,10 +229,11 @@ export function pageSql(t: LedgerTable, after: SqlParam | undefined, pageSize: n
 
 /**
  * The three tables, their indexes and triggers, and every other table's trigger whose body names one of them (a DROP
- * TABLE of a rebuild drops none of those, and a rename checks them: they must come out word for word).
+ * TABLE of a rebuild drops none of those, and a rename checks them: they must come out word for word). Matched in any
+ * case (SQLite's names are case-insensitive: a trigger `ON APP_CHANGES` is on the table, after PR 151's review).
  */
 export const SCHEMA_SQL =
-  "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE (type IN ('table', 'index', 'trigger') AND tbl_name IN ('app_changes', 'guarded_changes', 'security_events')) OR (type = 'trigger' AND (instr(sql, 'app_changes') > 0 OR instr(sql, 'guarded_changes') > 0 OR instr(sql, 'security_events') > 0)) ORDER BY name";
+  "SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE (type IN ('table', 'index', 'trigger') AND lower(tbl_name) IN ('app_changes', 'guarded_changes', 'security_events')) OR (type = 'trigger' AND (instr(lower(sql), 'app_changes') > 0 OR instr(lower(sql), 'guarded_changes') > 0 OR instr(lower(sql), 'security_events') > 0)) ORDER BY name";
 
 async function snapshotTable(read: LedgerRead, t: LedgerTable, pageSize: number): Promise<TableSnapshot> {
   const all = createHash('sha256');
@@ -254,13 +269,26 @@ async function snapshotTable(read: LedgerRead, t: LedgerTable, pageSize: number)
   return { rows, maxSeq: t.name === 'app_changes' ? maxSeq : null, sha256: all.digest('hex'), byKey };
 }
 
-export async function takeSnapshot(read: LedgerRead, o: { env: string; database: string; remote: boolean; now?: Date; pageSize?: number }): Promise<LedgerSnapshot> {
+export async function takeSnapshot(read: LedgerRead, o: { env: string; database: string; remote: boolean; now?: Date; pageSize?: number; checkout?: Checkout }): Promise<LedgerSnapshot> {
   const pageSize = o.pageSize ?? 500;
   const tables: Record<string, TableSnapshot> = {};
   for (const t of LEDGER_TABLES) tables[t.name] = await snapshotTable(read, t, pageSize);
   const schema: LedgerSnapshot['schema'] = {};
   for (const r of await read(SCHEMA_SQL)) schema[String(r.name)] = { type: String(r.type), table: String(r.tbl_name), sql: r.sql === null ? null : String(r.sql) };
-  return { format: SNAPSHOT_FORMAT, env: o.env, database: o.database, remote: o.remote, takenAt: (o.now ?? new Date()).toISOString(), tables, schema };
+  let appliedNames: string[] | null = null;
+  const has = await read("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'd1_migrations'");
+  if (has.length) appliedNames = (await read('SELECT name FROM d1_migrations ORDER BY name')).map((r) => String(r.name));
+  return {
+    format: SNAPSHOT_FORMAT,
+    env: o.env,
+    database: o.database,
+    remote: o.remote,
+    takenAt: (o.now ?? new Date()).toISOString(),
+    tables,
+    schema,
+    applied: appliedNames,
+    checkout: o.checkout ? { commit: o.checkout.commit, migrationsDirty: o.checkout.migrationsDirty } : null,
+  };
 }
 
 /** The status moves a job makes: activation, a close or end (in force), a cancel (not yet in force). */
@@ -310,7 +338,15 @@ export function lifecycleProblem(t: LedgerTable, before: readonly (string | null
   return problems.length ? problems.join(', ') : null;
 }
 
-export type Verdict = 'identical' | 'kept' | 'roll_back' | 'not_applied';
+/**
+ * `unknown_level`: a snapshot's `security_events` kind list is at no known level (nothing else wrong): don't restore on
+ * this alone, find out which migrations the database has. `cannot_judge` (the CLI): the snapshots, the checkout and
+ * the database don't belong together (another commit, dirty migrations, a migration this checkout doesn't have).
+ */
+export type Verdict = 'identical' | 'kept' | 'roll_back' | 'not_applied' | 'unknown_level' | 'cannot_judge';
+
+/** The CLI's exit code per verdict: 0 when the migration is in and every row kept; 2 can't judge; 3 unknown level. */
+export const VERDICT_EXIT: Readonly<Record<Verdict, number>> = { identical: 0, kept: 0, roll_back: 1, not_applied: 1, cannot_judge: 2, unknown_level: 3 };
 
 export interface Comparison {
   verdict: Verdict;
@@ -399,8 +435,26 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, 
   const migrated = !applied(before) && applied(after);
   const fromLevel = before.schema.security_events?.sql ? securityEventsLevel(before.schema.security_events.sql) : null;
   const toLevel = after.schema.security_events?.sql ? securityEventsLevel(after.schema.security_events.sql) : null;
+  let unknownLevel = false;
   if (fromLevel !== null && toLevel !== null && fromLevel !== toLevel) lines.push(`security_events' kinds: at migration ${fromLevel} before, ${toLevel} after (the kinds the migrations in between add).`);
-  if (toLevel !== null && (toLevel === '0027') !== applied(after)) {
+  // A kind list at no known level is its own finding, not a damaged rebuild (after PR 151's review, L4), except after
+  // 0027: its triggers present means 0027 rebuilt security_events (one transaction), so its list must be 0027's, and
+  // any other is that rebuild's damage.
+  if (applied(after) && !applied(before) && toLevel !== '0027' && after.schema.security_events?.sql) {
+    broken = true;
+    lines.push(`CHANGED table security_events: 0027's triggers are present but its kind list is ${toLevel === null ? 'at no known level' : `at ${toLevel}`}, not 0027's (the rebuild left a kind out or changed the CHECK).`);
+  } else {
+    for (const [which, level, snap] of [['before', fromLevel, before], ['after', toLevel, after]] as const) {
+      if (level === null && snap.schema.security_events?.sql) {
+        unknownLevel = true;
+        lines.push(`UNKNOWN LEVEL: security_events' kind list ${which} is at no migration level this checkout knows (SECURITY_EVENT_KIND_STEPS): which migrations does the database have?`);
+      }
+    }
+  }
+  // A snapshot taken after 0027 can't show what 0027 did (L5).
+  const lateBefore = applied(before);
+  if (lateBefore) lines.push("WARNING: the snapshot before already has 0027's triggers: it was taken after the migration, so this comparison proves nothing about 0027.");
+  if (toLevel !== null && toLevel === '0027' && !applied(after)) {
     broken = true;
     lines.push(`CHANGED schema: security_events' kinds are at ${toLevel} but 0027's triggers are ${applied(after) ? 'present' : 'absent'}.`);
   }
@@ -412,7 +466,9 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, 
       lines.push(`MISSING table ${t.name} in the schema.`);
       continue;
     }
-    const expected = toLevel === null ? null : expectedTableSql(t.name, b.sql, migrated, toLevel);
+    // security_events at an unknown level is reported above, once; the other two don't depend on the level.
+    if (t.name === 'security_events' && (fromLevel === null || toLevel === null || (applied(after) && !applied(before) && toLevel !== '0027'))) continue;
+    const expected = expectedTableSql(t.name, b.sql, migrated, toLevel ?? '0027');
     if (a.sql !== expected) {
       broken = true;
       const what = t.name === 'security_events' ? `the old one with the kinds of the migrations between (${fromLevel ?? 'unknown level'} → ${toLevel ?? 'unknown level'}) added` : migrated ? 'the old one less the CHECK 0027 moves' : 'the same as before';
@@ -461,6 +517,10 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, 
     lines.push('Verdict: ROLL BACK to the Time Travel bookmark taken before the migration (docs/operations.md "Ledger rebuild").');
     return { verdict: 'roll_back', lines };
   }
+  if (unknownLevel) {
+    lines.push('Verdict: unknown level. No row or rule of the three tables was found damaged, but security_events\' kinds are at no level this checkout knows: don\'t restore on this; check the database\'s d1_migrations and the checkout, and ask.');
+    return { verdict: 'unknown_level', lines };
+  }
   if (!applied(after)) {
     lines.push(`Verdict: migration 0027 is not applied (no ${KIND_TRIGGERS.filter((k) => !Object.hasOwn(after.schema, k)).join(', ')}); every row of before is there. Nothing to roll back.`);
     return { verdict: 'not_applied', lines };
@@ -469,7 +529,7 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, 
     lines.push('Verdict: kept. Every row, seq, rule, index and trigger of before is there; the differences above are rows written or moved on by the running jobs since the first snapshot, each only as a job moves it.');
     return { verdict: 'kept', lines };
   }
-  lines.push('Verdict: identical. Every row, seq, rule, index and trigger is as before.');
+  lines.push(lateBefore ? 'Verdict: identical, to a snapshot already taken after 0027 (see the warning): it says nothing about the migration itself.' : 'Verdict: identical. Every row, seq, rule, index and trigger is as before.');
   return { verdict: 'identical', lines };
 }
 
@@ -485,6 +545,8 @@ export function parseSnapshot(v: unknown, env: string): LedgerSnapshot {
     throw new Error(`--before is not a ${SNAPSHOT_FORMAT} snapshot (take a new one with this version)`);
   }
   if (s.env !== env) throw new Error(`--before is a snapshot of ${String(s.env)}, not ${env}`);
+  if (s.applied !== null && !Array.isArray(s.applied)) throw new Error('--before has no usable applied list');
+  if (s.checkout !== null && (typeof s.checkout !== 'object' || typeof s.checkout?.commit !== 'string' || typeof s.checkout?.migrationsDirty !== 'boolean')) throw new Error('--before has no usable checkout');
   for (const t of LEDGER_TABLES) {
     const x = s.tables![t.name];
     if (!x || typeof x.rows !== 'number' || typeof x.sha256 !== 'string' || typeof x.byKey !== 'object') throw new Error(`--before has no usable ${t.name}`);
@@ -527,6 +589,30 @@ export interface LedgerCheckDeps {
    * (`referenceSchema`): what an object that appeared between the snapshots must be, word for word (D924).
    */
   referenceSchema?: () => LedgerSnapshot['schema'];
+  /** The checkout (`git rev-parse HEAD`, `git status --porcelain apps/api/migrations`, its files): the CLI's. */
+  checkout?: () => Checkout;
+}
+
+/**
+ * Whether the snapshots, this checkout and the database belong together (after PR 151's review, L2): the checkout's
+ * migrations clean and committed, both snapshots from this commit (`otherCommit` accepts another one, printing both),
+ * and every migration the database recorded a file of this checkout. Returns the reasons it can't judge (empty = fine).
+ */
+export function cannotJudge(before: LedgerSnapshot, after: LedgerSnapshot, checkout: Checkout, otherCommit: boolean): string[] {
+  const out: string[] = [];
+  if (checkout.migrationsDirty) out.push('this checkout has uncommitted changes in apps/api/migrations: the reference and the applied files could be anything');
+  if (before.checkout === null) out.push('the snapshot before records no checkout');
+  else if (before.checkout.migrationsDirty) out.push('the snapshot before was taken from a checkout with uncommitted changes in apps/api/migrations');
+  else if (before.checkout.commit !== checkout.commit && !otherCommit) {
+    out.push(`the snapshot before was taken at ${before.checkout.commit}, this checkout is at ${checkout.commit} (--other-commit to compare anyway)`);
+  }
+  if (after.applied === null) out.push("the database has no d1_migrations table: which migrations it has can't be read");
+  else {
+    const files = new Set(checkout.migrationFiles);
+    const foreign = after.applied.filter((n) => !files.has(n));
+    if (foreign.length) out.push(`the database recorded migration(s) this checkout doesn't have: ${foreign.join(', ')}`);
+  }
+  return out;
 }
 
 /** `SCHEMA_SQL` on a fresh in-memory SQLite with every migration in `dir` applied in name order (as a fresh D1 gets them). */
@@ -598,7 +684,7 @@ async function feedCursor(env: string, remote: boolean, yes: boolean, d1Name: st
 
 /** The CLI (scripts/ledger-check.ts). Returns the exit code (1 for roll_back or not_applied). */
 export async function ledgerCheck(argv: readonly string[], deps: LedgerCheckDeps): Promise<number> {
-  const args = parseCli(argv, { strings: ['before', 'out', 'd1-name'], booleans: ['remote', 'yes'] });
+  const args = parseCli(argv, { strings: ['before', 'out', 'd1-name'], booleans: ['remote', 'yes', 'other-commit'] });
   const [env, step, ...rest] = args.positionals;
   if (!env || (step !== 'snapshot' && step !== 'compare' && step !== 'feed-cursor') || rest.length) throw new CliError('Give an env and one step: snapshot, compare or feed-cursor');
   const remote = args.flag('remote');
@@ -619,7 +705,8 @@ export async function ledgerCheck(argv: readonly string[], deps: LedgerCheckDeps
   const now = deps.now();
   if (before && before.remote !== remote) throw new CliError(`--before is a snapshot of the ${before.remote ? 'remote' : 'local'} database: run compare ${before.remote ? 'with' : 'without'} --remote`);
   if (before && before.database !== database) throw new CliError(`--before is a snapshot of ${before.database}, not ${database}`);
-  const snap = await takeSnapshot((s) => deps.read(env, database, s, remote), { env, database, remote, now });
+  const checkout = deps.checkout?.();
+  const snap = await takeSnapshot((s) => deps.read(env, database, s, remote), { env, database, remote, now, ...(checkout ? { checkout } : {}) });
   const out = fromCaller(args.str('out')) ?? snapshotFile(dir, step === 'compare' ? 'after' : 'snapshot', now);
   deps.writeJson(out, snap);
   deps.log(`${env}: ${database} (${remote ? 'remote' : 'local'}), ${snap.takenAt}: snapshot written to ${out}`);
@@ -628,9 +715,20 @@ export async function ledgerCheck(argv: readonly string[], deps: LedgerCheckDeps
     deps.log(`  ${t.name}: ${s.rows} rows${s.maxSeq !== null ? `, max(seq) ${s.maxSeq}` : ''}, sha256 ${s.sha256}`);
   }
   deps.log(`  ${Object.keys(snap.schema).length} tables, indexes and triggers; 0027's triggers ${applied(snap) ? 'present' : 'absent'}`);
+  if (checkout) deps.log(`  checkout ${checkout.commit}${checkout.migrationsDirty ? ' (apps/api/migrations has uncommitted changes)' : ''}; the database recorded ${snap.applied === null ? 'no d1_migrations' : `${snap.applied.length} migration(s)`}`);
+  if (step === 'snapshot' && checkout?.migrationsDirty) deps.log('  WARNING: apps/api/migrations has uncommitted changes: a compare against this snapshot will refuse to judge.');
   if (!before) return 0;
-  const c = compareSnapshots(before, snap, deps.referenceSchema?.());
   deps.log(`Compared with ${beforeFile} (${before.takenAt}):`);
+  if (checkout) {
+    const why = cannotJudge(before, snap, checkout, args.flag('other-commit'));
+    if (args.flag('other-commit') && before.checkout && before.checkout.commit !== checkout.commit) deps.log(`  --other-commit: the snapshot before is from ${before.checkout.commit}, this checkout is ${checkout.commit}.`);
+    if (why.length) {
+      for (const w of why) deps.log(`  CAN'T JUDGE: ${w}.`);
+      deps.log("  Verdict: can't judge. Nothing compared: don't restore on this; fix what is named above and run compare again.");
+      return VERDICT_EXIT.cannot_judge;
+    }
+  }
+  const c = compareSnapshots(before, snap, deps.referenceSchema?.());
   for (const l of c.lines) deps.log(`  ${l}`);
-  return c.verdict === 'identical' || c.verdict === 'kept' ? 0 : 1;
+  return VERDICT_EXIT[c.verdict];
 }

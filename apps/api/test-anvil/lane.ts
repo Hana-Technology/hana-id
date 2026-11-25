@@ -114,6 +114,15 @@ export async function until(pred: () => Promise<boolean>, ms = 15_000, what = 'c
     await new Promise((r) => setTimeout(r, 25));
   }
 }
+/**
+ * Sends a signed transaction and waits for its receipt (automine on), so what the test reads next sees it mined: under
+ * load anvil can answer the send before the block with it is the latest (D924).
+ */
+export async function sendMined(raw: string): Promise<string> {
+  const hash = await rpc<string>('eth_sendRawTransaction', [raw]);
+  await until(async () => (await receipt(hash)) !== null, 15_000, `the receipt of ${hash}`);
+  return hash;
+}
 /** Until the node's pool holds a transaction of `from` at nonce `nonce` (its pending count past it). */
 export const untilPooled = (from: string, nonce: number): Promise<void> => until(async () => (await txCount(from, 'pending')) > nonce, 15_000, `a pooled transaction of ${from} at ${nonce}`);
 

@@ -1196,6 +1196,51 @@ const evmRelayClosedSlotMined: Playbook = {
   refs: ['docs/operations.md#evm-gas-sponsorship-not-live-yet-d834d836-d847-d848-d851-d856', 'D869', 'D851'],
 };
 
+// D915's two drift findings, security events of their own since migration 0027 (D916).
+const sharedWalletPolicy: Playbook = {
+  id: 'shared-wallet-policy',
+  title: 'Auto-approve found on an app that shares a wallet',
+  kind: 'incident',
+  severity: 'critical',
+  status: 'live',
+  summary: "A `shared_wallet_policy` security event: the hourly check found an auto-approve policy (in force, waiting, or proposed) on an app whose scope is marked as a shared wallet, or on an app the platform created. No Journear tool can put one there, so it was written straight into the database.",
+  signals: ["A `shared_wallet_policy` row in the admin's security events, emailed by the feed: the app, and where the policy sits (`source` `policy`, `policy_pending` or `change`)."],
+  impact: [
+    "On a shared wallet, a policy lets one partner's site approve moves from a wallet every other site on the scope uses too. The vault serves no policy on such an app, so nothing is approved by it, but the database is not as our tools left it.",
+    'How urgent: now.',
+  ],
+  steps: [
+    { title: 'Remove the policy', who: 'anyone', detail: "On the app's page in the admin portal, use the kill switch “Remove the policy” (it also cancels a waiting one); an open proposal is cancelled from the app's changes." },
+    { title: 'Find who wrote it', who: 'anyone', detail: 'Nobody should be able to: find out who has write access to the API’s database and what wrote it (the audit trail shows no write of ours). Treat it as a security incident until it is explained.' },
+  ],
+  verify: ['The next hourly check records no new `shared_wallet_policy` event for the app.'],
+  followUps: ['Note what wrote it, and how, in the decision log.'],
+  refs: ['D915', 'D916'],
+  related: ['shared-scope-unmarked', 'api-or-cloudflare-compromised'],
+};
+
+const sharedScopeUnmarked: Playbook = {
+  id: 'shared-scope-unmarked',
+  title: 'A shared wallet’s mark was removed by hand',
+  kind: 'incident',
+  severity: 'critical',
+  status: 'live',
+  summary: "A `shared_scope_unmarked` security event: the ledger says a scope was marked as a shared wallet, but its row no longer is (or is gone). The mark is one way in every Journear tool, so it was undone straight in the database.",
+  signals: ["A `shared_scope_unmarked` row in the admin's security events, emailed by the feed: the scope, the ledger row of its mark (`markSeq`), and whether the scope's row is still there."],
+  impact: [
+    'While the mark is off, the rules for a shared wallet (no auto-approve on its apps) are held only by the hourly check, which still counts the scope as marked from the ledger.',
+    'How urgent: now.',
+  ],
+  steps: [
+    { title: 'Find who undid it', who: 'anyone', detail: 'Nobody should be able to: find out who has write access to the API’s database and what changed the row. Treat it as a security incident until it is explained.' },
+    { title: 'Set the mark back', who: 'anyone', detail: "Mark the scope as shared again from any of its apps' pages in the admin portal (“Shared wallet” → “Mark the scope as shared”), after removing any policy the check reports." },
+  ],
+  verify: ["The scope's apps show “Shared wallet” again, and the next hourly check records nothing new for it."],
+  followUps: ['Note what undid it, and how, in the decision log.'],
+  refs: ['D915', 'D916'],
+  related: ['shared-wallet-policy', 'api-or-cloudflare-compromised'],
+};
+
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   homeBudgetHigh,
   nearRelayBudgetHigh,
@@ -1209,6 +1254,8 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   evmRelaySlotTaken,
   nearBillingLate,
   neonComputeHigh,
+  sharedWalletPolicy,
+  sharedScopeUnmarked,
   updaterKeyStolen,
   relayerKeyStolen,
   vaultKekLeaked,

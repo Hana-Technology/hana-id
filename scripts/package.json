@@ -28,6 +28,7 @@
     "coop-canary": "tsx coop-canary.ts",
     "env-secrets": "tsx env-secrets.ts",
     "d1-move": "tsx d1-move.ts",
+    "ledger-check": "tsx ledger-check.ts",
     "access-setup": "tsx access-setup.ts",
     "near-relay-keys": "tsx near-relay-keys.ts",
     "deploy-evm-delegate": "tsx deploy-evm-delegate.ts",

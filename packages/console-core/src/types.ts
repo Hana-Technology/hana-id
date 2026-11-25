@@ -8,12 +8,22 @@ import { APP_CREATOR_KINDS } from './shared-scope.ts';
 
 export const ENVIRONMENTS = ['test', 'live'] as const;
 export const ROLES = ['owner', 'viewer'] as const;
-export const ACTOR_KINDS = ['member', 'hana', 'system', 'link'] as const;
-export const PROPOSER_KINDS = ['member', 'hana', 'system'] as const;
+/**
+ * Who wrote an `app_changes` row (the API's ledger; its trigger `app_changes_actor_kind`, migration 0027). `platform`
+ * is a network's backend through its platform key (D916; docs/partner-platform-spec.md): the ledger and the views can
+ * hold and show it, and nothing acts as it yet (the `actor` union below has no `platform` member).
+ */
+export const ACTOR_KINDS = ['member', 'hana', 'system', 'link', 'platform'] as const;
+export type ActorKind = (typeof ACTOR_KINDS)[number];
+/** Who wrote a console `audit_log` row (CONSOLE_DB's CHECK): the console's own actors only, never `platform`. */
+export const AUDIT_LOG_ACTOR_KINDS = ['member', 'hana', 'system', 'link'] as const;
+/** Who proposed a guarded change (`guarded_changes.proposed_by_kind`; its triggers, migration 0027). */
+export const PROPOSER_KINDS = ['member', 'hana', 'system', 'platform'] as const;
+export type ProposerKind = (typeof PROPOSER_KINDS)[number];
 export const GUARDED_CHANGE_KINDS = ['origin_add', 'policy_set', 'raw_sign_on'] as const;
 export const GUARDED_CHANGE_STATUSES = ['pending', 'active', 'cancelled', 'ended'] as const;
 export const WAIVERS = ['loopback', 'no_session'] as const;
-export const SECURITY_EVENT_KINDS = ['drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'near_billing_late', 'evm_relay_closed_slot_mined', 'neon_compute_high', 'evm_relay_auto_resumed', 'label_proposed', 'label_blocked', 'label_live'] as const;
+export const SECURITY_EVENT_KINDS = ['drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'near_billing_late', 'evm_relay_closed_slot_mined', 'neon_compute_high', 'evm_relay_auto_resumed', 'label_proposed', 'label_blocked', 'label_live', 'platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked'] as const;
 export const ORG_KINDS = ['partner', 'internal'] as const;
 export const ORG_STATUSES = ['active', 'frozen'] as const;
 export const GRANTOR_KINDS = ['member', 'hana'] as const;
@@ -390,7 +400,7 @@ export const auditRow = z
   .object({
     seq: z.number().int().positive(),
     at: ms,
-    actorKind: z.enum(ACTOR_KINDS),
+    actorKind: z.enum(AUDIT_LOG_ACTOR_KINDS),
     actorId: z.string(),
     actorEmail: z.string().optional(),
     actorSub: z.string().optional(),

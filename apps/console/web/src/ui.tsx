@@ -505,5 +505,7 @@ export function ChangeTrack({ change, now }: { change: GuardedChange; now: numbe
   );
 }
 
-/** Who asked for a change, as a partner may see it. */
-export const proposer = (c: GuardedChange): string => (c.proposedByKind === 'hana' ? BRAND.company : c.proposedByKind === 'system' ? 'the system' : 'a member') + (c.requestCountry ? ` (from ${c.requestCountry})` : '');
+/** Who asked for a change, as a partner may see it (a platform proposal by its key id, D916). */
+export const proposer = (c: GuardedChange): string =>
+  (c.proposedByKind === 'hana' ? BRAND.company : c.proposedByKind === 'system' ? 'the system' : c.proposedByKind === 'platform' ? `your platform key ${c.proposedBy}` : 'a member') +
+  (c.requestCountry ? ` (from ${c.requestCountry})` : '');

@@ -4,6 +4,7 @@
 // text, one-line subjects, links only to the console origin, no remote image); which mail bypasses SendGrid's
 // suppression lists (alerts and blocking notices) and which keeps them (D401 as amended).
 import { MAIL_LOGO_PATH } from '@hana-id/brand/mail-logo';
+import { ACTOR_KINDS, PROPOSER_KINDS } from '@hana-id/console-core';
 import { SENDGRID_URL } from '@hana-id/sendgrid';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mailLabel } from '../src/env.ts';
@@ -225,6 +226,50 @@ describe('rendering', () => {
       // The heading is fixed words, never the app's name (D687's rule, D700).
       expect(r.html).toContain(`>${subject.replace(' for Dry Run App', '')}</h1>`);
       expect(r.html).not.toMatch(/approve this|accept this/iu);
+    }
+  });
+
+  it('names every proposer kind in "Proposed by", and every actor kind in "Changed by" and the digests\' "By" (D916)', () => {
+    const proposedBy = (kind: string, by: string) =>
+      changePending(
+        ctx,
+        {
+          change: { id: 'gc_9', appId: 'app_1', kind: 'origin_add', origin: 'https://shop.partner.example', display: 'https://shop.partner.example', idn: false, status: 'pending', proposedByKind: kind, proposedBy: by, proposedAt: 0 } as never,
+          contacts: [],
+          app: { id: 'app_1', name: 'Partner shop', orgId: 'org_1', scopeId: 's1', environment: 'test' },
+        },
+        { cancelUrl: consoleLink('https://console.test', '/cancel/gc_9#t=abc'), delayMs: 60_000 },
+      );
+    const proposers: [string, string, string][] = [
+      ['member', 'usr_1', 'a console member (usr_1)'],
+      ['hana', 'staff@hana.example', 'Journear staff (staff@hana.example)'],
+      ['system', 'cron', 'the system (cron)'],
+      ['platform', 'pkc_Nt4Wq8Rb2m', "the organisation's platform key (pkc_Nt4Wq8Rb2m)"],
+    ];
+    expect(proposers.map(([k]) => k)).toEqual([...PROPOSER_KINDS]);
+    for (const [kind, by, words] of proposers) {
+      const r = proposedBy(kind, by);
+      expect(r.text, kind).toMatch(new RegExp(`Proposed by:\\s+${words.replace(/[().]/gu, '\\$&')}\n`, 'u'));
+      expect(visibleText(r.html), kind).toContain(`Proposed by${words}`);
+    }
+    // A kind a newer API wrote reads as itself, never as another kind.
+    expect(proposedBy('robot', 'r_1').text).toMatch(/Proposed by:\s+robot \(r_1\)\n/u);
+
+    const actors: [string, string][] = [
+      ['member', 'a console member (id_member)'],
+      ['hana', 'Journear staff (id_hana)'],
+      ['system', 'the system (id_system)'],
+      ['link', 'an emailed link (id_link)'],
+      ['platform', "the organisation's platform key (id_platform)"],
+    ];
+    expect(actors.map(([k]) => k)).toEqual([...ACTOR_KINDS]);
+    for (const [kind, words] of actors) {
+      const row = { seq: 1, at: Date.UTC(2026, 10, 25, 3), orgId: 'org_1', appId: 'app_1', scopeId: 's1', kind: 'settings.changed', actorKind: kind, actorId: `id_${kind}`, requestId: 'req_12345678', detail: { loginMethods: 'google' } } as never;
+      expect(visibleText(loginMethodsChanged(ctx, row, { undoUrl: 'https://console.test/orgs/org_1/apps/app_1/email' }).html), kind).toContain(`Changed by${words}`);
+      const digest = changesDigest(ctx, 'org_1', [row]);
+      expect(visibleText(digest.html), kind).toContain(`By ${words}`);
+      // The text part keeps the code, for support.
+      expect(digest.text, kind).toContain(`by ${kind} id_${kind}`);
     }
   });
 

@@ -19,7 +19,7 @@ export interface ChangeRow {
   policy_json: string | null;
   policy_id: string | null;
   status: 'pending' | 'active' | 'cancelled' | 'ended';
-  proposed_by_kind: 'member' | 'hana' | 'system';
+  proposed_by_kind: GuardedChange['proposedByKind'];
   proposed_by: string;
   proposer_sub: string | null;
   proposed_at: number;

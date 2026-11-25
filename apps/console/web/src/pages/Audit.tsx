@@ -9,11 +9,26 @@ import { ApiError, getJson } from '../api.ts';
 import { when } from '../lib.tsx';
 import { Badge, Empty, ErrorNote, Loading, PageHeader } from '../ui.tsx';
 
-function who(e: PartnerAuditEntry): string {
-  if (e.actorKind === 'hana') return 'Journear';
-  if (e.actorKind === 'system') return 'system';
-  if (e.actorKind === 'link') return 'emailed link';
-  return e.source === 'console' && e.actorEmail ? e.actorEmail : 'a member';
+/** Who did it, as the Who column says it. Exhaustive over the actor kinds, so a new kind can't show as "a member". */
+export function who(e: PartnerAuditEntry): string {
+  switch (e.actorKind) {
+    case 'hana':
+      return 'Journear';
+    case 'system':
+      return 'system';
+    case 'link':
+      return 'emailed link';
+    // D916: the org's own platform key (its backend through the platform API), named by its key id.
+    case 'platform':
+      return `your platform key ${e.actorId}`;
+    case 'member':
+      return e.source === 'console' && e.actorEmail ? e.actorEmail : 'a member';
+    default: {
+      // A kind this build doesn't know (a newer API's) reads as itself; the type check makes a new kind a compile error.
+      const unknown: never = e;
+      return String((unknown as { actorKind: string }).actorKind);
+    }
+  }
 }
 
 function what(e: PartnerAuditEntry): string {

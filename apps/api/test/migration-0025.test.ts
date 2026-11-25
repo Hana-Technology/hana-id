@@ -33,7 +33,8 @@ const change = (id: string, label: string, apps: string, o: { org?: string; scop
 beforeAll(async () => {
   const migrations = env.TEST_MIGRATIONS;
   const at = migrations.findIndex((m) => m.name === '0025_partner_labels.sql');
-  // Later migrations (0026, the shared-scope rules) don't touch these tables.
+  // Later migrations don't lose what this file checks: 0026 (the shared-scope rules) doesn't touch these tables, 0027
+  // (D916) rebuilds security_events keeping every row, kind and the index.
   expect(at).toBeGreaterThan(0);
   expect(migrations[at - 1]!.name).toBe('0024_evm_relay_auto_resumed.sql');
   await applyD1Migrations(db, migrations.slice(0, at));

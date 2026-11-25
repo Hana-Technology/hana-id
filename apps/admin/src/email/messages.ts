@@ -1,7 +1,7 @@
 // What every email says (docs/batch-c-spec.md "Email", "Notice and cancel", "Invites and owner grants", "On-chain
 // owner actions"). Builders only: who gets each message and when it is sent is notices.ts, feed.ts and watcher.ts.
 // The link tokens are passed in as finished URLs; nothing here sees a key.
-import { type AppChange, type AuditRow, type InviteView, type LabelDiffLine, type LabelNotice, type MemberNotice, type SecurityEvent, actionLabel, detailFields, securityEventLabel } from '@hana-id/console-core';
+import { type ActorKind, type AppChange, type AuditRow, type InviteView, type LabelDiffLine, type LabelNotice, type MemberNotice, type SecurityEvent, actionLabel, detailFields, securityEventLabel } from '@hana-id/console-core';
 import type { ChangeNotice } from '../env.ts';
 import { log } from '../log.ts';
 import { durationWords } from '@hana-id/console-core/duration-words';
@@ -21,6 +21,34 @@ export interface MailContext {
  * heading and preview line, never an app's, organisation's or person's name (D687's rule), and the env's hosted logo.
  */
 const notice = (c: MailContext, heading: string, preheader: string): Design => ({ heading, preheader, ...(c.filesOrigin ? { filesOrigin: c.filesOrigin } : {}) });
+
+/**
+ * Who proposed a guarded change, in the notice's "Proposed by" row (the proposer's id kept after it for support). A
+ * platform proposal names the organisation's platform key (D916; docs/partner-platform-spec.md A6): the one message
+ * goes to the org's security contacts and to Journear's security alias, so it says "the organisation's", right for
+ * both. Exhaustive, so a new proposer kind can't reach an email unnamed.
+ */
+const PROPOSED_BY: Readonly<Record<ChangeNotice['change']['proposedByKind'], string>> = {
+  hana: 'Journear staff',
+  member: 'a console member',
+  system: 'the system',
+  platform: "the organisation's platform key",
+};
+
+/**
+ * Who made an applied change, in a notice's "Changed by" row and the digests' "By" (D704; their text part keeps the
+ * code), the id kept after it.
+ */
+const CHANGED_BY: Readonly<Record<ActorKind, string>> = {
+  hana: 'Journear staff',
+  member: 'a console member',
+  system: 'the system',
+  link: 'an emailed link',
+  platform: "the organisation's platform key",
+};
+
+/** An actor in words; a kind this build doesn't know reads as itself (a row written by a newer API). */
+const byWords = (kind: string, id: string): string => `${Object.hasOwn(CHANGED_BY, kind) ? CHANGED_BY[kind as ActorKind] : kind} (${id})`;
 
 const KIND_LABEL: Record<string, string> = { origin_add: 'a new allowed origin', policy_set: 'an auto-approve policy', raw_sign_on: 'raw signing (with approval)' };
 /** Each guarded change kind in plain words (D699): the notice's subject and its "Change" row (the id kept after it for support). */
@@ -55,7 +83,7 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
     if (ch.display && ch.display !== ch.origin) rows.push(['Shown as', ch.display]);
   }
   if (ch.kind === 'policy_set' && ch.policyId) rows.push(['Policy id', ch.policyId]);
-  rows.push(['Proposed by', `${ch.proposedByKind === 'hana' ? 'Journear staff' : ch.proposedByKind === 'member' ? 'a console member' : 'the system'} (${ch.proposedBy})`]);
+  rows.push(['Proposed by', `${Object.hasOwn(PROPOSED_BY, ch.proposedByKind) ? PROPOSED_BY[ch.proposedByKind] : ch.proposedByKind} (${ch.proposedBy})`]);
   rows.push(['Proposed at', readableTime(ch.proposedAt)]);
   if (ch.requestCountry) rows.push(['Request country', ch.requestCountry]);
   blocks.push({ kind: 'kv', rows });
@@ -189,7 +217,7 @@ export function loginMethodsChanged(c: MailContext, r: AppChange, o: { appName?:
           ['Organisation', r.orgId],
           ...(r.scopeId ? ([['Scope', r.scopeId]] as [string, string][]) : []),
           ['Login methods now', String(r.detail.loginMethods)],
-          ['Changed by', `${r.actorKind === 'hana' ? 'Journear staff' : r.actorKind === 'member' ? 'a console member' : 'the system'} (${r.actorId})`],
+          ['Changed by', byWords(r.actorKind, r.actorId)],
           ['Changed at', readableTime(r.at)],
         ],
       },
@@ -334,9 +362,6 @@ const detailText = (d: Record<string, unknown>): string => {
   return s === undefined || s === '{}' ? '' : cut(s, 400);
 };
 
-/** Who did it, in words, the id kept for support (D704; the text part keeps the code, as before). */
-const actorWords = (kind: string, id: string): string =>
-  `${kind === 'hana' ? 'Journear staff' : kind === 'member' ? 'a console member' : kind === 'system' ? 'the system' : kind === 'link' ? 'an emailed link' : kind} (${id})`;
 
 /** A row's time in both forms: `text` for the text part (the exact ISO time), `words` for the HTML part. */
 interface RowTime {
@@ -401,7 +426,7 @@ const changeRow = (r: AppChange, time: RowTime): LogRow => ({
   line: `${time.text} ${r.kind}${r.appId ? ` on ${r.appId}` : ''} by ${r.actorKind} ${r.actorId}${detailText(r.detail) ? ` ${detailText(r.detail)}` : ''}`,
   title: actionLabel(r.kind),
   code: r.kind,
-  fields: [['When', time.words], ['By', actorWords(r.actorKind, r.actorId)], ...(r.appId ? ([['App', r.appId]] as [string, string][]) : [])],
+  fields: [['When', time.words], ['By', byWords(r.actorKind, r.actorId)], ...(r.appId ? ([['App', r.appId]] as [string, string][]) : [])],
   ...(detailWords(r.detail) ? { detail: detailWords(r.detail) } : {}),
 });
 
@@ -409,7 +434,7 @@ const auditLogRow = (r: AuditRow, time: RowTime): LogRow => ({
   line: `${time.text} ${r.action}${r.target ? ` ${r.target}` : ''} by ${r.actorKind} ${r.actorId} (${r.outcome})${detailText(r.details) ? ` ${detailText(r.details)}` : ''}`,
   title: actionLabel(r.action),
   code: r.action,
-  fields: [['When', time.words], ['By', actorWords(r.actorKind, r.actorId)], ...(r.target ? ([['About', r.target]] as [string, string][]) : []), ['Outcome', outcomeWords(r.outcome)]],
+  fields: [['When', time.words], ['By', byWords(r.actorKind, r.actorId)], ...(r.target ? ([['About', r.target]] as [string, string][]) : []), ['Outcome', outcomeWords(r.outcome)]],
   ...(detailWords(r.details) ? { detail: detailWords(r.details) } : {}),
 });
 

@@ -185,6 +185,13 @@ export const SECURITY_EVENT_TITLES: Readonly<Record<(typeof SECURITY_EVENT_KINDS
   label_proposed: 'Request labels proposed: shown to users after the wait unless Journear blocks them',
   label_blocked: 'Request labels blocked by Journear',
   label_live: 'Request labels now shown to users',
+  // D916: written by the platform API and the linking view once they are built (docs/partner-platform-spec.md A5, B6).
+  platform_quota: 'Platform key: a limit was reached',
+  platform_auth_failures: 'Platform key: many failed requests in a minute',
+  link_lookup_volume: 'Many look-ups of one person across apps',
+  // D915's drift findings, kinds of their own since migration 0027 (D916): written by the hourly drift check.
+  shared_wallet_policy: 'Auto-approve found on an app that shares a wallet',
+  shared_scope_unmarked: 'A shared wallet’s mark was removed by hand',
 };
 
 /** A security event's kind in words; an unknown kind reads as its own words. */

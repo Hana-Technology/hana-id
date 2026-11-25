@@ -7,18 +7,18 @@
 // words; an unknown page.
 import { StrictMode } from 'react';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
-import type { AppDetail, PartnerAuditEntry } from '@hana-id/console-core';
+import { ACTOR_KINDS, AUDIT_LOG_ACTOR_KINDS, type AppDetail, type GuardedChange, PROPOSER_KINDS, type PartnerAuditEntry } from '@hana-id/console-core';
 import { BrowserRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { explain } from '../src/messages.ts';
-import { actionLabel, detail, detailFields, detailValue } from '../src/pages/Audit.tsx';
+import { actionLabel, detail, detailFields, detailValue, who } from '../src/pages/Audit.tsx';
 import { when } from '../src/lib.tsx';
 import { logoProblem } from '../src/pages/app/Branding.tsx';
 import { clientSnippet } from '../src/pages/app/Overview.tsx';
 import { clockOffset, nextEffectAt, useReloadAtNextEffect } from '../src/pages/Apps.tsx';
-import { ErrorNote } from '../src/ui.tsx';
+import { ErrorNote, proposer } from '../src/ui.tsx';
 
 type Answer = { status?: number; body: unknown };
 let routes: Record<string, Answer | ((init?: RequestInit) => Answer)>;
@@ -545,6 +545,23 @@ describe('navigation', () => {
     expect(await screen.findByText('Key rotated')).toBeTruthy();
     expect(screen.getByText('key.rotated')).toBeTruthy();
     expect(screen.queryByText(new RegExp(String(at_), 'u'))).toBeNull();
+  });
+
+  it('the audit names who did it for every actor kind; a platform key by its id, in the table and on a waiting change (D916)', async () => {
+    const api = (actorKind: string, actorId: string) => ({ source: 'api', seq: 7, at: 0, kind: 'origin.proposed', detail: {}, actorKind, actorId, requestId: 'req_who12345' }) as PartnerAuditEntry;
+    const words: Record<(typeof ACTOR_KINDS)[number], string> = { member: 'a member', hana: 'Journear', system: 'system', link: 'emailed link', platform: 'your platform key pkc_Nt4Wq8Rb2m' };
+    for (const k of ACTOR_KINDS) expect(who(api(k, k === 'platform' ? 'pkc_Nt4Wq8Rb2m' : `id_${k}`)), k).toBe(words[k]);
+    // The console's own rows: a member by their address; the console never records a platform row.
+    for (const k of AUDIT_LOG_ACTOR_KINDS) expect(who({ source: 'console', seq: 1, at: 0, actorKind: k, actorId: 'x', actorEmail: 'me@partner.example', action: 'a.b', details: {}, requestId: 'req_who12345', outcome: 'ok' } as PartnerAuditEntry), k).toBe(k === 'member' ? 'me@partner.example' : words[k]);
+    const change = (proposedByKind: string, proposedBy: string, requestCountry?: string) => ({ id: 'gc_1', appId: 'app_1', kind: 'origin_add', status: 'pending', proposedByKind, proposedBy, proposedAt: 0, ...(requestCountry ? { requestCountry } : {}) }) as GuardedChange;
+    const proposers: Record<(typeof PROPOSER_KINDS)[number], string> = { member: 'a member (from SG)', hana: 'Journear (from SG)', system: 'the system (from SG)', platform: 'your platform key pkc_Nt4Wq8Rb2m (from SG)' };
+    for (const k of PROPOSER_KINDS) expect(proposer(change(k, 'pkc_Nt4Wq8Rb2m', 'SG')), k).toBe(proposers[k]);
+    routes['/api/me'] = { body: ME };
+    routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status: 'active' }, role: 'owner' } };
+    routes['/api/orgs/org_a/audit'] = { body: { entries: [api('platform', 'pkc_Nt4Wq8Rb2m')] } };
+    at('/orgs/org_a/audit');
+    expect(await screen.findByText('your platform key pkc_Nt4Wq8Rb2m')).toBeTruthy();
+    expect(screen.getByText('Origin proposed')).toBeTruthy();
   });
 
   it('the audit’s details read as words: dates, null as none, lists of objects as plain lists, unknown keys kept', async () => {

@@ -135,4 +135,23 @@ describe('migration 0026_shared_scope_rules', () => {
         .first(),
     ).toEqual({ n: 6 });
   });
+
+  // Last: it runs after the test above applied every later file, so after 0027's ledger rebuild (D916).
+  it('after 0027 rebuilt guarded_changes, every trigger of 0026 is there with its SQL and still holds the mark back', async () => {
+    expect((await db.prepare("SELECT name FROM d1_migrations WHERE name = '0027_platform_actor.sql'").all()).results).toHaveLength(1);
+    const sql = (await db.prepare("SELECT sql FROM sqlite_master WHERE name = 'scopes_app_user_ids_no_policy'").first<{ sql: string }>())!.sql;
+    expect(sql).toContain("FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = 'policy_set' AND g.status IN ('pending', 'active')");
+    const now = Date.now();
+    await db.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s9', 'org_b', 'test', NULL, ?1, ?1)").bind(now).run();
+    await db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES ('app_b9', 'B9', 's9', 'org_b', 'pk_test_BbbbbbbbbbbbbbbbbbbZ')").run();
+    await db
+      .prepare("INSERT INTO guarded_changes (id, app_id, kind, policy_json, policy_id, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES ('gc_9', 'app_b9', 'policy_set', ?1, ?2, 'pending', 'hana', 'staff', ?3, 'r9')")
+      .bind(POLICY, 'b'.repeat(64), now)
+      .run();
+    expect(await accepted("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's9'")).toBe(false);
+    await db.prepare("UPDATE guarded_changes SET status = 'cancelled', cancelled_at = 1, cancelled_by = 'staff' WHERE id = 'gc_9'").run();
+    expect(await accepted("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's9'")).toBe(true);
+    expect(await accepted("UPDATE scopes SET app_user_ids = 0 WHERE scope_id = 's9'")).toBe(false);
+    expect(await accepted("UPDATE apps SET created_by_kind = 'platform' WHERE id = 'app_b9'")).toBe(false);
+  });
 });

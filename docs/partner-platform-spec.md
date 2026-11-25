@@ -9,12 +9,17 @@ from its own partner portal (Sodax is the first, D909). This spec is what to bui
   network (the scope's owner) and Journear staff can still link one person's IDs when they need to diagnose a problem.
 
 Status: **proposed, not built.** Decisions: D913 in `decisions.md` (the Tech Lead's answers of 2026-11-24, including
-the eleven open questions of this spec's first version, answered "yes all" to the recommendations), on top of D909
-(one wallet across the network's partner sites). Built on the recommendation for who vouches for a partner's web
-address; to be adjusted after the Tech Lead has talked to the network. This version folds in PR 139's security review
-(its findings are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece it gates).
+the eleven open questions of this spec's first version, answered "yes all" to the recommendations) and D914 (the Tech
+Lead's answers of 2026-11-25 to the nine further questions N1 to N9, with N3 decided differently from the
+recommendation: an owner's confirmation, A15; and question 8 re-confirmed as **no**), on top of D909 (one wallet
+across the network's partner sites). Built on the recommendation for who vouches for a partner's web address; to be
+adjusted after the Tech Lead has talked to the network. This version folds in PR 139's security review (its findings
+are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece it gates).
 
-Last verified: 2026-11-24 (branch `docs/partner-platform-spec`, docs only, not merged: after PR 139's security review,
+Last verified: 2026-11-25 (branch `docs/platform-answers`, docs only, not merged, from `next` @ 0b99ec12: the Tech
+Lead's answers to N1 to N9 and question 8 (D914) folded into every section; the owner's confirmation (A15) and its
+piece P10 added; the staff restore removed (A14); the console's roles and step-up kinds and `guarded_changes` checked
+against the code); 2026-11-24 (branch `docs/partner-platform-spec`, docs only, not merged: after PR 139's security review,
 every cited file and line checked again against `next` @ 6f51a033); 2026-11-24 (the same branch, first version, from
 `next` @ 6f51a033).
 
@@ -26,9 +31,9 @@ spec adds. Nothing here is built.
 | | Proposed |
 |---|---|
 | Who calls | The network's backend only, with a request-signing key (ECDSA P-256, ES256) whose public half is registered with us for one organisation, one env and one or two of its test scopes |
-| What it may do | On apps it created on those scopes (open question N1): create a test app; propose and remove web addresses; cancel its own waiting proposals; read an app and its publishable keys; suspend and resume; create and revoke publishable keys |
-| What it may never do | Owners, Google clients or anything on chain; auto-approve policies; raw signing; gas sponsorship; the mainnet demo; partner labels; live apps; deleting apps; any app it didn't create, any live app, any other scope or organisation |
-| Who vouches for a web address | The network, for every partner site it adds. Each address waits at least our guarded-change delay after it is announced to the organisation's security contacts and to Journear, with the usual cancel link: at least 24 h on a production network; on the dev testnet env the usual 60 s protects almost nothing, so a platform minimum is proposed (open question N3) |
+| What it may do | Only on apps it created on those scopes (decided, N1): create a test app; propose and remove web addresses; cancel its own waiting proposals; read an app and its publishable keys; suspend and resume; create and revoke publishable keys |
+| What it may never do | Owners, Google clients or anything on chain; auto-approve policies; raw signing; gas sponsorship; the mainnet demo; partner labels; live apps; deleting apps; confirming a web address (only an owner in our partner portal can, A15); any app it didn't create, any live app, any other scope or organisation |
+| Who vouches for a web address | The network, for every partner site it adds, and then one of its owners (decided, N3). A web address the network's backend proposes is announced to the organisation's security contacts and to Journear, with the usual cancel link, as today. It comes into force **at once when an owner of the organisation confirms it** in our partner portal (signed in, on a page that shows the app and the address; A15). If nobody confirms it, it comes into force after at least 24 h (the platform minimum, in every env except `local*` test envs, and at least our guarded-change delay), unless cancelled. So a stolen platform key alone gets only the slow, cancellable path |
 | Off switches | Journear staff: revoke the network's key at once, switch the platform off for the organisation at once, suspend any one partner app at once (Journear's own bit, which the network can't clear) |
 | Audit | Every call that passes the signature check is recorded, reads included; failures before it are counted and alerted on, not stored; every write is also an `app_changes` row with the new actor kind `platform` |
 | Shared scope rules, in code | Auto-approve refused for every app on a shared scope and every platform-created app (piece P0, before the platform is switched on for any org) |
@@ -149,15 +154,15 @@ apps of a scope a person has used, any code rule tied to a shared scope.
 
 ## A1. What it may do, and never
 
-The platform's **reach**: apps of the credential's org, on a scope the credential names, on a `test` scope, and (the
-recommendation of open question N1) created by the platform (`apps.created_by_kind = 'platform'`). The network's own
-apps and every staff-created app of the org stay outside it.
+The platform's **reach**: apps of the credential's org, on a scope the credential names, on a `test` scope, and
+created by the platform (`apps.created_by_kind = 'platform'`; decided, N1: it sees and changes only apps it created).
+The network's own apps and every staff-created app of the org stay outside it.
 
 | May (only within its reach) | Never |
 |---|---|
 | Create a test app (name, first origins) on one of its scopes | Create a scope, or an app on a live scope or another org's scope |
-| Read an app: name, status, origins, its waiting and in-force origin changes, its publishable keys | Read settings beyond those (no policy, raw signing, mainnet demo, labels, Google client, sponsorship) |
-| Propose origin additions (guarded changes) | Any waiver; expedite (decided, D913 question 11) |
+| Read an app: name, status, origins, its waiting and in-force origin changes (and whether an owner confirmed each), its publishable keys | Read settings beyond those (no policy, raw signing, mainnet demo, labels, Google client, sponsorship) |
+| Propose origin additions (guarded changes), which come into force when an owner of the org confirms them in our partner portal, or after the delay with the platform minimum (A15) | Confirm an origin, its own or any other (the confirmation is a console route only an owner reaches, never a platform route, A15); any waiver; expedite (decided, D913 question 11) |
 | Remove origins (immediate) | Owners, Google clients, shared login, anything on chain |
 | Cancel waiting `origin_add` changes that a platform key of its org proposed | Cancel any other change (H2) |
 | Suspend an app (the partner bit 4) and resume a suspension the platform set and no member has taken over (A4.6) | Clear Journear's bits 1 or 2, or a member's suspension |
@@ -165,23 +170,29 @@ apps and every staff-created app of the org stay outside it.
 | Read its own credential's status; revoke its own key, also while the org's switch is off | Register or reactivate any key |
 | | Auto-approve policies (refused in code for its apps, P0), raw signing, gas sponsorship (staff-only manifest allowlist, unreachable from any API), the mainnet demo (D428: a staff switch per partner app, D913 point 2), partner labels, email-sharing or session settings, logos, renames after creation |
 
-Live apps: not in this version. Whether the same credential model will serve the network's future live scope is open
-question N2; until the Tech Lead decides, a live app for a network partner is created by Journear staff, as today.
+Live apps: not in this version. The same credential model will serve the network's future live scope (decided, N2),
+with a separate key and its own security review before any live app is opened to it; until then a live app for a
+network partner is created by Journear staff, as today.
 
 ## A2. Threat model
 
 | Threat | What it could give | What stops or bounds it |
 |---|---|---|
-| **A stolen platform credential** (the network's private key) | Create test apps under the network's name; propose look-alike origins; remove origins, suspend apps and revoke publishable keys of the platform's apps (denial of service); read publishable keys (public anyway) | Its reach (A1) and the reach filter inside every plan read and commit (H1); every origin it adds waits at least the delay after an email to the org's security contacts and to Journear, cancellable from the email; creation and proposal quotas (A5); the platform's own destructive-call breaker (M3); staff revoke the key or switch the platform off for the org at once; anomaly events to staff (A5). It can never touch owners, the chain, policies, raw signing, sponsorship, the mainnet demo or labels, so it can't move or sign anything on its own |
-| **A malicious or compromised partner site** (one of the network's partners) | On a shared wallet: ask any of the scope's users to approve moves from the one wallet, from its own origin | The user's approval window names the app and its web address; the "also used on other apps" line (another branch; open question N6 asks that it ship before the platform is on for any org); auto-approve refused in code for every app on a shared scope (P0, H3), raw signing refused for test apps, sponsorship staff-only, the mainnet demo staff-only with a warning for a platform-created app (A11); staff suspend the app at once (bit 1); the network removes its origins at once. A partner has no platform key and no console |
-| **A malicious network insider** | Everything a stolen credential gives; with console access as an owner, also the cancel links and the linking view (Part B); registering a key of its own | Origin additions also notify Journear, and staff see every platform proposal on the admin portal's queue; a key registered by an owner waits the delay, its notice goes to the security contacts, the org's owners and Journear and names who registered it (M5); a staff-registered key needs an owner's acceptance or a second staff member (M5); a registration within 7 days of a security-contact change is refused (M5); every call is audited where the network's other owners and Journear see it; linking lookups are audited and their volume alerted (L9); Journear's per-app suspensions can't be undone by the network |
+| **A stolen platform credential** (the network's private key) | Create test apps under the network's name; propose look-alike origins; remove origins, suspend apps and revoke publishable keys of the platform's apps (denial of service); read publishable keys (public anyway) | Its reach (A1) and the reach filter inside every plan read and commit (H1); every origin it adds waits at least 24 h (the platform minimum, and at least the delay) after an email to the org's security contacts and to Journear, cancellable from the email, unless an owner confirms it in our partner portal, which the key can't do (A15); creation and proposal quotas (A5); the platform's own destructive-call breaker (M3); staff revoke the key or switch the platform off for the org at once; anomaly events to staff (A5). It can never touch owners, the chain, policies, raw signing, sponsorship, the mainnet demo or labels, so it can't move or sign anything on its own |
+| **A malicious or compromised partner site** (one of the network's partners) | On a shared wallet: ask any of the scope's users to approve moves from the one wallet, from its own origin | The user's approval window names the app and its web address; the "also used on other apps" line (another branch; decided, N6: it ships before the platform is on for any org); auto-approve refused in code for every app on a shared scope (P0, H3), raw signing refused for test apps, sponsorship staff-only, the mainnet demo staff-only with a warning for a platform-created app (A11); staff suspend the app at once (bit 1); the network removes its origins at once. A partner has no platform key and no console |
+| **A malicious network insider** | Everything a stolen credential gives; with console access as an owner, also the cancel links and the linking view (Part B); registering a key of its own; as an on-chain owner of the scope, proposing an origin through the platform and confirming it at once (A15), where adding it by hand on a production network would wait the full delay (the open point of A15) | Origin additions also notify Journear, and a confirmation notifies the security contacts, every owner and Journear and names who confirmed (A15); and staff see every platform proposal on the admin portal's queue; a key registered by an owner waits the delay, its notice goes to the security contacts, the org's owners and Journear and names who registered it (M5); a staff-registered key needs an owner's acceptance or a second staff member (M5); a registration within 7 days of a security-contact change is refused (M5); every call is audited where the network's other owners and Journear see it; linking lookups are audited and their volume alerted (L9); Journear's per-app suspensions can't be undone by the network |
 | **A Journear staff member acting alone** | Register a key for an org | A staff-registered key comes into force only after the network's owner accepts it with a fresh sign-in, or a second staff member approves it, and after the delay and the notice (M5) |
 | **Replay** of a captured request | Repeat a write | Each request is signed over the env, its method, path, body hash, key id, time and a single-use nonce; ±60 s clock window; the nonce is reserved until the window ends (A3); writes also carry an idempotency key (A9) |
 | **Confused deputy between orgs, scopes or environments** | Network X acting on network Y's app; a credential acting on a live app, a staff-created app or another scope of its own org | The org comes only from the credential, never from the request; every plan read and every commit predicate holds the reach filter (org, the credential's scopes, `environment = 'test'`, platform-created), not only a check at the route (H1); a cancel is held to platform-proposed `origin_add` changes (H2); anything outside the reach is `not_found`, exactly like an app that doesn't exist; a key's scopes are checked against `scopes.org_id` at registration and inside every call |
 | **Enumeration** (of apps, changes, keys, credentials) | Learn other orgs' app ids or which key ids exist | Ids are random (`newId`, 12 random bytes); unknown and foreign ids answer the same `not_found`; every authentication failure answers the same `401 unauthenticated`; failures are limited per IP, successes per key |
 | **App creation abused to phish under the network's name** | An app named like the network or a known partner, with an attacker's origin | The origin waits the delay with the announcement (the notice shows the origin, its decoded form and the internationalised-domain warning that exists today); platform origins follow the live-scope rules (no loopback, no http, no mixed-script host, M7); app names pass `normalisePartnerAppName` (`packages/console-core/src/names.ts`: Journear's names and the reviewed lists refused) and, new, a name that reads like another app's name **on the same scope** is refused (the look-alike skeleton the labels already use; apps on other scopes or of other orgs aren't compared, L15); creation quotas; staff see every platform-created app |
 | **Origin takeover of an expired domain** | A partner lets its domain lapse; someone else registers it and serves a page on an origin that is still allowed on the shared wallet | The network must remove a partner's origins when it leaves (A13); the platform's read shows each origin's age; piece P9 reports origins with no sign-in for 60 days to the network and staff (decided as a later piece, D913 question 9); HTTPS only; staff suspend at once |
-| **The dev testnet env's short delay** | On sandbox-dev the delay is 60 s and the notice job runs every 5 minutes, so an added origin is in force about a minute after its email: nobody can cancel it in time. The delay protects almost nothing there, and sandbox-dev is where the mainnet demo (real money, D428) runs | A platform minimum delay in every env but `local*` test envs (open question N3, recommended 24 h); until it is decided, the platform is not switched on for any org in a dev env (M6) |
+| **The dev testnet env's short delay** | On sandbox-dev the delay is 60 s and the notice job runs every 5 minutes, so an added origin is in force about a minute after its email: nobody can cancel it in time. The delay protects almost nothing there, and sandbox-dev is where the mainnet demo (real money, D428) runs | Decided (N3): a platform minimum delay of 24 h for platform-proposed origins and for platform keys, in every env but `local*` test envs (M6); an origin comes into force sooner only when an owner confirms it (A15), never on the key's word alone. The platform is not switched on for any org until the minimum and the confirmation (P4, P10) are built |
+| **A confirmation by a taken-over owner account** (someone holds one owner's Google account) | Through the platform, nothing: a Google account proposes nothing there. Together with a stolen platform key, or with any origin the key proposed: confirm an attacker's origin at once, with no time to cancel. **The accepted risk** (the Tech Lead, N3: an owner whose own Google account is taken over has more at risk than this) | The confirmation needs a console `owner` member who is also an on-chain owner of the app's scope, with a fresh Google sign-in (to confirm, A15); the confirmation's notice goes at once to the security contacts, every owner and Journear, naming who confirmed; the user's approval window names the app and its web address, with the "also used on other apps" line (N6); staff suspend the app at once; the network or an owner removes the origin at once |
+| **Confirm fatigue** (owners confirm by habit, without reading) | An attacker's origin confirmed by a real owner | The email never confirms: its Confirm link only opens the console page; the page shows the app, the origin in full and decoded, the internationalised-domain warning, who proposed it and when; each origin is ticked one by one (none ticked at first, no "confirm all"); each confirmation is its own fresh sign-in; the platform's proposal quotas (A5) bound how many there can be |
+| **CSRF on the confirmation**, a mail scanner or a forwarded email | A confirmation nobody meant | A GET never confirms (the page only shows the proposal); the confirm is a console `POST` under the console's CSRF rules (`apps/console/src/csrf.ts`: `Sec-Fetch-Site`, `Origin`, the custom header, JSON) with a `SameSite=Strict` session, and the fresh sign-in's nonce is bound to the exact change ids, app and origins (A15); a forwarded email gives its reader the page, not a session |
+| **A confirmation racing a cancel or a key revocation** | An origin in force after someone cancelled it, or after the proposing key was revoked | The confirmation is one compare-and-swap batch whose commit predicate requires the change still `pending`, announced, not cancelled and not yet in force, the proposing key not revoked and the org's platform switch on (A15); whichever lands first wins, and a cancel or revoke that lands first makes the confirmation `not_pending` or `conflict` |
+| **A confirmation after the app left the platform's reach** (deleted, moved, its scope dropped from the key, suspended by Journear) | An origin in force on an app the platform should no longer touch | The same commit predicate holds the proposing key's reach (A4.2) and refuses an app Journear suspended (bit 1 or 2); a refused confirmation leaves the proposal as it was (still waiting, still cancellable) |
 | **A leaked request log** at the network or in transit | A captured signed request | No bearer secret in any header; the signature covers the body and a single-use nonce, so a logged request can't be reused or altered |
 | **Our D1 read by an attacker** | The registered public keys and the call log | Public keys sign nothing; nothing secret of the network is stored on our side |
 | **Flooding the platform route** | Spend the hot DB or the limiter objects; lock the network out from a shared egress IP | Failures are limited per IP and counted only while they fail (M2), so a valid key is never locked out by others behind the same IP; successes are limited per key; the org's own bucket under the global one keeps the kill-switch reserve (A5) |
@@ -293,14 +304,16 @@ credentials in force or waiting per org, so one can replace the other.
 2. **Journear staff**, in the admin portal, after checking the key's thumbprint with the network out of band. A
    staff-registered key is held as `awaiting_acceptance` until **an on-chain owner of each scope accepts it** in our
    partner portal with a fresh sign-in (step-up kind `platform.key_accept`, the same nonce fields), **or a second
-   staff member** (not the one who registered it) approves it in the admin portal with a reason (M5; open question
-   N5). Only then is it announced.
+   staff member** (not the one who registered it) approves it in the admin portal with a reason (M5; decided, N5).
+   Only then is it announced.
 
 Either way the credential is then **pending**: announced by email to the org's security contacts, **to every owner of
 the org**, and to Journear's security alias, naming who registered it (the member's email or "Journear staff" with the
-staff member's name) and who accepted it, with a cancel link (M5; open question N9); and usable only after the delay
-(at least `appChangeDelayMs`, and the platform minimum of open question N3). Staff can't skip the wait. The public key
-is checked to be a valid P-256 point, unique across all orgs.
+staff member's name) and who accepted it, with a cancel link (M5; decided, N9); and usable only after the delay (the
+greater of `appChangeDelayMs` and the platform minimum of 24 h, in every env but `local*` test envs; decided, N3).
+Staff can't skip the wait, and **a key has no confirmation shortcut**: the owner's confirmation of A15 is for origins
+only (decided while writing this, **to confirm with the Tech Lead**: the discussion of N3 was about web addresses
+only). The public key is checked to be a valid P-256 point, unique across all orgs.
 
 **Refused after a security-contact change** (M5): a registration (and an acceptance) is refused with `conflict` while
 the org's security contacts changed less than **7 days** ago (the latest `org.security_contacts` row in
@@ -330,7 +343,7 @@ and its thumbprint in the hot D1 (`platform_keys`, A7). Nothing secret of the ne
    read's join (`planApp`, `planChange`, the key and suspension writers' reads) **and** to the commit row's predicate
    (`commitOnApp`, `commitOnChange`):
    `a.org_id = :org AND a.scope_id IN (SELECT value FROM json_each(:credentialScopes)) AND s.environment = 'test' AND
-   a.created_by_kind = 'platform'` (the last term per open question N1). A state that moves between the read and the
+   a.created_by_kind = 'platform'` (the last term per N1, decided). A state that moves between the read and the
    batch (an app moved to another scope, say) makes the commit insert nothing (`version_conflict`), so the write never
    lands outside the reach. Reads (`listApps`, `getApp`) take the same predicate. Anything outside it is `not_found`.
    Tests (P4): an org with a live app, a staff-created test app and a platform-created test app on the same scope and
@@ -348,7 +361,8 @@ and its thumbprint in the hot D1 (`platform_keys`, A7). Nothing secret of the ne
    localhost wildcard, no http and no mixed-script host label. No waiver (both waivers already require a `member` or
    `hana` proposer, `lifecycle.ts`); refused within the delay of the scope's assignment (as staff proposals are); the
    20-per-app limit unchanged; `ackNotice` sets `active_from` from the greater of `appChangeDelayMs` and the platform
-   minimum (open question N3) for a `platform` proposal.
+   minimum (`PLATFORM_MIN_DELAY_MS`, 24 h, in every env but `local*` test envs; decided, N3) for a `platform`
+   proposal. An owner's confirmation (A15) may bring it forward to the moment of the confirmation; nothing else can.
 6. **Resume** (L4). A new column `apps.partner_bit_by` (`'member'`, `'platform'` or NULL) says who holds the partner
    bit. The platform's suspend sets bit 4 and, only if the bit was clear, `partner_bit_by = 'platform'`. A member's
    suspend in the console always sets `partner_bit_by = 'member'`, **also when bit 4 is already set** (it then writes a
@@ -405,15 +419,16 @@ nonce, key windows) and at most three reads and two batches.
 | Part | Reused unchanged | Changed | New |
 |---|---|---|---|
 | Origin additions | `guarded_changes` `origin_add`, `app_origins` with `active_from` NULL, `MAX_APP_ORIGINS` | `proposeOrigins` takes the reach predicate (H1); `proposed_by_kind` gains `platform` (proposer id = the credential id); `checkOriginRules` called with the live rules for a platform proposal (M7) | — |
-| Announcement | `pendingNotices` → the admin Worker's email to the security alias and every security contact → `ackNotice` (the `system` actor) with the cancel link's hash; the 7-day lapse; activation by the hourly job | Platform proposals of one request are sent as **one email** listing every origin, each with its own cancel link (L14); the "Proposed by" row reads "your platform key "{label}" ({pkc_…})"; `ackNotice` applies the platform minimum delay (N3) | — |
-| Delay | `APP_CHANGE_DELAY_MS`; no waiver for a platform proposal | The platform minimum (N3) | — |
+| Announcement | `pendingNotices` → the admin Worker's email to the security alias and every security contact → `ackNotice` (the `system` actor) with the cancel link's hash; the 7-day lapse; activation by the hourly job | Platform proposals of one request are sent as **one email** listing every origin, each with its own cancel link (L14); the "Proposed by" row reads "your platform key "{label}" ({pkc_…})"; `ackNotice` applies the platform minimum delay (N3); the email also carries a **Confirm** link that only opens the console's confirmation page (A15) | The notice of a confirmation, from the change feed, to the security alias, every security contact and every owner (A15) |
+| Delay | `APP_CHANGE_DELAY_MS`; no waiver for a platform proposal | The platform minimum, 24 h, for platform proposals and platform keys in every env but `local*` test envs (`isLocalEnv`, `packages/env/src/origins.ts`; decided, N3) | — |
 | Cancel | `cancelChange` (an owner, staff), `cancelChangeByLink` (the email) | The platform's cancel, held to platform-proposed `origin_add` changes in its reach (H2) | — |
-| Expedite | Member proposals only, as today; never a platform proposal (decided, D913 question 11) | — | Staff restore (P9 only, to re-confirm: M1, below) |
+| Expedite | Member proposals only, as today; never a platform proposal (decided, D913 question 11). Staff restore of a removed origin without the wait: refused (A14) | — | — |
+| Confirmation | The step-up verification (`verifyStepUpToken`, `confirmStepUp`), the console's CSRF rules, the compare-and-swap commit; `expediteChange`'s way of setting `active_from = now` and the matching `app_origins.active_from` | — | `ConsoleRpc.confirmOrigins` (a console route only: no platform route, A15); step-up kind `origin.confirm`; `guarded_changes.confirmed_*` (A7); `app_changes` kind `origin.confirmed` |
 | Removals, suspension, keys | `removeOrigins`, `setSuspensionBit`, `createKey`, `revokeKey` | Each takes the reach predicate (H1); `apps.partner_bit_by` and the member's take-over write (A4.6) | — |
 | App creation | The body of `createApp` (name rules, first key, origins as proposals, `app.created`) | A platform variant on an existing flagged scope only: no scope creation, no on-chain owner read, never a waiver, the look-alike name check within the scope, `user_ids` and `created_by_kind` by `INSERT … SELECT` | — |
 | Auto-approve | `proposeChange`'s rules for everyone else | `proposeChange` (ConsoleRpc and AdminRpc), the admin CLI's `app:settings` and the hourly drift check refuse or flag a `policy_set` for an app on a flagged scope or created by the platform (P0, H3) | — |
-| Ledger | `app_changes` with its kinds (`app.created`, `origin.proposed`, `origin.removed`, `change.cancelled`, `suspension.set`, `suspension.cleared`, `key.created`, `key.revoked`) | `actor_kind` gains `platform` (actor id = the credential id) | Kinds `platform.key_proposed`, `platform.key_accepted`, `platform.key_announced`, `platform.key_cancelled`, `platform.key_active`, `platform.key_revoked`, `platform.org_switch`, `scope.app_user_ids` (org-level rows, `app_id` NULL), each with an audit title in `APP_CHANGE_KINDS` (D704) |
-| Credential registration | The step-up verification (`changes/step-up.ts`); the notice email and cancel-link machinery (`linkToken`, `CANCEL_LINK_KEY`); the owners' email list the admin Worker already uses for invites | Console `pending_actions` gains `platform.key_add`, `platform.key_accept` and `platform.key_revoke` (a rebuild, as migration 0004 did) | A guarded change of its own kind, held in `platform_keys` (keys belong to an org, not an app, so `guarded_changes`, whose `app_id` is required, can't hold it): `AdminRpc.platformKeyNotices` → email → `ackPlatformKeyNotice`; cancel by an owner, staff or the link (`/cancel-platform-key/:id#t=` on the console) |
+| Ledger | `app_changes` with its kinds (`app.created`, `origin.proposed`, `origin.removed`, `change.cancelled`, `suspension.set`, `suspension.cleared`, `key.created`, `key.revoked`) | `actor_kind` gains `platform` (actor id = the credential id) | Kind `origin.confirmed` (actor `member`, with the step-up's `actor_sub`; detail: the change id, the origin, the proposing key's id); kinds `platform.key_proposed`, `platform.key_accepted`, `platform.key_announced`, `platform.key_cancelled`, `platform.key_active`, `platform.key_revoked`, `platform.org_switch`, `scope.app_user_ids` (org-level rows, `app_id` NULL), each with an audit title in `APP_CHANGE_KINDS` (D704) |
+| Credential registration | The step-up verification (`changes/step-up.ts`); the notice email and cancel-link machinery (`linkToken`, `CANCEL_LINK_KEY`); the owners' email list the admin Worker already uses for invites | Console `pending_actions` gains `platform.key_add`, `platform.key_accept`, `platform.key_revoke` (a rebuild, as migration 0004 did), and `origin.confirm` (P10; in the same rebuild if P2 and P10 ship together, else its own) | A guarded change of its own kind, held in `platform_keys` (keys belong to an org, not an app, so `guarded_changes`, whose `app_id` is required, can't hold it): `AdminRpc.platformKeyNotices` → email → `ackPlatformKeyNotice`; cancel by an owner, staff or the link (`/cancel-platform-key/:id#t=` on the console) |
 | Security events | The admin Worker's email of `security_events` | — | Kinds `platform_quota`, `platform_auth_failures`, `link_lookup_volume` (B6) |
 | Call log | — | — | `platform_calls`: every call that passed the signature check |
 
@@ -472,7 +487,23 @@ CREATE INDEX platform_calls_org ON platform_calls (org_id, seq);
 ALTER TABLE scopes ADD COLUMN app_user_ids INTEGER NOT NULL DEFAULT 0 CHECK (app_user_ids IN (0, 1));
 ALTER TABLE apps ADD COLUMN created_by_kind TEXT NOT NULL DEFAULT 'hana' CHECK (created_by_kind IN ('hana', 'platform'));
 ALTER TABLE apps ADD COLUMN partner_bit_by TEXT CHECK (partner_bit_by IN ('member', 'platform'));
+-- P10: who confirmed a platform-proposed origin, and when (A15). After P1's rebuild, so plain added columns.
+ALTER TABLE guarded_changes ADD COLUMN confirmed_by  TEXT;     -- the console member's user id
+ALTER TABLE guarded_changes ADD COLUMN confirmed_sub TEXT;     -- the verified step-up's Google sub (an on-chain owner)
+ALTER TABLE guarded_changes ADD COLUMN confirmed_at  INTEGER;  -- also the new active_from
+-- Only a platform-proposed origin_add, only once, all three together.
+CREATE TRIGGER guarded_changes_confirm_rule BEFORE UPDATE OF confirmed_by, confirmed_sub, confirmed_at ON guarded_changes
+  WHEN OLD.confirmed_at IS NOT NULL
+    OR NEW.confirmed_at IS NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_sub IS NULL
+    OR OLD.kind IS NOT 'origin_add' OR OLD.proposed_by_kind IS NOT 'platform'
+BEGIN SELECT RAISE(ABORT, 'guarded_changes: only a platform origin is confirmed, once'); END;
 ```
+
+The confirmation is recorded three times, each in its own place: the change's `confirmed_by`, `confirmed_sub` and
+`confirmed_at` (with `active_from = confirmed_at` on the change and its `app_origins` row); one `app_changes` row
+`origin.confirmed` per origin (actor `member`, the member's id, `actor_sub` the step-up's `sub`); and a console
+`audit_log` row for the member's action, as every step-up write writes today. The ledger row is what the admin
+Worker's feed (`changesSince`) turns into the confirmation's notice (A15).
 
 **What isn't stored** (L7): a request that fails before the signature verifies has no authenticated key, and writing a
 row for each would let anyone fill the hot DB, so it is counted (the per-IP window, the per-key failure counter that
@@ -520,7 +551,7 @@ before and after, the row count, `max(seq)` (for `app_changes`) and an aggregate
 ordered by its key through `wrangler d1 execute --json` and hashes the canonical JSON with SHA-256 locally, since D1 has
 no hash function); any difference is a rollback to the bookmark.
 
-Console D1: `pending_actions` rebuilt with the three new step-up kinds (as 0004). `console-core`: `ACTOR_KINDS` and
+Console D1: `pending_actions` rebuilt with the three new step-up kinds (as 0004), and with `origin.confirm` (P10). `console-core`: `ACTOR_KINDS` and
 `PROPOSER_KINDS` gain `platform`; the console's Audit renders it.
 
 ## A8. Endpoints
@@ -544,13 +575,15 @@ needs the A3 headers; every `POST` that writes needs `Idempotency-Key`.
   "suspended": { "byJournear": false, "byOrganisation": false, "byYou": false, "youCanResume": false },
   "originsVersion": 3,
   "origins": [ { "origin": "https://…", "display": "https://…", "idn": false,
-                 "state": "waiting_announcement | waiting | active", "activeFrom": 0, "changeId": "gc_…" } ],
+                 "state": "waiting_announcement | waiting | active", "activeFrom": 0, "confirmedAt": null,
+                 "changeId": "gc_…" } ],
   "keys": [ { "id": "key_…", "key": "pk_test_…", "createdAt": 0, "revokedAt": 0 } ] }
 ```
 
 `byJournear` covers bits 1 and 2 together (the network learns that Journear stopped the app, not why); `byOrganisation`
-is bit 4 held by a member, `byYou` bit 4 held by the platform. No settings, no policy, no mainnet demo, no labels, no
-staff identities.
+is bit 4 held by a member, `byYou` bit 4 held by the platform. For a waiting origin, `activeFrom` is the date it comes
+into force if nobody confirms it; once an owner confirms it (A15), `confirmedAt` is the time and `activeFrom` the
+same (never who confirmed). No settings, no policy, no mainnet demo, no labels, no staff identities.
 
 | Endpoint | Body | Answer | Codes beyond the common ones |
 |---|---|---|---|
@@ -559,7 +592,7 @@ staff identities.
 | `POST /v1/platform/apps` | `{scopeId, name, origins?: [≤ 20]}` | `201 {app, publishableKey, changes: [{changeId, origin}]}` | `forbidden` (scope not on the key, or not flagged), `origin_refused`, `conflict` (scope assigned less than the delay ago; a name like another app's on the scope), `409 app_limit`, `no_security_contact` |
 | `GET /v1/platform/apps?scopeId=&cursor=` | — | `{apps: [PlatformApp], next?}` (50 a page, within the reach) | `forbidden` |
 | `GET /v1/platform/apps/:appId` | — | `{app}` | `not_found` |
-| `POST /v1/platform/apps/:appId/origins` | `{add: [≤ 20], expectedVersion}` | `202 {version, changes: [{changeId, origin}]}`; each waits for its announcement and then the delay | `not_found`, `origin_refused` (the live rules, A4.5), `conflict` (duplicate, more than 20, scope assigned less than the delay ago) |
+| `POST /v1/platform/apps/:appId/origins` | `{add: [≤ 20], expectedVersion}` | `202 {version, changes: [{changeId, origin}]}`; each waits for its announcement, then comes into force when an owner confirms it (A15) or after the delay with the platform minimum | `not_found`, `origin_refused` (the live rules, A4.5), `conflict` (duplicate, more than 20, scope assigned less than the delay ago) |
 | `POST /v1/platform/apps/:appId/origins/remove` | `{remove: [≤ 20], expectedVersion}` | `{version}`; immediate | `not_found`, `bad_request` (not an origin of the app) |
 | `POST /v1/platform/changes/:changeId/cancel` | — | `{change}` | `not_found` (also any change the platform didn't propose, A4.7), `not_pending` |
 | `POST /v1/platform/apps/:appId/suspend` | `{suspended: true \| false}` | `{suspended}` (the view's object) | `not_found`, `forbidden` (A4.6) |
@@ -575,8 +608,13 @@ Staff and console methods (RPC, no route): `AdminRpc.registerPlatformKey`, `appr
 member), `revokePlatformKey`, `listPlatformKeys`, `setPlatformOrg`, `setScopeAppUserIds`, `platformKeyNotices`,
 `ackPlatformKeyNotice` (`system` only), `cancelPlatformKey`, `platformCalls`; `ConsoleRpc.listPlatformKeys`,
 `proposePlatformKey` and `acceptPlatformKey` (with `stepUpJwt`), `revokePlatformKey` (owner, kill switch),
-`cancelPlatformKey`, `cancelPlatformKeyByLink` (`link` actor), `platformCalls`. Their full shapes go in `docs/api.md`
-when built.
+`cancelPlatformKey`, `cancelPlatformKeyByLink` (`link` actor), `platformCalls`; `ConsoleRpc.confirmOrigins` (P10,
+A15: `{changeIds: [≤ 20], stepUpJwt}`, a member actor only). Their full shapes go in `docs/api.md` when built.
+
+**No platform route confirms.** There is no `/v1/platform/…/confirm` and none may be added: the confirmation is the
+console's `POST /api/orgs/:org/actions` step-up (kind `origin.confirm`) and then `ConsoleRpc.confirmOrigins`, which
+refuses any actor but `member` (`verifyStepUpToken` already does) and so can never be reached with a platform key. A
+test (P10) walks every platform route and checks none changes `confirmed_at` or brings an `active_from` forward.
 
 ## A9. Idempotency (gates P4: L3)
 
@@ -609,7 +647,8 @@ when built.
 3. The key is public; what protects it is the app's allowed origins. The platform API is never called from a page: it
    refuses any request with an `Origin` header.
 4. Until the partner's origin is in force, our sign-in refuses the partner's site (`origin_not_allowed`); the
-   network's portal should show "Goes live on {date}" from the origin's `activeFrom`.
+   network's portal should show "Waiting for your owner to confirm, or live on {date}" from the origin's
+   `activeFrom`, and "Live" once it is in force (at once after an owner confirms it, A15).
 5. Switching off: the network calls `suspend` (logins stop at once; open pages notice within 30 s, as today). On a
    key rotation, the network creates a key, publishes it in its configuration, and revokes the old key once its
    caches have turned over.
@@ -627,6 +666,16 @@ when built.
 - On each app: "Created by your platform key {label}"; platform rows in the Audit with the key's label as the actor;
   origin changes proposed by the platform marked as such; on the scope, "Shared wallet: apps here get their own user
   IDs, and auto-approve is off" for a flagged scope.
+- **Confirm a web address** (P10, A15): the page the email's Confirm link opens (`/confirm/:changeId`, a console
+  page behind the usual sign-in). It shows the app's name, each waiting address of that one platform request in full
+  with its decoded form and the internationalised-domain warning, which platform key proposed it and when, "Comes
+  into force on {date} if nobody confirms it", and the line "This wallet is also used on {other apps}" when the
+  scope is shared. Each address has its own tick box, none ticked at first; **Confirm** then asks for the usual fresh
+  Google sign-in. Plain words on the page: "Only confirm web addresses you know belong to {app}. Once you confirm,
+  {app} can use this wallet there straight away." and, beside the cancel: "Not yours? Cancel it." A viewer, or an
+  owner who isn't an owner of the app's scope on chain, sees the page without the Confirm button and the reason
+  ("Only an owner of this wallet's settings can confirm"). The app's origins list shows "Waiting for an owner to
+  confirm, or live on {date}" for each such address.
 - The Users screen changes of Part B (B6).
 
 **Partner companies get no portal of their own in this version.** A member of the network's org sees every app and
@@ -641,7 +690,9 @@ network's security contacts (and, for keys, its owners); the network tells its p
 - On the scope: the shared-scope flag (one way; refused while any app on the scope has a policy in force or waiting,
   P0).
 - A platform queue: every waiting origin proposal and key registration made by or for a platform, across orgs, with
-  its origin, app and time left, so staff see each one before it is in force.
+  its origin, app and time left, so staff see each one before it is in force; and, for 7 days, every origin an owner
+  confirmed, with who confirmed it and when (a confirmed origin is in force before staff can see it in the queue,
+  so staff review it after the fact and suspend or remove it if it is wrong).
 - On each app: "Created by the platform"; the existing per-app suspension (bit 1) and delete, unchanged; the mainnet
   demo switch (staff only, D428, D913 point 2), which for a platform-created app or an app on a flagged scope first
   shows a warning that asks staff to confirm: "This app shares one wallet with every app on its scope. Real money
@@ -650,8 +701,8 @@ network's security contacts (and, for keys, its owners); the network tells its p
 
 **Open item, not in this spec:** Passport Home shows at most 10 apps per scope (`HOME_APPS_PER_SCOPE`), and the
 sign-in windows' "also used on other apps" line is being built on another branch. A network with many partners needs
-Home to list the apps a person actually used first (open question N8 asks whether platform-created test apps should be
-listed at all on dev envs).
+Home to list the apps a person actually used first. Platform-created test apps are listed in Home on dev envs like
+any app a person signed in on (decided, N8), so users see every site their wallet is used on.
 
 ## A12. On chain, and address impact
 
@@ -665,23 +716,96 @@ derivation changes. **Address impact: none.**
 The recommendation the Tech Lead asked to build on (D913 point 6): the network is the customer and the scope's owner,
 so it vouches for every partner site it adds. Concretely the network, before calling `origins`, checks that the
 partner controls the domain (its own process: for example a DNS record or a file on the site), adds only the
-partner's exact HTTPS origins, and removes them as soon as the partner leaves or its domain lapses. Journear's backstops
-are the delay, the announcement and cancel link, the staff queue, the off switches and the audit.
+partner's exact HTTPS origins, and removes them as soon as the partner leaves or its domain lapses. Then one of the
+network's owners confirms each new address in our partner portal, or lets it wait (A15). Journear's backstops are the
+delay with the platform minimum, the announcement and cancel link, the confirmation's notice, the staff queue, the
+off switches and the audit.
 
-## A14. Staff restore of removed origins (P9 only; M1)
+## A14. Staff restore of removed origins: considered and refused
 
-The Tech Lead answered "yes" to letting staff restore, without the wait, an origin a stolen key removed (D913,
-question 8). **The security review advises against it** (M1): a restore that skips the delay is the one path by which
-an origin comes into force with no time for anyone to object, and a staffer tricked by someone posing as the network
-could use it to put an attacker's origin back. It is therefore **to re-confirm with the Tech Lead before P9 is built**,
-and if built it takes only this narrowed form:
+The first version of this spec let Journear staff restore, without the wait, an origin a stolen key removed (D913,
+question 8, first answered yes). The Tech Lead re-confirmed it as **no** on 2026-11-25 (D914), as PR 139's security
+review advised (M1): a restore that skips the delay would be a path by which an origin comes into force with no time
+for anyone to object, and a staffer tricked by someone posing as the network could use it to put an attacker's origin
+back. Nothing of it is built. An origin a stolen key removed comes back as any other: the network proposes it again
+(once its key is replaced) and an owner confirms it (A15), or a member adds it by hand.
 
-- only an origin whose removal was by the `platform` actor (the `origin.removed` row's actor), on the same app, within
-  the last 7 days, and that was in force when removed (`wasInForce`);
-- only once that removing key is revoked or the org's platform switch is off (so the key that did the damage can't
-  remove it again, and the restore isn't a way round an ongoing attack);
-- with a notice to the org's security contacts and owners, as for any change, sent before the origin is back;
-- with two people: one staff member proposes, a second approves, each with a reason, both recorded.
+## A15. An owner's confirmation of a platform-proposed origin (decided, N3; gates P10)
+
+**The rule** (the Tech Lead, 2026-11-25, D914), the same in every env except `local*` test envs:
+
+1. An origin the platform proposes starts waiting and is announced as today (A4.5, A6): one email per request to the
+   security alias and every security contact, with its cancel link.
+2. It comes into force **at once** when an owner of the organisation confirms it: signed in to our partner portal,
+   pressing Confirm on a page that shows the app and the origin (A11). The email's Confirm link only opens that page;
+   **a GET never confirms** (mail scanners open links, emails get forwarded). The cancel link stays one click from the
+   email with no sign-in, as today (the page `/cancel/:changeId#t=` and its `POST`).
+3. If nobody confirms it, it comes into force after the platform minimum (24 h, and at least `appChangeDelayMs`),
+   unless it is cancelled first. So **a stolen platform key alone gets only the slow, cancellable path.**
+
+In `local*` test envs (`isLocalEnv`) the 24 h minimum doesn't apply (the env's own delay does, so tests run); the
+confirmation works the same there.
+
+**Who may confirm** (proposed, **to confirm with the Tech Lead**): a console member whose role is `owner`
+(`members.role`, `apps/console/migrations/0001_init.sql`; the role read fresh on the request, `ownerNow`,
+`apps/console/src/sql.ts`) of an active org, **and** an on-chain owner (`Owner::Oidc`) of the app's scope, proven
+with the console's fresh Google sign-in (a new step-up kind `origin.confirm`), which the API verifies itself as it does
+for `ConsoleRpc.changeOrigins` (`verifyStepUpToken`, `confirmStepUp`, `apps/api/src/changes/step-up.ts`). That is the
+strictest role the console has, and the one that may add an origin by hand today (the console's `origin.add` step-up
+refuses anyone else with `not_owner`, `apps/console/src/actions.ts`), so a confirmation never lets anyone bring an
+origin into force who couldn't add it themselves. A `viewer`, or an `owner` member who isn't an on-chain owner of
+that scope, can't confirm. The Tech Lead's words were "signed in to the console, pressing Confirm"; the fresh sign-in
+is one step more, chosen because it also defeats a stolen console session and binds the confirmation to the exact
+addresses (to confirm with the rest).
+
+**What the confirmation checks** (`ConsoleRpc.confirmOrigins`, one compare-and-swap batch, failing closed):
+
+- The actor is a `member` (`forbidden` otherwise: the platform, staff, the system and the link never confirm). The
+  step-up token's nonce is the `origin.confirm` layout over the signer account, the env, the org, the app, the scope
+  and the sorted list of (change id, origin), so a token for one set of addresses confirms no other; the token is
+  single use (`owner-actions:tokens`).
+- Each change is an `origin_add` proposed by the `platform`, `pending`, **announced** (`notified_at` set: a change
+  not yet announced can't be confirmed, so the security contacts always hear of it first), not cancelled, not yet in
+  force, and not already confirmed (`not_pending` otherwise).
+- The proposing key is still in force (not revoked, not expired) and the org's platform switch is on (`conflict`
+  otherwise: an owner who still wants the address adds it by hand). The app is still in the proposing key's reach
+  (A4.2: same org, a scope the key names, `test`, platform-created), not deleted, and not suspended by Journear
+  (bits 1 and 2) (`not_found` or `conflict`). The org isn't frozen (`forbidden`).
+- All of it is in the commit predicate, not only in the plan read, so a cancel, a key revocation, a switch-off, a
+  move of the app or a staff suspension that lands between the read and the batch makes the confirmation insert
+  nothing (`version_conflict`). A cancel and a confirmation of the same change: whichever commits first wins.
+- The batch sets `confirmed_by`, `confirmed_sub`, `confirmed_at` and `active_from = now` on the change and its
+  `app_origins` row (as `expediteChange` does), and writes one `origin.confirmed` row per origin (A7). Up to 20
+  changes of one request in one call; the console's `CONSOLE_DB_LIMITS` and costs are checked for it, as for
+  `changeOrigins`.
+
+**The notice of a confirmation.** The origin is in force before anyone else hears of the confirmation, so its notice
+is after the fact and goes wide: the admin Worker's 5-minute run reads the `origin.confirmed` rows from the change feed and emails
+the security alias, every security contact and **every owner of the org**, one email per confirmation call: "{Member
+email} confirmed {origin} for {app}. It works there now. If this wasn't meant to happen, remove the address in the
+partner portal: it stops at once." The console's Audit shows the row with the member as the actor; the staff queue
+lists it for 7 days (A11).
+
+**The accepted risk** (the Tech Lead, 2026-11-25, D914). One owner's Google account taken over can propose nothing
+through the platform, but it can confirm an origin a stolen platform key proposed, or both can be in one attacker's
+hands; then an attacker's origin is in force at once, with no time to cancel. The Tech Lead accepted this: "I think
+this is too pessimistic, if an owner's own Google account is taken over, then more is at risk (other than these
+stuff), his banking etc". What still bounds it: the user's approval window names the app and its web address, with
+the "also used on other apps" line (N6); the confirmation's notice to every owner, the security contacts and
+Journear; staff suspend the app at once (bit 1); the network or any owner removes the origin at once.
+
+**Open, to revisit at mainnet preparation (not decided).** On a production env, an origin a member adds by hand in
+the console still waits the full guarded-change delay (at least 24 h), while an owner's confirmation of the
+platform's proposal brings one into force at once. Confirming the platform's proposal is therefore faster than adding
+one by hand, and an on-chain owner who also holds the platform key can use the platform to skip the production delay.
+Nothing changes now; the two paths are to be made consistent (one way or the other) when mainnet is prepared.
+
+**Platform keys have no shortcut** (decided while writing this, **to confirm with the Tech Lead**): a key waits the
+delay with the 24 h platform minimum (A3), and no owner's confirmation brings it forward; the discussion of N3 was
+about web addresses only.
+
+**Address impact: none.** The confirmation changes when a web address may use an app, an off-chain record; no
+contract call, key, path or address derivation.
 
 ---
 
@@ -819,9 +943,9 @@ turned into each other's without our key, and they have no portal and no platfor
 later, it is `POST /v1/platform/users/lookup {appId, userId | supportId}` with the same rules plus a `platform_calls`
 row and its own limits.
 
-**The data-sharing question** (L9; open question N7): what the network may do with a link once it has one, in
-particular whether it may give one partner another partner's ID for the same person. The recommendation is no (the
-network's agreement with us and its guide say so), since it would rebuild the join key per-app IDs remove.
+**The data-sharing rule** (L9; decided, N7): the network may **not** give one partner another partner's ID for the
+same person (the network's agreement with us and its guide say so), since it would rebuild the join key per-app IDs
+remove.
 
 **How the lookup works.** The forward direction (person → each app's ID) is computed from `end_users.token_sub` and
 the app id (B2). The reverse direction (an app's ID → person) needs a record, proposed below: when a person signs in
@@ -888,32 +1012,38 @@ Answered "yes all" to the recommendations (D913). Each is now part of the design
 5. The cross-app view of one person: **owners only** (B6).
 6. Keep per-app User IDs, knowing partners can still match people by wallet address: **yes** (B1).
 7. A per-app Support ID as well: **yes** (B4).
-8. Staff may restore, without the 24 h wait, an origin a stolen key removed: **yes, but the security review advises
-   against it; to re-confirm with the Tech Lead before P9 is built**, and only in the narrowed form of A14.
+8. Staff may restore, without the 24 h wait, an origin a stolen key removed: first answered yes; **re-confirmed as no
+   on 2026-11-25** (D914), as the security review advised (M1). Not built (A14).
 9. Report a partner origin with no sign-in for 60 days to the network and staff: **yes, as a later piece** (P9).
 10. Tell users in Passport Home that the network can see which of its sites they use: **yes** (B6).
 11. Staff may expedite a new platform-proposed origin: **no** (A6).
 
-## Open questions for the Tech Lead (from PR 139's security review)
+## Decided by the Tech Lead (2026-11-25): the questions from PR 139's security review
 
-Each answerable in a word; the recommendation is what the design above assumes until answered.
+"yes to all except for number 3" (D914), then N3 decided differently from the recommendation after a discussion, and
+question 8 re-confirmed as no (above). Each is now part of the design above.
 
-- **N1.** May the platform act on apps it didn't create (the network's own site, apps staff made for it)?
-  **Recommend: no.** It sees and changes only apps it created.
-- **N2.** Will the same credential model serve the network's future live scope? **Recommend: yes, with a separate key
-  and its own security review before any live app is opened to it.**
+- **N1.** May the platform act on apps it didn't create (the network's own site, apps staff made for it)? **No.** It
+  sees and changes only apps it created (A1, A4.2).
+- **N2.** Will the same credential model serve the network's future live scope? **Yes, with a separate key and its
+  own security review before any live app is opened to it** (A1).
 - **N3.** A minimum delay for platform-proposed origins and keys on dev envs, where the usual 60 s protects almost
-  nothing? **Recommend: yes, 24 h in every env except `local*` test envs.**
-- **N4.** Refuse auto-approve in code for every app on a shared scope? **Recommend: yes** (piece P0).
+  nothing? Recommended: 24 h in every env except `local*` test envs. **Decided differently:** the 24 h minimum stays
+  for an origin nobody confirms, and an origin comes into force **at once when an owner of the organisation confirms
+  it** in our partner portal; the same in every env except `local*` test envs (A15, P10). The Tech Lead accepted the
+  remaining risk of a taken-over owner account (A15). **To confirm** with the Tech Lead: who exactly may confirm (A15
+  proposes an `owner` member who is an on-chain owner of the scope, with a fresh sign-in), and that platform keys get
+  no confirmation shortcut (A3, A15). **Open, for mainnet preparation:** a member's own origin on a production env
+  still waits the full delay (A15).
+- **N4.** Refuse auto-approve in code for every app on a shared scope? **Yes** (piece P0).
 - **N5.** Must a key that staff register be accepted by the network's owner (or a second staff member) before it
-  works? **Recommend: yes.**
-- **N6.** Must the "also used on other apps" line ship before the platform is switched on for any org?
-  **Recommend: yes.**
-- **N7.** May the network give one partner another partner's ID for the same person? **Recommend: no.**
-- **N8.** Should platform-created test apps appear in Passport Home's list on dev envs? **Recommend: yes**, like any
-  app a person signed in on, so users see every site their wallet is used on.
-- **N9.** Should key-registration notices also go to the org's owners, not only the security contacts?
-  **Recommend: yes.**
+  works? **Yes** (A3).
+- **N6.** Must the "also used on other apps" line ship before the platform is switched on for any org? **Yes**
+  (build plan, gates).
+- **N7.** May the network give one partner another partner's ID for the same person? **No** (B6).
+- **N8.** Should platform-created test apps appear in Passport Home's list on dev envs? **Yes**, like any app a
+  person signed in on, so users see every site their wallet is used on (A11).
+- **N9.** Should key-registration notices also go to the org's owners, not only the security contacts? **Yes** (A3).
 
 ## Build plan
 
@@ -931,28 +1061,31 @@ review.
 | P3 | M2 (per-IP counts failures only), M3 (the platform's own global breaker), M4 (plain ES256, both S values, DER and raw, the high-S vector), L1 (exact regexes, one parsed path, no dot or empty segments, GET and POST only, JSON, no encoding), L2 (`ENV_NAME` signed, one key per env), L5 (self-revoke with the switch off, the key review before re-enabling), L8 (the hot-DB budget, the nonce object's name and location) |
 | P4 | H1 (the reach filter in every plan read and commit predicate), H2 (cancel held to platform-proposed origin adds), M7 (live origin rules), L3 (idempotency for the ledger's lifetime, the rotated-key retry), L4 (who holds the partner bit), L15 (look-alike names within the scope), L16 (`INSERT … SELECT` of the app's mode) |
 | P5 | L7 (what is recorded and what is only counted), L14 (one email per request, lower quotas), H3's mainnet demo warning |
-| Before the platform switch is on for any org | P0 (H3, in code), the N3 decision (M6), the "also used on other apps" line (N6) |
-| P6 and P7 | M8 (retention and erasure), L9 (lookup volume alerts, the data-sharing question N7), L12 (the `aud` benefit and the guide), L10 (the vectors' path) |
-| P9 | M1 (staff restore: re-confirm, then only the narrowed form) |
+| P10 | M6 (decided as N3: the owner's confirmation and its threats, A2 and A15) |
+| Before the platform switch is on for any org | P0 (H3, in code), the platform minimum (P4) and the owner's confirmation path built and reviewed (P10, M6), the "also used on other apps" line (N6) |
+| P6 and P7 | M8 (retention and erasure), L9 (lookup volume alerts, the data-sharing rule N7), L12 (the `aud` benefit and the guide), L10 (the vectors' path) |
+| None | M1 (staff restore): closed by refusing the restore (question 8, A14) |
 | This branch | L11 (`docs/integration.md`'s `sub` row corrected), L13 (D913 split into the Tech Lead's words, his answers and what is only proposed) |
 
 | Piece | What | Size | Tests required | Independent security review |
 |---|---|---|---|---|
 | P0 | **Shared-scope rules in code** (H3): `scopes.app_user_ids`, `apps.created_by_kind`; `AdminRpc.setScopeAppUserIds` (one way, refused while a policy is in force or waiting); `proposeChange` in ConsoleRpc and AdminRpc and the admin CLI's `app:settings` refuse a `policy_set` (`policy_invalid`, "Auto-approve is off for apps that share a wallet") for an app on a flagged scope or created by the platform; the hourly drift check flags a policy on such an app; the console and the admin portal hide the policy editor for them. Ships before the platform is switched on for any org | S | Refused through each of the three paths for a flagged scope and for a platform-created app; an unflagged app unchanged; the flag refused with a waiting policy; the drift flag for a bare D1 write | **Yes** |
 | P1 | The `platform` actor: the rebuild of `app_changes`, `guarded_changes` and `security_events` with the kind triggers (A7); `ACTOR_KINDS`, `PROPOSER_KINDS`, audit titles; the notice email's "Proposed by" wording; the console's Audit rendering | S | The migration test of A7 (rows, `seq`, every index and trigger by its SQL, refusals kept, an unknown kind refused); the ops script's before and after comparison; views and the email for each actor kind | **Yes** (the ledger) |
-| P2 | Credentials: `platform_keys`, `platform_orgs`; registration by an owner of each scope and by staff with acceptance or a second staff member; the 7-day contact rule; notices to contacts, owners and the alias naming who registered and accepted; ack, cancel link, activation and expiry jobs; the four revocation routes; the switch with the key review | M | Each registration route; the step-up nonce bound to env, thumbprint, scopes and label (a token for another key refused); one owner of only one of two scopes refused; a staff key unusable until accepted, and the registering staffer can't approve it; a registration within 7 days of a contact change refused; the delay with no waiver; the link cancel; immediate revocation by each route; expiry | **Yes** |
+| P2 | Credentials: `platform_keys`, `platform_orgs`; registration by an owner of each scope and by staff with acceptance or a second staff member; the 7-day contact rule; notices to contacts, owners and the alias naming who registered and accepted; ack, cancel link, activation and expiry jobs; the four revocation routes; the switch with the key review | M | Each registration route; the step-up nonce bound to env, thumbprint, scopes and label (a token for another key refused); one owner of only one of two scopes refused; a staff key unusable until accepted, and the registering staffer can't approve it; a registration within 7 days of a contact change refused; the delay with no waiver, at least the 24 h platform minimum on a dev env, with no confirmation shortcut; the link cancel; immediate revocation by each route; expiry | **Yes** |
 | P3 | Request authentication and admission: the route, A3's checks in order, the failure-only per-IP window, the nonce object (pinned), the per-key and per-org limits, the platform's breakers, `PLATFORM_DB_LIMITS`, `platform_calls`, `GET /credential`, self-revoke | M | The vectors from an independent implementation, the high-S one verifying and the DER one refused; every refusal in A3's order with its code; a path with `//`, `.`, `..`, `%2F` or a trailing slash refused; a PUT, a non-JSON or encoded body refused; a replayed nonce; a request signed for another env (`ENV_NAME` or `SIGNER_ACCOUNT`); a body or path changed after signing; the identical `401` for every authentication failure; a valid key behind an IP that is failing still admitted; self-revoke with the switch off; a platform breaker flood leaving the console's breaker untouched; each route within its cost | **Yes** |
-| P4 | Operations: create (the platform variant, the look-alike name check within the scope, quotas, `INSERT … SELECT`), list, get (the allowlisted view), origins propose (live rules), remove and cancel, suspend and resume (`partner_bit_by`), keys create and revoke; the reach predicate in every reused writer; `platform_requests` | M | H1's tests (a live app, a staff-created app and another scope untouched; the scope moved between the read and the commit); H2 (a member's, staff's or policy change `not_found` to the platform's cancel); M7 (a loopback, http or mixed-script origin refused on a test scope); the resume rule including a member suspending after the platform; idempotency (a retry returns the first result; another body `idempotency_conflict`; another credential `conflict`; after 7 days `already_applied`); the breaker and the reserve; a frozen org | **Yes** (with P3 if built together) |
+| P4 | Operations: create (the platform variant, the look-alike name check within the scope, quotas, `INSERT … SELECT`), list, get (the allowlisted view), origins propose (live rules; `ackNotice`'s platform minimum, `PLATFORM_MIN_DELAY_MS`, for platform proposals), remove and cancel, suspend and resume (`partner_bit_by`), keys create and revoke; the reach predicate in every reused writer; `platform_requests` | M | H1's tests (a live app, a staff-created app and another scope untouched; the scope moved between the read and the commit); H2 (a member's, staff's or policy change `not_found` to the platform's cancel); M7 (a loopback, http or mixed-script origin refused on a test scope); the platform minimum (a platform proposal's `active_from` at least 24 h after its ack on a dev env, its env's delay in a `local*` env, a member's or staff's proposal unchanged); the resume rule including a member suspending after the platform; idempotency (a retry returns the first result; another body `idempotency_conflict`; another credential `conflict`; after 7 days `already_applied`); the breaker and the reserve; a frozen org | **Yes** (with P3 if built together) |
 | P5 | Screens: the console's Platform keys, activity, app badges and Audit rows; the admin portal's org switch with the key review, quotas, approvals, platform queue and activity; the mainnet demo warning; one email per request; playbooks for the new event kinds | M | Console and admin unit tests; an e2e run: register a key, accept it, create an app, propose origins, see one notice and the queue, cancel from the link | No |
 | P6 | Per-app User IDs: `appSub` in core with vectors from `packages/core/scripts/gen-identity-vectors.mjs`; `apps.user_ids` with its triggers; the mint, the session answers' Support ID; `end_user_apps` written after login; retention and the erase script (M8); the guide's `sub` text | M | Vectors from the independent generator; an existing app's `sub` and Support ID unchanged across the migration; an `'app'` app's token `sub` and `hana.supportId` agreeing with `supportIdFromSub`; two apps of a flagged scope giving different IDs, one app on an unflagged scope giving today's; the triggers; a deleted app's rows purged at 30 days, not before; erase by a per-app User ID and by a per-app Support ID | **Yes** |
 | P7 | Linking: the console's "This person on your apps" panel and per-app search (owners), its audit rows, limits and volume alert; the staff Support lookup resolving per-app IDs; Passport Home's line for a flagged scope | S to M | A viewer refused; another org's user `not_found`; every lookup audited before it answers; the limits; the alert once per window; nothing beyond the listed fields in the answer | **Yes** (with P6) |
 | P8 | The network's guide: a partner-facing document for the network (the request format, the reference signer with the DER conversion, the vectors, every endpoint, the delay, the off switches, "check `aud`"), checked by the docs test that keeps partner guides free of repo paths | S | The guide's code samples run against the local stack | No |
-| P9 (later) | The 60-day unused-origin report (an origin's last sign-in day, written at most once a day per origin); staff restore only if the Tech Lead re-confirms question 8, in A14's form | S each | As each needs; for the restore: every condition of A14, two different staff members, the notice sent first | Yes for the restore |
+| P9 (later) | The 60-day unused-origin report (an origin's last sign-in day, written at most once a day per origin), to the network and staff. No staff restore (A14) | S | The report lists an origin with no sign-in for 60 days and not one used within them; at most one write a day per origin | No |
+| P10 | **The owner's confirmation** (A15, decided N3): `ConsoleRpc.confirmOrigins` with its commit predicate; the console's step-up kind `origin.confirm` (the `pending_actions` rebuild) and its nonce layout; `guarded_changes.confirmed_*` and the trigger (A7); `origin.confirmed` in the ledger and `APP_CHANGE_KINDS`; the notice email from the change feed to the alias, the security contacts and every owner; the Confirm link in the platform proposal's email; the console's confirmation page and origin states (A11); the admin portal's queue of confirmed origins; the platform view's `confirmedAt`. After P4 and P5; before the platform is switched on for any org | M | A confirmation by an owner member who is an on-chain owner of the scope brings each ticked origin into force at once, and no other; refused for a viewer, for an owner member who isn't an on-chain owner of that scope, and for every non-member actor; no platform route can confirm or bring an `active_from` forward (every route walked); a GET of the confirm page or of the email's link changes nothing; a confirm without the console's CSRF headers refused; a step-up token for another set of changes, another app or another env refused, and a used token refused; refused before the announcement, after a cancel, after it came into force, twice; a cancel and a confirmation racing (each order; the second loses); the proposing key revoked or expired, the org's switch off, the org frozen, the app deleted, moved off the key's scopes or suspended by Journear, each between the plan read and the batch (nothing written); the trigger refusing a confirmation of a member's or staff's change and a second confirmation through a bare D1 write; the notice sent to every owner and contact after a confirmation and only once; an unconfirmed origin still waiting 24 h on a dev env and its env's delay in a `local*` env; the e2e: a platform proposal, its email, the Confirm page, the fresh sign-in, the origin working at once | **Yes** |
 
-**Order:** P0 and P1 first (either order), then P2, P3, P4, P5; P6 and P7 after P0, in parallel with Part A. Deploy
-order for each env: the API migration (with its Time Travel bookmark and comparison), then the API, then the admin and
-console Workers. The platform switch stays off for every org until P0 is deployed, N3 is decided and, per N6, the
-"also used on other apps" line has shipped.
+**Order:** P0 and P1 first (either order), then P2, P3, P4, P5, P10; P6 and P7 after P0, in parallel with Part A.
+Deploy order for each env: the API migration (with its Time Travel bookmark and comparison), then the API, then the
+admin and console Workers. The platform switch stays off for every org until P0 is deployed, the platform minimum
+(P4) and the owner's confirmation (P10) are built, reviewed and deployed, and, per N6, the "also used on other apps"
+line has shipped.
 
 ## What the network builds on its side
 
@@ -963,11 +1096,13 @@ console Workers. The platform switch stays off for every org until P0 is deploye
    fresh nonce, the timestamp from a synchronised clock) and an `Idempotency-Key` per operation, resent unchanged on
    retries from the same key.
 3. **Its portal switch:** on → create the partner's app with its exact HTTPS origins after checking the partner
-   controls them; store the app id and publishable key in the partner's configuration; show "goes live on {date}".
-   Off → suspend. A partner leaving or its domain lapsing → remove its origins at once.
+   controls them; store the app id and publishable key in the partner's configuration; show "Waiting for your owner
+   to confirm, or live on {date}" from each origin's `activeFrom` (A10), then "Live". Off → suspend. A partner leaving or its domain lapsing → remove its origins at once.
 4. **Its SDK:** load our SDK only when the switch is on and create the client with the partner's publishable key
    (`docs/sodax-sdk-integration.md` section 2, including its Stellar wallet-kit change).
-5. **Security contacts and owners** who read our announcements and use the cancel link when a change isn't theirs.
+5. **Security contacts and owners** who read our announcements and use the cancel link when a change isn't theirs;
+   and owners (on-chain owners of the scope, A15) who confirm each new partner address in our partner portal once
+   they have checked it is the partner's, or leave it to come into force after the 24 h wait.
 6. **Support:** partners' questions about one person go to the network, whose owners use our portal's linking view;
    the network doesn't give one partner another partner's ID (N7).
 7. **Telling partners** that the user ID is their own per site, that addresses are shared across the network's sites,
@@ -975,6 +1110,7 @@ console Workers. The platform switch stays off for every org until P0 is deploye
 
 ## Not in this version
 
-Live apps through the platform (N2); a portal for partner companies or per-app access for members; per-app security
+Live apps through the platform (decided for later, with a separate key and its own review, N2); staff restore of
+removed origins (refused, A14); a confirmation shortcut for platform keys (A15); a portal for partner companies or per-app access for members; per-app security
 contacts; deleting apps through the platform; a user lookup from the network's backend (B6); changes to Passport
 Home's app list beyond the line of B6; npm publishing and the core package's licence (parked, D913 point 4).

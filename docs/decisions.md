@@ -21186,3 +21186,83 @@ held it) when it was built; it sits after D913, which reached `next` first.
   still write a Hedera value's raw number as "wei" (`render-approval.ts`, the value and fee rows), where the consent
   screen now says "weibars".
 - Address impact: none (display only; no key, path or derivation changes).
+
+## The partner platform: the Tech Lead's answers of 2026-11-25 (branch `docs/platform-answers`)
+
+From `next` @ 0b99ec12; docs only, not merged, not built, not deployed. Numbered D914: D912 is held by an open pull
+request, D915 and D916 by two branches being built at the same time.
+
+### D914. The partner platform spec's N1 to N9 answered: a platform-proposed web address is in force at once when an owner of the organisation confirms it in the portal, else after 24 h; staff may not restore a removed web address without the wait
+- Date 2026-11-25 · Status: N1, N2 and N4 to N9 **decided by the Tech Lead 2026-11-25** as recommended; N3 **decided
+  by the Tech Lead 2026-11-25, differently from the recommendation**; question 8 of D913 **re-confirmed by the Tech
+  Lead 2026-11-25 as no**; two points of N3's design **decided while writing the spec, to confirm with the Tech
+  Lead**; one point **open, to revisit at mainnet preparation**; the design that carries them out **proposed, not
+  built** (`docs/partner-platform-spec.md`, A14, A15, piece P10) · Relates to D51, D127, D235, D356, D428, D909, D913 ·
+  Built: nothing
+- **In the Tech Lead's words** (2026-11-25), in this order: "yes to all except for number 3" (said of N1 to N9 with the
+  spec's recommendations, and of the re-confirmation of D913's question 8, which is recorded as no below, as the
+  security review advised); then, after a discussion of N3 and of the risk that
+  an owner's Google account is taken over, "I think this is too pessimistic, if an owner's own Google account is
+  taken over, then more is at risk (other than these stuff), his banking etc"; then, to the rule below, "go".
+- **The Tech Lead's answers:**
+  - **N1. No:** the platform sees and changes only apps it created; the network's own site and staff-made apps stay
+    outside its reach.
+  - **N2. Yes:** the same credential model will serve the network's future live scope, with a separate key and its
+    own security review before any live app is opened to it.
+  - **N4. Yes:** auto-approve is refused in code for every app on a shared scope (piece P0).
+  - **N5. Yes:** a key that staff register works only once the network's owner (or a second staff member) accepts it.
+  - **N6. Yes:** the "also used on other apps" line ships before the platform is switched on for any org.
+  - **N7. No:** the network may not give one partner another partner's ID for the same person.
+  - **N8. Yes:** platform-created test apps are listed in Passport Home on dev envs, like any app a person used.
+  - **N9. Yes:** key-registration notices also go to the org's owners.
+  - **Question 8 (D913): now no.** Staff may not restore, without the wait, an origin a stolen key removed. This is
+    what PR 139's security review advised (M1: a restore that skips the delay is a path by which an origin comes into
+    force with no time to object, and a staffer tricked by someone posing as the network could use it). The spec's
+    A14 now says only that it was considered and refused, and why; piece P9 keeps only the 60-day unused-origin
+    report.
+  - **N3, decided differently from the recommendation** (which was a 24 h minimum for platform-proposed origins and
+    keys in every env except `local*` test envs). The rule, the same in every env except `local*` test envs:
+    1. An origin proposed by the platform starts waiting and is announced as today.
+    2. It comes into force **at once** when an owner of the organisation confirms it: signed in to the console,
+       pressing Confirm on a page that shows the app and the origin. The email's Confirm link only opens that
+       console page; a GET never confirms (mail scanners open links, emails get forwarded). The cancel link stays
+       one click from the email with no sign-in, as today.
+    3. If nobody confirms it, it comes into force after a platform minimum of 24 h, unless cancelled. So a stolen
+       platform key alone gets only the slow, cancellable path.
+  - **The accepted risk** (the Tech Lead, with the words above): one owner's Google account taken over can propose
+    nothing through the platform, but it can confirm an origin a stolen platform key proposed, or both can be in one
+    attacker's hands, and then an attacker's origin is in force at once. What still bounds it: the approval window
+    names the app and its web address; the "also used on other apps" line; staff suspend an app at once; origins
+    can be removed at once; and, in the spec's design, the confirmation's notice to every owner, the security
+    contacts and Journear.
+- **Decided while writing the spec, to confirm with the Tech Lead:**
+  1. **Origins only.** The confirmation is a shortcut for web addresses only; platform keys keep the delay with the
+     24 h platform minimum and no shortcut. The discussion was about web addresses only.
+  2. **Who may confirm.** Proposed: a console member whose role is `owner` (`members.role`, the stricter of the
+     console's two roles, `owner` and `viewer`; read fresh on each request) **and** who is an on-chain owner
+     (`Owner::Oidc`) of the app's scope, proven with the console's fresh Google sign-in (a new step-up kind
+     `origin.confirm`, verified by the API itself as for `ConsoleRpc.changeOrigins`). That is the strictest role the
+     console has, the one that may add an origin by hand today (anyone else gets `not_owner`), so a confirmation never
+     lets someone bring an origin into force who couldn't add it themselves. The fresh sign-in is one step more than
+     "signed in, pressing Confirm"; it was chosen because it also stops a stolen console session and a cross-site
+     request, and binds the confirmation to the exact addresses.
+- **Open, to revisit at mainnet preparation (not a decision):** on a production env an origin a member adds by hand
+  in the console still waits the full guarded-change delay (at least 24 h), while an owner's confirmation of a
+  platform proposal is in force at once. So confirming the platform's proposal is faster than adding one by hand, and
+  an on-chain owner who also holds the platform key could use the platform to skip the production delay. Not changed
+  now.
+- **Proposed in the spec, not the Tech Lead's own words** (built on the answers above): the confirmation is a console
+  route (`ConsoleRpc.confirmOrigins`, after the console's step-up), never a platform route, and refuses every actor
+  but a member; only an announced, waiting, unconfirmed origin proposed by the platform can be confirmed; one
+  compare-and-swap batch whose commit predicate also requires the proposing key in force, the org's platform switch
+  on, the app still in the key's reach and not suspended by Journear, so a cancel, a revocation or a move that lands
+  first wins; each origin ticked one by one on the page, none ticked at first; `guarded_changes.confirmed_by`,
+  `confirmed_sub` and `confirmed_at` with a trigger that allows them only once and only on a platform origin; an
+  `origin.confirmed` ledger row; a notice after the fact to the security alias, every security contact and every
+  owner; the staff queue listing confirmed origins for 7 days; the platform's app view's `confirmedAt`; the network's
+  portal showing "Waiting for your owner to confirm, or live on {date}". All of it is a new piece, **P10**, with its
+  required tests and an independent security review, after P4 and P5; the platform switch stays off for every org
+  until P0, the platform minimum (P4) and P10 are built, reviewed and deployed, and the "also used on other apps" line
+  has shipped (N6).
+- Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation; the confirmation and
+  the delays are off-chain records of which web addresses may use an app.

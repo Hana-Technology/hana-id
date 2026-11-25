@@ -22061,7 +22061,7 @@ and 0029 are piece P2's, built at the same time; 0030 doesn't depend on them).
 
 ## Deploy readiness: what preparing the December deploy found, and the fixes (branch `fix/deploy-readiness`), 2026-11-25
 
-From `next` @ `ca37652b`, not merged, not deployed. The deploy preparation (a read of `git diff origin/develop...origin/next`
+From `next` @ `ca37652b` (with `4776f6af`, PR 148, merged in), not merged, not deployed. The deploy preparation (a read of `git diff origin/develop...origin/next`
 and the runbooks, and `verify --full` on `ca37652b`; nothing run against Cloudflare, Neon or NEAR) found what follows;
 this branch fixes it. The deploy list it produced is kept outside the repository.
 
@@ -22109,9 +22109,10 @@ this branch fixes it. The deploy list it produced is kept outside the repository
   said the job is not deployed; "What sandbox-dev runs" stops at 2026-11-12; "Neon compute" calls the admin's code
   "9d09e6b2", which is not a commit in this repository. **Done:** phase 2 rewritten (the ledger first, then the
   snapshot, the bookmark, one apply of 0022 to 0027, the comparison, the console's 0004), 0.10 the rehearsal, the
-  retention wait, the costs and the untested import, where P2's `0028_platform_keys.sql` and console
-  `0005_platform_key_step_ups.sql` and P6's `0030_app_user_ids.sql` slot in (after 0027 and 0004, in the same
-  commands); `ledger-check` resolves a relative `--before` or `--out` against INIT_CWD; the admin's `*/30` in the
+  retention wait, the costs and the untested import, where P6's `0030_app_user_ids.sql` (merged into `next` with PR 148
+  while this branch was open) and P2's `0028_platform_keys.sql` and console `0005_platform_key_step_ups.sql` slot in
+  (after 0027 and 0004, in the same commands; 0030 adds triggers on `apps` only, so `ledger-check` needs no step for
+  it); `ledger-check` resolves a relative `--before` or `--out` against INIT_CWD; the admin's `*/30` in the
   rollback rows; "Retention" and "What sandbox-dev runs" corrected; "9d09e6b2" marked unverified (probably a Cloudflare
   version id; no remote read was made). **To confirm:** the ledger before D1 in phase 2 (it is the step that depends on
   Neon's reset, so a failure there stops the deploy before anything changes).

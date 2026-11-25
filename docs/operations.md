@@ -2375,8 +2375,8 @@ kind list and expects exactly what the migrations in between do (0022 to 0025 wi
 `scripts/lib/ledger-check.ts`, held to the migration files by `scripts/test/ledger-check.test.ts`), and every index or
 trigger that appears in between must be one this checkout's migrations create, word for word (0026's
 `scopes_app_user_ids_no_policy` from a snapshot at 0021). So take the snapshot once, before the one apply; no apply in
-stages. When `0028_platform_keys.sql` (P2, D918), `0030_app_user_ids.sql` (P6, D919) or another migration merges, it
-applies in name order in the same command, after 0027: a migration that rebuilds `security_events` must add its step
+stages. `0030_app_user_ids.sql` (P6, D919, merged) applies in the same command after 0027, and so will
+`0028_platform_keys.sql` (P2, D918) once merged, or another migration, in name order: a migration that rebuilds `security_events` must add its step
 to that list (the test fails until it does); one that only adds tables or triggers elsewhere needs nothing.
 
 **What the rehearsal costs on the Free plan (D924; docs only, not measured).** Importing the export writes every row of
@@ -2441,7 +2441,8 @@ generated for the env with `gen <env>`, logged in to the API's Cloudflare accoun
    everything the snapshot saw, and the rows written between the two are only "written since"):
    `corepack pnpm --dir apps/api exec wrangler d1 time-travel info <d1>` (note the bookmark; it undoes everything below)
    `corepack pnpm --dir apps/api exec wrangler d1 migrations apply <d1> --remote` (every pending migration in name
-   order: on sandbox-dev 0022 to 0027, and 0028 or 0030 once merged; each file is its own transaction)
+   order: on sandbox-dev 0022 to 0027 and 0030, and 0028 once merged; each file is its own transaction; then 0030's
+   own check, "D1: migration 0030" step 2)
 5. **The comparison**, right after:
    `corepack pnpm --filter @hana-id/scripts run ledger-check <env> compare --remote --before .secrets/<env>/ledger-snapshot-<time>.json`
    (from the repo root: a relative `--before` is relative to where you run pnpm, D924; or paste the path step 3 printed)

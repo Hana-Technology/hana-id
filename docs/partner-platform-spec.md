@@ -31,7 +31,7 @@ Passport Home's line); its current state is in `api.md`, `architecture.md`, `sec
 it differs from B6, D925 says so (Home's line names no network, the audit row's app, the staff lookup listing an
 ambiguous code's matches).
 
-Last verified: 2026-11-25 (branch `feat/app-user-linking`, after PR 153's review: piece P7's migrations in its status line, D925; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged: the status line of piece P7, D925; no other text changed); 2026-11-25 (branch `feat/platform-keys`: the status line (P2 built, D918), and after PR 149's review the gates row's `local*` guard; no other design text changed); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: a partner on the network's own widget (A4.5, A5, A8, A10, A13, A15, the build plan's later pieces P11 and P12, "What the network builds"), D926); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
+Last verified: 2026-11-26 (branch `docs/confirmations-1126`, from `next`, not merged, docs only: the standby-key advice (A3), the org cap of 10 platform-created apps (A5) and Home's count and 100 cap ("Passport Home's apps", A11's open item) confirmed by the Tech Lead, D928; the "still to confirm" line under D914's confirmations; no other design text changed); 2026-11-25 (branch `feat/app-user-linking`, after PR 153's review: piece P7's migrations in its status line, D925; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged: the status line of piece P7, D925; no other text changed); 2026-11-25 (branch `feat/platform-keys`: the status line (P2 built, D918), and after PR 149's review the gates row's `local*` guard; no other design text changed); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: a partner on the network's own widget (A4.5, A5, A8, A10, A13, A15, the build plan's later pieces P11 and P12, "What the network builds"), D926); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
 Lead's confirmations of D914's proposals and the four-eyes rule for staff proposals on a shared scope (D917) folded
 into A2, A3, A6, A7, A8, A11, A14, A15 and the build plan; the admin portal's identity checked in
 `apps/admin/src/access.ts`); 2026-11-25 (branch `docs/platform-answers`, after PR 142's review: its 16 findings folded in (revocation
@@ -167,9 +167,10 @@ scope's wallet directory 30 days after its last app's deletion (`purgeDirectory`
 `scripts/lib/uid-erase.ts` erases one person on request.
 
 **Passport Home's apps.** `GET /v1/home/apps` lists, per scope, the apps that have had a login, at most 10 apps per
-scope in one answer (`HOME_APPS_PER_SCOPE`, `apps/api/src/home/apps.ts`). Since D922 (branch `chore/tidy-1125`, to
-confirm) every scope also says how many apps it has (`appsTotal`) and one scope's answer carries up to 100, so Home
-says "and N more apps" and shows them on the wallet's page; none is left out without a word.
+scope in one answer (`HOME_APPS_PER_SCOPE`, `apps/api/src/home/apps.ts`). Since D922 (branch `chore/tidy-1125`;
+its page line, "Show all apps" and the 100 cap confirmed by the Tech Lead, D928) every scope also says how many apps it
+has (`appsTotal`) and the full answer for one wallet ("Show all apps", `all=1`) carries up to 100, so Home says "and N
+more apps" and shows them on the wallet's page; none is left out without a word.
 
 **Not there today:** any service-to-service caller, any `platform` actor, any per-app User ID, any record of which
 apps of a scope a person has used, any code rule tied to a shared scope.
@@ -403,7 +404,8 @@ in `app_changes`), so an insider can't swap the contacts and register a key the 
 **Expiry and rotation.** A credential expires 365 days after it comes into force (decided, D913 question 3); the admin
 Worker emails the security contacts and owners 30 and 7 days before. To rotate, register the next key, switch the
 network's backend to it once it is in force, then revoke the old one. On a real-money setup the next key waits 24 h
-unless a second owner confirms it. **Advice to the network:** keep a second key registered and in force as a standby
+unless a second owner confirms it. **Advice to the network** (confirmed by the Tech Lead, D928; the Platform keys page
+suggests it): keep a second key registered and in force as a standby
 (the two-credential quota of A5 exists for this), so an urgent rotation is a switch to the standby and a revoke of the
 old key, with no wait at all; then register a new standby.
 
@@ -499,7 +501,7 @@ staff raise an org's values in `platform_orgs` when it needs more.
 | Requests per credential | 60 a minute, 2 000 a UTC day | `platform:key:<keyId>`, after the signature |
 | Hot-DB budget | the org's own bucket (`platform:bucket:org:<orgId>`) under the existing global bucket with its kill-switch reserve; one call at most 3 reads, 2 batches and 12 statements (`PLATFORM_DB_LIMITS`, below) | `consoleAdmit`'s buckets, the platform's own keys |
 | Destructive calls (remove origins, suspend, revoke a publishable key) | 10 per org and **30 across every org** per rolling hour, on the platform's own counters `platform:breaker:org:<org>` and `platform:breaker:global`, separate from `console:breaker:global` (M3), so a platform flood never uses up the console's kill switches and the reverse; a call that changed nothing gets its slot back | the `consoleAdmit` mechanism with the platform's keys |
-| Apps per org created by the platform | 10 undeleted (Passport Home lists 10 apps per scope today: A11) | checked in the create batch's predicate |
+| Apps per org created by the platform | 10 undeleted (kept by the Tech Lead, D928: Home no longer hides the 11th app since D922, but other reads still lean on small scopes, D922's "After PR 150's review") | checked in the create batch's predicate |
 | App creations | 2 an hour, 5 a UTC day per org | windows on `platform:<orgId>` |
 | Origin proposals | 10 an hour, 30 a UTC day per org; at most 30 waiting (proposed, not yet in force) per org | windows, and a count in the proposal batch's predicate |
 | Origins per app | 20 active or pending (`MAX_APP_ORIGINS`); a partner on the network's widget spends one on the widget's origin (A13) | unchanged |
@@ -902,8 +904,8 @@ network's security contacts (and, for keys, its owners); the network tells its p
   signed here comes from the same wallet as on the network's other sites." (H3).
 - The new security event kinds in the existing security feed, each with a playbook (`packages/playbooks`).
 
-**Open item, not in this spec** (partly met by D922, to confirm: Home now counts every app and shows up to 100 on a
-wallet's page; the order is still the scope's, not the apps a person used): Passport Home shows at most 10 apps per scope (`HOME_APPS_PER_SCOPE`), and the
+**Open item, not in this spec** (partly met by D922: Home now counts every app and shows up to 100 on a wallet's
+page, confirmed by the Tech Lead, D928; the order is still the scope's, not the apps a person used, still to confirm): Passport Home shows at most 10 apps per scope (`HOME_APPS_PER_SCOPE`), and the
 sign-in windows' "also used on other apps" line is being built on another branch. A network with many partners needs
 Home to list the apps a person actually used first. Platform-created test apps are listed in Home on dev envs like
 any app a person signed in on (decided, N8), so users see every site their wallet is used on.
@@ -1382,7 +1384,10 @@ well.", then, on 17, "four eyes". Each is now part of the design above.
 - **21.** An owner's acceptance of a staff-registered key counts as its confirmation: **yes** (A3).
 - **22.** Switching the org's platform off or freezing it also cancels waiting keys: **yes** (A3).
 
-Not put, **still to confirm**: the `local*` guard (A15), the standby-key advice (A3), the key's revoke link (A3), and,
+Later (2026-11-26, D928, "ok" to piece P2's screens): the standby-key advice: **yes** (A3; the Platform keys page
+suggests a standby beside the two-key limit).
+
+Not put, **still to confirm**: the `local*` guard (A15), the key's revoke link (A3), and,
 for the four-eyes rule on staff proposals, how the second staff member proves who they are, its database rules, its
 notices and that P10 builds it (A15).
 

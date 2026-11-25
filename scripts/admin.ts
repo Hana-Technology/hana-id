@@ -19,8 +19,10 @@
 // is the email issuer's part of the monthly retention (lib/admin-retention.ts, D365): the admin Worker has no binding
 // to the issuer's D1. support:lookup is the Support ID lookup (lib/admin-support.ts, C15): the wallet directory, apps,
 // shares and changes from the API's D1, addresses from the issuer's, and the ledger as usage_admin over
-// .secrets/<env>/neon-usage-admin.url ("ledger unavailable" without it).
-import { existsSync } from 'node:fs';
+// .secrets/<env>/neon-usage-admin.url ("ledger unavailable" without it). labels:check re-parses every stored Request
+// labels version waiting or in force with this checkout's parser and compares its lines with a baseline
+// (lib/admin-labels-check.ts, D922), read only, through apiPrivateD1Execute.
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { loadEnv, type Manifest } from '@hana-id/env';
@@ -55,7 +57,8 @@ import { type UserCmdDeps, userFindCommand, userList } from './lib/admin-users.t
 import { retentionIssuer } from './lib/admin-retention.ts';
 import { statusTokenFromSecrets, watchdogTestPage } from './lib/admin-test-page.ts';
 import { type SupportLedgerConn, supportLookupCommand } from './lib/admin-support.ts';
-import { secretsDir } from './lib/secrets.ts';
+import { LABELS_CHECK_USAGE, labelsCheck } from './lib/admin-labels-check.ts';
+import { assertPrivate, parseSecretJson, secretsDir, writeSecretJson } from './lib/secrets.ts';
 import { ROLE_FILES, readRoleUrl } from './lib/usage-setup.ts';
 import { redact } from './lib/usage-migrate.ts';
 import pg from 'pg';
@@ -142,6 +145,7 @@ const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
                (2 of 3 kept); --approve-with (dev envs on testnet only) approves both in the same command; elsewhere
                it prints what each remaining member must sign. Once the DAO has the new council, --yes writes
                council.members in envs/<env>.json (without --yes: prints that edit)
+${LABELS_CHECK_USAGE}
 
   --remote   act on the deployed D1 database (default: local, apps/api/.wrangler/state; user:*: the issuer's,
              apps/email-issuer/.wrangler/state, and the API's for the wallet directory)
@@ -193,6 +197,7 @@ const COMMANDS = [
   'watchdog:test-page',
   'home:client:add',
   'home:listing',
+  'labels:check',
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -259,9 +264,9 @@ async function scopeExists(m: Manifest, scopeId: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
-    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email', 'mainnet-demo', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user', 'days'],
+    strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email', 'mainnet-demo', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user', 'days', 'baseline', 'out'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google', 'request-id'],
-    booleans: ['remote', 'yes', 'allow-shared', 'shared-wallet', 'json', 'reject', 'help', 'quiet', 'normal'],
+    booleans: ['remote', 'yes', 'allow-shared', 'shared-wallet', 'json', 'reject', 'help', 'quiet', 'normal', 'save'],
   });
   if (args.flag('help')) return void console.log(USAGE);
   const [envName, command, ...rest] = args.positionals;
@@ -385,6 +390,22 @@ async function main(): Promise<void> {
       return;
     case 'home:listing':
       homeListing(m, args, where, { d1: (statement) => d1Execute(m, statement, { remote }), log: (line) => console.log(line) });
+      return;
+    case 'labels:check':
+      process.exitCode = await labelsCheck(
+        { env: m.name, network: m.network, database: m.cloudflare.d1Name, remote, save: args.flag('save'), out: args.str('out'), baseline: args.str('baseline') },
+        {
+          read: (statement) => apiPrivateD1Execute(m, statement, { remote }),
+          secretsEnvDir: secretsDir,
+          writeJson: writeSecretJson,
+          readJson(file) {
+            assertPrivate(file);
+            return parseSecretJson<unknown>(readFileSync(file, 'utf8'), file);
+          },
+          log: (line) => console.log(line),
+          now: () => new Date(),
+        },
+      );
       return;
     case 'user:list':
     case 'user:find':

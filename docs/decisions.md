@@ -21963,3 +21963,32 @@ PR 135's review" list, D910, D914); D912 is recorded on its own branch.
   - **To confirm (the Tech Lead):** the breakpoint (760 px, the portal's own, rather than a narrower one for rows only).
   - **Tests:** `apps/admin/test-spa/design.test.ts` (the size rule picks the control and never a lone text column; the
     phone rules). happy-dom has no layout, so the widths are in the screenshots (`hana-id-review-files/tidy-1125/`).
+
+- **3. `admin <env> labels:check`: the stored Request labels re-checked before labels go on** (D907/D908's review,
+  item 4: the check had been described by hand).
+  - **Built:** `scripts/lib/admin-labels-check.ts`, wired into `scripts/admin.ts` as `labels:check` (local by default,
+    `--remote`; refused on a mainnet env). It reads every `label_changes` row `pending` or `active`, 50 at a time in
+    id order, through `apiPrivateD1Execute` (D916, F4: remote over D1's REST API, local from a 0600 file with
+    wrangler's log off), parses each text again with core's `parseLabelDocument`, checks it still matches its stored
+    sha256, and builds its lines with core's `previewLabelDocument` (with the first attached app's name, as the API's
+    preview), the address book's lines and what it describes. Per version it prints its id, apps' ids, state and one
+    verdict: parses the same; fails, with each error's code and path (never a value); reads differently, with only the
+    changed lines (at most 12, each cut to 160 characters); not compared. Exits 1 on any but the first. Read-only
+    (only SELECTs, tested).
+  - **The choice, to confirm (the Tech Lead):** "reads differently" needs the lines the versions were reviewed with,
+    and the database keeps only each text (the API builds every preview again from it). So the command compares with
+    a baseline it writes itself: `--save` from a checkout of the deployed commit writes every version's lines to
+    `.secrets/<env>/labels-lines-<time>.json` (0600; the documents' words are in it), and `--baseline <file>` from the
+    checkout to deploy compares. A version not in the baseline (proposed since) exits 1 ("take the baseline again"),
+    failing closed. Without `--baseline` it only parses and says the lines were not compared (exit 0 if all parse).
+    The alternative, storing each version's announced lines in D1, needs a migration and was not built. The API's
+    network rule (a test scope's documents name the test networks) is not re-checked: a scope's environment never
+    changes. `docs/operations.md`'s section now runs these two steps, and is required before any deploy that changes
+    the label rules while a version is stored, not only before labels go on.
+  - **Tests:** `scripts/test/admin-labels-check.test.ts` on node:sqlite with the real migrations: a valid version
+    (the same), one D907's 40-character rule now refuses (`sentence_text at display.formats.payment.intent.object`),
+    one whose baseline lines are an older build's (the payment sentence without the account's name: reads
+    differently, the two lines shown), the app renamed (reads differently), not in the baseline, a text that no longer
+    matches its sha256, paging over 120 versions, the refusals (mainnet, `--out` without `--save`, another env's or
+    database's baseline), and that no partner word is printed outside the changed lines. Also run once by hand against
+    a local D1 with migrations 0001 to 0027 (a valid and a failing version: the verdicts and exit 1 as above).

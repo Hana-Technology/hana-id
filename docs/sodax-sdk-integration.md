@@ -6,7 +6,7 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
 for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
+Last verified: 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
 answers to D923 (D926): the fork holding the Stellar change (section 2, "The Stellar change, on our fork"), the
 widget decided as one app per partner (section 12), switching off decided, the worked example's home (section 2), "Open";
 nothing else re-checked); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
@@ -140,7 +140,9 @@ review folder's `stellar-modules.patch` (`ef43cca2` fix(wallet-sdk-core), `10b65
 tree as the patch, checked), authored under the Tech Lead's git identity. A local clone is in
 `~/Documents/sodax-sdks-fork`, with `origin` the fork and `upstream` Sodax's, pushing to `upstream` disabled. Nothing
 was opened on Sodax's repository: a spec issue and a pull request wait for the Tech Lead ("we can make a PR later if
-needed"); Sodax's own tests have not been run on the branch. The patch file in the review folder is now mirrored
+needed"); Sodax's own tests have not been run on the branch. GitHub Actions are switched off on the fork (the Tech
+Lead's "switch them off", D928; none had run); the two commits carry the Tech Lead's personal commit email, which
+they said is fine. The patch file in the review folder is now mirrored
 there; the branch is the copy to keep current.
 
 **Keeping the branch current** (in the clone; pushing to the fork is a Journear person's step, not an agent's):
@@ -153,7 +155,9 @@ maintainer's plan and `plan-approved`, then the pull request (`pr-description-dr
 theirs with `gh repo sync Hana-Technology/sodax-sdks --branch main`.
 
 **A worked example** (2026-11-25, D923; now in the sample-partner repository, decided D926: `examples/sodax-wallet-kit/`
-on that repository's local branch `sodax-bundle-example`, not pushed; the first version stays in the review folder's
+on that repository's branch `sodax-bundle-example`, pushed to `Hana-Technology/hana-id-sodax-sample` (private) on
+2026-11-26 with the Tech Lead's "yes" (D928), with the seven earlier commits of `feat/sdk-0-5-0` it builds on, not merged
+into its `main`; the first version stays in the review folder's
 `sodax-bundle/example/`): an add-on shaped like Sodax's optional Privy email login (a sub-path,
 `@sodax/wallet-sdk-react/journear`, the only entry that imports our SDK, an optional peer): a `<JournearPassport
 setting={…} />` component inside `SodaxWalletProvider` that, when the partner's setting `{ socialLogin, publishableKey }`

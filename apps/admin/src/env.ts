@@ -5,7 +5,9 @@
 // leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
   PlatformKeyNotice,
+  PlatformCallsPage,
   PlatformKeyView,
+  PlatformQueue,
   PlatformOrgView,
   LinkStatsRow,
   ApiPurgeAuditResult,
@@ -53,6 +55,8 @@ export interface ChangeNotice {
   contacts: string[];
   app: { id: string; name: string; orgId: string; scopeId: string; environment: 'test' | 'live' };
   policy?: unknown;
+  /** D930: a web address the platform proposed: its request (one email per request), the wait the ack gives it, its key. */
+  platform?: { keyId: string; keyLabel: string | null; requestId: string; waitMs: number };
 }
 
 /** One app's origins as `AdminRpc.getApp` describes them (the fields the watcher's SetAllowShared notice reads). */
@@ -163,6 +167,10 @@ export interface AdminRpcClient {
   setPlatformOrg(c: unknown): Answer<{ changed: boolean; platform: PlatformOrgView }>;
   setPlatformOrgFrozen(c: unknown): Answer<{ changed: boolean }>;
   platformOrgs(c: unknown): Answer<{ orgs: { orgId: string; enabled: boolean; frozen: boolean; version: number }[]; next?: string }>;
+  /** D930: one page of an org's platform calls (staff, with the caller's network prefix). */
+  platformCalls(c: unknown): Answer<PlatformCallsPage>;
+  /** D930: every waiting web address a platform key proposed and every waiting platform key, across orgs. */
+  platformQueue(c: unknown): Answer<PlatformQueue>;
   /** The keys to announce, confirmed, stopped and expiring, with the org's security contacts (the notice cron's page). */
   platformKeyNotices(c: unknown): Answer<{ notices: PlatformKeyNotice[] }>;
   /** System only, after every send was accepted: starts the key's wait (or puts an accepted staff key in force with its stop link). */

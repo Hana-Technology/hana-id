@@ -52,6 +52,9 @@ export function org(orgId: string, role: 'owner' | 'viewer', frozen: boolean): O
   return { org: { id: ORG_ID, name: 'Example Labs', status: frozen ? 'frozen' : 'active', requiredHd: 'examplelabs.example' }, role };
 }
 
+/** The working platform key's id (D930: the creator of the apps the backend made). */
+const WORKING_PKC = 'pkc_Wk7Hq2Lm9Xc4Pz';
+
 export function appDetails(now: number): AppDetail[] {
   const policy = livePolicy();
   const idn = 'https://lumènpay.io';
@@ -143,7 +146,7 @@ export function appDetails(now: number): AppDetail[] {
         { origin: 'https://shop.partner-one.example', display: 'https://shop.partner-one.example', idn: false, activeFrom: null, changeId: 'gc_Pf3Lk8Wd2' },
       ],
       settings: { persistence: 'session', sessionTtlMs: 12 * H, idleTtlMs: 2 * H, googleWebClientId: null, rawSign: 'off', policy: null },
-      // D916: a change proposed by the org's platform key (nothing proposes one yet; the preview shows how it reads).
+      // D916: a change proposed by the org's platform key (D930: named by its label, the working key's).
       changes: [
         {
           id: 'gc_Pf3Lk8Wd2',
@@ -154,7 +157,7 @@ export function appDetails(now: number): AppDetail[] {
           idn: false,
           status: 'pending',
           proposedByKind: 'platform',
-          proposedBy: 'pkc_Nt4Wq8Rb2m',
+          proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz',
           proposedAt: now - 20 * 60_000,
           notifiedAt: now - 17 * 60_000,
           activeFrom: now + 24 * H - 17 * 60_000,
@@ -183,6 +186,63 @@ export function appDetails(now: number): AppDetail[] {
       sharedWallet: true,
       changes: [],
       keys: [{ id: 'key_Rb9Xc2Lp7', prefix: 'pk_test_', key: `pk_test_${hex('r1', 32)}`, createdBy: 'hana', createdAt: now - 3 * H }],
+    },
+    // D930: an app the org's backend made with its platform key on the shared wallet: one web address working, two it
+    // asked for in one request still waiting (one emailed, one not yet), its own User IDs.
+    {
+      id: 'app_Pk3Cf8Ld2w',
+      name: 'Coffee Club',
+      scopeId: 's_rewards_test',
+      environment: 'test',
+      suspendedBy: 0,
+      deleted: false,
+      activeOrigins: 1,
+      pendingChanges: 2,
+      createdAt: now - 2 * D,
+      orgId: ORG_ID,
+      originsVersion: 3,
+      settingsVersion: 0,
+      origins: [
+        { origin: 'https://coffeeclub.example', display: 'https://coffeeclub.example', idn: false, activeFrom: now - D, changeId: 'gc_Pk1Hd3Vc8' },
+        { origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, activeFrom: now + 24 * H - 12 * 60_000, changeId: 'gc_Pk4Ws9Ra1' },
+        { origin: 'https://widget.lumenpay.io', display: 'https://widget.lumenpay.io', idn: false, activeFrom: null, changeId: 'gc_Pk5Tq2Nb6' },
+      ],
+      settings: { persistence: 'session', sessionTtlMs: 12 * H, idleTtlMs: 2 * H, googleWebClientId: null, rawSign: 'off', policy: null },
+      sharedScope: true,
+      createdByKind: 'platform',
+      sharedWallet: true,
+      userIds: 'app',
+      createdByKey: WORKING_PKC,
+      changes: [
+        { id: 'gc_Pk4Ws9Ra1', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, status: 'pending', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 15 * 60_000, notifiedAt: now - 12 * 60_000, activeFrom: now + 24 * H - 12 * 60_000 },
+        { id: 'gc_Pk5Tq2Nb6', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: 'https://widget.lumenpay.io', display: 'https://widget.lumenpay.io', idn: false, status: 'pending', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 15 * 60_000 },
+      ],
+      keys: [{ id: 'key_Pk7Rt3Wm1', prefix: 'pk_test_', key: `pk_test_${hex('cc1', 32)}`, createdBy: 'pkc_Wk7Hq2Lm9Xc4Pz', createdAt: now - 2 * D }],
+    },
+    // D930: another app the backend made, which the backend suspended (it may resume only its own suspension).
+    {
+      id: 'app_Pk9Sr4Mx7q',
+      name: 'Stamp Rally',
+      scopeId: 's_rewards_test',
+      environment: 'test',
+      suspendedBy: 4,
+      deleted: false,
+      activeOrigins: 1,
+      pendingChanges: 0,
+      createdAt: now - 6 * D,
+      orgId: ORG_ID,
+      originsVersion: 1,
+      settingsVersion: 0,
+      origins: [{ origin: 'https://stamprally.example', display: 'https://stamprally.example', idn: false, activeFrom: now - 5 * D, changeId: 'gc_Pk8Lm2Qs4' }],
+      settings: { persistence: 'session', sessionTtlMs: 12 * H, idleTtlMs: 2 * H, googleWebClientId: null, rawSign: 'off', policy: null },
+      sharedScope: true,
+      createdByKind: 'platform',
+      sharedWallet: true,
+      userIds: 'app',
+      createdByKey: WORKING_PKC,
+      partnerBitBy: 'platform',
+      changes: [],
+      keys: [{ id: 'key_Pk2Vb6Tn9', prefix: 'pk_test_', key: `pk_test_${hex('sr1', 32)}`, createdBy: 'pkc_Wk7Hq2Lm9Xc4Pz', createdAt: now - 6 * D }],
     },
     {
       id: 'app_Lg5Yn3Wq8d',
@@ -217,6 +277,8 @@ export const summaryOf = (a: AppDetail): AppSummary => ({
   ...(a.logoUrl ? { logoUrl: a.logoUrl } : {}),
   // D925: the list says which apps share a wallet (the Users screen's search across apps).
   ...(a.sharedScope !== undefined ? { sharedScope: a.sharedScope } : {}),
+  // D930: the list marks an app the org's backend made with its platform key.
+  ...(a.createdByKind !== undefined ? { createdByKind: a.createdByKind } : {}),
   createdAt: a.createdAt,
 });
 
@@ -435,7 +497,10 @@ export function audit(now: number): AuditAnswer {
     entries: [
       c(212, now - 9 * 60_000, 'step_up.confirmed', { appId: 'app_Lm4Pq9Zs2v', details: { kind: 'origin.add' } }),
       // D916: a row written by the org's platform key.
-      { source: 'api', seq: 985, at: now - 20 * 60_000, appId: 'app_Ts6Ry1Hn8b', kind: 'origin.proposed', detail: { changeId: 'gc_Pf3Lk8Wd2', origin: 'https://shop.partner-one.example' }, actorKind: 'platform', actorId: 'pkc_Nt4Wq8Rb2m', requestId: `pf_${hex('rq985', 29)}` },
+      { source: 'api', seq: 985, at: now - 20 * 60_000, appId: 'app_Ts6Ry1Hn8b', kind: 'origin.proposed', detail: { changeId: 'gc_Pf3Lk8Wd2', origin: 'https://shop.partner-one.example' }, actorKind: 'platform', actorId: 'pkc_Wk7Hq2Lm9Xc4Pz', requestId: `pf_${hex('rq985', 29)}` },
+      // D930: the backend made an app with its platform key, and suspended another.
+      { source: 'api', seq: 986, at: now - 15 * 60_000, appId: 'app_Pk3Cf8Ld2w', kind: 'app.created', detail: { name: 'Coffee Club', plan: 'free', environment: 'test', keyId: 'key_Pk7Rt3Wm1', scopeCreated: false, waiver: null, userIds: 'app', createdBy: 'platform', origins: [{ changeId: 'gc_Pk4Ws9Ra1', origin: 'https://order.coffeeclub.example' }, { changeId: 'gc_Pk5Tq2Nb6', origin: 'https://widget.lumenpay.io' }] }, actorKind: 'platform', actorId: 'pkc_Wk7Hq2Lm9Xc4Pz', requestId: `pf_${hex('rq986', 29)}` },
+      { source: 'api', seq: 987, at: now - 6 * 60_000, appId: 'app_Pk9Sr4Mx7q', kind: 'suspension.set', detail: { bit: 4 }, actorKind: 'platform', actorId: 'pkc_Wk7Hq2Lm9Xc4Pz', requestId: `pf_${hex('rq987', 29)}` },
       // A staff-created app's first origin: announced with the no_session waiver, then recorded by the hourly job.
       { source: 'api', seq: 984, at: now - 40 * 60_000, appId: 'app_Rw2Bt7Kd5c', kind: 'origin.activated', detail: { changeId: 'gc_Rw7Lh2Qa9', kind: 'origin_add', origin: 'http://localhost:5173', policyId: null, activeFrom: now - 3 * H + 4 * 60_000 }, actorKind: 'system', actorId: 'cron', requestId: `${hex('rq984', 16)}-SIN` },
       { source: 'api', seq: 981, at: now - 2 * H, appId: 'app_Lm4Pq9Zs2v', kind: 'key.created', detail: { prefix: 'pk_live_' }, actorKind: 'member', actorId: 'usr_Ak3Pz8Qw2n', requestId: `${hex('rq981', 16)}-SIN` },
@@ -478,7 +543,7 @@ const THUMB = (s: string) => (s.repeat(43)).slice(0, 43);
 /** The org's platform keys: one working, one waiting for another owner (a real-money setup, registered by you), one awaiting your acceptance, one stopped. */
 export function platformKeys(now: number): import('@hana-id/console-core').PlatformKeyView[] {
   return [
-    { id: 'pkc_Wk7Hq2Lm9Xc4Pz', orgId: ORG_ID, label: 'Production backend', thumbprint: THUMB('Nq3vTz8kLm2Xb7Wp_'), scopes: ['s_lumen_test'], status: 'active', state: 'in_force', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Dm7Vx2Kp4r', proposedAt: now - 40 * D, notifiedAt: now - 40 * D + 5 * 60_000, activeFrom: now - 40 * D + 20 * 60_000, expiresAt: now + 325 * D, confirmedKind: 'confirm', confirmedBy: 'usr_Ak3Pz8Qw2n', confirmedAt: now - 40 * D + 20 * 60_000 },
+    { id: 'pkc_Wk7Hq2Lm9Xc4Pz', orgId: ORG_ID, label: 'Production backend', thumbprint: THUMB('Nq3vTz8kLm2Xb7Wp_'), scopes: ['s_lumen_test'], status: 'active', state: 'in_force', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Dm7Vx2Kp4r', proposedAt: now - 40 * D, notifiedAt: now - 40 * D + 5 * 60_000, activeFrom: now - 40 * D + 20 * 60_000, expiresAt: now + 325 * D, confirmedKind: 'confirm', confirmedBy: 'usr_Ak3Pz8Qw2n', confirmedAt: now - 40 * D + 20 * 60_000, lastUsedAt: now - 6 * 60_000 },
     { id: 'pkc_Ws4Bn8Rt5Wp1Qa', orgId: ORG_ID, label: 'Standby key', thumbprint: THUMB('Hc2Rk9Vd4Jt7Mx1-'), scopes: ['s_lumen_test', 's_rewards_test'], status: 'pending', state: 'waiting', fourEyes: true, proposedByKind: 'member', proposedBy: 'usr_Ak3Pz8Qw2n', proposedAt: now - 2 * H, notifiedAt: now - 2 * H + 4 * 60_000, activeFrom: now + 22 * H },
     { id: 'pkc_Wa9Gh6Tn1sLk2V', orgId: ORG_ID, label: 'Key sent by email', thumbprint: THUMB('Pz5Lq8Wc3Nb6Vt0_'), scopes: ['s_rewards_test'], status: 'awaiting_acceptance', state: 'awaiting_acceptance', fourEyes: false, proposedByKind: 'hana', proposedBy: 'hana', proposedAt: now - 30 * 60_000 },
     { id: 'pkc_Wr2Sm9Lk2Vb7qX', orgId: ORG_ID, label: 'Old laptop key', thumbprint: THUMB('Ty6Mn1Qx4Kc9Rb2-'), scopes: ['s_lumen_test'], status: 'revoked', state: 'revoked', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Ak3Pz8Qw2n', proposedAt: now - 90 * D, activeFrom: now - 89 * D, expiresAt: now + 275 * D, revokedAt: now - 41 * D, revokedByKind: 'member', revokeReason: 'Laptop lost' },
@@ -495,4 +560,21 @@ export function platformKeyAbilities(id: string, role: 'owner' | 'viewer', froze
   if (id === 'pkc_Ws4Bn8Rt5Wp1Qa') return { accept: no('This key isn’t waiting for an acceptance.'), confirm: no('You registered this key, so another owner must confirm it. If nobody does, it starts working when its wait ends.') };
   if (id === 'pkc_Wa9Gh6Tn1sLk2V') return { accept: { allowed: true }, confirm: no('This key isn’t waiting.') };
   return { accept: no('This key isn’t waiting for an acceptance.'), confirm: no('This key isn’t waiting.') };
+}
+
+// ---- platform activity (D930) ----
+
+/** The org's platform calls, newest first (what the backend did with its keys), as `GET …/platform-activity` answers them. */
+export function platformCalls(now: number): import('@hana-id/console-core').PlatformCallView[] {
+  const k = 'pkc_Wk7Hq2Lm9Xc4Pz';
+  const c = (seq: number, ago: number, method: 'GET' | 'POST', route: string, status: number, appId?: string, code?: string) => ({ seq, at: now - ago, keyId: k, method, route, status, requestId: `pf_${hex(`call${seq}`, 29)}`, ...(appId ? { appId } : {}), ...(code ? { code } : {}) });
+  return [
+    c(412, 6 * 60_000, 'POST', '/v1/platform/apps/:appId/suspend', 200, 'app_Pk9Sr4Mx7q'),
+    c(411, 9 * 60_000, 'GET', '/v1/platform/apps/:appId', 200, 'app_Pk3Cf8Ld2w'),
+    c(410, 14 * 60_000, 'POST', '/v1/platform/apps', 429, undefined, 'rate_limited'),
+    c(409, 15 * 60_000, 'POST', '/v1/platform/apps', 201, 'app_Pk3Cf8Ld2w'),
+    c(408, 20 * 60_000, 'POST', '/v1/platform/apps/:appId/origins', 202, 'app_Ts6Ry1Hn8b'),
+    c(407, 2 * H, 'POST', '/v1/platform/apps/:appId/origins', 400, 'app_Pk9Sr4Mx7q', 'origin_refused'),
+    c(406, 3 * H, 'GET', '/v1/platform/credential', 200),
+  ];
 }

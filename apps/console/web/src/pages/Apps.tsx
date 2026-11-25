@@ -19,9 +19,28 @@ const SUSPENDED = [
   [4, 'by your organisation'],
 ] as const;
 
-export function suspension(bits: number): string | null {
-  const why = SUSPENDED.filter(([b]) => (bits & b) !== 0).map(([, w]) => w);
+/**
+ * The app's suspension in words, with who holds it (D930): Journear (bits 1 and 2), your organisation (an owner, bit 4)
+ * or your organisation's backend through its platform key (bit 4 held by the platform: `partnerBitBy`).
+ */
+export function suspension(bits: number, partnerBitBy?: 'member' | 'platform'): string | null {
+  const why = SUSPENDED.filter(([b]) => (bits & b) !== 0).map(([b, w]) => (b === 4 && partnerBitBy === 'platform' ? 'by your backend' : w));
   return why.length ? `Suspended ${why.join(', ')}` : null;
+}
+
+/** A platform key in words: its label from the org's keys when known, else its id (D930). */
+export const keyWords = (id: string, labels: Record<string, string> | undefined): string => {
+  const label = labels?.[id];
+  return label ? `your platform key “${label}”` : `your platform key ${id}`;
+};
+
+/** The marker of an app the organisation's backend made with its platform key (D930). */
+export function MadeByBackend({ title }: { title?: string | undefined }) {
+  return (
+    <Badge tone="info" title={title ?? 'Your organisation’s backend created this app with its platform key, and manages it.'}>
+      Made by your backend
+    </Badge>
+  );
 }
 
 export const envLabel = (e: 'test' | 'live'): string => (e === 'live' ? 'Live' : 'Test');
@@ -36,9 +55,9 @@ export function AppTile({ name, logoUrl, size = 'md' }: { name: string; logoUrl?
   );
 }
 
-function Status({ a }: { a: AppSummary }) {
+function Status({ a }: { a: AppSummary & { partnerBitBy?: 'member' | 'platform' | undefined } }) {
   if (a.deleted) return <Badge tone="neutral">Deleted</Badge>;
-  const s = suspension(a.suspendedBy);
+  const s = suspension(a.suspendedBy, a.partnerBitBy);
   return s ? <Badge tone="danger">{s}</Badge> : <Badge tone="ok">Active</Badge>;
 }
 
@@ -87,10 +106,11 @@ export function AppsList() {
                 </span>
                 <span className="app-row-meta">
                   <Badge tone={a.environment === 'live' ? 'accent' : 'neutral'}>{envLabel(a.environment)}</Badge>
+                  {a.createdByKind === 'platform' && <MadeByBackend />}
                   <Status a={a} />
                 </span>
                 <span className="app-row-num">
-                  {a.activeOrigins} {a.activeOrigins === 1 ? 'origin' : 'origins'}
+                  {a.activeOrigins} {a.activeOrigins === 1 ? 'web address' : 'web addresses'}
                 </span>
                 <span className="app-row-num">{a.pendingChanges > 0 ? <Badge tone="warn">{a.pendingChanges} waiting</Badge> : <span className="muted">No changes waiting</span>}</span>
               </Link>
@@ -109,6 +129,8 @@ export interface AppCtl extends OrgContext {
   reload: () => void;
   /** A member's address by user id (for "requested by"), or undefined. */
   nameOf: (userId: string) => string | undefined;
+  /** D930: the labels of the platform keys the app names (its creator, a change's proposer), by key id. */
+  keyLabels: Record<string, string>;
   /**
    * Now on the server's clock (the reader's clock plus the offset the last app read measured): what is still waiting,
    * the timeline and the re-read are judged by it, so a reader's clock that runs fast or slow changes nothing (D701).
@@ -120,7 +142,7 @@ export const useApp = (): AppCtl => useOutletContext<AppCtl>();
 
 const SECTIONS = [
   ['', 'Overview'],
-  ['origins', 'Origins'],
+  ['origins', 'Web addresses'],
   ['keys', 'Keys'],
   ['sessions', 'Login & sessions'],
   ['email', 'Email login'],
@@ -178,7 +200,7 @@ export function clockOffset(serverNow: unknown, readerNow: number): number {
 export function AppLayout() {
   const { org, app } = useParams();
   const ctx = useOrg();
-  const r = useApi<{ app: AppDetail; now?: number }>(`/api/orgs/${org}/apps/${app}`);
+  const r = useApi<{ app: AppDetail; now?: number; keyLabels?: Record<string, string> }>(`/api/orgs/${org}/apps/${app}`);
   const m = useApi<MembersAnswer>(`/api/orgs/${org}/members`);
   // Measured once per answer: the answer's server time against the reader's clock as it arrives.
   const offset = useMemo(() => clockOffset(r.data?.now, Date.now()), [r.data]);
@@ -199,6 +221,7 @@ export function AppLayout() {
     owner: ctx?.role === 'owner' && !a.deleted,
     reload: r.reload,
     nameOf: (id) => m.data?.members.find((x) => x.userId === id)?.email,
+    keyLabels: r.data.keyLabels ?? {},
     serverNow: () => Date.now() + offset,
   };
   const base = `/orgs/${org}/apps/${a.id}`;
@@ -219,6 +242,7 @@ export function AppLayout() {
             <Badge tone={a.environment === 'live' ? 'accent' : 'neutral'} title={a.environment === 'live' ? 'Live: mainnet chains allowed' : 'Test: test networks only'}>
               {envLabel(a.environment)}
             </Badge>
+            {a.createdByKind === 'platform' && <MadeByBackend title={a.createdByKey ? `Created by ${keyWords(a.createdByKey, ctl.keyLabels)}` : undefined} />}
             <Status a={a} />
           </span>
         }

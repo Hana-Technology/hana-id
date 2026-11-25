@@ -154,7 +154,11 @@ export const partnerAuditEntry = z.discriminatedUnion('source', [partnerConsoleE
 export type PartnerAuditEntry = z.infer<typeof partnerAuditEntry>;
 
 /** Newest first; `next` is the cursor of the following page (`<audit seq>.<change seq>`, each an exclusive bound). */
-export const auditAnswer = z.object({ entries: z.array(partnerAuditEntry), next: z.string().optional() }).strict();
+/**
+ * `keyLabels` (D930): the label of each platform key the page's rows name as their actor (the org's own keys), so the
+ * Audit says which key acted; absent when no row names one.
+ */
+export const auditAnswer = z.object({ entries: z.array(partnerAuditEntry), next: z.string().optional(), keyLabels: z.record(z.string(), z.string()).optional() }).strict();
 export type AuditAnswer = z.infer<typeof auditAnswer>;
 /** The audit cursor: two exclusive upper bounds, the console's `audit_log.seq` and the API's `app_changes.seq`. */
 export const AUDIT_CURSOR_RE = /^([1-9]\d{0,14})\.([1-9]\d{0,14})$/u;

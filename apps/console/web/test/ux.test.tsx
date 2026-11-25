@@ -95,7 +95,7 @@ describe('errors in plain words', () => {
     signedIn();
     routes['/api/orgs/org_a/actions'] = { status: 400, body: { error: { code: 'origin_refused', message: 'https://localhost.partner.example: loopback names are refused for live apps' } } };
     at('/orgs/org_a/apps/app_1/origins');
-    fireEvent.change(await screen.findByLabelText(/Origins to add/u), { target: { value: 'https://localhost.partner.example' } });
+    fireEvent.change(await screen.findByLabelText(/Web addresses to add/u), { target: { value: 'https://localhost.partner.example' } });
     fireEvent.click(screen.getByRole('button', { name: 'Review and confirm with Google' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Journear can’t accept that origin.');
@@ -268,7 +268,7 @@ describe('no control that can’t work: one line says why', () => {
     signedIn();
     at('/orgs/org_a/apps/app_1/origins');
     const many = Array.from({ length: 21 }, (_, i) => `https://a${i}.partner.example`).join('\n');
-    const box = await screen.findByLabelText(/Origins to add/u);
+    const box = await screen.findByLabelText(/Web addresses to add/u);
     fireEvent.change(box, { target: { value: many } });
     // Not while typing: the button is off, the field isn't flagged yet.
     expect(screen.queryByText(/more than 20/u)).toBeNull();
@@ -288,7 +288,7 @@ describe('no control that can’t work: one line says why', () => {
   it('a frozen org says why adding is paused, and keeps Remove', async () => {
     signedIn({}, 'owner', 'frozen');
     at('/orgs/org_a/apps/app_1/origins');
-    expect(await screen.findByText(/Adding origins is paused while Journear has frozen the organisation/u)).toBeTruthy();
+    expect(await screen.findByText(/Adding web addresses is paused while Journear has frozen the organisation/u)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
   });
 });
@@ -311,7 +311,7 @@ describe('empty states and the app overview', () => {
   it('the checklist ticks what the console can see, and the snippet carries the app’s key', async () => {
     signedIn({ origins: [], keys: [key('k9')] });
     at('/orgs/org_a/apps/app_1');
-    const origins = (await screen.findByText('Allow your app’s origins')).closest('li')!;
+    const origins = (await screen.findByText('Allow your app’s web addresses')).closest('li')!;
     expect(origins.textContent).toContain('To do');
     expect(screen.getByText('Copy your publishable key').closest('li')!.textContent).toContain('Done');
     expect(screen.getByText(/publishableKey: 'pk_live_k9'/u)).toBeTruthy();
@@ -349,17 +349,17 @@ describe('empty states and the app overview', () => {
     const change = { id: 'gc_7', appId: 'app_1', kind: 'origin_add', origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: now - 24 * 60_000, waiver: 'no_session', notifiedAt: now - 20 * 60_000, activeFrom: now - 20 * 60_000 };
     signedIn({ environment: 'test', origins: [{ origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, activeFrom: now - 20 * 60_000, changeId: 'gc_7' }], changes: [change] });
     at('/orgs/org_a/apps/app_1');
-    const step = (await screen.findByText('Allow your app’s origins')).closest('li')!;
-    expect(step.textContent).toContain('1 origin is active.');
+    const step = (await screen.findByText('Allow your app’s web addresses')).closest('li')!;
+    expect(step.textContent).toContain('1 web address is active.');
     expect(screen.queryByText('Changes waiting')).toBeNull();
     expect(screen.queryByText(/Pending: active from/u)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Origins' }).querySelector('.tab-dot')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Web addresses' }).querySelector('.tab-dot')).toBeNull();
     // The Origins tab shows it as active, with Remove, and nothing waiting.
-    fireEvent.click(screen.getByRole('link', { name: 'Origins' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Web addresses' }));
     const row = (await screen.findAllByText('http://localhost:5173')).map((e) => e.closest('tr')).find(Boolean)!;
     expect(within(row).getByText('Active')).toBeTruthy();
-    expect(screen.queryByText('Origins waiting to take effect')).toBeNull();
+    expect(screen.queryByText('Web addresses waiting to take effect')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
   });
 
@@ -374,7 +374,7 @@ describe('empty states and the app overview', () => {
       return { body: { app: { ...APP, origins: [...APP.origins, { origin: 'https://new.partner.example', display: 'https://new.partner.example', idn: false, activeFrom: at0, changeId: 'gc_8' }], changes: [{ ...pending, status }] } } };
     };
     at('/orgs/org_a/apps/app_1');
-    const item = (await screen.findByText('Add origin https://new.partner.example')).closest('li')!;
+    const item = (await screen.findByText('Add web address https://new.partner.example')).closest('li')!;
     expect(screen.getByText('Changes waiting')).toBeTruthy();
     expect(within(item).getByRole('button', { name: 'Cancel' })).toBeTruthy();
     const track = within(item).getByRole('list', { name: 'Progress of this change' });
@@ -383,7 +383,7 @@ describe('empty states and the app overview', () => {
     expect(within(track).queryByText('In effect')).toBeNull();
     await waitFor(() => expect(screen.queryByText('Changes waiting')).toBeNull(), { timeout: 4000 });
     expect(reads).toBe(2);
-    expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('2 origins are active.');
+    expect(screen.getByText('Allow your app’s web addresses').closest('li')!.textContent).toContain('2 web addresses are active.');
   });
 
   it('a reader’s clock 3 h fast: a change the server says is still ahead keeps Cancel and its timeline not reached', async () => {
@@ -395,15 +395,15 @@ describe('empty states and the app overview', () => {
     routes['/api/orgs/org_a/apps/app_1'] = () => ({ body: { app: body, now: real() } });
     vi.spyOn(Date, 'now').mockImplementation(() => real() + 3 * H);
     at('/orgs/org_a/apps/app_1');
-    const item = (await screen.findByText('Add origin https://new.partner.example')).closest('li')!;
+    const item = (await screen.findByText('Add web address https://new.partner.example')).closest('li')!;
     expect(screen.getByText('Changes waiting')).toBeTruthy();
     expect(within(item).getByRole('button', { name: 'Cancel' })).toBeTruthy();
     const track = within(item).getByRole('list', { name: 'Progress of this change' });
     expect([...track.querySelectorAll('li')].map((li) => li.className)).toEqual(['done', 'done', 'current']);
     // Counted on the server's clock: about an hour ahead, never "due".
     expect(item.textContent).toMatch(/\(in (59 min|1 h)\)/u);
-    expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('1 origin is active, 1 waiting.');
-    expect(screen.getByRole('link', { name: /Origins/u }).querySelector('.tab-dot')).not.toBeNull();
+    expect(screen.getByText('Allow your app’s web addresses').closest('li')!.textContent).toContain('1 web address is active, 1 waiting.');
+    expect(screen.getByRole('link', { name: /Web addresses/u }).querySelector('.tab-dot')).not.toBeNull();
   });
 
   it('a reader’s clock 3 h slow: a change in force on the server isn’t waiting, and one due shortly is re-read at the server’s time', async () => {
@@ -420,12 +420,12 @@ describe('empty states and the app overview', () => {
     };
     vi.spyOn(Date, 'now').mockImplementation(() => real() - 3 * H);
     at('/orgs/org_a/apps/app_1');
-    expect(await screen.findByText('Add origin https://new.partner.example')).toBeTruthy();
-    expect(screen.queryByText('Add origin http://localhost:5173')).toBeNull();
+    expect(await screen.findByText('Add web address https://new.partner.example')).toBeTruthy();
+    expect(screen.queryByText('Add web address http://localhost:5173')).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Cancel' })).toHaveLength(1);
     await waitFor(() => expect(screen.queryByText('Changes waiting')).toBeNull(), { timeout: 4000 });
     expect(reads).toBe(2);
-    expect(screen.getByText('Allow your app’s origins').closest('li')!.textContent).toContain('3 origins are active.');
+    expect(screen.getByText('Allow your app’s web addresses').closest('li')!.textContent).toContain('3 web addresses are active.');
   });
 
   it('the re-read at the next effective time: one timer, one reload, no polling; nothing set when nothing waits on a clock', () => {
@@ -472,7 +472,7 @@ describe('empty states and the app overview', () => {
     routes['/api/orgs/org_a/members'] = { body: { members: [{ userId: 'usr_a', email: 'me@partner.example', role: 'owner', roleSince: 0, addedBy: 'hana', addedAt: 0, disabled: false }], invites: [], grants: [] } };
     routes['/api/orgs/org_a/changes/gc_9/cancel'] = { body: { ...change, status: 'cancelled' } };
     at('/orgs/org_a/apps/app_1/origins');
-    const item = (await screen.findByText('Add origin https://new.partner.example')).closest('li')!;
+    const item = (await screen.findByText('Add web address https://new.partner.example')).closest('li')!;
     await waitFor(() => expect(item.textContent).toContain('Requested by me@partner.example'));
     expect(within(item).getByText('Not sent yet')).toBeTruthy();
     expect(item.textContent).toContain('the delay starts once it is sent');
@@ -547,21 +547,29 @@ describe('navigation', () => {
     expect(screen.queryByText(new RegExp(String(at_), 'u'))).toBeNull();
   });
 
-  it('the audit names who did it for every actor kind; a platform key by its id, in the table and on a waiting change (D916)', async () => {
+  it('the audit names who did it for every actor kind; a platform key by its label when known, else its id, in the table and on a waiting change (D916, D930)', async () => {
     const api = (actorKind: string, actorId: string) => ({ source: 'api', seq: 7, at: 0, kind: 'origin.proposed', detail: {}, actorKind, actorId, requestId: 'req_who12345' }) as PartnerAuditEntry;
-    const words: Record<(typeof ACTOR_KINDS)[number], string> = { member: 'a member', hana: 'Journear', system: 'system', link: 'emailed link', platform: 'your platform key pkc_Nt4Wq8Rb2m' };
+    const words: Record<(typeof ACTOR_KINDS)[number], string> = { member: 'a member', hana: 'Journear', system: 'system', link: 'emailed link', platform: 'your backend (platform key pkc_Nt4Wq8Rb2m)' };
     for (const k of ACTOR_KINDS) expect(who(api(k, k === 'platform' ? 'pkc_Nt4Wq8Rb2m' : `id_${k}`)), k).toBe(words[k]);
     // The console's own rows: a member by their address; the console never records a platform row.
     for (const k of AUDIT_LOG_ACTOR_KINDS) expect(who({ source: 'console', seq: 1, at: 0, actorKind: k, actorId: 'x', actorEmail: 'me@partner.example', action: 'a.b', details: {}, requestId: 'req_who12345', outcome: 'ok' } as PartnerAuditEntry), k).toBe(k === 'member' ? 'me@partner.example' : words[k]);
     const change = (proposedByKind: string, proposedBy: string, requestCountry?: string) => ({ id: 'gc_1', appId: 'app_1', kind: 'origin_add', status: 'pending', proposedByKind, proposedBy, proposedAt: 0, ...(requestCountry ? { requestCountry } : {}) }) as GuardedChange;
-    const proposers: Record<(typeof PROPOSER_KINDS)[number], string> = { member: 'a member (from SG)', hana: 'Journear (from SG)', system: 'the system (from SG)', platform: 'your platform key pkc_Nt4Wq8Rb2m (from SG)' };
+    const proposers: Record<(typeof PROPOSER_KINDS)[number], string> = { member: 'a member (from SG)', hana: 'Journear (from SG)', system: 'the system (from SG)', platform: 'your backend (platform key pkc_Nt4Wq8Rb2m) (from SG)' };
     for (const k of PROPOSER_KINDS) expect(proposer(change(k, 'pkc_Nt4Wq8Rb2m', 'SG')), k).toBe(proposers[k]);
+    // With the org's key labels (the app answer's `keyLabels`): the key's label.
+    expect(proposer(change('platform', 'pkc_Nt4Wq8Rb2m'), { pkc_Nt4Wq8Rb2m: 'Production backend' })).toBe('your backend (platform key “Production backend”)');
+    expect(who(api('platform', 'pkc_Nt4Wq8Rb2m'), { pkc_Nt4Wq8Rb2m: 'Production backend' })).toBe('your backend (platform key “Production backend”)');
     routes['/api/me'] = { body: ME };
     routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status: 'active' }, role: 'owner' } };
-    routes['/api/orgs/org_a/audit'] = { body: { entries: [api('platform', 'pkc_Nt4Wq8Rb2m')] } };
+    routes['/api/orgs/org_a/audit'] = { body: { entries: [api('platform', 'pkc_Nt4Wq8Rb2m'), api('member', 'usr_1')], keyLabels: { pkc_Nt4Wq8Rb2m: 'Production backend' } } };
     at('/orgs/org_a/audit');
-    expect(await screen.findByText('your platform key pkc_Nt4Wq8Rb2m')).toBeTruthy();
-    expect(screen.getByText('Origin proposed')).toBeTruthy();
+    expect(await screen.findByText('your backend (platform key “Production backend”)')).toBeTruthy();
+    expect(screen.getByText('pkc_Nt4Wq8Rb2m')).toBeTruthy();
+    expect(screen.getAllByText('Web address asked for')).toHaveLength(2);
+    // The filter keeps only the backend's rows.
+    fireEvent.click(screen.getByLabelText('Only what your backend did with its platform key'));
+    expect(screen.getAllByText('Web address asked for')).toHaveLength(1);
+    expect(screen.queryByText('a member')).toBeNull();
   });
 
   it('the audit’s details read as words: dates, null as none, lists of objects as plain lists, unknown keys kept', async () => {

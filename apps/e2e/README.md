@@ -39,6 +39,17 @@ Passport Home: the wallet's page says the company behind these apps can see whic
 scope-level Support ID "Journear Support ID"; an ordinary wallet keeps the usual words. Both save their screens with
 `HANA_SHOTS_DIR=<dir>` (Chromium only).
 
+The partner platform's screens (D930): `tests/platform-screens.spec.ts` runs, in each browser's admin lane, staff
+registering a network's platform key in the admin portal, the owner accepting it in the partner console with a fresh
+sign-in, the admin Worker's real notice step announcing it, the network's backend creating an app with two web
+addresses, ONE email per recipient for that request (both addresses, each its own cancel link, the real 24 hours, no
+waiver), the Platform queue, the console's "Made by your backend" and Web addresses tab, the cancel from the emailed
+link, and the Platform activity. `POST /__e2e/lane/platform {action}` (`src/server/lane-platform.ts`): `reset` (the labels
+org with its scope marked as shared and a fresh key pair, whose private half never leaves the lane), `notices` (the
+admin's real `runNotices`, the messages kept in memory: no mail leaves the stack), `switch`, `create` (a signed
+`POST /v1/platform/apps`), `state`. The lane's `RATE_LIMITER` routes the platform's admission, nonce and marks to the
+real object. Screens with `HANA_SHOTS_DIR=<dir>` (Chromium only).
+
 The shared-wallet line (D912): `tests/shared-wallet.spec.ts` puts two apps on a scope of their own (with a suspended
 one, one with no web address and one no one has signed in to, which don't count; the others are made `launched`, since
 the mocked /v1/login records no first sign-in) and sees "This wallet is also used on 1 other app." under who is asking

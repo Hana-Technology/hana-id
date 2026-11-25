@@ -13,7 +13,7 @@
 // Support ID lookup (`POST /api/support/lookup`, support.ts). D843's "Gas sponsorship" (evm-relay.ts). D894's
 // "Partner labels" (partner-labels.ts).
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
-import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView, NEW_ORG_INVITES_MAX, SHARED_SCOPE_TEST_ONLY } from '@hana-id/console-core';
+import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView, NEW_ORG_INVITES_MAX, PLATFORM_CALLS_PAGE, PLATFORM_QUEUE_LIMIT, SHARED_SCOPE_TEST_ONLY } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { auditCsv } from './export.ts';
 import { errorResponse, json, readJson } from './http.ts';
@@ -304,6 +304,17 @@ const ROUTES: Route[] = [
   { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/approve', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/approve', c.staff, () => c.env.API.approvePlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id, ...pick(c.body, 'reason') })) },
   { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/revoke', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/revoke', c.staff, () => c.env.API.revokePlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id, ...pick(c.body, 'reason') })) },
   { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/cancel', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/cancel', c.staff, () => c.env.API.cancelPlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id })) },
+  // D930: the org's platform calls (`?app=&before=`) and the queue across orgs (reads only).
+  {
+    method: 'GET',
+    pattern: '/api/orgs/:org/platform-calls',
+    handler: (c) => {
+      const app = c.url.searchParams.get('app');
+      const before = intParam(c.url.searchParams.get('before'));
+      return answer('GET /api/orgs/:org/platform-calls', c.staff, () => c.env.API.platformCalls({ ...staffCtx(c.staff), orgId: c.params.org, limit: PLATFORM_CALLS_PAGE, ...(app ? { appId: app } : {}), ...(before !== undefined ? { before } : {}) }));
+    },
+  },
+  { method: 'GET', pattern: '/api/platform-queue', handler: (c) => answer('GET /api/platform-queue', c.staff, () => c.env.API.platformQueue({ ...staffCtx(c.staff), limit: PLATFORM_QUEUE_LIMIT })) },
   { method: 'POST', pattern: '/api/orgs/:org/platform-switch', handler: (c) => answer('POST /api/orgs/:org/platform-switch', c.staff, () => c.env.API.setPlatformOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'enabled', 'reason', 'reviewedKeys') })) },
   { method: 'POST', pattern: '/api/orgs/:org/suspend', handler: (c) => answer('POST /api/orgs/:org/suspend', c.staff, () => c.env.API.suspendOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'suspended') })) },
   {

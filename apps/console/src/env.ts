@@ -46,7 +46,7 @@ import type {
   PlatformOrgView,
 } from '@hana-id/console-core';
 import type { z } from '@hana-id/env/zod';
-import type { listPlatformKeysInput, platformKeyByLinkInput, platformKeyInput, proposePlatformKeyInput, revokePlatformKeyInput, stepUpPlatformKeyInput } from '@hana-id/console-core';
+import type { PlatformCallsInput, PlatformCallsPage, listPlatformKeysInput, platformKeyByLinkInput, platformKeyInput, proposePlatformKeyInput, revokePlatformKeyInput, stepUpPlatformKeyInput } from '@hana-id/console-core';
 import type { ConsoleUsersClient } from './users.ts';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -99,6 +99,8 @@ export interface ConsoleRpcClient {
   revokePlatformKey(c: z.infer<typeof revokePlatformKeyInput>): Answer<{ key: PlatformKeyView }>;
   cancelPlatformKeyByLink(c: z.infer<typeof platformKeyByLinkInput>): Answer<{ key: { id: string; label: string; state: 'cancelled' | 'revoked' } }>;
   revokePlatformKeyByLink(c: z.infer<typeof platformKeyByLinkInput>): Answer<{ key: { id: string; label: string; state: 'cancelled' | 'revoked' } }>;
+  /** D930: one page of the org's platform calls (the Platform activity page). */
+  platformCalls(c: PlatformCallsInput): Answer<PlatformCallsPage>;
 }
 
 export interface Env {

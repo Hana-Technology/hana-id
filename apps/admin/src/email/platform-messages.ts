@@ -133,3 +133,61 @@ export function platformKeyExpiring(c: MailContext, n: PlatformKeyNotice, p: Key
   const title = 'Platform key expires soon';
   return render(c.env, `${title}: ${oneLine(k.label, 40)}`, blocks, c.consoleOrigin, c.label, design(c, title, 'A key for your organisation’s backend stops working soon. Register its next key now.'));
 }
+
+/** One web address of a platform request's email (D930): the change, how it shows, and its own cancel link. */
+export interface PlatformOriginLine {
+  changeId: string;
+  origin: string;
+  display?: string | undefined;
+  idn?: boolean | undefined;
+  cancelUrl: string;
+}
+
+/**
+ * The web addresses one request of a platform key asked for (D930; docs/partner-platform-spec.md A6, finding L14): one
+ * email for the whole request, every address with its own cancel link, to the security alias and every security
+ * contact. The wait is the one the ack gives (`waitMs`, from AdminRpc.pendingNotices: at least 24 h outside `local*`
+ * test envs) and the date is stated; no waiver sentence, since none applies to a platform proposal, and nothing brings
+ * one forward yet (the owner's confirmation is piece P10, which adds its line and Confirm link here).
+ */
+export function platformOriginsProposed(
+  c: MailContext,
+  n: { app: { id: string; name: string; orgId: string; scopeId: string }; keyId: string; keyLabel: string | null; proposedAt: number; requestCountry?: string | undefined; waitMs: number },
+  lines: readonly PlatformOriginLine[],
+  o: { now: number; orgName?: string | undefined },
+): Rendered {
+  if (lines.length === 0) throw new Error('a platform request’s email needs at least one web address');
+  const many = lines.length > 1;
+  const app = oneLine(n.app.name, 80);
+  const key = n.keyLabel ? `your platform key “${oneLine(n.keyLabel, 40)}” (${n.keyId})` : `your platform key (${n.keyId})`;
+  const rows: [string, string][] = [
+    ['App', `${app} (${n.app.id})`],
+    ['Organisation', o.orgName ? `${oneLine(o.orgName, 80)} (${n.app.orgId})` : n.app.orgId],
+    ['Wallet settings (scope)', n.app.scopeId],
+    ['Requested by', key],
+    ['Requested at', readableTime(n.proposedAt)],
+  ];
+  if (n.requestCountry) rows.push(['Request country', n.requestCountry]);
+  const blocks: Block[] = [
+    { kind: 'p', text: `Your organisation’s backend asked, with ${key}, for ${many ? `${lines.length} new web addresses` : 'a new web address'} for ${app}. ${many ? 'They don’t' : 'It doesn’t'} work yet.` },
+    { kind: 'kv', rows },
+  ];
+  for (const l of lines) {
+    const r: [string, string][] = [['Web address', l.origin]];
+    if (l.display && l.display !== l.origin) r.push(['Shown as', l.display]);
+    blocks.push({ kind: 'kv', rows: r });
+    if (l.idn) blocks.push({ kind: 'warn', text: `This web address uses international letters. Its plain form is ${l.origin}; check that it is the site you expect and not a lookalike.` });
+    // The button names the plain (ASCII) form, never the decoded one an attacker chose to look like another site.
+    blocks.push({ kind: 'link', label: many ? `Cancel ${oneLine(l.origin, 120)}` : 'Cancel this web address', url: l.cancelUrl });
+  }
+  blocks.push(
+    {
+      kind: 'p',
+      text: `${many ? 'They start' : 'It starts'} working on ${readableTime(o.now + n.waitMs)}, ${waitWords(n.waitMs)} after this email, unless someone cancels ${many ? 'them' : 'it'}. Web addresses your platform key asks for always wait the full time: nothing makes them start sooner.`,
+    },
+    { kind: 'p', text: `If you didn’t expect this, cancel ${many ? 'each one you don’t recognise' : 'it'} now. ${many ? 'Each link cancels one web address. ' : ''}The page asks you to confirm; opening the link alone changes nothing.` },
+    { kind: 'p', text: `An owner can also cancel ${many ? 'them' : 'it'} in the partner portal, and Journear security can cancel ${many ? 'them' : 'it'} from the admin portal.` },
+  );
+  const title = many ? 'New web addresses requested by your platform key' : 'New web address requested by your platform key';
+  return render(c.env, `${title} for ${oneLine(n.app.name, 60)}`, blocks, c.consoleOrigin, c.label, design(c, title, `Your organisation’s backend asked for ${many ? 'new web addresses' : 'a new web address'}. ${many ? 'They don’t' : 'It doesn’t'} work yet, and you can cancel ${many ? 'them' : 'it'}.`));
+}

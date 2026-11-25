@@ -43,6 +43,7 @@ import {
   proposePlatformKeyInput,
   revokePlatformKeyInput,
   stepUpPlatformKeyInput,
+  platformCallsInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -65,6 +66,7 @@ import { cancelLabelChange, cancelLabelChangeByLink } from '../labels/lifecycle.
 import { listLabels, previewLabels, proposeLabels, removeLabels } from '../labels/propose.ts';
 import { isLabelChange } from '../labels/sql.ts';
 import { acceptPlatformKey, cancelPlatformKey, cancelPlatformKeyByLink, confirmPlatformKey, getPlatformKey, listPlatformKeys, registerPlatformKey, revokePlatformKey, revokePlatformKeyByLink } from '../platform/keys.ts';
+import { platformCalls } from '../platform/activity.ts';
 import { runRpc } from './common.ts';
 
 const MEMBER = ['member'] as const;
@@ -124,6 +126,8 @@ export const CONSOLE_COSTS = {
   /** Plan read, a batch of six (commit, key, and the four that cancel its waiting web addresses), the key read back. */
   revokePlatformKey: 8,
   revokePlatformKeyByLink: 8,
+  /** D930: one read (a page of the org's platform calls, at most PLATFORM_CALLS_SCAN rows looked through). */
+  platformCalls: 1,
 } as const;
 
 /**
@@ -344,6 +348,11 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   // ---- platform keys (D918): a network's backend's keys. Registering, accepting and confirming are a member's, with the
   // step-up the API verifies itself; no platform key can reach any of these (the actor union has no `platform`, and the
   // writers refuse every other kind) ----
+
+  /** D930: the org's platform calls (any member: the console's route matrix lets every member read them, as the Audit). */
+  platformCalls(c: unknown) {
+    return runRpc(this.env, 'platformCalls', platformCallsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.platformCalls }, ({ input, db }) => platformCalls(db, input, false));
+  }
 
   listPlatformKeys(c: unknown) {
     return runRpc(this.env, 'listPlatformKeys', listPlatformKeysInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listPlatformKeys }, ({ input, db, w }) => listPlatformKeys(db, input.orgId, w.now, false));

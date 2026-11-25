@@ -44,6 +44,9 @@ export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object
   shared_scope_unmarked: 'shared-scope-unmarked',
   // D925: the linking view's volume alert.
   link_lookup_volume: 'link-lookup-volume',
+  // D930: the platform API's limits and failed signatures (D927, D929).
+  platform_quota: 'platform-quota',
+  platform_auth_failures: 'platform-auth-failures',
 });
 
 export function withWords(e: SecurityEvent): SecurityEvent & { title: string; playbook: { id: string; title: string } | null } {

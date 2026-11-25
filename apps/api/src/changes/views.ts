@@ -150,6 +150,8 @@ export function summaryView(r: AppRow & { active_origins: number; pending_change
   v.emailOn = r.login_methods.split(',').includes('email');
   // D925: the Users screen's search across apps is for an org with a shared wallet.
   v.sharedScope = r.app_user_ids === 1;
+  // D930: the list marks an app the platform created.
+  v.createdByKind = r.created_by_kind === 'platform' ? 'platform' : 'hana';
   return v;
 }
 

@@ -23704,3 +23704,122 @@ From `next` @ bcb121bd; not merged, not deployed, migration applied nowhere. Pie
       address on the app).
 - Address impact: **none.** No contract call, no key, path, address or existing ID changes: an app created here
   gets its own User IDs exactly as any new app on a marked scope does (D919).
+
+## The partner platform's screens (branch `feat/platform-screens`), 2026-11-25
+
+From `next` @ 62daa39a; not merged, not deployed, no migration. Piece P5 of `partner-platform-spec.md` (A11; findings
+L7, L14 and H3's warning), with the residual of P4 (D929's found (g): the platform proposal's email). D930 is the
+number the caller assigned.
+
+### D930. The console and the admin portal show what the platform pieces built: a network's keys, its backend's calls, the apps its backend made and the web addresses they wait for, who holds a suspension, and a staff queue; a platform request's web addresses go out in one email with their real 24 hours
+- Date 2026-11-25 · Status: **built**; the design is the spec's A11 and the Tech Lead's D913, D914, D917, D926 and
+  D928; every point under "Decided while building" is **to confirm (the Tech Lead)** · Relates to D704, D915, D916,
+  D918, D919, D925, D927, D928, D929 · Built: `apps/api/src/platform/activity.ts`, `changes/lifecycle.ts`
+  (`pendingNotices`), `changes/apps.ts` (`getApp`), `changes/views.ts` (`summaryView`), `rpc/console.ts`,
+  `rpc/admin.ts`; console-core `platform-activity.ts`, `platform-words.ts`, `types.ts`, `partner.ts`,
+  `audit-words.ts`; `apps/console/src/platform-keys.ts`, `bff.ts`, `writes.ts` and the SPA's `PlatformActivity.tsx`,
+  `PlatformKeys.tsx`, `Apps.tsx`, `Audit.tsx`, `app/{Overview,Origins,Changes,Suspend}.tsx`, `Action.tsx`,
+  `Cancel.tsx`, `Users.tsx`, `styles.css`; `apps/admin/src/notices.ts`, `email/platform-messages.ts`,
+  `email/messages.ts`, `routes.ts`, `security.ts`, `public/app.js`; `packages/playbooks` (two playbooks);
+  `apps/e2e/src/server/lane-platform.ts` and `tests/platform-screens.spec.ts`
+- **What it does.**
+  - **The partner console.** *Platform keys*: each key's wallet settings, last use, who accepted it, "Working, expires
+    soon" in its last 30 days, a line when Journear froze the org (its keys don't work until unfrozen), and on a
+    real-money setup the registrant's line instead of a Confirm button: "Another owner needs to confirm this key. If
+    nobody does, it starts working on {date}." or, with one owner, "Your organisation has one owner, so this key starts
+    working on {date}." (the key page's answer now counts the org's owners). *Platform activity*
+    (`/orgs/:org/platform-activity`, any member, frozen orgs too): each call the backend made that passed its signature
+    check (when, what in words with the route under it, the app, the key by its label, "Worked", "Limit reached" or
+    "Refused" with the code, the request id), one app at a time, Older and Newer; never the caller's network. *Apps*:
+    an app the backend made is marked "Made by your backend" in the list and the header; its Overview says which key
+    made it, that the backend manages its web addresses, suspension and publishable keys and that what it asks for
+    waits 24 hours, its shared wallet and its User IDs ("Its own: …" as the admin's row says). *Web addresses* (the
+    Origins tab, renamed): what the backend asked for is marked "Asked for by your backend", its line says it waits
+    {N} hours after its email (from the change's own times), and a note says nothing makes it start sooner; Cancel
+    stays one click. *Suspend*: who holds it ("Suspended by your backend", "by your organisation", "by Journear"); an
+    owner can **Take the suspension over** so only an owner can resume it (the API's take-over, A4.6, D929). *Audit*:
+    a platform row reads "your backend (platform key “label”)" with the key's id under it, and a box keeps only the
+    backend's rows (the answer's `keyLabels`, from the org's own keys). *Users*: the intro says "the ID your backend
+    receives when they sign in, and keeps for them" instead of "the identity token's sub".
+  - **The admin portal.** The org's Platform keys panel shows the org's limits (read-only: raised by a reviewed D1
+    write, as `operations.md` says), each key's last use and the **Activity** (with the caller's network); a new
+    **Platform queue** (Security) lists every web address a platform key asked for that isn't working yet and every
+    key still waiting, across orgs, unannounced first then the soonest; an app the platform made says so ("Made by the
+    platform", its key) and who holds its partner suspension; the mainnet demo's switch, on an app that shares a wallet,
+    adds the spec's H3 sentence to its confirmation ("This app shares one wallet with every app on its scope. Real money
+    signed here comes from the same wallet as on the network's other sites.") and its row says so.
+  - **One email per platform request** (L14, and D929's found (g)): the admin Worker groups the platform proposals of
+    one request on one app (`pendingNotices` now lists them together with `platform: {keyId, keyLabel, requestId,
+    waitMs}`), sends one message per recipient listing every web address with its own cancel link, then acks each; the
+    email states the wait its ack gives (`waitMs`: the greater of the env's delay, the platform minimum and the wait the
+    proposal recorded) and the date, names the key by its label, and has **no waiver sentence**. A request cut off by
+    the end of a full notice page waits for the next run, so it goes out whole. The old notice's waiver sentence can no
+    longer reach a platform proposal (and says "at least 24 hours, no waiver" if one ever did).
+  - **Reads behind them**: `ConsoleRpc.platformCalls` (a member; cost 1), `AdminRpc.platformCalls` (staff, with the
+    network prefix) and `AdminRpc.platformQueue` (staff); the app views' `createdByKey` and `partnerBitBy` and the
+    list's `createdByKind`. No RPC writes anything new; no role reaches more than before.
+  - **Playbooks** for `platform_quota` and `platform_auth_failures` (linked from the security feed).
+  - **Phone width** (the known item): every console page fits 390 and 360 px (measured on every route of the preview):
+    a table's screen-reader words (`.visually-hidden`, positioned) no longer count against the page (the table wraps,
+    the tabs and the nav row are positioned boxes), and the pending upgrades' commands wrap.
+- **Tests.** API `platform-screens.test.ts` (the creator key and the list's creator; the partner bit's holder through a
+  take-over and Journear's bit; the activity for a member without the network and for staff with it, another org's
+  never, one app, paging and the bounded window, a system actor and a member refused where they don't belong; every
+  route with words; the queue's waiting, announced, cancelled and member cases and its order, staff only; the notices'
+  `platform` field and order), `rpc-cas.test.ts` (the cost); console `platform-screens.test.ts` (the activity route for
+  a viewer, another org's 404, bad parameters, a frozen org; `keyLabels` on an app and the Audit, none for a plain app;
+  the owners' count) and the SPA tests (the new words, the Audit's labels and filter); admin `platform-notices.test.ts`
+  (one message per recipient, each address's link and hash, the real 24 h and its date, no waiver; two requests two
+  emails; a refused send acks none and the retry acks all; the budget; a request cut at a full page waits; the staff
+  routes) and `test-spa/platform-screens.test.ts` (limits, activity and Older, the queue and its nav, the app's marks,
+  the mainnet demo warning and its absence, the route words equal to console-core's); playbooks' tests; e2e
+  `platform-screens.spec.ts` (Chromium, Firefox, WebKit: staff register, the owner accepts with a fresh sign-in, the
+  real notice step, the backend's create, one email, the queue, the console's marks, the cancel from the link, the
+  activity).
+- **Decided while building, to confirm (the Tech Lead):**
+  1. **Words** on the screens: "Made by your backend" (console) and "Made by the platform" (admin), "Asked for by your
+     backend", "your backend (platform key “label”)", "Take the suspension over", "Platform activity", "Worked",
+     "Limit reached", "Refused", "Working, expires soon", the activity's route words ("Create an app", "Ask for web
+     addresses", …), and the email's subject "New web address(es) requested by your platform key for {app}" and wait
+     line "They start working on {date}, 24 hours after this email, unless someone cancels them. Web addresses your
+     platform key asks for always wait the full time: nothing makes them start sooner." (P10 replaces the last sentence
+     with its "or sooner if an owner of your organisation confirms it").
+  2. **The console's Origins tab renamed "Web addresses"**, with its page, the Overview's step, the fresh sign-in's
+     review page and the cancel page in the same words; and the shared audit titles `origin.proposed` "Web address
+     asked for", `origin.activated` "Web address working", `origin.removed` "Web address removed", `origins.removed`
+     "Web addresses removed" (the console's Audit and the admin's feed digests alike). The partner guide's tab name
+     follows. Developers' words (`origin` in the code and the guide's prose) are unchanged.
+  3. **Platform activity for every member** (viewers too, as the Audit), never with the caller's network; staff see it.
+  4. **No migration**: a page of activity looks through the org's newest 1 000 calls (one app's among them), and Older
+     moves the window, rather than an index on the app (`platform_calls` has `(org_id, seq)` only).
+  5. **The creator key** of an app is read as the creator of its first publishable key (written by the create's own
+     batch), not from the ledger (no index by app there).
+  6. **Owners are not yet recipients** of a platform proposal's email (the P10 row lists "owners added to the platform
+     proposal's notice"; D917 confirmed the rule): this piece leaves the recipients as they were.
+  7. **The queue shows only what is waiting**; confirmed origins for 7 days are P10's. It is read-only: cancel and stop
+     stay on the app's and the org's pages. It shows no call counts per key (A11's "the last use and the call counts"):
+     the last use and the activity list stand for them.
+  8. **The limits are shown, not edited**: raising one stays a reviewed D1 write (`operations.md`), no new staff write.
+  9. **A member may take over the backend's suspension** from the console (the suspend route was hidden while the bit
+     was set); resuming still needs a fresh sign-in.
+  10. **"Expires soon"** from 30 days before the end (the first expiry email's).
+  11. **The admin's route words are a copy** in `public/app.js` (no build step), held equal to console-core's by a test.
+  12. **The phone-width fix** is in the console's stylesheet only (positioned table boxes, wrapped commands); the
+      admin portal was not measured.
+  13. **The notice page order** adds the request id after the proposal time (one request's changes are together).
+  14. **The two playbooks**: both "warning"; staff may stop the key or switch the org off; a limit is raised by the Tech
+      Lead's reviewed D1 write.
+- **Found in the spec** (its design not changed): (a) the task's "state the real in-force time" and A6's wait line ("…,
+  or sooner if an owner of your organisation confirms it") differ only by P10's clause: P5 states the time without it,
+  since nothing can bring a platform web address forward yet; (b) the P5 row's "org switch with the key review" and
+  "approvals" were built by P2 (D918), so P5 adds only the limits and the activity there; (c) A11's line "on the scope,
+  Shared wallet: …" has no console page per scope to sit on (D915 point 7): it is on each app's Overview; (d) A11's
+  "Confirm a web address" page, the removal page, the queue's confirmed origins, owners in the proposal's recipients
+  and the Confirm link are P10's (the spec's P10 row), so the console says a platform web address "waits 24 hours" and
+  offers Cancel only; (e) the e2e row's "propose origins" is done with the create (its origins are platform proposals,
+  A4.4), not a separate `…/origins` call.
+- **Left for P10**: the owner's confirmation of a web address (the console page, the step-up, the "or sooner" line and
+  Confirm link in this email, owners as its recipients), the notice of a confirmation and its removal link, confirmed
+  origins in the staff queue, the staff proposals' four eyes, the `local*` guard.
+- Address impact: **none.** Screens, reads and the words of an email; no contract call, key, path or address
+  derivation, and no ID changes.

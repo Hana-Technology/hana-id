@@ -244,7 +244,7 @@ describe('the look', () => {
     const strip = await screen.findByRole('group', { name: 'This app at a glance' });
     expect(strip.className).toBe('jp-stats');
     expect([...strip.querySelectorAll('.jp-stat')].map((s) => [s.querySelector('.k')!.textContent, s.querySelector('.v')!.textContent])).toEqual([
-      ['Active origins', '1'],
+      ['Active web addresses', '1'],
       ['Working keys', '1'],
       ['Pending changes', '0'],
     ]);

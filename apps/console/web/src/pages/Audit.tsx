@@ -10,7 +10,7 @@ import { when } from '../lib.tsx';
 import { Badge, Empty, ErrorNote, Loading, PageHeader } from '../ui.tsx';
 
 /** Who did it, as the Who column says it. Exhaustive over the actor kinds, so a new kind can't show as "a member". */
-export function who(e: PartnerAuditEntry): string {
+export function who(e: PartnerAuditEntry, keyLabels?: Record<string, string>): string {
   switch (e.actorKind) {
     case 'hana':
       return 'Journear';
@@ -18,9 +18,9 @@ export function who(e: PartnerAuditEntry): string {
       return 'system';
     case 'link':
       return 'emailed link';
-    // D916: the org's own platform key (its backend through the platform API), named by its key id.
+    // D916, D930: the org's own platform key (its backend through the platform API), by its label when known.
     case 'platform':
-      return `your platform key ${e.actorId}`;
+      return keyLabels?.[e.actorId] ? `your backend (platform key “${keyLabels[e.actorId]}”)` : `your backend (platform key ${e.actorId})`;
     case 'member':
       return e.source === 'console' && e.actorEmail ? e.actorEmail : 'a member';
     default: {
@@ -56,6 +56,8 @@ export function Audit() {
   const { org } = useParams();
   const navigate = useNavigate();
   const [entries, setEntries] = useState<PartnerAuditEntry[]>([]);
+  const [keyLabels, setKeyLabels] = useState<Record<string, string>>({});
+  const [onlyBackend, setOnlyBackend] = useState(false);
   const [next, setNext] = useState<string | undefined>(undefined);
   const [error, setError] = useState<ApiError | undefined>(undefined);
   const [loading, setLoading] = useState(true);
@@ -65,6 +67,7 @@ export function Audit() {
     try {
       const page = await getJson<AuditAnswer>(`/api/orgs/${org}/audit${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`);
       setEntries((prev) => (cursor ? [...prev, ...page.entries] : page.entries));
+      if (page.keyLabels) setKeyLabels((prev) => ({ ...prev, ...page.keyLabels }));
       setNext(page.next);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) navigate('/signin', { replace: true });
@@ -98,6 +101,12 @@ export function Audit() {
     <>
       {head}
       {loading && entries.length === 0 && <Loading />}
+      {entries.some((e) => e.actorKind === 'platform') && (
+        <label className="jp-check audit-filter">
+          <input type="checkbox" checked={onlyBackend} onChange={(e) => setOnlyBackend(e.target.checked)} />
+          <span>Only what your backend did with its platform key</span>
+        </label>
+      )}
       <div className="jp-table-wrap tall">
       <table className="jp-table audit">
         <thead>
@@ -110,10 +119,13 @@ export function Audit() {
           </tr>
         </thead>
         <tbody>
-          {entries.map((e) => (
+          {entries.filter((e) => !onlyBackend || e.actorKind === 'platform').map((e) => (
             <tr key={`${e.source}:${e.seq}`} className={e.source === 'console' && e.outcome === 'failed' ? 'failed' : undefined}>
               <td>{when(e.at)}</td>
-              <td>{who(e)}</td>
+              <td>
+                {who(e, keyLabels)}
+                {e.actorKind === 'platform' && <div className="mono small muted">{e.actorId}</div>}
+              </td>
               <td>
                 <span className="audit-what">{actionLabel(what(e))}</span>
                 {e.source === 'console' && e.outcome === 'failed' && <Badge tone="danger">Failed</Badge>}

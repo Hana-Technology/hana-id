@@ -1266,6 +1266,58 @@ const linkLookupVolume: Playbook = {
   related: ['api-or-cloudflare-compromised'],
 };
 
+// D930: the platform API's two security events (D927, D929; docs/partner-platform-spec.md A5).
+const platformQuota: Playbook = {
+  id: 'platform-quota',
+  title: 'A network’s platform key reached a limit',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary:
+    "A `platform_quota` security event: a network's backend, signing with its platform key, was refused by one of its organisation's limits for the first time in a clock hour (`limit`: `platform:creations:hour` or `:day` for new apps, `platform:proposals:hour` or `:day` for web addresses asked for, `platform:keys:hour` or `:day` for publishable keys; the key in `keyId`). It is written once an hour per limit; the requests past the limit were refused (`429 rate_limited`), nothing was written for them.",
+  signals: ["A `platform_quota` row in the admin's security events, emailed by the feed: the organisation, `limit`, `keyId` and the hour (`windowStart`). The organisation's Platform keys panel lists the calls (Activity) with the refused ones as “Limit reached”."],
+  impact: [
+    'The network can’t create apps, ask for web addresses or make publishable keys until the window passes. Its apps keep working; its kill switches (remove, suspend, revoke) are not counted by these limits.',
+    'A burst can be a normal onboarding day, a bug in the network’s backend retrying, or someone else using its key.',
+    'How urgent: today.',
+  ],
+  steps: [
+    { title: 'See what the key did', who: 'anyone', detail: "Open the organisation in the admin portal: the Platform keys panel's Activity shows each call (when, what, which app, the result, the caller's network) and the Platform queue shows the web addresses waiting. Many new apps or web addresses nobody announced to you, or calls from an unusual network, point at a stolen key." },
+    { title: 'Ask the network', who: 'anyone', detail: "Contact the organisation's security contacts (not through the key's own backend) and ask whether the burst was theirs." },
+    { title: 'If it isn’t theirs', who: 'anyone', detail: 'Stop the key on the Platform keys panel (it stops at once, and every web address it asked for that still waits is cancelled with it), or switch the platform off for the organisation. Cancel any waiting web address you don’t trust from its app’s page.' },
+    { title: 'If it is theirs and they need more', who: 'anyone', detail: "The Tech Lead raises the organisation's `platform_orgs.max_apps`, `creations_per_day` or `proposals_per_day` by a reviewed D1 write (docs/operations.md “Platform app operations”). The hourly limits are fixed in code." },
+  ],
+  verify: ['No further `platform_quota` row for the organisation in the next hours, and the Activity shows calls at the usual rate.'],
+  followUps: ['Note the cause in the decision log if a limit was raised.'],
+  refs: ['D929', 'D930', 'docs/operations.md#platform-app-operations-hot-db-migration-0033-d929'],
+  related: ['platform-auth-failures'],
+};
+
+const platformAuthFailures: Playbook = {
+  id: 'platform-auth-failures',
+  title: 'Many failed requests for one platform key',
+  kind: 'incident',
+  severity: 'warning',
+  status: 'live',
+  summary:
+    "A `platform_auth_failures` security event: ten or more requests in a minute named one network's platform key (`keyId`) but failed its signature check. Written once an hour per key. Failed requests are only counted, never stored: they aren't in the Activity.",
+  signals: ["A `platform_auth_failures` row in the admin's security events, emailed by the feed: the organisation, `keyId`, `failures` and the hour. The API's request log has `event: \"platform\"` lines with status 401 and the key id, and their IP prefix."],
+  impact: [
+    'Someone has the key’s id but not its private key (the id is not secret), or the network’s request signer is broken (a wrong clock, a changed body, a DER signature sent as it is).',
+    'A flood from one network can hold that key’s ordinary calls out from the same network for a while (docs/security.md, “Platform API”); its other networks are unaffected.',
+    'How urgent: today; now if the key’s own calls are failing too.',
+  ],
+  steps: [
+    { title: 'See where they come from', who: 'anyone', detail: 'In the API’s request log, filter `event: "platform"` with status 401 and the key id: the IP prefixes and the reasons (`bad_signature`, `not_in_force`, `malformed_signature`). One prefix that is the network’s own usually means a broken signer.' },
+    { title: 'Ask the network', who: 'anyone', detail: "Tell the organisation's security contacts what you see and ask whether their backend is failing. A broken signer is theirs to fix (the reference signer and test vectors in their guide)." },
+    { title: 'If the key may be stolen', who: 'anyone', detail: 'A failed signature can’t act, so nothing was done with the key by these requests. If the network also sees calls it didn’t make in the Activity, stop the key on the Platform keys panel and have the network register a new one.' },
+  ],
+  verify: ['No further `platform_auth_failures` row for the key in the next hours.'],
+  followUps: ['If a shared egress address was the cause, remind the network that a production backend needs a dedicated egress IP (docs/operations.md “Platform API”).'],
+  refs: ['D927', 'D930', 'docs/operations.md#platform-api-hot-db-migration-0032-d927'],
+  related: ['platform-quota'],
+};
+
 export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   homeBudgetHigh,
   nearRelayBudgetHigh,
@@ -1282,6 +1334,8 @@ export const INCIDENT_PLAYBOOKS: readonly Playbook[] = [
   sharedWalletPolicy,
   sharedScopeUnmarked,
   linkLookupVolume,
+  platformQuota,
+  platformAuthFailures,
   updaterKeyStolen,
   relayerKeyStolen,
   vaultKekLeaked,

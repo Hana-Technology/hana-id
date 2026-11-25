@@ -33,7 +33,7 @@ import { pendingUpgradesRoute } from './governance.ts';
 import { ledgerCsvRoute, statementFileRoute, statementViewRoute, statementsRoute, usageRoute } from './reports.ts';
 import { helperRoute, scopeOfOrg, scopeRoute } from './scopes.ts';
 import { linkRoute, usersRoute, usersScreenOn } from './users.ts';
-import { PLATFORM_KEY_ID, cancelRoute as cancelPlatformKeyRoute, keyRoute as platformKeyRoute, listRoute as platformKeysRoute, revokeRoute as revokePlatformKeyRoute } from './platform-keys.ts';
+import { PLATFORM_KEY_ID, activityRoute as platformActivityRoute, cancelRoute as cancelPlatformKeyRoute, keyRoute as platformKeyRoute, listRoute as platformKeysRoute, revokeRoute as revokePlatformKeyRoute } from './platform-keys.ts';
 
 export interface RouteCall {
   request: Request;
@@ -296,6 +296,8 @@ const ROUTES: OrgRouteDef[] = [
   // ---- platform keys (D918): any member reads; an owner stops or cancels at once (kill switches, frozen orgs too);
   // registering, accepting and confirming are step-ups (actions.ts) ----
   { method: 'GET', re: /^\/platform-keys$/u, role: 'viewer', frozenOk: true, run: (c) => platformKeysRoute(c.env, c.info, c.caller) },
+  // D930: the org's platform calls, for any member (reads only, as the Audit).
+  { method: 'GET', re: /^\/platform-activity$/u, role: 'viewer', frozenOk: true, run: (c) => platformActivityRoute(c.env, c.info, c.caller, c.url) },
   { method: 'GET', re: new RegExp(`^/platform-keys/(${PLATFORM_KEY_ID})$`, 'u'), role: 'viewer', frozenOk: true, run: (c) => platformKeyRoute(c.env, c.info, c.caller, c.m[1]!) },
   { method: 'POST', re: new RegExp(`^/platform-keys/(${PLATFORM_KEY_ID})/revoke$`, 'u'), role: 'owner', frozenOk: true, run: (c) => revokePlatformKeyRoute(c.request, c.env, c.info, c.caller, c.m[1]!) },
   { method: 'POST', re: new RegExp(`^/platform-keys/(${PLATFORM_KEY_ID})/cancel$`, 'u'), role: 'owner', frozenOk: true, run: (c) => cancelPlatformKeyRoute(c.request, c.env, c.info, c.caller, c.m[1]!) },

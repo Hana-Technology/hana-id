@@ -233,6 +233,8 @@ export const appSummary = z
      * across apps. An API before D925's build omits it in the list (the detail has had it since D915).
      */
     sharedScope: z.boolean().optional(),
+    /** D930: who created the app (`platform`: a network's backend through its platform key), for the list's marker. */
+    createdByKind: z.enum(APP_CREATOR_KINDS).optional(),
     createdAt: ms,
   })
   .strict();
@@ -277,6 +279,13 @@ export const appDetail = appSummary
      * before 0030's build omits it.
      */
     userIds: z.enum(['scope', 'app']).optional(),
+    /** D930: the platform key (`pkc_…`) that created the app, for an app the platform created. */
+    createdByKey: z.string().regex(/^pkc_[1-9A-HJ-NP-Za-km-z]{12,17}$/u).optional(),
+    /**
+     * D930: who holds the partner suspension (bit 4) while it is set: `member` (an owner in the console, or staff on
+     * that bit) or `platform` (the org's backend through its platform key, which may lift only its own).
+     */
+    partnerBitBy: z.enum(['member', 'platform']).optional(),
     changes: z.array(guardedChange),
     keys: z.array(keyView),
   })

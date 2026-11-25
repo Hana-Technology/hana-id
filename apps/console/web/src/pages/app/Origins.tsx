@@ -1,4 +1,4 @@
-// An app's allowed origins: each with its state (active, or waiting with its timeline and Cancel), Remove for an owner
+// An app's allowed web addresses (origins): each with its state (active, or waiting with its timeline and Cancel), Remove for an owner
 // (immediate, a kill switch: open in a frozen org), and the add form (a fresh sign-in: `origin.add`, announced, then
 // active after the delay; at most 20 per request), shown only to an on-chain owner of the app's scope (the API refuses
 // anyone else, `not_owner`; ChainOwner.tsx says who can instead). The form flags a path or too many origins once the
@@ -30,28 +30,30 @@ export function Origins() {
     .filter(Boolean);
   const pathy = add.filter((o) => /^https?:\/\/[^/]+\/./u.test(o));
   const tooMany = add.length > MAX_PER_REQUEST;
-  const problem = !touched.seen('origins') ? undefined : tooMany ? `That is more than ${MAX_PER_REQUEST}: add them in two goes.` : pathy.length > 0 ? `An origin has no path: ${pathy[0]} would be added as its origin only.` : undefined;
+  const problem = !touched.seen('origins') ? undefined : tooMany ? `That is more than ${MAX_PER_REQUEST}: add them in two goes.` : pathy.length > 0 ? `A web address has no path: only the start of ${pathy[0]} would be added.` : undefined;
+  // D930: which of the app's waiting changes your backend asked for (its platform key), by change id.
+  const byBackend = new Set(app.changes.filter((c) => c.proposedByKind === 'platform').map((c) => c.id));
   return (
     <div className="stack">
       <Panel
-        title="Allowed origins"
+        title="Allowed web addresses"
         description={
           <>
-            The wallet loads only on pages served from one of these exact origins (scheme, host and port, no path). Removing one signs out the users who signed in there.
+            The wallet loads only on pages served from one of these exact web addresses (the start of the address, like https://app.example.com, with no path). Removing one signs out the users who signed in there.
             {app.environment === 'live' ? ' Live apps can’t use http://localhost.' : ' Test apps may add http://localhost:<port> for development.'}
           </>
         }
       >
         {app.origins.length === 0 ? (
-          <Empty title="No origins yet">
-            <p>{chain.state === 'yes' ? 'Add the origin your app runs on below.' : chain.state === 'no' ? 'An on-chain owner of the app’s scope adds the origins your app runs on.' : 'An owner adds the origins your app runs on.'} Until one is active, the wallet won’t load anywhere.</p>
+          <Empty title="No web addresses yet">
+            <p>{chain.state === 'yes' ? 'Add the web address your app runs on below.' : chain.state === 'no' ? 'An on-chain owner of the app’s scope adds the web addresses your app runs on.' : 'An owner adds the web addresses your app runs on.'} Until one is active, the wallet won’t load anywhere.</p>
           </Empty>
         ) : (
           <div className="jp-table-wrap">
           <table className="jp-table compact">
             <thead>
               <tr>
-                <th scope="col">Origin</th>
+                <th scope="col">Web address</th>
                 <th scope="col">State</th>
                 {owner && (
                   <th scope="col">
@@ -65,6 +67,11 @@ export function Origins() {
                 <tr key={o.origin}>
                   <td>
                     <OriginText {...o} />
+                    {o.changeId !== undefined && byBackend.has(o.changeId) && (
+                      <div>
+                        <Badge tone="info">Asked for by your backend</Badge>
+                      </div>
+                    )}
                   </td>
                   <td>
                     {o.activeFrom === null ? (
@@ -105,16 +112,16 @@ export function Origins() {
           </div>
         )}
         <WriteNote error={w.error} />
-        <PendingChanges ctl={ctl} kinds={['origin_add']} title="Origins waiting to take effect" />
+        <PendingChanges ctl={ctl} kinds={['origin_add']} title="Web addresses waiting to take effect" />
       </Panel>
 
-      <Panel title="Add origins" description="A new origin is announced by email to your organisation’s security contacts and becomes active after the security delay (24 hours on production deployments). Any owner can cancel it until then.">
+      <Panel title="Add web addresses" description="A new web address is announced by email to your organisation’s security contacts and becomes active after the security delay (24 hours on production deployments). Any owner can cancel it until then.">
         {!owner ? (
-          <Why>Only owners can add or remove origins.</Why>
+          <Why>Only owners can add or remove web addresses.</Why>
         ) : frozen ? (
-          <Why>Adding origins is paused while Journear has frozen the organisation. Removing one still works.</Why>
+          <Why>Adding web addresses is paused while Journear has frozen the organisation. Removing one still works.</Why>
         ) : chain.state !== 'yes' ? (
-          <ChainOwnerGate chain={chain} org={org} scopeId={app.scopeId} what="Adding origins" />
+          <ChainOwnerGate chain={chain} org={org} scopeId={app.scopeId} what="Adding web addresses" />
         ) : (
           <form
             className="form"
@@ -125,7 +132,7 @@ export function Origins() {
             }}
           >
             <Field
-              label="Origins to add"
+              label="Web addresses to add"
               error={problem}
               hint={
                 <>

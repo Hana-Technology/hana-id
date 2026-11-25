@@ -17,7 +17,7 @@
 // (here against the registrant's address, and in the API against the one it stored), and an owner since before the key
 // was registered (here only: the API doesn't hold roles). These person checks run when the action is built and again
 // in the callback, so a change of role in between is caught.
-import { type Actor, type PlatformKeyView, personEmailKey, platformKeyByLinkInput } from '@hana-id/console-core';
+import { type Actor, PLATFORM_CALLS_PAGE, type PlatformKeyView, appIdInput, personEmailKey, platformKeyByLinkInput } from '@hana-id/console-core';
 import { z } from '@hana-id/env/zod';
 import { type Writer, auditInsert, entry } from './audit.ts';
 import { type OrgCaller, actorOf } from './actions.ts';
@@ -143,14 +143,45 @@ export async function listRoute(env: Env, info: RequestInfo, c: OrgCaller): Prom
   return json(200, { keys: keys.keys, platform: { enabled: keys.platform.enabled, frozen: keys.platform.frozen }, scopes, people, role: c.role, now: Date.now() });
 }
 
+/**
+ * `GET /api/orgs/:org/platform-activity?app=&before=` (any member, D930): one page of the org's platform calls, newest
+ * first, with the labels of the org's keys and the names of its apps for the screen. Reads only.
+ */
+export async function activityRoute(env: Env, info: RequestInfo, c: OrgCaller, url: URL): Promise<Response> {
+  const app = url.searchParams.get('app');
+  const before = url.searchParams.get('before');
+  if (app !== null && !appIdInput.safeParse(app).success) return errorResponse('bad_request', 'Bad app');
+  if (before !== null && !/^[1-9]\d{0,15}$/u.test(before)) return errorResponse('bad_request', 'Bad cursor');
+  const ctx = ctxOf(c, info);
+  const [calls, keys, apps] = await Promise.all([
+    env.API.platformCalls({ ...ctx, orgId: c.orgId, limit: PLATFORM_CALLS_PAGE, ...(app !== null ? { appId: app } : {}), ...(before !== null ? { before: Number(before) } : {}) }),
+    env.API.listPlatformKeys({ ...ctx, orgId: c.orgId }),
+    env.API.listApps({ ...ctx, orgId: c.orgId }),
+  ]);
+  if (!calls.ok) return errorResponse(calls.code);
+  const keyLabels = keys.ok ? Object.fromEntries(keys.keys.map((k) => [k.id, k.label])) : {};
+  // Every app of the org that the platform created, for the filter; names of any app a call names.
+  const appList = apps.ok ? apps.apps.filter((a) => a.createdByKind === 'platform').map((a) => ({ id: a.id, name: a.name })) : [];
+  const appNames = apps.ok ? Object.fromEntries(apps.apps.map((a) => [a.id, a.name])) : {};
+  return json(200, { calls: calls.calls, ...(calls.next !== undefined ? { next: calls.next } : {}), keyLabels, apps: appList, appNames, platform: keys.ok ? { enabled: keys.platform.enabled } : null });
+}
+
 /** `GET /api/orgs/:org/platform-keys/:id`: the key, the people it names, and this member's abilities. Reads only. */
 export async function keyRoute(env: Env, info: RequestInfo, c: OrgCaller, keyId: string): Promise<Response> {
   const r = await env.API.getPlatformKey({ ...ctxOf(c, info), orgId: c.orgId, keyId });
   if (!r.ok) return errorResponse(r.code);
   const now = Date.now();
   const people = await peopleOf(env, c.orgId, [r.key.proposedBy, r.key.acceptedBy, r.key.confirmedBy]);
-  const [accept, confirm] = await Promise.all([abilityFor(env, c, r.key, 'accept', now), abilityFor(env, c, r.key, 'confirm', now)]);
-  return json(200, { key: r.key, people, role: c.role, accept, confirm, now });
+  const [accept, confirm, owners] = await Promise.all([abilityFor(env, c, r.key, 'accept', now), abilityFor(env, c, r.key, 'confirm', now), ownerCount(env, c.orgId, now)]);
+  return json(200, { key: r.key, people, role: c.role, accept, confirm, owners, now });
+}
+
+/** How many owners the org has now (D930: the page says when only one, so a real-money key always waits). */
+async function ownerCount(env: Env, orgId: string, now: number): Promise<number> {
+  const r = await env.CONSOLE_DB.prepare(`SELECT COUNT(*) AS n FROM members m JOIN console_users u ON u.id = m.user_id WHERE m.org_id = ? AND u.disabled_at IS NULL AND ${ownerNow('m', now)}`)
+    .bind(orgId)
+    .first<{ n: number }>();
+  return r?.n ?? 0;
 }
 
 /** `GET /api/platform-keys/:id/org`: which of the member's organisations the key is in (for the email's Confirm link). */

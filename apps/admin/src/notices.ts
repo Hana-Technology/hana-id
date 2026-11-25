@@ -4,6 +4,8 @@
 //
 //   change_pending  AdminRpc.pendingNotices → the security alias and every security contact → AdminRpc.ackNotice
 //                   (the change's clock starts at the ack). Token: HMAC(CANCEL_LINK_KEY, "hana-id/cancel-link/v1" ‖ id).
+//                   A platform request's web addresses (D930, L14) go as one email listing each with its own link, then
+//                   one ack each; the email states the wait the ack gives (`platform.waitMs`) and no waiver.
 //   member_invite   StaffRpc.pendingMemberNotices (kind invite) → every owner, the contacts and the alias, then the
 //                   invitee's link → StaffRpc.ackMemberNotice (the link works from the ack). Token: INVITE_LINK_KEY.
 //   owner_grant     (kind owner_grant) → every owner, the contacts and the alias, with the cancel link → ack (a
@@ -28,7 +30,7 @@ import type { MemberNotice } from '@hana-id/console-core';
 import type { ChangeNotice, Env } from './env.ts';
 import { mailLabel } from './env.ts';
 import { changePending, inviteLink, inviteNotice, labelsProposed, ownerGrantNotice, type MailContext } from './email/messages.ts';
-import { type KeyPeople, platformKeyConfirmed, platformKeyExpiring, platformKeyRegistered, platformKeyStopped } from './email/platform-messages.ts';
+import { type KeyPeople, platformKeyConfirmed, platformKeyExpiring, platformKeyRegistered, platformKeyStopped, platformOriginsProposed } from './email/platform-messages.ts';
 import type { MemberView, PlatformKeyNotice } from '@hana-id/console-core';
 import { consoleLink } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
@@ -78,7 +80,26 @@ export async function runChangeNotices(rawEnv: Env, sender: EmailSender, budget:
     return out;
   }
   const delayMs = delay(env.APP_CHANGE_DELAY_MS, 86_400_000);
-  for (const n of page.notices as ChangeNotice[]) {
+  const notices = page.notices as ChangeNotice[];
+  for (let i = 0; i < notices.length; ) {
+    const n = notices[i]!;
+    if (n.platform) {
+      // D930 (L14): one email for every web address one platform request asked for on one app (the page lists them
+      // together). A request cut off by the end of a full page waits whole for the next run, unless it is the page.
+      const group = platformGroup(notices, i);
+      if (i + group.length === notices.length && notices.length >= NOTICE_PAGE && i > 0) {
+        out.skipped += group.length;
+        break;
+      }
+      i += group.length;
+      const r = await sendPlatformGroup(env, sender, budget, key, group);
+      out.acked += r.acked;
+      out.failed += r.failed;
+      out.skipped += r.skipped;
+      if (r.stop) break;
+      continue;
+    }
+    i++;
     const id = n.change.id;
     const token = await linkToken('cancelLink', key, id);
     const to = recipients(env.SECURITY_ALIAS, n.contacts);
@@ -105,6 +126,69 @@ export async function runChangeNotices(rawEnv: Env, sender: EmailSender, budget:
     } else {
       out.failed++;
       log({ event: 'notice', step: 'change_pending', target: id, orgId: n.app.orgId, outcome: 'rejected', code: ack.code }, 'warn');
+    }
+  }
+  return out;
+}
+
+/** The platform proposals from `i` on that one request made on one app (consecutive on the page: it orders by request). */
+export function platformGroup(notices: readonly ChangeNotice[], i: number): ChangeNotice[] {
+  const first = notices[i]!;
+  const group = [first];
+  for (let j = i + 1; j < notices.length; j++) {
+    const n = notices[j]!;
+    if (!n.platform || n.platform.requestId !== first.platform!.requestId || n.app.id !== first.app.id) break;
+    group.push(n);
+  }
+  return group;
+}
+
+/**
+ * One platform request's email (D930): every recipient once, then each change's ack with its own link's hash. Fails
+ * closed as the single notice does: no ack unless every send was accepted; an ack refused leaves that change for the
+ * next run (whose email then lists only what is still unannounced). `stop`: the budget ran out, the run ends here.
+ */
+async function sendPlatformGroup(env: Env, sender: EmailSender, budget: Budget, key: Uint8Array, group: ChangeNotice[]): Promise<StepResult & { stop: boolean }> {
+  const out = { acked: 0, failed: 0, skipped: 0, stop: false };
+  const first = group[0]!;
+  const p = first.platform!;
+  const target = p.requestId;
+  const to = recipients(env.SECURITY_ALIAS, first.contacts);
+  if (!budget.fits(to.length + group.length, group.length)) return { ...out, skipped: group.length, stop: true };
+  const tokens = await Promise.all(group.map((n) => linkToken('cancelLink', key, n.change.id)));
+  const lines = group.map((n, k) => ({
+    changeId: n.change.id,
+    origin: n.change.origin ?? '',
+    display: n.change.display,
+    idn: n.change.idn,
+    cancelUrl: consoleLink(env.CONSOLE_ORIGIN, `/cancel/${encodeURIComponent(n.change.id)}#t=${b64url(tokens[k]!)}`),
+  }));
+  let message;
+  try {
+    message = platformOriginsProposed(
+      mailContext(env),
+      { app: first.app, keyId: p.keyId, keyLabel: p.keyLabel, proposedAt: first.change.proposedAt, requestCountry: first.change.requestCountry, waitMs: Math.max(...group.map((n) => n.platform!.waitMs)) },
+      lines,
+      { now: Date.now() },
+    );
+  } catch (err) {
+    log({ event: 'notice', step: 'change_pending', target, orgId: first.app.orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
+    return { ...out, failed: group.length };
+  }
+  const sent = await sendToAll(sender, budget, to, message, `platform_origins:${target}:${group.map((n) => n.change.id).join(',')}`);
+  if (sent.outOfBudget) return { ...out, skipped: group.length, stop: true };
+  if (!sent.allAccepted) {
+    log({ event: 'notice', step: 'change_pending', target, orgId: first.app.orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed, count: group.length }, 'warn');
+    return { ...out, failed: group.length };
+  }
+  for (const [k, n] of group.entries()) {
+    const ack = await env.API.ackNotice({ ...systemCtx(), changeId: n.change.id, cancelTokenHash: b64url(await linkTokenHash(tokens[k]!)) }).catch(() => null);
+    if (ack?.ok) {
+      out.acked++;
+      log({ event: 'notice', step: 'change_pending', target: n.change.id, orgId: n.app.orgId, outcome: 'ok', sent: sent.sent });
+    } else {
+      out.failed++;
+      log({ event: 'notice', step: 'change_pending', target: n.change.id, orgId: n.app.orgId, outcome: 'rejected', code: ack?.code ?? 'upstream_unavailable' }, 'warn');
     }
   }
   return out;

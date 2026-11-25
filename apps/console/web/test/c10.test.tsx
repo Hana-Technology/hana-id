@@ -83,10 +83,10 @@ describe('a fresh sign-in, end to end in the SPA', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/actions/act_1'));
     expect(bodyOf('/api/orgs/org_a/actions')).toEqual({ kind: 'origin.add', params: { appId: 'app_1', add: ['https://bücher.example'] }, returnTo: { page: 'origins', appId: 'app_1' } });
     expect(headerOf('/api/orgs/org_a/actions', 'x-hana-console')).toBe('1');
-    expect(await screen.findByText('Add origins')).toBeTruthy();
+    expect(await screen.findByText('Add web addresses')).toBeTruthy();
     expect(screen.getByText('IDN')).toBeTruthy();
     expect(screen.getByText('https://xn--bcher-kva.example')).toBeTruthy();
-    expect(screen.getByText(/internationalised \(punycode\) name/u)).toBeTruthy();
+    expect(screen.getByText(/international letters \(an internationalised, punycode name\)/u)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm with Google' }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith('https://console-auth.test/start?f=xyz'));
   });
@@ -277,14 +277,14 @@ describe('changes that need an on-chain owner of the scope (Origins, Signing)', 
     signedIn('owner', 'active', false);
     routes['/api/orgs/org_a/apps/app_1'] = { body: { app: { ...APP, settings: { ...APP.settings, policy: { policyId: 'p'.repeat(64), label: 'Swaps', json: {} } } } } };
     await sections('/origins');
-    const why = await screen.findByText(/Adding origins needs an on-chain owner of this app’s scope/u);
+    const why = await screen.findByText(/Adding web addresses needs an on-chain owner of this app’s scope/u);
     expect(why.textContent).toContain('your Google account isn’t one (its on-chain owner is boss@partner.example)');
     expect(why.textContent).toContain('An on-chain owner can add you on the scope page');
     expect(screen.getByRole('link', { name: 'scope page' }).getAttribute('href')).toBe('/orgs/org_a/scopes/s1');
     expect(screen.queryByPlaceholderText('https://app.example.com')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Review and confirm with Google' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
-    expect(screen.getByText(/An on-chain owner of the app’s scope adds|Allowed origins/u)).toBeTruthy();
+    expect(screen.getByText(/An on-chain owner of the app’s scope adds|Allowed web addresses/u)).toBeTruthy();
     cleanup();
     await sections('/signing');
     expect(await screen.findByText(/Setting a policy needs an on-chain owner/u)).toBeTruthy();
@@ -300,7 +300,7 @@ describe('changes that need an on-chain owner of the scope (Origins, Signing)', 
     signedIn('owner', 'active', false);
     routes['/api/orgs/org_a/scopes/s1'] = { body: scopeAnswer(false, [{ kind: 'near', accountId: 'hana-smoke.testnet' }, { kind: 'other_google' }]) };
     await sections('/origins');
-    const why = await screen.findByText(/Adding origins needs an on-chain owner/u);
+    const why = await screen.findByText(/Adding web addresses needs an on-chain owner/u);
     expect(why.textContent).toContain('its on-chain owners are the NEAR account hana-smoke.testnet, a Google account outside your organisation');
     expect(why.textContent).toContain('ask Journear to add you');
   });
@@ -308,7 +308,7 @@ describe('changes that need an on-chain owner of the scope (Origins, Signing)', 
   it('a viewer reads no scope and gets the viewer line; NEAR down shows the error with a retry, never the form', async () => {
     signedIn('viewer');
     await sections('/origins');
-    expect(screen.getByText('Only owners can add or remove origins.')).toBeTruthy();
+    expect(screen.getByText('Only owners can add or remove web addresses.')).toBeTruthy();
     cleanup();
     await sections('/signing');
     expect(screen.getByText('Only owners can set or remove the policy.')).toBeTruthy();

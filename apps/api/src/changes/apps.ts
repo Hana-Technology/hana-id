@@ -47,16 +47,24 @@ export interface OriginRow {
   change_id: string | null;
 }
 
+/**
+ * D930: who holds the partner bit (migration 0033) and, for an app the platform created, the platform key that created
+ * it: the creator of its first publishable key, which the create's own batch writes with the key's id (an app's keys are
+ * never deleted while it lives). Read in the app's own row, so no extra read.
+ */
+const DETAIL_EXTRA = raw(`a.partner_bit_by AS partner_bit_by,
+  CASE WHEN a.created_by_kind = 'platform' THEN (SELECT k.created_by FROM app_keys k WHERE k.app_id = a.id ORDER BY k.created_at, k.id LIMIT 1) END AS first_key_by`);
+
 /** An app's detail: one batch of four indexed reads (the app, its origins, its open changes, its keys). */
 export async function getApp(db: HotDb, appId: string, orgId: string | null, now: number, filesOrigin?: string, opts: { mainnetDemo?: boolean } = {}): Promise<AppDetail> {
   const [app, origins, changes, keys] = await db.batch([
-    q`SELECT ${raw(APP_COLUMNS)}, ${COUNTS(now)} FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE a.id = ${appId} AND ${orgFilter(orgId)}`,
+    q`SELECT ${raw(APP_COLUMNS)}, ${COUNTS(now)}, ${DETAIL_EXTRA} FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE a.id = ${appId} AND ${orgFilter(orgId)}`,
     q`SELECT o.origin, o.active_from, o.change_id FROM app_origins o JOIN apps a ON a.id = o.app_id WHERE o.app_id = ${appId} AND ${orgFilter(orgId)} ORDER BY o.origin`,
     q`SELECT ${raw(CHANGE_COLUMNS.split(', ').map((c) => `g.${c}`).join(', '))} FROM guarded_changes g JOIN apps a ON a.id = g.app_id
        WHERE g.app_id = ${appId} AND ${orgFilter(orgId)} AND g.status IN ('pending', 'active') ORDER BY g.proposed_at, g.id`,
     q`SELECT ${raw(KEY_COLUMNS.split(', ').map((c) => `k.${c}`).join(', '))} FROM app_keys k JOIN apps a ON a.id = k.app_id WHERE k.app_id = ${appId} AND ${orgFilter(orgId)} ORDER BY k.created_at, k.id`,
   ]);
-  const row = app?.results[0] as (AppRow & { active_origins: number; pending_changes: number }) | undefined;
+  const row = app?.results[0] as (AppRow & { active_origins: number; pending_changes: number } & DetailExtra) | undefined;
   if (!row) return refuse('not_found', 'No such app');
   const detail = await detailView(row, origins!.results as unknown as OriginRow[], changes!.results as unknown as ChangeRow[], keys!.results as unknown as KeyRow[], now, filesOrigin);
   // Staff only (AdminRpc): a partner's view never carries the mainnet demo switch (and keeps its read budget).
@@ -75,8 +83,14 @@ export async function storedMainnetDemo(db: HotDb, appId: string): Promise<boole
   }
 }
 
+/** The detail's extra columns (DETAIL_EXTRA); absent when the row came from a plan read. */
+export interface DetailExtra {
+  partner_bit_by?: 'member' | 'platform' | null;
+  first_key_by?: string | null;
+}
+
 export async function detailView(
-  row: AppRow & { active_origins: number; pending_changes: number },
+  row: AppRow & { active_origins: number; pending_changes: number } & DetailExtra,
   origins: OriginRow[],
   changes: ChangeRow[],
   keys: KeyRow[],
@@ -108,6 +122,10 @@ export async function detailView(
     // D919: the User ID the app gives its users ('app': its own; anything unexpected is shown as its own too, the
     // stricter reading, as the token mint refuses it).
     userIds: row.user_ids === 'scope' ? 'scope' : 'app',
+    // D930: the platform key that created it (a platform-created app), and who holds the partner bit while it is set
+    // (a bit set before migration 0033, with no holder recorded, reads as a member's, as the writers read it).
+    ...(row.created_by_kind === 'platform' && typeof row.first_key_by === 'string' && row.first_key_by.startsWith('pkc_') ? { createdByKey: row.first_key_by } : {}),
+    ...((row.suspended_by & 4) !== 0 && row.partner_bit_by !== undefined ? { partnerBitBy: row.partner_bit_by === 'platform' ? ('platform' as const) : ('member' as const) } : {}),
     // Each change's status as it is in force now (changeView), so a page never offers Cancel on a change in force.
     changes: latestPolicyOnly(changes.map((c) => changeView(c, now))),
     keys: keys.map(keyView),

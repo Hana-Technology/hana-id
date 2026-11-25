@@ -842,3 +842,32 @@ test('D897: a wallet’s head at 1280 px: the apps start under their label; the 
   expect(await sr.evaluate((el) => { const r = el.getBoundingClientRect(); return r.width <= 1 && r.height <= 1; })).toBe(true);
   await expect(page.locator('#home-coverage .jp-badge')).toHaveText('Safe if the apps close');
 });
+
+// ---- D922: a wallet used on more apps than one answer carries ----
+
+test('a wallet used on more apps than the list carries: the row counts them, the page shows them all', async ({ page, context, browserName }) => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => app(`app_net${String(i + 1).padStart(3, '0')}`, `Network partner ${i + 1}`));
+  const requests: string[] = [];
+  await routeApps(context, (url) => {
+    requests.push(url.search);
+    // The list carries 10 of the wallet's 24 apps and the count; the wallet alone ("Show all apps") every one.
+    if (url.searchParams.get('scopeId') === 's1') return { status: 200, body: { scopes: [{ ...LIST.scopes[0], apps: many(24), appsTotal: 24 }], nextCursor: null } };
+    return { status: 200, body: { scopes: [{ ...LIST.scopes[0], apps: many(10), appsTotal: 24 }, LIST.scopes[2]], nextCursor: null } };
+  });
+  await page.goto(`${AUTH_ORIGIN}/home`);
+  await signIn(page);
+  const row = page.locator('.home-row[data-scope="s1"]');
+  await expect(row.locator('.home-row-name')).toHaveCount(10);
+  await expect(row.locator('.home-row-more')).toHaveText('and 14 more apps');
+  await shots(page, '20-more-apps-row', browserName);
+  await row.click();
+  await expect(page.locator('.home-app-all .home-app')).toHaveCount(10);
+  await expect(page.locator('#home-more-apps')).toHaveText('This wallet is also used on 14 more apps.');
+  await shots(page, '21-more-apps-page', browserName);
+  await page.getByRole('button', { name: 'Show all apps' }).click();
+  await expect(page.locator('.home-app-all .home-app')).toHaveCount(24);
+  await expect(page.locator('#home-more-apps')).toHaveCount(0);
+  await expect(page.locator('.home-app-all .home-app').nth(10)).toBeFocused();
+  expect(requests.at(-1)).toBe('?scopeId=s1');
+  await shots(page, '22-more-apps-all', browserName);
+});

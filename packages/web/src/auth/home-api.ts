@@ -86,6 +86,11 @@ export interface HomeScope {
   /** The user's addresses on record here; empty when there are none. */
   addresses: HomeAddress[];
   apps: HomeApp[];
+  /**
+   * How many apps use this listing in all (D922): more than `apps.length` when the answer left some out (a list answer
+   * carries 10 a scope; one scope's answer up to 100). An API from before it: `apps.length`.
+   */
+  appsTotal: number;
 }
 
 export interface HomeAppsPage {
@@ -99,6 +104,10 @@ export type HomeAppsQuery = { kind: 'first' } | { kind: 'cursor'; cursor: string
 /** The bounds the API promises (apps a listing, origins an app), enforced again here so a bad answer can't flood the page. */
 export const HOME_MAX_SCOPES = 64;
 export const HOME_MAX_APPS = 10;
+/** One scope's answer (a `scopeId` or `appId` read: "Show all apps", D922) carries up to this many apps. */
+export const HOME_MAX_SCOPE_APPS = 100;
+/** The most a count can say (a bad answer can't make the page claim more). */
+const HOME_APPS_TOTAL_MAX = 1_000_000;
 export const HOME_MAX_ORIGINS = 5;
 // An app's name as Home shows it: one rule with the sign-in and approval windows' list of the apps that share a wallet.
 import { homeAppName } from './app-name.ts';
@@ -146,7 +155,9 @@ function parseScope(v: unknown): HomeScope | null {
   const apps = v.apps
     .map(parseApp)
     .filter((a): a is HomeApp => a !== null)
-    .slice(0, HOME_MAX_APPS);
+    .slice(0, HOME_MAX_SCOPE_APPS);
+  // The count, never less than what is shown; anything else (or none, from an older API) is what is shown.
+  const total = typeof v.appsTotal === 'number' && Number.isSafeInteger(v.appsTotal) && v.appsTotal >= apps.length && v.appsTotal <= HOME_APPS_TOTAL_MAX ? v.appsTotal : apps.length;
   return {
     scopeId: v.scopeId,
     mine: v.mine,
@@ -156,6 +167,7 @@ function parseScope(v: unknown): HomeScope | null {
     supportId: v.mine && typeof v.supportId === 'string' && SUPPORT_ID_RE.test(v.supportId) ? v.supportId : null,
     addresses: v.mine ? parseAddresses(v.addresses) : [],
     apps,
+    appsTotal: total,
   };
 }
 

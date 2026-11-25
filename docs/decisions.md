@@ -21992,3 +21992,40 @@ PR 135's review" list, D910, D914); D912 is recorded on its own branch.
     matches its sha256, paging over 120 versions, the refusals (mainnet, `--out` without `--save`, another env's or
     database's baseline), and that no partner word is printed outside the changed lines. Also run once by hand against
     a local D1 with migrations 0001 to 0027 (a valid and a failing version: the verdicts and exit 1 as above).
+
+- **4. Passport Home's 10 apps a wallet.**
+  - **What the limit is:** `HOME_APPS_PER_SCOPE = 10` in `apps/api/src/home/apps.ts`, a `LIMIT 10` on each scope's
+    apps inside `GET /v1/home/apps`' one SQL statement (live apps first, then deleted, oldest first), and again in the
+    page's parser (`HOME_MAX_APPS = 10`, `packages/web/src/auth/home-api.ts`), which every Home view read from. It is
+    per scope, so per wallet: on a shared scope every partner app shares one wallet. At the 11th app nothing errors:
+    the newest apps were dropped from the row, the wallet's page, the Security tab's name sharing and the sign-ins
+    tab, with no word that any were missing. It is a size and cost bound (one answer holds up to 45 scopes, each app
+    with up to 5 origins), not an abuse rule: D1 bills rows read and the free plan's budget (D417, D500) is per
+    request. The sign-in and approval windows' D912 line (5 names, "and N more") and `GET /v1/home/devices` (100 apps a
+    scope) have their own caps and were not the problem.
+  - **Built (no migration, no new route):** every scope in the answer now carries `appsTotal`, a `COUNT(*)` over the
+    scope's apps by the same rule as the apps listed (a stranger's count is of launched apps only, so it reveals no
+    unlaunched app); a list page or search still carries 10 apps a scope, and a `scopeId` or `appId` answer (one
+    scope) up to `HOME_APPS_ONE_SCOPE = 100`. Home's row says "and 14 more apps" after the names (and to a screen
+    reader); the wallet's page says "This wallet is also used on 14 more apps." ("also shared by" on an app where the
+    person has no wallet) under the apps' box, with "Show all apps", which reads the wallet alone once and shows every
+    app, focus on the first new one; past 100 it says "Passport Home can show up to 100 apps here." The Security
+    tab's name sharing still reads one app at a time for the first 10 and now says "This wallet is used on N more
+    apps. Name sharing is shown here for the first 10." The protection is kept: the list answer's size is as before,
+    plus one indexed count a scope; one scope's answer is bounded at 100 apps × 5 origins.
+  - **To confirm (the Tech Lead):** (a) 100 apps in one scope's answer (the devices route's figure), and the button
+    rather than reading the whole wallet each time its page opens; (b) the words of the row, the page line, the button
+    and the 100 cap line; (c) the order is still the scope's (oldest first): showing the apps a person actually used
+    first, which `partner-platform-spec.md` asks for a network, needs a per-person record of apps used, a migration,
+    not built; (d) the name sharing list stays at 10 reads (a batch read would be a new endpoint); (e) the platform
+    spec's cap of 10 undeleted apps an org creates (its line 490, "Passport Home lists 10 apps per scope today") was
+    justified by this limit: Home no longer hides the 11th, so whether that cap stays is the Tech Lead's call.
+  - **Tests:** API `home-apps.test.ts` (10 apps and `appsTotal` 12 in the list, all 12 in a `scopeId` and an `appId`
+    answer, 100 of 103 with the count, a stranger's count without the unlaunched app, the scope's own user's with
+    it); web `home-page.test.ts` (the row's words and label, the page line, "Show all apps" sending one `?scopeId=`
+    read and showing all, focus, the fresher row on Back, the 100 cap, an older API without the count, a bad count
+    ignored) and `home-profile.test.ts` (10 reads and the line); e2e `home.spec.ts` (the whole path over a routed list,
+    with screenshots).
+- Address impact: **none.** Display and read paths only (the approval window's details, an admin page's CSS, a
+  read-only CLI command, Home's list and its answer's count); nothing touches the contract, a key, a path or a
+  derivation.

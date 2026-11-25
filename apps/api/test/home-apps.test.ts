@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { purgeDirectory } from '../src/changes/retention.ts';
 import { syncAfterLogin } from '../src/directory/sync.ts';
 import { HotDb } from '../src/changes/db.ts';
-import { HOME_APPS_ENDPOINT, HOME_APPS_PER_IP_MINUTE, HOME_APPS_PER_KEY_MINUTE, HOME_LIST_PAGE, HOME_MINE_MAX, HOME_SCOPE_READS, HOME_SEARCH_PER_KEY_MINUTE } from '../src/home/apps.ts';
+import { HOME_APPS_ENDPOINT, HOME_APPS_ONE_SCOPE, HOME_APPS_PER_IP_MINUTE, HOME_APPS_PER_SCOPE, HOME_APPS_PER_KEY_MINUTE, HOME_LIST_PAGE, HOME_MINE_MAX, HOME_SCOPE_READS, HOME_SEARCH_PER_KEY_MINUTE } from '../src/home/apps.ts';
 import { homeCoverage } from '../src/home/coverage.ts';
 import type { ConfigView, ScopeView } from '../src/views.ts';
 import { clearViewCaches } from '../src/views.ts';
@@ -60,6 +60,7 @@ interface ScopeEntry {
   supportId?: string;
   addresses?: { chain: string; address: string }[];
   apps: AppRow[];
+  appsTotal: number;
 }
 interface Answer {
   scopes: ScopeEntry[];
@@ -528,6 +529,8 @@ describe('an unlaunched app (no first login, D462)', () => {
     const unlaunched = await seedApp({ scope: launched.scope, firstLogin: null, origins: ['https://staging.partner.test'] });
     const seen = await one(await newIdentity(), launched.scope);
     expect(seen!.apps.map((a) => a.appId)).toEqual([launched.id]);
+    // The count follows the same rule: a stranger isn't told an unlaunched app exists.
+    expect(seen!.appsTotal).toBe(1);
     expect(JSON.stringify(seen)).not.toContain('staging.partner.test');
     expect((await list(await newIdentity(), `?appId=${unlaunched.id}`)).scopes).toEqual([]);
     expect((await list(await newIdentity(), `?q=${encodeURIComponent(await nameOf(unlaunched.id))}`)).scopes).toEqual([]);
@@ -535,6 +538,7 @@ describe('an unlaunched app (no first login, D462)', () => {
     const sub = `own-${uid()}`;
     await seedUser(launched.scope, { sub });
     expect((await one(await newIdentity({ sub }), launched.scope))!.apps.map((a) => a.appId).sort()).toEqual([launched.id, unlaunched.id].sort());
+    expect((await one(await newIdentity({ sub }), launched.scope))!.appsTotal).toBe(2);
   });
 });
 
@@ -616,13 +620,32 @@ describe('paging and the free-plan bounds (D417)', () => {
     expect(await one(await newIdentity(), app.scope)).toMatchObject({ coverage: 'none' });
   });
 
-  it('an app or origin cap holds: at most 10 apps a scope, 5 origins an app', async () => {
+  it('an app or origin cap holds: at most 10 apps a scope in a list, 100 in one scope’s answer, 5 origins an app; every scope says how many apps it has (D922)', async () => {
+    expect([HOME_APPS_PER_SCOPE, HOME_APPS_ONE_SCOPE]).toEqual([10, 100]);
     const scope = `s${uid()}`;
     const origins = Array.from({ length: 8 }, (_, i) => `https://o${i}.example.com`);
-    for (let i = 0; i < 12; i++) await seedApp({ scope, origins });
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) ids.push((await seedApp({ scope, origins })).id);
+    // The list: the first 10, and the count, so Home says "and 2 more" instead of hiding them.
+    const listed = (await walk()).find((s) => s.scopeId === scope);
+    expect(listed?.apps).toHaveLength(10);
+    expect(listed?.appsTotal).toBe(12);
+    // One scope's answer (Home's "Show all apps"): every one of them, the list's 10 first.
     const entry = await one(await newIdentity(), scope);
-    expect(entry?.apps).toHaveLength(10);
+    expect(entry?.apps.map((a) => a.appId).sort()).toEqual([...ids].sort());
+    expect(entry?.apps.slice(0, 10).map((a) => a.appId)).toEqual(listed?.apps.map((a) => a.appId));
+    expect(entry?.appsTotal).toBe(12);
     expect(entry?.apps[0]?.origins).toHaveLength(5);
+    // An app id's answer is the same scope's.
+    expect((await list(await newIdentity(), `?appId=${ids[11]}`)).scopes[0]?.apps).toHaveLength(12);
+  });
+
+  it('one scope’s answer stops at 100 apps and still counts them all', async () => {
+    const scope = `s${uid()}`;
+    for (let i = 0; i < HOME_APPS_ONE_SCOPE + 3; i++) await seedApp({ scope, origins: [] });
+    const entry = await one(await newIdentity(), scope);
+    expect(entry?.apps).toHaveLength(HOME_APPS_ONE_SCOPE);
+    expect(entry?.appsTotal).toBe(HOME_APPS_ONE_SCOPE + 3);
   });
 });
 

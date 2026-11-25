@@ -70,7 +70,7 @@ function views(chain: Chain, scopeId: string, who: { provider: string; sub: stri
   return { identity, account };
 }
 
-const homeScope = (scopeId = S): HomeScope => ({ scopeId, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: [], logoUrl: null }] });
+const homeScope = (scopeId = S): HomeScope => ({ scopeId, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: [], logoUrl: null }], appsTotal: 1 });
 
 type Which = 'primary' | 'second';
 interface Harness {
@@ -735,7 +735,7 @@ describe('D897: the line of “Ways to sign in”', () => {
 describe('D898 option A: “Open {App} to cancel it” on a waiting sign-in', () => {
   type App = HomeScope['apps'][number];
   const app = (name: string, origins: string[], status: App['status'] = 'active'): App => ({ appId: `app_${name.toLowerCase().replace(/[^a-z]/gu, '')}1`, name, status, environment: 'live', origins, logoUrl: null });
-  const scopeWith = (apps: App[]): HomeScope => ({ scopeId: S, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], apps });
+  const scopeWith = (apps: App[]): HomeScope => ({ scopeId: S, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], apps, appsTotal: apps.length });
   async function showWith(apps: App[]) {
     const h = start(googleWithEmail(T0 + DAY, false), asGoogle);
     document.getElementById('app')!.replaceChildren(h.section.appView(scopeWith(apps)));

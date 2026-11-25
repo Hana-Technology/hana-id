@@ -733,6 +733,71 @@ describe('your apps', () => {
   });
 });
 
+describe('a wallet used on more apps than one answer carries (D922)', () => {
+  const many = (n: number, prefix = 'Partner') => Array.from({ length: n }, (_, i) => app(`${prefix} ${String(i + 1).padStart(3, '0')}`));
+
+  it('the row says how many more; the wallet’s page says so and “Show all apps” reads the wallet alone, then shows every app', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: many(10), appsTotal: 25 })], nextCursor: null });
+    await h.signIn();
+    const row = document.querySelector('.home-row[data-scope="s1"]') as HTMLElement;
+    expect(row.querySelectorAll('.home-row-name')).toHaveLength(10);
+    expect(row.querySelector('.home-row-more')?.textContent).toBe(' and 15 more apps');
+    expect(row.getAttribute('aria-label')).toMatch(/Partner 010, and 15 more apps, Safe if the apps close$/u);
+    row.click();
+    expect(document.querySelectorAll('.home-app-all .home-app')).toHaveLength(10);
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('This wallet is also used on 15 more apps.');
+    // Journear's words sit under the partner's box, never inside it.
+    expect(document.querySelector('.home-app-all #home-more-apps')).toBeNull();
+    h.answer = (url) => json(200, { scopes: url.searchParams.get('scopeId') === 's1' ? [mine('s1', { apps: many(25), appsTotal: 25 })] : [], nextCursor: null });
+    h.click('home-more-apps-button');
+    await h.page.idle();
+    const last = h.appCalls().at(-1) as Call;
+    expect(last.url.search).toBe('?scopeId=s1');
+    expect(document.querySelectorAll('.home-app-all .home-app')).toHaveLength(25);
+    expect(document.getElementById('home-more-apps')).toBeNull();
+    expect(document.getElementById('home-more-apps-button')).toBeNull();
+    // Focus on the first app it added.
+    expect(document.activeElement?.textContent).toContain('Partner 011');
+    // The list's row is the fresher copy too.
+    h.click('home-back');
+    expect(document.querySelector('.home-row[data-scope="s1"]')?.querySelectorAll('.home-row-name')).toHaveLength(25);
+    expect(document.querySelector('.home-row[data-scope="s1"] .home-row-more')).toBeNull();
+  });
+
+  it('an app where the user has no wallet: read by its app; past what one answer carries, the page says how many and what to do', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [scope('s3', { apps: many(10, 'Net'), appsTotal: 140 })], nextCursor: null });
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s3"]') as HTMLElement).click();
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('This wallet is also shared by 130 more apps.');
+    h.answer = () => json(200, { scopes: [scope('s3', { apps: many(100, 'Net'), appsTotal: 140 })], nextCursor: null });
+    h.click('home-more-apps-button');
+    await h.page.idle();
+    expect((h.appCalls().at(-1) as Call).url.search).toBe('?appId=app_Net001');
+    expect(document.querySelectorAll('.home-app-all .home-app')).toHaveLength(100);
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('This wallet is also shared by 40 more apps. Passport Home can show up to 100 apps here.');
+    expect(document.getElementById('home-more-apps-button')).toBeNull();
+  });
+
+  it('every app shown, or an older API without the count: no line, no button', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: many(3), appsTotal: 3 }), mine('s2', { apps: many(2) })], nextCursor: null });
+    await h.signIn();
+    expect(document.querySelectorAll('.home-row-more')).toHaveLength(0);
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(document.getElementById('home-more-apps')).toBeNull();
+    expect(document.getElementById('home-more-apps-button')).toBeNull();
+  });
+
+  it('a count below what is shown, or not a whole number, is ignored', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: many(4), appsTotal: 2 }), mine('s2', { apps: many(2), appsTotal: 2.5 }), mine('s3', { apps: many(2), appsTotal: '9' })], nextCursor: null });
+    await h.signIn();
+    expect(document.querySelectorAll('.home-row-more')).toHaveLength(0);
+  });
+});
+
 describe('partner strings are text only', () => {
   it('never builds markup, a link or an image from a name, an origin or a logo', async () => {
     const h = await ready();

@@ -40,7 +40,13 @@ export const HOME_LIST_PAGE = 15;
 export const HOME_SCOPE_READS = 16;
 /** Reads at once, so a failure stops the rest of them. */
 const HOME_READ_BATCH = 5;
+/**
+ * A scope's apps in a list answer (up to HOME_MINE_MAX + HOME_LIST_PAGE scopes), and in an answer for one scope (a
+ * `scopeId` or `appId` read, which Home sends for "Show all apps"): each answer stays bounded (at most 5 origins an
+ * app), and every scope says how many apps it has (`appsTotal`), so Home never hides one without saying so (D922).
+ */
 export const HOME_APPS_PER_SCOPE = 10;
+export const HOME_APPS_ONE_SCOPE = 100;
 export const HOME_ORIGINS_PER_APP = 5;
 /** A search term, in characters, after trimming. */
 export const HOME_SEARCH_MIN = 2;
@@ -126,20 +132,23 @@ interface ScopeRow {
   scope_id: string;
   environment: 'test' | 'live';
   apps_json: string;
+  apps_total: number;
   held_json: string;
 }
 
 /**
- * Live apps first, then deleted ones, at most HOME_APPS_PER_SCOPE; origins in force, at most HOME_ORIGINS_PER_APP each.
- * `allApps`: true for the user's own scopes (the marker may have failed to write, and the directory is per scope, so it
- * can't say which app they used); otherwise only apps with a first login.
+ * Live apps first, then deleted ones, at most `appsLimit`; origins in force, at most HOME_ORIGINS_PER_APP each; and how
+ * many apps there are in all, by the same rule (`apps_total`). `allApps`: true for the user's own scopes (the marker
+ * may have failed to write, and the directory is per scope, so it can't say which app they used); otherwise only apps
+ * with a first login.
  */
-const scopeColumns = (now: number, allApps: Q): Q =>
+const scopeColumns = (now: number, allApps: Q, appsLimit: number = HOME_APPS_PER_SCOPE): Q =>
   q`s.scope_id, s.environment,
     (SELECT json_group_array(json_object('id', a.id, 'name', a.name, 'status', a.status, 'suspended_by', a.suspended_by, 'deleted_at', a.deleted_at,
         'logo_key', a.logo_key, 'google_web_client_id', a.google_web_client_id,
         'origins', json((SELECT json_group_array(o.origin) FROM (SELECT origin FROM app_origins WHERE app_id = a.id AND active_from <= ${now} ORDER BY origin LIMIT ${HOME_ORIGINS_PER_APP}) o))))
-       FROM (SELECT x.* FROM apps x WHERE x.scope_id = s.scope_id AND (x.first_login_at IS NOT NULL OR ${allApps}) ORDER BY (x.deleted_at IS NOT NULL), x.created_at, x.id LIMIT ${HOME_APPS_PER_SCOPE}) a) AS apps_json,
+       FROM (SELECT x.* FROM apps x WHERE x.scope_id = s.scope_id AND (x.first_login_at IS NOT NULL OR ${allApps}) ORDER BY (x.deleted_at IS NOT NULL), x.created_at, x.id LIMIT ${appsLimit}) a) AS apps_json,
+    (SELECT COUNT(*) FROM apps x WHERE x.scope_id = s.scope_id AND (x.first_login_at IS NOT NULL OR ${allApps})) AS apps_total,
     (SELECT json_group_array(h.aud) FROM hana_held_clients h WHERE h.scope_id = s.scope_id AND h.provider = 'google') AS held_json`;
 
 /** Test apps only in dev envs (D98 item 8). */
@@ -151,7 +160,9 @@ const likeTerm = (term: string): string => `%${term.replace(/[\\%_]/gu, (c) => `
 /** The statement that picks this request's listed rows (D462); the quieter listing is D502's. */
 function listingQuery(query: Exclude<HomeQuery, { kind: 'first' }> | null, env: Env, now: number, mine: readonly string[]): Q {
   const isMine = mine.length > 0 ? q`s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})` : raw('0');
-  const select = q`SELECT ${scopeColumns(now, isMine)} FROM scopes s WHERE ${environmentFilter(env)}`;
+  // One scope's answer carries up to HOME_APPS_ONE_SCOPE of its apps; a list's, HOME_APPS_PER_SCOPE each.
+  const one = query?.kind === 'scope' || query?.kind === 'app';
+  const select = q`SELECT ${scopeColumns(now, isMine, one ? HOME_APPS_ONE_SCOPE : HOME_APPS_PER_SCOPE)} FROM scopes s WHERE ${environmentFilter(env)}`;
   // A scope a stranger may see: one app has had a login (D462).
   const launched = raw('EXISTS (SELECT 1 FROM apps x WHERE x.scope_id = s.scope_id AND x.first_login_at IS NOT NULL)');
   // Scope ids are sequential, so a quiet scope isn't found by one (D502): its link names an app id, which can't be walked.
@@ -273,6 +284,8 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
       googleClientId: route.googleClientId,
       ...(entry ? { supportId: formatSupportId(entry.supportCode), addresses: entry.addresses } : {}),
       apps: apps.map((a) => ({ appId: a.id, name: a.name, status: appStatus(a), environment: r.environment, origins: a.origins, logoUrl: logoUrl(env.FILES_ORIGIN, a.logo_key) ?? null })),
+      // How many apps the scope has by the same rule, so a page can say "and N more" and offer them (D922).
+      appsTotal: Math.max(Number(r.apps_total) || 0, apps.length),
     };
   });
 

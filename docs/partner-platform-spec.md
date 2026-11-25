@@ -21,7 +21,7 @@ are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece i
 Its current state is in `api.md`, `architecture.md`, `security.md` and `operations.md`; every other piece is still
 proposed.
 
-Last verified: 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
+Last verified: 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
 Lead's confirmations of D914's proposals and the four-eyes rule for staff proposals on a shared scope (D917) folded
 into A2, A3, A6, A7, A8, A11, A14, A15 and the build plan; the admin portal's identity checked in
 `apps/admin/src/access.ts`); 2026-11-25 (branch `docs/platform-answers`, after PR 142's review: its 16 findings folded in (revocation
@@ -157,7 +157,9 @@ scope's wallet directory 30 days after its last app's deletion (`purgeDirectory`
 `scripts/lib/uid-erase.ts` erases one person on request.
 
 **Passport Home's apps.** `GET /v1/home/apps` lists, per scope, the apps that have had a login, at most 10 apps per
-scope in one answer (`HOME_APPS_PER_SCOPE`, `apps/api/src/home/apps.ts`).
+scope in one answer (`HOME_APPS_PER_SCOPE`, `apps/api/src/home/apps.ts`). Since D922 (branch `chore/tidy-1125`, to
+confirm) every scope also says how many apps it has (`appsTotal`) and one scope's answer carries up to 100, so Home
+says "and N more apps" and shows them on the wallet's page; none is left out without a word.
 
 **Not there today:** any service-to-service caller, any `platform` actor, any per-app User ID, any record of which
 apps of a scope a person has used, any code rule tied to a shared scope.
@@ -883,7 +885,8 @@ network's security contacts (and, for keys, its owners); the network tells its p
   signed here comes from the same wallet as on the network's other sites." (H3).
 - The new security event kinds in the existing security feed, each with a playbook (`packages/playbooks`).
 
-**Open item, not in this spec:** Passport Home shows at most 10 apps per scope (`HOME_APPS_PER_SCOPE`), and the
+**Open item, not in this spec** (partly met by D922, to confirm: Home now counts every app and shows up to 100 on a
+wallet's page; the order is still the scope's, not the apps a person used): Passport Home shows at most 10 apps per scope (`HOME_APPS_PER_SCOPE`), and the
 sign-in windows' "also used on other apps" line is being built on another branch. A network with many partners needs
 Home to list the apps a person actually used first. Platform-created test apps are listed in Home on dev envs like
 any app a person signed in on (decided, N8), so users see every site their wallet is used on.

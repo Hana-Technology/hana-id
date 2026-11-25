@@ -21919,3 +21919,80 @@ PR 135's review" list, D910, D914); D912 is recorded on its own branch.
   Still required then: the Tech Lead's "go ahead deploy", `verify --full` on the deploy commit, and the migrations
   applied by the Tech Lead. The deployed admin Worker keeps its hand-set 30-minute trigger until that deploy.
 - Address impact: **none** (docs only).
+
+## Deploy readiness: what preparing the December deploy found, and the fixes (branch `fix/deploy-readiness`), 2026-11-25
+
+From `next` @ `ca37652b`, not merged, not deployed. The deploy preparation (a read of `git diff origin/develop...origin/next`
+and the runbooks, and `verify --full` on `ca37652b`; nothing run against Cloudflare, Neon or NEAR) found what follows;
+this branch fixes it. The deploy list it produced is kept outside the repository.
+
+### D924. One `ledger-check` snapshot before 0022 to 0027 in one apply; `gen` never drops the usage ledger silently; the NEAR relay's D793 values back on `next`; the runbooks brought to what `next` deploys; tests that failed under load
+
+- **Date:** 2026-11-25 · **Status:** built on `fix/deploy-readiness`; each choice below **to confirm (the Tech Lead)**;
+  nothing deployed.
+- **Found 1, `ledger-check` (D916).** sandbox-dev's D1 is at 0021, so the deploy applies 0022 to 0027 in one
+  `wrangler d1 migrations apply`. `compare` expected the after-SQL of `security_events` from a snapshot taken at 0025
+  or later (it looked for `'label_live')`), so a snapshot at 0021 gave `ROLL BACK` with nothing wrong (reproduced on the
+  real migrations). The rehearsal would have stopped the deploy; without it, a needless Time Travel restore. **Fixed:**
+  `compare` reads each snapshot's level from `security_events`' kind list and expects the before-SQL with exactly the
+  kinds the migrations in between add (`SECURITY_EVENT_KIND_STEPS`: 0022, 0023, 0024, 0025, 0027; 0026 leaves the
+  table alone), and `app_changes` and `guarded_changes` unchanged until 0027; a list at no known level, a level going
+  backwards, or 0027's kinds without its triggers is a rollback. The CLI also holds every index and trigger that
+  appears between the snapshots to this checkout's migrations, word for word (a fresh SQLite built from
+  `apps/api/migrations`), and, once 0027 is in, requires every one they create: 0026's `scopes_app_user_ids_no_policy`
+  is in neither snapshot when the first is at 0021. Tests on the real migration files: the step list is what every file
+  after 0021 does (a new rebuild of `security_events`, for example in P2 or later, fails the test until its step is
+  added), 0022 to 0026 write no row of the three tables, every starting level 0021 to 0026 comes back `identical`, every
+  damaged copy of 0027 is still a rollback from 0021, a row lost or changed by a migration in between is a rollback, the
+  jobs' moves while the migrations apply are `kept`, 0022 to 0026 alone are "not applied". Option (b) of the
+  preparation (0022 to 0026 from an older checkout first) is not needed. **To confirm:** the reference check against
+  the checkout's migrations (stricter than before: an index or trigger nobody's migration creates is now a rollback).
+- **Found 2, `gen` and the rehearsal.** The runbook's rehearsal (`gen <env> --d1-name <rehearsal> …`, then
+  `gen <env> --d1-id <id>`) wrote the API's config with `usage capture: off`: the Hyperdrive id was kept only for a file
+  on the same database name (reproduced). **Fixed:** the id is kept for the same Worker on the env's own database or a
+  rehearsal copy of it, both ways; and `gen` refuses, writing nothing, an env with a `usage` block when no id is known,
+  unless given `--usage-hyperdrive-id off` (`local*` envs excepted). **To confirm:** the refusal (a fresh checkout's
+  `gen sandbox-dev` now needs the id or `off`).
+- **Found 3, the NEAR relay limits (D793).** Still the judging-week values on `next`. **Done:** D793's put-back, exactly
+  as it records it ("the relay's four values to 1, 5, 200 and 2"): `appDailyBudgetNear` 1, `dailyBudgetNear` 5,
+  `activationsPerAppPerDay` 200, `lowBalanceNear` 2; nothing else. The relay account then needs 10 NEAR. For the stamps
+  site: at 1 NEAR an app's day covers about 120 new users writing five messages each, so a busy day ends with its relays
+  refused (`app_budget_exhausted`) until 00:00 UTC. The test that pinned the judging values now pins these and their
+  relationships; the partner guide's table and the runbook's figures follow.
+- **Found 4 to 8, the runbooks.** `go-live-after-freeze.md` phase 2 listed 0022 to 0024 (0025 optional) and the ledger's
+  0009 and 0010, said console 0004 could stay unapplied (then `deploy-check --d1` fails) and had no rehearsal or
+  comparison for 0027; nothing connected the monthly retention job (from the 1st at 01:00 UTC, in the deployed admin
+  Worker, needing Neon) with a deploy on the reset day; nothing said what the rehearsal costs on D1's Free plan (every
+  row imported and copied counts against the account's 100,000 rows written a day; past it D1 refuses writes until
+  00:00 UTC) or that importing an export into a database with BEFORE INSERT triggers is untested; the snapshot path
+  `--before .secrets/…` was resolved against `scripts/` (pnpm's working directory), not where pnpm was run; a rollback of
+  the admin Worker leaves the `*/5` trigger with old code, so Neon wakes every 5 minutes; `operations.md` "Retention"
+  said the job is not deployed; "What sandbox-dev runs" stops at 2026-11-12; "Neon compute" calls the admin's code
+  "9d09e6b2", which is not a commit in this repository. **Done:** phase 2 rewritten (the ledger first, then the
+  snapshot, the bookmark, one apply of 0022 to 0027, the comparison, the console's 0004), 0.10 the rehearsal, the
+  retention wait, the costs and the untested import, where P2's `0028_platform_keys.sql` and console
+  `0005_platform_key_step_ups.sql` and P6's `0030_app_user_ids.sql` slot in (after 0027 and 0004, in the same
+  commands); `ledger-check` resolves a relative `--before` or `--out` against INIT_CWD; the admin's `*/30` in the
+  rollback rows; "Retention" and "What sandbox-dev runs" corrected; "9d09e6b2" marked unverified (probably a Cloudflare
+  version id; no remote read was made). **To confirm:** the ledger before D1 in phase 2 (it is the step that depends on
+  Neon's reset, so a failure there stops the deploy before anything changes).
+- **Found 9, tests that failed under load** (load average 27 to 43 with five agents running): `packages/web`
+  `home-link-cancel.test.ts` counted event-loop turns while WebCrypto ran on the thread pool (now waits for every
+  WebCrypto call in flight, then counts quiet turns); `share-check.test.ts` read `accountsChanged` before its port message
+  arrived (now waits for the one after the disconnect; its polling is bounded by 10 s of real time, not 300 polls);
+  `apps/api/test-anvil/halts.test.ts` read a count before the transaction was mined (`sendMined` waits for the receipt);
+  `packages/console-core/test/names.test.ts` held names to 20 ms of wall clock (now to how the cost grows from 32 to 64
+  characters and against a plain name, best of five batches); `apps/api/test/vault-consents.test.ts` held a request to
+  250 ms (now to no retry timer set, with the one-read count); `apps/e2e/tests/hand-browser.spec.ts`'s Close and Done
+  clicks raced a window closing itself (`clickToClose` accepts that close and nothing else); `apps/watchdog`'s tests get a
+  30 s timeout (each takes about 10 ms; a starved workerd once took 5 s). Left: `apps/e2e/tests/home-shell.spec.ts:315`,
+  no failure output to work from. **To confirm:** each of these.
+- **Open decisions (the Tech Lead), from the preparation:** (1) the email budget: keep `dailySendBudget` 333,
+  `appShares` (Stamp Trail 200) and `tighterLimits`, or lower them (`go-live-after-freeze.md` 5.4); (2) the deploy tag's
+  name (recommended `sandbox-dev-<date>`); (3) Sodax's test scope: not marked as a shared wallet in this deploy
+  (recommended; the mark is one way, D915); (4) the Sodax sample site's address, to check it before and after the
+  deploy (it isn't in this repository).
+- Address impact: **none.** Checked: no file under `contracts/hana-signer` changes between `develop` and `next` or on
+  this branch; `packages/core/src/ckd.ts`, `derivation.ts`, `layouts.ts`, `wallet-record.ts` and
+  `packages/web/src/vault/record.ts` are unchanged; the manifest's `ckdNetworkKey` is unchanged; this branch touches a
+  deploy script, a config generator, the NEAR relay's spend limits, tests and docs only.

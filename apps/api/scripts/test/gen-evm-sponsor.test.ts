@@ -132,7 +132,9 @@ describe('the two packages’ shared rules are the same functions', () => {
     // requireKnownAccount false: refused by both outside local* envs, accepted by both in one.
     const off = withChain({ requireKnownAccount: false });
     for (const name of [base.name, 'local-dev']) {
-      const schemaOk = manifestSchema.safeParse({ ...base, name, evm: { sponsor: JSON.parse(off) as unknown } }).success;
+      // D931: a local* env has its API on a loopback http URL (the identity issuer follows apiUrl, so it goes too).
+      const local = name === 'local-dev' ? { apiUrl: 'http://127.0.0.1:8790', identityToken: undefined } : {};
+      const schemaOk = manifestSchema.safeParse({ ...base, name, ...local, evm: { sponsor: JSON.parse(off) as unknown } }).success;
       const workerOk = parseEvmSponsorConfig(off, { network: 'testnet', envName: name, pinnedDelegates: FIXTURE_PINNED_DELEGATES }).status === 'configured';
       expect([name, workerOk], off).toEqual([name, schemaOk]);
       expect(workerOk).toBe(name === 'local-dev');

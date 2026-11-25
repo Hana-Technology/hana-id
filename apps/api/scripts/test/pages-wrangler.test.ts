@@ -168,7 +168,8 @@ describe('page Worker configs', () => {
   });
 
   it('local* envs: loopback origins become wrangler dev host and port, with no deployment target', () => {
-    const m = variant({ name: 'local-test', vaultOrigin: 'http://127.0.0.1:8788', authOrigin: 'http://localhost:8789' });
+    // D931: a local* env has its API on a loopback http URL too (the identity issuer follows it, so it goes).
+    const m = variant({ name: 'local-test', apiUrl: 'http://127.0.0.1:8790', identityToken: undefined, vaultOrigin: 'http://127.0.0.1:8788', authOrigin: 'http://localhost:8789' });
     expect(pagesPlacement(m, 'vault')).toEqual({
       name: `${m.cloudflare.workerName}-vault`,
       workers_dev: false,

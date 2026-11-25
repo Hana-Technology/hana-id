@@ -36,6 +36,7 @@ import {
   PLATFORM_KEY_LIFETIME_MS,
   PLATFORM_KEY_REVOKE_LINK_MS,
   PLATFORM_KEY_WORDS,
+  KNOWN_PRIVATE_PLATFORM_KEYS,
   PLATFORM_KEYS_PER_ORG,
   bytesEqual,
   fromB64url,
@@ -297,6 +298,10 @@ export async function registerPlatformKey(db: HotDb, env: Env, w: Writer, i: { o
   const parsed = await parsePlatformPublicKey(i.publicKey);
   if (!parsed.ok) return refuse('bad_request', parsed.problem);
   const key = parsed.key;
+  // A key whose private half is published (a test key) is refused outside a `local*` test env (F8).
+  if (KNOWN_PRIVATE_PLATFORM_KEYS[key.thumbprint] && !(/^local/u.test(env.ENV_NAME) && env.NETWORK === 'testnet')) {
+    return refuse('bad_request', 'This public key’s private key is published (it is a test key). Make a new key pair and paste its public key.');
+  }
   // WebCrypto's own import as a second check of the point (it refuses one off the curve).
   try {
     await crypto.subtle.importKey('jwk', { ...key.jwk, ext: true }, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify']);

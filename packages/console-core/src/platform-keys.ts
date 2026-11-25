@@ -201,6 +201,18 @@ export async function parsePlatformPublicKey(input: string): Promise<PlatformKey
   return { ok: false, problem: PLATFORM_KEY_WORDS.notAKey };
 }
 
+/**
+ * Public keys whose private halves are published (D927, after PR 156's review, F8), by RFC 7638 thumbprint: anyone can
+ * sign with them, so a registration of one is refused in every env but a `local*` test env. The P-256 generator
+ * (private key 1) and its double (private key 2), and the platform request vectors' test key (its private key derives
+ * from a public string in scripts/gen-platform-request-vectors.mjs). test/platform-keys.test.ts derives each.
+ */
+export const KNOWN_PRIVATE_PLATFORM_KEYS: Readonly<Record<string, string>> = {
+  'xx0BcA-wMohw8atYDJOe6peGModklG2wRHBlXHMvl0M': 'the P-256 generator point (private key 1)',
+  AhqHzaYXA5MzmDCrsseUsVBGKyfhDhvekx0THjH_xIE: 'twice the P-256 generator (private key 2)',
+  'mBMTrRfEY-gb-MFa4zaRAQqG1zZ4kbkKiLo_qps_BTo': 'the platform request test vectors’ key',
+};
+
 /** The key's point from its stored 65 bytes, as a JWK (for WebCrypto's import, and the staff view). */
 export function rawToJwk(raw: Uint8Array): { crv: 'P-256'; kty: 'EC'; x: string; y: string } {
   if (raw.length !== 65 || raw[0] !== 4) throw new RangeError('A platform key is 65 bytes, uncompressed');

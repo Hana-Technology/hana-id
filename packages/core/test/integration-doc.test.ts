@@ -12,6 +12,8 @@ import { readText } from './helpers.ts';
 const guide = readText('../../../docs/integration.md');
 /** The partner's first page, sent with the SDK files beside the guide. */
 const startHere = readText('../../../docs/partner-start-here.md');
+/** The network's guide to the platform API (its code is checked against the API in apps/api/test/platform-guide.test.ts). */
+const platformGuide = readText('../../../docs/platform-guide.md');
 
 /** The first ```json block after the guide's "**Example**" marker in the auto-approve section. */
 function examplePolicy(): unknown {
@@ -78,6 +80,7 @@ describe('docs/integration.md', () => {
   it.each([
     ['docs/integration.md', guide],
     ['docs/partner-start-here.md', startHere],
+    ['docs/platform-guide.md', platformGuide],
     ['packages/core/README.md', readText('../README.md')],
     ['packages/web/README.md', readText('../../web/README.md')],
     ['packages/react/README.md', readText('../../react/README.md')],
@@ -109,6 +112,18 @@ describe('docs/integration.md', () => {
     expect(guide).not.toMatch(/send its client ID|Sending Hana the client ID/u);
     expect(guide).toContain('Hana never registers a client ID you send');
     expect(s1).toContain('An on-chain owner stays one even after leaving your organisation');
+  });
+
+  it("platform-guide.md: sandbox-dev's values as the manifest sets them, never called final, plain punctuation, one short Last verified line", () => {
+    const m = JSON.parse(readText('../../../envs/sandbox-dev.json')) as { name: string; signer: string; apiUrl: string; network: string };
+    expect(m.network).toBe('testnet');
+    expect(platformGuide).toContain(`\`${m.apiUrl}\`, \`${m.name}\` and \`${m.signer}\``);
+    expect(platformGuide).toContain('**not deployed** in any environment');
+    expect(platformGuide).toContain("the API's address changes to a stable");
+    expect(platformGuide.match(/[–—]/u)?.[0] ?? null).toBeNull();
+    const lines = platformGuide.split('\n').filter((l) => l.startsWith('Last verified'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.length).toBeLessThan(200);
   });
 
   it('starts with the content: one short Last verified line, not a changelog', () => {

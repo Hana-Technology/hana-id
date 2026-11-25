@@ -24126,3 +24126,83 @@ for it). D931 is the number the caller assigned; API migration 0034 and console 
   To confirm (the Tech Lead): (j) the 7-day retry window, and "Not told" kept 7 days more in the queue; (k) refusing
   `CLOUDFLARE_ENV` and `WRANGLER_CI_OVERRIDE_NAME` outright (an operator who sets them for another project must unset
   them to deploy).
+
+## The network's guide to the platform API (branch `docs/platform-guide`), 2026-11-26
+
+From `feat/owner-confirmation` @ c0822331 (PR 159, which contains PR 158; neither in `next` yet); docs and one test,
+no behaviour change, not merged, nothing deployed. Piece P8 of `partner-platform-spec.md`. D932 is the number the
+caller assigned.
+
+### D932. The network's guide: one task-shaped, partner-facing page; its TypeScript client quoted from a file the API's real verifier and routes run; the generator's published test key as its vector; a Java signer checked once by hand
+- Date 2026-11-26 · Status: **written** (docs and tests only); the choices below are **to confirm (the Tech Lead)** ·
+  Relates to D909, D913, D914, D917, D918, D919, D923, D925, D926, D927, D928, D929, D930, D931 · Built:
+  `docs/platform-guide.md`; `examples/platform-signer/platform-client.ts` (the client the guide quotes);
+  `apps/api/test/platform-guide.test.ts`; `packages/core/test/integration-doc.test.ts` (the partner-facing checks);
+  the rows and status lines of `README.md`, `partner-platform-spec.md` and `sodax-sdk-integration.md`
+- **What it is.** `platform-guide.md`, for a network's backend developers (first reader: Sodax's backend team), in
+  the voice and rules of the other partner guides: what the platform can and can't do and what stays with owners
+  and staff; Journear's setup and the three values per env; making a key on the server (OpenSSL, a KMS), its
+  fingerprint, registering and confirming it (four eyes on real money), the standby, stopping it; the request, the
+  headers, the ten-line message, raw `r ‖ s` and the DER conversion, the clock and the nonce, the one `401`; a test
+  vector; the reference client; every endpoint task by task with its refusals; idempotency, retries and
+  `expectedVersion`; a partner's timeline, the emails and a state table for the network's portal; the limits with
+  their `limit` names, the `429`, the switch-off and the freeze; per-app User IDs and Support IDs; the front end and
+  the widget iframe; production notes (a dedicated egress IP first); the toggle recipe; troubleshooting by code;
+  questions for the network. It states plainly that nothing is deployed or switched on, that the env values come from
+  Journear and aren't final, and that marking a wallet as shared is for test apps only.
+- **Choices.**
+  1. **The name** `platform-guide.md` (the spec names none). Partner-facing like `integration.md`: the docs test that
+     keeps partner guides free of repo paths, decision numbers and batch names now reads it too, with no dashes and
+     one short Last verified line. It names `api.md`, the integration guide and `sodax-sdk-integration.md` by file name.
+  2. **A client of its own, not console-core's `signPlatformRequest`**: console-core isn't published and a network
+     can't install it. The client (no dependencies; Node 20+ or any WebCrypto runtime; a portable key type) lives in
+     `examples/platform-signer/` with no `package.json` (not a workspace package), and the guide quotes it byte for
+     byte (checked). `apps/api/test/platform-guide.test.ts` runs it through `handlePlatform` (the real checks 1 to 8,
+     routes and D1): a key from a PKCS #8 PEM, the credential with its request id, a partner's whole life (create
+     with two web addresses, the replay, `idempotency_conflict`, list, read, propose, `version_conflict`, cancel,
+     suspend, resume, key create and revoke, remove), a lost answer retried with a new nonce and the same
+     Idempotency-Key (one app created), the self-revoke while switched off then the `401`, and the numbers the guide
+     states against the code's constants.
+  3. **The vector** is the independent generator's key and its `post_idempotency` case (no new key): its private half
+     is SHA-256 of a fixed text, which the guide states, so no private key is written anywhere (gitleaks passes with
+     no allowlist), and registration already refuses it outside `local*` envs (`KNOWN_PRIVATE_PLATFORM_KEYS`). The test
+     checks the client's message for every vector case, its DER conversion of every case, the guide's printed values,
+     and that the client's own signature over the GET case's inputs verifies.
+  4. **The client's retries**: a network error, `500` and `503` with backoff (0.5, 1, 2 s), a `429` only when its
+     `retry-after` is at most 60 s, 4 attempts; every attempt re-signed with the same body bytes and Idempotency-Key.
+     It refuses a write without an Idempotency-Key, the self-revoke excepted.
+  5. **A Java 17 signer** (standard library, `SHA256withECDSAinP1363Format`) in the guide, checked once by hand on
+     2026-11-26: its message for the vector is the vector's, and a GET and a signed self-revoke it made were accepted
+     by `handlePlatform` (a temporary test, removed). Not in the suite, and the guide says so. No Python sample: the
+     `cryptography` package wasn't available offline here, so none was tested.
+  6. **sandbox-dev's three values** (API URL, env name, signer account) given as what they "would be", pinned to the
+     manifest by the docs test, with "not deployed there yet" and "the address changes before any partner goes live".
+  7. **KMS notes** (AWS, Google Cloud, Azure key types; digest or message; DER) are untested, and the guide says so.
+  8. **Polling advice**: the list (50 apps a call), only while an address waits, not more often than every few
+     minutes, since 10 apps read one by one every 5 minutes would pass the key's 2,000 a day.
+  9. **The front end** points to the integration guide and `sodax-sdk-integration.md` rather than repeating them,
+     with the widget rule (the widget's and every framing page's address), the approval window naming the widget's
+     address, and the top-level gap stated as proposed work.
+- **Found while writing (not fixed: no code change; docs only where said).**
+  1. `api.md` "Platform app operations", the web addresses rule, still says an owner's confirmation is "piece P10,
+     not built: until then nothing brings one in sooner": stale since PR 159 (its own "Owner confirmations" section
+     says built). Left for PR 159's branch.
+  2. The spec's A10 point 4 says a partner's site gets `origin_not_allowed` until its address is in force; the SDK's
+     failure is `vault_unavailable` with `data.reason: 'no_answer'` (`integration.md`). A10 point 2's
+     `createHana({ environment: 'test' })` isn't an SDK env name (`'sandbox-dev'`). The guide follows the SDK.
+  3. The spec's A8 credential answer has no `thumbprint` (the API and `api.md` do); A5's 10 proposals an hour is 20
+     as built (recorded in D929). The guide follows the code.
+  4. The spec's P8 row says the samples run "against the local stack"; they run against the API's handler in the
+     Workers test pool (the same verifier, routes, D1 and limiter objects), not `apps/e2e`.
+  5. Reads are refused (`403 forbidden`) while an organisation is frozen, `GET /credential` included: as A4.3 and
+     `api.md` say, but a frozen network can't read its own key's state. The guide says so.
+  6. `sodax-sdk-integration.md` said no service-to-service API exists (summary, section 3): a pointer to the guide
+     added, the rest of section 3 kept as the first design note. It also holds internal details (local paths,
+     private repositories, the Tech Lead's words), so it isn't partner-safe as it stands, though the guide names it.
+- To confirm (the Tech Lead): (a) the name, and sending `platform-guide.md` to Sodax as it is; (b) whether Sodax gets
+  `sodax-sdk-integration.md` (a partner-safe version first) or the guide stops naming it; (c) printing sandbox-dev's
+  API URL, env name and signer account now, marked not final; (d) the generator's published key as the guide's
+  vector, its private key given as "SHA-256 of a fixed text"; (e) the hand-checked Java signer in the guide (keep, drop,
+  or add a JVM test job); (f) the client's retry defaults; (g) the polling advice; (h) the guide's questions for
+  Sodax (section 14); (i) saying that every Cloudflare Worker reaches us from one shared address (the address itself is
+  in `api.md`, not the guide).

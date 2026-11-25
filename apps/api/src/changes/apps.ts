@@ -6,7 +6,7 @@ import { autoApproveRefused, originDisplay } from '@hana-id/console-core';
 import { NOT_YET, type Writer, refuse, refuseReplay, replayRow } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { policyInForce, rawSignInForce, storedPolicy } from './policy.ts';
-import { type Q, q, raw } from './sql.ts';
+import { type Q, join, q, raw } from './sql.ts';
 import {
   APP_CHANGE_COLUMNS,
   APP_COLUMNS,
@@ -138,7 +138,8 @@ export async function listChanges(db: HotDb, orgId: string, beforeSeq: number | 
 
 /** What an app write plans from: the app (with its scope), optionally its origins, open changes and keys, and the replay check. */
 export interface AppPlan {
-  app: AppRow;
+  /** `partner_bit_by` (migration 0033, D929) only when the plan asked for it (`with.partnerBit`). */
+  app: AppRow & { partner_bit_by?: 'member' | 'platform' | null };
   origins: OriginRow[];
   openChanges: ChangeRow[];
   keys: KeyRow[];
@@ -146,11 +147,12 @@ export interface AppPlan {
 
 /**
  * The plan read of an app write: one query. `not_found` for no such app in the org (or a deleted one, unless
- * `allowDeleted`), `already_applied` for a request id used before.
+ * `allowDeleted`), or outside the platform's reach when the writer has one (D929, H1), `already_applied` for a
+ * request id used before.
  */
 export async function planApp(
   db: HotDb,
-  i: { appId: string; orgId: string | null; w: Writer; with?: { origins?: boolean; changes?: boolean; keys?: boolean }; allowDeleted?: boolean },
+  i: { appId: string; orgId: string | null; w: Writer; with?: { origins?: boolean; changes?: boolean; keys?: boolean; partnerBit?: boolean }; keyId?: string; allowDeleted?: boolean },
 ): Promise<AppPlan> {
   const extra: Q[] = [];
   if (i.with?.origins) {
@@ -159,14 +161,24 @@ export async function planApp(
   if (i.with?.changes) {
     extra.push(raw(`(SELECT json_group_array(${CHANGE_JSON('g')}) FROM guarded_changes g WHERE g.app_id = a.id AND g.status IN ('pending', 'active')) AS changes_json`));
   }
+  if (i.with?.partnerBit) extra.push(raw('a.partner_bit_by AS partner_bit_by'));
   if (i.with?.keys) {
-    extra.push(raw(`(SELECT json_group_array(json_object('id', k.id, 'app_id', k.app_id, 'key', k.key, 'created_by', k.created_by, 'created_at', k.created_at, 'revoked_at', k.revoked_at)) FROM app_keys k WHERE k.app_id = a.id) AS keys_json`));
+    // D929: only the keys a key write needs, never the app's whole history (revoked keys pile up; one JSON value of
+    // them all would grow without bound): those unrevoked or still in their rotation grace at the write's time, and
+    // the key the write names (three disjoint parts, in no particular order: every reader finds or counts). Each part is a seek: on `app_keys_app_revoked` (migration 0033), and on the key's id.
+    const cols3 = `k.id, k.app_id, k.key, k.created_by, k.created_at, k.revoked_at`;
+    extra.push(
+      q`(SELECT json_group_array(json_object('id', k.id, 'app_id', k.app_id, 'key', k.key, 'created_by', k.created_by, 'created_at', k.created_at, 'revoked_at', k.revoked_at))
+          FROM (SELECT ${raw(cols3)} FROM app_keys k WHERE k.app_id = a.id AND k.revoked_at IS NULL
+                UNION ALL SELECT ${raw(cols3)} FROM app_keys k WHERE k.app_id = a.id AND k.revoked_at > ${i.w.now}
+                ${i.keyId === undefined ? raw('') : q`UNION ALL SELECT ${raw(cols3)} FROM app_keys k WHERE k.id = ${i.keyId} AND k.app_id = a.id AND k.revoked_at <= ${i.w.now}`}) k) AS keys_json`,
+    );
   }
-  const cols = extra.length ? q`, ${{ sql: extra.map((e) => e.sql).join(', '), args: [] }}` : raw('');
+  const cols = extra.length ? q`, ${join(extra, ', ')}` : raw('');
   // The replay check is a scalar subquery: it is answered even when the app doesn't match (another org's, deleted).
   const r = await db.first<AppRow & { replay: string | null; app_id: string | null; origins_json?: string; changes_json?: string; keys_json?: string }>(
     q`SELECT ${replayRow(i.w.requestId)} AS replay, a.id AS app_id, ${raw(APP_COLUMNS)}${cols}
-        FROM (SELECT 1) LEFT JOIN apps a ON a.id = ${i.appId} AND ${orgFilter(i.orgId)} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
+        FROM (SELECT 1) LEFT JOIN apps a ON a.id = ${i.appId} AND ${orgFilter(i.orgId)}${i.w.reach ? q` AND ${i.w.reach.app}` : raw('')} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
   );
   if (i.w.expect && i.w.expect.appId === undefined) i.w.expect.appId = i.appId;
   refuseReplay(r?.replay, i.w);

@@ -6,6 +6,8 @@
 import { describe, expect, it } from 'vitest';
 import { APP_NAME_BADGES, APP_NAME_PASSPORT_TIER_WORDS, APP_NAME_PASSPORT_TIER_WORDS_BEFORE, APP_NAME_PASSPORT_TIER_WORDS_BEFORE_AT_END, appNameProblem, brandNameIn, hanaWordIn, journearWordIn, lookalikeLettersIn, looksLikeAddress, nameSkeleton, normalisePartnerAppName, passportNameIn, passportProblemIn, sentenceClaimIn, vouchingWordIn } from '../src/names.ts';
 import { CHECK_MARKS } from '../../core/src/verified-contracts.ts';
+import { appNameLookalikeKey, namesLookAlike } from '../src/names.ts';
+import { PLATFORM_OPS_LIMITS, platformAddOriginsBody, platformCreateAppBody, platformEmptyBody, platformRemoveOriginsBody, platformSuspendBody } from '../src/platform-ops.ts';
 
 const ch = (n: number): string => String.fromCodePoint(n);
 
@@ -448,5 +450,41 @@ describe('D891: no rule is slow (no catastrophic backtracking)', () => {
       expect(full / quarter, `${name.slice(0, 20)}: 2,000 vs 500 characters`).toBeLessThan(32);
       expect(full / 20, `${name.slice(0, 20)}: one call on 2,000 characters`).toBeLessThan(2000);
     }
+  });
+});
+
+describe('look-alike app names on one scope (D929, the platform API’s create, L15)', () => {
+  it('reads names alike across case, spacing, punctuation, accents, look-alike letters and rn/m, vv/w', () => {
+    for (const other of ['ACME SWAP', 'acme-swap', 'Acme  Swap', 'Acrne Swap', 'Àcmé Swap', 'AcmeSwap', 'Acme_Swap', 'Ac.me Swap']) expect(namesLookAlike('Acme Swap', other), other).toBe(true);
+    expect(namesLookAlike('Acme Wallet', 'Acme VVallet')).toBe(true);
+    // A tatweel (U+0640) only stretches a letter: "سواب" and "سـواب" are one name, at the end too.
+    expect(namesLookAlike('سواب', 'سـواب')).toBe(true);
+    expect(namesLookAlike('Acme Swap', 'Acme Swap\u0640')).toBe(true);
+    expect(namesLookAlike('سواب', 'سوا')).toBe(false);
+    // Inside a folded pair too: "rـn" is "m", "VـV" is "W".
+    expect(namesLookAlike('Acme Swap', 'Acr\u0640ne Swap')).toBe(true);
+    expect(namesLookAlike('Acme Wallet', 'Acme V\u0640Vallet')).toBe(true);
+    // A name of tatweels alone has an empty key, never compared.
+    expect(appNameLookalikeKey('\u0640\u0640')).toBe('');
+    expect(namesLookAlike('\u0640', '\u0640\u0640')).toBe(false);
+    expect(namesLookAlike('Acme Swap', 'Acme Swap Pro')).toBe(false);
+    expect(namesLookAlike('Acme Swap', 'Acme Swop')).toBe(false);
+    // Nothing to compare: never alike.
+    expect(namesLookAlike('!!!', '???')).toBe(false);
+    expect(appNameLookalikeKey('Acme Swap')).toBe('acmeswap');
+  });
+});
+
+describe('the platform API’s bodies (D929)', () => {
+  it('are strict: an unknown field, a 21st web address or a bad scope id is refused', () => {
+    expect(platformCreateAppBody.safeParse({ scopeId: 's1', name: 'Acme' }).success).toBe(true);
+    expect(platformCreateAppBody.safeParse({ scopeId: 's1', name: 'Acme', userIds: 'scope' }).success).toBe(false);
+    expect(platformCreateAppBody.safeParse({ scopeId: 'S!', name: 'Acme' }).success).toBe(false);
+    expect(platformCreateAppBody.safeParse({ scopeId: 's1', name: 'Acme', origins: Array(21).fill('https://a.example') }).success).toBe(false);
+    expect(platformAddOriginsBody.safeParse({ add: [], expectedVersion: 1 }).success).toBe(false);
+    expect(platformRemoveOriginsBody.safeParse({ remove: ['https://a.example'], expectedVersion: -1 }).success).toBe(false);
+    expect(platformSuspendBody.safeParse({ suspended: 'yes' }).success).toBe(false);
+    expect(platformEmptyBody.safeParse({ note: 1 }).success).toBe(false);
+    expect(PLATFORM_OPS_LIMITS).toMatchObject({ creationsPerHour: 2, proposalsPerHour: 20, waitingPerOrg: 30, keyCreationsPerHour: 20, keyCreationsPerDay: 50, listPage: 50, keysShown: 20 });
   });
 });

@@ -24,7 +24,7 @@ import { call } from './helpers.ts';
 import worker from '../src/index.ts';
 import routesSource from '../src/platform/routes.ts?raw';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { type Sent, callsOf, deliver, freeze, freshIp, freshNow, keyPair, keyRow, read, seedKey, send, switchOff, switchOn } from './platform-helpers.ts';
+import { type Sent, callsOf, deliver, freeze, freshIp, freshNow, importProblems, keyPair, keyRow, platformProposal, read, seedKey, send, switchOff, switchOn } from './platform-helpers.ts';
 import { type DbCount, countingDb, orgApp, rows } from './rpc-helpers.ts';
 
 const MIN = 60_000;
@@ -568,13 +568,7 @@ describe('the org’s switch and freeze, and the self-revoke', () => {
   it('the self-revoke works with the switch off: the key stops at once, its waiting web addresses are cancelled, one ledger row names the key', async () => {
     const k = await seedKey();
     const now = freshNow();
-    const gc = `gc_${Math.random().toString(36).slice(2, 14)}`;
-    await env.DB.prepare(
-      `INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, notified_at, active_from, request_id) VALUES (?1, ?2, 'origin_add', 'https://partner.example', 'pending', 'platform', ?3, ?4, ?4, ?5, ?6)`,
-    )
-      .bind(gc, k.app.id, k.id, Date.now(), now + 24 * HOUR, `pf_${gc}`)
-      .run();
-    await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, ?3, ?4)').bind(k.app.id, 'https://partner.example', now + 24 * HOUR, gc).run();
+    const gc = await platformProposal(k.app.id, k.id, 'https://partner.example', { activeFrom: now + 24 * HOUR });
     await switchOff(k.org);
     expect((await send(k, { now })).body.code).toBe('platform_off');
     const r = await send(k, { now, method: 'POST', path: '/v1/platform/credential/revoke', body: JSON.stringify({ reason: 'Rotating to the standby key' }), idempotencyKey: 'stop-0001' });
@@ -707,10 +701,14 @@ describe('GET /v1/platform/credential and the call log', () => {
 
 describe('each route within its hot-DB cost (L8)', () => {
   it('the declared costs and PLATFORM_DB_LIMITS hold, the failure path of the revoke included', async () => {
+    // P4's routes (D929) are measured, each on its own paths, in platform-ops.test.ts "each route within its D1 cost".
     expect(PLATFORM_ROUTES.map((r) => [r.method, r.path, r.cost])).toEqual([
       ['GET', '/v1/platform/credential', 4],
       ['POST', '/v1/platform/credential/revoke', 11],
+      ...PLATFORM_ROUTES.slice(2).map((r) => [r.method, r.path, r.cost]),
     ]);
+    // Each within PLATFORM_DB_LIMITS' 12 through the hot DB, plus the announced keys' list (read outside it).
+    for (const r of PLATFORM_ROUTES) expect(r.cost, r.path).toBeLessThanOrEqual(13);
     for (const [route, fault] of [[PLATFORM_ROUTES[0]!, undefined], [PLATFORM_ROUTES[1]!, undefined], [PLATFORM_ROUTES[1]!, 1]] as const) {
       const k = await seedKey();
       const count: DbCount = { reads: 0, batches: 0, statements: 0 };
@@ -863,8 +861,22 @@ describe('when a limiter errors: admission fails closed, the self-revoke goes ah
 // ---- the reach of an authenticated request ----
 
 describe('what an authenticated platform request can reach', () => {
-  it('two routes only; no route or path registers, accepts, confirms or brings back a key, confirms a web address, or calls any ConsoleRpc or AdminRpc method', async () => {
-    expect(PLATFORM_ROUTES.map((r) => `${r.method} ${r.path}`)).toEqual(['GET /v1/platform/credential', 'POST /v1/platform/credential/revoke']);
+  it('the routes are the key’s two and the app operations’ nine; no route or path registers, accepts, confirms or brings back a key, confirms a web address, or calls any ConsoleRpc or AdminRpc method', async () => {
+    expect(PLATFORM_ROUTES.map((r) => `${r.method} ${r.path}`)).toEqual([
+      'GET /v1/platform/credential',
+      'POST /v1/platform/credential/revoke',
+      'GET /v1/platform/apps',
+      'POST /v1/platform/apps',
+      'GET /v1/platform/apps/:appId',
+      'POST /v1/platform/apps/:appId/origins',
+      'POST /v1/platform/apps/:appId/origins/remove',
+      'POST /v1/platform/changes/:changeId/cancel',
+      'POST /v1/platform/apps/:appId/suspend',
+      'POST /v1/platform/apps/:appId/keys',
+      'POST /v1/platform/apps/:appId/keys/:keyId/revoke',
+    ]);
+    // No template names a confirm, an accept, an approval, a registration, an expedite or a waiver (D929).
+    for (const r of PLATFORM_ROUTES) expect(r.path, r.path).not.toMatch(/confirm|accept|approv|regist|expedit|waive|unrevoke|policy|settings|label|mainnet/iu);
     const spies = [ConsoleRpc.prototype, AdminRpc.prototype].flatMap((proto) =>
       Object.getOwnPropertyNames(proto)
         .filter((m) => m !== 'constructor' && typeof (proto as unknown as Record<string, unknown>)[m] === 'function')
@@ -877,12 +889,7 @@ describe('what an authenticated platform request can reach', () => {
     const waiting = await seedKey({ org: k.app, state: 'pending', switchOn: false });
     await switchOn(k.org);
     const now = freshNow();
-    const gc = `gc_${Math.random().toString(36).slice(2, 14)}`;
-    await env.DB.prepare(
-      `INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, notified_at, active_from, request_id) VALUES (?1, ?2, 'origin_add', 'https://p.example', 'pending', 'platform', ?3, ?4, ?4, ?5, ?6)`,
-    )
-      .bind(gc, k.app.id, k.id, Date.now(), now + 24 * HOUR, `pf_${gc}`)
-      .run();
+    const gc = await platformProposal(k.app.id, k.id, 'https://p.example', { activeFrom: now + 24 * HOUR });
     const before = { waiting: await keyRow(waiting.id), change: await rows('SELECT * FROM guarded_changes WHERE id = ?1', gc) };
     const paths = new Set<string>(['/v1/platform/keys', `/v1/platform/keys/${waiting.id}/confirm`, `/v1/platform/keys/${waiting.id}/accept`, '/v1/platform/keys/register', `/v1/platform/changes/${gc}/confirm`, `/v1/platform/credential/confirm`, '/v1/platform/credential/accept', '/v1/platform/credential/register', '/v1/platform/credential/unrevoke']);
     for (const m of methods) {
@@ -1105,8 +1112,8 @@ describe('F10: through the real router, and what the routes may import', () => {
     expect(again.status).toBe(409);
   });
 
-  it('the routes import only what reading and stopping the key needs (a route confirming or accepting anything fails here)', () => {
-    expect(importProblems(routesSource)).toEqual([]);
+  it('the routes import only what reading and stopping the key and the app operations need (a route confirming or accepting anything fails here)', () => {
+    expect(importProblems(routesSource, ROUTE_IMPORTS)).toEqual([]);
   });
 
   it('the allowlist check sees every import form (N6)', () => {
@@ -1121,40 +1128,48 @@ describe('F10: through the real router, and what the routes may import', () => {
       ['multi-line', "import {\n  revokePlatformKeyNow,\n  confirmPlatformKey,\n} from './keys.ts';"],
       ['a type not allowed', "import type { Answer } from '../rpc/common.ts';"],
     ] as const) {
-      expect(importProblems(src).length, form).toBeGreaterThan(0);
+      expect(importProblems(src, ROUTE_IMPORTS).length, form).toBeGreaterThan(0);
     }
-    expect(importProblems("import { revokePlatformKeyNow } from './keys.ts';\nimport type { AuthRow } from './request.ts';")).toEqual([]);
+    expect(importProblems("import { revokePlatformKeyNow } from './keys.ts';\nimport type { AuthRow } from './request.ts';", ROUTE_IMPORTS)).toEqual([]);
   });
 });
 
 /** What in a module's source breaks the routes' import allowlist (every import and re-export form). */
 const ROUTE_IMPORTS: Record<string, string[]> = {
-  '@hana-id/console-core': ['Actor', 'PLATFORM_REQUEST_LIMITS', 'PlatformCredentialView', 'b64url', 'platformRevokeBody', 'randomBytes', 'sha256', 'utf8'],
+  // P3's (the key itself), and P4's body schemas (D929: each a strict zod object of the route's own fields; data only).
+  '@hana-id/console-core': [
+    'PLATFORM_REQUEST_LIMITS',
+    'PlatformCredentialView',
+    'b64url',
+    'platformRevokeBody',
+    'randomBytes',
+    'platformAddOriginsBody',
+    'platformCreateAppBody',
+    'platformEmptyBody',
+    'platformRemoveOriginsBody',
+    'platformSuspendBody',
+  ],
   '../env.ts': ['Env'],
-  '../changes/cas.ts': ['Writer', 'refuse'],
+  '../changes/cas.ts': ['refuse'],
   '../changes/db.ts': ['HotDb'],
   './keys.ts': ['revokePlatformKeyNow'],
+  // D929: the app operations, one function per route, and the writer and request id the self-revoke shares with them
+  // (moved there from this file). Their own imports are held by platform-ops.test.ts "what the operations may import".
+  './ops.ts': [
+    'addPlatformOrigins',
+    'cancelPlatformChange',
+    'createPlatformApp',
+    'createPublishableKey',
+    'getPlatformApp',
+    'listPlatformApps',
+    'platformRequestId',
+    'platformWriter',
+    'removePlatformOrigins',
+    'revokePublishableKey',
+    'suspendPlatformApp',
+  ],
   './request.ts': ['AuthRow'],
 };
-function importProblems(src: string): string[] {
-  const problems: string[] = [];
-  const named = /\b(?:import|export)\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/gu;
-  const seen = new Set<number>();
-  for (const m of src.matchAll(named)) {
-    seen.add(m.index!);
-    const allowed = ROUTE_IMPORTS[m[2]!];
-    if (!allowed) problems.push(`module ${m[2]}`);
-    for (const n of m[1]!.split(',').map((x) => x.trim().replace(/^type\s+/u, '').split(/\s+as\s+/u)[0]!.trim()).filter(Boolean)) if (!allowed?.includes(n)) problems.push(`${n} from ${m[2]}`);
-  }
-  // Any other `from '…'` (default, namespace, `export *`), a bare `import '…'`, a dynamic import or a require.
-  for (const m of src.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/gu)) if (!seen.has(m.index!)) problems.push(`non-named import of ${m[1]}`);
-  for (const m of src.matchAll(/(?:^|[;\n])\s*import\s*['"]([^'"]+)['"]/gu)) problems.push(`side-effect import of ${m[1]}`);
-  if (/\bimport\s*\(/u.test(src)) problems.push('dynamic import');
-  if (/\brequire\s*\(/u.test(src)) problems.push('require');
-  if (/\b(confirm|accept|approve|register|propose)[A-Z]\w*\(/u.test(src)) problems.push('a confirm, accept, approve, register or propose call');
-  if (/rpc\//u.test(src)) problems.push('an RPC module');
-  return problems;
-}
 
 describe('F11: a failure after the key’s windows counted gives the charge back', () => {
   it('the platform admission failing: 503, and the key’s minute is untouched', async () => {

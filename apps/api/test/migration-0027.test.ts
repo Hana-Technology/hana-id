@@ -405,8 +405,8 @@ describe('migration 0027 checks its own copy before dropping anything', () => {
       expect(failed, what).toBe(true);
       expect(await snapshot(), what).toEqual(before);
     }
-    // The real file then applies on the same database.
-    await applyD1Migrations(fresh, migrations);
+    // The real file then applies on the same database (0027 itself: a later file may add columns, as 0033 does).
+    await applyD1Migrations(fresh, migrations.slice(0, at + 1));
     const after = await snapshot();
     expect(after.rows).toEqual(before.rows);
   });

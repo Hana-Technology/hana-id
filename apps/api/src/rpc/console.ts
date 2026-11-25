@@ -269,7 +269,7 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   setSuspended(c: unknown) {
     const suspending = (c as { suspended?: unknown } | null)?.suspended === true;
     return runRpc(this.env, 'setSuspended', consoleSetSuspendedInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.setSuspended, killSwitch: suspending, breaker: suspending }, ({ input, db, w }) =>
-      setSuspensionBit(db, w, { orgId: input.orgId, appId: input.appId, bit: 4, suspended: input.suspended }),
+      setSuspensionBit(db, w, { orgId: input.orgId, appId: input.appId, bit: 4, suspended: input.suspended }).then(({ suspendedBy }) => ({ suspendedBy })),
     );
   }
 

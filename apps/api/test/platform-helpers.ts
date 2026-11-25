@@ -35,7 +35,7 @@ export async function keyPair(): Promise<{ privateKey: CryptoKey; publicRaw: Uin
  * `active` (confirmed, in force), `pending` (announced, waiting a day), `registered` (not announced yet).
  */
 export async function seedKey(
-  o: { org?: OrgApp; id?: string; pair?: { privateKey: CryptoKey; publicRaw: Uint8Array; thumbprint: string }; activeFrom?: number; state?: 'active' | 'pending' | 'registered'; switchOn?: boolean } = {},
+  o: { org?: OrgApp; id?: string; pair?: { privateKey: CryptoKey; publicRaw: Uint8Array; thumbprint: string }; activeFrom?: number; state?: 'active' | 'pending' | 'registered'; switchOn?: boolean; scopes?: string[] } = {},
 ): Promise<Seeded> {
   const app = o.org ?? (await orgApp());
   const pair = o.pair ?? (await keyPair());
@@ -46,7 +46,7 @@ export async function seedKey(
     `INSERT INTO platform_keys (id, org_id, label, alg, public_key, thumbprint, scopes_json, status, proposed_by_kind, proposed_by, proposer_sub, proposer_email_key, proposed_at, four_eyes, min_delay_ms, request_id)
      VALUES (?1, ?2, 'Backend key', 'ES256', ?3, ?4, ?5, 'pending', 'member', 'usr_registrant', 'owner-sub-1', 'owner@partner.example', ?6, 0, ?7, ?8)`,
   )
-    .bind(id, app.org, blob, pair.thumbprint, JSON.stringify([app.scope]), now, DAY, `req_reg_${id}`)
+    .bind(id, app.org, blob, pair.thumbprint, JSON.stringify(o.scopes ?? [app.scope]), now, DAY, `req_reg_${id}`)
     .run();
   if (o.state !== 'registered') {
     await env.DB.prepare('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?3 + ?4 WHERE id = ?1').bind(id, now, now + DAY, PLATFORM_KEY_LIFETIME_MS).run();
@@ -186,3 +186,56 @@ export async function read(res: Response): Promise<Omit<Sent, 'request'>> {
 export const keyRow = async (id: string) => (await env.DB.prepare('SELECT * FROM platform_keys WHERE id = ?1').bind(id).first<Record<string, unknown>>())!;
 export const callsOf = async (keyId: string) =>
   (await env.DB.prepare('SELECT * FROM platform_calls WHERE key_id = ?1 ORDER BY seq').bind(keyId).all<{ route: string; method: string; status: number; code: string | null; request_id: string; ip_prefix: string | null; app_id: string | null; org_id: string; at: number }>()).results;
+
+/**
+ * A web address the platform proposed for app `appId` with key `keyId`, written as the platform's proposal and the
+ * admin Worker's ack leave it, within migration 0033's rules: proposed with its wait, then announced now with its
+ * earliest time `activeFrom` (default a day on). `inForce`: a `local*`-sized wait (60 s), announced 4 minutes ago
+ * with its earliest time a few seconds in the past, recorded `active`.
+ */
+export async function platformProposal(appId: string, keyId: string, origin: string, o: { inForce?: boolean; activeFrom?: number; id?: string } = {}): Promise<string> {
+  const id = o.id ?? newId('guardedChange');
+  const now = Date.now();
+  const minDelay = o.inForce ? 60_000 : DAY;
+  await env.DB.prepare('INSERT INTO platform_origin_waits (change_id, app_id, origin, key_id, min_delay_ms, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)').bind(id, appId, origin, keyId, minDelay, now).run();
+  await env.DB.prepare(
+    `INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id)
+     VALUES (?1, ?2, 'origin_add', ?3, 'pending', 'platform', ?4, ?5, ?6)`,
+  )
+    .bind(id, appId, origin, keyId, now - 10 * 60_000, `pf_${id}`)
+    .run();
+  await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, NULL, ?3)').bind(appId, origin, id).run();
+  // In force by the database's clock (a test may have moved Date.now on): its triggers judge by that one.
+  const dbNow = (await env.DB.prepare("SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS t").first<{ t: number }>())!.t;
+  // Margins of nearly a minute on each of 0033's clock rules (announced at most 5 minutes back, the earliest time at
+  // least the wait from the database's now less 2 minutes), so a loaded machine's pause between these writes can't
+  // trip them (the earlier 280 s / 50 s left 10 s).
+  const notified = o.inForce ? dbNow - 240_000 : now;
+  const from = o.inForce ? dbNow - 5_000 : (o.activeFrom ?? now + DAY);
+  await env.DB.prepare('UPDATE platform_origin_waits SET unconfirmed_active_from = ?2 WHERE change_id = ?1').bind(id, from).run();
+  await env.DB.prepare('UPDATE guarded_changes SET notified_at = ?2, active_from = ?3 WHERE id = ?1').bind(id, notified, from).run();
+  await env.DB.prepare('UPDATE app_origins SET active_from = ?3 WHERE app_id = ?1 AND change_id = ?2').bind(appId, id, from).run();
+  if (o.inForce) await env.DB.prepare("UPDATE guarded_changes SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1").bind(id, dbNow).run();
+  return id;
+}
+
+/** What in a module's source breaks an import allowlist (`allow`: module → the names it may give), every import and re-export form. */
+export function importProblems(src: string, allow: Record<string, string[]>): string[] {
+  const problems: string[] = [];
+  const named = /\b(?:import|export)\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/gu;
+  const seen = new Set<number>();
+  for (const m of src.matchAll(named)) {
+    seen.add(m.index!);
+    const allowed = allow[m[2]!];
+    if (!allowed) problems.push(`module ${m[2]}`);
+    for (const n of m[1]!.split(',').map((x) => x.trim().replace(/^type\s+/u, '').split(/\s+as\s+/u)[0]!.trim()).filter(Boolean)) if (!allowed?.includes(n)) problems.push(`${n} from ${m[2]}`);
+  }
+  // Any other `from '…'` (default, namespace, `export *`), a bare `import '…'`, a dynamic import or a require.
+  for (const m of src.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/gu)) if (!seen.has(m.index!)) problems.push(`non-named import of ${m[1]}`);
+  for (const m of src.matchAll(/(?:^|[;\n])\s*import\s*['"]([^'"]+)['"]/gu)) problems.push(`side-effect import of ${m[1]}`);
+  if (/\bimport\s*\(/u.test(src)) problems.push('dynamic import');
+  if (/\brequire\s*\(/u.test(src)) problems.push('require');
+  if (/\b(confirm|accept|approve|register|propose)[A-Z]\w*\(/u.test(src)) problems.push('a confirm, accept, approve, register or propose call');
+  if (/rpc\//u.test(src)) problems.push('an RPC module');
+  return problems;
+}

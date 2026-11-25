@@ -52,6 +52,25 @@ export interface Writer {
   wrote?: boolean;
   /** The sub of an API-verified step-up (changes/step-up.ts), recorded as `app_changes.actor_sub`; unset otherwise. */
   sub?: string;
+  /**
+   * D929 (docs/partner-platform-spec.md A4.2, H1): the platform's reach, set only for a write by a network's backend
+   * (absent for the console and staff). `app` holds for the apps row `a`; `change` for the guarded change `g` (H2: the
+   * platform's own waiting web addresses only). Every plan read (planApp, planChange) and every commit row
+   * (commitOnApp, commitOnChange) adds them, so a write never lands outside the reach even when the state moves between
+   * the read and the batch; anything outside it is `not_found`, like an app that doesn't exist. A write that isn't on
+   * one app (commitOn) refuses a writer with a reach.
+   */
+  reach?: { app: Q; change: Q };
+  /**
+   * D929: statements recorded with the write itself (the platform's `platform_requests` row), appended to its batch
+   * after the writer's own and guarded by the commit row like the rest.
+   */
+  batchTail?: readonly Q[];
+  /**
+   * D929: run after the plan read and every check, just before the batch (the platform takes its quota there, so a
+   * refused write or a retry answered by its replay never spends it).
+   */
+  beforeBatch?: () => Promise<void>;
 }
 
 /** Declares what this write records, for the replay check (call before the plan read). */
@@ -85,6 +104,7 @@ const detailOf = (d: CommitRow['detail']): Q => ('sql' in d && 'args' in d && Ar
  */
 export function commitOnApp(w: Writer, row: CommitRow, appId: string, orgId: string | null, predicate: Q): Q {
   const org = orgId === null ? raw('1') : q`a.org_id = ${orgId}`;
+  if (w.reach) predicate = q`(${predicate}) AND ${w.reach.app}`;
   return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id)
     SELECT ${w.now}, a.org_id, a.id, a.scope_id, ${row.kind}, ${detailOf(row.detail)}, ${w.actor.kind}, ${actorId(w.actor)}, ${actorSub(w)}, ${w.requestId}
       FROM apps a WHERE a.id = ${appId} AND ((${org} AND ${predicate}) OR ${replayed(w.requestId)})`;
@@ -96,6 +116,7 @@ export function commitOnApp(w: Writer, row: CommitRow, appId: string, orgId: str
  */
 export function commitOnChange(w: Writer, row: CommitRow, changeId: string, orgId: string | null, predicate: Q, actor?: { kind: string; id: string }): Q {
   const org = orgId === null ? raw('1') : q`a.org_id = ${orgId}`;
+  if (w.reach) predicate = q`(${predicate}) AND ${w.reach.app} AND ${w.reach.change}`;
   return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id)
     SELECT ${w.now}, a.org_id, a.id, a.scope_id, ${row.kind}, ${detailOf(row.detail)}, ${actor?.kind ?? w.actor.kind}, ${actor?.id ?? actorId(w.actor)}, ${actor ? null : actorSub(w)}, ${w.requestId}
       FROM guarded_changes g JOIN apps a ON a.id = g.app_id WHERE g.id = ${changeId} AND ((${org} AND ${predicate}) OR ${replayed(w.requestId)})`;
@@ -103,6 +124,8 @@ export function commitOnChange(w: Writer, row: CommitRow, changeId: string, orgI
 
 /** The commit row of a write that is not on one app (an org's contacts, a scope's org, a whole org's suspension). */
 export function commitOn(w: Writer, row: CommitRow, ids: { orgId: string; appId?: string | null; scopeId?: string | null }, predicate: Q): Q {
+  // D929: a writer with the platform's reach writes only on its apps (commitOnApp, commitOnChange), never this way.
+  if (w.reach) throw new RpcRefusal('internal', 'A platform write must be on one of its apps');
   return q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id)
     SELECT ${w.now}, ${ids.orgId}, ${ids.appId ?? null}, ${ids.scopeId ?? null}, ${row.kind}, ${detailOf(row.detail)}, ${w.actor.kind}, ${actorId(w.actor)}, ${actorSub(w)}, ${w.requestId}
      WHERE (${predicate}) OR ${replayed(w.requestId)}`;
@@ -132,7 +155,8 @@ export function refuseReplay(row: string | StoredReplay | null | undefined, w: W
   const actor = e?.actor ?? { kind: w.actor.kind, id: actorId(w.actor) };
   const same = !!e && e.kinds.includes(r.kind) && (e.appId === undefined || e.appId === r.app_id) && actor.kind === r.actor_kind && actor.id === r.actor_id;
   if (!same) refuse('conflict', 'This request id was already used for another write: use a new one');
-  refuse('already_applied', `Request already applied (app_changes seq ${r.seq})`);
+  // D929: a network's backend never learns the ledger's global sequence.
+  refuse('already_applied', (w.actor.kind as string) === 'platform' ? 'This request was already applied: read the app to see its state' : `Request already applied (app_changes seq ${r.seq})`);
 }
 
 /**
@@ -141,8 +165,9 @@ export function refuseReplay(row: string | StoredReplay | null | undefined, w: W
  */
 export async function runWrite(db: HotDb, w: Writer, stmts: readonly Q[]): Promise<D1Result[]> {
   let results: D1Result[];
+  if (w.beforeBatch) await w.beforeBatch();
   try {
-    results = await db.batch(stmts);
+    results = await db.batch(w.batchTail?.length ? [...stmts, ...w.batchTail] : stmts);
   } catch (err) {
     // The batch rolled back. Only a used request id is answered; anything else is the caller's internal error.
     const seen = await db.first<StoredReplay>(q`SELECT seq, kind, app_id, actor_kind, actor_id FROM app_changes WHERE request_id = ${w.requestId}`);

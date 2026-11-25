@@ -694,3 +694,22 @@ export function normalisePartnerAppName(input: string): { ok: true; name: string
   const problem = appNameProblem(r.name);
   return problem ? { ok: false, problem } : r;
 }
+
+// ---- look-alike names on one scope (the platform API's create, L15) ----
+
+/**
+ * The form two app names are compared in to tell whether one reads like the other: the skeleton (NFKC, accents
+ * dropped, look-alike letters and digits folded, lower case), "rn" read as "m" and "vv" as "w", and every character
+ * that isn't a letter or a digit left out ("Acme Swap", "ACME-swap", "Acme  Swap", "Acrne Swap" and "Àcmé Swap" are one
+ * name). Compared within one scope only: apps on other scopes, or of other orgs, are never compared.
+ */
+export function appNameLookalikeKey(name: string): string {
+  // The Arabic tatweel (U+0640) only stretches a letter: left out before the "rn"/"vv" folds, so "Acrـne" is "Acme".
+  return canon(nameSkeleton(name).replace(/\u0640/gu, '')).replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+/** Whether two app names read alike (`appNameLookalikeKey` equal, and not empty). */
+export function namesLookAlike(a: string, b: string): boolean {
+  const k = appNameLookalikeKey(a);
+  return k.length > 0 && k === appNameLookalikeKey(b);
+}

@@ -361,6 +361,9 @@ export async function appChangesAnnounce(m: M, changeId: string, where: string, 
   if (!change) throw new Error(`No guarded change ${changeId}`);
   if (change.status !== 'pending') throw new Error(`${changeId} is ${change.status}, not pending`);
   if (change.notified_at !== null) throw new Error(`${changeId} was already announced at ${at(change.notified_at)} (in force from ${at(change.active_from ?? change.notified_at)})`);
+  // D929 (docs/partner-platform-spec.md A4.5): a web address the platform proposed is announced only by the admin
+  // Worker, so its email (and later its Confirm link) always goes out and its platform wait always applies.
+  if (change.proposed_by_kind === 'platform') throw new Error(`${changeId} was proposed by a platform key: only the admin Worker announces those (forbidden here)`);
   await deps.requireC3Api(REQUIRED_HOT_DB_ANNOUNCE);
   const app = findApp(deps, change.app_id);
   const now = deps.now();

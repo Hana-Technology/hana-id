@@ -18,6 +18,7 @@ import {
 } from '@hana-id/console-core';
 import { createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { platformProposal as proposal } from './platform-helpers.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearJwksCache } from '@hana-id/oidc';
 import type { Writer } from '../src/changes/cas.ts';
@@ -154,19 +155,8 @@ const refusal = (sql: string, ...binds: unknown[]): Promise<string> =>
       (e: unknown) => String(e instanceof Error ? e.message : e),
     );
 
-/** A waiting web address the platform proposed for `app` with key `keyId` (piece P4 will write these; until then, a bare D1 write). */
-async function platformProposal(app: OrgApp, keyId: string, origin: string, o: { inForce?: boolean } = {}): Promise<string> {
-  const id = newId('guardedChange');
-  const now = Date.now();
-  await env.DB.prepare(
-    `INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, notified_at, active_from, request_id)
-     VALUES (?1, ?2, 'origin_add', ?3, ?4, 'platform', ?5, ?6, ?7, ?8, ?9)`,
-  )
-    .bind(id, app.id, origin, o.inForce ? 'active' : 'pending', keyId, now - HOUR, now - HOUR, o.inForce ? now - 60_000 : now + DAY, `pf_${id}`)
-    .run();
-  await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, ?3, ?4)').bind(app.id, origin, o.inForce ? now - 60_000 : now + DAY, id).run();
-  return id;
-}
+/** A waiting web address the platform proposed for `app` with key `keyId` (written within migration 0033's rules). */
+const platformProposal = (app: OrgApp, keyId: string, origin: string, o: { inForce?: boolean } = {}): Promise<string> => proposal(app.id, keyId, origin, o);
 
 // ---- registration ----
 

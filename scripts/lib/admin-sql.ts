@@ -437,6 +437,7 @@ function noSessionWaiver(t: string, now: number): string {
  * `active_from`, or the app's pending policy or raw signing with `*_effective_at = active_from` (a matured pending
  * value is first kept as the stored one, so the announcement never takes a policy or raw signing in force away). No
  * version bump (announcements never invalidate a step-up in flight). The CLI reads the change back for what it got.
+ * Never a platform proposal (D929): only the admin Worker announces those, with their platform wait.
  */
 export function announceWrite(change: ChangeRow, app: AppRef, delayMs: number, opts: { now: number; actor: CliActor; requestId: string }): HotWrite {
   const { now, actor, requestId } = opts;
@@ -449,7 +450,7 @@ export function announceWrite(change: ChangeRow, app: AppRef, delayMs: number, o
   const s = [
     `INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, request_id)
      SELECT ${now}, ${sql`${app.org_id}, ${app.id}, ${app.scope_id}, ${'change.announced'}`}, ${detail}, 'hana', ${sql`${actor.id}, ${requestId}`}
-       FROM guarded_changes g WHERE ${sql`g.id = ${change.id}`} AND g.status = 'pending' AND g.notified_at IS NULL`,
+       FROM guarded_changes g WHERE ${sql`g.id = ${change.id}`} AND g.status = 'pending' AND g.notified_at IS NULL AND g.proposed_by_kind <> 'platform'`,
     `UPDATE guarded_changes SET notified_at = ${now},
             active_from = CASE WHEN ${waived('guarded_changes')} THEN ${now} ELSE ${now + delayMs} END,
             waiver = CASE WHEN ${waived('guarded_changes')} THEN 'no_session' END

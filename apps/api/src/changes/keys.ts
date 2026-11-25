@@ -5,6 +5,9 @@
 // endpoints (unlock, touch, revoke, share creation) cache the app per isolate and see it within 30 s (app-cache.ts,
 // D78, D208). No step-up: keys are public and origins gate them.
 //
+// The plan reads only the keys unrevoked or in their grace at the write's time, and the key the write names (D929):
+// every count below is over those, so a history of revoked keys costs nothing.
+//
 // Two counts, on purpose (D227): the 5-key limit counts keys with `revoked_at` NULL (a rotating key is already
 // revoked, so rotation never hits the limit), while "the last valid key" and what revoke accepts count keys still
 // valid now (`revoked_at` NULL or in the future: a rotating key still logs users in).
@@ -30,10 +33,14 @@ export const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
  */
 export const legacyKeyTombstone = (environment: Environment): string => `pk_${environment}_0revoked${base58(randomBytes(16))}`;
 
-/** Points `apps.publishable_key` at the oldest key with no revocation, or a tombstone. Writes the column, never reads it. */
+/**
+ * Points `apps.publishable_key` at the oldest key with no revocation, or a tombstone. Writes the column, never reads it.
+ * `+created_at` keeps the sort off the newest-keys index, so the unrevoked keys come down `app_keys_app_revoked` and a
+ * long history of revoked keys isn't read (D929).
+ */
 export function syncLegacyKey(appId: string, environment: Environment, requestId: string): Q {
   return q`UPDATE apps SET publishable_key = COALESCE(
-             (SELECT key FROM app_keys WHERE app_id = ${appId} AND revoked_at IS NULL ORDER BY created_at, rowid LIMIT 1), ${legacyKeyTombstone(environment)})
+             (SELECT key FROM app_keys WHERE app_id = ${appId} AND revoked_at IS NULL ORDER BY +created_at, rowid LIMIT 1), ${legacyKeyTombstone(environment)})
             WHERE id = ${appId} AND ${committed(requestId)}`;
 }
 
@@ -68,7 +75,7 @@ export async function createKey(db: HotDb, w: Writer, i: { orgId: string | null;
 /** Rotate: a new key, and the old one (unrevoked) revoked at now + 24 h. The old key keeps working for exactly the grace. */
 export async function rotateKey(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; keyId: string }) {
   expectReplay(w, ['key.rotated']);
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { keys: true } });
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { keys: true }, keyId: i.keyId });
   const old = plan.keys.find((k) => k.id === i.keyId);
   if (!old) return refuse('not_found', 'No such key');
   if (old.revoked_at !== null) refuse('conflict', old.revoked_at > w.now ? 'The key is already being rotated' : 'The key is revoked');
@@ -92,7 +99,7 @@ export async function rotateKey(db: HotDb, w: Writer, i: { orgId: string | null;
 /** Revoke: immediate, also for a key in its rotation grace. Revoking the last valid key is allowed and warned about. */
 export async function revokeKey(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; keyId: string }) {
   expectReplay(w, ['key.revoked']);
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { keys: true } });
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { keys: true }, keyId: i.keyId });
   const key = plan.keys.find((k) => k.id === i.keyId);
   if (!key) return refuse('not_found', 'No such key');
   if (!unrevoked(w.now)(key)) refuse('conflict', 'The key is already revoked');

@@ -244,7 +244,7 @@ describe('rendering', () => {
       ['member', 'usr_1', 'a console member (usr_1)'],
       ['hana', 'staff@hana.example', 'Journear staff (staff@hana.example)'],
       ['system', 'cron', 'the system (cron)'],
-      ['platform', 'pkc_Nt4Wq8Rb2m', 'your platform key (pkc_Nt4Wq8Rb2m)'],
+      ['platform', 'pkc_Nt4Wq8Rb2m', "the organisation's platform key (pkc_Nt4Wq8Rb2m)"],
     ];
     expect(proposers.map(([k]) => k)).toEqual([...PROPOSER_KINDS]);
     for (const [kind, by, words] of proposers) {
@@ -260,7 +260,7 @@ describe('rendering', () => {
       ['hana', 'Journear staff (id_hana)'],
       ['system', 'the system (id_system)'],
       ['link', 'an emailed link (id_link)'],
-      ['platform', 'a platform key (id_platform)'],
+      ['platform', "the organisation's platform key (id_platform)"],
     ];
     expect(actors.map(([k]) => k)).toEqual([...ACTOR_KINDS]);
     for (const [kind, words] of actors) {

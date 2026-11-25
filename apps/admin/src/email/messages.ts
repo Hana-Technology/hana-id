@@ -24,14 +24,15 @@ const notice = (c: MailContext, heading: string, preheader: string): Design => (
 
 /**
  * Who proposed a guarded change, in the notice's "Proposed by" row (the proposer's id kept after it for support). A
- * platform proposal names the org's own platform key (D916; docs/partner-platform-spec.md A6): the notice goes to that
- * org's security contacts. Exhaustive, so a new proposer kind can't reach an email unnamed.
+ * platform proposal names the organisation's platform key (D916; docs/partner-platform-spec.md A6): the one message
+ * goes to the org's security contacts and to Journear's security alias, so it says "the organisation's", right for
+ * both. Exhaustive, so a new proposer kind can't reach an email unnamed.
  */
 const PROPOSED_BY: Readonly<Record<ChangeNotice['change']['proposedByKind'], string>> = {
   hana: 'Journear staff',
   member: 'a console member',
   system: 'the system',
-  platform: 'your platform key',
+  platform: "the organisation's platform key",
 };
 
 /**
@@ -43,7 +44,7 @@ const CHANGED_BY: Readonly<Record<ActorKind, string>> = {
   member: 'a console member',
   system: 'the system',
   link: 'an emailed link',
-  platform: 'a platform key',
+  platform: "the organisation's platform key",
 };
 
 /** An actor in words; a kind this build doesn't know reads as itself (a row written by a newer API). */

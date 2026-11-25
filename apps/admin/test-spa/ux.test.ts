@@ -341,3 +341,21 @@ describe('the Retention screen (C13; readiness 7.17)', () => {
     expect(text).toContain('key exports and mainnet demo signatures of scopes left without apps: 2');
   });
 });
+
+describe('the audit page names and filters every actor kind (D916)', () => {
+  it('offers "Platform key" in "Done by", sends actorKind=platform, keeps it in the CSV link, and names a platform app change', async () => {
+    const change = { seq: 9, at: T, orgId: 'org_lumen', appId: 'app_pay', scopeId: 's_pay', kind: 'origin.proposed', detail: {}, actorKind: 'platform', actorId: 'pkc_Nt4Wq8Rb2m', requestId: 'req_platform1' };
+    const s = boot('/audit?orgId=org_lumen&actorKind=platform', (c) => (c.path.startsWith('/api/audit?') ? { body: { rows: [], changes: [change], directory: null } } : { status: 404, body: { error: { code: 'not_found', message: 'x' } } }));
+    await vi.waitFor(() => expect(s.text()).toContain('Audit log'));
+    await vi.waitFor(() => expect(s.text()).toContain('pkc_Nt4Wq8Rb2m'));
+    const select = s.form().querySelector('[name="actorKind"]') as unknown as HTMLSelectElement;
+    const options = [...select.querySelectorAll('option')].map((o) => [o.getAttribute('value'), o.textContent]);
+    expect(options).toEqual([['', 'Anyone'], ['hana', 'Journear staff'], ['member', 'Members'], ['system', 'System'], ['link', 'Account link'], ['platform', 'Platform key']]);
+    expect([...select.querySelectorAll('option')].filter((o) => o.hasAttribute('selected')).map((o) => o.getAttribute('value'))).toEqual(['platform']);
+    expect(s.api().some((c) => c.path.startsWith('/api/audit?') && new URLSearchParams(c.path.split('?')[1]).get('actorKind') === 'platform')).toBe(true);
+    expect(main(s).querySelector('a[href^="/api/audit.csv?"]')!.getAttribute('href')).toContain('actorKind=platform');
+    expect(s.text()).toContain('Platform keypkc_Nt4Wq8Rb2m');
+  });
+});
+
+const main = (s: ReturnType<typeof boot>) => s.main();

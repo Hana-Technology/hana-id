@@ -219,7 +219,9 @@ describe('migration 0027_platform_actor', () => {
 
   it('every trigger and view in the whole schema is there after with the same SQL; only 0027’s four triggers are new', async () => {
     const after = await everyTriggerAndView();
-    expect([...after.keys()].filter((k) => !everyTriggerBefore.has(k)).sort()).toEqual(['app_changes_actor_kind', 'app_changes_no_replace', 'guarded_changes_proposer_kind', 'guarded_changes_proposer_kind_update']);
+    // Later migrations' own tables bring their own triggers (0028's platform_keys, D918); none reads the rebuilt tables.
+    const later = new Set(['platform_keys']);
+    expect([...after.keys()].filter((k) => !everyTriggerBefore.has(k) && !later.has(after.get(k)!.tbl)).sort()).toEqual(['app_changes_actor_kind', 'app_changes_no_replace', 'guarded_changes_proposer_kind', 'guarded_changes_proposer_kind_update']);
     for (const [name, b] of everyTriggerBefore) expect(after.get(name), name).toEqual(b);
   });
 

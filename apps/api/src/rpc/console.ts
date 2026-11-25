@@ -36,6 +36,12 @@ import {
   previewLabelsInput,
   proposeLabelsInput,
   removeLabelsInput,
+  listPlatformKeysInput,
+  platformKeyByLinkInput,
+  platformKeyInput,
+  proposePlatformKeyInput,
+  revokePlatformKeyInput,
+  stepUpPlatformKeyInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -55,6 +61,7 @@ import { emailSearchMac } from '../identity/email.ts';
 import { cancelLabelChange, cancelLabelChangeByLink } from '../labels/lifecycle.ts';
 import { listLabels, previewLabels, proposeLabels, removeLabels } from '../labels/propose.ts';
 import { isLabelChange } from '../labels/sql.ts';
+import { acceptPlatformKey, cancelPlatformKey, cancelPlatformKeyByLink, confirmPlatformKey, getPlatformKey, listPlatformKeys, registerPlatformKey, revokePlatformKey, revokePlatformKeyByLink } from '../platform/keys.ts';
 import { runRpc } from './common.ts';
 
 const MEMBER = ['member'] as const;
@@ -96,6 +103,19 @@ export const CONSOLE_COSTS = {
   proposeLabels: 7,
   /** Plan read, a batch of four, one diagnostic read. */
   removeLabels: 6,
+  /** D918: platform keys. One read each. */
+  listPlatformKeys: 1,
+  getPlatformKey: 1,
+  /** Plan read, a batch of two (commit, key), the key read back (or, when the batch fails, one diagnostic read). */
+  proposePlatformKey: 4,
+  acceptPlatformKey: 4,
+  confirmPlatformKey: 4,
+  cancelPlatformKey: 4,
+  /** Plan read, a batch of two and no read back. */
+  cancelPlatformKeyByLink: 4,
+  /** Plan read, a batch of six (commit, key, and the four that cancel its waiting web addresses), the key read back. */
+  revokePlatformKey: 8,
+  revokePlatformKeyByLink: 8,
 } as const;
 
 /**
@@ -311,6 +331,55 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
         ...(status >= 400 && error ? { error: error.slice(0, 500) } : {}),
       };
     });
+  }
+
+  // ---- platform keys (D918): a network's backend's keys. Registering, accepting and confirming are a member's, with the
+  // step-up the API verifies itself; no platform key can reach any of these (the actor union has no `platform`, and the
+  // writers refuse every other kind) ----
+
+  listPlatformKeys(c: unknown) {
+    return runRpc(this.env, 'listPlatformKeys', listPlatformKeysInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.listPlatformKeys }, ({ input, db, w }) => listPlatformKeys(db, input.orgId, w.now, false));
+  }
+
+  getPlatformKey(c: unknown) {
+    return runRpc(this.env, 'getPlatformKey', platformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getPlatformKey }, async ({ input, db, w }) => ({ key: await getPlatformKey(db, input.orgId, input.keyId, w.now, false) }));
+  }
+
+  /** An on-chain owner of each scope, with the `platform.key_add` step-up. Not counted by the breaker: nothing works without the wait or a confirmation. */
+  proposePlatformKey(c: unknown) {
+    return runRpc(this.env, 'proposePlatformKey', proposePlatformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.proposePlatformKey }, ({ input, db, w }) =>
+      registerPlatformKey(db, this.env, w, { orgId: input.orgId, scopeIds: input.scopeIds, label: input.label, publicKey: input.publicKey, by: { kind: 'member', stepUpJwt: input.stepUpJwt } }),
+    );
+  }
+
+  /** An on-chain owner of each scope accepts a staff-registered key (counts as its confirmation, D917). */
+  acceptPlatformKey(c: unknown) {
+    return runRpc(this.env, 'acceptPlatformKey', stepUpPlatformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.acceptPlatformKey }, ({ input, db, w }) => acceptPlatformKey(db, this.env, w, input));
+  }
+
+  /** An owner's confirmation of a waiting key: in force at once; four eyes on a real-money setup. A member actor only. */
+  confirmPlatformKey(c: unknown) {
+    return runRpc(this.env, 'confirmPlatformKey', stepUpPlatformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.confirmPlatformKey }, ({ input, db, w }) => confirmPlatformKey(db, this.env, w, input));
+  }
+
+  /** A waiting key cancelled at once, no fresh sign-in (a cancel only stops a key). */
+  cancelPlatformKey(c: unknown) {
+    return runRpc(this.env, 'cancelPlatformKey', platformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.cancelPlatformKey, killSwitch: true }, ({ input, db, w }) => cancelPlatformKey(db, w, input));
+  }
+
+  /** A kill switch: immediate, no fresh sign-in, whatever the key's state; cancels the key's waiting web addresses. Counted by the breaker. */
+  revokePlatformKey(c: unknown) {
+    return runRpc(this.env, 'revokePlatformKey', revokePlatformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokePlatformKey, killSwitch: true, breaker: true }, ({ input, db, w }) => revokePlatformKey(db, w, input));
+  }
+
+  /** The announcement's cancel link (`POST /api/platform-keys/cancel`): no session, the `link` actor, the link limits. */
+  cancelPlatformKeyByLink(c: unknown) {
+    return runRpc(this.env, 'cancelPlatformKeyByLink', platformKeyByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.cancelPlatformKeyByLink, link: true }, ({ input, db, w }) => cancelPlatformKeyByLink(db, w, input));
+  }
+
+  /** The confirmation notice's revoke link (`POST /api/platform-keys/revoke`, 7 days, single use): the `link` actor. */
+  revokePlatformKeyByLink(c: unknown) {
+    return runRpc(this.env, 'revokePlatformKeyByLink', platformKeyByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.revokePlatformKeyByLink, link: true }, ({ input, db, w }) => revokePlatformKeyByLink(db, w, input));
   }
 
   // ---- end users and their wallets (D310, D315, D346): the org's own scopes only; `userId` is the identity token's

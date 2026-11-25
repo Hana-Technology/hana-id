@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { MAX_APP_CHANGE_DELAY_MS, MIN_APP_CHANGE_DELAY_MS, PRODUCTION_APP_CHANGE_DELAY_MS, repoRoot } from '@hana-id/env';
+import { PLATFORM_MIN_DELAY_MS } from '@hana-id/console-core';
 import { describe, expect, it } from 'vitest';
 import * as apiConfig from '../../src/guarded/config.ts';
 
@@ -119,5 +120,18 @@ describe('guarded/config.ts', () => {
     expect(apiConfig.MIN_APP_CHANGE_DELAY_MS).toBe(MIN_APP_CHANGE_DELAY_MS);
     expect(apiConfig.MAX_APP_CHANGE_DELAY_MS).toBe(MAX_APP_CHANGE_DELAY_MS);
     expect(apiConfig.PRODUCTION_APP_CHANGE_DELAY_MS).toBe(PRODUCTION_APP_CHANGE_DELAY_MS);
+  });
+
+  it('D918: console-core’s platform minimum; four eyes and the 24 h minimum on every mainnet manifest, the 24 h on every env but a local* one on testnet', () => {
+    expect(apiConfig.PLATFORM_MIN_DELAY_MS).toBe(PLATFORM_MIN_DELAY_MS);
+    const dir = join(repoRoot, 'envs');
+    const manifests = readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as { name: string; network: string });
+    expect(manifests.length).toBeGreaterThan(0);
+    for (const m of manifests) {
+      expect(apiConfig.fourEyesNetwork(m.network), m.name).toBe(m.network === 'mainnet');
+      expect(apiConfig.platformMinDelayMs({ ENV_NAME: m.name, NETWORK: m.network }), m.name).toBe(/^local/u.test(m.name) && m.network === 'testnet' ? 0 : PLATFORM_MIN_DELAY_MS);
+    }
+    expect(apiConfig.fourEyesNetwork('mainnet')).toBe(true);
+    expect(apiConfig.fourEyesNetwork(undefined)).toBe(false);
   });
 });

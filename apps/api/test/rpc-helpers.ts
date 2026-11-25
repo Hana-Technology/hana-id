@@ -236,3 +236,10 @@ export function governanceViews<T extends Chain>(n: T, now = Date.now()): T {
   n.accessKeyList = [{ public_key: UPDATER_PK, access_key: { nonce: 1, permission: 'FullAccess' } }];
   return n;
 }
+
+/** A fresh P-256 key pair's public half as a partner pastes it (a JWK): a platform key's (D918). */
+export async function newPlatformPublicKey(): Promise<string> {
+  const kp = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
+  const jwk = (await crypto.subtle.exportKey('jwk', kp.publicKey)) as JsonWebKey;
+  return JSON.stringify({ kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y });
+}

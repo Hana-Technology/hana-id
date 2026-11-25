@@ -46,6 +46,9 @@ export interface LogFields {
   guardedChangeId?: string;
   /** D894: a partner label version (`lc_…`). */
   labelChangeId?: string;
+  /** D918: a platform key's id (`pkc_…`), never the key or its thumbprint. */
+  platformKeyId?: string;
+  lapsed?: number;
   what?: string;
   activated?: number;
   superseded?: number;

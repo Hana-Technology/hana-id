@@ -9,6 +9,21 @@ export const MAX_APP_CHANGE_DELAY_MS = 7 * DAY_MS;
 export const PRODUCTION_APP_CHANGE_DELAY_MS = DAY_MS;
 /** The NEAR network whose origin rules are production's (https only, no loopback, no wildcard). */
 export const PRODUCTION_NETWORK = 'mainnet';
+/** packages/console-core PLATFORM_MIN_DELAY_MS (D914): what a platform key (and, from P4, a platform proposal) waits at least when nobody confirms it. */
+export const PLATFORM_MIN_DELAY_MS = DAY_MS;
+
+/** A real-money setup (D914): four eyes on every platform key. The network alone decides it, as changeConfig's 24 h floor. */
+export const fourEyesNetwork = (network: string | undefined): boolean => network === PRODUCTION_NETWORK;
+
+/**
+ * The platform minimum for this env (D914, D918): 24 h everywhere except a `local*` env on testnet, which keeps its own
+ * short delay (0 here: the guarded-change delay then applies alone). Fails closed: any other name, a missing name, or
+ * any other network (mainnet above all) gets the 24 h. The rest of the `local*` guard the spec proposes (the manifest
+ * rule, the deploy wrapper's refusal) is piece P10's.
+ */
+export function platformMinDelayMs(env: { ENV_NAME?: string; NETWORK?: string }): number {
+  return typeof env.ENV_NAME === 'string' && /^local/u.test(env.ENV_NAME) && env.NETWORK === 'testnet' ? 0 : PLATFORM_MIN_DELAY_MS;
+}
 
 export interface ChangeConfig {
   delayMs: number;

@@ -421,7 +421,7 @@ describe('wrangler.jsonc', () => {
     const read = () => JSON.parse(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8').replace(/^\/\/.*\n/u, '')) as { hyperdrive?: { id: string }[]; d1_databases: { database_name: string; database_id: string }[] };
     const opts = { dir, loadManifest: () => real };
     // A fresh folder: no id known, so gen refuses (nothing written) unless given the id or `off`.
-    expect(() => main(['sandbox-dev', '--d1-id', envId], opts)).toThrow(/has a usage ledger .*pass --usage-hyperdrive-id <writer id>.*or --usage-hyperdrive-id off.*Nothing written/u);
+    expect(() => main(['sandbox-dev', '--d1-id', envId], opts)).toThrow(/has a usage ledger .*pass --usage-hyperdrive-id <writer id>: the id of the config named hana-id-usage-writer-sandbox-dev \(never hana-id-usage-admin-sandbox-dev\) in `corepack pnpm --dir apps\/api exec wrangler hyperdrive list` \(read-only\), or --usage-hyperdrive-id off.*Nothing written/u);
     for (const f of ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc']) expect(existsSync(join(dir, f)), f).toBe(false);
     main(['sandbox-dev', '--d1-id', envId, '--usage-hyperdrive-id', hd], opts);
     expect(read().hyperdrive?.[0]?.id).toBe(hd);

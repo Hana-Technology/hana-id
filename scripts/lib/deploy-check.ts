@@ -45,7 +45,7 @@
 // It holds no secret and prints only public values: URLs and Worker names from the manifest, HTTP statuses, build ids
 // that parse, and the last lines of a failed wrangler run's own error output (nothing else from an answer is printed).
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Manifest, ckdSourceOperatorProblems, emailIssuerUrl, loadEnv, nearOperatorProblems, operatorConflictProblems, repoRoot } from '@hana-id/env';
@@ -72,7 +72,10 @@ export const DEPLOY_CHECK_USAGE = `Usage: deploy-check.ts <env> [--only <groups>
                the console's, the watchdog's, for the groups read), with \`wrangler d1 migrations list <db> --remote\`
                (read-only); any is a failure. Needs each app's wrangler.jsonc generated for <env>.
   --skip-head  compare the pieces with each other only, not with this checkout
-  --strict     a piece deployed from a tree with uncommitted changes (…-dirty) fails instead of warning`;
+  --strict     a piece deployed from a tree with uncommitted changes (…-dirty) fails instead of warning
+  --usage-binding  only this: the USAGE_DB Hyperdrive id in apps/api/wrangler.jsonc (generated for <env>) names the
+               manifest's usage.writerHyperdrive config, read with \`wrangler hyperdrive get <id>\` (read-only; D924,
+               untried against Cloudflare)`;
 
 export const CHECK_TIMEOUT_MS = 10_000;
 /** The most read of a JSON or HTML answer; the vault bundle is read only as far as its first line. */
@@ -428,6 +431,8 @@ export interface RunResult {
 
 export interface DeployCheckDeps {
   fetch?: typeof fetch;
+  /** A local file's text, or null when it doesn't exist (`--usage-binding` reads apps/api/wrangler.jsonc). */
+  readText?: (file: string) => string | null;
   localBuild?: () => LocalBuild;
   loadManifest?: (name: string) => Manifest;
   /** `pnpm <argv>` in `dir`; stdout and stderr together. */
@@ -459,6 +464,55 @@ const tail = (output: string): string =>
     .slice(-8)
     .map((l) => `    ${l}`)
     .join('\n');
+
+// ---- the usage ledger's binding (after PR 151's review, L11) ----
+
+/** `wrangler hyperdrive get <id>` (read-only: one config's settings; the origin's password is never returned). */
+export const hyperdriveGetArgv = (id: string): string[] => ['exec', 'wrangler', 'hyperdrive', 'get', id];
+
+/** The `name` of a Hyperdrive config from `wrangler hyperdrive get`'s output (its JSON object), or null. */
+export function hyperdriveNameOf(output: string): string | null {
+  const start = output.indexOf('{');
+  const end = output.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const v = JSON.parse(output.slice(start, end + 1)) as { name?: unknown };
+    return typeof v.name === 'string' ? v.name : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `gen` takes any well-formed Hyperdrive id, so a hand-typed id could bind the API's USAGE_DB to the admin's config
+ * (the `usage_admin` role). This reads the id from the generated apps/api/wrangler.jsonc (this checkout's, the one a
+ * deploy from here uploads) and asks wrangler for that config's name, which must be the manifest's
+ * `usage.writerHyperdrive`. Only names and ids are printed. Untried against Cloudflare (D924): the parse takes the JSON
+ * object in wrangler's output.
+ */
+export function checkUsageBinding(m: Manifest, configText: string | null, get: (id: string) => RunResult): { lines: string[]; failures: string[] } {
+  const lines: string[] = [];
+  const failures: string[] = [];
+  const want = m.usage?.writerHyperdrive;
+  if (!want) return { lines, failures: [`envs/${m.name}.json has no usage block: no USAGE_DB binding to check`] };
+  if (configText === null) return { lines, failures: [`no apps/api/wrangler.jsonc: run \`corepack pnpm --filter @hana-id/api gen ${m.name}\` first`] };
+  let config: { name?: unknown; hyperdrive?: { binding?: unknown; id?: unknown }[] };
+  try {
+    config = JSON.parse(configText.replace(/^\/\/.*\n/u, '')) as typeof config;
+  } catch {
+    return { lines, failures: ['apps/api/wrangler.jsonc is not the generator\'s JSON'] };
+  }
+  if (config.name !== m.cloudflare.workerName) return { lines, failures: [`apps/api/wrangler.jsonc is for ${String(config.name)}, not ${m.cloudflare.workerName}: run gen ${m.name}`] };
+  const id = config.hyperdrive?.find((h) => h.binding === 'USAGE_DB')?.id;
+  if (typeof id !== 'string' || !/^[0-9a-f]{32}$/u.test(id)) return { lines, failures: [`apps/api/wrangler.jsonc has no USAGE_DB binding: usage capture is off in this config`] };
+  const res = get(id);
+  const name = res.status === 0 ? hyperdriveNameOf(res.output) : null;
+  if (name === null) return { lines, failures: [`could not read Hyperdrive config ${id}${res.status !== 0 ? `, exit ${res.status}` : ''}:\n${tail(res.output)}`] };
+  lines.push(`  usage  USAGE_DB → Hyperdrive ${id} (${name})`);
+  if (name === m.usage?.adminHyperdrive) failures.push(`USAGE_DB is bound to the admin's Hyperdrive config ${name} (role usage_admin), not ${want}: run gen ${m.name} --usage-hyperdrive-id <the id of ${want} in \`wrangler hyperdrive list\`>`);
+  else if (name !== want) failures.push(`USAGE_DB is bound to Hyperdrive config ${name}, not ${want} (envs/${m.name}.json usage.writerHyperdrive)`);
+  return { lines, failures };
+}
 
 // ---- usage capture and Hana's own org (Hana Home's billing) ----
 
@@ -552,7 +606,7 @@ export function sponsorRpcSecretFailures(m: Manifest, names: readonly string[]):
 
 /** Runs the check; returns the exit code (0: every piece read on one commit, HEAD's unless --skip-head). */
 export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps = {}): Promise<number> {
-  const args = parseCli(argv, { booleans: ['d1', 'skip-head', 'strict'], multiple: ['only', 'skip'] });
+  const args = parseCli(argv, { booleans: ['d1', 'skip-head', 'strict', 'usage-binding'], multiple: ['only', 'skip'] });
   if (args.positionals.length !== 1) throw new CliError('Name one env');
   const envName = args.positionals[0]!;
   if (envName.startsWith('local')) throw new CliError('local* envs run on wrangler dev, never deployed: nothing to check');
@@ -560,6 +614,15 @@ export async function deployCheck(argv: readonly string[], deps: DeployCheckDeps
   const skip = parseGroups(args.list('skip'), 'skip');
   const m = (deps.loadManifest ?? loadEnv)(envName);
   const log = deps.log ?? ((line: string) => console.log(line));
+  if (args.flag('usage-binding')) {
+    const dir = join(repoRoot, 'apps', 'api');
+    const config = (deps.readText ?? ((f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : null)))(join(dir, 'wrangler.jsonc'));
+    const r = checkUsageBinding(m, config, (id) => (deps.pnpm ?? defaultPnpm)(dir, hyperdriveGetArgv(id)));
+    for (const l of r.lines) log(l);
+    for (const f of r.failures) log(`FAIL: ${f}`);
+    if (r.failures.length === 0) log(`OK: ${m.name}'s API config binds USAGE_DB to ${m.usage?.writerHyperdrive}`);
+    return r.failures.length ? 1 : 0;
+  }
   const all = checkTargets(m);
   const selection = selectGroups(m, all, only, skip);
   const targets = all.filter((t) => selection.groups.includes(t.group));

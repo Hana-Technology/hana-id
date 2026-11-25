@@ -12,9 +12,11 @@
 //              scratch database (its name must contain "rehearsal"; --d1-id required), so `wrangler d1 migrations
 //              apply` and the admin CLI (its --d1-name) run on it exactly as they will on the env's database. Run gen
 //              again without it afterwards.
-// --usage-hyperdrive-id  The usage ledger writer's Hyperdrive config id (`usage-setup <env> hyperdrive` prints it;
-//              batch C4): binds USAGE_DB and turns usage capture on. Without the flag, the id already in wrangler.jsonc
-//              is kept only when that file was generated for the same Worker and D1 database; `off` drops it.
+// --usage-hyperdrive-id  The usage ledger writer's Hyperdrive config id (batch C4; `usage-setup <env> hyperdrive`
+//              creates the configs and prints it once; afterwards read it, read-only, from `wrangler hyperdrive list`:
+//              the row named usage.writerHyperdrive, never the admin's): binds USAGE_DB and turns usage capture on.
+//              Without the flag, the id already in wrangler.jsonc is kept for the same Worker on the env's own D1 or a
+//              rehearsal copy of it (D924); `off` drops it; an env with `usage` and no known id is refused.
 // --dev-vars   Also write apps/api/.dev.vars (0600, gitignored) from .secrets/<env>/relayer-keys.json (session pool,
 //              JSON array of ed25519 secret keys), .secrets/<env>/owner-relayer-keys.json (owner pool, same format),
 //              .secrets/<env>/home-relayer-keys.json (Home pool, same format, when it exists) and
@@ -511,7 +513,7 @@ export function main(argv: string[], opts: { root?: string; dir?: string; loadMa
   const usageFlag = argv.indexOf('--usage-hyperdrive-id');
   const usageArg = usageFlag >= 0 ? argv[usageFlag + 1] : undefined;
   if (usageFlag >= 0 && (!usageArg || (usageArg !== 'off' && !HYPERDRIVE_ID_RE.test(usageArg)))) {
-    throw new Error('--usage-hyperdrive-id needs the writer Hyperdrive config id (32 hex characters; `usage-setup <env> hyperdrive` prints it) or `off`');
+    throw new Error('--usage-hyperdrive-id needs the writer Hyperdrive config id (32 hex characters: the row named usage.writerHyperdrive in `corepack pnpm --dir apps/api exec wrangler hyperdrive list`) or `off`');
   }
   const idFlag = argv.indexOf('--d1-id');
   const d1Arg = idFlag >= 0 ? argv[idFlag + 1] : undefined;
@@ -531,7 +533,7 @@ export function main(argv: string[], opts: { root?: string; dir?: string; loadMa
   const usageHyperdriveId0 = resolvedUsageHyperdriveId(join(outDir, 'wrangler.jsonc'), manifest, usageArg, loaded.cloudflare.d1Name);
   if (loaded.usage && !isLocalEnv(loaded.name) && usageHyperdriveId0 === null && usageArg !== 'off') {
     throw new Error(
-      `envs/${loaded.name}.json has a usage ledger (usage.writerHyperdrive ${loaded.usage.writerHyperdrive}), but no writer Hyperdrive id is known for this config: pass --usage-hyperdrive-id <writer id> (the USAGE_DB id of the env's last config; \`usage-setup ${loaded.name} hyperdrive\` prints it), or --usage-hyperdrive-id off to write it with usage capture off. Nothing written.`,
+      `envs/${loaded.name}.json has a usage ledger (usage.writerHyperdrive ${loaded.usage.writerHyperdrive}), but no writer Hyperdrive id is known for this config: pass --usage-hyperdrive-id <writer id>: the id of the config named ${loaded.usage.writerHyperdrive} (never ${loaded.usage.adminHyperdrive}) in \`corepack pnpm --dir apps/api exec wrangler hyperdrive list\` (read-only), or --usage-hyperdrive-id off to write it with usage capture off. Nothing written.`,
     );
   }
   if (d1Name) console.log(`The D1 binding points at the rehearsal database ${d1Name}: run gen ${loaded.name} again (with the env's own --d1-id) before any deploy or admin command on the env`);

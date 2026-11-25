@@ -43,7 +43,7 @@ import {
   stellarAccountControl,
   stellarFlagNames,
 } from '@hana-id/core/decode';
-import { DEMO_CHECK_IN_CALLDATA, type NearAction, type ReviewedNearAccounts, evmChainInfo, isDemoCheckInCall, toHex } from '@hana-id/core';
+import { DEMO_CHECK_IN_CALLDATA, EVM_NATIVE_DECIMALS, type NearAction, type ReviewedNearAccounts, evmChainInfo, evmNativeUnits, isDemoCheckInCall, toHex } from '@hana-id/core';
 import { BRAND } from '@hana-id/brand';
 import type { LabelDocument } from '@hana-id/core/partner-labels';
 import { type Child, type Dom, dom, row, rows, withoutEmptyLists } from './dom.ts';
@@ -55,8 +55,24 @@ import { formatUnits } from './format-units.ts';
 export { formatUnits };
 
 const stroops = (s: string) => `${formatUnits(s, 7)} XLM (${s} stroops)`;
-const wei = (v: bigint) => `${formatUnits(v, 18)} (${v} wei)`;
-const gwei = (v: bigint) => `${formatUnits(v, 9)} gwei`;
+/**
+ * A raw native amount in the details, in the chain's own smallest unit (D922): "1.5 (1500000000000000000 wei)", on
+ * Hedera "1.5 (1500000000000000000 weibars)". The units come from `evmNativeUnits`, as the consent screen's do.
+ */
+const nativeRaw = (chainId: number, v: bigint) => {
+  const u = evmNativeUnits(chainId);
+  return `${formatUnits(v, u.decimals)} (${v} ${u.smallest})`;
+};
+/**
+ * A gas price: "0.5 gwei"; on a chain whose smallest unit has its own name (no "gwei" to borrow), as an amount of the
+ * coin with its raw number, as the value rows: "0.00000071 HBAR (710000000000 weibars)".
+ */
+const gasPrice = (chainId: number, v: bigint) => {
+  const u = evmNativeUnits(chainId);
+  if (u.gasPrice) return `${formatUnits(v, u.gasPrice.decimals)} ${u.gasPrice.name}`;
+  const symbol = evmChainInfo(chainId)?.nativeSymbol;
+  return `${formatUnits(v, u.decimals)}${symbol ? ` ${symbol}` : ''} (${v} ${u.smallest})`;
+};
 
 const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);
 
@@ -428,8 +444,8 @@ function evmCallData(d: Dom, chainId: number, c: Pick<DecodedEvmCallSite, 'to' |
 function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
   const fees =
     tx.type === 'eip1559'
-      ? [row(d, 'Max fee per gas', mono(d, gwei(tx.maxFeePerGas))), row(d, 'Priority fee per gas', mono(d, gwei(tx.maxPriorityFeePerGas)))]
-      : [row(d, 'Gas price', mono(d, gwei(tx.gasPrice)))];
+      ? [row(d, 'Max fee per gas', mono(d, gasPrice(chainId, tx.maxFeePerGas))), row(d, 'Priority fee per gas', mono(d, gasPrice(chainId, tx.maxPriorityFeePerGas)))]
+      : [row(d, 'Gas price', mono(d, gasPrice(chainId, tx.gasPrice)))];
   const data: Child[] = [];
   if (tx.to === null) data.push(d.h('p', {}, 'Creates a contract from this code:'), mono(d, tx.data));
   else data.push(...evmCallData(d, chainId, tx));
@@ -437,10 +453,10 @@ function evmTx(d: Dom, chainId: number, tx: DecodedEvmTx): HTMLElement[] {
     facts(d, [
       row(d, 'Chain ID', mono(d, String(chainId))),
       row(d, 'To', tx.to === null ? 'New contract' : mono(d, tx.to)),
-      row(d, 'Value', mono(d, wei(tx.value))),
+      row(d, 'Value', mono(d, nativeRaw(chainId, tx.value))),
       row(d, 'Gas limit', mono(d, String(tx.gasLimit))),
       ...fees,
-      row(d, 'Maximum network fee', mono(d, wei(tx.maxFeeWei))),
+      row(d, 'Maximum network fee', mono(d, nativeRaw(chainId, tx.maxFeeWei))),
       row(d, 'Nonce', mono(d, String(tx.nonce))),
       tx.type === 'eip1559' && tx.accessList.length > 0 && row(d, 'Access list', `${tx.accessList.length} entries`),
     ]),
@@ -500,7 +516,7 @@ function sponsoredDetails(d: Dom, decoded: Extract<DecodedApproval, { kind: 'evm
     d.h(
       'ol',
       { class: 'ops' },
-      ...decoded.calls.map((c, i) => d.h('li', { class: 'op' }, d.h('h3', {}, `${i + 1}. Call`), facts(d, [row(d, 'To', mono(d, c.to)), row(d, 'Value', mono(d, wei(c.value)))]), ...evmCallData(d, decoded.chainId, c))),
+      ...decoded.calls.map((c, i) => d.h('li', { class: 'op' }, d.h('h3', {}, `${i + 1}. Call`), facts(d, [row(d, 'To', mono(d, c.to)), row(d, 'Value', mono(d, nativeRaw(decoded.chainId, c.value)))]), ...evmCallData(d, decoded.chainId, c))),
     ),
   ];
 }
@@ -1088,7 +1104,7 @@ export function amountHeadline(decoded: DecodedApproval): AmountHeadline | null 
     case 'evm_tx': {
       const { tx } = decoded;
       const info = evmChainInfo(decoded.chainId);
-      return tx.to !== null && tx.data === '0x' && info ? { value: displayUnits(tx.value, 18), unit: info.nativeSymbol } : null;
+      return tx.to !== null && tx.data === '0x' && info ? { value: displayUnits(tx.value, EVM_NATIVE_DECIMALS), unit: info.nativeSymbol } : null;
     }
     case 'stellar_tx': {
       const ops = decoded.envelope.tx.operations;

@@ -733,6 +733,114 @@ describe('your apps', () => {
   });
 });
 
+describe('a wallet used on more apps than one answer carries (D922, PR 150’s review)', () => {
+  const many = (n: number, prefix = 'Partner', over: Record<string, unknown> = {}) => Array.from({ length: n }, (_, i) => app(`${prefix} ${String(i + 1).padStart(3, '0')}`, over));
+
+  it('the row says how many more; the wallet’s page says so and “Show all apps” asks for the full answer, then shows every app; the row still names 10', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: many(10), appsTotal: 25, appsOpen: 25 })], nextCursor: null });
+    await h.signIn();
+    const row = document.querySelector('.home-row[data-scope="s1"]') as HTMLElement;
+    expect(row.querySelectorAll('.home-row-name')).toHaveLength(10);
+    expect(row.querySelector('.home-row-more')?.textContent).toBe(' and 15 more apps');
+    expect(row.getAttribute('aria-label')).toMatch(/Partner 010, and 15 more apps, Safe if the apps close$/u);
+    row.click();
+    expect(document.querySelectorAll('.home-app-all .home-app')).toHaveLength(10);
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('This wallet is also used on 15 more apps.');
+    // Journear's words sit under the partner's box, never inside it.
+    expect(document.querySelector('.home-app-all #home-more-apps')).toBeNull();
+    h.answer = (url) => json(200, { scopes: url.searchParams.get('scopeId') === 's1' && url.searchParams.get('all') === '1' ? [mine('s1', { apps: many(25), appsTotal: 25, appsOpen: 25 })] : [], nextCursor: null });
+    h.click('home-more-apps-button');
+    await h.page.idle();
+    expect((h.appCalls().at(-1) as Call).url.search).toBe('?scopeId=s1&all=1');
+    expect(document.querySelectorAll('.home-app-all .home-app')).toHaveLength(25);
+    expect(document.getElementById('home-more-apps')).toBeNull();
+    expect(document.getElementById('home-more-apps-button')).toBeNull();
+    // Focus on the first app it added.
+    expect(document.activeElement?.textContent).toContain('Partner 011');
+    // Back on the list, the row is the fresher copy, and still names 10 and counts the rest.
+    h.click('home-back');
+    const again = document.querySelector('.home-row[data-scope="s1"]') as HTMLElement;
+    expect(again.querySelectorAll('.home-row-name')).toHaveLength(10);
+    expect(again.querySelector('.home-row-more')?.textContent).toBe(' and 15 more apps');
+    expect(again.getAttribute('aria-label')).toMatch(/Partner 010, and 15 more apps, /u);
+  });
+
+  it('some of the apps not shown have closed: said so, for the user’s wallet and for an app where they have none', async () => {
+    const h = await ready();
+    h.answer = () =>
+      json(200, {
+        // 12 more apps; 3 of all 22 aren't open, 1 of them shown: 2 of the rest have closed.
+        scopes: [mine('s1', { apps: [...many(9), app('Gone', { status: 'deleted' })], appsTotal: 22, appsOpen: 19 }), scope('s3', { apps: many(10, 'Net'), appsTotal: 11, appsOpen: 10 }), mine('s4', { apps: many(10, 'Ok'), appsTotal: 11, appsOpen: 11 })],
+        nextCursor: null,
+      });
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('This wallet is also used on 12 more apps, including some that have closed.');
+    h.click('home-back');
+    (document.querySelector('.home-row[data-scope="s3"]') as HTMLElement).click();
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('1 more app is listed with this one, which has closed.');
+    h.click('home-back');
+    (document.querySelector('.home-row[data-scope="s4"]') as HTMLElement).click();
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('This wallet is also used on 1 more app.');
+  });
+
+  it('an app where the user has no wallet: read by its app; past what the full answer carries, the page says the rest can’t be listed', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [scope('s3', { apps: many(10, 'Net'), appsTotal: 140, appsOpen: 140 })], nextCursor: null });
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s3"]') as HTMLElement).click();
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('130 more apps are listed with this one.');
+    h.answer = () => json(200, { scopes: [scope('s3', { apps: many(100, 'Net'), appsTotal: 140, appsOpen: 140 })], nextCursor: null });
+    h.click('home-more-apps-button');
+    await h.page.idle();
+    expect((h.appCalls().at(-1) as Call).url.search).toBe('?appId=app_Net001&all=1');
+    expect(document.querySelectorAll('.home-app-all .home-app')).toHaveLength(100);
+    expect(document.getElementById('home-more-apps')?.textContent).toBe('40 more apps are listed with this one. Passport Home can show only 100 apps here, so those 40 can’t be listed.');
+    expect(document.getElementById('home-more-apps-button')).toBeNull();
+  });
+
+  it('focus when the read fails (its notice shown) or adds nothing: back on “Show all apps”', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: many(10), appsTotal: 12, appsOpen: 12 })], nextCursor: null });
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    h.answer = () => refusal(503, 'home_directory_unavailable');
+    h.click('home-more-apps-button');
+    await h.page.idle();
+    expect(document.querySelectorAll('.home-app-all .home-app')).toHaveLength(10);
+    expect(document.activeElement?.id).toBe('home-more-apps-button');
+    expect(pageText()).toContain('Try again in a moment.');
+    // Adds nothing (the same 10 back): the button again.
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: many(10), appsTotal: 12, appsOpen: 12 })], nextCursor: null });
+    h.click('home-more-apps-button');
+    await h.page.idle();
+    expect(document.activeElement?.id).toBe('home-more-apps-button');
+  });
+
+  it('every app shown, or an older API without the counts: no line, no button', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: many(3), appsTotal: 3, appsOpen: 3 }), mine('s2', { apps: many(2) })], nextCursor: null });
+    await h.signIn();
+    expect(document.querySelectorAll('.home-row-more')).toHaveLength(0);
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(document.getElementById('home-more-apps')).toBeNull();
+    expect(document.getElementById('home-more-apps-button')).toBeNull();
+  });
+
+  it('the parser: a list answer keeps 10 apps a scope, the full answer 100, cut before parsing; a bad count is ignored', () => {
+    const body = (n: number, over: Record<string, unknown> = {}) => ({ scopes: [mine('s1', { apps: many(n), ...over })], nextCursor: null });
+    expect(parseHomeApps(body(30)).scopes[0]?.apps).toHaveLength(10);
+    expect(parseHomeApps(body(130), 100).scopes[0]?.apps).toHaveLength(100);
+    // Cut first: the 11th entry of a list answer isn't parsed, even if it is malformed in a way that would throw.
+    const odd = { scopes: [mine('s1', { apps: [...many(10), { get appId(): string { throw new Error('parsed'); } }] })], nextCursor: null };
+    expect(parseHomeApps(odd).scopes[0]?.apps).toHaveLength(10);
+    for (const appsTotal of [2, 2.5, '9', -1, 2_000_000]) expect(parseHomeApps(body(4, { appsTotal })).scopes[0]?.appsTotal, String(appsTotal)).toBe(4);
+    expect(parseHomeApps(body(4, { appsTotal: 9, appsOpen: 12 })).scopes[0]?.appsOpen).toBe(9);
+    expect(parseHomeApps(body(4, { appsTotal: 9 })).scopes[0]?.appsOpen).toBe(4);
+  });
+});
+
 describe('partner strings are text only', () => {
   it('never builds markup, a link or an image from a name, an origin or a logo', async () => {
     const h = await ready();

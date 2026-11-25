@@ -746,8 +746,15 @@ a.jp-btn { text-decoration: none; }
 /* ---- settings: the brand's rows, the save bar under a settings form ---- */
 .settings { border: 1px solid var(--jp-border); border-radius: var(--jp-radius-lg); overflow: hidden; background: var(--jp-surface); }
 .settings .jp-setting { cursor: default; }
-.settings .jp-setting > :last-child { flex: none; }
+/* The control keeps its size; a row without one keeps its text at full width (a lone text column is also the last child). */
+.settings .jp-setting > :last-child:not(:first-child) { flex: none; }
 .settings .jp-setting .jp-field { min-width: min(22rem, 100%); }
+/* At phone width (D922): each row stacks, its text across the row and its buttons below, wrapping when they don't fit. */
+@media (max-width: 760px) {
+  .settings .jp-setting { flex-direction: column; align-items: stretch; gap: var(--jp-space-3); padding: 14px 16px; }
+  .settings .jp-setting > :last-child:not(:first-child) { display: flex; flex-wrap: wrap; gap: var(--jp-space-2); }
+  .settings .jp-setting .jp-btn { white-space: normal; height: auto; min-height: var(--jp-control-md); text-align: center; }
+}
 .jp-savebar .ic { color: var(--jp-accent); }
 .jp-savebar[hidden] { display: none !important; }
 /* Centred on the page, beside the nav. */

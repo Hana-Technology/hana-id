@@ -44,7 +44,9 @@ export const HOME_DEVICES_PER_SCOPE = 25;
 export const HOME_CONSENTS_PER_SCOPE = 25;
 /** Shared addresses per scope, and the apps per scope read for their names and origins (only apps the rows name). */
 export const HOME_EMAILS_PER_SCOPE = 25;
-export const HOME_DEVICE_APPS_PER_SCOPE = 100;
+/** One number with the page's parser (@hana-id/core/home, D922's review). */
+export { HOME_DEVICE_APPS_PER_SCOPE } from '@hana-id/core/home';
+import { HOME_DEVICE_APPS_PER_SCOPE } from '@hana-id/core/home';
 /**
  * `get_identity` reads a request may make to confirm member-resolved roots (D661), and how many at once. With the page at
  * 10, every member scope of a page is read. Worst case, every read failing over through NEAR_RPC and its 3 fallbacks and

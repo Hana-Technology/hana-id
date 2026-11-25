@@ -2,10 +2,12 @@
 // passphrase, and which sign requests name a mainnet.
 import { describe, expect, it } from 'vitest';
 import {
+  EVM_NATIVE_DECIMALS,
   STELLAR_MAINNET_PASSPHRASE,
   KNOWN_EVM_MAINNETS,
   TEST_EVM_CHAINS,
   evmChainInfo,
+  evmNativeUnits,
   isTestEvmChain,
   isTestPublishableKey,
   isTestStellarNetwork,
@@ -108,6 +110,18 @@ describe('chain names and native coins, from Hana’s own tables', () => {
       expect(isTestEvmChain(id)).toBe(false);
     }
     expect(Object.keys(TEST_EVM_CHAINS)).toHaveLength(13);
+  });
+
+  it('the unit a raw native amount is counted in (D922): weibars on Hedera and its test networks, wei everywhere else; 18 decimals on every chain', () => {
+    for (const id of [295, 296, 297]) expect(evmNativeUnits(id), String(id)).toEqual({ smallest: 'weibars', decimals: 18, gasPrice: null });
+    for (const id of [...Object.keys(TEST_EVM_CHAINS), ...Object.keys(KNOWN_EVM_MAINNETS)].map(Number).filter((id) => id !== 295)) {
+      expect(evmNativeUnits(id), String(id)).toEqual({ smallest: 'wei', decimals: 18, gasPrice: { name: 'gwei', decimals: 9 } });
+    }
+    // An unknown or malformed id: wei, as before.
+    for (const id of [987654321, 0, -1, 1.5, Number.NaN]) expect(evmNativeUnits(id).smallest).toBe('wei');
+    expect(EVM_NATIVE_DECIMALS).toBe(18);
+    // A unit isn't a name: Hedera's test networks stay unnamed.
+    expect(evmChainInfo(296)).toBeNull();
   });
 
   it('999 is never a test chain: a Wanchain test network still runs on it, but the same signature is good on HyperEVM', () => {

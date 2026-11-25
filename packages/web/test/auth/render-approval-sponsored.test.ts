@@ -67,6 +67,18 @@ const lines = (el: ParentNode) => [...el.querySelectorAll('p.summary-line')].map
 
 beforeEach(() => document.body.replaceChildren());
 
+describe('a sponsored call’s value in the chain’s own unit (D922, PR 150’s review)', () => {
+  it('Hedera has no sponsorship (no reviewed account helper: the request never decodes); the rows read the unit by chain, so one there would say weibars', () => {
+    const hedera = Object.freeze({ '295': Object.freeze({ delegate: SPONSOR_DELEGATE, relayer: SPONSOR_RELAYER }) });
+    expect(() => decodeApprovalRequest(sponsoredApproval(sponsorSubject({ chainId: 295 })), { sponsorChains: hedera, nowMs: SPONSOR_NOW_MS })).toThrow('No reviewed account helper is pinned for this chain');
+    // A sponsored call carries no value (always 0); its row is in the chain's own unit.
+    const local = decodeSponsored({ calls: [sponsoredCall(TOKEN, TRANSFER)] }) as Extract<DecodedApproval, { kind: 'evm_sponsored' }>;
+    expect(fact(details(render(local)).querySelector('ol.ops > li.op') as HTMLElement, 'Value')).toBe('0 (0 wei)');
+    const onHedera = renderApproval(dom(document), { ...local, chainId: 295 }, APP, { envNetwork: 'testnet', testApp: false, parentOrigin: PARTNER, address: SPONSOR_ME });
+    expect(fact(details(onHedera).querySelector('ol.ops > li.op') as HTMLElement, 'Value')).toBe('0 (0 weibars)');
+  });
+});
+
 describe('a sponsored action’s window', () => {
   it('first time, one known call: its headline, the fee line, the amber setup note (lead); the details folded with the setup row', () => {
     const el = render(decodeSponsored({ authNonce: 0n, calls: [sponsoredCall(TOKEN, TRANSFER)] }));

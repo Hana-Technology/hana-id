@@ -49,7 +49,7 @@ function views(chain: Chain, scopeId: string, who: { provider: string; sub: stri
 /** A Google wallet (root G) with the email E waiting to join it, at `epoch`. */
 const waiting = (epoch = 4): Chain => ({ opened: new Set([key(G)]), accounts: [{ root: G, members: [{ who: E, effectiveAtMs: T0 + 3_600_000, active: false }], epoch }] });
 
-const scopeOf = (o: Partial<HomeScope> = {}): HomeScope => ({ scopeId: S, mine: true, coverage: 'shared', googleClientId: CLIENT_ID, supportId: null, addresses: [], apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: ['https://sodax.example'], logoUrl: null }], ...o });
+const scopeOf = (o: Partial<HomeScope> = {}): HomeScope => ({ scopeId: S, mine: true, coverage: 'shared', googleClientId: CLIENT_ID, supportId: null, addresses: [], apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: ['https://sodax.example'], logoUrl: null }], appsTotal: 1, appsOpen: 1, ...o });
 
 interface Opts {
   who?: HomeSignInsWho | null;
@@ -189,9 +189,11 @@ async function harness(o: Opts = {}): Promise<H> {
   h.google = async (claims = {}, payload) => {
     const p = parseParams(h.child!.received.at(-1));
     if (!p) throw new Error('no parameters were posted');
-    for (let quiet = 0; quiet < 100 && relayResolve === null; ) {
+    // Until the page asks for the relay read: by the clock (up to 5 s, PR 150), with every WebCrypto call in flight
+    // awaited on the way, as idle() does (D924).
+    for (const until = Date.now() + 5_000; relayResolve === null && Date.now() < until; ) {
       await new Promise((r) => setImmediate(r));
-      quiet = (await cryptoSettled()) ? 0 : quiet + 1;
+      await cryptoSettled();
     }
     if (!relayResolve) throw new Error('no relay read');
     const body: RelayPayload = payload ?? { idToken: await signer.sign({ iss: 'https://accounts.google.com', aud: CLIENT_ID, sub: G.sub, nonce: p.nonce, iat: Math.floor(T0 / 1000), exp: Math.floor(T0 / 1000) + 3600, ...claims }) };

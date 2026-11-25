@@ -54,7 +54,7 @@ import { ServerClock } from './clock.ts';
 import { type Child, type Dom, addressText, dom, headingText, maskedAddress, originText, supportCode, supportRequest } from './dom.ts';
 import { sessionKeyText } from './errors.ts';
 import { googleKeys } from './google-keys.ts';
-import { HOME_APP_ID, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
+import { HOME_APP_ID, HOME_MAX_APPS, HOME_MAX_SCOPE_APPS, HOME_SEARCH_MAX, HOME_SEARCH_MIN, type HomeAddress, type HomeApi, type HomeApp, type HomeAppsPage, type HomeAppsQuery, type HomeConfig, type HomeCoverage, type HomeIdentity, type HomeScope, newHomeIdentity } from './home-api.ts';
 import { HOME_DEVICES_TITLE, type HomeDevices, devicesLinked, startHomeDevices } from './home-devices.ts';
 import { HOME_NAME_TITLE, type HomeProfileSection, startHomeProfile } from './home-profile.ts';
 import { type HomeSignIns, startHomeSignIns } from './home-sign-ins.ts';
@@ -126,6 +126,23 @@ export const HOME_TEXT = Object.freeze({
   appTitle: 'App details',
   walletApp: 'App that uses this wallet',
   walletApps: 'Apps that use this wallet',
+  /**
+   * D922: a listing carries some of its apps (10 in the list, up to 100 on a wallet's page) and says how many more
+   * there are, so no app that uses the wallet is ever left out without a word. After the names in a row, and under the
+   * apps on the wallet's page, with the button that shows them.
+   */
+  moreApps: (n: number): string => ` and ${n} more ${n === 1 ? 'app' : 'apps'}`,
+  /**
+   * `closed`: some of the apps not shown have closed or are paused (D922's review: the approval window counts only the
+   * apps that can still ask, so Home says when its number includes others).
+   */
+  moreAppsLine: (n: number, mine: boolean, closed: boolean): string => {
+    const apps = `${n} more ${n === 1 ? 'app' : 'apps'}`;
+    const which = closed ? (n === 1 ? ', which has closed' : ', including some that have closed') : '';
+    return mine ? `This wallet is also used on ${apps}${which}.` : `${apps[0]!.toUpperCase()}${apps.slice(1)} ${n === 1 ? 'is' : 'are'} listed with this one${which}.`;
+  },
+  moreAppsButton: 'Show all apps',
+  moreAppsCap: (shown: number, left: number): string => `${BRAND.home} can show only ${shown} apps here, so ${left === 1 ? 'that one can’t' : `those ${left} can’t`} be listed.`,
   noAddress: `${BRAND.company} has no address on record for this wallet yet.`,
   /** A wallet's tabs (D895), and what their list is called. */
   tabs: Object.freeze({ addresses: 'Addresses', security: 'Security', move: 'Move wallet' }) as Readonly<Record<'addresses' | 'security' | 'move', string>>,
@@ -499,7 +516,7 @@ export function startHomePage(deps: HomePageDeps): HomePage {
    */
   let problemAt: 'top' | 'others' = 'top';
   /** Which action is loading, so only its button says so. */
-  let busy: 'more' | 'search' | 'check' | null = null;
+  let busy: 'more' | 'search' | 'check' | 'apps' | null = null;
   /** `/home?view=devices` (D613): the devices view opens once after each new account's sign-in. */
   const devicesLink = devicesLinked(win.location.search);
 
@@ -1127,6 +1144,42 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     const fresh = page?.scopes.find((s) => s.scopeId === scope.scopeId);
     if (fresh) replaceScope(fresh);
     renderContent();
+  }
+
+  /**
+   * "Show all apps" (D922): reads the listing alone, which carries up to 100 of its apps instead of the list's 10. A
+   * user's own listing by its id, another by its app, as `checkScope`. Focus goes to the first app it added.
+   */
+  async function loadAllApps(scope: HomeScope): Promise<void> {
+    if (busy) return;
+    const first = scope.apps[0];
+    // `all`: the one read that carries every app (up to 100), with its own tighter limit at the API (D922's review).
+    const query: HomeAppsQuery = scope.mine || !first ? { kind: 'scope', scopeId: scope.scopeId, all: true } : { kind: 'app', appId: first.appId, all: true };
+    const before = scope.apps.length;
+    busy = 'apps';
+    problem = null;
+    problemAt = 'top';
+    renderContent();
+    const at = epoch;
+    const page = await request(query);
+    if (at !== epoch) return;
+    busy = null;
+    const fresh = page?.scopes.find((s) => s.scopeId === scope.scopeId);
+    if (fresh) replaceScope(fresh);
+    renderContent();
+    try {
+      if (fresh && fresh.apps.length > before) {
+        // The first app it added.
+        const added = win.document.querySelectorAll<HTMLElement>('.home-app-all .home-app')[before];
+        added?.setAttribute('tabindex', '-1');
+        added?.focus();
+      } else {
+        // A read that failed (its notice is at the top) or added nothing: back on the button, or the line if it's gone.
+        (byId('home-more-apps-button') ?? byId('home-more-apps'))?.focus();
+      }
+    } catch {
+      // Focus is a convenience.
+    }
   }
 
   // ---- the views, and Back and Forward inside Home (D893) ----
@@ -2085,11 +2138,18 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     // pauses ("Sodax, Sodax Earn (Paused), Safe if the app closes"); where the first app runs is the row's description,
     // not its name. Journear's own words around the partner's names, set as an attribute value, never markup.
     const stateWords = (a: HomeApp): string[] => [STATUS_TEXT[a.status], a.environment === 'test' ? 'Test app' : null].filter((w): w is string => w !== null);
-    const named = scope.apps.length > 0 ? scope.apps.map((a) => (stateWords(a).length > 0 ? `${a.name} (${stateWords(a).join(', ')})` : a.name)).join(', ') : scopeTitle(scope);
+    // D922: a row names at most HOME_MAX_APPS apps (after "Show all apps" too), then counts the rest, never dropping one
+    // without a word.
+    const rowApps = scope.apps.slice(0, HOME_MAX_APPS);
+    const more = Math.max(scope.appsTotal, scope.apps.length) - rowApps.length;
+    const named = (rowApps.length > 0 ? rowApps.map((a) => (stateWords(a).length > 0 ? `${a.name} (${stateWords(a).join(', ')})` : a.name)).join(', ') : scopeTitle(scope)) + (more > 0 ? `,${HOME_TEXT.moreApps(more)}` : '');
     const whereId = `home-row-where-${(rowSeq += 1)}`;
     const title =
       scope.apps.length > 0
-        ? scope.apps.flatMap((a, i) => [i > 0 ? d.h('span', { class: 'home-row-sep', attrs: { 'aria-hidden': 'true' } }, ' · ') : null, d.h('span', { class: 'home-row-app' }, d.h('span', { class: 'home-row-name' }, a.name), ...appBadges(a))])
+        ? [
+            ...rowApps.flatMap((a, i) => [i > 0 ? d.h('span', { class: 'home-row-sep', attrs: { 'aria-hidden': 'true' } }, ' · ') : null, d.h('span', { class: 'home-row-app' }, d.h('span', { class: 'home-row-name' }, a.name), ...appBadges(a))]),
+            more > 0 ? d.h('span', { class: 'home-row-more' }, HOME_TEXT.moreApps(more)) : null,
+          ]
         : [scopeTitle(scope)];
     const row = d.h(
       'button',
@@ -2321,6 +2381,22 @@ export function startHomePage(deps: HomePageDeps): HomePage {
     );
   }
 
+  /**
+   * D922: under a listing's apps, how many more use it and the button that shows them (one read of the listing alone);
+   * once that read carried as many as one answer can, what the user can do instead. Nothing when every app is shown.
+   */
+  function moreApps(scope: HomeScope): Child[] {
+    const more = scope.appsTotal - scope.apps.length;
+    if (more <= 0) return [];
+    const capped = scope.apps.length >= HOME_MAX_SCOPE_APPS;
+    // Some of the apps not shown are closed or paused: what isn't open, less what is shown that isn't.
+    const closedLeft = scope.appsTotal - scope.appsOpen - scope.apps.filter((a) => a.status !== 'active').length;
+    return [
+      d.h('p', { class: 'home-more-apps', attrs: { id: 'home-more-apps', tabindex: '-1' } }, HOME_TEXT.moreAppsLine(more, scope.mine, closedLeft > 0), capped ? ` ${HOME_TEXT.moreAppsCap(scope.apps.length, more)}` : null),
+      capped ? null : d.h('div', { class: 'actions start' }, button(busy === 'apps' ? 'Loading…' : HOME_TEXT.moreAppsButton, () => track(loadAllApps(scope)), { id: 'home-more-apps-button', disabled: busy !== null })),
+    ];
+  }
+
   /** One listing's page: its apps, whether Hana can open the wallet, the addresses on record and the Support ID. */
   function appPage(scope: HomeScope): Child[] {
     // The app the page's link named, the user's own included: a link can come from anyone ("open this, press Move this
@@ -2391,6 +2467,8 @@ export function startHomePage(deps: HomePageDeps): HomePage {
           // Each app with where it runs first ("and N more"), side by side where they fit (PR 122's review: a shorter head).
           ...(scope.apps.length > 0 ? scope.apps.map((a) => appLine(a, 1)) : [d.h('p', { class: 'muted' }, scopeTitle(scope))]),
         ),
+        // D922: Journear's words about the apps left out, under the partner's box, never inside it.
+        ...moreApps(scope),
         // Whether it needs them: the badge on its own line, then the answer; the question is read to a screen reader
         // only (the answer starts "No." or "Yes.").
         d.h('p', { attrs: { id: 'home-coverage' } }, ...coverageParts(d, cover, busy === 'check', badge(cover.badge, cover.tone))),

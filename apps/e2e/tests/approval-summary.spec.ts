@@ -170,6 +170,11 @@ test('the six other EVM chains Sodax lists: the window names each with its own c
     await expect(headline).toHaveText(`E2E Partner wants to send 0.01 ${coin} to ${short(RECIPIENT)}`);
     await expect(fact('Network')).toHaveText(`${name} (real money)`);
     await expect(fact('Network fee')).toHaveText(`Up to 0.0001 ${coin}`);
+    // The folded details count the raw number in the chain's own unit, at the same scale (D922): weibars on Hedera.
+    const unit = chainId === 295 ? 'weibars' : 'wei';
+    const detail = (name: string) => details(popup).locator('dt', { hasText: new RegExp(`^${name}$`, 'u') }).locator('xpath=following-sibling::dd[1]');
+    await expect(detail('Value')).toHaveText(`0.01 (10000000000000000 ${unit})`);
+    await expect(detail('Maximum network fee')).toHaveText(`0.0001 (100000000000000 ${unit})`);
     await expect(popup.getByText('doesn’t know (no.', { exact: false })).toHaveCount(0);
     await expect(popup.locator('.danger-box')).toHaveCount(0);
     await expectPlainWindow(popup);

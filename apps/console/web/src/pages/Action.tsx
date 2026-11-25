@@ -124,7 +124,7 @@ function KeyDecoded({ kind, d }: { kind: string; d: Record<string, unknown> }) {
             ? 'Journear registered this key for your organisation. Accept it only if your backend team gave Journear this key: check the fingerprint with them.'
             : 'Confirm this key only if you know it is your organisation’s. Once you confirm, your backend can use it straight away.'}
       </p>
-      <dl className="facts jp-kv">
+      <dl className="facts jp-kv key-facts">
         <dt>Label</dt>
         <dd>{str(d.label)}</dd>
         <dt>Fingerprint</dt>

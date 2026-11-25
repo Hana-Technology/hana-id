@@ -1697,7 +1697,7 @@ const KEY_STATE = { awaiting_acceptance: ['Awaiting acceptance', 'warning'], wai
 async function platformPanel(main, o) {
   const id = encodeURIComponent(o.id);
   const box = h('div', {}, loading());
-  main.append(panel('Platform keys', { anchor: 'platform', hint: 'Keys the organisation’s backend signs its requests with (piece P3 builds the requests). A staff-registered key works only once an owner of each scope accepts it, or a second staff member approves it.' }, box));
+  main.append(panel('Platform keys', { anchor: 'platform', hint: 'Keys the organisation’s backend will sign its requests with (nothing accepts those requests yet). A staff-registered key works only once an owner of each scope accepts it, or a second staff member approves it.' }, box));
   let d;
   try {
     d = await api('GET', `/api/orgs/${id}/platform`);
@@ -1710,23 +1710,11 @@ async function platformPanel(main, o) {
     const [label, tone] = KEY_STATE[k.state] || [k.state, 'neutral'];
     const by = k.proposedByKind === 'hana' ? `Journear staff (${k.proposedByEmail || k.proposedBy})` : `member ${k.proposedBy}`;
     const actions = [];
-    if (k.state === 'awaiting_acceptance') {
-      actions.push(
-        me && me.email && k.proposedByEmail && me.email.toLowerCase() === k.proposedByEmail.toLowerCase()
-          ? unavailable('Approve', 'You registered it: a second staff member approves it')
-          : form(
-              [{ name: 'reason', label: 'How you checked it with the network', required: true, help: 'At least 20 characters. You can’t approve a key you registered.' }],
-              'Approve',
-              (v) => api('POST', `/api/orgs/${id}/platform-keys/${encodeURIComponent(k.id)}/approve`, { reason: v.reason }),
-              { done: 'Key approved: it is announced, then waits 24 hours unless an owner confirms it.' },
-            ),
-      );
-    }
     if (k.state === 'awaiting_acceptance' || k.state === 'waiting') actions.push(actionButton('Cancel', () => api('POST', `/api/orgs/${id}/platform-keys/${encodeURIComponent(k.id)}/cancel`, {}), `Cancel the key “${k.label}”? It never starts working.`, true, { done: 'Key cancelled.' }));
     if (k.state === 'awaiting_acceptance' || k.state === 'waiting' || k.state === 'in_force') actions.push(actionButton('Stop', () => api('POST', `/api/orgs/${id}/platform-keys/${encodeURIComponent(k.id)}/revoke`, { reason: 'Stopped by Journear staff from the admin portal' }), `Stop the key “${k.label}” now? It stops at once for good, and web addresses it asked for that still wait are cancelled.`, true, { done: 'Key stopped.' }));
     return tr(
       h('span', {}, k.label, h('span', { class: 'sub' }, mono(k.id))),
-      h('span', {}, badge(label, tone), k.activeFrom ? h('span', { class: 'sub' }, `${k.state === 'waiting' ? 'from' : 'since'} ${time(k.activeFrom)}`) : ''),
+      h('span', {}, badge(label, tone), k.activeFrom && (k.state === 'waiting' || k.state === 'in_force') ? h('span', { class: 'sub' }, `${k.state === 'waiting' ? 'from' : 'since'} ${time(k.activeFrom)}`) : ''),
       mono(k.thumbprint),
       k.scopes.map((s) => mono(s)),
       h('span', {}, by, h('span', { class: 'sub' }, time(k.proposedAt))),
@@ -1744,10 +1732,30 @@ async function platformPanel(main, o) {
           false,
           { done: 'Platform keys are on for this organisation.' },
         );
+  // A staff key waiting for its acceptance: a second staff member approves it here, with how they checked it.
+  const approvals = d.keys
+    .filter((k) => k.state === 'awaiting_acceptance')
+    .map((k) =>
+      h(
+        'div',
+        {},
+        h('h3', {}, `Approve “${k.label}”`),
+        me && me.email && k.proposedByEmail && me.email.toLowerCase() === k.proposedByEmail.toLowerCase()
+          ? unavailable('Approve', 'You registered it: a second staff member approves it')
+          : form(
+              [{ name: 'reason', label: 'How you checked it with the network', required: true, size: 'wide', help: 'At least 20 characters. You can’t approve a key you registered.' }],
+              'Approve',
+              (v) => api('POST', `/api/orgs/${id}/platform-keys/${encodeURIComponent(k.id)}/approve`, { reason: v.reason }),
+              { done: 'Key approved: it is announced, then waits 24 hours unless an owner confirms it.' },
+            ),
+      ),
+    );
   box.replaceChildren(
     h('p', {}, d.platform.enabled ? 'Platform keys are on for this organisation.' : 'Platform keys are off for this organisation: no key works.', d.platform.frozen ? ' The organisation is frozen.' : ''),
     h('div', { class: 'row' }, switchBox),
     table(['Key', 'State', 'Fingerprint', 'Scopes', 'Registered by', ''], rows, { empty: 'No platform key yet.' }),
+    ...approvals,
+    h('h3', {}, 'Register a key'),
     form(
       [
         { name: 'label', label: 'Label', placeholder: 'Production backend', required: true },

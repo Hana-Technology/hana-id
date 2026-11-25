@@ -244,12 +244,11 @@ export function PlatformKeyPage() {
       <PageHeader title={k.label} back={back} description="A key your organisation’s backend uses to manage its test apps. Check the fingerprint with your backend team." />
       <div className="stack">
         <Panel>
-          <dl className="facts jp-kv">
-            <dt>State</dt>
-            <dd>
-              <Badge tone={s.tone}>{s.label}</Badge>
-              {s.line && <div className="muted small">{s.line}</div>}
-            </dd>
+          <p className="key-state">
+            <Badge tone={s.tone}>{s.label}</Badge>
+            {s.line && <span className="muted small"> {s.line}</span>}
+          </p>
+          <dl className="facts jp-kv key-facts">
             <dt>Fingerprint</dt>
             <dd className="mono">{k.thumbprint}</dd>
             <dt>{k.scopes.length > 1 ? 'Wallet settings (scopes)' : 'Wallet settings (scope)'}</dt>

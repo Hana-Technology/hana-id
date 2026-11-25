@@ -210,7 +210,9 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   if (rest === '/members') return ok(scenario === 'new-org' ? { members: [F.members(now).members[0]!], invites: [], grants: [] } : F.members(now));
   if (rest === '/audit') return ok(F.audit(now));
   // D918: the org's platform keys and one key's page.
-  if (rest === '/platform-keys') return ok({ keys: apps.length ? F.platformKeys(now) : [], platform: { enabled: true, frozen }, scopes: apps.filter((a) => a.environment === 'test').map((a) => a.scopeId), people: F.PLATFORM_PEOPLE, role, now });
+  // Two live keys at most (the quota): the default shows a working and a waiting one (no Register form); `multi` a key
+  // awaiting acceptance and a stopped one, with the form.
+  if (rest === '/platform-keys') return ok({ keys: apps.length ? F.platformKeys(now).filter((k) => (scenario === 'multi' ? k.state === 'awaiting_acceptance' || k.state === 'revoked' : k.state !== 'awaiting_acceptance')) : [], platform: { enabled: true, frozen }, scopes: apps.filter((a) => a.environment === 'test').map((a) => a.scopeId), people: F.PLATFORM_PEOPLE, role, now });
   const keyM = /^\/platform-keys\/([^/]+)$/u.exec(rest);
   if (keyM) {
     const k = F.platformKeys(now).find((x) => x.id === keyM[1]);

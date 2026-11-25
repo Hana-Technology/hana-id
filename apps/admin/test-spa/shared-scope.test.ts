@@ -51,6 +51,20 @@ describe('the staff app page for an app that shares a wallet (D915)', () => {
     expect(s.main().querySelector('textarea[name="policy"]')).toBeNull();
   });
 
+  it('the User IDs row (D919): its own on a marked scope’s new app, the scope’s otherwise; none from an API before 0030', async () => {
+    const own = await open({ sharedScope: true, createdByKind: 'hana', sharedWallet: true, userIds: 'app' });
+    expect(row(own, 'User IDs')).toEqual({ title: 'User IDs', text: 'Its own: each person gets a User ID and Support ID on this app that no other app has. The Support ID lookup doesn’t find these yet.', buttons: [] });
+    closeWindow();
+    const before = await open({ sharedScope: true, createdByKind: 'hana', sharedWallet: true, userIds: 'scope' });
+    expect(row(before, 'User IDs')!.text).toBe('The scope’s: this app was made before the scope was marked as shared, so it keeps the User IDs it already had.');
+    closeWindow();
+    const plain = await open({ sharedScope: false, createdByKind: 'hana', sharedWallet: false, userIds: 'scope' });
+    expect(row(plain, 'User IDs')!.text).toBe('The scope’s: each person has the same User ID and Support ID on every app of this scope.');
+    closeWindow();
+    const old = await open({ sharedScope: false, createdByKind: 'hana', sharedWallet: false });
+    expect(row(old, 'User IDs')).toBeUndefined();
+  });
+
   it('a platform-created app: auto-approve off, no proposal form; a policy found there can still be removed', async () => {
     const s = await open({ sharedScope: false, createdByKind: 'platform', sharedWallet: true, settings: { ...SETTINGS, policy: { policyId: 'a'.repeat(64), label: 'Found', json: {} } } });
     expect(row(s, 'Auto-approve policy')!.buttons).toEqual(['Remove the policy']);

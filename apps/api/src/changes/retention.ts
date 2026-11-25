@@ -4,7 +4,8 @@
 //   purgeAudit      app_changes and guarded_changes rows older than 60 months, in batches
 //   deletedApps     the apps deleted 30 days ago or more (the ledger's app_users purge, usage.purge_app_users)
 //   purgeDirectory  the wallet directory (migration 0011) of every scope whose apps were all deleted 30 days ago or more,
-//                   and the email consents (migration 0014, D411) of every app deleted 30 days ago or more
+//                   and the email consents (migration 0014, D411), name shares (0021, D714) and per-app sign-in rows
+//                   (`end_user_apps`, 0030, D919) of every app deleted 30 days ago or more
 //   purgeUserEvents user_events (migration 0013: key exports, mainnet demo signatures) older than 24 months, and those
 //                   of a scope left without apps (purgeDirectory's rule)
 //
@@ -108,13 +109,19 @@ export async function purgeDirectory(db: HotDb, i: { before: number; limit: numb
   const consents = q`SELECT c.rowid FROM email_consents c JOIN apps a ON a.id = c.app_id WHERE a.deleted_at IS NOT NULL AND a.deleted_at <= ${cutoff} LIMIT ${i.limit}`;
   // D714: a deleted app's name shares, the same way (the names themselves are the users' own, kept in Home).
   const nameShares = q`SELECT n.rowid FROM name_shares n JOIN apps a ON a.id = n.app_id WHERE a.deleted_at IS NOT NULL AND a.deleted_at <= ${cutoff} LIMIT ${i.limit}`;
-  const [scopes, wallets, identities, users, emailConsents, names] = await db.batch([
+  // D919 (M8): a deleted app's rows of which apps a person signed in on (and that app's IDs), the same way, 30 days on;
+  // a dead scope's users take theirs with them (deleted with the page, before the users, so ON DELETE CASCADE has
+  // nothing left to do and the count is ours).
+  const userApps = q`SELECT e.rowid FROM end_user_apps e JOIN apps a ON a.id = e.app_id WHERE a.deleted_at IS NOT NULL AND a.deleted_at <= ${cutoff} LIMIT ${i.limit}`;
+  const [scopes, wallets, identities, pageApps, users, emailConsents, names, deletedApps] = await db.batch([
     q`SELECT COUNT(DISTINCT scope_id) AS n FROM end_users WHERE user_id IN (${page})`,
     q`DELETE FROM end_user_wallets WHERE user_id IN (${page})`,
     q`DELETE FROM end_user_identities WHERE user_id IN (${page})`,
+    q`DELETE FROM end_user_apps WHERE user_id IN (${page})`,
     q`DELETE FROM end_users WHERE user_id IN (${page})`,
     q`DELETE FROM email_consents WHERE rowid IN (${consents})`,
     q`DELETE FROM name_shares WHERE rowid IN (${nameShares})`,
+    q`DELETE FROM end_user_apps WHERE rowid IN (${userApps})`,
   ]);
   const n = (scopes!.results as { n: number }[] | undefined)?.[0]?.n ?? 0;
   return {
@@ -124,6 +131,7 @@ export async function purgeDirectory(db: HotDb, i: { before: number; limit: numb
     identities: identities!.meta.changes ?? 0,
     emailConsents: emailConsents!.meta.changes ?? 0,
     nameShares: names!.meta.changes ?? 0,
+    userApps: (pageApps!.meta.changes ?? 0) + (deletedApps!.meta.changes ?? 0),
   };
 }
 

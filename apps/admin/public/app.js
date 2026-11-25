@@ -1158,6 +1158,22 @@ function sharedWalletRow(app, orgId, ro, scopeApps) {
   return settingRow('Shared wallet', text, control);
 }
 
+/**
+ * D919 (migration 0030): which User ID the app gives its users, fixed when it was created. 'app': its own, on a scope
+ * marked as shared (the Support ID lookup doesn't find those yet: the linking piece adds it); 'scope': the person's one
+ * User ID for the scope's apps, and on a marked scope the app was made before the mark. Null for an API from before 0030.
+ */
+function userIdsRow(app) {
+  if (app.userIds !== 'app' && app.userIds !== 'scope') return null;
+  const text =
+    app.userIds === 'app'
+      ? 'Its own: each person gets a User ID and Support ID on this app that no other app has. The Support ID lookup doesn’t find these yet.'
+      : app.sharedScope
+        ? 'The scope’s: this app was made before the scope was marked as shared, so it keeps the User IDs it already had.'
+        : 'The scope’s: each person has the same User ID and Support ID on every app of this scope.';
+  return settingRow('User IDs', text, '');
+}
+
 const logKind = (k) => h('span', {}, LOG_KIND[k] || k, LOG_KIND[k] ? h('span', { class: 'sub' }, h('code', {}, k)) : '');
 
 // ---- navigation ----
@@ -2026,6 +2042,7 @@ async function appPage(main, orgId, appId) {
       ro ? '' : h('div', { class: 'row' }, policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true, { done: 'Policy removed.' }) : '', sharedWallet ? '' : proposePolicy.button),
     ),
     sharedWalletRow(app, orgId, ro, scopeApps),
+    userIdsRow(app),
     settingRow('Other settings', h('details', { class: 'raw' }, h('summary', {}, 'Show all settings'), h('pre', {}, JSON.stringify(app.settings, null, 2))), ''),
   ];
   main.append(panel('Signing settings', {}, h('div', { class: 'settings' }, rows.filter(Boolean)), ro || sharedWallet ? '' : proposePolicy.box));
@@ -3557,6 +3574,7 @@ const RETENTION_LABELS = {
   directoryIdentities: 'wallet directory identities',
   emailConsentsPurged: 'email consents of deleted apps',
   nameSharesPurged: 'name shares of deleted apps',
+  userAppsPurged: 'shared-wallet app sign-ins of deleted apps',
   userEventsExpired: 'key exports and mainnet demo signatures (24 months)',
   userEventsDeadScopes: 'key exports and mainnet demo signatures of scopes left without apps',
   appChangesDeleted: 'app_changes (60 months)',

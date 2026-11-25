@@ -22,6 +22,13 @@ browser); `tests/demo-near-shots.spec.ts` saves
 its screens with `HANA_SHOTS_DIR=<dir>` (Chromium only, skipped otherwise). With reduced motion (D906) the demo's own
 spinners (`.progress::before`, `.stage::before`) pulse slowly even inside a `.jp-card`, and the results' fade stops.
 
+Per-app User IDs (D919): `tests/app-user-ids.spec.ts` signs one person in on an app of scope `p6addr`, then marks the
+scope as shared (`newApp({sharedScope: true})`, one way; an existing scope's apps keep their IDs) and creates two apps
+on it, each signed in on in a browser context of its own: every app opens the same wallet, whose three addresses are
+pinned as this stack derived them on `next` @ e59e9c64 before the change; the app of before keeps its `sub` and Support
+ID; each new app's token carries a `sub` of its own, and `hana.supportId` on each page is the short form of that page's
+`sub`; `/__e2e/wallets` lists the person's `end_user_apps` rows (`apps`) with each app's IDs.
+
 The shared-wallet line (D912): `tests/shared-wallet.spec.ts` puts two apps on a scope of their own (with a suspended
 one, one with no web address and one no one has signed in to, which don't count; the others are made `launched`, since
 the mocked /v1/login records no first sign-in) and sees "This wallet is also used on 1 other app." under who is asking

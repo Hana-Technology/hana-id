@@ -170,6 +170,32 @@ const sidExample = (title, appId) => {
   return example(title, parts, { app_id: appId, sid: `s1_${b64url(mac16(concat(parts)))}` });
 };
 
+// ---- the per-app User ID (D919): from the scope-level sub's 16 bytes and the app id, the same key, its own label ----
+// Crockford base32 (uppercase), most significant bit first: the Support ID's 8 characters of the first 5 bytes.
+const crockford = (bytes) => {
+  const alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  let bits = '';
+  for (const b of bytes) bits += b.toString(2).padStart(8, '0');
+  let out = '';
+  for (let i = 0; i < bits.length; i += 5) out += alphabet[parseInt(bits.slice(i, i + 5).padEnd(5, '0'), 2)];
+  return out;
+};
+const supportIdOf = (bytes16) => {
+  const code = crockford(bytes16.subarray(0, 5));
+  return `HANA-${code.slice(0, 4)}-${code.slice(4)}`;
+};
+const appSubExample = (title, scope, appId, scopeSubBytes) => {
+  const parts = [
+    ['"hana-id/idt-app-sub/v1"', ascii('hana-id/idt-app-sub/v1')],
+    ['0x00', Buffer.from([0])],
+    [`borsh(scope "${scope}")`, str(scope)],
+    [`borsh(appId "${appId}")`, str(appId)],
+    ['scopeSubBytes (16)', scopeSubBytes],
+  ];
+  const bytes = mac16(concat(parts));
+  return example(title, parts, { scope_id: scope, app_id: appId, scope_sub: `u1_${b64url(scopeSubBytes)}`, app_sub_bytes_hex: hex(bytes), app_sub: `u1_${b64url(bytes)}`, support_id: supportIdOf(bytes), scope_support_id: supportIdOf(scopeSubBytes) });
+};
+
 // ---- sealed email AAD ----
 const NOT_AFTER = 1_800_043_200_000;
 const sealedAad = example('Sealed-email AAD', [
@@ -252,6 +278,18 @@ const fixture = {
     google_other_scope: subExample('sub: the same Google user in scope s2', `s2#google#${GOOGLE_SUB}#0`, 's2', 'google', GOOGLE_SUB),
     email_root: subExample('sub: an email-login root', `${SCOPE}#email#Zx9yW8v7U6t5S4r3Q2p1Ow#0`, SCOPE, 'email', 'Zx9yW8v7U6t5S4r3Q2p1Ow'),
   },
+  // D919: an app whose user_ids is 'app' gets its own User ID; a 'scope' app keeps the scope-level `sub` above.
+  app_subs: (() => {
+    const k0 = mac16(concat(subParts(SCOPE, 'google', GOOGLE_SUB)));
+    const s2 = mac16(concat(subParts('s2', 'google', GOOGLE_SUB)));
+    const email = mac16(concat(subParts(SCOPE, 'email', 'Zx9yW8v7U6t5S4r3Q2p1Ow')));
+    return {
+      app: appSubExample('app sub: Google root, app_0123456789abcdef in scope s1', SCOPE, APP_ID, k0),
+      other_app: appSubExample('app sub: the same person, another app of scope s1', SCOPE, OTHER_APP_ID, k0),
+      other_scope: appSubExample('app sub: the same person and app id in scope s2', 's2', APP_ID, s2),
+      email_root: appSubExample('app sub: an email-login root, app_0123456789abcdef in scope s1', SCOPE, APP_ID, email),
+    };
+  })(),
   sids: {
     app: sidExample('sid: app_0123456789abcdef, session key seed 7', APP_ID),
     other_app: sidExample('sid: another app, the same session key', OTHER_APP_ID),

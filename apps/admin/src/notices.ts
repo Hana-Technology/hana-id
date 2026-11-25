@@ -175,7 +175,7 @@ async function sendPlatformGroup(env: Env, sender: EmailSender, budget: Budget, 
     log({ event: 'notice', step: 'change_pending', target, orgId: first.app.orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
     return { ...out, failed: group.length };
   }
-  const sent = await sendToAll(sender, budget, to, message, `platform_origins:${target}:${group.map((n) => n.change.id).join(',')}`);
+  const sent = await sendToAll(sender, budget, to, message, `change_pending:${target}:${group.map((n) => n.change.id).join(',')}`);
   if (sent.outOfBudget) return { ...out, skipped: group.length, stop: true };
   if (!sent.allAccepted) {
     log({ event: 'notice', step: 'change_pending', target, orgId: first.app.orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed, count: group.length }, 'warn');

@@ -16,7 +16,7 @@
 // - `sub` = "u1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY, "hana-id/idt-sub/v1" ‖ 0x00 ‖ borsh(scope_id)
 //   ‖ borsh(root_provider) ‖ borsh(root_sub))[0..16]); `sid` = "s1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY,
 //   "hana-id/idt-sid/v1" ‖ 0x00 ‖ borsh(app_id) ‖ session_pk)[0..16]).
-// - The per-app User ID (D919, for an app whose `user_ids` is 'app'): "u1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY,
+// - The per-app User ID (for an app whose `user_ids` is 'app'): "u1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY,
 //   "hana-id/idt-app-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(app_id) ‖ scope_sub_bytes(16))[0..16]).
 //
 // SECURITY: IDENTITY_SUB_KEY is a secret (it maps partners' `sub`s back to on-chain paths). Nothing here logs.
@@ -35,7 +35,7 @@ export const IDENTITY_WALLET_DOMAIN = 'hana-id/identity-wallet/v1';
 export const IDENTITY_WALLET_PROOFS_DOMAIN = 'hana-id/identity-wallet-proofs/v1';
 export const IDENTITY_SUB_LABEL = 'hana-id/idt-sub/v1';
 export const IDENTITY_SID_LABEL = 'hana-id/idt-sid/v1';
-/** The per-app User ID's label (D919): the same key as `sub` and `sid`, domain-separated. */
+/** The per-app User ID's label: the same key as `sub` and `sid`, domain-separated. */
 export const IDENTITY_APP_SUB_LABEL = 'hana-id/idt-app-sub/v1';
 export const SEALED_EMAIL_AAD_DOMAIN = 'hana-id/sealed-email/v1';
 
@@ -261,7 +261,7 @@ export function identitySubBytes(key: Uint8Array, scopeId: string, root: { provi
 export const identitySub = (key: Uint8Array, scopeId: string, root: { provider: string; sub: string }): string => IDENTITY_SUB_PREFIX + base64UrlEncode(identitySubBytes(key, scopeId, root));
 
 /**
- * The per-app User ID's 16 bytes (D919; docs/partner-platform-spec.md B2): HMAC-SHA256(IDENTITY_SUB_KEY,
+ * The per-app User ID's 16 bytes: HMAC-SHA256(IDENTITY_SUB_KEY,
  * "hana-id/idt-app-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(app_id) ‖ scopeSubBytes)[0..16], where `scopeSubBytes` are
  * the 16 bytes behind the person's scope-level `sub` (`identitySubBytes`, or `decodeIdentitySub` of
  * `end_users.token_sub`). The same key as `sub` and `sid`, its own label. Without the key nobody can compute it, turn
@@ -280,7 +280,7 @@ export const appSub = (key: Uint8Array, scopeId: string, appId: string, scopeSub
   IDENTITY_SUB_PREFIX + base64UrlEncode(appSubBytes(key, scopeId, appId, scopeSubBytes));
 
 /**
- * Which User ID an app gives its users (`apps.user_ids`, migration 0030, D919): `scope`, the person's scope-level
+ * Which User ID an app gives its users (its `user_ids` setting): `scope`, the person's scope-level
  * `sub`, the same on every app of the scope (every app made before per-app IDs, and every app on a scope not marked as
  * shared); `app`, a User ID of the app's own (`appSub`), for an app created on a scope marked as shared.
  */

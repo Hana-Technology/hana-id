@@ -12,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Budget } from '../src/mail.ts';
 import { runPlatformKeyNotices } from '../src/notices.ts';
 import { reconcileFreezes } from '../src/platform.ts';
-import { ALIAS, CONSOLE, FakeEmail, adminRequest, envWith, json, linkIn, overrideBinding, seedConsoleMember, seedConsoleOrg, seedHotApp, sha256Hex, staffJwt, stubNetwork, tokenOf, uid } from './helpers.ts';
+import { createExecutionContext } from 'cloudflare:test';
+import { ADMIN, ALIAS, CONSOLE, CSRF, FakeEmail, adminRequest, envWith, json, linkIn, overrideBinding, seedConsoleMember, seedConsoleOrg, seedHotApp, sha256Hex, staffJwt, stubNetwork, tokenOf, uid } from './helpers.ts';
 
 beforeEach(async () => {
   await stubNetwork();
@@ -58,6 +59,13 @@ const keyRow = (id: string) =>
     .prepare('SELECT status, notified_at, active_from, unconfirmed_active_from, hex(cancel_token_hash) AS cancel_h, hex(revoke_link_hash) AS revoke_h, revoke_link_until, confirm_notified_at, end_notified_at, expiry_notice_stage FROM platform_keys WHERE id = ?1')
     .bind(id)
     .first<Record<string, unknown>>();
+
+/** A staff request to the admin Worker's own fetch with some bindings replaced (the route's order of calls). */
+async function adminRequestWith(over: Partial<typeof env>, path: string, body: unknown): Promise<Response> {
+  const worker = (await import('../src/index.ts')).default as unknown as { fetch: (r: Request, e: typeof env, c: ExecutionContext) => Promise<Response> };
+  const headers = new Headers({ ...CSRF, 'cf-access-jwt-assertion': await staffJwt(), 'cf-connecting-ip': '198.51.100.9' });
+  return worker.fetch(new Request(`${ADMIN}${path}`, { method: 'POST', headers, body: JSON.stringify(body) }), envWith(over), createExecutionContext());
+}
 
 const hrefs = (html: string) => [...html.matchAll(/href="([^"]*)"/gu)].map((x) => x[1]!);
 
@@ -159,6 +167,8 @@ describe('the platform key notices', () => {
     await runPlatformKeyNotices(env, end, big());
     const [s] = end.about(k.id);
     expect(s!.subject).toContain('Platform key stopped');
+    // The org's other waiting keys, each announced one with its own cancel link (finding 5).
+    expect(s!.text).not.toContain('waiting to start working');
     expect(s!.text).toContain('was stopped by Journear staff');
     expect(s!.text).toContain('https://w.partner.example');
     expect((await keyRow(k.id))!.end_notified_at).not.toBeNull();
@@ -211,5 +221,54 @@ describe('the staff routes', () => {
     expect(fixed.fixed).toBeGreaterThanOrEqual(1);
     expect(await hot().prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(org).first()).toEqual({ frozen: 0 });
     expect(owner.email).toBeTruthy();
+  });
+});
+
+describe('after PR 149’s review (admin)', () => {
+  it('the stop notice carries a working cancel link for each announced waiting key of the org (finding 5)', async () => {
+    const { org, owner, app } = await orgWithApp();
+    const k = await memberKey(org, app.scope, owner);
+    const w = await memberKey(org, app.scope, owner);
+    await runPlatformKeyNotices(env, new FakeEmail(), big());
+    expect(await adminRequest(`/api/orgs/${org}/platform-keys/${k.id}/revoke`, { body: { reason: 'Rotated' } })).toMatchObject({ status: 200 });
+    const end = new FakeEmail();
+    await runPlatformKeyNotices(env, end, big());
+    const [s] = end.about(k.id).filter((m) => m.subject.includes('stopped'));
+    expect(s!.text).toContain('waiting to start working');
+    const url = linkIn(s!.text, `/cancel-platform-key/${w.id}`);
+    expect([...tokenOf(url)]).toEqual([...(await linkToken('platformKeyCancel', new Uint8Array(32).fill(1), w.id))]);
+    expect((await keyRow(w.id))!.cancel_h).toBe((await sha256Hex(tokenOf(url))).toUpperCase());
+  });
+
+  it('a failing notice is recorded, retried later after the others, and reported as stuck at error level from the 12th failure (finding 11)', async () => {
+    const { org, owner, app } = await orgWithApp();
+    const k = await memberKey(org, app.scope, owner);
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((l: string) => void errors.push(l));
+    const fake = new FakeEmail();
+    fake.failFor.add(app.contact);
+    await runPlatformKeyNotices(env, fake, big());
+    expect(await hot().prepare('SELECT notice_failures FROM platform_keys WHERE id = ?1').bind(k.id).first()).toEqual({ notice_failures: 1 });
+    await hot().prepare('UPDATE platform_keys SET notice_failures = 11, notice_failed_at = 1 WHERE id = ?1').bind(k.id).run();
+    await runPlatformKeyNotices(env, fake, big());
+    expect(errors.some((l) => l.includes('"code":"notice_stuck"') && l.includes(k.id))).toBe(true);
+  });
+
+  it('freezing mirrors into the API first, unfreezing frees the console first (finding 4)', async () => {
+    const { org } = await orgWithApp();
+    const order: string[] = [];
+    const api = overrideBinding(env.API, { setPlatformOrgFrozen: async (c: unknown) => (order.push(`api:${(c as { frozen: boolean }).frozen}`), env.API.setPlatformOrgFrozen(c)) });
+    const con = overrideBinding(env.CONSOLE, { freezeOrg: async (c: unknown) => (order.push(`console:${(c as { frozen: boolean }).frozen}`), env.CONSOLE.freezeOrg(c)) });
+    // Through the real route with the bindings replaced.
+    const res = await adminRequestWith({ API: api, CONSOLE: con }, `/api/orgs/${org}/freeze`, { frozen: true });
+    expect(res.status).toBe(200);
+    const res2 = await adminRequestWith({ API: api, CONSOLE: con }, `/api/orgs/${org}/freeze`, { frozen: false });
+    expect(res2.status).toBe(200);
+    expect(order).toEqual(['api:true', 'console:true', 'console:false', 'api:false']);
+    // A failed mirror on a freeze still freezes the console, and says so.
+    const down = overrideBinding(env.API, { setPlatformOrgFrozen: async () => ({ ok: false, code: 'internal' }) });
+    const res3 = await adminRequestWith({ API: down, CONSOLE: env.CONSOLE }, `/api/orgs/${org}/freeze`, { frozen: true });
+    expect(res3.status).toBe(502);
+    expect(await env.CONSOLE_TEST_DB.prepare('SELECT status FROM orgs WHERE id = ?').bind(org).first()).toEqual({ status: 'frozen' });
   });
 });

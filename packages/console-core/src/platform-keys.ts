@@ -276,12 +276,13 @@ export const approvePlatformKeyInput = ctx.extend({ ...org, ...keyId, reason: st
 /** AdminRpc.setPlatformOrg: the org's platform switch. Turning it on names every key of the org still in force or waiting (the review, L5). */
 export const setPlatformOrgInput = ctx.extend({ ...org, enabled: z.boolean(), reason: z.string().trim().min(1).max(500), reviewedKeys: z.array(platformKeyIdInput).max(10).optional() }).strict();
 /** AdminRpc.setPlatformOrgFrozen: the admin Worker mirrors the console's freeze of an org. */
-export const setPlatformOrgFrozenInput = ctx.extend({ ...org, frozen: z.boolean() }).strict();
+export const setPlatformOrgFrozenInput = ctx.extend({ ...org, frozen: z.boolean(), expectedVersion: z.number().int().nonnegative().optional() }).strict();
 export const platformKeyNoticesInput = ctx.extend({ limit: z.number().int().min(1).max(100) }).strict();
 export const ackPlatformKeyNoticeInput = ctx.extend({ ...keyId, cancelTokenHash: b64url32, revokeTokenHash: b64url32.optional() }).strict();
 export const ackPlatformKeyConfirmNoticeInput = ctx.extend({ ...keyId, revokeTokenHash: b64url32 }).strict();
 export const ackPlatformKeyEndNoticeInput = ctx.extend(keyId).strict();
 export const ackPlatformKeyExpiryNoticeInput = ctx.extend({ ...keyId, stage: z.union([z.literal(30), z.literal(7)]) }).strict();
+export const notePlatformKeyNoticeFailureInput = ctx.extend(keyId).strict();
 export const platformOrgsInput = ctx.extend({ limit: z.number().int().min(1).max(500), cursor: z.string().regex(/^org_[A-Za-z0-9]{1,64}$/u).optional() }).strict();
 
 // ---- views ----
@@ -306,6 +307,8 @@ export interface PlatformKeyView {
   proposedBy: string;
   /** Staff view only: the registering staff member's email. */
   proposedByEmail?: string;
+  /** The partner view for one member (ConsoleRpc.getPlatformKey): whether this member is the registrant as four eyes counts it (the console user, the Google account or the email). */
+  registeredByYou?: boolean;
   proposedAt: number;
   acceptedByKind?: 'hana' | 'member';
   acceptedBy?: string;
@@ -351,6 +354,8 @@ export interface PlatformKeyNotice {
   stage?: PlatformKeyExpiryStage;
   /** ended: the waiting web addresses cancelled with it (app id and name, the address). */
   cancelledOrigins?: { appId: string; appName: string; origin: string }[];
-  /** ended: the org's other keys still awaiting acceptance or waiting (their labels and ids). */
-  waitingKeys?: { id: string; label: string }[];
+  /** ended: the org's other keys still awaiting acceptance or waiting (their labels and ids; `announced`: its emailed cancel link works). */
+  waitingKeys?: { id: string; label: string; announced: boolean }[];
+  /** How many times in a row this notice's sends failed (0 when none). */
+  failures?: number;
 }

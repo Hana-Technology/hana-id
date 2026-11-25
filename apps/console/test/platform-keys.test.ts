@@ -306,3 +306,56 @@ describe('stop and cancel', () => {
     expect(DAY).toBeGreaterThan(0);
   });
 });
+
+describe('after PR 149’s review: owner since, and the acceptance screen', () => {
+  const grant = (org: string, userId: string, o: { ownerFrom: number; appliedAt?: number | null }) =>
+    db
+      .prepare("INSERT INTO owner_grants (id, org_id, user_id, granted_by_kind, granted_by, created_at, notified_at, owner_from, applied_at) VALUES (?, ?, ?, 'hana', 's', ?, ?, ?, ?)")
+      .bind(`og_${Math.random().toString(36).slice(2, 12)}`, org, userId, o.ownerFrom - 1000, o.ownerFrom - 1000, o.ownerFrom, o.appliedAt ?? null)
+      .run();
+
+  it('an owner since before the key counts only without a break: an old applied grant, a demotion, a removal and re-adding all reset it', async () => {
+    const { m, app } = await ownerWithScope();
+    const now = Date.now();
+    // Promoted by a grant long ago (applied), later demoted to viewer; a new grant matured after the key's registration.
+    const demoted = await member('viewer', { org: m.org });
+    await grant(m.org, demoted.userId, { ownerFrom: now - 90 * DAY, appliedAt: now - 90 * DAY });
+    await db.prepare('UPDATE members SET role_since = ? WHERE org_id = ? AND user_id = ?').bind(now - 10 * DAY, m.org, demoted.userId).run();
+    await grant(m.org, demoted.userId, { ownerFrom: now - 5_000 });
+    // Removed and added again (as a viewer, now), with its old applied grant still on file and a new matured one.
+    const readded = await member('viewer', { org: m.org });
+    await grant(m.org, readded.userId, { ownerFrom: now - 200 * DAY, appliedAt: now - 200 * DAY });
+    await db.prepare('DELETE FROM members WHERE org_id = ? AND user_id = ?').bind(m.org, readded.userId).run();
+    await db.prepare("INSERT INTO members (org_id, user_id, role, role_since, added_by, added_at) VALUES (?, ?, 'viewer', ?, 'test', ?)").bind(m.org, readded.userId, now - 3_000, now - 3_000).run();
+    await grant(m.org, readded.userId, { ownerFrom: now - 2_000 });
+    // A viewer whose grant matured before the key: an owner since then.
+    const steady = await member('viewer', { org: m.org });
+    await db.prepare('UPDATE members SET role_since = ? WHERE org_id = ? AND user_id = ?').bind(now - 30 * DAY, m.org, steady.userId).run();
+    await grant(m.org, steady.userId, { ownerFrom: now - 20 * DAY });
+    await setScope({ id: app.scope, owners: [oidc(m.sub), oidc(demoted.sub), oidc(readded.sub), oidc(steady.sub)] });
+    const keyId = await fourEyesKey(m.org, app.scope, m, now - 60_000);
+    const ability = async (who: Member) => (await getAs<{ confirm: { allowed: boolean; reason?: string } }>(who, `/api/orgs/${m.org}/platform-keys/${keyId}`)).body.confirm;
+    expect(await ability(demoted)).toMatchObject({ allowed: false, reason: expect.stringMatching(/already an owner when the key was registered/u) });
+    expect(await ability(readded)).toMatchObject({ allowed: false, reason: expect.stringMatching(/already an owner when the key was registered/u) });
+    expect(await ability(steady)).toEqual({ allowed: true });
+  });
+
+  it('on a real-money setup the acceptance screen refuses an owner with the registering staffer’s email before any sign-in', async () => {
+    const { m, app } = await ownerWithScope();
+    // A staff key under four eyes (as the API writes one on mainnet), registered by staff whose email this owner shares.
+    const p = await parsePlatformPublicKey(await newPublicKey());
+    if (!p.ok) throw new Error(p.problem);
+    const id = newId('platformKey');
+    await hot
+      .prepare(
+        `INSERT INTO platform_keys (id, org_id, label, alg, public_key, thumbprint, scopes_json, status, proposed_by_kind, proposed_by, proposer_email_key, proposer_email, proposal_note, proposed_at, four_eyes, min_delay_ms, request_id)
+         VALUES (?1, ?2, 'Staff key', 'ES256', ?3, ?4, ?5, 'awaiting_acceptance', 'hana', 'access-sub', ?6, ?6, 'phone', ?7, 1, 86400000, ?8)`,
+      )
+      .bind(id, m.org, p.key.raw, p.key.thumbprint, JSON.stringify([app.scope]), m.email.replace(/^m-/u, 'm'), Date.now(), `r_${id}`)
+      .run();
+    await db.prepare('UPDATE console_users SET email = ? WHERE id = ?').bind(m.email.replace(/^m-/u, 'm.'), m.userId).run();
+    const page = await getAs<{ accept: { allowed: boolean; reason?: string } }>(m, `/api/orgs/${m.org}/platform-keys/${id}`);
+    expect(page.body.accept).toMatchObject({ allowed: false, reason: expect.stringMatching(/same email address as the person who registered/u) });
+    expect((await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'platform.key_accept', params: { keyId: id } })).status).toBe(403);
+  });
+});

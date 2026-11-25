@@ -23,6 +23,11 @@ export interface CallSetup {
   breaker?: boolean;
   /** ConsoleRpc.cancelChangeByLink: the link limits (per IP, then global) instead of the members' budget. */
   link?: boolean;
+  /**
+   * D918: a kill switch that is never refused for budget (a platform key's revocation): no bucket and no breaker, still
+   * held to CONSOLE_DB_LIMITS (its `cost` keeps it a console call), and logged as `unmetered` for the alerts.
+   */
+  unmetered?: boolean;
 }
 
 export interface Call<I> {
@@ -66,6 +71,7 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
   let code: RpcCode | null = null;
   try {
     if (setup.link) await admitLinkCall(env, input.clientIp, now);
+    else if (setup.unmetered) log({ event: 'rpc_admit', ...fields, outcome: 'ok', code: 'unmetered' });
     else if (consoleCall) {
       ({ reserveUsed } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
       breakerTaken = !!setup.breaker;

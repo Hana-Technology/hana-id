@@ -12,8 +12,11 @@ export const PRODUCTION_NETWORK = 'mainnet';
 /** packages/console-core PLATFORM_MIN_DELAY_MS (D914): what a platform key (and, from P4, a platform proposal) waits at least when nobody confirms it. */
 export const PLATFORM_MIN_DELAY_MS = DAY_MS;
 
-/** A real-money setup (D914): four eyes on every platform key. The network alone decides it, as changeConfig's 24 h floor. */
-export const fourEyesNetwork = (network: string | undefined): boolean => network === PRODUCTION_NETWORK;
+/**
+ * A real-money setup (D914): four eyes on every platform key. Fails closed, as the manifest schema reads production
+ * (`packages/env/src/schema.ts`: anything but testnet): every network but `testnet`, a missing one included.
+ */
+export const fourEyesNetwork = (network: string | undefined): boolean => network !== 'testnet';
 
 /**
  * The platform minimum for this env (D914, D918): 24 h everywhere except a `local*` env on testnet, which keeps its own

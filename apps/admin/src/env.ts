@@ -159,12 +159,13 @@ export interface AdminRpcClient {
   cancelPlatformKey(c: unknown): Answer<{ key: PlatformKeyView }>;
   setPlatformOrg(c: unknown): Answer<{ changed: boolean; platform: PlatformOrgView }>;
   setPlatformOrgFrozen(c: unknown): Answer<{ changed: boolean }>;
-  platformOrgs(c: unknown): Answer<{ orgs: { orgId: string; enabled: boolean; frozen: boolean }[]; next?: string }>;
+  platformOrgs(c: unknown): Answer<{ orgs: { orgId: string; enabled: boolean; frozen: boolean; version: number }[]; next?: string }>;
   /** The keys to announce, confirmed, stopped and expiring, with the org's security contacts (the notice cron's page). */
   platformKeyNotices(c: unknown): Answer<{ notices: PlatformKeyNotice[] }>;
   /** System only, after every send was accepted: starts the key's wait (or puts an accepted staff key in force with its stop link). */
   ackPlatformKeyNotice(c: unknown): Answer<{ key: PlatformKeyView }>;
   ackPlatformKeyConfirmNotice(c: unknown): Answer<Record<string, never>>;
+  notePlatformKeyNoticeFailure(c: unknown): Answer<{ failures: number }>;
   ackPlatformKeyEndNotice(c: unknown): Answer<Record<string, never>>;
   ackPlatformKeyExpiryNotice(c: unknown): Answer<Record<string, never>>;
 }

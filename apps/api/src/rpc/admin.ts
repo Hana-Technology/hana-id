@@ -76,6 +76,7 @@ import {
   ackPlatformKeyEndNoticeInput,
   ackPlatformKeyExpiryNoticeInput,
   ackPlatformKeyNoticeInput,
+  notePlatformKeyNoticeFailureInput,
   adminRevokePlatformKeyInput,
   approvePlatformKeyInput,
   listPlatformKeysInput,
@@ -130,6 +131,7 @@ import {
   cancelPlatformKey,
   getPlatformKey,
   listPlatformKeys,
+  notePlatformKeyNoticeFailure,
   platformKeyNotices,
   platformOrgs,
   registerPlatformKey,
@@ -345,6 +347,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** Only the notice cron, after every send was accepted: starts the key's wait (or puts an accepted staff key in force). */
   ackPlatformKeyNotice(c: unknown) {
     return runRpc(this.env, 'admin.ackPlatformKeyNotice', ackPlatformKeyNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackPlatformKeyNotice(db, this.env, w, input));
+  }
+
+  /** The notice cron: a notice's sends failed; it is retried later, after every other (answers the failures in a row). */
+  notePlatformKeyNoticeFailure(c: unknown) {
+    return runRpc(this.env, 'admin.notePlatformKeyNoticeFailure', notePlatformKeyNoticeFailureInput, c, { actors: SYSTEM }, ({ input, db, w }) => notePlatformKeyNoticeFailure(db, w, input));
   }
 
   ackPlatformKeyConfirmNotice(c: unknown) {

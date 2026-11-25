@@ -70,17 +70,20 @@ export async function answer(route: string, staff: StaffRequest, call: () => Pro
   return json(200, shape ? shape(rest) : rest);
 }
 
-/** The API's mirror of a console freeze (D918), after the console's own: 502 `mirror_failed` when it didn't land. */
-async function mirrorFreeze(env: Env, staff: StaffRequest, orgId: string, frozen: boolean): Promise<Response> {
+/** The API's mirror of a console freeze (D918): true when it landed. */
+async function mirrorFreeze(env: Env, staff: StaffRequest, orgId: string, frozen: boolean): Promise<boolean> {
   try {
     const r = await env.API.setPlatformOrgFrozen({ ...staffCtx(staff), orgId, frozen });
-    if (r.ok) return json(200, { platformMirrored: true });
+    if (r.ok) return true;
     log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: r.code, step: 'platform_mirror' }, 'warn');
   } catch (err) {
     log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
   }
-  return json(502, { error: { code: 'mirror_failed', message: `The organisation is ${frozen ? 'frozen' : 'unfrozen'} in the console, but its platform keys weren’t updated. Press the button again; the hourly check repeats it too.` } });
+  return false;
 }
+
+const mirrorFailed = (frozen: boolean): Response =>
+  json(502, { error: { code: 'mirror_failed', message: `The organisation is ${frozen ? 'frozen' : 'unfrozen'} in the console, but its platform keys weren’t updated. Press the button again; the hourly check repeats it too.` } });
 
 const pick = (b: Record<string, unknown>, ...keys: string[]): Record<string, unknown> => {
   const out: Record<string, unknown> = {};
@@ -201,15 +204,20 @@ const ROUTES: Route[] = [
     },
   },
   {
-    // The console's freeze, then its mirror in the API (D918: a freeze cancels the org's waiting platform keys and the
-    // platform's waiting web addresses). The console first: a freeze never waits on the API. A failed mirror is said in
-    // the answer (pressing Freeze again repeats it, a no-op for the console), and the hourly reconciliation repeats it.
+    // D918 (after PR 149's review): the API's mirror of the freeze, ordered so a failure never leaves a frozen org's keys
+    // working. Freezing: the API first (it only tightens: the org's waiting keys and web addresses are cancelled), then
+    // the console, whatever the API answered (a freeze never waits on the API). Unfreezing: the console first, then the
+    // API. A mirror that didn't land is said in the answer (pressing again repeats it); the hourly check repeats it too.
     method: 'POST',
     pattern: '/api/orgs/:org/freeze',
     handler: async (c) => {
-      const res = await answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'frozen') }));
-      if (!res.ok || typeof c.body.frozen !== 'boolean') return res;
-      return mirrorFreeze(c.env, c.staff, c.params.org!, c.body.frozen);
+      if (typeof c.body.frozen !== 'boolean') return answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'frozen') }));
+      const frozen = c.body.frozen;
+      const mirrored = frozen ? await mirrorFreeze(c.env, c.staff, c.params.org!, true) : null;
+      const res = await answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, frozen }));
+      if (!res.ok) return res;
+      const ok = frozen ? mirrored! : await mirrorFreeze(c.env, c.staff, c.params.org!, false);
+      return ok ? json(200, { platformMirrored: true }) : mirrorFailed(frozen);
     },
   },
   // ---- platform keys (D918): the org's keys and switch; staff register (held for an owner's acceptance or a second

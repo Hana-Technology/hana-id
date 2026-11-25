@@ -94,7 +94,7 @@ export function platformKeyConfirmed(c: MailContext, n: PlatformKeyNotice, p: Ke
 const STOPPED_BY: Readonly<Record<string, string>> = { member: 'an owner of your organisation', hana: 'Journear staff', link: 'the emailed link', platform: 'the key itself (your backend)' };
 
 /** A key stopped: revoked (by whom) or expired; the waiting web addresses it proposed that were cancelled with it; the org's other waiting keys. */
-export function platformKeyStopped(c: MailContext, n: PlatformKeyNotice, p: KeyPeople): Rendered {
+export function platformKeyStopped(c: MailContext, n: PlatformKeyNotice, p: KeyPeople, o: { waitingLinks?: Record<string, string> } = {}): Rendered {
   const k = n.key;
   const expired = k.status === 'expired';
   const by = expired ? 'it reached the end of its year' : (STOPPED_BY[k.revokedByKind ?? ''] ?? 'someone');
@@ -111,10 +111,12 @@ export function platformKeyStopped(c: MailContext, n: PlatformKeyNotice, p: KeyP
   if (cancelled.length) blocks.push({ kind: 'list', items: cancelled.map((x) => `${oneLine(x.origin, 200)} (${oneLine(x.appName, 60)})`) });
   const waiting = n.waitingKeys ?? [];
   if (waiting.length) {
-    blocks.push(
-      { kind: 'p', text: 'Your organisation also has these keys waiting to start working. If you don’t recognise one, cancel it in the partner portal:' },
-      { kind: 'list', items: waiting.map((w) => `${oneLine(w.label, 40)} (${w.id})`) },
-    );
+    blocks.push({ kind: 'p', text: 'Your organisation also has these keys waiting to start working. If you don’t recognise one, cancel it. The page asks you to confirm; opening a link alone changes nothing.' });
+    for (const w of waiting) {
+      const url = o.waitingLinks?.[w.id];
+      if (url) blocks.push({ kind: 'link', label: `Cancel the key “${oneLine(w.label, 40)}”`, url });
+      else blocks.push({ kind: 'p', text: `${oneLine(w.label, 40)} (${w.id}): not announced yet, so it has no link. An owner can cancel it in the partner portal.` });
+    }
   }
   const title = expired ? 'Platform key expired' : 'Platform key stopped';
   return render(c.env, `${title} for ${oneLine(p.orgName ?? k.orgId, 60)}`, blocks, c.consoleOrigin, c.label, design(c, title, 'A key for your organisation’s backend no longer works.'));

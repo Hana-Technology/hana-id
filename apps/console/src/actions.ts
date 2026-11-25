@@ -422,7 +422,7 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
       const digest = await platformKeyDigest({ kind: 'add', signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: c.orgId, keyId: '', thumbprint, scopes, label: label.label });
       return {
         action: { ...base, scope_ids: scopes, label: label.label, public_key: JSON.stringify(parsed.key.jwk), thumbprint },
-        decoded: { scopeIds: scopes, label: label.label, thumbprint, fourEyes: env.NETWORK === 'mainnet' },
+        decoded: { scopeIds: scopes, label: label.label, thumbprint, fourEyes: env.NETWORK !== 'testnet' },
         digest,
       };
     }

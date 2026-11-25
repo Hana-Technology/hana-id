@@ -72,6 +72,8 @@ CREATE TABLE platform_keys (
   end_notified_at         INTEGER,                -- the notice that the key stopped (revoked or expired)
   expiry_notice_stage     INTEGER NOT NULL DEFAULT 0 CHECK (expiry_notice_stage IN (0, 30, 7)),
   last_used_at            INTEGER,                -- piece P3: at most once an hour per key
+  notice_failures         INTEGER NOT NULL DEFAULT 0 CHECK (notice_failures >= 0), -- failed sends of the notice now due (reset by its ack)
+  notice_failed_at        INTEGER,                -- the last of them: the page puts a failing notice after every other
   request_id              TEXT NOT NULL UNIQUE,
   -- A member registers with a verified step-up; staff without one, and with their reason.
   CHECK ((proposed_by_kind = 'member') = (proposer_sub IS NOT NULL)),
@@ -82,7 +84,9 @@ CREATE TABLE platform_keys (
   CHECK (accepted_by_kind IS NULL OR accepted_by_kind = 'member' OR accepted_by IS NOT proposed_by),
   CHECK ((accepted_by_kind IS NULL) = (accepted_by IS NULL) AND (accepted_by_kind IS NULL) = (accepted_at IS NULL)),
   CHECK ((accepted_by_kind IS 'member') = (accepted_sub IS NOT NULL)),
-  CHECK (accepted_by_kind IS NOT 'hana' OR (accept_note IS NOT NULL AND accepted_email_key IS NOT proposer_email_key)),
+  CHECK (accepted_by_kind IS NOT 'hana' OR (accept_note IS NOT NULL AND accepted_email_key IS NOT NULL AND accepted_email_key IS NOT proposer_email_key)),
+  -- Every registration records the registrant's email as four eyes compares it.
+  CHECK (proposer_email_key IS NOT NULL),
   -- A staff key is used only once accepted or approved (or never, once cancelled or revoked).
   CHECK (proposed_by_kind = 'member' OR status IN ('awaiting_acceptance', 'cancelled', 'revoked') OR accepted_at IS NOT NULL),
   CHECK ((confirmed_at IS NULL) = (confirmed_by IS NULL) AND (confirmed_at IS NULL) = (confirmed_sub IS NULL)
@@ -90,7 +94,7 @@ CREATE TABLE platform_keys (
   CHECK (confirmed_kind IS NOT 'acceptance' OR (accepted_by_kind IS 'member' AND confirmed_by IS accepted_by AND confirmed_sub IS accepted_sub)),
   -- Four eyes, in the database: never the registrant's own console user, Google account or email.
   CHECK (four_eyes = 0 OR confirmed_at IS NULL
-         OR (confirmed_by IS NOT proposed_by AND confirmed_sub IS NOT proposer_sub AND confirmed_email_key IS NOT proposer_email_key)),
+         OR (confirmed_email_key IS NOT NULL AND confirmed_by IS NOT proposed_by AND confirmed_sub IS NOT proposer_sub AND confirmed_email_key IS NOT proposer_email_key)),
   -- In force only once announced; the unconfirmed date always written with the announcement.
   CHECK (active_from IS NULL OR (notified_at IS NOT NULL AND unconfirmed_active_from IS NOT NULL AND expires_at IS NOT NULL)),
   CHECK ((notified_at IS NULL) = (unconfirmed_active_from IS NULL)),
@@ -99,7 +103,7 @@ CREATE TABLE platform_keys (
   CHECK (four_eyes = 0 OR min_delay_ms >= 86400000),
   CHECK ((status = 'cancelled') = (cancelled_at IS NOT NULL)),
   CHECK ((status = 'revoked') = (revoked_at IS NOT NULL)),
-  CHECK (status NOT IN ('active', 'expired') OR activated_recorded_at IS NOT NULL),
+  CHECK (status NOT IN ('active', 'expired') OR (activated_recorded_at IS NOT NULL AND active_from IS NOT NULL)),
   CHECK ((revoke_link_hash IS NULL) = (revoke_link_until IS NULL))
 );
 
@@ -111,6 +115,11 @@ CREATE INDEX platform_keys_expiry ON platform_keys (status, expires_at);
 -- A key's scopes are test scopes of its org (a scope belongs to one org, D51), and a key starts as its registrant left it.
 CREATE TRIGGER platform_keys_insert BEFORE INSERT ON platform_keys
 BEGIN
+  -- An INSERT OR REPLACE (or a REPLACE) deletes the row it conflicts with without firing a DELETE trigger, so a key
+  -- could come back or vanish that way: any row sharing one of the table's unique keys (the id, the public key, the
+  -- thumbprint, the request id; the two link hashes are NULL at insert, below) refuses the insert instead.
+  SELECT RAISE(ABORT, 'platform_keys: a key is never replaced')
+   WHERE EXISTS (SELECT 1 FROM platform_keys WHERE id = NEW.id OR public_key = NEW.public_key OR thumbprint = NEW.thumbprint OR request_id = NEW.request_id);
   SELECT RAISE(ABORT, 'platform_keys: every scope must be a test scope of this org, named once')
    WHERE EXISTS (SELECT 1 FROM json_each(NEW.scopes_json) j
                   WHERE j.type IS NOT 'text' OR NOT EXISTS (SELECT 1 FROM scopes s WHERE s.scope_id = j.value AND s.org_id = NEW.org_id AND s.environment = 'test'))
@@ -147,6 +156,35 @@ BEGIN
   SELECT RAISE(ABORT, 'platform_keys: a key comes into force early only when confirmed');
 END;
 
+-- The announcement is held to the database's own clock (D918 after PR 149's review), whoever writes it: its time no more
+-- than 5 minutes back, and the date it comes into force unconfirmed at least its wait from now, less 2 minutes for the
+-- Worker's clock against D1's and the time a batch takes to land. So a bare write can't back-date an announcement into
+-- force: an unconfirmed key works at the earliest its wait less 2 minutes after the write that announced it.
+CREATE TRIGGER platform_keys_announced_now BEFORE UPDATE OF notified_at, unconfirmed_active_from ON platform_keys
+  WHEN OLD.notified_at IS NULL AND NEW.notified_at IS NOT NULL
+   AND (NEW.notified_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000
+        OR NEW.unconfirmed_active_from < ((julianday('now') - 2440587.5) * 86400000.0) + NEW.min_delay_ms - 120000)
+BEGIN
+  SELECT RAISE(ABORT, 'platform_keys: an announcement is never back-dated');
+END;
+
+-- Recorded `active` without a confirmation only once its date has passed by the database's clock (2 minutes' skew).
+CREATE TRIGGER platform_keys_active_on_time BEFORE UPDATE OF status ON platform_keys
+  WHEN NEW.status = 'active' AND OLD.status IS NOT 'active' AND NEW.confirmed_at IS NULL
+   AND (NEW.active_from IS NULL OR NEW.active_from > ((julianday('now') - 2440587.5) * 86400000.0) + 120000)
+BEGIN
+  SELECT RAISE(ABORT, 'platform_keys: a key is recorded in force only once its date has passed, unless confirmed');
+END;
+
+-- An UPDATE OR REPLACE of a link hash would delete the row already holding it (no DELETE trigger fires): refused.
+CREATE TRIGGER platform_keys_no_replace_update BEFORE UPDATE OF cancel_token_hash, revoke_link_hash ON platform_keys
+  WHEN EXISTS (SELECT 1 FROM platform_keys o WHERE o.id IS NOT NEW.id
+                AND ((NEW.cancel_token_hash IS NOT NULL AND o.cancel_token_hash = NEW.cancel_token_hash)
+                  OR (NEW.revoke_link_hash IS NOT NULL AND o.revoke_link_hash = NEW.revoke_link_hash)))
+BEGIN
+  SELECT RAISE(ABORT, 'platform_keys: a key is never replaced');
+END;
+
 -- A key's state only moves forward, and a cancelled, revoked or expired key never comes back (its id is never reused).
 CREATE TRIGGER platform_keys_status_moves BEFORE UPDATE OF status ON platform_keys
   WHEN NEW.status IS NOT OLD.status AND NOT (
@@ -175,5 +213,26 @@ CREATE TABLE platform_orgs (
   proposals_per_day INTEGER NOT NULL DEFAULT 30 CHECK (proposals_per_day BETWEEN 0 AND 1000),
   set_by            TEXT NOT NULL,
   set_at            INTEGER NOT NULL,
-  version           INTEGER NOT NULL DEFAULT 0
+  version           INTEGER NOT NULL DEFAULT 0,
+  -- The switch-on's review (L5): the ids of every key of the org in force, waiting or awaiting acceptance, sorted, as
+  -- staff confirmed them; a trigger wants it to be exactly the current set whenever the switch goes on.
+  review_json       TEXT CHECK (review_json IS NULL OR (json_valid(review_json) AND json_type(review_json) = 'array'))
 );
+
+-- One row per org, never replaced (a REPLACE would reset the freeze and the switch with no trigger firing): the API
+-- inserts a missing row and updates an existing one.
+CREATE TRIGGER platform_orgs_insert BEFORE INSERT ON platform_orgs
+BEGIN
+  SELECT RAISE(ABORT, 'platform_orgs: an org''s row is never replaced') WHERE EXISTS (SELECT 1 FROM platform_orgs WHERE org_id = NEW.org_id);
+  SELECT RAISE(ABORT, 'platform_orgs: the switch goes on only with the review of every key') WHERE NEW.enabled = 1;
+END;
+
+-- The switch goes on only with the review naming exactly the org's keys in force, waiting or awaiting acceptance, and
+-- never while the org is frozen. (An unfreeze and a switch-off are staff's legitimate writes: nothing here holds them.)
+CREATE TRIGGER platform_orgs_switch_on BEFORE UPDATE OF enabled ON platform_orgs
+  WHEN OLD.enabled = 0 AND NEW.enabled = 1
+   AND (NEW.frozen = 1 OR NEW.review_json IS NOT (SELECT json_group_array(id) FROM (SELECT id FROM platform_keys k WHERE k.org_id = NEW.org_id
+          AND k.status IN ('awaiting_acceptance', 'pending', 'active') AND (k.expires_at IS NULL OR k.expires_at > NEW.set_at) ORDER BY id)))
+BEGIN
+  SELECT RAISE(ABORT, 'platform_orgs: the switch goes on only with the review of every key');
+END;

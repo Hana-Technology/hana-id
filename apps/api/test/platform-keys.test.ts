@@ -363,7 +363,7 @@ describe('registration by staff', () => {
 // ---- the wait ----
 
 describe('the announcement and the wait', () => {
-  it('a key nobody confirms waits the 24 h platminimum on a dev env (appChangeDelayMs is 60 s here), with no waiver, then the hourly job records it', async () => {
+  it('a key nobody confirms waits the 24 h platform minimum on a dev env (appChangeDelayMs is 60 s here), with no waiver; in force by the predicate at its date', async () => {
     const r = await setup();
     const { key } = await ok(memberRegister(r));
     const a = await announce(key.id);
@@ -375,11 +375,21 @@ describe('the announcement and the wait', () => {
     expect((await keyRow(key.id)).status).toBe('pending');
     clock.advance(10_000);
     expect((await ok(consoleOn().getPlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key.state).toBe('in_force');
-    expect((await platformKeysMaintenance(env)).activated).toBeGreaterThanOrEqual(1);
-    expect(await keyRow(key.id)).toMatchObject({ status: 'active', activated_recorded_at: Date.now() });
-    expect(await ledger(r.app.org, 'platform.key_active')).toHaveLength(1);
-    // A second run records nothing more.
+    // The test's clock runs ahead of D1's: the database records `active` only once its own clock has passed the date
+    // (platform_keys_active_on_time), so the job leaves it pending here, and nothing is written but the attempt.
     await platformKeysMaintenance(env);
+    expect((await keyRow(key.id)).status).toBe('pending');
+    expect(await ledger(r.app.org, 'platform.key_active')).toHaveLength(0);
+  });
+
+  it('the hourly job records a key in force once, by the database’s clock (a local* key whose 60 s wait has passed)', async () => {
+    const r = await setup();
+    const db = await dbNow();
+    const { id } = await bareKey(r, { min_delay_ms: 60_000, notified_at: db - 110_000, unconfirmed_active_from: db - 50_000, active_from: db - 50_000, expires_at: db + PLATFORM_KEY_LIFETIME_MS });
+    expect((await platformKeysMaintenance(env, db)).activated).toBeGreaterThanOrEqual(1);
+    expect(await keyRow(id)).toMatchObject({ status: 'active', activated_recorded_at: db });
+    expect(await ledger(r.app.org, 'platform.key_active')).toHaveLength(1);
+    await platformKeysMaintenance(env, db + 1000);
     expect(await ledger(r.app.org, 'platform.key_active')).toHaveLength(1);
   });
 
@@ -705,8 +715,10 @@ describe('revocation', () => {
 
   it('expiry: a year after it came into force the hourly job ends the key and cancels what it left waiting', async () => {
     const r = await setup();
-    const key = await inForce(r);
-    await platformKeysMaintenance(env);
+    // A confirmed key (recorded `active` at its confirmation): the expiry ends an `active` key.
+    const { key } = await ok(memberRegister(r));
+    await announce(key.id);
+    await ok(confirmBy(r, key.id, owner('owner-sub-2', 'second@partner.example')));
     const expiresAt = (await keyRow(key.id)).expires_at as number;
     clock.advance(expiresAt - Date.now() - 2 * HOUR);
     const p = await platformProposal(r.app, key.id, 'https://e.partner.example');
@@ -780,7 +792,7 @@ describe('the org’s platform switch and the freeze mirror', () => {
     expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: true }))).changed).toBe(false);
     await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false }));
     expect((await keyRow(k.id)).status).toBe('cancelled');
-    expect((await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)).toEqual({ orgId: r.app.org, enabled: false, frozen: false });
+    expect((await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)).toMatchObject({ orgId: r.app.org, enabled: false, frozen: false });
   });
 
   it('platformOrgs pages in id order with a cursor until the end', async () => {
@@ -837,7 +849,7 @@ describe('the notices’ page and acks', () => {
     await ok(adminOn().revokePlatformKey({ ...hana(), orgId: r.app.org, keyId: k.id, reason: 'Rotated' }));
     const [ended] = (await page()).filter((n) => n.kind === 'ended');
     expect(ended!.cancelledOrigins).toEqual([{ appId: r.app.id, appName: expect.any(String), origin: 'https://n.partner.example' }]);
-    expect(ended!.waitingKeys).toEqual([{ id: waiting.id, label: r.label }]);
+    expect(ended!.waitingKeys).toEqual([{ id: waiting.id, label: r.label, announced: false }]);
     await ok(adminOn().ackPlatformKeyEndNotice({ ...system(), keyId: k.id }));
     expect((await page()).filter((n) => n.kind === 'ended')).toEqual([]);
     // The acks are the system's only.
@@ -893,6 +905,27 @@ describe('the console’s hot-DB budget', () => {
   });
 });
 
+/** D1's own clock (ms), which the announcement and activation triggers read. */
+async function dbNow(): Promise<number> {
+  return (await env.DB.prepare("SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS t").first<{ t: number }>())!.t;
+}
+
+/** A member's key written straight to D1 (as the API would, or as a bare writer might), with `o` over the columns. */
+async function bareKey(r: Reg, o: Record<string, unknown> = {}): Promise<{ id: string }> {
+  const p = await parsePlatformPublicKey(await newPublicKey());
+  if (!p.ok) throw new Error(p.problem);
+  const id = newId('platformKey');
+  await env.DB.prepare(
+    `INSERT INTO platform_keys (id, org_id, label, alg, public_key, thumbprint, scopes_json, status, proposed_by_kind, proposed_by, proposer_sub, proposer_email_key, proposed_at, four_eyes, min_delay_ms, request_id)
+     VALUES (?1, ?2, 'Bare', 'ES256', ?3, ?4, ?5, 'pending', 'member', 'usr_bare', 'sub-bare', 'bare@partner.example', ?6, 0, ?7, ?8)`,
+  )
+    .bind(id, r.app.org, p.key.raw, p.key.thumbprint, JSON.stringify(r.scopes), Date.now(), (o.min_delay_ms as number | undefined) ?? DAY, `r_${id}`)
+    .run();
+  const rest = Object.entries(o).filter(([k]) => k !== 'min_delay_ms');
+  if (rest.length) await env.DB.prepare(`UPDATE platform_keys SET ${rest.map(([k], i) => `${k} = ?${i + 2}`).join(', ')} WHERE id = ?1`).bind(id, ...rest.map(([, v]) => v)).run();
+  return { id };
+}
+
 /** A second app on `of`'s scope (a direct insert: the scope already belongs to the org). */
 async function sameScopeApp(of: OrgApp): Promise<OrgApp> {
   const id = `app_${newId('app').slice(4)}`;
@@ -920,3 +953,94 @@ function racing(base: D1Database, before: () => Promise<unknown>): D1Database {
     },
   });
 }
+
+describe('after PR 149’s review', () => {
+  it('four eyes on any network but testnet, a missing one included (finding 6)', async () => {
+    const r = await setup();
+    const { key } = await ok(memberRegister(r, { rpc: consoleOn({ NETWORK: 'devnet', APP_CHANGE_DELAY_MS: String(DAY) }) }));
+    expect(await keyRow(key.id)).toMatchObject({ four_eyes: 1, min_delay_ms: DAY });
+    expect(fourEyesEnv({ NETWORK: undefined })).toBe(true);
+  });
+
+  it('an owner’s stop is never refused by the breaker or the budget (finding 7)', async () => {
+    const r = await setup();
+    const { key } = await ok(memberRegister(r));
+    await announce(key.id);
+    // Fill the org's breaker hour with destructive calls (5 suspensions of 5 apps), and its bucket with reads.
+    const apps = [r.app, ...(await Promise.all([1, 2, 3, 4, 5].map(() => sameScopeApp(r.app))))];
+    let refused: { code?: string } | undefined;
+    for (const a of apps) {
+      const res = await consoleOn().setSuspended({ ...member(), orgId: r.app.org, appId: a.id, suspended: true });
+      if (!res.ok) refused = res;
+    }
+    expect(refused).toMatchObject({ code: 'rate_limited' });
+    for (let k = 0; k < 60; k++) await consoleOn().listApps({ ...member(), orgId: r.app.org });
+    expect((await ok(consoleOn().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key.state).toBe('revoked');
+  });
+
+  it('a security-contact change after the registration holds its announcement for 7 days (finding 8)', async () => {
+    const r = await setup();
+    const { key } = await ok(memberRegister(r));
+    await ok(adminOn().setSecurityContacts({ ...hana(), orgId: r.app.org, emails: ['new-contact@partner.example'] }));
+    expect((await ok(adminOn().platformKeyNotices({ ...system(), limit: 100 }))).notices.filter((n) => n.key.id === key.id)).toEqual([]);
+    expect(await no(adminOn().ackPlatformKeyNotice({ ...system(), keyId: key.id, cancelTokenHash: await linkToken().hash }))).toMatchObject({ code: 'conflict' });
+    clock.advance(7 * DAY + 1000);
+    expect((await ok(adminOn().platformKeyNotices({ ...system(), limit: 100 }))).notices.filter((n) => n.key.id === key.id).map((n) => n.kind)).toEqual(['announce']);
+  });
+
+  it('a notice whose sends keep failing waits longer each time and comes after every other (finding 11)', async () => {
+    const r = await setup();
+    const a = (await ok(memberRegister(r))).key;
+    const b = (await ok(memberRegister({ ...r, publicKey: await newPublicKey() }))).key;
+    const page = async () => (await ok(adminOn().platformKeyNotices({ ...system(), limit: 100 }))).notices.filter((n) => n.key.orgId === r.app.org).map((n) => n.key.id);
+    expect(await page()).toEqual([a.id, b.id]);
+    expect(await ok(adminOn().notePlatformKeyNoticeFailure({ ...system(), keyId: a.id }))).toMatchObject({ failures: 1 });
+    expect(await page()).toEqual([b.id]);
+    clock.advance(5 * 60_000 + 1000);
+    expect(await page()).toEqual([b.id, a.id]);
+    await ok(adminOn().notePlatformKeyNoticeFailure({ ...system(), keyId: a.id }));
+    clock.advance(5 * 60_000 + 1000);
+    expect(await page()).toEqual([b.id]);
+    clock.advance(5 * 60_000);
+    expect(await page()).toEqual([b.id, a.id]);
+    await announce(a.id);
+    expect(await keyRow(a.id)).toMatchObject({ notice_failures: 0, notice_failed_at: null });
+    expect(await no(adminOn().notePlatformKeyNoticeFailure({ ...hana(), keyId: a.id }))).toMatchObject({ code: 'forbidden' });
+  });
+
+  it('a confirmation racing a switch-off or a freeze loses (nothing confirmed, the key cancelled)', async () => {
+    for (const race of ['off', 'freeze'] as const) {
+      const r = await setup();
+      const { key } = await ok(memberRegister(r));
+      await announce(key.id);
+      const raced = racing(env.DB, () =>
+        race === 'off' ? adminOn().setPlatformOrg({ ...hana(), orgId: r.app.org, enabled: false, reason: 'Race' }) : adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }),
+      );
+      const jwt = await stepUp(await digest('confirm', { orgId: r.app.org, keyId: key.id, publicKey: r.publicKey, scopes: r.scopes, label: r.label }), { sub: 'owner-sub-2' });
+      expect(await no(consoleOn({ DB: raced }).confirmPlatformKey({ ...owner('owner-sub-2', 'second@partner.example'), orgId: r.app.org, keyId: key.id, stepUpJwt: jwt })), race).toMatchObject({ code: 'version_conflict' });
+      expect(await keyRow(key.id), race).toMatchObject({ status: 'cancelled', confirmed_at: null });
+    }
+  });
+
+  it('the freeze mirror’s unfreeze is a compare-and-swap on the row’s version (finding 4)', async () => {
+    const r = await setup();
+    await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
+    const v = (await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)!.version;
+    expect(await no(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v - 1 }))).toMatchObject({ code: 'version_conflict' });
+    // A freeze between the read and the batch moves the version: the unfreeze writes nothing.
+    await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false }));
+    await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
+    const v2 = (await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)!.version;
+    const raced = racing(env.DB, () => env.DB.prepare('UPDATE platform_orgs SET version = version + 1 WHERE org_id = ?1').bind(r.app.org).run());
+    expect(await no(adminOn({ DB: raced }).setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v2 }))).toMatchObject({ code: 'version_conflict' });
+    expect(await env.DB.prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(r.app.org).first()).toEqual({ frozen: 1 });
+    expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v2 + 1 }))).changed).toBe(true);
+  });
+
+  it('the console view says whether this member counts as the registrant for four eyes (finding 10)', async () => {
+    const r = await setup();
+    const { key } = await ok(staffRegister(r, { rpc: adminOn(MAINNET) }));
+    expect((await ok(consoleOn().getPlatformKey({ ...owner('owner-sub-2', 'Staff.1+x@hana.example'), orgId: r.app.org, keyId: key.id }))).key.registeredByYou).toBe(true);
+    expect((await ok(consoleOn().getPlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key.registeredByYou).toBe(false);
+  });
+});

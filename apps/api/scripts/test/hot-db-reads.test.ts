@@ -128,10 +128,13 @@ describe('guarded/config.ts', () => {
     const manifests = readdirSync(dir).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')) as { name: string; network: string });
     expect(manifests.length).toBeGreaterThan(0);
     for (const m of manifests) {
-      expect(apiConfig.fourEyesNetwork(m.network), m.name).toBe(m.network === 'mainnet');
+      // Fails closed (D918 after PR 149's review): four eyes on every network but testnet.
+      expect(apiConfig.fourEyesNetwork(m.network), m.name).toBe(m.network !== 'testnet');
       expect(apiConfig.platformMinDelayMs({ ENV_NAME: m.name, NETWORK: m.network }), m.name).toBe(/^local/u.test(m.name) && m.network === 'testnet' ? 0 : PLATFORM_MIN_DELAY_MS);
     }
     expect(apiConfig.fourEyesNetwork('mainnet')).toBe(true);
-    expect(apiConfig.fourEyesNetwork(undefined)).toBe(false);
+    expect(apiConfig.fourEyesNetwork('devnet')).toBe(true);
+    expect(apiConfig.fourEyesNetwork(undefined)).toBe(true);
+    expect(apiConfig.fourEyesNetwork('testnet')).toBe(false);
   });
 });

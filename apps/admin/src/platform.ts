@@ -3,6 +3,7 @@
 // addresses, and which piece P3's request check will read. The staff route mirrors at once (routes.ts); this check
 // repeats any mirror that didn't land.
 //
+// An unfreeze is re-checked against the console just before it and is a compare-and-swap on the mirror row's version.
 // It compares complete lists, never one page of each: every page of the console's organisations and every page of the
 // API's mirror rows (each `next` cursor followed, at most MAX_PAGES each). An org with no mirror row counts as not
 // frozen there, so a frozen console org without one is a difference to fix (never "fine"). At most MIRROR_FIXES are
@@ -61,6 +62,7 @@ export async function reconcileFreezes(env: Pick<Env, 'API' | 'CONSOLE'>): Promi
   out.complete = orgs.complete && mirrored.complete;
   if (!out.complete) log({ event: 'freeze_mirror', outcome: 'error', code: orgs.code ?? mirrored.code ?? 'incomplete', count: orgs.items.length, step: 'read' }, 'error');
   const inApi = new Map(mirrored.items.map((o) => [o.orgId, o.frozen]));
+  const versions = new Map(mirrored.items.map((o) => [o.orgId, o.version]));
   // A frozen console org the mirror doesn't show frozen (no row included) always needs the fix. Unfreezing the mirror
   // only from complete lists: a short read must never loosen a freeze.
   const wrong = orgs.items.filter((o) => {
@@ -70,7 +72,18 @@ export async function reconcileFreezes(env: Pick<Env, 'API' | 'CONSOLE'>): Promi
   });
   out.backlog = Math.max(0, wrong.length - MIRROR_FIXES);
   for (const o of wrong.slice(0, MIRROR_FIXES)) {
-    const r = await env.API.setPlatformOrgFrozen({ ...systemCtx(), orgId: o.id, frozen: o.status === 'frozen' }).catch(() => null);
+    const freeze = o.status === 'frozen';
+    if (!freeze) {
+      // An unfreeze only loosens: the console's status is read again right before it (a freeze that landed after the
+      // lists were read must win), and the mirror is unfrozen only if its row is still the version read (a
+      // compare-and-swap: a freeze mirrored meanwhile bumps it). Either moving means no unfreeze this run.
+      const now = await env.CONSOLE.getOrg({ ...systemCtx(), orgId: o.id }).catch(() => null);
+      if (!now?.ok || now.org.status !== 'active') {
+        log({ event: 'freeze_mirror', orgId: o.id, outcome: 'rejected', code: now?.ok ? 'frozen_meanwhile' : 'console_unreadable' }, 'warn');
+        continue;
+      }
+    }
+    const r = await env.API.setPlatformOrgFrozen({ ...systemCtx(), orgId: o.id, frozen: freeze, ...(freeze ? {} : { expectedVersion: versions.get(o.id) ?? 0 }) }).catch(() => null);
     if (r?.ok) out.fixed++;
     else out.failed++;
     log({ event: 'freeze_mirror', orgId: o.id, outcome: r?.ok ? 'ok' : 'rejected', ...(r && !r.ok ? { code: r.code } : {}) }, r?.ok ? 'info' : 'warn');

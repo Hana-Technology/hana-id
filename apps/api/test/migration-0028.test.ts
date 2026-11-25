@@ -77,6 +77,8 @@ const insertKey = (o: Record<string, unknown> = {}) => {
   return refusal(`INSERT INTO platform_keys (${cols.join(', ')}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(', ')})`, ...cols.map((c) => row[c])).then((r) => ({ r, id: row.id as string }));
 };
 
+const DB_NOW = async (): Promise<number> => (await db.prepare("SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS t").first<{ t: number }>())!.t;
+
 describe('migration 0028_platform_keys', () => {
   it('keeps every row and every schema object of before; adds only the two tables, their indexes and triggers', async () => {
     for (const t of KEPT_TABLES) expect(await rowsOf(t), t).toEqual(beforeRows[t]);
@@ -86,7 +88,19 @@ describe('migration 0028_platform_keys', () => {
     expect(new Set(added.map((o) => o.tbl_name))).toEqual(new Set([...NEW_TABLES, 'd1_migrations'].filter((t) => added.some((o) => o.tbl_name === t))));
     expect(added.filter((o) => o.type === 'table').map((o) => o.name).sort()).toEqual(NEW_TABLES);
     expect(added.filter((o) => o.type === 'index' && !o.name.startsWith('sqlite_autoindex_')).map((o) => o.name).sort()).toEqual(['platform_keys_due', 'platform_keys_expiry', 'platform_keys_org', 'platform_keys_unnotified']);
-    expect(added.filter((o) => o.type === 'trigger').map((o) => o.name).sort()).toEqual(['platform_keys_confirm_fixed', 'platform_keys_fixed', 'platform_keys_insert', 'platform_keys_no_early_delete', 'platform_keys_not_early', 'platform_keys_status_moves']);
+    expect(added.filter((o) => o.type === 'trigger').map((o) => o.name).sort()).toEqual([
+      'platform_keys_active_on_time',
+      'platform_keys_announced_now',
+      'platform_keys_confirm_fixed',
+      'platform_keys_fixed',
+      'platform_keys_insert',
+      'platform_keys_no_early_delete',
+      'platform_keys_no_replace_update',
+      'platform_keys_not_early',
+      'platform_keys_status_moves',
+      'platform_orgs_insert',
+      'platform_orgs_switch_on',
+    ]);
   });
 
   it('no new trigger reads the ledger’s tables (ledger-check and 0027’s readers are untouched)', async () => {
@@ -131,8 +145,8 @@ describe('migration 0028_platform_keys', () => {
     // One public key, one thumbprint, across every org.
     const k = await insertKey({ public_key: point, thumbprint: 'T'.repeat(43) });
     expect(k.r).toBe('accepted');
-    expect((await insertKey({ public_key: point })).r).toMatch(/UNIQUE/u);
-    expect((await insertKey({ thumbprint: 'T'.repeat(43) })).r).toMatch(/UNIQUE/u);
+    expect((await insertKey({ public_key: point })).r).toMatch(/never replaced/u);
+    expect((await insertKey({ thumbprint: 'T'.repeat(43) })).r).toMatch(/never replaced/u);
   });
 
   it('a key, its registrant, its four-eyes mark and its wait are fixed; it only moves forward; it is kept 60 months after it stopped', async () => {
@@ -152,7 +166,7 @@ describe('migration 0028_platform_keys', () => {
   it('a key is in force only once announced, early only when confirmed, and four eyes holds in the table', async () => {
     const { id } = await insertKey({ four_eyes: 1 });
     expect(await refusal('UPDATE platform_keys SET active_from = ?2, expires_at = ?3 WHERE id = ?1', id, now, now + 1)).toMatch(/CHECK/u);
-    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3 WHERE id = ?1', id, now, now + 1000)).toMatch(/CHECK/u); // shorter than its wait
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3 WHERE id = ?1', id, now, now + 1000)).toMatch(/CHECK|back-dated/u); // shorter than its wait
     expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', id, now, now + 86_400_000, now + 2 * 86_400_000)).toBe('accepted');
     expect(await refusal('UPDATE platform_keys SET active_from = ?2 WHERE id = ?1', id, now + 1)).toMatch(/early only when confirmed/u);
     expect(await refusal('UPDATE platform_keys SET unconfirmed_active_from = ?2 WHERE id = ?1', id, now + 90_000_000)).toMatch(/early only when confirmed/u);
@@ -187,7 +201,7 @@ describe('migration 0028_platform_keys', () => {
   it('platform_orgs: one row per org, flags 0 or 1, sane quotas, defaults off', async () => {
     expect(await refusal("INSERT INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_a', 's', 1)")).toBe('accepted');
     expect(await db.prepare("SELECT enabled, frozen, max_apps, creations_per_day, proposals_per_day, version FROM platform_orgs WHERE org_id = 'org_a'").first()).toEqual({ enabled: 0, frozen: 0, max_apps: 10, creations_per_day: 5, proposals_per_day: 30, version: 0 });
-    expect(await refusal("INSERT INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_a', 's', 1)")).toMatch(/UNIQUE|PRIMARY/u);
+    expect(await refusal("INSERT INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_a', 's', 1)")).toMatch(/never replaced/u);
     expect(await refusal("INSERT INTO platform_orgs (org_id, enabled, set_by, set_at) VALUES ('org_c', 2, 's', 1)")).toMatch(/CHECK/u);
     expect(await refusal("INSERT INTO platform_orgs (org_id, max_apps, set_by, set_at) VALUES ('org_d', -1, 's', 1)")).toMatch(/CHECK/u);
     expect(await refusal("INSERT INTO platform_orgs (org_id, set_by, set_at) VALUES ('nope', 's', 1)")).toMatch(/CHECK/u);
@@ -199,5 +213,85 @@ describe('migration 0028_platform_keys', () => {
     await applyD1Migrations(db, env.TEST_MIGRATIONS.slice(0, env.TEST_MIGRATIONS.findIndex((m) => m.name === FILE) + 1));
     expect((await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name)).toEqual(names);
     expect(names).toContain(FILE);
+  });
+});
+
+describe('0028 after PR 149’s review: no replace, no back-dating, the database’s clock, four eyes’ emails, the switch', () => {
+  it('INSERT OR REPLACE never brings back a revoked key under its id, nor deletes a key by reusing its public key', async () => {
+    const revoked = await insertKey();
+    expect(await refusal("UPDATE platform_keys SET status = 'revoked', revoked_at = 1, revoked_by_kind = 'hana', revoked_by = 's' WHERE id = ?1", revoked.id)).toBe('accepted');
+    const before = await db.prepare('SELECT * FROM platform_keys WHERE id = ?1').bind(revoked.id).first();
+    const cols = 'id, org_id, label, alg, public_key, thumbprint, scopes_json, status, proposed_by_kind, proposed_by, proposer_sub, proposer_email_key, proposed_at, four_eyes, min_delay_ms, request_id';
+    const fresh = new Uint8Array(65).fill(9);
+    fresh[0] = 4;
+    // The same id, any public key: refused, the revoked row untouched.
+    expect(await refusal(`INSERT OR REPLACE INTO platform_keys (${cols}) VALUES (?1, 'org_a', 'Back', 'ES256', ?2, ?3, '["st"]', 'pending', 'member', 'usr_x', 'sub-x', 'x@a.example', 1, 0, 86400000, 'r_replace_1')`, revoked.id, fresh, 'R'.repeat(43))).toMatch(/never replaced/u);
+    expect(await refusal(`REPLACE INTO platform_keys (${cols}) VALUES (?1, 'org_a', 'Back', 'ES256', ?2, ?3, '["st"]', 'pending', 'member', 'usr_x', 'sub-x', 'x@a.example', 1, 0, 86400000, 'r_replace_2')`, revoked.id, fresh, 'Q'.repeat(43))).toMatch(/never replaced/u);
+    expect(await db.prepare('SELECT * FROM platform_keys WHERE id = ?1').bind(revoked.id).first()).toEqual(before);
+    // A new id with a key in force's public key, thumbprint or request id: refused, that row kept.
+    const live = await insertKey();
+    const row = (await db.prepare('SELECT public_key, thumbprint, request_id FROM platform_keys WHERE id = ?1').bind(live.id).first<{ public_key: ArrayBuffer; thumbprint: string; request_id: string }>())!;
+    for (const [pk, tp, rid] of [
+      [row.public_key, 'P'.repeat(43), 'r_x1'],
+      [fresh, row.thumbprint, 'r_x2'],
+      [fresh, 'O'.repeat(43), row.request_id],
+    ] as const) {
+      expect(await refusal(`INSERT OR REPLACE INTO platform_keys (${cols}) VALUES ('pkc_Newnewnewnew1', 'org_a', 'Thief', 'ES256', ?1, ?2, '["st"]', 'pending', 'member', 'usr_x', 'sub-x', 'x@a.example', 1, 0, 86400000, ?3)`, pk, tp, rid)).toMatch(/never replaced/u);
+    }
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM platform_keys WHERE id = ?1').bind(live.id).first()).toEqual({ n: 1 });
+    // An UPDATE OR REPLACE of a link hash onto another row's: refused, that row kept.
+    const h = new Uint8Array(32).fill(3);
+    expect(await refusal('UPDATE platform_keys SET cancel_token_hash = ?2 WHERE id = ?1', live.id, h)).toBe('accepted');
+    const other = await insertKey();
+    expect(await refusal('UPDATE OR REPLACE platform_keys SET cancel_token_hash = ?2 WHERE id = ?1', other.id, h)).toMatch(/never replaced/u);
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM platform_keys WHERE id = ?1').bind(live.id).first()).toEqual({ n: 1 });
+  });
+
+  it('an announcement is never back-dated, its unconfirmed date is at least its wait from the database’s now (2 min skew), and `active` needs its date or a confirmation', async () => {
+    const now = await DB_NOW();
+    const k = await insertKey({ four_eyes: 1 });
+    // The review's write: back-dated two days, in force a day ago, recorded active, with four eyes.
+    expect(await refusal("UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4, status = 'active', activated_recorded_at = ?3 WHERE id = ?1", k.id, now - 2 * 86_400_000, now - 86_400_000, now + 300 * 86_400_000)).toMatch(/back-dated/u);
+    // Six minutes back: refused; a 24 h wait that would end in 23 h: refused.
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3 WHERE id = ?1', k.id, now - 360_000, now - 360_000 + 86_400_000)).toMatch(/back-dated/u);
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3 WHERE id = ?1', k.id, now, now + 23 * 3_600_000)).toMatch(/back-dated|CHECK/u);
+    // A real announcement: then `active` before the date is refused without a confirmation.
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', k.id, now, now + 86_400_000, now + 366 * 86_400_000)).toBe('accepted');
+    expect(await refusal("UPDATE platform_keys SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1", k.id, now)).toMatch(/only once its date has passed/u);
+    // A short local* wait already passed (within the skew): accepted, then recorded active.
+    const local = await insertKey({ min_delay_ms: 60_000 });
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', local.id, now - 110_000, now - 50_000, now + 86_400_000)).toBe('accepted');
+    expect(await refusal("UPDATE platform_keys SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1", local.id, now)).toBe('accepted');
+    // `active` with no date at all is refused by the CHECK.
+    const bare = await insertKey();
+    expect(await refusal("UPDATE platform_keys SET status = 'active', activated_recorded_at = 1 WHERE id = ?1", bare.id)).toMatch(/CHECK|date/u);
+  });
+
+  it('four eyes wants the confirmer’s email key and a staff approval’s; every registration records the registrant’s', async () => {
+    const now = await DB_NOW();
+    const k = await insertKey({ four_eyes: 1 });
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', k.id, now, now + 86_400_000, now + 366 * 86_400_000)).toBe('accepted');
+    expect(await refusal("UPDATE platform_keys SET confirmed_kind = 'confirm', confirmed_by = 'usr_b', confirmed_sub = 'sub-b', confirmed_email_key = NULL, confirmed_at = ?2, active_from = ?2, status = 'active', activated_recorded_at = ?2 WHERE id = ?1", k.id, now)).toMatch(/CHECK/u);
+    const s = await insertKey({ proposed_by_kind: 'hana', proposed_by: 'staff-1', proposer_sub: null, proposer_email_key: 's1@h.example', proposal_note: 'phone', status: 'awaiting_acceptance' });
+    expect(await refusal("UPDATE platform_keys SET status = 'pending', accepted_by_kind = 'hana', accepted_by = 'staff-2', accepted_email_key = NULL, accept_note = 'x', accepted_at = 1 WHERE id = ?1", s.id)).toMatch(/CHECK/u);
+    expect((await insertKey({ proposer_email_key: null })).r).toMatch(/CHECK/u);
+  });
+
+  it('platform_orgs: never replaced (the freeze kept), and the switch goes on only with the review of exactly the current keys, never while frozen', async () => {
+    expect(await refusal("INSERT INTO platform_orgs (org_id, frozen, set_by, set_at) VALUES ('org_z', 1, 's', 1)")).toBe('accepted');
+    expect(await refusal("INSERT OR REPLACE INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_z', 's', 2)")).toMatch(/never replaced/u);
+    expect(await db.prepare("SELECT frozen FROM platform_orgs WHERE org_id = 'org_z'").first()).toEqual({ frozen: 1 });
+    expect(await refusal("INSERT INTO platform_orgs (org_id, enabled, set_by, set_at) VALUES ('org_y', 1, 's', 1)")).toMatch(/review/u);
+    // org_a has keys from the tests above; the review must name exactly its live ones.
+    expect(await refusal("INSERT INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_b', 's', 1)")).toBe('accepted');
+    expect(await refusal("UPDATE platform_orgs SET enabled = 1, set_at = ?1 WHERE org_id = 'org_b'", Date.now())).toMatch(/review/u); // no review recorded at all
+    expect(await refusal("UPDATE platform_orgs SET enabled = 1, review_json = '[]', set_at = ?1 WHERE org_id = 'org_b'", Date.now())).toBe('accepted'); // org_b has no key: the review is []
+    expect(await refusal("UPDATE platform_orgs SET enabled = 0 WHERE org_id = 'org_b'")).toBe('accepted');
+    expect(await refusal("UPDATE platform_orgs SET enabled = 1, review_json = '[\"pkc_nothing\"]', set_at = ?1 WHERE org_id = 'org_b'", Date.now())).toMatch(/review/u);
+    const live = (await db.prepare("SELECT json_group_array(id) AS j FROM (SELECT id FROM platform_keys WHERE org_id = 'org_a' AND status IN ('awaiting_acceptance', 'pending', 'active') AND (expires_at IS NULL OR expires_at > ?1) ORDER BY id)").bind(Date.now()).first<{ j: string }>())!.j;
+    expect(await refusal("UPDATE platform_orgs SET enabled = 1, review_json = '[]', set_at = ?1 WHERE org_id = 'org_a'", Date.now())).toMatch(/review/u);
+    expect(await refusal('UPDATE platform_orgs SET enabled = 1, review_json = ?2, set_at = ?1 WHERE org_id = ?3', Date.now(), live, 'org_a')).toBe('accepted');
+    expect(await refusal("UPDATE platform_orgs SET enabled = 0, frozen = 1 WHERE org_id = 'org_a'")).toBe('accepted');
+    expect(await refusal('UPDATE platform_orgs SET enabled = 1, review_json = ?2, set_at = ?1 WHERE org_id = ?3', Date.now(), live, 'org_a')).toMatch(/review/u);
   });
 });

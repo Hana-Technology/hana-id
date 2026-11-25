@@ -342,7 +342,7 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   }
 
   getPlatformKey(c: unknown) {
-    return runRpc(this.env, 'getPlatformKey', platformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getPlatformKey }, async ({ input, db, w }) => ({ key: await getPlatformKey(db, input.orgId, input.keyId, w.now, false) }));
+    return runRpc(this.env, 'getPlatformKey', platformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getPlatformKey }, async ({ input, db, w }) => ({ key: await getPlatformKey(db, input.orgId, input.keyId, w.now, false, input.actor) }));
   }
 
   /** An on-chain owner of each scope, with the `platform.key_add` step-up. Not counted by the breaker: nothing works without the wait or a confirmation. */
@@ -367,9 +367,14 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'cancelPlatformKey', platformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.cancelPlatformKey, killSwitch: true }, ({ input, db, w }) => cancelPlatformKey(db, w, input));
   }
 
-  /** A kill switch: immediate, no fresh sign-in, whatever the key's state; cancels the key's waiting web addresses. Counted by the breaker. */
+  /**
+   * A kill switch: immediate, no fresh sign-in, whatever the key's state; cancels the key's waiting web addresses.
+   * Never refused by the members' budget or the breaker (D918 after PR 149's review: one org's burst must not leave any
+   * owner unable to stop a stolen key): admitted outside them, still held to CONSOLE_DB_LIMITS, logged for the alerts.
+   * A revocation is idempotent (a second one is `conflict` after one read), which bounds what repeating it costs.
+   */
   revokePlatformKey(c: unknown) {
-    return runRpc(this.env, 'revokePlatformKey', revokePlatformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokePlatformKey, killSwitch: true, breaker: true }, ({ input, db, w }) => revokePlatformKey(db, w, input));
+    return runRpc(this.env, 'revokePlatformKey', revokePlatformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokePlatformKey, unmetered: true }, ({ input, db, w }) => revokePlatformKey(db, w, input));
   }
 
   /** The announcement's cancel link (`POST /api/platform-keys/cancel`): no session, the `link` actor, the link limits. */

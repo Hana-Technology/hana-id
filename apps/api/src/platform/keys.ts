@@ -93,6 +93,8 @@ export interface PlatformKeyRow {
   end_notified_at: number | null;
   expiry_notice_stage: number;
   last_used_at: number | null;
+  notice_failures: number;
+  notice_failed_at: number | null;
   cancel_hash_hex: string | null;
   revoke_hash_hex: string | null;
 }
@@ -103,7 +105,7 @@ export const PLATFORM_KEY_COLUMNS = (k: string): Q =>
       'id', 'org_id', 'label', 'thumbprint', 'scopes_json', 'status', 'proposed_by_kind', 'proposed_by', 'proposer_sub', 'proposer_email_key', 'proposer_email', 'proposed_at',
       'accepted_by_kind', 'accepted_by', 'accepted_email', 'accepted_at', 'notified_at', 'unconfirmed_active_from', 'active_from', 'expires_at', 'four_eyes', 'min_delay_ms',
       'confirmed_kind', 'confirmed_by', 'confirmed_at', 'confirm_notified_at', 'revoke_link_until', 'cancelled_at', 'cancelled_by_kind', 'revoked_at', 'revoked_by_kind',
-      'revoke_reason', 'end_request_id', 'end_notified_at', 'expiry_notice_stage', 'last_used_at',
+      'revoke_reason', 'end_request_id', 'end_notified_at', 'expiry_notice_stage', 'last_used_at', 'notice_failures', 'notice_failed_at',
     ]
       .map((c) => `${k}.${c}`)
       .join(', ') + `, hex(${k}.cancel_token_hash) AS cancel_hash_hex, hex(${k}.revoke_link_hash) AS revoke_hash_hex`,
@@ -123,6 +125,9 @@ export const KEY_COUNTS = (k: string, now: number): Q => q`(${raw(k)}.status IN 
 /** The org's security contacts changed less than 7 days ago (the latest `org.security_contacts` row; M5). */
 const CONTACTS_CHANGED = (orgId: string, now: number): Q =>
   q`EXISTS (SELECT 1 FROM app_changes WHERE org_id = ${orgId} AND kind = 'org.security_contacts' AND at > ${now - PLATFORM_KEY_CONTACT_WAIT_MS})`;
+/** The same rule for the key row `k`'s org (the notice page). */
+const CONTACTS_CHANGED_K = (k: string, now: number): Q =>
+  q`EXISTS (SELECT 1 FROM app_changes WHERE org_id = ${raw(k)}.org_id AND kind = 'org.security_contacts' AND at > ${now - PLATFORM_KEY_CONTACT_WAIT_MS})`;
 const FROZEN = (orgId: string): Q => q`EXISTS (SELECT 1 FROM platform_orgs WHERE org_id = ${orgId} AND frozen = 1)`;
 
 // ---- views ----
@@ -243,10 +248,14 @@ export async function listPlatformKeys(db: HotDb, orgId: string, now: number, st
 }
 
 /** One key of the org (`not_found` for another org's or an unknown id: the same answer). */
-export async function getPlatformKey(db: HotDb, orgId: string, keyId: string, now: number, staff: boolean): Promise<PlatformKeyView> {
+export async function getPlatformKey(db: HotDb, orgId: string, keyId: string, now: number, staff: boolean, viewer?: Actor): Promise<PlatformKeyView> {
   const r = await db.first<PlatformKeyRow>(q`SELECT ${PLATFORM_KEY_COLUMNS('k')} FROM platform_keys k WHERE k.id = ${keyId} AND k.org_id = ${orgId}`);
   if (!r) return refuse('not_found', 'No such platform key in this organisation');
-  return platformKeyView(r, now, staff);
+  const v = platformKeyView(r, now, staff);
+  // For the console's screen (D918 after PR 149's review): whether this member counts as the registrant for four eyes,
+  // so the page can say so before any sign-in. Computed here, where the registrant's sub and email key are.
+  if (viewer?.kind === 'member') v.registeredByYou = r.proposed_by === viewer.id || r.proposer_sub === viewer.sub || r.proposer_email_key === personEmailKey(viewer.email);
+  return v;
 }
 
 // ---- registration ----
@@ -625,10 +634,18 @@ const WAITING_KEYS_JSON = (orgId: string, now: number): Q =>
 const REVIEW_KEYS_JSON = (orgId: string, now: number): Q =>
   q`(SELECT json_group_array(id) FROM (SELECT id FROM platform_keys k WHERE k.org_id = ${orgId} AND ${KEY_COUNTS('k', now)} ORDER BY id))`;
 
-const upsertOrg = (w: Writer, orgId: string, set: { enabled?: 0 | 1; frozen?: 0 | 1 }): Q =>
+/**
+ * The org's switch row written in the caller's batch, only if it committed: inserted when missing (never with the switch
+ * on: the table's insert trigger refuses it, and an existing row is never replaced), then updated. The switch-on carries
+ * its review, which the table's trigger wants to be exactly the org's current keys.
+ */
+const writeOrg = (w: Writer, orgId: string, set: { enabled?: 0 | 1; frozen?: 0 | 1; review?: string | null }): Q[] => [
   q`INSERT INTO platform_orgs (org_id, enabled, frozen, set_by, set_at, version)
-      SELECT ${orgId}, ${set.enabled ?? 0}, ${set.frozen ?? 0}, ${actorId(w.actor)}, ${w.now}, 1 WHERE ${committed(w.requestId)}
-      ON CONFLICT (org_id) DO UPDATE SET ${raw(set.enabled !== undefined ? 'enabled = excluded.enabled, ' : '')}${raw(set.frozen !== undefined ? 'frozen = excluded.frozen, ' : '')}set_by = excluded.set_by, set_at = excluded.set_at, version = version + 1`;
+      SELECT ${orgId}, 0, 0, ${actorId(w.actor)}, ${w.now}, 0 WHERE ${committed(w.requestId)} AND NOT EXISTS (SELECT 1 FROM platform_orgs WHERE org_id = ${orgId})`,
+  q`UPDATE platform_orgs SET ${raw(set.enabled !== undefined ? `enabled = ${set.enabled}, ` : '')}${raw(set.frozen !== undefined ? `frozen = ${set.frozen}, ` : '')}${
+    set.review !== undefined ? q`review_json = ${set.review}, ` : raw('')
+  }set_by = ${actorId(w.actor)}, set_at = ${w.now}, version = version + 1 WHERE org_id = ${orgId} AND ${committed(w.requestId)}`,
+];
 
 /**
  * AdminRpc.setPlatformOrg (A3, L5): staff's switch. Off: at once, and in the same batch the org's waiting keys and
@@ -658,14 +675,14 @@ export async function setPlatformOrg(db: HotDb, w: Writer, i: { orgId: string; e
         { orgId: i.orgId },
         q`NOT EXISTS (SELECT 1 FROM platform_orgs WHERE org_id = ${i.orgId} AND (enabled = 1 OR frozen = 1)) AND ${REVIEW_KEYS_JSON(i.orgId, w.now)} = ${JSON.stringify(reviewed)}`,
       ),
-      upsertOrg(w, i.orgId, { enabled: 1 }),
+      ...writeOrg(w, i.orgId, { enabled: 1, review: JSON.stringify(reviewed) }),
     ]);
   } else {
     await runWrite(db, w, [
       commitOn(w, { kind: 'platform.org_switch', detail: q`json_object('enabled', json('false'), 'reason', ${reason}, 'cancelledKeys', json(${WAITING_KEYS_JSON(i.orgId, w.now)}))` }, { orgId: i.orgId }, raw('1')),
       cancelWaitingKeys(w, i.orgId, 'platform_off'),
       ...cancelPlatformProposals(w, { orgId: i.orgId, keyId: null, reason: 'platform_off' }),
-      upsertOrg(w, i.orgId, { enabled: 0 }),
+      ...writeOrg(w, i.orgId, { enabled: 0, review: null }),
     ]);
   }
   return { changed: true, platform: (await listPlatformKeys(db, i.orgId, w.now, true)).platform };
@@ -676,11 +693,11 @@ export async function setPlatformOrg(db: HotDb, w: Writer, i: { orgId: string; e
  * one batch: `frozen` set, the org's waiting keys and the platform's waiting web addresses for its apps cancelled
  * (D917). Its keys in force stay (only the kill switches work for a frozen org); unfreezing changes nothing else.
  */
-export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: string; frozen: boolean }) {
+export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: string; frozen: boolean; expectedVersion?: number | undefined }) {
   expectReplay(w, ['platform.org_frozen']);
   if (w.actor.kind !== 'hana' && w.actor.kind !== 'system') return refuse('forbidden', 'Only Journear staff (or the admin Worker’s mirror) freeze an organisation');
-  const p = await db.first<{ replay: string | null; frozen: number | null; waiting: string; proposals: number }>(
-    q`SELECT ${replayRow(w.requestId)} AS replay, po.frozen, ${WAITING_KEYS_JSON(i.orgId, w.now)} AS waiting,
+  const p = await db.first<{ replay: string | null; frozen: number | null; version: number | null; waiting: string; proposals: number }>(
+    q`SELECT ${replayRow(w.requestId)} AS replay, po.frozen, po.version, ${WAITING_KEYS_JSON(i.orgId, w.now)} AS waiting,
              (SELECT COUNT(*) FROM guarded_changes g WHERE g.kind = 'origin_add' AND g.proposed_by_kind = 'platform' AND g.status = 'pending' AND (g.active_from IS NULL OR g.active_from > ${w.now})
                 AND g.app_id IN (SELECT id FROM apps WHERE org_id = ${i.orgId})) AS proposals
         FROM (SELECT 1) LEFT JOIN platform_orgs po ON po.org_id = ${i.orgId}`,
@@ -689,20 +706,23 @@ export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: str
   const waiting = JSON.parse(p?.waiting ?? '[]') as string[];
   // Already as asked, with nothing left waiting to cancel: no write.
   if ((p?.frozen ?? 0) === (i.frozen ? 1 : 0) && (!i.frozen || (waiting.length === 0 && (p?.proposals ?? 0) === 0))) return { changed: false };
+  // A compare-and-swap on the row's version when asked (the hourly check's unfreeze: a freeze landing after its read wins).
+  if (i.expectedVersion !== undefined && (p?.version ?? 0) !== i.expectedVersion) refuse('version_conflict', 'The organisation’s platform row changed since it was read');
+  const cas = i.expectedVersion === undefined ? raw('1') : q`COALESCE((SELECT version FROM platform_orgs WHERE org_id = ${i.orgId}), 0) = ${i.expectedVersion}`;
   const stmts: Q[] = [
-    commitOn(w, { kind: 'platform.org_frozen', detail: { frozen: i.frozen, ...(i.frozen ? { cancelledKeys: waiting } : {}) } }, { orgId: i.orgId }, raw('1')),
+    commitOn(w, { kind: 'platform.org_frozen', detail: { frozen: i.frozen, ...(i.frozen ? { cancelledKeys: waiting } : {}) } }, { orgId: i.orgId }, cas),
   ];
   if (i.frozen) stmts.push(cancelWaitingKeys(w, i.orgId, 'org_frozen'), ...cancelPlatformProposals(w, { orgId: i.orgId, keyId: null, reason: 'org_frozen' }));
-  stmts.push(upsertOrg(w, i.orgId, { frozen: i.frozen ? 1 : 0 }));
+  stmts.push(...writeOrg(w, i.orgId, { frozen: i.frozen ? 1 : 0 }));
   await runWrite(db, w, stmts);
   return { changed: true };
 }
 
 /** AdminRpc.platformOrgs: the orgs with a switch row, in id order from after `cursor`, `next` while more remain (the admin Worker's freeze check pages through them all). */
-export async function platformOrgs(db: HotDb, limit: number, cursor?: string): Promise<{ orgs: { orgId: string; enabled: boolean; frozen: boolean }[]; next?: string }> {
-  const rows = await db.all<{ org_id: string; enabled: number; frozen: number }>(q`SELECT org_id, enabled, frozen FROM platform_orgs WHERE org_id > ${cursor ?? ''} ORDER BY org_id LIMIT ${limit + 1}`);
+export async function platformOrgs(db: HotDb, limit: number, cursor?: string): Promise<{ orgs: { orgId: string; enabled: boolean; frozen: boolean; version: number }[]; next?: string }> {
+  const rows = await db.all<{ org_id: string; enabled: number; frozen: number; version: number }>(q`SELECT org_id, enabled, frozen, version FROM platform_orgs WHERE org_id > ${cursor ?? ''} ORDER BY org_id LIMIT ${limit + 1}`);
   const page = rows.slice(0, limit);
-  return { orgs: page.map((r) => ({ orgId: r.org_id, enabled: r.enabled === 1, frozen: r.frozen === 1 })), ...(rows.length > limit ? { next: page[page.length - 1]!.org_id } : {}) };
+  return { orgs: page.map((r) => ({ orgId: r.org_id, enabled: r.enabled === 1, frozen: r.frozen === 1, version: r.version })), ...(rows.length > limit ? { next: page[page.length - 1]!.org_id } : {}) };
 }
 
 // ---- notices ----
@@ -719,21 +739,25 @@ export async function platformKeyNotices(db: HotDb, env: Env, limit: number, now
   const rows = await db.all<PlatformKeyRow & { notice: PlatformKeyNotice['kind']; contacts: string; cancelled_json: string | null; waiting_json: string }>(
     q`SELECT * FROM (
         SELECT 'announce' AS notice, ${PLATFORM_KEY_COLUMNS('k')}, ${CONTACTS('k')} AS contacts, NULL AS cancelled_json, '[]' AS waiting_json, k.proposed_at AS t
-          FROM platform_keys k WHERE k.status = 'pending' AND k.notified_at IS NULL
+          FROM platform_keys k WHERE k.status = 'pending' AND k.notified_at IS NULL AND NOT ${CONTACTS_CHANGED_K('k', now)}
         UNION ALL
         SELECT 'confirmed', ${PLATFORM_KEY_COLUMNS('k')}, ${CONTACTS('k')}, NULL, '[]', k.confirmed_at
           FROM platform_keys k WHERE k.confirmed_kind = 'confirm' AND k.confirm_notified_at IS NULL AND k.status = 'active'
         UNION ALL
         SELECT 'ended', ${PLATFORM_KEY_COLUMNS('k')}, ${CONTACTS('k')},
                (SELECT json_extract(c.detail_json, '$.changes') FROM app_changes c WHERE c.request_id = k.end_request_id || ':cancelled'),
-               (SELECT json_group_array(json_object('id', o.id, 'label', o.label)) FROM platform_keys o WHERE o.org_id = k.org_id AND o.id != k.id AND ${KEY_WAITING('o', now)}),
+               (SELECT json_group_array(json_object('id', o.id, 'label', o.label, 'announced', json(CASE WHEN o.cancel_token_hash IS NOT NULL THEN 'true' ELSE 'false' END))) FROM platform_keys o WHERE o.org_id = k.org_id AND o.id != k.id AND ${KEY_WAITING('o', now)}),
                COALESCE(k.revoked_at, k.expires_at)
           FROM platform_keys k WHERE k.status IN ('revoked', 'expired') AND k.end_notified_at IS NULL AND k.notified_at IS NOT NULL
         UNION ALL
         SELECT 'expiring', ${PLATFORM_KEY_COLUMNS('k')}, ${CONTACTS('k')}, NULL, '[]', k.expires_at
           FROM platform_keys k WHERE ${KEY_IN_FORCE('k', now)}
            AND ((k.expires_at - ${now} <= ${7 * 86_400_000} AND k.expiry_notice_stage != 7) OR (k.expires_at - ${now} <= ${30 * 86_400_000} AND k.expiry_notice_stage = 0))
-      ) ORDER BY t, id LIMIT ${limit}`,
+      )
+      -- A notice whose sends failed waits longer after each failure (5 min times the failures, at most an hour) and comes
+      -- after every other, so one recipient that always refuses can't hold the page back (D918 after PR 149's review).
+      WHERE notice_failed_at IS NULL OR notice_failed_at <= ${now} - MIN(notice_failures, 12) * 300000
+      ORDER BY notice_failures > 0, t, id LIMIT ${limit}`,
   );
   const appNames = new Map<string, string>();
   const cancelledIds = rows.flatMap((r) => (r.cancelled_json ? (JSON.parse(r.cancelled_json) as { appId: string }[]).map((c) => c.appId) : []));
@@ -741,7 +765,7 @@ export async function platformKeyNotices(db: HotDb, env: Env, limit: number, now
     for (const a of await db.all<{ id: string; name: string }>(q`SELECT id, name FROM apps WHERE id IN (SELECT value FROM json_each(${JSON.stringify([...new Set(cancelledIds)])}))`)) appNames.set(a.id, a.name);
   }
   return rows.map((r) => {
-    const n: PlatformKeyNotice = { kind: r.notice, key: platformKeyView(r, now, true), contacts: JSON.parse(r.contacts) as string[] };
+    const n: PlatformKeyNotice = { kind: r.notice, key: platformKeyView(r, now, true), contacts: JSON.parse(r.contacts) as string[], failures: r.notice_failures };
     if (r.notice === 'announce') {
       n.inForceAtOnce = r.confirmed_kind === 'acceptance';
       n.waitMs = Math.max(keyDelayMs(env), r.min_delay_ms);
@@ -749,7 +773,7 @@ export async function platformKeyNotices(db: HotDb, env: Env, limit: number, now
     if (r.notice === 'expiring') n.stage = r.expires_at! - now <= 7 * 86_400_000 ? 7 : 30;
     if (r.notice === 'ended') {
       n.cancelledOrigins = (r.cancelled_json ? (JSON.parse(r.cancelled_json) as { appId: string; origin: string }[]) : []).map((c) => ({ appId: c.appId, appName: appNames.get(c.appId) ?? c.appId, origin: c.origin }));
-      n.waitingKeys = JSON.parse(r.waiting_json) as { id: string; label: string }[];
+      n.waitingKeys = JSON.parse(r.waiting_json) as { id: string; label: string; announced: boolean }[];
     }
     return n;
   });
@@ -768,9 +792,12 @@ const hashBlob = (b64: string): ArrayBuffer => {
  */
 export async function ackPlatformKeyNotice(db: HotDb, env: Env, w: Writer, i: { keyId: string; cancelTokenHash: string; revokeTokenHash?: string | undefined }) {
   expectReplay(w, ['platform.key_announced']);
-  const { key } = await planKey(db, w, i.keyId, null);
+  const { plan, key } = await planKey(db, w, i.keyId, null);
   if (!key) return refuse('not_found', 'No such platform key');
   if (key.status !== 'pending' || key.notified_at !== null) refuse('not_pending', key.status === 'pending' ? 'The key is already announced' : `The key is ${key.status}`);
+  // Held within 7 days of a security-contact change, as the registration is: a contact removed in between would never
+  // hear of the key (the notice page leaves it out meanwhile, so nothing is mailed twice).
+  if (plan.contacts_changed) refuse('conflict', PLATFORM_KEY_WORDS.contactWait);
   const atOnce = key.confirmed_kind === 'acceptance';
   if (atOnce && !i.revokeTokenHash) refuse('bad_request', 'A key in force at once needs its revoke link in the announcement');
   const unconfirmed = w.now + Math.max(keyDelayMs(env), key.min_delay_ms);
@@ -780,9 +807,10 @@ export async function ackPlatformKeyNotice(db: HotDb, env: Env, w: Writer, i: { 
       w,
       { kind: 'platform.key_announced', detail: { keyId: key.id, activeFrom, unconfirmedActiveFrom: unconfirmed, inForceAtOnce: atOnce, channel: 'email' } },
       { orgId: key.org_id },
-      q`EXISTS (SELECT 1 FROM platform_keys WHERE id = ${key.id} AND status = 'pending' AND notified_at IS NULL AND confirmed_kind IS ${key.confirmed_kind})`,
+      q`EXISTS (SELECT 1 FROM platform_keys WHERE id = ${key.id} AND status = 'pending' AND notified_at IS NULL AND confirmed_kind IS ${key.confirmed_kind})
+        AND NOT ${CONTACTS_CHANGED(key.org_id, w.now)}`,
     ),
-    q`UPDATE platform_keys SET notified_at = ${w.now}, unconfirmed_active_from = ${unconfirmed}, active_from = ${activeFrom}, expires_at = ${activeFrom + PLATFORM_KEY_LIFETIME_MS},
+    q`UPDATE platform_keys SET notice_failures = 0, notice_failed_at = NULL, notified_at = ${w.now}, unconfirmed_active_from = ${unconfirmed}, active_from = ${activeFrom}, expires_at = ${activeFrom + PLATFORM_KEY_LIFETIME_MS},
              cancel_token_hash = ${hashBlob(i.cancelTokenHash)}
              ${atOnce ? q`, status = 'active', activated_recorded_at = ${w.now}, revoke_link_hash = ${hashBlob(i.revokeTokenHash!)}, revoke_link_until = ${w.now + PLATFORM_KEY_REVOKE_LINK_MS}, confirm_notified_at = ${w.now}` : raw('')}
        WHERE id = ${key.id} AND status = 'pending' AND notified_at IS NULL AND ${committed(w.requestId)}`,
@@ -800,7 +828,7 @@ async function markSent(db: HotDb, sql: Q): Promise<boolean> {
 export async function ackPlatformKeyConfirmNotice(db: HotDb, w: Writer, i: { keyId: string; revokeTokenHash: string }) {
   const ok = await markSent(
     db,
-    q`UPDATE platform_keys SET confirm_notified_at = ${w.now}, revoke_link_hash = ${hashBlob(i.revokeTokenHash)}, revoke_link_until = ${w.now + PLATFORM_KEY_REVOKE_LINK_MS}
+    q`UPDATE platform_keys SET notice_failures = 0, notice_failed_at = NULL, confirm_notified_at = ${w.now}, revoke_link_hash = ${hashBlob(i.revokeTokenHash)}, revoke_link_until = ${w.now + PLATFORM_KEY_REVOKE_LINK_MS}
        WHERE id = ${i.keyId} AND confirmed_kind = 'confirm' AND confirm_notified_at IS NULL AND revoke_link_hash IS NULL`,
   );
   if (!ok) refuse('not_pending', 'No confirmation of this key is waiting for its notice');
@@ -809,7 +837,7 @@ export async function ackPlatformKeyConfirmNotice(db: HotDb, w: Writer, i: { key
 
 /** AdminRpc.ackPlatformKeyEndNotice (`system`): the notice that a key stopped (revoked or expired) went out. */
 export async function ackPlatformKeyEndNotice(db: HotDb, w: Writer, i: { keyId: string }) {
-  const ok = await markSent(db, q`UPDATE platform_keys SET end_notified_at = ${w.now} WHERE id = ${i.keyId} AND status IN ('revoked', 'expired') AND end_notified_at IS NULL`);
+  const ok = await markSent(db, q`UPDATE platform_keys SET notice_failures = 0, notice_failed_at = NULL, end_notified_at = ${w.now} WHERE id = ${i.keyId} AND status IN ('revoked', 'expired') AND end_notified_at IS NULL`);
   if (!ok) refuse('not_pending', 'No end of this key is waiting for its notice');
   return {};
 }
@@ -817,7 +845,19 @@ export async function ackPlatformKeyEndNotice(db: HotDb, w: Writer, i: { keyId: 
 /** AdminRpc.ackPlatformKeyExpiryNotice (`system`): the 30- or 7-day warning went out (a stage is never sent twice, nor the 30 after the 7). */
 export async function ackPlatformKeyExpiryNotice(db: HotDb, w: Writer, i: { keyId: string; stage: 30 | 7 }) {
   const from = i.stage === 30 ? q`expiry_notice_stage = 0` : q`expiry_notice_stage IN (0, 30)`;
-  const ok = await markSent(db, q`UPDATE platform_keys SET expiry_notice_stage = ${i.stage} WHERE id = ${i.keyId} AND ${from} AND status IN ('pending', 'active')`);
+  const ok = await markSent(db, q`UPDATE platform_keys SET notice_failures = 0, notice_failed_at = NULL, expiry_notice_stage = ${i.stage} WHERE id = ${i.keyId} AND ${from} AND status IN ('pending', 'active')`);
   if (!ok) refuse('not_pending', 'This warning was already sent');
   return {};
+}
+
+/**
+ * AdminRpc.notePlatformKeyNoticeFailure (`system`): a notice's sends failed (a recipient refused). The page then retries
+ * it later and after every other notice; answers how many times in a row it failed, so the admin Worker reports a stuck
+ * one. Nothing about the key's state changes.
+ */
+export async function notePlatformKeyNoticeFailure(db: HotDb, w: Writer, i: { keyId: string }): Promise<{ failures: number }> {
+  const [r] = await db.batch([q`UPDATE platform_keys SET notice_failures = notice_failures + 1, notice_failed_at = ${w.now} WHERE id = ${i.keyId} RETURNING notice_failures`]);
+  const row = (r?.results?.[0] ?? null) as { notice_failures: number } | null;
+  if (!row) return refuse('not_found', 'No such platform key');
+  return { failures: row.notice_failures };
 }

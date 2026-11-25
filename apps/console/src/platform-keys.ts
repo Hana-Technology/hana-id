@@ -56,17 +56,24 @@ async function registrantEmail(env: Env, userId: string): Promise<string | null>
   return (await env.CONSOLE_DB.prepare('SELECT email FROM console_users WHERE id = ?').bind(userId).first<{ email: string }>())?.email ?? null;
 }
 
-/** When the member became an owner of the org: `role_since` for an owner, a matured grant's `owner_from`; null if not an owner now. */
+/**
+ * Since when the member is an owner of the org without a break, or null if not an owner now (D918 after PR 149's
+ * review): an owner's `role_since`; a viewer whose matured grant isn't applied yet, the later of `role_since` and that
+ * grant's `owner_from` (applied grants don't count: a demotion, or a removal and a new membership, resets the clock, and
+ * `role_since` moves with each of them).
+ */
 export async function ownerSince(env: Env, orgId: string, userId: string, now: number): Promise<number | null> {
   const r = await env.CONSOLE_DB.prepare(
     `SELECT m.role, m.role_since, ${ownerNow('m', now)} AS is_owner,
-            (SELECT MIN(og.owner_from) FROM owner_grants og WHERE og.org_id = m.org_id AND og.user_id = m.user_id AND og.cancelled_at IS NULL AND og.notified_at IS NOT NULL AND og.owner_from <= ${lit(now)}) AS granted_from
+            (SELECT MAX(og.owner_from) FROM owner_grants og WHERE og.org_id = m.org_id AND og.user_id = m.user_id AND og.cancelled_at IS NULL AND og.applied_at IS NULL
+                AND og.notified_at IS NOT NULL AND og.owner_from <= ${lit(now)}) AS granted_from
        FROM members m WHERE m.org_id = ? AND m.user_id = ?`,
   )
     .bind(orgId, userId)
     .first<{ role: string; role_since: number; is_owner: number; granted_from: number | null }>();
   if (!r || !r.is_owner) return null;
-  return r.role === 'owner' ? r.role_since : r.granted_from;
+  if (r.role === 'owner') return r.role_since;
+  return r.granted_from === null ? null : Math.max(r.role_since, r.granted_from);
 }
 
 /**
@@ -108,7 +115,12 @@ export async function abilityFor(env: Env, c: OrgCaller, key: PlatformKeyView, w
   if (c.orgStatus !== 'active') return no('Journear has frozen your organisation, so keys can’t be accepted or confirmed.');
   if (what === 'accept') {
     if (key.state !== 'awaiting_acceptance') return no('This key isn’t waiting for an acceptance.');
+    // Four eyes for the screen too (the API refuses it anyway): on a real-money setup the person who registered the
+    // staff key (by email: staff aren't console users) can't accept it. The owner-since rule isn't applied to an
+    // acceptance: the staff member who registered it is the first person, so a second owner account adds nothing.
+    if (key.fourEyes && key.registeredByYou) return no('This account has the same email address as the person who registered the key, so another owner must accept it.');
   } else {
+    if (key.fourEyes && key.registeredByYou && key.proposedByKind === 'member' && key.proposedBy !== c.session.userId) return no('This account has the same email address or Google account as the owner who registered the key, so another owner must confirm it.');
     if (key.state !== 'waiting' || key.notifiedAt === undefined || key.confirmedAt !== undefined) return no(key.state === 'waiting' ? 'This key can be confirmed once its email has gone out.' : 'This key isn’t waiting.');
     const problem = await fourEyesProblem(env, c.orgId, { userId: c.session.userId, email: c.session.email }, key, now);
     if (problem) return no(problem);

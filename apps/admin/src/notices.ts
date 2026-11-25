@@ -38,6 +38,8 @@ import { systemCtx } from './rpc.ts';
 
 /** Notices read per run and kind (the budget usually ends a run first). */
 export const NOTICE_PAGE = 20;
+/** A platform key notice failing this many times in a row is reported at error level as stuck. */
+export const STUCK_AFTER = 12;
 
 export interface StepResult {
   acked: number;
@@ -375,6 +377,13 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
       break;
     }
     const people = peopleFor(n, list, orgName);
+    // The stop notice names the org's other waiting keys; each announced one with its own cancel link (deterministic,
+    // as its announcement's: HMAC(CANCEL_LINK_KEY, "hana-id/platform-key-cancel/v1" ‖ id)), so a security contact who
+    // isn't a console member can cancel it too.
+    const waitingLinks: Record<string, string> = {};
+    for (const wk of n.waitingKeys ?? []) {
+      if (wk.announced) waitingLinks[wk.id] = consoleLink(env.CONSOLE_ORIGIN, `/cancel-platform-key/${encodeURIComponent(wk.id)}#t=${b64url(await linkToken('platformKeyCancel', key, wk.id))}`);
+    }
     const cancelToken = await linkToken('platformKeyCancel', key, id);
     const revokeToken = await linkToken('platformKeyRevoke', key, id);
     const cancelUrl = consoleLink(env.CONSOLE_ORIGIN, `/cancel-platform-key/${encodeURIComponent(id)}#t=${b64url(cancelToken)}`);
@@ -388,7 +397,7 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
           : n.kind === 'confirmed'
             ? platformKeyConfirmed(ctx, n, people, { revokeUrl })
             : n.kind === 'ended'
-              ? platformKeyStopped(ctx, n, people)
+              ? platformKeyStopped(ctx, n, people, { waitingLinks })
               : platformKeyExpiring(ctx, n, people);
     } catch (err) {
       out.failed++;
@@ -402,7 +411,11 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
     }
     if (!sent.allAccepted) {
       out.failed++;
-      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed }, 'warn');
+      // Recorded, so the page retries it later and after every other notice (one refusing recipient can't hold the page
+      // back); from the 12th failure in a row it is reported at error level as stuck (D918 after PR 149's review).
+      const noted = budget.fits(1, 1) ? await env.API.notePlatformKeyNoticeFailure({ ...systemCtx(), keyId: id }).catch(() => null) : null;
+      const failures = noted?.ok ? noted.failures : (n.failures ?? 0) + 1;
+      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'rejected', code: failures >= STUCK_AFTER ? 'notice_stuck' : 'send_failed', sent: sent.sent, failed: sent.failed, count: failures }, failures >= STUCK_AFTER ? 'error' : 'warn');
       continue;
     }
     const base = { ...systemCtx(), keyId: id };

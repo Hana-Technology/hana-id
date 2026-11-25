@@ -172,9 +172,9 @@ export interface AppSpec {
    */
   launched?: boolean;
   /**
-   * The scope is marked as shared by several partners' apps (`scopes.app_user_ids`, migration 0026; a test scope only).
-   * Set when the scope row is first created here (an existing scope keeps its mark). An app created on a marked scope
-   * gets its own User IDs (`apps.user_ids` 'app', migration 0030, D919), as the API's createApp writes it.
+   * Mark the app's scope as shared by several partners' apps first (`scopes.app_user_ids`, migration 0026; a test scope
+   * only; one way, as staff's mark: an existing scope's apps keep their User IDs). An app created on a marked scope gets
+   * its own User IDs (`apps.user_ids` 'app', migration 0030, D919), as the API's createApp writes it.
    */
   sharedScope?: boolean;
 }
@@ -289,9 +289,12 @@ export class MockApi {
     const now = Date.now();
     // The hot DB after migration 0006: the scope row (one environment per scope; a key of the other one is refused by
     // its triggers), the app, its key in app_keys, and its origins in force (active_from 0, as migrated).
+    // Only when the scope has no row yet: an INSERT OR IGNORE of an unmarked row over a marked scope is refused by 0026's
+    // trigger (it runs before the conflict is resolved, so a mark can't be undone that way).
     this.d1.db
-      .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES (?, 'org_legacy', ?, ?, ?, ?, ?)")
-      .run(scopeId, spec.live ? 'live' : 'test', now, now, now, spec.sharedScope ? 1 : 0);
+      .prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) SELECT ?, 'org_legacy', ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM scopes WHERE scope_id = ?)")
+      .run(scopeId, spec.live ? 'live' : 'test', now, now, now, spec.sharedScope ? 1 : 0, scopeId);
+    if (spec.sharedScope) this.d1.db.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ? AND app_user_ids = 0').run(scopeId);
     // The User ID mode from the scope's mark, as the API's createApp writes it (D919): 'app' on a marked scope.
     this.d1.db
       .prepare(
@@ -649,6 +652,8 @@ export class MockApi {
     scopeId: string;
     wallets: { chain: string; address: string }[];
     identities: { provider: string; sub: string | null; role: string; status: string }[];
+    /** D919: the apps of a shared scope the user signed in on, with that app's User ID and Support code (`end_user_apps`). */
+    apps: { appId: string; appSub: string; supportCode: string }[];
   }[] {
     const users = this.d1.db.prepare('SELECT u.user_id, u.token_sub, u.support_code, u.scope_id FROM end_users u WHERE u.user_id IN (SELECT user_id FROM end_user_wallets WHERE address = ?) ORDER BY u.user_id').all(address);
     return users.map((u) => ({
@@ -664,6 +669,10 @@ export class MockApi {
         .prepare('SELECT provider, sub, role, status FROM end_user_identities WHERE user_id = ? ORDER BY role DESC, provider')
         .all(String(u.user_id))
         .map((i) => ({ provider: String(i.provider), sub: i.sub === null ? null : String(i.sub), role: String(i.role), status: String(i.status) })),
+      apps: this.d1.db
+        .prepare('SELECT app_id, app_sub, support_code FROM end_user_apps WHERE user_id = ? ORDER BY app_id')
+        .all(String(u.user_id))
+        .map((a) => ({ appId: String(a.app_id), appSub: String(a.app_sub), supportCode: String(a.support_code) })),
     }));
   }
 

@@ -269,7 +269,7 @@ describe('uid-erase: the plan (dry run)', PGLITE, () => {
 describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('erases the account’s rows in the ledger, the wallet directory and the issuer, records it, and leaves everyone else alone', async () => {
     const out = await uidErase([...ARGV, '--yes'], deps());
-    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userEvents: 6, evmSponsorSends: 0, issuerApps: 2, issuerEmails: 1 });
+    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userApps: 0, userEvents: 6, evmSponsorSends: 0, issuerApps: 2, issuerEmails: 1 });
     // D714: the names that stay, and the shares that stay.
     expect(api.prepare('SELECT provider, sub FROM home_profiles ORDER BY provider, sub').all().map((r) => `${r.provider}:${r.sub}`)).toEqual([`google:${GOOGLE.sub}`, `google:${OTHER.sub}`]);
     expect(api.prepare('SELECT app_id, sub FROM name_shares ORDER BY app_id, sub').all().map((r) => `${r.app_id}:${r.sub}`)).toEqual([`app_n1:${OTHER.sub}`, `app_n2:${GOOGLE.sub}`]);
@@ -338,7 +338,7 @@ describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('is re-runnable: a second run finds nothing and still answers', async () => {
     await uidErase([...ARGV, '--yes'], deps());
     const again = await uidErase([...ARGV, '--yes'], deps());
-    expect(again!.erased).toEqual({ ledgerEvents: 0, ledgerAppUsers: 0, directoryWallets: 0, directoryIdentities: 0, emailConsents: 0, nameShares: 0, homeNames: 0, directoryUsers: 0, userEvents: 0, evmSponsorSends: 0, issuerApps: 0, issuerEmails: 0 });
+    expect(again!.erased).toEqual({ ledgerEvents: 0, ledgerAppUsers: 0, directoryWallets: 0, directoryIdentities: 0, emailConsents: 0, nameShares: 0, homeNames: 0, directoryUsers: 0, userApps: 0, userEvents: 0, evmSponsorSends: 0, issuerApps: 0, issuerEmails: 0 });
   });
 
   it('works from the root identity too, with the sub on stdin', async () => {
@@ -350,10 +350,87 @@ describe('uid-erase --yes: across the three stores', PGLITE, () => {
   it('an env without an issuer erases the ledger and the wallet directory; --no-ledger skips the ledger and records nothing', async () => {
     const noIssuer = { ...M, emailIssuer: undefined } as Manifest;
     const out = await uidErase([...ARGV, '--yes', '--no-ledger'], deps({ loadManifest: () => noIssuer, issuerD1: async () => Promise.reject(new Error('no issuer')) }));
-    expect(out!.erased).toEqual({ directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userEvents: 6, evmSponsorSends: 0 });
+    expect(out!.erased).toEqual({ directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userApps: 0, userEvents: 6, evmSponsorSends: 0 });
     expect((await ledgerCount(GOOGLE)).e).toBe(2);
     expect((await ledger.query('SELECT 1 FROM ops.erasures')).rows).toEqual([]);
     expect(lines.join('\n')).toMatch(/record the ticket and these counts in the support log by hand/u);
+  });
+});
+
+describe('uid-erase by a User ID or Support ID, and the apps signed in on (D919)', PGLITE, () => {
+  /** An app's own User ID and Support code for Alice (any well-formed values: the script resolves, it doesn't derive). */
+  const OWN_SUB = `u1_${'O'.repeat(21)}w`;
+  const OWN_CODE = 'XWNC0DE1';
+  /** s7 marked as shared, an app of its own on it, and the rows Alice's and Olivia's sign-ins left (end_user_apps). */
+  async function sharedRows(): Promise<{ root: string; other: string }> {
+    const root = await userOf(GOOGLE);
+    const other = await userOf(OTHER);
+    api.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?').run(SCOPE);
+    api.prepare("INSERT INTO apps (id, name, scope_id, publishable_key, created_at, user_ids) VALUES ('app_own', 'own', ?, 'pk_test_own', 1, 'app')").run(SCOPE);
+    const row = api.prepare('INSERT INTO end_user_apps (user_id, app_id, app_sub, support_code, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, 1, 2)');
+    row.run(root, 'app_n1', tokenSub(1), root.slice(3, 11).toUpperCase());
+    row.run(root, 'app_own', OWN_SUB, OWN_CODE);
+    row.run(other, 'app_own', `u1_${'P'.repeat(21)}w`, 'PPPPPPPP');
+    return { root, other };
+  }
+  const by = (...flag: string[]) => ['sandbox-dev', '--scope', SCOPE, ...flag, '--ticket', 'SUP-919'];
+
+  it("--user-id with an app's own User ID: the same person and account as by their sub, and their app rows go; Olivia's stay", async () => {
+    const { root, other } = await sharedRows();
+    const out = await uidErase([...by('--user-id', OWN_SUB), '--yes'], deps());
+    expect(out!.plan.account.root).toMatchObject(GOOGLE);
+    expect(out!.plan.userApps).toBe(2);
+    expect(out!.erased).toMatchObject({ directoryUsers: 2, userApps: 2, emailConsents: 4, issuerApps: 2 });
+    expect(one(api, 'SELECT COUNT(*) AS n FROM end_user_apps WHERE user_id = ?', root)).toBe(0);
+    expect(one(api, 'SELECT COUNT(*) AS n FROM end_user_apps WHERE user_id = ?', other)).toBe(1);
+    expect(lines.join('\n')).toMatch(/app ids {3}2 row\(s\) of the apps of a shared scope they signed in on/u);
+    // The resolved sign-in is never printed, nor the app's own User ID the operator gave.
+    expect(lines.join('\n')).not.toContain(GOOGLE.sub);
+    expect(lines.join('\n')).not.toContain(OWN_SUB);
+  });
+
+  it("--support-id with an app's own Support ID, and the scope's User ID and Support ID: each resolves to the same plan as the sub", async () => {
+    await sharedRows();
+    const bySub = (await uidErase(['sandbox-dev', '--scope', SCOPE, '--provider', GOOGLE.provider, '--sub', GOOGLE.sub, '--ticket', 'SUP-919'], deps()))!.plan;
+    const root = await userOf(GOOGLE);
+    for (const flag of [['--support-id', `HANA-${OWN_CODE.slice(0, 4)}-${OWN_CODE.slice(4)}`], ['--support-id', `hana-${OWN_CODE.slice(0, 4).toLowerCase()}-${OWN_CODE.slice(4)}`], ['--user-id', tokenSub(1)], ['--support-id', `HANA-${root.slice(3, 7).toUpperCase()}-${root.slice(7, 11).toUpperCase()}`]]) {
+      const plan = (await uidErase(by(...flag), deps()))!.plan;
+      expect({ ...plan, account: plan.account.root }, flag.join(' ')).toEqual({ ...bySub, account: bySub.account.root });
+    }
+    expect(one(api, 'SELECT COUNT(*) AS n FROM end_user_apps')).toBe(3);
+  });
+
+  it('--user-id - reads it from stdin', async () => {
+    await sharedRows();
+    const out = await uidErase(by('--user-id', '-'), deps({ readLine: async () => `${OWN_SUB}\n` }));
+    expect(out!.plan.account.root).toMatchObject(GOOGLE);
+  });
+
+  it('refuses a Support ID several people share, an unknown or malformed ID, two ways at once, or a person with no known sign-in, changing nothing', async () => {
+    const { other } = await sharedRows();
+    api.prepare("UPDATE end_user_apps SET support_code = ? WHERE user_id = ?").run(OWN_CODE, other);
+    const fail = (argv: string[]) => uidErase([...argv, '--yes'], deps()).then(() => 'ran', (e: Error) => e.message);
+    expect(await fail(by('--support-id', `HANA-${OWN_CODE.slice(0, 4)}-${OWN_CODE.slice(4)}`))).toMatch(/2 people in scope s7 share this Support ID/u);
+    expect(await fail(by('--user-id', `u1_${'Z'.repeat(21)}A`))).toMatch(/No person with this User ID in scope s7/u);
+    expect(await fail(by('--user-id', 'u1_short'))).toMatch(/--user-id takes a User ID/u);
+    expect(await fail(by('--support-id', 'HANA-IIII-0000'))).toMatch(/--support-id takes a Support ID/u);
+    expect(await fail(by('--user-id', OWN_SUB, '--provider', 'google', '--sub', GOOGLE.sub))).toMatch(/Name the person one way/u);
+    expect(await fail(by('--user-id', OWN_SUB, '--support-id', 'HANA-0000-0000'))).toMatch(/Name the person one way/u);
+    // A person whose root has no sign-in in the directory (its sub unknown): named by sub instead.
+    api.prepare('UPDATE end_user_identities SET sub = NULL WHERE user_id = ? AND role = ?').run(other, 'root');
+    expect(await fail(by('--user-id', `u1_${'P'.repeat(21)}w`))).toMatch(/no sign-in for this person's account/u);
+    expect(one(api, 'SELECT COUNT(*) AS n FROM end_user_apps')).toBe(3);
+    expect(one(api, 'SELECT COUNT(*) AS n FROM end_users')).toBe(4);
+  });
+
+  it("before migration 0030: no app rows to erase, and an app's own IDs can't be resolved (the scope's still can)", async () => {
+    api.exec('DROP TABLE end_user_apps');
+    const out = await uidErase([...ARGV, '--yes'], deps());
+    expect(out!.plan.userApps).toBeNull();
+    expect(out!.erased).not.toHaveProperty('userApps');
+    expect(lines.join('\n')).toMatch(/app ids {3}none: the API's D1 has no end_user_apps table \(migration 0030 not applied\)/u);
+    const fail = await uidErase(by('--user-id', OWN_SUB), deps()).then(() => 'ran', (e: Error) => e.message);
+    expect(fail).toMatch(/no end_user_apps yet/u);
   });
 });
 
@@ -407,7 +484,7 @@ describe('uid-erase and user_events (readiness 7.17)', PGLITE, () => {
     api.exec('DROP TABLE user_events');
     const out = await uidErase([...ARGV, '--yes'], deps());
     expect(out!.plan.events).toBeNull();
-    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, evmSponsorSends: 0, issuerApps: 2, issuerEmails: 1 });
+    expect(out!.erased).toEqual({ ledgerEvents: 3, ledgerAppUsers: 3, directoryWallets: 3, directoryIdentities: 2, emailConsents: 4, nameShares: 2, homeNames: 1, directoryUsers: 2, userApps: 0, evmSponsorSends: 0, issuerApps: 2, issuerEmails: 1 });
     expect(lines.join('\n')).toMatch(/events {4}none \(the API's D1 has no user_events: migration 0013 not applied\)/u);
   });
 });

@@ -65,14 +65,16 @@ export async function seedApp(
   const scope = opts.scope ?? `s${uid()}`;
   const now = Date.now();
   const environment = key.startsWith('pk_live_') ? 'live' : 'test';
+  // Only when the scope has no row yet (an INSERT OR IGNORE of an unmarked row over a marked scope is refused by 0026's
+  // trigger, which runs before the conflict is resolved).
   if (opts.sharedScope) {
     await db
-      .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES (?1, 'org_legacy', ?2, ?3, ?4, ?4, 1)")
+      .prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) SELECT ?1, 'org_legacy', ?2, ?3, ?4, ?4, 1 WHERE NOT EXISTS (SELECT 1 FROM scopes WHERE scope_id = ?1)")
       .bind(scope, environment, opts.firstSession === undefined ? now : opts.firstSession, now)
       .run();
   } else {
     await db
-      .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?1, 'org_legacy', ?2, ?3, ?4, ?4)")
+      .prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) SELECT ?1, 'org_legacy', ?2, ?3, ?4, ?4 WHERE NOT EXISTS (SELECT 1 FROM scopes WHERE scope_id = ?1)")
       .bind(scope, environment, opts.firstSession === undefined ? now : opts.firstSession, now)
       .run();
   }

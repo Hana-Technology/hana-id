@@ -132,17 +132,34 @@ export function appDetails(now: number): AppDetail[] {
       suspendedBy: 0,
       deleted: false,
       activeOrigins: 2,
-      pendingChanges: 0,
+      pendingChanges: 1,
       createdAt: now - 52 * D,
       orgId: ORG_ID,
-      originsVersion: 3,
+      originsVersion: 4,
       settingsVersion: 4,
       origins: [
         { origin: 'https://staging.lumenpay.io', display: 'https://staging.lumenpay.io', idn: false, activeFrom: now - 50 * D },
         { origin: 'http://localhost:5173', display: 'http://localhost:5173', idn: false, activeFrom: now - 50 * D },
+        { origin: 'https://shop.partner-one.example', display: 'https://shop.partner-one.example', idn: false, activeFrom: null, changeId: 'gc_Pf3Lk8Wd2' },
       ],
       settings: { persistence: 'session', sessionTtlMs: 12 * H, idleTtlMs: 2 * H, googleWebClientId: null, rawSign: 'off', policy: null },
-      changes: [],
+      // D916: a change proposed by the org's platform key (nothing proposes one yet; the preview shows how it reads).
+      changes: [
+        {
+          id: 'gc_Pf3Lk8Wd2',
+          appId: 'app_Ts6Ry1Hn8b',
+          kind: 'origin_add',
+          origin: 'https://shop.partner-one.example',
+          display: 'https://shop.partner-one.example',
+          idn: false,
+          status: 'pending',
+          proposedByKind: 'platform',
+          proposedBy: 'pkc_Nt4Wq8Rb2m',
+          proposedAt: now - 20 * 60_000,
+          notifiedAt: now - 17 * 60_000,
+          activeFrom: now + 24 * H - 17 * 60_000,
+        },
+      ],
       keys: [{ id: 'key_Tq1Wv6Ms3', prefix: 'pk_test_', key: `pk_test_${hex('t1', 32)}`, createdBy: 'hana', createdAt: now - 52 * D }],
     },
     {
@@ -390,6 +407,8 @@ export function audit(now: number): AuditAnswer {
   return {
     entries: [
       c(212, now - 9 * 60_000, 'step_up.confirmed', { appId: 'app_Lm4Pq9Zs2v', details: { kind: 'origin.add' } }),
+      // D916: a row written by the org's platform key.
+      { source: 'api', seq: 985, at: now - 20 * 60_000, appId: 'app_Ts6Ry1Hn8b', kind: 'origin.proposed', detail: { changeId: 'gc_Pf3Lk8Wd2', origin: 'https://shop.partner-one.example' }, actorKind: 'platform', actorId: 'pkc_Nt4Wq8Rb2m', requestId: `pf_${hex('rq985', 29)}` },
       // A staff-created app's first origin: announced with the no_session waiver, then recorded by the hourly job.
       { source: 'api', seq: 984, at: now - 40 * 60_000, appId: 'app_Rw2Bt7Kd5c', kind: 'origin.activated', detail: { changeId: 'gc_Rw7Lh2Qa9', kind: 'origin_add', origin: 'http://localhost:5173', policyId: null, activeFrom: now - 3 * H + 4 * 60_000 }, actorKind: 'system', actorId: 'cron', requestId: `${hex('rq984', 16)}-SIN` },
       { source: 'api', seq: 981, at: now - 2 * H, appId: 'app_Lm4Pq9Zs2v', kind: 'key.created', detail: { prefix: 'pk_live_' }, actorKind: 'member', actorId: 'usr_Ak3Pz8Qw2n', requestId: `${hex('rq981', 16)}-SIN` },

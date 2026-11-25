@@ -5,7 +5,7 @@
 // email addresses (D269): nothing here, or in the console, reads the email issuer's directory. The addresses below are
 // the org's own members and invitees (partner staff), which the spec shows them.
 import { z } from '@hana-id/env/zod';
-import { ACTOR_KINDS, AUDIT_OUTCOMES, GRANTOR_KINDS, ORG_STATUSES, role } from './types.ts';
+import { ACTOR_KINDS, AUDIT_LOG_ACTOR_KINDS, AUDIT_OUTCOMES, GRANTOR_KINDS, ORG_STATUSES, role } from './types.ts';
 
 const ms = z.number().int().nonnegative();
 const id = z.string().min(1).max(128);
@@ -117,7 +117,7 @@ export const partnerConsoleEvent = z
     source: z.literal('console'),
     seq: z.number().int().positive(),
     at: ms,
-    actorKind: z.enum(ACTOR_KINDS),
+    actorKind: z.enum(AUDIT_LOG_ACTOR_KINDS),
     actorId: z.string(),
     /** The acting member's own address (a member of this org); never a staffer's. */
     actorEmail: z.string().optional(),

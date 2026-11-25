@@ -2,6 +2,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import {
   ACTOR_KINDS,
+  AUDIT_LOG_ACTOR_KINDS,
   AUDIT_OUTCOMES,
   AUTH_FLOW_PURPOSES,
   AUTH_FLOW_SCOPES,
@@ -67,7 +68,9 @@ describe('CONSOLE_DB 0001', () => {
     expect(await checkList('auth_flows', 'purpose')).toEqual([...AUTH_FLOW_PURPOSES]);
     expect(await checkList('auth_flows', 'scope')).toEqual([...AUTH_FLOW_SCOPES]);
     expect(await checkList('pending_actions', 'kind')).toEqual([...STEP_UP_KINDS]);
-    expect(await checkList('audit_log', 'actor_kind')).toEqual([...ACTOR_KINDS]);
+    expect(await checkList('audit_log', 'actor_kind')).toEqual([...AUDIT_LOG_ACTOR_KINDS]);
+    // The console's own actors are the API ledger's less `platform`, which only the API's ledger records (D916).
+    expect(ACTOR_KINDS.filter((k) => k !== 'platform')).toEqual([...AUDIT_LOG_ACTOR_KINDS]);
     expect(await checkList('audit_log', 'outcome')).toEqual([...AUDIT_OUTCOMES]);
   });
 });

@@ -1091,7 +1091,8 @@ function appState(a) {
   if (a.suspendedBy) return h('span', {}, badge('Suspended', 'bad'), h('span', { class: 'sub' }, `by ${suspendedBy(a.suspendedBy).join(', ')}`));
   return badge('Active', 'ok');
 }
-const ACTOR = { hana: `${BRAND.company} staff`, member: 'Member', system: 'System', link: 'Account link' };
+// D916: `platform` is an org's platform key (its pkc_… id shown beside it); nothing writes it yet.
+const ACTOR = { hana: `${BRAND.company} staff`, member: 'Member', system: 'System', link: 'Account link', platform: 'Platform key' };
 const actor = (kind, id) => h('span', {}, ACTOR[kind] || kind, id ? h('span', { class: 'sub' }, id) : '');
 const CHANGE_KIND = { origin_add: 'Add an origin', policy_set: 'Set an auto-approve policy', raw_sign_on: 'Turn raw signing on' };
 const CHANGE_STATUS = { pending: ['Pending', 'warning'], active: ['In force', 'ok'], cancelled: ['Cancelled', ''], ended: ['Ended', ''] };

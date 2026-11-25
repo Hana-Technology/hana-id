@@ -40,7 +40,7 @@ async function checkList(table: string, column: string): Promise<string[]> {
 }
 
 beforeAll(async () => {
-  expect(env.TEST_MIGRATIONS.map((m) => m.name)).toEqual(['0001_init.sql', '0002_invites_kind_audit_request.sql', '0003_cron_runs.sql', '0004_label_step_ups.sql']);
+  expect(env.TEST_MIGRATIONS.map((m) => m.name)).toEqual(['0001_init.sql', '0002_invites_kind_audit_request.sql', '0003_cron_runs.sql', '0004_label_step_ups.sql', '0006_audit_actor_index.sql']);
   await applyD1Migrations(db, env.TEST_MIGRATIONS);
 });
 
@@ -249,5 +249,15 @@ describe('0002: one audit row per request id and action (D243)', () => {
     expect(await row(r, 'invite.issued')).toBe(true);
     expect(await row(r, 'invite.issued')).toBe(false);
     expect(await row(r, 'invite.revoked')).toBe(true);
+  });
+});
+
+describe('CONSOLE_DB 0006 (D925 after PR 153’s review)', () => {
+  it('adds only the index on audit_log (actor, action, time); audit_log’s triggers are the two of 0001, unchanged', async () => {
+    const { results } = await db.prepare("SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'audit_log' AND name NOT LIKE 'sqlite_%' ORDER BY type, name").all<{ type: string; name: string; sql: string }>();
+    expect(results.map((r) => `${r.type}:${r.name}`)).toEqual(['index:audit_log_actor_action_at', 'index:audit_log_org_seq', 'index:audit_log_request_action', 'table:audit_log', 'trigger:audit_log_no_early_delete', 'trigger:audit_log_no_update']);
+    expect(results.find((r) => r.name === 'audit_log_actor_action_at')!.sql).toBe('CREATE INDEX audit_log_actor_action_at ON audit_log (actor_id, action, at)');
+    const plan = (await db.prepare("EXPLAIN QUERY PLAN SELECT 1 FROM audit_log WHERE actor_id = 'usr_x' AND action = 'users.link_view' AND at >= 0").all<{ detail: string }>()).results.map((r) => r.detail).join('\n');
+    expect(plan).toContain('audit_log_actor_action_at');
   });
 });

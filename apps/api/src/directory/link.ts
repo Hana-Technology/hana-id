@@ -27,14 +27,17 @@
 import {
   LINK_ALERT_MEMBER_PER_HOUR,
   LINK_ALERT_ORG_PER_DAY,
+  LINK_ALERT_ORG_PER_WEEK,
   LINK_APPS_MAX,
   LINK_MEMBER_PER_DAY,
   LINK_MEMBER_PER_HOUR,
   LINK_ORG_PER_DAY,
+  type LinkPurpose,
   type LinkQuery,
   type LinkedApp,
   type UserLinkView,
   formatSupportId,
+  linkAuditRef,
   parseLinkQuery,
 } from '@hana-id/console-core';
 import { refuse } from '../changes/cas.ts';
@@ -47,6 +50,7 @@ import { placedStub } from '../placement.ts';
 import type { Limit } from '../rate-limiter.ts';
 
 const DAY_MS = 24 * HOUR_MS;
+const WEEK_MS = 7 * DAY_MS;
 
 /** A member's windows (its own object): the two limits, and the alert's soft window. */
 export const LINK_MEMBER_LIMITS: Limit[] = [
@@ -58,6 +62,7 @@ export const LINK_MEMBER_LIMITS: Limit[] = [
 export const LINK_ORG_LIMITS: Limit[] = [
   { name: 'day', windowMs: DAY_MS, max: LINK_ORG_PER_DAY },
   { name: 'alert-day', windowMs: DAY_MS, max: LINK_ALERT_ORG_PER_DAY, soft: true },
+  { name: 'alert-week', windowMs: WEEK_MS, max: LINK_ALERT_ORG_PER_WEEK, soft: true },
 ];
 
 export const linkMemberObject = (memberId: string): string => `console-link:${memberId}`;
@@ -79,26 +84,34 @@ export async function admitLinkLookup(env: Env, a: { memberId: string; orgId: st
     await member.unhit(LINK_MEMBER_LIMITS, now);
     return refuse('rate_limited', 'Your organisation has made too many look-ups today: try again tomorrow');
   }
-  if (m.soft?.includes('alert-hour')) await volumeEvent(env.DB, { scope: 'member', orgId: a.orgId, memberId: a.memberId, windowMs: HOUR_MS, threshold: LINK_ALERT_MEMBER_PER_HOUR }, now);
-  if (o.soft?.includes('alert-day')) await volumeEvent(env.DB, { scope: 'org', orgId: a.orgId, memberId: null, windowMs: DAY_MS, threshold: LINK_ALERT_ORG_PER_DAY }, now);
+  // Only the look-up that crosses a threshold writes its event (the RateLimiter names a soft window once per window).
+  if (m.soft?.includes('alert-hour')) await volumeEvent(env.DB, { limit: 'member_hour', orgId: a.orgId, memberId: a.memberId, windowMs: HOUR_MS, threshold: LINK_ALERT_MEMBER_PER_HOUR }, now);
+  if (o.soft?.includes('alert-day')) await volumeEvent(env.DB, { limit: 'org_day', orgId: a.orgId, memberId: null, windowMs: DAY_MS, threshold: LINK_ALERT_ORG_PER_DAY }, now);
+  if (o.soft?.includes('alert-week')) await volumeEvent(env.DB, { limit: 'org_week', orgId: a.orgId, memberId: null, windowMs: WEEK_MS, threshold: LINK_ALERT_ORG_PER_WEEK }, now);
 }
 
+/** At most this many `link_lookup_volume` writes one look-up can make (one per soft window): counted in its cost. */
+export const LINK_ALERT_WRITES_MAX = 3;
+
 /**
- * One `link_lookup_volume` event per window: its id is derived from the kind, the subject and the window's start, so
- * every later lookup past the threshold in that window writes nothing. `detail_json` holds the window, the threshold
- * and, for a member, the console member's id (never a person's ID). A failure is logged, never thrown: the alert must
- * not stop a lookup the limits allowed.
+ * One `link_lookup_volume` event, written by the look-up that crosses a threshold (once per window; its id is still
+ * derived from the window, so a retry can't write a second). An org's events carry its `org_id`; a member's is filed
+ * under no org (a member's limits follow them across orgs): its detail names the member and the org whose look-up
+ * crossed it, and staff see every org the member's look-ups touched in the console audit (actor = the member).
+ * `detail_json` holds the window and the threshold, never a person's ID. A failure is logged, never thrown: the alert
+ * must not stop a look-up the limits allowed.
  */
-async function volumeEvent(db: D1Database, e: { scope: 'member' | 'org'; orgId: string; memberId: string | null; windowMs: number; threshold: number }, now: number): Promise<void> {
+async function volumeEvent(db: D1Database, e: { limit: 'member_hour' | 'org_day' | 'org_week'; orgId: string; memberId: string | null; windowMs: number; threshold: number }, now: number): Promise<void> {
   const windowStart = Math.floor(now / e.windowMs) * e.windowMs;
+  const member = e.memberId !== null;
   try {
     await db
       .prepare("INSERT OR IGNORE INTO security_events (id, detected_at, kind, org_id, detail_json) VALUES (?1, ?2, 'link_lookup_volume', ?3, ?4)")
       .bind(
-        await eventId('link_lookup_volume', e.scope, e.orgId, e.memberId ?? '', String(windowStart)),
+        await eventId('link_lookup_volume', e.limit, member ? e.memberId! : e.orgId, String(windowStart)),
         now,
-        e.orgId,
-        JSON.stringify({ limit: e.scope === 'member' ? 'member_hour' : 'org_day', windowStart, windowMs: e.windowMs, threshold: e.threshold, ...(e.memberId ? { memberId: e.memberId } : {}) }),
+        member ? null : e.orgId,
+        JSON.stringify({ limit: e.limit, windowStart, windowMs: e.windowMs, threshold: e.threshold, ...(member ? { memberId: e.memberId, crossedInOrg: e.orgId } : {}) }),
       )
       .run();
   } catch {
@@ -150,9 +163,12 @@ type Json = Record<string, unknown>;
 const list = (s: string): Json[] => (JSON.parse(s || '[]') as (Json | null)[]).filter((x): x is Json => x !== null);
 
 /** `ConsoleRpc.linkUser`'s work, after the limits: the person a whole User ID or Support ID names, and their apps. */
-export async function consoleLinkUser(db: HotDb, i: { orgId: string; query: string }): Promise<UserLinkView> {
+export async function consoleLinkUser(db: HotDb, i: { orgId: string; query: string; purpose: LinkPurpose }, subKey: Uint8Array): Promise<UserLinkView & { auditRef: string }> {
   const query = parseLinkQuery(i.query);
   if (!query) return refuse('bad_request', 'query: not a User ID (u1_…) or Support ID (HANA-XXXX-XXXX)');
+  // The panel opens by the person's User ID for all the apps (PR 153's review): any other code is the search, so the
+  // audit's `by` can't be made to say "panel" for a search by an app's code.
+  if (i.purpose === 'panel' && query.kind !== 'userId') return refuse('bad_request', PANEL_ONLY);
   const rows = await db.all<LinkRow>(linkStatement(i.orgId, query));
   // Another org's person, an unmarked scope, a deleted app and a code nobody holds: the same answer.
   if (rows.length === 0) return refuse('not_found', 'No such user');
@@ -163,6 +179,7 @@ export async function consoleLinkUser(db: HotDb, i: { orgId: string; query: stri
   const scopeHit = matched.some((h) => h.via === 'scope');
   const appHit = matched.find((h) => h.via === 'app' && typeof h.app_id === 'string');
   const of: 'scope' | 'app' = scopeHit || !appHit ? 'scope' : 'app';
+  if (i.purpose === 'panel' && of !== 'scope') return refuse('bad_request', PANEL_ONLY);
   const appsAll = list(r.apps_json)
     .map(
       (a): LinkedApp => ({
@@ -182,5 +199,10 @@ export async function consoleLinkUser(db: HotDb, i: { orgId: string; query: stri
     match: { kind: query.kind, of, appId: of === 'app' ? String(appHit!.app_id) : null },
     apps: appsAll.slice(0, LINK_APPS_MAX),
     truncated: appsAll.length > LINK_APPS_MAX,
+    // The console's audit names the person by this, never by the User ID (console-core `linkAuditRef`).
+    auditRef: await linkAuditRef(subKey, r.token_sub),
   };
 }
+
+const PANEL_ONLY = 'purpose: the panel opens by the person’s User ID for all your apps; an app’s code is a search';
+

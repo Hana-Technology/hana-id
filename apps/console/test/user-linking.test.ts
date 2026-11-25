@@ -3,13 +3,14 @@
 // screen on, over the real API's ConsoleRpc (the API half is apps/api test/user-linking.test.ts). Owners only; every
 // lookup audited before it answers (`users.link_view`, the owner rule read again in the insert); an audit row that
 // can't be written means no answer; the answer rebuilt field by field.
-import { newId } from '@hana-id/console-core';
+import { linkAuditRef, newId } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { minuteHeadroom } from './helpers.ts';
 import worker from '../src/index.ts';
 import { type UserLinkOut, userLinkView } from '../src/users.ts';
-import { type Member, cookieOf, member } from './c10.ts';
-import { CSRF, ORIGIN, auditRows, db, uid } from './helpers.ts';
+import { type Member, breathe, cookieOf, member } from './c10.ts';
+import { CSRF, ORIGIN, auditRows, db, hana, staffRpc, uid } from './helpers.ts';
 
 const hot = env.HOT_DB;
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -53,9 +54,26 @@ async function linkAs(m: Pick<Member, 'cs' | 'org'>, body: unknown, e: typeof en
 }
 
 const linkRows = (org: string) => auditRows("org_id = ? AND action = 'users.link_view'", org);
+/** The reference the console's row names a person by (the test API's IDENTITY_SUB_KEY). */
+const refOf = (userId: string) => linkAuditRef(Uint8Array.from(atob(env.TEST_IDENTITY_SUB_KEY), (c) => c.charCodeAt(0)), userId);
+/** The env with the API's linkUser wrapped by `wrap` (after its answer, or instead of it). */
+const withApi = (wrap: (real: (c: unknown) => Promise<unknown>, c: unknown) => Promise<unknown>) =>
+  ({
+    ...ON,
+    API: new Proxy(env.API, {
+      get(t, p) {
+        if (p === 'linkUser') return (c: unknown) => wrap((x) => (t as unknown as { linkUser: (c: unknown) => Promise<unknown> }).linkUser(x), c);
+        const v = Reflect.get(t, p) as unknown;
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+      },
+    }),
+  }) as typeof env;
 
 describe('POST /api/orgs/:org/users/link', () => {
-  it('an owner: the person’s apps with each app’s own IDs, audited first (target the scope-level User ID, what opened it, the kind of code)', async () => {
+  // Each look-up costs the API's console budget 4 (D925 after PR 153's review): a refilled bucket for each test, so a
+  // test sees its own answer rather than the budget's.
+  beforeEach(() => breathe(1500));
+  it('an owner: the person’s apps with each app’s own IDs, audited first (target the person’s audit reference, never their ID; what opened it; the kind of code)', async () => {
     const m = await member('owner');
     const n = await seedNetwork(m.org);
     const r = await linkAs(m, { query: n.person.userId, purpose: 'panel' });
@@ -73,7 +91,14 @@ describe('POST /api/orgs/:org/users/link', () => {
       truncated: false,
     });
     const rows = await linkRows(m.org);
-    expect(rows).toEqual([{ action: 'users.link_view', actor_kind: 'member', actor_id: m.userId, target: n.person.userId, org_id: m.org, details_json: JSON.stringify({ by: 'panel', kind: 'userId', of: 'scope' }), outcome: 'ok' }]);
+    expect(rows).toEqual([{ action: 'users.link_view', actor_kind: 'member', actor_id: m.userId, target: await refOf(n.person.userId), org_id: m.org, details_json: JSON.stringify({ by: 'panel', kind: 'userId', of: 'scope' }), outcome: 'ok' }]);
+    // The reference isn't the ID, and the answer never carries it.
+    expect(rows[0]!.target).toMatch(/^lr1_/u);
+    expect(JSON.stringify(r.body)).not.toContain('lr1_');
+    // Staff find the owners' look-ups of this person by it (the audit's `target` filter), and by nothing else there.
+    const q = await staffRpc().queryAudit({ ...hana(), filters: { target: rows[0]!.target! }, limit: 10 });
+    expect(q.ok && q.rows.map((x) => [x.action, x.orgId])).toEqual([['users.link_view', m.org]]);
+    expect((await staffRpc().queryAudit({ ...hana(), filters: { target: n.person.userId } as never, limit: 10 })).ok).toBe(false);
   });
 
   it('the per-app search: an app’s own Support ID finds the person; the row names that app, never the code typed', async () => {
@@ -83,9 +108,9 @@ describe('POST /api/orgs/:org/users/link', () => {
     expect(r.status).toBe(200);
     expect((r.body.link as UserLinkOut).match).toEqual({ kind: 'supportId', of: 'app', appId: n.own });
     const row = (await db.prepare("SELECT app_id, target, details_json FROM audit_log WHERE org_id = ? AND action = 'users.link_view'").bind(m.org).first<{ app_id: string; target: string; details_json: string }>())!;
-    expect(row).toEqual({ app_id: n.own, target: n.person.userId, details_json: JSON.stringify({ by: 'search', kind: 'supportId', of: 'app' }) });
+    expect(row).toEqual({ app_id: n.own, target: await refOf(n.person.userId), details_json: JSON.stringify({ by: 'search', kind: 'supportId', of: 'app' }) });
     const all = JSON.stringify(await db.prepare('SELECT * FROM audit_log WHERE org_id = ?').bind(m.org).all());
-    for (const s of [n.person.ownCode, n.person.ownSub, fmt(n.person.ownCode)]) expect(all).not.toContain(s);
+    for (const s of [n.person.ownCode, n.person.ownSub, fmt(n.person.ownCode), n.person.userId]) expect(all).not.toContain(s);
   });
 
   it('a viewer is refused (403 forbidden) before anything is counted, read or recorded', async () => {
@@ -136,26 +161,82 @@ describe('POST /api/orgs/:org/users/link', () => {
     expect(await linkRows(m.org)).toEqual([]);
   });
 
-  it('a member demoted (or disabled) after the request was let in gets no row and no answer: the owner rule is read again in the insert', async () => {
+  // PR 153's review: each of the insert's guards, changed after the API answered and before the row: no answer, and a
+  // row with no target that says a look-up ran and wasn't answered.
+  const changes: [string, (m: Member) => Promise<unknown>, string][] = [
+    ['demoted to viewer', (m) => db.prepare("UPDATE members SET role = 'viewer' WHERE org_id = ? AND user_id = ?").bind(m.org, m.userId).run(), 'forbidden'],
+    ['disabled', (m) => db.prepare('UPDATE console_users SET disabled_at = ? WHERE id = ?').bind(Date.now(), m.userId).run(), 'forbidden'],
+    ['outside the org’s Workspace domain', (m) => db.prepare("UPDATE orgs SET required_hd = 'other.example' WHERE id = ?").bind(m.org).run(), 'forbidden'],
+    [
+      'a viewer whose owner grant is still waiting',
+      async (m) => {
+        await db.prepare("UPDATE members SET role = 'viewer' WHERE org_id = ? AND user_id = ?").bind(m.org, m.userId).run();
+        await db.prepare("INSERT INTO owner_grants (id, org_id, user_id, granted_by_kind, granted_by, created_at, notified_at, owner_from) VALUES (?, ?, ?, 'hana', 's', ?, ?, ?)").bind(`og_w${uid()}`, m.org, m.userId, Date.now(), Date.now(), Date.now() + 3_600_000).run();
+      },
+      'forbidden',
+    ],
+    ['in an org frozen meanwhile', (m) => db.prepare("UPDATE orgs SET status = 'frozen' WHERE id = ?").bind(m.org).run(), 'org_frozen'],
+  ];
+  for (const [what, change, code] of changes)
+    it(`a member ${what} after the request was let in: no answer, and an unguarded row with no target (${code})`, async () => {
+      const m = await member('owner');
+      const n = await seedNetwork(m.org);
+      const e = withApi(async (real, c) => {
+        const r = await real(c);
+        await change(m);
+        return r;
+      });
+      const r = await linkAs(m, { query: n.person.userId, purpose: 'panel' }, e);
+      expect(r).toEqual({ status: 403, body: { error: { code: 'forbidden', message: 'Only an owner of the organisation can do this' } } });
+      for (const s of [n.person.ownSub, n.person.userId, 'lr1_']) expect(JSON.stringify(r)).not.toContain(s);
+      expect((await linkRows(m.org)).map((x) => [x.target, x.details_json, x.outcome])).toEqual([[null, JSON.stringify({ by: 'panel', code }), 'failed']]);
+    });
+
+  it('a frozen org’s owner is refused (403 org_frozen) before the API is asked, with a row', async () => {
+    const m = await member('owner', { status: 'frozen' });
+    const n = await seedNetwork(m.org);
+    let asked = 0;
+    const r = await linkAs(m, { query: n.person.userId, purpose: 'panel' }, withApi(async (real, c) => (asked++, real(c))));
+    expect(r.status).toBe(403);
+    expect((r.body.error as { code: string }).code).toBe('org_frozen');
+    expect(asked).toBe(0);
+    expect((await linkRows(m.org)).map((x) => [x.target, x.details_json, x.outcome])).toEqual([[null, JSON.stringify({ by: 'panel', code: 'org_frozen' }), 'failed']]);
+  });
+
+  it('an API without the method (a console deployed first): a clean 500 “not available yet”, recorded', async () => {
     const m = await member('owner');
     const n = await seedNetwork(m.org);
-    // Demote the member the moment the API has answered, before the console writes its row.
-    const api = new Proxy(env.API, {
-      get(t, p) {
-        if (p === 'linkUser')
-          return async (c: unknown) => {
-            const r = await (t as unknown as { linkUser: (c: unknown) => Promise<unknown> }).linkUser(c);
-            await db.prepare("UPDATE members SET role = 'viewer' WHERE org_id = ? AND user_id = ?").bind(m.org, m.userId).run();
-            return r;
-          };
-        const v = Reflect.get(t, p) as unknown;
-        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
-      },
-    });
-    const r = await linkAs(m, { query: n.person.userId, purpose: 'panel' }, { ...ON, API: api } as typeof env);
-    expect(r).toEqual({ status: 403, body: { error: { code: 'forbidden', message: 'Only an owner of the organisation can do this' } } });
-    expect(JSON.stringify(r)).not.toContain(n.person.ownSub);
-    expect(await linkRows(m.org)).toEqual([]);
+    const r = await linkAs(m, { query: n.person.userId, purpose: 'panel' }, withApi(async () => Promise.reject(new TypeError('The RPC receiver does not implement the method "linkUser".'))));
+    expect(r).toEqual({ status: 500, body: { error: { code: 'internal', message: 'Looking up a person across your apps isn’t available yet. Try again later.' } } });
+    expect((await linkRows(m.org)).map((x) => x.details_json)).toEqual([JSON.stringify({ by: 'panel', code: 'unavailable' })]);
+  });
+
+  it('the panel with an app’s code is refused (400) and recorded as such: the audit can’t say “panel” for a search', async () => {
+    const m = await member('owner');
+    const n = await seedNetwork(m.org);
+    const r = await linkAs(m, { query: fmt(n.person.ownCode), purpose: 'panel' });
+    expect(r.status).toBe(400);
+    expect((r.body.error as { message: string }).message).toBe('purpose: the panel opens by the person’s User ID for all your apps; an app’s code is a search');
+    expect((await linkRows(m.org)).map((x) => [x.target, x.details_json])).toEqual([[null, JSON.stringify({ by: 'panel', code: 'bad_request' })]]);
+  });
+
+  it('a flood: 50 look-ups in a minute meet the console’s own limit (10 a minute a member); refusals write at most one row an hour', async () => {
+    // The binding's windows are real-clock minutes: the whole run (about 15 s) in one.
+    await minuteHeadroom(35_000);
+    const m = await member('owner');
+    const n = await seedNetwork(m.org);
+    const statuses: number[] = [];
+    // A fifth of a second apart (the API's own budget refills meanwhile; the console's limit is the one met).
+    for (let i = 0; i < 50; i++) {
+      statuses.push((await linkAs(m, { query: 'HANA-ZZZZ-ZZZZ', purpose: 'search' })).status);
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(statuses.filter((x) => x === 404)).toHaveLength(10);
+    expect(statuses.filter((x) => x === 429)).toHaveLength(40);
+    const rows = await linkRows(m.org);
+    // Ten real look-ups (each recorded), and one row for the forty refused.
+    expect(rows.map((x) => JSON.parse(x.details_json).code)).toEqual([...Array(10).fill('not_found'), 'rate_limited']);
+    void n;
   });
 
   it('refuses a body of another shape, and is 404 with the Users screen off (the test config’s default)', async () => {

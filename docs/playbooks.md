@@ -1957,32 +1957,32 @@ A `shared_scope_unmarked` security event: the ledger says a scope was marked as 
 
 `link-lookup-volume` · warning
 
-A `link_lookup_volume` security event: an owner of a network's organisation looked up more than 30 people across the organisation's apps in a clock hour, or the organisation's owners more than 200 in a UTC day (“This person on your apps” and the search by an app's ID, in the partner console). It is an alert, not a refusal: the limits (60 an hour and 300 a day per owner, 1 000 a day per organisation) refuse past them on their own.
+A `link_lookup_volume` security event: an owner of a network's organisation looked up more than 30 people across the organisation's apps in a clock hour (`member_hour`, filed under no organisation: an owner's limits follow them across organisations), or the organisation's owners more than 200 in a UTC day (`org_day`) or 500 in a week (`org_week`), in the partner console (“This person on your apps” and the search by an app's ID). It is an alert, written once by the look-up that crosses the threshold, not a refusal: the limits (60 an hour and 300 a day per owner, 1 000 a day per organisation) refuse past them on their own.
 
 **Signals**
 
-- A `link_lookup_volume` row in the admin's security events, emailed by the feed: the organisation, `limit` (`member_hour` or `org_day`), the window's start and length, the threshold, and for an owner their console member id. One row per window, however many look-ups follow.
+- A `link_lookup_volume` row in the admin's security events, emailed by the feed: `limit` (`member_hour`, `org_day` or `org_week`), the window's start and length, the threshold; an organisation's on the organisation, an owner's with `memberId` and `crossedInOrg` (the organisation whose look-up crossed it).
 
 **Impact**
 
-- Each look-up shows one person's User ID and Support ID on every app of the network: the mapping per-app IDs keep from partners. Many look-ups in a short time can mean someone is building a table to hand out (the network agreed not to give one partner another partner's ID), or an owner's account is being used by someone else.
+- Each look-up shows one person's User ID and Support ID on every app of the network: the mapping per-app IDs keep from partners. Many look-ups can mean someone is building a table to hand out (the network agreed not to give one partner another partner's ID), or an owner's account is being used by someone else.
 - How urgent: today.
 
 **Steps**
 
-1. **See what was looked up** (who: anyone). In the admin portal's audit (console rows, action `users.link_view`, the organisation): who looked, when, which person (the scope-level User ID) and which app's code matched. Each row was written before its answer.
+1. **See what was looked up** (who: anyone). In the admin portal's Audit log, filter by action `users.link_view` and the organisation, or for an owner by their actor id (every organisation their look-ups touched): who looked, when, which app's code matched, and the person's audit reference (`lr1_…`, never their ID; a Support ID lookup of a person shows theirs). Each row was written before its answer; refusals have a row too (a run of refused ones, one row an hour).
 
 2. **Ask the network** (who: anyone). Contact the organisation's security contacts (not through the account that looked) and ask what the look-ups were for. Support work for one person needs a handful, not dozens.
 
-3. **If it isn’t theirs** (who: anyone). Disable the member in the admin portal (their sessions end at once), and freeze the organisation if more than one account is involved. The limits keep refusing past 60 an hour per owner and 1 000 a day per organisation meanwhile.
+3. **If it isn’t theirs** (who: anyone). Freeze the organisation (look-ups stop at once: a frozen organisation gets none, each refusal recorded), or disable the member (their sessions end at once). The limits keep refusing past 60 an hour per owner and 1 000 a day per organisation meanwhile.
 
 **Verify**
 
-- No further `link_lookup_volume` row for the organisation in the next windows, and the audit shows look-ups at the usual rate.
+- No further `link_lookup_volume` row for the organisation or the owner in the next windows, and the audit shows look-ups at the usual rate.
 
 **Follow-ups**
 
-- Note the cause and what was done in the decision log; if the network needs more for real support work, raise the limits there first.
+- Note the cause and what was done in the decision log; if the network needs more for real support work, raise the thresholds there first.
 
 **Refs:** D913 (`docs/decisions.md`), D925 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
 

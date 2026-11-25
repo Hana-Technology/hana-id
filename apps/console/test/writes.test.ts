@@ -136,14 +136,18 @@ describe('the role matrix (spec "Roles and permissions")', () => {
     await setScope({ id: app.scope, owners: [oidc(m.sub)] });
     for (const s of await samples(m, app)) {
       const route = routeOf(s)!;
-      if (route.pattern.includes('users')) continue;
+      // The Users screen is off here (404); its look-up route's frozen refusal is tested with the screen on (user-linking.test.ts).
+      if (route.pattern.includes('users')) {
+        if (route.pattern.includes('link')) expect(route.frozenOk, 'the look-up across apps is refused while frozen (PR 153’s review)').toBe(false);
+        continue;
+      }
       const r = await call(m, s);
       if (route.frozenOk) expect(r.code, `${s.method} ${s.path}`).not.toBe('org_frozen');
       else expect(r, `${s.method} ${s.path}`).toEqual({ status: 403, code: 'org_frozen' });
     }
     const open = ROUTE_TABLE.filter((r) => r.frozenOk && r.method === 'POST').map((r) => r.pattern);
     expect(open.sort()).toEqual(
-      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/users\\/link$'].sort(),
+      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$'].sort(),
     );
   });
 

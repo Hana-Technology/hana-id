@@ -10,7 +10,7 @@ import { chooseAccount, expect, login, newApp, openPartner, test, walletDirector
 import { shots } from './home-steps.ts';
 
 const SEEN = 'The company behind these apps can see which of them you use with this wallet.';
-const SUPPORT_LINE = 'Give this only to Journear support. If an app’s support team asks for your Support ID, give them the one that app shows you.';
+const SUPPORT_LINE = 'Give this only to Journear support, not to an app’s support team. If an app’s support team asks for your Support ID, give them the one that app shows you.';
 
 async function openHome(context: import('@playwright/test').BrowserContext) {
   const home = await context.newPage();

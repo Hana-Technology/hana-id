@@ -211,7 +211,7 @@ describe('counters', () => {
 });
 
 describe('fixed windows with a soft limit (D925: the linking view’s volume alert)', () => {
-  it('a soft window never refuses: at its max it is named in `soft` and still counts; a hard window still refuses and counts nothing', async () => {
+  it('a soft window never refuses: the hit that crosses its max names it in `soft` (once per window) and still counts; a hard window still refuses and counts nothing', async () => {
     const stub = newStub();
     const limits: Limit[] = [
       { name: 'hard', windowMs: MINUTE, max: 5 },
@@ -219,7 +219,11 @@ describe('fixed windows with a soft limit (D925: the linking view’s volume ale
     ];
     const answers = [];
     for (let i = 0; i < 6; i++) answers.push(await stub.hit(limits, NOW + i));
-    expect(answers).toEqual([{ ok: true }, { ok: true }, { ok: true, soft: ['alert'] }, { ok: true, soft: ['alert'] }, { ok: true, soft: ['alert'] }, { ok: false, limit: 'hard', retryAfterS: 60 }]);
+    // Named only by the hit that crosses it (the third: the count was exactly 2), so its alert is written once.
+    expect(answers).toEqual([{ ok: true }, { ok: true }, { ok: true, soft: ['alert'] }, { ok: true }, { ok: true }, { ok: false, limit: 'hard', retryAfterS: 60 }]);
+    // The next window crosses again.
+    for (let i = 0; i < 2; i++) await stub.hit(limits, NOW + MINUTE + i);
+    expect(await stub.hit(limits, NOW + MINUTE + 5)).toEqual({ ok: true, soft: ['alert'] });
     // Without a soft window, `hit` answers as before.
     const plain = newStub();
     expect(await plain.hit(WINDOW, NOW)).toEqual({ ok: true });

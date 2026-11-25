@@ -72,6 +72,7 @@ import {
   labelNoticesInput,
   labelQueueInput,
   labelStaffActInput,
+  linkAuditRef,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -98,6 +99,7 @@ import { systemStatus } from '../system-status.ts';
 import { evmRelayerStaffAct, evmRelayerStaffDetail, evmRelayerStaffOverview } from '../evm-relayer-staff.ts';
 import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers, adminProfileNames } from '../directory/read.ts';
 import { supportLookup, userShares } from '../directory/support.ts';
+import { identitySubKey } from '../identity/signer.ts';
 import { linkStats } from '../link-usage.ts';
 import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
@@ -436,7 +438,10 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
    * admin Worker and the CLI read those as usage_admin.
    */
   supportLookup(c: unknown) {
-    return runRpc(this.env, 'admin.supportLookup', supportLookupInput, c, { actors: HANA }, ({ input, db, w }) => supportLookup(db, input, w.now));
+    // D925: each match's console-audit reference, so staff find the network owners' look-ups of that person.
+    const subKey = identitySubKey(this.env);
+    const auditRef = typeof subKey === 'string' ? undefined : (userId: string) => linkAuditRef(subKey, userId);
+    return runRpc(this.env, 'admin.supportLookup', supportLookupInput, c, { actors: HANA }, ({ input, db, w }) => supportLookup(db, input, w.now, auditRef));
   }
 
   /** The vault shares of one path in one app that haven't expired (no share id, key or counter). */

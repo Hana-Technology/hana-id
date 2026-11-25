@@ -141,6 +141,11 @@ export interface SupportMatch {
   matchedBy: { of: 'scope' | 'app'; appId: string | null } | null;
   /** The apps of a marked scope the person signed in on, each with its IDs, most recently used first (empty elsewhere). */
   userApps: SupportUserApp[];
+  /**
+   * D925 after PR 153's review: the reference the console's `users.link_view` rows name this person by (console-core
+   * `linkAuditRef`): the network owners' look-ups of them are the audit rows with this target. Absent without the key.
+   */
+  linkAuditRef?: string;
   apps: SupportApp[];
   shares: SupportShare[];
   /** The scope's apps' changes in the window, newest first, at most SUPPORT_CHANGES_MAX. */

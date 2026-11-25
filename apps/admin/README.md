@@ -122,7 +122,8 @@ buttons beside the text on a wide screen and below it at phone width (760 px and
 optional request IDs (≤ 20) and a window (1–731 days, 30 by default) → `POST /api/support/lookup`: every user the code
 names, by the scope's code or since D925 one app's own on a shared wallet (a collision lists each, `truncated` past 10;
 each match says "Matched: This app’s own code: {app}" or "The scope’s code", and "This person on each app" lists each
-app's User ID and Support ID with the sharing rule), their ids, identities with each one's address from the issuer's
+app's User ID and Support ID with the sharing rule, and since PR 153's review the person's "Audit reference", which
+the Audit log's "Person’s audit reference" filter takes to list the network owners' look-ups of them), their ids, identities with each one's address from the issuer's
 directory (read as `support_lookup` under the same ticket; unverified Google claims marked), wallets, the scope's apps,
 the vault shares not yet expired, the apps' changes, the ok ledger events, and the request IDs' events with their
 errors; "ledger unavailable" with its reason when the ledger can't be read. Reached from the nav, from the Users search

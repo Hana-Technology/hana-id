@@ -2098,8 +2098,9 @@ function expediteControl(c) {
 
 async function auditPage(main) {
   const params = new URLSearchParams(location.search);
-  const keys = ['orgId', 'appId', 'actorKind', 'actorId', 'action'];
-  const labels = { orgId: 'Organisation id', appId: 'App id', actorKind: 'Done by', actorId: 'Actor id or email', action: 'Action' };
+  const keys = ['orgId', 'appId', 'actorKind', 'actorId', 'action', 'target'];
+  // `target` (D925): a person's audit reference (`lr1_…`, from the Support ID lookup): the network owners' look-ups of them.
+  const labels = { orgId: 'Organisation id', appId: 'App id', actorKind: 'Done by', actorId: 'Actor id or email', action: 'Action', target: 'Person’s audit reference' };
   const filterForm = h(
     'form',
     {
@@ -2122,7 +2123,7 @@ async function auditPage(main) {
     keys.map((k) =>
       k === 'actorKind'
         ? field({ name: k, type: 'select', label: labels[k], optional: false, value: params.get(k) || '', options: [{ value: '', label: 'Anyone' }, { value: 'hana', label: `${BRAND.company} staff` }, { value: 'member', label: 'Members' }, { value: 'system', label: 'System' }, { value: 'link', label: 'Account link' }, { value: 'platform', label: ACTOR.platform }] })
-        : field({ name: k, label: labels[k], optional: false, value: params.get(k) || '', placeholder: k === 'action' ? 'e.g. invite.issue' : k === 'orgId' ? 'org_…' : '' }),
+        : field({ name: k, label: labels[k], optional: false, value: params.get(k) || '', placeholder: k === 'action' ? 'e.g. invite.issue' : k === 'orgId' ? 'org_…' : k === 'target' ? 'lr1_…' : '' }),
     ),
     field({ name: 'from', type: 'date', label: 'From', optional: false, size: 'narrow', value: params.get('from') ? new Date(Number(params.get('from'))).toISOString().slice(0, 10) : '' }),
     field({ name: 'to', type: 'date', label: 'To', optional: false, size: 'narrow', value: params.get('to') ? new Date(Number(params.get('to'))).toISOString().slice(0, 10) : '' }),
@@ -4193,6 +4194,9 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
   const parts = [
     facts([
       ...(by ? [['Matched', by]] : []),
+      // D925 after PR 153's review: the network owners' look-ups of this person are the audit rows with this target. Not a
+      // link: nothing that names a person goes into a URL (D410); staff type it into the Audit log's filter.
+      ...(m.linkAuditRef ? [['Audit reference', h('span', {}, mono(m.linkAuditRef), h('span', { class: 'sub' }, 'The network owners’ look-ups of this person: filter the Audit log by it.'))]] : []),
       ['User ID', mono(u.userId)],
       ['Support ID', mono(u.supportId)],
       // The account's name: its root's, else the first identity's that has one (each identity's is in the table below).

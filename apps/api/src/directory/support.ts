@@ -142,7 +142,6 @@ async function scopeChanges(db: HotDb, scopeId: string, apps: AppRow[], orgIds: 
 }
 
 interface UserAppRow {
-  user_id: string;
   app_id: string;
   app_sub: string;
   support_code: string;
@@ -155,19 +154,27 @@ interface UserAppRow {
  * migration 0030), most recently used first, at most SUPPORT_USER_APPS_MAX a user. One read for all of them.
  */
 export const userAppsStatement = (internalIds: readonly string[]): Q =>
-  q`SELECT user_id, app_id, app_sub, support_code, first_seen_at, last_seen_at FROM (
-      SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e.user_id ORDER BY e.last_seen_at DESC, e.app_id) AS rn FROM end_user_apps e
-       WHERE e.user_id IN (${join(internalIds.map((id) => q`${id}`), ', ')})
-    ) WHERE rn <= ${SUPPORT_USER_APPS_MAX} ORDER BY user_id, last_seen_at DESC, app_id`;
+  // One capped list per person, each read newest first down migration 0031's index and stopped at the cap, so the cost
+  // is bounded by the cap, not by how many apps the person used (PR 153's review). One statement (D1 refuses a long
+  // compound SELECT): the people as a JSON array, each with its apps as a JSON aggregate.
+  q`SELECT p.value AS user_id,
+      (SELECT json_group_array(json_object('app_id', x.app_id, 'app_sub', x.app_sub, 'support_code', x.support_code, 'first_seen_at', x.first_seen_at, 'last_seen_at', x.last_seen_at))
+         FROM (SELECT app_id, app_sub, support_code, first_seen_at, last_seen_at FROM end_user_apps
+                WHERE user_id = p.value ORDER BY last_seen_at DESC, app_id LIMIT ${SUPPORT_USER_APPS_MAX}) x) AS apps_json
+      FROM json_each(${JSON.stringify(internalIds)}) p`;
 
 async function userAppsOf(db: HotDb, internalIds: string[]): Promise<Map<string, SupportUserApp[]>> {
   const out = new Map<string, SupportUserApp[]>();
   if (internalIds.length === 0) return out;
-  const rows = await db.all<UserAppRow>(userAppsStatement(internalIds));
+  const rows = await db.all<{ user_id: string; apps_json: string }>(userAppsStatement(internalIds));
   for (const r of rows) {
-    const list = out.get(r.user_id) ?? [];
-    list.push({ appId: r.app_id, userId: r.app_sub, supportId: formatSupportId(r.support_code), firstSeenAt: r.first_seen_at, lastSeenAt: r.last_seen_at });
-    out.set(r.user_id, list);
+    const apps = (JSON.parse(r.apps_json || '[]') as (UserAppRow | null)[]).filter((a): a is UserAppRow => a !== null);
+    out.set(
+      r.user_id,
+      apps
+        .map((a) => ({ appId: a.app_id, userId: a.app_sub, supportId: formatSupportId(a.support_code), firstSeenAt: a.first_seen_at, lastSeenAt: a.last_seen_at }))
+        .sort((x, y) => y.lastSeenAt - x.lastSeenAt || (x.appId < y.appId ? -1 : 1)),
+    );
   }
   return out;
 }
@@ -185,7 +192,7 @@ function matchedBy(query: SupportQuery, user: StaffUser, apps: SupportUserApp[])
 }
 
 /** `AdminRpc.supportLookup`: every user the query names, each with its scope's apps, its shares and the apps' changes. */
-export async function supportLookup(db: HotDb, i: { query: string; days?: number | undefined }, now: number): Promise<SupportLookupResult> {
+export async function supportLookup(db: HotDb, i: { query: string; days?: number | undefined }, now: number, auditRef?: (scopeUserId: string) => Promise<string>): Promise<SupportLookupResult> {
   const query = parseSupportQuery(i.query);
   if (!query) return refuse('bad_request', NOT_A_QUERY);
   const since = supportSince(now, i.days ?? SUPPORT_DAYS_DEFAULT);
@@ -202,7 +209,7 @@ export async function supportLookup(db: HotDb, i: { query: string; days?: number
     const [shares, changes] = await Promise.all([matchShares(db, user, mine, now), scopeChanges(db, user.scopeId, mine, orgIds, since)]);
     const appViews: SupportApp[] = mine.map((a) => ({ appId: a.id, name: a.name, orgId: a.org_id, environment: a.environment ?? null, persistence: a.persistence, deletedAt: a.deleted_at }));
     const own = userApps.get(user.internalId) ?? [];
-    matches.push({ user, matchedBy: matchedBy(query, user, own), userApps: own, apps: appViews, shares, changes });
+    matches.push({ user, matchedBy: matchedBy(query, user, own), userApps: own, ...(auditRef ? { linkAuditRef: await auditRef(user.userId) } : {}), apps: appViews, shares, changes });
   }
   return { query, since, matches, truncated: users.length > SUPPORT_MATCHES_MAX };
 }

@@ -18,6 +18,7 @@ import {
   type LinkedApp,
   type UserLinkView,
   LINK_APPS_MAX,
+  LINK_AUDIT_REF_RE,
   linkUserBody,
   type ConsoleListUsersInput,
   type PartnerUser,
@@ -34,7 +35,8 @@ import type { Env } from './env.ts';
 import { errorResponse, json, readJson } from './http.ts';
 import type { RequestInfo } from './links.ts';
 import { log } from './log.ts';
-import { frag, ownerNow } from './sql.ts';
+import { CONSOLE_LIMIT_PERIOD_S, consoleIpKey } from './limits.ts';
+import { frag, lit, ownerNow } from './sql.ts';
 
 /** The partner user as ConsoleRpc answers it (console-core `PartnerUser`). */
 export type PartnerUserIn = PartnerUser;
@@ -228,7 +230,8 @@ export async function usersRoute(env: Pick<Env, 'USERS_SCREEN' | 'API'>, url: UR
 
 /** ConsoleRpc's linking read (apps/api/src/directory/link.ts). */
 export interface ConsoleLinkClient {
-  linkUser(c: ConsoleLinkUserInput): Promise<RpcOk<{ link: unknown }> | RpcFail>;
+  /** `auditRef`: the person's reference for the audit row (console-core `LINK_AUDIT_REF_RE`); never shown. */
+  linkUser(c: ConsoleLinkUserInput): Promise<RpcOk<{ link: unknown; auditRef?: unknown }> | RpcFail>;
 }
 
 /** What the console answers for a lookup: exactly these fields (console-core `UserLinkView`), nothing else. */
@@ -268,59 +271,135 @@ export function linkClient(env: Pick<Env, 'USERS_SCREEN' | 'API'>): ConsoleLinkC
 
 /**
  * The audit row's guard: the acting member is an owner of the org now (`ownerNow`, the same rule as every owner write),
- * not disabled, and the org's Workspace rule holds for the session's domain. Read in the insert itself, so a member
- * demoted, removed or disabled since the request began gets no row, and so no answer.
+ * not disabled, the org's Workspace rule holds for the session's domain, and the org isn't frozen (PR 153's review: a
+ * freeze is staff's containment, and a look-up removes pseudonymity). Read in the insert itself, so a member demoted,
+ * removed or disabled, or an org frozen, since the request began gets no answer.
  */
 const ownerGuard = (orgId: string, userId: string, hd: string | null, now: number) =>
   frag(
     `EXISTS (SELECT 1 FROM members m JOIN orgs o ON o.id = m.org_id JOIN console_users cu ON cu.id = m.user_id
-       WHERE m.org_id = ? AND m.user_id = ? AND cu.disabled_at IS NULL AND (o.required_hd IS NULL OR o.required_hd = ?) AND ${ownerNow('m', now)})`,
+       WHERE m.org_id = ? AND m.user_id = ? AND cu.disabled_at IS NULL AND o.status = 'active' AND (o.required_hd IS NULL OR o.required_hd = ?) AND ${ownerNow('m', now)})`,
     orgId,
     userId,
     hd,
   );
+
+/** The window a member's `rate_limited` rows are counted in: at most one such row per member per clock hour. */
+export const LINK_REFUSAL_ROW_WINDOW_MS = 3_600_000;
+
+/**
+ * A `rate_limited` refusal's row only when this member has none in the window yet (console migration 0006's index on
+ * `actor_id, action, at`), so a flood of refused look-ups can't bury the real ones in the 60-month audit.
+ */
+const firstRefusalInWindow = (actorId: string, now: number) =>
+  frag(
+    `NOT EXISTS (SELECT 1 FROM audit_log WHERE actor_id = ? AND action = 'users.link_view' AND at >= ${lit(now - (now % LINK_REFUSAL_ROW_WINDOW_MS))} AND details_json LIKE '%"code":"rate_limited"%')`,
+    actorId,
+  );
+
+/** What a look-up's caller is: the session's Workspace domain, and the org's state as the request read it. */
+export interface LinkCaller {
+  hd: string | null;
+  orgStatus: 'active' | 'frozen';
+}
+
+const NOT_YET = 'Looking up a person across your apps isn’t available yet. Try again later.';
 
 /**
  * `POST /api/orgs/:org/users/link {query, purpose}` (owner): one person of the org's marked scopes, by a whole User ID
  * or Support ID (the scope's or one app's own), with that person's ID on each of the org's apps (D925). In order:
  *
  *   1. the route matrix: an owner now (a viewer is `403 forbidden` before anything is read or counted);
- *   2. `ConsoleRpc.linkUser`: counted for the member and the org, then one SELECT held to the org's marked scopes;
- *   3. the `users.link_view` audit row, written only while the member is still an owner (`ownerGuard`, read in the
- *      insert): target the person's scope-level User ID (none when nothing was found), the app whose own code matched,
- *      what opened it and the kind of code; no other identifier. A refusal is recorded the same way, with its code;
- *   4. only then the answer, rebuilt field by field. An audit row that can't be written, or a guard that no longer holds,
- *      means no answer (`internal`, `forbidden`): the lookup's count stays spent.
+ *   2. the body (strict; `400` with nothing counted or recorded);
+ *   3. the console's own flood limit per member (`CONSOLE_IP_LIMIT`, `<env>:console-lookup:<member>`, 10 a minute):
+ *      past it `429`, recorded once per member per hour (PR 153's review);
+ *   4. a frozen org: `403 org_frozen`, recorded (the route matrix hands the refusal here);
+ *   5. `ConsoleRpc.linkUser`: counted for the member and the org, then one SELECT held to the org's marked scopes; an
+ *      API without it (a console deployed first) is a clean `500` "not available yet", recorded;
+ *   6. the `users.link_view` audit row, written only while the member is still an owner of an org that isn't frozen
+ *      (`ownerGuard`, read in the insert): target the person's audit reference (`lr1_…`, a keyed hash of their
+ *      scope-level User ID, never the ID; none when nothing was found), `app_id` the app whose own code matched,
+ *      `details` `{by, kind, of}` or `{by, code}`; never the code typed. When the guard fails, an unguarded row with no
+ *      target, outcome `failed` and `{by, code: 'forbidden' | 'org_frozen'}` says a look-up ran and wasn't answered;
+ *   7. only then the answer, rebuilt field by field (the audit reference never in it). A row that can't be written
+ *      means no answer (`500`); the look-up's count stays spent.
  *
  * POST, so no code lands in a URL; the query is never logged or stored.
  */
-export async function linkRoute(env: Env, request: Request, info: RequestInfo, ctx: UsersCtx & { orgId: string }, w: Writer, hd: string | null): Promise<Response> {
+export async function linkRoute(env: Env, request: Request, info: RequestInfo, ctx: UsersCtx & { orgId: string }, w: Writer, caller: LinkCaller): Promise<Response> {
   const client = linkClient(env);
   if (!client) return errorResponse('not_found');
   const b = await readJson(request);
   if (!b.ok) return errorResponse(b.code);
   const body = linkUserBody.safeParse(b.value);
   if (!body.success) return errorResponse('bad_request', 'Expected {query, purpose}');
-  const r = await client.linkUser({ ...ctx, query: body.data.query, purpose: body.data.purpose });
-  const view = r.ok ? userLinkView(r.link) : null;
-  if (r.ok && !view) log({ event: 'users_shape', requestId: info.requestId, outcome: 'error', code: 'bad_link' }, 'error');
-  const code = !r.ok ? r.code : view ? null : 'internal';
-  const details: Record<string, string> = { by: body.data.purpose, ...(view ? { kind: view.match.kind, of: view.match.of } : { code: code! }) };
-  let recorded: number;
+  const by = body.data.purpose;
+  /** A refusal's row: no target, outcome failed, the code; with `guard`, only while it holds. */
+  const refusalRow = async (code: string, guard?: ReturnType<typeof frag>): Promise<boolean> => {
+    const res = await auditInsert(env.CONSOLE_DB, entry(w, 'users.link_view', { orgId: ctx.orgId, appId: null, target: null, outcome: 'failed', details: { by, code } }), guard).run();
+    return res.meta.changes === 1;
+  };
+  const recordOrFail = async (fn: () => Promise<unknown>): Promise<Response | null> => {
+    try {
+      await fn();
+      return null;
+    } catch (err) {
+      log({ event: 'audit_write_failed', requestId: info.requestId, error: err instanceof Error ? err.name : 'unknown' }, 'error');
+      return errorResponse('internal', 'The look-up couldn’t be recorded, so nothing is shown. Try again.');
+    }
+  };
+
+  // 3. The console's own flood limit, before anything else is counted.
+  const { success } = await env.CONSOLE_IP_LIMIT.limit({ key: consoleIpKey(env.ENV_NAME, 'lookup', ctx.actor.id) });
+  if (!success) {
+    const failed = await recordOrFail(() => refusalRow('rate_limited', firstRefusalInWindow(ctx.actor.id, w.now)));
+    return failed ?? errorResponse('rate_limited', 'Too many look-ups in a short time: wait a minute', { 'retry-after': String(CONSOLE_LIMIT_PERIOD_S) });
+  }
+  // 4. A frozen org (the route matrix's refusal, handed here so it is recorded).
+  if (caller.orgStatus !== 'active') {
+    const failed = await recordOrFail(() => refusalRow('org_frozen'));
+    return failed ?? errorResponse('org_frozen', 'Journear has frozen this organisation: only cancels and kill switches work until it is unfrozen');
+  }
+
+  // 5. The API.
+  let r: Awaited<ReturnType<ConsoleLinkClient['linkUser']>>;
   try {
+    r = await client.linkUser({ ...ctx, query: body.data.query, purpose: by });
+  } catch {
+    log({ event: 'console_rpc', method: 'linkUser', requestId: info.requestId, orgId: ctx.orgId, outcome: 'error', code: 'unavailable' }, 'error');
+    const failed = await recordOrFail(() => refusalRow('unavailable'));
+    return failed ?? errorResponse('internal', NOT_YET);
+  }
+  const view = r.ok ? userLinkView(r.link) : null;
+  const auditRef = r.ok && typeof r.auditRef === 'string' && LINK_AUDIT_REF_RE.test(r.auditRef) ? r.auditRef : null;
+  if (r.ok && (!view || !auditRef)) log({ event: 'users_shape', requestId: info.requestId, outcome: 'error', code: 'bad_link' }, 'error');
+  const answered = view !== null && auditRef !== null;
+  const code = !r.ok ? r.code : answered ? null : 'internal';
+  log({ event: 'console_rpc', method: 'linkUser', requestId: info.requestId, orgId: ctx.orgId, outcome: answered ? 'ok' : 'rejected', ...(code ? { code } : {}) });
+
+  // 6. The row, before the answer.
+  if (!answered) {
+    const failed = await recordOrFail(() => (code === 'rate_limited' ? refusalRow('rate_limited', firstRefusalInWindow(ctx.actor.id, w.now)) : refusalRow(code!)));
+    if (failed) return failed;
+    // The API's words for a limit, an ambiguous code or the panel's rule (fixed texts, never the query); every other
+    // refusal its code alone.
+    return !r.ok ? errorResponse(r.code, r.code === 'rate_limited' || r.code === 'ambiguous' || r.code === 'bad_request' ? r.error : undefined) : errorResponse('internal');
+  }
+  let recorded = false;
+  const failed = await recordOrFail(async () => {
     const res = await auditInsert(
       env.CONSOLE_DB,
-      entry(w, 'users.link_view', { orgId: ctx.orgId, appId: view?.match.appId ?? null, target: view?.userId ?? null, outcome: view ? 'ok' : 'failed', details }),
-      ownerGuard(ctx.orgId, ctx.actor.id, hd, w.now),
+      entry(w, 'users.link_view', { orgId: ctx.orgId, appId: view.match.appId, target: auditRef, outcome: 'ok', details: { by, kind: view.match.kind, of: view.match.of } }),
+      ownerGuard(ctx.orgId, ctx.actor.id, caller.hd, w.now),
     ).run();
-    recorded = res.meta.changes;
-  } catch (err) {
-    log({ event: 'audit_write_failed', requestId: info.requestId, error: err instanceof Error ? err.name : 'unknown' }, 'error');
-    return errorResponse('internal', 'The look-up couldn’t be recorded, so nothing is shown. Try again.');
-  }
-  log({ event: 'console_rpc', method: 'linkUser', requestId: info.requestId, orgId: ctx.orgId, outcome: view ? 'ok' : 'rejected', ...(code ? { code } : {}) });
-  if (recorded !== 1) return errorResponse('forbidden', 'Only an owner of the organisation can do this');
-  // The API's own words for a limit or an ambiguous code (fixed texts, never the query); every other refusal its code.
-  if (!view) return !r.ok ? errorResponse(r.code, r.code === 'rate_limited' || r.code === 'ambiguous' ? r.error : undefined) : errorResponse('internal');
+    recorded = res.meta.changes === 1;
+    // The guard failed: say that a look-up ran and wasn't answered (no target), as a refused one.
+    if (!recorded) {
+      const org = await env.CONSOLE_DB.prepare('SELECT status FROM orgs WHERE id = ?').bind(ctx.orgId).first<{ status: string }>();
+      await refusalRow(org?.status === 'active' ? 'forbidden' : 'org_frozen');
+    }
+  });
+  if (failed) return failed;
+  if (!recorded) return errorResponse('forbidden', 'Only an owner of the organisation can do this');
   return json(200, { link: view });
 }

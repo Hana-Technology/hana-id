@@ -3,7 +3,7 @@
 // in apps/console test/user-linking.test.ts), its limits and volume alert, and the staff Support ID lookup resolving an
 // app's own codes. Seeded through the directory's own writes (`upsertUser`, `upsertUserApp`) with the env's real keys,
 // so every User ID and Support ID here is the one the mint would give.
-import { LINK_ALERT_MEMBER_PER_HOUR, LINK_ALERT_ORG_PER_DAY, LINK_APPS_MAX, LINK_MEMBER_PER_DAY, LINK_MEMBER_PER_HOUR, LINK_ORG_PER_DAY, formatSupportId, newId, supportCodeOf } from '@hana-id/console-core';
+import { LINK_ALERT_MEMBER_PER_HOUR, LINK_ALERT_ORG_PER_DAY, LINK_ALERT_ORG_PER_WEEK, linkAuditRef, LINK_APPS_MAX, LINK_MEMBER_PER_DAY, LINK_MEMBER_PER_HOUR, LINK_ORG_PER_DAY, formatSupportId, newId, supportCodeOf } from '@hana-id/console-core';
 import { appSub, identitySub, identitySubBytes } from '@hana-id/core/identity';
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -196,6 +196,7 @@ describe('ConsoleRpc.linkUser: one person across the org’s apps', () => {
 
 describe('the limits and the volume alert (counted before the read)', () => {
   const T = Date.UTC(2026, 10, 25, 1, 0, 0);
+  const allEvents = () => env.DB.prepare("SELECT id, org_id, detail_json FROM security_events WHERE kind = 'link_lookup_volume' ORDER BY detected_at, id").all<{ id: string; org_id: string | null; detail_json: string }>().then((r) => r.results);
   const events = (orgId: string) => env.DB.prepare("SELECT id, org_id, detail_json FROM security_events WHERE kind = 'link_lookup_volume' AND org_id = ?1 ORDER BY detected_at, id").bind(orgId).all<{ id: string; org_id: string; detail_json: string }>().then((r) => r.results);
   const admit = async (memberId: string, orgId: string, now: number) => {
     try {
@@ -233,33 +234,49 @@ describe('the limits and the volume alert (counted before the read)', () => {
     expect(await admit(`usr_${uid()}`, org, T + DAY)).toBe('ok');
   });
 
-  it(`the alert: one event per member past ${LINK_ALERT_MEMBER_PER_HOUR} in a clock hour, one per org past ${LINK_ALERT_ORG_PER_DAY} in a UTC day; never a refusal`, async () => {
+  it(`the alert: one event per member past ${LINK_ALERT_MEMBER_PER_HOUR} in a clock hour (under no org, naming the member and the org that crossed it), one per org past ${LINK_ALERT_ORG_PER_DAY} in a UTC day and ${LINK_ALERT_ORG_PER_WEEK} in a week; only the crossing writes; never a refusal`, async () => {
     const org = newOrg();
     const m = `usr_${uid()}`;
+    const memberEvents = () => allEvents().then((r) => r.filter((e) => JSON.parse(e.detail_json).memberId === m));
     for (let i = 0; i < LINK_ALERT_MEMBER_PER_HOUR; i++) await admit(m, org, T + i);
-    expect(await events(org)).toEqual([]);
+    expect(await memberEvents()).toEqual([]);
+    const spy = vi.spyOn(env.DB, 'prepare');
     expect(await admit(m, org, T + 100)).toBe('ok');
-    expect(await events(org)).toHaveLength(1);
+    expect(await memberEvents()).toHaveLength(1);
+    // Later look-ups in the window write nothing at all (no INSERT OR IGNORE per look-up).
+    const writes = () => spy.mock.calls.filter(([sql]) => String(sql).includes('security_events')).length;
+    const before = writes();
     for (let i = 0; i < 10; i++) expect(await admit(m, org, T + 200 + i)).toBe('ok');
-    const [ev] = await events(org);
-    expect(await events(org)).toHaveLength(1);
-    expect(JSON.parse(ev!.detail_json)).toEqual({ limit: 'member_hour', windowStart: T, windowMs: HOUR, threshold: LINK_ALERT_MEMBER_PER_HOUR, memberId: m });
-    // The next hour is another window: another event once past it again.
-    for (let i = 0; i <= LINK_ALERT_MEMBER_PER_HOUR; i++) await admit(m, org, T + HOUR + i);
-    expect(await events(org)).toHaveLength(2);
-    // The org's day: past 200 (the members above made 72 lookups today; others make the rest, under their own 30).
-    const before = (await events(org)).length;
-    let k = LINK_ALERT_MEMBER_PER_HOUR + 11 + LINK_ALERT_MEMBER_PER_HOUR + 1;
+    expect(writes()).toBe(before);
+    spy.mockRestore();
+    const [ev] = await memberEvents();
+    expect(ev!.org_id).toBeNull();
+    expect(JSON.parse(ev!.detail_json)).toEqual({ limit: 'member_hour', windowStart: T, windowMs: HOUR, threshold: LINK_ALERT_MEMBER_PER_HOUR, memberId: m, crossedInOrg: org });
+    // The next hour is another window: another event once past it again (in another org: the member's own count).
+    const other = newOrg();
+    for (let i = 0; i <= LINK_ALERT_MEMBER_PER_HOUR; i++) await admit(m, other, T + HOUR + i);
+    expect((await memberEvents()).map((e) => JSON.parse(e.detail_json).crossedInOrg)).toEqual([org, other]);
+    // The org's day: past 200 (the member made 41 here today; others make the rest, under their own 30).
+    let k = LINK_ALERT_MEMBER_PER_HOUR + 11;
     for (let mi = 0; k < LINK_ALERT_ORG_PER_DAY; mi++) for (let i = 0; i < 20 && k < LINK_ALERT_ORG_PER_DAY; i++, k++) await admit(`usr_a${org}${mi}`, org, T + 2 * HOUR + i);
-    expect((await events(org)).length).toBe(before);
+    expect(await events(org)).toEqual([]);
     await admit(`usr_${uid()}`, org, T + 3 * HOUR);
-    const all = await events(org);
-    expect(all.length).toBe(before + 1);
-    expect(all.map((e) => JSON.parse(e.detail_json).limit)).toContain('org_day');
-    const orgEvent = all.find((e) => JSON.parse(e.detail_json).limit === 'org_day')!;
-    expect(JSON.parse(orgEvent.detail_json)).toEqual({ limit: 'org_day', windowStart: T - (T % DAY), windowMs: DAY, threshold: LINK_ALERT_ORG_PER_DAY });
+    expect((await events(org)).map((e) => JSON.parse(e.detail_json))).toEqual([{ limit: 'org_day', windowStart: T - (T % DAY), windowMs: DAY, threshold: LINK_ALERT_ORG_PER_DAY }]);
     for (let i = 0; i < 5; i++) await admit(`usr_${uid()}`, org, T + 4 * HOUR + i);
-    expect((await events(org)).length).toBe(before + 1);
+    expect(await events(org)).toHaveLength(1);
+  });
+
+  it(`the week: an org that stays under ${LINK_ALERT_ORG_PER_DAY} a day but passes ${LINK_ALERT_ORG_PER_WEEK} in a week alerts once`, async () => {
+    const org = newOrg();
+    const WEEK = 7 * DAY;
+    const weekStart = Math.floor(T / WEEK) * WEEK;
+    let n = 0;
+    // 150 a day (no daily alert), from the week's first day, by many members under their own thresholds.
+    for (let d = 0; n < LINK_ALERT_ORG_PER_WEEK; d++)
+      for (let i = 0; i < 150 && n < LINK_ALERT_ORG_PER_WEEK; i++, n++) expect(await admit(`usr_w${org}${d}_${Math.floor(i / 20)}`, org, weekStart + d * DAY + HOUR + i)).toBe('ok');
+    expect(await events(org)).toEqual([]);
+    await admit(`usr_${uid()}`, org, weekStart + 4 * DAY);
+    expect((await events(org)).map((e) => JSON.parse(e.detail_json))).toEqual([{ limit: 'org_week', windowStart: weekStart, windowMs: WEEK, threshold: LINK_ALERT_ORG_PER_WEEK }]);
   });
 
   it('through the RPC: a lookup that finds nothing counts like one that does; the 61st in an hour is rate_limited before the read', async () => {
@@ -302,6 +319,70 @@ describe('the reads’ D1 cost (rows read, pinned)', () => {
   });
 });
 
+describe('after PR 153’s review', () => {
+  it('the panel opens only by the person’s User ID for all the apps: an app’s User ID or any Support ID is refused (bad_request), so the audit can’t say “panel” for a search', async () => {
+    const clock = ownClock();
+    const n = await network();
+    const refused = { ok: false, code: 'bad_request', error: 'purpose: the panel opens by the person’s User ID for all your apps; an app’s code is a search' };
+    expect(await link(n.org, own(n.own1, n.sub), { purpose: 'panel', clock })).toEqual(refused);
+    expect(await link(n.org, ownSupport(n.own2, n.sub), { purpose: 'panel', clock })).toEqual(refused);
+    expect(await link(n.org, n.person.supportId, { purpose: 'panel', clock })).toEqual(refused);
+    expect((await link(n.org, n.person.userId, { purpose: 'panel', clock })).ok).toBe(true);
+    expect((await link(n.org, own(n.own1, n.sub), { purpose: 'search', clock })).ok).toBe(true);
+  });
+
+  it('the answer carries the audit reference of the person (for the console’s row, never shown): a keyed hash of the scope-level User ID, not the ID', async () => {
+    const clock = ownClock();
+    const n = await network();
+    const r = (await link(n.org, own(n.own1, n.sub), { clock })) as unknown as { auditRef: string };
+    expect(r.auditRef).toBe(await linkAuditRef(KEY, n.person.userId));
+    expect(r.auditRef).toMatch(/^lr1_[A-Za-z0-9_-]{21}[AQgw]$/u);
+    expect(r.auditRef).not.toContain(n.person.userId.slice(3));
+  });
+
+  it('a scope moved to another org: the new org’s owners find its people (the whole history), the old org finds no one', async () => {
+    const clock = ownClock();
+    const n = await network();
+    const next = newOrg();
+    await env.DB.prepare('UPDATE scopes SET org_id = ?2 WHERE scope_id = ?1').bind(n.before.scope, next).run();
+    expect(await link(n.org, n.person.userId, { clock })).toMatchObject({ ok: false, code: 'not_found' });
+    const r = await link(next, own(n.own1, n.sub), { clock });
+    expect(r.link).toMatchObject({ userId: n.person.userId, match: { of: 'app', appId: n.own1.id } });
+    expect((r.link as { apps: unknown[] }).apps).toHaveLength(4);
+  });
+
+  it('the cost is bounded by the 100-app cap, not by the person’s app count: a person on 100 apps and on 120 read the same budget', async () => {
+    const org = newOrg();
+    const first = await seedApp({ sharedScope: true });
+    const apps = [first];
+    for (let i = 1; i < 120; i++) apps.push(await seedApp({ scope: first.scope }));
+    await env.DB.prepare('UPDATE scopes SET org_id = ?2 WHERE scope_id = ?1').bind(first.scope, org).run();
+    const rowsRead = async (userId: string) => (await prepare(env.DB, linkStatement(org, { kind: 'userId', userId })).all()).meta.rows_read;
+    const on = async (count: number) => {
+      const sub = `g-${uid()}`;
+      let person = '';
+      for (const [i, a] of apps.slice(0, count).entries()) person = (await signIn(a, sub, Date.now() - DAY + i * 1000)).userId;
+      return rowsRead(person);
+    };
+    const hundred = await on(100);
+    const more = await on(120);
+    // Measured: 208 rows for 100 apps (two an app listed, down migration 0031's index), 210 for 120: the read stops at
+    // the cap's 101 rows. Held to 240 for either (before the index, 368 for 120 apps).
+    expect(hundred).toBeLessThanOrEqual(240);
+    expect(more).toBeLessThanOrEqual(240);
+    const staff = async (count: number) => {
+      const sub = `s-${uid()}`;
+      let internal = '';
+      for (const [i, a] of apps.slice(0, count).entries()) internal = (await signIn(a, sub, Date.now() - DAY + i * 1000)).internalId;
+      return (await prepare(env.DB, userAppsStatement([internal])).all()).meta.rows_read;
+    };
+    const staffHundred = await staff(100);
+    // Measured 101 for either: the cap's rows, down the same index.
+    expect(staffHundred).toBeLessThanOrEqual(110);
+    expect(await staff(120)).toBeLessThanOrEqual(110);
+  });
+});
+
 describe('the staff Support ID lookup resolves an app’s own codes (AdminRpc.supportLookup, findUsers)', () => {
   type Lookup = { ok: boolean; matches: { user: { userId: string }; matchedBy: unknown; userApps: { appId: string; userId: string; supportId: string }[] }[] };
   const lookup = async (query: string) => (await adminRpc().supportLookup({ ...hana(), query })) as unknown as Lookup;
@@ -326,6 +407,8 @@ describe('the staff Support ID lookup resolves an app’s own codes (AdminRpc.su
     expect(apps.map((a) => a.appId)).toEqual([n.gone.id, n.paused.id, n.own2.id, n.own1.id, n.before.id]);
     expect(apps.find((a) => a.appId === n.own1.id)).toMatchObject({ userId: own(n.own1, n.sub), supportId: ownSupport(n.own1, n.sub) });
     expect(apps.find((a) => a.appId === n.before.id)).toMatchObject({ userId: n.person.userId, supportId: n.person.supportId });
+    // Each match carries the console audit's reference of the person (D925 after PR 153's review).
+    expect(((await lookup(n.person.userId)).matches[0] as unknown as { linkAuditRef: string }).linkAuditRef).toBe(await linkAuditRef(KEY, n.person.userId));
     // A person on an unmarked scope: no per-app rows.
     expect((await lookup(n.onPlain.userId)).matches[0]!.userApps).toEqual([]);
   });
@@ -363,8 +446,8 @@ describe('the staff Support ID lookup resolves an app’s own codes (AdminRpc.su
     const n = await network();
     for (let i = 0; i < 5; i++) await signIn(n.own2, `g-${uid()}`);
     const read = async () => {
-      const r = await prepare(env.DB, userAppsStatement([n.person.internalId])).all();
-      return [r.results.length, r.meta.rows_read];
+      const r = await prepare(env.DB, userAppsStatement([n.person.internalId])).all<{ apps_json: string }>();
+      return [(JSON.parse(r.results[0]!.apps_json) as unknown[]).length, r.meta.rows_read];
     };
     const first = await read();
     for (let i = 0; i < 10; i++) await signIn(n.own1, `g-${uid()}`);

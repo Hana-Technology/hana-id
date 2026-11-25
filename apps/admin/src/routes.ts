@@ -97,7 +97,7 @@ export const ownersOf = (members: MemberView[]): MemberView[] => members.filter(
 /** The audit filters from the query string (all optional; the RPC's schema checks each). */
 export function auditFilters(url: URL): Record<string, unknown> {
   const f: Record<string, unknown> = {};
-  for (const k of ['orgId', 'appId', 'actorKind', 'actorId', 'action']) {
+  for (const k of ['orgId', 'appId', 'actorKind', 'actorId', 'action', 'target']) {
     const v = url.searchParams.get(k);
     if (v) f[k] = v;
   }

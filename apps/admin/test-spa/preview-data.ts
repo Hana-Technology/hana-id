@@ -498,6 +498,7 @@ export const userGet = (provider: string, sub: string) => ({
 const sharedMatch = {
   user: { ...walletUser, userId: 'u1_Jt4wN8pR2xK6mB9qZ3vL7a', supportId: 'HANA-1K8D-W3QA', scopeId: 's7c3d9e1f5a2b8', orgId: 'org_01jd2sodaxnet' },
   matchedBy: { of: 'app', appId: 'app_01jd5stamps' },
+  linkAuditRef: 'lr1_Wq3nB7xK2pR9mT4vL8cZ1g',
   userApps: [
     { appId: 'app_01jd5stamps', userId: 'u1_Hx2cV6nT9bQ4wK8mR3zP5g', supportId: 'HANA-7Q2M-K4XP', firstSeenAt: ago(4 * DAY), lastSeenAt: ago(2 * HOUR) },
     { appId: 'app_01jd4coffee', userId: 'u1_Pz8kW3mQ6vB2nX9tR5cL4w', supportId: 'HANA-C5RN-8YTE', firstSeenAt: ago(9 * DAY), lastSeenAt: ago(DAY) },

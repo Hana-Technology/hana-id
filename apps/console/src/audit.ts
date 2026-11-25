@@ -223,6 +223,7 @@ export async function queryAudit(db: D1Database, filters: AuditFilters, cursor: 
   if (filters.actorKind !== undefined) add('actor_kind = ?', filters.actorKind);
   if (filters.actorId !== undefined) add('actor_id = ?', filters.actorId);
   if (filters.action !== undefined) add('action = ?', filters.action);
+  if (filters.target !== undefined) add('target = ?', filters.target);
   if (filters.from !== undefined) where.push(`at >= ${lit(filters.from)}`);
   if (filters.to !== undefined) where.push(`at < ${lit(filters.to)}`);
   if (cursor !== undefined) where.push(`seq < ${lit(Number(cursor))}`);

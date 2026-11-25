@@ -15,6 +15,7 @@
 // app's id and name, the User ID and Support ID that app gives the person, and when they first and last signed in there.
 // Never a Google `sub`, an email, an internal id (`hu_…`), an identity key or a wallet address.
 import { z } from '@hana-id/env/zod';
+import { b64url, concatBytes, hmacSha256, utf8 } from './bytes.ts';
 import { orgIdInput } from './rpc.ts';
 import { ctx } from './types.ts';
 import { USER_ID_RE, parseSupportId } from './users.ts';
@@ -27,6 +28,13 @@ export const LINK_ORG_PER_DAY = 1000;
 /** Past these, one `link_lookup_volume` security event per window (an alert to Journear, never a refusal). */
 export const LINK_ALERT_MEMBER_PER_HOUR = 30;
 export const LINK_ALERT_ORG_PER_DAY = 200;
+/**
+ * And past this an org in a week (fixed 7-day windows from the Unix epoch, PR 153's review): slow harvesting under the
+ * daily threshold (199 a day is about 1 400 a week) still alerts. Honest support work is a look-up per ticket that needs
+ * the cross-app view; 500 a week is about 70 a working day, well above that for any network we expect on testnet. To
+ * confirm (the Tech Lead).
+ */
+export const LINK_ALERT_ORG_PER_WEEK = 500;
 /** Apps listed for one person in one answer, most recently used first (`truncated` says when there are more). */
 export const LINK_APPS_MAX = 100;
 
@@ -81,6 +89,21 @@ export interface LinkedApp {
 }
 
 /** `ConsoleRpc.linkUser`'s answer (and the console's, rebuilt field by field). */
+/**
+ * The opaque reference the console's audit row names the person by (PR 153's review): `lr1_` ‖ b64url of 16 bytes of
+ * HMAC-SHA256(IDENTITY_SUB_KEY, "hana-id/link-audit-ref/v1" ‖ 0x00 ‖ the scope-level User ID). Staff get it with a
+ * Support ID lookup and match it against `users.link_view` rows; it isn't the User ID, and an erasure leaves it (so an
+ * erasure can't hide whom an owner looked up).
+ */
+export const LINK_AUDIT_REF_RE = /^lr1_[A-Za-z0-9_-]{21}[AQgw]$/u;
+export const LINK_AUDIT_REF_LABEL = 'hana-id/link-audit-ref/v1';
+
+/** The audit reference of a scope-level User ID under `IDENTITY_SUB_KEY` (above); only the API holds the key. */
+export async function linkAuditRef(subKey: Uint8Array, scopeUserId: string): Promise<string> {
+  const mac = await hmacSha256(subKey, concatBytes(utf8(LINK_AUDIT_REF_LABEL), Uint8Array.of(0), utf8(scopeUserId)));
+  return `lr1_${b64url(mac.slice(0, 16))}`;
+}
+
 export interface UserLinkView {
   /** The person's User ID and Support ID for the scope (the Users screen's "User ID (all your apps)"). */
   userId: string;

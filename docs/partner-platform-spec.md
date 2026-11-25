@@ -23,13 +23,13 @@ proposed. **Piece P6 built** (2026-11-25, branch `feat/app-user-ids`, D919, not 
 IDs as B2 to B4 and B7 describe, with migration **0030** (0028 and 0029 are piece P2's); its current state is
 in the same docs and `integration.md`. Where it differs from Part B, D919 says so (the triggers' insert rule, the
 `'scope'` app on a marked scope having an `end_user_apps` row, the erase script's inputs). **Piece P7 built**
-(2026-11-25, branch `feat/app-user-linking`, D925, not merged, not deployed, no migration): the linking of B6 (the
+(2026-11-25, branch `feat/app-user-linking`, D925, not merged, not deployed, migrations 0031 and console 0006, both indexes): the linking of B6 (the
 console's panel and per-app search for owners, its audit, limits and volume alert, the staff lookup of either code,
 Passport Home's line); its current state is in `api.md`, `architecture.md`, `security.md` and `operations.md`. Where
 it differs from B6, D925 says so (Home's line names no network, the audit row's app, the staff lookup listing an
 ambiguous code's matches).
 
-Last verified: 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged: the status line of piece P7, D925; no other text changed); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: a partner on the network's own widget (A4.5, A5, A8, A10, A13, A15, the build plan's later pieces P11 and P12, "What the network builds"), D926); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
+Last verified: 2026-11-25 (branch `feat/app-user-linking`, after PR 153's review: piece P7's migrations in its status line, D925; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged: the status line of piece P7, D925; no other text changed); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: a partner on the network's own widget (A4.5, A5, A8, A10, A13, A15, the build plan's later pieces P11 and P12, "What the network builds"), D926); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
 Lead's confirmations of D914's proposals and the four-eyes rule for staff proposals on a shared scope (D917) folded
 into A2, A3, A6, A7, A8, A11, A14, A15 and the build plan; the admin portal's identity checked in
 `apps/admin/src/access.ts`); 2026-11-25 (branch `docs/platform-answers`, after PR 142's review: its 16 findings folded in (revocation

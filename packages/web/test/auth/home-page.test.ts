@@ -538,7 +538,16 @@ describe('your apps', () => {
     expect(document.getElementById('home-shared-seen')?.textContent).toBe('The company behind these apps can see which of them you use with this wallet.');
     const support = document.getElementById('home-support-id')!.closest('.home-support')!;
     expect(support.querySelector('h2')?.textContent).toBe('Journear Support ID');
-    expect(document.getElementById('home-support-line')?.textContent).toBe('Give this only to Journear support. If an app’s support team asks for your Support ID, give them the one that app shows you.');
+    expect(document.getElementById('home-support-line')?.textContent).toBe('Give this only to Journear support, not to an app’s support team. If an app’s support team asks for your Support ID, give them the one that app shows you.');
+  });
+
+  it('D925 after PR 153’s review: a shared wallet with one app has no “which of them” line (its Support ID is still labelled)', async () => {
+    const h = await ready();
+    h.answer = () => json(200, { scopes: [mine('s1', { apps: [app('Sodax')], sharedScope: true })], nextCursor: null });
+    await h.signIn();
+    (document.querySelector('.home-row[data-scope="s1"]') as HTMLElement).click();
+    expect(document.getElementById('home-shared-seen')).toBeNull();
+    expect(document.getElementById('home-support-id')!.closest('.home-support')!.querySelector('h2')?.textContent).toBe('Journear Support ID');
   });
 
   it('D925: an ordinary wallet keeps the usual Support ID words and has no line about the company behind its apps', async () => {

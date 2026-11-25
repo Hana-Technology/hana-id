@@ -211,6 +211,7 @@ describe('the Support ID lookup screen', () => {
       { appId: 'app_stamps', name: 'Stamp Rally', orgId: 'org_1', environment: 'test', persistence: 'session', deletedAt: null },
     ];
     m.matchedBy = { of: 'app', appId: 'app_stamps' };
+    m.linkAuditRef = 'lr1_AbCdEfGhIjKlMnOpQrStUA';
     m.userApps = [
       { appId: 'app_stamps', userId: 'u1_ZyXwVuTsRqPoNmLkJiHgFA', supportId: 'HANA-7Q2M-K4XP', firstSeenAt: T - DAY, lastSeenAt: T },
       { appId: 'app_1', userId: 'u1_AAAAAAAAAAAAAAAAAAAA1A', supportId: 'HANA-2750-G5HM', firstSeenAt: T - 9 * DAY, lastSeenAt: T - DAY },
@@ -224,6 +225,10 @@ describe('the Support ID lookup screen', () => {
     const t = s.text();
     expect(t).toContain('This app’s own code: Stamp Rally');
     for (const want of ['u1_ZyXwVuTsRqPoNmLkJiHgFA', 'HANA-7Q2M-K4XP', 'Never give one partner another partner’s ID for the same person.']) expect(t, want).toContain(want);
+    // The owners' look-ups of this person: the reference to filter the Audit log by, never in a link (after PR 153's review).
+    expect(t).toContain('lr1_AbCdEfGhIjKlMnOpQrStUA');
+    expect(t).toContain('The network owners’ look-ups of this person: filter the Audit log by it.');
+    for (const a of s.main().querySelectorAll('a')) expect(a.getAttribute('href') ?? '').not.toContain('lr1_');
     // The scope's own code says so; a person with no per-app rows has no such table.
     m.matchedBy = { of: 'scope', appId: null };
     m.userApps = [];

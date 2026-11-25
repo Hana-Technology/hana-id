@@ -13,10 +13,15 @@
 // `--identity-email off|on_request|at_login` (D411, migration 0014's `apps.identity_email`): when Hana asks users to
 // share their email with the app; immediate, like the persistence (turning it on shares nothing until a user agrees).
 // On a hot D1 without migration 0014 the display says so and the flag is refused before anything is written.
+//
+// D915 (migration 0026): a new `--auto-approve` policy is refused for an app on a shared scope or created by the
+// platform ("Auto-approve is off for apps that share a wallet"), in the plan and again in the write's guard; on a hot
+// D1 without 0026 a new policy is refused too (the rule can't be checked there). `--auto-approve off` always works.
 import { readFileSync, statSync } from 'node:fs';
 import { isDevEnv } from '@hana-id/env';
 import { isAbsolute, resolve } from 'node:path';
 import { canonicalJson, parseAutoApprovePolicy, policyId } from '@hana-id/core/policy';
+import { SHARED_WALLET_NO_AUTO_APPROVE, autoApproveRefused } from '@hana-id/console-core';
 import type { Manifest } from '@hana-id/env';
 import {
   type ChangeRow,
@@ -81,6 +86,10 @@ export interface SettingsRow {
   google_web_client_id: string | null;
   /** Migration 0014 (D411); absent when the hot D1 doesn't have the column yet. */
   identity_email?: string;
+  /** Migration 0026 (D915): the scope is marked shared (1); absent when the hot D1 doesn't have the columns yet. */
+  app_user_ids?: number;
+  /** Migration 0026 (D915): who created the app; absent with `app_user_ids`. */
+  created_by_kind?: string;
 }
 
 /** A validated policy as it is stored: its canonical JSON (normalized by the validator) and its policyId. */
@@ -116,16 +125,38 @@ const SETTINGS_COLUMNS =
 /** 1 when the hot D1's `apps` has migration 0014's `identity_email` column, else 0 (the table's stored definition). */
 export const IDENTITY_EMAIL_COLUMN_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'apps' AND instr(sql, 'identity_email') > 0";
 
+/** 1 when the hot D1 has migration 0026's two columns (`scopes.app_user_ids`, `apps.created_by_kind`), else 0. */
+export const SHARED_SCOPE_COLUMNS_SQL =
+  "SELECT (SELECT COUNT(*) FROM pragma_table_info('scopes') WHERE name = 'app_user_ids') * (SELECT COUNT(*) FROM pragma_table_info('apps') WHERE name = 'created_by_kind') AS n";
+
+/** The refusal of a new `--auto-approve` policy on a hot D1 without migration 0026. */
+export const AUTO_APPROVE_NEEDS_0026 =
+  "A new --auto-approve policy needs migration 0026 (0026_shared_scope_rules.sql) on this env's hot D1, to check the app doesn't share a wallet: apply it first. --auto-approve off works without it";
+
+/** The refusal of a new `--auto-approve` policy for an app on a shared scope or created by the platform (D915). */
+export const AUTO_APPROVE_SHARED_WALLET = `--auto-approve is refused: ${SHARED_WALLET_NO_AUTO_APPROVE} (the app's scope is shared by several partners' apps, or the platform created it). --auto-approve off still works`;
+
+/** Whether the row's app may never have a policy (D915); null when the hot D1 doesn't have migration 0026. */
+export function sharedWalletOf(row: Pick<SettingsRow, 'app_user_ids' | 'created_by_kind'>): boolean | null {
+  if (row.app_user_ids === undefined || row.created_by_kind === undefined) return null;
+  return autoApproveRefused({ sharedScope: Number(row.app_user_ids) === 1, createdByKind: row.created_by_kind === 'hana' ? 'hana' : 'platform' });
+}
+
+/** The write guard's part for a new policy: the app as D1 holds it at the write is not one that shares a wallet. */
+export const NOT_SHARED_WALLET_SQL = "created_by_kind = 'hana' AND (SELECT s.app_user_ids FROM scopes s WHERE s.scope_id = apps.scope_id) = 0";
+
 /** The settings columns this database has: migration 0014's `identity_email` only once applied. */
 const settingsColumns = (identityEmail: boolean): string[] => [...SETTINGS_COLUMNS.split(', '), ...(identityEmail ? ['identity_email'] : [])];
 
 /**
  * The app (by id or any of its publishable keys) with its settings columns, version and scope environment;
- * `identity_email` too when the database has it (`{identityEmail: true}`, the default: every database the tests build).
+ * `identity_email` too when the database has it (`{identityEmail: true}`, the default: every database the tests build),
+ * and migration 0026's `app_user_ids` and `created_by_kind` likewise (`{sharedScope: true}`, the default).
  */
-export function settingsSql(idOrKey: string, opts: { identityEmail?: boolean } = {}): string {
+export function settingsSql(idOrKey: string, opts: { identityEmail?: boolean; sharedScope?: boolean } = {}): string {
   const columns = settingsColumns(opts.identityEmail ?? true).map((c) => `a.${c}`).join(', ');
-  return `SELECT a.id, a.name, a.scope_id, a.org_id, a.settings_version, a.deleted_at, s.environment, ${columns} FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE ${sql`a.id = ${idOrKey} OR a.id IN (SELECT app_id FROM app_keys WHERE key = ${idOrKey})`}`;
+  const shared = (opts.sharedScope ?? true) ? ', s.app_user_ids, a.created_by_kind' : '';
+  return `SELECT a.id, a.name, a.scope_id, a.org_id, a.settings_version, a.deleted_at, s.environment, ${columns}${shared} FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE ${sql`a.id = ${idOrKey} OR a.id IN (SELECT app_id FROM app_keys WHERE key = ${idOrKey})`}`;
 }
 
 /** Parses a duration such as `12h`, `23h50m`, `15m`, `90s` or `3600000ms`. A bare number is refused (ms or s?). */
@@ -280,6 +311,8 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
   const warnings: string[] = [];
   const changed: Record<string, unknown> = {};
   const ledgerRows: { kind: string; detail: Record<string, unknown> }[] = [];
+  /** A new policy_set proposal is in this write (its guard then also holds the shared-wallet rule, D915). */
+  let proposesPolicy = false;
   // Pending and not yet in force (a change whose clock has passed is in force by predicate until the cron records it).
   const pendingOf = (kind: ChangeRow['kind']) => open.filter((c) => c.kind === kind && c.status === 'pending' && (c.active_from === null || c.active_from > now));
   const hint = (id: string) => {
@@ -392,6 +425,10 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
       lines.push('auto-approve: policy removed (immediate); every request gets the approval popup, and users’ consents lapse');
     }
   } else if (change.autoApprove !== undefined) {
+    // D915: before the file is even validated, so the operator reads the one reason that matters.
+    const shared = sharedWalletOf(row);
+    if (shared === null) throw new CliError(AUTO_APPROVE_NEEDS_0026);
+    if (shared) throw new CliError(AUTO_APPROVE_SHARED_WALLET);
     const result = validatePolicy(change.autoApprove.text, sessionTtl);
     if (!result.ok) throw new CliError(`--auto-approve ${change.autoApprove.file} is not a valid AutoApprovePolicyV1:\n  ${result.problems.join('\n  ')}`);
     const policy = result.policy;
@@ -427,6 +464,7 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
       lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") already pending, in force from ${at(row.auto_approve_effective_at)} (delay not restarted)`);
     } else {
       const changeId = newChangeId();
+      proposesPolicy = true;
       after.push(proposalSql({ changeId, appId: row.id, kind: 'policy_set', policyJson: policy.json, policyId: policy.id }, { now, actor, requestId }, when));
       ledgerRows.push({ kind: 'policy.proposed', detail: { changeId, policyId: policy.id } });
       lines.push(`auto-approve: policy ${policy.id} ("${policy.label}") from ${change.autoApprove.file}, proposed as ${changeId} (a staff proposal: in force appChangeDelayMs after it is announced)`);
@@ -451,7 +489,9 @@ export function planSettings(row: SettingsRow, change: SettingsChange, ctx: Plan
   // The guard: this app, its version and every settings column still as read. The write's one app_changes row is
   // inserted only while it holds; then the UPDATE (the version bump and the immediate values) and the rest run only if
   // that row exists (admin-sql.ts "writes").
-  const guard = { where: `${unchangedSince(row)} AND ${sql`settings_version = ${row.settings_version}`} AND deleted_at IS NULL`, set: [sql`settings_version = ${to}`, ...set] };
+  // A new policy (D915) also needs the app not to share a wallet as D1 holds it then (a scope marked shared meanwhile).
+  const shared = proposesPolicy ? ` AND ${NOT_SHARED_WALLET_SQL}` : '';
+  const guard = { where: `${unchangedSince(row)} AND ${sql`settings_version = ${row.settings_version}`} AND deleted_at IS NULL${shared}`, set: [sql`settings_version = ${to}`, ...set] };
   const commitRow = ledgerRows.length === 1 ? ledgerRows[0]! : { kind: 'settings.changed', detail: { parts: ledgerRows } };
   return { write: settingsWrite(row, guard, commitRow, after, { now, actor, requestId }), lines, warnings };
 }
@@ -532,6 +572,8 @@ export function describeSettings(row: SettingsRow, now: number, openChanges: rea
     return r.ok ? `${r.policy.id} ("${r.policy.label}")` : `INVALID, not served (${r.problems[0] ?? 'unknown problem'})`;
   };
   out.push(`auto-approve: ${inForce === null ? 'off' : policyText(inForce)}`);
+  const shared = sharedWalletOf(row);
+  if (shared) out.push(`  ${SHARED_WALLET_NO_AUTO_APPROVE}: the app's scope is shared by several partners' apps, or the platform created it`);
   if (row.auto_approve_pending !== null && row.auto_approve_effective_at !== null && !matured(row.auto_approve_pending, row.auto_approve_effective_at, now)) {
     out.push(`  pending until ${at(row.auto_approve_effective_at)}: ${policyText(row.auto_approve_pending)}`);
   }
@@ -604,7 +646,8 @@ export function defaultAppSettingsDeps(m: Manifest, remote: boolean): AppSetting
 /** app:settings <app> [flags]: shows the settings, or checks and applies the flags given and prints what changed. */
 export async function appSettings(m: Manifest, idOrKey: string, args: Args, where: string, deps: AppSettingsDeps): Promise<void> {
   const identityEmail = Number(deps.d1(IDENTITY_EMAIL_COLUMN_SQL)[0]?.n ?? 0) > 0;
-  const rows = deps.d1(settingsSql(idOrKey, { identityEmail })) as unknown as SettingsRow[];
+  const sharedScope = Number(deps.d1(SHARED_SCOPE_COLUMNS_SQL)[0]?.n ?? 0) > 0;
+  const rows = deps.d1(settingsSql(idOrKey, { identityEmail, sharedScope })) as unknown as SettingsRow[];
   if (rows.length !== 1 || !rows[0]) throw new Error(`No app ${idOrKey}`);
   const row = rows[0];
   const change = parseSettingsArgs(args, deps.readFile, deps.baseDir ?? invocationDir());

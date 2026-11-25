@@ -4,6 +4,7 @@
 // app never changes; applying again changes nothing.
 import { applyD1Migrations } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { APP_CREATOR_KINDS } from '@hana-id/console-core';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 const db = env.MIGRATION_DB;
@@ -71,6 +72,12 @@ describe('migration 0026_shared_scope_rules', () => {
       { id: 'app_h', created_by_kind: 'hana' },
       { id: 'app_p', created_by_kind: 'platform' },
     ]);
+  });
+
+  it('the creator kinds are console-core’s APP_CREATOR_KINDS', async () => {
+    const sql = (await db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'apps'").first<{ sql: string }>())!.sql;
+    const list = /created_by_kind TEXT NOT NULL DEFAULT 'hana' CHECK \(created_by_kind IN \(([^)]*)\)\)/u.exec(sql)![1]!;
+    expect(list.split(',').map((k) => k.trim().replace(/'/gu, ''))).toEqual([...APP_CREATOR_KINDS]);
   });
 
   it('who created an app never changes', async () => {

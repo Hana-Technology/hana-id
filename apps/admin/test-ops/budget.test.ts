@@ -155,7 +155,8 @@ describe('the budget', () => {
 describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retention run, the alerts, a backlog of statement notices and of settlement', () => {
   // The 2nd of the month, 00:30 UTC: the daily tick, and the month's retention job is due (it has not run yet).
   const T0 = Date.UTC(2031, 2, 2, 0, 30);
-  const SETTLE = 58;
+  // Two runs of settlement: the 2nd tick's share after retention finishes, then the 3rd tick drains the rest (37 at most).
+  const SETTLE = 57;
   const STATEMENTS = STATEMENT_NOTICES_PER_RUN + 1;
   let net: Net;
   let rpc: string[];
@@ -288,14 +289,15 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
 
     // 15 minutes later: retention finishes, the last statement notices go out, settlement takes the rest.
     const second = await tick(T0 + 15 * MIN);
-    expect(second.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, retention: 6, statement_notices: 2 * 5, link_jump: 1, settlement: RUN_BUDGET - 19 });
+    // (Retention's seventh call is the platform call log's purge, D927.)
+    expect(second.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, retention: 7, statement_notices: 2 * 5, link_jump: 1, settlement: RUN_BUDGET - 20 });
     expect(second.sum.retention).toMatchObject({ ran: true, status: 'ok' });
     expect(await store.unnoticedStatements(100)).toEqual([]);
-    expect(second.sum.settlement).toMatchObject({ read: RUN_BUDGET - 19, final: RUN_BUDGET - 19 });
+    expect(second.sum.settlement).toMatchObject({ read: RUN_BUDGET - 20, final: RUN_BUDGET - 20 });
 
     // Then settlement drains the backlog; the month's retention is done and takes nothing.
     const third = await tick(T0 + 30 * MIN);
-    expect(third.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, link_jump: 1, settlement: SETTLE - (RUN_BUDGET - 19) });
+    expect(third.sum.calls).toEqual({ ledger: 1, relayer_keys: 1, link_jump: 1, settlement: SETTLE - (RUN_BUDGET - 20) });
     expect(third.sum.retention).toMatchObject({ ran: false, why: 'done' });
     expect(await store.settlementBacklog()).toMatchObject({ pending: 0 });
 

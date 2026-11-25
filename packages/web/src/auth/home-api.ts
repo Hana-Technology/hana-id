@@ -99,6 +99,11 @@ export interface HomeScope {
    * wallet to approve something (D922's review). An API from before it: the open ones shown.
    */
   appsOpen: number;
+  /**
+   * Journear marked this wallet's apps as several partners' (D915): the organisation behind them can see which of them
+   * the person uses, and each app made after the mark shows its own Support ID (D919, D925). False from an older API.
+   */
+  sharedScope: boolean;
 }
 
 export interface HomeAppsPage {
@@ -189,6 +194,8 @@ function parseScope(v: unknown, maxApps: number): HomeScope | null {
     apps,
     appsTotal: total,
     appsOpen: open,
+    // Only on the user's own listing (the API sends it there only).
+    sharedScope: v.mine && v.sharedScope === true,
   };
 }
 

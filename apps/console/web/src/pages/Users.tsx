@@ -9,10 +9,16 @@
 // its ids stay whole on one line and its wallet addresses are shortened, each copied whole (the detail shows them full).
 // NEAR (D755): the user's implicit account, recorded only once they sign in through an SDK of 0.4.0 or later; a user
 // without one shows just Stellar and EVM in the list, and "No NEAR account yet" in the detail.
+//
+// D925 (piece P7): on a wallet several of the org's apps share (a scope Journear marked), the User ID and Support ID
+// here are the person's ones for the whole wallet ("all your apps"); apps made after the mark give the person IDs of
+// their own. Owners can open "This person on your apps" in a person's detail, and find a person by any app's ID; both
+// ask the server, which records each look-up in the org's Audit first. Viewers see neither (the server refuses them).
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { useApi, when } from '../lib.tsx';
-import { CopyButton, Empty, ErrorNote, Field, Loading, PageHeader, Panel, ShortValue } from '../ui.tsx';
+import { ApiError, postJson } from '../api.ts';
+import { useApi, useOrg, when } from '../lib.tsx';
+import { Callout, CopyButton, Empty, ErrorNote, Field, Loading, PageHeader, Panel, ShortValue } from '../ui.tsx';
 
 interface PartnerUser {
   userId: string;
@@ -28,6 +34,204 @@ interface PartnerUser {
   emails?: { appId: string; appName: string; email: string; sharedAt: number }[];
   /** The name shared from Passport Home with one of the org's apps (each part optional, at least one set), or null. */
   name: { givenName: string | null; familyName: string | null } | null;
+  /** A wallet several of the org's apps share (D925): these are the person's IDs for all of them. */
+  sharedScope?: boolean;
+}
+
+/** One person across the org's apps (`POST /api/orgs/:org/users/link`, owners only). */
+interface UserLink {
+  userId: string;
+  supportId: string;
+  scopeId: string;
+  match: { kind: 'userId' | 'supportId'; of: 'scope' | 'app'; appId: string | null };
+  apps: { appId: string; appName: string; userId: string; supportId: string; firstSeenAt: number; lastSeenAt: number }[];
+  truncated: boolean;
+}
+
+/** The words of the linking view (D925), in one place for the tests and the plain-words check. */
+export const LINK_TEXT = {
+  panelTitle: 'This person on your apps',
+  panelIntro: 'Each app made after this wallet was shared gives this person a User ID and Support ID of its own.',
+  show: 'Show their ID on each app',
+  /** N7, said where the IDs are shown. */
+  rule: 'Never give one partner another partner’s ID for the same person. Each partner should only see its own.',
+  recorded: 'Only owners can see this. Each look-up is recorded in your Audit.',
+  viewer: 'Only owners can see this person’s ID on each of your apps.',
+  findTitle: 'Find a person by an app’s ID',
+  findIntro: 'Type the User ID or Support ID that one of your apps has for a person. You see the same person on all your apps.',
+  findLabel: 'User ID or Support ID from one of your apps',
+  find: 'Find',
+  open: 'Open this person',
+  allApps: 'all your apps',
+  truncated: 'Only the 100 apps they used most recently are listed.',
+} as const;
+
+/** "(all your apps)" under a label, on a line of its own, so the label stays narrow and the ID beside it whole. */
+function AllApps() {
+  return (
+    <>
+      {' '}
+      <span className="dt-sub">({LINK_TEXT.allApps})</span>
+    </>
+  );
+}
+
+/** What the code that matched is, in plain words. */
+function matchText(l: UserLink): string {
+  const what = l.match.kind === 'userId' ? 'User ID' : 'Support ID';
+  if (l.match.of === 'scope') return `This is the person’s ${what} for ${LINK_TEXT.allApps}.`;
+  const app = l.apps.find((a) => a.appId === l.match.appId);
+  return `This is the ${what} ${app ? app.appName : 'one of your apps'} has for this person.`;
+}
+
+/** The person's IDs on each app, with the sharing rule beside them. */
+function LinkTable({ link }: { link: UserLink }) {
+  return (
+    <>
+      <Callout tone="warn" role="note" className="link-rule">
+        <p>{LINK_TEXT.rule}</p>
+      </Callout>
+      {link.apps.length === 0 ? (
+        <p className="muted">No app of yours has a sign-in from this person yet.</p>
+      ) : (
+        <div className="jp-table-wrap">
+          <table className="jp-table">
+            <thead>
+              <tr>
+                <th scope="col">App</th>
+                <th scope="col">User ID</th>
+                <th scope="col">Support ID</th>
+                <th scope="col">First sign-in</th>
+                <th scope="col">Last sign-in</th>
+              </tr>
+            </thead>
+            <tbody>
+              {link.apps.map((a) => (
+                <tr key={a.appId}>
+                  <td>{a.appName}</td>
+                  <td>
+                    <span className="nowrap">
+                      <code className="mono small">{a.userId}</code> <CopyButton value={a.userId} label={`${a.appName} User ID`} />
+                    </span>
+                  </td>
+                  <td className="mono nowrap">{a.supportId}</td>
+                  <td>
+                    <Moment ms={a.firstSeenAt} />
+                  </td>
+                  <td>
+                    <Moment ms={a.lastSeenAt} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {link.truncated && <p className="muted small">{LINK_TEXT.truncated}</p>}
+      <p className="muted small">{LINK_TEXT.recorded}</p>
+    </>
+  );
+}
+
+/** Asks the server for one person across the org's apps; each call is one recorded look-up. */
+function useLink(org: string): { busy: boolean; error: ApiError | undefined; link: UserLink | undefined; run: (query: string, purpose: 'panel' | 'search') => Promise<void>; reset: () => void } {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<ApiError | undefined>();
+  const [link, setLink] = useState<UserLink | undefined>();
+  return {
+    busy,
+    error,
+    link,
+    reset: () => {
+      setError(undefined);
+      setLink(undefined);
+    },
+    run: async (query, purpose) => {
+      setBusy(true);
+      setError(undefined);
+      setLink(undefined);
+      try {
+        setLink((await postJson<{ link: UserLink }>(`/api/orgs/${org}/users/link`, { query, purpose })).link);
+      } catch (err) {
+        setError(err instanceof ApiError ? err : new ApiError(0, 'network', 'The console couldn’t be reached'));
+      } finally {
+        setBusy(false);
+      }
+    },
+  };
+}
+
+/** "This person on your apps", in a person's detail: owners press to see it (one recorded look-up); viewers are told why not. */
+function PersonApps({ org, userId, owner }: { org: string; userId: string; owner: boolean }) {
+  const l = useLink(org);
+  return (
+    <section className="person-apps" aria-labelledby="person-apps-title">
+      <h3 id="person-apps-title">{LINK_TEXT.panelTitle}</h3>
+      <p className="muted">{LINK_TEXT.panelIntro}</p>
+      {!owner ? (
+        <p className="muted">{LINK_TEXT.viewer}</p>
+      ) : (
+        <>
+          {!l.link && (
+            <button type="button" className="jp-btn jp-btn-secondary jp-btn-sm" disabled={l.busy} onClick={() => void l.run(userId, 'panel')}>
+              {l.busy ? 'Loading…' : LINK_TEXT.show}
+            </button>
+          )}
+          {l.error && <ErrorNote error={l.error} onRetry={() => void l.run(userId, 'panel')} />}
+          {l.link && <LinkTable link={l.link} />}
+        </>
+      )}
+    </section>
+  );
+}
+
+/** Owners: find a person by any of the org's apps' User IDs or Support IDs (one recorded look-up per search). */
+function FindAcrossApps({ org, onOpen }: { org: string; onOpen: (userId: string) => void }) {
+  const [query, setQuery] = useState('');
+  const l = useLink(org);
+  return (
+    <Panel title={LINK_TEXT.findTitle} description={LINK_TEXT.findIntro} className="section find-across">
+      <form
+        className="form form-inline"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const q = query.trim();
+          if (q) void l.run(q, 'search');
+        }}
+      >
+        <Field className="field-grow" label={LINK_TEXT.findLabel}>
+          {(c) => <input {...c} className="jp-input" type="search" autoComplete="off" spellCheck={false} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="u1_… or HANA-…" />}
+        </Field>
+        <button type="submit" className="jp-btn jp-btn-secondary" disabled={l.busy || !query.trim()}>
+          {LINK_TEXT.find}
+        </button>
+      </form>
+      {l.error && <ErrorNote error={l.error} />}
+      {l.link && (
+        <div className="find-result" role="status">
+          <p>
+            <strong>{matchText(l.link)}</strong>
+          </p>
+          <dl className="facts">
+            <dt>
+              User ID <AllApps />
+            </dt>
+            <dd>
+              <code className="mono small">{l.link.userId}</code>
+            </dd>
+            <dt>
+              Support ID <AllApps />
+            </dt>
+            <dd className="mono nowrap">{l.link.supportId}</dd>
+          </dl>
+          <LinkTable link={l.link} />
+          <button type="button" className="jp-btn jp-btn-ghost jp-btn-sm" onClick={() => onOpen(l.link!.userId)}>
+            {LINK_TEXT.open}
+          </button>
+        </div>
+      )}
+    </Panel>
+  );
 }
 
 const KIND: Record<string, string> = { google: 'Google', email: 'Email', apple: 'Apple', other: 'Other' };
@@ -99,8 +303,9 @@ function EmailText({ email }: { email: string }) {
 }
 
 /** One user's detail: the list's fields and, per app, the address the user shared with it. */
-function UserDetail({ org, userId, onClose }: { org: string; userId: string; onClose: () => void }) {
+function UserDetail({ org, userId, owner, onClose }: { org: string; userId: string; owner: boolean; onClose: () => void }) {
   const r = useApi<{ user: PartnerUser }>(`/api/orgs/${org}/users/${encodeURIComponent(userId)}`);
+  const all = r.data?.user.sharedScope ? <AllApps /> : null;
   return (
     <Panel
       title="User"
@@ -115,11 +320,11 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
       {!r.data && !r.error && <Loading />}
       {r.data && (
         <dl className="facts">
-          <dt>User ID</dt>
+          <dt>User ID{all}</dt>
           <dd>
             <code className="mono small">{r.data.user.userId}</code> <CopyButton value={r.data.user.userId} label="User ID" />
           </dd>
-          <dt>Support ID</dt>
+          <dt>Support ID{all}</dt>
           <dd className="mono nowrap">{r.data.user.supportId}</dd>
           <dt>Name</dt>
           <dd>
@@ -159,12 +364,17 @@ function UserDetail({ org, userId, onClose }: { org: string; userId: string; onC
           </dd>
         </dl>
       )}
+      {r.data?.user.sharedScope && <PersonApps key={userId} org={org} userId={userId} owner={owner} />}
     </Panel>
   );
 }
 
 export function Users() {
   const { org } = useParams();
+  const owner = useOrg()?.role === 'owner';
+  // Owners of an org with a shared wallet get the cross-app search (D925); the apps list says whether there is one.
+  const apps = useApi<{ apps: { sharedScope?: boolean }[] }>(owner ? `/api/orgs/${org}/apps` : null);
+  const shared = (apps.data?.apps ?? []).some((a) => a.sharedScope === true);
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState<string | undefined>();
@@ -206,7 +416,8 @@ export function Users() {
         )}
       </form>
       <p className="muted small">An email address matches exactly, and only among the addresses users shared with your apps.</p>
-      {open && org && <UserDetail key={open} org={org} userId={open} onClose={() => setOpen(undefined)} />}
+      {owner && shared && org && <FindAcrossApps org={org} onOpen={(id) => setOpen(id)} />}
+      {open && org && <UserDetail key={open} org={org} userId={open} owner={owner} onClose={() => setOpen(undefined)} />}
       {r.error && <ErrorNote error={r.error} onRetry={r.reload} />}
       {!r.data && !r.error && <Loading />}
       {r.data && (
@@ -238,8 +449,12 @@ export function Users() {
                           {u.userId}
                         </button>{' '}
                         <CopyButton value={u.userId} label="User ID" />
+                        {u.sharedScope && <div className="muted small">{LINK_TEXT.allApps}</div>}
                       </td>
-                      <td className="mono">{u.supportId}</td>
+                      <td>
+                        <span className="mono nowrap">{u.supportId}</span>
+                        {u.sharedScope && <div className="muted small">{LINK_TEXT.allApps}</div>}
+                      </td>
                       <td>{u.name ? nameText(u.name) : <span className="muted">{NOT_SHARED}</span>}</td>
                       <td>{u.email ? <EmailText email={u.email} /> : <span className="muted">{NOT_SHARED}</span>}</td>
                       <td>{accountsText(u)}</td>

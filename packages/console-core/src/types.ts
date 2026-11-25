@@ -84,6 +84,8 @@ export const RPC_CODES = [
   'passkeys_required',
   /** D894: a partner label document the parser or the server's rules refuse (the problems are listed in `error`). */
   'label_invalid',
+  /** D925: a Support ID that more than one person of the org holds (40 bits collide rarely): ask for the User ID. */
+  'ambiguous',
   'internal',
 ] as const;
 export type RpcCode = (typeof RPC_CODES)[number];
@@ -107,6 +109,7 @@ export const RPC_HTTP_STATUS: Record<RpcCode, number> = {
   not_pending: 409,
   conflict: 409,
   key_limit: 409,
+  ambiguous: 409,
   no_security_contact: 409,
   owner_nonce_mismatch: 409,
   passkeys_required: 403,
@@ -225,6 +228,11 @@ export const appSummary = z
     logoUrl: urlString().optional(),
     /** Email login is on (`apps.login_methods` lists it; an API before batch 9's build omits it). */
     emailOn: z.boolean().optional(),
+    /**
+     * D925: the app's scope is marked as shared (`scopes.app_user_ids`), so the Users screen offers its owners the search
+     * across apps. An API before D925's build omits it in the list (the detail has had it since D915).
+     */
+    sharedScope: z.boolean().optional(),
     createdAt: ms,
   })
   .strict();

@@ -74,6 +74,7 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'GET', path: `${o}/governance/pending-upgrades` },
     { method: 'GET', path: `${o}/users` },
     { method: 'GET', path: `${o}/users/u1_AAAAAAAAAAAAAAAAAAAAAA` },
+    { method: 'POST', path: `${o}/users/link`, body: { query: 'u1_AAAAAAAAAAAAAAAAAAAAAA', purpose: 'panel' } },
     // D918: platform keys (an unknown key: the route's role and frozen rules still apply first).
     { method: 'GET', path: `${o}/platform-keys` },
     { method: 'GET', path: `${o}/platform-keys/pkc_Unknown1Unknown1` },
@@ -140,7 +141,11 @@ describe('the role matrix (spec "Roles and permissions")', () => {
     await setScope({ id: app.scope, owners: [oidc(m.sub)] });
     for (const s of await samples(m, app)) {
       const route = routeOf(s)!;
-      if (route.pattern.includes('users')) continue;
+      // The Users screen is off here (404); its look-up route's frozen refusal is tested with the screen on (user-linking.test.ts).
+      if (route.pattern.includes('users')) {
+        if (route.pattern.includes('link')) expect(route.frozenOk, 'the look-up across apps is refused while frozen (PR 153’s review)').toBe(false);
+        continue;
+      }
       const r = await call(m, s);
       if (route.frozenOk) expect(r.code, `${s.method} ${s.path}`).not.toBe('org_frozen');
       else expect(r, `${s.method} ${s.path}`).toEqual({ status: 403, code: 'org_frozen' });

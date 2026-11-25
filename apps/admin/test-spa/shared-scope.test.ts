@@ -54,7 +54,7 @@ describe('the staff app page for an app that shares a wallet (D915)', () => {
 
   it('the User IDs row (D919): its own on a marked scope’s new app, the scope’s otherwise; none from an API before 0030', async () => {
     const own = await open({ sharedScope: true, createdByKind: 'hana', sharedWallet: true, userIds: 'app' });
-    expect(row(own, 'User IDs')).toEqual({ title: 'User IDs', text: 'Its own: each person gets a User ID and Support ID on this app that no other app has. The Support ID lookup doesn’t find these yet.', buttons: [] });
+    expect(row(own, 'User IDs')).toEqual({ title: 'User IDs', text: 'Its own: each person gets a User ID and Support ID on this app that no other app has. The Support ID lookup finds a person by either.', buttons: [] });
     closeWindow();
     const before = await open({ sharedScope: true, createdByKind: 'hana', sharedWallet: true, userIds: 'scope' });
     expect(row(before, 'User IDs')!.text).toBe('The scope’s: this app was made before the scope was marked as shared, so it keeps the User IDs it already had.');

@@ -6,6 +6,7 @@ import { z } from '@hana-id/env/zod';
 import { ACTOR_KINDS, ORG_KINDS, ctx, inviteView, ownerGrantView, requestId, role } from './types.ts';
 import { orgIdInput } from './rpc.ts';
 import { isPlainNote } from './evm-relay.ts';
+import { LINK_AUDIT_REF_RE } from './linking.ts';
 
 export const userIdInput = z.string().regex(/^usr_[A-Za-z0-9]{1,64}$/u);
 export const inviteIdInput = z.string().regex(/^inv_[A-Za-z0-9]{1,64}$/u);
@@ -83,6 +84,8 @@ export const auditFilters = z
     actorKind: z.enum(ACTOR_KINDS).optional(),
     actorId: z.string().min(1).max(255).optional(),
     action: z.string().regex(/^[a-z_]+(\.[a-z_]+)*$/u).max(64).optional(),
+    /** D925 after PR 153's review: a person's audit reference (`lr1_…`), the target of the owners' look-ups of them. */
+    target: z.string().regex(LINK_AUDIT_REF_RE).optional(),
     from: ms.optional(),
     to: ms.optional(),
   })

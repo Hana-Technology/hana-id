@@ -83,6 +83,8 @@ export class ConsoleLane {
       API: d.api,
       ASSETS: { fetch: (r: Request) => this.asset(r) },
       CONSOLE_IP_LIMIT: { limit: async () => ({ success: true }) },
+      // The Users screen (D310), for the linking view (D925, /__e2e/lane/linking seeds a shared wallet's person).
+      USERS_SCREEN: '1',
     };
   }
 

@@ -141,6 +141,8 @@ interface AppJson {
 interface ScopeRow {
   scope_id: string;
   environment: 'test' | 'live';
+  /** The scope's mark (D915): several partners' apps share this wallet, and the scope's owner can see which of them a person used (D925). */
+  app_user_ids: number | null;
   /** Up to one more app than the answer's limit (scopeColumns). */
   apps_json: string;
   held_json: string;
@@ -154,7 +156,7 @@ interface ScopeRow {
  * counted, by `countApps` (D922's review: a count in this statement read every app row of every scope again).
  */
 const scopeColumns = (now: number, allApps: Q, appsLimit: number): Q =>
-  q`s.scope_id, s.environment,
+  q`s.scope_id, s.environment, s.app_user_ids,
     (SELECT json_group_array(json_object('id', a.id, 'name', a.name, 'status', a.status, 'suspended_by', a.suspended_by, 'deleted_at', a.deleted_at,
         'logo_key', a.logo_key, 'google_web_client_id', a.google_web_client_id,
         'origins', json((SELECT json_group_array(o.origin) FROM (SELECT origin FROM app_origins WHERE app_id = a.id AND active_from <= ${now} ORDER BY origin LIMIT ${HOME_ORIGINS_PER_APP}) o))))
@@ -337,7 +339,9 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
       mine: entry !== undefined,
       coverage: route.coverage,
       googleClientId: route.googleClientId,
-      ...(entry ? { supportId: formatSupportId(entry.supportCode), addresses: entry.addresses } : {}),
+      // D913 question 10, D925: on the person's own wallet only (PR 153's review), whether the scope is marked: Home tells
+      // them that the scope's owner can see which of its apps they use, and labels its Support ID as Journear's.
+      ...(entry ? { supportId: formatSupportId(entry.supportCode), addresses: entry.addresses, sharedScope: r.app_user_ids === 1 } : {}),
       apps: apps.map((a) => ({ appId: a.id, name: a.name, status: appStatus(a), environment: r.environment, origins: a.origins, logoUrl: logoUrl(env.FILES_ORIGIN, a.logo_key) ?? null })),
       // How many apps the scope has by the same rule, and how many of them are open, so a page can say "and N more" and
       // whether some have closed (D922).

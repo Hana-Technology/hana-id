@@ -6,6 +6,8 @@ declare global {
     interface Env extends ConsoleEnv {
       TEST_MIGRATIONS: D1Migration[];
       TEST_API_MIGRATIONS: D1Migration[];
+      /** The test API's IDENTITY_SUB_KEY (base64), to compute the linking view's audit reference (D925). */
+      TEST_IDENTITY_SUB_KEY: string;
       /** The API's hot DB (shared with the auxiliary API Worker), for seeding apps and reading app_changes. */
       HOT_DB: D1Database;
       /** What the fake upstream (test/fake-upstream.js) answers for the API Worker: chain views and Google's JWKS. */

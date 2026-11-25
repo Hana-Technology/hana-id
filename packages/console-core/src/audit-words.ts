@@ -179,6 +179,7 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'rate.overridden': 'Rate overridden',
   'support.lookup': 'Support ID looked up',
   'users.find': 'Wallet directory searched',
+  'users.link_view': 'Person looked up across your apps',
   'evm_relay.staff_action': 'Gas sponsorship tool used',
   'evm_relay.staff_result': 'Gas sponsorship tool result',
   'labels.staff_action': 'Partner labels tool used',

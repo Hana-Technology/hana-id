@@ -55,6 +55,7 @@ describe('partnerUserView: the allowlist', () => {
       ],
       email: null,
       name: null,
+      sharedScope: false,
     };
     expect(v).toEqual(expected);
     const text = JSON.stringify(v);
@@ -216,7 +217,7 @@ describe('the routes', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { users: PartnerUserOut[]; next?: string };
     expect(body.users).toHaveLength(1);
-    expect(Object.keys(body.users[0]!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'name', 'scopeId', 'supportId', 'userId', 'wallets']);
+    expect(Object.keys(body.users[0]!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'name', 'scopeId', 'sharedScope', 'supportId', 'userId', 'wallets']);
     expect([body.users[0]!.email, body.users[0]!.name]).toEqual([null, null]);
     expect(body.next).toBe(`1800000100000:${USER}`);
     for (const s of PII) expect(JSON.stringify(body), s).not.toContain(s);

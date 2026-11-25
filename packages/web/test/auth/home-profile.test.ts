@@ -54,6 +54,7 @@ const homeScope = (scopeId = S1, apps: { appId: string; name: string; status?: '
   coverage: 'shared',
   googleClientId: null,
   supportId: null,
+  sharedScope: false,
   addresses: [],
   apps: apps.map((a) => ({ appId: a.appId, name: a.name, status: a.status ?? 'active', environment: 'live', origins: [], logoUrl: null })),
   appsTotal: apps.length,

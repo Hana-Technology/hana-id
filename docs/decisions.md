@@ -22746,6 +22746,200 @@ this branch fixes it. The deploy list it produced is kept outside the repository
   `packages/web/src/vault/record.ts` are unchanged; the manifest's `ckdNetworkKey` is unchanged; this branch touches a
   deploy script, a config generator, the NEAR relay's spend limits, tests and docs only.
 
+## Linking one person across a network's apps (branch `feat/app-user-linking`), 2026-11-25
+
+From `next` @ 4776f6af (`next` @ 2545dee2 and a6ccd7e3 merged in); not merged, not deployed; no migration at first, then after PR 153's review two index migrations, API 0031 and console 0006. Piece P7 of `partner-platform-spec.md` (B6, findings
+L9 and N7). D925 is the number the caller assigned for this piece.
+
+### D925. A network's owners see one person across its apps in the partner console, and staff find a person by either kind of Support ID; Passport Home labels its code as Journear's own on a shared wallet
+- Date 2026-11-25 · Status: the design is the Tech Lead's D913 (questions 4, 5 and 10) and D914 (N7) and the spec's
+  B6; **built**, not merged, not deployed; the points marked "to confirm (the Tech Lead)" below were decided while
+  building · Relates to D394, D396, D410, D913, D914, D915, D919 · Built: console-core `linking.ts`, `apps/api/src/
+  directory/{link,read,support}.ts`, `rpc/console.ts` (`linkUser`), `rate-limiter.ts` (soft fixed windows),
+  `home/apps.ts`, `changes/views.ts`; `apps/console/src/{users,writes,audit}.ts` and the Users screen; the admin
+  portal's Support ID lookup; Passport Home's wallet page; the playbook `link-lookup-volume`; e2e
+  `user-linking-console.spec.ts` and `home-shared-wallet.spec.ts`
+- **What it does.**
+  - **The network's owners, in the partner console** (`POST /api/orgs/:org/users/link {query, purpose}`, owner only):
+    on the Users screen of a marked scope a person's detail has "This person on your apps" (pressed for: one look-up),
+    and the owners of an org with a shared wallet get "Find a person by an app’s ID" (any app's User ID or Support ID,
+    or the scope's). The answer: the person's User ID and Support ID for the scope, which kind of code matched (a User
+    ID or a Support ID; the scope's or which app's own), and per app the app's id and name, the User ID and Support ID
+    it gives the person, first and last sign-in. Nothing else: no sub, email, address, internal id or identity key.
+  - **Authorised in the statement.** One SELECT (`linkStatement`) finds the person only among the org's own marked
+    scopes, by an app's code only for a live app of that org on the person's scope, and lists only such apps. Another
+    org's person, an unmarked scope, a deleted app's code and a code nobody holds give the same `not_found` and the
+    same words. Whole values only (no prefix, no LIKE). A Support ID two of the org's people hold is refused
+    (`ambiguous`, a new RpcCode, 409), counting the org's people only.
+  - **Audited before it answers** (console `audit_log` `users.link_view`): target the person's scope-level User ID,
+    `app_id` the app whose own code matched, details `{by, kind, of}` or `{by, code}` for a refusal; never the code
+    typed. The row is written only while the member is an owner now (read in the insert); no row, or a failed write,
+    means no answer.
+  - **Limited before the read**: 60 an hour and 300 a UTC day per member (RateLimiter `console-link:<member id>`),
+    1 000 a day per org (`console-link-org:<org>`); a look-up that finds nothing counts. Past 30 a member in a clock
+    hour or 200 an org in a UTC day, one `link_lookup_volume` security event per window (a deterministic id), which
+    the admin Worker's feed emails with its new playbook. The RateLimiter's fixed `hit` takes soft windows for it (they
+    never refuse; every other caller is unchanged, tested).
+  - **Journear staff**: `AdminRpc.supportLookup` and `findUsers` resolve an app's own User ID or Support ID too; each
+    match says whose code it is (`matchedBy`) and lists the apps of a marked scope the person signed in on with each
+    app's IDs (`userApps`). The admin screen shows "Matched" and "This person on each app".
+  - **Passport Home** (`GET /v1/home/apps` `sharedScope`): on the person's wallet of a marked scope, a line under the
+    apps and the Support ID box labelled as Journear's (below).
+  - **The apps list** (`ConsoleRpc.listApps`) carries `sharedScope`, so the Users screen knows whether to offer the
+    search; `PartnerUser` carries `sharedScope` for the labels.
+- **Address impact: none.** Nothing here reads or writes a path, a key, a derivation input or an ID: every read is of
+  what P6 writes; no ID changes (the console, Home and the staff screens show the same values as before, with new
+  labels). `git diff next -- contracts packages/core/src` is empty.
+- **The words people read** (all to confirm, the Tech Lead):
+  - Console, the detail: "This person on your apps"; "Each app made after this wallet was shared gives this person a
+    User ID and Support ID of its own."; the button "Show their ID on each app"; beside the IDs (N7): "Never give one
+    partner another partner’s ID for the same person. Each partner should only see its own."; under them: "Only
+    owners can see this. Each look-up is recorded in your Audit."; a viewer: "Only owners can see this person’s ID on
+    each of your apps."; the labels "User ID (all your apps)", "Support ID (all your apps)" and "all your apps" in the
+    list.
+  - Console, the search: "Find a person by an app’s ID"; "Type the User ID or Support ID that one of your apps has for a
+    person. You see the same person on all your apps."; the field "User ID or Support ID from one of your apps"; the
+    result "This is the Support ID {app} has for this person." (or "User ID"), or "This is the person’s Support ID for
+    all your apps."; "Open this person"; an ambiguous code: "More than one person has this Support ID. Ask for their
+    User ID instead."; the Audit's title "Person looked up across your apps".
+  - Passport Home: "The company behind these apps can see which of them you use with this wallet."; the box's heading
+    "Journear Support ID" and its line "Give this only to Journear support. If an app’s support team asks for your
+    Support ID, give them the one that app shows you." (the line changed after PR 153's review: below, item 7)
+  - The admin portal: "Matched: This app’s own code: {app}" or "The scope’s code (the person’s one ID for every app made
+    before the scope was marked)"; "This person on each app" with "The User ID and Support ID each app of this shared
+    scope gives the person. Never give one partner another partner’s ID for the same person."; the app page's User IDs
+    row now ends "The Support ID lookup finds a person by either."
+- **To confirm (the Tech Lead):**
+  1. **Home's Support ID: labelled as Journear's own, not an explanation that each site has its own** (D919's open
+     point after PR 148's review). Of the two, a label with one instruction is the plainer: the person learns what to do
+     with this code, and which code to give an app. The code itself is unchanged (the scope-level one, which staff and
+     the network resolve). The label names Journear only, not the network: the person may not know who the network is.
+  2. **Home's line names no network** ("The company behind these apps…"), where the spec has "{Network}": the API holds
+     no organisation names (they are in the console's D1), and showing a partner-set name on Journear's page would need
+     its own rules (D903's "These are {App}'s words"). Naming the network needs a staff-set name in the API: not built.
+  3. **The owner check is in the console, read fresh twice; the org and scope checks are in the API's statement.** The
+     role lives in the console's D1, so the API's SELECT can't read it: the console's route matrix reads the member's
+     role on the request (as every owner route), and the audit row that gates the answer is inserted only while the
+     member is still an owner. A member demoted between the two gets no row and no answer (tested). The API trusts the
+     console's member actor, as every ConsoleRpc method does.
+  4. **The audit row is written after the read and before the answer**, not before the read: its target (the person's
+     scope-level User ID) is known only from the read, and the spec asks for exactly that target. The count is spent
+     before the read, so a look-up the audit then refuses still counts. Refusals are audited too, with their code and no
+     target. The row also names the app whose own code matched (`app_id`): an app id is no person's identifier.
+  5. **A member's limits follow the member across orgs** (one object per console member, as the spec's
+     `console-link:<user id>`), the org's per org; fixed clock-hour and UTC-day windows, as the alert's own.
+  6. **Staff see every match of a shared Support ID**, each saying whose code it is (the lookup's existing rule, D394:
+     staff tell them apart by the scope and the app); only the console refuses an ambiguous code.
+  7. **Only marked scopes and live apps**: a person of an unmarked scope, and a deleted app's code, are `not_found` to
+     the console (there is no cross-app view to give); a suspended app is listed (still the network's). Staff see a
+     deleted app's rows until the 30-day purge.
+  8. **The panel loads only when pressed**, so opening a person's detail isn't a look-up, and each look-up is one the
+     owner chose.
+  9. **The search is a separate owner-only box**, not the Users screen's search (which viewers use and which stays on
+     the scope-level IDs); it shows only for an org with an app on a marked scope.
+  10. **At most 100 apps per answer**, most recently used first, with `truncated`.
+  11. **The CLI's `support:lookup` and `user:find` are unchanged** (scope-level codes; the operator's unaudited path);
+      `uid-erase` already resolves an app's own codes (D919).
+  12. **No timing padding.** A code that exists in another org and one that exists nowhere run the same statement and
+      the same audit write; the difference is a few index rows, inside D1's own latency. Pinned as budgets: the statement's
+      rows read (measured 26 to 32 for a hit, 3 for a miss, 8 for another org's person; held to 32 to 36, 6 and 12) don't
+      grow with the tables.
+- **Found in the spec:** "authorised inside the query itself (org, scope, role read fresh)" can't hold the role in the
+  API's query (point 3); "audited before it answers" with the scope-level target fixes the audit after the read (point
+  4); "{Network}" in Home's line has no source (point 2); B6 doesn't say what an ambiguous Support ID does (refused in
+  the console, listed for staff: point 6); "Search accepts any per-app User ID or Support ID as well as today's forms"
+  would give viewers the cross-app view through the existing search, so it is a separate owner search (point 9); the
+  spec's limit key `console-link:<user id>` shares its words with the console's per-IP flood key
+  `<env>:console-link:<ip>` (another binding, no clash).
+- **Also:** the D919 open point 4 (the staff lookup can't find an `'app'` app's codes) is closed by this piece; the
+  partner guide no longer tells partners to send the `sub` with an app's own Support ID.
+- **After PR 153's review (2026-11-25)**, on the same branch. The review found the core rules hold (no other org's data
+  in the SQL, the same answer for every miss, no answer without its audit row, the field-by-field allowlist) and
+  nothing high. Changed:
+  1. (medium) **A frozen org gets no look-ups.** The route is no longer `frozenOk` (a freeze is staff's containment,
+     the playbook's step, and a look-up removes pseudonymity); it records the refusal itself (`recordsFrozen`), and
+     the audit insert's guard also requires the org not frozen. Tests: a frozen org's owner is refused with a row,
+     before the API is asked; an org frozen between the API's answer and the row gets no answer.
+  2. **Refusals can't flood the audit.** The console's own flood limit, 10 look-ups a minute a member
+     (`CONSOLE_IP_LIMIT`, key `<env>:console-lookup:<member>`), before anything is counted; a `rate_limited` refusal
+     (the console's or the API's) writes at most one row per member per clock hour, read through console migration
+     **0006**'s index `audit_log (actor_id, action, at)` (0005 is P2's). No count on that row: `audit_log` is
+     append-only, and a count would need a table of its own (not built). Test: 50 look-ups in a minute write 11 rows
+     (ten answered, one for the forty refused).
+  3. **A look-up that ran but wasn't answered leaves a trace.** When the guarded insert writes nothing, an unguarded
+     row with no target, outcome `failed` and `{by, code: 'forbidden'}` (or `'org_frozen'`), then `403` with no data.
+     Tests for each guard: demoted, disabled, outside `required_hd`, a viewer whose owner grant is still waiting, the
+     org frozen meanwhile.
+  4. **`purpose: 'panel'` only by the person's scope-level User ID**: an app's code or any Support ID with `panel` is
+     `bad_request` ("purpose: the panel opens by the person’s User ID for all your apps; an app’s code is a search"),
+     recorded as such, so the audit's `by` can't be made misleading. Tests in the API and the console.
+  5. **The alerts** (thresholds to confirm, the Tech Lead): a weekly org alert, **500 a week** (fixed 7-day windows
+     from the Unix epoch): slow harvesting under 200 a day (199 a day is about 1 400 a week) now alerts. Why 500: honest
+     support work is one look-up for a ticket that needs the cross-app view; 500 a week is about 70 a working day, well
+     above any network we expect on testnet, and a quarter of what the daily threshold allows a week. Each event is
+     now written once a window, not `INSERT OR IGNORE` on every later look-up (amended below, item 11: a failed write is
+     retried); `CONSOLE_COSTS.linkUser` is 4 (the read and up to three event
+     writes). A member's event is filed under no org (their limits follow them across orgs) with `memberId` and
+     `crossedInOrg`; staff see every org their look-ups touched in the console audit by actor (the playbook says so).
+     Still unalerted: under 30 an hour per owner, 200 a day and 500 a week per org (about 2 000 people a month).
+  6. **Home's `sharedScope` only on the person's own listing**: someone else's never carries it (the API sends it with
+     `supportId`, the parser drops it elsewhere). Tests with a stranger.
+  7. **Home's words** (to confirm, the Tech Lead): the line "The company behind these apps can see which of them you
+     use with this wallet." shows only with two or more apps on the wallet (`appsTotal` ≥ 2; with one, "which of them"
+     means nothing); the Support ID box's line is now "Give this only to Journear support, not to an app’s support
+     team. If an app’s support team asks for your Support ID, give them the one that app shows you." (the network can
+     read the code too, so "only to Journear" alone wasn't true). **A later improvement, to confirm (the Tech Lead):** on
+     a marked scope Home shows each app's own Support ID per app, which removes the join key rather than labelling it.
+  8. **The audit names the person by a keyed hash, not their User ID** (to confirm, the Tech Lead): `target` is the
+     person's audit reference `lr1_…` (console-core `linkAuditRef`: HMAC-SHA256 of `IDENTITY_SUB_KEY` over
+     `"hana-id/link-audit-ref/v1"` ‖ 0x00 ‖ the scope-level User ID, 16 bytes), which the API computes and the console
+     never shows. Staff get a person's reference from the Support ID lookup ("Audit reference": "The network owners’
+     look-ups of this person: filter the Audit log by it."; not a link, nothing naming a person goes into a URL) and
+     type it into the Audit log's new filter "Person’s audit reference" (`queryAudit`'s `target`, references only). `uid-erase` doesn't touch the console's
+     database: an erasure removes the directory's rows and leaves the audit as it was, so the 60-month audit holds no
+     end-user ID and an owner can't hide whom they looked up by asking for an erasure. Chosen over replacing the target
+     with a marker at erasure, which would do exactly that, and would need `audit_log`'s append-only trigger opened. No
+     console migration for this.
+  9. **The cost is bounded by the cap**: API migration **0031**, index `end_user_apps (user_id, last_seen_at DESC,
+     app_id)`, so the list stops at 101 rows in the SQL (the staff read too, one capped part per person). Measured: a
+     person on 100 apps 208 rows, on 120 apps 210 (368 before), held to 240; the staff read 101 either way. `security.md`'s
+     guessing odds now count codes (people × (1 + apps per person)), not people.
+  10. **Recorded:** moving a marked scope to another org gives the new org's owners its whole `end_user_apps` history
+      in this view (noted for that operation in `operations.md`). A console deployed ahead of the API (whose binding
+      has no `linkUser`, so the call throws) answers "Looking up a person across your apps isn’t available yet. Try
+      again later." (`500`, recorded), never an error page; the deploy order (API, then the console) is in
+      `operations.md` with 0031, for the deploy list.
+  Tests added for the review's gaps: the RPC throwing; a panel look-up with an app's code; a scope moved between orgs;
+  Home's `sharedScope` on other people's listings; the e2e specs in all three browsers.
+- **After the automated review of PR 153's fixes (2026-11-25)**, two medium findings:
+  11. **A failed alert write is retried, not lost.** The soft window was named only by the hit that crossed it, so an
+      `INSERT` that failed lost the window's alert. Now `hit` names a soft window on every hit past its max until the
+      caller marks it written (`RateLimiter.markAlerted`, after the `INSERT` succeeded; a marker per window, deleted two
+      windows on): one bounded attempt per look-up while it fails, none once written; the event's id still makes a
+      repeat a no-op. Tests: the crossing write fails and the next look-up writes it, then no further write in the
+      window, for a member's hour and an org's week.
+  12. **A person's audit reference never sits in a URL.** The admin's audit filter took `target` from the query string
+      and put it in the address bar and the CSV link. Now the GET forms ignore a `target` parameter; the page holds the
+      reference in memory ("Person’s audit reference", "Kept on this page only, never in the address."), sends it in a
+      POST body (`POST /api/audit`, `POST /api/audit.csv`) and downloads that CSV from memory; an old link's `target` is
+      dropped. Tests: the page's address, history state, links and API paths never carry it; the routes ignore it in the
+      query and filter by it in the body, the CSV included. Checked: the console's Audit page has no person filter; the
+      linking view's look-ups are POST bodies, and its SPA keeps the open person in memory. **Not changed, and found:**
+      opening a person (the Users list, and "Open this person") reads `GET /api/orgs/:org/users/:userId`, the user
+      detail route of D310, whose path carries the scope-level User ID (the fetch's URL, not the address bar): a
+      pre-existing route; moving it to a POST body is a separate change to confirm (the Tech Lead).
+- **For the Tech Lead to decide knowingly** (the reviewer's view with each):
+  - **No fresh sign-in (step-up) for a look-up.** The reviewer agrees: a look-up reads, the audit and limits bound it,
+    and a Google confirmation per look-up would make support work slow. A middle ground: require a console sign-in
+    within the last 12 hours (the session's `auth_at`): one more condition in the audit insert's guard and a "Sign in
+    again to look people up" message with the sign-in button; about half a day with tests.
+  - **The API trusts the console for the owner role**, as for every other owner-only ConsoleRpc write: the role lives
+    in the console's D1, which the API can't read; the console reads it on the request and again in the audit insert.
+  - **The audit row is written after the read and before the answer**: the person's reference is known only from the
+    read; the count is spent before it, so an unanswered look-up still counts and is recorded.
+  - **A member's limits follow them across orgs** (one object per member), the org's per org.
+  - **Staff see every match of a shared Support ID**, each saying whose code it is; only the console refuses one.
+
 ## Sodax: the Tech Lead's answers to D923 (branch `docs/sodax-decisions`), 2026-11-25
 
 From `next` @ 287ec88e; not merged, docs only. D926 is the number the caller assigned (D925 is another branch's).

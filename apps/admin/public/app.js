@@ -1163,14 +1163,14 @@ function sharedWalletRow(app, orgId, ro, scopeApps) {
 
 /**
  * D919 (migration 0030): which User ID the app gives its users, fixed when it was created. 'app': its own, on a scope
- * marked as shared (the Support ID lookup doesn't find those yet: the linking piece adds it); 'scope': the person's one
- * User ID for the scope's apps, and on a marked scope the app was made before the mark. Null for an API from before 0030.
+ * marked as shared (the Support ID lookup finds those too since D925); 'scope': the person's one User ID for the scope's
+ * apps, and on a marked scope the app was made before the mark. Null for an API from before 0030.
  */
 function userIdsRow(app) {
   if (app.userIds !== 'app' && app.userIds !== 'scope') return null;
   const text =
     app.userIds === 'app'
-      ? 'Its own: each person gets a User ID and Support ID on this app that no other app has. The Support ID lookup doesn’t find these yet.'
+      ? 'Its own: each person gets a User ID and Support ID on this app that no other app has. The Support ID lookup finds a person by either.'
       : app.sharedScope
         ? 'The scope’s: this app was made before the scope was marked as shared, so it keeps the User IDs it already had.'
         : 'The scope’s: each person has the same User ID and Support ID on every app of this scope.';
@@ -2190,8 +2190,40 @@ function expediteControl(c) {
 
 // ---- audit ----
 
+/**
+ * D925 after PR 153's review: a person's audit reference (`lr1_…`, from the Support ID lookup) filters the audit to the
+ * network owners' look-ups of them. It is held here, in memory only, and sent in a POST body: never in the address bar,
+ * the history, a link or the CSV's URL (as the Users screen's queries, D410).
+ */
+const auditState = { target: '' };
+
+/** The CSV of the filtered audit with the person's reference, fetched by POST and saved from memory. */
+async function downloadAuditCsv(query, target) {
+  for (;;) {
+    const res = await send('POST', `/api/audit.csv?${query}`, JSON.stringify({ target }));
+    if (res === EXPIRED) {
+      await session.waitForSignIn();
+      continue;
+    }
+    session.answered();
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new ApiError(res.status, data?.error?.code || 'error', data?.error?.message || `HTTP ${res.status}`);
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const a = h('a', { href: url, download: 'audit.csv' });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    return;
+  }
+}
+
 async function auditPage(main) {
   const params = new URLSearchParams(location.search);
+  // Never a person's reference from the URL (an old link's `target` is dropped).
+  params.delete('target');
   const keys = ['orgId', 'appId', 'actorKind', 'actorId', 'action'];
   const labels = { orgId: 'Organisation id', appId: 'App id', actorKind: 'Done by', actorId: 'Actor id or email', action: 'Action' };
   const filterForm = h(
@@ -2209,6 +2241,7 @@ async function auditPage(main) {
           const v = filterForm.elements[k].value;
           if (v) q.set(k, String(Date.parse(`${v}T00:00:00Z`)));
         }
+        auditState.target = filterForm.elements.target.value.trim();
         history.pushState(null, '', `/audit?${q}`);
         render();
       },
@@ -2218,17 +2251,32 @@ async function auditPage(main) {
         ? field({ name: k, type: 'select', label: labels[k], optional: false, value: params.get(k) || '', options: [{ value: '', label: 'Anyone' }, { value: 'hana', label: `${BRAND.company} staff` }, { value: 'member', label: 'Members' }, { value: 'system', label: 'System' }, { value: 'link', label: 'Account link' }, { value: 'platform', label: ACTOR.platform }] })
         : field({ name: k, label: labels[k], optional: false, value: params.get(k) || '', placeholder: k === 'action' ? 'e.g. invite.issue' : k === 'orgId' ? 'org_…' : '' }),
     ),
+    field({ name: 'target', label: 'Person’s audit reference', optional: false, value: auditState.target, placeholder: 'lr1_…', help: 'From a Support ID lookup: the network owners’ look-ups of that person. Kept on this page only, never in the address.' }),
     field({ name: 'from', type: 'date', label: 'From', optional: false, size: 'narrow', value: params.get('from') ? new Date(Number(params.get('from'))).toISOString().slice(0, 10) : '' }),
     field({ name: 'to', type: 'date', label: 'To', optional: false, size: 'narrow', value: params.get('to') ? new Date(Number(params.get('to'))).toISOString().slice(0, 10) : '' }),
-    h('div', { class: 'form-actions' }, h('button', { type: 'submit', class: btn('primary') }, 'Filter'), [...params.keys()].length ? h('a', { href: '/audit', 'data-link': true, class: btn('ghost') }, 'Clear filters') : ''),
+    h(
+      'div',
+      { class: 'form-actions' },
+      h('button', { type: 'submit', class: btn('primary') }, 'Filter'),
+      [...params.keys()].length || auditState.target
+        ? h('a', { href: '/audit', 'data-link': true, class: btn('ghost'), onclick: () => (auditState.target = '') }, 'Clear filters')
+        : '',
+    ),
   );
   const csv = new URLSearchParams(params);
   csv.delete('cursor');
   main.append(
-    pageHead('Audit log', { subtitle: 'Who did what in the partner console and here, and every staff read of the user directory.', actions: [h('a', { href: `/api/audit.csv?${csv}`, download: true, class: btn('secondary') }, 'Download CSV')] }),
+    pageHead('Audit log', {
+      subtitle: 'Who did what in the partner console and here, and every staff read of the user directory.',
+      actions: [
+        auditState.target
+          ? h('button', { type: 'button', class: btn('secondary'), onclick: () => downloadAuditCsv(csv, auditState.target).catch((err) => main.prepend(errorBox(err))) }, 'Download CSV')
+          : h('a', { href: `/api/audit.csv?${csv}`, download: true, class: btn('secondary') }, 'Download CSV'),
+      ],
+    }),
     panel('Filter', { hint: 'The CSV has the console rows below and, with an organisation filter, its app changes too.' }, filterForm),
   );
-  const data = await api('GET', `/api/audit?${params}`);
+  const data = auditState.target ? await api('POST', `/api/audit?${params}`, { target: auditState.target }) : await api('GET', `/api/audit?${params}`);
   main.append(
     panel(
       'Console audit',
@@ -4268,12 +4316,28 @@ function emailCell(key, e) {
 
 const outcomeBadge = (o) => (o === 'ok' ? badge('ok', 'info') : o === 'rejected' ? badge('rejected', 'warning') : badge(o, 'critical'));
 
+/**
+ * D925: which of the person's codes the lookup matched, in words: the scope's (every app of before, and every app on a
+ * scope not marked as shared), or one app's own (an app made after its scope was marked). Null for an internal id.
+ */
+function matchedByText(by, appLabel) {
+  if (!by) return null;
+  if (by.of === 'app') return h('span', {}, 'This app’s own code: ', appLabel(by.appId));
+  return 'The scope’s code (the person’s one ID for every app made before the scope was marked)';
+}
+
 function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
   const u = m.user;
   const appName = new Map(m.apps.map((a) => [a.appId, a.name]));
   const appLabel = (id) => (id ? named(appName.get(id) || 'unknown app', id) : '');
+  const by = matchedByText(m.matchedBy, appLabel);
+  const userApps = m.userApps || [];
   const parts = [
     facts([
+      ...(by ? [['Matched', by]] : []),
+      // D925 after PR 153's review: the network owners' look-ups of this person are the audit rows with this target. Not a
+      // link: nothing that names a person goes into a URL (D410); staff type it into the Audit log's filter.
+      ...(m.linkAuditRef ? [['Audit reference', h('span', {}, mono(m.linkAuditRef), h('span', { class: 'sub' }, 'The network owners’ look-ups of this person: filter the Audit log by it.'))]] : []),
       ['User ID', mono(u.userId)],
       ['Support ID', mono(u.supportId)],
       // The account's name: its root's, else the first identity's that has one (each identity's is in the table below).
@@ -4309,6 +4373,14 @@ function supportMatchBlock(m, k, n, activity, ledger, emails, days) {
     // D755: NEAR is recorded only from a session of an SDK of 0.4.0 or later; say so rather than leave a gap.
     u.wallets.length && !u.wallets.some((w) => w.chain === 'near') ? h('p', { class: 'hint' }, 'No NEAR account yet: it is recorded at the user’s next sign-in through an app on SDK 0.4.0 or later.') : '',
     ...userEventsBlock(u),
+    // D925: on a scope marked as shared, the apps the person signed in on, each with the User ID and Support ID it gives them.
+    ...(userApps.length
+      ? [
+          h('h3', {}, 'This person on each app'),
+          h('p', { class: 'hint' }, 'The User ID and Support ID each app of this shared scope gives the person. Never give one partner another partner’s ID for the same person.'),
+          table(['App', 'User ID', 'Support ID', 'First sign-in', 'Last sign-in'], userApps.map((a) => tr(appLabel(a.appId), mono(a.userId), mono(a.supportId), time(a.firstSeenAt), time(a.lastSeenAt)))),
+        ]
+      : []),
     h('h3', {}, 'Apps of the scope'),
     table(['App', 'Organisation', 'Environment', 'Persistence', 'Deleted'], m.apps.map((a) => tr(named(a.name, a.appId), mono(a.orgId), a.environment ? envBadge(a.environment) : 'unknown', a.persistence, a.deletedAt ? time(a.deletedAt) : ''))),
     h('h3', {}, 'Vault shares that haven’t expired'),
@@ -4347,7 +4419,21 @@ function supportResult(out, v, askedIds) {
         'Matches',
         {},
         note('info', '', `${v.matches.length}${v.truncated ? '+' : ''} users share this Support ID (40 bits collide rarely). Tell them apart by the app and the time the partner names.`),
-        table(['#', 'User ID', 'Scope', 'Organisation', 'Apps', 'Last seen'], v.matches.map((m, k) => tr(String(k + 1), h('code', {}, m.user.userId), mono(m.user.scopeId), mono(m.user.orgId || ''), m.apps.map((a) => a.name).join(', '), time(m.user.lastSeenAt)))),
+        table(
+          ['#', 'User ID', 'Scope', 'Organisation', 'Matched', 'Apps', 'Last seen'],
+          v.matches.map((m, k) =>
+            tr(
+              String(k + 1),
+              h('code', {}, m.user.userId),
+              mono(m.user.scopeId),
+              mono(m.user.orgId || ''),
+              // D925: whose code it is (the scope's, or one app's own).
+              m.matchedBy && m.matchedBy.of === 'app' ? (m.apps.find((a) => a.appId === m.matchedBy.appId) || { name: m.matchedBy.appId }).name : 'the scope',
+              m.apps.map((a) => a.name).join(', '),
+              time(m.user.lastSeenAt),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -4440,7 +4526,7 @@ async function supportPage(main) {
         await run();
       },
     },
-    label('Support ID, User ID or internal id', h('input', { name: 'query', required: true, maxlength: 64, placeholder: 'HANA-XXXX-XXXX, u1_… or hu_…', value: f.query, autocomplete: 'off' }), 'From the partner’s escalation. For a wallet address or a sub, search Users first.'),
+    label('Support ID, User ID or internal id', h('input', { name: 'query', required: true, maxlength: 64, placeholder: 'HANA-XXXX-XXXX, u1_… or hu_…', value: f.query, autocomplete: 'off' }), 'From the partner’s escalation or the user: the scope’s code or one app’s own (each app of a shared scope has its own). For a wallet address or a sub, search Users first.'),
     label('Support reference', h('input', { name: 'ticket', required: true, maxlength: 64, pattern: SUPPORT_TICKET_PATTERN, value: f.ticket, placeholder: 'ZD-4127', autocomplete: 'off' }), `${TICKET_HELP} The lookup is recorded before anything is read.`, { invalid: TICKET_INVALID }),
     label('Days back', h('input', { name: 'days', type: 'number', min: 1, max: 731, value: f.days }), '1 to 731.', { size: 'narrow' }),
     label('Request IDs from the escalation', h('textarea', { name: 'requestIds', placeholder: 'req_… one per line' }, f.requestIds), 'Up to 20, one per line. They come from the SDK’s errors and the demo’s diagnostics.', { size: 'wide', optional: true }),

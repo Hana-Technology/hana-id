@@ -9,7 +9,7 @@ export interface Limit {
   name: string;
   windowMs: number;
   max: number;
-  /** hitSliding only: a soft limit never refuses; past it, its name is reported in `soft` (an alert, not a breaker). */
+  /** A soft limit never refuses; past it, its name is reported in `soft` (an alert, not a breaker): by `hitSliding` on every hit past it, by `hit` on every hit past it until `markAlerted` notes its alert was written (D925). */
   soft?: boolean;
 }
 
@@ -88,12 +88,33 @@ export class RateLimiter extends DurableObject<Env> {
       const key = `${l.name}@${start}`;
       return { l, key, start, count: kv.get<number>(key) ?? 0 };
     });
+    // A soft window never refuses and still counts. Past its max it is reported in `soft` on every hit until the caller
+    // says its alert was written (`markAlerted`, a marker per window), so a failed write is retried by the next hit and
+    // a written one is never repeated in the window (D925, after the review of PR 153's fixes: detection fails closed).
+    const soft: string[] = [];
     for (const s of slots) {
-      if (s.count >= s.l.max) return { ok: false, limit: s.l.name, retryAfterS: Math.max(1, Math.ceil((s.start + s.l.windowMs - now) / 1000)) };
+      if (s.count < s.l.max) continue;
+      if (s.l.soft) {
+        if (kv.get<number>(`alerted:${s.key}`) === undefined) soft.push(s.l.name);
+      } else return { ok: false, limit: s.l.name, retryAfterS: Math.max(1, Math.ceil((s.start + s.l.windowMs - now) / 1000)) };
     }
     for (const s of slots) kv.put(s.key, s.count + 1);
     this.prune(limits, now);
-    return { ok: true };
+    return soft.length > 0 ? { ok: true, soft } : { ok: true };
+  }
+
+  /**
+   * Notes that the alert of each named soft window of `limits` at `now` was written: `hit` stops naming it in that window
+   * (D925). Old markers of these limits are deleted here (a marker lives two windows), so they don't pile up.
+   */
+  markAlerted(limits: Limit[], names: string[], now: number = Date.now()): void {
+    const kv = this.ctx.storage.kv;
+    for (const l of limits) {
+      if (!l.soft || !names.includes(l.name)) continue;
+      const start = Math.floor(now / l.windowMs) * l.windowMs;
+      kv.put(`alerted:${l.name}@${start}`, now);
+      for (const [key] of kv.list<number>({ prefix: `alerted:${l.name}@` })) if (Number(key.slice(key.lastIndexOf('@') + 1)) + 2 * l.windowMs <= now) kv.delete(key);
+    }
   }
 
   /**

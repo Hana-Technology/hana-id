@@ -148,6 +148,8 @@ export function summaryView(r: AppRow & { active_origins: number; pending_change
   const url = logoUrl(filesOrigin, r.logo_key);
   if (url) v.logoUrl = url;
   v.emailOn = r.login_methods.split(',').includes('email');
+  // D925: the Users screen's search across apps is for an org with a shared wallet.
+  v.sharedScope = r.app_user_ids === 1;
   return v;
 }
 

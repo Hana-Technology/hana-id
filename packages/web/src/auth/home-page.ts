@@ -144,6 +144,19 @@ export const HOME_TEXT = Object.freeze({
   moreAppsButton: 'Show all apps',
   moreAppsCap: (shown: number, left: number): string => `${BRAND.home} can show only ${shown} apps here, so ${left === 1 ? 'that one can’t' : `those ${left} can’t`} be listed.`,
   noAddress: `${BRAND.company} has no address on record for this wallet yet.`,
+  /**
+   * D925 (D913 question 10): on a wallet several partners' apps share (a scope Journear marked), the organisation behind
+   * them can see which of them the person uses. Home doesn't hold that organisation's name, so it isn't named (to
+   * confirm, the Tech Lead).
+   */
+  sharedSeen: 'The company behind these apps can see which of them you use with this wallet.',
+  /** The Support ID box: the usual line, and on such a wallet, the code labelled as Journear's own (D925, to confirm). */
+  supportTitle: 'Support ID',
+  supportLine: 'Give this to the app’s support team if you need help. It doesn’t reveal your email or your Google account.',
+  supportSharedTitle: `${BRAND.company} Support ID`,
+  // PR 153's review: true as worded (the company behind these apps can read this code too, an app's support team
+  // shouldn't get it), and still plain.
+  supportSharedLine: `Give this only to ${BRAND.company} support, not to an app’s support team. If an app’s support team asks for your Support ID, give them the one that app shows you.`,
   /** A wallet's tabs (D895), and what their list is called. */
   tabs: Object.freeze({ addresses: 'Addresses', security: 'Security', move: 'Move wallet' }) as Readonly<Record<'addresses' | 'security' | 'move', string>>,
   tabsWallet: 'This wallet',
@@ -2469,6 +2482,9 @@ export function startHomePage(deps: HomePageDeps): HomePage {
         ),
         // D922: Journear's words about the apps left out, under the partner's box, never inside it.
         ...moreApps(scope),
+        // D925 (D913 question 10): on the person's wallet of a scope several partners' apps share.
+        // PR 153's review: only once two or more apps use the wallet ("which of them" means nothing with one).
+        scope.mine && scope.sharedScope && scope.appsTotal >= 2 ? d.h('p', { class: 'home-shared-seen', attrs: { id: 'home-shared-seen' } }, HOME_TEXT.sharedSeen) : null,
         // Whether it needs them: the badge on its own line, then the answer; the question is read to a screen reader
         // only (the answer starts "No." or "Yes.").
         d.h('p', { attrs: { id: 'home-coverage' } }, ...coverageParts(d, cover, busy === 'check', badge(cover.badge, cover.tone))),
@@ -2500,9 +2516,12 @@ export function startHomePage(deps: HomePageDeps): HomePage {
             ? d.h(
                 'div',
                 { class: 'home-support' },
-                d.h('h2', {}, 'Support ID'),
+                // D925: on a wallet several partners' apps share, this is the person's code for the whole scope, which
+                // every app made before the mark and the scope's owner hold; read out to another app's support it would
+                // match them, so it is labelled as Journear's own.
+                d.h('h2', {}, scope.sharedScope ? HOME_TEXT.supportSharedTitle : HOME_TEXT.supportTitle),
                 d.h('p', {}, d.h('span', { class: 'mono', attrs: { id: 'home-support-id' } }, scope.supportId), ' ', copyButton('Support ID', scope.supportId, 'home-copy-support')),
-                d.h('p', { class: 'muted' }, 'Give this to the app’s support team if you need help. It doesn’t reveal your email or your Google account.'),
+                d.h('p', { class: 'muted', attrs: { id: 'home-support-line' } }, scope.sharedScope ? HOME_TEXT.supportSharedLine : HOME_TEXT.supportLine),
                 // With no addresses, the copy line is the Support ID's.
                 addressRows.length === 0 ? copyLine.box : null,
               )

@@ -6,7 +6,7 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
 for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
+Last verified: 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
 answers to D923 (D926): the fork holding the Stellar change (section 2, "The Stellar change, on our fork"), the
 widget decided as one app per partner (section 12), switching off decided, the worked example's home (section 2), "Open";
 nothing else re-checked); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
@@ -251,9 +251,12 @@ still lists the apps that use a wallet. The line must be live before the partner
    linking for Sodax and Journear staff (`partner-platform-spec.md` Part B). The wallet addresses stay the same on
    every site, so partners who compare addresses can still match users. **The per-app User IDs are built (D919, piece
    P6, not deployed):** an app created after staff mark the scope gets its own User ID and Support ID; Sodax's own
-   apps made before the mark keep theirs. The linking (Sodax's view of one person across its partners' apps, and the
-   staff lookup of a per-app Support ID) is piece P7, not built: mark the scope for real partners only once P7 is
-   deployed.
+   apps made before the mark keep theirs. **The linking is built too (D925, piece P7, not deployed):** Sodax's owners
+   see one person across its partners' apps in our partner portal (a person's "This person on your apps", and a
+   search by any app's User ID or Support ID; owners only, each look-up recorded and limited, never from Sodax's
+   backend), and Journear staff find a person by either kind of code. Sodax may not give one partner another
+   partner's ID for the same person; the portal says so beside the IDs. Mark the scope for real partners only once
+   P6 and P7 are deployed.
 3. Partner portal members belong to the whole organisation: a Sodax partner given portal access would see every
    other Sodax partner's apps and users. Per-app access doesn't exist.
 4. Security contacts are per organisation: a web address added for one partner's app is announced to Sodax's

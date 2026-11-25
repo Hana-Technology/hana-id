@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-25 (branch `feat/platform-keys`, from `next`, not merged, not deployed: "Layout"'s platform key files, the preview's platform keys answers and demo actions `act_demo_key_add` and `act_demo_key_confirm`, D918); 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
+Last verified: 2026-11-25 (branch `feat/app-user-linking`, not merged, not deployed: "Users": the linking view for owners, the "(all your apps)" labels, D925); 2026-11-25 (branch `feat/platform-keys`, from `next`, not merged, not deployed: "Layout"'s platform key files, the preview's platform keys answers and demo actions `act_demo_key_add` and `act_demo_key_confirm`, D918); 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
 from `@hana-id/brand`'s `LOCKUP`, outlined, D789); 2026-11-12 (branch `feat/journear-design-console`, not merged, not deployed: the SPA on the Journear
 Passport design system, "Brand" and "Patterns" below, D765: its tokens, component classes, self-hosted Archivo and IBM
 Plex and the Journear lockup; toasts, the save bar, setting rows, choice cards, validate on blur, the stats strip; the
@@ -118,6 +118,12 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
   platform reads "Requested by your platform key pkc_…".
 - **Users** (`/orgs/:org/users`): on where the env's manifest sets `console.usersScreen: true` (`gen` writes
   `USERS_SCREEN`; testnet only, sandbox-dev has it on, D702); off elsewhere, the tab hidden and its routes `404` (D357).
+  On a wallet several of the org's apps share (a marked scope, D925) the list and the detail label the person's IDs
+  "(all your apps)"; owners get "This person on your apps" in the detail (pressed for, one recorded look-up: each app's
+  User ID and Support ID, the sharing rule "Never give one partner another partner’s ID for the same person. Each
+  partner should only see its own." beside them) and, when an app of the org is on a marked scope, "Find a person by an
+  app’s ID" above the list (`POST /api/orgs/:org/users/link`); viewers see "Only owners can see this person’s ID on
+  each of your apps.".
   It shows a user's email address only once the user shared it with one of the org's apps (D411); an app name that
   isn't one display-safe line shows as "Unnamed app" rather than hiding the user. The list sits in a card like every
   console table (`.jp-table-wrap` under the content; the others sit in panels); the User ID and the Support ID never break
@@ -220,5 +226,7 @@ answers 401: the "Your session has ended" banner; switch to `owner` in another t
 `act_demo_policy`, `act_demo_settings`, `act_demo_invite`, `act_demo_owner`, `act_demo_ok`, `act_demo_failed`,
 `act_demo_expired`. "Confirm with Google" in the preview marks the action done and comes straight back (no Google).
 The invite and cancel pages: `/invite#t=<43 characters>`, `/cancel/gc_Ch4kq81Ns#t=<43 characters>`. The Users page
-(`/orgs/org_7Hq2Lm9Xc4/users`) lists three made-up users, the third with a shared email; clicking a User ID opens
-its detail.
+(`/orgs/org_7Hq2Lm9Xc4/users`) lists four made-up users, the first on the shared wallet of `app_Rw2Bt7Kd5c` (D925:
+"Find a person by an app’s ID" answers `HANA-7Q2M-K4XP`, that app's own code, or the person's `HANA-1K8D-W3QA`; their
+detail's "This person on your apps" lists both apps), the fourth with a shared email; clicking a User ID opens its
+detail.

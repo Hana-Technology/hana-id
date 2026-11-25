@@ -831,6 +831,12 @@ button.home-row:focus-visible {
 
 /* ---- a wallet's page ---- */
 
+/* D925: on the person's wallet of a scope several partners' apps share, under its apps. */
+.home-shared-seen {
+  margin: 0;
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+}
 #home-coverage .jp-badge {
   margin-right: var(--jp-space-1);
 }

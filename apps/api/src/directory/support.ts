@@ -4,9 +4,12 @@
 // by request ID) is read by the admin Worker and the CLI as `usage_admin`, never here: the API's ledger role can only
 // write (D73).
 //
-// Code → user is the wallet directory (`end_users.support_code`, `token_sub`, `user_id`; D312, D346): every match is
-// listed, at most SUPPORT_MATCHES_MAX in full. For each, the scope's apps, the user's vault shares in them that haven't
-// expired, and the scope's apps' `app_changes` in the window.
+// Code → user is the wallet directory (`end_users.support_code`, `token_sub`, `user_id`; D312, D346), and since D925 an
+// app's own User ID or Support ID too (`end_user_apps.app_sub`, `support_code`; an app made after its scope was marked
+// as shared, D919): every match is listed, at most SUPPORT_MATCHES_MAX in full, each saying which of its codes matched
+// (`matchedBy`: the scope's, or which app's own). For each, the apps of a marked scope the person signed in on with
+// each app's IDs (`userApps`), the scope's apps, the user's vault shares in them that haven't expired, and the scope's
+// apps' `app_changes` in the window.
 //
 // SECURITY: the answer is staff data (subs, wallet addresses, app changes); nothing here logs any of it. No share id,
 // session key, counter or wrapped share is selected.
@@ -20,7 +23,10 @@ import {
   type SupportApp,
   type SupportLookupResult,
   type SupportMatch,
+  type SupportQuery,
   type SupportShare,
+  type SupportUserApp,
+  SUPPORT_USER_APPS_MAX,
   type UserShare,
   formatSupportId,
   parseSupportQuery,
@@ -135,8 +141,58 @@ async function scopeChanges(db: HotDb, scopeId: string, apps: AppRow[], orgIds: 
   return rows.map(appChangeView);
 }
 
+interface UserAppRow {
+  app_id: string;
+  app_sub: string;
+  support_code: string;
+  first_seen_at: number;
+  last_seen_at: number;
+}
+
+/**
+ * The apps of a marked scope each listed user signed in on, with the IDs each gives them (D925; `end_user_apps`,
+ * migration 0030), most recently used first, at most SUPPORT_USER_APPS_MAX a user. One read for all of them.
+ */
+export const userAppsStatement = (internalIds: readonly string[]): Q =>
+  // One capped list per person, each read newest first down migration 0031's index and stopped at the cap, so the cost
+  // is bounded by the cap, not by how many apps the person used (PR 153's review). One statement (D1 refuses a long
+  // compound SELECT): the people as a JSON array, each with its apps as a JSON aggregate.
+  q`SELECT p.value AS user_id,
+      (SELECT json_group_array(json_object('app_id', x.app_id, 'app_sub', x.app_sub, 'support_code', x.support_code, 'first_seen_at', x.first_seen_at, 'last_seen_at', x.last_seen_at))
+         FROM (SELECT app_id, app_sub, support_code, first_seen_at, last_seen_at FROM end_user_apps
+                WHERE user_id = p.value ORDER BY last_seen_at DESC, app_id LIMIT ${SUPPORT_USER_APPS_MAX}) x) AS apps_json
+      FROM json_each(${JSON.stringify(internalIds)}) p`;
+
+async function userAppsOf(db: HotDb, internalIds: string[]): Promise<Map<string, SupportUserApp[]>> {
+  const out = new Map<string, SupportUserApp[]>();
+  if (internalIds.length === 0) return out;
+  const rows = await db.all<{ user_id: string; apps_json: string }>(userAppsStatement(internalIds));
+  for (const r of rows) {
+    const apps = (JSON.parse(r.apps_json || '[]') as (UserAppRow | null)[]).filter((a): a is UserAppRow => a !== null);
+    out.set(
+      r.user_id,
+      apps
+        .map((a) => ({ appId: a.app_id, userId: a.app_sub, supportId: formatSupportId(a.support_code), firstSeenAt: a.first_seen_at, lastSeenAt: a.last_seen_at }))
+        .sort((x, y) => y.lastSeenAt - x.lastSeenAt || (x.appId < y.appId ? -1 : 1)),
+    );
+  }
+  return out;
+}
+
+/**
+ * Which of the user's codes `query` is (D925): the scope's own (`end_users`), else one app's own (`end_user_apps`, an
+ * app made after the scope was marked). A 'scope' app's row holds the scope's code, so the scope comes first. Null for
+ * an internal id.
+ */
+function matchedBy(query: SupportQuery, user: StaffUser, apps: SupportUserApp[]): SupportMatch['matchedBy'] {
+  if (query.kind === 'internalId') return null;
+  if (query.kind === 'userId' ? user.userId === query.userId : user.supportId === formatSupportId(query.code)) return { of: 'scope', appId: null };
+  const app = apps.find((a) => (query.kind === 'userId' ? a.userId === query.userId : a.supportId === formatSupportId(query.code)));
+  return app ? { of: 'app', appId: app.appId } : { of: 'scope', appId: null };
+}
+
 /** `AdminRpc.supportLookup`: every user the query names, each with its scope's apps, its shares and the apps' changes. */
-export async function supportLookup(db: HotDb, i: { query: string; days?: number | undefined }, now: number): Promise<SupportLookupResult> {
+export async function supportLookup(db: HotDb, i: { query: string; days?: number | undefined }, now: number, auditRef?: (scopeUserId: string) => Promise<string>): Promise<SupportLookupResult> {
   const query = parseSupportQuery(i.query);
   if (!query) return refuse('bad_request', NOT_A_QUERY);
   const since = supportSince(now, i.days ?? SUPPORT_DAYS_DEFAULT);
@@ -145,14 +201,15 @@ export async function supportLookup(db: HotDb, i: { query: string; days?: number
   const { users } = await adminFindUsers(db, { query: text }, now);
   const listed = users.slice(0, SUPPORT_MATCHES_MAX);
   const scopeIds = [...new Set(listed.map((u) => u.scopeId))];
-  const apps = await scopeApps(db, scopeIds);
+  const [apps, userApps] = await Promise.all([scopeApps(db, scopeIds), userAppsOf(db, listed.map((u) => u.internalId))]);
   const matches: SupportMatch[] = [];
   for (const user of listed) {
     const mine = apps.filter((a) => a.scope_id === user.scopeId);
     const orgIds = [...new Set([...(user.orgId ? [user.orgId] : []), ...mine.map((a) => a.org_id)])];
     const [shares, changes] = await Promise.all([matchShares(db, user, mine, now), scopeChanges(db, user.scopeId, mine, orgIds, since)]);
     const appViews: SupportApp[] = mine.map((a) => ({ appId: a.id, name: a.name, orgId: a.org_id, environment: a.environment ?? null, persistence: a.persistence, deletedAt: a.deleted_at }));
-    matches.push({ user, apps: appViews, shares, changes });
+    const own = userApps.get(user.internalId) ?? [];
+    matches.push({ user, matchedBy: matchedBy(query, user, own), userApps: own, ...(auditRef ? { linkAuditRef: await auditRef(user.userId) } : {}), apps: appViews, shares, changes });
   }
   return { query, since, matches, truncated: users.length > SUPPORT_MATCHES_MAX };
 }

@@ -15,6 +15,7 @@ import {
   cancelChangeInput,
   consoleGetUserInput,
   consoleListUsersInput,
+  consoleLinkUserInput,
   consoleSetSuspendedInput,
   createKeyInput,
   getAppInput,
@@ -57,6 +58,8 @@ import { SAFETY_METHODS, newCtx, runOwnerAction } from '../handlers.ts';
 import { finishUsageOnThrow } from '../usage/event.ts';
 import { orgLedger, orgStatements, orgUsage } from '../usage/reports.ts';
 import { consoleGetUser, consoleListUsers } from '../directory/read.ts';
+import { admitLinkLookup, consoleLinkUser } from '../directory/link.ts';
+import { identitySubKey } from '../identity/signer.ts';
 import { emailSearchMac } from '../identity/email.ts';
 import { cancelLabelChange, cancelLabelChangeByLink } from '../labels/lifecycle.ts';
 import { listLabels, previewLabels, proposeLabels, removeLabels } from '../labels/propose.ts';
@@ -95,6 +98,11 @@ export const CONSOLE_COSTS = {
   /** One SELECT each (directory/read.ts). */
   listUsers: 1,
   getUser: 1,
+  /**
+   * D925: one SELECT (directory/link.ts), and at most three `link_lookup_volume` writes, by the look-up that crosses an
+   * alert's threshold (member hour, org day, org week; PR 153's review). The limits are RateLimiter objects.
+   */
+  linkUser: 4,
   /** D894: the entries' read and, for a scope with none, its version. */
   listLabels: 2,
   /** One plan read. */
@@ -397,5 +405,22 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
 
   getUser(c: unknown) {
     return runRpc(this.env, 'getUser', consoleGetUserInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getUser }, async ({ input, db, w }) => ({ user: await consoleGetUser(db, input, w.now) }));
+  }
+
+  /**
+   * D925 (piece P7): one person of a marked scope across the org's apps, by a whole User ID or Support ID (the scope's
+   * or one app's own). For the org's owners: the console checks the role on the request and again in the audit row it
+   * writes before it answers; this is reachable through no route, no publishable key, no platform key and no end-user
+   * session. Counted for the member and the org before the read (directory/link.ts); one SELECT.
+   */
+  linkUser(c: unknown) {
+    return runRpc(this.env, 'linkUser', consoleLinkUserInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.linkUser }, async ({ input, db, w }) => {
+      const subKey = identitySubKey(this.env);
+      // Without the key the directory holds nothing to link and no audit reference can be made: refused, nothing read.
+      if (typeof subKey === 'string') return refuse('internal', 'The directory is unavailable');
+      await admitLinkLookup(this.env, { memberId: input.actor.id, orgId: input.orgId }, w.now);
+      const { auditRef, ...link } = await consoleLinkUser(db, input, subKey);
+      return { link, auditRef };
+    });
   }
 }

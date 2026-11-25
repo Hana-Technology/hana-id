@@ -36,6 +36,7 @@ export const ERROR_TEXT: Record<string, string> = {
   origin_refused: 'Journear can’t accept that origin.',
   policy_invalid: 'The policy has problems. Fix them, then check it again.',
   label_invalid: 'The request labels have problems. Fix them, then check them again.',
+  ambiguous: 'More than one person has this Support ID. Ask for their User ID instead.',
   invalid_client_proof: 'The pasted token isn’t a valid proof for that client. Run the helper again and paste its new token.',
   logo_type: 'Journear can’t use that image. Use a still PNG, JPEG or WebP, 128 to 2048 px a side and nearly square.',
   logo_too_large: 'That image is over 512 KiB. Export a smaller one and upload it again.',
@@ -63,6 +64,7 @@ const GENERIC = new Set([
   'This confirmation has expired or was used: start again',
   'This invite link is not valid any more: it was used, revoked or has expired',
   'The logo is larger than 512 KiB',
+  'More than one person has this Support ID: ask for their User ID',
 ]);
 
 /** The plain text for `code`, and the server's message when it adds something. */

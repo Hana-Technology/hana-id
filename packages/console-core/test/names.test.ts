@@ -441,7 +441,10 @@ describe('D891: no rule is slow (no catastrophic backtracking)', () => {
       };
       const full = cost(check(name), 3);
       const half = cost(check(name.slice(0, Math.ceil(name.length / 2))), 3);
-      expect(full / half, `${name.slice(0, 20)}: 2,000 vs 1,000 characters`).toBeLessThan(32);
+      // Twice the characters: a linear or quadratic rule costs 2 to 4 times as much, a cubic one 8 (after PR 151's
+      // review, L8: under 32 caught only n^5), and none may take seconds outright (a generous ceiling for a loaded machine).
+      expect(full / half, `${name.slice(0, 20)}: 2,000 vs 1,000 characters`).toBeLessThan(8);
+      expect(full / 3, `${name.slice(0, 20)}: one call on 2,000 characters`).toBeLessThan(2000);
     }
   });
 });

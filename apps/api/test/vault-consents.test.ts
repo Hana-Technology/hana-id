@@ -9,7 +9,6 @@ import { base64UrlEncode, fromHex, sha256 } from '../src/bytes.ts';
 import { CONSENT_MAX_PER_SESSION_KEY, CONSENT_REVOKED_KEEP_MS, pruneConsents } from '../src/vault/consent-store.ts';
 import { SHARE_TOMBSTONE_MS, pruneShares, vaultMaintenance } from '../src/vault/cron.ts';
 import { clearKekCache } from '../src/vault/kek.ts';
-import { SESSION_RETRY_INTERVAL_MS } from '../src/vault/endpoints.ts';
 import { NO_SHARE_ID } from '../src/vault/message.ts';
 import { ORIGIN, type Chain, type SeededApp, call, newSessionKey, seedApp } from './helpers.ts';
 import { HOUR, VAULT, autoApprovePolicy, createShare, createShareBody, pathFor, pathHash, setSettings, setShare, signVault, spentSession, storedShare, vaultHeaders, vaultSetup } from './vault-helpers.ts';
@@ -381,10 +380,10 @@ describe('none mode', () => {
     const spk = newSessionKey();
     near.viewCalls.length = 0;
     // No wait either: measured as the timers the request sets, not as wall-clock time (D924: a 250 ms bound failed on
-    // a loaded machine). The re-read loop's pause is a setTimeout of SESSION_RETRY_INTERVAL_MS.
+    // a loaded machine): no timer over 0 ms at all (the re-read loop's pause would be one).
     const timers = vi.spyOn(globalThis, 'setTimeout');
     const { res } = await register(app, { spk, shareId: null });
-    const waits = timers.mock.calls.map((c) => Number(c[1] ?? 0)).filter((ms) => ms >= SESSION_RETRY_INTERVAL_MS);
+    const waits = timers.mock.calls.map((c) => Number(c[1] ?? 0)).filter((ms) => ms > 0);
     timers.mockRestore();
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('1');

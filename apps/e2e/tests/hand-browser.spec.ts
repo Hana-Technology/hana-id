@@ -90,18 +90,19 @@ async function signOut(demo: Page): Promise<void> {
 const closes = (p: Page) => (p.isClosed() ? Promise.resolve() : p.waitForEvent('close', { timeout: 20_000 }).then(() => undefined));
 
 /**
- * Clicks the window's own Close or Done and waits for the window to close. A window that closes itself as the click
- * lands makes the click throw ("Target page … has been closed"): that is the close being waited for, not a failure;
- * any other error, or a window still open, fails the test (D924).
+ * Clicks the window's own Close or Done and waits for the window to close. The window must be open with the button
+ * visible just before the click (one that closed before it fails the test); a window that closes itself as the click
+ * lands makes the click throw "… has been closed": that one error is the close being waited for, any other fails (D924,
+ * after PR 151's review).
  */
 async function clickToClose(p: Page, name: 'Close' | 'Done'): Promise<void> {
+  expect(p.isClosed(), `the window with ${name} is still open before the click`).toBe(false);
+  const button = p.getByRole('button', { name });
+  await expect(button).toBeVisible();
   const closed = closes(p);
-  await p
-    .getByRole('button', { name })
-    .click()
-    .catch((e: unknown) => {
-      if (!p.isClosed()) throw e;
-    });
+  await button.click().catch((e: unknown) => {
+    if (!(p.isClosed() && e instanceof Error && /has been closed/u.test(e.message))) throw e;
+  });
   await closed;
 }
 

@@ -179,10 +179,12 @@ describe('migration 0027_platform_actor', () => {
     for (const t of TABLES) expect(await columnsOf(t), t).toEqual(beforeColumns[t]);
   });
 
-  it('recreates every index and trigger with the same SQL, adds only the three kind triggers', async () => {
+  it('recreates every index and trigger with the same SQL, adds only the three kind triggers and the no-replace trigger', async () => {
     const after = await schemaOf();
     const added = [...after.keys()].filter((k) => !beforeSchema.has(k));
-    expect(added.sort()).toEqual(['app_changes_actor_kind', 'guarded_changes_proposer_kind', 'guarded_changes_proposer_kind_update']);
+    expect(added.sort()).toEqual(['app_changes_actor_kind', 'app_changes_no_replace', 'guarded_changes_proposer_kind', 'guarded_changes_proposer_kind_update']);
+    // The copy check's table is gone with the transaction's end.
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM sqlite_schema WHERE name IN ('ledger_copy_check', 'app_changes_new', 'guarded_changes_new', 'security_events_new')").first()).toEqual({ n: 0 });
     expect([...beforeSchema.keys()].filter((k) => !after.has(k))).toEqual([]);
     for (const [name, b] of beforeSchema) {
       if (b.type === 'table') continue;
@@ -281,6 +283,19 @@ describe('migration 0027_platform_actor', () => {
     expect(await accepted('UPDATE security_events SET notified_at = 9 WHERE id = ?1', 'se_drift')).toBe(true);
   });
 
+  it('a ledger row is never replaced: INSERT OR REPLACE on a used request id or seq is refused, the row unchanged', async () => {
+    const row = beforeRows.app_changes![3]!;
+    const replace = (seq: unknown, rid: unknown) =>
+      refusal("INSERT OR REPLACE INTO app_changes (seq, at, org_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (?1, 1, 'org_a', 'app.renamed', '{}', 'hana', 'x', ?2)", seq, rid);
+    expect(await replace(null, row.request_id)).toMatch(/already recorded/u);
+    expect(await replace(row.seq, 'req_fresh_replace')).toMatch(/already recorded/u);
+    expect(await refusal("INSERT OR IGNORE INTO app_changes (at, org_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (1, 'org_a', 'k', '{}', 'hana', 'x', ?1)", row.request_id)).toMatch(/already recorded/u);
+    expect(await refusal("INSERT INTO app_changes (at, org_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (1, 'org_a', 'k', '{}', 'hana', 'x', ?1)", row.request_id)).toMatch(/already recorded/u);
+    expect(await db.prepare('SELECT * FROM app_changes WHERE seq = ?1').bind(row.seq).first()).toEqual(row);
+    // A fresh request id and seq still insert.
+    expect(await replace(null, 'req_fresh_ok')).toBe('accepted');
+  });
+
   it('the database is whole: quick_check and the foreign key check come back clean', async () => {
     expect(await db.prepare('PRAGMA quick_check').all()).toMatchObject({ results: [{ quick_check: 'ok' }] });
     expect((await db.prepare('PRAGMA foreign_key_check').all()).results).toEqual([]);
@@ -293,5 +308,58 @@ describe('migration 0027_platform_actor', () => {
     expect((await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name)).toEqual(before);
     expect(before).toContain(FILE);
     expect(await rowsOf('app_changes')).toEqual(rows);
+  });
+});
+
+describe('migration 0027 checks its own copy before dropping anything', () => {
+  const fresh = env.FRESH_DB;
+  /** Each breaks the copy one way: a statement's text replaced, or a statement added right after the copy of a table. */
+  type Break = { what: string; replace?: [string, string]; after?: [string, string] };
+  const broken: Break[] = [
+    { what: 'a ledger value changed', replace: ['SELECT seq, at, org_id', 'SELECT seq, at + 1, org_id'] },
+    { what: 'a NULL made empty', replace: ['actor_id, actor_sub, request_id FROM app_changes', "actor_id, COALESCE(actor_sub, ''), request_id FROM app_changes"] },
+    { what: 'a ledger row skipped', replace: ['actor_sub, request_id FROM app_changes', 'actor_sub, request_id FROM app_changes WHERE seq > 1'] },
+    { what: 'a cancel link hash lost', after: ['INSERT INTO guarded_changes_new', 'UPDATE guarded_changes_new SET cancel_token_hash = NULL'] },
+    { what: 'a cancelled change made pending', after: ['INSERT INTO guarded_changes_new', "UPDATE guarded_changes_new SET status = 'pending', cancelled_at = NULL, cancelled_by = NULL WHERE status = 'cancelled'"] },
+    { what: 'active_from copied from notified_at', after: ['INSERT INTO guarded_changes_new', 'UPDATE guarded_changes_new SET active_from = notified_at'] },
+    { what: 'an event no longer emailed', after: ['INSERT INTO security_events_new', 'UPDATE security_events_new SET notified_at = NULL'] },
+  ];
+  const apply = (queries: string[], b: Break): string[] =>
+    queries.flatMap((q) => {
+      if (b.replace && q.includes(b.replace[0])) return [q.replace(b.replace[0], b.replace[1])];
+      if (b.after && q.trimStart().startsWith(b.after[0])) return [q, b.after[1]];
+      return [q];
+    });
+
+  it('a copy that differs in any way aborts the whole file: the old tables, their rows and triggers untouched', async () => {
+    const migrations = env.TEST_MIGRATIONS;
+    const at = migrations.findIndex((m) => m.name === FILE);
+    await applyD1Migrations(fresh, migrations.slice(0, at));
+    await fresh.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s_t', 'org_a', 'test', 1, 1, 1)").run();
+    await fresh.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES ('app_t', 'T', 's_t', 'org_a', 'pk_test_Ttttttttttttttttttttttt')").run();
+    await fresh.prepare("INSERT INTO app_changes (at, org_id, app_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (1, 'org_a', 'app_t', 'app.created', '{}', 'hana', 's', 'r1'), (2, 'org_a', 'app_t', 'app.renamed', '{}', 'member', 'u', 'r2')").run();
+    await fresh
+      .prepare("INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, notified_at, active_from, cancel_token_hash, cancelled_by, cancelled_at, request_id) VALUES ('gc_1', 'app_t', 'origin_add', 'https://a.example', 'cancelled', 'hana', 's', 1, 2, 3, ?1, 'link', 4, 'r')")
+      .bind(new Uint8Array(32).fill(5))
+      .run();
+    await fresh.prepare("INSERT INTO security_events (id, detected_at, kind, detail_json, notified_at) VALUES ('se_1', 1, 'drift', '{}', 9)").run();
+    const snapshot = async () => ({
+      rows: await Promise.all(TABLES.map(async (t) => (await fresh.prepare(`SELECT * FROM ${t} ORDER BY ${KEY[t]}`).all()).results)),
+      schema: (await fresh.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name").all()).results,
+      applied: (await fresh.prepare('SELECT name FROM d1_migrations ORDER BY id').all()).results,
+    });
+    const before = await snapshot();
+    for (const b of broken) {
+      const what = b.what;
+      const bad = { ...migrations[at]!, queries: apply(migrations[at]!.queries, b) };
+      expect(bad.queries.join('\n'), what).not.toBe(migrations[at]!.queries.join('\n'));
+      const failed = await applyD1Migrations(fresh, [...migrations.slice(0, at), bad]).then(() => false, () => true);
+      expect(failed, what).toBe(true);
+      expect(await snapshot(), what).toEqual(before);
+    }
+    // The real file then applies on the same database.
+    await applyD1Migrations(fresh, migrations);
+    const after = await snapshot();
+    expect(after.rows).toEqual(before.rows);
   });
 });

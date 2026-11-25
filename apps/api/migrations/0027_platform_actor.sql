@@ -7,8 +7,9 @@
 --
 -- Numbered 0027: 0026 is P0's (`scopes.app_user_ids`, `apps.created_by_kind`, `apps.partner_bit_by`). Neither file
 -- reads or writes what the other adds, so they apply in either order (wrangler applies the unapplied files in name
--- order; 0006's header). Applied only by the Tech Lead on a deployed env, with a Time Travel bookmark first and the
--- before-and-after comparison (`ledger-check`, docs/operations.md "Ledger rebuild (hot-DB migration 0027)").
+-- order; 0006's header). Applied only by the Tech Lead on a deployed env, after a rehearsal on a scratch copy, with a
+-- snapshot and a Time Travel bookmark first and the before-and-after comparison (`ledger-check`, docs/operations.md
+-- "Ledger rebuild (hot-DB migration 0027, D916)"). Each copy also checks itself below, inside this transaction.
 --
 -- No foreign key points at these tables, no other table's trigger reads them, and a DROP TABLE fires no trigger (its
 -- triggers are dropped first), so dropping the old tables deletes nothing elsewhere (unlike `apps`, never rebuilt:
@@ -69,6 +70,21 @@ INSERT INTO app_changes_new (seq, at, org_id, app_id, scope_id, kind, detail_jso
 INSERT INTO guarded_changes_new (id, app_id, kind, origin, policy_json, policy_id, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_country, waiver, notified_at, active_from, cancel_token_hash, activated_recorded_at, expedited_by, expedite_reason, ended_at, cancelled_by, cancelled_at, request_id)
   SELECT id, app_id, kind, origin, policy_json, policy_id, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_country, waiver, notified_at, active_from, cancel_token_hash, activated_recorded_at, expedited_by, expedite_reason, ended_at, cancelled_by, cancelled_at, request_id FROM guarded_changes;
 
+-- ---- The copy checks itself before anything is dropped (D916, after PR 143's review) ----
+-- Each old table and its copy hold exactly the same rows, every column compared (EXCEPT both ways: SQLite compares
+-- NULLs as equal there, and an integer never equals its text). A difference inserts 0, the CHECK refuses it, and the
+-- whole file rolls back with the old tables untouched, whatever the API writes meanwhile (the file is one transaction).
+
+CREATE TABLE ledger_copy_check (ok INTEGER NOT NULL CHECK (ok = 1));
+INSERT INTO ledger_copy_check (ok)
+  SELECT NOT EXISTS (SELECT * FROM app_changes EXCEPT SELECT * FROM app_changes_new)
+     AND NOT EXISTS (SELECT * FROM app_changes_new EXCEPT SELECT * FROM app_changes)
+     AND (SELECT COUNT(*) FROM app_changes) = (SELECT COUNT(*) FROM app_changes_new);
+INSERT INTO ledger_copy_check (ok)
+  SELECT NOT EXISTS (SELECT * FROM guarded_changes EXCEPT SELECT * FROM guarded_changes_new)
+     AND NOT EXISTS (SELECT * FROM guarded_changes_new EXCEPT SELECT * FROM guarded_changes)
+     AND (SELECT COUNT(*) FROM guarded_changes) = (SELECT COUNT(*) FROM guarded_changes_new);
+
 DROP TABLE app_changes;
 ALTER TABLE app_changes_new RENAME TO app_changes;
 DROP TABLE guarded_changes;
@@ -97,12 +113,24 @@ BEGIN
   SELECT RAISE(ABORT, 'app_changes rows are kept 60 months');
 END;
 
--- ---- The kind triggers (the lists are `ACTOR_KINDS` and `PROPOSER_KINDS` in @hana-id/console-core; a test compares) ----
+-- ---- The new triggers (the kind lists are `ACTOR_KINDS` and `PROPOSER_KINDS` in @hana-id/console-core; a test compares) ----
 
 -- Who wrote a ledger row. `app_changes` takes no update (app_changes_no_update), so an insert is its only write.
 CREATE TRIGGER app_changes_actor_kind BEFORE INSERT ON app_changes
 BEGIN
   SELECT RAISE(ABORT, 'app_changes: unknown actor_kind') WHERE NEW.actor_kind NOT IN ('member', 'hana', 'system', 'link', 'platform');
+END;
+
+-- A ledger row is never replaced (D916, after PR 143's review): `INSERT OR REPLACE` with a request id or seq already
+-- recorded would delete the old row through the conflict (a REPLACE's delete fires no DELETE trigger, so neither
+-- app_changes_no_early_delete nor the 60 months would hold) and write another in its place. Refused here before the
+-- conflict is resolved; a plain insert of a used request id is refused as before (the CAS replay path reads the
+-- existing row after any failed batch, cas.ts runWrite). Nothing writes the ledger with OR REPLACE, OR IGNORE or
+-- ON CONFLICT.
+CREATE TRIGGER app_changes_no_replace BEFORE INSERT ON app_changes
+WHEN EXISTS (SELECT 1 FROM app_changes WHERE request_id = NEW.request_id) OR EXISTS (SELECT 1 FROM app_changes WHERE seq = NEW.seq)
+BEGIN
+  SELECT RAISE(ABORT, 'app_changes: this request id or seq is already recorded');
 END;
 
 -- Who proposed a guarded change. Unlike the ledger, `guarded_changes` takes updates (its lifecycle columns), and the
@@ -131,6 +159,11 @@ CREATE TABLE security_events_new (
 );
 INSERT INTO security_events_new (id, detected_at, kind, org_id, app_id, scope_id, detail_json, notified_at)
   SELECT id, detected_at, kind, org_id, app_id, scope_id, detail_json, notified_at FROM security_events;
+INSERT INTO ledger_copy_check (ok)
+  SELECT NOT EXISTS (SELECT * FROM security_events EXCEPT SELECT * FROM security_events_new)
+     AND NOT EXISTS (SELECT * FROM security_events_new EXCEPT SELECT * FROM security_events)
+     AND (SELECT COUNT(*) FROM security_events) = (SELECT COUNT(*) FROM security_events_new);
+DROP TABLE ledger_copy_check;
 DROP TABLE security_events;
 ALTER TABLE security_events_new RENAME TO security_events;
 CREATE INDEX security_events_unnotified ON security_events (notified_at);

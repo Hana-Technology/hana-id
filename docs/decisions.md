@@ -21998,8 +21998,8 @@ PR 135's review" list, D910, D914); D912 is recorded on its own branch.
     apps inside `GET /v1/home/apps`' one SQL statement (live apps first, then deleted, oldest first), and again in the
     page's parser (`HOME_MAX_APPS = 10`, `packages/web/src/auth/home-api.ts`), which every Home view read from. It is
     per scope, so per wallet: on a shared scope every partner app shares one wallet. At the 11th app nothing errors:
-    the newest apps were dropped from the row, the wallet's page, the Security tab's name sharing and the sign-ins
-    tab, with no word that any were missing. It is a size and cost bound (one answer holds up to 45 scopes, each app
+    the newest apps were dropped from the row, the wallet's page and the Security tab's name sharing, with no word
+    that any were missing. It is a size and cost bound (one answer holds up to 45 scopes, each app
     with up to 5 origins), not an abuse rule: D1 bills rows read and the free plan's budget (D417, D500) is per
     request. The sign-in and approval windows' D912 line (5 names, "and N more") and `GET /v1/home/devices` (100 apps a
     scope) have their own caps and were not the problem.

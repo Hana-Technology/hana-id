@@ -22992,3 +22992,103 @@ From `next` @ 287ec88e; not merged, docs only. D926 is the number the caller ass
   two apps may list the same origin (no uniqueness across apps in the schema; two test apps both listing the widget's
   origin worked in D923's test).
 - Address impact: **none** (docs only; no contract, key, path, derivation or origin changed).
+
+## The platform API's request authentication and admission (branch `feat/platform-auth`), 2026-11-25
+
+From `next` @ 2d309362, `origin/next` @ 75c5de42 merged in; not merged, not deployed, migration applied nowhere. Piece
+P3 of `docs/partner-platform-spec.md` (A3 "The request", A5, A7, A8; findings M2, M3, M4, L1, L2, L5, L8). D927 is the
+number the caller assigned; API migration 0032 (0031 is piece P7's).
+
+### D927. A network's backend signs each request with its platform key (plain ES256 over the env, the method, the one parsed path, the body, the time and a single-use nonce); one identical 401 for every authentication failure; a valid key behind a failing IP still gets in; the platform's breaker is its own; the key can read and stop itself, nothing more yet
+- Date 2026-11-25 · Status: **built** (the design is the spec's A3 and A5, the Tech Lead's D913 question 1 and D917);
+  the points marked "to confirm (the Tech Lead)" below were decided while building · Relates to D913, D914, D916, D917,
+  D918, D925, D926 · Built: `apps/api/src/platform/request.ts`, `routes.ts`, migration 0032, console-core
+  `platform-request.ts` and `scripts/gen-platform-request-vectors.mjs`, the namespaced admission in
+  `apps/api/src/rate-limiter.ts`, `AdminRpc.purgePlatformCalls` and the admin's retention step
+- **What it does.** `{API}/v1/platform/…` takes a request from a network's backend only (no CORS; an `Origin` is
+  refused), signed with a platform key in force here (D918). The canonical message: ten lines joined by `\n`
+  (`journear-platform-v1`, `ENV_NAME`, `SIGNER_ACCOUNT`, the method, the path and query as parsed once, the key id, the
+  timestamp, the nonce, the `Idempotency-Key` or an empty line, the body's sha256 in lowercase hex); headers
+  `Journear-Key-Id`, `Journear-Timestamp`, `Journear-Nonce`, `Journear-Signature`, `Idempotency-Key`; the signature
+  plain ES256, raw `r ‖ s`, both S values, DER refused (M4). The checks in A3's order: (1) the per-IP window, (2) no
+  `Origin`, (3) the method, path, query, route, header size, body rules and header forms, (4) ±60 s, (5) the key in
+  force and the signature, (6) the org's switch and freeze, (7) the nonce, (8) the key's and the org's limits; then the
+  body is parsed, the route runs within `PLATFORM_DB_LIMITS` (3 reads, 2 batches, 12 statements) and the call is
+  recorded. Two routes: `GET /v1/platform/credential` (the key's own state) and `POST /v1/platform/credential/revoke`
+  (it stops at once and cancels what it left waiting, with the `platform` actor; allowed while switched off or frozen,
+  L5). No route registers, accepts, confirms or brings back a key, confirms a web address, or reaches ConsoleRpc or
+  AdminRpc. The reference signer (`signPlatformRequest`, with `derToRawSignature`) is in console-core for P8's guide.
+- **Tests.** `apps/api/test/platform-request.test.ts` (the independent vectors through the real handler: GET and high
+  S verify, DER and both other-env vectors refused, a signed revoke; every refusal in order, each check answering
+  before the next; the clock ±60 s both ways; timestamps, nonces, ids and signatures of the wrong shape or size; `//`,
+  `%2F`, `%2E`, a trailing slash, bad queries, a query on a write, and dot segments as the parser resolves them; PUT,
+  DELETE, PATCH, HEAD, OPTIONS; non-JSON, encoded, oversized and streamed bodies and oversized headers refused before
+  any import or verification; another `ENV_NAME` or `SIGNER_ACCOUNT`, a key pair registered elsewhere; a body, path,
+  query, Idempotency-Key, timestamp or nonce changed after signing; malleability (both S, s = n, s = 0, zeros, swapped,
+  DER, padding, the standard alphabet); the identical 401 byte for byte across eight causes with the same crypto work;
+  the auth-failure event; the IP window with admitted requests, failures, the overflow and its residual; refusals after
+  a valid signature counted; the IP prefix; the self-revoke with the switch off (ledger rows, cancelled origin) and while
+  frozen; no switch row; a key expiring, stopped, frozen or switched off between two requests; two keys of one org; the
+  credential view and the call log with `last_used_at` once an hour; the quota event; each route within its cost, the
+  revoke's failed batch included; the org's bucket; the platform's breaker against the console's both ways and its
+  refund; the nonce object pinned, held to timestamp + 120 s, its size bound; each limiter failing, and every limiter
+  failing for the self-revoke; the reach walk over every route and a path named after every ConsoleRpc and AdminRpc
+  method, every RPC method spied), `migration-0032.test.ts` (every row and object of before kept, only its own added, no
+  trigger reading another table, each CHECK and trigger against bare writes, the purge's 13 months and limit, an env
+  without it), console-core `platform-request.test.ts` (the committed vectors current with the generator, each case's
+  message, hash, raw and DER forms, the signer, the DER parser's refusals, every rule), the admin's
+  `test-ops/retention.test.ts` and `budget.test.ts` (the new step, its cutoff and its call), `platform-keys.test.ts`
+  (an unsigned request authenticates nothing).
+- **Decided while building, to confirm (the Tech Lead):**
+  1. **An overflow window for M2.** A3's check 1 as written (a hit, refused when full) would refuse a valid key whose
+     IP someone else filled with failures, which M2 says must not happen. Built: when the IP's window is full the
+     request is still checked, under one window shared by every IP (`platform:ip-overflow`, 120 a minute, pinned);
+     admitted, it gives that slot back. **Residual:** a flood from many IPs that also fills the overflow refuses a
+     valid key behind a full IP for up to a minute (logged `ip_overflow_full`); keys behind other IPs are unaffected.
+  2. **The IP window counts every request not admitted**, given back only once the request passes check 8, not as soon
+     as the signature verifies (A3): a valid signature refused at 6, 7 or 8 (switch off, frozen, replay, over quota)
+     uses it too, so a replayer of a captured request or a key over its quota can't make unbounded D1 reads.
+  3. **`platform_calls` holds the calls admitted** (checks 1 to 8 passed), whatever the route then answered; a valid
+     signature refused at 6, 7 or 8 is counted and logged, not stored (A7/L7 said every call past the signature, which
+     would let a replayer or a key over its quota write to the hot DB without limit).
+  4. **A frozen org** answers `403 forbidden` to every route but the self-revoke (check 6 names only the switch; A4.3
+     keeps only the kill switches for a frozen org). The freeze is read from the API's mirror: it lags a console freeze
+     only when the staff route's mirror writes fail, then up to the next hourly check (D918's I1, error-logged).
+  5. **The self-revoke** skips the key's and the org's limits (it can succeed once per key), goes ahead when any
+     limiter errors, the per-IP one included (logged at error level; a replay of it could only stop the same key), and
+     takes an `Idempotency-Key` without needing one (a kill switch kept simple; with one, the ledger request id is A9's
+     `pf_…`, without one a random `pf_…`). Every other route fails closed (`503 rate_limiter_unavailable`).
+  6. **The nonce object's size bound:** at most 300 fresh nonces a minute per key (`429 rate_limited`, `platform:nonce`),
+     held until timestamp + 120 s; the nonce comes before the quota (A3's order), so the bound is on the object itself.
+  7. **The numbers**: the org's bucket 5 statements a second, burst 40, 10 kept for kill switches, under the console's
+     global bucket (shared, as A5 says); the per-key windows and the breaker as A5 (60 a minute, 2 000 a UTC day; 10 per
+     org, 30 across orgs an hour); `platform:key:<keyId>` and the overflow pinned like the nonce object; the per-IP one
+     not. Route costs: 3 for the credential, 10 for the revoke; `HotDb` gained a whole-call statement ceiling.
+  8. **Shapes**: every header together at most 16 KiB; `content-type` `application/json` or `application/json;
+     charset=utf-8`, without case; a POST's body a JSON object (`{}` for none; anything else `400` after admission, and
+     recorded); an unknown route `404` and a known route's other method `405` with `allow`, both before authentication
+     (the routes are public); `www-authenticate: Journear-Signature` on the 401.
+  9. **Events**: `platform_auth_failures` once an hour per key (the 10th failed signature in a minute for a known id;
+     counted after the answer, so a known and an unknown id take the same time); `platform_quota` for the first refusal
+     of each limit in a clock hour.
+  10. **Records**: `platform_calls.request_id` is the answer's `requestId` (`x-request-id`), not the ledger's;
+      `ip_prefix` an IPv4 /24 or IPv6 /48; the table append-only (no update, no replace, no delete before 13 months) and
+      purged by the monthly retention job (`AdminRpc.purgePlatformCalls`, step `platform_calls`). A read whose call
+      can't be recorded answers 500; a committed write is answered (its ledger row records it).
+  11. **The credential view** adds the key's `thumbprint` to A8's fields.
+  12. **The vectors carry no private key** (the secret scan flags one; nothing needs it): the generator derives it from
+      a fixed string. The test env's names are the vectors' (`sandbox-test`, `signer.test.near`).
+- **Found in the spec** (its design not changed beyond the points above): (a) **dot segments can't be refused as
+  written**: the runtime parses `request.url` (WHATWG URL) before the Worker sees it, resolving `.`, `..` and `%2E`; so
+  the path rule refuses what survives (`//`, `%2F`, a trailing slash), a request signed over a dot path fails its
+  signature (the message is built from the one parse), and one escaping `/v1/platform` is another route's. Likewise
+  HTTP trims spaces around a header value, so a padded timestamp arrives without them. (b) M2 against check 1's
+  hit-first (point 1). (c) L7's "every call past the signature" against an unbounded write (point 3). (d) The unhit at
+  verification against valid-signature floods (point 2). (e) The nonce object's size has no bound before check 8
+  (point 6). (f) Check 6 is silent on a frozen org (point 4). (g) A5 gives no numbers for the org's bucket (point 7).
+  (h) A9's "every write needs an Idempotency-Key" against the self-revoke as a kill switch (point 5).
+- **Left for later pieces**: the app operations and the reach filter (P4); the console's activity screen and the
+  playbooks for `platform_auth_failures` and `platform_quota` (P5); the network's guide around the reference signer and
+  vectors (P8). The platform switch stays off for every org until P4 and P10 are deployed (the spec's gates).
+- Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation: request checks,
+  limiter state and an off-chain call log.

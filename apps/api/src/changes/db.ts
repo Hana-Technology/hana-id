@@ -7,11 +7,20 @@ import { type Q, prepare } from './sql.ts';
 export interface HotDbLimits {
   reads: number;
   batches: number;
+  /** The most statements in one batch. */
   statements: number;
+  /** D927: the most statements of the whole call (reads included), when set. */
+  total?: number;
 }
 
 /** ConsoleRpc's per-call ceiling (spec §RPC "Hot-DB budget"). */
 export const CONSOLE_DB_LIMITS: HotDbLimits = { reads: 2, batches: 1, statements: 8 };
+
+/**
+ * A platform request's ceiling (D927; docs/partner-platform-spec.md A5 "The hot-DB budget", L8): the credential's read,
+ * a plan read and a failed batch's diagnostic read; the write's batch and the call log's; 12 statements in all.
+ */
+export const PLATFORM_DB_LIMITS: HotDbLimits = { reads: 3, batches: 2, statements: 12, total: 12 };
 
 export class BudgetExceededError extends Error {
   constructor(what: string) {
@@ -31,10 +40,16 @@ export class HotDb {
     readonly limits?: HotDbLimits,
   ) {}
 
+  private checkTotal(): void {
+    const total = this.limits?.total;
+    if (total !== undefined && this.statements > total) throw new BudgetExceededError(`more than ${total} statements in one call`);
+  }
+
   private read(): void {
     this.reads++;
     this.statements++;
     if (this.limits && this.reads > this.limits.reads) throw new BudgetExceededError(`more than ${this.limits.reads} reads`);
+    this.checkTotal();
   }
 
   async first<T>(s: Q): Promise<T | null> {
@@ -53,6 +68,7 @@ export class HotDb {
     this.statements += stmts.length;
     if (this.limits && this.batches > this.limits.batches) throw new BudgetExceededError(`more than ${this.limits.batches} batch`);
     if (this.limits && stmts.length > this.limits.statements) throw new BudgetExceededError(`a batch of ${stmts.length} statements`);
+    this.checkTotal();
     return this.db.batch(stmts.map((s) => prepare(this.db, s)));
   }
 }

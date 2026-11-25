@@ -601,6 +601,15 @@ const revocable = (k: PlatformKeyRow): boolean => k.status === 'awaiting_accepta
  * (`platform`, its own id only: piece P3's `POST /v1/platform/credential/revoke`, allowed while the switch is off).
  */
 export async function revokePlatformKey(db: HotDb, w: Writer, i: { orgId: string; keyId: string; reason?: string | undefined }) {
+  const { kind } = await revokePlatformKeyNow(db, w, i);
+  return { key: await getPlatformKey(db, i.orgId, i.keyId, w.now, kind === 'hana') };
+}
+
+/**
+ * The revocation itself (one plan read and one batch), with no read back: `revokePlatformKey` reads the key back for
+ * the screens; the key's own `POST /v1/platform/credential/revoke` (D927) answers only when, within its hot-DB budget.
+ */
+export async function revokePlatformKeyNow(db: HotDb, w: Writer, i: { orgId: string; keyId: string; reason?: string | undefined }): Promise<{ kind: Revoker; revokedAt: number }> {
   expectReplay(w, ['platform.key_revoked']);
   const kind = w.actor.kind as Actor['kind'] | 'platform';
   if (kind !== 'member' && kind !== 'hana' && kind !== 'platform') return refuse('forbidden', 'Only an owner, Journear staff or the key itself stop a platform key');
@@ -610,7 +619,7 @@ export async function revokePlatformKey(db: HotDb, w: Writer, i: { orgId: string
   if (!revocable(key)) refuse('conflict', `This key is already ${key.status}`);
   const reason = i.reason?.trim() ? i.reason.trim() : null;
   await runWrite(db, w, revokeStatements(w, key, kind, reason, raw('1')));
-  return { key: await getPlatformKey(db, i.orgId, key.id, w.now, kind === 'hana') };
+  return { kind, revokedAt: w.now };
 }
 
 /**

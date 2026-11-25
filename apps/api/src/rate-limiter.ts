@@ -35,6 +35,12 @@ export interface ConsoleAdmission {
   breaker?: boolean;
   /** An emailed-link cancel: one token of the link-read budget instead of the members' buckets. */
   link?: boolean;
+  /**
+   * D927: whose org bucket, breaker, reserve share and refusal marks (`console:…` by default; `platform:…` for a
+   * network's platform key, so a platform flood never fills the console's breaker, M3). The global bucket
+   * (`console:bucket`) is the one both share, with its kill-switch reserve (A5).
+   */
+  ns?: 'console' | 'platform';
   limits: {
     perOrg: Bucket & { reserve: number };
     /** `reserveShare`: at most `max` tokens of the global reserve per org in any `windowMs`. */
@@ -54,6 +60,18 @@ export type ConsoleLimit = 'budget_org' | 'budget' | 'budget_reserve' | 'link' |
 /** `reserveUsed`: tokens of the global reserve this call took (settled back by `consoleSettle` if it changed nothing). */
 export type ConsoleAdmitResult = { ok: true; reserveUsed: number } | { ok: false; limit: ConsoleLimit; retryAfterS: number; notify: boolean };
 
+/** The KV keys of one namespace's admission (the global bucket is always `console:bucket`). */
+const admissionKeys = (ns: 'console' | 'platform' | undefined, org: string) => {
+  const p = ns ?? 'console';
+  return {
+    org: `${p}:bucket:org:${org}`,
+    breakerOrg: `${p}:breaker:org:${org}`,
+    breakerGlobal: `${p}:breaker:global`,
+    share: `${p}:reserve:org:${org}`,
+    noticed: (limit: ConsoleLimit) => (p === 'console' ? (limit === 'breaker_org' ? `console:noticed:org:${org}` : 'console:noticed:global') : `platform:noticed:${limit}:${org}`),
+  };
+};
+
 /** What a member call that changed nothing gives back (consoleSettle). */
 export interface ConsoleSettlement {
   org: string;
@@ -64,6 +82,8 @@ export interface ConsoleSettlement {
   /** Global reserve tokens it took: given back to the reserve and charged to the org's own bucket instead. */
   reserveUsed: number;
   limits: ConsoleAdmission['limits'];
+  /** D927: the admission's namespace (ConsoleAdmission.ns). */
+  ns?: 'console' | 'platform';
 }
 
 export type HitResult = { ok: true; soft?: string[] } | { ok: false; limit: string; retryAfterS: number };
@@ -198,10 +218,12 @@ export class RateLimiter extends DurableObject<Env> {
   consoleAdmit(r: ConsoleAdmission, now: number = Date.now()): ConsoleAdmitResult {
     const kv = this.ctx.storage.kv;
     const hour = Math.floor(now / 3_600_000);
+    const keys = admissionKeys(r.ns, r.org ?? '');
     const refuse = (limit: ConsoleLimit, waitS: number): ConsoleAdmitResult => {
       let notify = false;
-      if (limit === 'breaker_org' || limit === 'breaker_global') {
-        const key = limit === 'breaker_org' ? `console:noticed:org:${r.org}` : 'console:noticed:global';
+      // The console notes its breaker refusals; the platform every refusal (its `platform_quota` event, A5).
+      if (limit === 'breaker_org' || limit === 'breaker_global' || r.ns === 'platform') {
+        const key = keys.noticed(limit);
         notify = kv.get<number>(key) !== hour;
         if (notify) kv.put(key, hour);
       }
@@ -217,13 +239,13 @@ export class RateLimiter extends DurableObject<Env> {
       kv.put('console:link-read', { tokens: tokens - r.cost, at: now });
       return { ok: true, reserveUsed: 0 };
     }
-    const orgKey = `console:bucket:org:${r.org ?? ''}`;
+    const orgKey = keys.org;
     const orgTokens = fill(orgKey, r.limits.perOrg);
     const globalTokens = fill('console:bucket', r.limits.global);
     const recent = (key: string) => (kv.get<number[]>(key) ?? []).filter((t) => t > now - r.limits.breaker.windowMs);
-    const bOrgKey = `console:breaker:org:${r.org ?? ''}`;
+    const bOrgKey = keys.breakerOrg;
     const bOrg = r.breaker ? recent(bOrgKey) : [];
-    const bGlobal = r.breaker ? recent('console:breaker:global') : [];
+    const bGlobal = r.breaker ? recent(keys.breakerGlobal) : [];
     const until = (oldest: number | undefined) => ((oldest ?? now) + r.limits.breaker.windowMs - now) / 1000;
     if (r.breaker && bOrg.length >= r.limits.breaker.perOrg) return refuse('breaker_org', until(bOrg[0]));
     if (r.breaker && bGlobal.length >= r.limits.breaker.global) return refuse('breaker_global', until(bGlobal[0]));
@@ -234,7 +256,7 @@ export class RateLimiter extends DurableObject<Env> {
     // A kill switch dipping into the global reserve takes at most its org's share of it per window, so one org's
     // kill switches (no-ops included) can't drain what every other org's kill switches rely on.
     const reserveUsed = r.killSwitch ? Math.max(0, r.cost - Math.max(0, globalTokens - r.limits.global.reserve)) : 0;
-    const shareKey = `console:reserve:org:${r.org ?? ''}`;
+    const shareKey = keys.share;
     const share = r.limits.global.reserveShare;
     const taken = (kv.get<{ at: number; n: number }[]>(shareKey) ?? []).filter((e) => e.at > now - share.windowMs);
     if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) {
@@ -245,7 +267,7 @@ export class RateLimiter extends DurableObject<Env> {
     if (reserveUsed > 0) kv.put(shareKey, [...taken, { at: now, n: reserveUsed }]);
     if (r.breaker) {
       kv.put(bOrgKey, [...bOrg, now]);
-      kv.put('console:breaker:global', [...bGlobal, now]);
+      kv.put(keys.breakerGlobal, [...bGlobal, now]);
     }
     return { ok: true, reserveUsed };
   }
@@ -258,8 +280,9 @@ export class RateLimiter extends DurableObject<Env> {
    */
   consoleSettle(s: ConsoleSettlement, now: number = Date.now()): void {
     const kv = this.ctx.storage.kv;
+    const keys = admissionKeys(s.ns, s.org);
     if (s.breaker) {
-      for (const key of [`console:breaker:org:${s.org}`, 'console:breaker:global']) {
+      for (const key of [keys.breakerOrg, keys.breakerGlobal]) {
         const list = kv.get<number[]>(key) ?? [];
         const i = list.indexOf(s.at);
         if (i >= 0) kv.put(key, [...list.slice(0, i), ...list.slice(i + 1)]);
@@ -271,9 +294,9 @@ export class RateLimiter extends DurableObject<Env> {
         return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
       };
       kv.put('console:bucket', { tokens: Math.min(s.limits.global.burst, fill('console:bucket', s.limits.global) + s.reserveUsed), at: now });
-      const orgKey = `console:bucket:org:${s.org}`;
+      const orgKey = keys.org;
       kv.put(orgKey, { tokens: fill(orgKey, s.limits.perOrg) - s.reserveUsed, at: now });
-      const shareKey = `console:reserve:org:${s.org}`;
+      const shareKey = keys.share;
       const list = kv.get<{ at: number; n: number }[]>(shareKey) ?? [];
       const i = list.findIndex((e) => e.at === s.at);
       if (i >= 0) kv.put(shareKey, [...list.slice(0, i), ...list.slice(i + 1)]);
@@ -368,6 +391,32 @@ export class RateLimiter extends DurableObject<Env> {
     let held = kv.get<number>(`qn:${name}`) ?? 0;
     for (const k of keys) if (k.startsWith(`q:${name}:`) && kv.delete(k)) held--;
     kv.put(`qn:${name}`, Math.max(0, held));
+  }
+
+  /**
+   * D927: one platform request's nonce (A3 check 7), on the key's own `platform-nonce:<keyId>` object. `replayed` while
+   * an unexpired marker for it exists; else, if `cap` still has room (the object's size bound: fresh nonces a window),
+   * the marker is held until `untilMs` and the answer is `ok`; else `full`, and nothing is written. Atomic in the object.
+   */
+  reserveNonce(nonce: string, untilMs: number, cap: Limit[], now: number = Date.now()): 'ok' | 'replayed' | 'full' {
+    const kv = this.ctx.storage.kv;
+    const until = kv.get<number>(`mark:n:${nonce}`);
+    if (until !== undefined && until > now) return 'replayed';
+    if (!this.hit(cap, now).ok) return 'full';
+    kv.put(`mark:n:${nonce}`, untilMs);
+    void this.scheduleMarkerSweep(untilMs);
+    return 'ok';
+  }
+
+  /**
+   * D927: `hit(limits)` and, only when it counted, a test-and-set of the marker `mark` until `untilMs` (`reserve`): one
+   * call for a platform key's request windows and its once-an-hour `last_used_at` write. `marked` is true when this call
+   * set the marker.
+   */
+  hitMark(limits: Limit[], mark: string, untilMs: number, now: number = Date.now()): HitResult & { marked?: boolean } {
+    const r = this.hit(limits, now);
+    if (!r.ok) return r;
+    return { ...r, marked: this.reserve(mark, untilMs, now) };
   }
 
   /** Drops a marker (a reservation whose relay definitely did not execute). */

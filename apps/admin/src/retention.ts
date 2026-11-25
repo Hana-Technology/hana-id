@@ -17,12 +17,13 @@
 //     AdminRpc.purgeDirectory                        the wallet directory of scopes left without apps (D363)
 //     AdminRpc.purgeUserEvents                       key exports and mainnet demo signatures past 24 months, and
 //                                                    those of scopes left without apps (readiness 7.17)
+//     AdminRpc.purgePlatformCalls                    the platform API's call log past 13 months (D927)
 //     AdminRpc.purgeAudit, StaffRpc.purgeAudit       audit rows past 60 months, in batches (D364)
 //
 // Not here: the email issuer's directory and its staff audit, which this Worker has no binding to. They are the
 // operator's `admin <env> retention:issuer` (D365); the screen says so. Every number is a count; nothing here reads
 // a uid, a sub, an address or a wallet.
-import { RETENTION_BATCH, auditCutoff, deletedAppCutoff, userEventsCutoff } from '@hana-id/console-core';
+import { RETENTION_BATCH, auditCutoff, deletedAppCutoff, platformCallsCutoff, userEventsCutoff } from '@hana-id/console-core';
 import type { AdminRpcClient, Env, StaffRpcClient } from './env.ts';
 import { mailLabel } from './env.ts';
 import { retentionFailed } from './email/ledger-messages.ts';
@@ -91,7 +92,7 @@ export async function dueState(store: RetentionStore, now: number): Promise<DueS
 
 export interface RetentionDeps {
   store: RetentionStore;
-  api: Pick<AdminRpcClient, 'purgeAudit' | 'deletedApps' | 'purgeDirectory' | 'purgeUserEvents'>;
+  api: Pick<AdminRpcClient, 'purgeAudit' | 'deletedApps' | 'purgeDirectory' | 'purgeUserEvents' | 'purgePlatformCalls'>;
   console: Pick<StaffRpcClient, 'purgeAudit'>;
   budget: Budget;
   now: number;
@@ -229,6 +230,14 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
       add('userEventsExpired', r.expired);
       add('userEventsDeadScopes', r.deadScopes);
       if (r.expired < RETENTION_BATCH && r.deadScopes < RETENTION_BATCH) return;
+    }
+  });
+  await step('platform_calls', async () => {
+    for (;;) {
+      const r = await rpc<{ platformCalls: number }>('platform_calls', () => api.purgePlatformCalls({ ...systemCtx(), before: platformCallsCutoff(d.now), limit: RETENTION_BATCH }));
+      if (!r) return;
+      add('platformCallsDeleted', r.platformCalls);
+      if (r.platformCalls < RETENTION_BATCH) return;
     }
   });
   await step('api_audit', async () => {

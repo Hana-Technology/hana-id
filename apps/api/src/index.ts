@@ -6,6 +6,7 @@ import { json } from './http.ts';
 import { detectDrift } from './changes/drift.ts';
 import { labelsMaintenance } from './labels/cron.ts';
 import { platformKeysMaintenance } from './platform/cron.ts';
+import { handlePlatform, isPlatformPath } from './platform/request.ts';
 import { detectLabelDrift } from './labels/drift.ts';
 import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
 import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
@@ -121,6 +122,9 @@ export default {
         if (request.method === 'OPTIONS') return openPreflight();
         return routeError(405, 'method_not_allowed', 'Method not allowed', requestId, { allow: 'GET' });
       }
+      // D927: a network's backend, signed with its platform key (docs/partner-platform-spec.md A3); never a browser (no
+      // CORS, a request with an Origin is refused). Every method and path under the prefix is the platform's to answer.
+      if (isPlatformPath(pathname)) return await handlePlatform(request, url, env, requestId, ctx);
       if (pathname === GOVERNANCE_ENDPOINT) {
         if (request.method === 'GET' || request.method === 'HEAD') return await handleGovernance(request, env, requestId);
         if (request.method === 'OPTIONS') return openPreflight();

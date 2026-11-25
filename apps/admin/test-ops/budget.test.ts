@@ -185,6 +185,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
         deletedApps: async () => ({ ok: true as const, appIds: [], next: `1:app_${++deletedPages}`, more: deletedPages < 14 }),
         purgeDirectory: async () => ({ ok: true as const, scopes: 0, users: 0, wallets: 0, identities: 0 }),
         purgeUserEvents: async () => ({ ok: true as const, expired: 0, deadScopes: 0 }),
+        purgePlatformCalls: async () => ({ ok: true as const, platformCalls: 0 }),
         purgeAudit: async () => ({ ok: true as const, appChanges: 0, guardedChanges: 0 }),
         // D872: the run's wake-up report (only with NEON_PLAN).
         neonWake: async (c: unknown) => {
@@ -232,7 +233,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
       ledger: opens - before.opens,
       relayer_keys: countOf(mine, 'api.relayerKeys'),
       nonce_check: net.key - before.key,
-      retention: countOf(mine, 'api.deletedApps', 'api.purgeDirectory', 'api.purgeUserEvents', 'api.purgeAudit', 'console.purgeAudit'),
+      retention: countOf(mine, 'api.deletedApps', 'api.purgeDirectory', 'api.purgeUserEvents', 'api.purgePlatformCalls', 'api.purgeAudit', 'console.purgeAudit'),
       link_jump: countOf(mine, 'api.linkStats'),
       alerts: sent.filter((m) => ALERT_SUBJECT.test(m.subject)).length,
       statement_notices: countOf(mine, 'api.getSecurityContacts', 'console.getOrg') + sent.filter((m) => !ALERT_SUBJECT.test(m.subject) && !/\] Retention/u.test(m.subject)).length,

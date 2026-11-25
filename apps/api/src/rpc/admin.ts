@@ -44,6 +44,7 @@ import {
   purgeAuditInput,
   purgeDirectoryInput,
   purgeUserEventsInput,
+  purgePlatformCallsInput,
   NEON_WAKE_MAX_SKEW_MS,
   neonAdminRunInput,
   neonPlanOf,
@@ -113,7 +114,7 @@ import { evmRelayerStaffAct, evmRelayerStaffDetail, evmRelayerStaffOverview } fr
 import { adminAppNames, adminFindUsers, adminGetUser, adminListUsers, adminProfileNames } from '../directory/read.ts';
 import { supportLookup, userShares } from '../directory/support.ts';
 import { linkStats } from '../link-usage.ts';
-import { deletedApps, purgeAudit, purgeDirectory, purgeUserEvents } from '../changes/retention.ts';
+import { deletedApps, purgeAudit, purgeDirectory, purgePlatformCalls, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
 import { isLabelChange } from '../labels/sql.ts';
 import { ackLabelNotice, labelNotices } from '../labels/lifecycle.ts';
@@ -493,6 +494,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** user_events past min(before, 24 months ago), and those of scopes left without apps (purgeDirectory's rule). */
   purgeUserEvents(c: unknown) {
     return runRpc(this.env, 'admin.purgeUserEvents', purgeUserEventsInput, c, { actors: SYSTEM }, ({ input, db, w }) => purgeUserEvents(db, input, w.now));
+  }
+
+  /** D927: the platform API's call log past min(before, 13 months ago). */
+  purgePlatformCalls(c: unknown) {
+    return runRpc(this.env, 'admin.purgePlatformCalls', purgePlatformCallsInput, c, { actors: SYSTEM }, ({ input, db }) => purgePlatformCalls(db, input));
   }
 
   // ---- end users and their wallets (D310, D315, D346; staff only: the internal id, subs and identity keys included,

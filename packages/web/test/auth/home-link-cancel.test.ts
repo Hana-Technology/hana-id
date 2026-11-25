@@ -166,8 +166,11 @@ async function harness(o: Opts = {}): Promise<H> {
     if (!el) throw new Error(`No #${id} on the page: ${pageText()}`);
     (el as HTMLElement).click();
   };
+  // Waits by the clock, not by a count of turns: the page's WebCrypto work (signing, the relay's decryption) runs off the
+  // event loop, and on a loaded machine 300 turns came and went before it finished (verify on 2026-11-25, D922's review).
   h.idle = async () => {
-    for (let i = 0; i < 300; i++) {
+    const until = Date.now() + 5_000;
+    while (Date.now() < until) {
       await new Promise((r) => setImmediate(r));
       if (running.size === 0) return;
     }
@@ -185,7 +188,7 @@ async function harness(o: Opts = {}): Promise<H> {
   h.google = async (claims = {}, payload) => {
     const p = parseParams(h.child!.received.at(-1));
     if (!p) throw new Error('no parameters were posted');
-    for (let i = 0; i < 100 && relayResolve === null; i++) await new Promise((r) => setImmediate(r));
+    for (const until = Date.now() + 5_000; relayResolve === null && Date.now() < until; ) await new Promise((r) => setImmediate(r));
     if (!relayResolve) throw new Error('no relay read');
     const body: RelayPayload = payload ?? { idToken: await signer.sign({ iss: 'https://accounts.google.com', aud: CLIENT_ID, sub: G.sub, nonce: p.nonce, iat: Math.floor(T0 / 1000), exp: Math.floor(T0 / 1000) + 3600, ...claims }) };
     // The relay key the child got (a clone: the page zeroes its own copy of the message's).

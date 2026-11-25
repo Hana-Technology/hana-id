@@ -22220,6 +22220,10 @@ and 0029 are piece P2's, built at the same time; 0030 doesn't depend on them).
     reader, "no usable lines", a second app renamed, a deleted app; a Hedera sponsored request (refused at decode: no
     reviewed account helper on Hedera; the rows read the unit by chain); focus back on "Show all apps" when its read
     fails or adds nothing.
+  - `packages/web/test/auth/home-link-cancel.test.ts` (not changed in behaviour by this branch) failed in three of four
+    verify runs on a loaded machine (load average 40 to 57, other agents running): its `idle` waited 300 event-loop
+    turns, and the page's WebCrypto work runs off the loop. It now waits by the clock (up to 5 s), as does its wait for
+    the relay read; the file runs in the same 2 s.
   - **The org cap of 10 undeleted platform-created apps (item 4 (e) above): recommendation, to confirm (the Tech
     Lead): keep it.** Other things still lean on small scopes: D912's `otherApps` statement on every vault minute read
     (about 2 rows per other app of the scope), `GET /v1/home/devices` and its parser (100 apps a scope), the Security

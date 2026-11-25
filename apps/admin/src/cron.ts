@@ -17,6 +17,7 @@ import { errorName, log } from './log.ts';
 import { Budget, RUN_BUDGET, meteredEnv } from './mail.ts';
 import { opsDueAt, opsDueOrCatchUp, reportNeonWake, tracksNeon } from './neon.ts';
 import { runNotices } from './notices.ts';
+import { reconcileFreezes } from './platform.ts';
 import { type OpsStore, opsSource } from './ops.ts';
 import { runWatcher } from './watcher.ts';
 
@@ -54,9 +55,13 @@ export async function everyFiveMinutes(env: Env, now = Date.now(), scheduledTime
     if (tracksNeon(env)) await budget.as('neon_mark', async () => budget.takeRpc());
   }
   const notices = await budget.as('notices', () => runNotices(menv, sender, budget));
-  const acked = (notices.changes?.acked ?? 0) + (notices.labels?.acked ?? 0) + (notices.members?.acked ?? 0);
-  const failed = (notices.changes?.failed ?? 0) + (notices.labels?.failed ?? 0) + (notices.members?.failed ?? 0);
-  const summary: RunSummary = { at: now, notices: notices.changes || notices.labels || notices.members ? { acked, failed } : null, feed: false, watcher: false, budgetLeft: 0, ...(catchUp ? { catchUp: true as const } : {}), calls: {} };
+  const acked = (notices.changes?.acked ?? 0) + (notices.labels?.acked ?? 0) + (notices.members?.acked ?? 0) + (notices.platformKeys?.acked ?? 0);
+  const failed = (notices.changes?.failed ?? 0) + (notices.labels?.failed ?? 0) + (notices.members?.failed ?? 0) + (notices.platformKeys?.failed ?? 0);
+  // D918: once an hour (the run in the hour's first 5 minutes), the freeze mirror's check, with what budget is left.
+  if (new Date(scheduledTime).getUTCMinutes() < 5 && budget.fits(3 + 2, 3)) {
+    await budget.as('freeze_mirror', () => reconcileFreezes(menv)).catch((err: unknown) => log({ event: 'freeze_mirror', outcome: 'error', error: errorName(err) }, 'error'));
+  }
+  const summary: RunSummary = { at: now, notices: notices.changes || notices.labels || notices.members || notices.platformKeys ? { acked, failed } : null, feed: false, watcher: false, budgetLeft: 0, ...(catchUp ? { catchUp: true as const } : {}), calls: {} };
   if (!opsDue) {
     // D872: not this run's turn: the ledger stays closed, so Neon isn't woken for the notices (they don't need it).
     summary.budgetLeft = budget.remaining;

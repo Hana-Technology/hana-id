@@ -109,6 +109,34 @@ describe('reads', () => {
   });
 });
 
+describe('people’s addresses stay within the organisation', () => {
+  it('an id belonging to another org’s user, or to a member who left, yields no email through any route; four eyes still compares the former registrant’s', async () => {
+    const { m, app } = await ownerWithScope();
+    const stranger = await member('owner');
+    const second = await coOwner(m.org);
+    await setScope({ id: app.scope, owners: [oidc(m.sub), oidc(second.sub), oidc(stranger.sub)] });
+    // A key whose registrant is another org's user (a bare write: no route makes one), and one whose registrant left.
+    const foreign = await fourEyesKey(m.org, app.scope, stranger);
+    const leaver = await coOwner(m.org);
+    const left = await fourEyesKey(m.org, app.scope, leaver);
+    await db.prepare('DELETE FROM members WHERE org_id = ? AND user_id = ?').bind(m.org, leaver.userId).run();
+    const list = await getAs<{ people: Record<string, string> }>(m, `/api/orgs/${m.org}/platform-keys`);
+    expect(JSON.stringify(list.body)).not.toContain(stranger.email);
+    expect(JSON.stringify(list.body)).not.toContain(leaver.email);
+    for (const id of [foreign, left]) {
+      const page = await getAs<{ people: Record<string, string> }>(m, `/api/orgs/${m.org}/platform-keys/${id}`);
+      expect(page.status).toBe(200);
+      expect(page.body.people).toEqual({});
+      expect(JSON.stringify(page.body)).not.toMatch(new RegExp(`${stranger.email}|${leaver.email}`, 'u'));
+    }
+    // A current member with the departed registrant's address (dots aside) still can't confirm their key.
+    const twin = await coOwner(m.org, { email: leaver.email.replace('@', '+x@') });
+    await setScope({ id: app.scope, owners: [oidc(m.sub), oidc(twin.sub)] });
+    expect((await getAs<{ confirm: { allowed: boolean; reason?: string } }>(twin, `/api/orgs/${m.org}/platform-keys/${left}`)).body.confirm).toMatchObject({ allowed: false, reason: expect.stringMatching(/same email/u) });
+    expect(JSON.stringify((await getAs(twin, `/api/orgs/${m.org}/platform-keys/${left}`)).body)).not.toContain(leaver.email);
+  });
+});
+
 describe('registration', () => {
   it('an on-chain owner registers a key through the fresh sign-in; the action names the fingerprint; the audit row has no key', async () => {
     const { m, app } = await ownerWithScope();

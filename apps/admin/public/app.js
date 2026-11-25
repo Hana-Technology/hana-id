@@ -1689,6 +1689,79 @@ function contactsPanel(o, d) {
   );
 }
 
+// ---- platform keys (D918): a network's backend's keys, staff's register, approve, stop and cancel, and the switch ----
+
+const KEY_STATE = { awaiting_acceptance: ['Awaiting acceptance', 'warning'], waiting: ['Waiting', 'warning'], in_force: ['Working', 'ok'], cancelled: ['Cancelled', 'unknown'], revoked: ['Stopped', 'critical'], expired: ['Expired', 'unknown'] };
+
+/** The org's platform keys and the switch: GET /api/orgs/:org/platform. Turning the switch on names every key still working or waiting (the review, L5). */
+async function platformPanel(main, o) {
+  const id = encodeURIComponent(o.id);
+  const box = h('div', {}, loading());
+  main.append(panel('Platform keys', { anchor: 'platform', hint: 'Keys the organisation’s backend signs its requests with (piece P3 builds the requests). A staff-registered key works only once an owner of each scope accepts it, or a second staff member approves it.' }, box));
+  let d;
+  try {
+    d = await api('GET', `/api/orgs/${id}/platform`);
+  } catch (err) {
+    box.replaceChildren(errorBox(err));
+    return;
+  }
+  const live = d.keys.filter((k) => k.state === 'awaiting_acceptance' || k.state === 'waiting' || k.state === 'in_force');
+  const rows = d.keys.map((k) => {
+    const [label, tone] = KEY_STATE[k.state] || [k.state, 'neutral'];
+    const by = k.proposedByKind === 'hana' ? `Journear staff (${k.proposedByEmail || k.proposedBy})` : `member ${k.proposedBy}`;
+    const actions = [];
+    if (k.state === 'awaiting_acceptance') {
+      actions.push(
+        me && me.email && k.proposedByEmail && me.email.toLowerCase() === k.proposedByEmail.toLowerCase()
+          ? unavailable('Approve', 'You registered it: a second staff member approves it')
+          : form(
+              [{ name: 'reason', label: 'How you checked it with the network', required: true, help: 'At least 20 characters. You can’t approve a key you registered.' }],
+              'Approve',
+              (v) => api('POST', `/api/orgs/${id}/platform-keys/${encodeURIComponent(k.id)}/approve`, { reason: v.reason }),
+              { done: 'Key approved: it is announced, then waits 24 hours unless an owner confirms it.' },
+            ),
+      );
+    }
+    if (k.state === 'awaiting_acceptance' || k.state === 'waiting') actions.push(actionButton('Cancel', () => api('POST', `/api/orgs/${id}/platform-keys/${encodeURIComponent(k.id)}/cancel`, {}), `Cancel the key “${k.label}”? It never starts working.`, true, { done: 'Key cancelled.' }));
+    if (k.state === 'awaiting_acceptance' || k.state === 'waiting' || k.state === 'in_force') actions.push(actionButton('Stop', () => api('POST', `/api/orgs/${id}/platform-keys/${encodeURIComponent(k.id)}/revoke`, { reason: 'Stopped by Journear staff from the admin portal' }), `Stop the key “${k.label}” now? It stops at once for good, and web addresses it asked for that still wait are cancelled.`, true, { done: 'Key stopped.' }));
+    return tr(
+      h('span', {}, k.label, h('span', { class: 'sub' }, mono(k.id))),
+      h('span', {}, badge(label, tone), k.activeFrom ? h('span', { class: 'sub' }, `${k.state === 'waiting' ? 'from' : 'since'} ${time(k.activeFrom)}`) : ''),
+      mono(k.thumbprint),
+      k.scopes.map((s) => mono(s)),
+      h('span', {}, by, h('span', { class: 'sub' }, time(k.proposedAt))),
+      h('div', { class: 'row' }, actions),
+    );
+  });
+  const switchBox = d.platform.enabled
+    ? actionButton('Switch platform keys off', () => api('POST', `/api/orgs/${id}/platform-switch`, { enabled: false, reason: 'Switched off by Journear staff from the admin portal' }), `Switch platform keys off for ${o.name}? Every key stops working at once, and its waiting keys and waiting web addresses are cancelled.`, true, { done: 'Platform keys are off for this organisation.' })
+    : d.platform.frozen
+      ? unavailable('Switch platform keys on', 'The organisation is frozen')
+      : actionButton(
+          'Switch platform keys on',
+          () => api('POST', `/api/orgs/${id}/platform-switch`, { enabled: true, reason: 'Switched on by Journear staff after reviewing every key', reviewedKeys: live.map((k) => k.id) }),
+          live.length ? `Turning them on, you confirm you reviewed every key still working or waiting: ${live.map((k) => `${k.label} (${k.id})`).join(', ')}. Stop any you don’t recognise first.` : `Switch platform keys on for ${o.name}? It has no key yet.`,
+          false,
+          { done: 'Platform keys are on for this organisation.' },
+        );
+  box.replaceChildren(
+    h('p', {}, d.platform.enabled ? 'Platform keys are on for this organisation.' : 'Platform keys are off for this organisation: no key works.', d.platform.frozen ? ' The organisation is frozen.' : ''),
+    h('div', { class: 'row' }, switchBox),
+    table(['Key', 'State', 'Fingerprint', 'Scopes', 'Registered by', ''], rows, { empty: 'No platform key yet.' }),
+    form(
+      [
+        { name: 'label', label: 'Label', placeholder: 'Production backend', required: true },
+        { name: 'scopeIds', label: 'Scopes (one or two)', placeholder: 's1, s2', required: true },
+        { name: 'publicKey', label: 'Public key (PEM or JWK)', type: 'textarea', required: true, size: 'wide', help: 'The network’s ECDSA P-256 public key. Never a private key.' },
+        { name: 'reason', label: 'How you checked it with the network', required: true, size: 'wide', help: 'At least 20 characters: who read the fingerprint back to you, and how.' },
+      ],
+      'Register the key',
+      (v) => api('POST', `/api/orgs/${id}/platform-keys`, { label: v.label, scopeIds: lines(v.scopeIds), publicKey: v.publicKey, reason: v.reason }),
+      { done: 'Key registered: it waits for an owner of each scope to accept it, or a second staff member to approve it.' },
+    ),
+  );
+}
+
 function dangerPanel(o, legacy) {
   const id = encodeURIComponent(o.id);
   return panel(
@@ -1829,6 +1902,7 @@ async function orgPage(main, orgId) {
   if (d.flags.noSecurityContacts) main.append(note('warn', 'No security contact', 'This organisation can’t get apps until it has one, and its notices go to the Journear security alias only. Add one under Security contacts.'));
   if (d.flags.ownersNotContacts.length) main.append(note('warn', 'Owners who aren’t security contacts', `${d.flags.ownersNotContacts.join(', ')}: add them under Security contacts so they hear about changes to their apps.`));
   main.append(membersPanel(o, d), invitesPanel(d), grantsPanel(d), scopePanel(o, d), appsPanel(o, d), contactsPanel(o, d));
+  await platformPanel(main, o);
   await changesPanel(main, o.id);
   main.append(dangerPanel(o, false));
   return undefined;

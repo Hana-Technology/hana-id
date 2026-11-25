@@ -54,7 +54,8 @@ export function stateWords(k: PlatformKeyView, now: number): { label: string; to
   }
 }
 
-const personOf = (kind: string | undefined, id: string | undefined, people: Record<string, string>): string => (kind === 'hana' || id === 'hana' ? 'Journear staff' : id ? (people[id] ?? 'an owner') : '—');
+/** Who a key names: a current member by their address, staff as Journear staff, anyone else (someone who left the org) as a former member. */
+export const personOf = (kind: string | undefined, id: string | undefined, people: Record<string, string>): string => (kind === 'hana' || id === 'hana' ? 'Journear staff' : id ? (people[id] ?? 'a former member') : '—');
 
 export function PlatformKeys() {
   const { org } = useParams();

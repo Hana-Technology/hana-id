@@ -10,6 +10,11 @@
 //                   promotion's 24 h starts at the ack). Token: HMAC(CANCEL_LINK_KEY, "hana-console/owner-grant-cancel/v1" ‖ id).
 //   label_pending   AdminRpc.labelNotices → the security alias and every security contact → AdminRpc.ackLabelNotice
 //                   (D894: a request labels version's clock starts at the ack). Token: as change_pending's, of its `lc_` id.
+//   platform_key    AdminRpc.platformKeyNotices (D918) → the alias, every security contact and every owner of the org
+//                   (StaffRpc.listMembers), naming who registered, accepted and confirmed the key → the ack of its kind:
+//                   the announcement (ackPlatformKeyNotice: the key's wait starts, or an accepted staff key works now),
+//                   an owner's confirmation (ackPlatformKeyConfirmNotice), a stop or expiry, an expiry warning. Tokens:
+//                   HMAC(CANCEL_LINK_KEY, "hana-id/platform-key-cancel/v1" ‖ id) and "…/platform-key-revoke/v1" ‖ id.
 //
 // Fails closed: a missing key or sender, a failed or skipped send, or an unreadable recipient list means no ack; the
 // next run tries again with the same token (it is deterministic, so a link from an earlier attempt works once acked).
@@ -23,6 +28,8 @@ import type { MemberNotice } from '@hana-id/console-core';
 import type { ChangeNotice, Env } from './env.ts';
 import { mailLabel } from './env.ts';
 import { changePending, inviteLink, inviteNotice, labelsProposed, ownerGrantNotice, type MailContext } from './email/messages.ts';
+import { type KeyPeople, platformKeyConfirmed, platformKeyExpiring, platformKeyRegistered, platformKeyStopped } from './email/platform-messages.ts';
+import type { MemberView, PlatformKeyNotice } from '@hana-id/console-core';
 import { consoleLink } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
@@ -299,13 +306,134 @@ export async function runMemberNotices(rawEnv: Env, sender: EmailSender, budget:
 }
 
 /**
+ * Who a key's notice names, from the org's own current members only (StaffRpc.listMembers of that org): a member by
+ * their address, staff by theirs, and anyone no longer a member as "a former member" (their address isn't looked up).
+ */
+function peopleFor(n: PlatformKeyNotice, members: MemberView[], orgName: string | undefined): KeyPeople {
+  const email = (id: string | undefined): string | undefined => (id === undefined ? undefined : members.find((m) => m.userId === id)?.email);
+  const k = n.key;
+  const staffWords = (e: string | undefined, id: string) => `Journear staff (${e ?? id})`;
+  return {
+    orgName,
+    registeredBy: k.proposedByKind === 'hana' ? staffWords(k.proposedByEmail, k.proposedBy) : (email(k.proposedBy) ?? 'a former member'),
+    ...(k.acceptedByKind ? { acceptedBy: k.acceptedByKind === 'hana' ? staffWords(k.acceptedByEmail, k.acceptedBy!) : (email(k.acceptedBy) ?? 'a former member') } : {}),
+    ...(k.confirmedBy ? { confirmedBy: email(k.confirmedBy) ?? 'a former member' } : {}),
+  };
+}
+
+/**
+ * `platform_key` (D918): AdminRpc.platformKeyNotices → for each, the org's name and members (owners' addresses and the
+ * people the key names: two console RPCs, once a run and org), one message to the alias, every security contact and
+ * every owner, then its ack only after every send was accepted. The budget rules of the other steps: a notice starts
+ * only with room for its lookups, every email and its ack.
+ */
+export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
+  const out: StepResult = { acked: 0, failed: 0, skipped: 0 };
+  const env = meteredEnv(rawEnv, budget);
+  const key = linkKey(env.CANCEL_LINK_KEY);
+  if (!key) {
+    log({ event: 'notice', step: 'platform_key', outcome: 'skipped', code: 'cancel_link_key_missing' }, 'error');
+    return out;
+  }
+  if (!budget.fits(PAGE_AND_ONE, 2)) {
+    noRoom('platform_key');
+    return out;
+  }
+  const page = await env.API.platformKeyNotices({ ...systemCtx(), limit: NOTICE_PAGE });
+  if (!page.ok) {
+    // An API before D918 has no such method: the step does nothing (the other steps are unaffected).
+    log({ event: 'notice', step: 'platform_key', outcome: 'error', code: page.code }, page.code === 'not_found' ? 'warn' : 'error');
+    return out;
+  }
+  const orgs = new OrgLookups(env);
+  const members = new Map<string, MemberView[] | null>();
+  const ctx = mailContext(env);
+  for (const n of page.notices) {
+    const id = n.key.id;
+    const orgId = n.key.orgId;
+    const lookups = (orgs.nameUncached(orgId) ? 1 : 0) + (members.has(orgId) ? 0 : 1);
+    if (!budget.fits(lookups + 2, lookups + 1)) {
+      out.skipped++;
+      break;
+    }
+    if (!members.has(orgId)) {
+      const r = await env.CONSOLE.listMembers({ ...systemCtx(), orgId }).catch(() => null);
+      members.set(orgId, r?.ok ? r.members : null);
+    }
+    const list = members.get(orgId);
+    if (!list) {
+      // Without the owners the notice would miss people it must reach (N9): it waits for the next run.
+      out.failed++;
+      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'rejected', code: 'owners_unavailable' }, 'warn');
+      continue;
+    }
+    const orgName = await orgs.name(orgId);
+    const owners = list.filter((m) => m.role === 'owner' && !m.disabled).map((m) => m.email);
+    const to = recipients(env.SECURITY_ALIAS, n.contacts, owners);
+    if (!budget.fits(to.length + 1, 1)) {
+      out.skipped++;
+      break;
+    }
+    const people = peopleFor(n, list, orgName);
+    const cancelToken = await linkToken('platformKeyCancel', key, id);
+    const revokeToken = await linkToken('platformKeyRevoke', key, id);
+    const cancelUrl = consoleLink(env.CONSOLE_ORIGIN, `/cancel-platform-key/${encodeURIComponent(id)}#t=${b64url(cancelToken)}`);
+    const revokeUrl = consoleLink(env.CONSOLE_ORIGIN, `/revoke-platform-key/${encodeURIComponent(id)}#t=${b64url(revokeToken)}`);
+    const confirmUrl = consoleLink(env.CONSOLE_ORIGIN, `/confirm-platform-key/${encodeURIComponent(id)}`);
+    let message;
+    try {
+      message =
+        n.kind === 'announce'
+          ? platformKeyRegistered(ctx, n, people, { now: Date.now(), cancelUrl, confirmUrl, ...(n.inForceAtOnce ? { revokeUrl } : {}) })
+          : n.kind === 'confirmed'
+            ? platformKeyConfirmed(ctx, n, people, { revokeUrl })
+            : n.kind === 'ended'
+              ? platformKeyStopped(ctx, n, people)
+              : platformKeyExpiring(ctx, n, people);
+    } catch (err) {
+      out.failed++;
+      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
+      continue;
+    }
+    const sent = await sendToAll(sender, budget, to, message, `platform_key_${n.kind}:${id}${n.kind === 'expiring' ? `:${n.stage}` : ''}`);
+    if (sent.outOfBudget) {
+      out.skipped++;
+      break;
+    }
+    if (!sent.allAccepted) {
+      out.failed++;
+      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed }, 'warn');
+      continue;
+    }
+    const base = { ...systemCtx(), keyId: id };
+    const ack =
+      n.kind === 'announce'
+        ? await env.API.ackPlatformKeyNotice({ ...base, cancelTokenHash: b64url(await linkTokenHash(cancelToken)), ...(n.inForceAtOnce ? { revokeTokenHash: b64url(await linkTokenHash(revokeToken)) } : {}) })
+        : n.kind === 'confirmed'
+          ? await env.API.ackPlatformKeyConfirmNotice({ ...base, revokeTokenHash: b64url(await linkTokenHash(revokeToken)) })
+          : n.kind === 'ended'
+            ? await env.API.ackPlatformKeyEndNotice(base)
+            : await env.API.ackPlatformKeyExpiryNotice({ ...base, stage: n.stage ?? 30 });
+    if (ack.ok) {
+      out.acked++;
+      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'ok', sent: sent.sent });
+    } else {
+      out.failed++;
+      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'rejected', code: ack.code }, 'warn');
+    }
+  }
+  return out;
+}
+
+/**
  * The blocking steps, each on its own (a console outage doesn't hold back the guarded changes' notices; an API older
  * than the request labels, D894, fails only their step).
  */
-export async function runNotices(env: Env, sender: EmailSender, budget: Budget): Promise<{ changes: StepResult | null; labels: StepResult | null; members: StepResult | null }> {
+export async function runNotices(env: Env, sender: EmailSender, budget: Budget): Promise<{ changes: StepResult | null; labels: StepResult | null; members: StepResult | null; platformKeys: StepResult | null }> {
   let changes: StepResult | null = null;
   let labels: StepResult | null = null;
   let members: StepResult | null = null;
+  let platformKeys: StepResult | null = null;
   try {
     changes = await runChangeNotices(env, sender, budget);
   } catch (err) {
@@ -321,5 +449,10 @@ export async function runNotices(env: Env, sender: EmailSender, budget: Budget):
   } catch (err) {
     log({ event: 'notice', step: 'member', outcome: 'error', error: errorName(err) }, 'error');
   }
-  return { changes, labels, members };
+  try {
+    platformKeys = await runPlatformKeyNotices(env, sender, budget);
+  } catch (err) {
+    log({ event: 'notice', step: 'platform_key', outcome: 'error', error: errorName(err) }, 'error');
+  }
+  return { changes, labels, members, platformKeys };
 }

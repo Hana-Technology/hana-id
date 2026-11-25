@@ -70,6 +70,18 @@ export async function answer(route: string, staff: StaffRequest, call: () => Pro
   return json(200, shape ? shape(rest) : rest);
 }
 
+/** The API's mirror of a console freeze (D918), after the console's own: 502 `mirror_failed` when it didn't land. */
+async function mirrorFreeze(env: Env, staff: StaffRequest, orgId: string, frozen: boolean): Promise<Response> {
+  try {
+    const r = await env.API.setPlatformOrgFrozen({ ...staffCtx(staff), orgId, frozen });
+    if (r.ok) return json(200, { platformMirrored: true });
+    log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: r.code, step: 'platform_mirror' }, 'warn');
+  } catch (err) {
+    log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
+  }
+  return json(502, { error: { code: 'mirror_failed', message: `The organisation is ${frozen ? 'frozen' : 'unfrozen'} in the console, but its platform keys weren’t updated. Press the button again; the hourly check repeats it too.` } });
+}
+
 const pick = (b: Record<string, unknown>, ...keys: string[]): Record<string, unknown> => {
   const out: Record<string, unknown> = {};
   for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
@@ -188,7 +200,26 @@ const ROUTES: Route[] = [
       return json(200, { org: org.org, members: org.members, invites: org.invites, grants: org.grants ?? [], securityContacts: contacts.emails, apps: apps.apps, flags });
     },
   },
-  { method: 'POST', pattern: '/api/orgs/:org/freeze', handler: (c) => answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'frozen') })) },
+  {
+    // The console's freeze, then its mirror in the API (D918: a freeze cancels the org's waiting platform keys and the
+    // platform's waiting web addresses). The console first: a freeze never waits on the API. A failed mirror is said in
+    // the answer (pressing Freeze again repeats it, a no-op for the console), and the hourly reconciliation repeats it.
+    method: 'POST',
+    pattern: '/api/orgs/:org/freeze',
+    handler: async (c) => {
+      const res = await answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'frozen') }));
+      if (!res.ok || typeof c.body.frozen !== 'boolean') return res;
+      return mirrorFreeze(c.env, c.staff, c.params.org!, c.body.frozen);
+    },
+  },
+  // ---- platform keys (D918): the org's keys and switch; staff register (held for an owner's acceptance or a second
+  // staff member), approve (never the registrant), stop and cancel; the switch with the key review ----
+  { method: 'GET', pattern: '/api/orgs/:org/platform', handler: (c) => answer('GET /api/orgs/:org/platform', c.staff, () => c.env.API.listPlatformKeys({ ...staffCtx(c.staff), orgId: c.params.org })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-keys', handler: (c) => answer('POST /api/orgs/:org/platform-keys', c.staff, () => c.env.API.registerPlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'scopeIds', 'label', 'publicKey', 'reason') })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/approve', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/approve', c.staff, () => c.env.API.approvePlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id, ...pick(c.body, 'reason') })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/revoke', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/revoke', c.staff, () => c.env.API.revokePlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id, ...pick(c.body, 'reason') })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/cancel', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/cancel', c.staff, () => c.env.API.cancelPlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-switch', handler: (c) => answer('POST /api/orgs/:org/platform-switch', c.staff, () => c.env.API.setPlatformOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'enabled', 'reason', 'reviewedKeys') })) },
   { method: 'POST', pattern: '/api/orgs/:org/suspend', handler: (c) => answer('POST /api/orgs/:org/suspend', c.staff, () => c.env.API.suspendOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'suspended') })) },
   {
     method: 'PUT',

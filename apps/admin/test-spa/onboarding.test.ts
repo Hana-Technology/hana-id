@@ -18,6 +18,7 @@ function orgApi(details: () => Answer, write: (c: Call) => Answer) {
     if (c.method !== 'GET') return write(c);
     if (c.path === '/api/orgs/org_lumen') return details();
     if (c.path === '/api/orgs/org_lumen/changes') return { body: { changes: [] } };
+    if (c.path === '/api/orgs/org_lumen/platform') return { body: { keys: [], platform: { orgId: 'org', enabled: false, frozen: false, maxApps: 10, creationsPerDay: 5, proposalsPerDay: 30, setBy: null, setAt: null } } };
     if (c.path === '/api/orgs') return { body: { orgs: [ORG] } };
     if (c.path === '/api/invites/new-orgs') return { body: { invites: [], truncated: false } };
     return { status: 404, body: { error: { code: 'not_found', message: 'Not found' } } };

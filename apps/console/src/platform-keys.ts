@@ -37,14 +37,23 @@ export const PLATFORM_KEY_ID = 'pkc_[1-9A-HJ-NP-Za-km-z]{12,17}';
 /** Why this member can't accept or confirm a key now (shown on the page; null: they may). */
 export type Ability = { allowed: true } | { allowed: false; reason: string };
 
-/** The org's members' addresses for the people a key names (ids that aren't members are left out: staff, gone members). */
+/**
+ * The addresses of the people a key names, for the screens: only current members of `orgId` (a registrant, acceptor or
+ * confirmer who has left the org, any other console user and staff are left out, and the screens say "a former
+ * member" or "Journear staff"). Never used for four eyes (registrantEmail, which is never returned to a caller).
+ */
 export async function peopleOf(env: Env, orgId: string, ids: readonly (string | undefined)[]): Promise<Record<string, string>> {
   const want = [...new Set(ids.filter((x): x is string => typeof x === 'string' && x.startsWith('usr_')))];
   if (want.length === 0) return {};
-  const { results } = await env.CONSOLE_DB.prepare(`SELECT u.id, u.email FROM console_users u WHERE u.id IN (${want.map(() => '?').join(', ')})`)
-    .bind(...want)
+  const { results } = await env.CONSOLE_DB.prepare(`SELECT u.id, u.email FROM console_users u JOIN members m ON m.user_id = u.id AND m.org_id = ? WHERE u.id IN (${want.map(() => '?').join(', ')})`)
+    .bind(orgId, ...want)
     .all<{ id: string; email: string }>();
   return Object.fromEntries(results.map((r) => [r.id, r.email]));
+}
+
+/** The registrant's address for four eyes' email comparison only (also after they left the org); never returned to a caller. */
+async function registrantEmail(env: Env, userId: string): Promise<string | null> {
+  return (await env.CONSOLE_DB.prepare('SELECT email FROM console_users WHERE id = ?').bind(userId).first<{ email: string }>())?.email ?? null;
 }
 
 /** When the member became an owner of the org: `role_since` for an owner, a matured grant's `owner_from`; null if not an owner now. */
@@ -69,9 +78,8 @@ export async function fourEyesProblem(env: Env, orgId: string, who: { userId: st
   if (!key.fourEyes) return null;
   if (key.proposedByKind === 'member') {
     if (key.proposedBy === who.userId) return 'You registered this key, so another owner must confirm it. If nobody does, it starts working when its wait ends.';
-    const people = await peopleOf(env, orgId, [key.proposedBy]);
-    const theirs = people[key.proposedBy];
-    if (theirs !== undefined && personEmailKey(theirs) === personEmailKey(who.email)) return 'This account has the same email address as the owner who registered the key, so another owner must confirm it.';
+    const theirs = await registrantEmail(env, key.proposedBy);
+    if (theirs !== null && personEmailKey(theirs) === personEmailKey(who.email)) return 'This account has the same email address as the owner who registered the key, so another owner must confirm it.';
   }
   const since = await ownerSince(env, orgId, who.userId, now);
   if (since === null || since > key.proposedAt) return 'Only an owner who was already an owner when the key was registered can confirm it.';

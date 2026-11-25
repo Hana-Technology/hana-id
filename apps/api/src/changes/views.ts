@@ -114,13 +114,17 @@ export interface AppRow {
   identity_email: string;
   /** Migration 0010: `google`, `email` or `google,email`. */
   login_methods: string;
+  /** Migration 0026 (D915): who created the app, fixed at creation. */
+  created_by_kind: 'hana' | 'platform';
   environment: 'test' | 'live';
   first_session_at: number | null;
   assigned_at: number;
+  /** Migration 0026 (D915): the scope is marked as shared by several partners' apps (1), one way. */
+  app_user_ids: number;
 }
 
 export const APP_COLUMNS =
-  'a.id, a.name, a.scope_id, a.org_id, a.suspended_by, a.deleted_at, a.logo_key, a.created_at, a.origins_version, a.settings_version, a.persistence, a.session_ttl_ms, a.idle_ttl_ms, a.raw_sign, a.raw_sign_pending, a.raw_sign_effective_at, a.login_methods, a.auto_approve_policy, a.auto_approve_pending, a.auto_approve_effective_at, a.google_web_client_id, a.identity_email, s.environment, s.first_session_at, s.assigned_at';
+  'a.id, a.name, a.scope_id, a.org_id, a.suspended_by, a.deleted_at, a.logo_key, a.created_at, a.origins_version, a.settings_version, a.persistence, a.session_ttl_ms, a.idle_ttl_ms, a.raw_sign, a.raw_sign_pending, a.raw_sign_effective_at, a.login_methods, a.auto_approve_policy, a.auto_approve_pending, a.auto_approve_effective_at, a.google_web_client_id, a.identity_email, a.created_by_kind, s.environment, s.first_session_at, s.assigned_at, s.app_user_ids';
 
 /** `<FILES_ORIGIN>/<logo_key>`, or none (no logo, or no files origin in this env). */
 export function logoUrl(filesOrigin: string | undefined, logoKey: string | null): string | undefined {

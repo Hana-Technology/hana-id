@@ -102,6 +102,8 @@ export const createAppInput = ctx
   })
   .strict();
 export const assignScopeOrgInput = ctx.extend({ scopeId: scopeIdInput, ...org, orgOwnerSubs: z.array(subInput).max(100) }).strict();
+/** AdminRpc.setScopeAppUserIds (D915): marks the org's scope as shared by several partners' apps; one way, no `on` field. */
+export const setScopeAppUserIdsInput = ctx.extend({ scopeId: scopeIdInput, ...org }).strict();
 export const deleteAppInput = ctx.extend({ appId: appIdInput }).strict();
 export const adminSetSuspendedInput = ctx.extend({ appId: appIdInput, bit: z.union([z.literal(1), z.literal(2), z.literal(4)]), suspended: z.boolean() }).strict();
 export const suspendOrgInput = ctx.extend({ ...org, suspended: z.boolean() }).strict();
@@ -144,6 +146,7 @@ export type ConsoleProposeChangeInput = z.infer<typeof consoleProposeChangeInput
 export type OwnerActionInput = z.infer<typeof ownerActionInput>;
 export type CreateAppInput = z.infer<typeof createAppInput>;
 export type AssignScopeOrgInput = z.infer<typeof assignScopeOrgInput>;
+export type SetScopeAppUserIdsInput = z.infer<typeof setScopeAppUserIdsInput>;
 export type DeleteAppInput = z.infer<typeof deleteAppInput>;
 export type AdminSetSuspendedInput = z.infer<typeof adminSetSuspendedInput>;
 export type SuspendOrgInput = z.infer<typeof suspendOrgInput>;

@@ -10,6 +10,11 @@
 // the removes a member's changeOrigins sent with its adds (`origin.proposed` detail `removed`), the policy removed,
 // replaced or its pending value dropped, raw signing off), so a value put back by hand after a kill switch is drift.
 //
+// D915 (H3): an auto-approve policy on an app of a shared scope (`scopes.app_user_ids`) or created by the platform is
+// drift whatever explains it: no writer may put one there. Each is its own finding (`what` `shared_wallet_policy`, with
+// `source` `policy`, `policy_pending` or the open change `change`), so it is reported even when a forged
+// announced change would explain the value to the checks above.
+//
 // An `app.created` row explains nothing on its own (D228): the origins it lists are guarded changes since 0006, and
 // counting the row would let a forged in-force row for an unannounced initial origin pass.
 import type { Env } from '../env.ts';
@@ -54,6 +59,18 @@ interface OriginFinding {
   active_from: number;
   change_id: string | null;
 }
+
+interface SharedWalletFinding {
+  app_id: string;
+  org_id: string;
+  scope_id: string;
+  source: 'policy' | 'policy_pending' | 'change';
+  /** The policy text (`policy`, `policy_pending`) or the guarded change's id (`change`). */
+  value: string;
+}
+
+/** App `a` (joined with its scope `s`) may never have an auto-approve policy (D915). */
+const SHARED_WALLET = "(s.app_user_ids = 1 OR a.created_by_kind = 'platform')";
 
 interface SettingFinding {
   app_id: string;
@@ -113,6 +130,21 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
     .bind(DRIFT_BATCH)
     .all<SettingFinding>();
 
+  const { results: shared } = await db
+    .prepare(
+      `SELECT a.id AS app_id, a.org_id, a.scope_id, 'policy' AS source, a.auto_approve_policy AS value FROM apps a JOIN scopes s ON s.scope_id = a.scope_id
+        WHERE a.deleted_at IS NULL AND ${SHARED_WALLET} AND a.auto_approve_policy IS NOT NULL
+       UNION ALL
+       SELECT a.id, a.org_id, a.scope_id, 'policy_pending', a.auto_approve_pending FROM apps a JOIN scopes s ON s.scope_id = a.scope_id
+        WHERE a.deleted_at IS NULL AND ${SHARED_WALLET} AND a.auto_approve_pending IS NOT NULL
+       UNION ALL
+       SELECT a.id, a.org_id, a.scope_id, 'change', g.id FROM guarded_changes g JOIN apps a ON a.id = g.app_id JOIN scopes s ON s.scope_id = a.scope_id
+        WHERE a.deleted_at IS NULL AND ${SHARED_WALLET} AND g.kind = 'policy_set' AND g.status IN ('pending', 'active')
+       LIMIT ?1`,
+    )
+    .bind(DRIFT_BATCH)
+    .all<SharedWalletFinding>();
+
   const events: D1PreparedStatement[] = [];
   const insert = 'INSERT OR IGNORE INTO security_events (id, detected_at, kind, org_id, app_id, scope_id, detail_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)';
   for (const f of origins) {
@@ -124,6 +156,11 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
     const policyId = f.value === null ? null : ((await storedPolicy(f.value))?.id ?? 'invalid');
     const detail = { what: f.what, ...(policyId === null ? {} : { policyId }) };
     events.push(db.prepare(insert).bind(await eventId('drift', f.app_id, f.what, f.value ?? ''), now, 'drift', f.org_id, f.app_id, f.scope_id, JSON.stringify(detail)));
+  }
+  for (const f of shared) {
+    const policyId = f.source === 'change' ? undefined : ((await storedPolicy(f.value))?.id ?? 'invalid');
+    const detail = { what: 'shared_wallet_policy', source: f.source, ...(f.source === 'change' ? { changeId: f.value } : { policyId }) };
+    events.push(db.prepare(insert).bind(await eventId('drift', f.app_id, 'shared_wallet_policy', f.source, f.value), now, 'drift', f.org_id, f.app_id, f.scope_id, JSON.stringify(detail)));
   }
   let recorded = 0;
   if (events.length) {

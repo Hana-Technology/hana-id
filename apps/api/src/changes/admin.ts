@@ -3,7 +3,7 @@
 // never ConsoleRpc), and the feeds the admin Worker reads (scopes, the change ledger, security events, the relayer
 // pools' public keys).
 import { KeyPair } from '@near-js/crypto';
-import { type Environment, LEGACY_ORG_ID, newId, newPublishableKey } from '@hana-id/console-core';
+import { type Environment, LEGACY_ORG_ID, SHARED_SCOPE_POLICY_IN_THE_WAY, newId, newPublishableKey } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { POOLS, type Pool, parseRelayerKeys, poolsSharingAKey } from '../relayer-config.ts';
 import { getApp } from './apps.ts';
@@ -128,6 +128,44 @@ export async function assignScopeOrg(db: HotDb, env: Env, w: Writer, i: { scopeI
     q`SELECT COUNT(*) AS n FROM apps WHERE scope_id = ${i.scopeId}`,
   ]);
   return { apps: (results[2]!.results[0] as { n: number }).n };
+}
+
+/** An app of scope `s` (not deleted) with an auto-approve policy in force, waiting in its columns, or proposed. */
+const SCOPE_HAS_POLICY = (scopeId: string): Q =>
+  q`EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = ${scopeId} AND a.deleted_at IS NULL
+              AND (a.auto_approve_policy IS NOT NULL OR a.auto_approve_pending IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = 'policy_set' AND g.status IN ('pending', 'active'))))`;
+
+/**
+ * AdminRpc.setScopeAppUserIds (D915; docs/partner-platform-spec.md P0, B3): Journear staff mark the org's scope as shared
+ * by several partners' apps (`scopes.app_user_ids` = 1). One way: there is no "off", and a scope already marked answers
+ * `{changed: false}` with nothing written. Refused (`conflict`) while any app of the scope has an auto-approve policy in
+ * force, waiting or proposed, in the plan read and again in the commit predicate (migration 0026's trigger is the
+ * backstop). Another org's scope, or none, is `not_found`. The ledger row `scope.app_user_ids` lists the scope's apps.
+ */
+export async function setScopeAppUserIds(db: HotDb, w: Writer, i: { scopeId: string; orgId: string }): Promise<{ changed: boolean }> {
+  expectReplay(w, ['scope.app_user_ids'], null);
+  const r = await db.first<{ replay: string | null; org_id: string | null; app_user_ids: number | null; has_policy: number }>(
+    q`SELECT ${replayRow(w.requestId)} AS replay, s.org_id, s.app_user_ids, ${SCOPE_HAS_POLICY(i.scopeId)} AS has_policy
+        FROM (SELECT 1) LEFT JOIN scopes s ON s.scope_id = ${i.scopeId}`,
+  );
+  refuseReplay(r?.replay, w);
+  if (!r || r.org_id !== i.orgId) return refuse('not_found', 'No such scope in this organisation');
+  if (r.app_user_ids === 1) return { changed: false };
+  if (r.has_policy) refuse('conflict', SHARED_SCOPE_POLICY_IN_THE_WAY);
+  await runWrite(db, w, [
+    commitOn(
+      w,
+      {
+        kind: 'scope.app_user_ids',
+        detail: q`json_object('appUserIds', 1, 'apps', (SELECT json_group_array(id) FROM (SELECT id FROM apps WHERE scope_id = ${i.scopeId} AND deleted_at IS NULL ORDER BY created_at, id)))`,
+      },
+      { orgId: i.orgId, scopeId: i.scopeId },
+      q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND app_user_ids = 0) AND NOT ${SCOPE_HAS_POLICY(i.scopeId)}`,
+    ),
+    q`UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND ${committed(w.requestId)}`,
+  ]);
+  return { changed: true };
 }
 
 // ---- security contacts ----

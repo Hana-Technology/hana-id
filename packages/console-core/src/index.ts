@@ -18,6 +18,7 @@ export * from './partner.ts';
 export * from './reports.ts';
 export * from './retention.ts';
 export * from './rpc.ts';
+export * from './shared-scope.ts';
 export * from './staff.ts';
 export * from './support.ts';
 export * from './types.ts';

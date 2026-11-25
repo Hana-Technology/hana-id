@@ -513,6 +513,8 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
           labelNotices: async () => ({ ok: true as const, notices: [] }),
           // D918: the platform keys' notice step reads its page every run, and the hourly freeze check its mirror list.
           platformKeyNotices: async () => ({ ok: true as const, notices: [] }),
+          // D931: the confirmations' notice step reads its page every run there is room for it (none waiting here).
+          confirmationNotices: async () => ({ ok: true as const, notices: [] }),
           platformOrgs: async () => ({ ok: true as const, orgs: [] }),
           getSecurityContacts: async (c: { orgId: string }) => ({ ok: true as const, emails: [`sec-${c.orgId}@partner.example`] }),
           securityEvents: async (c: { limit: number }) => ({ ok: true as const, events: events.filter((e) => !notified.has(e.id)).slice(0, c.limit) }),

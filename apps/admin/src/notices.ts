@@ -5,7 +5,13 @@
 //   change_pending  AdminRpc.pendingNotices → the security alias and every security contact → AdminRpc.ackNotice
 //                   (the change's clock starts at the ack). Token: HMAC(CANCEL_LINK_KEY, "hana-id/cancel-link/v1" ‖ id).
 //                   A platform request's web addresses (D930, L14) go as one email listing each with its own link, then
-//                   one ack each; the email states the wait the ack gives (`platform.waitMs`) and no waiver.
+//                   one ack each; the email states the wait the ack gives (`platform.waitMs`) and no waiver. D931: that
+//                   email, and the one for a staff request under four eyes (`secondPerson`, grouped the same way), also
+//                   go to every owner of the org (StaffRpc.listMembers) and carry the Confirm link (it only opens the
+//                   partner portal's page: `/confirm/<the request's first change>`).
+//   origin_confirmed AdminRpc.confirmationNotices (D931) → the alias, every security contact and every owner, naming who
+//                   confirmed (and, for a staff proposal, who added them) → AdminRpc.ackConfirmationNotice with each
+//                   removal link's sha256 (valid 7 days). Token: HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ id).
 //   member_invite   StaffRpc.pendingMemberNotices (kind invite) → every owner, the contacts and the alias, then the
 //                   invitee's link → StaffRpc.ackMemberNotice (the link works from the ack). Token: INVITE_LINK_KEY.
 //   owner_grant     (kind owner_grant) → every owner, the contacts and the alias, with the cancel link → ack (a
@@ -30,8 +36,8 @@ import type { MemberNotice } from '@hana-id/console-core';
 import type { ChangeNotice, Env } from './env.ts';
 import { mailLabel } from './env.ts';
 import { changePending, inviteLink, inviteNotice, labelsProposed, ownerGrantNotice, type MailContext } from './email/messages.ts';
-import { type KeyPeople, platformKeyConfirmed, platformKeyExpiring, platformKeyRegistered, platformKeyStopped, platformOriginsProposed } from './email/platform-messages.ts';
-import type { MemberView, PlatformKeyNotice } from '@hana-id/console-core';
+import { type KeyPeople, originsConfirmed, platformKeyConfirmed, platformKeyExpiring, platformKeyRegistered, platformKeyStopped, platformOriginsProposed, secondPersonOriginsProposed } from './email/platform-messages.ts';
+import type { ConfirmationNotice, MemberView, PlatformKeyNotice } from '@hana-id/console-core';
 import { consoleLink } from './email/render.ts';
 import type { EmailSender } from './email/sender.ts';
 import { errorName, log } from './log.ts';
@@ -81,26 +87,28 @@ export async function runChangeNotices(rawEnv: Env, sender: EmailSender, budget:
   }
   const delayMs = delay(env.APP_CHANGE_DELAY_MS, 86_400_000);
   const notices = page.notices as ChangeNotice[];
+  const orgs = new OrgLookups(env);
   for (let i = 0; i < notices.length; ) {
     const n = notices[i]!;
-    if (n.platform) {
+    if (requestKey(n)) {
       // D930 (L14): one email for every web address one platform request asked for on one app (the page lists them
-      // together). A request that reaches the end of a full page may go on past it: the page is read again, wider by
-      // one request's most (MAX_ORIGINS_PER_REQUEST), from the same start, and the request taken whole from there
-      // (after PR 158's review: otherwise one stuck older notice ahead of a 20-address request held it back on every
-      // run). Only a request still cut off after that, or no room for the read, waits; each such skip is logged.
-      let group = platformGroup(notices, i);
+      // together); D931: a staff request under four eyes the same way. A request that reaches the end of a full page
+      // may go on past it: the page is read again, wider by one request's most (MAX_ORIGINS_PER_REQUEST), from the
+      // same start, and the request taken whole from there (after PR 158's review: otherwise one stuck older notice
+      // ahead of a 20-address request held it back on every run). Only a request still cut off after that, or no room
+      // for the read, waits; each such skip is logged.
+      let group = requestGroup(notices, i);
       if (i + group.length === notices.length && notices.length >= NOTICE_PAGE && i > 0) {
         const whole = await wholeRequest(env, budget, n);
         if (!whole) {
           out.skipped += group.length;
-          log({ event: 'notice', step: 'change_pending', target: n.platform.requestId, orgId: n.app.orgId, outcome: 'skipped', code: 'request_cut', count: group.length }, 'warn');
+          log({ event: 'notice', step: 'change_pending', target: groupRequestId(n), orgId: n.app.orgId, outcome: 'skipped', code: 'request_cut', count: group.length }, 'warn');
           break;
         }
         group = whole;
       }
       i += group.length;
-      const r = await sendPlatformGroup(env, sender, budget, key, group);
+      const r = await sendRequestGroup(env, sender, budget, key, orgs, group);
       out.acked += r.acked;
       out.failed += r.failed;
       out.skipped += r.skipped;
@@ -139,8 +147,12 @@ export async function runChangeNotices(rawEnv: Env, sender: EmailSender, budget:
   return out;
 }
 
-/** The most web addresses one platform request names (a create or a proposal: at most 20, `MAX_APP_ORIGINS`). */
+/** The most web addresses one platform or staff request names (a create or a proposal: at most 20, `MAX_APP_ORIGINS`). */
 export const MAX_ORIGINS_PER_REQUEST = 20;
+
+/** The request a notice is emailed with (a platform proposal, or a staff one under four eyes), or null for one alone. */
+const requestKey = (n: ChangeNotice): string | null => (n.platform ? `platform:${n.platform.requestId}` : n.secondPerson ? `staff:${n.secondPerson.requestId}` : null);
+const groupRequestId = (n: ChangeNotice): string => n.platform?.requestId ?? n.secondPerson?.requestId ?? n.change.id;
 
 /**
  * The whole of `first`'s request, from a page read again wider by one request's most from the same start (the page
@@ -155,33 +167,51 @@ async function wholeRequest(env: Env, budget: Budget, first: ChangeNotice): Prom
   const wide = page.notices as ChangeNotice[];
   const at = wide.findIndex((x) => x.change.id === first.change.id);
   if (at < 0) return null;
-  const group = platformGroup(wide, at);
+  const group = requestGroup(wide, at);
   return at + group.length === wide.length && wide.length >= limit ? null : group;
 }
 
-/** The platform proposals from `i` on that one request made on one app (consecutive on the page: it orders by request). */
-export function platformGroup(notices: readonly ChangeNotice[], i: number): ChangeNotice[] {
+/**
+ * The proposals from `i` on that one request made on one app (consecutive on the page: it orders by request): a
+ * platform request's (D930), or a staff request's under four eyes (D931), never the two mixed.
+ */
+export function requestGroup(notices: readonly ChangeNotice[], i: number): ChangeNotice[] {
   const first = notices[i]!;
+  const key = requestKey(first);
   const group = [first];
+  if (!key) return group;
   for (let j = i + 1; j < notices.length; j++) {
     const n = notices[j]!;
-    if (!n.platform || n.platform.requestId !== first.platform!.requestId || n.app.id !== first.app.id) break;
+    if (requestKey(n) !== key || n.app.id !== first.app.id) break;
     group.push(n);
   }
   return group;
 }
 
+/** The owners' addresses of an org's members (an owner in force, not disabled), as the key notices reach them. */
+const ownerEmails = (members: readonly MemberView[]): string[] => members.filter((m) => m.role === 'owner' && !m.disabled).map((m) => m.email);
+
 /**
- * One platform request's email (D930): every recipient once, then each change's ack with its own link's hash. Fails
- * closed as the single notice does: no ack unless every send was accepted; an ack refused leaves that change for the
- * next run (whose email then lists only what is still unannounced). `stop`: the budget ran out, the run ends here.
+ * One request's email (D930; D931): every recipient once (the alias, every security contact, every owner), then each
+ * change's ack with its own link's hash. Fails closed as the single notice does: no ack unless every send was accepted
+ * (and the owners were read); an ack refused leaves that change for the next run (whose email then lists only what is
+ * still unannounced). `stop`: the budget ran out, the run ends here.
  */
-async function sendPlatformGroup(env: Env, sender: EmailSender, budget: Budget, key: Uint8Array, group: ChangeNotice[]): Promise<StepResult & { stop: boolean }> {
+async function sendRequestGroup(env: Env, sender: EmailSender, budget: Budget, key: Uint8Array, orgs: OrgLookups, group: ChangeNotice[]): Promise<StepResult & { stop: boolean }> {
   const out = { acked: 0, failed: 0, skipped: 0, stop: false };
   const first = group[0]!;
-  const p = first.platform!;
-  const target = p.requestId;
-  const to = recipients(env.SECURITY_ALIAS, first.contacts);
+  const target = groupRequestId(first);
+  const orgId = first.app.orgId;
+  // The org's members (one RPC, once a run and org), at least one email and one ack; then every email and every ack.
+  const lookup = orgs.membersUncached(orgId) ? 1 : 0;
+  if (!budget.fits(lookup + 2, lookup + 1)) return { ...out, skipped: group.length, stop: true };
+  const members = await orgs.members(orgId);
+  if (!members) {
+    // Without the owners the email would miss people it must reach: nothing is sent or acked; the next run tries again.
+    log({ event: 'notice', step: 'change_pending', target, orgId, outcome: 'rejected', code: 'owners_unavailable', count: group.length }, 'warn');
+    return { ...out, failed: group.length };
+  }
+  const to = recipients(env.SECURITY_ALIAS, first.contacts, ownerEmails(members));
   if (!budget.fits(to.length + group.length, group.length)) return { ...out, skipped: group.length, stop: true };
   const tokens = await Promise.all(group.map((n) => linkToken('cancelLink', key, n.change.id)));
   const lines = group.map((n, k) => ({
@@ -191,22 +221,32 @@ async function sendPlatformGroup(env: Env, sender: EmailSender, budget: Budget, 
     idn: n.change.idn,
     cancelUrl: consoleLink(env.CONSOLE_ORIGIN, `/cancel/${encodeURIComponent(n.change.id)}#t=${b64url(tokens[k]!)}`),
   }));
+  // D931: the Confirm link only opens the partner portal's page for the request (its first change); a GET confirms nothing.
+  const confirmUrl = consoleLink(env.CONSOLE_ORIGIN, `/confirm/${encodeURIComponent(first.change.id)}`);
   let message;
   try {
-    message = platformOriginsProposed(
-      mailContext(env),
-      { app: first.app, keyId: p.keyId, keyLabel: p.keyLabel, proposedAt: first.change.proposedAt, requestCountry: first.change.requestCountry, waitMs: Math.max(...group.map((n) => n.platform!.waitMs)) },
-      lines,
-      { now: Date.now() },
-    );
+    const p = first.platform;
+    message = p
+      ? platformOriginsProposed(
+          mailContext(env),
+          { app: first.app, keyId: p.keyId, keyLabel: p.keyLabel, proposedAt: first.change.proposedAt, requestCountry: first.change.requestCountry, waitMs: Math.max(...group.map((n) => n.platform!.waitMs)) },
+          lines,
+          { now: Date.now(), confirmUrl },
+        )
+      : secondPersonOriginsProposed(
+          mailContext(env),
+          { app: first.app, proposedBy: first.change.proposedBy, proposedAt: first.change.proposedAt, requestCountry: first.change.requestCountry, waitMs: Math.max(...group.map((n) => n.secondPerson!.waitMs)) },
+          lines,
+          { now: Date.now(), confirmUrl },
+        );
   } catch (err) {
-    log({ event: 'notice', step: 'change_pending', target, orgId: first.app.orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
+    log({ event: 'notice', step: 'change_pending', target, orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
     return { ...out, failed: group.length };
   }
   const sent = await sendToAll(sender, budget, to, message, `change_pending:${target}:${group.map((n) => n.change.id).join(',')}`);
   if (sent.outOfBudget) return { ...out, skipped: group.length, stop: true };
   if (!sent.allAccepted) {
-    log({ event: 'notice', step: 'change_pending', target, orgId: first.app.orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed, count: group.length }, 'warn');
+    log({ event: 'notice', step: 'change_pending', target, orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed, count: group.length }, 'warn');
     return { ...out, failed: group.length };
   }
   for (const [k, n] of group.entries()) {
@@ -296,7 +336,25 @@ export async function runLabelNotices(rawEnv: Env, sender: EmailSender, budget: 
 class OrgLookups {
   private readonly names = new Map<string, string | undefined>();
   private readonly contacts = new Map<string, string[] | null>();
+  private readonly memberLists = new Map<string, MemberView[] | null>();
   constructor(private readonly env: Env) {}
+
+  /** Whether `members` would still make its RPC for the org (it is read once a run). */
+  membersUncached(orgId: string): boolean {
+    return !this.memberLists.has(orgId);
+  }
+
+  /**
+   * The org's current members (StaffRpc.listMembers); [] for an org the console doesn't know (no members, so no owner);
+   * null when they can't be read (then the org's notice that reaches its owners waits for the next run).
+   */
+  async members(orgId: string): Promise<MemberView[] | null> {
+    if (!this.memberLists.has(orgId)) {
+      const r = await this.env.CONSOLE.listMembers({ ...systemCtx(), orgId }).catch(() => null);
+      this.memberLists.set(orgId, r?.ok ? r.members : r && r.code === 'not_found' ? [] : null);
+    }
+    return this.memberLists.get(orgId)!;
+  }
 
   /** Whether `name` would still make its RPC for the org (it is read once a run). */
   nameUncached(orgId: string | undefined): boolean {
@@ -557,11 +615,108 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
 }
 
 /**
+ * Who confirmed, in the confirmation's notice (D931): a member by their address from the org's current members only
+ * ("a former member" otherwise, never looked up elsewhere), as the key notices name people; staff as "Journear staff".
+ */
+const confirmerWords = (n: ConfirmationNotice, members: readonly MemberView[]): string =>
+  n.confirmedByKind === 'hana' ? 'Journear staff' : (members.find((m) => m.userId === n.confirmedBy)?.email ?? 'a former member');
+
+/**
+ * `origin_confirmed` (D931): AdminRpc.confirmationNotices → for each confirmation, the org's members (one console RPC,
+ * once a run and org), one message to the alias, every security contact and every owner, with one removal link per
+ * web address → AdminRpc.ackConfirmationNotice with each link's sha256, only after every send was accepted (the links
+ * work from the ack, for 7 days). The token is HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ change id): a retry
+ * sends the same links. The budget rules of the other steps: a notice starts only with room for its lookup, every email
+ * and its ack; one that fails (its owners unreadable, a send refused, its ack refused) is left for the next run and the
+ * page goes on with the next one.
+ */
+export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
+  const out: StepResult = { acked: 0, failed: 0, skipped: 0 };
+  const env = meteredEnv(rawEnv, budget);
+  const key = linkKey(env.CANCEL_LINK_KEY);
+  if (!key) {
+    log({ event: 'notice', step: 'origin_confirmed', outcome: 'skipped', code: 'cancel_link_key_missing' }, 'error');
+    return out;
+  }
+  if (!budget.fits(PAGE_AND_ONE, 2)) {
+    noRoom('origin_confirmed');
+    return out;
+  }
+  const page = await env.API.confirmationNotices({ ...systemCtx(), limit: NOTICE_PAGE });
+  if (!page.ok) {
+    // An API before D931 has no such method: the step does nothing (the other steps are unaffected).
+    log({ event: 'notice', step: 'origin_confirmed', outcome: 'error', code: page.code }, page.code === 'not_found' ? 'warn' : 'error');
+    return out;
+  }
+  const orgs = new OrgLookups(env);
+  const ctx = mailContext(env);
+  for (const n of page.notices) {
+    const target = n.requestId;
+    const orgId = n.app.orgId;
+    const lookup = orgs.membersUncached(orgId) ? 1 : 0;
+    if (!budget.fits(lookup + 2, lookup + 1)) {
+      out.skipped++;
+      break;
+    }
+    const members = await orgs.members(orgId);
+    if (!members) {
+      out.failed++;
+      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: 'owners_unavailable' }, 'warn');
+      continue;
+    }
+    const to = recipients(env.SECURITY_ALIAS, n.contacts, ownerEmails(members));
+    if (!budget.fits(to.length + 1, 1)) {
+      out.skipped++;
+      break;
+    }
+    const tokens = await Promise.all(n.changes.map((ch) => linkToken('originRemove', key, ch.changeId)));
+    let message;
+    try {
+      message = originsConfirmed(
+        ctx,
+        n,
+        n.changes.map((ch, k) => ({ ...ch, removeUrl: consoleLink(env.CONSOLE_ORIGIN, `/remove/${encodeURIComponent(ch.changeId)}#t=${b64url(tokens[k]!)}`) })),
+        { confirmedBy: confirmerWords(n, members) },
+      );
+    } catch (err) {
+      out.failed++;
+      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
+      continue;
+    }
+    const sent = await sendToAll(sender, budget, to, message, `origin_confirmed:${target}`);
+    if (sent.outOfBudget) {
+      out.skipped++;
+      break;
+    }
+    if (!sent.allAccepted) {
+      out.failed++;
+      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed }, 'warn');
+      continue;
+    }
+    const removals = await Promise.all(n.changes.map(async (ch, k) => ({ changeId: ch.changeId, removalTokenHash: b64url(await linkTokenHash(tokens[k]!)) })));
+    const ack = await env.API.ackConfirmationNotice({ ...systemCtx(), requestId: target, removals }).catch(() => null);
+    if (ack?.ok) {
+      out.acked++;
+      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'ok', sent: sent.sent, count: n.changes.length });
+    } else {
+      out.failed++;
+      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: ack?.code ?? 'upstream_unavailable' }, 'warn');
+    }
+  }
+  return out;
+}
+
+/**
  * The blocking steps, each on its own (a console outage doesn't hold back the guarded changes' notices; an API older
  * than the request labels, D894, fails only their step).
  */
-export async function runNotices(env: Env, sender: EmailSender, budget: Budget): Promise<{ changes: StepResult | null; labels: StepResult | null; members: StepResult | null; platformKeys: StepResult | null }> {
+export async function runNotices(
+  env: Env,
+  sender: EmailSender,
+  budget: Budget,
+): Promise<{ changes: StepResult | null; confirmations: StepResult | null; labels: StepResult | null; members: StepResult | null; platformKeys: StepResult | null }> {
   let changes: StepResult | null = null;
+  let confirmations: StepResult | null = null;
   let labels: StepResult | null = null;
   let members: StepResult | null = null;
   let platformKeys: StepResult | null = null;
@@ -569,6 +724,12 @@ export async function runNotices(env: Env, sender: EmailSender, budget: Budget):
     changes = await runChangeNotices(env, sender, budget);
   } catch (err) {
     log({ event: 'notice', step: 'change_pending', outcome: 'error', error: errorName(err) }, 'error');
+  }
+  // D931: second, before the waiting things: these web addresses work already, so this email is the only warning.
+  try {
+    confirmations = await runConfirmationNotices(env, sender, budget);
+  } catch (err) {
+    log({ event: 'notice', step: 'origin_confirmed', outcome: 'error', error: errorName(err) }, 'error');
   }
   try {
     labels = await runLabelNotices(env, sender, budget);
@@ -585,5 +746,5 @@ export async function runNotices(env: Env, sender: EmailSender, budget: Budget):
   } catch (err) {
     log({ event: 'notice', step: 'platform_key', outcome: 'error', error: errorName(err) }, 'error');
   }
-  return { changes, labels, members, platformKeys };
+  return { changes, confirmations, labels, members, platformKeys };
 }

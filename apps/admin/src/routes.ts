@@ -315,6 +315,13 @@ const ROUTES: Route[] = [
     },
   },
   { method: 'GET', pattern: '/api/platform-queue', handler: (c) => answer('GET /api/platform-queue', c.staff, () => c.env.API.platformQueue({ ...staffCtx(c.staff), limit: PLATFORM_QUEUE_LIMIT })) },
+  // D931: a second staff member confirms web addresses another staff member added to a platform-created app or a shared
+  // wallet (four eyes), with a reason; the API refuses the proposer (by Access subject or email) and a platform proposal.
+  {
+    method: 'POST',
+    pattern: '/api/platform/confirm-staff-origins',
+    handler: (c) => answer('POST /api/platform/confirm-staff-origins', c.staff, () => c.env.API.confirmStaffOrigins({ ...staffCtx(c.staff), ...pick(c.body, 'orgId', 'appId', 'changeIds', 'reason') })),
+  },
   { method: 'POST', pattern: '/api/orgs/:org/platform-switch', handler: (c) => answer('POST /api/orgs/:org/platform-switch', c.staff, () => c.env.API.setPlatformOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'enabled', 'reason', 'reviewedKeys') })) },
   { method: 'POST', pattern: '/api/orgs/:org/suspend', handler: (c) => answer('POST /api/orgs/:org/suspend', c.staff, () => c.env.API.suspendOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'suspended') })) },
   {

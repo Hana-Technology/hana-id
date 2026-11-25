@@ -8,7 +8,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChangeNotice } from '../src/env.ts';
 import { Budget } from '../src/mail.ts';
-import { NOTICE_PAGE, platformGroup, runChangeNotices } from '../src/notices.ts';
+import { NOTICE_PAGE, requestGroup, runChangeNotices } from '../src/notices.ts';
 import { ALIAS, CONSOLE, FakeEmail, adminRequest, envWith, json, linkIn, overrideBinding, seedHotApp, sha256Hex, stubNetwork, tokenOf, uid } from './helpers.ts';
 
 beforeEach(async () => {
@@ -83,9 +83,11 @@ describe('a platform request’s web addresses: one email', () => {
       // Each button names the plain form, never the decoded one (which could imitate another site).
       expect(m.text).toContain('Cancel https://xn--bcher-kva.example');
       expect(m.text).not.toContain('Cancel https://bücher.example');
+      // Two cancel links and (D931) the Confirm link to the partner portal's page.
       const hrefs = [...m.html.matchAll(/href="([^"]*)"/gu)].map((x) => x[1]!);
-      expect(hrefs).toHaveLength(2);
-      for (const h of hrefs) expect(h.startsWith(`${CONSOLE}/cancel/`)).toBe(true);
+      expect(hrefs).toHaveLength(3);
+      expect(hrefs.filter((h) => h.startsWith(`${CONSOLE}/cancel/`))).toHaveLength(2);
+      expect(hrefs.filter((h) => h.startsWith(`${CONSOLE}/confirm/`))).toHaveLength(1);
     }
     // Each address's link is its own (HMAC of its own id), and each ack stored its hash and the full day.
     for (const id of ids) {
@@ -213,14 +215,23 @@ describe('a platform request’s web addresses: one email', () => {
   });
 });
 
-describe('platformGroup', () => {
+describe('requestGroup', () => {
   const n = (id: string, app: string, requestId?: string): ChangeNotice =>
     ({ change: { id }, contacts: [], app: { id: app }, ...(requestId ? { platform: { keyId: 'pkc_x', keyLabel: null, requestId, waitMs: DAY } } : {}) }) as unknown as ChangeNotice;
   it('takes the consecutive platform proposals of one request on one app', () => {
     const page = [n('1', 'A', 'r1'), n('2', 'A', 'r1'), n('3', 'B', 'r1'), n('4', 'A', 'r2'), n('5', 'A'), n('6', 'A', 'r2')];
-    expect(platformGroup(page, 0).map((x) => x.change.id)).toEqual(['1', '2']);
-    expect(platformGroup(page, 2).map((x) => x.change.id)).toEqual(['3']);
-    expect(platformGroup(page, 3).map((x) => x.change.id)).toEqual(['4']);
+    expect(requestGroup(page, 0).map((x) => x.change.id)).toEqual(['1', '2']);
+    expect(requestGroup(page, 2).map((x) => x.change.id)).toEqual(['3']);
+    expect(requestGroup(page, 3).map((x) => x.change.id)).toEqual(['4']);
+  });
+  it('D931: takes a staff request under four eyes the same way, never mixed with a platform request of the same id', () => {
+    const s = (id: string, app: string, requestId: string): ChangeNotice => ({ change: { id }, contacts: [], app: { id: app }, secondPerson: { requestId, waitMs: DAY } }) as unknown as ChangeNotice;
+    const page = [s('1', 'A', 'r1'), s('2', 'A', 'r1'), n('3', 'A', 'r1'), s('4', 'A', 'r1'), n('5', 'A'), s('6', 'B', 'r1')];
+    expect(requestGroup(page, 0).map((x) => x.change.id)).toEqual(['1', '2']);
+    expect(requestGroup(page, 2).map((x) => x.change.id)).toEqual(['3']);
+    expect(requestGroup(page, 3).map((x) => x.change.id)).toEqual(['4']);
+    expect(requestGroup(page, 4).map((x) => x.change.id)).toEqual(['5']);
+    expect(requestGroup(page, 5).map((x) => x.change.id)).toEqual(['6']);
   });
 });
 

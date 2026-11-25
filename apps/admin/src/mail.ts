@@ -224,6 +224,8 @@ export const BYPASS_PURPOSES: ReadonlySet<string> = new Set([
   // The link-rate alert (batch 9, D448).
   'link_jump',
   'change_pending',
+  // D931: web addresses a second person confirmed: in force already, so this mail (with its removal links) is the warning.
+  'origin_confirmed',
   // D894: a request labels version's blocking notice, and the mail that Journear blocked one.
   'label_pending',
   'labels_blocked',

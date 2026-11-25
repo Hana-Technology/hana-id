@@ -229,6 +229,17 @@ export function platformQueue() {
       { changeId: 'gc_01jdplat3', appId: 'app_01jdplattiles', appName: 'Tile Shop', orgId: 'org_01jc8lumenpay', scopeId: 's5d1e8a0c2f6ba', origin: 'https://xn--tilshop-yya.example', display: 'https://tilèshop.example', idn: true, keyId: 'pkc_Wk7Hq2Lm9Xc4Pz', keyLabel: 'Production backend', proposedAt: ago(5 * HOUR), notifiedAt: ago(5 * HOUR), activeFrom: NOW + 19 * HOUR },
     ],
     keys: p.keys.filter((k) => k.state === 'awaiting_acceptance'),
+    // D931: staff web addresses on a shared wallet waiting for a second person (one request of two, one not emailed yet).
+    secondPerson: [
+      { changeId: 'gc_01jdstaff1', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', origin: 'https://menu.coffeeclub.example', display: 'https://menu.coffeeclub.example', idn: false, requestId: 'req_staffadd1', proposedBy: '7335d417-61da-459d-899c-0a01c76a2b94', proposedAt: ago(3 * HOUR), notifiedAt: ago(3 * HOUR), activeFrom: NOW + 21 * HOUR },
+      { changeId: 'gc_01jdstaff2', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', origin: 'https://xn--caf-dma.example', display: 'https://café.example', idn: true, requestId: 'req_staffadd1', proposedBy: '7335d417-61da-459d-899c-0a01c76a2b94', proposedAt: ago(3 * HOUR), notifiedAt: ago(3 * HOUR), activeFrom: NOW + 21 * HOUR },
+      { changeId: 'gc_01jdstaff3', appId: 'app_01jdplattiles', appName: 'Tile Shop', orgId: 'org_01jc8lumenpay', origin: 'https://grout.tileshop.example', display: 'https://grout.tileshop.example', idn: false, requestId: 'req_staffadd2', proposedBy: '11111111-2222-4333-8444-555555555555', proposedAt: ago(2 * MIN), notifiedAt: null, activeFrom: null },
+    ],
+    // D931: confirmed in the last 7 days, newest first (one removed since).
+    confirmed: [
+      { changeId: 'gc_01jdconf1', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', origin: 'https://pay.coffeeclub.example', display: 'https://pay.coffeeclub.example', idn: false, proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', confirmedByKind: 'member', confirmedBy: 'usr_01jcaisyah', confirmedAt: ago(2 * HOUR), removed: false },
+      { changeId: 'gc_01jdconf2', appId: 'app_01jdplattiles', appName: 'Tile Shop', orgId: 'org_01jc8lumenpay', origin: 'https://old.tileshop.example', display: 'https://old.tileshop.example', idn: false, proposedByKind: 'hana', proposedBy: '7335d417-61da-459d-899c-0a01c76a2b94', confirmedByKind: 'hana', confirmedBy: '22222222-3333-4444-8555-666666666666', confirmedAt: ago(3 * DAY), removed: true },
+    ],
   };
 }
 

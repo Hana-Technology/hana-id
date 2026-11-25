@@ -4,7 +4,7 @@
 // it cancelled), and the expiry warnings. Builders only (notices.ts sends them); the link tokens come in as finished
 // URLs. Plain words for a partner's developers: "platform key" is the agreed term. Never the public key itself: its
 // fingerprint (the RFC 7638 thumbprint) identifies it.
-import type { PlatformKeyNotice } from '@hana-id/console-core';
+import { type ConfirmationNotice, type PlatformKeyNotice, CONFIRM_WORDS, ORIGIN_REMOVAL_LINK_MS } from '@hana-id/console-core';
 import { durationWords } from '@hana-id/console-core/duration-words';
 import type { MailContext } from './messages.ts';
 import { type Block, type Design, type Rendered, oneLine, readableTime, render } from './render.ts';
@@ -134,6 +134,7 @@ export function platformKeyExpiring(c: MailContext, n: PlatformKeyNotice, p: Key
   return render(c.env, `${title}: ${oneLine(k.label, 40)}`, blocks, c.consoleOrigin, c.label, design(c, title, 'A key for your organisation’s backend stops working soon. Register its next key now.'));
 }
 
+
 /** One web address of a platform request's email (D930): the change, how it shows, and its own cancel link. */
 export interface PlatformOriginLine {
   changeId: string;
@@ -144,17 +145,47 @@ export interface PlatformOriginLine {
 }
 
 /**
+ * One web address's blocks in an email: its plain form, how it shows when that differs, the warning for international
+ * letters, and its button. The button names the plain (ASCII) form, never the decoded one an attacker chose to look like
+ * another site.
+ */
+function originBlocks(l: { origin: string; display?: string | undefined; idn?: boolean | undefined }, button: { one: string; many: (origin: string) => string; url: string }, many: boolean): Block[] {
+  const r: [string, string][] = [['Web address', l.origin]];
+  if (l.display && l.display !== l.origin) r.push(['Shown as', l.display]);
+  const out: Block[] = [{ kind: 'kv', rows: r }];
+  if (l.idn) out.push({ kind: 'warn', text: `This web address uses international letters. Its plain form is ${l.origin}; check that it is the site you expect and not a lookalike.` });
+  out.push({ kind: 'link', label: many ? button.many(oneLine(l.origin, 120)) : button.one, url: button.url });
+  return out;
+}
+
+/** "it" or "them", from the shared words (console-core CONFIRM_WORDS), so the email says what the portal says. */
+const orSooner = (many: boolean): string => (many ? CONFIRM_WORDS.emailOrSooner.replace(/ it$/u, ' them') : CONFIRM_WORDS.emailOrSooner);
+
+/** The Confirm button (D931): it only opens the partner portal's page; an owner confirms there, signed in. */
+const CONFIRM_LABEL = 'Check and confirm in the partner portal';
+const confirmBlocks = (url: string, many: boolean): Block[] => [
+  { kind: 'link', label: CONFIRM_LABEL, url },
+  { kind: 'p', text: `That link only opens the partner portal. An owner of your organisation checks and confirms ${many ? 'them' : 'it'} there, after signing in again with Google. Opening the link alone changes nothing.` },
+];
+
+const cancelBlocks = (many: boolean): Block[] => [
+  { kind: 'p', text: `If you didn’t expect this, cancel ${many ? 'each one you don’t recognise' : 'it'} now. ${many ? 'Each link cancels one web address. ' : ''}The page asks you to confirm; opening the link alone changes nothing.` },
+  { kind: 'p', text: `An owner can also cancel ${many ? 'them' : 'it'} in the partner portal, and Journear security can cancel ${many ? 'them' : 'it'} from the admin portal.` },
+];
+
+/**
  * The web addresses one request of a platform key asked for (D930; docs/partner-platform-spec.md A6, finding L14): one
- * email for the whole request, every address with its own cancel link, to the security alias and every security
- * contact. The wait is the one the ack gives (`waitMs`, from AdminRpc.pendingNotices: at least 24 h outside `local*`
- * test envs), stated as a lower bound with its earliest date (the ack comes after the sends); no waiver sentence, since none applies to a platform proposal, and nothing brings
- * one forward yet (the owner's confirmation is piece P10, which adds its line and Confirm link here).
+ * email for the whole request, every address with its own cancel link, to the security alias, every security contact
+ * and every owner of the organisation (D931). The wait is the one the ack gives (`waitMs`, from
+ * AdminRpc.pendingNotices: at least 24 h outside `local*` test envs), stated as a lower bound with its earliest date
+ * (the ack comes after the sends), or sooner if an owner confirms them (D931: the Confirm link only opens the partner
+ * portal's page); no waiver sentence, since none applies to a platform proposal.
  */
 export function platformOriginsProposed(
   c: MailContext,
   n: { app: { id: string; name: string; orgId: string; scopeId: string }; keyId: string; keyLabel: string | null; proposedAt: number; requestCountry?: string | undefined; waitMs: number },
   lines: readonly PlatformOriginLine[],
-  o: { now: number; orgName?: string | undefined },
+  o: { now: number; confirmUrl: string; orgName?: string | undefined },
 ): Rendered {
   if (lines.length === 0) throw new Error('a platform request’s email needs at least one web address');
   const many = lines.length > 1;
@@ -172,24 +203,120 @@ export function platformOriginsProposed(
     { kind: 'p', text: `Your organisation’s backend asked, with ${key}, for ${many ? `${lines.length} new web addresses` : 'a new web address'} for ${app}. ${many ? 'They don’t' : 'It doesn’t'} work yet.` },
     { kind: 'kv', rows },
   ];
-  for (const l of lines) {
-    const r: [string, string][] = [['Web address', l.origin]];
-    if (l.display && l.display !== l.origin) r.push(['Shown as', l.display]);
-    blocks.push({ kind: 'kv', rows: r });
-    if (l.idn) blocks.push({ kind: 'warn', text: `This web address uses international letters. Its plain form is ${l.origin}; check that it is the site you expect and not a lookalike.` });
-    // The button names the plain (ASCII) form, never the decoded one an attacker chose to look like another site.
-    blocks.push({ kind: 'link', label: many ? `Cancel ${oneLine(l.origin, 120)}` : 'Cancel this web address', url: l.cancelUrl });
-  }
+  for (const l of lines) blocks.push(...originBlocks(l, { one: 'Cancel this web address', many: (x) => `Cancel ${x}`, url: l.cancelUrl }, many));
   blocks.push(
     {
       kind: 'p',
       // A lower bound (D930 after PR 158's review): the wait is counted from the ack, after every send, and a recipient
       // who got an earlier attempt's copy holds an earlier date, so the email never states an exact time.
-      text: `${many ? 'They start' : 'It starts'} working no sooner than ${readableTime(o.now + n.waitMs)}, at least ${waitWords(n.waitMs)} after this email, unless someone cancels ${many ? 'them' : 'it'}. Web addresses your platform key asks for always wait the full time: nothing makes them start sooner.`,
+      text: `${many ? 'They start' : 'It starts'} working no sooner than ${readableTime(o.now + n.waitMs)}, at least ${waitWords(n.waitMs)} after this email, ${orSooner(many)}, unless someone cancels ${many ? 'them' : 'it'}.`,
     },
-    { kind: 'p', text: `If you didn’t expect this, cancel ${many ? 'each one you don’t recognise' : 'it'} now. ${many ? 'Each link cancels one web address. ' : ''}The page asks you to confirm; opening the link alone changes nothing.` },
-    { kind: 'p', text: `An owner can also cancel ${many ? 'them' : 'it'} in the partner portal, and Journear security can cancel ${many ? 'them' : 'it'} from the admin portal.` },
+    ...confirmBlocks(o.confirmUrl, many),
+    ...cancelBlocks(many),
   );
   const title = many ? 'New web addresses requested by your platform key' : 'New web address requested by your platform key';
   return render(c.env, `${title} for ${oneLine(n.app.name, 60)}`, blocks, c.consoleOrigin, c.label, design(c, title, `Your organisation’s backend asked for ${many ? 'new web addresses' : 'a new web address'}. ${many ? 'They don’t' : 'It doesn’t'} work yet, and you can cancel ${many ? 'them' : 'it'}.`));
+}
+
+/**
+ * Web addresses Journear staff added in one request to a platform-created app or an app on a shared wallet (D931, four
+ * eyes): one email for the request, each with its own cancel link, to the alias, every security contact and every
+ * owner. Its real wait (`waitMs` from AdminRpc.pendingNotices, at least 24 h outside `local*` test envs) as a lower
+ * bound, or sooner if a second person confirms them: another Journear staff member (in the admin portal) or an owner (in
+ * the partner portal, the Confirm link). Never the waiver sentence: none applies.
+ */
+export function secondPersonOriginsProposed(
+  c: MailContext,
+  n: { app: { id: string; name: string; orgId: string; scopeId: string }; proposedBy: string; proposedAt: number; requestCountry?: string | undefined; waitMs: number },
+  lines: readonly PlatformOriginLine[],
+  o: { now: number; confirmUrl: string },
+): Rendered {
+  if (lines.length === 0) throw new Error('a staff request’s email needs at least one web address');
+  const many = lines.length > 1;
+  const app = oneLine(n.app.name, 80);
+  const rows: [string, string][] = [
+    ['App', `${app} (${n.app.id})`],
+    ['Organisation', n.app.orgId],
+    ['Wallet settings (scope)', n.app.scopeId],
+    ['Proposed by', `Journear staff (${n.proposedBy})`],
+    ['Proposed at', readableTime(n.proposedAt)],
+  ];
+  if (n.requestCountry) rows.push(['Request country', n.requestCountry]);
+  const blocks: Block[] = [
+    { kind: 'p', text: `Journear staff added ${many ? `${lines.length} new web addresses` : 'a new web address'} for ${app}. ${many ? 'They don’t' : 'It doesn’t'} work yet.` },
+    { kind: 'kv', rows },
+  ];
+  for (const l of lines) blocks.push(...originBlocks(l, { one: 'Cancel this web address', many: (x) => `Cancel ${x}`, url: l.cancelUrl }, many));
+  const them = many ? 'them' : 'it';
+  blocks.push(
+    {
+      kind: 'p',
+      text: `${many ? 'They start' : 'It starts'} working no sooner than ${readableTime(o.now + n.waitMs)}, at least ${waitWords(n.waitMs)} after this email, or sooner if a second person confirms ${them}, unless someone cancels ${them}. The second person is another Journear staff member, or an owner of your organisation in the partner portal.`,
+    },
+    ...confirmBlocks(o.confirmUrl, many),
+    ...cancelBlocks(many),
+  );
+  const title = many ? 'New web addresses added by Journear staff' : 'New web address added by Journear staff';
+  return render(c.env, `${title} for ${oneLine(n.app.name, 60)}`, blocks, c.consoleOrigin, c.label, design(c, title, `Journear staff added ${many ? 'new web addresses' : 'a new web address'} for one of your apps. ${many ? 'They don’t' : 'It doesn’t'} work yet, and you can cancel ${them}.`));
+}
+
+/** One web address of a confirmation's notice (D931): the change, how it shows, and its own removal link. */
+export interface ConfirmedOriginLine {
+  changeId: string;
+  origin: string;
+  display?: string | undefined;
+  idn?: boolean | undefined;
+  removeUrl: string;
+}
+
+/**
+ * A second person confirmed web addresses (D931): they work now. One email per confirmation to the alias, every
+ * security contact and every owner, naming who confirmed them (a member by their address from the org's current
+ * members, else "a former member"; staff as "Journear staff") and, for a staff proposal, the staff member who added
+ * them too; one removal link per web address, valid 7 days (`ORIGIN_REMOVAL_LINK_MS`).
+ */
+export function originsConfirmed(
+  c: MailContext,
+  n: Pick<ConfirmationNotice, 'app' | 'confirmedByKind' | 'confirmedBy' | 'confirmedAt' | 'proposedByKind' | 'keyId' | 'keyLabel' | 'proposedBy'>,
+  lines: readonly ConfirmedOriginLine[],
+  o: { confirmedBy: string },
+): Rendered {
+  if (lines.length === 0) throw new Error('a confirmation’s notice needs at least one web address');
+  const many = lines.length > 1;
+  const app = oneLine(n.app.name, 80);
+  const them = many ? 'them' : 'it';
+  const what = many ? `${lines.length} web addresses` : oneLine(lines[0]!.origin, 200);
+  // At the start of a sentence: "A former member"; an address stays as it is.
+  const who = /^a /u.test(o.confirmedBy) ? `A${o.confirmedBy.slice(1)}` : o.confirmedBy;
+  const staffProposal = n.proposedByKind === 'hana';
+  const rows: [string, string][] = [
+    ['App', `${app} (${n.app.id})`],
+    ['Organisation', n.app.orgId],
+    ['Wallet settings (scope)', n.app.scopeId],
+    staffProposal
+      ? ['Added by', `Journear staff (${n.proposedBy ?? 'unknown'})`]
+      : ['Requested by', n.keyLabel ? `your platform key “${oneLine(n.keyLabel, 40)}” (${n.keyId ?? ''})` : `your platform key (${n.keyId ?? ''})`],
+    ['Confirmed by', n.confirmedByKind === 'hana' ? `Journear staff (${n.confirmedBy})` : o.confirmedBy],
+    ['Confirmed at', readableTime(n.confirmedAt)],
+  ];
+  const blocks: Block[] = [
+    { kind: 'p', text: `${who} confirmed ${what} for ${app}. ${many ? 'They work' : 'It works'} there now. If this wasn’t meant to happen, remove ${them} here: ${many ? 'each stops' : 'it stops'} at once.` },
+    {
+      kind: 'p',
+      text: staffProposal
+        ? `Journear staff (${n.proposedBy ?? 'unknown'}) added ${them}. On this app, a web address Journear staff add needs a second person to confirm it.`
+        : `Your organisation’s backend asked for ${them} with its platform key.`,
+    },
+    { kind: 'kv', rows },
+  ];
+  for (const l of lines) blocks.push(...originBlocks(l, { one: 'Remove this web address', many: (x) => `Remove ${x}`, url: l.removeUrl }, many));
+  blocks.push(
+    {
+      kind: 'p',
+      text: `${many ? 'Each link removes one web address and works' : 'The link works'} for ${durationWords(ORIGIN_REMOVAL_LINK_MS)}. The page asks you to confirm; opening the link alone changes nothing.`,
+    },
+    { kind: 'p', text: `After that, an owner can remove ${them} in the partner portal, and Journear security can from the admin portal.` },
+  );
+  const title = many ? 'Web addresses confirmed' : 'Web address confirmed';
+  return render(c.env, `${title} for ${oneLine(n.app.name, 60)}`, blocks, c.consoleOrigin, c.label, design(c, title, `${many ? 'New web addresses for one of your apps work' : 'A new web address for one of your apps works'} now. You can remove ${them} at once.`));
 }

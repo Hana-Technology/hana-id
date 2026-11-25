@@ -32,6 +32,7 @@ function page(d: Record<string, unknown>, scopeRegistration: unknown = DEV_COUNC
     if (c.method !== 'GET') return { status: 500, body: { error: { code: 'internal', message: 'no write expected' } } };
     if (c.path === '/api/orgs/org_corvid') return { body: state.d };
     if (c.path === '/api/orgs/org_corvid/changes') return { body: { changes: [] } };
+    if (c.path === '/api/orgs/org_corvid/platform') return { body: { keys: [], platform: { orgId: 'org', enabled: false, frozen: false, maxApps: 10, creationsPerDay: 5, proposalsPerDay: 30, setBy: null, setAt: null } } };
     return { status: 404, body: { error: { code: 'not_found', message: 'Not found' } } };
   };
   return Object.assign(boot('/orgs/org_corvid', answer, { me: () => ({ body: { email: 'staff@hana.example', env, ...(scopeRegistration ? { scopeRegistration } : {}) } }) }), { state });

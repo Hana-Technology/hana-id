@@ -11,8 +11,8 @@ import { rotateKey } from '../src/changes/keys.ts';
 import { removeOrigins } from '../src/changes/origins.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
-import { ORIGIN, call, seedApp } from './helpers.ts';
-import { hex, labelChangeDigest, nonceOf, originChangeDigest, ownerActionNonce, settingsChangeDigest, sha256, utf8 } from '@hana-id/console-core';
+import { ORIGIN, call, seedApp, uid } from './helpers.ts';
+import { hex, labelChangeDigest, nonceOf, originChangeDigest, ownerActionNonce, parsePlatformPublicKey, platformKeyDigest, settingsChangeDigest, sha256, utf8 } from '@hana-id/console-core';
 
 /** A partner label document (D894) for the budget test: a made-up contract on the NEAR test network. */
 const LABEL_DOC = JSON.stringify({
@@ -34,6 +34,7 @@ import {
   linkToken,
   member,
   newOrg,
+  newPlatformPublicKey,
   orgApp,
   ownClock,
   governanceViews,
@@ -236,6 +237,14 @@ describe('the hot-DB budget', () => {
     if (!pending2.ok) throw new Error(pending2.code);
     let created: { key: { id: string } } | undefined;
     let labelId: string | undefined;
+    const pk = { one: await newPlatformPublicKey(), two: await newPlatformPublicKey(), three: await newPlatformPublicKey(), four: await newPlatformPublicKey(), five: await newPlatformPublicKey() };
+    const keys: Record<string, string> = {};
+    const keyNonce = async (kind: 'add' | 'accept' | 'confirm', keyId: string, publicKey: string, label: string) => {
+      const p = await parsePlatformPublicKey(publicKey);
+      if (!p.ok) throw new Error(p.problem);
+      return nonceOf(await platformKeyDigest({ kind, signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: app.org, keyId, thumbprint: p.key.thumbprint, scopes: [app.scope], label }));
+    };
+    const staffTwo = () => ({ actor: { kind: 'hana' as const, id: 'access-sub-staff-2', email: 'staff2@hana.example' }, requestId: `req_${uid()}`, clientIp: '198.51.100.2' });
     const calls: [keyof typeof CONSOLE_COSTS, (rpc: ConsoleRpc) => Promise<{ ok: boolean }>][] = [
       ['listApps', (rpc) => rpc.listApps({ ...member(), orgId: app.org })],
       ['getApp', (rpc) => rpc.getApp({ ...member(), orgId: app.org, appId: app.id })],
@@ -289,6 +298,45 @@ describe('the hot-DB budget', () => {
         const v = (await rows<{ v: number }>('SELECT labels_version AS v FROM scopes WHERE scope_id = ?1', app.scope))[0]!.v;
         const nonce = nonceOf(await labelChangeDigest({ signer: env.SIGNER_ACCOUNT, scopeId: app.scope, kind: 'labels_remove', labelId: labelId!, appIds: [], labelsVersion: v }));
         return rpc.removeLabels({ ...member(), orgId: app.org, scopeId: app.scope, labelId: labelId!, expectedVersion: v, stepUpJwt: await stepUp(nonce) });
+      }],
+      // D918: platform keys (an owner's registration, then its announcement by the admin Worker, its confirmation and
+      // its stop; a second key's cancel by the link; a staff key's acceptance and its stop by the link).
+      ['proposePlatformKey', async (rpc) => {
+        const r = await rpc.proposePlatformKey({ ...member(), orgId: app.org, scopeIds: [app.scope], label: 'Budget key', publicKey: pk.one, stepUpJwt: await stepUp(await keyNonce('add', '', pk.one, 'Budget key')) });
+        if (r.ok) keys.one = r.key.id;
+        return r;
+      }],
+      ['getPlatformKey', (rpc) => rpc.getPlatformKey({ ...member(), orgId: app.org, keyId: keys.one! })],
+      ['listPlatformKeys', (rpc) => rpc.listPlatformKeys({ ...member(), orgId: app.org })],
+      ['confirmPlatformKey', async (rpc) => {
+        await adminRpc().ackPlatformKeyNotice({ ...system(), keyId: keys.one!, cancelTokenHash: await linkToken().hash });
+        return rpc.confirmPlatformKey({ ...member(), orgId: app.org, keyId: keys.one!, stepUpJwt: await stepUp(await keyNonce('confirm', keys.one!, pk.one, 'Budget key')) });
+      }],
+      ['revokePlatformKey', (rpc) => rpc.revokePlatformKey({ ...member(), orgId: app.org, keyId: keys.one! })],
+      ['cancelPlatformKeyByLink', async (rpc) => {
+        const three = await adminRpc().registerPlatformKey({ ...hana(), orgId: app.org, scopeIds: [app.scope], label: 'Third', publicKey: pk.three, reason: 'Thumbprint checked by phone with the network' });
+        if (!three.ok) throw new Error(three.code);
+        const t = linkToken();
+        await adminRpc().approvePlatformKey({ ...staffTwo(), orgId: app.org, keyId: three.key.id, reason: 'Second staff member checked it too' });
+        await adminRpc().ackPlatformKeyNotice({ ...system(), keyId: three.key.id, cancelTokenHash: await t.hash });
+        return rpc.cancelPlatformKeyByLink({ actor: { kind: 'link', id: three.key.id }, requestId: `req_${uid()}`, clientIp: '203.0.113.9', keyId: three.key.id, token: t.token });
+      }],
+      ['cancelPlatformKey', async (rpc) => {
+        const r = await adminRpc().registerPlatformKey({ ...hana(), orgId: app.org, scopeIds: [app.scope], label: 'Fourth', publicKey: pk.four, reason: 'Thumbprint checked by phone with the network' });
+        if (!r.ok) throw new Error(r.code);
+        return rpc.cancelPlatformKey({ ...member(), orgId: app.org, keyId: r.key.id });
+      }],
+      ['acceptPlatformKey', async (rpc) => {
+        const r = await adminRpc().registerPlatformKey({ ...hana(), orgId: app.org, scopeIds: [app.scope], label: 'Fifth', publicKey: pk.five, reason: 'Thumbprint checked by phone with the network' });
+        if (!r.ok) throw new Error(r.code);
+        keys.five = r.key.id;
+        return rpc.acceptPlatformKey({ ...member(), orgId: app.org, keyId: r.key.id, stepUpJwt: await stepUp(await keyNonce('accept', r.key.id, pk.five, 'Fifth')) });
+      }],
+      ['revokePlatformKeyByLink', async (rpc) => {
+        const t = linkToken();
+        const r = linkToken();
+        await adminRpc().ackPlatformKeyNotice({ ...system(), keyId: keys.five!, cancelTokenHash: await t.hash, revokeTokenHash: await r.hash });
+        return rpc.revokePlatformKeyByLink({ actor: { kind: 'link', id: keys.five! }, requestId: `req_${uid()}`, clientIp: '203.0.113.9', keyId: keys.five!, token: r.token });
       }],
       ['getUser', async (rpc) => {
         const userId = `u1_${'E'.repeat(21)}A`;

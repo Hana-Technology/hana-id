@@ -45,6 +45,14 @@ export const STEP_UP_KINDS = [
   /** D894: a partner label document proposed (a guarded change) or removed (immediate), both bound to the change. */
   'labels.set',
   'labels.remove',
+  /**
+   * D918: a platform key registered by an on-chain owner of each scope it names, a staff-registered key accepted (which
+   * counts as its confirmation), and a waiting key confirmed so it is in force at once. Revoking and cancelling are
+   * immediate owner routes (kill switches), with no fresh sign-in.
+   */
+  'platform.key_add',
+  'platform.key_accept',
+  'platform.key_confirm',
 ] as const;
 export const OWNER_ACTION_METHODS = ['propose_change', 'execute_change', 'cancel_change', 'remove_client', 'disable_shared_login'] as const;
 

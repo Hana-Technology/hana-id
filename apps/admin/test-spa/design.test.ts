@@ -38,6 +38,7 @@ function orgsApi(write: (c: Call) => Answer = () => ({ body: { ok: true } }), op
     if (c.path === '/api/orgs' || c.path.startsWith('/api/orgs?')) return { body: { orgs: ORGS, next: opts.next } };
     if (c.path === '/api/invites/new-orgs') return { body: { invites: [], truncated: false } };
     if (c.path.startsWith('/api/apps/app_pay')) return { body: { app: APP_DETAIL } };
+    if (/^\/api\/orgs\/[^/]+\/platform$/u.test(c.path)) return { body: { keys: [], platform: { orgId: 'org', enabled: false, frozen: false, maxApps: 10, creationsPerDay: 5, proposalsPerDay: 30, setBy: null, setAt: null } } };
     const m = /^\/api\/orgs\/([^/]+)(\/changes)?$/u.exec(c.path);
     if (m && m[2]) return { body: { changes: [] } };
     if (m && m[1] === 'org_lumen') return { body: LUMEN };

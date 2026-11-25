@@ -47,6 +47,15 @@ export const AUDIT_DETAIL_KEYS = {
   // D894: an owner's partner labels proposal and removal (step-ups; app_changes, the API's, is authoritative).
   'labels.proposed': ['code', 'version', 'changeId', 'labelId'],
   'labels.removed': ['code', 'version', 'labelId'],
+  // D918: platform keys. An owner's registration, acceptance and confirmation (step-ups), stop and cancel (immediate),
+  // and the emailed links' cancel and stop (no session): ids, codes and states only, never a key or its thumbprint.
+  'platform_key.proposed': ['code', 'keyId'],
+  'platform_key.accepted': ['code', 'keyId'],
+  'platform_key.confirmed': ['code', 'keyId'],
+  'platform_key.cancelled': ['code', 'keyId'],
+  'platform_key.revoked': ['code', 'keyId'],
+  'platform_key.link_cancel': ['code', 'keyId'],
+  'platform_key.link_revoke': ['code', 'keyId'],
   'app.resumed': ['code', 'suspendedBy'],
   'app.settings_changed': ['code', 'version', 'fields'],
   'owner_action.relayed': ['code', 'method', 'status'],

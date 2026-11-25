@@ -4,6 +4,9 @@
 // each is optional in the type so a missing one fails closed at the step that needs it (no notice is acked, no email
 // leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
+  PlatformKeyNotice,
+  PlatformKeyView,
+  PlatformOrgView,
   LinkStatsRow,
   ApiPurgeAuditResult,
   ApiSystemStatus,
@@ -148,6 +151,23 @@ export interface AdminRpcClient {
   labelStaffAct(c: unknown): Answer<{ change: LabelChangeView }>;
   /** A switch: off / back on for an entry, an org or everyone; review on / off for an org or everyone (staff). */
   labelControl(c: unknown): Answer<{ version: number; changed: boolean }>;
+  // ---- platform keys (D918) ----
+  listPlatformKeys(c: unknown): Answer<{ keys: PlatformKeyView[]; platform: PlatformOrgView }>;
+  registerPlatformKey(c: unknown): Answer<{ key: PlatformKeyView }>;
+  approvePlatformKey(c: unknown): Answer<{ key: PlatformKeyView }>;
+  revokePlatformKey(c: unknown): Answer<{ key: PlatformKeyView }>;
+  cancelPlatformKey(c: unknown): Answer<{ key: PlatformKeyView }>;
+  setPlatformOrg(c: unknown): Answer<{ changed: boolean; platform: PlatformOrgView }>;
+  setPlatformOrgFrozen(c: unknown): Answer<{ changed: boolean }>;
+  platformOrgs(c: unknown): Answer<{ orgs: { orgId: string; enabled: boolean; frozen: boolean; version: number }[]; next?: string }>;
+  /** The keys to announce, confirmed, stopped and expiring, with the org's security contacts (the notice cron's page). */
+  platformKeyNotices(c: unknown): Answer<{ notices: PlatformKeyNotice[] }>;
+  /** System only, after every send was accepted: starts the key's wait (or puts an accepted staff key in force with its stop link). */
+  ackPlatformKeyNotice(c: unknown): Answer<{ key: PlatformKeyView }>;
+  ackPlatformKeyConfirmNotice(c: unknown): Answer<Record<string, never>>;
+  notePlatformKeyNoticeFailure(c: unknown): Answer<{ failures: number }>;
+  ackPlatformKeyEndNotice(c: unknown): Answer<Record<string, never>>;
+  ackPlatformKeyExpiryNotice(c: unknown): Answer<Record<string, never>>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */

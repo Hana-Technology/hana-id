@@ -53,7 +53,12 @@ import {
   stepUpDigest,
   userIdInput,
   utf8,
+  parsePlatformPublicKey,
+  platformKeyDigest,
+  platformKeyIdInput,
+  platformKeyLabel,
 } from '@hana-id/console-core';
+import { abilityFor, fourEyesProblem } from './platform-keys.ts';
 import { issuesAsZod3, z } from '@hana-id/env/zod';
 import { type Writer, auditInsert, entry } from './audit.ts';
 import { flowState } from './auth-flow.ts';
@@ -133,6 +138,10 @@ const params = {
   // D894: partner labels; D899: the Request labels page builds them (a form, never the partner's JSON by hand).
   'labels.set': z.object({ scopeId: scopeIdInput, labelId: labelIdInput.optional(), document: z.string().min(1).max(16 * 1024), appIds: z.array(appIdInput).min(1).max(LABEL_STORE_LIMITS.appsPerDocument) }).strict(),
   'labels.remove': z.object({ scopeId: scopeIdInput, labelId: labelIdInput }).strict(),
+  // D918: platform keys. The public key as pasted (PEM or JWK; never a private key: refused before any sign-in).
+  'platform.key_add': z.object({ scopeIds: z.array(scopeIdInput).min(1).max(2), label: z.string().min(1).max(160), publicKey: z.string().min(1).max(2048) }).strict(),
+  'platform.key_accept': z.object({ keyId: platformKeyIdInput }).strict(),
+  'platform.key_confirm': z.object({ keyId: platformKeyIdInput }).strict(),
   'org.policy': z
     .object({
       requiredHd: z
@@ -167,11 +176,15 @@ export const RETURN_PAGES = {
   // D899: an app's Request labels tab (the scope's entries, shown from an app of that scope).
   'labels.set': ['scope', 'labels'],
   'labels.remove': ['scope', 'labels'],
+  // D918: the org's Platform keys page.
+  'platform.key_add': ['platform-keys'],
+  'platform.key_accept': ['platform-keys'],
+  'platform.key_confirm': ['platform-keys'],
 } as const satisfies Record<StepUpKind, readonly string[]>;
 type ReturnPage = (typeof RETURN_PAGES)[StepUpKind][number];
 const APP_PAGES: ReadonlySet<string> = new Set(['origins', 'signing', 'suspend', 'sessions', 'email', 'labels']);
 /** `returnTo`: a page name and, for an app's page reached from a scope action (the Email login tab, Request labels), the app. */
-const returnInput = z.object({ page: z.enum(['origins', 'signing', 'suspend', 'sessions', 'email', 'labels', 'scope', 'members']), appId: appIdInput.optional() }).strict();
+const returnInput = z.object({ page: z.enum(['origins', 'signing', 'suspend', 'sessions', 'email', 'labels', 'scope', 'members', 'platform-keys']), appId: appIdInput.optional() }).strict();
 
 /** The org and role a session route resolved. */
 export interface OrgCaller {
@@ -390,6 +403,44 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
         digest,
       };
     }
+    case 'platform.key_add': {
+      const label = platformKeyLabel(p.label as string);
+      if (!label.ok) return no('bad_request', label.problem);
+      const parsed = await parsePlatformPublicKey(p.publicKey as string);
+      if (!parsed.ok) return no('bad_request', parsed.problem);
+      const scopes = [...new Set(p.scopeIds as string[])].sort();
+      if (scopes.length !== (p.scopeIds as string[]).length) no('bad_request', 'A scope is listed twice');
+      const apps = await env.API.listApps({ ...ctx, orgId: c.orgId });
+      if (!apps.ok) return no(apps.code, apps.error ?? apps.code);
+      for (const s of scopes) {
+        const app = apps.apps.find((a) => a.scopeId === s) ?? no('not_found', `No such scope in this organisation: ${s}`);
+        if (app.environment !== 'test') no('env_mismatch', 'Platform keys are for test scopes only for now');
+        const view = await scopeNow(env, s);
+        if (!oidcOwners(view).some((o) => o.provider === 'google' && o.sub === c.session.sub)) no('not_owner', 'Your Google account isn’t an on-chain owner of every scope this key names. Ask an owner of each one, or Journear.');
+      }
+      const thumbprint = parsed.key.thumbprint;
+      const digest = await platformKeyDigest({ kind: 'add', signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: c.orgId, keyId: '', thumbprint, scopes, label: label.label });
+      return {
+        action: { ...base, scope_ids: scopes, label: label.label, public_key: JSON.stringify(parsed.key.jwk), thumbprint },
+        decoded: { scopeIds: scopes, label: label.label, thumbprint, fourEyes: env.NETWORK !== 'testnet' },
+        digest,
+      };
+    }
+    case 'platform.key_accept':
+    case 'platform.key_confirm': {
+      const what = kind === 'platform.key_accept' ? 'accept' : 'confirm';
+      const r = await env.API.getPlatformKey({ ...ctx, orgId: c.orgId, keyId: p.keyId as string });
+      if (!r.ok) return no(r.code, r.code === 'not_found' ? 'No such platform key in this organisation' : (r.error ?? r.code));
+      const k = r.key;
+      const ability = await abilityFor(env, c, k, what, now);
+      if (!ability.allowed) no(ability.reason.startsWith('Only an owner of this wallet') ? 'not_owner' : 'forbidden', ability.reason);
+      const digest = await platformKeyDigest({ kind: what, signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: c.orgId, keyId: k.id, thumbprint: k.thumbprint, scopes: k.scopes, label: k.label });
+      return {
+        action: { ...base, key_id: k.id, thumbprint: k.thumbprint, scope_ids: k.scopes, label: k.label },
+        decoded: { keyId: k.id, label: k.label, thumbprint: k.thumbprint, scopeIds: k.scopes, proposedByKind: k.proposedByKind, proposedAt: k.proposedAt, fourEyes: k.fourEyes, ...(k.activeFrom !== undefined ? { activeFrom: k.activeFrom } : {}) },
+        digest,
+      };
+    }
     case 'member.invite': {
       const open = await env.CONSOLE_DB.prepare(`SELECT COUNT(*) AS n FROM invites WHERE org_id = ? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > ${lit(now)}`).bind(c.orgId).first<number>('n');
       if ((open ?? 0) >= 10) no('conflict', 'The organisation has 10 open invites: revoke one first');
@@ -556,6 +607,7 @@ export async function createAction(request: Request, env: Env, info: RequestInfo
 function pagePath(orgId: string, page: ReturnPage, ids: { appId?: string | undefined; scopeId?: string | undefined }): string | null {
   const org = `/orgs/${orgId}`;
   if (page === 'members') return `${org}/members`;
+  if (page === 'platform-keys') return `${org}/platform-keys`;
   if (page === 'scope') return ids.scopeId ? `${org}/scopes/${ids.scopeId}` : null;
   return ids.appId && APP_PAGES.has(page) ? `${org}/apps/${ids.appId}/${page}` : null;
 }
@@ -849,6 +901,29 @@ async function runApiKind(env: Env, w: Writer, a: LiveAction, act: Record<string
       const r = await env.API.removeLabels({ ...ctx, orgId, scopeId: act.scope_id as string, labelId: act.label_id as string, expectedVersion: act.labels_version as number, stepUpJwt: jwt });
       await auditOutcome(env, w, a, 'labels.removed', { ok: r.ok, details: r.ok ? { version: r.version, labelId: act.label_id as string } : { code: r.code } });
       return r.ok ? { status: 'ok', version: r.version } : failed(r.code, r.error);
+    }
+    case 'platform.key_add': {
+      const r = await env.API.proposePlatformKey({ ...ctx, orgId, scopeIds: act.scope_ids as string[], label: act.label as string, publicKey: act.public_key as string, stepUpJwt: jwt });
+      await auditOutcome(env, w, a, 'platform_key.proposed', { ok: r.ok, details: r.ok ? { keyId: r.key.id } : { code: r.code } });
+      return r.ok ? { status: 'ok', keyId: r.key.id } : failed(r.code, r.error);
+    }
+    case 'platform.key_accept': {
+      const r = await env.API.acceptPlatformKey({ ...ctx, orgId, keyId: act.key_id as string, stepUpJwt: jwt });
+      await auditOutcome(env, w, a, 'platform_key.accepted', { ok: r.ok, details: r.ok ? { keyId: r.key.id } : { code: r.code, keyId: act.key_id as string } });
+      return r.ok ? { status: 'ok', keyId: r.key.id } : failed(r.code, r.error);
+    }
+    case 'platform.key_confirm': {
+      // The person checks again, at the moment of the confirmation (a role or a membership can change in 5 minutes).
+      const k = await env.API.getPlatformKey({ ...ctx, orgId, keyId: act.key_id as string });
+      if (!k.ok) return failed(k.code, k.error);
+      const problem = await fourEyesProblem(env, orgId, { userId: a.user_id, email: a.email }, k.key, w.now);
+      if (problem) {
+        await auditOutcome(env, w, a, 'platform_key.confirmed', { ok: false, details: { code: 'forbidden', keyId: k.key.id } });
+        return failed('forbidden', problem);
+      }
+      const r = await env.API.confirmPlatformKey({ ...ctx, orgId, keyId: act.key_id as string, stepUpJwt: jwt });
+      await auditOutcome(env, w, a, 'platform_key.confirmed', { ok: r.ok, details: r.ok ? { keyId: r.key.id } : { code: r.code, keyId: act.key_id as string } });
+      return r.ok ? { status: 'ok', keyId: r.key.id } : failed(r.code, r.error);
     }
     default:
       return failed('internal');

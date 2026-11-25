@@ -1933,3 +1933,17 @@ body:has(.jp-savebar) .toast-region {
     text-align: center;
   }
 }
+
+/* D918: a platform key's facts; on a phone, each label above its value (a fingerprint is long and unbroken). */
+.key-state {
+  margin: 0 0 12px;
+}
+@media (max-width: 600px) {
+  .facts.key-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px 0;
+  }
+  .facts.key-facts dd {
+    margin-bottom: 8px;
+  }
+}

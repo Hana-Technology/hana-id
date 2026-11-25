@@ -173,6 +173,34 @@ describe('audit details', () => {
         "owner_grant.notified": [
           "ownerFrom",
         ],
+        "platform_key.accepted": [
+          "code",
+          "keyId",
+        ],
+        "platform_key.cancelled": [
+          "code",
+          "keyId",
+        ],
+        "platform_key.confirmed": [
+          "code",
+          "keyId",
+        ],
+        "platform_key.link_cancel": [
+          "code",
+          "keyId",
+        ],
+        "platform_key.link_revoke": [
+          "code",
+          "keyId",
+        ],
+        "platform_key.proposed": [
+          "code",
+          "keyId",
+        ],
+        "platform_key.revoked": [
+          "code",
+          "keyId",
+        ],
         "policy.proposed": [
           "code",
           "version",

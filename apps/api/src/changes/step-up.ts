@@ -78,9 +78,21 @@ const tokens = (env: Env) => placedStub(env, env.RATE_LIMITER, TOKEN_LIMITER);
  * single-use reservation (last, so a refusal never uses the token up).
  */
 export async function confirmStepUp(env: Env, t: StepUpToken, c: { expectedNonce: string; scopeId: string }): Promise<void> {
+  await confirmStepUpScopes(env, t, { expectedNonce: c.expectedNonce, scopeIds: [c.scopeId] });
+}
+
+/**
+ * confirmStepUp for a change that names several scopes (a platform key, D918): the nonce, then the token's `sub` an
+ * on-chain owner of **each** scope (each read uncached), then the one reservation. A token from an owner of only one
+ * of two scopes is `not_owner` and stays unused.
+ */
+export async function confirmStepUpScopes(env: Env, t: StepUpToken, c: { expectedNonce: string; scopeIds: readonly string[] }): Promise<void> {
   if (t.nonce !== c.expectedNonce) refuse('forbidden', 'The step-up token is for another change or an older version of the app: sign in again');
-  const scope = await scopeOnChain(env, c.scopeId);
-  if (!scope || !oidcOwners(scope).some(([p, s]) => p === t.provider && s === t.sub)) refuse('not_owner', `The step-up token is not from an on-chain owner of scope ${c.scopeId}`);
+  if (c.scopeIds.length === 0) refuse('bad_request', 'No scope to check the owner against');
+  for (const scopeId of c.scopeIds) {
+    const scope = await scopeOnChain(env, scopeId);
+    if (!scope || !oidcOwners(scope).some(([p, s]) => p === t.provider && s === t.sub)) refuse('not_owner', `The step-up token is not from an on-chain owner of scope ${scopeId}`);
+  }
   if (!(await tokens(env).reserve(t.hash, t.expMs))) refuse('token_used', 'This step-up token was already used: sign in again');
 }
 

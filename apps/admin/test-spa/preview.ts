@@ -89,6 +89,8 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
     if (p === '/api/orgs') return ok({ orgs: data.orgs });
     if (p === '/api/invites/new-orgs') return ok(data.newOrgInvites);
     if ((m = /^\/api\/orgs\/([^/]+)\/changes$/u.exec(p))) return ok(data.orgChanges(decodeURIComponent(m[1]!)));
+    // D918: an org's platform keys and switch (a key awaiting acceptance, one working, one stopped).
+    if ((m = /^\/api\/orgs\/([^/]+)\/platform$/u.exec(p))) return ok(data.orgPlatform(decodeURIComponent(m[1]!)));
     if ((m = /^\/api\/orgs\/([^/]+)$/u.exec(p))) {
       const d = data.orgDetail[decodeURIComponent(m[1]!)];
       return d ? ok(d) : refuse(404, 'not_found', 'No such org');

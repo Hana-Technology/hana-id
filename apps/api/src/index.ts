@@ -5,6 +5,7 @@ import { GOVERNANCE_ENDPOINT, handleGovernance } from './governance-status.ts';
 import { json } from './http.ts';
 import { detectDrift } from './changes/drift.ts';
 import { labelsMaintenance } from './labels/cron.ts';
+import { platformKeysMaintenance } from './platform/cron.ts';
 import { detectLabelDrift } from './labels/drift.ts';
 import { WALLET_RECORD_ENDPOINT, handleWalletRecord } from './directory/record.ts';
 import { MAINNET_DEMO_EVENTS_ENDPOINT, handleMainnetDemoEvent } from './mainnet-demo.ts';
@@ -288,9 +289,13 @@ export default {
     // Every run (D863): the NEAR relay's billing records read at FINAL, copied to the usage ledger, lateness checked.
     // Also outside `jobs`; never fails the run (nothing to do before migration 0023).
     const nearBilling = nearBillingMaintenance(env).catch(() => undefined);
+    // D918: platform keys' activation, expiry and lapse (hourly). Outside `jobs` too; it logs its own failures and does
+    // nothing before migration 0028.
+    const platformKeys = isHourlyRun(controller.scheduledTime) ? platformKeysMaintenance(env).catch(() => log({ event: 'platform_keys_cron', outcome: 'error', code: 'internal' }, 'error')) : undefined;
     const [issuerKeys, vault, identity, guarded, drift, labels, labelDrift] = await Promise.allSettled(jobs);
     await evmRelayCheck;
     await nearBilling;
+    await platformKeys;
     if (vault?.status === 'rejected') log({ event: 'vault_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (identity?.status === 'rejected') log({ event: 'identity_maintenance', outcome: 'error', code: 'internal' }, 'error');
     if (guarded?.status === 'rejected') log({ event: 'guarded_change_cron', outcome: 'error', code: 'internal' }, 'error');

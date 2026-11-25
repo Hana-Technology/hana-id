@@ -508,6 +508,9 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
           },
           // D894: the request labels' notice step reads its page every run (none waiting here).
           labelNotices: async () => ({ ok: true as const, notices: [] }),
+          // D918: the platform keys' notice step reads its page every run, and the hourly freeze check its mirror list.
+          platformKeyNotices: async () => ({ ok: true as const, notices: [] }),
+          platformOrgs: async () => ({ ok: true as const, orgs: [] }),
           getSecurityContacts: async (c: { orgId: string }) => ({ ok: true as const, emails: [`sec-${c.orgId}@partner.example`] }),
           securityEvents: async (c: { limit: number }) => ({ ok: true as const, events: events.filter((e) => !notified.has(e.id)).slice(0, c.limit) }),
           markSecurityEventNotified: async (c: { ids: string[] }) => {
@@ -537,6 +540,7 @@ describe('a worst-case 5-minute tick (D380): pages of blocking notices, a securi
       CONSOLE: recorded(
         {
           pendingMemberNotices: async (c: { limit: number }) => ({ ok: true as const, notices: invites.filter((n) => !invitesAcked.has(n.invite.id)).slice(0, c.limit) }),
+          listOrgs: async () => ({ ok: true as const, orgs: [] }),
           getOrg: async (c: { orgId: string }) => ({ ok: true as const, org: { id: c.orgId, name: `Org ${c.orgId}`, kind: 'partner' as const, status: 'active' as const, createdAt: 1 }, members: [], invites: [] }),
           ackMemberNotice: async (c: { inviteId: string }) => {
             invitesAcked.add(c.inviteId);

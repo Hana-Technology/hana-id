@@ -21,6 +21,13 @@ export const DOMAINS = {
   invite: 'hana-console/invite/v1',
   ownerGrantCancel: 'hana-console/owner-grant-cancel/v1',
   uid: 'hana-id/uid/v1',
+  /** D918: a platform key's registration, acceptance and confirmation step-ups (platform-keys.ts platformKeyDigest). */
+  platformKeyAdd: 'hana-id/console-key-add/v1',
+  platformKeyAccept: 'hana-id/console-key-accept/v1',
+  platformKeyConfirm: 'hana-id/console-key-confirm/v1',
+  /** D918: a platform key's emailed links: cancel a waiting key, revoke a confirmed one (key `CANCEL_LINK_KEY`, checked by the API). */
+  platformKeyCancel: 'hana-id/platform-key-cancel/v1',
+  platformKeyRevoke: 'hana-id/platform-key-revoke/v1',
   /** Reserved for second-owner approval (docs/batch-c-spec.md "Deferred"); nothing computes it. */
   changeApprove: 'hana-id/change-approve/v1',
 } as const;
@@ -143,9 +150,10 @@ export async function clientProofDigest(i: { signer: string; scopeId: string; ac
  * a failed ack carries the same working link; the databases store only sha256(T).
  * - cancel link (guarded change, key `CANCEL_LINK_KEY`, checked by the API),
  * - invite (key `INVITE_LINK_KEY`, checked by the console),
- * - owner-grant cancel (key `CANCEL_LINK_KEY`, checked by the console).
+ * - owner-grant cancel (key `CANCEL_LINK_KEY`, checked by the console),
+ * - a platform key's cancel and revoke links (key `CANCEL_LINK_KEY`, checked by the API; D918).
  */
-export type LinkKind = 'cancelLink' | 'invite' | 'ownerGrantCancel';
+export type LinkKind = 'cancelLink' | 'invite' | 'ownerGrantCancel' | 'platformKeyCancel' | 'platformKeyRevoke';
 
 export async function linkToken(kind: LinkKind, key: Uint8Array, id: string): Promise<Uint8Array> {
   if (!id) throw new TypeError('A link token needs an id');

@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-25 (branch `feat/app-user-linking`, not merged, not deployed: "Users": the linking view for owners, the "(all your apps)" labels, D925); 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
+Last verified: 2026-11-25 (branch `feat/app-user-linking`, not merged, not deployed: "Users": the linking view for owners, the "(all your apps)" labels, D925); 2026-11-25 (branch `feat/platform-keys`, from `next`, not merged, not deployed: "Layout"'s platform key files, the preview's platform keys answers and demo actions `act_demo_key_add` and `act_demo_key_confirm`, D918); 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
 from `@hana-id/brand`'s `LOCKUP`, outlined, D789); 2026-11-12 (branch `feat/journear-design-console`, not merged, not deployed: the SPA on the Journear
 Passport design system, "Brand" and "Patterns" below, D765: its tokens, component classes, self-hosted Archivo and IBM
 Plex and the Journear lockup; toasts, the save bar, setting rows, choice cards, validate on blur, the stats strip; the
@@ -19,7 +19,8 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
 |---|---|
 | `src/` | The Worker: host dispatch, headers and CSRF, sign-in, sessions, fresh sign-in (`actions.ts`), the read and write routes, StaffRpc, the hourly cron |
 | `web/` | The SPA (React 18, React Router 6, Vite), built to `dist/` and served as the Worker's assets |
-| `web/src/pages/` | One file per page; `pages/app/` holds an app's sections (overview, origins, keys, login and sessions, signing, branding, suspend) |
+| `web/src/pages/` | One file per page; `pages/app/` holds an app's sections (overview, origins, keys, login and sessions, signing, branding, suspend); `PlatformKeys.tsx` the org's platform keys, one key's page and the Confirm link's page (D918) |
+| `src/platform-keys.ts` | Platform keys (D918): the list and key routes (the people named from the org's current members only), Stop and Cancel, the emailed links, four eyes' person checks |
 | `web/src/ui.tsx` | The UI kit: errors and notes, panels, badges, copy buttons, the in-page confirm, the fresh sign-in hint, the guarded-change timeline |
 | `web/src/messages.ts` | Every API error code in plain language, with what to do next |
 | `web/src/lib.tsx` | The data, write and fresh-sign-in hooks, the fragment-token reader, formatting |

@@ -470,3 +470,29 @@ export function emailStatus(a: { id: string; scopeId: string; settings: { loginM
     : { clientOnChain: state === 'off-with-client', pending: null, youAreOnChainOwner: state !== 'not-owner' };
   return { emailOn: ['on', 'waiting', 'unlocking', 'ready', 'stuck', 'stuck-other', 'nochain'].includes(state), scopeId: a.scopeId, scope, otherAppsEmailOn: state === 'waiting' ? 1 : 0, available: state !== 'unavailable', deliverability, now };
 }
+
+// ---- platform keys (D918) ----
+
+const THUMB = (s: string) => (s.repeat(43)).slice(0, 43);
+
+/** The org's platform keys: one working, one waiting for another owner (a real-money setup, registered by you), one awaiting your acceptance, one stopped. */
+export function platformKeys(now: number): import('@hana-id/console-core').PlatformKeyView[] {
+  return [
+    { id: 'pkc_Wk7Hq2Lm9Xc4Pz', orgId: ORG_ID, label: 'Production backend', thumbprint: THUMB('Nq3vTz8kLm2Xb7Wp_'), scopes: ['s_lumen_test'], status: 'active', state: 'in_force', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Dm7Vx2Kp4r', proposedAt: now - 40 * D, notifiedAt: now - 40 * D + 5 * 60_000, activeFrom: now - 40 * D + 20 * 60_000, expiresAt: now + 325 * D, confirmedKind: 'confirm', confirmedBy: 'usr_Ak3Pz8Qw2n', confirmedAt: now - 40 * D + 20 * 60_000 },
+    { id: 'pkc_Ws4Bn8Rt5Wp1Qa', orgId: ORG_ID, label: 'Standby key', thumbprint: THUMB('Hc2Rk9Vd4Jt7Mx1-'), scopes: ['s_lumen_test', 's_rewards_test'], status: 'pending', state: 'waiting', fourEyes: true, proposedByKind: 'member', proposedBy: 'usr_Ak3Pz8Qw2n', proposedAt: now - 2 * H, notifiedAt: now - 2 * H + 4 * 60_000, activeFrom: now + 22 * H },
+    { id: 'pkc_Wa9Gh6Tn1sLk2V', orgId: ORG_ID, label: 'Key sent by email', thumbprint: THUMB('Pz5Lq8Wc3Nb6Vt0_'), scopes: ['s_rewards_test'], status: 'awaiting_acceptance', state: 'awaiting_acceptance', fourEyes: false, proposedByKind: 'hana', proposedBy: 'hana', proposedAt: now - 30 * 60_000 },
+    { id: 'pkc_Wr2Sm9Lk2Vb7qX', orgId: ORG_ID, label: 'Old laptop key', thumbprint: THUMB('Ty6Mn1Qx4Kc9Rb2-'), scopes: ['s_lumen_test'], status: 'revoked', state: 'revoked', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Ak3Pz8Qw2n', proposedAt: now - 90 * D, activeFrom: now - 89 * D, expiresAt: now + 275 * D, revokedAt: now - 41 * D, revokedByKind: 'member', revokeReason: 'Laptop lost' },
+  ];
+}
+
+export const PLATFORM_PEOPLE: Record<string, string> = { usr_Ak3Pz8Qw2n: 'aiko.tanaka@examplelabs.example', usr_Dm7Vx2Kp4r: 'dmitri.volkov@examplelabs.example' };
+
+/** Why you can or can't accept or confirm each key, as the console's server answers it. */
+export function platformKeyAbilities(id: string, role: 'owner' | 'viewer', frozen: boolean): { accept: { allowed: boolean; reason?: string }; confirm: { allowed: boolean; reason?: string } } {
+  const no = (reason: string) => ({ allowed: false as const, reason });
+  if (role !== 'owner') return { accept: no('Only an owner of your organisation can do this.'), confirm: no('Only an owner of your organisation can do this.') };
+  if (frozen) return { accept: no('Journear has frozen your organisation, so keys can’t be accepted or confirmed.'), confirm: no('Journear has frozen your organisation, so keys can’t be accepted or confirmed.') };
+  if (id === 'pkc_Ws4Bn8Rt5Wp1Qa') return { accept: no('This key isn’t waiting for an acceptance.'), confirm: no('You registered this key, so another owner must confirm it. If nobody does, it starts working when its wait ends.') };
+  if (id === 'pkc_Wa9Gh6Tn1sLk2V') return { accept: { allowed: true }, confirm: no('This key isn’t waiting.') };
+  return { accept: no('This key isn’t waiting for an acceptance.'), confirm: no('This key isn’t waiting.') };
+}

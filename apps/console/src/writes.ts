@@ -33,6 +33,7 @@ import { pendingUpgradesRoute } from './governance.ts';
 import { ledgerCsvRoute, statementFileRoute, statementViewRoute, statementsRoute, usageRoute } from './reports.ts';
 import { helperRoute, scopeOfOrg, scopeRoute } from './scopes.ts';
 import { linkRoute, usersRoute, usersScreenOn } from './users.ts';
+import { PLATFORM_KEY_ID, cancelRoute as cancelPlatformKeyRoute, keyRoute as platformKeyRoute, listRoute as platformKeysRoute, revokeRoute as revokePlatformKeyRoute } from './platform-keys.ts';
 
 export interface RouteCall {
   request: Request;
@@ -291,6 +292,13 @@ const ROUTES: OrgRouteDef[] = [
   // ---- request labels (D899): a scope's entries, any member; proposing and removing are step-ups (actions.ts) ----
   { method: 'GET', re: /^\/scopes\/(global|s[0-9a-z]{1,32})\/labels$/u, role: 'viewer', frozenOk: true, run: (c) => labelsRoute(c) },
   { method: 'GET', re: /^\/near-code\/([a-z0-9._-]{2,64})$/u, role: 'viewer', frozenOk: true, run: (c) => nearCodeRoute(c) },
+
+  // ---- platform keys (D918): any member reads; an owner stops or cancels at once (kill switches, frozen orgs too);
+  // registering, accepting and confirming are step-ups (actions.ts) ----
+  { method: 'GET', re: /^\/platform-keys$/u, role: 'viewer', frozenOk: true, run: (c) => platformKeysRoute(c.env, c.info, c.caller) },
+  { method: 'GET', re: new RegExp(`^/platform-keys/(${PLATFORM_KEY_ID})$`, 'u'), role: 'viewer', frozenOk: true, run: (c) => platformKeyRoute(c.env, c.info, c.caller, c.m[1]!) },
+  { method: 'POST', re: new RegExp(`^/platform-keys/(${PLATFORM_KEY_ID})/revoke$`, 'u'), role: 'owner', frozenOk: true, run: (c) => revokePlatformKeyRoute(c.request, c.env, c.info, c.caller, c.m[1]!) },
+  { method: 'POST', re: new RegExp(`^/platform-keys/(${PLATFORM_KEY_ID})/cancel$`, 'u'), role: 'owner', frozenOk: true, run: (c) => cancelPlatformKeyRoute(c.request, c.env, c.info, c.caller, c.m[1]!) },
 
   // ---- on chain ----
   { method: 'GET', re: /^\/scopes\/(global|s[0-9a-z]{1,32})$/u, role: 'viewer', frozenOk: true, run: (c) => scopeRoute(c.env, ctxOf(c), c.caller.orgId, c.m[1]!, c.caller.session.sub) },

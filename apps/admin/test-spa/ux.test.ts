@@ -29,6 +29,7 @@ function orgsApi(write: (c: Call) => Answer = () => ({ body: { ok: true } }), de
     if (c.method !== 'GET') return write(c);
     if (c.path === '/api/orgs') return { body: { orgs: ORGS } };
     if (c.path === '/api/invites/new-orgs') return { body: { invites: [], truncated: false } };
+    if (/^\/api\/orgs\/[^/]+\/platform$/u.test(c.path)) return { body: { keys: [], platform: { orgId: 'org', enabled: false, frozen: false, maxApps: 10, creationsPerDay: 5, proposalsPerDay: 30, setBy: null, setAt: null } } };
     const m = /^\/api\/orgs\/([^/]+)(\/changes)?$/u.exec(c.path);
     if (m && m[2]) return { body: { changes: [] } };
     if (m && all[m[1]!]) return { body: all[m[1]!] };

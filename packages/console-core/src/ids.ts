@@ -15,6 +15,8 @@ export const ID_PREFIXES = {
   /** A partner label entry (D894): one document's place, owned by one org in one scope. */
   partnerLabel: 'pl',
   securityEvent: 'se',
+  /** A network's platform key (D918): one registered public key, `platform_keys`. */
+  platformKey: 'pkc',
   app: 'app',
 } as const;
 export type IdKind = keyof typeof ID_PREFIXES;

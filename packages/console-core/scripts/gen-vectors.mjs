@@ -68,6 +68,22 @@ export function buildVectors() {
   const invite = hmac(INVITE_KEY, Buffer.concat([ascii('hana-console/invite/v1'), str('inv_9Jc4Vx7Rm2Lq8Np')]));
   const grant = hmac(LINK_KEY, Buffer.concat([ascii('hana-console/owner-grant-cancel/v1'), str('og_2Hs6Dp9Fw3Zt5Gy')]));
 
+  // D918: a platform key's public key (the P-256 generator point: a public test value whose private key is 1, never a
+  // real key), its RFC 7638 thumbprint, its SPKI PEM, and the three step-up layouts over it.
+  const gx = Buffer.from('6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296', 'hex');
+  const gy = Buffer.from('4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5', 'hex');
+  const pkJwk = { crv: 'P-256', kty: 'EC', x: b64url(gx), y: b64url(gy) };
+  const pkThumb = b64url(sha256(ascii(`{"crv":"P-256","kty":"EC","x":"${pkJwk.x}","y":"${pkJwk.y}"}`)));
+  const spki = Buffer.concat([Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex'), Buffer.from([4]), gx, gy]);
+  const pkPem = `-----BEGIN PUBLIC KEY-----\n${spki.toString('base64').match(/.{1,64}/gu).join('\n')}\n-----END PUBLIC KEY-----`;
+  const pkScopes = ['sz2', 's10'];
+  const keyStep = (domain, keyId) => Buffer.concat([ascii(domain), str(SIGNER), str('sandbox-dev'), str('org_7Yk3Qm2Pz9VxR4tLs'), str(keyId), str(pkThumb), vec(byteSort(pkScopes)), str('Production backend')]);
+  const keyAdd = keyStep('hana-id/console-key-add/v1', '');
+  const keyAccept = keyStep('hana-id/console-key-accept/v1', 'pkc_4Rm8Vq2Lz7Wx9Kd');
+  const keyConfirm = keyStep('hana-id/console-key-confirm/v1', 'pkc_4Rm8Vq2Lz7Wx9Kd');
+  const pkCancel = hmac(LINK_KEY, Buffer.concat([ascii('hana-id/platform-key-cancel/v1'), str('pkc_4Rm8Vq2Lz7Wx9Kd')]));
+  const pkRevoke = hmac(LINK_KEY, Buffer.concat([ascii('hana-id/platform-key-revoke/v1'), str('pkc_4Rm8Vq2Lz7Wx9Kd')]));
+
   const uidOf = (scope, provider, sub) => hmac(USER_ID_KEY, Buffer.concat([ascii('hana-id/uid/v1'), str(scope), str(provider), str(sub)])).subarray(0, 16);
 
   return {
@@ -90,6 +106,22 @@ export function buildVectors() {
     cancel_link: { change_id: 'gc_5Tn8Wq1Ys6Hb3Kd', token: b64url(cancel), token_hash_hex: hexOf(sha256(cancel)) },
     invite: { invite_id: 'inv_9Jc4Vx7Rm2Lq8Np', token: b64url(invite), token_hash_hex: hexOf(sha256(invite)) },
     owner_grant_cancel: { grant_id: 'og_2Hs6Dp9Fw3Zt5Gy', token: b64url(grant), token_hash_hex: hexOf(sha256(grant)) },
+    platform_key: {
+      jwk: pkJwk,
+      pem: pkPem,
+      raw_hex: hexOf(Buffer.concat([Buffer.from([4]), gx, gy])),
+      thumbprint: pkThumb,
+      env: 'sandbox-dev',
+      org_id: 'org_7Yk3Qm2Pz9VxR4tLs',
+      key_id: 'pkc_4Rm8Vq2Lz7Wx9Kd',
+      scopes: pkScopes,
+      label: 'Production backend',
+      add: { preimage_hex: hexOf(keyAdd), nonce: b64url(sha256(keyAdd)) },
+      accept: { preimage_hex: hexOf(keyAccept), nonce: b64url(sha256(keyAccept)) },
+      confirm: { preimage_hex: hexOf(keyConfirm), nonce: b64url(sha256(keyConfirm)) },
+      cancel_link: { token: b64url(pkCancel), token_hash_hex: hexOf(sha256(pkCancel)) },
+      revoke_link: { token: b64url(pkRevoke), token_hash_hex: hexOf(sha256(pkRevoke)) },
+    },
     uid: [
       { scope_id: 's1', provider: 'google', sub: '1098765432', path: 's1#google#1098765432#0', uid: b64url(uidOf('s1', 'google', '1098765432')) },
       { scope_id: 's1', provider: 'google', sub: '1098765432', path: 's1#google#1098765432#3', uid: b64url(uidOf('s1', 'google', '1098765432')) },

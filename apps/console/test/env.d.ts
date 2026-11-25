@@ -12,8 +12,11 @@ declare global {
       HOT_DB: D1Database;
       /** What the fake upstream (test/fake-upstream.js) answers for the API Worker: chain views and Google's JWKS. */
       FAKE_UPSTREAM: D1Database;
+      /** Empty databases for the migration tests (0005's rebuild of pending_actions, D918). */
+      MIGRATION_DB: D1Database;
+      FRESH_DB: D1Database;
       /** Test only: the API's AdminRpc (the admin Worker's binding, C8), to propose and announce changes. */
-      API_ADMIN: Fetcher & { [m in "addOrigins" | "ackNotice" | "pendingNotices" | "ackLabelNotice" | "labelDetail" | "labelStaffAct" | "labelControls" | "labelControl"]: (c: unknown) => Promise<{ ok: boolean; code?: string; [k: string]: unknown }> };
+      API_ADMIN: Fetcher & { [m in "addOrigins" | "ackNotice" | "pendingNotices" | "ackLabelNotice" | "labelDetail" | "labelStaffAct" | "labelControls" | "labelControl" | "registerPlatformKey" | "ackPlatformKeyNotice"]: (c: unknown) => Promise<{ ok: boolean; code?: string; [k: string]: unknown }> };
     }
   }
 }

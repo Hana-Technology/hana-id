@@ -70,6 +70,78 @@ export async function answer(route: string, staff: StaffRequest, call: () => Pro
   return json(200, shape ? shape(rest) : rest);
 }
 
+/**
+ * One write of the API's freeze mirror (D918): `ok`, `held` (an unfreeze inside the grace after the last freeze), or
+ * `failed` (logged at error level).
+ */
+async function mirrorWrite(env: Env, staff: StaffRequest, orgId: string, frozen: boolean): Promise<'ok' | 'held' | 'failed'> {
+  try {
+    const r = await env.API.setPlatformOrgFrozen({ ...staffCtx(staff), orgId, frozen });
+    if (r.ok) return 'ok';
+    if (!frozen && r.code === 'conflict') {
+      log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: 'mirror_held', step: 'platform_mirror' }, 'warn');
+      return 'held';
+    }
+    log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: r.code, step: 'platform_mirror' }, 'error');
+  } catch (err) {
+    log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
+  }
+  return 'failed';
+}
+
+/**
+ * The staff freeze and unfreeze with the API's mirror (D918, the mirror's rule in docs/security.md):
+ * - freeze: the mirror (it only tightens), then the console, then the mirror again, so the latest freeze of the mirror
+ *   is after the console's and any unfreeze racing it falls inside the grace. If the console's freeze fails, the answer
+ *   says the keys were stopped anyway and the hourly check turns them back on (the console stays active);
+ * - unfreeze: the console, then a fresh read of it, then the mirror only if the console reads active. Inside the grace
+ *   after a freeze the mirror stays frozen and the answer says the hourly check frees it.
+ */
+export async function staffFreeze(c: RouteCtx, frozen: boolean): Promise<Response> {
+  const orgId = c.params.org!;
+  const route = 'POST /api/orgs/:org/freeze';
+  if (frozen) {
+    const first = await mirrorWrite(c.env, c.staff, orgId, true);
+    const res = await answer(route, c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId, frozen }));
+    if (!res.ok) {
+      if (first !== 'ok') return res;
+      log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'rejected', code: 'console_freeze_failed', step: 'platform_mirror' }, 'error');
+      return json(res.status, { error: { code: 'console_freeze_failed', message: `The organisation wasn’t frozen (HTTP ${res.status}), but its platform keys were already stopped. Press Freeze again. If it stays unfrozen, the hourly check turns its platform keys back on.` } });
+    }
+    const second = await mirrorWrite(c.env, c.staff, orgId, true);
+    return first === 'ok' || second === 'ok' ? json(200, { platformMirrored: true }) : mirrorFailed(true);
+  }
+  const res = await answer(route, c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId, frozen }));
+  if (!res.ok) return res;
+  let status: string | null = null;
+  try {
+    const now = await c.env.CONSOLE.getOrg({ ...staffCtx(c.staff), orgId });
+    status = now.ok ? now.org.status : null;
+  } catch (err) {
+    log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
+  }
+  if (status !== 'active') {
+    // Frozen again meanwhile (another staff member), or unreadable: the mirror stays as it is.
+    log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'rejected', code: status === null ? 'console_unreadable' : 'frozen_meanwhile', step: 'platform_mirror' }, 'warn');
+    return mirrorFailed(false);
+  }
+  const w = await mirrorWrite(c.env, c.staff, orgId, false);
+  if (w === 'ok') return json(200, { platformMirrored: true });
+  if (w === 'held')
+    return json(409, { error: { code: 'mirror_held', message: 'The organisation is unfrozen. Its platform keys were stopped less than 10 minutes ago, so they stay stopped for now; the hourly check turns them back on.' } });
+  return mirrorFailed(false);
+}
+
+const mirrorFailed = (frozen: boolean): Response =>
+  json(502, {
+    error: {
+      code: 'mirror_failed',
+      message: frozen
+        ? 'The organisation is frozen, but its platform keys weren’t updated. Press Freeze again; the hourly check repeats it too.'
+        : 'The organisation is unfrozen, but its platform keys weren’t turned back on. Press Unfreeze again; the hourly check repeats it too.',
+    },
+  });
+
 const pick = (b: Record<string, unknown>, ...keys: string[]): Record<string, unknown> => {
   const out: Record<string, unknown> = {};
   for (const k of keys) if (b[k] !== undefined) out[k] = b[k];
@@ -215,7 +287,24 @@ const ROUTES: Route[] = [
       return json(200, { org: org.org, members: org.members, invites: org.invites, grants: org.grants ?? [], securityContacts: contacts.emails, apps: apps.apps, flags });
     },
   },
-  { method: 'POST', pattern: '/api/orgs/:org/freeze', handler: (c) => answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'frozen') })) },
+  {
+    // D918: the console's freeze with the API's mirror (`staffFreeze`: mirror, console, mirror; unfreeze: console, a
+    // fresh read, mirror). A mirror that didn't land is said in the answer; the hourly check repeats it too.
+    method: 'POST',
+    pattern: '/api/orgs/:org/freeze',
+    handler: async (c) => {
+      if (typeof c.body.frozen !== 'boolean') return answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'frozen') }));
+      return staffFreeze(c, c.body.frozen);
+    },
+  },
+  // ---- platform keys (D918): the org's keys and switch; staff register (held for an owner's acceptance or a second
+  // staff member), approve (never the registrant), stop and cancel; the switch with the key review ----
+  { method: 'GET', pattern: '/api/orgs/:org/platform', handler: (c) => answer('GET /api/orgs/:org/platform', c.staff, () => c.env.API.listPlatformKeys({ ...staffCtx(c.staff), orgId: c.params.org })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-keys', handler: (c) => answer('POST /api/orgs/:org/platform-keys', c.staff, () => c.env.API.registerPlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'scopeIds', 'label', 'publicKey', 'reason') })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/approve', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/approve', c.staff, () => c.env.API.approvePlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id, ...pick(c.body, 'reason') })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/revoke', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/revoke', c.staff, () => c.env.API.revokePlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id, ...pick(c.body, 'reason') })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-keys/:id/cancel', handler: (c) => answer('POST /api/orgs/:org/platform-keys/:id/cancel', c.staff, () => c.env.API.cancelPlatformKey({ ...staffCtx(c.staff), orgId: c.params.org, keyId: c.params.id })) },
+  { method: 'POST', pattern: '/api/orgs/:org/platform-switch', handler: (c) => answer('POST /api/orgs/:org/platform-switch', c.staff, () => c.env.API.setPlatformOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'enabled', 'reason', 'reviewedKeys') })) },
   { method: 'POST', pattern: '/api/orgs/:org/suspend', handler: (c) => answer('POST /api/orgs/:org/suspend', c.staff, () => c.env.API.suspendOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'suspended') })) },
   {
     method: 'PUT',

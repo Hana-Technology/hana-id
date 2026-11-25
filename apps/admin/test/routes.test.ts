@@ -356,6 +356,8 @@ describe('the route table', () => {
         "POST /api/orgs/:org/platform-keys/:id/approve",
         "POST /api/orgs/:org/platform-keys/:id/revoke",
         "POST /api/orgs/:org/platform-keys/:id/cancel",
+        "GET /api/orgs/:org/platform-calls",
+        "GET /api/platform-queue",
         "POST /api/orgs/:org/platform-switch",
         "POST /api/orgs/:org/suspend",
         "PUT /api/orgs/:org/security-contacts",

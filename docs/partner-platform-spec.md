@@ -18,10 +18,13 @@ adjusted after the Tech Lead has talked to the network. This version folds in PR
 are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece it gates).
 
 **Piece P0 built** (2026-11-25, branch `feat/shared-scope-rules`, D915): the shared-scope rules of the P0 row below.
-Its current state is in `api.md`, `architecture.md`, `security.md` and `operations.md`; every other piece is still
-proposed.
+**Piece P1 built** (branch `feat/platform-actor`, D916). **Piece P2 built** (2026-11-25, branch `feat/platform-keys`,
+D918, not merged, not deployed): platform keys' life cycle and records (migrations 0028 and console 0005); where it
+differs from this spec is listed in D918. Their current state is in `api.md`, `architecture.md`, `security.md` and
+`operations.md`; every other piece is still proposed.
 
-Last verified: 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
+Last verified: 2026-11-25 (branch `feat/platform-keys`: the status line (P2 built, D918); no design text changed);
+2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
 Lead's confirmations of D914's proposals and the four-eyes rule for staff proposals on a shared scope (D917) folded
 into A2, A3, A6, A7, A8, A11, A14, A15 and the build plan; the admin portal's identity checked in
 `apps/admin/src/access.ts`); 2026-11-25 (branch `docs/platform-answers`, after PR 142's review: its 16 findings folded in (revocation

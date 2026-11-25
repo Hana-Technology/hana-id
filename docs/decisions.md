@@ -23939,7 +23939,12 @@ for it). D931 is the number the caller assigned; API migration 0034 and console 
   `migration-0005.test.ts` and `migrations.test.ts`, `privacy.test.ts`, `writes.test.ts`; console-core `layouts.test.ts`
   (the layout and the removal link against the independent vectors); `packages/env` (`build-id.test.ts`,
   `stamped-deploy.test.ts`, `endpoints.test.ts`, `origins.test.ts`: the guard); scripts `ledger-check.test.ts` (the hazard
-  and its fix), `admin-apps.test.ts` (the CLI's refusals).
+  and its fix), `admin-apps.test.ts` (the CLI's refusals); admin `origin-confirm.test.ts`, `platform-notices.test.ts`,
+  `test-spa/platform-screens.test.ts` (the emails, the confirmation's notice, the staff route and the queue's sections);
+  console web `confirm.test.tsx` (the page, the removal page, the tab, the action page); e2e `owner-confirmation.spec.ts`
+  (Chromium, Firefox, WebKit: the backend's create, the email to the owner with its Confirm link, the page, one address
+  ticked, the fresh sign-in, the gate answering at once for it and not the other, the notice's removal link removing it,
+  a viewer with no Confirm).
 - **Decided while building, to confirm (the Tech Lead):**
   1. **The confirmation and the staff waits in tables of their own** (`origin_confirmations`, `staff_origin_waits`),
      not A7's `guarded_changes` columns (`confirmed_*`, `unconfirmed_active_from`, `second_person`,

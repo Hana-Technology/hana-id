@@ -6,7 +6,9 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909 and D913 in `decisions.md`. The build spec for the
 portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-24 (branch `feat/name-sodax-evm-chains`, from `next`, not merged, not deployed: the approval
+Last verified: 2026-11-25 (branch `feat/shared-scope-rules`, from `next`, not merged, not deployed: section 4's
+auto-approve item, now refused in code once staff mark the scope as shared, D915); 2026-11-24 (branch
+`feat/name-sodax-evm-chains`, from `next`, not merged, not deployed: the approval
 window names all 14 of Sodax's EVM chains, D910; "Chains", the summary's last row and "Who builds what" updated);
 2026-11-24 (branch `docs/partner-platform-spec`, from `next`, not merged, docs only: the Tech Lead's
 answers of 2026-11-24 (D913) in the status line, sections 3, 4, 5 and "Open", and links to `partner-platform-spec.md`;
@@ -146,7 +148,9 @@ partner site opens the same wallet without a word about it. Only Passport Home l
 **What must stay off for apps on a shared scope** (each is per app today, but every one reaches the same funds):
 
 - auto-approve policies, until the user is told which other sites share the wallet and a policy can't outlast that
-  (auto-approved Sodax swaps stay deferred, D708);
+  (auto-approved Sodax swaps stay deferred, D708). Refused in code (D915) once Journear staff mark the scope as shared
+  (the admin portal's app page, "Mark the scope as shared"; one way) and for every app the platform creates: until the
+  scope is marked it is still a rule kept by hand, so mark Sodax's scope before its first partner app;
 - raw signing (already refused for test apps);
 - the mainnet demo, except under staff's per-app rule (section 5);
 - gas sponsorship for EVM actions (not live), until each partner's sponsored calls are reviewed.

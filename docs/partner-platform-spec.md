@@ -14,6 +14,10 @@ the eleven open questions of this spec's first version, answered "yes all" to th
 address; to be adjusted after the Tech Lead has talked to the network. This version folds in PR 139's security review
 (its findings are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece it gates).
 
+**Piece P0 built** (2026-11-25, branch `feat/shared-scope-rules`, D915): the shared-scope rules of the P0 row below.
+Its current state is in `api.md`, `architecture.md`, `security.md` and `operations.md`; every other piece is still
+proposed.
+
 Last verified: 2026-11-24 (branch `docs/partner-platform-spec`, docs only, not merged: after PR 139's security review,
 every cited file and line checked again against `next` @ 6f51a033); 2026-11-24 (the same branch, first version, from
 `next` @ 6f51a033).

@@ -100,24 +100,9 @@ export type HomeAppsQuery = { kind: 'first' } | { kind: 'cursor'; cursor: string
 export const HOME_MAX_SCOPES = 64;
 export const HOME_MAX_APPS = 10;
 export const HOME_MAX_ORIGINS = 5;
-export const HOME_NAME_MAX = 200;
-/** How much of an app's name the page shows, in characters; a longer one ends in "…". */
-export const HOME_NAME_SHOWN = 60;
-/** What stands in for a name the page won't show (empty, too long, or with a control, bidi or invisible character). */
-export const HOME_UNNAMED_APP = 'Unnamed app';
-
-/**
- * An app's name as the page shows it. The name is the partner's own words on Hana's origin, so it is held to the one
- * display-safety rule (no control, direction-changing or invisible character) and cut short; a name that fails is
- * replaced by Hana's own words, never shown. The app stays listed either way: a user's wallet is never hidden by it.
- */
-export function homeAppName(v: unknown): string {
-  if (typeof v !== 'string') return HOME_UNNAMED_APP;
-  const name = v.trim();
-  if (name.length === 0 || name.length > HOME_NAME_MAX || !isDisplaySafeLine(name)) return HOME_UNNAMED_APP;
-  const chars = [...name];
-  return chars.length <= HOME_NAME_SHOWN ? name : `${chars.slice(0, HOME_NAME_SHOWN).join('').trimEnd()}…`;
-}
+// An app's name as Home shows it: one rule with the sign-in and approval windows' list of the apps that share a wallet.
+import { homeAppName } from './app-name.ts';
+export { HOME_NAME_MAX, HOME_NAME_SHOWN, HOME_UNNAMED_APP, homeAppName } from './app-name.ts';
 /** A search term, in characters, after trimming (the API's bounds). */
 export const HOME_SEARCH_MIN = 2;
 export const HOME_SEARCH_MAX = 64;

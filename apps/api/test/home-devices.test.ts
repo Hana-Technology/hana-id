@@ -733,9 +733,11 @@ describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)
     if (withConsent) expect(body.consent).toBe('active');
     // The gate's app and origins, the settings, login methods, identity email, the share (and the consent).
     // The gate's app and its origins (one origin here: a row per origin), the settings, login methods, identity email,
-    // the mainnet demo switch (a test app in a dev env only), the consent with its share (a policy app's), the share.
-    expect(counted.statements).toHaveLength(withConsent ? 8 : 7);
-    expect(counted.rowsRead()).toBeLessThanOrEqual(withConsent ? 14 : 11);
+    // the mainnet demo switch (a test app in a dev env only), the consent with its share (a policy app's), the share,
+    // and (D912, the vault's read) the other apps on the scope.
+    expect(counted.statements).toHaveLength(withConsent ? 9 : 8);
+    // D912's statement reads the app's own row through the scope index (3 rows alone; about 2 more per other app).
+    expect(counted.rowsRead()).toBeLessThanOrEqual(withConsent ? 17 : 14);
   });
 
   it('an idle share still reads live: time-based ends stay the vault’s own (D55), and the read moves nothing', async () => {

@@ -309,6 +309,67 @@ header.app > p + p {
   word-break: normal;
 }
 
+/* ---- the shared-wallet line (shared-wallet.ts, D912): Journear's own note right under who is asking, in the muted
+   small text of the account line, never a coloured box; "See which" opens the other apps' names ---- */
+.shared-wallet {
+  color: var(--jp-fg-muted);
+  font-size: var(--jp-text-sm);
+  line-height: var(--jp-leading-body);
+  min-width: 0;
+}
+
+/* The sentence reads as the account line does (not the approval window's link-coloured, semibold `details summary`);
+   only "See which" takes the link colour. */
+.shared-wallet > summary {
+  list-style: none;
+  cursor: pointer;
+  min-height: 24px;
+  border-radius: 3px;
+  color: var(--jp-fg-muted);
+  font-weight: var(--jp-weight-regular);
+}
+
+.shared-wallet > summary::-webkit-details-marker {
+  display: none;
+}
+
+.shared-wallet > summary:focus-visible {
+  outline: 2px solid var(--jp-focus);
+  outline-offset: 2px;
+}
+
+.shared-wallet-see {
+  color: var(--jp-link);
+  font-weight: var(--jp-weight-medium);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.shared-wallet-body {
+  margin-top: var(--jp-space-2);
+}
+
+.shared-wallet-apps {
+  margin: 0;
+  padding-left: var(--jp-space-5);
+  color: var(--jp-fg);
+}
+
+.shared-wallet-apps > li {
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+
+.shared-wallet-apps > li.shared-wallet-more {
+  color: var(--jp-fg-muted);
+  list-style: none;
+}
+
+.shared-wallet-note {
+  margin: var(--jp-space-2) 0 0;
+}
+
 /* The app's logo beside its name (batch C11): a 256 × 256 PNG from the files origin, shown small and never stretched. */
 img.app-logo {
   width: 32px;

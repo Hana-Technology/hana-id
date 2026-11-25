@@ -39,11 +39,13 @@ import {
   consentDigest,
   digestsEqual,
   newRequestId,
+  type OtherApps,
   parseWindowMessage,
 } from '@hana-id/core';
 import type { MainnetDemoPriceBook } from '@hana-id/core/mainnet-demo-prices';
 import type { AutoApprovePolicyV1 } from '@hana-id/core/policy';
 import { VaultError } from './errors.ts';
+import { windowOtherApps } from './other-apps.ts';
 import type { Launcher, LauncherHandle } from './launcher.ts';
 import { type Timers, type WindowMessageEvent, type WindowRef, randomHex128 } from './runtime.ts';
 
@@ -80,6 +82,8 @@ interface BaseItem {
   createdAt: number;
   timer: unknown;
   settle(outcome: ApprovalOutcome): void;
+  /** D912: the vault had no answer about the other apps yet and a read was asked for (only once per request). */
+  otherAppsRead?: true;
 }
 
 interface SignItem extends BaseItem {
@@ -119,6 +123,16 @@ export interface WindowLabelSet {
 export interface WindowLabels {
   forRequest(subject: ApprovalSubject): WindowLabelSet | 'stale';
   refresh(subject: ApprovalSubject): Promise<void>;
+}
+
+/**
+ * D912: the other apps that use this wallet, for the windows' shared-wallet line. `current` is what the vault last read
+ * (count 0: the app is alone), or 'unknown' before any answer; `refresh` reads again (settling within the vault's wait,
+ * whatever the read does).
+ */
+export interface WindowOtherApps {
+  current(): OtherApps | 'unknown';
+  refresh(): Promise<void>;
 }
 
 /** A request flagged `popupOpened`, from its arrival until it ends (vault.ts). */
@@ -166,6 +180,8 @@ export interface ApprovalDeps {
   onWindow?(open: boolean): void;
   /** D896: the app's partner labels for a request's window (absent: none, as before). */
   partnerLabels?: WindowLabels;
+  /** D912: the other apps that use this wallet (absent: none, as before). */
+  otherApps?: WindowOtherApps;
 }
 
 export class Approvals {
@@ -184,7 +200,10 @@ export class Approvals {
   /** Until when a partner-opened popup arriving with nothing to show is closed at once (LATE_CLOSE_MS). */
   private lateCloseUntil = 0;
   private windowOpen = false;
-  /** D896: the request at the head of the queue waiting for a fresh read of its labels before it is sent. */
+  /**
+   * D896: the request at the head of the queue waiting for a fresh read of its labels before it is sent (D912: or for
+   * the vault's first answer about the other apps that use the wallet).
+   */
   private labelWait: Item | null = null;
 
   constructor(private readonly d: ApprovalDeps) {}
@@ -267,7 +286,8 @@ export class Approvals {
       },
     });
     // position and queued are numbers of a fixed size, so this probe stands for every message the item can produce.
-    const probe = this.message(item, 1, 1, false);
+    // Without the shared-wallet line (D912): it never costs a request (send drops it should the popup refuse it).
+    const probe = this.message(item, 1, 1, false, NO_LABELS, false);
     if (!parseWindowMessage(probe, [probe.t])) {
       return Promise.reject(new VaultError(ErrorCode.unauthorized, 'The request is too large or malformed to show', { reason: 'invalid_request' }));
     }
@@ -449,6 +469,7 @@ export class Approvals {
   private send(item: Item): void {
     const popup = this.popup;
     if (!popup) return;
+    if (this.otherAppsWait(item)) return;
     const labels = this.labelsFor(item);
     if (labels === 'wait') return;
     this.queue.shift();
@@ -459,8 +480,51 @@ export class Approvals {
     const position = Math.min(this.batchDone + 1, queued);
     let m = this.message(item, position, queued, true, labels);
     // The labels never cost the request: should the popup's validator refuse the message with them, it goes without.
+    // Nor does the shared-wallet line (D912): last, without it too.
     if (labels.texts.length > 0 && !parseWindowMessage(m, [m.t])) m = this.message(item, position, queued, true);
+    if ((m.otherApps !== undefined || m.otherAppsUnknown !== undefined) && !parseWindowMessage(m, [m.t])) m = this.message(item, position, queued, true, NO_LABELS, false);
     popup.postMessage(m, this.d.authOrigin);
+  }
+
+  /**
+   * D912: whether `item` waits for the vault's first answer about the other apps that use the wallet: only before any
+   * answer had them, and only once per request; it is sent when the read settles (with the line, or without it).
+   */
+  private otherAppsWait(item: Item): boolean {
+    const source = this.d.otherApps;
+    if (!source || item.otherAppsRead) return false;
+    let known: OtherApps | 'unknown';
+    try {
+      known = source.current();
+    } catch {
+      return false;
+    }
+    if (known !== 'unknown') return false;
+    item.otherAppsRead = true;
+    this.labelWait = item;
+    void Promise.resolve()
+      .then(() => source.refresh())
+      .catch(() => undefined)
+      .then(() => {
+        if (this.labelWait !== item) return;
+        this.labelWait = null;
+        this.pump();
+      });
+    return true;
+  }
+
+  /**
+   * D912: the message's `otherApps` when the vault knows of other apps on the wallet, `otherAppsUnknown` when it has no
+   * answer at all (after the one wait), nothing when it knows the app is alone (other-apps.ts `windowOtherApps`).
+   */
+  private otherAppsField(): { otherApps?: OtherApps; otherAppsUnknown?: true } {
+    const source = this.d.otherApps;
+    if (!source) return {};
+    try {
+      return windowOtherApps(source.current());
+    } catch {
+      return { otherAppsUnknown: true };
+    }
   }
 
   /**
@@ -493,7 +557,7 @@ export class Approvals {
   }
 
   /** The hana:approve-request or hana:consent-request for `item`; `copy` gives the popup its own bytes and policy. */
-  private message(item: Item, position: number, queued: number, copy: boolean, labels: WindowLabelSet = NO_LABELS): { t: 'hana:approve-request' | 'hana:consent-request' } & Record<string, unknown> {
+  private message(item: Item, position: number, queued: number, copy: boolean, labels: WindowLabelSet = NO_LABELS, others = true): { t: 'hana:approve-request' | 'hana:consent-request' } & Record<string, unknown> {
     const logoUrl = this.d.logoUrl?.() ?? null;
     const common = {
       v: 1,
@@ -505,6 +569,8 @@ export class Approvals {
       ...(this.d.testApp ? { testApp: true } : {}),
       ...(this.d.testApp && this.d.mainnetDemo?.() ? { mainnetDemo: true } : {}),
       ...(logoUrl ? { logoUrl } : {}),
+      // D912: the shared-wallet line's apps, only when there are some, so every other message is the older one.
+      ...(others ? this.otherAppsField() : {}),
     } as const;
     if (item.type === 'consent') {
       return { ...common, t: 'hana:consent-request', policy: structuredPolicy(item.policy), policyId: item.policyId, expiresAtMs: item.expiresAtMs };

@@ -21873,3 +21873,103 @@ PR 135's review" list, D910, D914); D912 is recorded on its own branch.
   - F, put and not answered: the readiness page's Owner column split row by row; the deploy timing.
 - Address impact: **none.** Display wording, parser rules already built and off-chain design; nothing touches the
   contract, a key, a path or an address derivation.
+
+## Per-app User IDs on a shared scope (branch `feat/app-user-ids`), 2026-11-25
+
+From `next` @ e59e9c64; not merged, not deployed, migration applied nowhere. Piece P6 of `partner-platform-spec.md`
+(findings M8, L10, L12). D919 is the number the caller assigned for this piece; API migration 0030, as assigned (0028
+and 0029 are piece P2's, built at the same time; 0030 doesn't depend on them).
+
+### D919. Each app created on a scope marked as shared gets a User ID and Support ID of its own; existing apps and every wallet address stay exactly as they are
+- Date 2026-11-25 · Status: the design is the Tech Lead's D913 (point 3, questions 6 and 7) and the spec's Part B;
+  **built**; the points marked "to confirm (the Tech Lead)" below were decided while building · Relates to D127, D312,
+  D346, D394, D411, D714, D909, D913, D915 · Built: `packages/core/src/identity.ts` (`appSub`, `subForApp`),
+  `packages/core/scripts/gen-identity-vectors.mjs`, migration `0030_app_user_ids.sql`, `apps/api/src/{apps,identity/token,
+  directory/{store,sync,record},changes/{admin,apps,views,retention}}.ts`, `scripts/lib/{uid-erase,admin-apps,admin-sql}.ts`,
+  the admin portal's "User IDs" row, `docs/integration.md`'s `sub` text
+- **What it does.** On a scope Journear staff marked as shared (D915), an app created from now on gets its own User ID
+  (the identity token's `sub`) and Support ID for each person; two such apps give one person different IDs; an app made
+  before the mark, and every app on an unmarked scope, keep exactly today's.
+  - **The derivation** (core `appSub`, the spec's B2): `"u1_"` ‖ b64url(HMAC-SHA256(`IDENTITY_SUB_KEY`,
+    `"hana-id/idt-app-sub/v1"` ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(app_id) ‖ the 16 bytes of the scope-level `sub`)[0..16]):
+    the same `u1_` format, so partners' code, `buildIdentityClaims`' check and `supportIdFromSub` keep working. Pinned
+    by vectors (`identity-v1.json`'s `app_subs`, with their Support IDs) written by the independent generator
+    (node:crypto only, its own Crockford encoder); the generator's existing entries came out byte-identical, and the
+    test also pins three of today's `sub`s as literals.
+  - **The secret input** is `IDENTITY_SUB_KEY`, the existing API Worker secret (and `.secrets/<env>/identity-sub-key`
+    for the CLI), never rotated (D127). No new secret, so no storage or rotation story to add. Without it nobody can
+    compute an app's ID, turn one into another, or tell two are one person's; the scope-level `sub` alone (which a
+    `'scope'` app on the same scope holds) is not enough. Nothing logs it, a `sub` or an app's `sub`.
+  - **The mode:** `apps.user_ids` `'scope'` / `'app'` (migration 0030), written once by `INSERT … SELECT` of the scope's
+    mark in `AdminRpc.createApp`, `admin app:create` (on a D1 with 0030) and the e2e harness; triggers fix it, refuse an
+    insert that contradicts the mark, and refuse a scope change for an app whose mode isn't `'scope'`. Every app that
+    exists today is `'scope'`.
+  - **The mint** puts `subForApp`'s value in `sub`; the email consents, the name shares, the per-account rate limit and
+    Passport Home stay keyed by the scope-level User ID (B3). An unknown mode refuses the mint (`503
+    config_unavailable`, logged `identity_bad_user_ids`), before the body is read.
+  - **The Support ID** of `/v1/login` and `/v1/sessions` (`hana.supportId`, and the approval window's details) is the
+    short form of the same app's `sub` (`sessionSupportId(env, app, root)`), so it equals `supportIdFromSub(token.sub)`
+    in the partner's backend (B4). Passport Home's login keeps the scope-level code (`scopeSupportId`).
+  - **`end_user_apps`** (B6, B7): after `/v1/login` (`syncAfterLogin`; a linked login's `syncAccount`) and
+    `/v1/wallets/record`, one row per (person, app) for an app of a marked scope, with that app's User ID and Support
+    code; nothing backfilled; nothing reads it for partners or the network yet (P7).
+  - **Retention and erasure (M8):** `purgeDirectory` deletes a deleted app's rows 30 days after its deletion (tested:
+    at 30 days, and not 60 s before), and a dead scope's users take theirs (`userApps` in its answer, the admin job's
+    `userAppsPurged`); `uid-erase` takes `--user-id` or `--support-id` (the scope's, or one app's own) besides
+    `--provider`/`--sub`, resolves it in the scope through `end_users` and `end_user_apps` to one person and their
+    account root's sign-in in the wallet directory, and erases their `end_user_apps` rows with the rest.
+  - **The partner guide** (L12): `integration.md`'s `sub` row, its Support ID paragraph, rule 2 ("only together with
+    your `aud`"; one app with both web addresses to know one user across two of your own sites) and the Privy table.
+- **Address impact: none**, and checked, not only argued. Wallets come from the on-chain path (scope, provider, the
+  login's own sub, key index) and the MPC; nothing in this piece reads or writes a path, a key or a derivation input,
+  and `sub` feeds no derivation anywhere (searched: `identitySub`'s and the new functions' only callers are the mint,
+  the directory, Passport Home's root read, the email and name shares and the erase script; none reaches a session
+  path, the CKD request, the vault's derivation or the contract). `git diff next -- contracts packages/core/src/
+  derivation* packages/web/src/vault` is empty. Tests: `app-user-ids.test.ts` compares what `/v1/login` relays for one
+  person on an app of before, before and after its scope is marked, and on a new `'app'` app (identical, and none of
+  it names the app, its mode or a `u1_` value), and the tokens' proven wallets on three apps of one scope (identical);
+  `app-user-ids.spec.ts` (e2e) signs one person in on an app of before, then on two new apps of the marked scope and on
+  the first again: all four give the same Stellar, EVM and NEAR addresses, equal to literals this stack derived for
+  that person and scope on `next` @ e59e9c64 before the change. An existing app's `sub` and Support ID are unchanged
+  across the migration (`migration-0030.test.ts`, through the API's own reads and code, and the core literals).
+  What becomes final when this ships is the per-app ID's layout, which partners will store.
+- **Every consumer of `sub`, found by search, in both modes:** the mint (by mode, above); `/v1/login`, `/v1/sessions`
+  and the e2e stack's mocked `/v1/login` (by mode); the vault and SDK (`hana.supportId`, `IDENTITY_SUB_RE`,
+  `supportIdFromSub`: same format, unchanged); the email consents and the name shares (scope-level, unchanged); Passport
+  Home (`home/root.ts`, devices, revoke, profile, login: scope-level, unchanged); the wallet directory (`end_users`
+  scope-level; `end_user_apps` per app); the console's Users screen and the admin's users and Support ID lookup (read
+  the scope-level `end_users` only: unchanged, so they can't find an `'app'` app's codes yet, below); usage and the EVM
+  sponsorship limits (keyed by the internal id `hu_`, not `sub`: unchanged); the erase script (both); the demo page's
+  sample (wording true in both). Recovery and sessions don't use `sub` (they use the path and `sid`).
+- **To confirm (the Tech Lead):**
+  1. **The insert trigger is stricter than the spec's two triggers**: an insert whose mode isn't the mark's is refused,
+     so a plain `INSERT` (the default `'scope'`) on a marked scope fails, and a replacing insert or an upsert can't
+     change an existing app's mode. A database dump restores triggers after its rows (as `d1-move`'s import relies on),
+     so a legitimate `'scope'` app on a marked scope still restores; untried against a remote D1 export.
+  2. **A `'scope'` app on a marked scope gets `end_user_apps` rows too** (with the scope's IDs), so P7's panel can list
+     every app of the scope the person used, as B6 describes; the spec's text could be read as `'app'` apps only.
+  3. **Beyond the spec, `end_user_apps` is held by a trigger** (the app is on the person's scope, and that scope is
+     marked) and its Support code by a CHECK of Crockford's alphabet.
+  4. **The staff Support ID lookup can't find an `'app'` app's codes until P7**, and Passport Home shows the person's
+     scope-level code while the partner's page and our approval window show the app's own: a person with both may read
+     out either. Recommended: mark a real network's scope and create its partners' apps only once P7 is deployed;
+     until then `uid-erase … --support-id <code>` (a dry run changes nothing) resolves a code by hand and prints the
+     person's scope-level IDs to the operator, who holds `IDENTITY_SUB_KEY` anyway.
+  5. **The erase script also takes the scope-level User ID and Support ID** (the spec says "as well as today's forms";
+     today's only form was provider and sub), and refuses a Support ID several people share in the scope.
+  6. **The admin portal shows the mode** on each app's page ("User IDs": "Its own: …", "The scope's: …", with a note
+     that the lookup doesn't find an app's own yet); the spec's A11 doesn't list it. The console shows nothing new: its
+     Users screen still lists the scope-level User ID as "User ID"; P7 relabels it "User ID (all your apps)".
+  7. **An app with any mode but `'scope'` keeps its scope** (fail closed); a `'scope'` app's scope change is left to the
+     older rules (no code moves an app; the spec fixes only `'app'` apps').
+  8. **`HOT_DB_SCHEMA` stays 9**, as P0 left it: the API needs 0030 before it deploys (it reads `apps.user_ids` in
+     every app read), and `operations.md` says so with the deploy steps and a check.
+  9. **The ledger's `app.created` row doesn't record the mode** (it is in `apps.user_ids`, fixed); recommend adding it
+     when the platform's create (P4) writes the same row.
+- **Found in the spec:** B7's SQL re-creates `scopes_app_user_ids_one_way`, which 0026 already has (P0): not
+  re-created. B3's "the partner portal's per-app User ID" has nothing to show before P7: nothing built. B3's test
+  "a token minted for an existing app before and after the migration has the same `sub`" can't run as worded (this
+  build's mint reads the new column): built as the migration test through the API's own reads and code, the core
+  literals and the e2e addresses pinned from `next`. A `'scope'` app's scope change isn't covered by B7 (point 7).
+- **Also:** the admin portal's signing-settings rows already overflow at 390 px for long text (before this change too,
+  in `before-admin-app-signing-390-*.png`): not fixed here.

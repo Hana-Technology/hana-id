@@ -69,7 +69,7 @@ function fakeRpcs(o: { deleted?: string[][]; full?: boolean; fail?: Partial<Reco
         }),
       purgeDirectory: (c: unknown) => answer('purgeDirectory', c as Record<string, unknown>, 'purgeDirectory', () => ({ scopes: 1, users: n(2), wallets: n(3), identities: n(2) })),
       purgeUserEvents: (c: unknown) => answer('purgeUserEvents', c as Record<string, unknown>, 'userEvents', () => ({ expired: n(4), deadScopes: n(1) })),
-      purgePlatformCalls: (c: unknown) => answer('purgePlatformCalls', c as Record<string, unknown>, 'platformCalls', () => ({ platformCalls: n(6) })),
+      purgePlatformCalls: (c: unknown) => answer('purgePlatformCalls', c as Record<string, unknown>, 'platformCalls', () => ({ platformCalls: n(6), platformRequests: 2 })),
       // The 15-minute run's link-rate read (D448): not the retention job's, so not in `calls`.
       linkStats: async () => ({ ok: true, rows: [] }) as Ans as never,
       purgeAudit: (c: unknown) => answer('apiPurgeAudit', c as Record<string, unknown>, 'apiAudit', () => ({ appChanges: n(5), guardedChanges: n(1) })),
@@ -97,7 +97,7 @@ describe('when the monthly job runs', () => {
     expect(first).toMatchObject({ ran: true, status: 'ok', error: null });
     const [run] = await runsOf('2031-01');
     expect(run).toMatchObject({ status: 'ok', startedAt: t + 5 * MIN, finishedAt: t + 5 * MIN, error: null, alertedAt: null });
-    expect(run!.rows).toMatchObject({ directoryUsers: 2, directoryWallets: 3, userEventsExpired: 4, userEventsDeadScopes: 1, platformCallsDeleted: 6, appChangesDeleted: 5, guardedChangesDeleted: 1, auditLogDeleted: 7, ownerGrantsDeleted: 0, calls: 6 });
+    expect(run!.rows).toMatchObject({ directoryUsers: 2, directoryWallets: 3, userEventsExpired: 4, userEventsDeadScopes: 1, platformCallsDeleted: 6, platformRequestsDeleted: 2, appChangesDeleted: 5, guardedChangesDeleted: 1, auditLogDeleted: 7, ownerGrantsDeleted: 0, calls: 6 });
     expect(run!.rows.due).toEqual({ statements: 0, rates: 0, rateOverrides: 0, oldestStatement: null });
 
     // Idempotent: every later run of the month does nothing and calls nothing.

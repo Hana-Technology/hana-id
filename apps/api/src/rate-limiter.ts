@@ -106,7 +106,8 @@ export function slidingWait(l: Pick<Limit, 'windowMs' | 'max'>, elapsed: number,
 }
 
 export class RateLimiter extends DurableObject<Env> {
-  hit(limits: Limit[], now: number = Date.now()): HitResult {
+  /** `n` (D929): the hit counts `n` at once (a request proposing several web addresses), all or none. */
+  hit(limits: Limit[], now: number = Date.now(), n = 1): HitResult {
     const kv = this.ctx.storage.kv;
     const slots = limits.map((l) => {
       const start = Math.floor(now / l.windowMs) * l.windowMs;
@@ -118,12 +119,12 @@ export class RateLimiter extends DurableObject<Env> {
     // a written one is never repeated in the window (D925, after the review of PR 153's fixes: detection fails closed).
     const soft: string[] = [];
     for (const s of slots) {
-      if (s.count < s.l.max) continue;
+      if (s.count + n <= s.l.max) continue;
       if (s.l.soft) {
         if (kv.get<number>(`alerted:${s.key}`) === undefined) soft.push(s.l.name);
       } else return { ok: false, limit: s.l.name, retryAfterS: Math.max(1, Math.ceil((s.start + s.l.windowMs - now) / 1000)) };
     }
-    for (const s of slots) kv.put(s.key, s.count + 1);
+    for (const s of slots) kv.put(s.key, s.count + n);
     this.prune(limits, now);
     return soft.length > 0 ? { ok: true, soft } : { ok: true };
   }
@@ -143,17 +144,17 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /**
-   * Takes back one accepted `hit(limits, now)` (same limits, same `now`, so the same windows): a request that several
+   * Takes back one accepted `hit(limits, now, n)` (same limits, same `now` and `n`, so the same windows): a request that several
    * objects must all accept, refused by a later one, then costs the earlier ones nothing. Never goes below zero; a
    * window that has ended since is left alone.
    */
-  unhit(limits: Limit[], now: number): void {
+  unhit(limits: Limit[], now: number, n = 1): void {
     const kv = this.ctx.storage.kv;
     for (const l of limits) {
       const key = `${l.name}@${Math.floor(now / l.windowMs) * l.windowMs}`;
       const count = kv.get<number>(key) ?? 0;
-      if (count > 1) kv.put(key, count - 1);
-      else if (count === 1) kv.delete(key);
+      if (count > n) kv.put(key, count - n);
+      else if (count > 0) kv.delete(key);
     }
   }
 

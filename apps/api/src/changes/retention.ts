@@ -6,7 +6,8 @@
 //   purgeDirectory  the wallet directory (migration 0011) of every scope whose apps were all deleted 30 days ago or more,
 //                   and the email consents (migration 0014, D411), name shares (0021, D714) and per-app sign-in rows
 //                   (`end_user_apps`, 0030, D919) of every app deleted 30 days ago or more
-//   purgePlatformCalls platform_calls (migration 0032, D927) older than 13 months, in batches
+//   purgePlatformCalls platform_calls (migration 0032, D927) older than 13 months, and platform_requests (0033, D929)
+//                      older than 7 days, in batches
 //   purgeUserEvents user_events (migration 0013: key exports, mainnet demo signatures) older than 24 months, and those
 //                   of a scope left without apps (purgeDirectory's rule)
 //
@@ -170,18 +171,32 @@ export async function purgeUserEvents(db: HotDb, i: { before: number; deletedBef
 
 const noPlatformCallsTable = (err: unknown): boolean => /no such table: platform_calls\b/u.test(String((err as { message?: unknown } | null)?.message ?? ''));
 
+const noPlatformRequestsTable = (err: unknown): boolean => /no such table: platform_requests\b/u.test(String((err as { message?: unknown } | null)?.message ?? ''));
+
 /**
  * D927: the platform API's call log older than min(before, 13 months ago by the database's clock), up to `limit` rows, oldest first (the table's
  * delete trigger refuses younger rows whoever asks). An env without migration 0032 has nothing to purge: zero.
+ * D929: in the same batch, up to `limit` of the platform's idempotency records (`platform_requests`, migration 0033)
+ * older than 7 days by the database's clock (their delete trigger refuses younger ones; after 7 days the ledger's
+ * request id answers a reused Idempotency-Key). An env without 0033 purges the call log alone.
  */
 export async function purgePlatformCalls(db: HotDb, i: { before: number; limit: number }): Promise<PurgePlatformCallsResult> {
   // By the database's clock, as the delete trigger judges it (the user events' rule, above).
   const cutoff = q`MIN(${i.before}, unixepoch('now', '-13 months') * 1000)`;
+  const calls = q`DELETE FROM platform_calls WHERE seq IN (SELECT c.seq FROM platform_calls c WHERE c.at < ${cutoff} ORDER BY c.seq LIMIT ${i.limit})`;
+  const requests = q`DELETE FROM platform_requests WHERE rowid IN (SELECT r.rowid FROM platform_requests r WHERE r.at < (unixepoch('now', '-7 days') * 1000) - 60000 ORDER BY r.at LIMIT ${i.limit})`;
   try {
-    const [r] = await db.batch([q`DELETE FROM platform_calls WHERE seq IN (SELECT c.seq FROM platform_calls c WHERE c.at < ${cutoff} ORDER BY c.seq LIMIT ${i.limit})`]);
-    return { platformCalls: r!.meta.changes ?? 0 };
+    const [r, p] = await db.batch([calls, requests]);
+    return { platformCalls: r!.meta.changes ?? 0, platformRequests: p!.meta.changes ?? 0 };
   } catch (err) {
-    if (noPlatformCallsTable(err)) return { platformCalls: 0 };
+    if (noPlatformCallsTable(err)) return { platformCalls: 0, platformRequests: 0 };
+    if (!noPlatformRequestsTable(err)) throw err;
+  }
+  try {
+    const [r] = await db.batch([calls]);
+    return { platformCalls: r!.meta.changes ?? 0, platformRequests: 0 };
+  } catch (err) {
+    if (noPlatformCallsTable(err)) return { platformCalls: 0, platformRequests: 0 };
     throw err;
   }
 }

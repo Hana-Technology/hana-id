@@ -186,7 +186,7 @@ describe('a worst-case 15-minute tick (D380): the 00:30 daily work, a due retent
         deletedApps: async () => ({ ok: true as const, appIds: [], next: `1:app_${++deletedPages}`, more: deletedPages < 14 }),
         purgeDirectory: async () => ({ ok: true as const, scopes: 0, users: 0, wallets: 0, identities: 0 }),
         purgeUserEvents: async () => ({ ok: true as const, expired: 0, deadScopes: 0 }),
-        purgePlatformCalls: async () => ({ ok: true as const, platformCalls: 0 }),
+        purgePlatformCalls: async () => ({ ok: true as const, platformCalls: 0, platformRequests: 0 }),
         purgeAudit: async () => ({ ok: true as const, appChanges: 0, guardedChanges: 0 }),
         // D872: the run's wake-up report (only with NEON_PLAN).
         neonWake: async (c: unknown) => {

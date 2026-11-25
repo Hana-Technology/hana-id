@@ -65,11 +65,13 @@ import { placedStub } from '../placement.ts';
 import type { Limit, PlatformAdmission, RateLimiter } from '../rate-limiter.ts';
 import { RpcRefusal } from '../changes/cas.ts';
 import { HotDb, PLATFORM_DB_LIMITS } from '../changes/db.ts';
-import { CONSOLE_LIMITS, CONSOLE_LIMITER, HOUR_MS, eventId } from '../changes/guard.ts';
+import { CONSOLE_LIMITS, CONSOLE_LIMITER, HOUR_MS } from '../changes/guard.ts';
 import { q } from '../changes/sql.ts';
+import { platformQuotaEvent, platformSecurityEvent } from './events.ts';
 import { KEY_IN_FORCE } from './keys.ts';
 import { type KnownKey, type KnownKeys, alertedThisMinute, knownKeyIds, noteAlerted } from './known-keys.ts';
-import { PLATFORM_ROUTES, type PlatformRoute, type RouteAnswer } from './routes.ts';
+import { PlatformRefusal } from './refusal.ts';
+import { type RouteAnswer, matchRoute } from './routes.ts';
 
 export const PLATFORM_PREFIX = '/v1/platform';
 /** Whether the router hands a path to the platform API (anything under the prefix, so a malformed one is its 400). */
@@ -237,22 +239,8 @@ async function readCapped(request: Request, max: number): Promise<Uint8Array | n
   return out.slice(0, size);
 }
 
-/** A security event, written once (its id is deterministic). Never throws. */
-async function securityEvent(env: Env, kind: 'platform_quota' | 'platform_auth_failures', idParts: string[], orgId: string, detail: Record<string, unknown>, now: number): Promise<void> {
-  try {
-    await env.DB.prepare('INSERT OR IGNORE INTO security_events (id, detected_at, kind, org_id, detail_json) VALUES (?1, ?2, ?3, ?4, ?5)')
-      .bind(await eventId(kind, ...idParts), now, kind, orgId, JSON.stringify(detail))
-      .run();
-  } catch {
-    log({ event: 'platform', outcome: 'error', code: `${kind}_event_failed` }, 'error');
-  }
-}
-
-/** The first quota refusal of a limit in a clock hour writes `platform_quota` (the caller decides "first"). */
-const quotaEvent = (env: Env, orgId: string, keyId: string, limit: string, now: number) => {
-  const hour = Math.floor(now / HOUR_MS) * HOUR_MS;
-  return securityEvent(env, 'platform_quota', [orgId, limit, String(hour)], orgId, { limit, keyId, windowStart: hour }, now);
-};
+const quotaEvent = platformQuotaEvent;
+const securityEvent = platformSecurityEvent;
 
 /**
  * A known key id's failed signature, counted on its failure object; the 10th in a minute raises
@@ -273,14 +261,6 @@ async function countAuthFailure(env: Env, row: { id: string; org_id: string }, n
   } catch {
     log({ event: 'platform', outcome: 'error', code: 'auth_failure_count_failed', platformKeyId: row.id }, 'error');
   }
-}
-
-/** The route a method and path name, or why not. */
-function routeOf(method: string, path: string): { route: PlatformRoute } | { status: 404 | 405; allow?: string } {
-  const routes = PLATFORM_ROUTES.filter((r) => r.path === path);
-  if (routes.length === 0) return { status: 404 };
-  const route = routes.find((r) => r.method === method);
-  return route ? { route } : { status: 405, allow: routes.map((r) => r.method).join(', ') };
 }
 
 /** Every header's name and value together (Cloudflare's own included). */
@@ -389,11 +369,12 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   if (!PLATFORM_PATH_RE.test(path)) return finish(refusal('bad_request', 'The path must be /v1/platform/ and plain segments of letters, digits, _ and -, with no empty, dot or encoded segment and no trailing slash'));
   const query = url.search;
   if (query === '' ? url.href.includes('?') : method === 'POST' || !PLATFORM_QUERY_RE.test(query)) return finish(refusal('bad_request', method === 'POST' ? 'A POST takes no query' : 'The query must be one to four name=value pairs of letters, digits, _ and -'));
-  const found = routeOf(method, path);
+  const found = matchRoute(method, path);
   if (!('route' in found)) {
     return finish(found.status === 404 ? refusal('not_found', 'No such platform route') : refusal('method_not_allowed', `This route takes ${found.allow}`, {}, { allow: found.allow! }));
   }
   const route = found.route;
+  const params = found.params;
   fields.route = route.path;
   if (headersSize(h) > PLATFORM_HEADERS_MAX) return finish(refusal('bad_request', 'The request’s headers are too large'));
   if (h.has('content-encoding')) return finish(refusal('bad_request', 'Send the body without a content-encoding'));
@@ -424,6 +405,7 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   // 5. The key: on the announced list (else no D1 read), in force here, its point importing, the signature verifying.
   const body = method === 'GET' ? await readCapped(request, 0) : await readCapped(request, PLATFORM_BODY_MAX);
   if (body === null) return finish(refusal('bad_request', method === 'GET' ? 'A GET has no body' : `The body is larger than ${PLATFORM_BODY_MAX} bytes`));
+  const bodyHash = await bodySha256Hex(body);
   const message = utf8(
     platformRequestMessage({
       envName: env.ENV_NAME,
@@ -434,7 +416,7 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
       timestamp: ts,
       nonce,
       idempotencyKey: idem ?? undefined,
-      bodySha256Hex: await bodySha256Hex(body),
+      bodySha256Hex: bodyHash,
     }),
   );
   // A self-revoke past full windows (N1): its signature against the listed point, CPU only, no D1 read. A valid one
@@ -480,13 +462,15 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   const key = row;
   fields.orgId = key.org_id;
 
-  // 6. The org's switch and the freeze mirror (the self-revoke works either way).
-  if (key.enabled !== 1 && !route.allowOff) return finish(refusal('platform_off', 'Journear’s platform API is switched off for your organisation. Your key can still stop itself: POST /v1/platform/credential/revoke'));
-  if (key.frozen === 1 && !route.allowFrozen) return finish(refusal('forbidden', 'Journear has paused your organisation: only stopping things works for now'));
-
-  // The body: a self-revoke's is checked now (F1), any other's once admitted.
+  // The body: parsed now (the suspend route's flags depend on it, D929); a self-revoke's checked now (F1), any other's
+  // answered once admitted. A body that isn't valid gets only the route's static flags.
   const parsed = method === 'POST' ? jsonObject(body) : undefined;
   const problem = method === 'POST' && parsed === undefined ? NOT_AN_OBJECT : parsed !== undefined && route.validate ? route.validate(parsed) : null;
+  const flags = { killSwitch: route.killSwitch === true, breaker: route.breaker === true, allowFrozen: route.allowFrozen === true, ...(problem === null && parsed !== undefined && route.flags ? route.flags(parsed) : {}) };
+
+  // 6. The org's switch and the freeze mirror (the self-revoke works either way; a frozen org keeps its kill switches).
+  if (key.enabled !== 1 && !route.allowOff) return finish(refusal('platform_off', 'Journear’s platform API is switched off for your organisation. Your key can still stop itself: POST /v1/platform/credential/revoke'));
+  if (key.frozen === 1 && !flags.allowFrozen) return finish(refusal('forbidden', 'Journear has paused your organisation: only stopping things works for now'));
   const validRevoke = route.selfRevoke === true && problem === null;
 
   // 7. The nonce, once (a valid self-revoke outside the cap: it can succeed once per key).
@@ -542,8 +526,8 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
       charged = true;
       lastUsed = k.marked === true;
       stage = 'admit';
-      const killSwitch = problem === null && route.killSwitch === true;
-      const breaker = problem === null && route.breaker === true;
+      const killSwitch = problem === null && flags.killSwitch;
+      const breaker = problem === null && flags.breaker;
       const b = await consoleObj(env).platformAdmit({ org: key.org_id, cost, ...(killSwitch ? { killSwitch: true } : {}), ...(breaker ? { breaker: true } : {}), limits: PLATFORM_LIMITS }, now);
       if (!b.ok) {
         await undoCharge();
@@ -570,12 +554,28 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   if (problem !== null) out = refusal('bad_request', problem);
   else {
     try {
-      const r: RouteAnswer = await route.run({ env, db, key, body: parsed, now, idempotencyKey: idem, requestId });
+      const r: RouteAnswer = await route.run({
+        env,
+        db,
+        key,
+        body: parsed,
+        now,
+        idempotencyKey: idem,
+        requestId,
+        params,
+        path: `${path}${query}`,
+        query: url.searchParams,
+        bodySha256Hex: bodyHash,
+        waitUntil: (p) => ctx.waitUntil(p),
+      });
       out = { status: r.status, code: null, body: r.body };
       appId = r.appId ?? null;
       wrote = r.wrote === true;
     } catch (err) {
+      // The app a refused call named, for `platform_calls` (its id as the path gave it; none when the path has none).
+      appId = params.appId ?? null;
       if (err instanceof RpcRefusal) out = { status: RPC_HTTP_STATUS[err.code], code: err.code, body: { error: err.message.slice(0, 500), code: err.code } };
+      else if (err instanceof PlatformRefusal) out = { status: err.status, code: err.code, body: { error: err.message.slice(0, 500), code: err.code, ...err.extra }, headers: err.headers };
       else {
         log({ event: 'platform', requestId, outcome: 'error', code: 'route_failed', platformKeyId: keyId, endpoint: route.path }, 'error');
         out = refusal('internal', 'Internal error');

@@ -70,6 +70,8 @@ export interface ApiPurgeAuditResult {
 }
 export interface PurgePlatformCallsResult {
   platformCalls: number;
+  /** D929: the platform's idempotency records older than 7 days (`platform_requests`, migration 0033). */
+  platformRequests: number;
 }
 export interface ConsolePurgeAuditResult {
   auditLog: number;

@@ -8,7 +8,7 @@
 import { bytesEqual, fromB64url, hex, sha256 } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { LOCALHOST_WILDCARD, isDevEnv, isLoopbackOrigin } from '../origins.ts';
-import { PRODUCTION_NETWORK } from '../guarded/config.ts';
+import { PLATFORM_MIN_DELAY_MS, PRODUCTION_NETWORK, platformMinDelayMs } from '../guarded/config.ts';
 import { type Writer, actorId, commitOnChange, committed, refuseReplay, refuse, replayRow, runWrite, expectReplay } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { requireChangeConfig } from './origins.ts';
@@ -29,10 +29,12 @@ interface ChangePlan extends ChangeRow {
 async function planChange(db: HotDb, i: { changeId: string; orgId: string | null; w: Writer }): Promise<ChangePlan> {
   const org = i.orgId === null ? raw('1') : q`a.org_id = ${i.orgId}`;
   const cols = CHANGE_COLUMNS.split(', ').map((c) => `g.${c}`).join(', ');
+  // D929 (H1, H2): with the platform's reach, only its own waiting web addresses on apps in its reach are found.
+  const reach = i.w.reach;
   const r = await db.first<ChangePlan>(
     q`SELECT ${replayRow(i.w.requestId)} AS replay, g.id AS change_id, ${raw(cols)}, a.org_id, a.scope_id, a.deleted_at, s.environment, hex(g.cancel_token_hash) AS token_hash_hex
-        FROM (SELECT 1) LEFT JOIN guarded_changes g ON g.id = ${i.changeId}
-        LEFT JOIN apps a ON a.id = g.app_id AND ${org} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
+        FROM (SELECT 1) LEFT JOIN guarded_changes g ON g.id = ${i.changeId}${reach ? q` AND ${reach.change}` : raw('')}
+        LEFT JOIN apps a ON a.id = g.app_id AND ${org}${reach ? q` AND ${reach.app}` : raw('')} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
   );
   // A replay must be of a write on this change's app (known only now).
   if (i.w.expect) i.w.expect.appId = r?.app_id ?? null;
@@ -226,8 +228,18 @@ export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: s
   const blob = hash.buffer.slice(hash.byteOffset, hash.byteOffset + hash.byteLength) as ArrayBuffer;
   const later = w.now + config.delayMs;
   const loopback = loopbackWaiver(env, config.network, c, c.environment ?? 'live');
-  const at = (t: string): Q => (loopback ? q`${w.now}` : q`CASE WHEN ${noSessionWaiver(t, w.now)} THEN ${w.now} ELSE ${later} END`);
-  const waiver = (t: string): Q => (loopback ? q`'loopback'` : q`CASE WHEN ${noSessionWaiver(t, w.now)} THEN 'no_session' END`);
+  // D929 (A4.5, N3): a web address the platform proposed waits the greater of the env's delay, the platform minimum
+  // (24 h in every env but a `local*` test env) and the wait its proposal recorded, never with a waiver; the ack writes
+  // that time as its earliest (`unconfirmed_active_from`), which the database then holds (migration 0033's triggers).
+  const platform = c.proposed_by_kind === 'platform';
+  const platformWait = Math.max(config.delayMs, platformMinDelayMs(env));
+  const at = (t: string): Q =>
+    platform
+      ? q`(${w.now} + MAX(${platformWait}, COALESCE(${raw(t)}.min_delay_ms, ${PLATFORM_MIN_DELAY_MS})))`
+      : loopback
+        ? q`${w.now}`
+        : q`CASE WHEN ${noSessionWaiver(t, w.now)} THEN ${w.now} ELSE ${later} END`;
+  const waiver = (t: string): Q => (platform ? raw('NULL') : loopback ? q`'loopback'` : q`CASE WHEN ${noSessionWaiver(t, w.now)} THEN 'no_session' END`);
   const activeFrom = q`(SELECT active_from FROM guarded_changes WHERE id = ${c.id})`;
   const stmts: Q[] = [
     commitOnChange(
@@ -240,7 +252,7 @@ export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: s
       null,
       q`g.status = 'pending' AND g.notified_at IS NULL AND a.deleted_at IS NULL`,
     ),
-    q`UPDATE guarded_changes SET notified_at = ${w.now}, active_from = ${at('guarded_changes')}, waiver = ${waiver('guarded_changes')}, cancel_token_hash = ${blob}
+    q`UPDATE guarded_changes SET notified_at = ${w.now}, active_from = ${at('guarded_changes')}, ${platform ? q`unconfirmed_active_from = ${at('guarded_changes')}, ` : raw('')}waiver = ${waiver('guarded_changes')}, cancel_token_hash = ${blob}
        WHERE id = ${c.id} AND status = 'pending' AND notified_at IS NULL AND ${committed(w.requestId)}`,
   ];
   if (c.kind === 'origin_add') {

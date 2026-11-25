@@ -229,7 +229,9 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   /** Any bit, set or cleared (Hana may clear bit 4 after a malicious mass suspension); works with the console down. */
   setSuspended(c: unknown) {
-    return runRpc(this.env, 'admin.setSuspended', adminSetSuspendedInput, c, { actors: HANA }, ({ input, db, w }) => setSuspensionBit(db, w, { orgId: null, ...input }));
+    return runRpc(this.env, 'admin.setSuspended', adminSetSuspendedInput, c, { actors: HANA }, ({ input, db, w }) =>
+      setSuspensionBit(db, w, { orgId: null, ...input }).then(({ suspendedBy }) => ({ suspendedBy })),
+    );
   }
 
   suspendOrg(c: unknown) {

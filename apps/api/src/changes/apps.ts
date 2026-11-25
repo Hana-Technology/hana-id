@@ -138,7 +138,8 @@ export async function listChanges(db: HotDb, orgId: string, beforeSeq: number | 
 
 /** What an app write plans from: the app (with its scope), optionally its origins, open changes and keys, and the replay check. */
 export interface AppPlan {
-  app: AppRow;
+  /** `partner_bit_by` (migration 0033, D929) only when the plan asked for it (`with.partnerBit`). */
+  app: AppRow & { partner_bit_by?: 'member' | 'platform' | null };
   origins: OriginRow[];
   openChanges: ChangeRow[];
   keys: KeyRow[];
@@ -146,11 +147,12 @@ export interface AppPlan {
 
 /**
  * The plan read of an app write: one query. `not_found` for no such app in the org (or a deleted one, unless
- * `allowDeleted`), `already_applied` for a request id used before.
+ * `allowDeleted`), or outside the platform's reach when the writer has one (D929, H1), `already_applied` for a
+ * request id used before.
  */
 export async function planApp(
   db: HotDb,
-  i: { appId: string; orgId: string | null; w: Writer; with?: { origins?: boolean; changes?: boolean; keys?: boolean }; allowDeleted?: boolean },
+  i: { appId: string; orgId: string | null; w: Writer; with?: { origins?: boolean; changes?: boolean; keys?: boolean; partnerBit?: boolean }; allowDeleted?: boolean },
 ): Promise<AppPlan> {
   const extra: Q[] = [];
   if (i.with?.origins) {
@@ -159,6 +161,7 @@ export async function planApp(
   if (i.with?.changes) {
     extra.push(raw(`(SELECT json_group_array(${CHANGE_JSON('g')}) FROM guarded_changes g WHERE g.app_id = a.id AND g.status IN ('pending', 'active')) AS changes_json`));
   }
+  if (i.with?.partnerBit) extra.push(raw('a.partner_bit_by AS partner_bit_by'));
   if (i.with?.keys) {
     extra.push(raw(`(SELECT json_group_array(json_object('id', k.id, 'app_id', k.app_id, 'key', k.key, 'created_by', k.created_by, 'created_at', k.created_at, 'revoked_at', k.revoked_at)) FROM app_keys k WHERE k.app_id = a.id) AS keys_json`));
   }
@@ -166,7 +169,7 @@ export async function planApp(
   // The replay check is a scalar subquery: it is answered even when the app doesn't match (another org's, deleted).
   const r = await db.first<AppRow & { replay: string | null; app_id: string | null; origins_json?: string; changes_json?: string; keys_json?: string }>(
     q`SELECT ${replayRow(i.w.requestId)} AS replay, a.id AS app_id, ${raw(APP_COLUMNS)}${cols}
-        FROM (SELECT 1) LEFT JOIN apps a ON a.id = ${i.appId} AND ${orgFilter(i.orgId)} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
+        FROM (SELECT 1) LEFT JOIN apps a ON a.id = ${i.appId} AND ${orgFilter(i.orgId)}${i.w.reach ? q` AND ${i.w.reach.app}` : raw('')} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
   );
   if (i.w.expect && i.w.expect.appId === undefined) i.w.expect.appId = i.appId;
   refuseReplay(r?.replay, i.w);

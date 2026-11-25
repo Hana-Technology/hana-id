@@ -92,8 +92,29 @@ export async function changeOrigins(
 }
 
 /**
- * The write behind addOrigins (staff: `token` null) and changeOrigins (a member's verified token). Staff proposals are
- * refused for `appChangeDelayMs` after the scope's assignment; a member's are not (spec "Staff proposals").
+ * The platform's origin proposals (D929, docs/partner-platform-spec.md A4.5; `POST /v1/platform/apps/:appId/origins`):
+ * adds only, each a guarded change proposed by the `platform` (its id the key's), on an app in the writer's reach
+ * (`w.reach`, H1). Checked with the live-scope rules even on a test scope (M7: no loopback, no localhost wildcard, no
+ * http, no mixed-script host label); refused within `appChangeDelayMs` of the scope's assignment, as staff proposals
+ * are; the 20 web addresses per app as for everyone (a partner on the network's widget spends one on the widget's
+ * origin; two apps may list the same origin). Each records its wait (`min_delay_ms`), which the ack and the database
+ * hold (migration 0033): no waiver and no expedite. At most `waitingMax` of the org's web addresses waiting at once, in
+ * the commit predicate.
+ */
+export async function platformProposeOrigins(
+  db: HotDb,
+  env: Env,
+  w: Writer,
+  i: { orgId: string; appId: string; add: readonly string[]; expectedVersion: number; minDelayMs: number; waitingMax: number },
+) {
+  if (!w.reach || (w.actor.kind as string) !== 'platform') return refuse('forbidden', 'Only the platform proposes this way');
+  return proposeOrigins(db, env, w, { ...i, remove: [] }, null, { minDelayMs: i.minDelayMs, waitingMax: i.waitingMax });
+}
+
+/**
+ * The write behind addOrigins (staff: `token` null), changeOrigins (a member's verified token) and the platform's
+ * proposals (`platform`). Staff and platform proposals are refused for `appChangeDelayMs` after the scope's assignment;
+ * a member's are not (spec "Staff proposals").
  */
 async function proposeOrigins(
   db: HotDb,
@@ -101,6 +122,7 @@ async function proposeOrigins(
   w: Writer,
   i: { orgId: string; appId: string; add: readonly string[]; remove: readonly string[]; expectedVersion: number },
   token: StepUpToken | null,
+  platform?: { minDelayMs: number; waitingMax: number },
 ): Promise<{ version: number; changes: ReturnType<typeof changeView>[] }> {
   expectReplay(w, ['origin.proposed']);
   const config = requireChangeConfig(env);
@@ -111,7 +133,8 @@ async function proposeOrigins(
   const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { origins: true, changes: true } });
   expectVersion(plan.app.origins_version, i.expectedVersion);
   if (!token && plan.app.assigned_at > w.now - config.delayMs) refuse('conflict', 'The scope was assigned to this org less than appChangeDelayMs ago: staff proposals wait for it');
-  checkOriginRules(env, plan.app.environment, add);
+  // M7: the platform's web addresses follow the live-scope rules on every scope.
+  checkOriginRules(env, platform ? 'live' : plan.app.environment, add);
   // The app's origins: its rows and every open origin_add (one whose row was parked has no row but still counts).
   const rows = new Map(plan.origins.map((o) => [o.origin, o]));
   const have = new Set([...rows.keys(), ...plan.openChanges.filter((c) => c.kind === 'origin_add' && c.origin !== null).map((c) => c.origin!)]);
@@ -127,7 +150,16 @@ async function proposeOrigins(
     await confirmStepUp(env, token, { expectedNonce, scopeId: plan.app.scope_id });
     w.sub = token.sub;
   }
-  const by = token ? { kind: 'member' as const, id: actorId(w.actor), sub: token.sub } : { kind: 'hana' as const, id: actorId(w.actor), sub: null };
+  const by = token
+    ? { kind: 'member' as const, id: actorId(w.actor), sub: token.sub }
+    : platform
+      ? { kind: 'platform' as const, id: actorId(w.actor), sub: null }
+      : { kind: 'hana' as const, id: actorId(w.actor), sub: null };
+  // The org's web addresses the platform proposed that still wait (any of its keys, any of its apps), with these.
+  const waitingHolds = platform
+    ? q` AND (SELECT COUNT(*) FROM guarded_changes wg WHERE wg.kind = 'origin_add' AND wg.proposed_by_kind = 'platform' AND wg.status = 'pending'
+                AND (wg.active_from IS NULL OR wg.active_from > ${w.now}) AND wg.app_id IN (SELECT id FROM apps WHERE org_id = ${i.orgId})) + ${add.length} <= ${platform.waitingMax}`
+    : raw('');
   const changes = add.map((origin) => ({ id: newId('guardedChange'), origin }));
   const list = JSON.stringify(changes);
   const origins = JSON.stringify(add);
@@ -146,7 +178,7 @@ async function proposeOrigins(
                                    UNION SELECT origin FROM guarded_changes WHERE app_id = a.id AND kind = 'origin_add' AND status IN ('pending', 'active'))) - ${remove.length} + ${add.length} <= ${MAX_APP_ORIGINS}
         AND NOT EXISTS (SELECT 1 FROM app_origins WHERE app_id = a.id AND origin IN (SELECT value FROM json_each(${origins})))
         AND NOT EXISTS (SELECT 1 FROM guarded_changes WHERE app_id = a.id AND kind = 'origin_add' AND status IN ('pending', 'active')
-                         AND origin IN (SELECT value FROM json_each(${origins})))`,
+                         AND origin IN (SELECT value FROM json_each(${origins})))${waitingHolds}`,
     ),
     q`UPDATE apps SET origins_version = origins_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
   ];
@@ -158,9 +190,13 @@ async function proposeOrigins(
     );
   }
   stmts.push(
-    q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id)
-      SELECT json_extract(value, '$.id'), ${i.appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', ${by.kind}, ${by.id}, ${by.sub}, ${w.now}, ${w.requestId}
-        FROM json_each(${list}) WHERE ${committed(w.requestId)}`,
+    platform
+      ? q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id, min_delay_ms)
+          SELECT json_extract(value, '$.id'), ${i.appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', ${by.kind}, ${by.id}, NULL, ${w.now}, ${w.requestId}, ${platform.minDelayMs}
+            FROM json_each(${list}) WHERE ${committed(w.requestId)}`
+      : q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id)
+          SELECT json_extract(value, '$.id'), ${i.appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', ${by.kind}, ${by.id}, ${by.sub}, ${w.now}, ${w.requestId}
+            FROM json_each(${list}) WHERE ${committed(w.requestId)}`,
     q`INSERT INTO app_origins (app_id, origin, active_from, change_id)
       SELECT ${i.appId}, json_extract(value, '$.origin'), NULL, json_extract(value, '$.id') FROM json_each(${list}) WHERE ${committed(w.requestId)}`,
   );

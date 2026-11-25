@@ -25,7 +25,7 @@ import {
   withRehearsalD1,
   suspensionBits,
 } from '../lib/admin-apps.ts';
-import { addOriginsWrite, removeOriginsWrite, suspensionWrite, writeCommand } from '../lib/admin-sql.ts';
+import { addOriginsWrite, announceWrite, removeOriginsWrite, suspensionWrite, writeCommand } from '../lib/admin-sql.ts';
 import { parseCli } from '../lib/cli.ts';
 import { d1Of, newHotDb, seedHotApp, testIds } from './hot-db.ts';
 
@@ -243,6 +243,22 @@ describe('app:changes:announce', () => {
     expect(inForce('app_a', NOW + 5 + DELAY)).toEqual(['https://new.example.com', 'https://old.example.com']);
     // Once only.
     await expect(announce('gc_1')).rejects.toThrow('was already announced');
+  });
+
+  it('refuses a web address a platform key proposed (D929: only the admin Worker announces those, with their 24 h wait), writing nothing', async () => {
+    seedHotApp(h.db, { id: 'app_p', key: APP_KEY, scope: 's1', origins: [] });
+    h.db.exec(`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id, min_delay_ms)
+               VALUES ('gc_p', 'app_p', 'origin_add', 'https://p.example.com', 'pending', 'platform', 'pkc_4Rm8Vq2Lz7Wx9Kd', ${NOW}, 'pf_x', 86400000)`);
+    h.db.exec("INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES ('app_p', 'https://p.example.com', NULL, 'gc_p')");
+    const before = ledger('app_p').length;
+    await expect(announce('gc_p')).rejects.toThrow(/proposed by a platform key: only the admin Worker announces those/u);
+    expect(change('gc_p')).toMatchObject({ status: 'pending', notified_at: null, active_from: null });
+    expect(origins('app_p')).toEqual([{ origin: 'https://p.example.com', active_from: null, change_id: 'gc_p' }]);
+    expect(ledger('app_p')).toHaveLength(before);
+    // The write itself refuses one too (its commit row names no platform proposal), whoever builds it.
+    const w = announceWrite(change('gc_p') as never, { id: 'app_p', org_id: 'org_legacy', scope_id: 's1' } as never, DELAY, { now: NOW, actor: h.deps.actor, requestId: 'r_direct' });
+    for (const st of w.statements) h.db.exec(st);
+    expect(change('gc_p')).toMatchObject({ notified_at: null, active_from: null });
   });
 
   it('no_session waiver: in force at once while the scope has no login; the full delay once it has', async () => {

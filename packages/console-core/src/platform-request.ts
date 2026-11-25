@@ -107,6 +107,10 @@ export const PLATFORM_ERROR_STATUS = {
   not_found: 404,
   method_not_allowed: 405,
   request_replayed: 409,
+  /** D929 (A9): an Idempotency-Key used within 7 days for another method, path or body. */
+  idempotency_conflict: 409,
+  /** D929 (A5): the organisation has as many apps created through the platform as it may. */
+  app_limit: 409,
   conflict: 409,
   version_conflict: 409,
   rate_limited: 429,

@@ -17,7 +17,8 @@
 //     AdminRpc.purgeDirectory                        the wallet directory of scopes left without apps (D363)
 //     AdminRpc.purgeUserEvents                       key exports and mainnet demo signatures past 24 months, and
 //                                                    those of scopes left without apps (readiness 7.17)
-//     AdminRpc.purgePlatformCalls                    the platform API's call log past 13 months (D927)
+//     AdminRpc.purgePlatformCalls                    the platform API's call log past 13 months (D927), and its
+//                                                    idempotency records past 7 days (D929)
 //     AdminRpc.purgeAudit, StaffRpc.purgeAudit       audit rows past 60 months, in batches (D364)
 //
 // Not here: the email issuer's directory and its staff audit, which this Worker has no binding to. They are the
@@ -234,10 +235,12 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   });
   await step('platform_calls', async () => {
     for (;;) {
-      const r = await rpc<{ platformCalls: number }>('platform_calls', () => api.purgePlatformCalls({ ...systemCtx(), before: platformCallsCutoff(d.now), limit: RETENTION_BATCH }));
+      const r = await rpc<{ platformCalls: number; platformRequests?: number }>('platform_calls', () => api.purgePlatformCalls({ ...systemCtx(), before: platformCallsCutoff(d.now), limit: RETENTION_BATCH }));
       if (!r) return;
       add('platformCallsDeleted', r.platformCalls);
-      if (r.platformCalls < RETENTION_BATCH) return;
+      // D929: the platform's idempotency records past 7 days go in the same call (an API without them answers none).
+      add('platformRequestsDeleted', r.platformRequests ?? 0);
+      if (r.platformCalls < RETENTION_BATCH && (r.platformRequests ?? 0) < RETENTION_BATCH) return;
     }
   });
   await step('api_audit', async () => {

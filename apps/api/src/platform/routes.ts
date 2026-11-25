@@ -1,20 +1,61 @@
-// The platform API's routes (D927; docs/partner-platform-spec.md A8). Piece P3 has two, both about the key itself:
+// The platform API's routes (D927, D929; docs/partner-platform-spec.md A8). About the key itself (piece P3):
 //
 //   GET  /v1/platform/credential         the key's own state (its org, scopes, dates and limits)
 //   POST /v1/platform/credential/revoke  the key stops itself at once (allowed while the org's switch is off or the org
 //                                        is frozen, L5), cancelling in the same batch every web address it proposed that
 //                                        is still waiting (D918's revocation, the `platform` actor)
 //
-// Nothing else: the app operations are piece P4's, and no route may ever register, accept, confirm or bring back a
-// key, confirm a web address, or reach ConsoleRpc or AdminRpc (test: apps/api/test/platform-request.test.ts "reach").
-// Each route's `cost` is its hot-DB ceiling in statements (the credential's read and the key list's included), charged to the org's
-// bucket before it runs; the tests check each stays within it and within PLATFORM_DB_LIMITS.
-import { type Actor, PLATFORM_REQUEST_LIMITS, type PlatformCredentialView, b64url, platformRevokeBody, randomBytes, sha256, utf8 } from '@hana-id/console-core';
+// The app operations (piece P4, platform/ops.ts), only on apps the key's org created through the platform, on a scope
+// the key names (the reach, H1):
+//
+//   GET  /v1/platform/apps                               the apps in the reach (?scopeId=&cursor=, 50 a page)
+//   POST /v1/platform/apps                               create a test app on a shared scope, its web addresses waiting
+//   GET  /v1/platform/apps/:appId                        one app (the allowlisted view)
+//   POST /v1/platform/apps/:appId/origins                propose web addresses (each waits: no waiver, no expedite)
+//   POST /v1/platform/apps/:appId/origins/remove         stop web addresses at once (a kill switch)
+//   POST /v1/platform/changes/:changeId/cancel           cancel a waiting web address the platform proposed (H2)
+//   POST /v1/platform/apps/:appId/suspend                {suspended: true} a kill switch; {suspended: false} only its own
+//   POST /v1/platform/apps/:appId/keys                   a new publishable key
+//   POST /v1/platform/apps/:appId/keys/:keyId/revoke     revoke a publishable key at once (a kill switch)
+//
+// No route may ever register, accept, confirm or bring back a key, confirm a web address or bring one into force early,
+// reach a policy, raw signing, settings, labels, the mainnet demo, staff or member functions, or ConsoleRpc or AdminRpc
+// (tests: apps/api/test/platform-request.test.ts "reach" and the import allowlist; platform-ops.test.ts).
+// Each route's `cost` is its hot-DB ceiling in statements (the credential's read, the key list's and the call log's
+// included), charged to the org's bucket before it runs; the tests check each stays within it and within
+// PLATFORM_DB_LIMITS.
+import {
+  PLATFORM_REQUEST_LIMITS,
+  type PlatformCredentialView,
+  b64url,
+  platformAddOriginsBody,
+  platformCreateAppBody,
+  platformEmptyBody,
+  platformRemoveOriginsBody,
+  platformRevokeBody,
+  platformSuspendBody,
+  randomBytes,
+} from '@hana-id/console-core';
 import type { Env } from '../env.ts';
-import { type Writer, refuse } from '../changes/cas.ts';
+import { refuse } from '../changes/cas.ts';
 import type { HotDb } from '../changes/db.ts';
 import { revokePlatformKeyNow } from './keys.ts';
+import {
+  addPlatformOrigins,
+  cancelPlatformChange,
+  createPlatformApp,
+  createPublishableKey,
+  getPlatformApp,
+  listPlatformApps,
+  platformRequestId,
+  platformWriter,
+  removePlatformOrigins,
+  revokePublishableKey,
+  suspendPlatformApp,
+} from './ops.ts';
 import type { AuthRow } from './request.ts';
+
+export { platformRequestId };
 
 export interface RouteContext {
   env: Env;
@@ -26,6 +67,15 @@ export interface RouteContext {
   now: number;
   idempotencyKey: string | null;
   requestId: string;
+  /** The route's path parameters (`:appId`, `:changeId`, `:keyId`), each already matched by its pattern. */
+  params: Record<string, string>;
+  /** The path and query exactly as sent and signed. */
+  path: string;
+  /** A GET's query, as parsed once (request.ts). */
+  query: URLSearchParams;
+  /** sha256 of the exact body bytes, lowercase hex (what `platform_requests` records). */
+  bodySha256Hex: string;
+  waitUntil(p: Promise<unknown>): void;
 }
 
 export interface RouteAnswer {
@@ -39,8 +89,10 @@ export interface RouteAnswer {
 
 export interface PlatformRoute {
   method: 'GET' | 'POST';
-  /** The route's template, as `platform_calls.route` and the log record it (P3's have no parameters). */
+  /** The route's template, as `platform_calls.route` and the log record it (`:name` a parameter matched by `params`). */
   path: string;
+  /** Each parameter's pattern: a path whose segment doesn't match is no route (404 before any check of the key). */
+  params?: Record<string, RegExp>;
   /** Hot-DB statements at most, reads included (A5, L8). */
   cost: number;
   /**
@@ -59,22 +111,27 @@ export interface PlatformRoute {
   killSwitch?: boolean;
   /** Counted by the platform's destructive-call breaker. */
   breaker?: boolean;
+  /**
+   * Flags that depend on a valid body (the suspend route: suspending is a kill switch, allowed while frozen and counted
+   * by the breaker; resuming is none of these). Merged over the static ones.
+   */
+  flags?(body: Record<string, unknown>): { killSwitch?: boolean; breaker?: boolean; allowFrozen?: boolean };
   run(c: RouteContext): Promise<RouteAnswer>;
 }
 
-/**
- * The ledger request id of a write (A9): `pf_` + base64url(sha256(org ‖ 0x00 ‖ Idempotency-Key)), its first 32
- * characters, so a retry from the org's other key is `conflict` (A9: right for an app write, piece P4). The self-revoke
- * passes its key id too (after PR 156's review, F4): sha256(org ‖ 0x00 ‖ key id ‖ 0x00 ‖ Idempotency-Key), so stopping
- * each of the org's keys is its own operation even under one Idempotency-Key.
- */
-export async function platformRequestId(orgId: string, idempotencyKey: string, keyId?: string): Promise<string> {
-  const input = keyId === undefined ? `${orgId}\u0000${idempotencyKey}` : `${orgId}\u0000${keyId}\u0000${idempotencyKey}`;
-  return `pf_${b64url(await sha256(utf8(input))).slice(0, 32)}`;
-}
+/** A body's check against a strict schema: null, or what's wrong (`<field>: <problem>`, at most 200 characters). */
+const check =
+  (schema: { safeParse(v: unknown): { success: true } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } } }) =>
+  (body: Record<string, unknown>): string | null => {
+    const b = schema.safeParse(body);
+    if (b.success) return null;
+    const issue = b.error.issues[0];
+    return `${issue?.path.join('.') || 'body'}: ${issue?.message ?? 'invalid'}`.slice(0, 200);
+  };
 
-/** The writer of a platform write: the `platform` actor, its id the key's (`app_changes.actor_kind = 'platform'`, D916). */
-const platformWriter = (keyId: string, requestId: string, now: number): Writer => ({ actor: { kind: 'platform', id: keyId } as unknown as Actor, requestId, now });
+const APP_ID = /^app_[A-Za-z0-9]{1,64}$/u;
+const CHANGE_ID = /^gc_[A-Za-z0-9]{1,64}$/u;
+const KEY_ID = /^key_[A-Za-z0-9_]{1,96}$/u;
 
 export const PLATFORM_ROUTES: readonly PlatformRoute[] = [
   {
@@ -129,4 +186,127 @@ export const PLATFORM_ROUTES: readonly PlatformRoute[] = [
       return { status: 200, body: { revokedAt }, wrote: true };
     },
   },
+  // ---- the app operations (piece P4, platform/ops.ts). The costs: the credential's read, the announced keys' list
+  // (once every 30 s per isolate), the call log's row and, once an hour, last_used_at (4), plus the operation's own. ----
+  {
+    method: 'GET',
+    path: '/v1/platform/apps',
+    // One read: the page of apps with their web addresses and keys.
+    cost: 5,
+    idempotency: 'none',
+    run: (c) => listPlatformApps(c, c.query),
+  },
+  {
+    method: 'POST',
+    path: '/v1/platform/apps',
+    // The plan read; the batch of six (commit, app, key, changes, origin rows, the request's record); a failed batch's
+    // diagnostic read (or, instead, a retry's one read of what it first did).
+    cost: 12,
+    idempotency: 'required',
+    validate: check(platformCreateAppBody),
+    run: (c) => createPlatformApp(c, c.body),
+  },
+  {
+    method: 'GET',
+    path: '/v1/platform/apps/:appId',
+    params: { appId: APP_ID },
+    cost: 5,
+    idempotency: 'none',
+    run: (c) => getPlatformApp(c, c.params.appId!),
+  },
+  {
+    method: 'POST',
+    path: '/v1/platform/apps/:appId/origins',
+    params: { appId: APP_ID },
+    // The plan read; the batch of five (commit, origins version, changes, origin rows, the request's record); a
+    // diagnostic read.
+    cost: 11,
+    idempotency: 'required',
+    validate: check(platformAddOriginsBody),
+    run: (c) => addPlatformOrigins(c, c.params.appId!, c.body),
+  },
+  {
+    method: 'POST',
+    path: '/v1/platform/apps/:appId/origins/remove',
+    params: { appId: APP_ID },
+    // The plan read; the batch of five (commit, origins version, the changes closed, the rows removed, the record); a
+    // diagnostic read.
+    cost: 11,
+    idempotency: 'required',
+    allowFrozen: true,
+    killSwitch: true,
+    breaker: true,
+    validate: check(platformRemoveOriginsBody),
+    run: (c) => removePlatformOrigins(c, c.params.appId!, c.body),
+  },
+  {
+    method: 'POST',
+    path: '/v1/platform/changes/:changeId/cancel',
+    params: { changeId: CHANGE_ID },
+    // The plan read; the batch of five (commit, change, origin row, origins version, the record); a diagnostic read.
+    cost: 11,
+    idempotency: 'required',
+    allowFrozen: true,
+    killSwitch: true,
+    validate: check(platformEmptyBody),
+    run: (c) => cancelPlatformChange(c, c.params.changeId!),
+  },
+  {
+    method: 'POST',
+    path: '/v1/platform/apps/:appId/suspend',
+    params: { appId: APP_ID },
+    // The plan read; the batch of four (commit, app, its read back, the record); a diagnostic read.
+    cost: 10,
+    idempotency: 'required',
+    validate: check(platformSuspendBody),
+    flags: (body) => (body.suspended === true ? { killSwitch: true, breaker: true, allowFrozen: true } : {}),
+    run: (c) => suspendPlatformApp(c, c.params.appId!, platformSuspendBody.parse(c.body).suspended),
+  },
+  {
+    method: 'POST',
+    path: '/v1/platform/apps/:appId/keys',
+    params: { appId: APP_ID },
+    // The plan read; the batch of four (commit, key, the legacy key column, the record); a diagnostic read.
+    cost: 10,
+    idempotency: 'required',
+    validate: check(platformEmptyBody),
+    run: (c) => createPublishableKey(c, c.params.appId!),
+  },
+  {
+    method: 'POST',
+    path: '/v1/platform/apps/:appId/keys/:keyId/revoke',
+    params: { appId: APP_ID, keyId: KEY_ID },
+    // The plan read; the batch of four (commit, key, the legacy key column, the record); a diagnostic read.
+    cost: 10,
+    idempotency: 'required',
+    allowFrozen: true,
+    killSwitch: true,
+    breaker: true,
+    validate: check(platformEmptyBody),
+    run: (c) => revokePublishableKey(c, c.params.appId!, c.params.keyId!),
+  },
 ];
+
+/** The route a method and path name, with its parameters, or why not (404: no route; 405: another method's). */
+export function matchRoute(method: string, path: string): { route: PlatformRoute; params: Record<string, string> } | { status: 404 | 405; allow?: string } {
+  const segs = path.split('/');
+  const hits: { route: PlatformRoute; params: Record<string, string> }[] = [];
+  for (const route of PLATFORM_ROUTES) {
+    const t = route.path.split('/');
+    if (t.length !== segs.length) continue;
+    const params: Record<string, string> = {};
+    let ok = true;
+    for (let k = 0; k < t.length && ok; k++) {
+      const part = t[k]!;
+      if (part.startsWith(':')) {
+        const name = part.slice(1);
+        ok = route.params?.[name]?.test(segs[k]!) === true;
+        if (ok) params[name] = segs[k]!;
+      } else ok = part === segs[k];
+    }
+    if (ok) hits.push({ route, params });
+  }
+  if (hits.length === 0) return { status: 404 };
+  const hit = hits.find((h) => h.route.method === method);
+  return hit ?? { status: 405, allow: hits.map((h) => h.route.method).join(', ') };
+}

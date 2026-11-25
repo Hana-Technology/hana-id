@@ -103,15 +103,15 @@ describe('migration 0032', () => {
     for (let i = 0; i < 3; i++) expect(await insert({ at: old + i, request_id: `old-${i}` })).toBe('accepted');
     expect(await insert({ at: Date.now() - 380 * DAY, request_id: 'recent' })).toBe('accepted'); // 12.5 months: kept
     const purge = (limit: number) => purgePlatformCalls(new HotDb(db), { before: Date.now(), limit });
-    expect(await purge(2)).toEqual({ platformCalls: 2 });
-    expect(await purge(10)).toEqual({ platformCalls: 1 });
-    expect(await purge(10)).toEqual({ platformCalls: 0 });
+    expect(await purge(2)).toEqual({ platformCalls: 2, platformRequests: 0 });
+    expect(await purge(10)).toEqual({ platformCalls: 1, platformRequests: 0 });
+    expect(await purge(10)).toEqual({ platformCalls: 0, platformRequests: 0 });
     expect((await db.prepare("SELECT request_id FROM platform_calls WHERE request_id LIKE 'old-%' OR request_id = 'recent'").all<{ request_id: string }>()).results).toEqual([{ request_id: 'recent' }]);
     // `before` can only narrow it: never a younger row.
-    expect(await purgePlatformCalls(new HotDb(db), { before: Date.now() + 1000 * DAY, limit: 10 })).toEqual({ platformCalls: 0 });
+    expect(await purgePlatformCalls(new HotDb(db), { before: Date.now() + 1000 * DAY, limit: 10 })).toEqual({ platformCalls: 0, platformRequests: 0 });
   });
 
   it('an env without the migration purges nothing and fails nothing', async () => {
-    expect(await purgePlatformCalls(new HotDb(env.PRE_0018_DB), { before: Date.now(), limit: 10 })).toEqual({ platformCalls: 0 });
+    expect(await purgePlatformCalls(new HotDb(env.PRE_0018_DB), { before: Date.now(), limit: 10 })).toEqual({ platformCalls: 0, platformRequests: 0 });
   });
 });

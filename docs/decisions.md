@@ -22325,3 +22325,62 @@ assigned. Three follow-ups to a survey of Sodax's public source (`gosodax/sodax-
   stores it on our side (the vault's records are keyed by app and scope; `RESERVED_RAW_PREFIX` `'hana-id'` in
   `packages/web/src/vault/signing.ts`, the raw-signing domain prefix, is a separate constant and unchanged); no change
   to the contract, a key, a path, an address derivation, the `rdns` or any origin.
+- Note 2026-11-25 (D926): the Tech Lead answered four of the points above. Point 2 (the Stellar change) goes on a public
+  fork in the Hana-Technology org, a pull request to Sodax "later if needed"; point 3's example lives in the
+  sample-partner repository; point 3's switch-off not signing users out stands; point 4's option D is decided (one app
+  per partner, also for Sodax's widget). Point 1's two "to confirm" items (the default id `hana-id` with the
+  `productId` option; no EVM change) were not put and stay open. Point 4's two later changes are proposals (pieces P11
+  and P12 of `docs/partner-platform-spec.md`), not decided.
+
+## Sodax: the Tech Lead's answers to D923 (branch `docs/sodax-decisions`), 2026-11-25
+
+From `next` @ 287ec88e; not merged, docs only. D926 is the number the caller assigned (D925 is another branch's).
+
+### D926. The Stellar change for Sodax's kit lives on a public fork in the Hana-Technology org, a pull request later if needed; one app per partner, also for Sodax's widget (the widget's origin and the partner's pages); the worked example lives in the sample-partner repository; switching a partner off doesn't sign its users out
+
+- **Date:** 2026-11-25 · **Status:** four points **decided by the Tech Lead 2026-11-25** (their words below); two of
+  D923's points **still to confirm (the Tech Lead)**, not put; two later pieces **proposed, not decided** · **Relates
+  to:** D909, D912, D913, D914, D923; `docs/sodax-sdk-integration.md` sections 2 and 12, `docs/partner-platform-spec.md`
+  A5, A8, A10, A13 and the build plan · **Built:** nothing in this repository (docs only).
+- **How it was put** (by the coordinating session, 2026-11-25): four decisions: (1) whether, when and under whose name to
+  send Sodax the Stellar change, with the suggestion to raise it with Sodax's contact in conversation first; (2) one
+  app per partner, including for Sodax's widget: each partner's app lists the widget's address and the partner's own
+  pages (D923's option D); (3) the worked example lives in the sample-partner repository; (4) switching a partner off in
+  Sodax's portal doesn't sign its users out, suspending the partner's app does.
+- **The Tech Lead's words:** "for number 1, is it possible to just fork a copy of their repo and update it? then we can
+  make a PR later if needed. 2. ok 3. ok 4. ok". Told that a fork of a public repository is always public, and offered
+  a private copy instead (the session's recommendation), and asked which account: "public fork is fine. use
+  Hana-Technology org."
+- **Decided:**
+  1. **The Stellar change goes on a public fork**, `Hana-Technology/sodax-sdks`; a spec issue and pull request on
+     Sodax's repository only when the Tech Lead says ("later if needed").
+  2. **One app per partner, also for Sodax's widget**: a partner that uses the widget gets one app listing the widget's
+     origin and the partner's own pages (`partner-platform-spec.md` A10, A13).
+  3. **The worked example lives in the sample-partner repository** (`examples/sodax-wallet-kit/`).
+  4. **Switching a partner off in Sodax's portal doesn't sign its users out**; suspending the partner's app ends its
+     sign-ins (`partner-platform-spec.md` A10).
+- **Done, as facts** (by the coordinating session, 2026-11-25, after the answers): forked `gosodax/sodax-sdks` to
+  `https://github.com/Hana-Technology/sodax-sdks` (public); cloned it to `~/Documents/sodax-sdks-fork` with `origin`
+  the fork and `upstream` Sodax's, pushing to `upstream` disabled; created `feat/stellar-wallet-modules` at Sodax's
+  `main` @ `7c1ff2e1`, applied D923's `stellar-modules.patch` as two commits (`ef43cca2`, `10b651f8`) under the Tech
+  Lead's git identity, and pushed the branch to the fork. Nothing was opened or posted on Sodax's repository; Sodax's
+  tests were not run on the branch. Checked on this branch: the fork's commit tree is the same as the patch's.
+- **Done for point 3, on this branch's side:** the example is on the sample-partner repository's local branch
+  `sodax-bundle-example`, not pushed (that repository's `main` takes direct pushes; the Tech Lead looks first). It
+  needed the `productId` option, so the branch also repacks the sample's SDK tarballs from `next` @ `287ec88e`, the
+  step the sample's README already named ("Repack from `next` once PR 94 merges").
+- **Still to confirm (the Tech Lead), from D923, not put:** keep `hana-id` as the default Stellar module id with the
+  `productId` option for hosts; no EVM change (the production domain decides the `rdns`, Q15, Q26).
+- **Proposed, not decided** (the session's, from D923's option D; `partner-platform-spec.md` build plan): **P11**, show
+  the partner's page (the outermost ancestor) in the sign-in and approval windows instead of only the widget's
+  address, because every partner's site now shows the same address (tested, D923); **P12**, allow the widget's origin
+  only as a frame for a partner's app, because anyone can open the widget top-level with a partner's settings and get
+  that partner's app: read in our code and inferred, **not tested**.
+- **Proposed while writing it down, to confirm (the Tech Lead):** the widget's origin gets no exception in the
+  origin confirmation (A15): proposed, announced and confirmed per partner app like any other origin, normally in the
+  same create request as the partner's pages (`partner-platform-spec.md` A13).
+- **Read from the existing rules, no decision needed** (`partner-platform-spec.md` A5, A13): the widget's origin
+  takes one of the app's 20 origins; the "also used on other apps" line counts apps, not origins, so it is unchanged;
+  two apps may list the same origin (no uniqueness across apps in the schema; two test apps both listing the widget's
+  origin worked in D923's test).
+- Address impact: **none** (docs only; no contract, key, path, derivation or origin changed).

@@ -24,7 +24,7 @@ IDs as B2 to B4 and B7 describe, with migration **0030** (0028 and 0029 are piec
 in the same docs and `integration.md`. Where it differs from Part B, D919 says so (the triggers' insert rule, the
 `'scope'` app on a marked scope having an `end_user_apps` row, the erase script's inputs).
 
-Last verified: 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
+Last verified: 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: a partner on the network's own widget (A4.5, A5, A8, A10, A13, A15, the build plan's later pieces P11 and P12, "What the network builds"), D926); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged: "Passport Home's apps" and A11's open item, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
 Lead's confirmations of D914's proposals and the four-eyes rule for staff proposals on a shared scope (D917) folded
 into A2, A3, A6, A7, A8, A11, A14, A15 and the build plan; the admin portal's identity checked in
 `apps/admin/src/access.ts`); 2026-11-25 (branch `docs/platform-answers`, after PR 142's review: its 16 findings folded in (revocation
@@ -460,7 +460,7 @@ and its thumbprint in the hot D1 (`platform_keys`, A7). Nothing secret of the ne
    **live-scope rules even on a test scope**: `originProblem` is called with `environment: 'live'`, so no loopback, no
    localhost wildcard, no http and no mixed-script host label. No waiver (both waivers already require a `member` or
    `hana` proposer, `lifecycle.ts`); refused within the delay of the scope's assignment (as staff proposals are); the
-   20-per-app limit unchanged; `ackNotice` sets `active_from` from the greater of `appChangeDelayMs` and the platform
+   20-per-app limit unchanged (a partner on the network's widget spends one on the widget's origin, A13); `ackNotice` sets `active_from` from the greater of `appChangeDelayMs` and the platform
    minimum (`PLATFORM_MIN_DELAY_MS`, 24 h, in every env but `local*` test envs; decided, N3) for a `platform`
    proposal. An owner's confirmation (A15) may bring it forward to the moment of the confirmation; nothing else can.
    The admin CLI's `app:changes:announce` (`announceWrite`, `scripts/lib/admin-sql.ts`), which announces any pending
@@ -495,7 +495,7 @@ staff raise an org's values in `platform_orgs` when it needs more.
 | Apps per org created by the platform | 10 undeleted (Passport Home lists 10 apps per scope today: A11) | checked in the create batch's predicate |
 | App creations | 2 an hour, 5 a UTC day per org | windows on `platform:<orgId>` |
 | Origin proposals | 10 an hour, 30 a UTC day per org; at most 30 waiting (proposed, not yet in force) per org | windows, and a count in the proposal batch's predicate |
-| Origins per app | 20 active or pending (`MAX_APP_ORIGINS`) | unchanged |
+| Origins per app | 20 active or pending (`MAX_APP_ORIGINS`); a partner on the network's widget spends one on the widget's origin (A13) | unchanged |
 | Publishable keys per app | 5 unrevoked (`MAX_UNREVOKED_KEYS`) | unchanged |
 | Credentials per org | 2 in force, waiting or awaiting acceptance (so the network can keep a standby key in force for an urgent rotation, A3) | registration |
 
@@ -765,7 +765,7 @@ same (never who confirmed). No settings, no policy, no mainnet demo, no labels, 
 |---|---|---|---|
 | `GET /v1/platform/credential` | — | `{keyId, label, orgId, scopes, activeFrom, expiresAt, limits}` | — |
 | `POST /v1/platform/credential/revoke` | `{reason?}` (≤ 200 characters) | `{revokedAt}`; the key stops at once; allowed while the switch is off | — |
-| `POST /v1/platform/apps` | `{scopeId, name, origins?: [≤ 20]}` | `201 {app, publishableKey, changes: [{changeId, origin}]}`; the origins are platform proposals (A4.4), each waiting for an owner's confirmation or the platform minimum | `forbidden` (scope not on the key, or not flagged), `origin_refused`, `conflict` (scope assigned less than the delay ago; a name like another app's on the scope), `409 app_limit`, `no_security_contact` |
+| `POST /v1/platform/apps` | `{scopeId, name, origins?: [≤ 20]}` (for a partner on the network's widget, the widget's origin and the partner's pages, A13) | `201 {app, publishableKey, changes: [{changeId, origin}]}`; the origins are platform proposals (A4.4), each waiting for an owner's confirmation or the platform minimum | `forbidden` (scope not on the key, or not flagged), `origin_refused`, `conflict` (scope assigned less than the delay ago; a name like another app's on the scope), `409 app_limit`, `no_security_contact` |
 | `GET /v1/platform/apps?scopeId=&cursor=` | — | `{apps: [PlatformApp], next?}` (50 a page, within the reach) | `forbidden` |
 | `GET /v1/platform/apps/:appId` | — | `{app}` | `not_found` |
 | `POST /v1/platform/apps/:appId/origins` | `{add: [≤ 20], expectedVersion}` | `202 {version, changes: [{changeId, origin}]}`; each waits for its announcement, then comes into force when an owner confirms it (A15) or after the delay with the platform minimum | `not_found`, `origin_refused` (the live rules, A4.5), `conflict` (duplicate, more than 20, scope assigned less than the delay ago) |
@@ -822,7 +822,12 @@ test (P10) walks every platform route and checks none changes `confirmed_at` or 
 2. The network's SDK, on the partner's page, reads the partner's configuration from the network's own configuration
    service (as it reads its other partner settings) and, only when the switch is on, loads `@hana-id/web` and calls
    `createHana({ publishableKey, environment: 'test', evm, stellar })` (`docs/sodax-sdk-integration.md` section 2,
-   unchanged).
+   unchanged). **When the partner uses the network's own widget** (an iframe on the network's origin inside the
+   partner's page, as Sodax's swap widget is), the widget does the same inside its iframe with the partner's key.
+   Decided (the Tech Lead, 2026-11-25, D926): still one app per partner, and that app lists **the widget's origin as
+   well as the partner's own pages**. Our vault refuses a frame unless every page around it is an origin of the app
+   (tested, D923: an app with only the widget's origin doesn't work on the partner's page), so the partner's pages
+   bind its key to its own sites.
 3. The key is public; what protects it is the app's allowed origins. The platform API is never called from a page: it
    refuses any request with an `Origin` header.
 4. Until the partner's origin is in force, our sign-in refuses the partner's site (`origin_not_allowed`); the
@@ -830,7 +835,9 @@ test (P10) walks every platform route and checks none changes `confirmed_at` or 
    `activeFrom`, and "Live" once it is in force (at once after an owner confirms it, A15).
 5. Switching off: the network calls `suspend` (logins stop at once; open pages notice within 30 s, as today). On a
    key rotation, the network creates a key, publishes it in its configuration, and revokes the old key once its
-   caches have turned over.
+   caches have turned over. Decided (the Tech Lead, 2026-11-25, D926): turning a partner off in the network's portal
+   does **not** sign its users out on their devices (the network's SDK only drops our wallet from its lists and
+   removes our client, as closing the tab does); suspending the partner's app is what ends its sign-ins.
 
 ## A11. What the console and the admin portal show
 
@@ -910,6 +917,32 @@ partner's exact HTTPS origins, and removes them as soon as the partner leaves or
 network's owners confirms each new address in our partner portal, or lets it wait (A15). Journear's backstops are the
 delay with the platform minimum, the announcement and cancel link, the confirmation's notice, the staff queue, the
 off switches and the audit.
+
+**A partner on the network's widget** (decided: one app per partner listing the widget's origin and the partner's
+pages, D926). What follows, each a reading of the existing rules unless marked:
+
+- **The widget's origin is the network's own**, so the network vouches for it as for its own site; it is proposed,
+  announced and confirmed (A15) like any other origin, once per partner app, normally in the same create request as
+  the partner's pages, so one confirmation covers them. Proposed, **to confirm (the Tech Lead):** no exception for it
+  (no standing confirmation, no shorter wait): a stolen platform key could otherwise attach the widget's origin to an
+  app without an owner looking.
+- **The partner's own pages still decide where the key works.** In a frame, every ancestor must be an origin of the
+  app (Chromium and WebKit by `location.ancestorOrigins`, every browser by the vault's `frame-ancestors`), so partner
+  B's page can't use partner A's app through the widget (tested, D923).
+- **The gap:** the widget's origin alone is enough when the widget is opened **top-level**. Anyone can open the
+  widget's own page with a partner's settings and get that partner's app, outside the partner's pages. Read in our
+  code and inferred, **not tested** (the test opened the widget top-level only for an app listing every partner page,
+  where it worked). The windows still show the app's name and the widget's address. Later piece P12 (proposed) closes
+  it.
+- **Two apps may list the same origin**: the schema has no uniqueness across apps (`app_origins` has a plain index on
+  `origin`), and two test apps on one scope both listing the widget's origin worked (tested, created through the e2e
+  stack's own endpoint, which writes the rows directly). The platform's propose path has no rule against it (read).
+- **The per-app quota:** the widget's origin takes one of the app's 20 origins (`MAX_APP_ORIGINS`), leaving 19 for the
+  partner's pages (A5).
+- **The "also used on other apps" line** (D912) counts apps, not origins, so it is unchanged: on partner A's app it
+  names the network's other partner apps (tested, D923). What changes is the address under "From {App}": the
+  requesting site our windows show is the vault's parent, the **widget's** origin, the same on every partner's site;
+  the app's name is the only partner-specific part. Later piece P11 (proposed) shows the partner's page instead.
 
 ## A14. Staff restore of removed origins: considered and refused
 
@@ -1381,8 +1414,10 @@ review.
 | P8 | The network's guide: a partner-facing document for the network (the request format, the reference signer with the DER conversion, the vectors, every endpoint, the delay, the off switches, "check `aud`"), checked by the docs test that keeps partner guides free of repo paths | S | The guide's code samples run against the local stack | No |
 | P9 (later) | The 60-day unused-origin report (an origin's last sign-in day, written at most once a day per origin), to the network and staff. No staff restore (A14) | S | The report lists an origin with no sign-in for 60 days and not one used within them; at most one write a day per origin | No |
 | P10 | **The owner's confirmation of origins** (A15, decided N3; who may confirm decided, D914): `ConsoleRpc.confirmOrigins` with its set commit predicate (one app, one proposing request, 1 to 20 changes, all or nothing); the console's step-up kind `origin.confirm` (the `pending_actions` rebuild) with its own nonce label; `guarded_changes.confirmed_*`, `unconfirmed_active_from`, the removal link's columns and the three triggers (A7); `origin.confirmed` in the ledger and `APP_CHANGE_KINDS`; the confirmation's notice with its ack and removal link (`AdminRpc.confirmationNotices`, `ackConfirmationNotice`, `ConsoleRpc.removeOriginByLink`, the `/remove/:changeId#t=` page); owners added to the platform proposal's notice, its wait line and its Confirm link; the console's confirmation page (with the chain read that hides Confirm) and origin states (A11); the admin portal's queue of confirmed origins; the platform view's `confirmedAt`; the `local*` guard (A15, proposed); **the second person's confirmation of staff proposals on a shared scope** (A15, four eyes, D917: `AdminRpc.confirmStaffOrigins`, the console's confirmation for them, `second_person`, `confirmed_by_kind`). Reuses P2's page, step-up and notice machinery. After P2, P4 and P5; before the platform is switched on for any org | M | **Who and how:** a confirmation by an `owner` member who is an on-chain owner of the scope brings each ticked origin into force at once, and no other; refused for a viewer (`forbidden` from the route matrix), for an owner member who isn't an on-chain owner of that scope (`not_owner` after the sign-in), for a member demoted to viewer between creating the action and signing in, and for every non-member actor; ConsoleRpc refusing a member's or staff's change (not a platform proposal); no platform route can confirm or bring an `active_from` forward (every route walked). **The token:** a token for another set of changes, another app, another org, another scope or another env refused; a token of another kind (an `origin.add` token, a settings token) refused, the `origin.confirm` nonce having its own label; a used token refused. **Requests:** a GET of the confirm page or of the email's link changes nothing; a confirm without the console's CSRF headers refused. **State:** refused before the announcement, after a cancel, after it came into force, twice; a cancel and a confirmation racing (each order; the second loses); the proposing key revoked or expired, the org's switch off, the org frozen, the app deleted, moved off the key's scopes or suspended by Journear, each between the plan read and the batch (nothing written). **The set:** a partly stale set writes nothing; a set spanning two apps or two proposing requests refused; 21 changes refused; the call within `CONSOLE_DB_LIMITS` and its cost. **The database:** the confirm trigger refusing a member's or staff's change, a change not pending or not announced, and a second confirmation, through bare D1 writes; an early `active_from` on `guarded_changes` or `app_origins` without a confirmation refused. **Records:** one `origin.confirmed` ledger row listing every change, and the console `audit_log` row; the notice sent once to the security alias, every contact and every owner, after the ack stored the removal links; the removal link removing the origin at once, single use, refused after 7 days, a GET of it removing nothing; the staff queue listing confirmed origins for 7 days; `confirmedAt` in the platform's view, never who confirmed. **The page:** nothing ticked at first, no "confirm all", Confirm hidden for an owner who isn't an on-chain owner. **Revocation:** a revocation, a switch-off and a freeze cancelling the key's waiting proposals in their own batch, with the ledger row, and an origin in force left as it is. **Timing:** an unconfirmed origin waiting 24 h on a dev env and its env's delay in a `local*` env; the proposal email's wait line saying 24 hours on sandbox-dev's config; the `local*` guard refusing a `local*` env with a non-loopback API or a deploy. **e2e:** a platform proposal, its email, the Confirm page, the fresh sign-in, the origin working at once, the notice, the removal link. **Staff proposals on a shared scope (four eyes, D917):** the proposing staffer's confirm refused (by the API and by a bare D1 write against the CHECK); a second staffer's confirm (another Access `sub` and email) brings it into force at once; an owner's confirm brings it into force at once; nobody: it waits 24 h; no waiver (`no_session`, `loopback`) and no expedite path, through AdminRpc and the CLI; the `second_person` flag written for a platform-created app and a flagged scope, not for other apps; the notice naming both people | **Yes** |
+| P11 (later, proposed) | **The partner's page in our windows** (D926, from D923; not decided): when the vault is framed by a page other than its parent (the network's widget inside a partner's page), the sign-in and approval windows show the outermost page's origin (`location.ancestorOrigins` where the browser gives it; else, in Firefox, the app's one origin that isn't the widget's, when there is exactly one) beside or instead of the widget's. Why: today every partner's site shows the same address, the widget's (tested, D923) | S | The window's address in Chromium, Firefox and WebKit, framed and top-level; an app with two partner pages in Firefox falls back to the widget's address and says so | No |
+| P12 (later, proposed) | **The widget's origin only as a frame** (D926, from D923; not decided): an origin marked frame-only for an app is accepted as the vault's parent only when another of the app's origins is around it, never top-level. Why: anyone can open the widget's own page with a partner's settings and get that partner's app (read in code, inferred, not tested). Needs a way to mark the origin (a flag on `app_origins`, proposed with it) | S to M | Top-level on a frame-only origin refused (`vault_unavailable`); framed by a listed partner page accepted; the flag can only be set with the origin's own proposal | Yes |
 
-**Order:** P0 and P1 first (either order), then P2, P3, P4, P5, P10; P6 and P7 after P0, in parallel with Part A.
+**Order:** P0 and P1 first (either order), then P2, P3, P4, P5, P10; P6 and P7 after P0, in parallel with Part A. P11 and P12 are proposals, not decided (D926); if taken up, after P4, before a partner on the network's widget handles real money.
 Deploy order for each env: the API migration (with its Time Travel bookmark and comparison), then the API, then the
 admin and console Workers. The platform switch stays off for every org until P0 is deployed, the platform minimum
 (P4) and the owner's confirmation (P10) are built, reviewed and deployed, and, per N6, the "also used on other apps"
@@ -1399,10 +1434,12 @@ line has shipped.
    fresh nonce, the timestamp from a synchronised clock) and an `Idempotency-Key` per operation, resent unchanged on
    retries from the same key.
 3. **Its portal switch:** on → create the partner's app with its exact HTTPS origins after checking the partner
-   controls them; store the app id and publishable key in the partner's configuration; show "Waiting for your owner
+   controls them (and, for a partner on the network's widget, the widget's origin too, A13); store the app id and publishable key in the partner's configuration; show "Waiting for your owner
    to confirm, or live on {date}" from each origin's `activeFrom` (A10), then "Live". Off → suspend. A partner leaving or its domain lapsing → remove its origins at once.
 4. **Its SDK:** load our SDK only when the switch is on and create the client with the partner's publishable key
-   (`docs/sodax-sdk-integration.md` section 2, including its Stellar wallet-kit change).
+   (`docs/sodax-sdk-integration.md` section 2, including its Stellar wallet-kit change; a worked add-on is in the
+   sample-partner repository, `examples/sodax-wallet-kit/`). Switching a partner off drops our wallet from its lists
+   and doesn't sign users out; suspending the app does (A10).
 5. **Security contacts and owners** who read our announcements and use the cancel link when a change isn't theirs;
    and owners (on-chain owners of the scope, A15) who confirm each new partner address in our partner portal once
    they have checked it is the partner's, or leave it to come into force after the 24 h wait.

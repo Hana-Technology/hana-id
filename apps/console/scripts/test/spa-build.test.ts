@@ -119,7 +119,7 @@ describe('the build stamp (scripts/build-stamp.ts)', () => {
   it('`deploy` checks the D1 has its migrations, builds the SPA, then deploys through the shared stamped wrapper', () => {
     const scripts = (JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')) as { scripts: Record<string, string> }).scripts;
     // D931 (after PR 159's review, L2): the migration check first.
-    expect(scripts.deploy).toBe('tsx ../../packages/env/src/check-migrations.ts --binding CONSOLE_DB --required 0007_origin_confirm_step_up.sql && vite build && tsx ../../packages/env/src/stamped-deploy.ts');
+    expect(scripts.deploy).toBe('vite build && tsx ../../packages/env/src/stamped-deploy.ts --require-migrations CONSOLE_DB:0007_origin_confirm_step_up.sql');
   });
 });
 

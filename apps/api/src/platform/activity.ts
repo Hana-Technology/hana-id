@@ -12,7 +12,7 @@
 //                  confirmed in the last 7 days, and staff web addresses on a shared wallet waiting for a second person.
 //
 // No org's rows reach another org: every console read has `org_id = ?` from the caller's org.
-import { type ConfirmedQueueRow, type PlatformCallView, type PlatformCallsPage, type PlatformQueue, type PlatformQueueOrigin, type SecondPersonQueueRow, CONFIRMED_QUEUE_MS, PLATFORM_CALLS_SCAN, originDisplay } from '@hana-id/console-core';
+import { type ConfirmedQueueRow, type PlatformCallView, type PlatformCallsPage, type PlatformQueue, type PlatformQueueOrigin, type SecondPersonQueueRow, CONFIRMED_QUEUE_MS, CONFIRM_NOTICE_MAX_FAILURES, PLATFORM_CALLS_SCAN, originDisplay } from '@hana-id/console-core';
 import type { HotDb } from '../changes/db.ts';
 import { q, raw } from '../changes/sql.ts';
 import { KEY_WAITING, PLATFORM_KEY_COLUMNS, type PlatformKeyRow, platformKeyView } from './keys.ts';
@@ -87,6 +87,7 @@ export async function platformQueue(db: HotDb, now: number, limit: number): Prom
     q`SELECT ${PLATFORM_KEY_COLUMNS('k')} FROM platform_keys k WHERE ${KEY_WAITING('k', now)} ORDER BY k.proposed_at, k.id LIMIT ${limit}`,
     // D931: confirmed in the last 7 days (newest first); `removed` once its web address no longer works there.
     q`SELECT oc.change_id, oc.app_id, oc.origin, oc.confirmed_by_kind, oc.confirmed_by, oc.confirmed_at, g.proposed_by_kind, g.proposed_by, a.name AS app_name, a.org_id,
+             oc.notice_at, oc.notice_failures,
              (g.status NOT IN ('pending', 'active') OR NOT EXISTS (SELECT 1 FROM app_origins ao WHERE ao.app_id = oc.app_id AND ao.change_id = oc.change_id)) AS removed
         FROM origin_confirmations oc JOIN guarded_changes g ON g.id = oc.change_id JOIN apps a ON a.id = oc.app_id
        WHERE oc.confirmed_at > ${now - CONFIRMED_QUEUE_MS}
@@ -129,6 +130,9 @@ export async function platformQueue(db: HotDb, now: number, limit: number): Prom
         confirmedBy: r.confirmed_by,
         confirmedAt: r.confirmed_at,
         removed: r.removed === 1,
+        // After PR 159's second review: whether the people were told.
+        notice: r.notice_at !== null ? 'sent' : r.notice_failures >= CONFIRM_NOTICE_MAX_FAILURES ? 'not_sent' : r.notice_failures > 0 ? 'retrying' : 'waiting',
+        noticeFailures: r.notice_failures,
       }),
     ),
     secondPerson: (second!.results as unknown as SecondRow[]).map(
@@ -160,6 +164,8 @@ interface ConfirmedRow {
   app_name: string;
   org_id: string;
   removed: number;
+  notice_at: number | null;
+  notice_failures: number;
 }
 
 interface SecondRow {

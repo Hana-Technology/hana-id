@@ -145,6 +145,13 @@ export interface ConfirmedQueueRow {
   confirmedAt: number;
   /** Removed since (by the removal link, an owner, staff or the platform): no longer working. */
   removed: boolean;
+  /**
+   * Its notice (after PR 159's second review): `sent` (every recipient accepted), `waiting` (not tried yet), `retrying`
+   * (a recipient refused; `noticeFailures` runs so far), `not_sent` (left after CONFIRM_NOTICE_MAX_FAILURES: the
+   * confirmation stands, but people may not have been told).
+   */
+  notice: 'sent' | 'waiting' | 'retrying' | 'not_sent';
+  noticeFailures: number;
 }
 
 /** A staff proposal under four eyes that waits for a second person, as the staff queue lists it. */

@@ -189,7 +189,7 @@ export interface AdminRpcClient {
   /** A second staff member (never the proposer) confirms a staff set under four eyes, with a reason: in force at once. */
   confirmStaffOrigins(c: unknown): Answer<{ confirmedAt: number; changes: { changeId: string; origin: string; display: string; idn: boolean }[] }>;
   /** The confirmations whose notice hasn't gone out, with the org's security contacts (the notice cron's page). */
-  confirmationNotices(c: unknown): Answer<{ notices: ConfirmationNotice[] }>;
+  confirmationNotices(c: unknown): Answer<{ notices: ConfirmationNotice[]; stuck: number }>;
   /** System only, after every send was accepted: stores each removal link's sha256 (valid 7 days). */
   /** After PR 159's review: the removal links armed before the first send; a refused run noted (a bounded retry). */
   armConfirmationLinks(c: unknown): Answer<{ removalUntil: number | null }>;

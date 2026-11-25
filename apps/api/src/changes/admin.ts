@@ -166,7 +166,7 @@ export async function assignScopeOrg(db: HotDb, env: Env, w: Writer, i: { scopeI
  * would leave it on the plain path (no four eyes, no 24 h), so the mark waits until it is cancelled or working.
  */
 export const SCOPE_HAS_WAITING_STAFF_ORIGIN = (scopeId: string, now: number): Q =>
-  q`EXISTS (SELECT 1 FROM guarded_changes g JOIN apps a ON a.id = g.app_id WHERE a.scope_id = ${scopeId}
+  q`EXISTS (SELECT 1 FROM guarded_changes g JOIN apps a ON a.id = g.app_id WHERE a.scope_id = ${scopeId} AND a.deleted_at IS NULL
               AND g.kind = 'origin_add' AND g.proposed_by_kind = 'hana' AND g.status = 'pending' AND (g.active_from IS NULL OR g.active_from > ${now}))`;
 
 /** In words: why the scope can't be marked yet. */

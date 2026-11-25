@@ -57,6 +57,7 @@ const TRIGGERS_0034 = [
   'app_origins_platform_not_early',
   'app_origins_platform_not_early_update',
   'scopes_app_user_ids_no_waiting_staff_origin',
+  'scopes_app_user_ids_insert_rules',
 ] as const;
 /** 0033's triggers 0034 replaces: dropped and created again under the same name. */
 const REPLACED = ['guarded_changes_platform_not_early', 'app_origins_platform_not_early', 'app_origins_platform_not_early_update'];
@@ -407,12 +408,26 @@ describe('migration 0034_origin_confirmations', () => {
     for (const t of ['origin_confirmations', 'staff_origin_waits']) expect(await db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE change_id = 'gc_sp'`).first(), t).toEqual({ n: 0 });
   });
 
-  it('after PR 159’s review (L1): a plain scope is never marked shared while a staff web address of its apps waits', async () => {
+  it('after PR 159’s reviews (L1, L-b): a plain scope is never marked shared while a staff web address of its apps waits, by an update or a replacing insert; nor with a policy; a deleted app doesn’t count', async () => {
+    const SCOPE = "INSERT OR REPLACE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('su', 'org_a', 'test', 1, 1, 1, 1)";
+    const UPSERT = "INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('su', 'org_a', 'test', 1, 1, 1, 1) ON CONFLICT DO UPDATE SET app_user_ids = 1";
+    const cancelWaiting = () => run("UPDATE guarded_changes SET status = 'cancelled', cancelled_at = 1, cancelled_by = 's' WHERE app_id = 'app_s' AND proposed_by_kind = 'hana' AND status = 'pending' AND (active_from IS NULL OR active_from > ?1)", Date.now());
     await run("INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, waiver, request_id) VALUES ('gc_plainwait', 'app_s', 'origin_add', 'https://plainwait.example', 'pending', 'hana', 'staff-1', 1, 'no_session', 'r_plainwait')");
     expect(await refusal("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 'su'")).toMatch(/a staff web address not working yet/u);
-    // Every waiting staff web address of the scope cancelled (gc_plain, brought in earlier by a bare write, is in force):
-    // then the scope may be marked.
-    await run("UPDATE guarded_changes SET status = 'cancelled', cancelled_at = 1, cancelled_by = 's' WHERE app_id = 'app_s' AND proposed_by_kind = 'hana' AND status = 'pending' AND (active_from IS NULL OR active_from > ?1)", Date.now());
+    expect(await refusal(SCOPE)).toMatch(/a staff web address not working yet/u);
+    expect(await refusal(UPSERT)).toMatch(/a staff web address not working yet/u);
+    await cancelWaiting();
+    // 0027's no-policy rule through a replacing insert too (that trigger fires on updates only).
+    await run("UPDATE apps SET auto_approve_pending = '{}', auto_approve_effective_at = 1 WHERE id = 'app_s'");
+    expect(await refusal(SCOPE)).toMatch(/auto-approve policy/u);
+    await run("UPDATE apps SET auto_approve_pending = NULL, auto_approve_effective_at = NULL WHERE id = 'app_s'");
+    // A deleted app's waiting staff web address doesn't hold the mark back (as 0026's rules skip deleted apps).
+    await run("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, created_by_kind, user_ids) VALUES ('app_gone', 'G', 'su', 'org_a', 'pk_test_Ggggggggggggggggggggggg', 'hana', 'scope')");
+    await run("INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES ('gc_gone', 'app_gone', 'origin_add', 'https://gone.example', 'pending', 'hana', 'staff-1', 1, 'r_gone')");
+    expect(await refusal("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 'su'")).toMatch(/a staff web address not working yet/u);
+    await run("UPDATE apps SET deleted_at = 1 WHERE id = 'app_gone'");
+    // A new scope has no app: marked at its insert as before.
+    expect(await refusal("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('snew', 'org_a', 'test', NULL, 1, 1, 1)")).toBe('accepted');
     expect(await refusal("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 'su'")).toBe('accepted');
   });
 

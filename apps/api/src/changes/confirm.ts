@@ -386,7 +386,7 @@ interface NoticeRow {
  * AdminRpc.confirmationNotices: the confirmations whose notice hasn't gone out, one per confirmation call (its ledger
  * request id), oldest first, each with the org's security contacts (the admin Worker adds the alias and every owner).
  */
-export async function confirmationNotices(db: HotDb, limit: number, now: number): Promise<ConfirmationNotice[]> {
+export async function confirmationNotices(db: HotDb, limit: number, now: number): Promise<{ notices: ConfirmationNotice[]; stuck: number }> {
   const rows = await db.all<NoticeRow>(
     q`SELECT f.request_id, f.confirmed_at, f.app_id, a.name AS app_name, a.org_id, a.scope_id, s.environment, f.confirmed_by_kind, f.confirmed_by, g.proposed_by_kind, g.proposed_by,
              CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS key_label,
@@ -402,7 +402,13 @@ export async function confirmationNotices(db: HotDb, limit: number, now: number)
         JOIN guarded_changes g ON g.id = f.first_change JOIN apps a ON a.id = f.app_id JOIN scopes s ON s.scope_id = a.scope_id
        ORDER BY f.confirmed_at, f.request_id`,
   );
-  return rows.map((r) => {
+  // After PR 159's second review: how many confirmations of the last 7 days were left unannounced after the bounded
+  // retries (their links work; people may not have been told), so the admin Worker reports them on every run.
+  const stuck = await db.first<{ n: number }>(
+    q`SELECT COUNT(*) AS n FROM (SELECT request_id FROM origin_confirmations WHERE notice_at IS NULL GROUP BY request_id
+        HAVING MAX(notice_failures) >= ${CONFIRM_NOTICE_MAX_FAILURES} AND MIN(confirmed_at) > ${now - ORIGIN_REMOVAL_LINK_MS})`,
+  );
+  const notices = rows.map((r) => {
     const n: ConfirmationNotice = {
       requestId: r.request_id,
       app: { id: r.app_id, name: r.app_name, orgId: r.org_id, scopeId: r.scope_id, environment: r.environment },
@@ -420,6 +426,7 @@ export async function confirmationNotices(db: HotDb, limit: number, now: number)
     } else n.proposedBy = r.proposed_by;
     return n;
   });
+  return { notices, stuck: stuck?.n ?? 0 };
 }
 
 const blob = (b64: string): ArrayBuffer => {

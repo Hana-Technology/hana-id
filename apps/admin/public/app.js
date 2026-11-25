@@ -1914,7 +1914,7 @@ function staffConfirmControl(group) {
   const d = disclosure(
     'Confirm…',
     form(
-      [{ name: 'reason', type: 'textarea', label: 'Why you confirm it, and how you checked', placeholder: 'Checked with Aisyah (owner) on a call to her listed number that these are their sites', required: true, minlength: STAFF_CONFIRM_REASON_MIN, maxlength: 1000, size: 'wide', help: 'At least 20 characters. Kept in the audit log, with your name.' }],
+      [{ name: 'reason', type: 'textarea', label: 'Why you confirm it, and how you checked', placeholder: 'Checked with Aisyah (owner) on a call to her listed number that these are their sites', required: true, minlength: STAFF_CONFIRM_REASON_MIN, maxlength: 1000, size: 'wide', help: 'At least 20 characters. Kept in the audit log, with your name. The organisation’s members can read it in their activity log, so write nothing private.' }],
       'Confirm',
       (v) => api('POST', '/api/platform/confirm-staff-origins', { orgId: first.orgId, appId: first.appId, changeIds: ready.map((o) => o.changeId), reason: v.reason }),
       {
@@ -1960,6 +1960,14 @@ function secondPersonPanel(rows, left) {
   );
 }
 
+/** After PR 159's second review: whether the organisation was told of a confirmation (its email, with the removal link). */
+function noticeState(o) {
+  if (o.notice === 'sent') return h('span', { class: 'sub' }, 'Organisation told');
+  if (o.notice === 'not_sent') return h('span', { class: 'sub' }, badge('Not told', 'bad'), ` the email failed ${o.noticeFailures} times`);
+  if (o.notice === 'retrying') return h('span', { class: 'sub' }, badge('Email retrying', 'warning'), ` failed ${o.noticeFailures} ${o.noticeFailures === 1 ? 'time' : 'times'} so far`);
+  return h('span', { class: 'sub' }, 'Email not sent yet');
+}
+
 /** D931: every web address a second person confirmed in the last 7 days, newest first: in force before staff see it here. */
 function confirmedPanel(rows) {
   const asked = (o) => (o.proposedByKind === 'platform' ? actor('platform', o.proposedBy) : staffWho(o.proposedBy));
@@ -1970,12 +1978,12 @@ function confirmedPanel(rows) {
       queueApp(o),
       asked(o),
       h('span', {}, by(o), h('span', { class: 'sub' }, time(o.confirmedAt))),
-      o.removed ? badge('Removed since', '') : badge('Working', 'ok'),
+      h('span', {}, o.removed ? badge('Removed since', '') : badge('Working', 'ok'), noticeState(o)),
     ),
   );
   return panel(
     'Confirmed in the last 7 days',
-    { hint: 'They started working when they were confirmed. Review each one: if one looks wrong, open its app to suspend the app or remove the web address.' },
+    { hint: 'They started working when they were confirmed. Review each one: if one looks wrong, open its app to suspend the app or remove the web address. “Not told” means the email to the organisation failed every try: tell its owners yourself (docs/operations.md, notice_stuck).' },
     table(['Web address', 'App and organisation', 'Asked for by', 'Confirmed by', 'Now'], trs, { empty: 'Nothing was confirmed in the last 7 days.' }),
   );
 }

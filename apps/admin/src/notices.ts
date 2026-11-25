@@ -9,9 +9,12 @@
 //                   email, and the one for a staff request under four eyes (`secondPerson`, grouped the same way), also
 //                   go to every owner of the org (StaffRpc.listMembers) and carry the Confirm link (it only opens the
 //                   partner portal's page: `/confirm/<the request's first change>`).
-//   origin_confirmed AdminRpc.confirmationNotices (D931) → the alias, every security contact and every owner, naming who
-//                   confirmed (and, for a staff proposal, who added them) → AdminRpc.ackConfirmationNotice with each
-//                   removal link's sha256 (valid 7 days). Token: HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ id).
+//   origin_confirmed AdminRpc.confirmationNotices (D931) → AdminRpc.armConfirmationLinks with each removal link's
+//                   sha256 (valid 7 days, from before the first send) → the alias, every security contact and every
+//                   owner, naming who confirmed (and, for a staff proposal, that staff added them) →
+//                   AdminRpc.ackConfirmationNotice once every send was accepted; any failure noted
+//                   (noteConfirmationNoticeFailure: retried later, left after 24 runs, `notice_stuck` logged on every
+//                   run while any is left). Token: HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ id).
 //   member_invite   StaffRpc.pendingMemberNotices (kind invite) → every owner, the contacts and the alias, then the
 //                   invitee's link → StaffRpc.ackMemberNotice (the link works from the ack). Token: INVITE_LINK_KEY.
 //   owner_grant     (kind owner_grant) → every owner, the contacts and the alias, with the cancel link → ack (a
@@ -623,12 +626,14 @@ const confirmerWords = (n: ConfirmationNotice, members: readonly MemberView[]): 
 
 /**
  * `origin_confirmed` (D931): AdminRpc.confirmationNotices → for each confirmation, the org's members (one console RPC,
- * once a run and org), one message to the alias, every security contact and every owner, with one removal link per
- * web address → AdminRpc.ackConfirmationNotice with each link's sha256, only after every send was accepted (the links
- * work from the ack, for 7 days). The token is HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ change id): a retry
- * sends the same links. The budget rules of the other steps: a notice starts only with room for its lookup, every email
- * and its ack; one that fails (its owners unreadable, a send refused, its ack refused) is left for the next run and the
- * page goes on with the next one.
+ * once a run and org), its removal links armed (AdminRpc.armConfirmationLinks: each link's sha256, 7 days, before the
+ * first send, so a link that reached anyone works), one message to the alias, every security contact and every owner,
+ * with one removal link per web address → AdminRpc.ackConfirmationNotice once every send was accepted. The token is
+ * HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ change id): a retry sends the same links. The budget rules of the
+ * other steps: a notice starts only with room for its lookup, the arming, every email and its ack. Any failure (its
+ * owners unreadable, its email not rendered, the arming refused, a send refused) is noted with the API
+ * (noteConfirmationNoticeFailure), which offers it again later and leaves it after 24 runs; one left like that is
+ * reported as `notice_stuck` (error level) on every run, from the API's stored count (after PR 159's second review).
  */
 export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
   const out: StepResult = { acked: 0, failed: 0, skipped: 0 };
@@ -648,8 +653,17 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
     log({ event: 'notice', step: 'origin_confirmed', outcome: 'error', code: page.code }, page.code === 'not_found' ? 'warn' : 'error');
     return out;
   }
+  if (page.stuck > 0) log({ event: 'notice', step: 'origin_confirmed', outcome: 'rejected', code: 'notice_stuck', count: page.stuck }, 'error');
   const orgs = new OrgLookups(env);
   const ctx = mailContext(env);
+  /** Notes a failed run with the API (so it backs off and is left after 24), and logs it; `notice_stuck` at the last. */
+  const failed = async (target: string, orgId: string, code: string, extra: Record<string, string | number> = {}) => {
+    out.failed++;
+    const noted = budget.fits(0, 1) ? await env.API.noteConfirmationNoticeFailure({ ...systemCtx(), requestId: target }).catch(() => null) : null;
+    const failures = noted?.ok ? noted.failures : null;
+    const stuck = failures !== null && failures >= CONFIRM_NOTICE_MAX_FAILURES;
+    log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: stuck ? 'notice_stuck' : code, ...extra, ...(failures !== null ? { count: failures } : {}), ...(stuck ? { error: code } : {}) }, stuck ? 'error' : 'warn');
+  };
   for (const n of page.notices) {
     const target = n.requestId;
     const orgId = n.app.orgId;
@@ -660,8 +674,7 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
     }
     const members = await orgs.members(orgId);
     if (!members) {
-      out.failed++;
-      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: 'owners_unavailable' }, 'warn');
+      await failed(target, orgId, 'owners_unavailable');
       continue;
     }
     const to = recipients(env.SECURITY_ALIAS, n.contacts, ownerEmails(members));
@@ -679,8 +692,8 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
         { confirmedBy: confirmerWords(n, members) },
       );
     } catch (err) {
-      out.failed++;
       log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
+      await failed(target, orgId, 'render_failed');
       continue;
     }
     // After PR 159's review: the removal links are armed before the first send (written once; the same deterministic
@@ -692,8 +705,7 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
     }
     const armed = await env.API.armConfirmationLinks({ ...systemCtx(), requestId: target, removals }).catch(() => null);
     if (!armed?.ok) {
-      out.failed++;
-      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: armed?.code ?? 'upstream_unavailable', method: 'armConfirmationLinks' }, 'warn');
+      await failed(target, orgId, armed?.code ?? 'upstream_unavailable', { method: 'armConfirmationLinks' });
       continue;
     }
     // A recipient already accepted isn't sent it again by this isolate (mail.ts's memo); the durable bound is the API's:
@@ -705,11 +717,7 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
       break;
     }
     if (!sent.allAccepted) {
-      out.failed++;
-      const noted = budget.fits(0, 1) ? await env.API.noteConfirmationNoticeFailure({ ...systemCtx(), requestId: target }).catch(() => null) : null;
-      const failures = noted?.ok ? noted.failures : null;
-      const stuck = failures !== null && failures >= CONFIRM_NOTICE_MAX_FAILURES;
-      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: stuck ? 'notice_stuck' : 'send_failed', sent: sent.sent, failed: sent.failed, ...(failures !== null ? { failures } : {}) }, stuck ? 'error' : 'warn');
+      await failed(target, orgId, 'send_failed', { sent: sent.sent, failed: sent.failed });
       continue;
     }
     const ack = await env.API.ackConfirmationNotice({ ...systemCtx(), requestId: target }).catch(() => null);

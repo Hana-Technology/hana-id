@@ -96,6 +96,8 @@ describe('the Platform queue’s second person (D931)', () => {
     const p = section(s, 'Waiting for a second person');
     const f = p.querySelector('form')!;
     const reason = f.querySelector('[name="reason"]') as unknown as HTMLTextAreaElement;
+    // After PR 159's second review: the reason is shown to the organisation (its activity log), and the field says so.
+    expect(f.textContent).toContain('The organisation’s members can read it in their activity log, so write nothing private.');
     reason.value = 'too short';
     s.submit(f);
     await vi.waitFor(() => expect(p.textContent).toContain('At least 20 characters (now 9).'));
@@ -132,8 +134,13 @@ describe('the Platform queue’s second person (D931)', () => {
     await vi.waitFor(() => expect(s.text()).toContain('Confirmed in the last 7 days'));
     const p = section(s, 'Confirmed in the last 7 days');
     const rows = p.querySelectorAll('tbody tr');
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(3);
     for (const words of ['https://pay.coffeeclub.example', 'Coffee Club', 'An owner', 'usr_01jcaisyah', 'Working']) expect(rows[0]!.textContent, words).toContain(words);
+    // After PR 159's second review: whether the organisation was told (sent, retrying n, not told).
+    expect(rows[0]!.textContent).toContain('Email retrying failed 2 times so far');
+    expect(rows[1]!.textContent).toContain('Organisation told');
+    expect(rows[2]!.textContent).toContain('Not told the email failed 24 times');
+    expect(p.textContent).toContain('“Not told” means the email to the organisation failed every try');
     // Who asked: the platform key, by its label and id (a public id, not a secret).
     expect(rows[0]!.textContent).toContain('Platform key');
     expect(rows[0]!.textContent).toContain(PREVIEW_KEY_ID);

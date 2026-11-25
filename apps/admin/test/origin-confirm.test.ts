@@ -421,6 +421,57 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
     expect(fake.attempts.filter((m) => m.text.includes('n0.partner.example'))).toEqual([]);
   });
 
+  it('after PR 159’s second review: owners unreadable, an arming refused or a render failure are noted as failures too (they back off)', async () => {
+    const { app } = await network({ shared: false });
+    const mk = (n: number) => ({
+      requestId: `rq_${uid()}`,
+      app: { id: app.id, name: `App ${n}`, orgId: n === 0 ? 'org_unreadable' : app.org, scopeId: app.scope, environment: 'test' as const },
+      contacts: [app.contact],
+      confirmedByKind: 'hana' as const,
+      confirmedBy: SECOND.sub,
+      confirmedAt: Date.now(),
+      proposedByKind: 'hana' as const,
+      proposedBy: STAFF_SUB,
+      changes: [{ changeId: newId('guardedChange'), origin: `https://m${n}.partner.example`, display: `https://m${n}.partner.example`, idn: false }],
+    });
+    const notices = [mk(0), mk(1)];
+    const noted: string[] = [];
+    const api = overrideBinding(env.API, {
+      confirmationNotices: async () => ({ ok: true, notices: notices.map((n) => ({ ...n, failures: 0 })), stuck: 0 }),
+      armConfirmationLinks: async () => ({ ok: false, code: 'conflict' }),
+      noteConfirmationNoticeFailure: async (c: unknown) => (noted.push((c as { requestId: string }).requestId), { ok: true, failures: 3 }),
+    });
+    const members = overrideBinding(env.CONSOLE, { listMembers: async (c: unknown) => ((c as { orgId: string }).orgId === 'org_unreadable' ? { ok: false, code: 'upstream_unavailable' } : env.CONSOLE.listMembers(c)) });
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((l: unknown) => void warns.push(String(l)));
+    const fake = new FakeEmail();
+    expect(await runConfirmationNotices(envWith({ API: api, CONSOLE: members }), fake, big())).toEqual({ acked: 0, failed: 2, skipped: 0 });
+    expect(noted).toEqual([notices[0]!.requestId, notices[1]!.requestId]);
+    expect(fake.attempts).toEqual([]);
+    expect(warns.join('\n')).toMatch(/"code":"owners_unavailable","count":3/u);
+    expect(warns.join('\n')).toMatch(/"code":"conflict","method":"armConfirmationLinks","count":3/u);
+    // The real API: an arming refused counts (its stored count grows), so it backs off instead of heading every page.
+    const { ids } = await confirmedByStaff([`https://g-${uid().toLowerCase()}.partner.example`]);
+    const refusing = overrideBinding(env.API, { armConfirmationLinks: async () => ({ ok: false, code: 'conflict' }) });
+    await runConfirmationNotices(envWith({ API: refusing }), new FakeEmail(), big());
+    expect((await confirmationRow(ids[0]!))!.notice_failures).toBe(1);
+  });
+
+  it('after PR 159’s second review: a notice left after 24 failures is logged as notice_stuck on every run, from the stored count', async () => {
+    const { ids } = await confirmedByStaff([`https://h-${uid().toLowerCase()}.partner.example`]);
+    const requestId = (await confirmationRow(ids[0]!))!.request_id;
+    for (let k = 0; k < 24; k++) expect(await env.API.noteConfirmationNoticeFailure({ actor: { kind: 'system', id: 'test' }, requestId, clientIp: '127.0.0.1' })).toMatchObject({ ok: true });
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((l: unknown) => void errors.push(String(l)));
+    const fake = new FakeEmail();
+    for (let run = 0; run < 2; run++) await runConfirmationNotices(env, fake, big());
+    expect(fake.attempts.filter((m) => m.text.includes(ids[0]!))).toEqual([]);
+    const stuck = errors.filter((l) => l.includes('notice_stuck'));
+    expect(stuck).toHaveLength(2);
+    expect(JSON.parse(stuck[0]!)).toMatchObject({ step: 'origin_confirmed', code: 'notice_stuck' });
+    expect(JSON.parse(stuck[0]!).count).toBeGreaterThanOrEqual(1);
+  });
+
   it('without room for the lookup, every email and the ack, it waits whole: nothing sent, nothing acked', async () => {
     const { ids } = await confirmedByStaff([`https://f-${uid().toLowerCase()}.partner.example`]);
     const all = (await env.API.confirmationNotices({ actor: { kind: 'system', id: 'test' }, requestId: `rq_${uid()}`, clientIp: '127.0.0.1', limit: 50 })) as { ok: true; notices: { changes: { changeId: string }[] }[] };

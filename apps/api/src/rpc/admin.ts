@@ -270,7 +270,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   /** D931: the confirmations whose notice (with its removal links) hasn't gone out, for the notice cron. */
   confirmationNotices(c: unknown) {
-    return runRpc(this.env, 'admin.confirmationNotices', confirmationNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ notices: await confirmationNotices(db, input.limit, w.now) }));
+    return runRpc(this.env, 'admin.confirmationNotices', confirmationNoticesInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db, w }) => confirmationNotices(db, input.limit, w.now));
   }
 
   /** D931 (after PR 159's review): only the notice cron, before the first send: the removal links' hashes (7 days), once. */

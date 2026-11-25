@@ -2,7 +2,7 @@
 // and passes wrangler's exit status on; every app that deploys a Worker of an env runs it, none runs a raw
 // `wrangler deploy`, and no app keeps its own copy.
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -49,7 +49,7 @@ describe('the shared deploy wrapper', () => {
     });
     expect(res.status).toBe(3);
     const id = localBuild().id;
-    expect(readFileSync(join(dir, 'args.txt'), 'utf8').trim().split('\n')).toEqual(['deploy', '-c', 'wrangler.vault.jsonc', '--var', `HANA_BUILD:${id}`]);
+    expect(readFileSync(join(dir, 'args.txt'), 'utf8').trim().split('\n')).toEqual(['deploy', '-c', join(realpathSync(dir), 'wrangler.vault.jsonc'), '--var', `HANA_BUILD:${id}`]);
     expect(res.stdout).toContain(`Build ${id}`);
   });
 
@@ -59,13 +59,13 @@ describe('the shared deploy wrapper', () => {
     for (const app of WORKER_APPS) {
       const scripts = scriptsOf(app);
       const steps = scripts.deploy!.split(' && ');
-      expect(steps.at(-1), app).toBe(RUN);
+      expect(steps.at(-1)!.startsWith(RUN), app).toBe(true);
       expect(Object.values(scripts).join('\n'), app).not.toMatch(/(^|&& )wrangler deploy/mu);
       expect(existsSync(join(repoRoot, 'apps', app, 'scripts', 'deploy.ts')), app).toBe(false);
     }
     // D931 (after PR 159's review, L2): the API and the console check their database has the migrations first.
-    expect(scriptsOf('console').deploy).toBe(`tsx ../../packages/env/src/check-migrations.ts --binding CONSOLE_DB --required 0007_origin_confirm_step_up.sql && vite build && ${RUN}`);
-    expect(scriptsOf('api').deploy).toBe(`tsx ../../packages/env/src/check-migrations.ts --binding DB --required 0034_origin_confirmations.sql && ${RUN}`);
+    expect(scriptsOf('console').deploy).toBe(`vite build && ${RUN} --require-migrations CONSOLE_DB:0007_origin_confirm_step_up.sql`);
+    expect(scriptsOf('api').deploy).toBe(`${RUN} --require-migrations DB:0034_origin_confirmations.sql`);
     expect(scriptsOf('api')['deploy:pages']).toBe(`pnpm --filter @hana-id/web build && ${RUN} -c wrangler.vault.jsonc && ${RUN} -c wrangler.auth.jsonc`);
   });
 });

@@ -237,8 +237,9 @@ export function platformQueue() {
     ],
     // D931: confirmed in the last 7 days, newest first (one removed since).
     confirmed: [
-      { changeId: 'gc_01jdconf1', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', origin: 'https://pay.coffeeclub.example', display: 'https://pay.coffeeclub.example', idn: false, proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', confirmedByKind: 'member', confirmedBy: 'usr_01jcaisyah', confirmedAt: ago(2 * HOUR), removed: false },
-      { changeId: 'gc_01jdconf2', appId: 'app_01jdplattiles', appName: 'Tile Shop', orgId: 'org_01jc8lumenpay', origin: 'https://old.tileshop.example', display: 'https://old.tileshop.example', idn: false, proposedByKind: 'hana', proposedBy: '7335d417-61da-459d-899c-0a01c76a2b94', confirmedByKind: 'hana', confirmedBy: '22222222-3333-4444-8555-666666666666', confirmedAt: ago(3 * DAY), removed: true },
+      { changeId: 'gc_01jdconf1', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', origin: 'https://pay.coffeeclub.example', display: 'https://pay.coffeeclub.example', idn: false, proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', confirmedByKind: 'member', confirmedBy: 'usr_01jcaisyah', confirmedAt: ago(2 * HOUR), removed: false, notice: 'retrying', noticeFailures: 2 },
+      { changeId: 'gc_01jdconf2', appId: 'app_01jdplattiles', appName: 'Tile Shop', orgId: 'org_01jc8lumenpay', origin: 'https://old.tileshop.example', display: 'https://old.tileshop.example', idn: false, proposedByKind: 'hana', proposedBy: '7335d417-61da-459d-899c-0a01c76a2b94', confirmedByKind: 'hana', confirmedBy: '22222222-3333-4444-8555-666666666666', confirmedAt: ago(3 * DAY), removed: true, notice: 'sent', noticeFailures: 0 },
+      { changeId: 'gc_01jdconf3', appId: 'app_01jdplattiles', appName: 'Tile Shop', orgId: 'org_01jc8lumenpay', origin: 'https://tiles.tileshop.example', display: 'https://tiles.tileshop.example', idn: false, proposedByKind: 'hana', proposedBy: '7335d417-61da-459d-899c-0a01c76a2b94', confirmedByKind: 'hana', confirmedBy: '22222222-3333-4444-8555-666666666666', confirmedAt: ago(5 * DAY), removed: false, notice: 'not_sent', noticeFailures: 24 },
     ],
   };
 }

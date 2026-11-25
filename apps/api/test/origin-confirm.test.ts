@@ -567,9 +567,16 @@ describe('the confirmation’s notice and its removal link', () => {
     clock.advance(5 * 60_000 + 1000);
     expect((await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).notices.find((x) => x.requestId === who.requestId)).toMatchObject({ failures: 1 });
     // Bounded: after CONFIRM_NOTICE_MAX_FAILURES runs, it is left (its links still work).
+    const queued = async () => (await ok(adminOn().platformQueue({ ...hana(), limit: 100 }))).confirmed.find((c) => c.changeId === set.changes[0]!.changeId)!;
+    expect(await queued()).toMatchObject({ notice: 'retrying', noticeFailures: 1 });
+    const stuckBefore = (await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).stuck;
     for (let k = 2; k <= CONFIRM_NOTICE_MAX_FAILURES; k++) await ok(adminOn().noteConfirmationNoticeFailure({ ...system(), requestId: who.requestId }));
     clock.advance(2 * 3_600_000);
-    expect((await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).notices.find((x) => x.requestId === who.requestId)).toBeUndefined();
+    const left = await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }));
+    expect(left.notices.find((x) => x.requestId === who.requestId)).toBeUndefined();
+    // Reported as stuck on every run from the stored count (after PR 159's second review), and shown in the queue.
+    expect(left.stuck).toBe(stuckBefore + 1);
+    expect(await queued()).toMatchObject({ notice: 'not_sent', noticeFailures: CONFIRM_NOTICE_MAX_FAILURES });
     await ok(consoleOn().removeOriginByLink({ ...link(set.changes[0]!.changeId), changeId: set.changes[0]!.changeId, token: t.token }));
   });
 
@@ -582,7 +589,7 @@ describe('the confirmation’s notice and its removal link', () => {
     const ver = (await one<{ v: number }>('SELECT origins_version AS v FROM apps WHERE id = ?1', net.site.id)).v;
     const s = await ok(adminOn().addOrigins({ ...hana(), orgId: net.org, appId: net.site.id, add: ['https://waits.example'], expectedVersion: ver }));
     const q = await ok(adminOn().platformQueue({ ...hana(), limit: 100 }));
-    expect(q.confirmed.find((c) => c.changeId === set.changes[0]!.changeId)).toMatchObject({ appId: app, confirmedByKind: 'member', confirmedBy: who.actor.id, confirmedAt: Date.now(), proposedByKind: 'platform', removed: false });
+    expect(q.confirmed.find((c) => c.changeId === set.changes[0]!.changeId)).toMatchObject({ appId: app, confirmedByKind: 'member', confirmedBy: who.actor.id, confirmedAt: Date.now(), proposedByKind: 'platform', removed: false, notice: 'waiting', noticeFailures: 0 });
     expect(q.secondPerson.find((c) => c.changeId === s.changes[0]!.id)).toMatchObject({ appId: net.site.id, proposedBy: 'access-sub-staff-1', notifiedAt: null });
     clock.advance(7 * DAY + 1000);
     const later = await ok(adminOn().platformQueue({ ...hana(), limit: 100 }));
@@ -603,6 +610,14 @@ describe('after PR 159’s review, L1: a scope is marked shared only once no sta
     expect((await no(mark(app.org, app.scope))).code).toBe('conflict');
     expect(await one('SELECT app_user_ids FROM scopes WHERE scope_id = ?1', app.scope)).toEqual({ app_user_ids: 0 });
     await ok(adminOn().cancelChange({ ...hana(), orgId: app.org, changeId: p.changes[0]!.id }));
+    expect(await ok(mark(app.org, app.scope))).toMatchObject({ changed: true });
+  });
+
+  it('after PR 159’s second review: a deleted app’s waiting staff web address doesn’t hold the mark back', async () => {
+    const app = await orgApp();
+    await ok(adminOn().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://deleted-app.example'], expectedVersion: 0 }));
+    expect((await no(mark(app.org, app.scope))).code).toBe('conflict');
+    await env.DB.prepare('UPDATE apps SET deleted_at = ?2 WHERE id = ?1').bind(app.id, Date.now()).run();
     expect(await ok(mark(app.org, app.scope))).toMatchObject({ changed: true });
   });
 

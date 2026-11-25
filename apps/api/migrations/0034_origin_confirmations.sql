@@ -43,7 +43,8 @@
 -- guarded_changes_second_person_insert, guarded_changes_second_person_no_replace, guarded_changes_second_person_update,
 -- guarded_changes_second_person_no_replace_update, guarded_changes_second_person_no_delete,
 -- guarded_changes_confirmation_gone, guarded_changes_platform_not_early, app_origins_platform_not_early,
--- app_origins_platform_not_early_update; and on `scopes`, scopes_app_user_ids_no_waiting_staff_origin. apps/api/test/migration-0034.test.ts checks every one is in the schema after
+-- app_origins_platform_not_early_update; and on `scopes`, scopes_app_user_ids_no_waiting_staff_origin and
+-- scopes_app_user_ids_insert_rules. apps/api/test/migration-0034.test.ts checks every one is in the schema after
 -- every later migration.
 --
 -- The database's clock is `(julianday('now') - 2440587.5) * 86400000.0` (ms), as 0028's and 0033's triggers read it.
@@ -274,8 +275,25 @@ WHEN OLD.app_user_ids = 0 AND NEW.app_user_ids = 1
 BEGIN
   SELECT RAISE(ABORT, 'scopes: an app of this scope has a staff web address not working yet')
    WHERE EXISTS (SELECT 1 FROM guarded_changes g JOIN apps a ON a.id = g.app_id
-                  WHERE a.scope_id = NEW.scope_id AND g.kind = 'origin_add' AND g.proposed_by_kind = 'hana' AND g.status = 'pending'
+                  WHERE a.scope_id = NEW.scope_id AND a.deleted_at IS NULL AND g.kind = 'origin_add' AND g.proposed_by_kind = 'hana' AND g.status = 'pending'
                     AND (g.active_from IS NULL OR g.active_from > ((julianday('now') - 2440587.5) * 86400000.0)));
+END;
+
+-- The same for a mark written by an insert that replaces the scope's row (INSERT OR REPLACE, an upsert: this runs
+-- before the conflict is resolved, so it sees the apps of the row being replaced; after PR 159's second review), and
+-- 0027's `scopes_app_user_ids_no_policy` rule with it (that update trigger had the same gap): no app of the scope with
+-- an auto-approve policy in force, waiting or proposed. A new scope has no app yet, so neither refuses it.
+CREATE TRIGGER scopes_app_user_ids_insert_rules BEFORE INSERT ON scopes
+WHEN NEW.app_user_ids = 1
+BEGIN
+  SELECT RAISE(ABORT, 'scopes: an app of this scope has a staff web address not working yet')
+   WHERE EXISTS (SELECT 1 FROM guarded_changes g JOIN apps a ON a.id = g.app_id
+                  WHERE a.scope_id = NEW.scope_id AND a.deleted_at IS NULL AND g.kind = 'origin_add' AND g.proposed_by_kind = 'hana' AND g.status = 'pending'
+                    AND (g.active_from IS NULL OR g.active_from > ((julianday('now') - 2440587.5) * 86400000.0)));
+  SELECT RAISE(ABORT, 'scopes: an app of this scope has an auto-approve policy in force or waiting')
+   WHERE EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = NEW.scope_id AND a.deleted_at IS NULL
+                  AND (a.auto_approve_policy IS NOT NULL OR a.auto_approve_pending IS NOT NULL
+                       OR EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = 'policy_set' AND g.status IN ('pending', 'active'))));
 END;
 
 -- ---- 0033's three earliest-time triggers, replaced: a recorded confirmation's time is the one earlier time allowed ----

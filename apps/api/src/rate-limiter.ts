@@ -48,12 +48,12 @@ export interface ConsoleAdmission {
 export type ConsoleLimit = 'budget_org' | 'budget' | 'budget_reserve' | 'link' | 'breaker_org' | 'breaker_global';
 
 /**
- * D927 (after PR 156's review, F3): one platform request's admission, on the same `console-rpc` object as the console's.
- * The platform's own keys for its org buckets, its own global bucket and its own breaker (M3); and the console's
- * global bucket (`console:bucket`) charged too, but never below `sharedFloor` (an ordinary call) or `sharedFloorKill`
- * (a kill switch), so the platform as a whole takes at most its own global rate and the console always keeps the top
- * of its bucket and the whole of its kill-switch reserve. The platform's kill switches dip only into the platform's own
- * reserve, each org at most `reserveShare` of it per window.
+ * D927 (after PR 156's review, F3; the second review, N2): one platform request's admission, on the same `console-rpc`
+ * object as the console's. The platform's own keys for its org buckets, its own global bucket and its own breaker
+ * (M3); and the console's global bucket (`console:bucket`) charged too. An ordinary platform call never takes it below
+ * `sharedFloor`, so the console always keeps the top of its bucket. A platform kill switch is never refused by it (a
+ * console flood must not hold back a platform kill switch): it is charged, clamped at 0, and bounded instead by the
+ * platform's own bucket, its reserve and each org's share of that (`reserveShare`), and by the breaker.
  */
 export interface PlatformAdmission {
   org: string;
@@ -63,8 +63,8 @@ export interface PlatformAdmission {
   limits: {
     perOrg: Bucket & { reserve: number };
     platform: Bucket & { reserve: number; reserveShare: { windowMs: number; max: number } };
-    /** The console's global bucket, as CONSOLE_LIMITS.global (its rate and burst), and the floors the platform leaves. */
-    shared: Bucket & { sharedFloor: number; sharedFloorKill: number };
+    /** The console's global bucket, as CONSOLE_LIMITS.global (its rate and burst), and the floor ordinary platform calls leave. */
+    shared: Bucket & { sharedFloor: number };
     breaker: { windowMs: number; perOrg: number; global: number };
   };
 }
@@ -356,10 +356,9 @@ export class RateLimiter extends DurableObject<Env> {
     if (r.breaker && bGlobal.length >= L.breaker.global) return refuse('breaker_global', until(bGlobal[0]));
     const orgFloor = r.killSwitch ? 0 : L.perOrg.reserve;
     const platformFloor = r.killSwitch ? 0 : L.platform.reserve;
-    const sharedFloor = r.killSwitch ? L.shared.sharedFloorKill : L.shared.sharedFloor;
     if (orgTokens - r.cost < orgFloor) return refuse('budget_org', (r.cost + orgFloor - orgTokens) / L.perOrg.ratePerS);
     if (platformTokens - r.cost < platformFloor) return refuse('budget_platform', (r.cost + platformFloor - platformTokens) / L.platform.ratePerS);
-    if (sharedTokens - r.cost < sharedFloor) return refuse('budget_shared', (r.cost + sharedFloor - sharedTokens) / L.shared.ratePerS);
+    if (!r.killSwitch && sharedTokens - r.cost < L.shared.sharedFloor) return refuse('budget_shared', (r.cost + L.shared.sharedFloor - sharedTokens) / L.shared.ratePerS);
     const reserveUsed = r.killSwitch ? Math.max(0, r.cost - Math.max(0, platformTokens - L.platform.reserve)) : 0;
     const shareKey = `platform:reserve:org:${r.org}`;
     const share = L.platform.reserveShare;
@@ -367,7 +366,7 @@ export class RateLimiter extends DurableObject<Env> {
     if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) return refuse('budget_reserve', (taken[0]!.at + share.windowMs - now) / 1000);
     kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
     kv.put('platform:bucket', { tokens: platformTokens - r.cost, at: now });
-    kv.put('console:bucket', { tokens: sharedTokens - r.cost, at: now });
+    kv.put('console:bucket', { tokens: Math.max(0, sharedTokens - r.cost), at: now });
     if (reserveUsed > 0) kv.put(shareKey, [...taken, { at: now, n: reserveUsed }]);
     if (r.breaker) {
       kv.put(bOrgKey, [...bOrg, now]);
@@ -378,7 +377,9 @@ export class RateLimiter extends DurableObject<Env> {
 
   /**
    * D927: a platform call admitted at `at` that changed nothing: its breaker slot back, and the platform reserve tokens
-   * it took back to the platform's reserve, charged to its org's own bucket instead (as consoleSettle does).
+   * it took back to the platform's reserve, charged to its org's own bucket instead (as consoleSettle does). The refund
+   * happens only for the reserve-share entry of that admission, found and removed, so a second settle of the same `at`
+   * refunds nothing (the second review, N6).
    */
   platformSettle(s: { org: string; at: number; breaker: boolean; reserveUsed: number; limits: PlatformAdmission['limits'] }, now: number = Date.now()): void {
     const kv = this.ctx.storage.kv;
@@ -390,6 +391,11 @@ export class RateLimiter extends DurableObject<Env> {
       }
     }
     if (s.reserveUsed > 0) {
+      const shareKey = `platform:reserve:org:${s.org}`;
+      const list = kv.get<{ at: number; n: number }[]>(shareKey) ?? [];
+      const i = list.findIndex((e) => e.at === s.at && e.n === s.reserveUsed);
+      if (i < 0) return;
+      kv.put(shareKey, [...list.slice(0, i), ...list.slice(i + 1)]);
       const fill = (key: string, b: Bucket) => {
         const st = kv.get<{ tokens: number; at: number }>(key) ?? { tokens: b.burst, at: now };
         return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
@@ -397,10 +403,6 @@ export class RateLimiter extends DurableObject<Env> {
       kv.put('platform:bucket', { tokens: Math.min(s.limits.platform.burst, fill('platform:bucket', s.limits.platform) + s.reserveUsed), at: now });
       const orgKey = `platform:bucket:org:${s.org}`;
       kv.put(orgKey, { tokens: fill(orgKey, s.limits.perOrg) - s.reserveUsed, at: now });
-      const shareKey = `platform:reserve:org:${s.org}`;
-      const list = kv.get<{ at: number; n: number }[]>(shareKey) ?? [];
-      const i = list.findIndex((e) => e.at === s.at);
-      if (i >= 0) kv.put(shareKey, [...list.slice(0, i), ...list.slice(i + 1)]);
     }
   }
 

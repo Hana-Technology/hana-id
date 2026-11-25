@@ -4,11 +4,11 @@
 //
 //   1. Per IP, requests not admitted: a `hit` on `platform:ip:<subject>` (30 a minute, not pinned; IPv4 by address,
 //      IPv6 by /48), given back once the request is admitted (after 8), so only failures and refusals use it. When that
-//      window is full the request goes on only if it names a key id this env has announced and not stopped (the
-//      isolate's list, known-keys.ts: a random id never reaches D1 or a key's object), under that key's own overflow
-//      window (`platform:keyfail:<keyId>`, pinned, 20 a minute); past that, a self-revoke still goes on under that key's
-//      pre-authentication window (10 a minute), so its signature is checked before any refusal. Otherwise 429 (M2;
-//      after PR 156's review, F2).
+//      window is full: a key id not on the isolate's list of announced keys (known-keys.ts) goes on to the one 401 with
+//      no D1 read and no key object (N4); a listed id goes on under its own overflow window for this IP subject
+//      (`platform:keyfail:<keyId>:<subject>`, pinned, 20 a minute, N1); past that, a self-revoke's signature is checked
+//      against the listed point (CPU only), a valid one going on and a failed one counted (60 a minute per key and
+//      subject, the CPU bound); anything else is 429 (M2; F2; after the second review, N1).
 //   2. An `Origin` header: 403 browser_refused, with no CORS header (never for browsers).
 //   3. The shapes, each matched in full, before any signature work: GET or POST (405); the one parsed path and query
 //      (400); a known route and its method (404, 405); every header together at most 16 KiB; a GET with no body, no
@@ -27,7 +27,8 @@
 //      (it can succeed once per key, so a thief filling the cap can't hold it back) and skips 8. Anything else reserves
 //      the nonce until timestamp + 120 s on `platform-nonce:<keyId>` (pinned), at most 300 fresh nonces a minute per key:
 //      a second use is 409 request_replayed, past the cap 429.
-//   8. The key's own windows (`platform:key:<keyId>`, pinned: 60 a minute, 2 000 a UTC day) and the platform's
+//   8. A valid self-revoke: only its own window (10 a minute on the key's object, N3). Anything else: the key's own
+//      windows (`platform:key:<keyId>`, pinned: 60 a minute, 2 000 a UTC day) and the platform's
 //      admission on the `console-rpc` object (rate-limiter.ts `platformAdmit`): the org's bucket, the platform's own
 //      global bucket, the console's global bucket above a floor the platform never takes, and the platform's own
 //      destructive-call breaker (M3, F3). An invalid self-revoke goes through 8 like any other call.
@@ -67,7 +68,7 @@ import { HotDb, PLATFORM_DB_LIMITS } from '../changes/db.ts';
 import { CONSOLE_LIMITS, CONSOLE_LIMITER, HOUR_MS, eventId } from '../changes/guard.ts';
 import { q } from '../changes/sql.ts';
 import { KEY_IN_FORCE } from './keys.ts';
-import { alertedThisMinute, knownKeyIds, noteAlerted } from './known-keys.ts';
+import { type KnownKey, type KnownKeys, alertedThisMinute, knownKeyIds, noteAlerted } from './known-keys.ts';
 import { PLATFORM_ROUTES, type PlatformRoute, type RouteAnswer } from './routes.ts';
 
 export const PLATFORM_PREFIX = '/v1/platform';
@@ -82,8 +83,13 @@ export const PLATFORM_WINDOWS = {
   ip: [{ name: 'fail:minute', windowMs: MIN, max: L.failuresPerIpPerMinute }],
   /** Requests naming this key checked while their IP's window was full (check 1, M2, F2), on the key's failure object. */
   overflow: [{ name: 'overflow:minute', windowMs: MIN, max: L.overflowPerKeyPerMinute }],
-  /** Self-revokes of this key checked while its overflow was full too (check 1, F2): the bound on that pre-auth work. */
-  revokePreauth: [{ name: 'revoke-preauth:minute', windowMs: MIN, max: L.revokePreauthPerKeyPerMinute }],
+  /**
+   * Self-revokes naming this key, from this IP subject, whose signature failed the check against the listed point past
+   * full windows (check 1, N1): the bound on that CPU work; a valid signature gives its slot back.
+   */
+  revokePreauth: [{ name: 'revoke-preauth:minute', windowMs: MIN, max: L.revokePreauthFailuresPerKeyPerMinute }],
+  /** Valid self-revokes of a key (N3): the bound while a revocation can't land. */
+  validRevokes: [{ name: 'revoke:minute', windowMs: MIN, max: L.validRevokesPerKeyPerMinute }],
   /** Fresh nonces per key (check 7: the nonce object's size bound; a valid self-revoke is outside it). */
   nonce: [{ name: 'nonce:minute', windowMs: MIN, max: L.noncesPerKeyPerMinute }],
   /** Requests admitted per key (check 8). */
@@ -99,15 +105,15 @@ export const PLATFORM_WINDOWS = {
  * The platform's admission on the `console-rpc` object (A5; after PR 156's review, F3): the org's own bucket (8
  * statements a second, burst 40, the last 10 for kill switches: both of its keys at their full 60 a minute); the
  * platform's own global bucket (10 statements a second, burst 60, the last 15 for kill switches, at most 8 of them an
- * org a minute); the console's global bucket charged too, but an ordinary platform call never takes it below 30 of
- * its 60 tokens and a platform kill switch never below 20 (the console's own kill-switch reserve, which the platform
- * never spends), so the console always keeps at least half its burst; its own breaker (10 per org, 30 across orgs an
- * hour). To confirm (the Tech Lead): the numbers.
+ * org a minute); the console's global bucket charged too: an ordinary platform call never takes it below 30 of its 60
+ * tokens, so the console always keeps at least half its burst, and a platform kill switch is never refused by it
+ * (charged, clamped at 0: N2), bounded by the platform's own reserve, each org's share of it and the breaker; its own
+ * breaker (10 per org, 30 across orgs an hour). To confirm (the Tech Lead): the numbers.
  */
 export const PLATFORM_LIMITS = {
   perOrg: { ratePerS: 8, burst: 40, reserve: 10 },
   platform: { ratePerS: 10, burst: 60, reserve: 15, reserveShare: { windowMs: MIN, max: 8 } },
-  shared: { ratePerS: CONSOLE_LIMITS.global.ratePerS, burst: CONSOLE_LIMITS.global.burst, sharedFloor: 30, sharedFloorKill: CONSOLE_LIMITS.global.reserve },
+  shared: { ratePerS: CONSOLE_LIMITS.global.ratePerS, burst: CONSOLE_LIMITS.global.burst, sharedFloor: 30 },
   breaker: { windowMs: HOUR_MS, perOrg: L.breaker.perOrgPerHour, global: L.breaker.globalPerHour },
 } as const satisfies PlatformAdmission['limits'];
 
@@ -127,8 +133,11 @@ export function platformIpSubject(raw: string | null): string {
 const ipObj = (env: Env, subject: string) => env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`platform:ip:${subject}`));
 export const nonceObj = (env: Env, keyId: string) => placedStub(env, env.RATE_LIMITER, `platform-nonce:${keyId}`);
 export const keyObj = (env: Env, keyId: string) => placedStub(env, env.RATE_LIMITER, `platform:key:${keyId}`);
-/** A key's failure object (F5): its overflow and pre-auth windows and its failure count, apart from its admitted traffic. */
-export const keyFailObj = (env: Env, keyId: string) => placedStub(env, env.RATE_LIMITER, `platform:keyfail:${keyId}`);
+/**
+ * A key's failure objects (F5): per IP subject, its overflow and pre-auth windows (N1); without one, its failure count;
+ * all apart from the object its admitted traffic uses.
+ */
+export const keyFailObj = (env: Env, keyId: string, subject?: string) => placedStub(env, env.RATE_LIMITER, subject === undefined ? `platform:keyfail:${keyId}` : `platform:keyfail:${keyId}:${subject}`);
 const consoleObj = (env: Env) => placedStub(env, env.RATE_LIMITER, CONSOLE_LIMITER);
 
 /**
@@ -328,30 +337,33 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
     return answer(o, requestId);
   };
 
-  // The isolate's list of announced key ids (F2, F5): asked at most once a request.
-  let known: Set<string> | null = null;
-  const isKnown = async (): Promise<boolean> => {
-    if (!idWellFormed) return false;
+  // The isolate's list of announced keys (F2, F5, N1): asked at most once a request.
+  let known: KnownKeys | null = null;
+  const listed = async (): Promise<KnownKey | undefined> => {
+    if (!idWellFormed) return undefined;
     known ??= await knownKeyIds(env);
-    return known.has(sentKeyId);
+    return known.get(sentKeyId);
   };
+  const isKnown = async (): Promise<boolean> => (await listed()) !== undefined;
 
-  // 1. The per-IP window of requests not admitted; past it, only a key id announced here, under its own windows.
+  // 1. The per-IP window of requests not admitted. Past it: an id not on the list goes on to the one 401 (N4: no D1
+  // read, no key object, the same answer as any authentication failure); a listed id under its own overflow window for
+  // this IP subject (N1: one address can't spend another's); past that too, a self-revoke is still checked, its
+  // signature against the listed point before any refusal (`preauth`, N1); anything else is 429.
   let slot: { obj: DurableObjectStub<RateLimiter>; limits: Limit[] } | null = null;
+  let preauth: { obj: DurableObjectStub<RateLimiter>; retryAfterS: number } | null = null;
   try {
     const ip = ipObj(env, subject);
     const r = await ip.hit([...PLATFORM_WINDOWS.ip], now);
     if (r.ok) slot = { obj: ip, limits: [...PLATFORM_WINDOWS.ip] };
-    else {
-      const full = () => finish(limited('platform:ip', r.retryAfterS, 'Too many failed requests from this address: try again in a minute'));
-      if (!(await isKnown())) return full();
-      const kf = keyFailObj(env, sentKeyId!);
+    else if (await isKnown()) {
+      const kf = keyFailObj(env, sentKeyId!, subject);
       const o = await kf.hit([...PLATFORM_WINDOWS.overflow], now);
       if (o.ok) slot = { obj: kf, limits: [...PLATFORM_WINDOWS.overflow] };
-      else if (revokePath && (await kf.hit([...PLATFORM_WINDOWS.revokePreauth], now)).ok) slot = { obj: kf, limits: [...PLATFORM_WINDOWS.revokePreauth] };
+      else if (revokePath) preauth = { obj: kf, retryAfterS: r.retryAfterS };
       else {
         log({ event: 'platform', requestId, code: 'key_overflow_full', platformKeyId: sentKeyId!, ...(prefix ? { ipPrefix: prefix } : {}) }, 'warn');
-        return full();
+        return finish(limited('platform:ip', r.retryAfterS, 'Too many failed requests from this address: try again in a minute'));
       }
     }
   } catch {
@@ -410,19 +422,6 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   // 5. The key: on the announced list (else no D1 read), in force here, its point importing, the signature verifying.
   const body = method === 'GET' ? await readCapped(request, 0) : await readCapped(request, PLATFORM_BODY_MAX);
   if (body === null) return finish(refusal('bad_request', method === 'GET' ? 'A GET has no body' : `The body is larger than ${PLATFORM_BODY_MAX} bytes`));
-  const db = new HotDb(env.DB, PLATFORM_DB_LIMITS);
-  let row: AuthRow | null = null;
-  try {
-    if (await isKnown()) {
-      row = await db.first<AuthRow>(
-        q`SELECT k.id, k.org_id, k.label, k.thumbprint, k.scopes_json, k.active_from, k.expires_at, k.public_key, ${KEY_IN_FORCE('k', now)} AS in_force,
-                 COALESCE(po.enabled, 0) AS enabled, COALESCE(po.frozen, 0) AS frozen, po.max_apps, po.creations_per_day, po.proposals_per_day
-            FROM platform_keys k LEFT JOIN platform_orgs po ON po.org_id = k.org_id WHERE k.id = ${keyId}`,
-      );
-    }
-  } catch {
-    return finish(refusal('internal', 'Internal error'));
-  }
   const message = utf8(
     platformRequestMessage({
       envName: env.ENV_NAME,
@@ -436,6 +435,38 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
       bodySha256Hex: await bodySha256Hex(body),
     }),
   );
+  // A self-revoke past full windows (N1): its signature against the listed point, CPU only, no D1 read. A valid one
+  // goes on to the real check 5; a failed one is counted on this key and IP subject's failed-verification window, and a
+  // full window refuses further ones without verifying (the CPU bound). Never charged for a valid signature.
+  if (preauth) {
+    try {
+      const entry = await listed();
+      const inForce = entry !== undefined && entry.activeFrom !== null && entry.activeFrom <= now && (entry.expiresAt === null || entry.expiresAt > now);
+      const point = inForce ? await importPoint(entry.point) : null;
+      const room = await preauth.obj.hit([...PLATFORM_WINDOWS.revokePreauth], now);
+      if (!room.ok) {
+        log({ event: 'platform', requestId, code: 'revoke_preauth_full', platformKeyId: keyId, ...(prefix ? { ipPrefix: prefix } : {}) }, 'warn');
+        return finish(limited('platform:ip', preauth.retryAfterS, 'Too many failed requests from this address: try again in a minute'));
+      }
+      if (point && (await verifyWith(point, signature, message))) await preauth.obj.unhit([...PLATFORM_WINDOWS.revokePreauth], now);
+      else return finish(limited('platform:ip', preauth.retryAfterS, 'Too many failed requests from this address: try again in a minute'));
+    } catch {
+      log({ event: 'platform', requestId, outcome: 'error', code: 'ip_limiter_failed' }, 'error');
+    }
+  }
+  const db = new HotDb(env.DB, PLATFORM_DB_LIMITS);
+  let row: AuthRow | null = null;
+  try {
+    if (await isKnown()) {
+      row = await db.first<AuthRow>(
+        q`SELECT k.id, k.org_id, k.label, k.thumbprint, k.scopes_json, k.active_from, k.expires_at, k.public_key, ${KEY_IN_FORCE('k', now)} AS in_force,
+                 COALESCE(po.enabled, 0) AS enabled, COALESCE(po.frozen, 0) AS frozen, po.max_apps, po.creations_per_day, po.proposals_per_day
+            FROM platform_keys k LEFT JOIN platform_orgs po ON po.org_id = k.org_id WHERE k.id = ${keyId}`,
+      );
+    }
+  } catch {
+    return finish(refusal('internal', 'Internal error'));
+  }
   // Only a key in force whose stored point imports is ever verified against (F7); anything else, the dummy point.
   const real = row && row.in_force === 1 && row.public_key ? await importPoint(new Uint8Array(row.public_key)) : null;
   const verified = await verifyWith(real ?? (await importPoint(DUMMY_KEY))!, signature, message);
@@ -482,7 +513,17 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
     charged = false;
     lastUsed = false;
   };
-  if (!validRevoke) {
+  if (validRevoke) {
+    // N3: valid self-revokes of a key are counted too (10 a minute on its key object), so while a revocation can't land
+    // (a D1 error) they can't write rows and nonce markers without bound; only valid ones fill it, and one landing stops
+    // the key. A limiter error lets the stop go ahead.
+    try {
+      const v = await kobj.hit([...PLATFORM_WINDOWS.validRevokes], now);
+      if (!v.ok) return finish(limited(`platform:key:${v.limit}`, v.retryAfterS, 'This key’s stop was sent many times just now: check the key in the partner portal'));
+    } catch {
+      log({ event: 'platform', requestId, outcome: 'error', code: 'key_limiter_failed', platformKeyId: keyId }, 'error');
+    }
+  } else {
     const cost = problem === null ? route.cost : REFUSED_CALL_COST;
     let stage = 'key';
     try {

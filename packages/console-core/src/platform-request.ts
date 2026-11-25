@@ -78,12 +78,17 @@ export const PLATFORM_REQUEST_LIMITS = {
   perKeyPerDay: 2000,
   failuresPerIpPerMinute: 30,
   /**
-   * Requests naming one key id announced here, from an IP whose failure window is full: checked anyway, so a valid key
-   * still gets in (M2; after PR 156's review, F2). A random or unknown key id gets no overflow at all.
+   * Requests naming one key id announced here, from one IP subject whose failure window is full: checked anyway, so a
+   * valid key still gets in (M2; F2, per key and IP subject since the second review, N1).
    */
   overflowPerKeyPerMinute: 20,
-  /** Self-revokes of one key from an IP whose window and the key's overflow are both full: still checked (F2). */
-  revokePreauthPerKeyPerMinute: 10,
+  /**
+   * Self-revokes naming one key from one IP subject, past full windows, whose signature fails the check against the
+   * key's listed point (N1): the CPU bound. A valid signature is never counted, and always goes on to check 5.
+   */
+  revokePreauthFailuresPerKeyPerMinute: 60,
+  /** Valid self-revokes of one key a minute (N3): bounds them while a revocation can't land (a D1 error). */
+  validRevokesPerKeyPerMinute: 10,
   /** Fresh nonces one key may hold a minute (the nonce object's size bound: 5 times the per-key rate); a valid self-revoke is outside it (F1). */
   noncesPerKeyPerMinute: 300,
   /** Failed signatures for one known key id in a minute that raise a `platform_auth_failures` event. */

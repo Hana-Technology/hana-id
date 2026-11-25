@@ -13,6 +13,7 @@ import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { admitMemberCall } from '../src/changes/guard.ts';
 import { HotDb } from '../src/changes/db.ts';
+import { isLocalTestEnv } from '../src/guarded/config.ts';
 import { placedStub } from '../src/placement.ts';
 import { DUMMY_KEY, PLATFORM_LIMITS, PLATFORM_WINDOWS, UNAUTHENTICATED_MESSAGE, ipPrefix, isPlatformPath, platformIpSubject } from '../src/platform/request.ts';
 import { PLATFORM_ROUTES, platformRequestId } from '../src/platform/routes.ts';
@@ -37,9 +38,9 @@ async function failIp(ip: string, now: number) {
   const subject = `v4:${ip}`;
   for (let i = 0; i < PLATFORM_REQUEST_LIMITS.failuresPerIpPerMinute; i++) await limiter(`platform:ip:${subject}`).hit([...PLATFORM_WINDOWS.ip], now);
 }
-/** Fills a key's own overflow window (as 20 requests naming it from a full IP would). */
-async function fillKeyOverflow(keyId: string, now: number) {
-  for (let i = 0; i < PLATFORM_REQUEST_LIMITS.overflowPerKeyPerMinute; i++) await placedStub(env, env.RATE_LIMITER, `platform:keyfail:${keyId}`).hit([...PLATFORM_WINDOWS.overflow], now);
+/** Fills a key's own overflow window for one IP subject (as 20 requests naming it from that full IP would). */
+async function fillKeyOverflow(keyId: string, subject: string, now: number) {
+  for (let i = 0; i < PLATFORM_REQUEST_LIMITS.overflowPerKeyPerMinute; i++) await placedStub(env, env.RATE_LIMITER, `platform:keyfail:${keyId}:${subject}`).hit([...PLATFORM_WINDOWS.overflow], now);
 }
 const events = (kind: string, org: string) => rows<{ id: string; detail_json: string }>('SELECT id, detail_json FROM security_events WHERE kind = ?1 AND org_id = ?2', kind, org);
 const noCors = (headers: [string, string][]) => expect(headers.filter(([k]) => k.startsWith('access-control-'))).toEqual([]);
@@ -104,7 +105,7 @@ describe('every refusal in A3’s order, with its code', () => {
     // 1. The IP's window full and the key's own overflow full: 429, whatever else is wrong.
     const ip = freshIp();
     await failIp(ip, now);
-    await fillKeyOverflow(k.id, now);
+    await fillKeyOverflow(k.id, `v4:${ip}`, now);
     let r: Omit<Sent, 'request'> = await send(k, { now, ip, method: 'PUT', path: '/v1/platform//x', headers: { origin: 'https://evil.example' } });
     expect([r.status, r.body.code, r.body.limit]).toEqual([429, 'rate_limited', 'platform:ip']);
     expect(Number(r.res.headers.get('retry-after'))).toBeGreaterThan(0);
@@ -441,13 +442,13 @@ describe('the per-IP window counts only requests not admitted (M2)', () => {
     // Someone else fails from the same IP until its window is full...
     const stranger = { id: 'pkc_7Hq2Vx9Lm4Rt8Ko', privateKey: (await keyPair()).privateKey };
     for (let i = 0; i < PLATFORM_REQUEST_LIMITS.failuresPerIpPerMinute; i++) expect((await send(stranger, { now, ip })).status).toBe(401);
-    // ... then a random key id from it is refused at check 1, with no D1 read; the valid key is still admitted, through its own overflow.
+    // ... then a random key id from it gets the one 401 (N4), with no D1 read; the valid key is still admitted, through its own overflow.
     const reads = vi.spyOn(HotDb.prototype, 'first');
-    expect((await send(stranger, { now, ip })).body.limit).toBe('platform:ip');
+    expect((await send(stranger, { now, ip })).body.code).toBe('unauthenticated');
     expect(reads).not.toHaveBeenCalled();
     for (let i = 0; i < 10; i++) expect((await send(k, { now: now + 30_000 + i * 600, ip })).status, String(i)).toBe(200);
     // Admitted requests give their overflow slot back, so it never fills with them.
-    expect(await placedStub(env, env.RATE_LIMITER, `platform:keyfail:${k.id}`).hit([...PLATFORM_WINDOWS.overflow], now)).toMatchObject({ ok: true });
+    expect(await placedStub(env, env.RATE_LIMITER, `platform:keyfail:${k.id}:v4:${ip}`).hit([...PLATFORM_WINDOWS.overflow], now)).toMatchObject({ ok: true });
     // Another IP is untouched.
     expect((await send(k, { now })).status).toBe(200);
   });
@@ -469,18 +470,75 @@ describe('the per-IP window counts only requests not admitted (M2)', () => {
     expect((await keyRow(k.id)).status).toBe('revoked');
   });
 
-  it('the self-revoke’s pre-auth window is strictly bounded per key id', async () => {
+  it('scenario B (the second review, N1): junk, bad signatures naming the key and forged revokes from one IP; the holder’s valid revoke from that IP still stops the key', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const ip = freshIp();
+    const other = (await keyPair()).privateKey;
+    const stranger = { id: 'pkc_7Hq2Vx9Lm4Rt8Kh', privateKey: other };
+    for (let i = 0; i < 30; i++) await send(stranger, { now, ip });
+    for (let i = 0; i < 20; i++) expect((await send(k, { now, ip, signWith: other })).status).toBe(401);
+    for (let i = 0; i < 10; i++) expect((await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke', signWith: other })).body.limit).toBe('platform:ip');
+    // The key's ordinary calls from that IP wait out the minute; its signed revoke doesn't.
+    expect((await send(k, { now, ip })).body.limit).toBe('platform:ip');
+    expect((await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(200);
+    expect((await keyRow(k.id)).status).toBe('revoked');
+  });
+
+  it('scenario B2: the same from the attacker’s own IP spends nothing of another IP’s, even one whose window is full', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const attacker = freshIp();
+    const victim = freshIp();
+    const other = (await keyPair()).privateKey;
+    const stranger = { id: 'pkc_7Hq2Vx9Lm4Rt8Kf', privateKey: other };
+    for (let i = 0; i < 30; i++) await send(stranger, { now, ip: attacker });
+    for (let i = 0; i < 20; i++) await send(k, { now, ip: attacker, signWith: other });
+    for (let i = 0; i < 70; i++) await send(k, { now, ip: attacker, method: 'POST', path: '/v1/platform/credential/revoke', signWith: other });
+    // The victim's IP is full of someone else's junk too: its key still gets in through its own overflow there.
+    await failIp(victim, now);
+    expect((await send(k, { now, ip: victim })).status).toBe(200);
+    expect((await send(k, { now, ip: victim, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(200);
+  });
+
+  it('the pre-auth check’s CPU bound: past 60 failed verifications a minute for one key and subject, more revokes from it are refused unverified (the residual)', async () => {
     const k = await seedKey();
     const now = freshNow();
     const ip = freshIp();
     await failIp(ip, now);
-    await fillKeyOverflow(k.id, now);
+    await fillKeyOverflow(k.id, `v4:${ip}`, now);
     const other = (await keyPair()).privateKey;
-    for (let i = 0; i < PLATFORM_REQUEST_LIMITS.revokePreauthPerKeyPerMinute; i++) expect((await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke', signWith: other })).status).toBe(401);
+    const verify = vi.spyOn(crypto.subtle, 'verify');
+    for (let i = 0; i < PLATFORM_REQUEST_LIMITS.revokePreauthFailuresPerKeyPerMinute; i++) await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke', signWith: other });
+    verify.mockClear();
     expect((await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke' })).body.limit).toBe('platform:ip');
+    expect(verify).not.toHaveBeenCalled();
     expect((await keyRow(k.id)).status).toBe('active');
     // From any IP whose window isn't full it works at once.
     expect((await send(k, { now, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(200);
+  });
+
+  it('a self-revoke verified against a stale list still fails check 5 once the key is stopped in D1', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const ip = freshIp();
+    await failIp(ip, now);
+    await fillKeyOverflow(k.id, `v4:${ip}`, now);
+    expect((await send(k, { now, ip })).body.limit).toBe('platform:ip'); // the list is loaded, with the key on it
+    await env.DB.prepare("UPDATE platform_keys SET status = 'revoked', revoked_at = ?2, revoked_by_kind = 'hana', revoked_by = 'x' WHERE id = ?1").bind(k.id, Date.now()).run();
+    expect((await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(401);
+  });
+
+  it('N4: past a full IP window, an id not on the list gets the same 401 as any authentication failure', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const ip = freshIp();
+    const other = (await keyPair()).privateKey;
+    const normal = await send({ id: 'pkc_7Hq2Vx9Lm4Rt8Ke', privateKey: other }, { now, ray: 'n4-ray' });
+    await failIp(ip, now);
+    const unknown = await send({ id: 'pkc_7Hq2Vx9Lm4Rt8Ke', privateKey: other }, { now, ip, ray: 'n4-ray' });
+    const listedBadSig = await send(k, { now, ip, ray: 'n4-ray', signWith: other });
+    for (const r of [unknown, listedBadSig]) expect([r.status, r.text, r.headers]).toEqual([normal.status, normal.text, normal.headers]);
   });
 
   it('a refusal after a valid signature (switch off, replay) counts as not admitted', async () => {
@@ -906,12 +964,22 @@ describe('F3: the platform’s own global bucket, and a floor in the console’s
     expect(admitted).toBe(10);
     const third = (await orgApp()).org;
     expect(await admitMemberCall(env, { org: third, cost: 8 }, now)).toMatchObject({ reserveUsed: 0 });
-    // A platform kill switch may go lower, never into the console's kill-switch reserve (20): here the console's own call
-    // just took the bucket to 22, so a platform kill switch of 3 waits; the console's kill switch doesn't.
-    expect(await obj.platformAdmit({ org: orgs[0]!, cost: 3, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_shared' });
+    // A platform kill switch is never refused by the console's bucket (N2), and the console's kill switch still goes through.
+    expect((await obj.platformAdmit({ org: orgs[0]!, cost: 3, killSwitch: true, limits: PLATFORM_LIMITS }, now)).ok).toBe(true);
     expect(await admitMemberCall(env, { org: third, cost: 5, killSwitch: true }, now)).toMatchObject({ reserveUsed: expect.any(Number) });
-    // A second later the bucket has refilled (30 a second) and the platform's kill switch goes through.
-    expect((await obj.platformAdmit({ org: orgs[0]!, cost: 3, killSwitch: true, limits: PLATFORM_LIMITS }, now + 1000)).ok).toBe(true);
+  });
+
+  it('N2: a sustained console flood never holds back a platform kill switch', async () => {
+    const now = freshNow();
+    const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
+    const consoleOrgs = await Promise.all(Array.from({ length: 4 }, async () => (await orgApp()).org));
+    const network = (await orgApp()).org;
+    let admitted = 0;
+    for (let t = 0; t < 10; t++) {
+      for (const org of consoleOrgs) for (let i = 0; i < 20; i++) await admitMemberCall(env, { org, cost: 1 }, now + t * 1000).catch(() => undefined);
+      if ((await obj.platformAdmit({ org: network, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now + t * 1000 + 1)).ok) admitted++;
+    }
+    expect(admitted).toBe(10);
   });
 
   it('the platform’s own rate holds across orgs: 10 statements a second over time', async () => {
@@ -1037,25 +1105,55 @@ describe('F10: through the real router, and what the routes may import', () => {
   });
 
   it('the routes import only what reading and stopping the key needs (a route confirming or accepting anything fails here)', () => {
-    const imports = [...routesSource.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+'([^']+)'/gu)].map((m) => ({ from: m[2]!, names: m[1]!.split(',').map((n: string) => n.trim().replace(/^type\s+/u, '')).filter(Boolean) }));
-    const ALLOWED: Record<string, string[]> = {
-      '@hana-id/console-core': ['Actor', 'PLATFORM_REQUEST_LIMITS', 'PlatformCredentialView', 'b64url', 'platformRevokeBody', 'randomBytes', 'sha256', 'utf8'],
-      '../env.ts': ['Env'],
-      '../changes/cas.ts': ['Writer', 'refuse'],
-      '../changes/db.ts': ['HotDb'],
-      './keys.ts': ['revokePlatformKeyNow'],
-      './request.ts': ['AuthRow'],
-    };
-    for (const i of imports) {
-      expect(Object.keys(ALLOWED), i.from).toContain(i.from);
-      for (const n of i.names) expect(ALLOWED[i.from], `${n} from ${i.from}`).toContain(n);
+    expect(importProblems(routesSource)).toEqual([]);
+  });
+
+  it('the allowlist check sees every import form (N6)', () => {
+    for (const [form, src] of [
+      ['namespace', "import * as rpc from '../rpc/console.ts';"],
+      ['default', "import ConsoleRpc from '../rpc/console.ts';"],
+      ['a name not allowed', "import { confirmPlatformKey } from './keys.ts';"],
+      ['re-export', "export { acceptPlatformKey } from './keys.ts';"],
+      ['re-export all', "export * from './keys.ts';"],
+      ['side effect', "import '../rpc/admin.ts';"],
+      ['dynamic', "const m = await import('./keys.ts');"],
+      ['multi-line', "import {\n  revokePlatformKeyNow,\n  confirmPlatformKey,\n} from './keys.ts';"],
+      ['a type not allowed', "import type { Answer } from '../rpc/common.ts';"],
+    ] as const) {
+      expect(importProblems(src).length, form).toBeGreaterThan(0);
     }
-    // No dynamic import, no other module, nothing named like a confirmation or an acceptance anywhere in it.
-    expect(routesSource).not.toMatch(/import\(/u);
-    expect(routesSource).not.toMatch(/\b(confirm|accept|approve|register|propose)[A-Z]\w*\(/u);
-    expect(routesSource).not.toMatch(/rpc\//u);
+    expect(importProblems("import { revokePlatformKeyNow } from './keys.ts';\nimport type { AuthRow } from './request.ts';")).toEqual([]);
   });
 });
+
+/** What in a module's source breaks the routes' import allowlist (every import and re-export form). */
+const ROUTE_IMPORTS: Record<string, string[]> = {
+  '@hana-id/console-core': ['Actor', 'PLATFORM_REQUEST_LIMITS', 'PlatformCredentialView', 'b64url', 'platformRevokeBody', 'randomBytes', 'sha256', 'utf8'],
+  '../env.ts': ['Env'],
+  '../changes/cas.ts': ['Writer', 'refuse'],
+  '../changes/db.ts': ['HotDb'],
+  './keys.ts': ['revokePlatformKeyNow'],
+  './request.ts': ['AuthRow'],
+};
+function importProblems(src: string): string[] {
+  const problems: string[] = [];
+  const named = /\b(?:import|export)\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/gu;
+  const seen = new Set<number>();
+  for (const m of src.matchAll(named)) {
+    seen.add(m.index!);
+    const allowed = ROUTE_IMPORTS[m[2]!];
+    if (!allowed) problems.push(`module ${m[2]}`);
+    for (const n of m[1]!.split(',').map((x) => x.trim().replace(/^type\s+/u, '').split(/\s+as\s+/u)[0]!.trim()).filter(Boolean)) if (!allowed?.includes(n)) problems.push(`${n} from ${m[2]}`);
+  }
+  // Any other `from '…'` (default, namespace, `export *`), a bare `import '…'`, a dynamic import or a require.
+  for (const m of src.matchAll(/\b(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/gu)) if (!seen.has(m.index!)) problems.push(`non-named import of ${m[1]}`);
+  for (const m of src.matchAll(/(?:^|[;\n])\s*import\s*['"]([^'"]+)['"]/gu)) problems.push(`side-effect import of ${m[1]}`);
+  if (/\bimport\s*\(/u.test(src)) problems.push('dynamic import');
+  if (/\brequire\s*\(/u.test(src)) problems.push('require');
+  if (/\b(confirm|accept|approve|register|propose)[A-Z]\w*\(/u.test(src)) problems.push('a confirm, accept, approve, register or propose call');
+  if (/rpc\//u.test(src)) problems.push('an RPC module');
+  return problems;
+}
 
 describe('F11: a failure after the key’s windows counted gives the charge back', () => {
   it('the platform admission failing: 503, and the key’s minute is untouched', async () => {
@@ -1074,5 +1172,45 @@ describe('F11: a failure after the key’s windows counted gives the charge back
     expect((await keyRow(k.id)).last_used_at).toBeNull();
     expect((await send(k, { now: now + 1000 })).status).toBe(200);
     expect((await keyRow(k.id)).last_used_at).toBe(now + 1000);
+  });
+});
+
+describe('the second review', () => {
+  it('N3: while the revocation can’t land, valid self-revokes are held to 10 a minute: at most 10 recorded, the key still active', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const count: DbCount = { reads: 0, batches: 0, statements: 0 };
+    // The revocation's batch (six statements) fails; the call log's (one) lands.
+    const db = countingDb(env.DB, count, { faultAt: 1 });
+    const statuses: number[] = [];
+    for (let i = 0; i < 15; i++) statuses.push((await send(k, { now: now + i, method: 'POST', path: '/v1/platform/credential/revoke', bindings: { DB: db } })).status);
+    expect(statuses.slice(0, PLATFORM_REQUEST_LIMITS.validRevokesPerKeyPerMinute)).toEqual(Array(PLATFORM_REQUEST_LIMITS.validRevokesPerKeyPerMinute).fill(500));
+    expect(statuses.slice(PLATFORM_REQUEST_LIMITS.validRevokesPerKeyPerMinute)).toEqual(Array(15 - PLATFORM_REQUEST_LIMITS.validRevokesPerKeyPerMinute).fill(429));
+    expect(await callsOf(k.id)).toHaveLength(PLATFORM_REQUEST_LIMITS.validRevokesPerKeyPerMinute);
+    expect((await keyRow(k.id)).status).toBe('active');
+    // Once D1 takes the write again, a valid revoke the next minute stops it.
+    expect((await send(k, { now: now + MIN, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(200);
+  });
+
+  it('N6: a second settle of the same admission refunds nothing', async () => {
+    const org = (await orgApp()).org;
+    const now = freshNow();
+    const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
+    // Take the platform's bucket down to its reserve (60 → 15, three kill switches of 15 from other orgs), then a kill switch that dips into it.
+    for (let i = 0; i < 3; i++) expect(await obj.platformAdmit({ org: (await orgApp()).org, cost: 15, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
+    const kill = await obj.platformAdmit({ org, cost: 6, killSwitch: true, limits: PLATFORM_LIMITS }, now);
+    expect(kill).toMatchObject({ ok: true, reserveUsed: expect.any(Number) });
+    const used = (kill as { reserveUsed: number }).reserveUsed;
+    expect(used).toBeGreaterThan(0);
+    const settle = () => obj.platformSettle({ org, at: now, breaker: false, reserveUsed: used, limits: PLATFORM_LIMITS }, now);
+    await settle();
+    await settle();
+    // One refund only: the reserve holds exactly what the kill switch took back, so an ordinary call still can't reach it.
+    expect(await obj.platformAdmit({ org: (await orgApp()).org, cost: 1, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
+  });
+
+  it('N6: one local* predicate for the platform minimum and the published-key rule', () => {
+    for (const e of [{ ENV_NAME: 'local-test', NETWORK: 'testnet' }, { ENV_NAME: 'local', NETWORK: 'testnet' }]) expect(isLocalTestEnv(e)).toBe(true);
+    for (const e of [{ ENV_NAME: 'local-test', NETWORK: 'mainnet' }, { ENV_NAME: 'sandbox-dev', NETWORK: 'testnet' }, { NETWORK: 'testnet' }, { ENV_NAME: 'xlocal', NETWORK: 'testnet' }]) expect(isLocalTestEnv(e)).toBe(false);
   });
 });

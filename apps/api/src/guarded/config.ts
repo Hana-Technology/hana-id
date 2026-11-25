@@ -24,8 +24,13 @@ export const fourEyesNetwork = (network: string | undefined): boolean => network
  * any other network (mainnet above all) gets the 24 h. The rest of the `local*` guard the spec proposes (the manifest
  * rule, the deploy wrapper's refusal) is piece P10's.
  */
+/** A `local*` test env (its name `local…` and its network `testnet`): the one predicate for the platform's exceptions. */
+export function isLocalTestEnv(env: { ENV_NAME?: string; NETWORK?: string }): boolean {
+  return typeof env.ENV_NAME === 'string' && /^local/u.test(env.ENV_NAME) && env.NETWORK === 'testnet';
+}
+
 export function platformMinDelayMs(env: { ENV_NAME?: string; NETWORK?: string }): number {
-  return typeof env.ENV_NAME === 'string' && /^local/u.test(env.ENV_NAME) && env.NETWORK === 'testnet' ? 0 : PLATFORM_MIN_DELAY_MS;
+  return isLocalTestEnv(env) ? 0 : PLATFORM_MIN_DELAY_MS;
 }
 
 export interface ChangeConfig {

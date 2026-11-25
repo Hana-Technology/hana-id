@@ -51,7 +51,7 @@ import {
   sortedScopes,
 } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
-import { fourEyesNetwork, platformMinDelayMs } from '../guarded/config.ts';
+import { fourEyesNetwork, isLocalTestEnv, platformMinDelayMs } from '../guarded/config.ts';
 import { type Writer, actorId, commitOn, committed, expectReplay, refuse, refuseReplay, replayRow, runWrite } from '../changes/cas.ts';
 import type { HotDb } from '../changes/db.ts';
 import { requireChangeConfig } from '../changes/origins.ts';
@@ -299,7 +299,7 @@ export async function registerPlatformKey(db: HotDb, env: Env, w: Writer, i: { o
   if (!parsed.ok) return refuse('bad_request', parsed.problem);
   const key = parsed.key;
   // A key whose private half is published (a test key) is refused outside a `local*` test env (F8).
-  if (KNOWN_PRIVATE_PLATFORM_KEYS[key.thumbprint] && !(/^local/u.test(env.ENV_NAME) && env.NETWORK === 'testnet')) {
+  if (KNOWN_PRIVATE_PLATFORM_KEYS[key.thumbprint] && !isLocalTestEnv(env)) {
     return refuse('bad_request', 'This public key’s private key is published (it is a test key). Make a new key pair and paste its public key.');
   }
   // WebCrypto's own import as a second check of the point (it refuses one off the curve).

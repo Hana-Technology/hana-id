@@ -281,6 +281,20 @@ describe('settings rows, tables, the pager', () => {
     expect(rows[1]!.querySelector('button')!.textContent).toBe('Propose an auto-approve policy');
   });
 
+  it('at phone width each settings row stacks, its buttons below its text; a row without a control keeps its text full width (D922)', async () => {
+    const s = boot('/orgs/org_lumen/apps/app_pay', orgsApi());
+    await vi.waitFor(() => expect(s.text()).toContain('Signing settings'));
+    const rows = [...s.main().querySelectorAll('.settings .jp-setting')];
+    // The rule that keeps a control its size picks the control, never a row's only (text) column.
+    const keepsSize = '.settings .jp-setting > :last-child:not(:first-child)';
+    expect(rows.map((r) => r.lastElementChild!.matches(keepsSize))).toEqual([false, true, false]);
+    expect(rows[2]!.children).toHaveLength(1);
+    const css = readFileSync(new URL('../public/app.css', import.meta.url), 'utf8');
+    expect(css).not.toMatch(/\.settings \.jp-setting > :last-child \{/u);
+    const narrow = /@media \(max-width: 760px\) \{\n  \.settings \.jp-setting \{ flex-direction: column; align-items: stretch;[^}]*\}\n  \.settings \.jp-setting > :last-child:not\(:first-child\) \{ display: flex; flex-wrap: wrap;[^}]*\}\n  \.settings \.jp-setting \.jp-btn \{ white-space: normal;/u;
+    expect(css).toMatch(narrow);
+  });
+
   it('numbers are right-aligned under a right-aligned header; the brand’s table keeps its header in view', async () => {
     const s = boot('/orgs/org_lumen', orgsApi());
     await vi.waitFor(() => expect(s.text()).toContain('Lumen checkout'));

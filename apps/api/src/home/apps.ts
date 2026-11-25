@@ -21,11 +21,12 @@ import { HotDb } from '../changes/db.ts';
 import { type Q, join, q, raw } from '../changes/sql.ts';
 import { logoUrl } from '../changes/views.ts';
 import type { Env } from '../env.ts';
-import { done, lap, limiter, newCtx, reject } from '../handlers.ts';
+import { done, ipKey, lap, limiter, newCtx, reject } from '../handlers.ts';
 import { isDevEnv } from '../origins.ts';
 import { type ConfigView, type ScopeView, cachedHomeScope, getConfig, readHomeScope } from '../views.ts';
 import { type HomeCoverage, homeCoverage } from './coverage.ts';
 import { homeGate } from './identity.ts';
+import { HOME_APPS_ALL_MAX, HOME_APPS_PER_SCOPE } from '@hana-id/core/home';
 
 export const HOME_APPS_ENDPOINT = '/v1/home/apps';
 /** docs/hana-home-spec.md "Rate limits". */
@@ -40,8 +41,18 @@ export const HOME_LIST_PAGE = 15;
 export const HOME_SCOPE_READS = 16;
 /** Reads at once, so a failure stops the rest of them. */
 const HOME_READ_BATCH = 5;
-export const HOME_APPS_PER_SCOPE = 10;
+/**
+ * A scope's apps in every answer (a list page, a search, one scope by `scopeId` or `appId`), and in the explicit full
+ * answer (`&all=1` with `scopeId` or `appId`, which Home sends only for "Show all apps"); one number with the page's
+ * parser (@hana-id/core/home). Every scope says how many apps it has (`appsTotal`) and how many of them are open
+ * (`appsOpen`), so Home never hides one without saying so (D922). The full answer reads about three times the rows a
+ * list answer does for a scope of 100 apps (each app's origins), so it has its own, tighter windows.
+ */
+export { HOME_APPS_PER_SCOPE, HOME_APPS_ALL_MAX } from '@hana-id/core/home';
 export const HOME_ORIGINS_PER_APP = 5;
+/** The full answer's windows (D922's review): per Home key and per IP, a minute each, apart from the list's. */
+export const HOME_APPS_ALL_PER_KEY_MINUTE = 6;
+export const HOME_APPS_ALL_PER_IP_MINUTE = 12;
 /** A search term, in characters, after trimming. */
 export const HOME_SEARCH_MIN = 2;
 export const HOME_SEARCH_MAX = 64;
@@ -50,14 +61,19 @@ const MINUTE = 60_000;
 const SCOPE_RE = /^[a-z0-9]{1,64}$/u;
 const APP_RE = /^app_[A-Za-z0-9_-]{1,64}$/u;
 
-type HomeQuery = { kind: 'first' } | { kind: 'cursor'; cursor: string } | { kind: 'search'; term: string } | { kind: 'scope'; scopeId: string } | { kind: 'app'; appId: string };
+type HomeQuery = { kind: 'first' } | { kind: 'cursor'; cursor: string } | { kind: 'search'; term: string } | { kind: 'scope'; scopeId: string; all: boolean } | { kind: 'app'; appId: string; all: boolean };
 
-/** At most one parameter: the page after a cursor, a search, or one scope or app (the partner's link). Null when malformed. */
+/**
+ * At most one parameter: the page after a cursor, a search, or one scope or app (the partner's link); and `all=1` beside
+ * `scopeId` or `appId` only, for every app of it (D922). Null when malformed.
+ */
 function parseQuery(url: URL): HomeQuery | null {
   const keys = [...url.searchParams.keys()];
   if (keys.length === 0) return { kind: 'first' };
-  if (keys.length > 1) return null;
+  const all = keys.length === 2 && keys[1] === 'all' && url.searchParams.getAll('all').length === 1 && url.searchParams.get('all') === '1';
+  if (keys.length > 2 || (keys.length === 2 && !all)) return null;
   const key = keys[0] as string;
+  if (all && key !== 'scopeId' && key !== 'appId') return null;
   const value = url.searchParams.get(key) as string;
   switch (key) {
     case 'cursor':
@@ -68,9 +84,9 @@ function parseQuery(url: URL): HomeQuery | null {
       return length >= HOME_SEARCH_MIN && length <= HOME_SEARCH_MAX ? { kind: 'search', term } : null;
     }
     case 'scopeId':
-      return SCOPE_RE.test(value) ? { kind: 'scope', scopeId: value } : null;
+      return SCOPE_RE.test(value) ? { kind: 'scope', scopeId: value, all } : null;
     case 'appId':
-      return APP_RE.test(value) ? { kind: 'app', appId: value } : null;
+      return APP_RE.test(value) ? { kind: 'app', appId: value, all } : null;
     default:
       return null;
   }
@@ -125,22 +141,45 @@ interface AppJson {
 interface ScopeRow {
   scope_id: string;
   environment: 'test' | 'live';
+  /** Up to one more app than the answer's limit (scopeColumns). */
   apps_json: string;
   held_json: string;
 }
 
 /**
- * Live apps first, then deleted ones, at most HOME_APPS_PER_SCOPE; origins in force, at most HOME_ORIGINS_PER_APP each.
- * `allApps`: true for the user's own scopes (the marker may have failed to write, and the directory is per scope, so it
- * can't say which app they used); otherwise only apps with a first login.
+ * Live apps first, then deleted ones, one more than `appsLimit` (the extra one says there are more: it is never sent);
+ * origins in force, at most HOME_ORIGINS_PER_APP each. `allApps`: true for the user's own scopes (the marker may have
+ * failed to write, and the directory is per scope, so it can't say which app they used); otherwise only apps with a
+ * first login. A scope with no more apps than the limit is counted from what this read; only a scope with more is
+ * counted, by `countApps` (D922's review: a count in this statement read every app row of every scope again).
  */
-const scopeColumns = (now: number, allApps: Q): Q =>
+const scopeColumns = (now: number, allApps: Q, appsLimit: number): Q =>
   q`s.scope_id, s.environment,
     (SELECT json_group_array(json_object('id', a.id, 'name', a.name, 'status', a.status, 'suspended_by', a.suspended_by, 'deleted_at', a.deleted_at,
         'logo_key', a.logo_key, 'google_web_client_id', a.google_web_client_id,
         'origins', json((SELECT json_group_array(o.origin) FROM (SELECT origin FROM app_origins WHERE app_id = a.id AND active_from <= ${now} ORDER BY origin LIMIT ${HOME_ORIGINS_PER_APP}) o))))
-       FROM (SELECT x.* FROM apps x WHERE x.scope_id = s.scope_id AND (x.first_login_at IS NOT NULL OR ${allApps}) ORDER BY (x.deleted_at IS NOT NULL), x.created_at, x.id LIMIT ${HOME_APPS_PER_SCOPE}) a) AS apps_json,
+       FROM (SELECT x.* FROM apps x WHERE x.scope_id = s.scope_id AND (x.first_login_at IS NOT NULL OR ${allApps}) ORDER BY (x.deleted_at IS NOT NULL), x.created_at, x.id LIMIT ${appsLimit + 1}) a) AS apps_json,
     (SELECT json_group_array(h.aud) FROM hana_held_clients h WHERE h.scope_id = s.scope_id AND h.provider = 'google') AS held_json`;
+
+/** Open: not deleted and not suspended (any bit, or the legacy status), as D912 counts the apps that can still ask. */
+const isOpen = (a: Pick<AppJson, 'deleted_at' | 'suspended_by' | 'status'>): boolean => a.deleted_at === null && a.suspended_by === 0 && a.status === 'active';
+
+/**
+ * How many apps each of these scopes has by the listing's rule, and how many are open: one statement, only for the
+ * scopes whose read came back over its limit (through the scope index; a row per app of those scopes).
+ */
+async function countApps(db: HotDb, scopeIds: readonly string[], mine: readonly string[]): Promise<Map<string, { total: number; open: number }>> {
+  const out = new Map<string, { total: number; open: number }>();
+  if (scopeIds.length === 0) return out;
+  const isMine = mine.length > 0 ? q`x.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})` : raw('0');
+  const rows = await db.all<{ scope_id: string; total: number; open: number }>(
+    q`SELECT x.scope_id, COUNT(*) AS total, SUM(CASE WHEN x.deleted_at IS NULL AND x.suspended_by = 0 AND x.status = 'active' THEN 1 ELSE 0 END) AS open
+        FROM apps x WHERE x.scope_id IN (${join(scopeIds.map((id) => q`${id}`), ', ')}) AND (x.first_login_at IS NOT NULL OR ${isMine})
+       GROUP BY x.scope_id`,
+  );
+  for (const r of rows) out.set(r.scope_id, { total: Number(r.total), open: Number(r.open) });
+  return out;
+}
 
 /** Test apps only in dev envs (D98 item 8). */
 const environmentFilter = (env: Env): Q => (isDevEnv(env.ENV_NAME) ? raw('1') : raw("s.environment = 'live'"));
@@ -151,7 +190,10 @@ const likeTerm = (term: string): string => `%${term.replace(/[\\%_]/gu, (c) => `
 /** The statement that picks this request's listed rows (D462); the quieter listing is D502's. */
 function listingQuery(query: Exclude<HomeQuery, { kind: 'first' }> | null, env: Env, now: number, mine: readonly string[]): Q {
   const isMine = mine.length > 0 ? q`s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})` : raw('0');
-  const select = q`SELECT ${scopeColumns(now, isMine)} FROM scopes s WHERE ${environmentFilter(env)}`;
+  // Only the explicit full answer (`all`) carries up to HOME_APPS_ALL_MAX apps; every other, HOME_APPS_PER_SCOPE a scope
+  // (each read one more, to know whether there are more).
+  const all = (query?.kind === 'scope' || query?.kind === 'app') && query.all;
+  const select = q`SELECT ${scopeColumns(now, isMine, all ? HOME_APPS_ALL_MAX : HOME_APPS_PER_SCOPE)} FROM scopes s WHERE ${environmentFilter(env)}`;
   // A scope a stranger may see: one app has had a login (D462).
   const launched = raw('EXISTS (SELECT 1 FROM apps x WHERE x.scope_id = s.scope_id AND x.first_login_at IS NOT NULL)');
   // Scope ids are sequential, so a quiet scope isn't found by one (D502): its link names an app id, which can't be walked.
@@ -205,11 +247,23 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
   lap(ctx, 'identity');
 
   const query = parseQuery(new URL(request.url));
-  if (!query) return reject(ctx, 400, 'bad_request', 'Give at most one of cursor, q (2 to 64 characters), scopeId or appId');
+  if (!query) return reject(ctx, 400, 'bad_request', 'Give at most one of cursor, q (2 to 64 characters), scopeId or appId (and all=1 with scopeId or appId)');
   if (query.kind === 'search') {
     try {
       const hit = await limiter(env, `home-key:${keyHash}`).hit([{ name: 'home:apps:search:key', windowMs: MINUTE, max: HOME_SEARCH_PER_KEY_MINUTE }], now);
       if (!hit.ok) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (searches per Home key per minute)', { 'retry-after': String(hit.retryAfterS) });
+    } catch {
+      return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
+    }
+  }
+  // The full answer (D922's review): its own windows per Home key and per IP, apart from the list's, so the larger read
+  // can't be asked for at the list's rate.
+  if ((query.kind === 'scope' || query.kind === 'app') && query.all) {
+    try {
+      const byKey = await limiter(env, `home-key:${keyHash}`).hit([{ name: 'home:apps:all:key', windowMs: MINUTE, max: HOME_APPS_ALL_PER_KEY_MINUTE }], now);
+      if (!byKey.ok) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (full app lists per Home key per minute)', { 'retry-after': String(byKey.retryAfterS) });
+      const byIp = await limiter(env, ipKey(request)).hit([{ name: 'home:apps:all:ip', windowMs: MINUTE, max: HOME_APPS_ALL_PER_IP_MINUTE }], now);
+      if (!byIp.ok) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (full app lists per IP per minute)', { 'retry-after': String(byIp.retryAfterS) });
     } catch {
       return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
     }
@@ -224,13 +278,15 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
 
   let overlay: Map<string, OverlayEntry>;
   let rows: ScopeRow[];
+  let counts: Map<string, { total: number; open: number }>;
   let nextCursor: string | null = null;
+  const appsLimit = (query.kind === 'scope' || query.kind === 'app') && query.all ? HOME_APPS_ALL_MAX : HOME_APPS_PER_SCOPE;
   try {
     const db = new HotDb(env.DB);
     overlay = await readOverlay(db, provider, sub);
     const mine = [...overlay.keys()];
     const statements: Q[] = [listingQuery(query.kind === 'first' ? null : query, env, now, mine)];
-    if (query.kind === 'first' && mine.length > 0) statements.push(q`SELECT ${scopeColumns(now, raw('1'))} FROM scopes s WHERE ${environmentFilter(env)} AND s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})`);
+    if (query.kind === 'first' && mine.length > 0) statements.push(q`SELECT ${scopeColumns(now, raw('1'), HOME_APPS_PER_SCOPE)} FROM scopes s WHERE ${environmentFilter(env)} AND s.scope_id IN (${join(mine.map((id) => q`${id}`), ', ')})`);
     const [listed, own] = await db.batch(statements);
     let listedRows = (listed?.results ?? []) as unknown as ScopeRow[];
     if (query.kind === 'first' || query.kind === 'cursor') {
@@ -243,6 +299,8 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
     }
     const ownRows = ((own?.results ?? []) as unknown as ScopeRow[]).sort((a, b) => mine.indexOf(a.scope_id) - mine.indexOf(b.scope_id));
     rows = [...ownRows, ...listedRows];
+    // Only a scope that came back over its limit is counted (one statement for all of them).
+    counts = await countApps(db, rows.filter((r) => (JSON.parse(r.apps_json || '[]') as unknown[]).length > appsLimit).map((r) => r.scope_id), mine);
   } catch {
     return reject(ctx, 503, 'home_directory_unavailable', 'The app list is unavailable, try again');
   }
@@ -252,7 +310,11 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
   lap(ctx, 'chain');
 
   const scopes = rows.map((r) => {
-    const apps = JSON.parse(r.apps_json || '[]') as AppJson[];
+    const read = JSON.parse(r.apps_json || '[]') as AppJson[];
+    const apps = read.slice(0, appsLimit);
+    const counted = read.length > appsLimit ? counts.get(r.scope_id) : undefined;
+    const total = Math.max(counted?.total ?? apps.length, apps.length);
+    const open = Math.min(counted?.open ?? apps.filter(isOpen).length, total);
     const view = views.get(r.scope_id);
     const route: { coverage: HomeCoverage | 'unknown'; googleClientId: string | null } =
       view === undefined
@@ -262,7 +324,11 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
             scope: view,
             config,
             heldClients: JSON.parse(r.held_json || '[]') as string[],
-            preferredClients: apps.filter((a) => a.deleted_at === null).flatMap((a) => (a.google_web_client_id ? [a.google_web_client_id] : [])),
+            // The first HOME_APPS_PER_SCOPE live apps, as every answer has them, so the full answer's route is the list's (D922's review).
+            preferredClients: apps
+              .filter((a) => a.deleted_at === null)
+              .slice(0, HOME_APPS_PER_SCOPE)
+              .flatMap((a) => (a.google_web_client_id ? [a.google_web_client_id] : [])),
             now,
           });
     const entry = overlay.get(r.scope_id);
@@ -273,6 +339,10 @@ export async function handleHomeApps(request: Request, env: Env, requestId: stri
       googleClientId: route.googleClientId,
       ...(entry ? { supportId: formatSupportId(entry.supportCode), addresses: entry.addresses } : {}),
       apps: apps.map((a) => ({ appId: a.id, name: a.name, status: appStatus(a), environment: r.environment, origins: a.origins, logoUrl: logoUrl(env.FILES_ORIGIN, a.logo_key) ?? null })),
+      // How many apps the scope has by the same rule, and how many of them are open, so a page can say "and N more" and
+      // whether some have closed (D922).
+      appsTotal: total,
+      appsOpen: open,
     };
   });
 

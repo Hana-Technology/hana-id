@@ -6,7 +6,8 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
 for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-25 (branch `feat/sodax-followups`, from `next`, not merged, not deployed: Sodax's public
+Last verified: 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
+in weibars on Hedera, D922); 2026-11-25 (branch `feat/sodax-followups`, from `next`, not merged, not deployed: Sodax's public
 source read at `7c1ff2e` (main) and the tags `@sdks@2.3.0` and `@sdks@2.4.0-rc.1`, and a local test against the
 published 2.3.0 packages, stock and with the Stellar change applied to their build output (D923): the summary, sections
 1, 2, 6 ("Sodax's other chains"), 7, 8, 9 and "Open", and the new sections 10 (Sodax's public source), 11 (the naming
@@ -273,8 +274,8 @@ networks (D910): "HyperEVM (real money)" and HYPE, "LightLink" and ETH, "Redbell
 "Hedera" and HBAR, "Robinhood Chain" and ETH, each checked against the chain's own docs and the public chain
 registries. Naming a chain is display only: test apps still refuse all of them, the mainnet demo stays Base and
 Stellar, and an unknown token or call on a named chain is still unknown. A transaction counts HBAR in 18 decimals
-(Hedera's relay takes weibars), which is how the window shows it; Sodax's own token list gives HBAR 8 (tinybars, as
-programs see it). Hedera's own account and fee rules through its relay: not checked.
+(Hedera's relay takes weibars), which is how the window shows it, its folded details and the auto-approve consent
+screen writing the raw number as weibars (D922); Sodax's own token list gives HBAR 8 (tinybars, as programs see it). Hedera's own account and fee rules through its relay: not checked.
 
 **Planned.** Every new chain needs the same pieces: a key from the user's existing secret, an address, a signer in
 our vault, a provider in our SDK and Sodax's wallet interface for it, an approval window that says in plain words what

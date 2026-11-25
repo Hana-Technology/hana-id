@@ -599,6 +599,18 @@ button.home-row:focus-visible {
   vertical-align: 1px;
 }
 
+/* D922: "and 12 more apps" after the names a row shows: Journear's words, quieter than the names. */
+.home-row-more {
+  font-weight: var(--jp-weight-regular);
+  color: var(--jp-fg-muted);
+}
+
+/* D922: under a wallet's apps, how many more use it, then "Show all apps". */
+.home-more-apps {
+  margin: 0 0 var(--jp-space-2);
+  color: var(--jp-fg-muted);
+}
+
 /* Where the app runs: there, but quieter than the name (D893: no longer the loudest line of the row). */
 .home-row-sub {
   color: var(--jp-fg-muted);

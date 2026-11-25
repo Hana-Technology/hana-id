@@ -34,6 +34,8 @@ export const APP_CHANGE_KINDS = [
   'raw_sign.off',
   'raw_sign.proposed',
   'scope.assigned',
+  // D915: a scope marked as shared by several partners' apps (one way).
+  'scope.app_user_ids',
   'settings.changed',
   'suspension.set',
   'suspension.cleared',
@@ -117,6 +119,7 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'org.frozen': 'Organisation frozen',
   'org.unfrozen': 'Organisation unfrozen',
   'scope.assigned': 'Scope moved to this organisation',
+  'scope.app_user_ids': 'Scope marked as a shared wallet',
   'migration.baseline': 'Migration baseline recorded',
   'owner_action.relayed': 'On-chain owner action sent',
   'owner_action.executed': 'On-chain owner action executed',

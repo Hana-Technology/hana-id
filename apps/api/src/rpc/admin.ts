@@ -12,6 +12,7 @@
 // the System status page (D425) `systemStatus` (staff only, read-only, no user data). D843 adds EVM gas sponsorship's
 // relayer: its view in `systemStatus`, `evmRelayDetail` and the staff tools `evmRelayAct` (staff only): this file is
 // the only one besides the relayer object and its staff module that may reach them (a source test in scripts/test).
+// D915 adds `setScopeAppUserIds`: staff mark a scope as shared by several partners' apps (one way).
 import {
   adminAppNamesInput,
   adminProfileNamesInput,
@@ -23,6 +24,7 @@ import {
   adminProposeChangeInput,
   adminSetSuspendedInput,
   assignScopeOrgInput,
+  setScopeAppUserIdsInput,
   cancelChangeInput,
   changesSinceInput,
   createAppInput,
@@ -82,6 +84,7 @@ import {
   markSecurityEventNotified,
   relayerPools,
   securityEvents,
+  setScopeAppUserIds,
   setSecurityContacts,
 } from '../changes/admin.ts';
 import { getApp, listApps, listChanges } from '../changes/apps.ts';
@@ -179,6 +182,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   assignScopeOrg(c: unknown) {
     return runRpc(this.env, 'admin.assignScopeOrg', assignScopeOrgInput, c, { actors: HANA }, ({ input, db, w }) => assignScopeOrg(db, this.env, w, input));
+  }
+
+  /** D915: marks a scope as shared by several partners' apps (one way); refused while any of its apps has a policy. */
+  setScopeAppUserIds(c: unknown) {
+    return runRpc(this.env, 'admin.setScopeAppUserIds', setScopeAppUserIdsInput, c, { actors: HANA }, ({ input, db, w }) => setScopeAppUserIds(db, w, input));
   }
 
   deleteApp(c: unknown) {

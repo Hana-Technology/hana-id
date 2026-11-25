@@ -208,6 +208,38 @@ describe('GET /v1/app (batch B)', () => {
     expect(errors.mock.calls.map(([line]) => JSON.parse(String(line)).event)).toContain('auto_approve_policy_invalid');
   });
 
+  it('serves no policy for an app that shares a wallet (D915), whatever D1 holds; an unmarked staff-created app is unchanged', async () => {
+    const policy = JSON.stringify(autoApprovePolicy('Direct write'));
+    // Unmarked, created by staff: the policy is served.
+    const plain = await seedApp();
+    chain({ [newAud()]: plain.scope });
+    await env.DB.prepare('UPDATE apps SET auto_approve_policy = ?2 WHERE id = ?1').bind(plain.id, policy).run();
+    expect(((await body(await get(appHeaders(plain)))).autoApprovePolicy as { label: string } | null)?.label).toBe('Direct write');
+    // A marked scope, then a policy written straight into D1 (in force, and pending past its time): none served, logged.
+    const app = await seedApp();
+    chain({ [newAud()]: app.scope });
+    await env.DB.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?1').bind(app.scope).run();
+    await env.DB.prepare('UPDATE apps SET auto_approve_policy = ?2 WHERE id = ?1').bind(app.id, policy).run();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await get(appHeaders(app));
+    expect(res.status).toBe(200);
+    expect((await body(res)).autoApprovePolicy).toBeNull();
+    const logged = errors.mock.calls.map(([line]) => JSON.parse(String(line)) as Record<string, unknown>).filter((l) => l.event === 'auto_approve_policy_shared_wallet');
+    expect(logged).toEqual([expect.objectContaining({ appId: app.id, code: 'scope_marked' })]);
+    expect(JSON.stringify(logged)).not.toContain('Direct write');
+    await env.DB.prepare('UPDATE apps SET auto_approve_policy = NULL, auto_approve_pending = ?2, auto_approve_effective_at = ?3 WHERE id = ?1').bind(app.id, policy, Date.now() - 1).run();
+    expect((await body(await get(appHeaders(app)))).autoApprovePolicy).toBeNull();
+    // An app the platform created, on an unmarked scope: none served either.
+    const platform = await seedApp();
+    chain({ [newAud()]: platform.scope });
+    await env.DB.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_by_kind) VALUES (?1, 'P', ?2, 'org_legacy', ?3, 'active', 'free', 'platform')").bind(`app_${uid()}`, platform.scope, `${platform.key}x`).run();
+    const pApp = (await env.DB.prepare("SELECT id, publishable_key AS key FROM apps WHERE scope_id = ?1 AND created_by_kind = 'platform'").bind(platform.scope).first<{ id: string; key: string }>())!;
+    await env.DB.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?1, ?2, ?3, 'test', 1)").bind(`key_${uid()}`, pApp.id, pApp.key).run();
+    await env.DB.prepare("INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, 0)").bind(pApp.id, ORIGIN).run();
+    await env.DB.prepare('UPDATE apps SET auto_approve_policy = ?2 WHERE id = ?1').bind(pApp.id, policy).run();
+    expect((await body(await get(appHeaders({ key: pApp.key })))).autoApprovePolicy).toBeNull();
+  });
+
   it('503 config_unavailable when the settings row cannot be read', async () => {
     const app = await seedApp();
     const aud = newAud();

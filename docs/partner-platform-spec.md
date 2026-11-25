@@ -17,6 +17,10 @@ across the network's partner sites). Built on the recommendation for who vouches
 adjusted after the Tech Lead has talked to the network. This version folds in PR 139's security review (its findings
 are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece it gates).
 
+**Piece P0 built** (2026-11-25, branch `feat/shared-scope-rules`, D915): the shared-scope rules of the P0 row below.
+Its current state is in `api.md`, `architecture.md`, `security.md` and `operations.md`; every other piece is still
+proposed.
+
 Last verified: 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
 Lead's confirmations of D914's proposals and the four-eyes rule for staff proposals on a shared scope (D917) folded
 into A2, A3, A6, A7, A8, A11, A14, A15 and the build plan; the admin portal's identity checked in

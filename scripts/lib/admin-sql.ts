@@ -129,6 +129,11 @@ export function scopeSql(scopeId: string): string {
   return sql`SELECT scope_id, org_id, environment, first_session_at, created_at, assigned_at FROM scopes WHERE scope_id = ${scopeId}`;
 }
 
+/** D915: a scope's mark (migration 0026; ask SHARED_SCOPE_COLUMNS_SQL first). */
+export function scopeMarkSql(scopeId: string): string {
+  return sql`SELECT app_user_ids FROM scopes WHERE scope_id = ${scopeId}`;
+}
+
 export function planExistsSql(plan: string): string {
   return sql`SELECT id FROM plans WHERE id = ${plan}`;
 }
@@ -289,10 +294,16 @@ export interface NewApp {
  * only on a scope this call creates, granted or not at the announcement), and the ledger. The 0006 triggers refuse
  * another org or environment for an existing scope. Nothing to guard: every row is new.
  */
-export function createAppWrite(app: NewApp, opts: { createScope: boolean; now: number; actor: CliActor; requestId: string }): HotWrite {
+export function createAppWrite(app: NewApp, opts: { createScope: boolean; now: number; actor: CliActor; requestId: string; sharedWallet?: boolean }): HotWrite {
   const { now, actor, requestId } = opts;
   const s: string[] = [];
-  if (opts.createScope) {
+  if (opts.createScope && opts.sharedWallet) {
+    // D915 after PR 145's review: the new scope marked as shared in its first row, with the mark's own ledger row.
+    s.push(
+      sql`INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES (${app.scopeId}, ${app.orgId}, ${app.environment}, ${null}, ${now}, ${now}, ${1})`,
+      ledger({ at: now, orgId: app.orgId, appId: null, scopeId: app.scopeId, kind: 'scope.app_user_ids', detail: { appUserIds: 1, apps: [app.id], atCreate: true }, actor, requestId: `${requestId}:mark` }),
+    );
+  } else if (opts.createScope) {
     s.push(sql`INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (${app.scopeId}, ${app.orgId}, ${app.environment}, ${null}, ${now}, ${now})`);
   }
   s.push(
@@ -313,7 +324,7 @@ export function createAppWrite(app: NewApp, opts: { createScope: boolean; now: n
       appId: app.id,
       scopeId: app.scopeId,
       kind: 'app.created',
-      detail: { name: app.name, plan: app.plan, environment: app.environment, keyId: app.keyId, scopeCreated: opts.createScope, waiver, origins: app.origins },
+      detail: { name: app.name, plan: app.plan, environment: app.environment, keyId: app.keyId, scopeCreated: opts.createScope, waiver, origins: app.origins, ...(opts.sharedWallet ? { appUserIds: true } : {}) },
       actor,
       requestId,
     }),

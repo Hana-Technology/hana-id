@@ -169,6 +169,8 @@ export const orgChanges = (orgId: string) => ({
 
 export const appDetail = (orgId: string, appId: string) => {
   const live = appId === 'app_01jcblumen';
+  // D915: the test app's scope is marked as shared by several partners' apps (auto-approve off, no proposal form).
+  const shared = appId === 'app_01jcblumentest';
   return {
     app: {
       id: appId,
@@ -194,8 +196,11 @@ export const appDetail = (orgId: string, appId: string) => {
       settings: {
         rawSign: 'off',
         persistence: 'session',
-        policy: { v: 1, label: 'Small payments', maxConsentMs: 2_592_000_000, limits: { perDayCount: 20 }, stellar: { maxAmount: '50' } },
+        policy: shared ? null : { v: 1, label: 'Small payments', maxConsentMs: 2_592_000_000, limits: { perDayCount: 20 }, stellar: { maxAmount: '50' } },
       },
+      sharedScope: shared,
+      createdByKind: 'hana',
+      sharedWallet: shared,
       keys: [
         { id: 'key_01jdb7', key: 'pk_live_previewfakekey000001', createdAt: ago(DAY), createdBy: 'aisyah.rahman@lumenpay.example', revokedAt: null },
         { id: 'key_01jcb1', key: 'pk_live_previewfakekey000002', createdAt: ago(19 * DAY), createdBy: 'tze@hana.example', revokedAt: NOW + 6 * DAY },

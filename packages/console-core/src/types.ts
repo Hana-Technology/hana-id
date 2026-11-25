@@ -2,6 +2,7 @@
 // validate with them) with their TS types. The enum lists are the single source for the databases' CHECK lists: the
 // migration tests compare them.
 import { urlString, z } from '@hana-id/env/zod';
+import { APP_CREATOR_KINDS } from './shared-scope.ts';
 
 // ---- enums shared with the migrations ----
 
@@ -246,6 +247,14 @@ export const appDetail = appSummary
         mainnetDemo: z.boolean().optional(),
       })
       .strict(),
+    /**
+     * D915 (migration 0026): the app's scope is marked as shared by several partners' apps (`scopes.app_user_ids`), and
+     * who created the app. `sharedWallet` is `autoApproveRefused` of the two: no auto-approve policy, and the screens
+     * hide the policy editor. An API before 0026's build omits all three.
+     */
+    sharedScope: z.boolean().optional(),
+    createdByKind: z.enum(APP_CREATOR_KINDS).optional(),
+    sharedWallet: z.boolean().optional(),
     changes: z.array(guardedChange),
     keys: z.array(keyView),
   })

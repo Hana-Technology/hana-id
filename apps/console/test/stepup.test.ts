@@ -5,7 +5,7 @@
 // a digest for another action or session, a stale iat, a sub mismatch, reuse, an expired action, a revoked session
 // between creation and callback, a flow finished in another browser; console-only kinds consume, change and audit
 // atomically, and a lost race writes nothing.
-import { hex, labelChangeDigest, originChangeDigest, ownerActionNonce, nonceOf, sha256, stepUpDigest, utf8 } from '@hana-id/console-core';
+import { SHARED_WALLET_NO_AUTO_APPROVE, hex, labelChangeDigest, originChangeDigest, ownerActionNonce, nonceOf, sha256, stepUpDigest, utf8 } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { actionOf, breathe, createAction, getAs, member, postAs, stepUp } from './c10.ts';
@@ -140,6 +140,31 @@ describe('policy.set: validated in the console, the consent preview data, propos
     expect(r).toMatchObject({ status: 400, body: { error: { code: 'policy_invalid' } } });
     const c = await postAs(m, `/api/orgs/${m.org}/apps/${app.id}/policy/check`, { policy: { v: 2 } });
     expect(c.status).toBe(400);
+  });
+});
+
+describe('policy.set for an app that shares a wallet (D915)', () => {
+  it('refused before any sign-in on a marked scope and for a platform-created app, with the words; an unmarked app is unchanged', async () => {
+    const { m, app } = await ownerWithApp();
+    await env.HOT_DB.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?').bind(app.scope).run();
+    const r = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'policy.set', params: { appId: app.id, policy: policyJson() } });
+    expect(r).toMatchObject({ status: 400, body: { error: { code: 'policy_invalid', message: SHARED_WALLET_NO_AUTO_APPROVE } } });
+    // A platform-created app on another, unmarked scope of the org.
+    const other = await ownerWithApp();
+    const key = `pk_test_Platform${Date.now().toString(36)}abcdefgh`.slice(0, 33);
+    await env.HOT_DB.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_by_kind) VALUES ('app_platformc10', 'Platform', ?, ?, ?, 'active', 'free', 'platform')").bind(other.app.scope, other.m.org, key).run();
+    const p = await postAs(other.m, `/api/orgs/${other.m.org}/actions`, { kind: 'policy.set', params: { appId: 'app_platformc10', policy: policyJson() } });
+    expect(p).toMatchObject({ status: 400, body: { error: { code: 'policy_invalid', message: SHARED_WALLET_NO_AUTO_APPROVE } } });
+    // The staff-created app beside it is unchanged: its action is created, waiting for the sign-in.
+    const ok = await postAs(other.m, `/api/orgs/${other.m.org}/actions`, { kind: 'policy.set', params: { appId: other.app.id, policy: policyJson() } });
+    expect(ok.status).toBe(200);
+    // And the API's own answer, should the sign-in still run on a scope marked after the action was made.
+    const late = await ownerWithApp();
+    const a = await createAction(late.m, 'policy.set', { appId: late.app.id, policy: policyJson() });
+    await env.HOT_DB.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?').bind(late.app.scope).run();
+    await stepUp(google, late.m, a.id);
+    expect((await actionOf(late.m, a.id)).body).toMatchObject({ status: 'failed' });
+    expect(await hotChanges(late.app.id)).toEqual([]);
   });
 });
 

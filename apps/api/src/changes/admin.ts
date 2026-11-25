@@ -3,7 +3,7 @@
 // never ConsoleRpc), and the feeds the admin Worker reads (scopes, the change ledger, security events, the relayer
 // pools' public keys).
 import { KeyPair } from '@near-js/crypto';
-import { type Environment, LEGACY_ORG_ID, newId, newPublishableKey } from '@hana-id/console-core';
+import { type Environment, LEGACY_ORG_ID, SHARED_SCOPE_POLICY_IN_THE_WAY, SHARED_SCOPE_TEST_ONLY, newId, newPublishableKey } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { POOLS, type Pool, parseRelayerKeys, poolsSharingAKey } from '../relayer-config.ts';
 import { getApp } from './apps.ts';
@@ -24,12 +24,13 @@ interface ScopeRead {
   org_id: string | null;
   environment: Environment | null;
   assigned_at: number | null;
+  app_user_ids: number | null;
 }
 
 const readScope = (db: HotDb, w: Writer, scopeId: string, orgId: string) =>
   db.first<ScopeRead>(
     q`SELECT ${replayRow(w.requestId)} AS replay, (SELECT COUNT(*) FROM org_security_contacts WHERE org_id = ${orgId}) AS contacts,
-             s.scope_id, s.org_id, s.environment, s.assigned_at
+             s.scope_id, s.org_id, s.environment, s.assigned_at, s.app_user_ids
         FROM (SELECT 1) LEFT JOIN scopes s ON s.scope_id = ${scopeId}`,
   );
 
@@ -40,12 +41,17 @@ const readScope = (db: HotDb, w: Writer, scopeId: string, orgId: string) =>
  * staff proposals. The `no_session` waiver candidate is recorded only on the origins of a scope row this call creates
  * (granted or not when the notice is acked, lifecycle.ts). On an existing scope, initial origins wait for
  * `appChangeDelayMs` after its last assignment like every staff proposal (D206).
+ *
+ * `appUserIds` (D915 after PR 145's review): the scope this call creates is marked as shared in the same batch (its
+ * row inserted with the mark, and a `scope.app_user_ids` ledger row beside `app.created`), so a network's scope can be
+ * marked before its first partner app. A test scope only (`env_mismatch`); on an existing scope it must already be
+ * marked (`conflict`: mark it with setScopeAppUserIds, which checks its apps' policies).
  */
 export async function createApp(
   db: HotDb,
   env: Env,
   w: Writer,
-  i: { orgId: string; scopeId: string; environment: Environment; name: string; origins: readonly string[]; orgOwnerSubs: readonly string[] },
+  i: { orgId: string; scopeId: string; environment: Environment; name: string; origins: readonly string[]; orgOwnerSubs: readonly string[]; appUserIds?: boolean },
 ) {
   expectReplay(w, ['app.created']);
   const config = requireChangeConfig(env);
@@ -61,6 +67,9 @@ export async function createApp(
     if (s!.environment !== i.environment) refuse('env_mismatch', `The scope is a ${s!.environment} scope`);
     if (origins.length && s!.assigned_at! > w.now - config.delayMs) refuse('conflict', 'The scope was assigned to this org less than appChangeDelayMs ago: staff proposals wait for it');
   }
+  const mark = i.appUserIds === true;
+  if (mark && i.environment !== 'test') refuse('env_mismatch', SHARED_SCOPE_TEST_ONLY);
+  if (mark && !createScope && s!.app_user_ids !== 1) refuse('conflict', 'The scope exists and isn’t marked as shared: mark it from one of its apps first (that checks their auto-approve policies)');
   await requireOwnersInOrg(env, i.scopeId, i.orgOwnerSubs);
 
   const appId = newId('app');
@@ -70,21 +79,28 @@ export async function createApp(
   const changes = origins.map((origin) => ({ changeId: newId('guardedChange'), origin }));
   const scopeHolds: Q = createScope
     ? q`NOT EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId})`
-    : q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = ${i.environment} AND assigned_at = ${s!.assigned_at})`;
+    : q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = ${i.environment} AND assigned_at = ${s!.assigned_at}${mark ? raw(' AND app_user_ids = 1') : raw('')})`;
   const when = committed(w.requestId);
   const list = JSON.stringify(changes);
   const stmts: Q[] = [
     commitOn(
       w,
-      { kind: 'app.created', detail: { name, plan: DEFAULT_PLAN, environment: i.environment, keyId, scopeCreated: createScope, waiver, origins: changes } },
+      { kind: 'app.created', detail: { name, plan: DEFAULT_PLAN, environment: i.environment, keyId, scopeCreated: createScope, waiver, origins: changes, ...(mark ? { appUserIds: true } : {}) } },
       { orgId: i.orgId, appId, scopeId: i.scopeId },
       q`${scopeHolds} AND EXISTS (SELECT 1 FROM org_security_contacts WHERE org_id = ${i.orgId})`,
     ),
   ];
   if (createScope) {
     stmts.push(
-      q`INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) SELECT ${i.scopeId}, ${i.orgId}, ${i.environment}, NULL, ${w.now}, ${w.now} WHERE ${when}`,
+      q`INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) SELECT ${i.scopeId}, ${i.orgId}, ${i.environment}, NULL, ${w.now}, ${w.now}, ${mark ? 1 : 0} WHERE ${when}`,
     );
+    // The mark's own ledger row (drift reads it, and retention keeps it), under a request id derived from this one.
+    if (mark) {
+      stmts.push(
+        q`INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id)
+          SELECT ${w.now}, ${i.orgId}, NULL, ${i.scopeId}, 'scope.app_user_ids', ${JSON.stringify({ appUserIds: 1, apps: [appId], atCreate: true })}, ${w.actor.kind}, ${actorId(w.actor)}, NULL, ${`${w.requestId}:mark`} WHERE ${when}`,
+      );
+    }
   }
   stmts.push(
     q`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version)
@@ -128,6 +144,47 @@ export async function assignScopeOrg(db: HotDb, env: Env, w: Writer, i: { scopeI
     q`SELECT COUNT(*) AS n FROM apps WHERE scope_id = ${i.scopeId}`,
   ]);
   return { apps: (results[2]!.results[0] as { n: number }).n };
+}
+
+/** An app of scope `s` (not deleted) with an auto-approve policy in force, waiting in its columns, or proposed. */
+const SCOPE_HAS_POLICY = (scopeId: string): Q =>
+  q`EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = ${scopeId} AND a.deleted_at IS NULL
+              AND (a.auto_approve_policy IS NOT NULL OR a.auto_approve_pending IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = 'policy_set' AND g.status IN ('pending', 'active'))))`;
+
+/**
+ * AdminRpc.setScopeAppUserIds (D915; docs/partner-platform-spec.md P0, B3): Journear staff mark the org's scope as shared
+ * by several partners' apps (`scopes.app_user_ids` = 1). One way: there is no "off", and a scope already marked answers
+ * `{changed: false}` with nothing written. Refused (`conflict`) while any app of the scope has an auto-approve policy in
+ * force, waiting or proposed, in the plan read and again in the commit predicate (migration 0026's trigger is the
+ * backstop). Another org's scope, or none, is `not_found`; a live scope `env_mismatch` (D915 after PR 145's review: a
+ * live shared scope needs its own review first; a trigger refuses it too). The ledger row `scope.app_user_ids` lists
+ * the scope's apps.
+ */
+export async function setScopeAppUserIds(db: HotDb, w: Writer, i: { scopeId: string; orgId: string }): Promise<{ changed: boolean }> {
+  expectReplay(w, ['scope.app_user_ids'], null);
+  const r = await db.first<{ replay: string | null; org_id: string | null; environment: Environment | null; app_user_ids: number | null; has_policy: number }>(
+    q`SELECT ${replayRow(w.requestId)} AS replay, s.org_id, s.environment, s.app_user_ids, ${SCOPE_HAS_POLICY(i.scopeId)} AS has_policy
+        FROM (SELECT 1) LEFT JOIN scopes s ON s.scope_id = ${i.scopeId}`,
+  );
+  refuseReplay(r?.replay, w);
+  if (!r || r.org_id !== i.orgId) return refuse('not_found', 'No such scope in this organisation');
+  if (r.app_user_ids === 1) return { changed: false };
+  if (r.environment !== 'test') refuse('env_mismatch', SHARED_SCOPE_TEST_ONLY);
+  if (r.has_policy) refuse('conflict', SHARED_SCOPE_POLICY_IN_THE_WAY);
+  await runWrite(db, w, [
+    commitOn(
+      w,
+      {
+        kind: 'scope.app_user_ids',
+        detail: q`json_object('appUserIds', 1, 'apps', (SELECT json_group_array(id) FROM (SELECT id FROM apps WHERE scope_id = ${i.scopeId} AND deleted_at IS NULL ORDER BY created_at, id)))`,
+      },
+      { orgId: i.orgId, scopeId: i.scopeId },
+      q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = 'test' AND app_user_ids = 0) AND NOT ${SCOPE_HAS_POLICY(i.scopeId)}`,
+    ),
+    q`UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND ${committed(w.requestId)}`,
+  ]);
+  return { changed: true };
 }
 
 // ---- security contacts ----

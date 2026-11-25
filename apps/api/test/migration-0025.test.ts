@@ -33,7 +33,8 @@ const change = (id: string, label: string, apps: string, o: { org?: string; scop
 beforeAll(async () => {
   const migrations = env.TEST_MIGRATIONS;
   const at = migrations.findIndex((m) => m.name === '0025_partner_labels.sql');
-  // Later files (0027's rebuild of security_events, D916) keep every row, kind and the index this file checks.
+  // Later migrations don't lose what this file checks: 0026 (the shared-scope rules) doesn't touch these tables, 0027
+  // (D916) rebuilds security_events keeping every row, kind and the index.
   expect(at).toBeGreaterThan(0);
   expect(migrations[at - 1]!.name).toBe('0024_evm_relay_auto_resumed.sql');
   await applyD1Migrations(db, migrations.slice(0, at));
@@ -87,7 +88,8 @@ describe('migration 0025_partner_labels', () => {
     await applyD1Migrations(db, env.TEST_MIGRATIONS);
     const after = (await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name);
     expect(after).toEqual(before);
-    expect(after.slice(after.indexOf('0024_evm_relay_auto_resumed.sql'), after.indexOf('0024_evm_relay_auto_resumed.sql') + 2)).toEqual(['0024_evm_relay_auto_resumed.sql', '0025_partner_labels.sql']);
+    const i = after.indexOf('0025_partner_labels.sql');
+    expect(after.slice(i - 1, i + 1)).toEqual(['0024_evm_relay_auto_resumed.sql', '0025_partner_labels.sql']);
     expect(await db.prepare("SELECT COUNT(*) AS n FROM label_changes WHERE id = 'lc_ok'").first()).toEqual({ n: 1 });
   });
 });

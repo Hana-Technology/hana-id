@@ -9,11 +9,11 @@
 // - proposeChange: a policy set or raw-signing enable as a pending guarded change, nothing in `apps` until its notice
 //   is acked (lifecycle.ts): a staff proposal (AdminRpc) or a member's with the API-verified step-up (ConsoleRpc,
 //   changes/step-up.ts, the settings-change layout over the policyId and the stored settings_version).
-import { LOGO_KEY_RE, newId, nonceOf, normalisePartnerAppName, settingsChangeDigest } from '@hana-id/console-core';
+import { LOGO_KEY_RE, SHARED_WALLET_NO_AUTO_APPROVE, newId, nonceOf, normalisePartnerAppName, settingsChangeDigest } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { IDLE_TTL_MIN_MS, SESSION_TTL_MAX_MS, SESSION_TTL_MIN_MS } from '../vault/settings.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
-import { expectVersion, planApp, storedMainnetDemo } from './apps.ts';
+import { expectVersion, planApp, sharedWallet, storedMainnetDemo } from './apps.ts';
 import { type Writer, actorId, closeChanges, commitOnApp, committed, NOT_YET, refuse, runWrite, expectReplay } from './cas.ts';
 import { scopeGoogleClients } from './chain.ts';
 import type { HotDb } from './db.ts';
@@ -173,6 +173,13 @@ export async function setMainnetDemo(db: HotDb, env: Env, w: Writer, i: { orgId:
   return { version: i.expectedVersion + 1 };
 }
 
+/**
+ * D915: app `a` of a commit row is not on a shared scope and wasn't created by the platform, as D1 holds it in the
+ * write's own transaction, so a scope marked shared between the plan read and the commit still refuses the policy
+ * (`version_conflict`: read the app again, which then answers the words).
+ */
+const NOT_SHARED_WALLET = raw(`(a.created_by_kind = 'hana' AND COALESCE((SELECT s.app_user_ids FROM scopes s WHERE s.scope_id = a.scope_id), 1) = 0)`);
+
 /** ConsoleRpc.proposeChange: a member's policy set or raw-signing enable, bound to the member's step-up token. */
 export async function proposeSettingByMember(
   db: HotDb,
@@ -186,9 +193,10 @@ export async function proposeSettingByMember(
 
 /**
  * A proposal of a policy set or a raw-signing enable: Hana staff's (AdminRpc.proposeChange, `token` null) or a member's
- * with a verified step-up token. Refused for raw signing on a test app (D39), for a value already in force, and while
- * another change of the same kind is pending (cancel it first); a staff proposal also within `appChangeDelayMs` of a
- * scope assignment. Staff proposals never get a waiver and are never expedited.
+ * with a verified step-up token. Refused for raw signing on a test app (D39), for a policy on an app on a shared scope
+ * or created by the platform (D915: `policy_invalid`, "Auto-approve is off for apps that share a wallet"), for a value
+ * already in force, and while another change of the same kind is pending (cancel it first); a staff proposal also
+ * within `appChangeDelayMs` of a scope assignment. Staff proposals never get a waiver and are never expedited.
  */
 export async function proposeSetting(
   db: HotDb,
@@ -209,6 +217,8 @@ export async function proposeSetting(
     if (a.environment === 'test') refuse('env_mismatch', 'Test apps never sign raw (D39)');
   } else {
     if (i.policy === undefined) refuse('bad_request', 'policy_set needs a policy');
+    // D915 (H3): never for an app on a shared scope or created by the platform; held again in the commit predicate.
+    if (sharedWallet(a)) refuse('policy_invalid', SHARED_WALLET_NO_AUTO_APPROVE);
     const r = await validatePolicy(i.policy, a.session_ttl_ms);
     if (!r.ok) return refuse('policy_invalid', r.problems.slice(0, 10).join('; '));
     policy = r.policy;
@@ -242,7 +252,8 @@ export async function proposeSetting(
         i.orgId,
         q`a.settings_version = ${i.expectedVersion} AND a.deleted_at IS NULL
           AND (${token ? raw('1') : q`(SELECT assigned_at FROM scopes WHERE scope_id = a.scope_id) <= ${w.now - config.delayMs}`})
-          AND NOT EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = ${i.kind} AND ${NOT_YET(w.now, 'g')})`,
+          AND NOT EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = ${i.kind} AND ${NOT_YET(w.now, 'g')})
+          AND (${i.kind === 'policy_set' ? NOT_SHARED_WALLET : raw('1')})`,
       ),
       q`UPDATE apps SET settings_version = settings_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
       q`INSERT INTO guarded_changes (id, app_id, kind, policy_json, policy_id, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id)

@@ -10,6 +10,16 @@
 // the removes a member's changeOrigins sent with its adds (`origin.proposed` detail `removed`), the policy removed,
 // replaced or its pending value dropped, raw signing off), so a value put back by hand after a kill switch is drift.
 //
+// D915 (H3): an auto-approve policy on an app of a shared scope (`scopes.app_user_ids`) or created by the platform is
+// drift whatever explains it: no writer may put one there. Each is its own finding (`what` `shared_wallet_policy`, with
+// `source` `policy`, `policy_pending` or the open change `change`), so it is reported even when a forged
+// announced change would explain the value to the checks above. After PR 145's review: a scope counts as shared when its
+// column says so, when its row is missing, or when the append-only ledger has a `scope.app_user_ids` row for it (a mark
+// undone by a direct write still counts), and an app counts when its creator isn't `hana`; a scope the ledger says is
+// marked while its column doesn't is a finding of its own (`shared_scope_unmarked`). A finding is new per app, source
+// and `settings_version` (a policy forged again after the kill switch, which bumps the version, is reported again) or
+// per change id; findings already recorded are left out of the read, in a fixed order, so they never crowd out new ones.
+//
 // An `app.created` row explains nothing on its own (D228): the origins it lists are guarded changes since 0006, and
 // counting the row would let a forged in-force row for an unannounced initial origin pass.
 import type { Env } from '../env.ts';
@@ -31,6 +41,11 @@ const ORIGIN_ENDS = ['origin.removed', 'origin.proposed'];
  * value the baseline explains never turns into a false drift finding when its row turns 60 months old (D364).
  */
 export const DRIFT_LEDGER_KINDS: readonly string[] = ['migration.baseline', ...ORIGIN_ENDS, ...POLICY_ENDS, ...RAW_ENDS];
+/**
+ * D915: a scope's mark (`app_id` NULL). Drift reads every such row, for every scope, for as long as the scope exists
+ * (scopes are never deleted), so the retention purge never deletes one (D364).
+ */
+export const SHARED_SCOPE_LEDGER_KIND = 'scope.app_user_ids';
 const kindIn = (kinds: readonly string[]) => kinds.map((k) => `'${k}'`).join(', ');
 /** No row after the baseline `b` of app `a` ended it. */
 const NOT_ENDED = (kinds: readonly string[]) =>
@@ -54,6 +69,21 @@ interface OriginFinding {
   active_from: number;
   change_id: string | null;
 }
+
+interface SharedWalletFinding {
+  app_id: string;
+  org_id: string;
+  scope_id: string;
+  settings_version: number;
+  source: 'policy' | 'policy_pending' | 'change';
+  /** The policy text (`policy`, `policy_pending`) or the guarded change's id (`change`). */
+  value: string;
+}
+
+/** App `a` (joined with its scope `s`) may never have an auto-approve policy (D915). */
+const SHARED_WALLET = "(COALESCE(s.app_user_ids, 1) <> 0 OR a.created_by_kind <> 'hana' OR a.scope_id IN (SELECT scope_id FROM marked))";
+/** Scopes the ledger says were marked (the mark's rows are append-only and kept past 60 months: retention.ts). */
+const MARKED = "WITH marked AS (SELECT DISTINCT scope_id FROM app_changes WHERE kind = 'scope.app_user_ids' AND scope_id IS NOT NULL)";
 
 interface SettingFinding {
   app_id: string;
@@ -113,6 +143,42 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
     .bind(DRIFT_BATCH)
     .all<SettingFinding>();
 
+  const { results: shared } = await db
+    .prepare(
+      `${MARKED}
+       SELECT f.* FROM (
+         SELECT a.id AS app_id, a.org_id, a.scope_id, a.settings_version, 'policy' AS source, a.auto_approve_policy AS value FROM apps a LEFT JOIN scopes s ON s.scope_id = a.scope_id
+          WHERE a.deleted_at IS NULL AND ${SHARED_WALLET} AND a.auto_approve_policy IS NOT NULL
+         UNION ALL
+         SELECT a.id, a.org_id, a.scope_id, a.settings_version, 'policy_pending', a.auto_approve_pending FROM apps a LEFT JOIN scopes s ON s.scope_id = a.scope_id
+          WHERE a.deleted_at IS NULL AND ${SHARED_WALLET} AND a.auto_approve_pending IS NOT NULL
+         UNION ALL
+         SELECT a.id, a.org_id, a.scope_id, a.settings_version, 'change', g.id FROM guarded_changes g JOIN apps a ON a.id = g.app_id LEFT JOIN scopes s ON s.scope_id = a.scope_id
+          WHERE a.deleted_at IS NULL AND ${SHARED_WALLET} AND g.kind = 'policy_set' AND g.status IN ('pending', 'active')
+       ) f
+       WHERE NOT EXISTS (SELECT 1 FROM security_events e WHERE e.kind = 'drift' AND e.app_id = f.app_id
+                           AND json_extract(e.detail_json, '$.what') = 'shared_wallet_policy' AND json_extract(e.detail_json, '$.source') = f.source
+                           AND CASE WHEN f.source = 'change' THEN json_extract(e.detail_json, '$.changeId') = f.value
+                                    ELSE json_extract(e.detail_json, '$.settingsVersion') = f.settings_version END)
+       ORDER BY f.app_id, f.source, f.value
+       LIMIT ?1`,
+    )
+    .bind(DRIFT_BATCH)
+    .all<SharedWalletFinding>();
+  // A scope whose latest mark in the ledger isn't in its column (or whose row is gone): the mark was undone by hand.
+  const { results: unmarked } = await db
+    .prepare(
+      `SELECT m.scope_id, m.org_id, m.seq, s.scope_id IS NOT NULL AS has_row FROM app_changes m LEFT JOIN scopes s ON s.scope_id = m.scope_id
+        WHERE m.kind = 'scope.app_user_ids' AND m.scope_id IS NOT NULL
+          AND m.seq = (SELECT MAX(x.seq) FROM app_changes x WHERE x.kind = 'scope.app_user_ids' AND x.scope_id = m.scope_id)
+          AND COALESCE(s.app_user_ids, 0) <> 1
+          AND NOT EXISTS (SELECT 1 FROM security_events e WHERE e.kind = 'drift' AND e.scope_id = m.scope_id
+                            AND json_extract(e.detail_json, '$.what') = 'shared_scope_unmarked' AND json_extract(e.detail_json, '$.markSeq') = m.seq)
+        ORDER BY m.scope_id LIMIT ?1`,
+    )
+    .bind(DRIFT_BATCH)
+    .all<{ scope_id: string; org_id: string; seq: number; has_row: number }>();
+
   const events: D1PreparedStatement[] = [];
   const insert = 'INSERT OR IGNORE INTO security_events (id, detected_at, kind, org_id, app_id, scope_id, detail_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)';
   for (const f of origins) {
@@ -124,6 +190,16 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
     const policyId = f.value === null ? null : ((await storedPolicy(f.value))?.id ?? 'invalid');
     const detail = { what: f.what, ...(policyId === null ? {} : { policyId }) };
     events.push(db.prepare(insert).bind(await eventId('drift', f.app_id, f.what, f.value ?? ''), now, 'drift', f.org_id, f.app_id, f.scope_id, JSON.stringify(detail)));
+  }
+  for (const f of shared) {
+    const policyId = f.source === 'change' ? undefined : ((await storedPolicy(f.value))?.id ?? 'invalid');
+    const detail = { what: 'shared_wallet_policy', source: f.source, ...(f.source === 'change' ? { changeId: f.value } : { policyId, settingsVersion: f.settings_version }) };
+    const key = f.source === 'change' ? f.value : String(f.settings_version);
+    events.push(db.prepare(insert).bind(await eventId('drift', f.app_id, 'shared_wallet_policy', f.source, key), now, 'drift', f.org_id, f.app_id, f.scope_id, JSON.stringify(detail)));
+  }
+  for (const u of unmarked) {
+    const detail = { what: 'shared_scope_unmarked', markSeq: u.seq, scopeRow: u.has_row ? 'present' : 'missing' };
+    events.push(db.prepare(insert).bind(await eventId('drift', 'scope', u.scope_id, 'shared_scope_unmarked', String(u.seq)), now, 'drift', u.org_id, null, u.scope_id, JSON.stringify(detail)));
   }
   let recorded = 0;
   if (events.length) {

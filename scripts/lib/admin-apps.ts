@@ -6,7 +6,7 @@
 // same app:create created).
 import { randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
-import { type Environment, MAX_APP_ORIGINS, newId, newPublishableKey } from '@hana-id/console-core';
+import { type Environment, MAX_APP_ORIGINS, SHARED_SCOPE_TEST_ONLY, newId, newPublishableKey } from '@hana-id/console-core';
 import { hanaOwnOrigins, type Manifest } from '@hana-id/env';
 import {
   type AppRow,
@@ -38,11 +38,12 @@ import {
   planExistsSql,
   printable,
   removeOriginsWrite,
+  scopeMarkSql,
   scopeSql,
   suspensionWrite,
   writeCommand,
 } from './admin-sql.ts';
-import { announceHint } from './admin-settings.ts';
+import { SHARED_SCOPE_COLUMNS_SQL, announceHint } from './admin-settings.ts';
 import { type Args, CliError } from './cli.ts';
 import { newAppId } from './pk.ts';
 
@@ -170,7 +171,12 @@ function assertAssignedLongEnough(m: M, scope: Pick<ScopeRow, 'scope_id' | 'assi
   if (now < from) throw new Error(`Scope ${scope.scope_id} was assigned to its org less than appChangeDelayMs ago: staff proposals on it are refused until ${at(from)}`);
 }
 
-/** app:create --org <org> --name <name> --scope <id> [--environment test|live] --origin <o>… [--plan free] */
+/**
+ * app:create --org <org> --name <name> --scope <id> [--environment test|live] --origin <o>… [--plan free] [--shared-wallet]
+ *
+ * `--shared-wallet` (D915 after PR 145's review): a new scope is created marked as shared by several partners' apps, in
+ * the same write as its first row; an existing scope must already be marked. Test scopes only.
+ */
 export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDeps): Promise<void> {
   const orgId = assertOrgId(args.required('org'));
   const name = assertAppName(args.required('name'));
@@ -196,6 +202,14 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
   }
   if (origins.length > MAX_APP_ORIGINS) throw new Error(`At most ${MAX_APP_ORIGINS} origins per app`);
   assertAppOrigins(originContext(m), environment, origins);
+  const sharedWallet = args.flag('shared-wallet');
+  if (sharedWallet) {
+    if (environment !== 'test') throw new CliError(`--shared-wallet: ${SHARED_SCOPE_TEST_ONLY}`);
+    if (!(Number(deps.d1(SHARED_SCOPE_COLUMNS_SQL)[0]?.n ?? 0) > 0)) throw new Error(`--shared-wallet needs migration 0026 (0026_shared_scope_rules.sql) on ${where}: apply it first`);
+    if (scope && Number(deps.d1(scopeMarkSql(scopeId))[0]?.app_user_ids ?? 0) !== 1) {
+      throw new Error(`Scope ${scopeId} exists and isn't marked as shared: mark it from one of its apps in the admin portal ("Mark the scope as shared"), which checks their auto-approve policies`);
+    }
+  }
   const requestId = deps.ids.request();
   const app = {
     id: deps.ids.app(),
@@ -208,8 +222,8 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
     plan,
     origins: origins.map((origin) => ({ changeId: deps.ids.change(), origin })),
   };
-  if (!commit(deps, createAppWrite(app, { createScope: !scope, now, actor: deps.actor, requestId }))) throw new Error(STALE_WRITE);
-  deps.log(`${at(now)} Created app ${app.id} "${printable(name)}" (org ${orgId}, ${environment} scope ${scopeId}${scope ? '' : ', new'}, plan ${plan}) in ${where}`);
+  if (!commit(deps, createAppWrite(app, { createScope: !scope, now, actor: deps.actor, requestId, sharedWallet }))) throw new Error(STALE_WRITE);
+  deps.log(`${at(now)} Created app ${app.id} "${printable(name)}" (org ${orgId}, ${environment} scope ${scopeId}${scope ? '' : ', new'}${sharedWallet ? ', shared by several partners’ apps: no auto-approve' : ''}, plan ${plan}) in ${where}`);
   deps.log(`Publishable key: ${app.publishableKey}`);
   deps.log(`Origins (staff proposals, not in force until announced${scope ? ' and appChangeDelayMs has passed' : '; the no_session waiver applies while the scope has no login'}):`);
   for (const o of app.origins) deps.log(`  ${o.changeId}  ${o.origin}`);

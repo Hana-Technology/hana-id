@@ -61,6 +61,8 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Gas sponsorship: a payment slot was used by another transaction](#evm-relay-slot-taken) | critical | — |
 | [NEAR relay: a billing record is late](#near-billing-late) | warning | — |
 | [The usage database’s free monthly allowance is running low](#neon-compute-high) | warning | — |
+| [Auto-approve found on an app that shares a wallet](#shared-wallet-policy) | critical | — |
+| [A shared wallet’s mark was removed by hand](#shared-scope-unmarked) | critical | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -1881,6 +1883,72 @@ A `neon_compute_high` security event (once at 70% and once at 90% a month), or t
 - Reading Neon's exact figure through its API needs a Neon API key held by the admin Worker: a decision, not built (docs/operations.md "Neon compute on the free plan").
 
 **Refs:** [`docs/operations.md#neon-compute-on-the-free-plan-d872`](operations.md#neon-compute-on-the-free-plan-d872), D872 (`docs/decisions.md`), D417 (`docs/decisions.md`)
+
+<a id="shared-wallet-policy"></a>
+
+### Auto-approve found on an app that shares a wallet
+
+`shared-wallet-policy` · critical
+
+A `shared_wallet_policy` security event: the hourly check found an auto-approve policy (in force, waiting, or proposed) on an app whose scope is marked as a shared wallet, or on an app the platform created. No Journear tool can put one there, so it was written straight into the database.
+
+**Signals**
+
+- A `shared_wallet_policy` row in the admin's security events, emailed by the feed: the app, and where the policy sits (`source` `policy`, `policy_pending` or `change`).
+
+**Impact**
+
+- On a shared wallet, a policy lets one partner's site approve moves from a wallet every other site on the scope uses too. The vault serves no policy on such an app, so nothing is approved by it, but the database is not as our tools left it.
+- How urgent: now.
+
+**Steps**
+
+1. **Remove the policy** (who: anyone). On the app's page in the admin portal, use the kill switch “Remove the policy” (it also cancels a waiting one); an open proposal is cancelled from the app's changes.
+
+2. **Find who wrote it** (who: anyone). Nobody should be able to: find out who has write access to the API’s database and what wrote it (the audit trail shows no write of ours). Treat it as a security incident until it is explained.
+
+**Verify**
+
+- The next hourly check records no new `shared_wallet_policy` event for the app.
+
+**Follow-ups**
+
+- Note what wrote it, and how, in the decision log.
+
+**Refs:** D915 (`docs/decisions.md`), D916 (`docs/decisions.md`) · **See also:** [shared-scope-unmarked](#shared-scope-unmarked), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+
+<a id="shared-scope-unmarked"></a>
+
+### A shared wallet’s mark was removed by hand
+
+`shared-scope-unmarked` · critical
+
+A `shared_scope_unmarked` security event: the ledger says a scope was marked as a shared wallet, but its row no longer is (or is gone). The mark is one way in every Journear tool, so it was undone straight in the database.
+
+**Signals**
+
+- A `shared_scope_unmarked` row in the admin's security events, emailed by the feed: the scope, the ledger row of its mark (`markSeq`), and whether the scope's row is still there.
+
+**Impact**
+
+- While the mark is off, the rules for a shared wallet (no auto-approve on its apps) are held only by the hourly check, which still counts the scope as marked from the ledger.
+- How urgent: now.
+
+**Steps**
+
+1. **Find who undid it** (who: anyone). Nobody should be able to: find out who has write access to the API’s database and what changed the row. Treat it as a security incident until it is explained.
+
+2. **Set the mark back** (who: anyone). Mark the scope as shared again from any of its apps' pages in the admin portal (“Shared wallet” → “Mark the scope as shared”), after removing any policy the check reports.
+
+**Verify**
+
+- The scope's apps show “Shared wallet” again, and the next hourly check records nothing new for it.
+
+**Follow-ups**
+
+- Note what undid it, and how, in the decision log.
+
+**Refs:** D915 (`docs/decisions.md`), D916 (`docs/decisions.md`) · **See also:** [shared-wallet-policy](#shared-wallet-policy), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
 
 <a id="updater-key-stolen"></a>
 

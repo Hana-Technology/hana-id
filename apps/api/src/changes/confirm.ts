@@ -432,7 +432,7 @@ const DB_NOW = raw(`CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`)
 
 /**
  * AdminRpc.armConfirmationLinks (`system` only; after PR 159's review): before the notice's first send, each removal
- * link's sha256 and its end (7 days from now, by the database's clock), written once, so a link that reached anyone
+ * link's sha256 and its end (7 days from now), written once, so a link that reached anyone
  * works even if another recipient keeps refusing. The list must be exactly the confirmation's web addresses; the same
  * hashes again (a retry: the tokens are deterministic) change nothing, other hashes are refused.
  */
@@ -453,7 +453,8 @@ export async function armConfirmationLinks(db: HotDb, w: Writer, i: { requestId:
     await db.batch(
       todo.map((r) => {
         const x = i.removals.find((y) => y.changeId === r.change_id)!;
-        return q`UPDATE origin_confirmations SET links_at = ${DB_NOW}, removal_token_hash = ${blob(x.removalTokenHash)}, removal_until = ${DB_NOW} + ${ORIGIN_REMOVAL_LINK_MS}
+        // The link's end by the API's clock, which also judges it (the database refuses a back-dated one).
+        return q`UPDATE origin_confirmations SET links_at = ${w.now}, removal_token_hash = ${blob(x.removalTokenHash)}, removal_until = ${w.now + ORIGIN_REMOVAL_LINK_MS}
                   WHERE change_id = ${r.change_id} AND request_id = ${i.requestId} AND links_at IS NULL`;
       }),
     );

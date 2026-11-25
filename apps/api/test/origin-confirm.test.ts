@@ -522,10 +522,8 @@ describe('the confirmation’s notice and its removal link', () => {
     expect((await no(adminOn().armConfirmationLinks({ ...hana(), requestId: who.requestId, removals }))).code).toBe('forbidden');
     expect((await no(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: removals.slice(0, 1) }))).code).toBe('bad_request');
     expect((await no(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId }))).code).toBe('conflict');
-    const t0 = await dbNow();
     const armed = await ok(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals }));
-    expect(armed.removalUntil! - t0).toBeGreaterThanOrEqual(ORIGIN_REMOVAL_LINK_MS - 1000);
-    expect(armed.removalUntil! - t0).toBeLessThanOrEqual(ORIGIN_REMOVAL_LINK_MS + 60_000);
+    expect(armed.removalUntil).toBe(Date.now() + ORIGIN_REMOVAL_LINK_MS);
     expect(await ok(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals }))).toMatchObject({ removalUntil: armed.removalUntil });
     const other = await linkToken().hash;
     expect((await no(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: [{ ...removals[0]!, removalTokenHash: other }, removals[1]!] }))).code).toBe('conflict');

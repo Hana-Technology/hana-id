@@ -159,8 +159,9 @@ BEGIN
 END;
 
 -- Fixed once written. Its removal link is armed once (its hash and exactly 7 days, before the notice's first send,
--- so a link that reached anyone works: after PR 159's review), its notice acked once and only after the link, neither
--- back-dated nor in the future by the database's clock (5 and 2 minutes' skew); a failed notice run counts up by one.
+-- so a link that reached anyone works: after PR 159's review; never back-dated, and judged by the API's clock it was
+-- written with), its notice acked once and only after the link, neither back-dated nor in the future by the database's
+-- clock (5 and 2 minutes' skew); a failed notice run counts up by one.
 CREATE TRIGGER origin_confirmations_update BEFORE UPDATE ON origin_confirmations
 BEGIN
   SELECT RAISE(ABORT, 'origin_confirmations: a confirmation is fixed; only its link and its notice are written, once')
@@ -170,8 +171,7 @@ BEGIN
       OR NEW.step_up_id IS NOT OLD.step_up_id OR NEW.reason IS NOT OLD.reason OR NEW.confirmed_at IS NOT OLD.confirmed_at;
   SELECT RAISE(ABORT, 'origin_confirmations: the removal link is armed once, never back-dated')
    WHERE (OLD.links_at IS NOT NULL AND (NEW.links_at IS NOT OLD.links_at OR NEW.removal_token_hash IS NOT OLD.removal_token_hash OR NEW.removal_until IS NOT OLD.removal_until))
-      OR (OLD.links_at IS NULL AND NEW.links_at IS NOT NULL
-          AND (NEW.links_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000 OR NEW.links_at > ((julianday('now') - 2440587.5) * 86400000.0) + 120000));
+      OR (OLD.links_at IS NULL AND NEW.links_at IS NOT NULL AND NEW.links_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000);
   SELECT RAISE(ABORT, 'origin_confirmations: the notice is acked once, now by the database''s clock')
    WHERE (OLD.notice_at IS NOT NULL AND NEW.notice_at IS NOT OLD.notice_at)
       OR (OLD.notice_at IS NULL AND NEW.notice_at IS NOT NULL

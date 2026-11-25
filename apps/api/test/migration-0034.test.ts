@@ -236,12 +236,11 @@ describe('migration 0034_origin_confirmations', () => {
     for (const set of ["confirmed_by = 'usr_x'", "confirmed_sub = 'x'", 'confirmed_at = confirmed_at - 1', "token_sha256 = '" + 'c'.repeat(64) + "'", "request_id = 'rq_x'", "change_id = 'gc_x'", "origin = 'https://x.example'", "confirmed_email_key = 'x@x.example'", "step_up_id = 'act_x'"]) {
       expect(await refusal(`UPDATE origin_confirmations SET ${set} WHERE change_id = 'gc_p33'`), set).toMatch(/is fixed/u);
     }
-    // The removal link: armed once, its hash and exactly 7 days, neither back-dated nor ahead of the database's clock.
+    // The removal link: armed once, its hash and exactly 7 days, never back-dated by the database's clock.
     const n = await DB_NOW();
     const LINK = "UPDATE origin_confirmations SET links_at = ?1, removal_token_hash = ?2, removal_until = ?3 WHERE change_id = 'gc_p33'";
     expect(await refusal(LINK, n, new Uint8Array(32).fill(1), n + 8 * DAY)).toMatch(/CHECK/u);
     expect(await refusal(LINK, n - 10 * 60_000, new Uint8Array(32).fill(1), n - 10 * 60_000 + 7 * DAY)).toMatch(/armed once, never back-dated/u);
-    expect(await refusal(LINK, n + 10 * 60_000, new Uint8Array(32).fill(1), n + 10 * 60_000 + 7 * DAY)).toMatch(/armed once, never back-dated/u);
     expect(await refusal("UPDATE origin_confirmations SET links_at = ?1, removal_token_hash = ?2 WHERE change_id = 'gc_p33'", n, new Uint8Array(32).fill(1))).toMatch(/CHECK/u);
     // The notice can't come before its link.
     expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1 WHERE change_id = 'gc_p33'", n)).toMatch(/CHECK/u);

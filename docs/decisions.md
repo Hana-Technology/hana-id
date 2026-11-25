@@ -24039,13 +24039,14 @@ for it). D931 is the number the caller assigned; API migration 0034 and console 
      outside the wrapper is not covered (`security.md` says so).
   4. **Staff confirmations' limits** are staff buckets (20 per staffer, 100 across staff), never the org's 40.
   5. **Removal links from the first send.** The notice step arms the links (`AdminRpc.armConfirmationLinks`: written
-     once, exactly 7 days, by the database's clock) before its first send, so a delivered link works while another
+     once, exactly 7 days) before its first send, so a delivered link works while another
      recipient keeps refusing; a refused run is noted (`noteConfirmationNoticeFailure`), offered again 5 minutes more
      after each failure (at most an hour), recipients already accepted aren't sent it again by the isolate, and the
      notice is left after 24 runs (about a day), logged `notice_stuck`. The table gained `links_at`,
      `notice_failures`, `notice_failed_at` (0034 was applied nowhere).
-  6. **`notice_at` and `links_at` bounded** both ways by the database's clock (5 minutes back, 2 ahead); the API writes
-     both from the database's clock.
+  6. **`notice_at` bounded** both ways by the database's clock (5 minutes back, 2 ahead), and the API writes it from that
+     clock; `links_at` is never back-dated, and is written and judged (the link's 7 days) by the API's own clock, as every
+     other expiry of the API (the e2e lane, whose clock runs ahead of SQLite's, showed why they must not be mixed).
   7. **The rollback** in `operations.md` now says an older API's staff `addOrigins` and `createApp` with web addresses
      on a shared wallet or a platform-created app are refused by 0034's triggers (fail closed).
   8. **Partner emails name staff as "Journear staff"** ("A Journear staff member added them … a second Journear staff

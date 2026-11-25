@@ -79,13 +79,17 @@ export async function createApp(
   const changes = origins.map((origin) => ({ changeId: newId('guardedChange'), origin }));
   const scopeHolds: Q = createScope
     ? q`NOT EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId})`
-    : q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = ${i.environment} AND assigned_at = ${s!.assigned_at}${mark ? raw(' AND app_user_ids = 1') : raw('')})`;
+    : // The mark as read, too (D919): the ledger row records the app's User ID mode, so a mark set between the read and
+      // the batch commits nothing (`version_conflict`) rather than a row that says the other mode.
+      q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = ${i.environment} AND assigned_at = ${s!.assigned_at} AND app_user_ids = ${s!.app_user_ids})`;
+  // D919: the mode the app's insert below gets from the mark the predicate holds.
+  const userIds = (createScope ? mark : s!.app_user_ids === 1) ? 'app' : 'scope';
   const when = committed(w.requestId);
   const list = JSON.stringify(changes);
   const stmts: Q[] = [
     commitOn(
       w,
-      { kind: 'app.created', detail: { name, plan: DEFAULT_PLAN, environment: i.environment, keyId, scopeCreated: createScope, waiver, origins: changes, ...(mark ? { appUserIds: true } : {}) } },
+      { kind: 'app.created', detail: { name, plan: DEFAULT_PLAN, environment: i.environment, keyId, scopeCreated: createScope, waiver, origins: changes, userIds, ...(mark ? { appUserIds: true } : {}) } },
       { orgId: i.orgId, appId, scopeId: i.scopeId },
       q`${scopeHolds} AND EXISTS (SELECT 1 FROM org_security_contacts WHERE org_id = ${i.orgId})`,
     ),

@@ -9,11 +9,13 @@
 import { formatSupportId, supportCodeOf } from '@hana-id/console-core';
 import { appSub, identitySub, identitySubBytes } from '@hana-id/core/identity';
 import { supportIdFromSub } from '@hana-id/core/support-id';
+import { createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { forgetCachedApps } from '../src/app-cache.ts';
 import { appUserIds, scopeSupportId, sessionSupportId, upsertUserApp, userAppIds } from '../src/directory/store.ts';
 import { syncAfterLogin } from '../src/directory/sync.ts';
+import { AdminRpc } from '../src/rpc/admin.ts';
 import { identitySubKey } from '../src/identity/signer.ts';
 import { deriveWalletAddresses, withChainKey } from '@hana-id/core/derivation';
 import { signWalletRecord, walletRecordSessionMessage, walletRecordStatement } from '@hana-id/core/wallet-record';
@@ -98,6 +100,35 @@ describe("the app's mode, from its scope's mark at creation", () => {
     expect(await modeOf(first.id)).toBe('scope');
     const view = (await adminRpc().getApp({ ...hana(), orgId: org, appId: first.id })) as { ok: boolean; app: { userIds?: string } };
     expect(view.app.userIds).toBe('scope');
+    // The ledger's app.created row records the mode each create gave (PR 148's review).
+    const detail = async (appId: string) => JSON.parse((await env.DB.prepare("SELECT detail_json FROM app_changes WHERE app_id = ?1 AND kind = 'app.created'").bind(appId).first<{ detail_json: string }>())!.detail_json) as { userIds?: string };
+    expect((await detail(unmarked.app!.id)).userIds).toBe('scope');
+    expect((await detail(marked.app!.id)).userIds).toBe('app');
+  });
+});
+
+describe("createApp's commit holds the mark it read (PR 148's review)", () => {
+  it('a scope marked between the plan read and the batch creates nothing: version_conflict, no app, no ledger row', async () => {
+    const org = newOrg();
+    const first = await orgApp({ org });
+    const near = chain();
+    near.views.get_scope = (a) => ({ id: a.scope_id, owners: [{ Near: { account_id: 'owner.test.near' } }], clients: [], pending: [], action_nonce: 0, allow_shared: false });
+    const racing: D1Database = new Proxy(env.DB, {
+      get(t, p) {
+        if (p === 'batch')
+          return async (stmts: D1PreparedStatement[]) => {
+            await t.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?1').bind(first.scope).run();
+            return t.batch(stmts);
+          };
+        const v: unknown = Reflect.get(t, p);
+        return typeof v === 'function' ? v.bind(t) : v;
+      },
+    });
+    const rpc = new AdminRpc(createExecutionContext(), { ...env, DB: racing });
+    const count = async () => (await env.DB.prepare('SELECT COUNT(*) AS n FROM apps WHERE scope_id = ?1').bind(first.scope).first<{ n: number }>())!.n;
+    const before = await count();
+    expect(await rpc.createApp({ ...hana(), orgId: org, scopeId: first.scope, environment: 'test', name: `Raced ${uid()}`, origins: [], orgOwnerSubs: [] })).toMatchObject({ ok: false, code: 'version_conflict' });
+    expect(await count()).toBe(before);
   });
 });
 
@@ -211,6 +242,40 @@ describe('end_user_apps: which apps of a shared scope a person signed in on', ()
     expect(r.meta.changes).toBe(0);
   });
 
+  it("rewrites the app's IDs with every write, so a re-key of IDENTITY_SUB_KEY never leaves stale ones (PR 148's review)", async () => {
+    const s = await sharedSetup();
+    const standing = { pending: false, path: pathFor(s.before.scope), confirmed: true };
+    const at = { requestId: rid(), endpoint: 'test', appId: s.own1.id };
+    expect(await syncAfterLogin(env, s.before.scope, ROOT, null, standing, at)).toBe(true);
+    const [first] = await userApps(s.before.scope);
+    expect(first!.app_sub).toBe(ownSub(s.before.scope, s.own1.id));
+    const otherKey = btoa(String.fromCharCode(...new Uint8Array(32).fill(5)));
+    expect(await syncAfterLogin({ ...env, IDENTITY_SUB_KEY: otherKey }, s.before.scope, ROOT, null, standing, at)).toBe(true);
+    const [second] = await userApps(s.before.scope);
+    const k2 = new Uint8Array(32).fill(5);
+    const want = appSub(k2, s.before.scope, s.own1.id, identitySubBytes(k2, s.before.scope, ROOT));
+    expect(second!.app_sub).toBe(want);
+    expect(second!.support_code).toBe(supportCodeOf(want));
+    expect(second!.first_seen_at).toBe(first!.first_seen_at);
+  });
+
+  it('the per-login write reads few D1 rows, on a marked scope and an unmarked one, however many apps and rows exist (pinned)', async () => {
+    const s = await sharedSetup();
+    // Noise: more apps on the marked scope and more people with rows.
+    for (let i = 0; i < 5; i++) await seedApp({ scope: s.before.scope });
+    for (const app of [s.before, s.own1, s.own2]) expect((await call('/v1/login', { headers: hanaHeaders(app), body: await loginBody(app.scope, s.aud) })).status).toBe(200);
+    const internal = (await env.DB.prepare('SELECT user_id FROM end_users WHERE scope_id = ?1').bind(s.before.scope).first<{ user_id: string }>())!.user_id;
+    const rowsRead = async (app: SeededApp) => {
+      const ids = userAppIds(env, { id: app.id, scope_id: app.scope }, ROOT)!;
+      return (await upsertUserApp(env.DB, internal, { id: app.id, scope_id: app.scope }, ids, Date.now()).run()).meta.rows_read;
+    };
+    // The app's row and its scope's (the join), the insert trigger's reads, the foreign keys' and the conflict's row:
+    // 7 rows, the same on a repeat (pinned, so a change that adds a read is seen).
+    expect([await rowsRead(s.own1), await rowsRead(s.own1)]).toEqual([7, 7]);
+    // An unmarked scope's app (every login on every other app): the app's row and its scope's, nothing written: 3.
+    expect([await rowsRead(s.plain), await rowsRead(s.plain)]).toEqual([3, 3]);
+  });
+
   it('holds no Google sub, email, address or internal id: only the app, its two IDs and two times', async () => {
     const s = await sharedSetup();
     expect((await call('/v1/login', { headers: hanaHeaders(s.own1), body: await loginBody(s.own1.scope, s.aud) })).status).toBe(200);
@@ -255,14 +320,5 @@ describe('address impact: none', () => {
     expect(after).toEqual(unmarked);
     expect(ownLogin).toEqual(unmarked);
     expect(unmarked).toEqual({ inputs: { scope_id: before.scope, key_index: 0, max_uses: 1 }, googleSub: G_SUB });
-  });
-
-  it('the token’s proven wallets are the same addresses on every app of the scope, whatever its User ID', async () => {
-    const s = await sharedSetup();
-    const prk = crypto.getRandomValues(new Uint8Array(32));
-    const wallets = async (app: SeededApp) => (await verifyToken((await body(await mint(app, (await createShare(app, s.near, { sub: G_SUB })).spk, { prk }))).identityToken as string)).claims.wallets;
-    const w = await wallets(s.before);
-    expect(await wallets(s.own1)).toEqual(w);
-    expect(await wallets(s.own2)).toEqual(w);
   });
 });

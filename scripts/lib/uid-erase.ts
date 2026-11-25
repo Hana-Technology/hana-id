@@ -44,9 +44,8 @@
 // is per scope: run again for each). `--yes` erases, re-counts (all zero, or it fails) and records the erasure in
 // ops.erasures (ticket, operator, scope, counts; never a uid, a sub or an address). Re-runnable: every step is
 // idempotent. No address is ever printed, nor a consent's User ID; the sub is the operator's own input.
-import { USER_ID_RE, formatSupportId, internalIdOf, scopeIdInput, uid as uidOf, uidOfInternalId } from '@hana-id/console-core';
+import { USER_ID_RE, formatSupportId, parseSupportId, internalIdOf, scopeIdInput, uid as uidOf, uidOfInternalId } from '@hana-id/console-core';
 import { identitySub } from '@hana-id/core/identity';
-import { SUPPORT_ID_RE } from '@hana-id/core/support-id';
 import type { Manifest } from '@hana-id/env';
 import { type Args, CliError, parseCli } from './cli.ts';
 import { sql } from './sql.ts';
@@ -500,9 +499,11 @@ function personInput(args: Args): { kind: 'sub' } | { kind: 'userId' | 'supportI
     return { kind: 'userId', value: userId };
   }
   if (supportId !== undefined) {
-    const v = supportId.trim().toUpperCase();
-    if (!SUPPORT_ID_RE.test(v)) throw new CliError('--support-id takes a Support ID (HANA-XXXX-XXXX)');
-    return { kind: 'supportId', value: v };
+    // As people type it, and as the staff lookup reads it (console-core parseSupportId): any case, dashes and spaces,
+    // with or without HANA-, and Crockford's look-alikes I and L as 1, O as 0.
+    const code = parseSupportId(supportId);
+    if (!code) throw new CliError('--support-id takes a Support ID (HANA-XXXX-XXXX)');
+    return { kind: 'supportId', value: code };
   }
   return { kind: 'sub' };
 }
@@ -513,11 +514,11 @@ function personInput(args: Args): { kind: 'sub' } | { kind: 'userId' | 'supportI
  * match, or the directory has no sign-in for the person's root (then the operator names the sign-in instead). Nothing
  * here is printed: the plan names the person by internal id and the scope's IDs, as for a sub.
  */
-export async function resolvePerson(c: Ctx, by: { userId: string } | { supportId: string }): Promise<Identity> {
+export async function resolvePerson(c: Ctx, by: { userId: string } | { supportCode: string }): Promise<Identity> {
   if ('userId' in by && !USER_ID_RE.test(by.userId)) throw new CliError('Not a User ID (u1_ and 22 characters)');
   const userAppsTable = num((await c.deps.apiD1(c.m, USER_APPS_TABLE_SQL, c.remote))[0]?.n) > 0;
   const scope = sql`${c.scopeId}`;
-  const [col, appCol, value] = 'userId' in by ? ['token_sub', 'app_sub', by.userId] : ['support_code', 'support_code', by.supportId.slice(5).replace('-', '')];
+  const [col, appCol, value] = 'userId' in by ? ['token_sub', 'app_sub', by.userId] : ['support_code', 'support_code', by.supportCode];
   const v = sql`${value}`;
   const people = await c.deps.apiD1(
     c.m,
@@ -565,7 +566,7 @@ export async function uidErase(argv: readonly string[], deps: UidEraseDeps): Pro
   if (!args.flag('no-ledger') && !ledger) throw new CliError(`No .secrets/${m.name}/neon-usage-admin.url: run usage-setup ${m.name} roles, or pass --no-ledger for an env without a ledger`);
   const c: Ctx = { m, remote, scopeId: scope.data, ticket, deps, ledger };
   try {
-    if (by.kind !== 'sub') named = await resolvePerson(c, by.kind === 'userId' ? { userId: by.value === '-' ? (await deps.readLine('User ID: ')).trim() : by.value } : { supportId: by.value });
+    if (by.kind !== 'sub') named = await resolvePerson(c, by.kind === 'userId' ? { userId: by.value === '-' ? (await deps.readLine('User ID: ')).trim() : by.value } : { supportCode: by.value });
     if (!named) throw new CliError('Name the person: --provider and --sub, --user-id or --support-id');
     const plan = await planErasure(c, named);
     for (const l of formatPlan(plan, where)) deps.log(l);

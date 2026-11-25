@@ -224,7 +224,10 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
     origins: origins.map((origin) => ({ changeId: deps.ids.change(), origin })),
   };
   const userIdsColumn = Number(deps.d1(APP_USER_IDS_COLUMN_SQL)[0]?.n ?? 0) > 0;
-  if (!commit(deps, createAppWrite(app, { createScope: !scope, now, actor: deps.actor, requestId, sharedWallet, userIdsColumn }))) throw new Error(STALE_WRITE);
+  // D919: the mode the app gets, from the mark as read now (a new scope gets `--shared-wallet`'s); the write holds it.
+  const marked = scope ? Number(deps.d1(scopeMarkSql(scopeId))[0]?.app_user_ids ?? 0) === 1 : sharedWallet;
+  const userIds = userIdsColumn ? (marked ? 'app' : 'scope') : undefined;
+  if (!commit(deps, createAppWrite(app, { createScope: !scope, now, actor: deps.actor, requestId, sharedWallet, ...(userIds ? { userIds } : {}) }))) throw new Error(STALE_WRITE);
   // D919: what the write gave the app, read back (the mark could have been set meanwhile).
   const ownIds = userIdsColumn && (deps.d1(appUserIdsSql(app.id))[0]?.user_ids ?? null) === 'app';
   deps.log(`${at(now)} Created app ${app.id} "${printable(name)}" (org ${orgId}, ${environment} scope ${scopeId}${scope ? '' : ', new'}${sharedWallet ? ', shared by several partners’ apps: no auto-approve' : ''}${ownIds ? ', its own User IDs' : ''}, plan ${plan}) in ${where}`);

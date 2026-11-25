@@ -393,7 +393,7 @@ describe('uid-erase by a User ID or Support ID, and the apps signed in on (D919)
     await sharedRows();
     const bySub = (await uidErase(['sandbox-dev', '--scope', SCOPE, '--provider', GOOGLE.provider, '--sub', GOOGLE.sub, '--ticket', 'SUP-919'], deps()))!.plan;
     const root = await userOf(GOOGLE);
-    for (const flag of [['--support-id', `HANA-${OWN_CODE.slice(0, 4)}-${OWN_CODE.slice(4)}`], ['--support-id', `hana-${OWN_CODE.slice(0, 4).toLowerCase()}-${OWN_CODE.slice(4)}`], ['--user-id', tokenSub(1)], ['--support-id', `HANA-${root.slice(3, 7).toUpperCase()}-${root.slice(7, 11).toUpperCase()}`]]) {
+    for (const flag of [['--support-id', `HANA-${OWN_CODE.slice(0, 4)}-${OWN_CODE.slice(4)}`], ['--support-id', `hana-${OWN_CODE.slice(0, 4).toLowerCase()}-${OWN_CODE.slice(4)}`], ['--support-id', 'xwnc ODEI'], ['--support-id', 'XWNC-0DEl'], ['--user-id', tokenSub(1)], ['--support-id', `HANA-${root.slice(3, 7).toUpperCase()}-${root.slice(7, 11).toUpperCase()}`]]) {
       const plan = (await uidErase(by(...flag), deps()))!.plan;
       expect({ ...plan, account: plan.account.root }, flag.join(' ')).toEqual({ ...bySub, account: bySub.account.root });
     }
@@ -413,7 +413,8 @@ describe('uid-erase by a User ID or Support ID, and the apps signed in on (D919)
     expect(await fail(by('--support-id', `HANA-${OWN_CODE.slice(0, 4)}-${OWN_CODE.slice(4)}`))).toMatch(/2 people in scope s7 share this Support ID/u);
     expect(await fail(by('--user-id', `u1_${'Z'.repeat(21)}A`))).toMatch(/No person with this User ID in scope s7/u);
     expect(await fail(by('--user-id', 'u1_short'))).toMatch(/--user-id takes a User ID/u);
-    expect(await fail(by('--support-id', 'HANA-IIII-0000'))).toMatch(/--support-id takes a Support ID/u);
+    expect(await fail(by('--support-id', 'HANA-UUUU-0000'))).toMatch(/--support-id takes a Support ID/u);
+    expect(await fail(by('--support-id', 'HANA-12'))).toMatch(/--support-id takes a Support ID/u);
     expect(await fail(by('--user-id', OWN_SUB, '--provider', 'google', '--sub', GOOGLE.sub))).toMatch(/Name the person one way/u);
     expect(await fail(by('--user-id', OWN_SUB, '--support-id', 'HANA-0000-0000'))).toMatch(/Name the person one way/u);
     // A person whose root has no sign-in in the directory (its sub unknown): named by sub instead.

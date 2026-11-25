@@ -102,7 +102,8 @@ export async function scopeSupportId(env: Pick<Env, 'USER_ID_KEY' | 'IDENTITY_SU
 /**
  * The person's row for `app` (migration 0030, D919): only for an app on a scope marked as shared (read in the statement
  * itself, so a stale cached app never writes one elsewhere, and the 0030 trigger refuses any other), with the User ID
- * and Support code that app gives them, chosen in the statement by the app's stored mode. Times only move forward.
+ * and Support code that app gives them, chosen in the statement by the app's stored mode, rewritten with every write
+ * (as `upsertUser` does: a row always carries what the env's key gives, also after a re-key). Times only move forward.
  * `ids` holds both forms; the statement keeps the one matching `apps.user_ids` (an unknown mode matches neither, and the
  * NOT NULL column then refuses the row: fail closed).
  */
@@ -119,7 +120,8 @@ export function upsertUserApp(
        SELECT ?1, a.id, CASE a.user_ids WHEN 'app' THEN ?4 WHEN 'scope' THEN ?6 END, CASE a.user_ids WHEN 'app' THEN ?5 WHEN 'scope' THEN ?7 END, ?8, ?8
          FROM apps a JOIN scopes s ON s.scope_id = a.scope_id
         WHERE a.id = ?2 AND a.scope_id = ?3 AND s.app_user_ids = 1
-       ON CONFLICT (user_id, app_id) DO UPDATE SET first_seen_at = MIN(first_seen_at, excluded.first_seen_at), last_seen_at = MAX(last_seen_at, excluded.last_seen_at)`,
+       ON CONFLICT (user_id, app_id) DO UPDATE SET app_sub = excluded.app_sub, support_code = excluded.support_code,
+         first_seen_at = MIN(first_seen_at, excluded.first_seen_at), last_seen_at = MAX(last_seen_at, excluded.last_seen_at)`,
     )
     .bind(internalId, app.id, app.scope_id, ids.app.userId, ids.app.supportCode, ids.scope.userId, ids.scope.supportCode, at);
 }

@@ -16,7 +16,7 @@ import { identitySubKey } from '../src/identity/signer.ts';
 
 const db = env.MIGRATION_DB;
 const FILE = '0030_app_user_ids.sql';
-const NEW_TRIGGERS = ['apps_app_ids_scope_fixed', 'apps_user_ids_fixed', 'apps_user_ids_insert', 'end_user_apps_insert'];
+const NEW_TRIGGERS = ['apps_app_ids_scope_fixed', 'apps_user_ids_fixed', 'apps_user_ids_insert', 'apps_user_ids_no_delete', 'end_user_apps_insert'];
 const SUB_KEY = identitySubKey(env) as Uint8Array;
 const ROOT = { provider: 'google', sub: '110248495921238986420' };
 const KEYS = { a1: 'pk_test_Aaaaaaaaaaaaaaaaaaaaaa1', m1: 'pk_test_Mmmmmmmmmmmmmmmmmmmmmm1', l1: 'pk_live_Llllllllllllllllllllll1' };
@@ -104,7 +104,7 @@ describe('migration 0030_app_user_ids', () => {
     expect(await db.prepare('SELECT COUNT(*) AS n FROM end_user_apps').first()).toEqual({ n: 0 });
   });
 
-  it('every trigger and view of the schema is there after with the same SQL; only its own four triggers are new', async () => {
+  it('every trigger and view of the schema is there after with the same SQL; only its own five triggers are new', async () => {
     const after = await everyTriggerAndView();
     expect([...after.keys()].filter((k) => !schemaBefore.has(k)).sort()).toEqual(NEW_TRIGGERS);
     expect([...schemaBefore.keys()].filter((k) => !after.has(k))).toEqual([]);
@@ -190,6 +190,28 @@ describe('migration 0030_app_user_ids', () => {
     expect(await accepted("UPDATE apps SET scope_id = 's1' WHERE id = 'app_a2'")).toBe(true);
   });
 
+  it("after PR 148's review: a replacing insert can't move an 'app' app to another marked scope, even with the same mode", async () => {
+    await db.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('s5', 'org_a', 'test', NULL, 1, 1, 1)").run();
+    expect(await refusal("INSERT OR REPLACE INTO apps (id, name, scope_id, org_id, publishable_key, user_ids) VALUES ('app_m2', 'M2', 's5', 'org_a', 'pk_test_Mmmmmmmmmmmmmmmmmmmmmm2', 'app')")).toMatch(/keeps its scope/u);
+    expect(await refusal("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, user_ids) VALUES ('app_m2', 'M2', 's5', 'org_a', 'pk_test_Mmmmmmmmmmmmmmmmmmmmmm9', 'app') ON CONFLICT (id) DO UPDATE SET name = excluded.name")).toMatch(/keeps its scope/u);
+    // The same scope and mode still replaces (nothing moves; only the triggers' rules are checked).
+    expect((await db.prepare("SELECT scope_id, user_ids FROM apps WHERE id = 'app_m2'").first())).toEqual({ scope_id: 's2', user_ids: 'app' });
+  });
+
+  it("after PR 148's review: an 'app' app, or any app on a marked scope, is never deleted (so never deleted and inserted again)", async () => {
+    expect(await refusal("DELETE FROM apps WHERE id = 'app_m2'")).toMatch(/never deleted/u);
+    // An app of before on a marked scope: deleting and re-inserting it would give it the mode 'app'.
+    expect(await refusal("DELETE FROM apps WHERE id = 'app_m1'")).toMatch(/never deleted/u);
+    expect(await refusal("DELETE FROM apps WHERE scope_id = 's2'")).toMatch(/never deleted/u);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM apps WHERE scope_id = 's2'").first()).toEqual({ n: 2 });
+    // A 'scope' app on an unmarked scope can still be hard-deleted, as before (no code does; tests do).
+    await db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES ('app_tmp', 'Tmp', 's1', 'org_a', 'pk_test_Tmpppppppppppppppppppp1')").run();
+    expect(await accepted("DELETE FROM apps WHERE id = 'app_tmp'")).toBe(true);
+    // A soft delete is an update: allowed for every app.
+    expect(await accepted("UPDATE apps SET deleted_at = 5 WHERE id = 'app_m2'")).toBe(true);
+    expect(await accepted("UPDATE apps SET deleted_at = NULL WHERE id = 'app_m2'")).toBe(true);
+  });
+
   describe('end_user_apps', () => {
     const SUB = 'u1_AAAAAAAAAAAAAAAAAAAAAA';
     const insert = (app: string, sub = SUB, code = 'ABCD1234', user = 'hu_AAAAAAAAAAAAAAAAAAAAAAAAAA') =>
@@ -209,11 +231,21 @@ describe('migration 0030_app_user_ids', () => {
       expect(await insert('app_m2', SUB, 'ABCD1234', 'hu_CCCCCCCCCCCCCCCCCCCCCCCCCC')).toBe(false);
     });
 
-    it('checks the shapes of the User ID and the Support code', async () => {
+    it('checks the shapes of the User ID and the Support code; a u2_ re-key is allowed', async () => {
       await db.prepare("DELETE FROM end_user_apps WHERE app_id = 'app_m2'").run();
-      for (const bad of ['u2_AAAAAAAAAAAAAAAAAAAAAA', 'u1_AAAA', 'x'.repeat(25)]) expect(await insert('app_m2', bad), bad).toBe(false);
+      for (const bad of ['u0_AAAAAAAAAAAAAAAAAAAAAA', 'ux_AAAAAAAAAAAAAAAAAAAAAA', 'u1_AAAA', 'x'.repeat(25)]) expect(await insert('app_m2', bad), bad).toBe(false);
+      expect(await insert('app_m2', 'u2_AAAAAAAAAAAAAAAAAAAAAA')).toBe(true);
+      await db.prepare("DELETE FROM end_user_apps WHERE app_id = 'app_m2'").run();
       for (const bad of ['ABCD123', 'ABCD12345', 'ABCDI234', 'ABCDL234', 'ABCDO234', 'ABCDU234', 'abcd1234']) expect(await insert('app_m2', SUB, bad), bad).toBe(false);
       expect(await insert('app_m2')).toBe(true);
+    });
+
+    it('names an existing app (a foreign key, ON DELETE CASCADE as name_shares)', async () => {
+      const fk = (await db.prepare("SELECT \"table\", \"from\", \"to\", on_delete FROM pragma_foreign_key_list('end_user_apps') ORDER BY \"table\"").all()).results;
+      expect(fk).toEqual([
+        { table: 'apps', from: 'app_id', to: 'id', on_delete: 'CASCADE' },
+        { table: 'end_users', from: 'user_id', to: 'user_id', on_delete: 'CASCADE' },
+      ]);
     });
 
     it('goes with its person (ON DELETE CASCADE)', async () => {

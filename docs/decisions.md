@@ -21927,8 +21927,7 @@ and 0029 are piece P2's, built at the same time; 0030 doesn't depend on them).
   path, the CKD request, the vault's derivation or the contract). `git diff next -- contracts packages/core/src/
   derivation* packages/web/src/vault` is empty. Tests: `app-user-ids.test.ts` compares what `/v1/login` relays for one
   person on an app of before, before and after its scope is marked, and on a new `'app'` app (identical, and none of
-  it names the app, its mode or a `u1_` value), and the tokens' proven wallets on three apps of one scope (identical);
-  `app-user-ids.spec.ts` (e2e) signs one person in on an app of before, then on two new apps of the marked scope and on
+  it names the app, its mode or a `u1_` value); `app-user-ids.spec.ts` (e2e) signs one person in on an app of before, then on two new apps of the marked scope and on
   the first again: all four give the same Stellar, EVM and NEAR addresses, equal to literals this stack derived for
   that person and scope on `next` @ e59e9c64 before the change. An existing app's `sub` and Support ID are unchanged
   across the migration (`migration-0030.test.ts`, through the API's own reads and code, and the core literals).
@@ -21964,8 +21963,8 @@ and 0029 are piece P2's, built at the same time; 0030 doesn't depend on them).
      older rules (no code moves an app; the spec fixes only `'app'` apps').
   8. **`HOT_DB_SCHEMA` stays 9**, as P0 left it: the API needs 0030 before it deploys (it reads `apps.user_ids` in
      every app read), and `operations.md` says so with the deploy steps and a check.
-  9. **The ledger's `app.created` row doesn't record the mode** (it is in `apps.user_ids`, fixed); recommend adding it
-     when the platform's create (P4) writes the same row.
+  9. ~~**The ledger's `app.created` row doesn't record the mode**~~ Done after PR 148's review (below, item 8): it
+     records `userIds`; P4's create should write it the same way.
 - **Found in the spec:** B7's SQL re-creates `scopes_app_user_ids_one_way`, which 0026 already has (P0): not
   re-created. B3's "the partner portal's per-app User ID" has nothing to show before P7: nothing built. B3's test
   "a token minted for an existing app before and after the migration has the same `sub`" can't run as worded (this
@@ -21973,6 +21972,46 @@ and 0029 are piece P2's, built at the same time; 0030 doesn't depend on them).
   literals and the e2e addresses pinned from `next`. A `'scope'` app's scope change isn't covered by B7 (point 7).
 - **Also:** the admin portal's signing-settings rows already overflow at 390 px for long text (before this change too,
   in `before-admin-app-signing-390-*.png`): not fixed here.
+- **After PR 148's review (2026-11-25)**, on the same branch. Nothing high or medium; the eight low points and notes:
+  1. **An `'app'` app can't be moved by a replacing insert or a delete-then-insert.** `apps_user_ids_insert` also
+     refuses an insert that would give an existing app whose mode isn't `'scope'` another scope (a REPLACE fires no
+     UPDATE trigger), and a new trigger `apps_user_ids_no_delete` refuses a hard delete of such an app **and of any app
+     on a marked scope** (beyond the review's ask: deleting an app of before there and inserting it again would give
+     it the mode `'app'`, changing its users' IDs). Checked: no code hard-deletes an app (apps are soft-deleted; the
+     only `DELETE FROM apps` are two tests on unmarked scopes and before 0030; `d1-move` imports into an empty
+     database). A future rebuild of `apps` is unaffected (a DROP TABLE's implicit delete fires no trigger) but must
+     re-create the four triggers. Tests in `migration-0030.test.ts`.
+  2. **`end_user_apps` rewrites both IDs with every write**, as `end_users` does, and its CHECK takes any `u<digit>_`
+     prefix (`GLOB 'u[1-9]_*'`), so the documented `u2_` re-key neither leaves stale IDs for people who sign in again
+     nor fails the directory's batch. People who never sign in again keep the old IDs: the re-key's runbook
+     (`operations.md`, "Sub key leak") now says to recompute them with `end_users.token_sub`, whose own 0011 CHECK
+     still says `u1_` and needs its own migration then. Test: a re-write with another key changes both, keeps
+     `first_seen_at`.
+  3. **The partner guide no longer promises** that Journear's support finds an `'app'` app's Support ID: until P7, send
+     the user's `sub` with it.
+  4. **To confirm (the Tech Lead), for P7:** Passport Home shows the person's scope-level Support ID, the code every
+     `'scope'` app on the scope and the network hold, so a person who reads it out to an `'app'` partner hands that
+     partner a 40-bit join key (by their own action; the addresses match anyway). Not changed here. Recommended for P7:
+     Home labels the code as Journear's own ("Your Journear Support ID: give it only to Journear or {Network}"), or its
+     line explains that each site has its own.
+  5. **The "proven wallets are the same on every app" test is dropped**: it fed one random key to every mint, so it
+     couldn't fail on a path change, and is no longer cited as evidence. The evidence stays the relayed derivation
+     inputs (API) and the addresses pinned from `next` (e2e).
+  6. **`end_user_apps.app_id` references `apps(id)` with ON DELETE CASCADE**, as `name_shares` does. Thought through with
+     item 1: the delete trigger makes every app that can have rows (an app of a marked scope) undeletable, so the
+     cascade never removes rows while the trigger stands; it only keeps a row from naming an app that doesn't exist
+     and would clean up after a future, deliberate hard delete. A soft delete cascades nothing, so the 30-day purge is
+     unchanged.
+  7. **The per-login write's row reads are pinned** (`app-user-ids.test.ts`): 7 on an app of a marked scope, 3 on any
+     other app (the join finds no mark), the same on a repeat, with other apps and people present.
+  8. **`uid-erase --support-id` reads look-alikes** as the staff lookup does (console-core `parseSupportId`: any case,
+     spaces and dashes, I and L as 1, O as 0). **The `app.created` ledger row records `userIds`** (no ledger rebuild:
+     `detail_json` is free JSON): `createApp`'s commit predicate now also holds the mark it read, so a mark set
+     between the read and the batch commits nothing (`version_conflict`) rather than a row naming the other mode;
+     `app:create` holds it in its insert (a raced mark inserts no app, and the key's insert stops the write).
+  9. **To confirm (the Tech Lead):** a remote D1 export's order (rows before triggers) is untried; `operations.md`'s
+     account move now starts with a rehearsal of `d1-move` on a fixture holding an app of before (`'scope'`) on a
+     marked scope, before the move.
 
 ### D920. The readiness page's Owner split is confirmed; the next sandbox-dev deploy is of the current setup, from 2026-11-26
 

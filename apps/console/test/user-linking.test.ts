@@ -221,15 +221,16 @@ describe('POST /api/orgs/:org/users/link', () => {
   });
 
   it('a flood: 50 look-ups in a minute meet the console’s own limit (10 a minute a member); refusals write at most one row an hour', async () => {
-    // The binding's windows are real-clock minutes: the whole run (about 15 s) in one.
-    await minuteHeadroom(35_000);
+    // The binding's windows are real-clock minutes: the whole run (a few seconds, longer on a loaded machine) in one.
+    await minuteHeadroom(25_000);
     const m = await member('owner');
     const n = await seedNetwork(m.org);
     const statuses: number[] = [];
-    // A fifth of a second apart (the API's own budget refills meanwhile; the console's limit is the one met).
+    // The first ten a fifth of a second apart (they reach the API, whose own budget refills meanwhile); the rest at
+    // once (the console's limit refuses them before the API).
     for (let i = 0; i < 50; i++) {
       statuses.push((await linkAs(m, { query: 'HANA-ZZZZ-ZZZZ', purpose: 'search' })).status);
-      await new Promise((r) => setTimeout(r, 200));
+      if (i < 10) await new Promise((r) => setTimeout(r, 200));
     }
     expect(statuses.filter((x) => x === 404)).toHaveLength(10);
     expect(statuses.filter((x) => x === 429)).toHaveLength(40);
@@ -237,7 +238,7 @@ describe('POST /api/orgs/:org/users/link', () => {
     // Ten real look-ups (each recorded), and one row for the forty refused.
     expect(rows.map((x) => JSON.parse(x.details_json).code)).toEqual([...Array(10).fill('not_found'), 'rate_limited']);
     void n;
-  });
+  }, 120_000);
 
   it('refuses a body of another shape, and is 404 with the Users screen off (the test config’s default)', async () => {
     const m = await member('owner');

@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-25 (an app's own `sub` and Support ID on a shared wallet); 2026-11-24 (shared-scope `sub`; request labels, Hedera); 2026-11-23 (gas sponsorship), SDK 0.5.0.
+Last verified against code: 2026-11-25 (an app's own `sub` and Support ID, found by support); 2026-11-24 (shared-scope `sub`; request labels, Hedera); 2026-11-23 (gas sponsorship), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -660,8 +660,8 @@ button.addEventListener('click', async () => {
   nothing on a code alone. Show it where your users look for help, put it in your diagnostics, and give it to Journear
   when you escalate, with the error `code`, its request ID (`error.requestId`, section 13), when it happened and the
   app; Journear's support finds the user, their logins and sessions by it, and a failed request by its request ID (Journear Passport
-  keeps no user id on failed requests). Not yet for an app with a `sub` of its own on a wallet several partners share:
-  Journear's support can't find those Support IDs on their own yet, so send the user's `sub` with it. The Journear Passport
+  keeps no user id on failed requests), whether it is your app's own Support ID or the one the user's wallet has for
+  all its apps. The Journear Passport
   approval popup also shows it in its details ("Show details"), so a user can read it out. It comes from Journear Passport's API with the
   session: `null` for a session saved before this release (until the user's next login) and on an environment that
   can't compute it. An SDK older than 0.2.0 never receives it (the vault gives older SDKs exactly the answers they

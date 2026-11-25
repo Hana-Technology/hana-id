@@ -221,6 +221,11 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
 function write(scenario: Scenario, orgId: string, rest: string, body: unknown, state: PreviewState, now: number): Answer {
   const b = (body ?? {}) as Record<string, unknown>;
   if (scenario === 'viewer') return fail(403, 'forbidden', 'Only an owner of the organisation can do this');
+  // D925: one person across the org's apps (a read, though a POST; owners only).
+  if (rest === '/users/link') {
+    const link = F.userLink(now, String(b.query ?? '').trim());
+    return link ? ok({ link }) : fail(404, 'not_found', 'Not found');
+  }
   if (scenario === 'errors') {
     if (rest === '/actions') return fail(400, 'origin_refused', 'https://localhost.lumenpay.io: loopback names are refused for live apps');
     if (rest.endsWith('/policy/check')) return fail(400, 'policy_invalid', 'label: required; evm.chains[0].maxFeeWei: must be a decimal string', { problems: ['label: required', 'evm.chains[0].maxFeeWei: must be a decimal string'] });

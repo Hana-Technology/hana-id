@@ -63,6 +63,7 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [The usage database’s free monthly allowance is running low](#neon-compute-high) | warning | — |
 | [Auto-approve found on an app that shares a wallet](#shared-wallet-policy) | critical | — |
 | [A shared wallet’s mark was removed by hand](#shared-scope-unmarked) | critical | — |
+| [Many look-ups of one network’s people across its apps](#link-lookup-volume) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -1949,6 +1950,41 @@ A `shared_scope_unmarked` security event: the ledger says a scope was marked as 
 - Note what undid it, and how, in the decision log.
 
 **Refs:** D915 (`docs/decisions.md`), D916 (`docs/decisions.md`) · **See also:** [shared-wallet-policy](#shared-wallet-policy), [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+
+<a id="link-lookup-volume"></a>
+
+### Many look-ups of one network’s people across its apps
+
+`link-lookup-volume` · warning
+
+A `link_lookup_volume` security event: an owner of a network's organisation looked up more than 30 people across the organisation's apps in a clock hour, or the organisation's owners more than 200 in a UTC day (“This person on your apps” and the search by an app's ID, in the partner console). It is an alert, not a refusal: the limits (60 an hour and 300 a day per owner, 1 000 a day per organisation) refuse past them on their own.
+
+**Signals**
+
+- A `link_lookup_volume` row in the admin's security events, emailed by the feed: the organisation, `limit` (`member_hour` or `org_day`), the window's start and length, the threshold, and for an owner their console member id. One row per window, however many look-ups follow.
+
+**Impact**
+
+- Each look-up shows one person's User ID and Support ID on every app of the network: the mapping per-app IDs keep from partners. Many look-ups in a short time can mean someone is building a table to hand out (the network agreed not to give one partner another partner's ID), or an owner's account is being used by someone else.
+- How urgent: today.
+
+**Steps**
+
+1. **See what was looked up** (who: anyone). In the admin portal's audit (console rows, action `users.link_view`, the organisation): who looked, when, which person (the scope-level User ID) and which app's code matched. Each row was written before its answer.
+
+2. **Ask the network** (who: anyone). Contact the organisation's security contacts (not through the account that looked) and ask what the look-ups were for. Support work for one person needs a handful, not dozens.
+
+3. **If it isn’t theirs** (who: anyone). Disable the member in the admin portal (their sessions end at once), and freeze the organisation if more than one account is involved. The limits keep refusing past 60 an hour per owner and 1 000 a day per organisation meanwhile.
+
+**Verify**
+
+- No further `link_lookup_volume` row for the organisation in the next windows, and the audit shows look-ups at the usual rate.
+
+**Follow-ups**
+
+- Note the cause and what was done in the decision log; if the network needs more for real support work, raise the limits there first.
+
+**Refs:** D913 (`docs/decisions.md`), D925 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
 
 <a id="updater-key-stolen"></a>
 

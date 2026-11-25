@@ -215,6 +215,8 @@ export const summaryOf = (a: AppDetail): AppSummary => ({
   activeOrigins: a.activeOrigins,
   pendingChanges: a.pendingChanges,
   ...(a.logoUrl ? { logoUrl: a.logoUrl } : {}),
+  // D925: the list says which apps share a wallet (the Users screen's search across apps).
+  ...(a.sharedScope !== undefined ? { sharedScope: a.sharedScope } : {}),
   createdAt: a.createdAt,
 });
 
@@ -390,12 +392,33 @@ export function users(now: number) {
       ...(near ? [{ chain: 'near' as const, address: near, firstSeenAt: now - seen, lastUsedAt: now - seen }] : []),
     ],
     email,
+    sharedScope: false,
   });
+  // D925: a person on the shared wallet of "Rewards beta" (a scope Journear marked), with that scope's IDs.
+  const shared = { ...u(4, 'HANA-1K8D-W3QA', [{ kind: 'google', status: 'active' }], '0x7d2E9a4B1c6F3e8A5b0D7c2F9e4A1b6C3d8E5f20', 'GA4D7F0H3K6M9P2R5T8V1X4Z7B0D3F6H9K2M5P8R1T4V7X0Z3B6D9F', 40 * 60_000), userId: 'u1_Jt4wN8pR2xK6mB9qZ3vL7a', scopeId: 's_rewards_test', sharedScope: true };
   return [
+    shared,
     u(1, 'HANA-7KQ2-M4XD', [{ kind: 'google', status: 'active' }], '0x4E2a9c1B7d3F6e8A0b5C9d2E7f1A3b6C8d0E2f41', 'GBX4K7QWZ2M5N8P3R6T9V2Y5B8E1H4K7N0Q3S6U9W2Z5C8F1J4L7P2', 14 * 60_000, null, 'a8f3c2d17e4b9056c1d2e3f40718293a4b5c6d7e8f9012a3b4c5d6e7f8091a2b'),
     u(2, 'HANA-9TPL-2WRN', [{ kind: 'google', status: 'active' }, { kind: 'email', status: 'active' }], '0x91bD3e7F0a2C4d6E8f1A3b5C7d9E0f2A4b6C8d1E', 'GCQ7M2P5R8T1V4X7Z0B3D6F9H2K5M8P1R4T7V0X3Z6B9D2F5H8K1M4', 3 * H, null, '3c9e7a1b5d2f4086e9a1b3c5d7e9f1023a4b5c6d7e8f90a1b2c3d4e5f6a7b8c9'),
     u(3, 'HANA-4HJS-8BQC', [{ kind: 'email', status: 'active' }, { kind: 'google', status: 'pending' }], '0x0c7A2e9B4d1F6a3C8e5B0d7F2a9C4e1B6d3F8a51', 'GDA2C5E8G1J4L7N0Q3S6U9W2Y5A8C1E4G7J0L3N6Q9S2U5W8Y1A4C7', 2 * D, 'mei.lin@example.com'),
   ];
+}
+
+/** D925: the shared wallet's person across the org's apps (`POST /api/orgs/:org/users/link`), as an owner sees it. */
+export function userLink(now: number, query: string) {
+  const code = query.replace(/[\s-]/gu, '').toUpperCase();
+  const ownStamps = { appId: 'app_Rw2Bt7Kd5c', appName: 'Rewards beta', userId: 'u1_Hx2cV6nT9bQ4wK8mR3zP5g', supportId: 'HANA-7Q2M-K4XP', firstSeenAt: now - 4 * D, lastSeenAt: now - 40 * 60_000 };
+  const before = { appId: 'app_Bf1Kd8Mn3x', appName: 'Rewards (first site)', userId: 'u1_Jt4wN8pR2xK6mB9qZ3vL7a', supportId: 'HANA-1K8D-W3QA', firstSeenAt: now - 20 * D, lastSeenAt: now - 5 * D };
+  const byOwn = code === 'HANA7Q2MK4XP' || query === ownStamps.userId;
+  if (!byOwn && query !== before.userId && code !== 'HANA1K8DW3QA') return undefined;
+  return {
+    userId: before.userId,
+    supportId: before.supportId,
+    scopeId: 's_rewards_test',
+    match: byOwn ? { kind: query.startsWith('u1_') ? 'userId' : 'supportId', of: 'app', appId: ownStamps.appId } : { kind: query.startsWith('u1_') ? 'userId' : 'supportId', of: 'scope', appId: null },
+    apps: [ownStamps, before],
+    truncated: false,
+  };
 }
 
 /** One user's detail (`GET /api/orgs/:org/users/:userId`): the list's fields and each app's shared address. */

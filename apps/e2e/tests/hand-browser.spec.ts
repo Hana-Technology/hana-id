@@ -90,6 +90,22 @@ async function signOut(demo: Page): Promise<void> {
 const closes = (p: Page) => (p.isClosed() ? Promise.resolve() : p.waitForEvent('close', { timeout: 20_000 }).then(() => undefined));
 
 /**
+ * Clicks the window's own Close or Done and waits for the window to close. A window that closes itself as the click
+ * lands makes the click throw ("Target page … has been closed"): that is the close being waited for, not a failure;
+ * any other error, or a window still open, fails the test (D924).
+ */
+async function clickToClose(p: Page, name: 'Close' | 'Done'): Promise<void> {
+  const closed = closes(p);
+  await p
+    .getByRole('button', { name })
+    .click()
+    .catch((e: unknown) => {
+      if (!p.isClosed()) throw e;
+    });
+  await closed;
+}
+
+/**
  * Case B, waiting: a Google sign-in on the demo (the Google wallet), Sign out, Sign in with email with the same
  * address, Link and continue, the same account again, Done. Ends signed in to the Google wallet.
  */
@@ -106,9 +122,7 @@ async function waitingLink(h: Hand, demo: Page, a: HandAccount): Promise<void> {
   await expect(popup.locator('#link-banners')).toContainText('will be able to open this wallet from');
   // D887: the link this sign-in just made: the small button alone, named for whose link it cancels.
   await expect(popup.getByRole('button', { name: 'Cancel this link for the email address', exact: true })).toBeVisible();
-  const closed = closes(popup);
-  await popup.getByRole('button', { name: 'Done' }).click();
-  await closed;
+  await clickToClose(popup, 'Done');
   await expect(demo.locator('#status')).toContainText('Signed in');
 }
 
@@ -210,9 +224,7 @@ test('case B waiting, cancelled from a Google sign-in (D864), with Passport Home
   await popup.getByRole('button', { name: 'Link and continue' }).click();
   await choose(popup, ben);
   await expect(popup.locator('#link-banners')).toContainText('will be able to open this wallet from');
-  const done = closes(popup);
-  await popup.getByRole('button', { name: 'Done' }).click();
-  await done;
+  await clickToClose(popup, 'Done');
 
   await showAgain(home);
   await expect(rows(home)).toHaveCount(2);
@@ -230,9 +242,7 @@ test('case B waiting, cancelled from a Google sign-in (D864), with Passport Home
   // D881: back from Google's check, the window says what became of it.
   await expect(again.getByRole('heading', { name: 'Link cancelled' })).toBeVisible();
   await expect(again.locator('#link-change-what')).toHaveText('The email address is no longer being linked to this wallet, so it won’t open it.');
-  const cancelled = closes(again);
-  await again.getByRole('button', { name: 'Close' }).click();
-  await cancelled;
+  await clickToClose(again, 'Close');
   await expect(demo.locator('#status')).toContainText('Signed in');
 
   await showAgain(home);
@@ -256,9 +266,7 @@ test('case B waiting, cancelled from the email’s own sign-in (D864)', async ({
   await expect(demo.locator('#error-text')).toHaveText('This sign-in is waiting to be linked to a wallet, so it can’t open one yet. The Journear sign-in window says what to do.');
   await nextCode(h, popup, cleo, () => popup.getByRole('button', { name: 'Cancel this link', exact: true }).click());
   await expect(popup.getByRole('heading', { name: 'Link cancelled' })).toBeVisible();
-  const closed = closes(popup);
-  await popup.getByRole('button', { name: 'Close' }).click();
-  await closed;
+  await clickToClose(popup, 'Close');
   const home = await homeList(h, cleo);
   await expect(rows(home)).toHaveCount(1);
   await h.context.close();
@@ -287,9 +295,7 @@ test('a waiting link made to take effect, the shared-wallet question and Remove 
   await expect(popup.getByRole('heading', { name: 'Remove this email from that wallet?' })).toBeVisible();
   await nextCode(h, popup, dev, () => popup.getByRole('button', { name: 'Remove it' }).click());
   await expect(popup.getByRole('heading', { name: 'This email was removed' })).toBeVisible();
-  const closed = closes(popup);
-  await popup.getByRole('button', { name: 'Close' }).click();
-  await closed;
+  await clickToClose(popup, 'Close');
   await expect(demo.getByRole('alert')).toHaveText('Sign-in cancelled.');
   await showAgain(home);
   await expect(rows(home)).toHaveCount(1);
@@ -325,9 +331,7 @@ test('the automatic same-address link (case A), then the email’s next sign-in:
   await expect(google).toHaveTitle('You can now sign in with Google too');
   await expect(google.locator('#link-banners')).toContainText('You already have a wallet here, made when you signed in with your email address. Your Google account uses the same address, so signing in with Google now opens that same wallet.');
   await expect(google.locator('#link-fresh-home')).toHaveText('You can see every way to sign in to your wallet in Passport Home, under “Ways to sign in”.');
-  const done = closes(google);
-  await google.getByRole('button', { name: 'Done' }).click();
-  await done;
+  await clickToClose(google, 'Done');
   await expect(demo.locator('#status')).toContainText('Signed in');
   await expect(demo.locator('#evm-address')).toHaveText(evm ?? '');
   const home = await homeList(h, ada, 'email');
@@ -355,9 +359,7 @@ test('the automatic same-address link (case A), then the email’s next sign-in:
   await expect(next.getByRole('button', { name: 'Remove it', exact: true })).toBeVisible();
   await next.getByRole('button', { name: 'Go back', exact: true }).click();
   await expect(remove).toBeVisible();
-  const kept = closes(next);
-  await next.getByRole('button', { name: 'Done' }).click();
-  await kept;
+  await clickToClose(next, 'Done');
   await expect(demo.locator('#evm-address')).toHaveText(evm ?? '');
   await showAgain(home);
   await expect(rows(home)).toHaveCount(2);
@@ -385,9 +387,7 @@ test('an added sign-in 8 days old: Home’s line, the quiet line with Done, not 
   // D887: under the line, "Don't recognise it?" and a small Remove it, named for what it removes.
   await expect(first.getByRole('button', { name: 'Remove it (the email address)', exact: true })).toBeVisible();
   await expect.poll(() => seenText(first.locator('#link-older .banner-action'))).toBe('Don’t recognise it?Remove it');
-  const done = closes(first);
-  await first.getByRole('button', { name: 'Done' }).click();
-  await done;
+  await clickToClose(first, 'Done');
   await expect(demo.locator('#status')).toContainText('Signed in');
   await signOut(demo);
   // Not shown again in this browser: the window closes by itself.
@@ -405,9 +405,7 @@ test('an added sign-in 8 days old: Home’s line, the quiet line with Done, not 
   await expect(third.getByRole('heading', { name: 'Remove the email address from this wallet?' })).toBeVisible();
   await third.getByRole('button', { name: 'Remove it', exact: true }).click();
   await expect(third.getByRole('heading', { name: 'The email address was removed' })).toBeVisible();
-  const removed = closes(third);
-  await third.getByRole('button', { name: 'Close' }).click();
-  await removed;
+  await clickToClose(third, 'Close');
   await showAgain(home);
   await expect(rows(home)).toHaveCount(1);
   await h.context.close();

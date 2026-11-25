@@ -15,7 +15,7 @@ import { forgetVerifiedChains } from '../src/evm/sponsor-chain.ts';
 import { DEFAULT_SPONSOR_PORTS, sponsorPorts } from '../src/evm/sponsor-ports.ts';
 import { evmSponsorConfig, forgetRelayerBalances, forgetRelayerStatus, sponsorTiming } from '../src/evm/sponsor.ts';
 import { reconcileEvmSends } from '../src/evm/sponsor-settle.ts';
-import { act, addressOf, auditRows, balance, CHAIN, clockAhead, clockTo, automine, billingRows, checkInCall, code, DELEGATE, designator, DEV_ACCOUNT, ETH, json, LANE, LANE_FALLBACK, mine, prepare, rawAuthorization, rawTx, rawType4, receipt, relayerRun, rpc, send, setBalance, SKIPPED, txCount, untilPooled, vaultSign, world, type World } from './lane.ts';
+import { act, addressOf, auditRows, balance, CHAIN, clockAhead, clockTo, automine, billingRows, checkInCall, code, DELEGATE, designator, DEV_ACCOUNT, ETH, json, LANE, LANE_FALLBACK, mine, prepare, rawAuthorization, rawTx, rawType4, receipt, relayerRun, rpc, send, sendMined, setBalance, SKIPPED, txCount, untilPooled, vaultSign, world, type World } from './lane.ts';
 import { testKey } from '../test/evm-sponsor-helpers.ts';
 import { uid } from '../test/helpers.ts';
 
@@ -48,7 +48,7 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
     const w = await world();
     expect((await act(w, [checkInCall])).res.status).toBe(200);
     // Someone else with the key: a plain transfer at nonce 1, mined.
-    await rpc('eth_sendRawTransaction', [rawTx(w.relayerKey, { nonce: 1, ...fee })]);
+    await sendMined(rawTx(w.relayerKey, { nonce: 1, ...fee }));
     expect(await txCount(w.relayer)).toBe(2);
     await relayerRun(w);
     expect((await w.stub.status()).halted).toMatchObject({ reason: 'foreign_transactions', nonce: 1 });
@@ -205,7 +205,7 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
     await setBalance(addressOf(carrier), ETH);
     const before = await txCount(w.relayer);
     const auth = rawAuthorization(w.relayerKey, { chainId: CHAIN, address: DELEGATE, nonce: BigInt(before) });
-    await rpc('eth_sendRawTransaction', [rawType4(carrier, { nonce: 0, to: addressOf(carrier), ...fee, authorizations: [auth] })]);
+    await sendMined(rawType4(carrier, { nonce: 0, to: addressOf(carrier), ...fee, authorizations: [auth] }));
     expect(await txCount(w.relayer)).toBe(before + 1);
     expect((await code(w.relayer)).toLowerCase()).toBe(designator(DELEGATE));
     await setBalance(w.relayer, ETH);
@@ -217,7 +217,7 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
     expect(s.autoRestart.pause).toMatchObject({ blocked: 'leak_seen' });
     // Cleared again: an authorization to the zero address (count +1 once more, no code).
     const clear = rawAuthorization(w.relayerKey, { chainId: CHAIN, address: `0x${'0'.repeat(40)}`, nonce: BigInt(before + 1) });
-    await rpc('eth_sendRawTransaction', [rawType4(carrier, { nonce: 1, to: addressOf(carrier), ...fee, authorizations: [clear] })]);
+    await sendMined(rawType4(carrier, { nonce: 1, to: addressOf(carrier), ...fee, authorizations: [clear] }));
     expect(await txCount(w.relayer)).toBe(before + 2);
     expect(await code(w.relayer)).toBe('0x');
     await mine(LANE.safeDepth);
@@ -234,7 +234,7 @@ describe.skipIf(SKIPPED !== null)('the relayer’s halts on real chain evidence 
     await setBalance(w.relayer, ETH);
     // Someone with the key, quicker than the relayer's next run: half the refill out, at the relayer's slot 0. (The
     // relayer's cancel for slot 0 went out at send, D890 review, but was refused for funds then, so no pool holds it.)
-    await rpc('eth_sendRawTransaction', [rawTx(w.relayerKey, { nonce: 0, to: DEV_ACCOUNT, value: ETH / 2n, ...fee })]);
+    await sendMined(rawTx(w.relayerKey, { nonce: 0, to: DEV_ACCOUNT, value: ETH / 2n, ...fee }));
     expect(await txCount(w.relayer)).toBe(1);
     expect(await balance(w.relayer)).toBeGreaterThan(ETH / 4n);
     clockTo(since + 61_000);

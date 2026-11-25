@@ -9,6 +9,7 @@ import { base64UrlEncode, fromHex, sha256 } from '../src/bytes.ts';
 import { CONSENT_MAX_PER_SESSION_KEY, CONSENT_REVOKED_KEEP_MS, pruneConsents } from '../src/vault/consent-store.ts';
 import { SHARE_TOMBSTONE_MS, pruneShares, vaultMaintenance } from '../src/vault/cron.ts';
 import { clearKekCache } from '../src/vault/kek.ts';
+import { SESSION_RETRY_INTERVAL_MS } from '../src/vault/endpoints.ts';
 import { NO_SHARE_ID } from '../src/vault/message.ts';
 import { ORIGIN, type Chain, type SeededApp, call, newSessionKey, seedApp } from './helpers.ts';
 import { HOUR, VAULT, autoApprovePolicy, createShare, createShareBody, pathFor, pathHash, setSettings, setShare, signVault, spentSession, storedShare, vaultHeaders, vaultSetup } from './vault-helpers.ts';
@@ -379,13 +380,17 @@ describe('none mode', () => {
     const { app, near } = await setup('none');
     const spk = newSessionKey();
     near.viewCalls.length = 0;
-    const started = Date.now();
+    // No wait either: measured as the timers the request sets, not as wall-clock time (D924: a 250 ms bound failed on
+    // a loaded machine). The re-read loop's pause is a setTimeout of SESSION_RETRY_INTERVAL_MS.
+    const timers = vi.spyOn(globalThis, 'setTimeout');
     const { res } = await register(app, { spk, shareId: null });
+    const waits = timers.mock.calls.map((c) => Number(c[1] ?? 0)).filter((ms) => ms >= SESSION_RETRY_INTERVAL_MS);
+    timers.mockRestore();
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('1');
     expect(((await res.json()) as { code: string }).code).toBe('session_not_visible');
     expect(near.viewCalls.filter((c) => c.method === 'get_session')).toHaveLength(1);
-    expect(Date.now() - started).toBeLessThan(250);
+    expect(waits).toEqual([]);
     near.sessions.set(JSON.stringify(spk), { path: pathFor(app.scope), scope_id: app.scope, expires_at_ms: Date.now() + 12 * HOUR, max_uses: 1, used: 1 });
     expect((await register(app, { spk, shareId: null })).res.status).toBe(201);
   });

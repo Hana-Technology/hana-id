@@ -406,24 +406,42 @@ describe('D891: awkward real-world names', () => {
 });
 
 describe('D891: no rule is slow (no catastrophic backtracking)', () => {
-  it('64-character adversarial names take under 20 ms each', () => {
+  // D924: measured as work, not wall-clock milliseconds (which failed under parallel load): each call's cost is the best of
+  // five timed batches, and a rule that backtracks catastrophically shows as a cost that explodes with the length (twice
+  // the characters, thousands of times the work), where linear or quadratic rules grow 2 to 4 times. Each adversarial
+  // name is also held against a plain name of the same length checked by the same rules.
+  const cost = (f: () => void, batch: number): number => {
+    let best = Number.POSITIVE_INFINITY;
+    for (let r = 0; r < 5; r++) {
+      const t = performance.now();
+      for (let i = 0; i < batch; i++) f();
+      best = Math.min(best, performance.now() - t);
+    }
+    return Math.max(best, 0.05); // below the timer's resolution, a floor rather than a zero
+  };
+  it('64-character adversarial names: no rule’s work explodes with the length, and none costs far more than a plain name', () => {
     const inputs = [
       'P'.repeat(64), 'p a s s p o r t '.repeat(4), 'Passport '.repeat(7), 'P-a-s-s-p-o-r-t-'.repeat(4), `${'a '.repeat(31)}!`, '. '.repeat(32), `Passport${' '.repeat(55)}|`,
       'J o u r n e a r '.repeat(4), `${'the '.repeat(15)}Passport`, 'Wallet Passport '.repeat(4), '.-'.repeat(32), `${'x'.repeat(63)}.`, 'Sa fe '.repeat(10),
       `Passport ${'Pro '.repeat(14)}`, `Passport ${'X '.repeat(28)}Pro`, `${'my '.repeat(19)}Passport Pro`, `${'Passport Pro '.repeat(5)}`, `Passport${'Pro'.repeat(18)}™`,
       `Passport ${'1.'.repeat(27)}x`, `Passport ${'v2 '.repeat(18)}`, `${'Passport 2.0 '.repeat(5)}`, `Passport ${'Elite '.repeat(10)}`, `${'v'.repeat(60)}2.0`,
     ];
+    const plain = cost(() => appNameProblem('Coffee Club Rewards and Loyalty for Small Shops Downtown Seattle W'.slice(0, 64)), 40);
     for (const name of inputs) {
-      const t = performance.now();
-      appNameProblem(name.slice(0, 64));
-      expect(performance.now() - t, name).toBeLessThan(20);
+      const full = cost(() => appNameProblem(name.slice(0, 64)), 40);
+      const half = cost(() => appNameProblem(name.slice(0, 32)), 40);
+      expect(full / half, `${name}: 64 vs 32 characters`).toBeLessThan(32);
+      expect(full / plain, `${name}: against a plain name`).toBeLessThan(200);
     }
-    // The version and trade-mark steps on 2,000 characters (far past the 64 a name may have): still fast.
+    // The version and trade-mark steps on 2,000 characters (far past the 64 a name may have): the same, 2,000 against 1,000.
     for (const name of [`Passport ${'v'.repeat(2000)}`, `Passport ${'1.'.repeat(1000)}x`, `Passport${'v.'.repeat(1000)}`, `Pa55port${'9.'.repeat(1000)}`, `${'Pass port'.repeat(220)}V2`, `Passport ${'(TM) '.repeat(400)}`, `${'v  '.repeat(700)}2`]) {
-      const t = performance.now();
-      passportProblemIn(name);
-      brandNameIn(name);
-      expect(performance.now() - t, name.slice(0, 20)).toBeLessThan(200);
+      const check = (n: string) => () => {
+        passportProblemIn(n);
+        brandNameIn(n);
+      };
+      const full = cost(check(name), 3);
+      const half = cost(check(name.slice(0, Math.ceil(name.length / 2))), 3);
+      expect(full / half, `${name.slice(0, 20)}: 2,000 vs 1,000 characters`).toBeLessThan(32);
     }
   });
 });

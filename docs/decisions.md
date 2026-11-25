@@ -21210,8 +21210,9 @@ From `next` @ 0b99ec12; not merged, not deployed, migration applied nowhere. Pie
     key: a limit was reached", "Platform key: many failed requests in a minute", "Many look-ups of one person across
     apps"). The RPC `actor` union is unchanged, so `ConsoleRpc` and `AdminRpc` refuse a `platform` actor at their input
     check until P3 and P4 add it.
-  - **Words.** The change notice's "Proposed by": "your platform key (pkc_…)". The "Changed by" rows and the feed
-    digests' "By": "a platform key (pkc_…)". The console's Audit: "your platform key pkc_…"; a waiting change: "Requested
+  - **Words.** The change notice's "Proposed by": "your platform key (pkc_…)" (since the review: "the organisation's
+    platform key (pkc_…)", F7 below). The "Changed by" rows and the feed digests' "By": "a platform key (pkc_…)" (the
+    same since the review). The console's Audit: "your platform key pkc_…"; a waiting change: "Requested
     by your platform key pkc_…". The admin SPA: "Platform key". Each list is exhaustive over the kinds, so a later kind
     can't reach a page or an email unnamed; a kind a newer API wrote reads as itself.
   - **`ledger-check`** (`scripts/ledger-check.ts`): the deploy step's before-and-after comparison (A7, M9). Every row of
@@ -21269,5 +21270,49 @@ From `next` @ 0b99ec12; not merged, not deployed, migration applied nowhere. Pie
 - **Merging beside P0**: 0026 must not rebuild `security_events` (0027's copy would refuse a kind 0027 doesn't list);
   the migration tests that list every migration file (0003's, 0006's) gain 0026 and 0027 from the two branches, a
   plain text merge.
+- **After PR 143's review** (2026-11-25; the review found the migration, the code and the views sound, and the
+  deploy's safety net not):
+  - **F1, `compare` passed a damaged rebuild as "kept".** Any difference in a job-written column passed. Now each
+    row's job-written columns are recorded as their state (NULL or a short hash; `status` itself), and only the
+    jobs' own moves pass (`lifecycleProblem`, `scripts/lib/ledger-check.ts`: an ack sets `notified_at` with
+    `active_from`, and `waiver`, `cancel_token_hash`; expedite changes `active_from` with `expedited_by` and
+    `expedite_reason`; activation pending → active with `activated_recorded_at`; an end active or pending → ended with
+    `ended_at`; a cancel pending → cancelled with `cancelled_at` and `cancelled_by`; an event's `notified_at` NULL →
+    set); anything else is `MOVED WRONG`, a rollback. `active_from` "earlier" can't be checked without its value, so
+    the rule is "changed only together with an expedite". And the copy now checks itself inside the migration: before
+    each DROP, a `ledger_copy_check` row with `CHECK (ok = 1)` takes "the old table EXCEPT the copy, and the copy EXCEPT
+    the old table, are both empty, with equal counts", so a damaged copy aborts the whole file whatever the API does.
+    Tests: seven damaged copies abort it with the old tables, rows, triggers and `d1_migrations` untouched; seven
+    job-column damages come back `roll_back` from `ledger-check` with that check switched off; every real job move,
+    and several in a row, comes back `kept`. A bug found on the way: `hex(NULL)` is '', so a cleared cancel-link hash
+    read like an empty one; NULL blobs are now read as NULL.
+  - **F2, the deploy steps.** Snapshot, then the bookmark, then the migration at once (the bookmark first made a
+    post-restore compare say ROLL BACK again). The rollback now has the export first, the restore, the admin feed's
+    cursor at once (`ledger-check <env> feed-cursor --remote --before <snapshot> [--yes]`: lowers `ops.state`
+    `feed.app_changes.seq` and its `.init` to the snapshot's `max(seq)`, never above the restored one, never raises
+    it; a repeat digest rather than a gap), the check (`not applied`), then "Re-run afterwards". The cursor step is
+    also added to "Restoring a D1 database (Time Travel)" for any restore. Time Travel has never been rehearsed (D152),
+    so the rehearsal is a required step 1 with a restore drill on the scratch copy.
+  - **F3**: the comparison reads the three tables' own SQL and expects exactly the old SQL less the moved CHECK (the
+    0027 test's normalisation); a dropped CHECK, `json_valid`, NOT NULL or new kind is a rollback.
+  - **F4**: rows are read with `apiPrivateD1Execute` (REST API remotely, a 0600 file and wrangler's log off locally),
+    not `d1Execute`, so no row reaches `~/.wrangler/logs`; a test holds the script to it.
+  - **F5**: `--d1-name <rehearsal database>` (a name containing "rehearsal", none naming production, remote only); a
+    mainnet env refused; the rehearsal step in `docs/operations.md`.
+  - **F6**: `app_changes_no_replace` refuses an insert with a request id or `seq` already recorded, so `INSERT OR
+    REPLACE` can't rewrite a ledger row (its delete fires no trigger). `guarded_changes` and `security_events` are left
+    as they are: no append-only rule applies to them (an UPDATE may already change any column), and every write to
+    `security_events` is `INSERT OR IGNORE` on its id (a trigger that aborts would break those; one that ignores would
+    turn a plain duplicate insert silent). Nothing writes the ledger with OR REPLACE, OR IGNORE or ON CONFLICT.
+  - **F7**: the change notice goes to the security alias and the org's contacts as one message, so it says "the
+    organisation's platform key (pkc_…)"; "Changed by" and the digests say the same. The console keeps "your platform
+    key" (its readers are the org's members). The admin's audit "Done by" filter offers "Platform key"; the staff
+    audit filter's schema takes it (tests).
+  - **Noted, not built**: P0 (PR 145) asks for a `shared_wallet_policy` event kind, as its drift finding reuses the
+    generic "App setting in force without a notice". The kind list 0027 widens is where it would go, with its title in
+    `SECURITY_EVENT_TITLES`; the coordinator will have it added once P0 is on `next`.
+  - **To confirm (the Tech Lead)**: the job-move rules above (they are the code's writers as read on 2026-11-25; a new
+    writer of a lifecycle column must be added to them); the feed cursor going back to the snapshot (a repeated digest
+    after a rollback rather than a missed one).
 - Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation: a D1 table rebuild,
   views and words, and an ops script.

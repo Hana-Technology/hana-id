@@ -759,9 +759,12 @@ Nothing authenticates with a platform key yet (piece P3); these hold for the cre
   `mirrorUnfreeze`, in the API's plan read and commit predicate; the hourly check's is also a compare-and-swap on the
   version it listed). The staff route freezes the mirror, then the console, then the mirror again, and unfreezes the
   console, reads it, then the mirror. The hourly check reads every page of both lists and, for each difference, the
-  console again before its write; a frozen org without a mirror row is fixed and logged at error level; never loosened
+  console again before its write (where the list said frozen it freezes unless that read says active, and also when
+  the console can't be read: tightening wins on uncertainty; an unfreeze needs a read saying active); a frozen org
+  without a mirror row is fixed and logged at error level; never loosened
   from a short read; a backlog over 10 logged at error level. **Invariants**, proved over every interleaving of two
-  staff members and one check with any one call failing (`apps/admin/test/freeze-mirror-interleavings.test.ts`): the
+  staff members and one check with any one call failing, the console unreadable at each step among them
+  (`apps/admin/test/freeze-mirror-interleavings.test.ts`): the
   mirror is never unfrozen while the console is frozen beyond one check, and never without an error-level log; it is
   never frozen while the console is active beyond the grace plus one check, and always repairs without a console
   write. **Remaining windows, for P3** (whose request check will read the mirror): a staff freeze whose mirror writes

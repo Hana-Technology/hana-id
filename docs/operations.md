@@ -2564,7 +2564,7 @@ keys again (its waiting keys and addresses are cancelled). If the answer says th
 the keys back on. An **unfreeze** frees the organisation, then its keys; within 10 minutes of a freeze the keys stay
 stopped and the answer says so (`mirror_held`): the hourly check turns them back on (pressing Unfreeze again after 10
 minutes does it at once). `freeze_mirror` log lines at error level mean a backlog, a list or organisation it couldn't
-read, or `mirror_was_unfrozen` (a frozen org whose keys weren't stopped: check why the staff route's mirror failed).
+read (`console_unreadable`: where the list said frozen it stops the keys anyway), or `mirror_was_unfrozen` (a frozen org whose keys weren't stopped: check why the staff route's mirror failed).
 An owner's stop is never held back by the console's budget; `platform_key_revoke_burst` (warn for one org, error
 across orgs) means many stops in 10 minutes, and `revoke_org_limit`, `revoke_noop_flood` or `revoke_limiter_failed` at
 error level mean the stop's own limits were reached or couldn't answer (D918 7a). A key held after a security-contact

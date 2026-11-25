@@ -9,7 +9,7 @@ import { MIRROR_FIXES, reconcileFreezes } from '../src/platform.ts';
 afterEach(() => vi.restoreAllMocks());
 
 type Org = { id: string; status: 'active' | 'frozen' };
-function fake(orgs: Org[], mirror: Map<string, boolean>, o: { consolePage?: number; apiPage?: number; consoleFailsAt?: number; statusNow?: (id: string) => 'active' | 'frozen'; versions?: Map<string, number> } = {}) {
+function fake(orgs: Org[], mirror: Map<string, boolean>, o: { consolePage?: number; apiPage?: number; consoleFailsAt?: number; statusNow?: (id: string) => 'active' | 'frozen'; versions?: Map<string, number>; getOrgFails?: boolean } = {}) {
   const fixes: { orgId: string; frozen: boolean; expectedVersion?: number }[] = [];
   const versions = o.versions ?? new Map<string, number>();
   const page = <T extends { key: string }>(items: T[], size: number, cursor: string | undefined) => {
@@ -26,7 +26,7 @@ function fake(orgs: Org[], mirror: Map<string, boolean>, o: { consolePage?: numb
         const p = page(orgs.map((x) => ({ ...x, key: x.id })), o.consolePage ?? 200, c.cursor);
         return { ok: true, orgs: p.slice.map((x) => ({ id: x.id, name: x.id, kind: 'partner', status: x.status, createdAt: 1 })), ...(p.next ? { next: p.next } : {}) };
       },
-      getOrg: async (c: { orgId: string }) => ({ ok: true, org: { id: c.orgId, name: c.orgId, kind: 'partner', status: o.statusNow ? o.statusNow(c.orgId) : (orgs.find((x) => x.id === c.orgId)?.status ?? 'active'), createdAt: 1 }, members: [], invites: [] }),
+      getOrg: async (c: { orgId: string }) => (o.getOrgFails ? { ok: false, code: 'internal' } : { ok: true, org: { id: c.orgId, name: c.orgId, kind: 'partner', status: o.statusNow ? o.statusNow(c.orgId) : (orgs.find((x) => x.id === c.orgId)?.status ?? 'active'), createdAt: 1 }, members: [], invites: [] }),
     },
     API: {
       platformOrgs: async (c: { cursor?: string }) => {
@@ -112,5 +112,19 @@ describe('the freeze mirror’s unfreeze (after PR 149’s review, finding 4)', 
     expect(r).toMatchObject({ fixed: 0, failed: 2 });
     expect(mirror.get('org_00001')).toBe(true);
     expect(mirror.get('org_00002')).toBe(true);
+  });
+});
+
+describe('the check when the console can’t be read just before its write (tightening wins on uncertainty)', () => {
+  it('a freeze the list called for still happens, logged at error level; an unfreeze doesn’t', async () => {
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((l: unknown) => void errors.push(String(l)));
+    const orgs: Org[] = [{ id: 'org_00001', status: 'frozen' }, { id: 'org_00002', status: 'active' }];
+    const mirror = new Map<string, boolean>([['org_00001', false], ['org_00002', true]]);
+    const { env, fixes } = fake(orgs, mirror, { getOrgFails: true });
+    await reconcileFreezes(env);
+    expect(fixes).toEqual([{ orgId: 'org_00001', frozen: true }]);
+    expect(mirror.get('org_00002')).toBe(true);
+    expect(errors.filter((l) => l.includes('console_unreadable'))).toHaveLength(2);
   });
 });

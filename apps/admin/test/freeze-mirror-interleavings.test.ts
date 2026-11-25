@@ -4,7 +4,8 @@
 // API's one unfreeze rule, console-core `mirrorUnfreeze`, plus the version compare-and-swap; each API call is atomic,
 // as its commit predicate re-checks the rule: apps/api/test/platform-keys.test.ts races it). Every binding call is a
 // step; a scheduler runs every ordering of two staff members' calls and one check's, from four starting states, with
-// no failure or with any one call failing. After each run it asserts:
+// no failure or with any one call failing (unreachable, or refusing: the console unreadable at each step among them).
+// After each run it asserts:
 // - the mirror never ends unfrozen while the console is frozen without an error-level log (I1, never silently);
 // - after the grace, one more check with nothing failing brings the mirror to the console's state without touching
 //   the console (I1 and I2: at most one run plus the grace, and nothing is unrecoverable).
@@ -50,7 +51,7 @@ interface Gate {
 }
 
 /** One run: `choices[i]` picks which waiting call goes next at the i-th step; `failAt` makes that call (by order) throw. */
-async function run(from: Start, staff: [boolean, boolean], choices: number[], failAt: number | null) {
+async function run(from: Start, staff: [boolean, boolean], choices: number[], failAt: number | null, failMode: 'throw' | 'refuse' = 'throw') {
   const w: World = { status: from.status, mirror: from.mirror && { ...from.mirror }, now: T0, consoleWrites: 0 };
   const pending: Gate[] = [];
   const branching: number[] = [];
@@ -62,7 +63,11 @@ async function run(from: Start, staff: [boolean, boolean], choices: number[], fa
   const step = async <T>(c: Ctx, label: string, act: () => T): Promise<T> => {
     await new Promise<void>((release) => pending.push({ actor: who(c), label, release }));
     w.now += 1000;
-    if (calls++ === failAt) throw new Error('Service unavailable');
+    // The chosen call fails: unreachable (it throws) or refusing (`internal`), e.g. the console unreadable.
+    if (calls++ === failAt) {
+      if (failMode === 'throw') throw new Error('Service unavailable');
+      return { ok: false, code: 'internal' } as T;
+    }
     return act();
   };
   const orgView = () => ({ id: ORG, name: 'Mirror test', kind: 'partner' as const, status: w.status, createdAt: 1 });
@@ -133,15 +138,21 @@ async function run(from: Start, staff: [boolean, boolean], choices: number[], fa
 }
 
 /** Every ordering: depth-first over the scheduler's choices, re-running each prefix. */
-async function everyOrdering(start: Start, staff: [boolean, boolean], failAt: number | null, check: (r: Awaited<ReturnType<typeof run>>, path: string) => void): Promise<{ runs: number; maxCalls: number }> {
+async function everyOrdering(
+  start: Start,
+  staff: [boolean, boolean],
+  failAt: number | null,
+  check: (r: Awaited<ReturnType<typeof run>>, path: string) => void,
+  failMode: 'throw' | 'refuse' = 'throw',
+): Promise<{ runs: number; maxCalls: number }> {
   let choices: number[] = [];
   let runs = 0;
   let maxCalls = 0;
   for (;;) {
-    const r = await run(start, staff, choices, failAt);
+    const r = await run(start, staff, choices, failAt, failMode);
     runs++;
     maxCalls = Math.max(maxCalls, r.calls);
-    check(r, `${start.name} / staff ${staff.join(',')} / fail ${failAt} / ${choices.join('')}`);
+    check(r, `${start.name} / staff ${staff.join(',')} / fail ${failAt} (${failMode}) / ${choices.join('')}`);
     // The next sequence: the last position with an untried option moves on; everything after it starts again.
     const full = r.branching.map((_, i) => choices[i] ?? 0);
     let i = full.length - 1;
@@ -167,7 +178,10 @@ describe('the freeze mirror over every interleaving of two staff members and the
       it(`${start.name}; staff ${staff.map((f) => (f ? 'freeze' : 'unfreeze')).join(' and ')}: every ordering, no failure or any one call failing`, { timeout: 600_000 }, async () => {
         const { runs, maxCalls } = await everyOrdering(start, staff, null, invariants);
         let total = runs;
-        for (let failAt = 0; failAt < maxCalls; failAt++) total += (await everyOrdering(start, staff, failAt, invariants)).runs;
+        // Any one call failing, each way: unreachable (throws) or refusing (`internal`). A console read failing at each
+        // step is among them: the check's read before a freeze (it freezes anyway: tightening wins) or before an
+        // unfreeze (no unfreeze), and the staff unfreeze's read (the mirror stays as it is).
+        for (const mode of ['throw', 'refuse'] as const) for (let failAt = 0; failAt < maxCalls; failAt++) total += (await everyOrdering(start, staff, failAt, invariants, mode)).runs;
         expect(total).toBeGreaterThan(100);
       });
 });

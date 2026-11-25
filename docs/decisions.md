@@ -22125,7 +22125,11 @@ D917). D918 is the number the caller assigned; API migration 0028 and console mi
        were stopped anyway (`console_freeze_failed`) and the check turns them back on if the org stays active;
      - the staff unfreeze route: console, a fresh read, mirror; inside the grace the mirror stays frozen and the answer
        says so (`mirror_held`);
-     - the check: for each difference, a fresh console read, then the write towards it.
+     - the check: for each difference, a fresh console read, then the write towards it. Tightening wins on
+       uncertainty: where the list said frozen it freezes unless the fresh read says active, and also when the console
+       can't be read (logged at error level), which is safe because a mirror frozen while the console is active is
+       always repaired by a later check without touching the console (I2); an unfreeze needs a successful read saying
+       active, the grace and the compare-and-swap (added after a further automated finding the same day).
      **Invariants**: (I1) the mirror is never unfrozen while the console is frozen beyond one check, and never
      silently: an unfreeze needs a console read showing active and a freeze older than the grace, and every staff
      console freeze is preceded by a mirror freeze, so a racing unfreeze lands inside the grace; it can happen only
@@ -22136,8 +22140,8 @@ D917). D918 is the number the caller assigned; API migration 0028 and console mi
      one, so once the grace has passed the next check's unfreeze is accepted. **Proof**:
      `apps/admin/test/freeze-mirror-interleavings.test.ts` runs the real staff route and the real check against a model
      of the console and of the API's rule, over every ordering of two staff members' calls (freeze and unfreeze, two
-     freezes, two unfreezes) and one check's, from four starting states, with no failure or any one call failing
-     (334,902 runs); after each it asserts I1 (or an error-level log) and that one check after the grace reaches the
+     freezes, two unfreezes) and one check's, from four starting states, with no failure or any one call failing,
+     unreachable or refusing (the console unreadable at each step among them; 667,833 runs); after each it asserts I1 (or an error-level log) and that one check after the grace reaches the
      console's state with no console write. With the grace set to 0 it finds finding 2's ordering at once. The API's
      commit predicate is raced in `apps/api/test/platform-keys.test.ts`. **Remaining windows**: I1's above (a failed
      mirror write or a stalled call: up to one hourly check, error-logged), and I2's (after a freeze whose console half

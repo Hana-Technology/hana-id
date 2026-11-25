@@ -75,22 +75,22 @@ export async function reconcileFreezes(env: Pick<Env, 'API' | 'CONSOLE'>): Promi
   });
   out.backlog = Math.max(0, wrong.length - MIRROR_FIXES);
   for (const o of wrong.slice(0, MIRROR_FIXES)) {
-    // Each write follows a fresh read of the console (the truth), freeze and unfreeze alike: the mirror is written
-    // towards what the console says now, never what the list said. An unfreeze is also a compare-and-swap on the
-    // version read with the list, and the API holds it back inside the grace after the last freeze.
+    // A fresh read of the console (the truth) before each write. Tightening wins on uncertainty:
+    // - the list said frozen: freeze, unless the fresh read says active (an unfreeze landed since the list); an
+    //   unreadable console still freezes (logged at error level): a mirror frozen while the console is active is always
+    //   repaired by a later run without touching the console (after the grace);
+    // - the list said active: unfreeze only if the fresh read succeeds and says active; the API then holds it inside
+    //   the grace after the last freeze, and it is a compare-and-swap on the version read with the list.
+    const listed = o.status === 'frozen';
     const now = await env.CONSOLE.getOrg({ ...systemCtx(), orgId: o.id }).catch(() => null);
-    if (!now?.ok) {
-      log({ event: 'freeze_mirror', orgId: o.id, outcome: 'error', code: 'console_unreadable' }, 'error');
+    const read = now?.ok ? now.org.status : null;
+    if (read === null) log({ event: 'freeze_mirror', orgId: o.id, outcome: 'error', code: 'console_unreadable', step: listed ? 'freeze_anyway' : 'no_unfreeze' }, 'error');
+    if (listed ? read === 'active' : read !== 'active') {
+      if (read !== null) log({ event: 'freeze_mirror', orgId: o.id, outcome: 'rejected', code: 'console_moved' }, 'warn');
       out.failed++;
       continue;
     }
-    const freeze = now.org.status === 'frozen';
-    if (freeze !== (o.status === 'frozen')) {
-      // The console moved since the list: the next run sees it (or a staff route already mirrored it).
-      log({ event: 'freeze_mirror', orgId: o.id, outcome: 'rejected', code: 'console_moved' }, 'warn');
-      out.failed++;
-      continue;
-    }
+    const freeze = listed;
     const r = await env.API.setPlatformOrgFrozen({ ...systemCtx(), orgId: o.id, frozen: freeze, ...(freeze ? {} : { expectedVersion: versions.get(o.id) ?? 0 }) }).catch(() => null);
     if (r?.ok) out.fixed++;
     else out.failed++;

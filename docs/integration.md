@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-25 (an app's own `sub` and Support ID on a shared wallet); 2026-11-24 (shared-scope `sub`; request labels, Hedera); 2026-11-23 (gas sponsorship), SDK 0.5.0.
+Last verified against code: 2026-11-25 (NEAR relay limits; SWK `productId`; own `sub`, Support ID); 2026-11-24 (shared-scope `sub`, labels, Hedera); 2026-11-23 (gas sponsorship), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -284,6 +284,10 @@ at `^0.5.0`).
   `SPONSORSHIP_REASON_NAMES`, `NEAR_RELAY_REASON_NAMES`, and the types `SponsorReason`, `KnownSponsorReason`,
   `SponsorshipReason`, `KnownSponsorshipReason` and `NearRelayReason` (a known reason, or any string, so a new reason
   never breaks your build).
+- New: `new HanaIdModule(hana, { productId })` sets the Stellar Wallets Kit module's id; the default stays `'hana-id'`.
+  Only for a host that finds other wallets by part of their id or name: pass `JOURNEAR_PASSPORT_MODULE_ID`
+  (`'journear-passport'`) where "hana" would also catch Journear Passport (Sodax's wallet kit finds Hana Wallet that
+  way; [Stellar Wallets Kit](#stellar-wallets-kit-ids)). Everyone else changes nothing.
 - `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` are no longer `4200`. On a chain without
   gas sponsorship, `wallet_getCapabilities` answers no capabilities and `wallet_sendCalls` is `5710` (unsupported
   chain). `eth_sendTransaction` is unchanged (never sponsored).
@@ -1088,7 +1092,26 @@ import { HanaIdModule } from '@hana-id/web/stellar-wallets-kit';
 const kit = new StellarWalletsKit({ network, modules: [new HanaIdModule(hana), ...otherModules] });
 ```
 
-The module's `productId` is `'hana-id'`; the picker shows its `productName`, "Journear Passport", and the Journear mark. `isAvailable()` is true once the vault is up, `getAddress()` logs in when
+The module's `productId` is `'hana-id'`; the picker shows its `productName`, "Journear Passport", and the Journear mark.
+
+<a id="stellar-wallets-kit-ids"></a>**Its id in a host that matches by name (0.5.0).** Some wallet kits find a wallet
+by part of its id or name: Sodax's wallet kit, asked for Hana Wallet (the browser extension) as `'hana'`, also takes
+any wallet whose id contains "hana", so `'hana-id'` is taken for Hana Wallet, and a "Connect Hana" button opens
+Journear Passport's sign-in instead. In such a host, pass the other id from the start:
+
+```ts
+import { HanaIdModule, JOURNEAR_PASSPORT_MODULE_ID } from '@hana-id/web/stellar-wallets-kit';
+
+new HanaIdModule(hana, { productId: JOURNEAR_PASSPORT_MODULE_ID }); // 'journear-passport'
+```
+
+Choose it once: kits and hosts may store the id to restore the user's wallet after a reload, so changing it later
+makes returning users pick the wallet again (and a host that named `'hana-id'` in its code, as `selectedWalletId`,
+must change too). A `productId` is 3 to 64 lower-case letters, digits, `-` or `.`, and never `'hana'` or
+`'io.hana.wallet'` (Hana Wallet's). The EVM side has no such option: EIP-6963's `rdns` comes from Journear Passport's
+own web address (see [EVM](#evm-eip-1193)).
+
+`isAvailable()` is true once the vault is up, `getAddress()` logs in when
 needed (with the button fallback when SWK's own awaits cost the popup), the sign methods open the approval popup in
 your click the same way, `disconnect()` is `hana.logout()`. Errors are
 SWK's `{code, message, ext}`, with `4001` for a rejection and the Journear Passport code in `ext`. Journear Passport only signs, so
@@ -1525,10 +1548,10 @@ limit):
 |---|---|---|
 | Per NEAR account | 10 a minute, 50 a day | 5 requests a minute |
 | Per user (all their NEAR accounts) | 200 a day | 2 a day |
-| Per app | 120 a minute, 2,000 a day | 60 requests a minute, 300 a day |
+| Per app | 120 a minute, 2,000 a day | 60 requests a minute, 200 a day |
 | Per IP address, across every app | 30 a minute | 10 a minute |
 | Across the environment | 200 a minute, 10,000 a day | 300 requests a minute, 1,000 a day |
-| NEAR spent per day | 3 NEAR per app (`rate_limited`, `data.reason: 'app_budget_exhausted'`), 6 NEAR across the environment (`api_unavailable`, `relay_budget_exhausted`) | (the same budgets) |
+| NEAR spent per day | 1 NEAR per app (`rate_limited`, `data.reason: 'app_budget_exhausted'`), 5 NEAR across the environment (`api_unavailable`, `relay_budget_exhausted`) | (the same budgets) |
 
 Days are UTC days. A relay of one small call costs the relay about 0.0002 NEAR; an activation about 0.0071 NEAR. Every
 activation request is counted per minute, including one for an account that already exists; only a created account

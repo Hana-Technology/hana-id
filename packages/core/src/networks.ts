@@ -79,6 +79,45 @@ const EVM_NATIVE_SYMBOLS: Readonly<Record<number, string>> = Object.freeze({
   8217: 'KAIA',
 });
 
+/**
+ * How many decimals a transaction's value and fee count the native coin in, on every EVM chain (Hedera included, see
+ * above; an unknown chain too). Every surface that turns a raw native amount into the coin reads this.
+ */
+export const EVM_NATIVE_DECIMALS = 18;
+
+/**
+ * The name of the unit a raw native amount is counted in, where it isn't "wei" (D910, D922): Hedera's relay calls the
+ * 18-decimal unit of HBAR a weibar, on its mainnet (295) and on its test networks (296 testnet, 297 previewnet; the
+ * same relay, docs.hedera.com/evm/development/json-rpc). The test networks stay unnamed (a unit isn't a name: their
+ * coin still reads "this network's own coin"). Every chain not listed says "wei", an unknown one too.
+ */
+const EVM_SMALLEST_UNIT_NAMES: Readonly<Record<number, string>> = Object.freeze({
+  295: 'weibars',
+  296: 'weibars',
+  297: 'weibars',
+});
+
+export interface EvmNativeUnits {
+  /** What a raw native amount's number is counted in: "wei", or "weibars" on Hedera. */
+  readonly smallest: string;
+  /** Decimals from that unit to one coin: always EVM_NATIVE_DECIMALS. */
+  readonly decimals: number;
+  /**
+   * The unit a gas price is shown in, with its decimals from the smallest unit: "gwei" (9) where the smallest unit is
+   * wei. Null on a chain with its own unit name, which has no "gwei" to borrow: its gas price is shown as the value
+   * rows are, the coin and the raw number ("0.00000071 HBAR (710000000000 weibars)").
+   */
+  readonly gasPrice: { readonly name: string; readonly decimals: number } | null;
+}
+
+/** The units a raw native amount and a gas price are shown in on this chain (the approval window's details, the consent screen). */
+export function evmNativeUnits(chainId: number): EvmNativeUnits {
+  const named = Number.isSafeInteger(chainId) && Object.hasOwn(EVM_SMALLEST_UNIT_NAMES, chainId) ? (EVM_SMALLEST_UNIT_NAMES[chainId] as string) : null;
+  return named === null
+    ? { smallest: 'wei', decimals: EVM_NATIVE_DECIMALS, gasPrice: { name: 'gwei', decimals: 9 } }
+    : { smallest: named, decimals: EVM_NATIVE_DECIMALS, gasPrice: null };
+}
+
 export interface EvmChainInfo {
   /**
    * Hana's own name for the network as a user reads it: "Base Sepolia (test network)", "Base (real money)",

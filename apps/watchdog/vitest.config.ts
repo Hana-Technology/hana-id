@@ -28,6 +28,10 @@ export default defineConfig(async () => {
     test: {
       include: ['test/**/*.test.ts'],
       setupFiles: ['./test/apply-migrations.ts'],
+      // Each run test takes about 10 ms and waits on nothing real (its sleeps, chain and mail are doubles), but a
+      // workerd starved by a loaded machine once took over the default 5 s (D924): a timeout is not what these tests
+      // check, so it is generous; every assertion is unchanged.
+      testTimeout: 30_000,
       onConsoleLog: (log: string) => (process.env.LOG || !log.startsWith('{"level"') ? undefined : false),
     },
   };

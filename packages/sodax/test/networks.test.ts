@@ -2,7 +2,7 @@
 // evmChainInfo), as a real-money network, with the native coin Sodax gives it. A @sodax/types upgrade that adds an
 // EVM chain fails this test until the chain is checked against its own docs and the public registries and named.
 // Naming a chain allows nothing: a test app still refuses every one of them, and the mainnet demo stays Base only.
-import { MAINNET_DEMO_EVM_CHAINS, evmChainInfo, isTestEvmChain } from '@hana-id/core';
+import { MAINNET_DEMO_EVM_CHAINS, evmChainInfo, evmNativeUnits, isTestEvmChain } from '@hana-id/core';
 import { baseChainInfo, spokeChainConfig } from '@sodax/types';
 import { describe, expect, it } from 'vitest';
 
@@ -42,6 +42,13 @@ describe('the EVM chains Sodax lists', () => {
     expect(sodaxNative('hedera')).toEqual({ symbol: 'HBAR', decimals: 8 });
     // Every other EVM chain's native coin has 18 decimals in Sodax's list too.
     for (const [key, c] of evmChains) if (key !== 'hedera') expect(sodaxNative(key)?.decimals, c.name).toBe(18);
+    // The window's own units (D922): 18 decimals on every one of them, so nothing is scaled by Sodax's 8; the raw
+    // number is in weibars on Hedera and wei on the rest.
+    for (const [key, c] of evmChains) {
+      const units = evmNativeUnits(Number(c.chainId));
+      expect(units.decimals, c.name).toBe(18);
+      expect(units.smallest, c.name).toBe(key === 'hedera' ? 'weibars' : 'wei');
+    }
   });
 
   it('the mainnet demo stays Base only', () => {

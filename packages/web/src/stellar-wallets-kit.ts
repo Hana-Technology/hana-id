@@ -23,7 +23,7 @@ import { HANA_ID_ICON, HANA_ID_NAME } from './client/icon.ts';
 
 export const HANA_ID_MODULE_ID = 'hana-id';
 /**
- * The id a host that matches wallets by substring should pass as `productId` (D923): `'hana-id'` contains "hana", so
+ * The id a host that matches wallets by substring should pass as `productId`: `'hana-id'` contains "hana", so
  * Sodax's wallet kit's brand calls for Hana Wallet (`['hana']`) catch it. The default stays `'hana-id'`: hosts and
  * partner code that stored or named it keep working.
  */

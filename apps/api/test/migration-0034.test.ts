@@ -375,6 +375,9 @@ describe('migration 0034_origin_confirmations', () => {
     expect(await staff('rq_sp_self', 'staff-1', 'other@hana.example')).toMatch(ONLY);
     await ledgerRow('rq_sp_twin', 'app_h', 'hana', 'staff-2', null);
     expect(await staff('rq_sp_twin', 'staff-2', 'staff1@hana.example')).toMatch(ONLY);
+    // An owner (a member) with the proposing staff member's email: the same person, refused.
+    await ledgerRow('rq_sp_member_twin', 'app_h', 'member', 'usr_twin', 'sub-twin');
+    expect(await confirmRow({ ...base, request_id: 'rq_sp_member_twin', confirmed_by: 'usr_twin', confirmed_sub: 'sub-twin', confirmed_email_key: 'staff1@hana.example', token_sha256: '7'.repeat(64) })).toMatch(ONLY);
     expect(await confirmRow({ ...base, request_id: 'rq_sp_twin', confirmed_by_kind: 'hana', confirmed_by: 'staff-2', confirmed_sub: null, token_sha256: null, confirmed_email_key: 'staff2@hana.example', reason: 'short' })).toMatch(/CHECK/u);
     const at = Date.now();
     expect(await confirmRow({ ...base, request_id: 'rq_sp_twin', confirmed_by_kind: 'hana', confirmed_by: 'staff-2', confirmed_sub: null, token_sha256: null, confirmed_email_key: 'staff2@hana.example', reason: 'Checked with the network by phone today', confirmed_at: at })).toBe('accepted');

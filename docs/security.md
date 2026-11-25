@@ -966,7 +966,7 @@ actor only, its input can't even name a platform actor), and staff never confirm
   allow-list). For a staff proposal under four eyes, also a **second staff member**: another Access subject **and**
   another email (dots and `+tags` aside) than the proposer's, with a reason of at least 20 characters
   (`AdminRpc.confirmStaffOrigins`), held in code, in the commit predicate and by the database. The proposer is never
-  the confirmer.
+  the confirmer, and an owner signed in with the proposing staff member's email is the same person (refused too).
 - **The token is bound** to exactly the set: the step-up's nonce is the `origin.confirm` layout
   (`hana-id/console-origin-confirm/v1`, its own domain: no origin-add, settings, label, key or owner-action token stands
   in for it) over the signer, the env, the org, the app, the scope and the sorted change ids with their web addresses

@@ -145,7 +145,9 @@ function checkSet(plan: ConfirmPlan, changes: PlanChange[], who: Confirmer, now:
     if (proposer === 'platform' && (c.has_platform_wait !== 1 || c.platform_wait === null)) refuse('not_pending', 'This web address can’t be confirmed');
     if (proposer === 'hana' && c.staff_wait === null) refuse('not_pending', 'This web address can’t be confirmed');
     if (c.proposed_by === who.id) refuse('forbidden', 'The person who added this web address can’t confirm it: a second person must');
-    if (who.kind === 'hana' && (c.staff_by === who.id || c.staff_email_key === who.emailKey)) refuse('forbidden', 'The staff member who added this web address can’t confirm it: a second staff member, or an owner of the organisation, must');
+    // Four eyes (D917): never the staff member who added it, by Access subject or by email; an owner signed in with that
+    // staff member's email is the same person too.
+    if (proposer === 'hana' && (c.staff_by === who.id || c.staff_email_key === who.emailKey)) refuse('forbidden', 'The staff member who added this web address can’t confirm it: a second staff member, or an owner of the organisation, must');
   }
   if (plan.frozen === 1) refuse('forbidden', 'Journear has frozen this organisation');
   if ((plan.suspended_by & 3) !== 0) refuse('conflict', 'Journear has suspended this app, so its web addresses can’t be confirmed');
@@ -170,7 +172,7 @@ function confirmPredicate(w: Writer, i: { orgId: string; ids: string; n: number;
                     AND EXISTS (SELECT 1 FROM json_each(k.scopes_json) ks WHERE ks.value = a.scope_id))`;
   const staff = q`g.proposed_by_kind = 'hana'
       AND EXISTS (SELECT 1 FROM staff_origin_waits sw WHERE sw.change_id = g.id AND sw.unconfirmed_active_from IS NOT NULL
-                    AND ${who.kind === 'hana' ? q`sw.proposed_by IS NOT ${who.id} AND sw.proposer_email_key IS NOT ${who.emailKey}` : raw('1')})`;
+                    AND sw.proposed_by IS NOT ${who.id} AND sw.proposer_email_key IS NOT ${who.emailKey})`;
   const appState =
     i.proposer === 'platform'
       ? q`a.created_by_kind = 'platform' AND (SELECT environment FROM scopes WHERE scope_id = a.scope_id) = 'test'

@@ -23,7 +23,8 @@
 -- proposal its wait recorded, a member confirming, the app still in the proposing key's reach (its org, a scope it
 -- names, a test scope, platform-created), the key not revoked nor expired (by the database's clock) and the org's
 -- switch on; for a staff proposal under four
--- eyes its wait recorded and, for a staff confirmer, another Access subject and another email than the proposer's.
+-- eyes its wait recorded and another email than the proposer's (an owner too: one person who is staff and an owner is
+-- still one person), for a staff confirmer also another Access subject.
 --
 -- `staff_origin_waits` (A15, D917): a web address staff propose on a platform-created app or on any app of a scope
 -- marked as shared waits at least the 24 h platform minimum after its announcement unless a second person confirms
@@ -149,7 +150,7 @@ BEGIN
                             AND EXISTS (SELECT 1 FROM json_each(k.scopes_json) ks WHERE ks.value = a.scope_id)))
           OR (g.proposed_by_kind = 'hana'
               AND EXISTS (SELECT 1 FROM staff_origin_waits sw WHERE sw.change_id = g.id AND sw.unconfirmed_active_from IS NOT NULL
-                            AND (NEW.confirmed_by_kind = 'member' OR (sw.proposed_by IS NOT NEW.confirmed_by AND sw.proposer_email_key IS NOT NEW.confirmed_email_key))))));
+                            AND sw.proposed_by IS NOT NEW.confirmed_by AND sw.proposer_email_key IS NOT NEW.confirmed_email_key))));
 END;
 
 -- Fixed once written; only its notice is written, once, with the removal link's hash and its 7 days.

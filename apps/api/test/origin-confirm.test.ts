@@ -436,7 +436,11 @@ describe('staff web addresses on a shared wallet: four eyes', () => {
     const q2 = await staffProposal(net);
     await announce(q2.id);
     const jwt = await stepUp(nonceOf(await originConfirmDigest({ signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: net.org, appId: net.site.id, scopeId: net.scope, changes: [{ changeId: q2.id, origin: q2.origin }] })));
-    await ok(consoleOn().confirmOrigins({ ...member(), orgId: net.org, appId: net.site.id, changeIds: [q2.id], stepUpJwt: jwt }));
+    // An owner signed in with the proposing staff member's email is the same person: refused, by the API and the database.
+    const twin = { ...member(), actor: { ...member().actor, email: 'staff@hana.example' } };
+    expect((await no(consoleOn().confirmOrigins({ ...twin, orgId: net.org, appId: net.site.id, changeIds: [q2.id], stepUpJwt: jwt }))).code).toBe('forbidden');
+    const jwt2 = await stepUp(nonceOf(await originConfirmDigest({ signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: net.org, appId: net.site.id, scopeId: net.scope, changes: [{ changeId: q2.id, origin: q2.origin }] })));
+    await ok(consoleOn().confirmOrigins({ ...member(), orgId: net.org, appId: net.site.id, changeIds: [q2.id], stepUpJwt: jwt2 }));
     expect(await one('SELECT active_from FROM guarded_changes WHERE id = ?1', q2.id)).toEqual({ active_from: Date.now() });
   });
 

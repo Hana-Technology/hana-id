@@ -236,10 +236,17 @@ interface ReplayRead {
   detail_json: string | null;
   app_json: string | null;
   change_json: string | null;
+  key_json: string | null;
 }
 
 /** What a replay answers, from the first write's ledger detail and the app as it is now (null: no longer in reach). */
-type Replayer = (detail: Record<string, unknown>, app: PlatformApp | null, change: Record<string, unknown> | null) => Record<string, unknown>;
+type Replayer = (
+  detail: Record<string, unknown>,
+  app: PlatformApp | null,
+  change: Record<string, unknown> | null,
+  /** The publishable key the first write created, by its id (whatever the view's newest-20 shows). */
+  key: { id: string; key: string; created_at: number; revoked_at: number | null } | null,
+) => Record<string, unknown>;
 
 /**
  * Runs a platform write; when its plan read finds the request id already used (refuseReplay's `already_applied` or
@@ -261,7 +268,9 @@ async function withReplay(c: OpContext, w: Writer, hash: string, run: () => Prom
                ac.kind, ac.app_id, ac.detail_json,
                (SELECT ${APP_JSON} FROM apps a WHERE a.id = ac.app_id AND ${reach.app}) AS app_json,
                (SELECT json_object('id', g.id, 'app_id', g.app_id, 'origin', g.origin, 'status', g.status, 'active_from', g.active_from, 'cancelled_at', g.cancelled_at)
-                  FROM guarded_changes g WHERE g.id = json_extract(ac.detail_json, '$.changeId')) AS change_json
+                  FROM guarded_changes g WHERE g.id = json_extract(ac.detail_json, '$.changeId')) AS change_json,
+               (SELECT json_object('id', k.id, 'key', k.key, 'created_at', k.created_at, 'revoked_at', k.revoked_at)
+                  FROM app_keys k WHERE k.id = json_extract(ac.detail_json, '$.keyId') AND k.app_id = ac.app_id) AS key_json
           FROM (SELECT 1) LEFT JOIN app_changes ac ON ac.request_id = ${w.requestId}
           LEFT JOIN platform_requests pr ON pr.org_id = ${c.key.org_id} AND pr.idem_hash = ${hash} AND pr.at > ${c.now - L.idempotencyMs}`,
     );
@@ -276,7 +285,8 @@ async function withReplay(c: OpContext, w: Writer, hash: string, run: () => Prom
     const app = r.app_json === null ? null : appView(r.app_json, c.now);
     const detail = JSON.parse(r.detail_json ?? '{}') as Record<string, unknown>;
     const change = r.change_json === null ? null : (JSON.parse(r.change_json) as Record<string, unknown>);
-    return { status: 200, body: { ...replay(detail, app, change), replayed: true }, ...(r.app_id ? { appId: r.app_id } : {}) };
+    const key = r.key_json === null ? null : (JSON.parse(r.key_json) as Parameters<Replayer>[3]);
+    return { status: 200, body: { ...replay(detail, app, change, key), replayed: true }, ...(r.app_id ? { appId: r.app_id } : {}) };
   }
 }
 
@@ -335,12 +345,41 @@ const proposalWindows = (key: AuthRow): Limit[] => [
 /** A platform proposal's wait from its announcement: the greater of the env's delay and the platform minimum (24 h; a `local*` test env's own delay). */
 const proposalWait = (env: Env): number => Math.max(requireChangeConfig(env).delayMs, platformMinDelayMs(env));
 
-/** Runs `write` with its quota taken; gives it back when the write doesn't commit (any refusal or failure). */
-async function withQuota<T>(give: () => Promise<void>, write: () => Promise<T>): Promise<T> {
+const keyWindows: Limit[] = [
+  { name: 'keys:hour', windowMs: HOUR, max: L.keyCreationsPerHour },
+  { name: 'keys:day', windowMs: DAY, max: L.keyCreationsPerDay },
+];
+
+/**
+ * A write's quota, taken just before its batch (`Writer.beforeBatch`: after the plan read and every check, so a refused
+ * write, or a retry answered by its replay, never spends it), all windows or none. `write` runs the writer; if it then
+ * fails, the quota is given back **only when no ledger row with this request id exists** (a write that committed but
+ * whose answer was lost keeps its count, L3): one read straight from D1, outside the call's hot-DB budget, on the
+ * failure path only; if that read fails too, nothing is given back.
+ */
+async function withQuota<T>(c: OpContext, w: Writer, takes: readonly [Limit[], number, string][], write: () => Promise<T>): Promise<T> {
+  const taken: (() => Promise<void>)[] = [];
+  w.beforeBatch = async () => {
+    for (const [limits, n, what] of takes) {
+      if (n === 0) continue;
+      try {
+        taken.push(await takeQuota(c, limits, n, what));
+      } catch (err) {
+        for (const give of taken.splice(0)) await give();
+        throw err;
+      }
+    }
+  };
   try {
     return await write();
   } catch (err) {
-    await give();
+    if (taken.length) {
+      const committedRow = await c.env.DB.prepare('SELECT 1 AS x FROM app_changes WHERE request_id = ?1').bind(w.requestId).first().then(
+        (r) => r !== null,
+        () => true,
+      );
+      if (!committedRow) for (const give of taken.splice(0)) await give();
+    }
     throw err;
   }
 }
@@ -408,33 +447,27 @@ export async function createPlatformApp(c: OpContext, body: unknown): Promise<Op
       if (p!.contacts === 0) refuse('no_security_contact', 'Your organisation has no security contact: ask Journear to set them first');
       const others = JSON.parse(p!.scope_apps) as { id: string; name: string }[];
       const alike = others.find((o) => namesLookAlike(o.name, name));
-      if (alike) refuse('conflict', `The name reads like another app’s on this scope ("${alike.name}"): choose a name that can’t be taken for it`);
+      // Never quoting the other name: it may be an app outside the reach (the network's own site, staff's).
+      if (alike) refuse('conflict', 'The name reads like the name of another app on this scope: choose a name that can’t be taken for it');
       if (origins.length && p!.assigned_at! > c.now - config.delayMs) refuse('conflict', 'The scope was given to your organisation only just now: web addresses can be proposed a little later');
       const maxApps = p!.max_apps ?? 10;
       if (p!.platform_apps >= maxApps) throw new PlatformRefusal('app_limit', `Your organisation has ${maxApps} apps created through the platform, its limit: ask Journear to raise it`, { maxApps });
       if (p!.waiting + origins.length > L.waitingPerOrg) {
         throw new PlatformRefusal('rate_limited', `At most ${L.waitingPerOrg} web addresses may wait at once across your organisation’s apps: wait for some to come into force, or cancel some`, { limit: 'platform:waiting_origins', retryAfterS: 3600 }, { 'retry-after': '3600' });
       }
-      const giveCreation = await takeQuota(c, creationWindows(c.key), 1, 'app creations');
-      let giveProposals: () => Promise<void> = async () => undefined;
-      try {
-        giveProposals = await takeQuota(c, proposalWindows(c.key), origins.length, 'web address proposals');
-      } catch (err) {
-        await giveCreation();
-        throw err;
-      }
       return withQuota(
-        async () => {
-          await giveCreation();
-          await giveProposals();
-        },
+        c,
+        w,
+        [
+          [creationWindows(c.key), 1, 'app creations'],
+          [proposalWindows(c.key), origins.length, 'web address proposals'],
+        ],
         () => writeCreate(c, w, { scopeId: b.scopeId, name, origins, others, minDelayMs, assignedBefore: c.now - config.delayMs, keyHolds }),
       );
     },
-    (detail, app) => {
+    (detail, app, _change, key) => {
       const view = replayApp(app);
-      const keyId = detail.keyId as string;
-      return { app: view, publishableKey: view.keys.find((k) => k.id === keyId)?.key ?? null, changes: detail.origins ?? [] };
+      return { app: view, publishableKey: key?.key ?? null, changes: detail.origins ?? [] };
     },
   );
 }
@@ -515,8 +548,7 @@ export async function addPlatformOrigins(c: OpContext, appId: string, body: unkn
     w,
     hash,
     async () => {
-      const give = await takeQuota(c, proposalWindows(c.key), add.length, 'web address proposals');
-      const r = await withQuota(give, () =>
+      const r = await withQuota(c, w, [[proposalWindows(c.key), add.length, 'web address proposals']], () =>
         platformProposeOrigins(c.db, c.env, w, { orgId: c.key.org_id, appId, add, expectedVersion: b.expectedVersion, minDelayMs: proposalWait(c.env), waitingMax: L.waitingPerOrg }),
       );
       return { status: 202, body: { version: r.version, changes: r.changes.map((ch) => ({ changeId: ch.id, origin: ch.origin })) }, appId, wrote: true };
@@ -567,7 +599,9 @@ export async function cancelPlatformChange(c: OpContext, changeId: string): Prom
         wrote: true,
       };
     },
-    (_d, _app, change) => {
+    (_d, app, change) => {
+      // The change's app must still be in the reach, as every replay's (deleted, its scope dropped: `not_found`).
+      replayApp(app);
       if (!change) return refuse('not_found', 'No such change');
       return { change: changeOut(change as unknown as Parameters<typeof changeOut>[0]) };
     },
@@ -605,12 +639,12 @@ export async function createPublishableKey(c: OpContext, appId: string): Promise
     w,
     hash,
     async () => {
-      const r = await createKey(c.db, w, { orgId: c.key.org_id, appId });
+      const r = await withQuota(c, w, [[keyWindows, 1, 'publishable key creations']], () => createKey(c.db, w, { orgId: c.key.org_id, appId }));
       return { status: 201, body: { key: { id: r.key.id, key: r.key.key, createdAt: r.key.createdAt, revokedAt: null } }, appId, wrote: true };
     },
-    (detail, app) => {
-      const k = replayApp(app).keys.find((x) => x.id === detail.keyId);
-      return { key: k ?? null };
+    (_detail, app, _change, key) => {
+      replayApp(app);
+      return { key: key && { id: key.id, key: key.key, createdAt: key.created_at, revokedAt: key.revoked_at } };
     },
   );
 }

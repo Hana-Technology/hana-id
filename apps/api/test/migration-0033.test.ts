@@ -51,7 +51,7 @@ const TRIGGERS_0033 = [
   'apps_partner_bit_by',
   'apps_platform_insert',
 ] as const;
-const NEW = ['platform_requests', 'platform_requests_at', 'platform_origin_waits', ...TRIGGERS_0033];
+const NEW = ['platform_requests', 'platform_requests_at', 'platform_origin_waits', 'app_keys_app_recent', 'app_keys_app_revoked', ...TRIGGERS_0033];
 
 let before: Map<string, Obj>;
 let beforeRows: Record<string, unknown[]>;
@@ -235,6 +235,13 @@ describe('migration 0033_platform_ops', () => {
         { suspended_by: 4, partner_bit_by: null, created_by_kind: 'hana' },
       ],
     });
+  });
+
+  it('an app’s newest keys and its valid keys come down the two app_keys indexes (no scan of a revoked history)', async () => {
+    const plan = async (sql: string) => (await db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all<{ detail: string }>()).results.map((r) => r.detail).join(' | ');
+    expect(await plan("SELECT id FROM app_keys WHERE app_id = 'app_p' ORDER BY created_at DESC, id DESC LIMIT 20")).toMatch(/USING (COVERING )?INDEX app_keys_app_recent/u);
+    expect(await plan("SELECT id FROM app_keys WHERE app_id = 'app_p' AND revoked_at IS NULL")).toMatch(/USING (COVERING )?INDEX app_keys_app_revoked/u);
+    expect(await plan("SELECT id FROM app_keys WHERE app_id = 'app_p' AND revoked_at > 5")).toMatch(/USING (COVERING )?INDEX app_keys_app_revoked/u);
   });
 
   it('the database is whole, and applying the migrations again changes nothing', async () => {

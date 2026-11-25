@@ -704,7 +704,8 @@ export function normalisePartnerAppName(input: string): { ok: true; name: string
  * name). Compared within one scope only: apps on other scopes, or of other orgs, are never compared.
  */
 export function appNameLookalikeKey(name: string): string {
-  return canon(nameSkeleton(name)).replace(/[^\p{L}\p{N}]/gu, '');
+  // The Arabic tatweel (U+0640) only stretches a letter: left out like punctuation.
+  return canon(nameSkeleton(name)).replace(/[^\p{L}\p{N}]|\u0640/gu, '');
 }
 
 /** Whether two app names read alike (`appNameLookalikeKey` equal, and not empty). */

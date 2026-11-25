@@ -23610,9 +23610,10 @@ From `next` @ bcb121bd; not merged, not deployed, migration applied nowhere. Pie
   5. **Idempotency's answers**: the body, method or path checked before the key (another body is
      `idempotency_conflict` from either key; the same from the other key `conflict`); a record older than 7 days is
      ignored even before the purge; a refused or failed write records nothing, so its key can be used again; two
-     copies of one request at once: one writes, the other `already_applied` (it has no read left for a replay); a retry
-     of a proposal whose quota window is full gets the `429` before its replay. The records are purged in
-     `AdminRpc.purgePlatformCalls`' batch (`platformRequests`), not a method of their own.
+     copies of one request at once: one writes, the other `already_applied` (it has no read left for a replay). The
+     records are purged in `AdminRpc.purgePlatformCalls`' batch (`platformRequests`), not a method of their own.
+     (After PR 157's review: the quota is taken after the plan read, so a retry is answered by its replay even when its
+     window is full, and a quota is given back only when no ledger row exists: below.)
   6. **The view**: the 20 newest publishable keys; web addresses from the gate's rows; `confirmedAt` null until P10;
      `byJournear` for bits 1 and 2 together; the list ordered by app id, its `cursor` an app id, 50 a page.
   7. **Create**: one `forbidden` for every scope it can't use (not on the key, not the org's, not a test scope, not
@@ -23631,7 +23632,7 @@ From `next` @ bcb121bd; not merged, not deployed, migration applied nowhere. Pie
       table's `cost` may now exceed 12 by that one read). A replay of an app that has left the reach is `not_found`.
   11. **A platform proposal written before 0033** (no wait; none exist) can never be announced: fail closed.
   12. **Words** of the refusals (plain, for a developer: "Your platform key can create apps only on its own scopes
-      that Journear marked as a shared wallet", "The name reads like another app’s on this scope", "A member of your
+      that Journear marked as a shared wallet", "The name reads like the name of another app on this scope" (after PR 157's review: it never quotes the other app), "A member of your
       organisation suspended this app in the partner portal: only a member can resume it", the Idempotency-Key
       messages) and the two new codes `idempotency_conflict` and `app_limit` (console-core `PLATFORM_ERROR_STATUS`).
 - **Found in the spec** (its design not changed beyond the points above): (a) A7's earliest time on
@@ -23647,5 +23648,50 @@ From `next` @ bcb121bd; not merged, not deployed, migration applied nowhere. Pie
   platform switch stays off until P10, as the gates say.
 - **Left for later pieces**: the screens and emails (P5); the network's guide around these routes (P8); the owner's
   confirmation, the email's wait line and Confirm link, the `local*` guard and staff proposals' four eyes (P10).
+- **After PR 157's review (2026-11-25)**, no Critical or High; each item fixed, with tests (`platform-ops.test.ts`
+  "after PR 157's review", `migration-0033.test.ts`, console-core `names.test.ts`); all **to confirm (the Tech Lead)**:
+  1. **M1, key churn.** Revoked publishable keys are kept, so creating and revoking them in a loop grew every key
+     write's plan read (one JSON value of every key the app ever had, towards D1's 2 MB value limit, after which key
+     writes would break for the console and staff too) and the view's read (6 027 rows with 3 000 revoked keys). Now:
+     a per-org quota on key creation (20 a clock hour, 50 a UTC day, `platform:keys:hour`/`…:day`, the same windows
+     and refund rule as the others); two indexes in 0033 (`app_keys_app_recent` for the view's 20 newest,
+     `app_keys_app_revoked` for the writers); `planApp`'s keys (the console's and staff's key writes too, unchanged in
+     behaviour) are only those unrevoked or in their grace at the write's time and the key it names, as three disjoint
+     index seeks; `syncLegacyKey`'s sort kept off the newest-keys index. Pinned with 3 000 revoked keys: the view at most
+     80 rows, the key writes 60, the plan read 20. **Open:** the console's own app read (`getApp`'s keys) still lists
+     every key; it is the console's screen (P5 or a later tidy-up), not reachable by the platform.
+  2. **L1**: a replayed cancel checks that the change's app is still in the reach (`not_found` after a deletion), as
+     every replay does.
+  3. **L2**: the look-alike refusal no longer quotes the other app's name (it can be outside the reach).
+  4. **L3**: a quota is given back only when no ledger row with the write's request id exists (one direct D1 read on
+     the failure path only, outside the hot-DB budget; if that read fails, nothing is given back), so a write that
+     committed but whose answer was lost keeps its count. The quota is now taken through `Writer.beforeBatch`, after
+     the plan read and every check, for the create, the proposals and the key create alike.
+  5. **N1, chosen: the docs corrected, not a stronger database check.** The database can't tell a `local*` env from
+     another, and the tests and local envs need short waits; holding 24 h in the database would need an env marker
+     row every env must write. `security.md` now says exactly: the 24 h is the wait code records from the env; the
+     database holds that it is at least 60 s and, from then on, that nothing comes into force before the recorded wait
+     from the announcement and from the database's now.
+  6. **N2**: `already_applied` to the platform names no ledger sequence ("This request was already applied: read the
+     app to see its state"); the console's and staff's message is unchanged.
+  7. **N4**: a replayed key create (and the create's `publishableKey`) returns that key by its id, whatever the view's
+     newest 20 hold.
+  8. **N7, fixed (a one-line fold)**: the look-alike key leaves out the Arabic tatweel (U+0640), at the end of a name
+     too.
+  9. **The flake** the reviewer saw once in five runs: ten runs of `migration-0033`, `platform-request` and
+     `platform-keys` together passed every time; the tightest clock margin found in this branch's test helper (the
+     in-force platform proposal's, 10 s against 0033's skew rules) is widened to about a minute.
+  - **Recorded, not changed (open points, the reviewer's reasoning):**
+    - **L4, the global breaker.** Three orgs each spending their 10 counted kill switches an hour (remove, suspend,
+      key revoke) fill the platform's global 30 an hour and refuse every other org's platform kill switches for up to
+      an hour. The console's, staff's and the self-revoke are unaffected. Possible fix: a small per-org floor through
+      the global breaker (each org's first few always admitted).
+    - **N3, fixed windows.** Clock-hour windows let about 4 creations through across an hour's boundary (2 just
+      before, 2 just after); a sliding window would hold 2 in any 60 minutes.
+    - **N5, the partner bit's holder.** A suspension staff set on bit 4 shows to the platform as `byOrganisation`;
+      and the org's other platform key can resume a suspension key A set (the holder is "the platform", not a key).
+    - **N6, remove's reach over others' proposals.** The platform's remove of a web address also cancels a waiting
+      addition of the same address that a member or staff proposed (the writer closes every open `origin_add` of that
+      address on the app).
 - Address impact: **none.** No contract call, no key, path, address or existing ID changes: an app created here
   gets its own User IDs exactly as any new app on a marked scope does (D919).

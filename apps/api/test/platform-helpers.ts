@@ -190,8 +190,8 @@ export const callsOf = async (keyId: string) =>
 /**
  * A web address the platform proposed for app `appId` with key `keyId`, written as the platform's proposal and the
  * admin Worker's ack leave it, within migration 0033's rules: proposed with its wait, then announced now with its
- * earliest time `activeFrom` (default a day on). `inForce`: a `local*`-sized wait (60 s), announced just under 5 minutes
- * ago with its earliest time a little in the past (the triggers' clock skew), recorded `active`.
+ * earliest time `activeFrom` (default a day on). `inForce`: a `local*`-sized wait (60 s), announced 4 minutes ago
+ * with its earliest time a few seconds in the past, recorded `active`.
  */
 export async function platformProposal(appId: string, keyId: string, origin: string, o: { inForce?: boolean; activeFrom?: number; id?: string } = {}): Promise<string> {
   const id = o.id ?? newId('guardedChange');
@@ -207,8 +207,11 @@ export async function platformProposal(appId: string, keyId: string, origin: str
   await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, NULL, ?3)').bind(appId, origin, id).run();
   // In force by the database's clock (a test may have moved Date.now on): its triggers judge by that one.
   const dbNow = (await env.DB.prepare("SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS t").first<{ t: number }>())!.t;
-  const notified = o.inForce ? dbNow - 280_000 : now;
-  const from = o.inForce ? dbNow - 50_000 : (o.activeFrom ?? now + DAY);
+  // Margins of nearly a minute on each of 0033's clock rules (announced at most 5 minutes back, the earliest time at
+  // least the wait from the database's now less 2 minutes), so a loaded machine's pause between these writes can't
+  // trip them (the earlier 280 s / 50 s left 10 s).
+  const notified = o.inForce ? dbNow - 240_000 : now;
+  const from = o.inForce ? dbNow - 5_000 : (o.activeFrom ?? now + DAY);
   await env.DB.prepare('UPDATE platform_origin_waits SET unconfirmed_active_from = ?2 WHERE change_id = ?1').bind(id, from).run();
   await env.DB.prepare('UPDATE guarded_changes SET notified_at = ?2, active_from = ?3 WHERE id = ?1').bind(id, notified, from).run();
   await env.DB.prepare('UPDATE app_origins SET active_from = ?3 WHERE app_id = ?1 AND change_id = ?2').bind(appId, id, from).run();

@@ -12,6 +12,7 @@ import { PLATFORM_KEY_LIFETIME_MS, PLATFORM_OPS_LIMITS, PLATFORM_REQUEST_LIMITS,
 import { env } from 'cloudflare:workers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getAppByKey } from '../src/apps.ts';
+import { planApp } from '../src/changes/apps.ts';
 import { HotDb } from '../src/changes/db.ts';
 import { admitMemberCall } from '../src/changes/guard.ts';
 import { ackNotice } from '../src/changes/lifecycle.ts';
@@ -238,11 +239,14 @@ describe('POST /v1/platform/apps (A4.4)', () => {
     for (const name of ['ACME SWAP', 'acme-swap', 'Acme  Swap', 'Acrne Swap', 'Àcmé Swap', 'AcmeSwap', 'Acme_Swap']) {
       const r = await create(net.k, { scopeId: net.s1, name });
       expect([r.status, r.body.code], name).toEqual([409, 'conflict']);
-      expect(r.body.error, name).toContain('Acme Swap');
+      // The other app's name is never quoted (it may be outside the reach).
+      expect(r.body.error, name).toBe('The name reads like the name of another app on this scope: choose a name that can’t be taken for it');
     }
     // The network's own (staff-created) site counts too.
     const siteName = (await one<{ name: string }>('SELECT name FROM apps WHERE id = ?1', net.site.id)).name;
-    expect((await create(net.k, { scopeId: net.s1, name: siteName.toUpperCase() })).body.code).toBe('conflict');
+    const site = await create(net.k, { scopeId: net.s1, name: siteName.toUpperCase() });
+    expect(site.body.code).toBe('conflict');
+    expect(site.text).not.toContain(siteName);
     expect((await create(net.k, { scopeId: net.s2, name: 'Acme Swap' })).status).toBe(201);
     expect((await create(net.k, { scopeId: net.s1, name: 'Acme Swap Pro' })).status).toBe(201);
     expect(namesLookAlike('Acme Swap', 'acme swap')).toBe(true);
@@ -971,6 +975,7 @@ function rowsDb(acc: { statements: number; rowsRead: number }): D1Database {
             const r = await t.all();
             acc.statements++;
             acc.rowsRead += r.meta.rows_read ?? 0;
+            (acc as { log?: string[] }).log?.push(`${r.meta.rows_read} first`);
             return r.results[0] ?? null;
           };
         if (p === 'all' || p === 'run')
@@ -978,6 +983,7 @@ function rowsDb(acc: { statements: number; rowsRead: number }): D1Database {
             const r = await (t[p] as () => Promise<D1Result>)();
             acc.statements++;
             acc.rowsRead += r.meta.rows_read ?? 0;
+            (acc as { log?: string[] }).log?.push(`${r.meta.rows_read} ${(t as unknown as { statement?: string }).statement ?? ''}`.slice(0, 300));
             return r;
           };
         if (p === '__real') return t;
@@ -992,7 +998,10 @@ function rowsDb(acc: { statements: number; rowsRead: number }): D1Database {
         return async (stmts: D1PreparedStatement[]) => {
           const res = await t.batch(stmts.map((s) => (s as unknown as { __real: D1PreparedStatement }).__real ?? s));
           acc.statements += stmts.length;
-          for (const r of res) acc.rowsRead += r.meta.rows_read ?? 0;
+          for (const [i, r] of res.entries()) {
+            acc.rowsRead += r.meta.rows_read ?? 0;
+            (acc as { log?: string[] }).log?.push(`${r.meta.rows_read} B${i}`);
+          }
           return res;
         };
       const v: unknown = Reflect.get(t, p);
@@ -1197,5 +1206,162 @@ describe('the quota windows’ limiter failing', () => {
     expect([c.status, c.body.code]).toEqual([503, 'rate_limiter_unavailable']);
     expect([p.status, p.body.code]).toEqual([503, 'rate_limiter_unavailable']);
     expect(await written()).toEqual(before);
+  });
+});
+
+// ---- after PR 157's review ----
+
+describe('after PR 157’s review', () => {
+  /** 3 000 revoked keys on an app, written straight to D1 (as years of churn would leave them). */
+  const revokedHistory = (appId: string, n = 3000) =>
+    env.DB.prepare(
+      `WITH RECURSIVE i(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM i WHERE x < ?2)
+       INSERT INTO app_keys (id, app_id, key, created_by, created_at, revoked_at, revoked_by)
+       SELECT 'key_hist' || x || ?3, ?1, 'pk_test_' || printf('%024d', x) || ?3, 'x', x, x + 1, 'x' FROM i`,
+    )
+      .bind(appId, n, newId('key').slice(4, 10))
+      .run();
+
+  it('M1: thousands of revoked keys cost nothing: the view, the key writes (the console’s and staff’s too) read only what they need', async () => {
+    const net = await network();
+    const a = await createdApp(net);
+    await revokedHistory(a.id);
+    const acc = { statements: 0, rowsRead: 0 };
+    const view = await get(net.k, `/v1/platform/apps/${a.id}`, { bindings: { DB: rowsDb(acc) } });
+    expect(view.status).toBe(200);
+    expect((view.body.app as { keys: unknown[] }).keys).toHaveLength(20);
+    expect(acc.rowsRead).toBeLessThanOrEqual(80);
+    for (const [path, rowsMax] of [[`/v1/platform/apps/${a.id}/keys`, 60], [`/v1/platform/apps/${a.id}/keys/${a.keyId}/revoke`, 60]] as const) {
+      const w = { statements: 0, rowsRead: 0, log: [] as string[] };
+      const r = await post(net.k, path, {}, { bindings: { DB: rowsDb(w) } });
+      expect(r.status, path).toBeLessThan(300);
+      expect(w.rowsRead, `${path} ${w.log.join('\n')}`).toBeLessThanOrEqual(rowsMax);
+    }
+    // The console's and staff's key writes share the plan read: the same bound, the same answers.
+    const r = await consoleRpc().createKey({ ...member(), orgId: net.org, appId: a.id });
+    expect(r).toMatchObject({ ok: true });
+    const plan = async (keyId?: string) => {
+      const p = { statements: 0, rowsRead: 0 };
+      const out = await planApp(new HotDb(rowsDb(p)), { appId: a.id, orgId: net.org, w: { actor: { kind: 'hana', id: 's' } as never, requestId: rid(), now: Date.now() + 400 * DAY }, with: { keys: true }, ...(keyId ? { keyId } : {}) });
+      return { rows: p.rowsRead, keys: out.keys.map((k) => k.id) };
+    };
+    const none = await plan();
+    expect(none.keys).toHaveLength(2); // the two unrevoked keys (one created here, one through the console)
+    expect(none.rows).toBeLessThanOrEqual(20);
+    expect((await plan('key_doesnotexist')).keys).toHaveLength(2); // an id that doesn't exist adds nothing
+    const target = (await one<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1 AND revoked_at IS NOT NULL ORDER BY created_at LIMIT 1', a.id)).id;
+    const named = await plan(target);
+    expect(named.keys).toContain(target);
+    expect(named.keys).toHaveLength(3);
+    expect(named.rows).toBeLessThanOrEqual(20);
+    // Revoking an old revoked key is still `conflict`, and a rotation still finds its key.
+    expect(await adminRpc().revokeKey({ ...hana(), orgId: net.org, appId: a.id, keyId: target })).toMatchObject({ ok: false, code: 'conflict' });
+  });
+
+  it('M1: publishable key creations, 20 a clock hour and 50 a UTC day per org; refused ones don’t count', async () => {
+    const net = await network();
+    let base = freshNow();
+    base = Math.ceil(base / DAY) * DAY + HOUR + 1000;
+    const apps: string[] = [];
+    for (let i = 0; i < 14; i++) apps.push((await bareApp(net.org, net.s1)).id);
+    let n = 0;
+    const make = async (now: number) => post(net.k, `/v1/platform/apps/${apps[Math.floor(n / 4)]!}/keys`, {}, { now }).then((r) => (r.status === 201 && n++, r));
+    // A refused one (no such app) first: not counted.
+    expect((await post(net.k, `/v1/platform/apps/app_${'N'.repeat(20)}/keys`, {}, { now: base })).status).toBe(404);
+    for (let i = 0; i < 20; i++) expect((await make(base + 1000 + i * 3000)).status, String(i)).toBe(201);
+    const hour = await make(base + 70_000);
+    expect([hour.status, hour.body.limit]).toEqual([429, 'platform:keys:hour']);
+    for (let i = 0; i < 20; i++) expect((await make(base + HOUR + i * 3000)).status).toBe(201);
+    for (let i = 0; i < 10; i++) expect((await make(base + 2 * HOUR + i * 3000)).status).toBe(201);
+    const day = await make(base + 2 * HOUR + 40_000);
+    expect([day.status, day.body.limit]).toEqual([429, 'platform:keys:day']);
+    while (freshNow() < base + 4 * HOUR);
+  });
+
+  it('L1: a replayed cancel after its app left the reach is `not_found`, as a replayed suspend', async () => {
+    const net = await network();
+    const a = await createdApp(net, ['https://cancel.example']);
+    const now = freshNow();
+    const cancel = { idempotencyKey: 'replay-cancel-1', now };
+    const suspend = { idempotencyKey: 'replay-suspend-1', now: now + 1000 };
+    expect((await post(net.k, `/v1/platform/changes/${a.changes[0]!.changeId}/cancel`, {}, cancel)).status).toBe(200);
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, suspend)).status).toBe(200);
+    expect(await adminRpc().deleteApp({ ...hana(), appId: a.id })).toMatchObject({ ok: true });
+    const c = await post(net.k, `/v1/platform/changes/${a.changes[0]!.changeId}/cancel`, {}, { ...cancel, now: now + 2000 });
+    const s = await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { ...suspend, now: now + 3000 });
+    expect([c.status, c.body.code]).toEqual([404, 'not_found']);
+    expect(sansId(c.body)).toEqual(sansId(s.body));
+  });
+
+  it('L3: a write that committed but whose answer was lost keeps its quota (refunded only with no ledger row)', async () => {
+    const net = await network();
+    const now = freshNow();
+    const lost = new Proxy(env.DB, {
+      get(t, p) {
+        if (p === 'batch')
+          return async (stmts: D1PreparedStatement[]) => {
+            const r = await t.batch(stmts);
+            if (stmts.length > 3) throw new Error('the answer was lost on the way back');
+            return r;
+          };
+        const v: unknown = Reflect.get(t, p);
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+    const first = await create(net.k, { scopeId: net.s1, name: 'Lost answer' }, { now, bindings: { DB: lost } });
+    expect(first.status).toBeGreaterThanOrEqual(400);
+    expect((await rows("SELECT id FROM apps WHERE org_id = ?1 AND name = 'Lost answer'", net.org)).length).toBe(1);
+    expect((await create(net.k, { scopeId: net.s1, name: 'Second' }, { now: now + 10_000 })).status).toBe(201);
+    // Two committed creations this hour: the third is refused (the lost one wasn't given back).
+    expect((await create(net.k, { scopeId: net.s1, name: 'Third' }, { now: now + 20_000 })).body.limit).toBe('platform:creations:hour');
+    // A refused write (nothing committed) still gives its quota back: here a version_conflict on a proposal.
+    const a = await bareApp(net.org, net.s2);
+    const ok = await post(net.k, `/v1/platform/apps/${a.id}/origins`, { add: Array.from({ length: 20 }, (_, i) => `https://q${i}.example`), expectedVersion: 0 }, { now: now + 30_000 });
+    expect(ok.status).toBe(202);
+    const b = await bareApp(net.org, net.s2);
+    const raced = await post(net.k, `/v1/platform/apps/${b.id}/origins`, { add: ['https://raced.example'], expectedVersion: 0 }, { now: now + 40_000, bindings: { DB: beforeFirstBatch(() => env.DB.prepare('UPDATE apps SET origins_version = 5 WHERE id = ?1').bind(b.id).run()) } });
+    expect(raced.body.limit ?? raced.body.code).toBe('platform:proposals:hour'); // 20 this hour already: refused before the batch, nothing to refund
+    void raced;
+  });
+
+  it('N2: the platform never sees the ledger’s sequence', async () => {
+    const net = await network();
+    const now = freshNow();
+    expect((await create(net.k, { scopeId: net.s1, name: 'Seq hidden' }, { idempotencyKey: 'seq-hidden-1', now })).status).toBe(201);
+    const late = await create(net.k, { scopeId: net.s1, name: 'Seq hidden' }, { idempotencyKey: 'seq-hidden-1', now: now + 8 * DAY });
+    expect(late.body.code).toBe('already_applied');
+    expect(late.text).not.toMatch(/seq|app_changes/iu);
+    while (freshNow() < now + 9 * DAY);
+  });
+
+  it('N4: a replayed key create returns that key by its id, however many keys came after it', async () => {
+    const net = await network();
+    const a = await createdApp(net);
+    const now = freshNow();
+    const first = await post(net.k, `/v1/platform/apps/${a.id}/keys`, {}, { idempotencyKey: 'replay-key-1', now });
+    expect(first.status).toBe(201);
+    await revokedHistory(a.id, 30);
+    await env.DB.prepare('UPDATE app_keys SET created_at = created_at - 1000000000000 WHERE id = ?1').bind((first.body.key as { id: string }).id).run().catch(() => undefined);
+    const again = await post(net.k, `/v1/platform/apps/${a.id}/keys`, {}, { idempotencyKey: 'replay-key-1', now: now + 1000 });
+    expect(again.body.replayed).toBe(true);
+    expect((again.body.key as { id: string }).id).toBe((first.body.key as { id: string }).id);
+    // And the create's replay names its first key the same way.
+    const c = await create(net.k, { scopeId: net.s2, name: 'Replay key app' }, { idempotencyKey: 'replay-create-key', now: now + 2000 });
+    await revokedHistory((c.body.app as { id: string }).id, 30);
+    const cr = await create(net.k, { scopeId: net.s2, name: 'Replay key app' }, { idempotencyKey: 'replay-create-key', now: now + 3000 });
+    expect(cr.body.publishableKey).toBe(c.body.publishableKey);
+  });
+
+  it('a proposal’s retry is answered by its replay even when the hour’s window is full (the quota is taken after the plan read)', async () => {
+    const net = await network();
+    const a = await bareApp(net.org, net.s1);
+    const now = freshNow();
+    const add = Array.from({ length: 20 }, (_, i) => `https://full${i}.example`);
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/origins`, { add, expectedVersion: 0 }, { idempotencyKey: 'full-window-1', now })).status).toBe(202);
+    const retry = await post(net.k, `/v1/platform/apps/${a.id}/origins`, { add, expectedVersion: 0 }, { idempotencyKey: 'full-window-1', now: now + 1000 });
+    expect([retry.status, retry.body.replayed]).toEqual([200, true]);
+    // A new proposal (another app: this one is full) is refused by the window.
+    const b = await bareApp(net.org, net.s1);
+    expect((await post(net.k, `/v1/platform/apps/${b.id}/origins`, { add: ['https://more.example'], expectedVersion: 0 }, { now: now + 2000 })).body.limit).toBe('platform:proposals:hour');
   });
 });

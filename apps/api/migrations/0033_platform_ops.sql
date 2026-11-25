@@ -1,7 +1,8 @@
 -- D929: the platform API's app operations (piece P4 of docs/partner-platform-spec.md, A4, A7, A9, A15; findings H1,
 -- H2, L3, L4, M7). Additive: two new tables (`platform_requests` with an index and three triggers,
 -- `platform_origin_waits` with three), ten triggers on `guarded_changes` (no column: `ledger-check` holds that table's
--- shape, below), one new column on `apps` with two triggers, and two triggers on `app_origins`. No table is rebuilt
+-- shape, below), one new column on `apps` with two triggers, two triggers on `app_origins` and two indexes on
+-- `app_keys`. No table is rebuilt
 -- and no existing index, trigger or view is touched (0033's test compares every one by `sqlite_schema`); no existing
 -- row changes. Applied by the Tech Lead on a deployed env before the API that writes it (docs/operations.md "Platform app
 -- operations (hot-DB migration 0033, D929)"); nothing writes the platform's rows until an org's platform switch is on.
@@ -237,6 +238,13 @@ CREATE TRIGGER app_origins_platform_not_early_update BEFORE UPDATE ON app_origin
 BEGIN
   SELECT RAISE(ABORT, 'app_origins: a web address the platform proposed comes into force no earlier than its wait allows');
 END;
+
+-- ---- app_keys: reads that stay small however many keys an app has revoked ----
+-- The platform's view lists an app's 20 newest keys (down the first index, no sort of every key); the key writers
+-- read only the keys unrevoked or in their grace, and the one they name (down the second). Revoked keys are kept, so
+-- without these a long history of key churn made every key write and view read grow with it.
+CREATE INDEX app_keys_app_recent ON app_keys (app_id, created_at DESC, id DESC);
+CREATE INDEX app_keys_app_revoked ON app_keys (app_id, revoked_at);
 
 -- ---- apps: who holds the partner suspension ----
 

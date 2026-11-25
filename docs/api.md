@@ -2600,8 +2600,10 @@ actor (its id the key's) and answer the first result again to a retry:
 - the same Idempotency-Key with **another method, path or body** within 7 days: `409 idempotency_conflict`;
 - **from the org's other key** (a rotation mid-retry): `409 conflict` ("used by your organisation's other platform
   key"): read the app to see whether it applied; if it didn't, use a new Idempotency-Key;
-- **after 7 days**: `409 already_applied` (the same write by the same key) or `409 conflict` (anything else): the
-  ledger's request id is kept 60 months. A write refused or failed records nothing: its key can be used again. Two
+- **after 7 days**: `409 already_applied` (the same write by the same key; its message names no ledger position) or
+  `409 conflict` (anything else): the ledger's request id is kept 60 months. A replay of a write whose app has left the
+  reach since (deleted, its scope dropped from the key) is `404 not_found`, the cancel's included; a replayed key create
+  returns that key, however many keys came after it. A write refused or failed records nothing: its key can be used again. Two
   copies of one request sent at once: one writes; the other is `409 already_applied`.
 
 **The app view** (`PlatformApp`, console-core `platform-ops.ts`), an allowlist:
@@ -2632,7 +2634,7 @@ id, staff identity or Google `sub`.
 | `POST /v1/platform/apps/:appId/origins/remove` | `{remove: [1–20], expectedVersion}` | `200 {version}`: stopped at once (a waiting one cancelled, one in force ended) | `404`, `400 bad_request` (not an origin of the app), `409 version_conflict` | 11 |
 | `POST /v1/platform/changes/:changeId/cancel` | `{}` | `200 {change: {changeId, appId, origin, display, idn, status, activeFrom, cancelledAt}}` | `404 not_found` (also any change no platform key of the org proposed: a member's, staff's or another kind's), `409 not_pending` (already in force, cancelled or ended) | 11 |
 | `POST /v1/platform/apps/:appId/suspend` | `{suspended: true \| false}` | `200 {suspended}` (the view's object); already in that state: nothing written | `404`, `403 forbidden` (resuming a suspension a member set or took over) | 10 |
-| `POST /v1/platform/apps/:appId/keys` | `{}` | `201 {key: {id, key, createdAt, revokedAt: null}}` | `404`, `409 key_limit` (5 unrevoked) | 10 |
+| `POST /v1/platform/apps/:appId/keys` | `{}` | `201 {key: {id, key, createdAt, revokedAt: null}}` | `404`, `409 key_limit` (5 unrevoked), `429 rate_limited` (`platform:keys:hour`, `…:day`), `503 rate_limiter_unavailable` | 10 |
 | `POST /v1/platform/apps/:appId/keys/:keyId/revoke` | `{}` | `200 {}`, or `{warning: "last_key"}` when it was the app's last valid key (the app stops working) | `404` (no such key of the app), `409 conflict` (already revoked) | 10 |
 
 Every write can also answer `409 idempotency_conflict`, `409 conflict` and `409 already_applied` (idempotency, above)
@@ -2642,7 +2644,9 @@ diagnostic read), charged to the org's bucket before the route runs; each route 
 batches, 12 statements through the hot DB; the announced keys' list is read outside it). Rows read on an org with 10
 apps of 20 web addresses and 5 keys each, pinned by `apps/api/test/platform-ops.test.ts`: the list about 350, a read
 about 40, a create about 250 and a proposal about 200 (both count the org's waiting web addresses), the others 25 to
-70.
+70. An app with thousands of revoked keys costs no more: the view reads its 20 newest keys down an index, and every
+key write (the console's and staff's too) reads only the keys unrevoked or in their grace and the one it names
+(after PR 157's review; tested with 3 000 revoked keys).
 
 **The rules, by operation:**
 
@@ -2651,8 +2655,8 @@ about 40, a create about 250 and a proposal about 200 (both count the org's wait
   'platform'`); its first publishable key; its web addresses as **platform proposals** (below), never staff
   proposals, never a waiver. The name follows the app name rules and must not read like another app's name **on the
   same scope** (any creator; compared as console-core `appNameLookalikeKey`: the look-alike skeleton, "rn" as "m",
-  "vv" as "w", spaces and punctuation left out, so "ACME-swap", "Acrne Swap" and "Àcmé Swap" are "Acme Swap"); apps
-  of other scopes or orgs are never compared. Two creates racing on one scope: one writes (the batch holds the scope's
+  "vv" as "w", spaces, punctuation and the Arabic tatweel left out, so "ACME-swap", "Acrne Swap" and "Àcmé Swap" are
+  "Acme Swap"); apps of other scopes or orgs are never compared. The refusal never names the other app. Two creates racing on one scope: one writes (the batch holds the scope's
   apps as read).
 - **Web addresses** (A4.5, M7, N3): checked with the **live-scope rules on every scope** (no loopback, no
   `http://localhost:*`, no `http`, no host label mixing scripts); at most 20 in force or waiting per app (a partner on
@@ -2676,12 +2680,14 @@ about 40, a create about 250 and a proposal about 200 (both count the org's wait
 
 **Quotas** (A5; console-core `PLATFORM_OPS_LIMITS`; per org, on the pinned object `platform:<orgId>`): app creations
 2 a clock hour and `platform_orgs.creations_per_day` (default 5) a UTC day; web address proposals, counted per address,
-20 a clock hour and `platform_orgs.proposals_per_day` (default 30) a UTC day; at most 30 web addresses waiting at once
-across the org's apps (in the batch's predicate); at most `platform_orgs.max_apps` (default 10) apps created through
-the platform and not deleted (in the create's predicate: `409 app_limit`). Only writes that commit count. A refusal
-is `429 rate_limited` with `limit` and `retry-after`; the first of each window in a clock hour writes a
-`platform_quota` security event. A retry of a write whose window is full may get the `429` before its replay: retry
-later with the same Idempotency-Key.
+20 a clock hour and `platform_orgs.proposals_per_day` (default 30) a UTC day; publishable key creations 20 a clock
+hour and 50 a UTC day; at most 30 web addresses waiting at once across the org's apps (in the batch's predicate); at
+most `platform_orgs.max_apps` (default 10) apps created through the platform and not deleted (in the create's
+predicate: `409 app_limit`). A window is taken only after the write's plan read and checks, just before its batch, so
+a refused write or a retry answered by its replay never spends it; one taken is given back only when no ledger row
+with the request id exists (a write that committed but whose answer was lost keeps its count). A refusal is `429
+rate_limited` with `limit` and `retry-after`; the first of each window in a clock hour writes a `platform_quota`
+security event. The windows' limiter failing is `503 rate_limiter_unavailable`.
 
 ## D1 schema (`apps/api/migrations`)
 
@@ -2709,6 +2715,7 @@ later with the same Idempotency-Key.
 | `platform_keys`, `platform_orgs` (D918) | `platform_keys`: `id` PK (`pkc_…`), `org_id`, `label` (1–40), `alg` `ES256`, `public_key` BLOB(65, 0x04…) UNIQUE, `thumbprint` UNIQUE, `scopes_json` (1–2 test scopes of the org: insert trigger), `status` `awaiting_acceptance`/`pending`/`active`/`cancelled`/`revoked`/`expired` (moves forward only: trigger), the registrant (`proposed_by_kind` `member`/`hana`, `proposed_by`, `proposer_sub`, `proposer_email_key`, staff's `proposer_email` and `proposal_note`), the acceptance, `notified_at`, `unconfirmed_active_from` (≥ `notified_at` + `min_delay_ms`; fixed once written), `active_from`, `expires_at`, `four_eyes` and `min_delay_ms` (written once), the confirmation (`confirmed_kind` `confirm`/`acceptance`, by, sub, email key, at; written once; four eyes in a CHECK), `cancel_token_hash`, `revoke_link_hash` + `revoke_link_until`, the cancel and revocation, `end_request_id`, the notices' marks, `last_used_at` (P3), `request_id` UNIQUE; triggers `platform_keys_insert`, `_fixed`, `_confirm_fixed`, `_not_early` (no earlier `active_from` without a confirmation), `_status_moves`, `_no_early_delete` (60 months after it stopped). `platform_orgs`: `org_id` PK, `enabled`, `frozen`, the quotas (`max_apps` 10, `creations_per_day` 5, `proposals_per_day` 30; for P4), `set_by`, `set_at`, `version`, `frozen_at` (every freeze's time; CHECK: a frozen row has one; an unfreeze waits 10 minutes from it), `review_json` (the switch-on's review). `platform_keys` also: `notice_failures`, `notice_failed_at`; CHECKs that four eyes' confirmation and a staff acceptance carry their email keys, that `active`/`expired` carry `active_from`, and that `expires_at` = `active_from` + 365 days; `_life_fixed` (a key's dates fixed once in force); triggers `_announced_now` (the first announcement never more than 5 minutes back by the database's clock, its wait from the database's now less 2 minutes), `_active_on_time` (`active` without a confirmation never before its date, plus 2 minutes), `_no_replace_update`, and the insert trigger refusing any id, public key, thumbprint or request id already held (no `INSERT OR REPLACE`). `platform_orgs` triggers: `_insert` (never replaced, never inserted with the switch on), `_org_fixed` (no row moved to another org), `_switch_on` (only with a review naming exactly the org's current keys, key expiry by the database's clock, never while frozen). A rebuild of either table must create every one of 0028's triggers again (its header names them). Nothing outside reads them; no trigger of 0028 reads the ledger's tables | 0028 |
 | `platform_requests` (D929) | `org_id`, `idem_hash` (sha256 of the Idempotency-Key, hex; PK with `org_id`), `key_id`, `method` `POST`, `path` (as sent), `body_sha256`, `request_id` UNIQUE (the ledger row's `pf_…`), `at`; index `at`. One row per platform write that committed, in its batch: a retry within 7 days is told from another call. Its insert trigger wants a ledger row of that key with that request id and refuses a replacing insert; no update; no delete within 7 days; purged after 7 days by `AdminRpc.purgePlatformCalls` (`platformRequests`) | 0033 |
 | `platform_origin_waits` (D929) | `change_id` PK (`gc_…`), `app_id`, `origin`, `key_id` (the proposing key), `min_delay_ms` (≥ 60 000: the wait from the announcement, 24 h outside `local*` test envs), `unconfirmed_active_from` (written once by the ack: at least the wait from the database's now), `at`. One per web address the platform proposed, written before its guarded change (whose insert trigger wants it); with the triggers of 0033 on `guarded_changes` and `app_origins` it holds the earliest time such a web address comes into force: never sooner, no waiver, no expedite, announced once and never back-dated (5 minutes' grace), recorded `active` only once due, never deleted while waiting, a cancelled one never back, never replaced. Goes with its change (an AFTER DELETE trigger). Not a column of `guarded_changes`: `ledger-check` holds that table's shape | 0033 |
+| `app_keys` (indexes, P4) | `app_keys_app_recent` (`app_id`, `created_at` DESC, `id` DESC): the platform view's 20 newest keys; `app_keys_app_revoked` (`app_id`, `revoked_at`): the key writers' unrevoked and in-grace keys. Revoked keys are kept, so neither read grows with them (D929) | 0033 |
 | `apps` (added, P4) | `partner_bit_by` `'member'`/`'platform'`/NULL: who holds the partner suspension (bit 4); NULL with bit 4 set (as every suspension before 0033) reads as a member's. Never set while bit 4 is clear (triggers on update and insert); a replacing insert can't change it, nor `created_by_kind` | 0033 |
 | `platform_calls` (D927) | `seq` PK, `at`, `org_id`, `key_id` (`pkc_…`), `method` `GET`/`POST`, `route` (the template, `/v1/platform/…`), `app_id`, `status`, `code`, `request_id`, `ip_prefix` (CHECKs on each); indexes (`org_id`, `seq`) and `at`. One row per platform request authenticated and admitted ("Platform API"); append-only (triggers `platform_calls_no_replace`, `_no_update`, `_no_early_delete`: kept 13 months), purged monthly by `AdminRpc.purgePlatformCalls`. Nothing else reads it; no trigger of it reads another table. No secret, signature, nonce or body | 0032 |
 | `partner_labels`, `label_changes`, `label_controls`, `label_control_log` (D894) | An entry (`pl_…`: org, scope, removed, staff switch with its version); its versions (`lc_…`: the text as proposed, `doc_schema`, `doc_sha256`, `doc_bytes`, `context_key`, `apps_json` (1–8 live apps of the scope and org, trigger), `previous_id`, `status` `pending`/`active`/`cancelled`/`lapsed`/`blocked`/`ended`, the proposer and its step-up `sub`, `notified_at`, `active_from`, `cancel_token_hash`, allow, block (note, `was_live`), cancel and end fields with `end_reason`; what it says is fixed by trigger, kept 60 months); the switches (`'*'` or an org: `labels_off`, `review_required`, `version`) and their append-only log; `scopes.labels_version`; `security_events` kinds `label_proposed`, `label_blocked`, `label_live` | 0025 |

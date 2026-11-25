@@ -34,13 +34,17 @@ export const platformEmptyBody = z.object({}).strict();
  * default, `platform_orgs.proposals_per_day`) 30 a UTC day; at most 30 web
  * addresses waiting (proposed, not yet in force) across the org's apps; at most `platform_orgs.max_apps` (default 10)
  * apps the platform created and not deleted. Per app: `MAX_APP_ORIGINS` (20) web addresses in force or waiting, the
- * widget's origin included; 5 unrevoked publishable keys. A list answers 50 apps a page; an app view lists its 20
- * newest publishable keys.
+ * widget's origin included; 5 unrevoked publishable keys, and the org's platform keys create at most 20 publishable
+ * keys a clock hour and 50 a UTC day (revoked keys are kept, so churn is bounded). A list answers 50 apps a page; an
+ * app view lists its 20 newest publishable keys.
  */
 export const PLATFORM_OPS_LIMITS = {
   creationsPerHour: 2,
   proposalsPerHour: 20,
   waitingPerOrg: 30,
+  /** Publishable keys the org's platform keys create (D929 after PR 157's review: revoked keys are kept). */
+  keyCreationsPerHour: 20,
+  keyCreationsPerDay: 50,
   listPage: 50,
   keysShown: 20,
   /** How long `platform_requests` tells a retry from another call with the same Idempotency-Key (A9). */

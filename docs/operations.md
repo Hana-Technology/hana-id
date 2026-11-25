@@ -2675,7 +2675,8 @@ on for its org, which waits for P10 (the owner's confirmation and its `local*` g
 
 - `apps/api/migrations/0033_platform_ops.sql` is **additive**: two new tables (`platform_requests`, the idempotency
   records; `platform_origin_waits`, each platform-proposed web address's wait and earliest time), one column on `apps`
-  (`partner_bit_by`, NULL on every existing row), and triggers on `guarded_changes`, `app_origins`, `apps` and the new
+  (`partner_bit_by`, NULL on every existing row), two indexes on `app_keys` (an app's newest keys and its valid
+  keys: building them reads every key once), and triggers on `guarded_changes`, `app_origins`, `apps` and the new
   tables. **No column of `guarded_changes`** is added (the earliest time lives in `platform_origin_waits`), so
   `ledger-check`'s hold on the ledger's tables' shape stands. Its triggers name `guarded_changes`, so `ledger-check`
   compares them too: since D929 it requires a later migration's objects only once the database recorded that migration
@@ -2691,8 +2692,8 @@ on for its org, which waits for P10 (the owner's confirmation and its `local*` g
    if 0027 is in the same apply, `ledger-check snapshot` first, as its section says.
 2. The migration: `corepack pnpm --dir apps/api exec wrangler d1 migrations apply <cloudflare.d1Name> --remote` (it
    lists `0033_platform_ops.sql`); check `SELECT name FROM sqlite_schema WHERE name LIKE 'platform_requests%' OR name
-   LIKE 'platform_origin_waits%' OR name LIKE '%_platform_%' OR name = 'apps_partner_bit_by'` lists the two tables, the
-   index and the twenty triggers named in the file's header; with 0027 in the same apply, `ledger-check compare`.
+   LIKE 'platform_origin_waits%' OR name LIKE '%_platform_%' OR name = 'apps_partner_bit_by' OR name LIKE 'app_keys_app_%'`
+   lists the two tables, the three indexes and the twenty triggers named in the file's header; with 0027 in the same apply, `ledger-check compare`.
 3. Deploy the API, then the admin Worker (its monthly retention step `platform_calls` also purges `platform_requests`
    older than 7 days: `platformRequestsDeleted`; an older admin Worker simply doesn't).
 4. Check: `curl -s <API>/v1/platform/apps` answers `401 unauthenticated`; the console's suspend and resume of an app
@@ -2707,7 +2708,8 @@ action brings it sooner** (no expedite, no waiver, `app:changes:announce` refuse
 write); cancel it from the email's link, or stop the key, switch the platform off or freeze the org, each of which
 cancels every one still waiting. To stop one partner's app at once: suspend it (staff's bit 1) or remove its web
 addresses; a member's suspension in the partner portal can't be resumed by the platform. `platform_quota` events name
-the window refused (`platform:creations:hour`, `…:day`, `platform:proposals:hour`, `…:day`); staff raise an org's
+the window refused (`platform:creations:hour`, `…:day`, `platform:proposals:hour`, `…:day`, `platform:keys:hour`,
+`…:day`); staff raise an org's
 `platform_orgs.max_apps`, `creations_per_day` or `proposals_per_day` by a reviewed D1 write if it needs more.
 
 ## Console sink scope (batch C6, milestone M3)

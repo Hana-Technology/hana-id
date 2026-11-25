@@ -66,6 +66,11 @@ export interface Writer {
    * after the writer's own and guarded by the commit row like the rest.
    */
   batchTail?: readonly Q[];
+  /**
+   * D929: run after the plan read and every check, just before the batch (the platform takes its quota there, so a
+   * refused write or a retry answered by its replay never spends it).
+   */
+  beforeBatch?: () => Promise<void>;
 }
 
 /** Declares what this write records, for the replay check (call before the plan read). */
@@ -150,7 +155,8 @@ export function refuseReplay(row: string | StoredReplay | null | undefined, w: W
   const actor = e?.actor ?? { kind: w.actor.kind, id: actorId(w.actor) };
   const same = !!e && e.kinds.includes(r.kind) && (e.appId === undefined || e.appId === r.app_id) && actor.kind === r.actor_kind && actor.id === r.actor_id;
   if (!same) refuse('conflict', 'This request id was already used for another write: use a new one');
-  refuse('already_applied', `Request already applied (app_changes seq ${r.seq})`);
+  // D929: a network's backend never learns the ledger's global sequence.
+  refuse('already_applied', (w.actor.kind as string) === 'platform' ? 'This request was already applied: read the app to see its state' : `Request already applied (app_changes seq ${r.seq})`);
 }
 
 /**
@@ -159,6 +165,7 @@ export function refuseReplay(row: string | StoredReplay | null | undefined, w: W
  */
 export async function runWrite(db: HotDb, w: Writer, stmts: readonly Q[]): Promise<D1Result[]> {
   let results: D1Result[];
+  if (w.beforeBatch) await w.beforeBatch();
   try {
     results = await db.batch(w.batchTail?.length ? [...stmts, ...w.batchTail] : stmts);
   } catch (err) {

@@ -47,8 +47,19 @@ waiver), the Platform queue, the console's "Made by your backend" and Web addres
 link, and the Platform activity. `POST /__e2e/lane/platform {action}` (`src/server/lane-platform.ts`): `reset` (the labels
 org with its scope marked as shared and a fresh key pair, whose private half never leaves the lane), `notices` (the
 admin's real `runNotices`, the messages kept in memory: no mail leaves the stack), `switch`, `create` (a signed
-`POST /v1/platform/apps`), `state`. The lane's `RATE_LIMITER` routes the platform's admission, nonce and marks to the
+`POST /v1/platform/apps`; it first clears the API's isolate list of announced keys, refreshed every 30 s, since the
+specs in one lane each register a fresh key seconds apart), `state`, `gate` (D931: apps/api's own `GET /v1/app` with the app's publishable key from one
+Origin, as a partner page asks it). The lane's `RATE_LIMITER` routes the platform's admission, nonce and marks to the
 real object. Screens with `HANA_SHOTS_DIR=<dir>` (Chromium only).
+
+An owner's confirmation of web addresses (D931): `tests/owner-confirmation.spec.ts` sets up the network as above, then
+the backend creates an app with two web addresses; the request's email reaches the owner too, with the "or sooner if an
+owner of your organisation confirms them" line and the Check and confirm link; the owner opens that link in the
+console, ticks one, presses Confirm and confirms with a fresh Google sign-in; that one passes the API's gate at once
+(the other still waits); the confirmation's notice names the owner and carries the removal link; its page changes
+nothing until Remove, which stops it at once. A viewer (`/__e2e/console/sign-in?as=viewer`, a console member who is
+no on-chain owner) opens the same page and sees no tick box and no Confirm. Screens with `HANA_SHOTS_DIR=<dir>`
+(Chromium only).
 
 The shared-wallet line (D912): `tests/shared-wallet.spec.ts` puts two apps on a scope of their own (with a suspended
 one, one with no web address and one no one has signed in to, which don't count; the others are made `launched`, since

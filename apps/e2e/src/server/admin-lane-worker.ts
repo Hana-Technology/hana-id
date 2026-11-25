@@ -682,6 +682,7 @@ async function labelsControl(b: Record<string, unknown>): Promise<Record<string,
  *   switch                     the org's platform switch on with the review of every key → {keys}
  *   create {name, origins}     the network's backend's signed create → {status, body}
  *   state                      the org's platform proposals → {proposals}
+ *   gate {key, origin}         D931: apps/api's GET /v1/app with that key from that Origin → {status, code}
  */
 async function platformControl(b: Record<string, unknown>): Promise<Record<string, unknown>> {
   const p = lane.platform;
@@ -696,8 +697,10 @@ async function platformControl(b: Record<string, unknown>): Promise<Record<strin
       return p.create({ name: String(b.name), origins: Array.isArray(b.origins) ? b.origins.map(String) : [] });
     case 'state':
       return p.state();
+    case 'gate':
+      return p.gate({ key: String(b.key), origin: String(b.origin) });
     default:
-      throw new Error('platform: action is reset, notices, switch, create or state');
+      throw new Error('platform: action is reset, notices, switch, create, state or gate');
   }
 }
 

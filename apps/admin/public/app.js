@@ -1940,19 +1940,23 @@ function secondPersonPanel(rows, left) {
     const o = g[0];
     const sent = g.map((x) => x.notifiedAt).filter((x) => typeof x === 'number');
     const from = g.map((x) => x.activeFrom).filter((x) => typeof x === 'number');
+    // Three columns, so the table fits its panel at desktop width: the Confirm… control under the web addresses, who
+    // added them under the app, and the two times together.
     return tr(
-      h('div', { class: 'stack' }, g.map(queueOrigin)),
-      queueApp(o),
-      h('span', {}, staffWho(o.proposedBy), h('span', { class: 'sub' }, `added ${time(o.proposedAt)}`)),
-      sent.length ? time(Math.min(...sent)) : badge('Email not sent yet', 'warning'),
-      from.length ? h('span', {}, time(Math.max(...from)), h('span', { class: 'sub' }, left(Math.max(...from)))) : '',
-      staffConfirmControl(g),
+      h('div', { class: 'stack' }, ...g.map(queueOrigin), staffConfirmControl(g)),
+      h('div', { class: 'stack' }, queueApp(o), h('span', {}, 'Added by ', staffWho(o.proposedBy), h('span', { class: 'sub' }, time(o.proposedAt)))),
+      h(
+        'div',
+        { class: 'stack' },
+        sent.length ? h('span', {}, 'Email sent ', time(Math.min(...sent))) : badge('Email not sent yet', 'warning'),
+        from.length ? h('span', {}, 'Starts working if nobody confirms: ', time(Math.max(...from)), h('span', { class: 'sub' }, left(Math.max(...from)))) : '',
+      ),
     );
   });
   return panel(
     'Waiting for a second person',
     { hint: 'Web addresses Journear staff added to a platform-created app or an app on a shared wallet. Each starts working 24 hours after its email unless a second person confirms it sooner: another staff member here, or an owner in the partner portal. The staff member who added it can’t confirm it.' },
-    table(['Web address', 'App and organisation', 'Added by', 'Email sent', 'Starts working if nobody confirms', ''], trs, { empty: 'Nothing is waiting for a second person.' }),
+    table(['Web address', 'App, organisation and who added it', 'When'], trs, { empty: 'Nothing is waiting for a second person.' }),
   );
 }
 

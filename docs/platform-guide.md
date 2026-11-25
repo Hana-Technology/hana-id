@@ -3,9 +3,8 @@
 This guide is for the backend developers of a **network**: a company that offers Journear Passport sign-in to its
 own partners, switched on from the network's own partner portal. When a partner turns the switch on, your server
 creates and manages a Journear Passport app for that partner, with no person at Journear involved. The first reader
-is Sodax's backend team. You should not need anything else to build the integration; the full reference tables are
-in Journear's API reference (`api.md`, sections "Platform API" and "Platform app operations"), which this guide
-never contradicts.
+is Sodax's backend team. Everything your backend needs is in this guide; the integration guide (`integration.md`,
+sent with our SDK) covers the partner's page and our SDK.
 
 Last verified: 2026-11-26, against the platform API's code and tests (built, not deployed anywhere yet).
 
@@ -48,7 +47,9 @@ Last verified: 2026-11-26, against the platform API's code and tests (built, not
 | Security contacts | Email addresses Journear sets for your organisation. They get every notice about new web addresses and keys |
 | On-chain owner | An owner whose Google account is also written as an owner of the scope on chain. Only on-chain owners can register keys and confirm web addresses |
 
-**What your platform key can do**, only on apps it created itself, on the scopes it was registered for:
+**What your platform key can do**, only on apps your organisation's platform keys created, on the scopes this key was
+registered for (so a key you rotate to sees and manages the apps the old one made, as long as it names the same
+scopes; rotating never leaves apps behind):
 
 - create a test app for a partner on your shared wallet, with its first web addresses;
 - list and read those apps: name, state, web addresses (and whether each is waiting or working), publishable keys;
@@ -61,7 +62,8 @@ Last verified: 2026-11-26, against the platform API's code and tests (built, not
 **What it can never do:** confirm or speed up a web address (only an owner of your organisation can, in the portal);
 register, accept or confirm a platform key; touch owners, Google sign-in settings or anything on chain; auto-approve
 policies, raw signing, gas sponsorship, partner labels, logos, renames or the real-money demo; delete an app; create
-a live app; see or change an app it didn't create, such as your own site's app or any app Journear staff made. To
+a live app; see or change an app no platform key of yours created, such as your own site's app or any app Journear
+staff made. To
 your key, an app outside its reach looks exactly like an app that doesn't exist (`404 not_found`).
 
 **What stays with people.** Your **owners**, in the partner portal: register your platform keys and confirm them,
@@ -149,8 +151,10 @@ Who: an owner of your organisation who is also an on-chain owner of each scope t
    ([section 5](#the-credential)).
 
 Journear staff can also register a key you send them (the public key only, after checking its fingerprint with you
-by another channel). Such a key works only after an owner **accepts** it in the portal with a fresh sign-in (which
-also counts as its confirmation), or a second Journear staff member approves it.
+by another channel). Such a key works only after one of two things. An owner **accepts** it in the portal with a
+fresh sign-in: that also counts as its confirmation, so it works as soon as its email has gone out. Or a second
+Journear staff member approves it: then it is announced and waits the full 24 hours after its email, unless an owner
+confirms it.
 
 A registration is refused when: your organisation already has 2 keys working, waiting or awaiting acceptance; your
 security contacts changed less than 7 days ago; Journear has frozen your organisation; the public key is already
@@ -188,8 +192,8 @@ stay; remove them if they shouldn't. Everyone is emailed "Platform key stopped",
 ## 4. Signing a request
 
 Every request is signed with your platform key over its environment, method, path, body, time and a single-use
-random value. There is no bearer token and no shared secret: a logged or captured request can't be reused or
-changed.
+random value. There is no bearer token and no shared secret: a logged or captured request can't be changed, and
+can't be used again once it has been answered (the one exception is under "The nonce" below).
 
 ### The request
 
@@ -199,8 +203,9 @@ changed.
 - **A `GET`** has no body, no content type and no `Idempotency-Key`.
 - **The path** is `/v1/platform/` followed by plain segments of letters, digits, `_` and `-`: no empty segment, no
   `.` or `..`, no percent-encoding, no trailing slash.
-- **A `GET`'s query**, when there is one, is one to four `name=value` pairs of the same characters, for example
-  `?scopeId=s1abc&cursor=app_9xYz`.
+- **A `GET`'s query**, when there is one, is one to four `name=value` pairs joined by `&`: each name a lower-case
+  letter followed by up to 31 letters (`[a-z][A-Za-z]{0,31}`), each value 1 to 128 letters, digits, `_` and `-`
+  (`[A-Za-z0-9_-]{1,128}`), for example `?scopeId=s1abc&cursor=app_9xYz`.
 - **No `Origin` header**: the platform API is for servers only. A request with one is refused (`403
   browser_refused`), and no answer carries CORS headers.
 
@@ -210,7 +215,7 @@ changed.
 |---|---|---|
 | `Journear-Key-Id` | Your platform key's id, shown in the portal | `pkc_` and 12 to 17 base58 characters |
 | `Journear-Timestamp` | Your clock now, in unix **milliseconds** | 13 digits |
-| `Journear-Nonce` | 16 fresh random bytes, base64url without padding: a new one for **every** request and every retry | 22 characters |
+| `Journear-Nonce` | Exactly 16 fresh random bytes, base64url without padding: a new one for **every** request and every retry | 22 characters, `^[A-Za-z0-9_-]{21}[AQgw]$` |
 | `Journear-Signature` | The signature: 64 bytes `r ‖ s`, base64url without padding | 86 characters |
 | `Idempotency-Key` | Writes only: one per operation, resent unchanged on its retries ([section 6](#6-retries-idempotency-and-versions)) | 8 to 64 letters, digits, `_` and `-` |
 | `content-type` | `application/json` on a `POST` | |
@@ -221,7 +226,10 @@ Each value is matched in full: nothing is trimmed. All headers together must sta
 `400 stale_request` with `serverTimeMs`, Journear's time: fix your server's clock (NTP).
 
 **The nonce.** Journear keeps each nonce until your timestamp plus 120 seconds. Sending the same nonce twice
-answers `409 request_replayed`. Any answer after the signature check (a `429` included) has used the nonce, so sign
+answers `409 request_replayed`. Journear reserves the nonce after it has checked the signature and that the platform
+is on and your organisation isn't frozen. So a request answered `403 platform_off`, `403 forbidden` (frozen) or a
+`503` from the nonce check itself holds no nonce: that same request could be sent again, unchanged, while its
+timestamp is within the clock window. Every later answer (any `429` included) has used the nonce. Either way, sign
 every retry again, with a new nonce and timestamp.
 
 ### The signed message
@@ -252,8 +260,8 @@ SHA-256 of the message instead.
 
 **On the wire: raw `r ‖ s`, never DER.** The header carries exactly 64 bytes: `r` then `s`, each 32 bytes
 big-endian, left-padded with zeros, then base64url without padding. WebCrypto already gives this form. Many KMS
-services and libraries answer **DER** instead (`SEQUENCE { INTEGER r, INTEGER s }`, 70 to 72 bytes, starting
-`0x30`): convert it (`derToRaw` in the reference client: read both integers, drop a leading `0x00`, left-pad each to
+services and libraries answer **DER** instead (`SEQUENCE { INTEGER r, INTEGER s }`, about 70 bytes and starting
+`0x30`, its length varying with the values): convert it (`derToRaw` in the reference client: read both integers, drop a leading `0x00`, left-pad each to
 32 bytes). A DER signature sent as it is doesn't fit the header's form and is refused with the same `401` as any
 other failure. Both `s` values are accepted (low and high).
 
@@ -275,7 +283,7 @@ setups, so it can never be used for real.
 | Public key (JWK) | `{"kty":"EC","crv":"P-256","x":"ueowcpD9Nj-M1kx84EQdShLN5FNLOZGq_BV2Mag8554","y":"2VAmr271NMsFT1bwCVSOVltiZojmM2vFVc1H8RIJWaM"}` |
 | Fingerprint | `mBMTrRfEY-gb-MFa4zaRAQqG1zZ4kbkKiLo_qps_BTo` |
 | Key id | `pkc_7Hq2Vx9Lm4Rt8Kd` |
-| Env name, signer account | `sandbox-test`, `signer.test.near` (a test environment of Journear's own) |
+| Env name, signer account | `sandbox-test`, `signer.test.near` (names used only for this vector, not a real environment) |
 | Request | `POST /v1/platform/credential/revoke`, body `{}` (2 bytes), `Idempotency-Key: op-2026-11-25-0001` |
 | Timestamp, nonce | `1800000000000`, `KI-DKBwJhE9EIP1K-7zt4A` |
 | Body hash | `44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a` |
@@ -306,23 +314,27 @@ Sent as DER, or signed with any other env name or signer account, the same reque
 
 ### The reference client (TypeScript)
 
-Node 20 or later, or any server runtime with WebCrypto and `fetch`; no dependencies. Journear's tests run this exact
-code against the API's own request checks and routes (a key from a PEM file, every endpoint, a retry after a lost
-answer, the self-revoke while switched off, and the vector above), so it stays in step with the API. Copy it into
-your backend as `platform-client.ts`.
+TypeScript, an ES module, no dependencies. It needs WebCrypto, `fetch` and `AbortSignal.timeout`: Node 22.18 or
+later runs the file as it is (Node's built-in type stripping; we ran it on Node 24), and Node 20 runs it through a
+TypeScript build step (tsc, tsx or your bundler). Journear's tests run this exact code against the API's own request
+checks and routes (a key from a PEM file, every endpoint, a retry after a lost answer, a timeout, the self-revoke
+while switched off, and the vector above), so it stays in step with the API. Copy it into your backend as
+`platform-client.ts`.
 
 <a id="reference-client"></a>
 
 ```ts
-// Journear Passport platform API: sign and send requests from your backend.
-// Node 20 or later, or any server runtime with WebCrypto and fetch. No dependencies. Public sample code: copy it.
+// Journear Passport platform API: sign and send requests from your backend. Public sample code: copy it.
+// TypeScript, an ES module, no dependencies. It needs WebCrypto, fetch and AbortSignal.timeout: Node 22.18 or later runs
+// it as it is (`node`'s built-in type stripping), Node 20 through a TypeScript build step (tsc, tsx or your bundler);
+// other server runtimes with those APIs work too.
 
 /** A WebCrypto private key (the DOM's and Node's types both name it this way). */
 export type SigningKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
 
 /** What your backend needs for one environment. Keep these in your configuration, never in code. */
 export interface PlatformConfig {
-  /** The env's API base URL, as Journear gives it (no trailing slash). */
+  /** The env's API base URL, as Journear gives it (`https://…`; a trailing slash is dropped). */
   apiBase: string;
   /** The env's name and contract account: lines 2 and 3 of every signed message (Journear gives both). */
   envName: string;
@@ -467,26 +479,39 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Sends one request, re-signed for every attempt (a new nonce and timestamp; the same body and Idempotency-Key).
- * Retries a network error, 500 and 503 with backoff, and 429 after its retry-after (up to `maxWaitS`). Every other
- * answer comes back as it is: read `body.code`.
+ * Each attempt has `timeoutMs` (default 15 s) for the whole exchange, the answer's body included. Retries a network
+ * error or a timeout, 500 and 503 with backoff, and 429 after its retry-after (up to `maxWaitS`); `attempts` (default
+ * 4) counts the first one. Every other answer comes back as it is: read `body.code`.
  */
-export async function callPlatform(cfg: PlatformConfig, req: PlatformRequest, o: { attempts?: number; maxWaitS?: number } = {}): Promise<PlatformAnswer> {
+export async function callPlatform(
+  cfg: PlatformConfig,
+  req: PlatformRequest,
+  o: { attempts?: number; maxWaitS?: number; timeoutMs?: number } = {},
+): Promise<PlatformAnswer> {
   const attempts = o.attempts ?? 4;
   const maxWaitS = o.maxWaitS ?? 60;
+  const timeoutMs = o.timeoutMs ?? 15_000;
+  if (!Number.isInteger(attempts) || attempts < 1) throw new Error('attempts is a whole number, 1 or more');
+  if (!Number.isFinite(maxWaitS) || maxWaitS < 0 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('maxWaitS and timeoutMs are positive numbers');
+  const apiBase = cfg.apiBase.replace(/\/+$/, '');
+  if (!/^https?:\/\/[^/?#]+(\/[^?#]*)?$/.test(apiBase)) throw new Error(`Not an API base URL: ${cfg.apiBase}`);
   const body = req.method === 'POST' ? enc.encode(JSON.stringify(req.body ?? {})) : new Uint8Array(0);
   if (req.method === 'POST' && req.idempotencyKey === undefined && req.path !== '/v1/platform/credential/revoke') throw new Error('Every write needs an Idempotency-Key');
   const doFetch = cfg.fetch ?? fetch;
   for (let attempt = 1; ; attempt++) {
     const headers = await signHeaders(cfg, { method: req.method, path: req.path, body, idempotencyKey: req.idempotencyKey, timestampMs: (cfg.now ?? Date.now)() });
     let res: Response;
+    let text: string;
     try {
-      res = await doFetch(`${cfg.apiBase}${req.path}`, { method: req.method, headers, ...(req.method === 'POST' ? { body } : {}) });
+      // The signal ends the attempt on time, the body's read included; a timeout is retried as a network error.
+      const signal = AbortSignal.timeout(timeoutMs);
+      res = await doFetch(`${apiBase}${req.path}`, { method: req.method, headers, signal, ...(req.method === 'POST' ? { body } : {}) });
+      text = await res.text();
     } catch (err) {
       if (attempt >= attempts) throw err;
       await sleep(500 * 2 ** (attempt - 1));
       continue;
     }
-    const text = await res.text();
     let parsed: Record<string, unknown> = {};
     try {
       parsed = JSON.parse(text) as Record<string, unknown>;
@@ -531,10 +556,11 @@ const created = await callPlatform(cfg, {
 
 ### Java 17 or later
 
-The same signer for a Java backend, standard library only. We checked it once by hand (Java 17, 2026-11-26): its
-message for the vector above is byte for byte the vector's, and a `GET` and a signed self-revoke it produced were
-accepted by the API's own request checks. It is **not** run by Journear's test suite. It sends one attempt; follow
-[section 6](#6-retries-idempotency-and-versions) for retries.
+The same signer for a Java backend, standard library only. Journear's tests compile this exact code and check its
+message and signature against the vector above whenever a JDK 17 or later is on the test machine (they say so and
+skip otherwise). Once, by hand (Java 17, 2026-11-26), a `GET` and a signed self-revoke it produced were also accepted
+by the API's own request checks; that part isn't repeated by the tests. It sends one attempt (10 s to connect, 15 s
+for the answer to start); follow [section 6](#6-retries-idempotency-and-versions) for retries.
 
 ```java
 // Journear Passport platform API: sign and send requests from a Java 17+ backend. No dependencies.
@@ -550,6 +576,7 @@ import java.security.PrivateKey;
 import java.security.SecureRandom;
 import java.security.Signature;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -560,11 +587,11 @@ public final class JournearPlatform {
   private static final SecureRandom RNG = new SecureRandom();
   private final String apiBase, envName, signerAccount, keyId;
   private final PrivateKey key;
-  private final HttpClient http = HttpClient.newHttpClient();
+  private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
 
   /** The env's values come from your configuration (Journear gives them per env); the key from your key store. */
   public JournearPlatform(String apiBase, String envName, String signerAccount, String keyId, PrivateKey key) {
-    this.apiBase = apiBase; this.envName = envName; this.signerAccount = signerAccount; this.keyId = keyId; this.key = key;
+    this.apiBase = apiBase.replaceAll("/+$", ""); this.envName = envName; this.signerAccount = signerAccount; this.keyId = keyId; this.key = key;
   }
 
   /** A PKCS #8 PEM private key, as `openssl genpkey` writes it. */
@@ -606,10 +633,13 @@ public final class JournearPlatform {
     return h;
   }
 
-  /** One attempt, signed now. For a retry call it again with the same body and Idempotency-Key. */
+  /**
+   * One attempt, signed now: 10 s to connect, 15 s for the answer to start (HttpRequest.timeout). A timeout throws
+   * HttpTimeoutException: retry it as a network error, calling this again with the same body and Idempotency-Key.
+   */
   public HttpResponse<String> send(String method, String path, String jsonBody, String idempotencyKey) throws Exception {
     byte[] body = method.equals("POST") ? jsonBody.getBytes(StandardCharsets.UTF_8) : new byte[0];
-    HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(apiBase + path));
+    HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(apiBase + path)).timeout(Duration.ofSeconds(15));
     signHeaders(method, path, body, idempotencyKey, System.currentTimeMillis(), null).forEach(b::header);
     b.method(method, method.equals("POST") ? HttpRequest.BodyPublishers.ofByteArray(body) : HttpRequest.BodyPublishers.noBody());
     return http.send(b.build(), HttpResponse.BodyHandlers.ofString());
@@ -640,8 +670,7 @@ also has an `x-request-id` header with the same id.
 
 **Every write is a `POST` with an `Idempotency-Key`** ([section 6](#6-retries-idempotency-and-versions)). Any route
 can also answer the common refusals of [section 8](#8-limits-refusals-and-the-off-switches) and
-[section 13](#13-troubleshooting-by-error-code) (`401`, `403 platform_off`, `429`, …). The full tables are in
-Journear's API reference.
+[section 13](#13-troubleshooting-by-error-code) (`401`, `403 platform_off`, `429`, …).
 
 ### The credential
 
@@ -791,11 +820,13 @@ What Journear answers to a write it has seen:
 
 | You send | Within 7 days | After 7 days |
 |---|---|---|
-| The same key, method, path and body, from the same platform key | `200` with the operation's answer as it is now and `"replayed": true`; nothing is written again | `409 already_applied`: it was done |
-| The same key with another method, path or body | `409 idempotency_conflict`: a bug on your side (one key, two operations). Use a new key | `409 conflict` |
+| The same key, method, path and body, from the same platform key | `200` with the operation's answer as it is now and `"replayed": true`; nothing is written again | `409 already_applied` |
+| The same key with another method, path or body | `409 idempotency_conflict`: a bug on your side (one key, two operations). Use a new key | `409 already_applied` if it is the same kind of write on the same app from the same platform key (another body is not noticed after 7 days); otherwise `409 conflict` |
 | The same key from your organisation's **other** platform key (a rotation mid-retry) | `409 conflict`: read the app to see whether it applied; if not, start again with a new key | `409 conflict` |
 
-A write that was refused or failed records nothing, so its key may be used again. A replay of a write whose app has
+After 7 days, `already_applied` means "a write of this kind on this app was made with this key": it doesn't prove
+that **this** body was applied. Read the app to see its state. Never reuse an Idempotency-Key for a different
+request. A write that was refused or failed records nothing, so its key may be used again. A replay of a write whose app has
 since left your key's reach (deleted, or its scope taken off the key) is `404 not_found`. A replayed create answers
 `200`, not `201`.
 
@@ -816,7 +847,8 @@ each operation from one worker at a time.
 | `409 version_conflict` | Read the app, decide again, and send the new request with a **new** Idempotency-Key |
 | Any other `4xx` | No: read `code` and fix the cause |
 
-The reference client retries the first four kinds by itself.
+The reference client retries the first four kinds by itself, and gives each attempt 15 seconds (`timeoutMs`), the
+answer's body included: a timeout counts as no answer.
 
 **Optimistic versions.** Proposals and removals carry `expectedVersion`: the app's `originsVersion` when you last read
 it. If anything changed the web addresses since (another proposal, a removal, a cancel, a key revocation that
@@ -911,18 +943,24 @@ All limits are provisional and kept low while you have few partners. Journear ca
 | Journear's database budget | per organisation and shared | `429`, `platform:budget_org`, `platform:budget_platform`, `platform:budget_shared`, `platform:budget_reserve` |
 | Self-revokes | 10 a minute per key | `429`, `platform:key:revoke:minute` |
 
-Clock hours and UTC days are fixed windows. A refused or replayed write doesn't use a quota unit.
+Clock hours and UTC days are fixed windows; the destructive-call limit is a rolling hour (the last 60 minutes). A
+refused or replayed write doesn't use a unit of the creation, address or key quotas, with two exceptions: every
+request admitted counts against your key's 60 a minute and 2,000 a day, whatever its answer; and two copies of one
+write sent at the same moment may both use a unit ([section 6](#6-retries-idempotency-and-versions)).
 
 **`429`** looks like `{ "error": "…", "code": "rate_limited", "limit": "platform:creations:day", "retryAfterS": 3600,
 "requestId": "…" }` with a `retry-after` header in seconds. Wait that long. For a minute window, back off and retry;
 for an hour or a day window, queue the work and tell your team. The destructive-call limit (the "breaker") protects
-against a runaway script or a stolen key: if you hit it, stop and talk to Journear. Your off switches keep a small
-reserve of the database budget, so removing, cancelling, suspending and revoking keep working when ordinary calls are
-refused.
+against a runaway script or a stolen key: if you hit it, stop and talk to Journear. Your off switches (remove,
+cancel, suspend, revoke a publishable key) keep a small reserve of Journear's database budget, so they keep working
+when ordinary calls are refused for that budget. They are **not** exempt from anything else: they still count
+against your key's 60 a minute and 2,000 a day and its 300 nonces a minute, and remove, suspend and revoke count
+against the destructive-call limit. Only the key's self-revoke skips those. If your key's own windows are full in an
+emergency, use your standby key, or stop things in the partner portal, which these limits don't touch.
 
 **`401 unauthenticated`** is one identical answer for every authentication failure ([section 4](#the-signature)).
 Don't retry it in a loop: after 30 failures a minute from one address, even your valid requests from that address go
-through a smaller per-key allowance, and 10 failures a minute for one key id alerts Journear's security team.
+through a smaller per-key allowance, and repeated failures for one key id alert Journear's security team.
 
 **When Journear switches the platform off for your organisation**, every call answers `403 platform_off`, except
 `POST /v1/platform/credential/revoke`: your key can always stop itself. Switching off also cancels every web address
@@ -976,8 +1014,22 @@ When your SDK bundles ours (Sodax's case):
    `vault_unavailable` with `data.reason: 'no_answer'`. Show your own "waiting" state
    ([section 7](#show-it-in-your-portal)).
 
-The details (EVM wallet lists, the Stellar wallet module and its `productId`, Sodax's kit) are in the integration
-guide and in Journear's note on embedding in Sodax's SDK (`sodax-sdk-integration.md`).
+What your SDK needs to know about ours (the integration guide has the full API):
+
+- **EVM.** Creating our client is enough: it announces itself to EVM wallet lists (EIP-6963), also when it is
+  created after your list was built, so libraries that listen for announcements (wagmi, for example) show "Journear
+  Passport" with no code of yours.
+- **Stellar.** Our wallet is a Stellar Wallets Kit module, `new HanaIdModule(hana, { productId })` from
+  `@hana-id/web/stellar-wallets-kit`. If your kit finds wallets by part of a name (so that "hana" would also match
+  another wallet called Hana Wallet), pass `productId: JOURNEAR_PASSPORT_MODULE_ID` (`'journear-passport'`). A kit
+  that builds its module list once, at start-up, needs a way to add a module later; Journear has a small change of
+  that kind ready to discuss with you.
+- **Errors.** Our wallet rejects with codes such as `4100` (a test key asked to sign on a real network) and `4001`
+  (the user said no). Keep the wallet's own error (as a `cause`, for example) rather than replacing it, so partners
+  can tell what happened.
+- **Size.** Our SDK is about 35 kB gzipped and is loaded only when the toggle is on.
+- **Toggle off on the page.** Remove our module from your lists, disconnect, and call `hana.destroy()`: it removes
+  our hidden frame.
 
 **Your widget in an iframe.** If the partner uses your widget, served from your own web address inside the partner's
 page, the partner's app must list **the widget's web address and every partner page that frames it**. Our frame
@@ -1061,7 +1113,7 @@ is live.
 | `request_replayed` | 409 | This nonce was used before | Sign every request and retry afresh |
 | `idempotency_conflict` | 409 | This Idempotency-Key was used in the last 7 days for another request | Use a new key per operation |
 | `conflict` | 409 | Depends on the route: a retry from your other platform key; an address already on the app or more than 20; a look-alike name; the scope given moments ago; a key already revoked | Read `error`; for the retry case, read the app and decide |
-| `already_applied` | 409 | This operation was done (a retry after 7 days, or two copies at once) | Read the app; nothing to do |
+| `already_applied` | 409 | A write with this Idempotency-Key was made: two copies sent at once, or a retry after 7 days (then possibly with another body) | Read the app to see its state; never reuse a key for a different request |
 | `version_conflict` | 409 | The app changed since you read it, or the state moved during the write | Read again, decide, send with a new Idempotency-Key |
 | `not_pending` | 409 | The address isn't waiting any more (working, cancelled or ended) | Remove it instead, if needed |
 | `app_limit` | 409 | Your organisation has `maxApps` platform-created apps | Ask Journear to raise it or delete old apps |
@@ -1083,4 +1135,4 @@ is live.
 6. Who are the owners who will confirm addresses and keys, and are they on-chain owners of the scope?
 7. Is polling enough for you, or would you need Journear to call your backend when an address starts working?
 8. Should your partners' security notices also reach the partners themselves? Today they go to your organisation's
-   security contacts only.
+   security contacts, every owner of your organisation and Journear's security team, never to the partner.

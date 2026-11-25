@@ -24133,8 +24133,9 @@ From `feat/owner-confirmation` @ c0822331 (PR 159, which contains PR 158; neithe
 no behaviour change, not merged, nothing deployed. Piece P8 of `partner-platform-spec.md`. D932 is the number the
 caller assigned.
 
-### D932. The network's guide: one task-shaped, partner-facing page; its TypeScript client quoted from a file the API's real verifier and routes run; the generator's published test key as its vector; a Java signer checked once by hand
-- Date 2026-11-26 · Status: **written** (docs and tests only); the choices below are **to confirm (the Tech Lead)** ·
+### D932. The network's guide: one task-shaped, partner-facing page; its TypeScript client quoted from a file the API's real verifier and routes run; the generator's published test key as its vector; a Java signer compiled and checked against the vector when a JDK is present
+- Date 2026-11-26 · Status: **written** (docs and tests; after PR 160's review also two small API fixes, below); the
+  choices below are **to confirm (the Tech Lead)** ·
   Relates to D909, D913, D914, D917, D918, D919, D923, D925, D926, D927, D928, D929, D930, D931 · Built:
   `docs/platform-guide.md`; `examples/platform-signer/platform-client.ts` (the client the guide quotes);
   `apps/api/test/platform-guide.test.ts`; `packages/core/test/integration-doc.test.ts` (the partner-facing checks);
@@ -24186,7 +24187,7 @@ caller assigned.
 - **Found while writing (not fixed: no code change; docs only where said).**
   1. `api.md` "Platform app operations", the web addresses rule, still says an owner's confirmation is "piece P10,
      not built: until then nothing brings one in sooner": stale since PR 159 (its own "Owner confirmations" section
-     says built). Left for PR 159's branch.
+     says built). Corrected after PR 160's review (M2).
   2. The spec's A10 point 4 says a partner's site gets `origin_not_allowed` until its address is in force; the SDK's
      failure is `vault_unavailable` with `data.reason: 'no_answer'` (`integration.md`). A10 point 2's
      `createHana({ environment: 'test' })` isn't an SDK env name (`'sandbox-dev'`). The guide follows the SDK.
@@ -24206,3 +24207,50 @@ caller assigned.
   or add a JVM test job); (f) the client's retry defaults; (g) the polling advice; (h) the guide's questions for
   Sodax (section 14); (i) saying that every Cloudflare Worker reaches us from one shared address (the address itself is
   in `api.md`, not the guide).
+- **After PR 160's review (2026-11-26; no High, three Medium, Lows).** Each item and what changed:
+  - **M1 (code):** a platform proposal past the 30-waiting cap answered `409 version_conflict` (the cap was only a
+    commit-predicate term), so the guide's "read again and resend" looped. The proposal's plan read now counts the
+    org's waiting web addresses (`planApp`'s `with.platformWaiting`) and `proposeOrigins` refuses past the cap with
+    `429 rate_limited`, `limit: platform:waiting_origins`, `retry-after: 3600`, as the create does, before any quota
+    unit is taken; the commit predicate stays (a race still answers `version_conflict`). Tests: app A with 20 waiting,
+    11 on app B `429` with nothing written, then 10 `202` on the same clock (no unit taken); the day-window test
+    cancels one so the day's window is what refuses; the proposal's pinned rows 250 → 330 (measured 277: the count is
+    read twice). `api.md`'s quota line and rows, `security.md`, `architecture.md`.
+  - **M2:** the guide stands alone: no `api.md` pointer or "never contradicts" claim, no `sodax-sdk-integration.md`;
+    the front-end section now carries what a network's SDK needs (EIP-6963, the Stellar module and
+    `JOURNEAR_PASSPORT_MODULE_ID`, a kit that builds its list once, keeping our error codes, size, `hana.destroy()`).
+    The partner-docs test now also catches internal docs named by bare file name. `api.md`'s stale P10 line fixed.
+  - **M3:** the client gives each attempt `timeoutMs` (default 15 s, `AbortSignal.timeout`) covering the body's read;
+    a timeout is retried as a network error (tested with an answer whose body stalls). Java: `connectTimeout` 10 s and
+    `HttpRequest.timeout` 15 s (until the answer starts, as the guide says).
+  - **L1:** after 7 days the same Idempotency-Key on the same kind of write, app and platform key with another body
+    is `already_applied` (`refuseReplay` compares kind, app and actor): the table and troubleshooting say so; read the
+    app, never reuse a key for another request.
+  - **L2:** `403 platform_off`, `403 forbidden` (frozen) and the nonce limiter's `503` come before the nonce is
+    reserved: the guide states it, and `security.md` names the residual (no code change).
+  - **L3 to L11:** the reach is any app the org's platform keys created on a scope this key names (rotation leaves no
+    app behind); the off switches are exempt only from the database budget (the per-key windows, nonces and breaker
+    still apply; the standby key or the portal); the breaker is a rolling hour, and "no quota unit" excepts the
+    per-key windows and simultaneous duplicates; the nonce's exact form, the query's exact forms, no DER length; a
+    key approved by a second staffer waits 24 h unless an owner confirms; who gets notices (question 8); the vector's
+    env names are its own.
+  - **L12:** the client refuses an `attempts` that isn't a whole number of at least 1, a bad `timeoutMs` or
+    `maxWaitS`, and a base URL that isn't one; it drops a trailing slash; the guide states the runtime (TypeScript,
+    an ES module; Node 22.18 or later runs it as it is, Node 20 through a build step; run on Node 24). Tested.
+  - **L13:** `scripts/test/platform-guide-java.test.ts` compiles the guide's Java block as printed and checks its
+    message and raw signature for the vector when a JDK 17+ is on PATH, and says so when it isn't; the guide's label
+    says exactly that (the run through the API's verifier was by hand, once).
+  - **Note:** the security-alert threshold is no longer quoted ("repeated failures").
+  - **Item 15 (code):** a lone surrogate (a JSON `\ud800` escape) passed the shared display-safety rule, so an app
+    named "Bad \ud800 Swap" was created. `\p{Cs}` joins core's `display-safe.ts` rule (in a `u` RegExp only a half
+    pair matches), so app names on every path (platform, staff, console settings and the console's own checks),
+    platform key labels, policy labels and every display-safe line refuse it, and messages holding one are shown as
+    hex. Tests: core (both rules, the replace, the every-code-point equivalence now expecting surrogates refused),
+    console-core `normaliseAppName`, `ConsoleRpc.updateSettings`, `AdminRpc.createApp`, the platform create (400,
+    nothing written). Strings from bytes (TextDecoder) can't hold one; JSON bodies were the way in.
+  - Also to confirm (the Tech Lead): (j) whether to reserve the nonce before the switch and freeze checks (a request
+    captured while the org was off could be sent again within about 60 s after staff switch it back on); not changed;
+    (k) naming Sodax in the guide (its first paragraph and the front-end section); (l) the global breaker, 30
+    destructive calls an hour across every organisation, lets one network's runaway script block every network's
+    remove, suspend and key revoke through the API (owners and staff still act in the portals; already open under
+    D929); (m) lone surrogates refused in every display-safe line, not only names (messages with one shown as hex).

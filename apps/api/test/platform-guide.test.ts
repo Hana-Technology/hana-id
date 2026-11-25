@@ -50,6 +50,7 @@ async function network() {
   const ip = freshIp();
   const sent: Request[] = [];
   let dropNext = 0;
+  let stallNext = 0;
   const cfg: PlatformConfig = {
     apiBase: 'https://api.test',
     envName: env.ENV_NAME,
@@ -69,10 +70,22 @@ async function network() {
         dropNext--;
         throw new TypeError('fetch failed');
       }
+      // A stalled answer: the status and headers arrive, the body never ends (until the attempt's signal fires).
+      if (stallNext > 0) {
+        stallNext--;
+        const signal = init?.signal;
+        if (!signal) throw new Error('the client sent no signal');
+        const stalled = new ReadableStream<Uint8Array>({
+          start(c) {
+            signal.addEventListener('abort', () => c.error(signal.reason));
+          },
+        });
+        return new Response(stalled, { status: res.status, headers: res.headers });
+      }
       return res;
     },
   };
-  return { k, site, cfg, clock, sent, dropAnswers: (n: number) => (dropNext = n) };
+  return { k, site, cfg, clock, sent, dropAnswers: (n: number) => (dropNext = n), stallAnswers: (n: number) => (stallNext = n) };
 }
 
 describe('docs/platform-guide.md', () => {
@@ -158,6 +171,34 @@ describe('docs/platform-guide.md', () => {
     expect(n.sent[0]!.headers.get('idempotency-key')).toBe(n.sent[1]!.headers.get('idempotency-key'));
     const apps = await env.DB.prepare("SELECT COUNT(*) AS c FROM apps WHERE org_id = ?1 AND created_by_kind = 'platform'").bind(n.k.org).first<{ c: number }>();
     expect(apps!.c).toBe(1);
+  });
+
+  it('a stalled answer: the attempt times out inside the body’s read, counts as no answer, and the retry is the replay', async () => {
+    const n = await network();
+    n.stallAnswers(1);
+    const r = await callPlatform(n.cfg, { method: 'POST', path: '/v1/platform/apps', body: { scopeId: n.k.scope, name: 'Partner C Swaps' }, idempotencyKey: newIdempotencyKey() }, { timeoutMs: 300 });
+    expect([r.status, r.body.replayed]).toEqual([200, true]);
+    expect(n.sent).toHaveLength(2);
+    expect(n.sent[0]!.headers.get('journear-nonce')).not.toBe(n.sent[1]!.headers.get('journear-nonce'));
+    // With one attempt only, the timeout is the caller's error.
+    n.stallAnswers(1);
+    await expect(callPlatform(n.cfg, { method: 'GET', path: '/v1/platform/credential' }, { timeoutMs: 300, attempts: 1 })).rejects.toThrow();
+  });
+
+  it('refuses a bad attempts, timeout or base URL before sending anything, and drops a trailing slash from the base', async () => {
+    const n = await network();
+    const get = { method: 'GET' as const, path: '/v1/platform/credential' };
+    for (const attempts of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(callPlatform(n.cfg, get, { attempts }), String(attempts)).rejects.toThrow(/attempts/u);
+    }
+    for (const timeoutMs of [0, -5, Number.NaN]) await expect(callPlatform(n.cfg, get, { timeoutMs }), String(timeoutMs)).rejects.toThrow(/timeoutMs/u);
+    for (const apiBase of ['api.test', 'ftp://api.test', 'https://api.test/v1?x=1', '']) {
+      await expect(callPlatform({ ...n.cfg, apiBase }, get), apiBase).rejects.toThrow(/base URL/u);
+    }
+    expect(n.sent).toHaveLength(0);
+    const r = await callPlatform({ ...n.cfg, apiBase: 'https://api.test//' }, get);
+    expect(r.status).toBe(200);
+    expect(n.sent[0]!.url).toBe('https://api.test/v1/platform/credential');
   });
 
   it('the switch off: every call is 403 platform_off but the key can still stop itself', async () => {

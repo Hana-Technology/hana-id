@@ -1,12 +1,14 @@
-// Journear Passport platform API: sign and send requests from your backend.
-// Node 20 or later, or any server runtime with WebCrypto and fetch. No dependencies. Public sample code: copy it.
+// Journear Passport platform API: sign and send requests from your backend. Public sample code: copy it.
+// TypeScript, an ES module, no dependencies. It needs WebCrypto, fetch and AbortSignal.timeout: Node 22.18 or later runs
+// it as it is (`node`'s built-in type stripping), Node 20 through a TypeScript build step (tsc, tsx or your bundler);
+// other server runtimes with those APIs work too.
 
 /** A WebCrypto private key (the DOM's and Node's types both name it this way). */
 export type SigningKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
 
 /** What your backend needs for one environment. Keep these in your configuration, never in code. */
 export interface PlatformConfig {
-  /** The env's API base URL, as Journear gives it (no trailing slash). */
+  /** The env's API base URL, as Journear gives it (`https://…`; a trailing slash is dropped). */
   apiBase: string;
   /** The env's name and contract account: lines 2 and 3 of every signed message (Journear gives both). */
   envName: string;
@@ -151,26 +153,39 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Sends one request, re-signed for every attempt (a new nonce and timestamp; the same body and Idempotency-Key).
- * Retries a network error, 500 and 503 with backoff, and 429 after its retry-after (up to `maxWaitS`). Every other
- * answer comes back as it is: read `body.code`.
+ * Each attempt has `timeoutMs` (default 15 s) for the whole exchange, the answer's body included. Retries a network
+ * error or a timeout, 500 and 503 with backoff, and 429 after its retry-after (up to `maxWaitS`); `attempts` (default
+ * 4) counts the first one. Every other answer comes back as it is: read `body.code`.
  */
-export async function callPlatform(cfg: PlatformConfig, req: PlatformRequest, o: { attempts?: number; maxWaitS?: number } = {}): Promise<PlatformAnswer> {
+export async function callPlatform(
+  cfg: PlatformConfig,
+  req: PlatformRequest,
+  o: { attempts?: number; maxWaitS?: number; timeoutMs?: number } = {},
+): Promise<PlatformAnswer> {
   const attempts = o.attempts ?? 4;
   const maxWaitS = o.maxWaitS ?? 60;
+  const timeoutMs = o.timeoutMs ?? 15_000;
+  if (!Number.isInteger(attempts) || attempts < 1) throw new Error('attempts is a whole number, 1 or more');
+  if (!Number.isFinite(maxWaitS) || maxWaitS < 0 || !Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('maxWaitS and timeoutMs are positive numbers');
+  const apiBase = cfg.apiBase.replace(/\/+$/, '');
+  if (!/^https?:\/\/[^/?#]+(\/[^?#]*)?$/.test(apiBase)) throw new Error(`Not an API base URL: ${cfg.apiBase}`);
   const body = req.method === 'POST' ? enc.encode(JSON.stringify(req.body ?? {})) : new Uint8Array(0);
   if (req.method === 'POST' && req.idempotencyKey === undefined && req.path !== '/v1/platform/credential/revoke') throw new Error('Every write needs an Idempotency-Key');
   const doFetch = cfg.fetch ?? fetch;
   for (let attempt = 1; ; attempt++) {
     const headers = await signHeaders(cfg, { method: req.method, path: req.path, body, idempotencyKey: req.idempotencyKey, timestampMs: (cfg.now ?? Date.now)() });
     let res: Response;
+    let text: string;
     try {
-      res = await doFetch(`${cfg.apiBase}${req.path}`, { method: req.method, headers, ...(req.method === 'POST' ? { body } : {}) });
+      // The signal ends the attempt on time, the body's read included; a timeout is retried as a network error.
+      const signal = AbortSignal.timeout(timeoutMs);
+      res = await doFetch(`${apiBase}${req.path}`, { method: req.method, headers, signal, ...(req.method === 'POST' ? { body } : {}) });
+      text = await res.text();
     } catch (err) {
       if (attempt >= attempts) throw err;
       await sleep(500 * 2 ** (attempt - 1));
       continue;
     }
-    const text = await res.text();
     let parsed: Record<string, unknown> = {};
     try {
       parsed = JSON.parse(text) as Record<string, unknown>;

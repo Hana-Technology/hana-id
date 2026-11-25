@@ -12,6 +12,7 @@ import type { HotDb } from './db.ts';
 import { type Q, q, raw } from './sql.ts';
 import { type StepUpToken, confirmStepUp, releaseStepUp, verifyStepUpToken } from './step-up.ts';
 import { type ChangeRow, changeView } from './views.ts';
+import { PlatformRefusal } from '../platform/refusal.ts';
 
 /** The stored (ASCII) form of each origin, deduplicated and sorted; `bad_request` for one that isn't an origin. */
 export function normaliseAll(input: readonly string[]): string[] {
@@ -159,7 +160,7 @@ async function proposeOrigins(
   const remove = normaliseAll(i.remove);
   const both = add.filter((o) => remove.includes(o));
   if (both.length) refuse('bad_request', `Both added and removed: ${both.join(', ')}`);
-  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { origins: true, changes: true } });
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { origins: true, changes: true, ...(platform ? { platformWaiting: i.orgId } : {}) } });
   expectVersion(plan.app.origins_version, i.expectedVersion);
   if (!token && plan.app.assigned_at > w.now - config.delayMs) refuse('conflict', 'The scope was assigned to this org less than appChangeDelayMs ago: staff proposals wait for it');
   // M7: the platform's web addresses follow the live-scope rules on every scope.
@@ -172,6 +173,18 @@ async function proposeOrigins(
   const dup = add.filter((o) => have.has(o));
   if (dup.length) refuse('conflict', `Already an origin of this app (in force or pending): ${dup.join(', ')}`);
   if (have.size - remove.length + add.length > MAX_APP_ORIGINS) refuse('conflict', `At most ${MAX_APP_ORIGINS} active or pending origins per app`);
+  // The platform's cap on waiting web addresses across the org (A5), checked before the batch as its create checks it
+  // (platform/ops.ts): a full cap is a 429 with the hour to wait, not the commit predicate's version_conflict, which a
+  // client would answer by reading again and resending (after PR 160's review, M1). The predicate below keeps the rule
+  // for a race; no quota window has been taken yet (withQuota takes them just before the batch).
+  if (platform && (plan.platformWaiting ?? 0) + add.length > platform.waitingMax) {
+    throw new PlatformRefusal(
+      'rate_limited',
+      `At most ${platform.waitingMax} web addresses may wait at once across your organisation’s apps: wait for some to come into force, or cancel some`,
+      { limit: 'platform:waiting_origins', retryAfterS: 3600 },
+      { 'retry-after': '3600' },
+    );
+  }
   if (token) {
     // Steps 4–6 of the API verification, after the version check and every input and state check (a refusal before
     // the reservation leaves the token unused).

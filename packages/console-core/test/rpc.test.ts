@@ -56,6 +56,9 @@ describe('app names', () => {
     expect(normaliseAppName('x'.repeat(APP_NAME_MAX + 1)).ok).toBe(false);
     expect(normaliseAppName('😀'.repeat(APP_NAME_MAX)).ok).toBe(true);
     for (const bad of ['a‮b', 'a​b', 'a\nb', 'a\u0007b', 'a️b', 'a\u{E0041}b']) expect(normaliseAppName(bad).ok, JSON.stringify(bad)).toBe(false);
+    // A lone surrogate (half of a UTF-16 pair, as a JSON "\ud800" escape carries in): refused (PR 160's review).
+    for (const bad of ['Bad \ud800 Swap', 'Bad \udfff Swap', JSON.parse('"Bad \\udc00 Swap"') as string]) expect(normaliseAppName(bad).ok, JSON.stringify(bad)).toBe(false);
+    expect(normaliseAppName('Rocket \ud83d\ude80 Swap').ok).toBe(true);
   });
 
   it('the rule is @hana-id/core isDisplaySafeLine itself (D904: no copy to drift; core\'s and env\'s tests guard what it refuses)', () => {

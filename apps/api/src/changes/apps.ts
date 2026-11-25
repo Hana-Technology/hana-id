@@ -160,6 +160,11 @@ export async function listChanges(db: HotDb, orgId: string, beforeSeq: number | 
 export interface AppPlan {
   /** `partner_bit_by` (migration 0033, D929) only when the plan asked for it (`with.partnerBit`). */
   app: AppRow & { partner_bit_by?: 'member' | 'platform' | null };
+  /**
+   * The org's web addresses the platform proposed that still wait, across its apps (only when the plan asked for it,
+   * `with.platformWaiting`: the platform's proposal checks its cap before its batch, as its create does).
+   */
+  platformWaiting?: number;
   origins: OriginRow[];
   openChanges: ChangeRow[];
   keys: KeyRow[];
@@ -172,9 +177,16 @@ export interface AppPlan {
  */
 export async function planApp(
   db: HotDb,
-  i: { appId: string; orgId: string | null; w: Writer; with?: { origins?: boolean; changes?: boolean; keys?: boolean; partnerBit?: boolean }; keyId?: string; allowDeleted?: boolean },
+  i: { appId: string; orgId: string | null; w: Writer; with?: { origins?: boolean; changes?: boolean; keys?: boolean; partnerBit?: boolean; platformWaiting?: string }; keyId?: string; allowDeleted?: boolean },
 ): Promise<AppPlan> {
   const extra: Q[] = [];
+  if (i.with?.platformWaiting !== undefined) {
+    // The same count as the platform proposal's commit predicate (changes/origins.ts `waitingHolds`).
+    extra.push(
+      q`(SELECT COUNT(*) FROM guarded_changes wg WHERE wg.kind = 'origin_add' AND wg.proposed_by_kind = 'platform' AND wg.status = 'pending'
+          AND (wg.active_from IS NULL OR wg.active_from > ${i.w.now}) AND wg.app_id IN (SELECT id FROM apps WHERE org_id = ${i.with.platformWaiting})) AS platform_waiting`,
+    );
+  }
   if (i.with?.origins) {
     extra.push(raw(`(SELECT json_group_array(json_object('origin', o.origin, 'active_from', o.active_from, 'change_id', o.change_id)) FROM app_origins o WHERE o.app_id = a.id) AS origins_json`));
   }
@@ -196,7 +208,7 @@ export async function planApp(
   }
   const cols = extra.length ? q`, ${join(extra, ', ')}` : raw('');
   // The replay check is a scalar subquery: it is answered even when the app doesn't match (another org's, deleted).
-  const r = await db.first<AppRow & { replay: string | null; app_id: string | null; origins_json?: string; changes_json?: string; keys_json?: string }>(
+  const r = await db.first<AppRow & { replay: string | null; app_id: string | null; origins_json?: string; changes_json?: string; keys_json?: string; platform_waiting?: number }>(
     q`SELECT ${replayRow(i.w.requestId)} AS replay, a.id AS app_id, ${raw(APP_COLUMNS)}${cols}
         FROM (SELECT 1) LEFT JOIN apps a ON a.id = ${i.appId} AND ${orgFilter(i.orgId)}${i.w.reach ? q` AND ${i.w.reach.app}` : raw('')} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
   );
@@ -204,7 +216,13 @@ export async function planApp(
   refuseReplay(r?.replay, i.w);
   if (!r || r.app_id === null) return refuse('not_found', 'No such app');
   if (r.deleted_at !== null && !i.allowDeleted) return refuse('not_found', 'The app is deleted');
-  return { app: r, origins: jsonRows<OriginRow>(r.origins_json), openChanges: jsonRows<ChangeRow>(r.changes_json), keys: jsonRows<KeyRow>(r.keys_json) };
+  return {
+    app: r,
+    ...(r.platform_waiting === undefined ? {} : { platformWaiting: r.platform_waiting }),
+    origins: jsonRows<OriginRow>(r.origins_json),
+    openChanges: jsonRows<ChangeRow>(r.changes_json),
+    keys: jsonRows<KeyRow>(r.keys_json),
+  };
 }
 
 /**

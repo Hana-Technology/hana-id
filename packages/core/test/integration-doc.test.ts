@@ -90,6 +90,9 @@ describe('docs/integration.md', () => {
       /\bD\d{2,3}\b/u,
       /(?<![\w@/.-])(docs|apps|examples|scripts|contracts|envs|legacy)\/[\w.-]/u,
       /\bpackages\/\w/u,
+      // Journear's internal docs by bare file name (PR 160's review, M2): a partner can't open them either. The
+      // partner-facing ones (integration.md, partner-start-here.md, platform-guide.md, the READMEs) may be named.
+      /(?<![\w/.-])(api|security|operations|decisions|architecture|sodax-sdk-integration|partner-platform-spec|playbooks|context|system-overview|mainnet-readiness|go-live-after-freeze|contract-interface)\.md\b/u,
       /\.secrets\b/u,
       /\bbatch [A-C]?\d|\bbatch [A-C]\b|\bbuild plan\b/iu,
       /\badmin app:|--google-web-client|--auto-approve\b/u,

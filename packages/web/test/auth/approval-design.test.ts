@@ -48,7 +48,6 @@ describe('the amount first (amountHeadline)', () => {
     // The auto-approve consent screen names them the same way: the heading, and limits in the chain's coin.
     // Hedera's raw number is in weibars (18 decimals, as its relay counts HBAR), the HBAR figure the same.
     expect(nativeAmount(295, '1500000000000000000')).toBe('1.5 HBAR (1500000000000000000 weibars)');
-    expect(nativeAmount(296, '1500000000000000000')).toBe('1.5 of this network’s own coin (1500000000000000000 wei)');
     expect(nativeAmount(8217, '1000000000000000000')).toBe('1 KAIA (1000000000000000000 wei)');
     expect(nativeAmount(8453, '100000')).toBe('0.0000000000001 ETH (100000 wei)');
     const h2 = evmChainHeading(dom(document), 999);
@@ -90,6 +89,43 @@ describe('the amount first (amountHeadline)', () => {
     expect(el.querySelector('dl.jp-kv.summary-facts')?.textContent).toBe('NetworkSepolia (test network)Network feeLess than 0.000001 ETH');
     expect(el.querySelector('details.request-details dl.jp-kv')?.textContent).toContain('1 (1000000000000000000 wei)');
     expect(renderApproval(dom(document), evm({ data: '0xa9059cbb' + '00'.repeat(64) }), 'Partner App').querySelector('.headline')).toBeNull();
+  });
+});
+
+describe('the folded details count a raw native amount in the chain’s own unit (D922)', () => {
+  /** The details' rows of the transaction, as "name: value". */
+  const detailRows = (el: HTMLElement): Record<string, string> =>
+    Object.fromEntries([...el.querySelectorAll('details.request-details dl.jp-kv dt')].map((dt) => [dt.textContent ?? '', dt.nextElementSibling?.textContent ?? '']));
+  // maxFeePerGas 710000000000 (Hedera's usual gas price, in weibars), gas 21000: the most the fee can be is 0.01491 HBAR.
+  const fees = { maxFeePerGas: '0xa54f4c3c00', maxPriorityFeePerGas: '0x0' };
+
+  it('Hedera: the value, the fee and the gas prices in weibars, at 18 decimals, the same figure as the headline’s HBAR', () => {
+    const el = renderApproval(dom(document), evm(fees, 295), 'Partner App');
+    expect(el.querySelector('.amt')?.textContent).toBe('1HBAR');
+    const r = detailRows(el);
+    expect(r['Value']).toBe('1 (1000000000000000000 weibars)');
+    expect(r['Maximum network fee']).toBe('0.01491 (14910000000000000 weibars)');
+    expect(r['Max fee per gas']).toBe('710000000000 weibars');
+    expect(r['Priority fee per gas']).toBe('0 weibars');
+    expect(el.querySelector('details.request-details')?.textContent).not.toMatch(/\bg?wei\b/u);
+    // The main view's fee is the same amount in HBAR.
+    expect(el.querySelector('dl.summary-facts')?.textContent).toContain('Up to 0.01491 HBAR');
+    // A legacy transaction's gas price too.
+    const legacy = evm({ type: '0x0', gasPrice: '0xa54f4c3c00', maxFeePerGas: undefined as never, maxPriorityFeePerGas: undefined as never }, 295);
+    expect(detailRows(renderApproval(dom(document), legacy, 'Partner App'))['Gas price']).toBe('710000000000 weibars');
+  });
+
+  it('every other chain, named or not: wei and gwei, as before', () => {
+    for (const id of [8453, 8217, 999, 987654321]) {
+      const r = detailRows(renderApproval(dom(document), evm(fees, id), 'Partner App'));
+      expect(r['Value'], String(id)).toBe('1 (1000000000000000000 wei)');
+      expect(r['Maximum network fee']).toBe('0.01491 (14910000000000000 wei)');
+      expect(r['Max fee per gas']).toBe('710 gwei');
+      expect(r['Priority fee per gas']).toBe('0 gwei');
+    }
+    // Hedera's test network has no name, but its relay counts in weibars too.
+    expect(detailRows(renderApproval(dom(document), evm(fees, 296), 'Partner App'))['Value']).toBe('1 (1000000000000000000 weibars)');
+    expect(nativeAmount(296, '1500000000000000000')).toBe('1.5 of this network’s own coin (1500000000000000000 weibars)');
   });
 });
 

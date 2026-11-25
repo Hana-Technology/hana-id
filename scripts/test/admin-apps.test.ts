@@ -117,6 +117,49 @@ describe('app:create --shared-wallet (D915 after PR 145’s review)', () => {
   });
 });
 
+describe('app:create: the app’s User ID mode (D919, migration 0030)', () => {
+  const mode = (id: string) => (h.db.prepare('SELECT user_ids FROM apps WHERE id = ?').get(id) as { user_ids: string } | undefined)?.user_ids;
+
+  it("follows the scope's mark at the write: 'app' on a marked scope (new or existing), 'scope' otherwise; the log says so", async () => {
+    await create(['--org', 'org_legacy', '--name', 'Plain', '--scope', 's8', '--environment', 'test', '--origin', 'https://p.example.com']);
+    expect(mode('app_1')).toBe('scope');
+    expect(out()).not.toContain('its own User IDs');
+    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet']);
+    expect(mode('app_2')).toBe('app');
+    expect(out()).toContain('its own User IDs');
+    seedHotApp(h.db, { id: 'app_old', key: OLD_KEY, scope: 's1' });
+    h.db.prepare("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's1'").run();
+    await create(['--org', 'org_legacy', '--name', 'Second', '--scope', 's1', '--origin', 'https://p.example.com']);
+    expect(mode('app_3')).toBe('app');
+    // The app of before keeps its mode.
+    expect(mode('app_old')).toBe('scope');
+  });
+
+  it('records the mode in the ledger’s app.created row, and a mark set between the read and the write creates nothing', async () => {
+    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet']);
+    expect(ledger('app_1')[0]!.detail).toMatchObject({ userIds: 'app', appUserIds: true });
+    seedHotApp(h.db, { id: 'app_old', key: OLD_KEY, scope: 's1' });
+    await create(['--org', 'org_legacy', '--name', 'Plain', '--scope', 's1', '--origin', 'https://p.example.com']);
+    expect(ledger('app_2')[0]!.detail).toMatchObject({ userIds: 'scope' });
+    // The scope is marked after the plan read (the write's first statement here): the write inserts no app.
+    const d1 = h.deps.d1;
+    h.deps.d1 = (command: string) => {
+      if (/INSERT INTO apps/u.test(command)) h.db.prepare("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's1'").run();
+      return d1(command);
+    };
+    await expect(create(['--org', 'org_legacy', '--name', 'Raced', '--scope', 's1', '--origin', 'https://p.example.com'])).rejects.toThrow();
+    expect(h.db.prepare("SELECT COUNT(*) AS n FROM apps WHERE name = 'Raced'").get()).toEqual({ n: 0 });
+  });
+
+  it('on a D1 without 0030 the app is created as before, with no mode to write', async () => {
+    h.db = newHotDb({ before: '0030' });
+    h.deps.d1 = d1Of(h.db);
+    await create(['--org', 'org_legacy', '--name', 'Old', '--scope', 's8', '--environment', 'test', '--origin', 'https://p.example.com']);
+    expect(h.db.prepare("SELECT COUNT(*) AS n FROM apps WHERE id = 'app_1'").get()).toEqual({ n: 1 });
+    expect(out()).not.toContain('its own User IDs');
+  });
+});
+
 describe('app:create', () => {
   it('on a new scope: needs --org and --environment, writes the scope, the app, its key by environment, origins as proposals with the no_session waiver', async () => {
     await expect(create(['--name', 'W', '--scope', 's7', '--origin', 'https://w.example.com'])).rejects.toThrow('--org is required');

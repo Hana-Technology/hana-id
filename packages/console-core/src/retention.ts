@@ -81,6 +81,12 @@ export interface PurgeDirectoryResult {
   emailConsents?: number;
   /** D714: name shares of apps deleted 30 days ago or more (an API before migration 0021's build omits it). */
   nameShares?: number;
+  /**
+   * D919: the rows of `end_user_apps` (which apps of a shared scope a person signed in on, with that app's IDs) of apps
+   * deleted 30 days ago or more; a scope's whole directory takes its rows with it (counted in `users`). An API before
+   * migration 0030's build omits it.
+   */
+  userApps?: number;
 }
 export interface PurgeUserEventsResult {
   /** Events past 24 months. */

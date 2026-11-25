@@ -134,6 +134,11 @@ export function scopeMarkSql(scopeId: string): string {
   return sql`SELECT app_user_ids FROM scopes WHERE scope_id = ${scopeId}`;
 }
 
+/** D919: an app's User ID mode (migration 0030; ask APP_USER_IDS_COLUMN_SQL first). */
+export function appUserIdsSql(appId: string): string {
+  return sql`SELECT user_ids FROM apps WHERE id = ${appId}`;
+}
+
 export function planExistsSql(plan: string): string {
   return sql`SELECT id FROM plans WHERE id = ${plan}`;
 }
@@ -294,7 +299,7 @@ export interface NewApp {
  * only on a scope this call creates, granted or not at the announcement), and the ledger. The 0006 triggers refuse
  * another org or environment for an existing scope. Nothing to guard: every row is new.
  */
-export function createAppWrite(app: NewApp, opts: { createScope: boolean; now: number; actor: CliActor; requestId: string; sharedWallet?: boolean }): HotWrite {
+export function createAppWrite(app: NewApp, opts: { createScope: boolean; now: number; actor: CliActor; requestId: string; sharedWallet?: boolean; userIds?: 'scope' | 'app' }): HotWrite {
   const { now, actor, requestId } = opts;
   const s: string[] = [];
   if (opts.createScope && opts.sharedWallet) {
@@ -307,7 +312,13 @@ export function createAppWrite(app: NewApp, opts: { createScope: boolean; now: n
     s.push(sql`INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (${app.scopeId}, ${app.orgId}, ${app.environment}, ${null}, ${now}, ${now})`);
   }
   s.push(
-    sql`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version) VALUES (${app.id}, ${app.name}, ${app.scopeId}, ${app.orgId}, ${app.publishableKey}, ${'active'}, ${app.plan}, ${now}, ${app.origins.length ? 1 : 0})`,
+    // D919 (migration 0030): the app's User ID mode from its scope's mark as the write sees it, as AdminRpc.createApp
+    // writes it: 'app' on a marked scope, 'scope' otherwise (0030's trigger refuses any other), and only while the mark
+    // is the one the plan read (`userIds`, which the ledger row records): a mark set in between inserts no app, and the
+    // key's insert then stops the write (`app_keys: no such app`). Before 0030 there is no column to write.
+    opts.userIds
+      ? sql`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version, user_ids) SELECT ${app.id}, ${app.name}, ${app.scopeId}, ${app.orgId}, ${app.publishableKey}, ${'active'}, ${app.plan}, ${now}, ${app.origins.length ? 1 : 0}, CASE s.app_user_ids WHEN 1 THEN 'app' WHEN 0 THEN 'scope' END FROM scopes s WHERE s.scope_id = ${app.scopeId} AND s.app_user_ids = ${opts.userIds === 'app' ? 1 : 0}`
+      : sql`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version) VALUES (${app.id}, ${app.name}, ${app.scopeId}, ${app.orgId}, ${app.publishableKey}, ${'active'}, ${app.plan}, ${now}, ${app.origins.length ? 1 : 0})`,
     sql`INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (${app.keyId}, ${app.id}, ${app.publishableKey}, ${actor.id}, ${now})`,
   );
   const waiver = opts.createScope ? 'no_session' : null;
@@ -324,7 +335,7 @@ export function createAppWrite(app: NewApp, opts: { createScope: boolean; now: n
       appId: app.id,
       scopeId: app.scopeId,
       kind: 'app.created',
-      detail: { name: app.name, plan: app.plan, environment: app.environment, keyId: app.keyId, scopeCreated: opts.createScope, waiver, origins: app.origins, ...(opts.sharedWallet ? { appUserIds: true } : {}) },
+      detail: { name: app.name, plan: app.plan, environment: app.environment, keyId: app.keyId, scopeCreated: opts.createScope, waiver, origins: app.origins, ...(opts.userIds ? { userIds: opts.userIds } : {}), ...(opts.sharedWallet ? { appUserIds: true } : {}) },
       actor,
       requestId,
     }),

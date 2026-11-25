@@ -98,8 +98,10 @@ const { address } = await hana.stellar.getAddress();
 const { signedTxXdr } = await hana.stellar.signTransaction(xdr, { networkPassphrase });
 
 // Stellar Wallets Kit (1.9.x and 2.x)
-import { HanaIdModule } from '@hana-id/web/stellar-wallets-kit';
+import { HanaIdModule, JOURNEAR_PASSPORT_MODULE_ID } from '@hana-id/web/stellar-wallets-kit';
 const kit = new StellarWalletsKit({ network, modules: [new HanaIdModule(hana), ...otherModules] });
+// In a host that finds wallets by part of their id (Sodax's wallet kit matches "hana"):
+new HanaIdModule(hana, { productId: JOURNEAR_PASSPORT_MODULE_ID }); // 'journear-passport'; the default stays 'hana-id'
 
 // NEAR (0.4.0): the user's implicit account; a gasless call through Journear Passport's relay (testnet)
 hana.near.accountId;                                     // 64 hex, or null

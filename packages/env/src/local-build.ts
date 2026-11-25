@@ -1,6 +1,8 @@
 // The build id of this checkout (./build-id.ts, D384), read from git, and the stamped `wrangler deploy` that each
 // Worker's `deploy` script runs through the one shared wrapper, ./stamped-deploy.ts (D406). Node only.
 import { execFileSync, spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { BUILD_VAR, type BuildId, formatBuildId, parseBuildId } from './build-id.ts';
 import { repoRoot } from './index.ts';
 
@@ -40,8 +42,43 @@ export function stampedDeployArgv(id: string, argv: readonly string[]): string[]
   return ['deploy', ...argv, '--var', `${BUILD_VAR}:${id}`];
 }
 
+/**
+ * D931 (the `local*` guard, docs/partner-platform-spec.md A15): why this deploy is refused, or null. A `local*` env runs
+ * on wrangler dev only (its 24 h platform minimum is waived), so the wrapper reads the wrangler config the deploy uses
+ * (`-c`/`--config <file>`, else `wrangler.jsonc` in the current directory) and refuses one whose `vars.ENV_NAME` is
+ * `local…`, and one it can't read (wrangler couldn't deploy it either). A Worker whose config names no env (console-auth,
+ * files) is not refused: the platform's exceptions are the API's, whose config always names its env.
+ */
+export function localDeployProblem(argv: readonly string[], cwd: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): string | null {
+  let file = 'wrangler.jsonc';
+  for (let k = 0; k < argv.length; k++) {
+    const a = argv[k]!;
+    if ((a === '-c' || a === '--config') && argv[k + 1] !== undefined) file = argv[k + 1]!;
+    else if (a.startsWith('--config=')) file = a.slice('--config='.length);
+  }
+  if (argv.some((a) => a === '--env' || a.startsWith('--env=') || a === '-e')) return 'refused: --env is not used here (each env has its own generated config)';
+  let config: { vars?: Record<string, unknown> };
+  try {
+    // The generated configs are JSON with `//` comment lines (their header); nothing else is JSONC in them.
+    const text = read(join(cwd, file))
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('//'))
+      .join('\n');
+    config = JSON.parse(text) as { vars?: Record<string, unknown> };
+  } catch {
+    return `refused: can't read ${file} to check which env it deploys (generate it with the app's gen script first)`;
+  }
+  const name = config?.vars?.ENV_NAME;
+  if (typeof name === 'string' && /^local/u.test(name)) return `refused: ${file} is for ${name}, a local* env: local* envs run on wrangler dev, never deployed`;
+  return null;
+}
+
 export interface StampedDeployDeps {
   build?: () => LocalBuild;
+  /** Reads the wrangler config the deploy uses (the `local*` guard); the default reads the file. */
+  readConfig?: (path: string) => string;
+  /** The directory wrangler runs in (the default: the current directory). */
+  cwd?: string;
   /** Runs wrangler with this argv in the current directory, output to the terminal; returns its exit status. */
   wrangler?: (argv: string[]) => number;
   log?: (line: string) => void;
@@ -58,8 +95,13 @@ const runWrangler = (argv: string[]): number => {
  * tree still deploys (sandbox work does), stamped `-dirty`, which `deploy-check` reports.
  */
 export function stampedDeploy(argv: readonly string[], deps: StampedDeployDeps = {}): number {
-  const build = (deps.build ?? localBuild)();
   const log = deps.log ?? ((line: string) => console.log(line));
+  const problem = localDeployProblem(argv, deps.cwd ?? process.cwd(), deps.readConfig);
+  if (problem) {
+    log(`Deploy ${problem}`);
+    return 1;
+  }
+  const build = (deps.build ?? localBuild)();
   const wranglerArgv = stampedDeployArgv(build.id, argv);
   log(`Build ${build.id} (HEAD ${build.head})${build.dirty ? ': the tree has uncommitted changes, so this deploy is stamped -dirty' : ''}`);
   return (deps.wrangler ?? runWrangler)(wranglerArgv);

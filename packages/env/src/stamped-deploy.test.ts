@@ -39,6 +39,8 @@ describe('the shared deploy wrapper', () => {
     dirs.push(dir);
     // A stand-in wrangler first on PATH: it records its arguments and exits 3.
     writeFileSync(join(dir, 'wrangler'), '#!/bin/sh\nprintf "%s\\n" "$@" > args.txt\nexit 3\n');
+    // The config the deploy names, for a deployed env (D931: the wrapper refuses a local* one, and one it can't read).
+    writeFileSync(join(dir, 'wrangler.vault.jsonc'), `// Generated\n${JSON.stringify({ name: 'x', vars: { ENV_NAME: 'sandbox-dev' } })}\n`);
     chmodSync(join(dir, 'wrangler'), 0o755);
     const res = spawnSync(process.execPath, ['--experimental-strip-types', '--no-warnings', WRAPPER, '-c', 'wrangler.vault.jsonc'], {
       cwd: dir,

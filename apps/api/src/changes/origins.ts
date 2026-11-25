@@ -3,9 +3,9 @@
 // the full delay and the blocking notice, never a waiver, refused for `appChangeDelayMs` after a scope assignment) and
 // member proposals (ConsoleRpc.changeOrigins: the API-verified step-up, changes/step-up.ts; removes sent with them
 // apply at once in the same batch).
-import { type Environment, MAX_APP_ORIGINS, newId, nonceOf, normaliseOrigin, OriginError, originChangeDigest, originProblem } from '@hana-id/console-core';
+import { type Environment, MAX_APP_ORIGINS, newId, nonceOf, normaliseOrigin, OriginError, originChangeDigest, originProblem, personEmailKey } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
-import { changeConfig } from '../guarded/config.ts';
+import { changeConfig, platformMinDelayMs } from '../guarded/config.ts';
 import { expectVersion, planApp } from './apps.ts';
 import { type Writer, actorId, closeChanges, commitOnApp, committed, refuse, runWrite, expectReplay } from './cas.ts';
 import type { HotDb } from './db.ts';
@@ -123,6 +123,24 @@ export function platformWaits(w: Writer, appId: string, list: string, minDelayMs
 }
 
 /**
+ * D931 (A15, four eyes, D917): the waits of staff proposals on a platform-created app or on any app of a scope marked
+ * as shared, written in the proposal's batch before the guarded changes, only if the app is such an app **as the batch
+ * sees it** (`INSERT … SELECT`, so a mark set between the plan read and the batch is not missed; migration 0034's
+ * trigger refuses such a staff proposal without its wait): the proposing staff member and their email key (a second
+ * staff member must differ in both), and the wait from the announcement, the greater of the env's delay and the 24 h
+ * platform minimum (`local*` test envs: the env's delay). For any other app it writes nothing.
+ */
+export function staffWaits(env: Env, w: Writer, appId: string, list: string, idField: 'id' | 'changeId', delayMs: number): Q {
+  const email = w.actor.kind === 'hana' ? personEmailKey(w.actor.email) : null;
+  const wait = Math.max(delayMs, platformMinDelayMs(env));
+  return q`INSERT INTO staff_origin_waits (change_id, app_id, origin, proposed_by, proposer_email_key, min_delay_ms, at)
+    SELECT json_extract(value, ${`$.${idField}`}), ${appId}, json_extract(value, '$.origin'), ${actorId(w.actor)}, ${email}, ${wait}, ${w.now}
+      FROM json_each(${list})
+     WHERE ${committed(w.requestId)}
+       AND EXISTS (SELECT 1 FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE a.id = ${appId} AND (a.created_by_kind = 'platform' OR s.app_user_ids = 1))`;
+}
+
+/**
  * The write behind addOrigins (staff: `token` null), changeOrigins (a member's verified token) and the platform's
  * proposals (`platform`). Staff and platform proposals are refused for `appChangeDelayMs` after the scope's assignment;
  * a member's are not (spec "Staff proposals").
@@ -200,8 +218,10 @@ async function proposeOrigins(
       q`DELETE FROM app_origins WHERE app_id = ${i.appId} AND origin IN (SELECT value FROM json_each(${removed})) AND ${committed(w.requestId)}`,
     );
   }
-  // A platform proposal's wait first (migration 0033: its guarded change can't be written without it).
+  // A platform proposal's wait first (migration 0033: its guarded change can't be written without it); a staff one's on
+  // a platform-created app or a shared wallet likewise (migration 0034, four eyes).
   if (platform) stmts.push(platformWaits(w, i.appId, list, platform.minDelayMs, 'id'));
+  else if (!token) stmts.push(staffWaits(env, w, i.appId, list, 'id', config.delayMs));
   stmts.push(
     q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id)
       SELECT json_extract(value, '$.id'), ${i.appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', ${by.kind}, ${by.id}, ${by.sub}, ${w.now}, ${w.requestId}

@@ -28,6 +28,10 @@ export const DOMAINS = {
   /** D918: a platform key's emailed links: cancel a waiting key, revoke a confirmed one (key `CANCEL_LINK_KEY`, checked by the API). */
   platformKeyCancel: 'hana-id/platform-key-cancel/v1',
   platformKeyRevoke: 'hana-id/platform-key-revoke/v1',
+  /** D931: an owner's confirmation of web addresses the platform (or staff, on a shared wallet) asked for (originConfirmDigest). */
+  originConfirm: 'hana-id/console-origin-confirm/v1',
+  /** D931: the confirmation notice's one-click removal link (key `CANCEL_LINK_KEY`, checked by the API). */
+  originRemove: 'hana-id/origin-remove/v1',
   /** Reserved for second-owner approval (docs/batch-c-spec.md "Deferred"); nothing computes it. */
   changeApprove: 'hana-id/change-approve/v1',
 } as const;
@@ -106,6 +110,40 @@ export async function settingsChangeDigest(i: { signer: string; appId: string; k
   return sha256(concatBytes(utf8(DOMAINS.settingsChange), borshString(i.signer), borshString(i.appId), borshString(i.kind), value, u64le(i.settingsVersion)));
 }
 
+/** At most this many web addresses in one confirmation (one proposing request's: A15). */
+export const ORIGIN_CONFIRM_MAX = 20;
+
+/**
+ * An owner's confirmation of web addresses (D931, docs/partner-platform-spec.md A15): d = sha256(
+ * "hana-id/console-origin-confirm/v1" ‖ borsh(signer) ‖ borsh(env) ‖ borsh(org_id) ‖ borsh(app_id) ‖ borsh(scope_id) ‖
+ * borsh(change ids sorted by byte order) ‖ borsh(their origins, in that order)). Its own domain, so no origin-change,
+ * settings, label, key or owner-action token stands in for it; over the exact set, so a token for one set of web
+ * addresses confirms no other, on no other app, scope, org or env. The console builds it from the API's view, and the
+ * API recomputes it from the stored changes.
+ */
+export async function originConfirmDigest(i: { signer: string; env: string; orgId: string; appId: string; scopeId: string; changes: readonly { changeId: string; origin: string }[] }): Promise<Uint8Array> {
+  if (!i.signer || !i.env || !i.orgId || !i.appId || !i.scopeId) throw new TypeError('A confirmation needs the signer, the env, the org, the app and the scope');
+  if (i.changes.length < 1 || i.changes.length > ORIGIN_CONFIRM_MAX) throw new TypeError(`A confirmation names 1 to ${ORIGIN_CONFIRM_MAX} web addresses`);
+  for (const c of i.changes) {
+    if (!/^gc_[A-Za-z0-9]{1,64}$/u.test(c.changeId)) throw new TypeError(`${c.changeId} is not a change id`);
+    if (normaliseOrigin(c.origin) !== c.origin) throw new TypeError(`${c.origin} is not a normalised origin`);
+  }
+  if (new Set(i.changes.map((c) => c.changeId)).size !== i.changes.length) throw new TypeError('A change is listed twice');
+  const sorted = [...i.changes].sort((a, b) => compareBytes(utf8(a.changeId), utf8(b.changeId)));
+  return sha256(
+    concatBytes(
+      utf8(DOMAINS.originConfirm),
+      borshString(i.signer),
+      borshString(i.env),
+      borshString(i.orgId),
+      borshString(i.appId),
+      borshString(i.scopeId),
+      borshStringVec(sorted.map((c) => c.changeId)),
+      borshStringVec(sorted.map((c) => c.origin)),
+    ),
+  );
+}
+
 export type LabelChangeKind = 'labels_set' | 'labels_remove';
 
 /**
@@ -151,9 +189,10 @@ export async function clientProofDigest(i: { signer: string; scopeId: string; ac
  * - cancel link (guarded change, key `CANCEL_LINK_KEY`, checked by the API),
  * - invite (key `INVITE_LINK_KEY`, checked by the console),
  * - owner-grant cancel (key `CANCEL_LINK_KEY`, checked by the console),
- * - a platform key's cancel and revoke links (key `CANCEL_LINK_KEY`, checked by the API; D918).
+ * - a platform key's cancel and revoke links (key `CANCEL_LINK_KEY`, checked by the API; D918),
+ * - a confirmed web address's removal link (key `CANCEL_LINK_KEY`, checked by the API; D931).
  */
-export type LinkKind = 'cancelLink' | 'invite' | 'ownerGrantCancel' | 'platformKeyCancel' | 'platformKeyRevoke';
+export type LinkKind = 'cancelLink' | 'invite' | 'ownerGrantCancel' | 'platformKeyCancel' | 'platformKeyRevoke' | 'originRemove';
 
 export async function linkToken(kind: LinkKind, key: Uint8Array, id: string): Promise<Uint8Array> {
   if (!id) throw new TypeError('A link token needs an id');

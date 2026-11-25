@@ -84,6 +84,25 @@ export function buildVectors() {
   const pkCancel = hmac(LINK_KEY, Buffer.concat([ascii('hana-id/platform-key-cancel/v1'), str('pkc_4Rm8Vq2Lz7Wx9Kd')]));
   const pkRevoke = hmac(LINK_KEY, Buffer.concat([ascii('hana-id/platform-key-revoke/v1'), str('pkc_4Rm8Vq2Lz7Wx9Kd')]));
 
+  // D931: an owner's confirmation of web addresses (two changes of one request, listed out of order: the layout sorts
+  // them by change id) and the confirmation notice's removal link.
+  const confirmChanges = [
+    { change_id: 'gc_9Hd2Kq7Wx4Mn8Rt', origin: 'https://shop.partner.example' },
+    { change_id: 'gc_3Bv6Ys1Lp5Qz2Jc', origin: 'https://xn--bcher-kva.example' },
+  ];
+  const confirmSorted = [...confirmChanges].sort((a, b) => Buffer.compare(ascii(a.change_id), ascii(b.change_id)));
+  const originConfirm = Buffer.concat([
+    ascii('hana-id/console-origin-confirm/v1'),
+    str(SIGNER),
+    str('sandbox-dev'),
+    str('org_7Yk3Qm2Pz9VxR4tLs'),
+    str('app_3vQb7Wk2Lm9Xp4Rz'),
+    str('sz2'),
+    vec(confirmSorted.map((c) => c.change_id)),
+    vec(confirmSorted.map((c) => c.origin)),
+  ]);
+  const originRemove = hmac(LINK_KEY, Buffer.concat([ascii('hana-id/origin-remove/v1'), str('gc_9Hd2Kq7Wx4Mn8Rt')]));
+
   const uidOf = (scope, provider, sub) => hmac(USER_ID_KEY, Buffer.concat([ascii('hana-id/uid/v1'), str(scope), str(provider), str(sub)])).subarray(0, 16);
 
   return {
@@ -122,6 +141,16 @@ export function buildVectors() {
       cancel_link: { token: b64url(pkCancel), token_hash_hex: hexOf(sha256(pkCancel)) },
       revoke_link: { token: b64url(pkRevoke), token_hash_hex: hexOf(sha256(pkRevoke)) },
     },
+    origin_confirm: {
+      env: 'sandbox-dev',
+      org_id: 'org_7Yk3Qm2Pz9VxR4tLs',
+      app_id: 'app_3vQb7Wk2Lm9Xp4Rz',
+      scope_id: 'sz2',
+      changes: confirmChanges,
+      preimage_hex: hexOf(originConfirm),
+      nonce: b64url(sha256(originConfirm)),
+    },
+    origin_remove_link: { change_id: 'gc_9Hd2Kq7Wx4Mn8Rt', token: b64url(originRemove), token_hash_hex: hexOf(sha256(originRemove)) },
     uid: [
       { scope_id: 's1', provider: 'google', sub: '1098765432', path: 's1#google#1098765432#0', uid: b64url(uidOf('s1', 'google', '1098765432')) },
       { scope_id: 's1', provider: 'google', sub: '1098765432', path: 's1#google#1098765432#3', uid: b64url(uidOf('s1', 'google', '1098765432')) },

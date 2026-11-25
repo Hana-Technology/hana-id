@@ -42,6 +42,10 @@ export const AUDIT_DETAIL_KEYS = {
   // RpcCode of a refusal. `requiredHd` is the org's own Workspace domain (its setting, not a person's).
   'step_up.failed': ['kind', 'code'],
   'origin.proposed': ['code', 'version', 'added', 'removed'],
+  // D931: an owner's confirmation (a step-up; app_changes' `origin.confirmed`, the API's, is authoritative) and the
+  // confirmation notice's removal link (no session): ids, counts and codes only.
+  'origin.confirmed': ['code', 'confirmed', 'requestId'],
+  'origin.link_remove': ['code', 'changeId'],
   'policy.proposed': ['code', 'version', 'policyId', 'changeId'],
   'raw_sign.proposed': ['code', 'version', 'changeId'],
   // D894: an owner's partner labels proposal and removal (step-ups; app_changes, the API's, is authoritative).

@@ -4,6 +4,7 @@
 // web address a platform key proposed that isn't in force yet, and every platform key still waiting, across orgs).
 // Reads only: nothing here changes anything, and no new reach is given (the console's members already see every app
 // of their org, staff every org).
+import type { ConfirmedQueueRow, SecondPersonQueueRow } from './origin-confirm.ts';
 import { z } from '@hana-id/env/zod';
 import type { PlatformKeyView } from './platform-keys.ts';
 import { appIdInput, orgIdInput } from './rpc.ts';
@@ -74,6 +75,13 @@ export type PlatformQueue = {
   origins: PlatformQueueOrigin[];
   /** Keys awaiting acceptance or waiting, across orgs, oldest first (the staff view). */
   keys: PlatformKeyView[];
+  /**
+   * D931: every web address a second person confirmed in the last 7 days, newest first (A11: it is in force before
+   * staff can see it here, so staff review it after the fact), with who confirmed it and when.
+   */
+  confirmed: ConfirmedQueueRow[];
+  /** D931: staff web addresses on a shared wallet that wait for a second person (another staffer, or an owner), soonest first. */
+  secondPerson: SecondPersonQueueRow[];
 };
 
 export { PLATFORM_ROUTE_WORDS, platformRouteWords } from './platform-words.ts';

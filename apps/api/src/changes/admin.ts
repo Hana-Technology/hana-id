@@ -10,7 +10,7 @@ import { getApp } from './apps.ts';
 import { type Writer, actorId, commitOn, committed, refuse, refuseReplay, replayRow, runWrite, expectReplay } from './cas.ts';
 import { requireOwnersInOrg } from './chain.ts';
 import type { HotDb } from './db.ts';
-import { checkOriginRules, normaliseAll, requireChangeConfig } from './origins.ts';
+import { checkOriginRules, normaliseAll, requireChangeConfig, staffWaits } from './origins.ts';
 import { appName } from './settings.ts';
 import { type Q, q, raw } from './sql.ts';
 import { APP_CHANGE_COLUMNS, type AppChangeRow, type SecurityEventRow, appChangeView, scopeView, securityEventView } from './views.ts';
@@ -75,7 +75,8 @@ export async function createApp(
   const appId = newId('app');
   const keyId = newId('key');
   const publishableKey = newPublishableKey(i.environment);
-  const waiver = createScope ? 'no_session' : null;
+  // D931: a scope this call marks as shared gives its first origins no waiver: they wait for a second person (four eyes).
+  const waiver = createScope && !mark ? 'no_session' : null;
   const changes = origins.map((origin) => ({ changeId: newId('guardedChange'), origin }));
   const scopeHolds: Q = createScope
     ? q`NOT EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId})`
@@ -119,6 +120,8 @@ export async function createApp(
   );
   if (changes.length) {
     stmts.push(
+      // D931: on a shared wallet the initial origins are staff proposals under four eyes (their waits first).
+      staffWaits(env, w, appId, list, 'changeId', config.delayMs),
       q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, waiver, request_id)
         SELECT json_extract(value, '$.changeId'), ${appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', 'hana', ${actorId(w.actor)}, ${w.now}, ${waiver}, ${w.requestId}
           FROM json_each(${list}) WHERE ${when}`,

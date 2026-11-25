@@ -366,7 +366,7 @@ const applied = (s: LedgerSnapshot): boolean => KIND_TRIGGERS.every((k) => Objec
  * - `kept`: every row of before is there, the differences only rows written since or the jobs' own moves;
  * - `identical`: the same counts and table hashes, every index and trigger as before.
  */
-export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, reference?: LedgerSnapshot['schema']): Comparison {
+export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, reference?: LedgerSnapshot['schema'], beforeReference?: LedgerSnapshot['schema']): Comparison {
   const lines: string[] = [];
   let broken = false;
   let moved = false;
@@ -483,8 +483,16 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, 
       broken = true;
       lines.push(`MISSING ${s.type} ${name} (on ${s.table}).`);
     } else if (n.sql !== s.sql || n.table !== s.table || n.type !== s.type) {
-      broken = true;
-      lines.push(`CHANGED ${s.type} ${name}: its SQL differs from before.`);
+      // D931: a trigger a later migration replaces (0034's of 0033's) reads as replaced, not changed, when the before
+      // SQL is the checkout's at the level the snapshot before recorded and the after SQL the one at the level after.
+      const was = beforeReference?.[name];
+      const now = reference?.[name];
+      if (was && now && was.sql === s.sql && was.table === s.table && was.type === s.type && now.sql === n.sql && now.table === n.table && now.type === n.type && now.file !== was.file) {
+        lines.push(`Replaced by a later migration: ${s.type} ${name} (${now.file}).`);
+      } else {
+        broken = true;
+        lines.push(`CHANGED ${s.type} ${name}: its SQL differs from before.`);
+      }
     }
   }
   const addedSchema = Object.keys(after.schema).filter((k) => !Object.hasOwn(before.schema, k));
@@ -592,7 +600,7 @@ export interface LedgerCheckDeps {
    * The three tables' indexes and triggers, and every trigger naming them, as this checkout's migrations create them
    * (`referenceSchema`): what an object that appeared between the snapshots must be, word for word (D924).
    */
-  referenceSchema?: () => LedgerSnapshot['schema'];
+  referenceSchema?: (applied?: readonly string[] | null) => LedgerSnapshot['schema'];
   /** The checkout (`git rev-parse HEAD`, `git status --porcelain apps/api/migrations`, its files): the CLI's. */
   checkout?: () => Checkout;
 }
@@ -623,17 +631,38 @@ export function cannotJudge(before: LedgerSnapshot, after: LedgerSnapshot, check
 const REBUILD_FILE = '0027_platform_actor.sql';
 
 /**
- * `SCHEMA_SQL` on a fresh in-memory SQLite with every migration in `dir` applied in name order (as a fresh D1 gets
- * them), each object with the file that first created it (`file`, D929).
+ * The latest of `applied` that `files` has (the level a database recorded, as this checkout knows it), or undefined
+ * (no record, or none known: the whole checkout). A foreign file is `cannotJudge`'s finding, not this one's.
  */
-export function referenceSchema(dir: string): LedgerSnapshot['schema'] {
+export function levelOf(applied: readonly string[] | null | undefined, files: readonly string[]): string | undefined {
+  if (!applied) return undefined;
+  const known = new Set(files);
+  return applied.filter((f) => known.has(f)).sort().at(-1);
+}
+
+/**
+ * `SCHEMA_SQL` on a fresh in-memory SQLite with every migration in `dir` applied in name order (as a fresh D1 gets
+ * them), or (D931) only those up to `upTo`, the level a database recorded: an object a later migration replaces (0034
+ * replaces three of 0033's triggers) is then the version a database at that level has, not the checkout's final one.
+ * Each object carries the file that last created it (`file`: its first creation, or the migration that created it
+ * again, D929, D931).
+ */
+export function referenceSchema(dir: string, upTo?: string): LedgerSnapshot['schema'] {
   const db = new DatabaseSync(':memory:');
   try {
     const schema: LedgerSnapshot['schema'] = {};
     const created: Record<string, string> = {};
+    const sqlAt: Record<string, string | null> = {};
     for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) {
+      if (upTo !== undefined && f > upTo) break;
       db.exec(readFileSync(join(dir, f), 'utf8'));
-      for (const r of db.prepare(SCHEMA_SQL).all() as Record<string, unknown>[]) created[String(r.name)] ??= f;
+      for (const r of db.prepare(SCHEMA_SQL).all() as Record<string, unknown>[]) {
+        const name = String(r.name);
+        const sql = r.sql === null ? null : String(r.sql);
+        // The file that created it, or created it again with other SQL (a replacement).
+        if (!(name in created) || sqlAt[name] !== sql) created[name] = f;
+        sqlAt[name] = sql;
+      }
     }
     for (const r of db.prepare(SCHEMA_SQL).all() as Record<string, unknown>[]) {
       const name = String(r.name);
@@ -745,7 +774,9 @@ export async function ledgerCheck(argv: readonly string[], deps: LedgerCheckDeps
       return VERDICT_EXIT.cannot_judge;
     }
   }
-  const c = compareSnapshots(before, snap, deps.referenceSchema?.());
+  // D931: each snapshot against the checkout's schema at the level its database recorded (a trigger a later migration
+  // replaces is judged by the version that database should have).
+  const c = compareSnapshots(before, snap, deps.referenceSchema?.(snap.applied), deps.referenceSchema?.(before.applied));
   for (const l of c.lines) deps.log(`  ${l}`);
   return VERDICT_EXIT[c.verdict];
 }

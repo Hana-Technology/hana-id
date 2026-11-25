@@ -687,6 +687,7 @@ export const manifestSchema = z
     evm: evmSchema.optional(),
   })
   .superRefine((m, ctx) => {
+    localEnvRules(m, ctx);
     nearRelayRules(m, ctx);
     evmSponsorRules(m, ctx);
     for (const field of ['rpc', 'rpcFallback', 'apiUrl'] as const) {
@@ -735,6 +736,25 @@ export const manifestSchema = z
       }
     }
   });
+
+/**
+ * D931 (the `local*` guard, docs/partner-platform-spec.md A15): a `local*` env runs on wrangler dev only, so it must be
+ * on testnet with its API on a loopback http URL. A real host can then never be `local*`, and the 24 h platform
+ * minimum's `local*` exception (the API's `isLocalTestEnv`, which checks the same three things again) can't reach one.
+ */
+function localEnvRules(m: { name: string; network: string; apiUrl: string }, ctx: z.RefinementCtx): void {
+  if (!isLocalEnv(m.name)) return;
+  if (m.network !== 'testnet') ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['network'], message: 'a local* env is on testnet only (it runs on wrangler dev, never deployed)' });
+  let url: URL | null = null;
+  try {
+    url = new URL(m.apiUrl);
+  } catch {
+    url = null;
+  }
+  if (!url || url.protocol !== 'http:' || !isLoopbackHost(url.hostname)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['apiUrl'], message: 'a local* env has its API on a loopback http URL (http://127.0.0.1:…), so a deployed host is never local*' });
+  }
+}
 
 /**
  * Why an RPC or API URL can't be used in env `envName`, or null: https everywhere; plain http only for a loopback host

@@ -126,7 +126,8 @@ export function platformReach(key: Pick<AuthRow, 'id' | 'org_id'>, now: number, 
 const APP_JSON = raw(
   `json_object('id', a.id, 'name', a.name, 'scope_id', a.scope_id, 'created_at', a.created_at, 'user_ids', a.user_ids,
      'suspended_by', a.suspended_by, 'partner_bit_by', a.partner_bit_by, 'origins_version', a.origins_version,
-     'origins', json((SELECT json_group_array(json_object('origin', o.origin, 'active_from', o.active_from, 'change_id', o.change_id))
+     'origins', json((SELECT json_group_array(json_object('origin', o.origin, 'active_from', o.active_from, 'change_id', o.change_id,
+                                                          'confirmed_at', (SELECT oc.confirmed_at FROM origin_confirmations oc WHERE oc.change_id = o.change_id)))
                         FROM (SELECT origin, active_from, change_id FROM app_origins WHERE app_id = a.id ORDER BY origin) o)),
      'keys', json((SELECT json_group_array(json_object('id', k.id, 'key', k.key, 'created_at', k.created_at, 'revoked_at', k.revoked_at))
                      FROM (SELECT id, key, created_at, revoked_at FROM app_keys WHERE app_id = a.id ORDER BY created_at DESC, id DESC LIMIT ${L.keysShown}) k)))`,
@@ -141,7 +142,7 @@ interface AppJson {
   suspended_by: number;
   partner_bit_by: PartnerBitBy;
   origins_version: number;
-  origins: { origin: string; active_from: number | null; change_id: string | null }[];
+  origins: { origin: string; active_from: number | null; change_id: string | null; confirmed_at?: number | null }[];
   keys: { id: string; key: string; created_at: number; revoked_at: number | null }[];
 }
 
@@ -152,9 +153,10 @@ export function suspendedView(suspendedBy: number, holder: PartnerBitBy): Platfo
   return { byJournear: (suspendedBy & (SUSPENSION_BITS.hana | SUSPENSION_BITS.org)) !== 0, byOrganisation: partner && !byYou, byYou, youCanResume: byYou };
 }
 
-function originView(o: { origin: string; active_from: number | null; change_id: string | null }, now: number): PlatformOrigin {
+/** D931: `confirmedAt` once an owner confirmed it (then `activeFrom` is the same time); never who confirmed. */
+function originView(o: { origin: string; active_from: number | null; change_id: string | null; confirmed_at?: number | null }, now: number): PlatformOrigin {
   const state = o.active_from === null ? 'waiting_announcement' : o.active_from > now ? 'waiting' : 'active';
-  return { ...originDisplay(o.origin), state, activeFrom: o.active_from, confirmedAt: null, ...(o.change_id === null ? {} : { changeId: o.change_id }) };
+  return { ...originDisplay(o.origin), state, activeFrom: o.active_from, confirmedAt: o.confirmed_at ?? null, ...(o.change_id === null ? {} : { changeId: o.change_id }) };
 }
 
 /** The allowlisted view of an app (A8) from its JSON. */

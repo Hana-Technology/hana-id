@@ -256,7 +256,7 @@ describe('migration 0033_platform_ops', () => {
 
 describe('0033’s triggers after every later migration (a later rebuild of their tables must create them again)', () => {
   /** Triggers a later migration adds or replaces on these tables, by name (P10 replaces the not-early ones). */
-  const LATER: string[] = [];
+  const LATER: string[] = ['guarded_changes_platform_not_early', 'app_origins_platform_not_early', 'app_origins_platform_not_early_update'];
   it('every trigger 0033 creates is there after the last migration, with 0033’s SQL; and every trigger and view of 0033’s schema too', async () => {
     const m = env.MIGRATION_DB;
     await applyD1Migrations(m, env.TEST_MIGRATIONS);

@@ -119,6 +119,29 @@
       "token_hash_hex": "d70383ab7f9ebc7f837d5611d881389c3f4136cf72db4ce770ddee1c02d634c1"
     }
   },
+  "origin_confirm": {
+    "env": "sandbox-dev",
+    "org_id": "org_7Yk3Qm2Pz9VxR4tLs",
+    "app_id": "app_3vQb7Wk2Lm9Xp4Rz",
+    "scope_id": "sz2",
+    "changes": [
+      {
+        "change_id": "gc_9Hd2Kq7Wx4Mn8Rt",
+        "origin": "https://shop.partner.example"
+      },
+      {
+        "change_id": "gc_3Bv6Ys1Lp5Qz2Jc",
+        "origin": "https://xn--bcher-kva.example"
+      }
+    ],
+    "preimage_hex": "68616e612d69642f636f6e736f6c652d6f726967696e2d636f6e6669726d2f76311b00000068616e612d69642d7369676e65722d646576312e746573746e65740b00000073616e64626f782d646576150000006f72675f37596b33516d32507a3956785234744c73140000006170705f3376516237576b324c6d39587034527a03000000737a32020000001200000067635f334276365973314c7035517a324a631200000067635f394864324b71375778344d6e385274020000001d00000068747470733a2f2f786e2d2d62636865722d6b76612e6578616d706c651c00000068747470733a2f2f73686f702e706172746e65722e6578616d706c65",
+    "nonce": "WGgvOezN4mF10IN4cpr_ojoOTzlNBkE3xM-csMoJCps"
+  },
+  "origin_remove_link": {
+    "change_id": "gc_9Hd2Kq7Wx4Mn8Rt",
+    "token": "qE7gVDr3vK3IjVscEG-GdysuGh0Jp4JA1NgS97IEBig",
+    "token_hash_hex": "18e6bf4734bbc339c63cd122b1819be5907faf15315752601009ffbb301576c9"
+  },
   "uid": [
     {
       "scope_id": "s1",

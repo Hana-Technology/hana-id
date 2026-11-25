@@ -386,12 +386,29 @@ describe('the announcement and the wait', () => {
     expect(await ledger(r.app.org, 'platform.key_active')).toHaveLength(1);
   });
 
-  it('a local* test env on testnet keeps its own short delay; anything else gets the 24 h', async () => {
-    expect(platformMinDelayMs({ ENV_NAME: 'local', NETWORK: 'testnet' })).toBe(0);
-    expect(platformMinDelayMs({ ENV_NAME: 'local-alice', NETWORK: 'testnet' })).toBe(0);
-    for (const e of [{ ENV_NAME: 'local', NETWORK: 'mainnet' }, { ENV_NAME: 'sandbox-dev', NETWORK: 'testnet' }, { ENV_NAME: 'xlocal', NETWORK: 'testnet' }, { NETWORK: 'testnet' }, { ENV_NAME: 'local' }]) expect(platformMinDelayMs(e), JSON.stringify(e)).toBe(DAY);
+  it('a local* test env on testnet with a loopback API keeps its own short delay; anything else gets the 24 h (D931: the local* guard fails closed)', async () => {
+    const API_URL = 'http://127.0.0.1:8787';
+    expect(platformMinDelayMs({ ENV_NAME: 'local', NETWORK: 'testnet', API_URL })).toBe(0);
+    expect(platformMinDelayMs({ ENV_NAME: 'local-alice', NETWORK: 'testnet', API_URL: 'http://localhost:8790' })).toBe(0);
+    expect(platformMinDelayMs({ ENV_NAME: 'local-alice', NETWORK: 'testnet', API_URL: 'http://[::1]:8790' })).toBe(0);
+    for (const e of [
+      { ENV_NAME: 'local', NETWORK: 'mainnet', API_URL },
+      { ENV_NAME: 'sandbox-dev', NETWORK: 'testnet', API_URL },
+      { ENV_NAME: 'xlocal', NETWORK: 'testnet', API_URL },
+      { NETWORK: 'testnet', API_URL },
+      { ENV_NAME: 'local', API_URL },
+      // The name and network alone no longer do: a deploy of a `local…` env to a real host still waits the 24 h.
+      { ENV_NAME: 'local', NETWORK: 'testnet' },
+      { ENV_NAME: 'local', NETWORK: 'testnet', API_URL: 'https://api.example.com' },
+      { ENV_NAME: 'local', NETWORK: 'testnet', API_URL: 'https://127.0.0.1:8787' },
+      { ENV_NAME: 'local', NETWORK: 'testnet', API_URL: 'http://127.0.0.1.example.com' },
+      { ENV_NAME: 'local', NETWORK: 'testnet', API_URL: 'http://user:pw@127.0.0.1:8787' },
+      { ENV_NAME: 'local', NETWORK: 'testnet', API_URL: 'not a url' },
+    ]) {
+      expect(platformMinDelayMs(e), JSON.stringify(e)).toBe(DAY);
+    }
     const r = await setup();
-    const local = { ENV_NAME: 'local-test', NETWORK: 'testnet' } as Partial<Env>;
+    const local = { ENV_NAME: 'local-test', NETWORK: 'testnet', API_URL } as Partial<Env>;
     // The nonce is over the env's name.
     const jwt = await stepUp(await digest('add', { orgId: r.app.org, publicKey: r.publicKey, scopes: r.scopes, label: r.label, envName: 'local-test' }));
     const { key } = await ok(consoleOn(local).proposePlatformKey({ ...member(), orgId: r.app.org, scopeIds: r.scopes, label: r.label, publicKey: r.publicKey, stepUpJwt: jwt }));

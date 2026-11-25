@@ -60,7 +60,9 @@ export async function getApp(db: HotDb, appId: string, orgId: string | null, now
   const [app, origins, changes, keys] = await db.batch([
     q`SELECT ${raw(APP_COLUMNS)}, ${COUNTS(now)}, ${DETAIL_EXTRA} FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE a.id = ${appId} AND ${orgFilter(orgId)}`,
     q`SELECT o.origin, o.active_from, o.change_id FROM app_origins o JOIN apps a ON a.id = o.app_id WHERE o.app_id = ${appId} AND ${orgFilter(orgId)} ORDER BY o.origin`,
-    q`SELECT ${raw(CHANGE_COLUMNS.split(', ').map((c) => `g.${c}`).join(', '))} FROM guarded_changes g JOIN apps a ON a.id = g.app_id
+    q`SELECT ${raw(CHANGE_COLUMNS.split(', ').map((c) => `g.${c}`).join(', '))},
+             EXISTS (SELECT 1 FROM staff_origin_waits sw WHERE sw.change_id = g.id) AS second_person, oc.confirmed_at, oc.confirmed_by_kind
+        FROM guarded_changes g JOIN apps a ON a.id = g.app_id LEFT JOIN origin_confirmations oc ON oc.change_id = g.id
        WHERE g.app_id = ${appId} AND ${orgFilter(orgId)} AND g.status IN ('pending', 'active') ORDER BY g.proposed_at, g.id`,
     q`SELECT ${raw(KEY_COLUMNS.split(', ').map((c) => `k.${c}`).join(', '))} FROM app_keys k JOIN apps a ON a.id = k.app_id WHERE k.app_id = ${appId} AND ${orgFilter(orgId)} ORDER BY k.created_at, k.id`,
   ]);

@@ -145,6 +145,8 @@ import {
   setPlatformOrgFrozen,
 } from '../platform/keys.ts';
 import { platformCalls, platformQueue } from '../platform/activity.ts';
+import { ackConfirmationNotice, confirmStaffOrigins, confirmationNotices } from '../changes/confirm.ts';
+import { ackConfirmationNoticeInput, confirmStaffOriginsInput, confirmationNoticesInput } from '@hana-id/console-core';
 import { adminRun, noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
@@ -255,6 +257,25 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   expediteChange(c: unknown) {
     return runRpc(this.env, 'admin.expediteChange', expediteChangeInput, c, { actors: HANA }, ({ input, db, w }) => expediteChange(db, w, input));
+  }
+
+  /**
+   * D931 (four eyes, D917): a second staff member confirms web addresses another staff member added to a
+   * platform-created app or a shared wallet (another Access subject and email, with a reason): in force at once. Never
+   * a platform proposal (only an owner confirms those, in the partner portal).
+   */
+  confirmStaffOrigins(c: unknown) {
+    return runRpc(this.env, 'admin.confirmStaffOrigins', confirmStaffOriginsInput, c, { actors: HANA }, ({ input, db, w }) => confirmStaffOrigins(db, this.env, w, input));
+  }
+
+  /** D931: the confirmations whose notice (with its removal links) hasn't gone out, for the notice cron. */
+  confirmationNotices(c: unknown) {
+    return runRpc(this.env, 'admin.confirmationNotices', confirmationNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db }) => ({ notices: await confirmationNotices(db, input.limit) }));
+  }
+
+  /** D931: only the notice cron, after every send was accepted: stores the removal links' hashes (7 days). */
+  ackConfirmationNotice(c: unknown) {
+    return runRpc(this.env, 'admin.ackConfirmationNotice', ackConfirmationNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackConfirmationNotice(db, w, input));
   }
 
   pendingNotices(c: unknown) {

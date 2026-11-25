@@ -21,10 +21,12 @@ are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece i
 **Piece P1 built** (branch `feat/platform-actor`, D916). **Piece P2 built** (2026-11-25, branch `feat/platform-keys`,
 D918, not merged, not deployed): platform keys' life cycle and records (migrations 0028 and console 0005); where it
 differs from this spec is listed in D918. Their current state is in `api.md`, `architecture.md`, `security.md` and
-`operations.md`; every other piece is still proposed.
+`operations.md`; every other piece is still proposed. **Piece P6 built** (2026-11-25, branch `feat/app-user-ids`, D919, not merged, not deployed): per-app User
+IDs as B2 to B4 and B7 describe, with migration **0030** (0028 and 0029 are piece P2's); its current state is
+in the same docs and `integration.md`. Where it differs from Part B, D919 says so (the triggers' insert rule, the
+`'scope'` app on a marked scope having an `end_user_apps` row, the erase script's inputs).
 
-Last verified: 2026-11-25 (branch `feat/platform-keys`: the status line (P2 built, D918); no design text changed);
-2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
+Last verified: 2026-11-25 (branch `feat/platform-keys`: the status line (P2 built, D918), and after PR 149's review the gates row's `local*` guard; no other design text changed); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged: the status line of piece P6, D919; no other text changed); 2026-11-25 (branch `docs/confirmations-1125`, from `next` @ b3783b46, docs only, not merged: the Tech
 Lead's confirmations of D914's proposals and the four-eyes rule for staff proposals on a shared scope (D917) folded
 into A2, A3, A6, A7, A8, A11, A14, A15 and the build plan; the admin portal's identity checked in
 `apps/admin/src/access.ts`); 2026-11-25 (branch `docs/platform-answers`, after PR 142's review: its 16 findings folded in (revocation

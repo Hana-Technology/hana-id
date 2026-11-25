@@ -16,6 +16,8 @@
 // - `sub` = "u1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY, "hana-id/idt-sub/v1" ‖ 0x00 ‖ borsh(scope_id)
 //   ‖ borsh(root_provider) ‖ borsh(root_sub))[0..16]); `sid` = "s1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY,
 //   "hana-id/idt-sid/v1" ‖ 0x00 ‖ borsh(app_id) ‖ session_pk)[0..16]).
+// - The per-app User ID (for an app whose `user_ids` is 'app'): "u1_" ‖ b64url(HMAC-SHA256(IDENTITY_SUB_KEY,
+//   "hana-id/idt-app-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(app_id) ‖ scope_sub_bytes(16))[0..16]).
 //
 // SECURITY: IDENTITY_SUB_KEY is a secret (it maps partners' `sub`s back to on-chain paths). Nothing here logs.
 import { ed25519 } from '@noble/curves/ed25519';
@@ -33,6 +35,8 @@ export const IDENTITY_WALLET_DOMAIN = 'hana-id/identity-wallet/v1';
 export const IDENTITY_WALLET_PROOFS_DOMAIN = 'hana-id/identity-wallet-proofs/v1';
 export const IDENTITY_SUB_LABEL = 'hana-id/idt-sub/v1';
 export const IDENTITY_SID_LABEL = 'hana-id/idt-sid/v1';
+/** The per-app User ID's label: the same key as `sub` and `sid`, domain-separated. */
+export const IDENTITY_APP_SUB_LABEL = 'hana-id/idt-app-sub/v1';
 export const SEALED_EMAIL_AAD_DOMAIN = 'hana-id/sealed-email/v1';
 
 /** The JWS `typ` (RFC 8725 §3.11): no other Hana JWT can be taken for an identity token, and vice versa. */
@@ -255,6 +259,49 @@ export function identitySubBytes(key: Uint8Array, scopeId: string, root: { provi
 
 /** `sub`: "u1_" ‖ 22 base64url characters (25 in all), per scope and account root, `key_index` excluded. */
 export const identitySub = (key: Uint8Array, scopeId: string, root: { provider: string; sub: string }): string => IDENTITY_SUB_PREFIX + base64UrlEncode(identitySubBytes(key, scopeId, root));
+
+/**
+ * The per-app User ID's 16 bytes: HMAC-SHA256(IDENTITY_SUB_KEY,
+ * "hana-id/idt-app-sub/v1" ‖ 0x00 ‖ borsh(scope_id) ‖ borsh(app_id) ‖ scopeSubBytes)[0..16], where `scopeSubBytes` are
+ * the 16 bytes behind the person's scope-level `sub` (`identitySubBytes`, or `decodeIdentitySub` of
+ * `end_users.token_sub`). The same key as `sub` and `sid`, its own label. Without the key nobody can compute it, turn
+ * one app's value into another's, or tell that two apps' values are one person's. Final from the day it ships:
+ * partners store it. An off-chain pseudonym only: nothing on chain, no key, path or address depends on it.
+ */
+export function appSubBytes(key: Uint8Array, scopeId: string, appId: string, scopeSubBytes: Uint8Array): Bytes {
+  checkSubKey(key);
+  if (scopeSubBytes.length !== 16) throw new Error('scopeSubBytes must be the 16 bytes behind a sub');
+  if (typeof appId !== 'string' || appId.length === 0) throw new Error('appId must be a non-empty string');
+  return mac16(key, concatBytes(utf8(IDENTITY_APP_SUB_LABEL), Uint8Array.of(0), borshString(scopeId), borshString(appId), toBytes(scopeSubBytes)));
+}
+
+/** The per-app User ID: "u1_" ‖ 22 base64url characters (25 in all), the format of `sub` (`IDENTITY_SUB_RE`). */
+export const appSub = (key: Uint8Array, scopeId: string, appId: string, scopeSubBytes: Uint8Array): string =>
+  IDENTITY_SUB_PREFIX + base64UrlEncode(appSubBytes(key, scopeId, appId, scopeSubBytes));
+
+/**
+ * Which User ID an app gives its users (its `user_ids` setting): `scope`, the person's scope-level
+ * `sub`, the same on every app of the scope (every app made before per-app IDs, and every app on a scope not marked as
+ * shared); `app`, a User ID of the app's own (`appSub`), for an app created on a scope marked as shared.
+ */
+export const APP_USER_ID_MODES = ['scope', 'app'] as const;
+export type AppUserIdMode = (typeof APP_USER_ID_MODES)[number];
+export const isAppUserIdMode = (v: unknown): v is AppUserIdMode => v === 'scope' || v === 'app';
+
+/**
+ * The 16 bytes behind the `sub` an app's identity tokens carry for the account rooted at `root`, by the app's mode:
+ * `scope` → exactly `identitySubBytes` (unchanged for every existing app), `app` → `appSubBytes`. Throws for any other
+ * mode (fail closed: never a guess at which ID a partner gets).
+ */
+export function subBytesForApp(key: Uint8Array, app: { scopeId: string; appId: string; userIds: string }, root: { provider: string; sub: string }): Bytes {
+  if (!isAppUserIdMode(app.userIds)) throw new TypeError('Unknown user_ids mode');
+  const scopeBytes = identitySubBytes(key, app.scopeId, root);
+  return app.userIds === 'scope' ? scopeBytes : appSubBytes(key, app.scopeId, app.appId, scopeBytes);
+}
+
+/** The `sub` an app's identity tokens carry for the account rooted at `root` (`subBytesForApp`, as `u1_…`). */
+export const subForApp = (key: Uint8Array, app: { scopeId: string; appId: string; userIds: string }, root: { provider: string; sub: string }): string =>
+  IDENTITY_SUB_PREFIX + base64UrlEncode(subBytesForApp(key, app, root));
 
 /** `sid`: "s1_" ‖ 22 base64url characters, one per (app, session key). */
 export function identitySid(key: Uint8Array, appId: string, sessionPublicKey: Uint8Array): string {

@@ -19,6 +19,8 @@ export interface ApiApp {
   environment: 'test' | 'live';
   google_web_client_id: string | null;
   scope_conflict: boolean;
+  /** Migration 0030 (D919): 'scope' or 'app'. */
+  user_ids: string;
   origins: string[];
 }
 
@@ -66,10 +68,11 @@ export interface ApiModules {
   /** apps/api/src/claims.ts: the ID token's first claim outside the allow-list (`token_has_pii`), or null. */
   disallowedClaim(jwt: string): string | null;
   /**
-   * apps/api/src/directory/store.ts: the Support ID the Worker's /v1/login and /v1/sessions answer with (C15), from the
-   * same derivation as the wallet directory's `support_code`; undefined without the env's keys.
+   * apps/api/src/directory/store.ts: the Support ID the Worker's /v1/login and /v1/sessions answer with (C15), the short
+   * form of the `sub` the app's identity tokens carry (D919: the scope's for a 'scope' app, its own for an 'app' app);
+   * undefined without the env's keys.
    */
-  sessionSupportId(env: ApiEnv, scopeId: string, root: { provider: string; sub: string }): Promise<string | undefined>;
+  sessionSupportId(env: ApiEnv, app: { id: string; scope_id: string; user_ids: string }, root: { provider: string; sub: string }): Promise<string | undefined>;
   /** apps/api/src/origins.ts: the hosts the origin rule treats as loopback (pk_test_ keys in dev envs only). */
   isLoopbackOrigin(origin: string): boolean;
   /** apps/api/src/vault/page.ts: GET {vaultOrigin}/vault?pk=… */

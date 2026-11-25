@@ -182,7 +182,7 @@ beforeAll(async () => {
   expect(beforeRows.security_events!.length).toBe(OLD_EVENT_KINDS.length);
   expect(maxSeqBefore).toBe(90000);
 
-  await applyD1Migrations(db, migrations);
+  await applyD1Migrations(db, migrations.slice(0, at + 1));
 });
 
 describe('migration 0027_platform_actor', () => {
@@ -219,9 +219,13 @@ describe('migration 0027_platform_actor', () => {
 
   it('every trigger and view in the whole schema is there after with the same SQL; only 0027’s four triggers are new', async () => {
     const after = await everyTriggerAndView();
-    // Later migrations' own tables bring their own triggers (0028's platform_keys, D918); none reads the rebuilt tables.
-    const later = new Set(['platform_keys', 'platform_orgs']);
-    expect([...after.keys()].filter((k) => !everyTriggerBefore.has(k) && !later.has(after.get(k)!.tbl)).sort()).toEqual(['app_changes_actor_kind', 'app_changes_no_replace', 'guarded_changes_proposer_kind', 'guarded_changes_proposer_kind_update']);
+    // Later migrations bring their own triggers (0028's on platform_keys and platform_orgs, D918; 0030's on apps and
+    // end_user_apps, D919), named here so nothing else can slip in; none reads the rebuilt tables.
+    const laterTables = new Set(['platform_keys', 'platform_orgs', 'end_user_apps']);
+    const laterOnApps = new Set(['apps_user_ids_fixed', 'apps_app_ids_scope_fixed', 'apps_user_ids_insert', 'apps_user_ids_no_delete']);
+    const later = (k: string) => laterTables.has(after.get(k)!.tbl) || laterOnApps.has(k);
+    for (const k of after.keys()) if (later(k)) for (const t of ['app_changes', 'guarded_changes', 'security_events']) expect(after.get(k)!.sql!.includes(t), `${k} reads ${t}`).toBe(false);
+    expect([...after.keys()].filter((k) => !everyTriggerBefore.has(k) && !later(k)).sort()).toEqual(['app_changes_actor_kind', 'app_changes_no_replace', 'guarded_changes_proposer_kind', 'guarded_changes_proposer_kind_update']);
     for (const [name, b] of everyTriggerBefore) expect(after.get(name), name).toEqual(b);
   });
 
@@ -348,7 +352,7 @@ describe('migration 0027_platform_actor', () => {
   it('applying the migrations again changes nothing (each file once, in name order)', async () => {
     const before = (await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name);
     const rows = await rowsOf('app_changes');
-    await applyD1Migrations(db, env.TEST_MIGRATIONS);
+    await applyD1Migrations(db, env.TEST_MIGRATIONS.filter((m) => m.name <= FILE));
     expect((await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name)).toEqual(before);
     expect(before).toContain(FILE);
     expect(await rowsOf('app_changes')).toEqual(rows);

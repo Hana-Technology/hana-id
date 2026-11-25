@@ -201,6 +201,8 @@ export const appDetail = (orgId: string, appId: string) => {
       sharedScope: shared,
       createdByKind: 'hana',
       sharedWallet: shared,
+      // D919: the shared scope's app has User IDs of its own.
+      userIds: shared ? 'app' : 'scope',
       keys: [
         { id: 'key_01jdb7', key: 'pk_live_previewfakekey000001', createdAt: ago(DAY), createdBy: 'aisyah.rahman@lumenpay.example', revokedAt: null },
         { id: 'key_01jcb1', key: 'pk_live_previewfakekey000002', createdAt: ago(19 * DAY), createdBy: 'tze@hana.example', revokedAt: NOW + 6 * DAY },

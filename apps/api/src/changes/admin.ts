@@ -79,13 +79,17 @@ export async function createApp(
   const changes = origins.map((origin) => ({ changeId: newId('guardedChange'), origin }));
   const scopeHolds: Q = createScope
     ? q`NOT EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId})`
-    : q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = ${i.environment} AND assigned_at = ${s!.assigned_at}${mark ? raw(' AND app_user_ids = 1') : raw('')})`;
+    : // The mark as read, too (D919): the ledger row records the app's User ID mode, so a mark set between the read and
+      // the batch commits nothing (`version_conflict`) rather than a row that says the other mode.
+      q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = ${i.environment} AND assigned_at = ${s!.assigned_at} AND app_user_ids = ${s!.app_user_ids})`;
+  // D919: the mode the app's insert below gets from the mark the predicate holds.
+  const userIds = (createScope ? mark : s!.app_user_ids === 1) ? 'app' : 'scope';
   const when = committed(w.requestId);
   const list = JSON.stringify(changes);
   const stmts: Q[] = [
     commitOn(
       w,
-      { kind: 'app.created', detail: { name, plan: DEFAULT_PLAN, environment: i.environment, keyId, scopeCreated: createScope, waiver, origins: changes, ...(mark ? { appUserIds: true } : {}) } },
+      { kind: 'app.created', detail: { name, plan: DEFAULT_PLAN, environment: i.environment, keyId, scopeCreated: createScope, waiver, origins: changes, userIds, ...(mark ? { appUserIds: true } : {}) } },
       { orgId: i.orgId, appId, scopeId: i.scopeId },
       q`${scopeHolds} AND EXISTS (SELECT 1 FROM org_security_contacts WHERE org_id = ${i.orgId})`,
     ),
@@ -103,8 +107,14 @@ export async function createApp(
     }
   }
   stmts.push(
-    q`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version)
-      SELECT ${appId}, ${name}, ${i.scopeId}, ${i.orgId}, ${publishableKey}, 'active', ${DEFAULT_PLAN}, ${w.now}, ${changes.length ? 1 : 0} WHERE ${when}`,
+    // D919 (migration 0030): the app's User ID mode from the scope's mark as the batch sees it (`INSERT … SELECT`, after
+    // the scope's own insert above when it is new), so a mark set between the plan read and this batch is never missed:
+    // 'app' on a marked scope, 'scope' otherwise; any other mark matches neither, the NOT NULL column refuses the row
+    // and 0030's trigger refuses a mode that contradicts the mark (fail closed).
+    q`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version, user_ids)
+      SELECT ${appId}, ${name}, ${i.scopeId}, ${i.orgId}, ${publishableKey}, 'active', ${DEFAULT_PLAN}, ${w.now}, ${changes.length ? 1 : 0},
+             (SELECT CASE s.app_user_ids WHEN 1 THEN 'app' WHEN 0 THEN 'scope' END FROM scopes s WHERE s.scope_id = ${i.scopeId})
+       WHERE ${when}`,
     q`INSERT INTO app_keys (id, app_id, key, created_by, created_at) SELECT ${keyId}, ${appId}, ${publishableKey}, ${actorId(w.actor)}, ${w.now} WHERE ${when}`,
   );
   if (changes.length) {

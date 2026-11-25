@@ -10,6 +10,11 @@
 // `given_name` and `family_name` (D714; identity/name.ts mintName): the name the user set in Hana Home, only for an app
 // they shared it with there.
 //
+// `sub` (D919): the User ID the app gives the person, by the app's `user_ids` (migration 0030; core `subForApp`): the
+// scope-level User ID for a 'scope' app (every app made before per-app IDs, and every app on a scope not marked as
+// shared), the app's own for an 'app' app. An unknown mode refuses the mint (fail closed). The email consents, the name
+// shares and the per-account rate limit stay keyed by the scope-level User ID, as before.
+//
 // SECURITY: the response carries a bearer credential for the partner's backend. Nothing here logs the token, `sub`,
 // `sid`, an address or the body; the request log has the app id, outcome, code, kid and timings.
 import {
@@ -27,6 +32,8 @@ import {
   identitySub,
   identitySubBytes,
   identityTokenHeader,
+  isAppUserIdMode,
+  subForApp,
   identityTokenPayload,
   verifyWalletProof,
   walletProofsHash,
@@ -295,6 +302,11 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
     log({ event: 'identity_unavailable', requestId, appId: app.id, code: config }, 'error');
     return reject(ctx, 503, 'identity_unavailable', 'Identity tokens are unavailable in this environment');
   }
+  // The app's User ID mode (migration 0030, D919): a value that is neither 'scope' nor 'app' is never guessed.
+  if (!isAppUserIdMode(app.user_ids)) {
+    log({ event: 'identity_bad_user_ids', requestId, appId: app.id }, 'error');
+    return reject(ctx, 503, 'config_unavailable', 'App config is unavailable, try again');
+  }
 
   // Body shape.
   const parsed = await readJson(request, MAX_IDENTITY_BODY);
@@ -399,7 +411,8 @@ async function sign(
     const claims = buildIdentityClaims({
       iss: config.iss,
       aud: app.id,
-      sub: identitySub(config.subKey, app.scope_id, t.root),
+      // The User ID this app gives the person (D919): the scope-level one for a 'scope' app, its own for an 'app' app.
+      sub: subForApp(config.subKey, { scopeId: app.scope_id, appId: app.id, userIds: app.user_ids }, t.root),
       sid: identitySid(config.subKey, app.id, t.sessionPk),
       iat: t.iat,
       exp: t.exp,

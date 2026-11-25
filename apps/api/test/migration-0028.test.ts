@@ -295,3 +295,47 @@ describe('0028 after PR 149’s review: no replace, no back-dating, the database
     expect(await refusal('UPDATE platform_orgs SET enabled = 1, review_json = ?2, set_at = ?1 WHERE org_id = ?3', Date.now(), live, 'org_a')).toMatch(/review/u);
   });
 });
+
+describe('0028 then 0030 (per-app User IDs, D919) in name order on a populated database', () => {
+  const m = env.MIGRATION_DB;
+  type Objs = Map<string, Obj>;
+  const objs = async (): Promise<Objs> =>
+    new Map((await m.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE name NOT LIKE '_cf_%' AND name NOT LIKE 'sqlite_%' ORDER BY name").all<Obj>()).results.map((r) => [r.name, r]));
+  const triggersAndViews = (o: Objs) => new Map([...o].filter(([, v]) => v.type === 'trigger' || v.type === 'view'));
+
+  it('each keeps every trigger, view, table, index and row of before; the platform key and its rules survive 0030', async () => {
+    const all = env.TEST_MIGRATIONS;
+    const at = (name: string) => all.findIndex((x) => x.name === name);
+    expect(at('0028_platform_keys.sql')).toBeLessThan(at('0030_app_user_ids.sql'));
+    await applyD1Migrations(m, all.slice(0, at('0028_platform_keys.sql')));
+    await m.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('st', 'org_a', 'test', 1, 1, 1)").run();
+    await m.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES ('app_t', 'T', 'st', 'org_a', 'pk_test_Ttttttttttttttttttttttt')").run();
+    await m.prepare("INSERT INTO app_changes (at, org_id, app_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (1, 'org_a', 'app_t', 'app.created', '{}', 'hana', 's', 'r1')").run();
+    const before27 = await objs();
+    await applyD1Migrations(m, all.slice(0, at('0028_platform_keys.sql') + 1));
+    const after28 = await objs();
+    for (const [name, o] of before27) expect(after28.get(name), name).toEqual(o);
+    // A key and a switch row, then every later file (0030 and beyond) in name order.
+    const pk = new Uint8Array(65).fill(5);
+    pk[0] = 4;
+    await m.prepare("INSERT INTO platform_keys (id, org_id, label, alg, public_key, thumbprint, scopes_json, status, proposed_by_kind, proposed_by, proposer_sub, proposer_email_key, proposed_at, four_eyes, min_delay_ms, request_id) VALUES ('pkc_Mmmmmmmmmmmmm', 'org_a', 'K', 'ES256', ?1, ?2, '[\"st\"]', 'pending', 'member', 'usr_a', 'sub-a', 'a@a.example', 1, 0, 86400000, 'r_k')").bind(pk, 'M'.repeat(43)).run();
+    await m.prepare("INSERT INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_a', 's', 1)").run();
+    const keyRow = await m.prepare("SELECT * FROM platform_keys WHERE id = 'pkc_Mmmmmmmmmmmmm'").first();
+    const apps = (await m.prepare('SELECT id, name, scope_id, org_id FROM apps ORDER BY id').all()).results;
+    await applyD1Migrations(m, all);
+    const after30 = await objs();
+    // Every trigger and view of 0028's schema (the platform tables' and everyone else's) is there with the same SQL.
+    for (const [name, o] of triggersAndViews(after28)) expect(after30.get(name), name).toEqual(o);
+    for (const [name, o] of after28) if (o.type !== 'table') expect(after30.get(name), name).toEqual(o);
+    expect(after30.get('platform_keys')).toEqual(after28.get('platform_keys'));
+    expect(after30.get('platform_orgs')).toEqual(after28.get('platform_orgs'));
+    expect(await m.prepare("SELECT * FROM platform_keys WHERE id = 'pkc_Mmmmmmmmmmmmm'").first()).toEqual(keyRow);
+    expect((await m.prepare('SELECT id, name, scope_id, org_id FROM apps ORDER BY id').all()).results).toEqual(apps);
+    expect(after30.has('apps_user_ids_insert')).toBe(true);
+    // 0028's rules still hold after 0030.
+    expect(await m.prepare("INSERT OR REPLACE INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_a', 's', 2)").run().then(() => 'accepted', (e: unknown) => String(e))).toMatch(/never replaced/u);
+    expect(await m.prepare("UPDATE platform_keys SET status = 'active', activated_recorded_at = 1 WHERE id = 'pkc_Mmmmmmmmmmmmm'").run().then(() => 'accepted', (e: unknown) => String(e))).toMatch(/CHECK|date/u);
+    expect(await m.prepare('PRAGMA quick_check').all()).toMatchObject({ results: [{ quick_check: 'ok' }] });
+    expect((await m.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name)).toEqual(all.map((x) => x.name));
+  });
+});

@@ -189,8 +189,13 @@ describe('ConsoleRpc.linkUser: one person across the org’s apps', () => {
   });
 
   it('is reachable through no public route: the API’s fetch answers 404 for anything that looks like it', async () => {
-    for (const path of ['/v1/users/link', '/v1/users/lookup', '/linkUser', '/v1/platform/users/lookup'])
+    for (const path of ['/v1/users/link', '/v1/users/lookup', '/linkUser'])
       for (const method of ['GET', 'POST']) expect((await call(path, { method, headers: { origin: 'https://wallet.example.com' }, ...(method === 'POST' ? { body: {} } : {}) })).status, `${method} ${path}`).toBe(404);
+    // Under /v1/platform the platform API answers (D927): a browser is refused, and the path is no route of its.
+    for (const method of ['GET', 'POST']) {
+      expect((await call('/v1/platform/users/lookup', { method, headers: { origin: 'https://wallet.example.com' }, ...(method === 'POST' ? { body: {} } : {}) })).status).toBe(403);
+      expect((await call('/v1/platform/users/lookup', { method, ...(method === 'POST' ? { body: {} } : {}) })).status).toBe(404);
+    }
   });
 });
 

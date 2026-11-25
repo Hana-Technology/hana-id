@@ -504,7 +504,7 @@ Nothing reads or writes 0025's partner labels' tables while the manifest has no 
 version is re-parsed with `admin sandbox-dev labels:check --remote`, against a baseline saved from the deployed commit
 with `--save`, D922: [Before switching partner labels on](operations.md#partner-labels-in-the-admin-portal-d894)). This
 deploy needs no baseline: 0025 is applied by it, so no version is stored yet. After phase 3, `corepack pnpm --filter
-@hana-id/scripts admin sandbox-dev labels:check --remote` (read-only) should find nothing to check.
+@hana-id/scripts admin sandbox-dev labels:check --remote` (read-only) says `0 Request labels versions waiting or in force`.
 
 ### 2.5 The snapshot (right before 2.6)
 

@@ -21241,14 +21241,16 @@ number the caller assigned for this piece.
      policy would block the scope for good.
   3. **Raw signing is not refused on a marked scope.** The spec's P0 names auto-approve only. Test scopes already refuse
      raw signing (D39); on a future live shared scope a staff or owner proposal would still go through. Recommend
-     refusing it there too when a live shared scope is opened (N2).
+     refusing it there too when a live shared scope is opened (N2). **After PR 145's review (item 3): only test scopes can
+     be marked for now, so this can't arise yet.**
   4. **The vault doesn't refuse to serve a policy found on such an app**: drift reports it within the hour and the kill
      switch removes it. Refusing it in `GET /v1/app` as well would close that hour; not built, as the spec puts the
-     bare-write case on drift.
+     bare-write case on drift. **Superseded after PR 145's review (below, item 2): built; no longer to confirm.**
   5. **`admin app:settings` refuses any new policy on a hot D1 without migration 0026** (it can't check the rule
      there); `off` and the other settings still work.
   6. **Where staff mark a scope:** the admin portal has no scope page, so the control is a "Shared wallet" row on each
-     app's page (A11 says "on the scope"). It is offered for live scopes too.
+     app's page (A11 says "on the scope"). ~~It is offered for live scopes too.~~ After PR 145's review: test scopes
+     only (item 3).
   7. **The console's scope line of A11** ("Shared wallet: apps here get their own user IDs, and auto-approve is off")
      is not shown: the per-app User ID half isn't true until P6. The console says it on the app's Signing and Overview
      tabs only.
@@ -21263,3 +21265,40 @@ number the caller assigned for this piece.
   not yet announced policy.
 - Address impact: **none.** No key, path or address derivation changes; no contract call. The two columns are
   off-chain settings.
+- **After PR 145's review (2026-11-25)**, on the same branch:
+  1. **Migration 0027 must re-create `scopes_app_user_ids_no_policy` word for word.** The trigger reads
+     `guarded_changes`, which P1's 0027 drops and renames; the P1 builder drops this trigger before its `DROP TABLE` and
+     creates it again after the renames, with exactly the SQL in `0026_shared_scope_rules.sql` (unchanged since the
+     review; keep it so). P1's migration test should compare the two by `sqlite_schema`.
+  2. **The vault never serves a policy for an app that shares a wallet** (`apps/api/src/vault/settings.ts`:
+     `getSettingsRow` joins the app's scope, `effectiveSettings` returns no policy when the scope is marked, its row is
+     missing or the creator isn't `hana`, with an error line `auto_approve_policy_shared_wallet` naming only the app and
+     why). That covers every reader: `GET /v1/app`, the vault page, consent registration (`policy_not_in_force`, nothing
+     recorded), the share checks and the identity token (which read only the session settings). One more D1 row per
+     `GET /v1/app` (the scope's), so the read's budget in `home-devices.test.ts` is 12 and 15 rows.
+  3. **Test scopes only, for now.** `setScopeAppUserIds` refuses a live scope (`env_mismatch`, "Only a test scope can be
+     marked as shared for now: a live shared scope needs its own security review first") in its read and its commit
+     predicate; the admin route refuses it before calling the API (it reads the org's apps); a trigger refuses it in D1;
+     the admin page doesn't offer it and says why. **To confirm (the Tech Lead):** when a live shared scope opens (N2,
+     D914), raw signing must be refused for its apps in the same commit check as the policy, and the mark refused while
+     raw signing is on or waiting.
+  4. **The one-way mark holds against a direct write**: triggers refuse a replacing insert or an upsert that would
+     leave a marked scope unmarked, and deleting a marked scope (checked: no code deletes or replaces scope rows:
+     `deleteApp` leaves the scope, `d1-move` imports only into an empty database, the e2e harness uses `INSERT OR IGNORE`
+     on scopes it never marks). Drift counts a scope as marked also when the append-only ledger has its
+     `scope.app_user_ids` row, and reports a scope whose latest mark isn't in its column (`shared_scope_unmarked`); the
+     retention purge keeps every such ledger row (D364).
+  5. **Drift's shared-wallet finding can't go quiet**: its id is per app, source and `settings_version` (or change id),
+     so a policy forged again after the kill switch (which bumps the version) is reported again; findings already
+     recorded are left out of the read, in a fixed order, so over 100 standing findings never crowd out a new one.
+  6. **A network's scope can be marked before its first partner app**: `createApp`'s `appUserIds` (AdminRpc; the admin
+     route takes it too) and `admin app:create --shared-wallet` create the scope marked, in the same write as its first
+     row, with the mark's own ledger row (request id `<id>:mark`); test scopes only; on an existing scope it must already
+     be marked. The order is in `operations.md`. The admin portal's create form has no checkbox for it yet (the CLI and
+     the RPC have it). **To confirm (the Tech Lead):** whether staff want that checkbox.
+  7. **Fail closed on unexpected values**: `autoApproveRefused` counts any creator but `hana`, `sharedWallet` and the
+     vault any scope flag that isn't 0 (a missing scope row included), drift a missing scope row and any creator but
+     `hana`, and the commit predicates and the CLI's guard a missing scope row, as sharing a wallet.
+  - Also: a test for an app created on an already-marked scope; the CLI's column check reads `sqlite_master` (as the
+    0014 check does) instead of a pragma function, untried against a remote D1 until its first use (`operations.md`
+    says how to try it); the mark's confirmation in the admin portal lists the scope's apps.

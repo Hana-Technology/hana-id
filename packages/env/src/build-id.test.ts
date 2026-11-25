@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BUILD_ID_RE, assertBuildId, buildMeta, formatBuildId, parseBuildId, parseBuildMeta, parseVaultBanner, vaultBanner } from './build-id.ts';
-import { type Git, localBuild, resolveDeployConfig, stampedDeploy, stampedDeployArgv } from './local-build.ts';
+import { type Git, localBuild, resolveDeployConfig, stampedDeploy, stampedDeployArgv, wranglerEnv } from './local-build.ts';
 
 const SHA = '0485faa1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7';
 
@@ -100,16 +100,18 @@ describe('stampedDeploy', () => {
       return v;
     },
   });
+  /** The names in a directory, from `files`' paths. */
+  const listOf = (files: Record<string, string | null>) => (dir: string) => Object.keys(files).filter((p) => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/')).map((p) => p.slice(dir.length + 1));
   const deps = (files: Record<string, string | null>, more: Record<string, unknown> = {}) => {
-    const wrangler = vi.fn((_argv: string[]) => 0);
+    const wrangler = vi.fn((_argv: string[], _env: NodeJS.ProcessEnv) => 0);
     const lines: string[] = [];
-    return { wrangler, lines, d: { build, wrangler, log: (l: string) => lines.push(l), cwd: '/w', ...fsOf(files), ...more } };
+    return { wrangler, lines, d: { build, wrangler, log: (l: string) => lines.push(l), cwd: '/w', env: { PATH: '/bin' }, listDir: listOf(files), ...fsOf(files), ...more } };
   };
 
   it('deploys exactly one resolved config, by its absolute path, stamped', () => {
     const { wrangler, lines, d } = deps({ '/w/wrangler.jsonc': config('sandbox-dev') });
     expect(stampedDeploy([], d)).toBe(0);
-    expect(wrangler).toHaveBeenCalledWith(['deploy', '-c', '/w/wrangler.jsonc', '--var', 'HANA_BUILD:0485faa1c2d3']);
+    expect(wrangler).toHaveBeenCalledWith(['deploy', '-c', '/w/wrangler.jsonc', '--var', 'HANA_BUILD:0485faa1c2d3'], { PATH: '/bin' });
     expect(lines.join('\n')).toContain('0485faa1c2d3');
     // -c (relative or absolute, once) and --dry-run.
     const a = deps({ '/w/wrangler.vault.jsonc': config(null), '/abs/x.jsonc': config('sandbox-dev') });
@@ -127,7 +129,7 @@ describe('stampedDeploy', () => {
   it('passes wrangler’s failure on, and says when the tree is dirty', () => {
     const lines: string[] = [];
     const dirty = () => ({ id: '0485faa1c2d3-dirty', commit: '0485faa1c2d3', dirty: true, head: SHA });
-    expect(stampedDeploy([], { build: dirty, wrangler: () => 3, log: (l) => lines.push(l), cwd: '/w', ...fsOf({ '/w/wrangler.jsonc': config('sandbox-dev') }) })).toBe(3);
+    expect(stampedDeploy([], { build: dirty, wrangler: () => 3, log: (l) => lines.push(l), cwd: '/w', env: {}, listDir: () => [], ...fsOf({ '/w/wrangler.jsonc': config('sandbox-dev') }) })).toBe(3);
     expect(lines.join('\n')).toMatch(/uncommitted changes/u);
   });
 
@@ -195,6 +197,47 @@ describe('stampedDeploy', () => {
     const redirect = deps({ '/w/.wrangler/deploy/config.json': '{"configPath":"../../local.jsonc"}', '/w/wrangler.jsonc': config('sandbox-dev') });
     expect(stampedDeploy([], redirect.d)).toBe(0);
     expect(redirect.wrangler.mock.calls[0]![0]!.slice(0, 3)).toEqual(['deploy', '-c', '/w/wrangler.jsonc']);
+  });
+
+  it('after PR 159’s third review: CLOUDFLARE_ENV and WRANGLER_CI_OVERRIDE_NAME refused, in the environment or a .env file wrangler would load; wrangler runs without them', () => {
+    for (const env of [{ CLOUDFLARE_ENV: 'x' }, { WRANGLER_CI_OVERRIDE_NAME: 'other-worker' }, { CLOUDFLARE_ENV: '' }]) {
+      const { wrangler, lines, d } = deps({ '/w/wrangler.jsonc': config('sandbox-dev') }, { env });
+      expect(stampedDeploy([], d), JSON.stringify(env)).toBe(1);
+      expect(lines.join('\n')).toMatch(/is set: it changes what wrangler deploys/u);
+      expect(wrangler).not.toHaveBeenCalled();
+    }
+    for (const [file, text] of [
+      ['/w/.env', 'CLOUDFLARE_API_TOKEN=t\nCLOUDFLARE_ENV=x\n'],
+      ['/w/.env.local', 'export WRANGLER_CI_OVERRIDE_NAME = other'],
+      ['/w/.env.x', '  CLOUDFLARE_ENV="x"'],
+      ['/c/.env', 'CLOUDFLARE_ENV=x'],
+    ] as const) {
+      const { wrangler, lines, d } = deps({ '/c/wrangler.jsonc': config('sandbox-dev'), [file]: text });
+      expect(stampedDeploy(['-c', '/c/wrangler.jsonc'], d), file).toBe(1);
+      expect(lines.join('\n'), file).toContain(`${file} sets`);
+      expect(wrangler).not.toHaveBeenCalled();
+    }
+    // A .env with other variables is fine; wrangler gets the environment without the refused names.
+    const ok = deps({ '/w/wrangler.jsonc': config('sandbox-dev'), '/w/.env': 'CLOUDFLARE_ACCOUNT_ID=abc\n# CLOUDFLARE_ENV=x is a comment\n' });
+    expect(stampedDeploy([], ok.d)).toBe(0);
+    expect(ok.wrangler.mock.calls[0]![1]).toEqual({ PATH: '/bin' });
+    expect(wranglerEnv({ PATH: '/bin', CLOUDFLARE_ENV: 'x', WRANGLER_CI_OVERRIDE_NAME: 'y', CLOUDFLARE_API_TOKEN: 't' })).toEqual({ PATH: '/bin', CLOUDFLARE_API_TOKEN: 't' });
+  });
+
+  it('after PR 159’s third review: a config with an env section, or a __proto__/constructor/prototype key at any depth, is refused', () => {
+    const withEnv = JSON.stringify({ name: 'hana-api', vars: { ENV_NAME: 'sandbox-dev' }, env: { x: { vars: { ENV_NAME: 'local-x' } } } });
+    const proto = '{"name":"hana-api","vars":{"ENV_NAME":"sandbox-dev"},"__proto__":{"vars":{"ENV_NAME":"local-x"}}}';
+    const nested = '{"name":"hana-api","vars":{"ENV_NAME":"sandbox-dev","constructor":{"prototype":{}}}}';
+    for (const [text, words] of [
+      [withEnv, /has an "env" section/u],
+      [proto, /has a "__proto__" key/u],
+      [nested, /has a "(?:constructor|prototype)" key/u],
+    ] as const) {
+      const { wrangler, lines, d } = deps({ '/w/wrangler.jsonc': text });
+      expect(stampedDeploy([], d), text).toBe(1);
+      expect(lines.join('\n')).toMatch(words);
+      expect(wrangler).not.toHaveBeenCalled();
+    }
   });
 
   it('after PR 159’s second review: the migration check runs on the same config that is deployed (pnpm passes extra args to the wrapper)', () => {

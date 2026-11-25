@@ -13,7 +13,7 @@
 // - the records: one `origin.confirmed` ledger row with the member and the step-up's `sub`; the confirmation rows;
 //   `confirmedAt` in the platform's view and the console's; the notice and its ack; the removal link; the queue;
 // - the limits and the cost.
-import { CONFIRM_NOTICE_MAX_FAILURES, CONSOLE_ERROR_STATUS, ORIGIN_CONFIRM_LIMITS, ORIGIN_REMOVAL_LINK_MS, newId, newPublishableKey, nonceOf, originChangeDigest, originConfirmDigest, personEmailKey, platformKeyDigest } from '@hana-id/console-core';
+import { CONFIRM_NOTICE_STUCK_FAILURES, CONSOLE_ERROR_STATUS, ORIGIN_CONFIRM_LIMITS, ORIGIN_REMOVAL_LINK_MS, newId, newPublishableKey, nonceOf, originChangeDigest, originConfirmDigest, personEmailKey, platformKeyDigest } from '@hana-id/console-core';
 import { sha256Hex } from '../src/owner-actions.ts';
 import { SHARED_SCOPE_STAFF_ORIGIN_WAITING } from '../src/changes/admin.ts';
 import { createExecutionContext } from 'cloudflare:test';
@@ -552,7 +552,7 @@ describe('the confirmation’s notice and its removal link', () => {
     expect(await one('SELECT COUNT(*) AS n FROM app_origins WHERE change_id = ?1', set.changes[1]!.changeId)).toEqual({ n: 1 });
   });
 
-  it('after PR 159’s review: a link works from its arming (another recipient refusing); a refused notice is retried later, a bounded number of times', async () => {
+  it('after PR 159’s review: a link works from its arming (another recipient refusing); a refused notice is retried later', async () => {
     const net = await network();
     const app = await platformApp(net);
     const set = await proposed(net, app, 1);
@@ -566,18 +566,62 @@ describe('the confirmation’s notice and its removal link', () => {
     expect(await ok(consoleOn().removalPreview({ ...link(set.changes[0]!.changeId), changeId: set.changes[0]!.changeId, token: t.token }))).toMatchObject({ removal: { removable: true } });
     clock.advance(5 * 60_000 + 1000);
     expect((await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).notices.find((x) => x.requestId === who.requestId)).toMatchObject({ failures: 1 });
-    // Bounded: after CONFIRM_NOTICE_MAX_FAILURES runs, it is left (its links still work).
-    const queued = async () => (await ok(adminOn().platformQueue({ ...hana(), limit: 100 }))).confirmed.find((c) => c.changeId === set.changes[0]!.changeId)!;
-    expect(await queued()).toMatchObject({ notice: 'retrying', noticeFailures: 1 });
-    const stuckBefore = (await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).stuck;
-    for (let k = 2; k <= CONFIRM_NOTICE_MAX_FAILURES; k++) await ok(adminOn().noteConfirmationNoticeFailure({ ...system(), requestId: who.requestId }));
-    clock.advance(2 * 3_600_000);
-    const left = await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }));
-    expect(left.notices.find((x) => x.requestId === who.requestId)).toBeUndefined();
-    // Reported as stuck on every run from the stored count (after PR 159's second review), and shown in the queue.
-    expect(left.stuck).toBe(stuckBefore + 1);
-    expect(await queued()).toMatchObject({ notice: 'not_sent', noticeFailures: CONFIRM_NOTICE_MAX_FAILURES });
     await ok(consoleOn().removeOriginByLink({ ...link(set.changes[0]!.changeId), changeId: set.changes[0]!.changeId, token: t.token }));
+  });
+
+  /** A confirmation whose notice runs fail every hour for `hours` (each run offered, then noted): the last page. */
+  const failFor = async (requestId: string, hours: number) => {
+    for (let h = 0; h < hours; h++) {
+      const page = await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }));
+      expect(page.notices.find((x) => x.requestId === requestId), `hour ${h}`).toBeDefined();
+      await ok(adminOn().noteConfirmationNoticeFailure({ ...system(), requestId }));
+      clock.advance(3_600_000 + 1000);
+    }
+    return ok(adminOn().confirmationNotices({ ...system(), limit: 50 }));
+  };
+  const queued = async (changeId: string) => (await ok(adminOn().platformQueue({ ...hana(), limit: 100 }))).confirmed.find((c) => c.changeId === changeId);
+
+  it('after PR 159’s third review: an outage of 3 days doesn’t abandon a notice: retried hourly, reported stuck from 24 failures, then sent', async () => {
+    const net = await network();
+    const app = await platformApp(net);
+    const set = await proposed(net, app, 1);
+    const who = member();
+    await ok(confirm(net, app, set.changes, { who }));
+    const before = (await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).stuck;
+    const page = await failFor(who.requestId, 72);
+    // Still offered after 72 failures (the back-off is at most an hour), and counted as stuck while it retries.
+    expect(page.notices.find((x) => x.requestId === who.requestId)).toMatchObject({ failures: 72 });
+    expect(page.stuck).toBe(before + 1);
+    expect(await queued(set.changes[0]!.changeId)).toMatchObject({ notice: 'retrying', noticeFailures: 72 });
+    // The outage ends: armed, sent, acked; no longer offered or stuck.
+    await ok(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: [{ changeId: set.changes[0]!.changeId, removalTokenHash: await linkToken().hash }] }));
+    await ok(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId }));
+    const after = await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }));
+    expect(after.notices.find((x) => x.requestId === who.requestId)).toBeUndefined();
+    expect(after.stuck).toBe(before);
+    expect(await queued(set.changes[0]!.changeId)).toMatchObject({ notice: 'sent', noticeFailures: 72 });
+  });
+
+  it('after PR 159’s third review: one failing past 7 days after its confirmation stops; reported as not sent and kept in the queue 7 days more', async () => {
+    const net = await network();
+    const app = await platformApp(net);
+    const set = await proposed(net, app, 1);
+    const who = member();
+    await ok(confirm(net, app, set.changes, { who }));
+    const base = await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }));
+    expect((await failFor(who.requestId, 7 * 24 - 1)).notices.find((x) => x.requestId === who.requestId)).toMatchObject({ failures: 7 * 24 - 1 });
+    clock.advance(3_600_000);
+    const page = await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }));
+    expect(page.notices.find((x) => x.requestId === who.requestId)).toBeUndefined();
+    // Every request never told whose 7 days ended in the last 7 days (this one among them; other tests' too).
+    const ended = async () =>
+      (await one<{ n: number }>('SELECT COUNT(DISTINCT request_id) AS n FROM origin_confirmations WHERE notice_at IS NULL AND confirmed_at <= ?1 AND confirmed_at > ?2', Date.now() - 7 * DAY, Date.now() - 14 * DAY)).n;
+    expect(page.notSent).toBe(await ended());
+    expect(page.notSent).toBeGreaterThan(base.notSent);
+    expect(await queued(set.changes[0]!.changeId)).toMatchObject({ notice: 'not_sent' });
+    clock.advance(7 * DAY);
+    expect(await queued(set.changes[0]!.changeId)).toBeUndefined();
+    expect((await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).notSent).toBe(await ended());
   });
 
   it('the staff queue lists confirmed web addresses for 7 days, with who and when, and staff ones waiting for a second person', async () => {
@@ -591,6 +635,9 @@ describe('the confirmation’s notice and its removal link', () => {
     const q = await ok(adminOn().platformQueue({ ...hana(), limit: 100 }));
     expect(q.confirmed.find((c) => c.changeId === set.changes[0]!.changeId)).toMatchObject({ appId: app, confirmedByKind: 'member', confirmedBy: who.actor.id, confirmedAt: Date.now(), proposedByKind: 'platform', removed: false, notice: 'waiting', noticeFailures: 0 });
     expect(q.secondPerson.find((c) => c.changeId === s.changes[0]!.id)).toMatchObject({ appId: net.site.id, proposedBy: 'access-sub-staff-1', notifiedAt: null });
+    // Told: listed for 7 days. (One never told stays 7 days more: the test above.)
+    await ok(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: [{ changeId: set.changes[0]!.changeId, removalTokenHash: await linkToken().hash }] }));
+    await ok(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId }));
     clock.advance(7 * DAY + 1000);
     const later = await ok(adminOn().platformQueue({ ...hana(), limit: 100 }));
     expect(later.confirmed.find((c) => c.changeId === set.changes[0]!.changeId)).toBeUndefined();

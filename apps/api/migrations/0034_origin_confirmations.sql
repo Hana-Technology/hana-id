@@ -43,8 +43,8 @@
 -- guarded_changes_second_person_insert, guarded_changes_second_person_no_replace, guarded_changes_second_person_update,
 -- guarded_changes_second_person_no_replace_update, guarded_changes_second_person_no_delete,
 -- guarded_changes_confirmation_gone, guarded_changes_platform_not_early, app_origins_platform_not_early,
--- app_origins_platform_not_early_update; and on `scopes`, scopes_app_user_ids_no_waiting_staff_origin and
--- scopes_app_user_ids_insert_rules. apps/api/test/migration-0034.test.ts checks every one is in the schema after
+-- app_origins_platform_not_early_update; and on `scopes`, scopes_app_user_ids_no_waiting_staff_origin,
+-- scopes_app_user_ids_insert_rules, scopes_id_fixed and scopes_no_delete_with_apps. apps/api/test/migration-0034.test.ts checks every one is in the schema after
 -- every later migration.
 --
 -- The database's clock is `(julianday('now') - 2440587.5) * 86400000.0` (ms), as 0028's and 0033's triggers read it.
@@ -294,6 +294,22 @@ BEGIN
    WHERE EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = NEW.scope_id AND a.deleted_at IS NULL
                   AND (a.auto_approve_policy IS NOT NULL OR a.auto_approve_pending IS NOT NULL
                        OR EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = 'policy_set' AND g.status IN ('pending', 'active'))));
+END;
+
+-- After PR 159's third review: a scope row keeps its id, and a scope with apps is never deleted. Otherwise a plain
+-- scope's row renamed onto a marked one's id (`UPDATE OR REPLACE … SET scope_id`, or the marked row deleted and the
+-- plain one renamed) would carry its apps' waiting staff web addresses or policies past every mark rule above. No code
+-- renames or deletes a scope row.
+CREATE TRIGGER scopes_id_fixed BEFORE UPDATE OF scope_id ON scopes
+WHEN NEW.scope_id IS NOT OLD.scope_id
+BEGIN
+  SELECT RAISE(ABORT, 'scopes: scope_id is fixed');
+END;
+
+CREATE TRIGGER scopes_no_delete_with_apps BEFORE DELETE ON scopes
+WHEN EXISTS (SELECT 1 FROM apps WHERE scope_id = OLD.scope_id)
+BEGIN
+  SELECT RAISE(ABORT, 'scopes: a scope with apps is never deleted');
 END;
 
 -- ---- 0033's three earliest-time triggers, replaced: a recorded confirmation's time is the one earlier time allowed ----

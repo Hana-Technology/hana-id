@@ -283,7 +283,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'admin.ackConfirmationNotice', ackConfirmationNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackConfirmationNotice(db, w, input));
   }
 
-  /** D931 (after PR 159's review): only the notice cron: a recipient refused; retried later, a bounded number of times. */
+  /** D931 (after PR 159's reviews): only the notice cron: a run failed; retried later, until 7 days after the confirmation. */
   noteConfirmationNoticeFailure(c: unknown) {
     return runRpc(this.env, 'admin.noteConfirmationNoticeFailure', noteConfirmationNoticeFailureInput, c, { actors: SYSTEM }, ({ input, db, w }) => noteConfirmationNoticeFailure(db, w, input));
   }

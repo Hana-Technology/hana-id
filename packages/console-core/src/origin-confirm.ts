@@ -57,13 +57,18 @@ export const armConfirmationLinksInput = ctx
   .strict();
 /** AdminRpc.ackConfirmationNotice (`system` only): every recipient accepted the notice (its links armed before). */
 export const ackConfirmationNoticeInput = ctx.extend({ requestId }).strict();
-/** AdminRpc.noteConfirmationNoticeFailure (`system` only): a recipient refused; the notice is retried later, a bounded number of times. */
+/** AdminRpc.noteConfirmationNoticeFailure (`system` only): a run failed; the notice is retried later, within CONFIRM_NOTICE_RETRY_MS. */
 export const noteConfirmationNoticeFailureInput = ctx.extend({ requestId }).strict();
 /**
- * A confirmation's notice is retried after a refused send at most this many runs (waiting 5 minutes more after each
- * failure, at most an hour: about a day in all), then left (its links work all the same, armed before the first send).
+ * After PR 159's third review: a confirmation's notice is retried until this long after the confirmation (the removal
+ * link's life and the queue's window), each failed run waiting 5 minutes more than the last, at most an hour (so at
+ * most about 170 tries), then left: an outage of hours or a weekend no longer abandons it.
  */
-export const CONFIRM_NOTICE_MAX_FAILURES = 24;
+export const CONFIRM_NOTICE_RETRY_MS = 7 * DAY;
+/** From this many failed runs a notice still retrying is reported as stuck (`notice_stuck`, about a day of failures). */
+export const CONFIRM_NOTICE_STUCK_FAILURES = 24;
+/** A notice never sent stays in the staff queue (as "Not told") this long after its retries ended. */
+export const CONFIRM_NOT_TOLD_SHOWN_MS = 7 * DAY;
 
 export type ConfirmOriginsInput = z.infer<typeof confirmOriginsInput>;
 export type ConfirmStaffOriginsInput = z.infer<typeof confirmStaffOriginsInput>;
@@ -125,11 +130,11 @@ export interface ConfirmationNotice {
   /** The proposing staff member's Access subject (a staff proposal): the notice names both people. */
   proposedBy?: string;
   changes: { changeId: string; origin: string; display: string; idn: boolean }[];
-  /** Earlier runs whose sends a recipient refused (the notice is left after CONFIRM_NOTICE_MAX_FAILURES). */
+  /** Earlier failed runs (retried until CONFIRM_NOTICE_RETRY_MS after the confirmation). */
   failures: number;
 }
 
-/** A confirmed web address in the staff queue (A11): for 7 days after its confirmation. */
+/** A confirmed web address in the staff queue (A11): for 7 days after its confirmation (14 if its notice never went out). */
 export interface ConfirmedQueueRow {
   changeId: string;
   appId: string;
@@ -146,9 +151,9 @@ export interface ConfirmedQueueRow {
   /** Removed since (by the removal link, an owner, staff or the platform): no longer working. */
   removed: boolean;
   /**
-   * Its notice (after PR 159's second review): `sent` (every recipient accepted), `waiting` (not tried yet), `retrying`
-   * (a recipient refused; `noticeFailures` runs so far), `not_sent` (left after CONFIRM_NOTICE_MAX_FAILURES: the
-   * confirmation stands, but people may not have been told).
+   * Its notice (after PR 159's reviews): `sent` (every recipient accepted), `waiting` (not tried yet), `retrying` (runs
+   * failed, `noticeFailures` so far; retried until 7 days after the confirmation), `not_sent` (the 7 days ended without
+   * it: the confirmation stands, but people may not have been told).
    */
   notice: 'sent' | 'waiting' | 'retrying' | 'not_sent';
   noticeFailures: number;

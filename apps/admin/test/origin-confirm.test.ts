@@ -457,7 +457,17 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
     expect((await confirmationRow(ids[0]!))!.notice_failures).toBe(1);
   });
 
-  it('after PR 159’s second review: a notice left after 24 failures is logged as notice_stuck on every run, from the stored count', async () => {
+  it('after PR 159’s third review: the notices whose 7 days ended unsent are logged as notice_not_sent on every run', async () => {
+    const api = overrideBinding(env.API, { confirmationNotices: async () => ({ ok: true, notices: [], stuck: 0, notSent: 2 }) });
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((l: unknown) => void errors.push(String(l)));
+    for (let run = 0; run < 2; run++) await runConfirmationNotices(envWith({ API: api }), new FakeEmail(), big());
+    const lines = errors.filter((l) => l.includes('notice_not_sent')).map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ step: 'origin_confirmed', code: 'notice_not_sent', count: 2 });
+  });
+
+  it('after PR 159’s reviews: a notice still failing after 24 runs (it keeps retrying, after an hour) is logged as notice_stuck on every run, from the stored count', async () => {
     const { ids } = await confirmedByStaff([`https://h-${uid().toLowerCase()}.partner.example`]);
     const requestId = (await confirmationRow(ids[0]!))!.request_id;
     for (let k = 0; k < 24; k++) expect(await env.API.noteConfirmationNoticeFailure({ actor: { kind: 'system', id: 'test' }, requestId, clientIp: '127.0.0.1' })).toMatchObject({ ok: true });

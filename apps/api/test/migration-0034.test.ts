@@ -58,6 +58,8 @@ const TRIGGERS_0034 = [
   'app_origins_platform_not_early_update',
   'scopes_app_user_ids_no_waiting_staff_origin',
   'scopes_app_user_ids_insert_rules',
+  'scopes_id_fixed',
+  'scopes_no_delete_with_apps',
 ] as const;
 /** 0033's triggers 0034 replaces: dropped and created again under the same name. */
 const REPLACED = ['guarded_changes_platform_not_early', 'app_origins_platform_not_early', 'app_origins_platform_not_early_update'];
@@ -429,6 +431,30 @@ describe('migration 0034_origin_confirmations', () => {
     // A new scope has no app: marked at its insert as before.
     expect(await refusal("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('snew', 'org_a', 'test', NULL, 1, 1, 1)")).toBe('accepted');
     expect(await refusal("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 'su'")).toBe('accepted');
+  });
+
+  it('after PR 159’s third review: a scope row is never renamed, nor deleted while it has apps (the reviewer’s two sequences)', async () => {
+    // A plain scope with an app whose staff web address waits, and a marked one.
+    await run("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('splain', 'org_a', 'test', 1, 1, 1)");
+    await run("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('smarked', 'org_a', 'test', NULL, 1, 1, 1)");
+    await run("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, created_by_kind, user_ids) VALUES ('app_plain', 'P', 'splain', 'org_a', 'pk_test_Ppppppppppppppppppppppp', 'hana', 'scope')");
+    await run("INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES ('gc_ren', 'app_plain', 'origin_add', 'https://rename.example', 'pending', 'hana', 'staff-1', 1, 'r_ren')");
+    // 1. Renamed onto the marked row's id, replacing it.
+    expect(await refusal("UPDATE OR REPLACE scopes SET scope_id = 'smarked' WHERE scope_id = 'splain'")).toMatch(/scope_id is fixed/u);
+    expect(await refusal("UPDATE scopes SET scope_id = 'sfree' WHERE scope_id = 'splain'")).toMatch(/scope_id is fixed/u);
+    // 2. A marked row with an app deleted, then the plain one renamed: neither step.
+    await run("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, created_by_kind, user_ids) VALUES ('app_marked', 'M', 'smarked', 'org_a', 'pk_test_Mmmmmmmmmmmmmmmmmmmmmmm', 'hana', 'app')");
+    expect(await refusal("DELETE FROM scopes WHERE scope_id = 'smarked'")).toMatch(/never deleted/u);
+    expect(await refusal("DELETE FROM scopes WHERE scope_id = 'splain'")).toMatch(/a scope with apps is never deleted/u);
+    expect(await refusal("UPDATE scopes SET scope_id = 'smarked' WHERE scope_id = 'splain'")).toMatch(/scope_id is fixed/u);
+    // A scope without apps still deletes (as 0026 allows for an unmarked one); other columns still change.
+    await run("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('sempty', 'org_a', 'test', NULL, 1, 1)");
+    expect(await refusal("DELETE FROM scopes WHERE scope_id = 'sempty'")).toBe('accepted');
+    expect(await refusal("UPDATE scopes SET scope_id = scope_id, first_session_at = 2 WHERE scope_id = 'splain'")).toBe('accepted');
+    expect((await db.prepare("SELECT scope_id, app_user_ids FROM scopes WHERE scope_id IN ('splain', 'smarked') ORDER BY scope_id").all()).results).toEqual([
+      { scope_id: 'smarked', app_user_ids: 1 },
+      { scope_id: 'splain', app_user_ids: 0 },
+    ]);
   });
 
   it('the database is whole, and applying the migrations again changes nothing', async () => {

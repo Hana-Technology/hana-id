@@ -7,7 +7,8 @@
 // doesn't recognise, all refuse. The required file is the latest migration the app's code reads (the API's 0034, the
 // console's 0007); a test holds each to its migrations folder.
 import { spawnSync } from 'node:child_process';
-import { dirname } from 'node:path';
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 export interface RequireMigrationsInput {
   /** The config the deploy uses (absolute) and its parsed content. */
@@ -15,12 +16,16 @@ export interface RequireMigrationsInput {
   config: Record<string, unknown>;
   binding: string;
   required: string;
+  /** The environment wrangler runs with (the wrapper's, without the variables it refuses). */
+  env?: NodeJS.ProcessEnv;
+  /** Whether a file exists (the required migration in the config's migrations folder). */
+  exists?: (path: string) => boolean;
   /** `pnpm exec wrangler <argv>` in the config's directory: its exit status and its stdout and stderr together. */
   wrangler?: (argv: string[]) => { status: number; output: string };
 }
 
-const runWrangler = (cwd: string) => (argv: string[]) => {
-  const r = spawnSync('pnpm', ['exec', 'wrangler', ...argv], { cwd, encoding: 'utf8' });
+const runWrangler = (cwd: string, env: NodeJS.ProcessEnv | undefined) => (argv: string[]) => {
+  const r = spawnSync('pnpm', ['exec', 'wrangler', ...argv], { cwd, encoding: 'utf8', ...(env ? { env } : {}) });
   return { status: r.status ?? 1, output: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 };
 
@@ -35,10 +40,14 @@ export function pendingFromList(output: string): string[] | null {
 export function requireMigrations(i: RequireMigrationsInput): string | null {
   if (!/^\d{4}_[A-Za-z0-9_-]+\.sql$/u.test(i.required)) return 'refused: --require-migrations names no migration file';
   const dbs = i.config.d1_databases as { binding?: unknown; database_name?: unknown }[] | undefined;
-  const d = Array.isArray(dbs) ? dbs.find((x) => x?.binding === i.binding) : undefined;
+  const d = Array.isArray(dbs) ? (dbs as { binding?: unknown; database_name?: unknown; migrations_dir?: unknown }[]).find((x) => x?.binding === i.binding) : undefined;
   const db = typeof d?.database_name === 'string' ? d.database_name : undefined;
   if (!db) return `refused: ${i.configPath} has no D1 database bound as ${i.binding}`;
-  const r = (i.wrangler ?? runWrangler(dirname(i.configPath)))(['d1', 'migrations', 'list', db, '--remote', '-c', i.configPath]);
+  // After PR 159's third review: wrangler answers "No migrations to apply" for a file it doesn't know, so the required
+  // file must be in the folder wrangler reads (`migrations_dir`, default `migrations`, beside the config).
+  const folder = resolve(dirname(i.configPath), typeof d?.migrations_dir === 'string' ? d.migrations_dir : 'migrations');
+  if (!(i.exists ?? existsSync)(join(folder, i.required))) return `refused: ${i.required} is not in ${folder}, the migrations folder wrangler reads for ${i.binding}: can't tell whether it is applied`;
+  const r = (i.wrangler ?? runWrangler(dirname(i.configPath), i.env))(['d1', 'migrations', 'list', db, '--remote', '-c', i.configPath]);
   if (r.status !== 0) return `refused: wrangler d1 migrations list ${db} --remote failed (exit ${r.status}): can't tell whether ${i.required} is applied`;
   const pending = pendingFromList(r.output);
   if (pending === null) return `refused: wrangler d1 migrations list ${db} --remote printed something unexpected: can't tell whether ${i.required} is applied`;

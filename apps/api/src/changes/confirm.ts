@@ -24,7 +24,9 @@ import {
   type ConfirmationNotice,
   type ConfirmationView,
   type ConfirmProposer,
-  CONFIRM_NOTICE_MAX_FAILURES,
+  CONFIRM_NOTICE_RETRY_MS,
+  CONFIRM_NOTICE_STUCK_FAILURES,
+  CONFIRM_NOT_TOLD_SHOWN_MS,
   CONFIRM_OTHER_APPS_SHOWN,
   ORIGIN_CONFIRM_LIMITS,
   ORIGIN_REMOVAL_LINK_MS,
@@ -386,7 +388,7 @@ interface NoticeRow {
  * AdminRpc.confirmationNotices: the confirmations whose notice hasn't gone out, one per confirmation call (its ledger
  * request id), oldest first, each with the org's security contacts (the admin Worker adds the alias and every owner).
  */
-export async function confirmationNotices(db: HotDb, limit: number, now: number): Promise<{ notices: ConfirmationNotice[]; stuck: number }> {
+export async function confirmationNotices(db: HotDb, limit: number, now: number): Promise<{ notices: ConfirmationNotice[]; stuck: number; notSent: number }> {
   const rows = await db.all<NoticeRow>(
     q`SELECT f.request_id, f.confirmed_at, f.app_id, a.name AS app_name, a.org_id, a.scope_id, s.environment, f.confirmed_by_kind, f.confirmed_by, g.proposed_by_kind, g.proposed_by,
              CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS key_label,
@@ -394,19 +396,23 @@ export async function confirmationNotices(db: HotDb, limit: number, now: number)
              (SELECT json_group_array(json_object('changeId', x.change_id, 'origin', x.origin)) FROM (SELECT change_id, origin FROM origin_confirmations WHERE request_id = f.request_id ORDER BY change_id) x) AS changes, f.failures
         FROM (SELECT request_id, MIN(confirmed_at) AS confirmed_at, MIN(change_id) AS first_change, app_id, confirmed_by_kind, confirmed_by, MAX(notice_failures) AS failures
                 FROM origin_confirmations WHERE notice_at IS NULL GROUP BY request_id
-               -- A refused send waits 5 minutes more after each failure (at most an hour), comes after every other, and is
-               -- left after CONFIRM_NOTICE_MAX_FAILURES runs: its links work anyway (armed before the first send).
-               HAVING MAX(notice_failures) < ${CONFIRM_NOTICE_MAX_FAILURES}
+               -- After PR 159's third review: a failed run waits 5 minutes more after each failure (at most an hour) and
+               -- comes after every never-failed one; it is retried until CONFIRM_NOTICE_RETRY_MS after the confirmation,
+               -- however many runs failed. A run reads at most its limit (50) notices.
+               HAVING MIN(confirmed_at) > ${now - CONFIRM_NOTICE_RETRY_MS}
                   AND (MAX(notice_failed_at) IS NULL OR MAX(notice_failed_at) <= ${now} - MIN(MAX(notice_failures), 12) * 300000)
                ORDER BY MAX(notice_failures) > 0, MIN(confirmed_at), request_id LIMIT ${limit}) f
         JOIN guarded_changes g ON g.id = f.first_change JOIN apps a ON a.id = f.app_id JOIN scopes s ON s.scope_id = a.scope_id
        ORDER BY f.confirmed_at, f.request_id`,
   );
-  // After PR 159's second review: how many confirmations of the last 7 days were left unannounced after the bounded
-  // retries (their links work; people may not have been told), so the admin Worker reports them on every run.
-  const stuck = await db.first<{ n: number }>(
-    q`SELECT COUNT(*) AS n FROM (SELECT request_id FROM origin_confirmations WHERE notice_at IS NULL GROUP BY request_id
-        HAVING MAX(notice_failures) >= ${CONFIRM_NOTICE_MAX_FAILURES} AND MIN(confirmed_at) > ${now - ORIGIN_REMOVAL_LINK_MS})`,
+  // After PR 159's reviews: how many notices are still retrying after CONFIRM_NOTICE_STUCK_FAILURES failures
+  // (`stuck`), and how many ended their 7 days without going out in the last 7 days (`notSent`): people may not have
+  // been told. The admin Worker reports both on every run.
+  const counts = await db.first<{ stuck: number | null; not_sent: number | null }>(
+    q`SELECT SUM(started > ${now - CONFIRM_NOTICE_RETRY_MS} AND failures >= ${CONFIRM_NOTICE_STUCK_FAILURES}) AS stuck,
+             SUM(started <= ${now - CONFIRM_NOTICE_RETRY_MS}) AS not_sent
+        FROM (SELECT MIN(confirmed_at) AS started, MAX(notice_failures) AS failures FROM origin_confirmations
+               WHERE notice_at IS NULL AND confirmed_at > ${now - CONFIRM_NOTICE_RETRY_MS - CONFIRM_NOT_TOLD_SHOWN_MS} GROUP BY request_id)`,
   );
   const notices = rows.map((r) => {
     const n: ConfirmationNotice = {
@@ -426,7 +432,7 @@ export async function confirmationNotices(db: HotDb, limit: number, now: number)
     } else n.proposedBy = r.proposed_by;
     return n;
   });
-  return { notices, stuck: stuck?.n ?? 0 };
+  return { notices, stuck: counts?.stuck ?? 0, notSent: counts?.not_sent ?? 0 };
 }
 
 const blob = (b64: string): ArrayBuffer => {
@@ -486,9 +492,10 @@ export async function ackConfirmationNotice(db: HotDb, w: Writer, i: { requestId
 }
 
 /**
- * AdminRpc.noteConfirmationNoticeFailure (`system` only): a recipient refused this run's send. The notice is offered
- * again later (5 minutes more after each failure, at most an hour) and left after CONFIRM_NOTICE_MAX_FAILURES; answers
- * how many runs failed, so the admin Worker reports a stuck one.
+ * AdminRpc.noteConfirmationNoticeFailure (`system` only): this run failed (owners unreadable, the email not rendered,
+ * the arming refused, a send refused). The notice is offered again later (5 minutes more after each failure, at most an
+ * hour) until CONFIRM_NOTICE_RETRY_MS after the confirmation; answers how many runs failed, so the admin Worker reports
+ * one stuck from CONFIRM_NOTICE_STUCK_FAILURES on.
  */
 export async function noteConfirmationNoticeFailure(db: HotDb, w: Writer, i: { requestId: string }): Promise<{ failures: number }> {
   if (w.actor.kind !== 'system') return refuse('forbidden', 'Only the notice job notes a notice’s failure');

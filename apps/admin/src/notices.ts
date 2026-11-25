@@ -13,8 +13,8 @@
 //                   sha256 (valid 7 days, from before the first send) → the alias, every security contact and every
 //                   owner, naming who confirmed (and, for a staff proposal, that staff added them) →
 //                   AdminRpc.ackConfirmationNotice once every send was accepted; any failure noted
-//                   (noteConfirmationNoticeFailure: retried later, left after 24 runs, `notice_stuck` logged on every
-//                   run while any is left). Token: HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ id).
+//                   (noteConfirmationNoticeFailure: retried with a back-off until 7 days after the confirmation;
+//                   `notice_stuck` logged from 24 failures, `notice_not_sent` once the 7 days end, on every run). Token: HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ id).
 //   member_invite   StaffRpc.pendingMemberNotices (kind invite) → every owner, the contacts and the alias, then the
 //                   invitee's link → StaffRpc.ackMemberNotice (the link works from the ack). Token: INVITE_LINK_KEY.
 //   owner_grant     (kind owner_grant) → every owner, the contacts and the alias, with the cancel link → ack (a
@@ -34,7 +34,7 @@
 // Budget (D280, D380): every RPC (the page, an org's name and contacts, the ack) and every email is one call of the
 // run's budget. A notice is started only when its lookups, every email and its ack fit what is left; otherwise it and
 // the rest of the page wait whole for the next run, so a notice is never sent without the room to ack it.
-import { CONFIRM_NOTICE_MAX_FAILURES, b64url, linkToken, linkTokenHash } from '@hana-id/console-core';
+import { CONFIRM_NOTICE_STUCK_FAILURES, b64url, linkToken, linkTokenHash } from '@hana-id/console-core';
 import type { MemberNotice } from '@hana-id/console-core';
 import type { ChangeNotice, Env } from './env.ts';
 import { mailLabel } from './env.ts';
@@ -632,8 +632,9 @@ const confirmerWords = (n: ConfirmationNotice, members: readonly MemberView[]): 
  * HMAC(CANCEL_LINK_KEY, "hana-id/origin-remove/v1" ‖ change id): a retry sends the same links. The budget rules of the
  * other steps: a notice starts only with room for its lookup, the arming, every email and its ack. Any failure (its
  * owners unreadable, its email not rendered, the arming refused, a send refused) is noted with the API
- * (noteConfirmationNoticeFailure), which offers it again later and leaves it after 24 runs; one left like that is
- * reported as `notice_stuck` (error level) on every run, from the API's stored count (after PR 159's second review).
+ * (noteConfirmationNoticeFailure), which offers it again later (5 minutes more each time, at most an hour) until 7 days
+ * after the confirmation (after PR 159's third review). From the API's stored counts, on every run: `notice_stuck`
+ * (error) while one has failed 24 times or more and still retries, `notice_not_sent` (error) for one whose 7 days ended.
  */
 export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, budget: Budget): Promise<StepResult> {
   const out: StepResult = { acked: 0, failed: 0, skipped: 0 };
@@ -653,15 +654,18 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
     log({ event: 'notice', step: 'origin_confirmed', outcome: 'error', code: page.code }, page.code === 'not_found' ? 'warn' : 'error');
     return out;
   }
+  // After PR 159's reviews: on every run, the notices still failing after CONFIRM_NOTICE_STUCK_FAILURES runs, and those
+  // whose 7 days of retries ended without them (`notSent`, for 7 days more).
   if (page.stuck > 0) log({ event: 'notice', step: 'origin_confirmed', outcome: 'rejected', code: 'notice_stuck', count: page.stuck }, 'error');
+  if (page.notSent > 0) log({ event: 'notice', step: 'origin_confirmed', outcome: 'rejected', code: 'notice_not_sent', count: page.notSent }, 'error');
   const orgs = new OrgLookups(env);
   const ctx = mailContext(env);
-  /** Notes a failed run with the API (so it backs off and is left after 24), and logs it; `notice_stuck` at the last. */
+  /** Notes a failed run with the API (so it backs off), and logs it; `notice_stuck` from CONFIRM_NOTICE_STUCK_FAILURES on. */
   const failed = async (target: string, orgId: string, code: string, extra: Record<string, string | number> = {}) => {
     out.failed++;
     const noted = budget.fits(0, 1) ? await env.API.noteConfirmationNoticeFailure({ ...systemCtx(), requestId: target }).catch(() => null) : null;
     const failures = noted?.ok ? noted.failures : null;
-    const stuck = failures !== null && failures >= CONFIRM_NOTICE_MAX_FAILURES;
+    const stuck = failures !== null && failures >= CONFIRM_NOTICE_STUCK_FAILURES;
     log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: stuck ? 'notice_stuck' : code, ...extra, ...(failures !== null ? { count: failures } : {}), ...(stuck ? { error: code } : {}) }, stuck ? 'error' : 'warn');
   };
   for (const n of page.notices) {
@@ -709,8 +713,8 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
       continue;
     }
     // A recipient already accepted isn't sent it again by this isolate (mail.ts's memo); the durable bound is the API's:
-    // a refused run is noted, retried later (5 minutes more each time, at most an hour) and left after
-    // CONFIRM_NOTICE_MAX_FAILURES runs.
+    // a refused run is noted and retried later (5 minutes more each time, at most an hour) until 7 days after the
+    // confirmation.
     const sent = await sendToAll(sender, budget, to, message, `origin_confirmed:${target}`);
     if (sent.outOfBudget) {
       out.skipped++;

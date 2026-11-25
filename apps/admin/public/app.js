@@ -1983,7 +1983,7 @@ function confirmedPanel(rows) {
   );
   return panel(
     'Confirmed in the last 7 days',
-    { hint: 'They started working when they were confirmed. Review each one: if one looks wrong, open its app to suspend the app or remove the web address. “Not told” means the email to the organisation failed every try: tell its owners yourself (docs/operations.md, notice_stuck).' },
+    { hint: 'They started working when they were confirmed. Review each one: if one looks wrong, open its app to suspend the app or remove the web address. “Email retrying” is tried again, at most an hour apart, for 7 days after the confirmation; “Not told” means the email to the organisation kept failing for 7 days: tell its owners yourself (docs/operations.md, notice_stuck).' },
     table(['Web address', 'App and organisation', 'Asked for by', 'Confirmed by', 'Now'], trs, { empty: 'Nothing was confirmed in the last 7 days.' }),
   );
 }

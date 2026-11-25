@@ -139,8 +139,8 @@ describe('the Platform queue’s second person (D931)', () => {
     // After PR 159's second review: whether the organisation was told (sent, retrying n, not told).
     expect(rows[0]!.textContent).toContain('Email retrying failed 2 times so far');
     expect(rows[1]!.textContent).toContain('Organisation told');
-    expect(rows[2]!.textContent).toContain('Not told the email failed 24 times');
-    expect(p.textContent).toContain('“Not told” means the email to the organisation failed every try');
+    expect(rows[2]!.textContent).toContain('Not told the email failed 170 times');
+    expect(p.textContent).toContain('“Not told” means the email to the organisation kept failing for 7 days');
     // Who asked: the platform key, by its label and id (a public id, not a secret).
     expect(rows[0]!.textContent).toContain('Platform key');
     expect(rows[0]!.textContent).toContain(PREVIEW_KEY_ID);

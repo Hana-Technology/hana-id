@@ -1,8 +1,8 @@
 // The build id of this checkout (./build-id.ts, D384), read from git, and the stamped `wrangler deploy` that each
 // Worker's `deploy` script runs through the one shared wrapper, ./stamped-deploy.ts (D406). Node only.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, isAbsolute, join } from 'node:path';
 import { BUILD_VAR, type BuildId, formatBuildId, parseBuildId } from './build-id.ts';
 import { requireMigrations } from './require-migrations.ts';
 import { repoRoot } from './index.ts';
@@ -86,19 +86,39 @@ export function resolveDeployConfig(config: string | undefined, cwd: string, exi
   return found ?? null;
 }
 
-/** A generated config, parsed (JSON with `//` comment lines), or null when it isn't one (TOML, missing, unreadable). */
-export function readDeployConfig(path: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): Record<string, unknown> | null {
-  if (!/\.jsonc?$/u.test(path)) return null;
+/** Keys JSON.parse reads as ordinary keys but a JavaScript object parser (wrangler's) may treat as the prototype. */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * A generated config, parsed (JSON with `//` comment lines), or why it isn't one we deploy: not JSON (TOML, missing,
+ * unreadable), or with a `__proto__`, `constructor` or `prototype` key at any depth (after PR 159's third review:
+ * `JSON.parse` keeps `"__proto__": {"vars": …}` as a plain key, wrangler's parser makes it the object's prototype, so
+ * the guard and wrangler would read different vars).
+ */
+export function readDeployConfig(path: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): Record<string, unknown> | string {
+  const unreadable = `refused: can't read ${path} to check which env it deploys (only the generated JSON configs are deployed)`;
+  if (!/\.jsonc?$/u.test(path)) return unreadable;
+  let text: string;
   try {
-    const text = read(path)
+    text = read(path)
       .split('\n')
       .filter((l) => !l.trimStart().startsWith('//'))
       .join('\n');
-    const c = JSON.parse(text) as unknown;
-    return c !== null && typeof c === 'object' && !Array.isArray(c) ? (c as Record<string, unknown>) : null;
   } catch {
-    return null;
+    return unreadable;
   }
+  let unsafe: string | null = null;
+  let c: unknown;
+  try {
+    c = JSON.parse(text, (key, value: unknown) => {
+      if (UNSAFE_KEYS.has(key)) unsafe ??= key;
+      return value;
+    });
+  } catch {
+    return unreadable;
+  }
+  if (unsafe !== null) return `refused: ${path} has a "${unsafe}" key, which wrangler may read differently from this check`;
+  return c !== null && typeof c === 'object' && !Array.isArray(c) ? (c as Record<string, unknown>) : unreadable;
 }
 
 /**
@@ -108,8 +128,56 @@ export function readDeployConfig(path: string, read: (path: string) => string = 
  * API's, whose config always names its env.
  */
 export function localConfigProblem(config: Record<string, unknown>, file: string): string | null {
+  // After PR 159's third review: an `env` section's vars replace the top-level ones when wrangler is given that env
+  // (`--env`, or CLOUDFLARE_ENV), so a config with one isn't checked as wrangler would read it. Generated configs have none.
+  if (Object.hasOwn(config, 'env')) return `refused: ${file} has an "env" section (each env has its own generated config, with none)`;
   const name = (config.vars as Record<string, unknown> | undefined)?.ENV_NAME;
   if (typeof name === 'string' && /^local/u.test(name)) return `refused: ${file} is for ${name}, a local* env: local* envs run on wrangler dev, never deployed`;
+  return null;
+}
+
+/**
+ * Environment variables that change what wrangler deploys from a config: `CLOUDFLARE_ENV` picks one of its `env`
+ * sections (with no such section, wrangler warns and deploys under that env name), `WRANGLER_CI_OVERRIDE_NAME` the
+ * Worker's name. The wrapper refuses them in its own environment and in a `.env` file wrangler would load, and runs
+ * wrangler with them removed (after PR 159's third review).
+ */
+export const WRANGLER_ENV_REFUSED = ['CLOUDFLARE_ENV', 'WRANGLER_CI_OVERRIDE_NAME'] as const;
+
+/** The process environment for wrangler: this one without WRANGLER_ENV_REFUSED. */
+export function wranglerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const k of WRANGLER_ENV_REFUSED) delete out[k];
+  return out;
+}
+
+/**
+ * Why the environment wrangler would run with is refused, or null: one of WRANGLER_ENV_REFUSED set in this process, or
+ * set by a `.env`/`.env.*` file in `dirs` (wrangler loads `.env` and `.env.local` from the directory it runs in, and
+ * `.env.<env>` with an env; every `.env*` there and in the config's directory is read, to be safe).
+ */
+export function wranglerEnvProblem(env: NodeJS.ProcessEnv, dirs: readonly string[], listDir: (dir: string) => string[], read: (path: string) => string): string | null {
+  const set = WRANGLER_ENV_REFUSED.find((k) => env[k] !== undefined);
+  if (set) return `refused: ${set} is set: it changes what wrangler deploys from the config; unset it`;
+  const assigns = new RegExp(`^\\s*(?:export\\s+)?(${WRANGLER_ENV_REFUSED.join('|')})\\s*[=:]`, 'mu');
+  for (const dir of new Set(dirs)) {
+    let names: string[];
+    try {
+      names = listDir(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names.filter((n) => /^\.env(?:\..+)?$/u.test(n)).sort()) {
+      let text: string;
+      try {
+        text = read(join(dir, name));
+      } catch {
+        return `refused: can't read ${join(dir, name)} to check what wrangler would load from it`;
+      }
+      const m = assigns.exec(text);
+      if (m) return `refused: ${join(dir, name)} sets ${m[1]}, which changes what wrangler deploys from the config; remove it`;
+    }
+  }
   return null;
 }
 
@@ -128,15 +196,19 @@ export interface StampedDeployDeps {
   exists?: (path: string) => boolean;
   /** The directory the deploy runs from (the default: the current directory). */
   cwd?: string;
-  /** Runs wrangler with this argv, output to the terminal; returns its exit status. */
-  wrangler?: (argv: string[]) => number;
+  /** Runs wrangler with this argv and environment, output to the terminal; returns its exit status. */
+  wrangler?: (argv: string[], env: NodeJS.ProcessEnv) => number;
+  /** This process's environment (the default: process.env). */
+  env?: NodeJS.ProcessEnv;
+  /** The names in a directory (the `.env` files' check); the default reads the directory. */
+  listDir?: (dir: string) => string[];
   /** The migration check (./require-migrations.ts), on the same resolved config. */
-  requireMigrations?: (i: { configPath: string; config: Record<string, unknown>; binding: string; required: string }) => string | null;
+  requireMigrations?: (i: { configPath: string; config: Record<string, unknown>; binding: string; required: string; env: NodeJS.ProcessEnv }) => string | null;
   log?: (line: string) => void;
 }
 
-const runWrangler = (argv: string[]): number => {
-  const res = spawnSync('wrangler', argv, { stdio: 'inherit' });
+const runWrangler = (argv: string[], env: NodeJS.ProcessEnv): number => {
+  const res = spawnSync('wrangler', argv, { stdio: 'inherit', env });
   if (res.error) throw res.error;
   return res.status ?? 1;
 };
@@ -160,16 +232,21 @@ export function stampedDeploy(argv: readonly string[], deps: StampedDeployDeps =
   const path = resolveDeployConfig(args.config, cwd, deps.exists);
   if (path === null) return refuse("refused: no wrangler config here (generate it with the app's gen script first)");
   const config = readDeployConfig(path, deps.readConfig);
-  if (config === null) return refuse(`refused: can't read ${path} to check which env it deploys (only the generated JSON configs are deployed)`);
+  if (typeof config === 'string') return refuse(config);
   const local = localConfigProblem(config, path);
   if (local) return refuse(local);
+  const read = deps.readConfig ?? ((p: string) => readFileSync(p, 'utf8'));
+  const env = deps.env ?? process.env;
+  const envProblem = wranglerEnvProblem(env, [cwd, dirname(path)], deps.listDir ?? ((d) => readdirSync(d)), read);
+  if (envProblem) return refuse(envProblem);
+  const clean = wranglerEnv(env);
   if (args.migrations) {
-    const why = (deps.requireMigrations ?? defaultRequireMigrations)({ configPath: path, config, ...args.migrations });
+    const why = (deps.requireMigrations ?? defaultRequireMigrations)({ configPath: path, config, ...args.migrations, env: clean });
     if (why) return refuse(why);
   }
   const build = (deps.build ?? localBuild)();
   log(`Build ${build.id} (HEAD ${build.head})${build.dirty ? ': the tree has uncommitted changes, so this deploy is stamped -dirty' : ''}`);
-  return (deps.wrangler ?? runWrangler)(stampedDeployArgv(build.id, path, args.dryRun));
+  return (deps.wrangler ?? runWrangler)(stampedDeployArgv(build.id, path, args.dryRun), clean);
 }
 
-const defaultRequireMigrations = (i: { configPath: string; config: Record<string, unknown>; binding: string; required: string }): string | null => requireMigrations(i);
+const defaultRequireMigrations = (i: { configPath: string; config: Record<string, unknown>; binding: string; required: string; env: NodeJS.ProcessEnv }): string | null => requireMigrations(i);

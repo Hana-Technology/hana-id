@@ -92,6 +92,12 @@ address is masked), a sign-in again by code in the bar (its controls reachable a
 forward. The page has one `header`, no `nav`, and a skip link that moves focus to `main#app` without changing the
 page's address.
 
+A wallet used on more apps than one answer carries (D922): `tests/home.spec.ts` "more apps than the list carries" routes
+a list of 10 of 24 apps with `appsTotal`, checks the row's "and 14 more apps", the wallet page's line and "Show all apps"
+(one `?scopeId=…&all=1` read, every app shown, focus on the first new one; back on the list the row still names 10),
+and saves its screens with `HANA_SHOTS_DIR`. The
+approval window's details in the chain's own unit (weibars on Hedera) are in `tests/approval-summary.spec.ts`.
+
 Passport Home's views and Back (D893): `tests/home.spec.ts` walks the front page as rows (opened with a click, Enter and
 Space), the headings and the window's title of each view ("Your wallets", "Wallet details", "App details", "Devices and
 auto-approve"), each group's empty and failed state, and, in all three browsers, Back and Forward: one entry per view

@@ -28,3 +28,12 @@ export const isDisplaySafeText = (text: string): boolean => !UNSAFE_MULTILINE.te
 
 /** One-line text (app names, policy labels and contract names): no control character at all. */
 export const isDisplaySafeLine = (text: string): boolean => !UNSAFE_LINE.test(text);
+
+const UNSAFE_LINE_ALL = new RegExp(String.raw`[\p{Cc}${INVISIBLE_CHARS}]`, 'gu');
+
+/**
+ * One-line text with every character `isDisplaySafeLine` refuses (controls C0, DEL and C1, bidi controls, zero-width and
+ * other invisible characters) replaced by "?": for text printed to a terminal or a log that may hold a partner's raw
+ * key or words, so an escape sequence can't rewrite the screen.
+ */
+export const displaySafeLine = (text: string): string => text.replace(UNSAFE_LINE_ALL, '?');

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { purgeDirectory } from '../src/changes/retention.ts';
 import { syncAfterLogin } from '../src/directory/sync.ts';
 import { HotDb } from '../src/changes/db.ts';
-import { HOME_APPS_ENDPOINT, HOME_APPS_PER_IP_MINUTE, HOME_APPS_PER_KEY_MINUTE, HOME_LIST_PAGE, HOME_MINE_MAX, HOME_SCOPE_READS, HOME_SEARCH_PER_KEY_MINUTE } from '../src/home/apps.ts';
+import { HOME_APPS_ALL_MAX, HOME_APPS_ALL_PER_IP_MINUTE, HOME_APPS_ALL_PER_KEY_MINUTE, HOME_APPS_ENDPOINT, HOME_APPS_PER_IP_MINUTE, HOME_APPS_PER_SCOPE, HOME_APPS_PER_KEY_MINUTE, HOME_LIST_PAGE, HOME_MINE_MAX, HOME_SCOPE_READS, HOME_SEARCH_PER_KEY_MINUTE } from '../src/home/apps.ts';
 import { homeCoverage } from '../src/home/coverage.ts';
 import type { ConfigView, ScopeView } from '../src/views.ts';
 import { clearViewCaches } from '../src/views.ts';
@@ -60,6 +60,8 @@ interface ScopeEntry {
   supportId?: string;
   addresses?: { chain: string; address: string }[];
   apps: AppRow[];
+  appsTotal: number;
+  appsOpen: number;
 }
 interface Answer {
   scopes: ScopeEntry[];
@@ -138,6 +140,50 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 const getScopeCalls = () => near.viewCalls.filter((c) => c.method === 'get_scope').length;
+
+/**
+ * A D1 that counts each statement and the rows it reads (`meta.rows_read`, what the free plan bills, D417), through
+ * `prepare` and `batch` alike (the listing is one batch), as home-devices.test.ts pins the vault's read.
+ */
+function countingDb(db: D1Database): { db: D1Database; statements: string[]; rowsRead: () => number } {
+  const statements: string[] = [];
+  let rows = 0;
+  const note = (sql: string, meta: { rows_read?: number } | undefined) => {
+    statements.push(sql.replace(/\s+/gu, ' ').slice(0, 60));
+    rows += meta?.rows_read ?? 0;
+  };
+  const inner = new WeakMap<object, { st: D1PreparedStatement; sql: string }>();
+  const wrap = (st: D1PreparedStatement, sql: string): D1PreparedStatement => {
+    const w = {
+      bind: (...v: unknown[]) => wrap(st.bind(...v), sql),
+      first: async (col?: string) => {
+        const r = await st.all();
+        note(sql, r.meta);
+        const row = (r.results[0] ?? null) as Record<string, unknown> | null;
+        return col === undefined ? row : (row?.[col] ?? null);
+      },
+      all: async () => {
+        const r = await st.all();
+        note(sql, r.meta);
+        return r;
+      },
+      run: async () => {
+        const r = await st.run();
+        note(sql, r.meta);
+        return r;
+      },
+    };
+    inner.set(w, { st, sql });
+    return w as unknown as D1PreparedStatement;
+  };
+  const batch = async (list: D1PreparedStatement[]) => {
+    const real = list.map((w) => inner.get(w as object)!);
+    const out = await db.batch(real.map((r) => r.st));
+    out.forEach((r, i) => note(real[i]!.sql, r.meta));
+    return out;
+  };
+  return { db: { prepare: (sql: string) => wrap(db.prepare(sql), sql), batch } as unknown as D1Database, statements, rowsRead: () => rows };
+}
 
 describe('homeCoverage: each row of the coverage table', () => {
   const now = 1_000;
@@ -237,17 +283,23 @@ describe('GET /v1/home/apps: the list and the overlay', () => {
     expect(other).not.toHaveProperty('addresses');
   });
 
-  it('D925: each listing says whether its apps share a wallet several partners use (a marked scope), mine or not', async () => {
+  it('D925: the user’s own listing says whether its apps share a wallet several partners use (a marked scope); nobody else’s does', async () => {
     const marked = await seedApp({ sharedScope: true });
     const plain = await seedApp();
     near.allowShared.add(marked.scope).add(plain.scope);
-    await seedUser(marked.scope);
-    await seedUser(plain.scope);
-    const id = await newIdentity();
+    // Its own Google account, so the overlay other tests measure isn't grown by these rows.
+    const sub = `marked-${uid()}`;
+    await seedUser(marked.scope, { sub });
+    await seedUser(plain.scope, { sub });
+    const id = await newIdentity({ sub });
     expect(await one(id, marked.scope)).toMatchObject({ mine: true, sharedScope: true });
     expect(await one(id, plain.scope)).toMatchObject({ mine: true, sharedScope: false });
+    // PR 153's review: someone else's listing never says (a stranger browsing the list learns nothing of the mark).
     const stranger = await newIdentity({ sub: `nobody-${uid()}` });
-    expect(await one(stranger, marked.scope)).toMatchObject({ mine: false, sharedScope: true });
+    const theirs = await one(stranger, marked.scope);
+    expect(theirs).toMatchObject({ mine: false });
+    expect(theirs).not.toHaveProperty('sharedScope');
+    expect((await walk()).filter((x) => !x.mine).some((x) => 'sharedScope' in x)).toBe(false);
   });
 
   it('only addresses at key_index 0, the ones Home can derive', async () => {
@@ -541,6 +593,8 @@ describe('an unlaunched app (no first login, D462)', () => {
     const unlaunched = await seedApp({ scope: launched.scope, firstLogin: null, origins: ['https://staging.partner.test'] });
     const seen = await one(await newIdentity(), launched.scope);
     expect(seen!.apps.map((a) => a.appId)).toEqual([launched.id]);
+    // The count follows the same rule: a stranger isn't told an unlaunched app exists.
+    expect(seen!.appsTotal).toBe(1);
     expect(JSON.stringify(seen)).not.toContain('staging.partner.test');
     expect((await list(await newIdentity(), `?appId=${unlaunched.id}`)).scopes).toEqual([]);
     expect((await list(await newIdentity(), `?q=${encodeURIComponent(await nameOf(unlaunched.id))}`)).scopes).toEqual([]);
@@ -548,6 +602,7 @@ describe('an unlaunched app (no first login, D462)', () => {
     const sub = `own-${uid()}`;
     await seedUser(launched.scope, { sub });
     expect((await one(await newIdentity({ sub }), launched.scope))!.apps.map((a) => a.appId).sort()).toEqual([launched.id, unlaunched.id].sort());
+    expect((await one(await newIdentity({ sub }), launched.scope))!.appsTotal).toBe(2);
   });
 });
 
@@ -629,13 +684,90 @@ describe('paging and the free-plan bounds (D417)', () => {
     expect(await one(await newIdentity(), app.scope)).toMatchObject({ coverage: 'none' });
   });
 
-  it('an app or origin cap holds: at most 10 apps a scope, 5 origins an app', async () => {
+  it('an app or origin cap holds: 10 apps a scope in every answer but the explicit full one (up to 100), 5 origins an app; every scope counts its apps (D922)', async () => {
+    expect([HOME_APPS_PER_SCOPE, HOME_APPS_ALL_MAX]).toEqual([10, 100]);
     const scope = `s${uid()}`;
     const origins = Array.from({ length: 8 }, (_, i) => `https://o${i}.example.com`);
-    for (let i = 0; i < 12; i++) await seedApp({ scope, origins });
-    const entry = await one(await newIdentity(), scope);
-    expect(entry?.apps).toHaveLength(10);
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) ids.push((await seedApp({ scope, origins })).id);
+    // The list: the first 10, and the count, so Home says "and 2 more" instead of hiding them.
+    const listed = (await walk()).find((s) => s.scopeId === scope);
+    expect(listed?.apps).toHaveLength(10);
+    expect([listed?.appsTotal, listed?.appsOpen]).toEqual([12, 12]);
+    // One scope by its id or an app's id ("Check now", the partner's link): still 10, with the count.
+    expect((await one(await newIdentity(), scope))?.apps).toHaveLength(10);
+    expect((await list(await newIdentity(), `?appId=${ids[11]}`)).scopes[0]?.apps).toHaveLength(10);
+    // The explicit full answer (Home's "Show all apps"): every one of them, the list's 10 first.
+    const entry = (await list(await newIdentity(), `?scopeId=${scope}&all=1`)).scopes[0];
+    expect(entry?.apps.map((a) => a.appId).sort()).toEqual([...ids].sort());
+    expect(entry?.apps.slice(0, 10).map((a) => a.appId)).toEqual(listed?.apps.map((a) => a.appId));
+    expect(entry?.appsTotal).toBe(12);
     expect(entry?.apps[0]?.origins).toHaveLength(5);
+    expect((await list(await newIdentity(), `?appId=${ids[11]}&all=1`)).scopes[0]?.apps).toHaveLength(12);
+  });
+
+  it('the full answer stops at 100 apps and still counts them all', async () => {
+    const scope = `s${uid()}`;
+    for (let i = 0; i < HOME_APPS_ALL_MAX + 3; i++) await seedApp({ scope, origins: [] });
+    const entry = (await list(await newIdentity(), `?scopeId=${scope}&all=1`)).scopes[0];
+    expect(entry?.apps).toHaveLength(HOME_APPS_ALL_MAX);
+    expect(entry?.appsTotal).toBe(HOME_APPS_ALL_MAX + 3);
+  });
+
+  it('a stranger’s count: the listed apps (D462), deleted, suspended and no-address ones included; `appsOpen` leaves out the deleted and suspended (D922’s review)', async () => {
+    const live = await seedApp();
+    await seedApp({ scope: live.scope, suspendedBy: 1 });
+    const gone = await seedApp({ scope: live.scope });
+    await env.DB.prepare('UPDATE apps SET deleted_at = 5 WHERE id = ?1').bind(gone.id).run();
+    await seedApp({ scope: live.scope, origins: [] });
+    // Never signed in: not a stranger's, so not in their count.
+    await seedApp({ scope: live.scope, firstLogin: null });
+    const seen = await one(await newIdentity(), live.scope);
+    expect(seen?.apps).toHaveLength(4);
+    expect([seen?.appsTotal, seen?.appsOpen]).toEqual([4, 2]);
+    expect(seen?.apps.map((a) => a.status).sort()).toEqual(['active', 'active', 'deleted', 'suspended']);
+  });
+
+  it('the route’s Google client is the list’s in the full answer too: only the first 10 live apps’ web clients are preferred (D922’s review)', async () => {
+    const scope = `s${uid()}`;
+    const first = `${uid()}.apps.googleusercontent.com`;
+    const later = `${uid()}.apps.googleusercontent.com`;
+    near.clients[first] = scope;
+    near.clients[later] = scope;
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) ids.push((await seedApp({ scope })).id);
+    // Only the 12th app (never in a list answer) names a web client: the later one.
+    await env.DB.prepare('UPDATE apps SET google_web_client_id = ?2 WHERE id = ?1').bind(ids[11], later).run();
+    clearViewCaches();
+    const short = await one(await newIdentity(), scope);
+    clearViewCaches();
+    const full = (await list(await newIdentity(), `?scopeId=${scope}&all=1`)).scopes[0];
+    expect(full?.apps).toHaveLength(12);
+    expect(full?.googleClientId).toBe(short?.googleClientId);
+  });
+
+  it('what one-scope answers cost D1 (rows read, D417): a scope within the limit is never counted; one over it, once; the full form below 3× (D922’s review)', async () => {
+    const id = await newIdentity();
+    // A scope of 3 apps: the overlay read and the listing only; its count is what the listing read.
+    const small = `s${uid()}`;
+    for (let i = 0; i < 3; i++) await seedApp({ scope: small, origins: ['https://a.example.com', 'https://b.example.com'] });
+    const smallDb = countingDb(env.DB);
+    expect((await get(id, `?scopeId=${small}`, { env: { DB: smallDb.db } })).status).toBe(200);
+    expect(smallDb.statements).toHaveLength(2);
+    expect(smallDb.rowsRead()).toBeLessThanOrEqual(45);
+    // A scope of 100 apps: the listing reads every app row (its ORDER BY), 11 apps' origins, then one count.
+    const scope = `s${uid()}`;
+    for (let i = 0; i < 100; i++) await seedApp({ scope, origins: ['https://a.example.com', 'https://b.example.com'] });
+    const shortDb = countingDb(env.DB);
+    const short = (await (await get(id, `?scopeId=${scope}`, { env: { DB: shortDb.db } })).json()) as Answer;
+    expect(short.scopes[0]?.appsTotal).toBe(100);
+    expect(shortDb.statements).toHaveLength(3);
+    expect(shortDb.rowsRead()).toBeLessThanOrEqual(380);
+    // The full form: 100 apps' origins, and no count (all of them came back).
+    const fullDb = countingDb(env.DB);
+    expect((await get(id, `?scopeId=${scope}&all=1`, { env: { DB: fullDb.db } })).status).toBe(200);
+    expect(fullDb.statements).toHaveLength(2);
+    expect(fullDb.rowsRead()).toBeLessThanOrEqual(560);
   });
 });
 
@@ -680,6 +812,37 @@ describe('every refusal, and the limits', () => {
   it('a malformed cursor, scope id or app id is 400', async () => {
     const id = await newIdentity();
     for (const q of ['?cursor=UPPER', '?scopeId=a!b', '?appId=nope', '?q=x']) expect((await get(id, q)).status).toBe(400);
+  });
+
+  it('all=1 only beside scopeId or appId, once, as the second parameter (D922)', async () => {
+    const id = await newIdentity();
+    for (const q of ['?all=1', '?q=abc&all=1', '?cursor=abc&all=1', '?scopeId=abc&all=2', '?scopeId=abc&all=', '?scopeId=abc&all=1&all=1', '?all=1&scopeId=abc', '?scopeId=abc&appId=app_x', '?scopeId=abc&other=1']) {
+      expect((await get(id, q)).status, q).toBe(400);
+    }
+    expect((await get(id, '?scopeId=abc&all=1')).status).toBe(200);
+  });
+
+  it(`the full answer has its own windows: ${HOME_APPS_ALL_PER_KEY_MINUTE} a minute per Home key, ${HOME_APPS_ALL_PER_IP_MINUTE} per IP; an ordinary one-scope read keeps the list’s`, async () => {
+    const { startOfMinuteClock } = await import('./helpers.ts');
+    await startOfMinuteClock();
+    const id = await newIdentity();
+    const ip = `10.9.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
+    for (let i = 0; i < HOME_APPS_ALL_PER_KEY_MINUTE; i++) expect((await get(id, '?scopeId=abc&all=1', { ip })).status).toBe(200);
+    const res = await get(id, '?scopeId=abc&all=1', { ip });
+    expect(res.status).toBe(429);
+    expect(((await res.json()) as { error: string }).error).toContain('full app lists per Home key');
+    // The list's window is not spent by them, and an ordinary one-scope read still answers.
+    expect((await get(id, '?scopeId=abc', { ip })).status).toBe(200);
+    // Per IP: other Home keys from the same address.
+    const ip2 = `10.8.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250)}`;
+    let used = 0;
+    while (used < HOME_APPS_ALL_PER_IP_MINUTE) {
+      const k = await newIdentity();
+      for (let i = 0; i < HOME_APPS_ALL_PER_KEY_MINUTE && used < HOME_APPS_ALL_PER_IP_MINUTE; i++, used++) expect((await get(k, '?scopeId=abc&all=1', { ip: ip2 })).status).toBe(200);
+    }
+    const byIp = await get(await newIdentity(), '?scopeId=abc&all=1', { ip: ip2 });
+    expect(byIp.status).toBe(429);
+    expect(((await byIp.json()) as { error: string }).error).toContain('full app lists per IP');
   });
 
   it(`the per-IP limit (${HOME_APPS_PER_IP_MINUTE} a minute) answers 429`, async () => {

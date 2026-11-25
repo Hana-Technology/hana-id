@@ -22,7 +22,7 @@
 import { isDisplaySafeLine } from '../display-safe.ts';
 import { toHex } from '../bytes.ts';
 import { KNOWN_TOKENS, type KnownTokenList, type TokenNetwork, imitatedSymbolOn, knownToken } from '../known-tokens.ts';
-import { STELLAR_MAINNET_PASSPHRASE, evmChainInfo } from '../networks.ts';
+import { EVM_NATIVE_DECIMALS, STELLAR_MAINNET_PASSPHRASE, evmChainInfo } from '../networks.ts';
 import type { NearAction } from '../near/codec.ts';
 import { isNearAccountId } from '../addresses.ts';
 import { type ContractChain, DEMO_CHECK_IN_NAME, STELLAR_TESTNET_PASSPHRASE, verifiedContract } from '../verified-contracts.ts';
@@ -449,7 +449,7 @@ const sameEvm = (a: string, b: string): boolean => a.toLowerCase() === b.toLower
 
 function evmNative(chainId: number, wei: bigint): string {
   const info = evmChainInfo(chainId);
-  return info ? `${displayUnits(wei, 18)} ${info.nativeSymbol}` : `${displayUnits(wei, 18)} of this network’s coin`;
+  return info ? `${displayUnits(wei, EVM_NATIVE_DECIMALS)} ${info.nativeSymbol}` : `${displayUnits(wei, EVM_NATIVE_DECIMALS)} of this network’s coin`;
 }
 
 /** The network by its plain name ("Base Sepolia (test network)"); its number is in the details only. */

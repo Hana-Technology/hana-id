@@ -5,6 +5,7 @@ import {
   CHECK_MARKS,
   decodeMessage,
   displayPartnerName,
+  displaySafeLine,
   isDisplaySafeLine,
   isDisplaySafeText,
   parseWindowMessage,
@@ -128,6 +129,20 @@ describe('the shared module (D904): the same rule as before, on every code point
     const sub = await import('@hana-id/core/display-safe');
     expect(sub.isDisplaySafeLine).toBe(isDisplaySafeLine);
     expect(sub.isDisplaySafeText).toBe(isDisplaySafeText);
-    expect(Object.keys(sub).sort()).toEqual(['isDisplaySafeLine', 'isDisplaySafeText']);
+    expect(Object.keys(sub).sort()).toEqual(['displaySafeLine', 'isDisplaySafeLine', 'isDisplaySafeText']);
+  });
+
+  it('displaySafeLine replaces exactly what isDisplaySafeLine refuses with "?" (D922, PR 150’s review), on every code point', () => {
+    const differ: string[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const c = String.fromCodePoint(cp);
+      const out = displaySafeLine(`a${c}b`);
+      if (out !== (isDisplaySafeLine(c) ? `a${c}b` : 'a?b')) differ.push(`U+${cp.toString(16)}`);
+    }
+    expect(differ).toEqual([]);
+    expect(displaySafeLine('\u001b]0;pwned\u0007\u001b[2J')).toBe('?]0;pwned??[2J');
+    expect(displaySafeLine('ünï “q” Coffee Club')).toBe('ünï “q” Coffee Club');
+    expect(isDisplaySafeLine(displaySafeLine('x\u202ey\u200bz\u0085'))).toBe(true);
   });
 });

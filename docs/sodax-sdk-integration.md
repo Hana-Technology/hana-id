@@ -6,7 +6,11 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
 for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `feat/sodax-followups`, from `next`, not merged, not deployed: Sodax's public
+Last verified: 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
+answers to D923 (D926): the fork holding the Stellar change (section 2, "The Stellar change, on our fork"), the
+widget decided as one app per partner (section 12), switching off decided, the worked example's home (section 2), "Open";
+nothing else re-checked); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
+in weibars on Hedera, D922); 2026-11-25 (branch `feat/sodax-followups`, from `next`, not merged, not deployed: Sodax's public
 source read at `7c1ff2e` (main) and the tags `@sdks@2.3.0` and `@sdks@2.4.0-rc.1`, and a local test against the
 published 2.3.0 packages, stock and with the Stellar change applied to their build output (D923): the summary, sections
 1, 2, 6 ("Sodax's other chains"), 7, 8, 9 and "Open", and the new sections 10 (Sodax's public source), 11 (the naming
@@ -42,7 +46,7 @@ talked to Sodax (D913); the spec is `partner-platform-spec.md`.
 | Our wallet in Sodax's EVM wallet list | **Works with no Sodax-specific code**: create the client and "Journear Passport" appears (EIP-6963) |
 | Our wallet in Sodax's Stellar wallet list | **Needs a change in Sodax's kit**: its Stellar Wallets Kit can't take an extra module. The change is written and tested locally, **not sent** (section 2, D923) |
 | Signing through Sodax's own wallet providers | **Works** on EVM and (with the change above) on Stellar; a test app is refused on mainnets, as designed; with the change, Sodax keeps our Stellar error code |
-| Inside Sodax's swap widget (an iframe on the partner's page) | **Works only if every page around the widget is a registered web address of the app**; the approval window names the widget's address, not the partner's page (section 12) |
+| Inside Sodax's swap widget (an iframe on the partner's page) | **Works only if every page around the widget is a registered web address of the app**; decided: one app per partner listing the widget's address and the partner's pages (D926); the approval window names the widget's address, not the partner's page (section 12) |
 | Sodax's built-in Hana Wallet entries | Sodax's "Hana" calls also catch our Stellar module (`hana-id`); hosts can now pick another id (`journear-passport`, D923; section 11) |
 | One wallet across partner sites | **Works** (one scope); the sign-in and approval windows say the wallet is also used on other apps (D912) |
 | A switch in Sodax's portal | **Missing**: no service-to-service API exists; apps are made by Journear staff |
@@ -129,8 +133,28 @@ inserts our hidden frame at once (one page load and one `GET /v1/app`), so creat
 and none of our SDK; with it on, our SDK comes as 3 chunks of 106 kB minified, 35 kB gzipped, against 8.45 MB (2.25 MB
 gzipped) of the stand-in widget's own page code.
 
-**A worked example** (2026-11-25, D923; outside the repository, in the review bundle `sodax-bundle/example/`, to move
-to the sample-partner repository later): an add-on shaped like Sodax's optional Privy email login (a sub-path,
+**The Stellar change, on our fork** (2026-11-25, D926). The Tech Lead chose a public fork over sending it now ("public
+fork is fine. use Hana-Technology org."): `https://github.com/Hana-Technology/sodax-sdks`, a fork of
+`gosodax/sodax-sdks`, branch `feat/stellar-wallet-modules` = Sodax's `main` @ `7c1ff2e1` plus the two commits of the
+review folder's `stellar-modules.patch` (`ef43cca2` fix(wallet-sdk-core), `10b651f8` feat(wallet-sdk-react); the same
+tree as the patch, checked), authored under the Tech Lead's git identity. A local clone is in
+`~/Documents/sodax-sdks-fork`, with `origin` the fork and `upstream` Sodax's, pushing to `upstream` disabled. Nothing
+was opened on Sodax's repository: a spec issue and a pull request wait for the Tech Lead ("we can make a PR later if
+needed"); Sodax's own tests have not been run on the branch. The patch file in the review folder is now mirrored
+there; the branch is the copy to keep current.
+
+**Keeping the branch current** (in the clone; pushing to the fork is a Journear person's step, not an agent's):
+`git fetch upstream`, then `git rebase upstream/main` on `feat/stellar-wallet-modules` (two small commits; a conflict
+is most likely in `src/types/config.ts` or `src/chainRegistry.ts`, where Sodax adds chains), then
+`git push --force-with-lease origin feat/stellar-wallet-modules`. Before a pull request, their checks on the branch:
+`pnpm i`, `pnpm checkTs`, `pnpm lint`, the two packages' `pnpm test`, `pnpm check:circular-deps`, `pnpm check:knip`
+(their `CONTRIBUTING.md`), and their process: a spec issue first (the review folder's `spec-issue-draft.md`), a
+maintainer's plan and `plan-approved`, then the pull request (`pr-description-draft.md`). The fork's `main` can follow
+theirs with `gh repo sync Hana-Technology/sodax-sdks --branch main`.
+
+**A worked example** (2026-11-25, D923; now in the sample-partner repository, decided D926: `examples/sodax-wallet-kit/`
+on that repository's local branch `sodax-bundle-example`, not pushed; the first version stays in the review folder's
+`sodax-bundle/example/`): an add-on shaped like Sodax's optional Privy email login (a sub-path,
 `@sodax/wallet-sdk-react/journear`, the only entry that imports our SDK, an optional peer): a `<JournearPassport
 setting={…} />` component inside `SodaxWalletProvider` that, when the partner's setting `{ socialLogin, publishableKey }`
 arrives (after the provider mounted, as Sodax's widget fetches its partner config) and is on, imports our SDK, creates
@@ -138,8 +162,13 @@ the client with the partner's key, adds our Stellar module (the change above) an
 setting turns off it removes the module, takes our connector out of wagmi (EIP-6963 has no removal event; done through
 wagmi's internal connector store in the example, by Sodax's own EVM provider in the real thing), disconnects and calls
 `hana.destroy()`. Tested in Chromium, Firefox and WebKit: the wallet appears in both lists after the config arrives,
-connects, signs, and leaves both lists with its hidden frame gone when switched off. Switching off doesn't sign the user
-out (as closing the tab); suspending the partner's app on our side ends its sign-ins (`partner-platform-spec.md` A10). Tested: bundling Sodax's kit with esbuild
+connects, signs, and leaves both lists with its hidden frame gone when switched off. Decided (the Tech Lead,
+2026-11-25, D926): switching a partner off doesn't sign its users out (as closing the tab); suspending the partner's
+app on our side ends its sign-ins (`partner-platform-spec.md` A10). In the sample-partner repository the example has
+its own `package.json` (Sodax's kit needs React 19; the sample is React 18), takes our SDK from the sample's vendored
+tarballs (repacked from `next` @ `287ec88e` for the `productId` option), applies the Stellar change to the published
+2.3.0 packages with `patch-package`, and uses the `journear-passport` id; measured there with Vite: our SDK 96 kB
+minified, 31 kB gzipped, loaded only when on. Tested: bundling Sodax's kit with esbuild
 for the browser needed stand-ins for Node's `crypto` and `stream`; inferred: a partner already using Sodax's kit has
 its bundler set up for that.
 
@@ -276,8 +305,8 @@ networks (D910): "HyperEVM (real money)" and HYPE, "LightLink" and ETH, "Redbell
 "Hedera" and HBAR, "Robinhood Chain" and ETH, each checked against the chain's own docs and the public chain
 registries. Naming a chain is display only: test apps still refuse all of them, the mainnet demo stays Base and
 Stellar, and an unknown token or call on a named chain is still unknown. A transaction counts HBAR in 18 decimals
-(Hedera's relay takes weibars), which is how the window shows it; Sodax's own token list gives HBAR 8 (tinybars, as
-programs see it). Hedera's own account and fee rules through its relay: not checked.
+(Hedera's relay takes weibars), which is how the window shows it, its folded details and the auto-approve consent
+screen writing the raw number as weibars (D922); Sodax's own token list gives HBAR 8 (tinybars, as programs see it). Hedera's own account and fee rules through its relay: not checked.
 
 **Planned.** Every new chain needs the same pieces: a key from the user's existing secret, an address, a signer in
 our vault, a provider in our SDK and Sodax's wallet interface for it, an approval window that says in plain words what
@@ -327,7 +356,7 @@ at the tags; what a wallet of ours on that chain would have to plug into):
 | Who | What |
 |---|---|
 | Journear | The service API and its staff screens (section 3); the per-app answers in section 4 (the shared-wallet line in our windows is built, D912); publishing the SDK; then chains in the order above |
-| Sodax | Load our SDK when the switch is on; create the client with the partner's key; accept extra Stellar Wallets Kit modules and keep wallet error codes (a change and its spec issue are drafted for the Tech Lead to send or not, D923); the portal switch and its call to our API; for its swap widget, register each partner's page addresses with the partner's app (section 12) |
+| Sodax | Load our SDK when the switch is on; create the client with the partner's key; accept extra Stellar Wallets Kit modules and keep wallet error codes (the change is on our public fork, a spec issue and pull request drafted, to send only when the Tech Lead says, D926); the portal switch and its call to our API; for its swap widget, register each partner's page addresses with the partner's app (section 12) |
 | Each Sodax partner | Its page meets our page requirements (popups allowed, the frame not blocked; `integration.md` section 5) |
 | The Tech Lead | The decisions in "Open" below |
 
@@ -375,9 +404,13 @@ recommendation, to be adjusted after the talk with Sodax. Still open:
   "Decided by the Tech Lead (2026-11-25)"), with who may confirm (an owner, with a fresh Google sign-in) and a rule
   for platform keys (a second owner confirms on real money) decided the same day; several design points proposed and
   still to confirm, and two open points (D914).
-- D923, to confirm (the Tech Lead): keep `hana-id` as the default Stellar module id and give hosts the `productId`
-  option (section 11); whether, when and under whose name the Stellar change, its spec issue and pull request go to
-  Sodax (section 2); the iframe setup to recommend to Sodax (section 12, option D); where the worked example lives.
+- D923's points answered by the Tech Lead (2026-11-25, D926): the Stellar change goes on a public fork in the
+  Hana-Technology org, a pull request "later if needed" (section 2); one app per partner, including for the widget
+  (section 12); the example lives in the sample-partner repository; switching off doesn't sign users out.
+- Still to confirm (the Tech Lead), from D923, not yet put: keep `hana-id` as the default Stellar module id with the
+  `productId` option for hosts (section 11); no EVM change, the production domain decides it (section 11).
+- Proposed, not decided (D926): pieces P11 (the partner's page in our windows) and P12 (the widget's origin only as a
+  frame) in `partner-platform-spec.md`'s build plan.
 
 ## 10. Sodax's public source
 
@@ -504,4 +537,8 @@ works, because the widget's origin is registered for every partner's app, so any
   instead of the widget's, and refuse the widget's origin top-level for a partner app (allow it only as a frame), so a
   partner's app can't be used outside the partner's pages.
 
-**Recommended: D**, to confirm (the Tech Lead), with the two changes as a later piece (not built).
+**Decided: D** (the Tech Lead, 2026-11-25: "ok", D926): one app per partner, also for Sodax's widget; each partner's
+app lists the widget's address and the partner's own pages (`partner-platform-spec.md` A10, A13). The two changes are
+**proposed, not decided**, as later pieces P11 and P12 of that spec's build plan; P12's reason (anyone can open the
+widget top-level with a partner's settings and get that partner's app) was read in our code and inferred, not
+tested.

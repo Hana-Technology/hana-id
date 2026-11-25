@@ -11,6 +11,9 @@
 // sign-ins (its signed message doesn't carry the end).
 import {
   ApiError,
+  HOME_APPS_ALL_MAX,
+  HOME_APPS_PER_SCOPE,
+  HOME_DEVICE_APPS_PER_SCOPE,
   HOME_IDENTITY_HEADER,
   HOME_IDENTITY_LIFETIME_MS,
   HOME_SALT_BYTES,
@@ -87,6 +90,16 @@ export interface HomeScope {
   addresses: HomeAddress[];
   apps: HomeApp[];
   /**
+   * How many apps use this listing in all (D922): more than `apps.length` when the answer left some out (every answer
+   * carries 10 a scope; the full answer, asked for with `all`, up to 100). An API from before it: `apps.length`.
+   */
+  appsTotal: number;
+  /**
+   * How many of `appsTotal` are open: not closed (deleted) and not paused (suspended), the apps that can still ask the
+   * wallet to approve something (D922's review). An API from before it: the open ones shown.
+   */
+  appsOpen: number;
+  /**
    * Journear marked this wallet's apps as several partners' (D915): the organisation behind them can see which of them
    * the person uses, and each app made after the mark shows its own Support ID (D919, D925). False from an older API.
    */
@@ -99,11 +112,21 @@ export interface HomeAppsPage {
 }
 
 /** Which page of the listing to read: at most one of these, as the API takes them. */
-export type HomeAppsQuery = { kind: 'first' } | { kind: 'cursor'; cursor: string } | { kind: 'search'; term: string } | { kind: 'scope'; scopeId: string } | { kind: 'app'; appId: string };
+export type HomeAppsQuery =
+  | { kind: 'first' }
+  | { kind: 'cursor'; cursor: string }
+  | { kind: 'search'; term: string }
+  /** `all`: every app of it, up to HOME_MAX_SCOPE_APPS (only "Show all apps" asks, D922). */
+  | { kind: 'scope'; scopeId: string; all?: true }
+  | { kind: 'app'; appId: string; all?: true };
 
 /** The bounds the API promises (apps a listing, origins an app), enforced again here so a bad answer can't flood the page. */
 export const HOME_MAX_SCOPES = 64;
-export const HOME_MAX_APPS = 10;
+export const HOME_MAX_APPS = HOME_APPS_PER_SCOPE;
+/** The full answer (`all`, "Show all apps", D922) carries up to this many apps; every other, HOME_MAX_APPS. */
+export const HOME_MAX_SCOPE_APPS = HOME_APPS_ALL_MAX;
+/** The most a count can say (a bad answer can't make the page claim more). */
+const HOME_APPS_TOTAL_MAX = 1_000_000;
 export const HOME_MAX_ORIGINS = 5;
 // An app's name as Home shows it: one rule with the sign-in and approval windows' list of the apps that share a wallet.
 import { homeAppName } from './app-name.ts';
@@ -143,15 +166,23 @@ function parseAddresses(v: unknown): HomeAddress[] {
   return out.sort((x, y) => order[x.chain] - order[y.chain]);
 }
 
-function parseScope(v: unknown): HomeScope | null {
+/** A count from the answer, or null when it isn't a whole number from `min` to HOME_APPS_TOTAL_MAX. */
+const count = (v: unknown, min: number): number | null => (typeof v === 'number' && Number.isSafeInteger(v) && v >= min && v <= HOME_APPS_TOTAL_MAX ? v : null);
+
+function parseScope(v: unknown, maxApps: number): HomeScope | null {
   if (!isObj(v) || !isScopeId(v.scopeId) || typeof v.mine !== 'boolean') return null;
   if (!(HOME_COVERAGES as readonly unknown[]).includes(v.coverage)) return null;
   const google = clientId(v.googleClientId);
   if (google === undefined || !Array.isArray(v.apps)) return null;
+  // Cut before parsing: an answer can't make the page parse more than it shows.
   const apps = v.apps
+    .slice(0, maxApps)
     .map(parseApp)
-    .filter((a): a is HomeApp => a !== null)
-    .slice(0, HOME_MAX_APPS);
+    .filter((a): a is HomeApp => a !== null);
+  // The counts, never less than what is shown; anything else (or none, from an older API) is what is shown.
+  const total = count(v.appsTotal, apps.length) ?? apps.length;
+  const shownOpen = apps.filter((a) => a.status === 'active').length;
+  const open = Math.min(count(v.appsOpen, 0) ?? shownOpen, total);
   return {
     scopeId: v.scopeId,
     mine: v.mine,
@@ -161,19 +192,25 @@ function parseScope(v: unknown): HomeScope | null {
     supportId: v.mine && typeof v.supportId === 'string' && SUPPORT_ID_RE.test(v.supportId) ? v.supportId : null,
     addresses: v.mine ? parseAddresses(v.addresses) : [],
     apps,
-    sharedScope: v.sharedScope === true,
+    appsTotal: total,
+    appsOpen: open,
+    // Only on the user's own listing (the API sends it there only).
+    sharedScope: v.mine && v.sharedScope === true,
   };
 }
 
-/** Reads a `GET /v1/home/apps` answer strictly; a malformed listing is dropped, a malformed answer is `bad_response`. */
-export function parseHomeApps(body: unknown): HomeAppsPage {
+/**
+ * Reads a `GET /v1/home/apps` answer strictly; a malformed listing is dropped, a malformed answer is `bad_response`.
+ * `maxApps`: a scope's apps kept, HOME_MAX_APPS unless the full answer was asked for.
+ */
+export function parseHomeApps(body: unknown, maxApps: number = HOME_MAX_APPS): HomeAppsPage {
   if (!isObj(body) || !Array.isArray(body.scopes)) throw bad('/v1/home/apps');
   const nextCursor = body.nextCursor === null || body.nextCursor === undefined ? null : isScopeId(body.nextCursor) ? body.nextCursor : undefined;
   if (nextCursor === undefined) throw bad('/v1/home/apps');
   const seen = new Set<string>();
   const scopes: HomeScope[] = [];
   for (const raw of body.scopes.slice(0, HOME_MAX_SCOPES)) {
-    const s = parseScope(raw);
+    const s = parseScope(raw, maxApps);
     if (!s || seen.has(s.scopeId)) continue;
     seen.add(s.scopeId);
     scopes.push(s);
@@ -200,9 +237,9 @@ export function homeAppsSearch(query: HomeAppsQuery): string {
     case 'search':
       return `?${new URLSearchParams({ q: query.term }).toString()}`;
     case 'scope':
-      return `?${new URLSearchParams({ scopeId: query.scopeId }).toString()}`;
+      return `?${new URLSearchParams({ scopeId: query.scopeId, ...(query.all ? { all: '1' } : {}) }).toString()}`;
     case 'app':
-      return `?${new URLSearchParams({ appId: query.appId }).toString()}`;
+      return `?${new URLSearchParams({ appId: query.appId, ...(query.all ? { all: '1' } : {}) }).toString()}`;
   }
 }
 
@@ -443,9 +480,10 @@ function parseDevice(v: unknown): HomeDevice | null {
 
 function parseDeviceScope(v: unknown): HomeDeviceScope | null {
   if (!isObj(v) || !isScopeId(v.scopeId) || !Array.isArray(v.apps) || !Array.isArray(v.devices) || !Array.isArray(v.consents)) return null;
+  // The API's own bound (one constant, @hana-id/core/home, D922's review: this was 50 against the API's 100).
   const apps = v.apps
+    .slice(0, HOME_DEVICE_APPS_PER_SCOPE)
     .filter((a): a is Record<string, unknown> => isObj(a) && typeof a.appId === 'string' && HOME_APP_ID.test(a.appId) && (a.status === 'active' || a.status === 'suspended' || a.status === 'deleted'))
-    .slice(0, HOME_MAX_APPS * 5)
     .map((a) => ({ appId: a.appId as string, name: homeAppName(a.name), status: a.status as HomeAppStatus }));
   const devices = v.devices
     .map(parseDevice)
@@ -659,7 +697,8 @@ export function homeApi(apiUrl: string, fetchFn: Fetch = (...args) => fetch(...a
     async apps(identity, query) {
       const url = new URL(`${base}/v1/home/apps${homeAppsSearch(query)}`);
       const header = await identity.header('GET', url, NO_BODY);
-      return parseHomeApps(await parseApiResponse(await fetchFn(url.toString(), init({ headers: { accept: 'application/json', [HOME_IDENTITY_HEADER]: header } }))));
+      const full = (query.kind === 'scope' || query.kind === 'app') && query.all === true;
+      return parseHomeApps(await parseApiResponse(await fetchFn(url.toString(), init({ headers: { accept: 'application/json', [HOME_IDENTITY_HEADER]: header } }))), full ? HOME_MAX_SCOPE_APPS : HOME_MAX_APPS);
     },
     async login(identity, body) {
       const url = new URL(`${base}/v1/home/login`);

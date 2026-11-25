@@ -5,6 +5,7 @@
 import { decodeHomeIdentity, homeMessage } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dom, originText } from '../../src/auth/dom.ts';
+import { HOME_DEVICE_APPS_PER_SCOPE } from '@hana-id/core';
 import { HOME_UNNAMED_RULE, type HomeIdentity, homeDevicesApi, homeDevicesSearch, homePolicyLabel, homeStopBody, newHomeIdentity, parseHomeDevices } from '../../src/auth/home-api.ts';
 import { HOME_DEVICES_APP_INTRO, HOME_DEVICES_WALLET_INTRO, HOME_EMAIL_SHOW, HOME_EMAIL_TITLE, HOME_STOP_CONFIRM, type HomeDevices, UNNAMED_DEVICE, DEVICES_FRESH_MS, devicesLinked, devicesSummary, emailAbout, emailSummary, nextMidnight, startHomeDevices, stillTrue, stopDoneText, whenFull, whenWords } from '../../src/auth/home-devices.ts';
 import type { HomeScope } from '../../src/auth/home-api.ts';
@@ -66,7 +67,7 @@ interface Harness {
   mountApp(scopeId?: string): void;
 }
 
-const homeScope = (scopeId: string): HomeScope => ({ scopeId, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], sharedScope: false, apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: [], logoUrl: null }] });
+const homeScope = (scopeId: string): HomeScope => ({ scopeId, mine: true, coverage: 'shared', googleClientId: null, supportId: null, addresses: [], sharedScope: false, apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: [], logoUrl: null }], appsTotal: 1, appsOpen: 1 });
 
 async function start(o: { search?: string; isGesture?: boolean } = {}): Promise<Harness> {
   const win = new FakeWindow('/home', o.search ?? '');
@@ -480,6 +481,14 @@ describe('partner strings are text only', () => {
     expect(document.querySelector('.home-device-name strong')?.textContent).toBe(UNNAMED_DEVICE);
     expect([...document.querySelectorAll('.home-email .mono')].map((x) => x.textContent)).toEqual(['ada@example.com']);
     expect([...document.querySelectorAll('#app h1, #app h2, #app h3, #app h4')].map((x) => x.textContent)).toEqual(['Devices and auto-approve']);
+  });
+
+  it('a scope’s apps: up to the API’s own bound, one constant (100; it was 50 against the API’s 100, D922’s review)', () => {
+    expect(HOME_DEVICE_APPS_PER_SCOPE).toBe(100);
+    const apps = Array.from({ length: 130 }, (_, i) => ({ appId: `app_d${String(i).padStart(3, '0')}`, name: `App ${i}`, status: 'active' }));
+    const page = parseHomeDevices({ scopes: [scopeOf('s1', { apps })], nextCursor: null });
+    expect(page.scopes[0]!.apps).toHaveLength(HOME_DEVICE_APPS_PER_SCOPE);
+    expect(page.scopes[0]!.apps.at(-1)?.appId).toBe('app_d099');
   });
 
   it('the parsers drop what isn’t of the API’s shape', () => {

@@ -8,6 +8,7 @@ import { type AbiValue, abiValuesOfKind, decodeFunctionData, parseFunctionSignat
 import type { DecodedEvmTx } from '../decode/evm.ts';
 import { DecodeError } from '../decode/errors.ts';
 import { parseHex0x } from '../decode/hex.ts';
+import { evmNativeUnits } from '../networks.ts';
 import { type DecodedApproval, decodeApprovalRequest } from '../decode/request.ts';
 import {
   type StellarInvocation,
@@ -415,19 +416,21 @@ function matchEvmTx(
   // Native spend: the value plus the most the transaction can pay in fees. The SDK fills gas and fees on the partner
   // page, so the fee counts against the same limits as the value (and the daily total records both).
   const fee = tx.maxFeeWei;
-  if (fee > BigInt(chain.maxFeeWei)) miss('fee_too_high', `Maximum fee ${fee} is over ${chain.maxFeeWei} wei`);
+  // The chain's own name for the unit (D922): "weibars" on Hedera, "wei" elsewhere.
+  const unit = evmNativeUnits(chainId).smallest;
+  if (fee > BigInt(chain.maxFeeWei)) miss('fee_too_high', `Maximum fee ${fee} is over ${chain.maxFeeWei} ${unit}`);
   if (tx.value > BigInt(chain.maxValueWei)) {
-    miss('value_too_high', `Value ${tx.value} is over ${chain.maxValueWei} wei`);
+    miss('value_too_high', `Value ${tx.value} is over ${chain.maxValueWei} ${unit}`);
   }
   const spend = tx.value + fee;
   if (spend > BigInt(chain.maxValueWei)) {
-    miss('value_plus_fee_too_high', `Value ${tx.value} plus maximum fee ${fee} is over ${chain.maxValueWei} wei`);
+    miss('value_plus_fee_too_high', `Value ${tx.value} plus maximum fee ${fee} is over ${chain.maxValueWei} ${unit}`);
   }
   const today = BigInt(usage.valueWeiByChain[String(chainId)] ?? '0');
   if (today + spend > BigInt(chain.maxValueWeiPerDay)) {
     miss(
       'daily_value_exceeded',
-      `Value plus maximum fee (${spend}) would take today's ${today} wei over the daily limit of ${chain.maxValueWeiPerDay} wei`,
+      `Value plus maximum fee (${spend}) would take today's ${today} ${unit} over the daily limit of ${chain.maxValueWeiPerDay} ${unit}`,
     );
   }
   return { ok: true, chain: 'evm', contract: to, function: entry.signature, spend: { chainId, valueWei: spend } };

@@ -59,6 +59,11 @@ export const HOME_NAME_TEXT = Object.freeze({
   stopping: 'Stopping…',
   sharing: 'Sharing…',
   again: 'Show again',
+  /**
+   * D922: the name's sharing is read one app at a time, for the first HOME_MAX_APPS apps; a wallet with more says so
+   * here instead of leaving them out without a word.
+   */
+  moreApps: (n: number, shown: number): string => `This wallet is used on ${n} more ${n === 1 ? 'app' : 'apps'}. Name sharing is shown here for the first ${shown}.`,
   current: 'Your name in Passport Home: ',
   noName: 'You haven’t set a name in Passport Home. To share one, go back to “Your wallets”, open “Your name” and save it first.',
   shared: 'Shared',
@@ -658,6 +663,8 @@ export function startHomeProfile(deps: HomeProfileDeps): HomeProfileSection {
     if (name !== null) out.push(d.h('p', { attrs: { id: 'home-app-name-current' } }, HOME_NAME_TEXT.current, nameText(name)));
     else if (known) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-app-name-none' } }, HOME_NAME_TEXT.noName));
     if (app.apps.length > 0) out.push(d.h('ul', { class: 'home-name-apps jp-card' }, ...app.apps.map(appEntry)));
+    const left = appScope ? Math.max(appScope.appsTotal, appScope.apps.length) - app.apps.length : 0;
+    if (app.apps.length > 0 && left > 0) out.push(d.h('p', { class: 'muted', attrs: { id: 'home-app-profile-more' } }, HOME_NAME_TEXT.moreApps(left, app.apps.length)));
     out.push(d.h('div', { class: 'actions start' }, button(busy === 'load-app' ? 'Loading…' : HOME_NAME_TEXT.again, 'home-app-profile-refresh', () => deps.track(loadApp()), { disabled: busy !== null })));
     return out;
   }

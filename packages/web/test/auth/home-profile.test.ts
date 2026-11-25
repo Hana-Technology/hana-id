@@ -57,6 +57,8 @@ const homeScope = (scopeId = S1, apps: { appId: string; name: string; status?: '
   sharedScope: false,
   addresses: [],
   apps: apps.map((a) => ({ appId: a.appId, name: a.name, status: a.status ?? 'active', environment: 'live', origins: [], logoUrl: null })),
+  appsTotal: apps.length,
+  appsOpen: apps.filter((a) => (a.status ?? 'active') === 'active').length,
 });
 
 async function start(o: { isGesture?: boolean } = {}): Promise<Harness> {
@@ -832,5 +834,20 @@ describe('D897 after review', () => {
     await h.idle();
     expect(document.activeElement).toBe(elsewhere);
     elsewhere.remove();
+  });
+});
+
+describe('a wallet used on more apps than the name’s reads cover (D922)', () => {
+  it('reads the first 10 apps one at a time and says how many more use the wallet', async () => {
+    const apps = Array.from({ length: 13 }, (_, i) => ({ appId: `app_p${String(i).padStart(2, '0')}`, name: `Partner ${i}` }));
+    const h = await appPage({ scope: { ...homeScope(S1, apps), appsTotal: 30 } });
+    expect(document.querySelectorAll('.home-name-apps > *')).toHaveLength(10);
+    expect(h.calls.filter((c) => c.url.searchParams.has('appId'))).toHaveLength(10);
+    expect(text('home-app-profile-more')).toBe('This wallet is used on 20 more apps. Name sharing is shown here for the first 10.');
+  });
+
+  it('every app read: no line', async () => {
+    await appPage({ scope: homeScope(S1, [{ appId: 'app_sodax1', name: 'Sodax' }]) });
+    expect(document.getElementById('home-app-profile-more')).toBeNull();
   });
 });

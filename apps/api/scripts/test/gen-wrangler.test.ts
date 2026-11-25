@@ -71,6 +71,9 @@ const updaterKey = KeyPair.fromRandom('ed25519').toString();
 const { identityToken: _identity, emailIssuer: _emailIssuer, console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...manifest } =
   loadEnv('sandbox-dev');
 
+/** `main`'s manifest for the cases that aren't about the usage ledger: sandbox-dev without its `usage` block (gen refuses to drop a ledger silently, D924). */
+const noUsage = (): Manifest => manifest as Manifest;
+
 function seedSecrets(root: string, env = manifest.name): void {
   const dir = join(root, '.secrets', env);
   mkdirSync(dir, { recursive: true });
@@ -383,27 +386,61 @@ describe('wrangler.jsonc', () => {
     const dir = tmp();
     const id = '0123456789abcdef0123456789abcdef';
     const read = () => JSON.parse(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8').replace(/^\/\/.*\n/u, '')) as { hyperdrive?: unknown };
-    main([manifest.name], { dir });
+    main([manifest.name], { dir, loadManifest: noUsage });
     expect(read()).not.toHaveProperty('hyperdrive');
     expect(logs.join('\n')).toMatch(/usage capture: off/u);
-    main([manifest.name, '--usage-hyperdrive-id', id], { dir });
+    main([manifest.name, '--usage-hyperdrive-id', id], { dir, loadManifest: noUsage });
     expect(read().hyperdrive).toEqual([{ binding: 'USAGE_DB', id, localConnectionString: LOCAL_USAGE_CONNECTION_STRING }]);
     expect(logs.join('\n')).toMatch(new RegExp(`usage capture: on \\(USAGE_DB → Hyperdrive ${id}\\)`, 'u'));
     // Regenerating without the flag keeps it; another env's config never inherits it.
-    main([manifest.name], { dir });
+    main([manifest.name], { dir, loadManifest: noUsage });
     expect(read().hyperdrive).toEqual([{ binding: 'USAGE_DB', id, localConnectionString: LOCAL_USAGE_CONNECTION_STRING }]);
     const other = { ...manifest, name: 'other-env', cloudflare: { ...manifest.cloudflare, workerName: 'hana-id-api-other', d1Name: 'hana-id-other-env' } };
     expect(existingUsageHyperdriveId(join(dir, 'wrangler.jsonc'), other)).toBeNull();
     expect(writeWranglerConfig(other, undefined, dir).usageHyperdriveId).toBeNull();
-    main([manifest.name, '--usage-hyperdrive-id', id], { dir });
-    main([manifest.name, '--usage-hyperdrive-id', 'off'], { dir });
+    main([manifest.name, '--usage-hyperdrive-id', id], { dir, loadManifest: noUsage });
+    main([manifest.name, '--usage-hyperdrive-id', 'off'], { dir, loadManifest: noUsage });
     expect(read()).not.toHaveProperty('hyperdrive');
     for (const bad of [[], ['nope'], ['0123456789ABCDEF0123456789ABCDEF'], ['--dev-vars']]) {
-      expect(() => main([manifest.name, '--usage-hyperdrive-id', ...bad], { dir }), JSON.stringify(bad)).toThrow(/--usage-hyperdrive-id needs/u);
+      expect(() => main([manifest.name, '--usage-hyperdrive-id', ...bad], { dir, loadManifest: noUsage }), JSON.stringify(bad)).toThrow(/--usage-hyperdrive-id needs/u);
     }
     expect(() => wranglerConfig(manifest, LOCAL_D1_ID, { usageHyperdriveId: 'x' })).toThrow(/32 lowercase hex/u);
     // wrangler dev: an unroutable placeholder (RFC 6761 .invalid), never a real ledger or credential.
     expect(new URL(LOCAL_USAGE_CONNECTION_STRING).hostname).toMatch(/\.invalid$/u);
+  });
+
+  it('an env with a usage ledger keeps USAGE_DB through a --d1-name rehearsal and back, and gen refuses to drop it silently (D924)', () => {
+    const logs: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')));
+    const real = loadEnv('sandbox-dev');
+    expect(real.usage).toBeDefined();
+    const dir = tmp();
+    const envId = '11111111-1111-4111-8111-111111111111';
+    const scratchId = '22222222-2222-4222-8222-222222222222';
+    const hd = 'abcdef0123456789abcdef0123456789';
+    const read = () => JSON.parse(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8').replace(/^\/\/.*\n/u, '')) as { hyperdrive?: { id: string }[]; d1_databases: { database_name: string; database_id: string }[] };
+    const opts = { dir, loadManifest: () => real };
+    // A fresh folder: no id known, so gen refuses (nothing written) unless given the id or `off`.
+    expect(() => main(['sandbox-dev', '--d1-id', envId], opts)).toThrow(/has a usage ledger .*pass --usage-hyperdrive-id <writer id>: the id of the config named hana-id-usage-writer-sandbox-dev \(never hana-id-usage-admin-sandbox-dev\) in `corepack pnpm --dir apps\/api exec wrangler hyperdrive list` \(read-only\), or --usage-hyperdrive-id off.*Nothing written/u);
+    for (const f of ['wrangler.jsonc', 'wrangler.vault.jsonc', 'wrangler.auth.jsonc']) expect(existsSync(join(dir, f)), f).toBe(false);
+    main(['sandbox-dev', '--d1-id', envId, '--usage-hyperdrive-id', hd], opts);
+    expect(read().hyperdrive?.[0]?.id).toBe(hd);
+    // The runbook's rehearsal: onto the scratch database, then back onto the env's own (docs/operations.md "Ledger rebuild" step 1 b and f).
+    main(['sandbox-dev', '--d1-name', 'hana-id-sandbox-dev-rehearsal-0027', '--d1-id', scratchId], opts);
+    expect(read().d1_databases[0]).toMatchObject({ database_name: 'hana-id-sandbox-dev-rehearsal-0027', database_id: scratchId });
+    expect(read().hyperdrive?.[0]?.id).toBe(hd);
+    main(['sandbox-dev', '--d1-id', envId], opts);
+    expect(read().d1_databases[0]).toMatchObject({ database_name: 'hana-id-sandbox-dev', database_id: envId });
+    expect(read().hyperdrive?.[0]?.id).toBe(hd);
+    expect(logs.filter((l) => l.startsWith('usage capture:'))).toEqual(Array(3).fill(`usage capture: on (USAGE_DB → Hyperdrive ${hd})`));
+    // `off` is still a choice, said out loud; after it, the next plain gen refuses again.
+    main(['sandbox-dev', '--usage-hyperdrive-id', 'off'], opts);
+    expect(read()).not.toHaveProperty('hyperdrive');
+    expect(() => main(['sandbox-dev'], opts)).toThrow(/has a usage ledger/u);
+    // Another Worker's config never lends its id, rehearsal or not.
+    const other = { ...real, cloudflare: { ...real.cloudflare, workerName: 'hana-id-api-other' } };
+    main(['sandbox-dev', '--d1-id', envId, '--usage-hyperdrive-id', hd], opts);
+    expect(existingUsageHyperdriveId(join(dir, 'wrangler.jsonc'), other)).toBeNull();
   });
 
   it('writes only the secrets that exist (no owner pool yet: no OWNER_RELAYER_KEYS line)', () => {
@@ -436,11 +473,11 @@ describe('wrangler.jsonc', () => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const dir = tmp();
     const id = '11111111-2222-4333-8444-555555555555';
-    main([manifest.name, '--d1-name', 'hana-id-sandbox-dev-rehearsal-0006', '--d1-id', id], { dir });
+    main([manifest.name, '--d1-name', 'hana-id-sandbox-dev-rehearsal-0006', '--d1-id', id], { dir, loadManifest: noUsage });
     const config = JSON.parse(readFileSync(join(dir, 'wrangler.jsonc'), 'utf8').replace(/^\/\/.*\n/u, '')) as { d1_databases: { database_name: string; database_id: string; migrations_dir: string }[] };
     expect(config.d1_databases).toEqual([{ binding: 'DB', database_name: 'hana-id-sandbox-dev-rehearsal-0006', database_id: id, migrations_dir: 'migrations' }]);
-    expect(() => main([manifest.name, '--d1-name', 'hana-id-sandbox-dev', '--d1-id', id], { dir })).toThrow(/rehearsal/u);
-    expect(() => main([manifest.name, '--d1-name', 'x-rehearsal'], { dir })).toThrow(/needs --d1-id/u);
+    expect(() => main([manifest.name, '--d1-name', 'hana-id-sandbox-dev', '--d1-id', id], { dir, loadManifest: noUsage })).toThrow(/rehearsal/u);
+    expect(() => main([manifest.name, '--d1-name', 'x-rehearsal'], { dir, loadManifest: noUsage })).toThrow(/needs --d1-id/u);
   });
 
   it('main writes the API and page Worker configs and .dev.vars, and never prints secret values', () => {
@@ -450,7 +487,7 @@ describe('wrangler.jsonc', () => {
     const root = tmp();
     const dir = tmp();
     seedSecrets(root);
-    main([manifest.name, '--dev-vars'], { root, dir });
+    main([manifest.name, '--dev-vars'], { root, dir, loadManifest: noUsage });
     // The API config, its usage-capture line, the two page configs, .dev.vars.
     expect(logs).toHaveLength(5);
     expect(logs.join('\n')).not.toMatch(/ed25519:|[1-9A-HJ-NP-Za-km-z]{40,}/u);

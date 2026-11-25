@@ -379,13 +379,17 @@ describe('none mode', () => {
     const { app, near } = await setup('none');
     const spk = newSessionKey();
     near.viewCalls.length = 0;
-    const started = Date.now();
+    // No wait either: measured as the timers the request sets, not as wall-clock time (D924: a 250 ms bound failed on
+    // a loaded machine): no timer over 0 ms at all (the re-read loop's pause would be one).
+    const timers = vi.spyOn(globalThis, 'setTimeout');
     const { res } = await register(app, { spk, shareId: null });
+    const waits = timers.mock.calls.map((c) => Number(c[1] ?? 0)).filter((ms) => ms > 0);
+    timers.mockRestore();
     expect(res.status).toBe(503);
     expect(res.headers.get('retry-after')).toBe('1');
     expect(((await res.json()) as { code: string }).code).toBe('session_not_visible');
     expect(near.viewCalls.filter((c) => c.method === 'get_session')).toHaveLength(1);
-    expect(Date.now() - started).toBeLessThan(250);
+    expect(waits).toEqual([]);
     near.sessions.set(JSON.stringify(spk), { path: pathFor(app.scope), scope_id: app.scope, expires_at_ms: Date.now() + 12 * HOUR, max_uses: 1, used: 1 });
     expect((await register(app, { spk, shareId: null })).res.status).toBe(201);
   });

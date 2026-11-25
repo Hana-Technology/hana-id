@@ -21947,3 +21947,19 @@ PR 135's review" list, D910, D914); D912 is recorded on its own branch.
     `approval-design.test.ts` (Hedera's value, fee and both kinds of gas price rows in weibars at the headline's
     scale, no "wei"/"gwei" left in its details; wei and gwei on Base, Kaia, HyperEVM and an unknown chain); e2e
     `approval-summary.spec.ts` (the six chains' value and fee rows in the live window, weibars on Hedera).
+
+- **2. The admin portal's Signing settings rows at phone width.**
+  - **Found:** two causes, both in `apps/admin/public/app.css`'s own part (not the brand's copied block). The rule
+    that keeps a row's control its size (`.settings .jp-setting > :last-child { flex: none }`) also hit a row with no
+    control, whose text column is its last child too: "Shared wallet" and "Other settings" kept their text on one
+    line, cut off by the card at 390 px ("Off. Only a test scope can be marked as shared for now" ran past the edge),
+    and the opened "Show all settings" could only be clipped. And at 390 px the controls stayed beside the text, so
+    "Auto-approve policy" got a column of 0 px with its two buttons running out of the card.
+  - **Built:** the size rule now picks only a control (`:last-child:not(:first-child)`), and at 760 px and under (the
+    portal's phone breakpoint) each row stacks: text across the row, buttons below, wrapping. 1280 px is unchanged
+    (the screenshots differ only in the relative times, "36 min ago"). The other tables on the page (Allowed origins,
+    Guarded changes, Publishable keys) scroll sideways inside their card and were left as they are; no horizontal page
+    scroll at 390 px before or after.
+  - **To confirm (the Tech Lead):** the breakpoint (760 px, the portal's own, rather than a narrower one for rows only).
+  - **Tests:** `apps/admin/test-spa/design.test.ts` (the size rule picks the control and never a lone text column; the
+    phone rules). happy-dom has no layout, so the widths are in the screenshots (`hana-id-review-files/tidy-1125/`).

@@ -1975,3 +1975,54 @@ body:has(.jp-savebar) .toast-region {
 .audit-filter {
   margin-bottom: 12px;
 }
+
+/* D931: a waiting change's controls side by side (Check and confirm, Cancel), wrapping on a phone. */
+.pending-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* D931: the confirmation page's web addresses: one box each, its tick box (none ticked at first), its state and its
+   cancel; long and punycode addresses wrap inside the box, never widening the page. */
+.oc-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.oc-item {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--jp-border);
+  border-radius: var(--jp-radius-md);
+}
+.oc-check {
+  font-size: inherit;
+}
+.oc-origin {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.oc-state {
+  margin: 6px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.oc-check + .oc-state,
+.oc-check ~ .oc-cancel {
+  padding-left: 28px;
+}
+.oc-cancel {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.oc-shared {
+  margin-top: 12px;
+}

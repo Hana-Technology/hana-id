@@ -3,6 +3,7 @@
 // active after the delay; at most 20 per request), shown only to an on-chain owner of the app's scope (the API refuses
 // anyone else, `not_owner`; ChainOwner.tsx says who can instead). The form flags a path or too many origins once the
 // field is left (validate on blur), and never sends either.
+import type { GuardedChange } from '@hana-id/console-core';
 import { useState } from 'react';
 import { postJson } from '../../api.ts';
 import { useNow, useStepUp, useTouched, useWrite, when } from '../../lib.tsx';
@@ -12,6 +13,9 @@ import { ChainOwnerGate, useChainOwner } from './ChainOwner.tsx';
 import { PendingChanges } from './Changes.tsx';
 
 const MAX_PER_REQUEST = 20;
+
+/** D931: "Confirmed on {date} by an owner" (or "by Journear staff"). */
+export const confirmedWords = (c: Pick<GuardedChange, 'confirmedAt' | 'confirmedByKind'>): string => `Confirmed on ${when(c.confirmedAt)} ${c.confirmedByKind === 'hana' ? 'by Journear staff' : 'by an owner'}`;
 
 export function Origins() {
   const ctl = useApp();
@@ -33,6 +37,8 @@ export function Origins() {
   const problem = !touched.seen('origins') ? undefined : tooMany ? `That is more than ${MAX_PER_REQUEST}: add them in two goes.` : pathy.length > 0 ? `A web address has no path: only the start of ${pathy[0]} would be added.` : undefined;
   // D930: which of the app's waiting changes your backend asked for (its platform key), by change id.
   const byBackend = new Set(app.changes.filter((c) => c.proposedByKind === 'platform').map((c) => c.id));
+  // D931: who confirmed a web address that came into force by a confirmation, by change id.
+  const confirmed = new Map(app.changes.filter((c) => c.confirmedAt !== undefined).map((c) => [c.id, c]));
   return (
     <div className="stack">
       <Panel
@@ -77,7 +83,10 @@ export function Origins() {
                     {o.activeFrom === null ? (
                       <Badge tone="warn">Waiting</Badge>
                     ) : o.activeFrom <= now ? (
-                      <Badge tone="ok">Active</Badge>
+                      <>
+                        <Badge tone="ok">Active</Badge>
+                        {o.changeId !== undefined && confirmed.has(o.changeId) && <div className="muted small">{confirmedWords(confirmed.get(o.changeId)!)}</div>}
+                      </>
                     ) : (
                       <>
                         <Badge tone="warn">Waiting</Badge> <span className="muted small">active from {when(o.activeFrom)}</span>

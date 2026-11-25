@@ -7,7 +7,8 @@ import { Link, useParams } from 'react-router-dom';
 import { confirmWithGoogle } from '../api.ts';
 import { duration, relative, useApi, useNow, useWrite, when } from '../lib.tsx';
 import { explain } from '../messages.ts';
-import { Callout, ErrorNote, IconShield, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
+import { CONFIRM_WORDS, confirmedLine } from '../confirm-words.ts';
+import { Callout, ErrorNote, IconShield, IdnWarning, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
 import { identityEmailLabel } from './app/Sessions.tsx';
 import { ConsentPreview } from './Consent.tsx';
 import { type DiffLine, DiffList, afterEmail, AccountLines } from '../labels/Diff.tsx';
@@ -39,6 +40,7 @@ const TITLES: Record<string, string> = {
   'platform.key_add': 'Register a platform key',
   'platform.key_accept': 'Accept a platform key',
   'platform.key_confirm': 'Confirm a platform key',
+  'origin.confirm': 'Confirm web addresses',
 };
 
 const GUARDED = new Set(['origin.add', 'policy.set', 'raw_sign.on']);
@@ -170,7 +172,29 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
               </li>
             ))}
           </ul>
-          {add.some((o) => o.idn) && <Callout tone="warn">A web address above uses international letters (an internationalised, punycode name): check the plain form is the domain you own.</Callout>}
+          {add.some((o) => o.idn) && <IdnWarning />}
+        </>
+      );
+    }
+    case 'origin.confirm': {
+      // D931: exactly the web addresses the owner ticked, each in full and decoded, and who asked for them.
+      const list = (d.changes as O[] | undefined) ?? [];
+      const app = str(d.appName);
+      const by = d.proposedByKind === 'hana' ? 'Journear staff' : typeof d.keyLabel === 'string' ? `your backend (platform key “${d.keyLabel}”)` : 'your backend (its platform key)';
+      return (
+        <>
+          <p>
+            App <strong>{app}</strong>. {CONFIRM_WORDS.intro(app)}
+          </p>
+          <p className="muted small">Asked for by {by}.</p>
+          <ul className="decoded-list">
+            {list.map((o) => (
+              <li key={o.origin}>
+                Confirm <OriginText {...o} />
+              </li>
+            ))}
+          </ul>
+          {list.some((o) => o.idn) && <IdnWarning />}
         </>
       );
     }
@@ -288,6 +312,7 @@ function takesEffect(kind: string, d: Record<string, unknown>): string {
       : 'Not at once. After you confirm, Journear emails your security contacts and owners. An owner can confirm it then (you too); if nobody does, it starts working 24 hours after that email. Any owner can cancel it until then.';
   if (kind === 'platform.key_accept') return 'It starts working once Journear has emailed your security contacts and owners about it, usually within a few minutes. Any owner can stop it at once afterwards.';
   if (kind === 'platform.key_confirm') return 'At once, when you confirm. Journear then emails your security contacts and owners, with a link that stops the key.';
+  if (kind === 'origin.confirm') return 'At once: they start working as soon as you confirm. Journear then emails your security contacts and owners, with a link to remove each one that works for 7 days. Any owner can also remove them on the app’s Web addresses tab.';
   if (GUARDED.has(kind))
     return 'Not at once. After you confirm, it is announced by email to your organisation’s security contacts and takes effect after the security delay (24 hours on production deployments). Any owner can cancel it until then, from the app’s page or the email.';
   if (kind === 'member.invite') return 'The invite email goes out after every owner and your security contacts have been told. The link works once, for that address only.';
@@ -305,13 +330,22 @@ const OUTCOME_TEXT: Record<string, string> = {
   version_conflict: 'The app changed meanwhile. Nothing was changed: start again from the app’s page.',
 };
 
+/** D931: a confirmation's refusals after Google, in plain words (the server checks everything again then). */
+const CONFIRM_OUTCOME: Record<string, string> = {
+  not_owner: `${CONFIRM_WORDS.onlyOwner} Nothing was confirmed.`,
+  not_pending: 'A web address here isn’t waiting any more (it was cancelled, or it already works). Nothing was confirmed: open the page again.',
+  version_conflict: 'Something changed meanwhile (a web address was cancelled, or the key that asked for it stopped). Nothing was confirmed: open the page again.',
+  conflict: 'The key that asked for these web addresses doesn’t work any more, or platform keys are off. Nothing was confirmed.',
+  forbidden: 'You can’t confirm these web addresses now (your role changed, or Journear froze your organisation). Nothing was confirmed.',
+};
+
 /** D899: a request labels change's refusals after Google, in plain words. */
 const LABELS_OUTCOME: Record<string, string> = {
   version_conflict: 'Your request labels changed meanwhile (another change, or Journear acted). Nothing was changed: go back, look again and propose it again.',
   env_mismatch: 'Request labels aren’t switched on here yet, so nothing was proposed.',
 };
 
-const APP_TAB: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.settings': 'sessions', 'app.resume': 'suspend' };
+const APP_TAB: Record<string, string> = { 'origin.add': 'origins', 'origin.confirm': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.settings': 'sessions', 'app.resume': 'suspend' };
 const TAB_LABEL: Record<string, string> = { origins: 'Web addresses', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login', labels: 'Request labels' };
 
 /**
@@ -404,7 +438,8 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
       {a.status === 'expired' && <Callout tone="warn">This confirmation expired. Nothing was changed: start again.</Callout>}
       {a.status === 'ok' && (
         <Callout tone="ok" role="status">
-          Done.{a.outcome?.nearTx ? ` NEAR transaction ${a.outcome.nearTx}.` : ''}
+          {a.kind === 'origin.confirm' ? confirmedLine(typeof a.outcome?.confirmed === 'number' ? a.outcome.confirmed : Array.isArray(a.decoded.changes) ? a.decoded.changes.length : 0, str(a.decoded.appName)) : 'Done.'}
+          {a.outcome?.nearTx ? ` NEAR transaction ${a.outcome.nearTx}.` : ''}
           {a.outcome?.noChange === true ? ' It was already so: nothing changed.' : ''}
           {GUARDED.has(a.kind) && a.outcome?.noChange !== true ? ' It is now announced and takes effect after the security delay; you can follow it, or cancel it, on the app’s page.' : ''}
           {a.kind === 'labels.set' && a.outcome?.noChange !== true ? ` Proposed. Journear emails your security contacts; ${a.decoded.reviewRequired === true ? `it goes live only after Journear allows it, at the earliest ${afterEmail(a.decoded.delayMs as number | null)}` : `it goes live ${afterEmail(a.decoded.delayMs as number | null)} unless someone cancels it`}. You can follow it, or cancel it, on the Request labels tab.` : ''}
@@ -420,8 +455,8 @@ export function ActionPage({ me }: { me?: MeAnswer | undefined }) {
           role="alert"
           title={
             <>
-              {(a.kind.startsWith('labels.') ? LABELS_OUTCOME[failedCode] : undefined) ?? OUTCOME_TEXT[failedCode] ?? `${explain(failedCode, a.outcome?.message ?? '').text} Nothing was changed.`}
-              {a.outcome?.message && !OUTCOME_TEXT[failedCode] && !(a.kind.startsWith('labels.') && LABELS_OUTCOME[failedCode]) && explain(failedCode, a.outcome.message).detail ? ` ${a.outcome.message}` : ''}
+              {(a.kind.startsWith('labels.') ? LABELS_OUTCOME[failedCode] : a.kind === 'origin.confirm' ? CONFIRM_OUTCOME[failedCode] : undefined) ?? OUTCOME_TEXT[failedCode] ?? `${explain(failedCode, a.outcome?.message ?? '').text} Nothing was changed.`}
+              {a.outcome?.message && !OUTCOME_TEXT[failedCode] && !(a.kind.startsWith('labels.') && LABELS_OUTCOME[failedCode]) && !(a.kind === 'origin.confirm' && CONFIRM_OUTCOME[failedCode]) && explain(failedCode, a.outcome.message).detail ? ` ${a.outcome.message}` : ''}
               {a.outcome?.code === 'rate_limited' && a.kind === 'owner_action' ? ' If this is urgent, send Journear security the action from this page.' : ''}
             </>
           }

@@ -5,12 +5,13 @@
 // who holds its partner suspension, and its mainnet demo switch asks staff to confirm the shared wallet's risk (H3).
 // The route words are the same as console-core's (platform-words.ts).
 import { readFileSync } from 'node:fs';
-/** The preview's platform key id (a public id: `pkc_` and base58). */
-const PREVIEW_KEY_ID = ['pkc', 'Wk7Hq2Lm9Xc4Pz'].join('_');
 import { PLATFORM_ROUTE_WORDS } from '@hana-id/console-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Answer, type Call, boot, closeWindow } from './boot.ts';
 import { appDetail, orgPlatform, platformCalls, platformQueue } from './preview-data.ts';
+
+/** The preview's platform key id (a public id: `pkc_` and base58). */
+const PREVIEW_KEY_ID = ['pkc', 'Wk7Hq2Lm9Xc4Pz'].join('_');
 
 afterEach(closeWindow);
 

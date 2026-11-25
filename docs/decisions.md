@@ -23862,3 +23862,104 @@ for it). D931 is the number the caller assigned; API migration 0034 and console 
   `platform-activity.ts`, the vectors; the console's `src/confirmations.ts`, `actions.ts` (kind `origin.confirm`),
   `writes.ts`, `index.ts`, `env.ts`, migration 0007; `packages/env` (`schema.ts`, `local-build.ts`); the CLI
   (`scripts/lib/admin-apps.ts`, `admin-sql.ts`); `scripts/lib/ledger-check.ts`, `scripts/ledger-check.ts`
+- **What it does.**
+  - **An owner's confirmation** (A15): a console `owner` of an active org who is an on-chain owner of the app's scope
+    ticks web addresses of one request on one app (1 to 20, none ticked at first, no "confirm all") on the page the
+    email's Confirm link opens, and signs in fresh (step-up kind `origin.confirm`, console migration 0007); the
+    callback calls `ConsoleRpc.confirmOrigins`, which verifies the token itself (its nonce is the
+    `hana-id/console-origin-confirm/v1` layout over the signer, env, org, app, scope and the sorted change ids with
+    their web addresses; independent vectors), reads the scope's owners on chain uncached, reserves the token once and
+    commits one batch: the `origin.confirmed` ledger row (the member and the step-up's `sub`), one
+    `origin_confirmations` row per change, the changes' and their gate rows' `active_from` = now. The commit predicate
+    holds every rule (the request, the reach, the state, the key in force, the switch on, the org not frozen, the app
+    not deleted nor suspended by Journear); a cancel, revocation, switch-off, freeze, suspension or deletion landing
+    between the read and the batch makes it write nothing. Anything the caller can't see answers one identical
+    `not_found`. Nothing a platform key sends confirms (no route; the input can't name a platform actor).
+  - **Four eyes on staff web addresses** (D917): one staff add to a platform-created app or to any app of a scope
+    marked as shared (`AdminRpc.addOrigins`, `createApp`'s first web addresses) waits 24 h after its email with no
+    waiver (`staff_origin_waits`, written by the proposal's `INSERT … SELECT`), unless a second person confirms it: an
+    owner as above, or another staff member (`AdminRpc.confirmStaffOrigins`: another Access subject **and** another
+    email, a reason of at least 20 characters). The proposer never confirms, nor an owner signed in with the proposing
+    staffer's email (one person). Staff never confirm a platform proposal; expedite stays refused for every staff
+    proposal; a web address a stolen key removed comes back only this way (no restore, A14).
+  - **In the database** (migration 0034): `origin_confirmations` is the only record that lets `active_from` come
+    before a recorded earliest time, and only to the confirmation's own time; its triggers hold who may confirm what,
+    one per change, never replaced, fixed but for its notice, kept while its change exists; one token, one set. 0033's
+    three earliest-time triggers are replaced under their names; six new triggers hold the staff waits. Bare D1 writes
+    of every kind are refused in `migration-0034.test.ts`.
+  - **The views and records**: `getApp`'s changes carry `requestId`, `secondPerson` and `confirmedAt`/`confirmedByKind`;
+    the platform's view `confirmedAt` (never who); `ConsoleRpc.getConfirmation` the page's view; `AdminRpc.platformQueue`
+    the 7 days of confirmed web addresses and the staff ones waiting for a second person; the console's audit row
+    `origin.confirmed` with the step-up's id (the confirmation's evidence reference, beside the token's sha256).
+  - **The notices** (`AdminRpc.confirmationNotices` → the admin Worker's email → `ackConfirmationNotice`, `system`
+    only): one per confirmation, with one removal link per web address (`originRemove`, 7 days; the console's
+    `/remove/:changeId#t=`, `ConsoleRpc.removalPreview` and `removeOriginByLink`, the `link` actor, single use, the
+    token in the commit predicate).
+  - **The `local*` guard** (A15, proposed there): the 24 h minimum's exception needs the name `local…`, `testnet` and a
+    loopback http API URL (`isLocalTestEnv`, failing closed); the manifest schema refuses a `local*` env with anything
+    else; the shared deploy wrapper refuses a config whose `ENV_NAME` is `local…`, one it can't read, and `--env`.
+  - **`ledger-check`** (D929 point 2): each snapshot is judged against the checkout's schema at the level its database
+    recorded, so a database with 0033 and not 0034 reads 0033's versions as they should be, and a snapshot across 0034
+    reports the three as replaced (a replacement the checkout doesn't make is still `CHANGED`).
+  - **The CLI** refuses `app:origins:add` on a platform-created app or a shared wallet, `app:create` with origins on a
+    shared wallet (it creates the app there with none), and `app:changes:announce` of a four-eyes staff proposal.
+  - **Keys' four eyes** (the task's "check what P2 built"): P2 built all of it (another console user, Google `sub` and
+    email, and an owner since before the registration; D918, its tests listed there); nothing added.
+- **Tests.** API `origin-confirm.test.ts` (in force at once with the ledger row, the confirmation rows, the token's hash
+  and never the token, the console's and the platform's views; the token for another set, origin, app, org, scope, env,
+  of the origin-add and key-confirm kinds, another person's, too old, with an email claim, all `forbidden`, nothing
+  written; a refusal leaves it unused; a used one `token_used`; staff, system, link and platform actors refused; two
+  requests, 21, repeats; another app's and another org's change answered as one that doesn't exist, word for word;
+  before its email, cancelled, twice, a member's and a plain staff proposal; the key revoked, the switch off, the org
+  frozen, Journear's suspension, the app deleted, each before and between the read and the batch; a cancel racing each
+  way; the limits; the cost; the page's view; four eyes for staff (the wait, the ack's 24 h and no waiver, no expedite,
+  the proposer by subject and by email, an owner twin, a second staffer, an owner, staff never on a platform proposal, a
+  plain scope untouched, `createApp`'s marked scope without `no_session`, no restore); the notice, its ack and the
+  removal link (preview, removal, single use, another's link, after 7 days); the queue's 7 days),
+  `migration-0034.test.ts` (every row and object of before, the three replaced, the ledger's shape; every rule against
+  bare writes; applied again; the triggers after the last migration), `migration-0033.test.ts` (`LATER` names the three),
+  `platform-keys.test.ts`, `platform-ops.test.ts`, `platform-request.test.ts` (the `local*` guard's three conditions),
+  `rpc-cas.test.ts` (the four new methods within their costs), console `confirmations.test.ts` (the page for an owner, a
+  viewer and an owner who isn't on chain, the Confirm link's org, another org's 404, GETs changing nothing, the step-up
+  through Google with its audit row and evidence, refusals before any sign-in, a demotion in the callback, CSRF, the
+  removal link's preview, removal, single use and audit, a platform proposal end to end), `migration-0007.test.ts`,
+  `migration-0005.test.ts` and `migrations.test.ts`, `privacy.test.ts`, `writes.test.ts`; console-core `layouts.test.ts`
+  (the layout and the removal link against the independent vectors); `packages/env` (`build-id.test.ts`,
+  `stamped-deploy.test.ts`, `endpoints.test.ts`, `origins.test.ts`: the guard); scripts `ledger-check.test.ts` (the hazard
+  and its fix), `admin-apps.test.ts` (the CLI's refusals).
+- **Decided while building, to confirm (the Tech Lead):**
+  1. **The confirmation and the staff waits in tables of their own** (`origin_confirmations`, `staff_origin_waits`),
+     not A7's `guarded_changes` columns (`confirmed_*`, `unconfirmed_active_from`, `second_person`,
+     `confirmed_by_kind`, the removal link's): `ledger-check` holds that table's shape (D929 point 1). The confirmation
+     row is the only thing that lets a web address in early, and only to its own time.
+  2. **The sign-in's evidence**: the step-up token's sha256 (the key the API reserved it under) and the console action's
+     id, never the token; the database also refuses a second confirmation request with the same token.
+  3. **The database's clock** holds a confirmation and its notice as never back-dated (2 and 5 minutes' skew), not as
+     "now" both ways: a later time only brings a web address in later. The insert trigger judges the proposing key by its
+     revocation and expiry (by the database's clock); that it was in force is the code's check (by the API's clock).
+  4. **Who confirms a staff web address under four eyes**: an owner (with the platform proposal's bar) or a second staff
+     member (another Access subject and another email, a reason of at least 20 characters); never the proposer, and
+     never an owner signed in with the proposer's email (one person); staff never confirm a platform proposal.
+  5. **Answers**: one identical `not_found` for any change not on this app of this org (another org's, another app's,
+     none); `not_pending` for one the caller can see but can't confirm (a member's, a plain staff one, not announced,
+     cancelled, in force, confirmed); `bad_request` for two requests; `conflict` for the key, the switch or Journear's
+     suspension; `forbidden` for a frozen org or the proposer.
+  6. **Limits**: 20 confirmations a clock hour per member (or staffer) and 40 per org, every attempt counted before
+     anything is read, failing closed (the web address still comes in after its 24 h).
+  7. **A partner's own suspension (bit 4) doesn't stop a confirmation**; Journear's bits 1 and 2 do.
+  8. **No version bump** on a confirmation (an owner's step-up in flight survives it, as an ack and an expedite do).
+  9. **The removal page's details** come from a `POST` preview with the token in the body (a GET carries no token, as
+     the cancel page); the confirmer is named by email only while a member of the org, staff as "Journear staff".
+  10. **Staff proposals written before 0034** stay plain (no wait, no four eyes): none exist on a shared wallet's
+      platform app, and fail-open there would need a backfill.
+  11. **A scope `createApp` marks as shared** gives its first web addresses no `no_session` waiver (four eyes).
+  12. **The CLI** no longer adds web addresses on a platform-created app or a shared wallet, nor announces a four-eyes
+      staff proposal, and creates an app on a shared wallet with none (it has no second person and no wait).
+  13. **The `local*` guard's three conditions** (the name, `testnet`, a loopback http API URL) in the API, the manifest
+      rule, and the deploy wrapper's refusal (a config with `ENV_NAME` `local…`, one it can't read, `--env`); a Worker
+      whose config names no env (console-auth, files) isn't refused.
+  14. **`ledger-check` at the database's level**: the reference schema is computed up to the latest migration the
+      database recorded (`levelOf`), and a trigger a later migration replaces reads "Replaced by a later migration"
+      only when both sides are the checkout's own versions at their levels.
+  15. **The page tells a staff proposer** who opens it as an owner that a second person must confirm
+      (`sameAsProposer`), so they aren't sent to a sign-in that the API would refuse.

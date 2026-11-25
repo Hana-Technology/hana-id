@@ -23163,7 +23163,7 @@ number the caller assigned; API migration 0032 (0031 is piece P7's).
 - **Left for later pieces**: the app operations and the reach filter (P4); the console's activity screen and the
   playbooks for `platform_auth_failures` and `platform_quota` (P5); the network's guide around the reference signer and
   vectors (P8). The platform switch stays off for every org until P4 and P10 are deployed (the spec's gates).
-- **After PR 156's review (2026-11-26)**, each of its findings F1 to F11 fixed, with tests (`platform-request.test.ts`
+- **After PR 156's review (2026-11-25)**, each of its findings F1 to F11 fixed, with tests (`platform-request.test.ts`
   "after PR 156's review", `migration-0032.test.ts`, console-core `platform-keys.test.ts`); all **to confirm (the Tech
   Lead)**:
   1. **F1, the self-revoke's limits.** Its body is parsed and checked right after check 6. Only a **valid** self-revoke
@@ -23233,6 +23233,50 @@ number the caller assigned; API migration 0032 (0031 is piece P7's).
       last-used marker are given back.
   - Not changed: the reviewer's other checks (the signature, replay, isolation, the identical 401 body and headers, a
     signer written from `api.md` alone, `derToRawSignature` against 3 000 node signatures) found them sound.
+- **After the second review of PR 156 (2026-11-25)**: F4 to F8, F10 and F11 confirmed closed; N1 to N6 fixed, with tests
+  (`platform-request.test.ts` "scenario B", "B2", "the pre-auth check's CPU bound", "N4", "N2", "the second review"),
+  N7 recorded; all **to confirm (the Tech Lead)**:
+  1. **N1, the self-revoke past full windows.** F2's pre-auth window was charged before any signature work and was per
+     key only, so forged revokes from anywhere could fill it. Now the announced-key list (`known-keys.ts`) carries each
+     key's public point and dates; past a full IP window and the key's overflow, a self-revoke's signature is checked
+     against the listed point (CPU only, no D1 read): a valid one goes on to the real check 5 (which still decides: a
+     key stopped since the list was read fails there, tested), a failed one is counted on
+     `platform:keyfail:<keyId>:<subject>` (60 a minute), and past 60 failures revokes from that key and subject are
+     refused unchecked (the CPU bound). The overflow window is per key **and IP subject**, so one address can't spend
+     another's. Scenario B (30 junk, 20 bad signatures naming the key, 10 forged revokes, then the holder's valid revoke
+     from that IP) and B2 (the attacker on another IP, the victim's IP full of junk) both stop the key.
+     **The residuals, truthfully:** someone who knows a key's id and sends from the **same IP subject** can hold that
+     key's ordinary calls out of that subject a minute at a time (20 requests), and its self-revoke with over 60 forged
+     revokes a minute; and (N5) on a shared egress address, any tenant can trip the Cloudflare edge rule (100 per 10 s
+     per IP, Block 10 s) for all of them, self-revokes included.
+  2. **N2, a console flood starving platform kill switches.** A platform kill switch is never refused by the console's
+     bucket now: charged, clamped at 0 (`rate-limiter.ts` `platformAdmit`); bounded by the org's bucket, the platform's
+     own bucket and reserve with each org's share, and the breaker (the "never below 20" floor is gone). Tested with a
+     sustained console flood from four orgs: ten platform kill switches of cost 11, ten admitted. `security.md`'s
+     sentence on what gates them corrected.
+  3. **N3, valid self-revokes while the revocation can't land.** A per-key window that only valid self-revokes count
+     (`revoke:minute`, 10 a minute on the key's object), checked before check 8 is skipped (a limiter error lets the stop
+     go ahead); a thief fills it only by sending valid revokes, which stop the key. Tested with the revocation's batch
+     failing: 10 recorded 500s, then 429, the key still active, a valid revoke the next minute stops it.
+  4. **N4, the status code as an oracle.** Past a full IP window an id not on the list now goes on to the one 401 (same
+     body, headers and work: a verification against the dummy point, no D1 read), not a 429. **What stays observable:**
+     the D1 read's timing, and a listed id's own overflow filling (a 429 after 20 requests naming it from one subject)
+     where an unlisted one keeps getting the 401: someone who already holds a key id can learn whether it is still
+     announced. Ids are 96 random bits, so nobody else learns anything. Stated in `security.md` and `api.md`.
+  5. **N5, the edge rule against Workers.** `operations.md`, `api.md`'s Platform API section and the spec's "What the
+     network builds" (a note for P8's guide): a production backend needs a dedicated egress IP; what we observe (the
+     edge rule's blocks, `platform_auth_failures`) and can't prevent (one tenant of a shared address tripping the block
+     for the others; telling them apart).
+  6. **N6.** The routes' import allowlist now checks every form (named, default, namespace, `export … from`,
+     `export *`, a bare `import '…'`, a dynamic import, `require`), with a test of each form; `platformSettle` refunds
+     only when it finds and removes that admission's reserve-share entry, so a second settle of the same `at` refunds
+     nothing (tested); the published-key rule and the platform minimum share one predicate (`guarded/config.ts`
+     `isLocalTestEnv`).
+  7. **N7, recorded:** the announced-key list costs one D1 read per isolate every 30 s, which any request (even one
+     refused at check 1) can be the one to trigger, and is charged to no bucket; a newly announced key is unusable for
+     every request for up to 30 s; waiting keys (before their date) and expired keys not yet marked by the hourly job
+     are on the list (check 5 refuses them). The "Last verified" stamps of this branch said 2026-11-26: corrected to
+     2026-11-25, the commits' date.
 - Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation: request checks,
   limiter state and an off-chain call log.
 

@@ -21192,11 +21192,12 @@ held it) when it was built; it sits after D913, which reached `next` first.
 From `next` @ 0b99ec12; docs only, not merged, not built, not deployed. Numbered D914: D912 is held by an open pull
 request, D915 and D916 by two branches being built at the same time.
 
-### D914. The partner platform spec's N1 to N9 answered: a platform-proposed web address is in force at once when an owner of the organisation confirms it in the portal, else after 24 h; staff may not restore a removed web address without the wait
+### D914. The partner platform spec's N1 to N9 answered: a platform-proposed web address is in force at once when an owner of the organisation confirms it in the portal, else after 24 h; a new platform key the same way, with four eyes on a real-money setup; staff may not restore a removed web address without the wait
 - Date 2026-11-25 · Status: N1, N2 and N4 to N9 **decided by the Tech Lead 2026-11-25** as recommended; N3 **decided
   by the Tech Lead 2026-11-25, differently from the recommendation**; question 8 of D913 **re-confirmed by the Tech
-  Lead 2026-11-25 as no**; two points of N3's design **decided while writing the spec, to confirm with the Tech
-  Lead**; one point **open, to revisit at mainnet preparation**; the design that carries them out **proposed, not
+  Lead 2026-11-25 as no**; how a platform key comes into force **decided by the Tech Lead 2026-11-25** (four eyes on a
+  real-money setup); one point of N3's design and two of the key rule **proposed while writing the spec, to
+  confirm with the Tech Lead**; one point **open, to revisit at mainnet preparation**; the design that carries them out **proposed, not
   built** (`docs/partner-platform-spec.md`, A14, A15, piece P10) · Relates to D51, D127, D235, D356, D428, D909, D913 ·
   Built: nothing
 - **In the Tech Lead's words** (2026-11-25), in this order: "yes to all except for number 3" (said of N1 to N9 with the
@@ -21235,10 +21236,42 @@ request, D915 and D916 by two branches being built at the same time.
     names the app and its web address; the "also used on other apps" line; staff suspend an app at once; origins
     can be removed at once; and, in the spec's design, the confirmation's notice to every owner, the security
     contacts and Journear.
-- **Decided while writing the spec, to confirm with the Tech Lead:**
-  1. **Origins only.** The confirmation is a shortcut for web addresses only; platform keys keep the delay with the
-     24 h platform minimum and no shortcut. The discussion was about web addresses only.
-  2. **Who may confirm.** Proposed: a console member whose role is `owner` (`members.role`, the stricter of the
+- **Platform keys, in the Tech Lead's words** (2026-11-25, later the same day; this replaces the spec's first
+  proposal that keys get no shortcut): asked whether a 24 h wait would block an urgent key rotation, then "what if we
+  made this also use confirmation emails? is it secure enough?", then, to the rule below, "sounds good, I like this
+  "four eyes" rule, please suggest this for future decisions similar to this. also ok with this."
+- **The Tech Lead's decision on keys:**
+  - A newly registered platform key is announced as today (security contacts, owners, the alias) and waits the 24 h
+    platform minimum, unless confirmed. Revocation stays immediate.
+  - **Test setup** (dev envs; not `local*` test envs, which keep their own short delay): any owner who meets the
+    confirmation bar may confirm it in the console, including the owner who registered it, and it is in force at
+    once. That is "no wait" in practice for an owner-registered key. Accepted there because an owner can already add
+    an origin by hand with the 60 s delay, test funds are worthless, and partner testing and an urgent rotation need
+    the speed.
+  - **Real-money setup** (production envs): **four eyes.** The confirming owner must be a different person from the
+    one who registered the key; the registrant's own confirmation is refused; with no second owner's confirmation the
+    key waits the 24 h. An org with one owner therefore always waits.
+  - The same mechanics as the origin confirmation: the email's link only opens the console page; a GET never
+    confirms; the confirmation is a console route the platform key can never reach; the one-click cancel from the
+    email stays.
+  - **Direction** (the Tech Lead): suggest the "four eyes" rule for future decisions of the same kind.
+- **Proposed for keys, to confirm with the Tech Lead** (`docs/partner-platform-spec.md` A3, A7):
+  1. **"A different person"** means a different console user (one console user is one Google account), a different
+     verified Google `sub`, a different email address (compared without dots and `+tags`), and an owner of the org
+     since before the key was registered. The user and `sub` checks are in the database write (a CHECK and the commit
+     predicate); the email and owner-since checks in the console's server. What it can't catch: one person with two
+     separate Google accounts, both owners long enough; two owners who collude; a compromised console server
+     skipping the email and owner-since checks.
+  2. **A staff-registered key** (N5): an owner's acceptance counts as its confirmation (on a test setup because any
+     owner may confirm; on a real-money setup because a staff registration and one owner's acceptance are two
+     people), and the key is in force once its announcement is sent; a key a second staff member approved waits the
+     24 h unless an owner confirms it.
+- **Advice to the network** (proposed): keep a second key registered and in force as a standby (the two-credential
+  quota exists for this), so an urgent rotation needs no wait at all.
+- **Open (not a decision):** with this rule, on a real-money setup one taken-over owner account alone still can't get
+  a key in force at once; on a test setup it can.
+- **Proposed while writing the spec, to confirm with the Tech Lead:**
+  1. **Who may confirm.** Proposed: a console member whose role is `owner` (`members.role`, the stricter of the
      console's two roles, `owner` and `viewer`; read fresh on each request) **and** who is an on-chain owner
      (`Owner::Oidc`) of the app's scope, proven with the console's fresh Google sign-in (a new step-up kind
      `origin.confirm`, verified by the API itself as for `ConsoleRpc.changeOrigins`). That is the strictest role the

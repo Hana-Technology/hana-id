@@ -34,6 +34,7 @@ spec adds. Nothing here is built.
 | What it may do | Only on apps it created on those scopes (decided, N1): create a test app; propose and remove web addresses; cancel its own waiting proposals; read an app and its publishable keys; suspend and resume; create and revoke publishable keys |
 | What it may never do | Owners, Google clients or anything on chain; auto-approve policies; raw signing; gas sponsorship; the mainnet demo; partner labels; live apps; deleting apps; confirming a web address (only an owner in our partner portal can, A15); any app it didn't create, any live app, any other scope or organisation |
 | Who vouches for a web address | The network, for every partner site it adds, and then one of its owners (decided, N3). A web address the network's backend proposes is announced to the organisation's security contacts and to Journear, with the usual cancel link, as today. It comes into force **at once when an owner of the organisation confirms it** in our partner portal (signed in, on a page that shows the app and the address; A15). If nobody confirms it, it comes into force after at least 24 h (the platform minimum, in every env except `local*` test envs, and at least our guarded-change delay), unless cancelled. So a stolen platform key alone gets only the slow, cancellable path |
+| A new platform key | Announced to the security contacts, every owner and Journear; in force when an owner confirms it in our partner portal, or after 24 h. On a test setup any owner may confirm, the registrant too; on a real-money setup only a **different** owner (four eyes), so an org with one owner always waits (A3, D914). Revocation is immediate |
 | Off switches | Journear staff: revoke the network's key at once, switch the platform off for the organisation at once, suspend any one partner app at once (Journear's own bit, which the network can't clear) |
 | Audit | Every call that passes the signature check is recorded, reads included; failures before it are counted and alerted on, not stored; every write is also an `app_changes` row with the new actor kind `platform` |
 | Shared scope rules, in code | Auto-approve refused for every app on a shared scope and every platform-created app (piece P0, before the platform is switched on for any org) |
@@ -180,8 +181,11 @@ network partner is created by Journear staff, as today.
 |---|---|---|
 | **A stolen platform credential** (the network's private key) | Create test apps under the network's name; propose look-alike origins; remove origins, suspend apps and revoke publishable keys of the platform's apps (denial of service); read publishable keys (public anyway) | Its reach (A1) and the reach filter inside every plan read and commit (H1); every origin it adds waits at least 24 h (the platform minimum, and at least the delay) after an email to the org's security contacts and to Journear, cancellable from the email, unless an owner confirms it in our partner portal, which the key can't do (A15); creation and proposal quotas (A5); the platform's own destructive-call breaker (M3); staff revoke the key or switch the platform off for the org at once; anomaly events to staff (A5). It can never touch owners, the chain, policies, raw signing, sponsorship, the mainnet demo or labels, so it can't move or sign anything on its own |
 | **A malicious or compromised partner site** (one of the network's partners) | On a shared wallet: ask any of the scope's users to approve moves from the one wallet, from its own origin | The user's approval window names the app and its web address; the "also used on other apps" line (another branch; decided, N6: it ships before the platform is on for any org); auto-approve refused in code for every app on a shared scope (P0, H3), raw signing refused for test apps, sponsorship staff-only, the mainnet demo staff-only with a warning for a platform-created app (A11); staff suspend the app at once (bit 1); the network removes its origins at once. A partner has no platform key and no console |
-| **A malicious network insider** | Everything a stolen credential gives; with console access as an owner, also the cancel links and the linking view (Part B); registering a key of its own; as an on-chain owner of the scope, proposing an origin through the platform and confirming it at once (A15), where adding it by hand on a production network would wait the full delay (the open point of A15) | Origin additions also notify Journear, and a confirmation notifies the security contacts, every owner and Journear and names who confirmed (A15); and staff see every platform proposal on the admin portal's queue; a key registered by an owner waits the delay, its notice goes to the security contacts, the org's owners and Journear and names who registered it (M5); a staff-registered key needs an owner's acceptance or a second staff member (M5); a registration within 7 days of a security-contact change is refused (M5); every call is audited where the network's other owners and Journear see it; linking lookups are audited and their volume alerted (L9); Journear's per-app suspensions can't be undone by the network |
-| **A Journear staff member acting alone** | Register a key for an org | A staff-registered key comes into force only after the network's owner accepts it with a fresh sign-in, or a second staff member approves it, and after the delay and the notice (M5) |
+| **A malicious network insider** | Everything a stolen credential gives; with console access as an owner, also the cancel links and the linking view (Part B); registering a key of its own and, on a test setup, confirming it at once (A3); as an on-chain owner of the scope, proposing an origin through the platform and confirming it at once (A15), where adding it by hand on a production network would wait the full delay (the open point of A15) | Origin additions also notify Journear, and a confirmation notifies the security contacts, every owner and Journear and names who confirmed (A15); and staff see every platform proposal on the admin portal's queue; a key registered by an owner is announced to the security contacts, the org's owners and Journear, naming who registered it (M5), and on a real-money setup comes into force before the 24 h only when a **different** owner confirms it (four eyes, A3); a staff-registered key needs an owner's acceptance or a second staff member (M5); a registration within 7 days of a security-contact change is refused (M5); every call is audited where the network's other owners and Journear see it; linking lookups are audited and their volume alerted (L9); Journear's per-app suspensions can't be undone by the network |
+| **A Journear staff member acting alone** | Register a key for an org | A staff-registered key comes into force only after the network's owner accepts it with a fresh sign-in (then, proposed, at once once announced: the acceptance counts as the confirmation, A3), or a second staff member approves it (then after the delay, unless an owner confirms it), and always after the notice (M5) |
+| **A key confirmed by a taken-over owner account** | On a test setup: one taken-over owner account registers a key and confirms it itself, in force within minutes | Accepted on a test setup (the Tech Lead, D914: an owner can already add an origin there with the 60 s delay, test funds are worthless); the notice to every owner, the security contacts and Journear names who registered and confirmed; revocation is immediate by any owner or staff. **On a real-money setup** one taken-over owner account alone can't: the confirmation needs a different owner (A3), so the key waits 24 h, announced, cancellable (the open point of A3 and D914) |
+| **One person posing as two owners** (to pass the four-eyes rule) | A key in force at once on a real-money setup on one person's word | The confirmer must differ from the registrant in console user, Google `sub` and email, and have been an owner since before the registration (A3); a new owner waits the owner-grant delay and is announced to every owner (D89). Residual: one person with two separate Google accounts, both owners for long enough, or two owners who collude |
+| **The platform key confirming a key** | A stolen key bringing a new key into force | No platform route confirms anything; `ConsoleRpc.confirmPlatformKey` refuses every actor but a member (A3, A8) |
 | **Replay** of a captured request | Repeat a write | Each request is signed over the env, its method, path, body hash, key id, time and a single-use nonce; ±60 s clock window; the nonce is reserved until the window ends (A3); writes also carry an idempotency key (A9) |
 | **Confused deputy between orgs, scopes or environments** | Network X acting on network Y's app; a credential acting on a live app, a staff-created app or another scope of its own org | The org comes only from the credential, never from the request; every plan read and every commit predicate holds the reach filter (org, the credential's scopes, `environment = 'test'`, platform-created), not only a check at the route (H1); a cancel is held to platform-proposed `origin_add` changes (H2); anything outside the reach is `not_found`, exactly like an app that doesn't exist; a key's scopes are checked against `scopes.org_id` at registration and inside every call |
 | **Enumeration** (of apps, changes, keys, credentials) | Learn other orgs' app ids or which key ids exist | Ids are random (`newId`, 12 random bytes); unknown and foreign ids answer the same `not_found`; every authentication failure answers the same `401 unauthenticated`; failures are limited per IP, successes per key |
@@ -309,19 +313,65 @@ credentials in force or waiting per org, so one can replace the other.
 
 Either way the credential is then **pending**: announced by email to the org's security contacts, **to every owner of
 the org**, and to Journear's security alias, naming who registered it (the member's email or "Journear staff" with the
-staff member's name) and who accepted it, with a cancel link (M5; decided, N9); and usable only after the delay (the
-greater of `appChangeDelayMs` and the platform minimum of 24 h, in every env but `local*` test envs; decided, N3).
-Staff can't skip the wait, and **a key has no confirmation shortcut**: the owner's confirmation of A15 is for origins
-only (decided while writing this, **to confirm with the Tech Lead**: the discussion of N3 was about web addresses
-only). The public key is checked to be a valid P-256 point, unique across all orgs.
+staff member's name) and who accepted it, with a cancel link (M5; decided, N9). It then comes into force **when an
+owner confirms it** (below), or else after the delay (the greater of `appChangeDelayMs` and the platform minimum of
+24 h, in every env but `local*` test envs; decided, N3), unless it is cancelled first. Staff can't skip the wait. The
+public key is checked to be a valid P-256 point, unique across all orgs.
 
-**Refused after a security-contact change** (M5): a registration (and an acceptance) is refused with `conflict` while
-the org's security contacts changed less than **7 days** ago (the latest `org.security_contacts` row in
-`app_changes`), so an insider can't swap the contacts and register a key the same week.
+**An owner's confirmation of a key** (decided by the Tech Lead 2026-11-25, D914; the "four eyes" rule). The
+mechanics are the origin confirmation's (A15): the announcement email carries a Confirm link that only opens the
+console's page for that key (label, thumbprint, scopes, who registered and accepted it, when it comes into force if
+nobody confirms); **a GET never confirms**; the confirmation is a console route (`ConsoleRpc.confirmPlatformKey`,
+after a step-up of kind `platform.key_confirm`) that refuses every actor but a member, so **no platform key can ever
+confirm a key**, its own or another; the cancel link stays one click from the email with no sign-in. Only a `pending`,
+announced, unconfirmed and uncancelled key can be confirmed. Revocation stays immediate, whatever the key's state.
+
+- **Who may confirm:** the same bar as for an origin (A15, to confirm): a console `owner` member who is an on-chain
+  owner of **each** scope the key names, with the fresh Google sign-in (`confirmStepUp` once per scope, as the
+  registration).
+- **On a test setup** (a dev env: a testnet env that isn't `local*`; `local*` test envs keep their own short delay
+  and no 24 h minimum): any owner who meets the bar may confirm, **including the owner who registered it**, and the
+  key is in force at once. In practice that is **no wait** for an owner-registered key: the owner registers it, the
+  announcement goes out on the next notice run (at most about 5 minutes), and the same owner confirms it. Accepted
+  there because an owner can already add an origin by hand with the 60 s delay, test funds are worthless, and partner
+  testing and an urgent rotation need the speed.
+- **On a real-money setup** (an env whose network is `mainnet`, `PRODUCTION_NETWORK` in
+  `apps/api/src/guarded/config.ts`): **four eyes.** The confirming owner must be a **different person** from the one
+  who registered the key; the registrant's own confirmation is refused (`forbidden`); with no second owner's
+  confirmation the key waits the full delay (at least 24 h). An org with one owner therefore always waits.
+- **"A different person"** (proposed, **to confirm with the Tech Lead**): the confirmer must differ from the
+  registrant in all of: the console user (`console_users.id`; one console user is one Google account, `UNIQUE
+  (provider, sub)`, so this also rules out one user with two memberships), the verified Google `sub` of the step-up
+  (against the registration's `proposer_sub`), and the email address (compared in lower case with dots and a `+tag`
+  removed from the local part, so `a.b+x@` and `ab@` are one person). And the confirmer must have been an owner of the
+  org **since before the key was registered** (`role_since`, or the owner grant's `owner_from`, at or before the key's
+  `proposed_at`), so a second Google account made an owner afterwards can't confirm; a new owner already waits the
+  owner-grant delay and is announced to every owner (D89, `owner_grants`). The console user and the `sub` are held in
+  the API's write itself (the commit predicate and a table CHECK, A7), not only in the console's screens; the email
+  and owner-since checks are made by the console's server before it calls the API (the API doesn't hold members'
+  emails or roles). **What this can't catch:** one person with two genuinely separate Google accounts, both owners
+  since before the registration (on-chain owners too); two owners who collude; a compromised console server, which
+  could skip the email and owner-since checks (not the user and `sub` checks).
+- **A staff-registered key** (N5) still needs an owner's acceptance first (or a second staff member's approval).
+  Proposed, **to confirm with the Tech Lead**: an owner's acceptance of a staff-registered key **counts as its
+  confirmation**: on a test setup because any owner may confirm, and on a real-money setup because a staff
+  registration and one owner's acceptance are already two people. The key then comes into force as soon as its
+  announcement has been sent (the next notice run), so the security contacts and owners always hear of it before it
+  works. A key approved by a second staff member (no owner involved) waits the delay unless an owner then confirms it
+  (any owner: none of them registered it).
+- **Refusals shared with registration:** a confirmation is refused while the org's security contacts changed less
+  than 7 days ago (as below), and while the org is frozen.
+
+**Refused after a security-contact change** (M5): a registration, an acceptance and a confirmation are refused with
+`conflict` while the org's security contacts changed less than **7 days** ago (the latest `org.security_contacts` row
+in `app_changes`), so an insider can't swap the contacts and register a key the same week.
 
 **Expiry and rotation.** A credential expires 365 days after it comes into force (decided, D913 question 3); the admin
-Worker emails the security contacts and owners 30 and 7 days before. To rotate, register the next key (it waits the
-delay), switch the network's backend to it once it is in force, then revoke the old one.
+Worker emails the security contacts and owners 30 and 7 days before. To rotate, register the next key, switch the
+network's backend to it once it is in force, then revoke the old one. On a real-money setup the next key waits 24 h
+unless a second owner confirms it. **Advice to the network:** keep a second key registered and in force as a standby
+(the two-credential quota of A5 exists for this), so an urgent rotation is a switch to the standby and a revoke of the
+old key, with no wait at all; then register a new standby.
 
 **Revocation is immediate**, never delayed, by any of: Journear staff (admin portal, with a reason); an `owner` member
 of the org in our partner portal (no fresh sign-in, as for revoking a publishable key: a kill switch); the credential
@@ -394,7 +444,7 @@ staff raise an org's values in `platform_orgs` when it needs more.
 | Origin proposals | 10 an hour, 30 a UTC day per org; at most 30 waiting (proposed, not yet in force) per org | windows, and a count in the proposal batch's predicate |
 | Origins per app | 20 active or pending (`MAX_APP_ORIGINS`) | unchanged |
 | Publishable keys per app | 5 unrevoked (`MAX_UNREVOKED_KEYS`) | unchanged |
-| Credentials per org | 2 in force, waiting or awaiting acceptance | registration |
+| Credentials per org | 2 in force, waiting or awaiting acceptance (so the network can keep a standby key in force for an urgent rotation, A3) | registration |
 
 **The hot-DB budget, worked out (L8).** Each call: one read of the credential joined to `platform_orgs` (1 read). Then
 a write: its plan read (1 read), one batch with the existing statements plus the `platform_requests` and
@@ -427,8 +477,8 @@ nonce, key windows) and at most three reads and two batches.
 | Removals, suspension, keys | `removeOrigins`, `setSuspensionBit`, `createKey`, `revokeKey` | Each takes the reach predicate (H1); `apps.partner_bit_by` and the member's take-over write (A4.6) | — |
 | App creation | The body of `createApp` (name rules, first key, origins as proposals, `app.created`) | A platform variant on an existing flagged scope only: no scope creation, no on-chain owner read, never a waiver, the look-alike name check within the scope, `user_ids` and `created_by_kind` by `INSERT … SELECT` | — |
 | Auto-approve | `proposeChange`'s rules for everyone else | `proposeChange` (ConsoleRpc and AdminRpc), the admin CLI's `app:settings` and the hourly drift check refuse or flag a `policy_set` for an app on a flagged scope or created by the platform (P0, H3) | — |
-| Ledger | `app_changes` with its kinds (`app.created`, `origin.proposed`, `origin.removed`, `change.cancelled`, `suspension.set`, `suspension.cleared`, `key.created`, `key.revoked`) | `actor_kind` gains `platform` (actor id = the credential id) | Kind `origin.confirmed` (actor `member`, with the step-up's `actor_sub`; detail: the change id, the origin, the proposing key's id); kinds `platform.key_proposed`, `platform.key_accepted`, `platform.key_announced`, `platform.key_cancelled`, `platform.key_active`, `platform.key_revoked`, `platform.org_switch`, `scope.app_user_ids` (org-level rows, `app_id` NULL), each with an audit title in `APP_CHANGE_KINDS` (D704) |
-| Credential registration | The step-up verification (`changes/step-up.ts`); the notice email and cancel-link machinery (`linkToken`, `CANCEL_LINK_KEY`); the owners' email list the admin Worker already uses for invites | Console `pending_actions` gains `platform.key_add`, `platform.key_accept`, `platform.key_revoke` (a rebuild, as migration 0004 did), and `origin.confirm` (P10; in the same rebuild if P2 and P10 ship together, else its own) | A guarded change of its own kind, held in `platform_keys` (keys belong to an org, not an app, so `guarded_changes`, whose `app_id` is required, can't hold it): `AdminRpc.platformKeyNotices` → email → `ackPlatformKeyNotice`; cancel by an owner, staff or the link (`/cancel-platform-key/:id#t=` on the console) |
+| Ledger | `app_changes` with its kinds (`app.created`, `origin.proposed`, `origin.removed`, `change.cancelled`, `suspension.set`, `suspension.cleared`, `key.created`, `key.revoked`) | `actor_kind` gains `platform` (actor id = the credential id) | Kind `origin.confirmed` (actor `member`, with the step-up's `actor_sub`; detail: the change id, the origin, the proposing key's id); kinds `platform.key_proposed`, `platform.key_accepted`, `platform.key_announced`, `platform.key_confirmed`, `platform.key_cancelled`, `platform.key_active`, `platform.key_revoked`, `platform.org_switch`, `scope.app_user_ids` (org-level rows, `app_id` NULL), each with an audit title in `APP_CHANGE_KINDS` (D704) |
+| Credential registration | The step-up verification (`changes/step-up.ts`); the notice email and cancel-link machinery (`linkToken`, `CANCEL_LINK_KEY`); the owners' email list the admin Worker already uses for invites | Console `pending_actions` gains `platform.key_add`, `platform.key_accept`, `platform.key_revoke` and `platform.key_confirm` (a rebuild, as migration 0004 did), and `origin.confirm` (P10; in the same rebuild if P2 and P10 ship together, else its own) | A guarded change of its own kind, held in `platform_keys` (keys belong to an org, not an app, so `guarded_changes`, whose `app_id` is required, can't hold it): `AdminRpc.platformKeyNotices` → email → `ackPlatformKeyNotice`; cancel by an owner, staff or the link (`/cancel-platform-key/:id#t=` on the console); an owner's confirmation (`ConsoleRpc.confirmPlatformKey`, step-up kind `platform.key_confirm`, the console page `/confirm-platform-key/:id`; four eyes on a real-money setup, A3) |
 | Security events | The admin Worker's email of `security_events` | — | Kinds `platform_quota`, `platform_auth_failures`, `link_lookup_volume` (B6) |
 | Call log | — | — | `platform_calls`: every call that passed the signature check |
 
@@ -461,9 +511,23 @@ CREATE TABLE platform_keys (
   revoked_at        INTEGER, revoked_by_kind TEXT, revoked_by TEXT, revoke_reason TEXT,
   last_used_at      INTEGER,                              -- written at most once an hour per key
   request_id        TEXT NOT NULL,
+  -- The owner's confirmation (A3, D914). four_eyes is written once at registration: 1 on a real-money setup.
+  four_eyes         INTEGER NOT NULL CHECK (four_eyes IN (0, 1)),
+  confirmed_kind    TEXT CHECK (confirmed_kind IN ('confirm', 'acceptance')), -- 'acceptance': a staff key's owner acceptance
+  confirmed_by      TEXT, confirmed_sub TEXT, confirmed_at INTEGER,
   CHECK (proposed_by_kind = 'member' OR status IN ('awaiting_acceptance', 'cancelled') OR accepted_at IS NOT NULL),
-  CHECK (accepted_by_kind IS NULL OR accepted_by_kind = 'member' OR accepted_by IS NOT proposed_by)
+  CHECK (accepted_by_kind IS NULL OR accepted_by_kind = 'member' OR accepted_by IS NOT proposed_by),
+  CHECK ((confirmed_at IS NULL) = (confirmed_by IS NULL) AND (confirmed_at IS NULL) = (confirmed_sub IS NULL)
+         AND (confirmed_at IS NULL) = (confirmed_kind IS NULL)),
+  -- Four eyes, in the database: never the registrant's own console user or Google account.
+  CHECK (four_eyes = 0 OR confirmed_at IS NULL
+         OR (confirmed_by IS NOT proposed_by AND confirmed_sub IS NOT proposer_sub))
 );
+-- four_eyes and the confirmation are fixed once written.
+CREATE TRIGGER platform_keys_confirm_fixed BEFORE UPDATE OF four_eyes, confirmed_kind, confirmed_by, confirmed_sub,
+  confirmed_at ON platform_keys
+  WHEN NEW.four_eyes IS NOT OLD.four_eyes OR OLD.confirmed_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'platform_keys: the confirmation is written once'); END;
 -- Staff's per-org switch and quotas (a missing row: off).
 CREATE TABLE platform_orgs (
   org_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)), frozen INTEGER NOT NULL DEFAULT 0,
@@ -487,6 +551,19 @@ CREATE INDEX platform_calls_org ON platform_calls (org_id, seq);
 ALTER TABLE scopes ADD COLUMN app_user_ids INTEGER NOT NULL DEFAULT 0 CHECK (app_user_ids IN (0, 1));
 ALTER TABLE apps ADD COLUMN created_by_kind TEXT NOT NULL DEFAULT 'hana' CHECK (created_by_kind IN ('hana', 'platform'));
 ALTER TABLE apps ADD COLUMN partner_bit_by TEXT CHECK (partner_bit_by IN ('member', 'platform'));
+```
+
+**A key's confirmation in the database** (A3). `four_eyes` is set by the registration's write from the env
+(`NETWORK = 'mainnet'`, the rule `changeConfig` already reads), never from the request; a test checks it is 1 on
+every mainnet config. The confirmation's commit predicate repeats the four-eyes rule (`confirmed_by IS NOT proposed_by
+AND confirmed_sub IS NOT proposer_sub` when `four_eyes = 1`; `IS NOT`, since a staff registration has no
+`proposer_sub`) and requires `status = 'pending' AND notified_at IS NOT NULL AND confirmed_at IS NULL AND revoked_at
+IS NULL AND cancelled_at IS NULL`, so a cancel or revocation that lands first wins; it sets `active_from = now`. An
+owner's acceptance of a staff key (proposed) writes `confirmed_kind = 'acceptance'` with the acceptance's member and
+`sub`, and the ack then sets `active_from = notified_at`. The email and owner-since checks (A3) are made by the
+console's server, which holds members' emails and roles.
+
+```sql
 -- P10: who confirmed a platform-proposed origin, and when (A15). After P1's rebuild, so plain added columns.
 ALTER TABLE guarded_changes ADD COLUMN confirmed_by  TEXT;     -- the console member's user id
 ALTER TABLE guarded_changes ADD COLUMN confirmed_sub TEXT;     -- the verified step-up's Google sub (an on-chain owner)
@@ -659,8 +736,13 @@ test (P10) walks every platform route and checks none changes `confirmed_at` or 
 
 - An org page **Platform keys**: each key's label, thumbprint, scopes, state (awaiting acceptance, waiting with its
   date, in force, expiring, revoked, cancelled), who registered and who accepted it, when it was last used;
-  **Register a key** and **Accept** (owners of each scope, fresh sign-in), **Revoke** (owners, immediate), **Cancel**
-  for a waiting one.
+  **Register a key** and **Accept** (owners of each scope, fresh sign-in), **Confirm** for a waiting one (the page
+  the announcement's Confirm link opens, `/confirm-platform-key/:id`: the key's label, thumbprint, scopes, who
+  registered it and when it comes into force if nobody confirms; then the fresh sign-in), **Revoke** (owners,
+  immediate), **Cancel** for a waiting one. On a real-money setup the registrant sees no Confirm button but "Another
+  owner needs to confirm this key. If nobody does, it starts working on {date}."; in an org with one owner: "Your
+  organisation has one owner, so this key starts working on {date}."; the state "Waiting for another owner to
+  confirm, or in force on {date}".
 - **Platform activity**: the `platform_calls` rows of the org (time, key, route, app, outcome, request id), filterable
   by app.
 - On each app: "Created by your platform key {label}"; platform rows in the Audit with the key's label as the actor;
@@ -800,9 +882,9 @@ platform's proposal brings one into force at once. Confirming the platform's pro
 one by hand, and an on-chain owner who also holds the platform key can use the platform to skip the production delay.
 Nothing changes now; the two paths are to be made consistent (one way or the other) when mainnet is prepared.
 
-**Platform keys have no shortcut** (decided while writing this, **to confirm with the Tech Lead**): a key waits the
-delay with the 24 h platform minimum (A3), and no owner's confirmation brings it forward; the discussion of N3 was
-about web addresses only.
+**Platform keys** have a confirmation of their own, with the same mechanics and one more rule on a real-money setup
+(four eyes: the confirming owner is not the one who registered the key): A3, "An owner's confirmation of a key"
+(decided by the Tech Lead 2026-11-25, D914).
 
 **Address impact: none.** The confirmation changes when a web address may use an app, an off-chain record; no
 contract call, key, path or address derivation.
@@ -1032,9 +1114,13 @@ question 8 re-confirmed as no (above). Each is now part of the design above.
   for an origin nobody confirms, and an origin comes into force **at once when an owner of the organisation confirms
   it** in our partner portal; the same in every env except `local*` test envs (A15, P10). The Tech Lead accepted the
   remaining risk of a taken-over owner account (A15). **To confirm** with the Tech Lead: who exactly may confirm (A15
-  proposes an `owner` member who is an on-chain owner of the scope, with a fresh sign-in), and that platform keys get
-  no confirmation shortcut (A3, A15). **Open, for mainnet preparation:** a member's own origin on a production env
-  still waits the full delay (A15).
+  proposes an `owner` member who is an on-chain owner of the scope, with a fresh sign-in). **Open, for mainnet
+  preparation:** a member's own origin on a production env still waits the full delay (A15).
+- **Platform keys** (decided by the Tech Lead later the same day, D914, not part of N3's answer): a new key is
+  announced and waits the 24 h platform minimum unless an owner confirms it; on a test setup any owner may confirm it,
+  the registrant too, and it is in force at once; on a real-money setup only a different owner (four eyes) (A3).
+  **Open:** on a real-money setup one taken-over owner account alone can't get a key in force at once; on a test
+  setup it can.
 - **N4.** Refuse auto-approve in code for every app on a shared scope? **Yes** (piece P0).
 - **N5.** Must a key that staff register be accepted by the network's owner (or a second staff member) before it
   works? **Yes** (A3).
@@ -1057,7 +1143,7 @@ review.
 | Gate | Findings |
 |---|---|
 | Before P1 | M9 (the ledger rebuild as specified in A7, the kind triggers, the deploy's bookmark and comparison) |
-| P2 | M5 (acceptance of staff-registered keys, owners in the notices, no registration within 7 days of a contact change), L6 (an owner of each scope) |
+| P2 | M5 (acceptance of staff-registered keys, owners in the notices, no registration within 7 days of a contact change), L6 (an owner of each scope), the key confirmation and its four-eyes rule (A3, D914) |
 | P3 | M2 (per-IP counts failures only), M3 (the platform's own global breaker), M4 (plain ES256, both S values, DER and raw, the high-S vector), L1 (exact regexes, one parsed path, no dot or empty segments, GET and POST only, JSON, no encoding), L2 (`ENV_NAME` signed, one key per env), L5 (self-revoke with the switch off, the key review before re-enabling), L8 (the hot-DB budget, the nonce object's name and location) |
 | P4 | H1 (the reach filter in every plan read and commit predicate), H2 (cancel held to platform-proposed origin adds), M7 (live origin rules), L3 (idempotency for the ledger's lifetime, the rotated-key retry), L4 (who holds the partner bit), L15 (look-alike names within the scope), L16 (`INSERT … SELECT` of the app's mode) |
 | P5 | L7 (what is recorded and what is only counted), L14 (one email per request, lower quotas), H3's mainnet demo warning |
@@ -1071,7 +1157,7 @@ review.
 |---|---|---|---|---|
 | P0 | **Shared-scope rules in code** (H3): `scopes.app_user_ids`, `apps.created_by_kind`; `AdminRpc.setScopeAppUserIds` (one way, refused while a policy is in force or waiting); `proposeChange` in ConsoleRpc and AdminRpc and the admin CLI's `app:settings` refuse a `policy_set` (`policy_invalid`, "Auto-approve is off for apps that share a wallet") for an app on a flagged scope or created by the platform; the hourly drift check flags a policy on such an app; the console and the admin portal hide the policy editor for them. Ships before the platform is switched on for any org | S | Refused through each of the three paths for a flagged scope and for a platform-created app; an unflagged app unchanged; the flag refused with a waiting policy; the drift flag for a bare D1 write | **Yes** |
 | P1 | The `platform` actor: the rebuild of `app_changes`, `guarded_changes` and `security_events` with the kind triggers (A7); `ACTOR_KINDS`, `PROPOSER_KINDS`, audit titles; the notice email's "Proposed by" wording; the console's Audit rendering | S | The migration test of A7 (rows, `seq`, every index and trigger by its SQL, refusals kept, an unknown kind refused); the ops script's before and after comparison; views and the email for each actor kind | **Yes** (the ledger) |
-| P2 | Credentials: `platform_keys`, `platform_orgs`; registration by an owner of each scope and by staff with acceptance or a second staff member; the 7-day contact rule; notices to contacts, owners and the alias naming who registered and accepted; ack, cancel link, activation and expiry jobs; the four revocation routes; the switch with the key review | M | Each registration route; the step-up nonce bound to env, thumbprint, scopes and label (a token for another key refused); one owner of only one of two scopes refused; a staff key unusable until accepted, and the registering staffer can't approve it; a registration within 7 days of a contact change refused; the delay with no waiver, at least the 24 h platform minimum on a dev env, with no confirmation shortcut; the link cancel; immediate revocation by each route; expiry | **Yes** |
+| P2 | Credentials: `platform_keys`, `platform_orgs`; registration by an owner of each scope and by staff with acceptance or a second staff member; the 7-day contact rule; notices to contacts, owners and the alias naming who registered and accepted; ack, cancel link, activation and expiry jobs; the four revocation routes; the switch with the key review; **the owner's confirmation of a key** (A3, A7: `ConsoleRpc.confirmPlatformKey`, step-up kind `platform.key_confirm`, `platform_keys.four_eyes` and `confirmed_*` with their CHECKs and trigger, the Confirm link in the key's announcement and the console page, the notice of a confirmation, the acceptance counting as the confirmation (proposed)); P10 reuses its page, step-up and notice machinery for origins | M to L | Each registration route; the step-up nonce bound to env, thumbprint, scopes and label (a token for another key refused); one owner of only one of two scopes refused; a staff key unusable until accepted, and the registering staffer can't approve it; a registration within 7 days of a contact change refused; the delay with no waiver, at least the 24 h platform minimum on a dev env when nobody confirms; the link cancel; immediate revocation by each route; expiry. The key confirmation: on a dev env the registrant's own confirmation brings the key into force at once; **on a production env the registrant's confirmation refused** (by the API and by a bare D1 write against the CHECK), **a second owner's confirmation brings it into force**, **one owner only: the key waits the 24 h**; a confirmer who differs only in email, or who became an owner after the registration, refused; `four_eyes` 1 on every mainnet config and fixed once written; **the platform key cannot confirm a key** (no platform route; `ConsoleRpc.confirmPlatformKey` refuses every non-member actor); a GET of the page or the link changes nothing; a confirmation before the announcement, after a cancel or after a revocation refused, and a revocation racing a confirmation (each order); a staff key's owner acceptance in force once announced, a second-staff approval waiting unless an owner confirms; a confirmation within 7 days of a contact change refused | **Yes** |
 | P3 | Request authentication and admission: the route, A3's checks in order, the failure-only per-IP window, the nonce object (pinned), the per-key and per-org limits, the platform's breakers, `PLATFORM_DB_LIMITS`, `platform_calls`, `GET /credential`, self-revoke | M | The vectors from an independent implementation, the high-S one verifying and the DER one refused; every refusal in A3's order with its code; a path with `//`, `.`, `..`, `%2F` or a trailing slash refused; a PUT, a non-JSON or encoded body refused; a replayed nonce; a request signed for another env (`ENV_NAME` or `SIGNER_ACCOUNT`); a body or path changed after signing; the identical `401` for every authentication failure; a valid key behind an IP that is failing still admitted; self-revoke with the switch off; a platform breaker flood leaving the console's breaker untouched; each route within its cost | **Yes** |
 | P4 | Operations: create (the platform variant, the look-alike name check within the scope, quotas, `INSERT … SELECT`), list, get (the allowlisted view), origins propose (live rules; `ackNotice`'s platform minimum, `PLATFORM_MIN_DELAY_MS`, for platform proposals), remove and cancel, suspend and resume (`partner_bit_by`), keys create and revoke; the reach predicate in every reused writer; `platform_requests` | M | H1's tests (a live app, a staff-created app and another scope untouched; the scope moved between the read and the commit); H2 (a member's, staff's or policy change `not_found` to the platform's cancel); M7 (a loopback, http or mixed-script origin refused on a test scope); the platform minimum (a platform proposal's `active_from` at least 24 h after its ack on a dev env, its env's delay in a `local*` env, a member's or staff's proposal unchanged); the resume rule including a member suspending after the platform; idempotency (a retry returns the first result; another body `idempotency_conflict`; another credential `conflict`; after 7 days `already_applied`); the breaker and the reserve; a frozen org | **Yes** (with P3 if built together) |
 | P5 | Screens: the console's Platform keys, activity, app badges and Audit rows; the admin portal's org switch with the key review, quotas, approvals, platform queue and activity; the mainnet demo warning; one email per request; playbooks for the new event kinds | M | Console and admin unit tests; an e2e run: register a key, accept it, create an app, propose origins, see one notice and the queue, cancel from the link | No |
@@ -1091,7 +1177,9 @@ line has shipped.
 
 1. **A signing key** (ECDSA P-256) per env in its cloud KMS or HSM, used only by its backend; the public key
    registered by one of its on-chain owners in our partner portal, or sent to Journear staff and then accepted by its
-   owner; a second key for rotation.
+   owner. On a real-money setup a second owner confirms a new key, or it waits 24 h; so the network should have at
+   least two owners, and keep **a second key registered and in force as a standby**, so an urgent rotation needs no
+   wait at all (A3).
 2. **The request signer** (the canonical message, plain ES256, the DER-to-raw conversion if its KMS answers DER, a
    fresh nonce, the timestamp from a synchronised clock) and an `Idempotency-Key` per operation, resent unchanged on
    retries from the same key.
@@ -1111,6 +1199,6 @@ line has shipped.
 ## Not in this version
 
 Live apps through the platform (decided for later, with a separate key and its own review, N2); staff restore of
-removed origins (refused, A14); a confirmation shortcut for platform keys (A15); a portal for partner companies or per-app access for members; per-app security
+removed origins (refused, A14); a portal for partner companies or per-app access for members; per-app security
 contacts; deleting apps through the platform; a user lookup from the network's backend (B6); changes to Passport
 Home's app list beyond the line of B6; npm publishing and the core package's licence (parked, D913 point 4).

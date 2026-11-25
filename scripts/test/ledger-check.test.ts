@@ -4,13 +4,13 @@
 // `roll_back`; the running jobs' writes in between (a notice acknowledged, an event emailed, new rows) come back
 // `kept`; a database the migration never reached `not_applied`. Paging doesn't change a hash, and no snapshot holds a
 // row's value.
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { APP_CHANGE_KINDS, SECURITY_EVENT_KINDS } from '@hana-id/console-core';
 import { describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
-import { type FeedState, type LedgerCheckDeps, type LedgerSnapshot, FEED_CURSOR_KEYS, KIND_TRIGGERS, LEDGER_TABLES, compareSnapshots, ledgerCheck, lifecycleProblem, pageSql, takeSnapshot } from '../lib/ledger-check.ts';
+import { type FeedState, type LedgerCheckDeps, type LedgerSnapshot, FEED_CURSOR_KEYS, KIND_TRIGGERS, LEDGER_TABLES, SECURITY_EVENT_KINDS_AT_0021, SECURITY_EVENT_KIND_STEPS, compareSnapshots, expectedTableSql, ledgerCheck, lifecycleProblem, pageSql, referenceSchema, securityEventsLevel, takeSnapshot } from '../lib/ledger-check.ts';
 import { MIGRATIONS_DIR, newHotDb } from './hot-db.ts';
 import { repoRoot } from '@hana-id/env';
 
@@ -27,9 +27,12 @@ const NOW = Date.UTC(2026, 10, 25, 3, 0);
 /** A value that must never appear in a snapshot (it is in a row's detail). */
 const SECRETISH = 'detail-that-must-not-leak-7f3a';
 
-/** A hot DB before 0027 with rows of every kind each ledger table has held. */
-function populated(): DatabaseSync {
-  const db = newHotDb({ before: '0027' });
+/**
+ * A hot DB with rows of every kind each ledger table has held: before 0027 by default, or before another migration
+ * (`'0022'`: sandbox-dev's level, through 0021), with only the event kinds that level's CHECK takes (D924).
+ */
+function populated(before = '0027'): DatabaseSync {
+  const db = newHotDb({ before });
   db.exec("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s_t', 'org_a', 'test', 1, 1, 1), ('s_l', 'org_a', 'live', NULL, 1, 1)");
   db.exec("INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES ('app_t', 'T', 's_t', 'org_a', 'pk_test_Ttttttttttttttttttttttt'), ('app_l', 'L', 's_l', 'org_a', 'pk_live_Lllllllllllllllllllllll')");
   const ins = db.prepare('INSERT INTO app_changes (at, org_id, app_id, scope_id, kind, detail_json, actor_kind, actor_id, actor_sub, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
@@ -73,9 +76,37 @@ function populated(): DatabaseSync {
         );
       }
   const se = db.prepare('INSERT INTO security_events (id, detected_at, kind, org_id, detail_json, notified_at) VALUES (?, ?, ?, ?, ?, ?)');
-  SECURITY_EVENT_KINDS.filter((k) => !['platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked'].includes(k)).forEach((k, i) => se.run(`se_${k}`, NOW - i, k, i % 2 ? 'org_a' : null, '{}', i % 2 ? NOW : null));
+  const takes = (k: string) => (db.prepare("SELECT sql FROM sqlite_schema WHERE name = 'security_events'").get() as { sql: string }).sql.includes(`'${k}'`);
+  SECURITY_EVENT_KINDS.filter((k) => !['platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked'].includes(k) && takes(k)).forEach((k, i) => se.run(`se_${k}`, NOW - i, k, i % 2 ? 'org_a' : null, '{}', i % 2 ? NOW : null));
   return db;
 }
+
+/** Damaged copies of 0027 (its own copy check off): what each must make the comparison say. */
+const BROKEN: [string, (sql: string) => string, RegExp][] = [
+  // A job-written column moved by the rebuild, not by a job (PR 143's review, F1): each reproduced as "kept" before.
+  ['active_from copied from notified_at', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET active_from = notified_at'), /MOVED WRONG: \d+ row\(s\) .*active_from changed/u],
+  ['every cancel link hash lost', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET cancel_token_hash = NULL'), /MOVED WRONG: .*cancel_token_hash cleared/u],
+  ['cancelled changes made pending again', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'pending' WHERE status = 'cancelled'"), /MOVED WRONG: .*status cancelled → pending/u],
+  ['ended changes made active again', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'active', ended_at = NULL WHERE status = 'ended'"), /MOVED WRONG: .*status ended → active/u],
+  ['every event unsent again', afterCopy('security_events', 'UPDATE security_events_new SET notified_at = NULL'), /security_events: .*\n {2}MOVED WRONG: \d+ row\(s\) .*notified_at cleared/u],
+  ['an announcement without its time', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET notified_at = 1 WHERE notified_at IS NULL'), /MOVED WRONG: .*notified_at set without active_from/u],
+  ['a cancel with nobody who cancelled', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'cancelled' WHERE status = 'pending'"), /MOVED WRONG: .*cancelled without cancelled_at and cancelled_by/u],
+  // A table's own rules dropped by the rebuild (F3): each came back "identical" before.
+  ['the status CHECK dropped', (s) => s.replace("status                TEXT NOT NULL CHECK (status IN ('pending', 'active', 'cancelled', 'ended')),", 'status                TEXT NOT NULL,'), /CHANGED table guarded_changes/u],
+  ['json_valid dropped', (s) => s.replace("detail_json TEXT NOT NULL CHECK (json_valid(detail_json)), -- allowlisted fields only", 'detail_json TEXT NOT NULL, -- allowlisted fields only'), /CHANGED table app_changes/u],
+  ['a NOT NULL dropped', (s) => s.replace('  at          INTEGER NOT NULL,\n  org_id      TEXT NOT NULL,\n  app_id      TEXT,', '  at          INTEGER,\n  org_id      TEXT NOT NULL,\n  app_id      TEXT,'), /CHANGED table app_changes/u],
+  ['a new event kind left out', (s) => s.replace("'link_lookup_volume', 'shared_wallet_policy'", "'shared_wallet_policy'"), /CHANGED table security_events/u],
+  ['a lost ledger row', (s) => s.replace('FROM app_changes;', 'FROM app_changes WHERE seq <> 70000;'), /app_changes: .*\n {2}LOST: 1 row\(s\)/u],
+  ['a lost guarded change', (s) => s.replace('FROM guarded_changes;', "FROM guarded_changes WHERE id <> 'gc_007';"), /LOST: 1 row\(s\) of before are gone \(first ids: gc_007\)/u],
+  ['a changed ledger row', (s) => s.replace('SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, actor_kind', "SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, CASE actor_kind WHEN 'link' THEN 'system' ELSE actor_kind END"), /CHANGED: \d+ row\(s\) differ in a column no job writes \(the table is append-only\)/u],
+  ['a changed proposer', (s) => s.replace('proposed_at, request_country, waiver, notified_at, active_from, cancel_token_hash, activated_recorded_at, expedited_by, expedite_reason, ended_at, cancelled_by, cancelled_at, request_id FROM guarded_changes', 'proposed_at + 1, request_country, waiver, notified_at, active_from, cancel_token_hash, activated_recorded_at, expedited_by, expedite_reason, ended_at, cancelled_by, cancelled_at, request_id FROM guarded_changes'), /guarded_changes: .*\n {2}CHANGED: 36/u],
+  ['seq renumbered', (s) => s.replace('SELECT seq, at, org_id', 'SELECT NULL, at, org_id'), /SEQ: /u],
+  ['a dropped index', (s) => s.replace('CREATE INDEX guarded_changes_due ON guarded_changes (status, active_from);', ''), /MISSING index guarded_changes_due/u],
+  // 0026's trigger on scopes reads guarded_changes: 0027 re-creates it, and the comparison holds it to its SQL.
+  ['0026’s trigger re-created altered', (s) => s.replace("g.status IN ('pending', 'active'))));\nEND;", "g.status IN ('pending'))));\nEND;"), /CHANGED trigger scopes_app_user_ids_no_policy/u],
+  ['0026’s trigger not re-created', (s) => s.replace(/CREATE TRIGGER scopes_app_user_ids_no_policy [\s\S]*?\nEND;/u, ''), /MISSING trigger scopes_app_user_ids_no_policy \(on scopes\)/u],
+  ['an altered trigger', (s) => s.replace("'-60 months') * 1000)\nBEGIN\n  SELECT RAISE(ABORT, 'app_changes rows are kept 60 months')", "'-6 months') * 1000)\nBEGIN\n  SELECT RAISE(ABORT, 'app_changes rows are kept 60 months')"), /CHANGED trigger app_changes_no_early_delete/u],
+];
 
 const reader = (db: DatabaseSync) => (s: string) => db.prepare(s).all() as Record<string, unknown>[];
 const snap = (db: DatabaseSync, pageSize = 7): Promise<LedgerSnapshot> => takeSnapshot(reader(db), { env: 'sandbox-dev', database: 'hana-id-sandbox-dev', remote: true, now: new Date(NOW), pageSize });
@@ -111,32 +142,7 @@ describe('ledger-check: snapshot and compare around migration 0027', () => {
   });
 
   it('a rebuild that loses a row, changes one, moves a job-written column as no job does, renumbers seq, drops a table rule, or drops or alters an index or trigger: roll back', async () => {
-    const broken: [string, (sql: string) => string, RegExp][] = [
-      // A job-written column moved by the rebuild, not by a job (PR 143's review, F1): each reproduced as "kept" before.
-      ['active_from copied from notified_at', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET active_from = notified_at'), /MOVED WRONG: \d+ row\(s\) .*active_from changed/u],
-      ['every cancel link hash lost', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET cancel_token_hash = NULL'), /MOVED WRONG: .*cancel_token_hash cleared/u],
-      ['cancelled changes made pending again', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'pending' WHERE status = 'cancelled'"), /MOVED WRONG: .*status cancelled → pending/u],
-      ['ended changes made active again', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'active', ended_at = NULL WHERE status = 'ended'"), /MOVED WRONG: .*status ended → active/u],
-      ['every event unsent again', afterCopy('security_events', 'UPDATE security_events_new SET notified_at = NULL'), /security_events: .*\n {2}MOVED WRONG: \d+ row\(s\) .*notified_at cleared/u],
-      ['an announcement without its time', afterCopy('guarded_changes', 'UPDATE guarded_changes_new SET notified_at = 1 WHERE notified_at IS NULL'), /MOVED WRONG: .*notified_at set without active_from/u],
-      ['a cancel with nobody who cancelled', afterCopy('guarded_changes', "UPDATE guarded_changes_new SET status = 'cancelled' WHERE status = 'pending'"), /MOVED WRONG: .*cancelled without cancelled_at and cancelled_by/u],
-      // A table's own rules dropped by the rebuild (F3): each came back "identical" before.
-      ['the status CHECK dropped', (s) => s.replace("status                TEXT NOT NULL CHECK (status IN ('pending', 'active', 'cancelled', 'ended')),", 'status                TEXT NOT NULL,'), /CHANGED table guarded_changes/u],
-      ['json_valid dropped', (s) => s.replace("detail_json TEXT NOT NULL CHECK (json_valid(detail_json)), -- allowlisted fields only", 'detail_json TEXT NOT NULL, -- allowlisted fields only'), /CHANGED table app_changes/u],
-      ['a NOT NULL dropped', (s) => s.replace('  at          INTEGER NOT NULL,\n  org_id      TEXT NOT NULL,\n  app_id      TEXT,', '  at          INTEGER,\n  org_id      TEXT NOT NULL,\n  app_id      TEXT,'), /CHANGED table app_changes/u],
-      ['a new event kind left out', (s) => s.replace("'link_lookup_volume', 'shared_wallet_policy'", "'shared_wallet_policy'"), /CHANGED table security_events/u],
-      ['a lost ledger row', (s) => s.replace('FROM app_changes;', 'FROM app_changes WHERE seq <> 70000;'), /app_changes: .*\n {2}LOST: 1 row\(s\)/u],
-      ['a lost guarded change', (s) => s.replace('FROM guarded_changes;', "FROM guarded_changes WHERE id <> 'gc_007';"), /LOST: 1 row\(s\) of before are gone \(first ids: gc_007\)/u],
-      ['a changed ledger row', (s) => s.replace('SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, actor_kind', "SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, CASE actor_kind WHEN 'link' THEN 'system' ELSE actor_kind END"), /CHANGED: \d+ row\(s\) differ in a column no job writes \(the table is append-only\)/u],
-      ['a changed proposer', (s) => s.replace('proposed_at, request_country, waiver, notified_at, active_from, cancel_token_hash, activated_recorded_at, expedited_by, expedite_reason, ended_at, cancelled_by, cancelled_at, request_id FROM guarded_changes', 'proposed_at + 1, request_country, waiver, notified_at, active_from, cancel_token_hash, activated_recorded_at, expedited_by, expedite_reason, ended_at, cancelled_by, cancelled_at, request_id FROM guarded_changes'), /guarded_changes: .*\n {2}CHANGED: 36/u],
-      ['seq renumbered', (s) => s.replace('SELECT seq, at, org_id', 'SELECT NULL, at, org_id'), /SEQ: /u],
-      ['a dropped index', (s) => s.replace('CREATE INDEX guarded_changes_due ON guarded_changes (status, active_from);', ''), /MISSING index guarded_changes_due/u],
-      // 0026's trigger on scopes reads guarded_changes: 0027 re-creates it, and the comparison holds it to its SQL.
-      ['0026’s trigger re-created altered', (s) => s.replace("g.status IN ('pending', 'active'))));\nEND;", "g.status IN ('pending'))));\nEND;"), /CHANGED trigger scopes_app_user_ids_no_policy/u],
-      ['0026’s trigger not re-created', (s) => s.replace(/CREATE TRIGGER scopes_app_user_ids_no_policy [\s\S]*?\nEND;/u, ''), /MISSING trigger scopes_app_user_ids_no_policy \(on scopes\)/u],
-      ['an altered trigger', (s) => s.replace("'-60 months') * 1000)\nBEGIN\n  SELECT RAISE(ABORT, 'app_changes rows are kept 60 months')", "'-6 months') * 1000)\nBEGIN\n  SELECT RAISE(ABORT, 'app_changes rows are kept 60 months')"), /CHANGED trigger app_changes_no_early_delete/u],
-    ];
-    for (const [what, mutate, finding] of broken) {
+    for (const [what, mutate, finding] of BROKEN) {
       const db = populated();
       const before = await snap(db);
       const bad = mutate(UNCHECKED);
@@ -350,5 +356,178 @@ describe('ledger-check: the CLI', () => {
     expect(cli).toMatch(/apiPrivateD1Execute\(/u);
     expect(cli).not.toMatch(/\bd1Execute\(/u);
     expect(cli).not.toMatch(/console\.log\([^)]*row/iu);
+  });
+});
+
+// D924: sandbox-dev's D1 is at 0021, so the deploy takes one snapshot and applies 0022 to 0027 in one
+// `migrations apply`. Every starting level from 0021 to 0026 must give the true verdict, from the real migration files.
+describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)', () => {
+  const FILES = readdirSync(MIGRATIONS_DIR).filter((n) => n.endsWith('.sql')).sort();
+  const file = (prefix: string) => FILES.find((f) => f.startsWith(prefix))!;
+  /** Applies the real migrations whose names sort in [from, to). */
+  const applyRange = (db: DatabaseSync, from: string, to: string) => {
+    for (const f of FILES) if (f >= from && f < to) db.exec(readFileSync(join(MIGRATIONS_DIR, f), 'utf8'));
+  };
+  const REFERENCE = referenceSchema(MIGRATIONS_DIR);
+  const LEVELS = ['0021', '0022', '0023', '0024', '0025', '0026'] as const;
+  const next = (level: string) => String(Number(level) + 1).padStart(4, '0');
+  const kindsIn = (sql: string): string[] => [...(/CHECK \(kind IN \(([^)]*)\)\)/u.exec(sql)?.[1] ?? '').matchAll(/'([^']+)'/gu)].map((m) => m[1]!);
+
+  it('the kind steps are exactly what the migration files after 0021 do to security_events (and they touch nothing else of the three tables)', () => {
+    // Every file after 0021 that rebuilds security_events, with the kinds it appends; a new rebuild (P2, P6, …) fails
+    // here until its step is added.
+    let kinds = [...SECURITY_EVENT_KINDS_AT_0021];
+    const steps: { migration: string; added: string[] }[] = [];
+    for (const f of FILES.filter((n) => n >= '0022')) {
+      const sql = readFileSync(join(MIGRATIONS_DIR, f), 'utf8');
+      const create = /CREATE TABLE security_events_new \(([\s\S]*?)\n\);/u.exec(sql);
+      if (!create) continue;
+      const now = kindsIn(create[0]);
+      expect(now.slice(0, kinds.length), f).toEqual(kinds);
+      steps.push({ migration: f.slice(0, 4), added: now.slice(kinds.length) });
+      kinds = now;
+    }
+    expect(steps).toEqual(SECURITY_EVENT_KIND_STEPS.map((x) => ({ migration: x.migration, added: [...x.added] })));
+    // 0022 to 0026 write no row of the three tables and leave app_changes and guarded_changes alone.
+    for (const level of ['0022', '0023', '0024', '0025', '0026']) {
+      const sql = readFileSync(join(MIGRATIONS_DIR, file(level)), 'utf8').replace(/--[^\n]*/gu, '');
+      expect(sql, level).not.toMatch(/\b(INSERT INTO|UPDATE|DELETE FROM|ALTER TABLE|DROP TABLE|CREATE TABLE)\s+"?(app_changes|guarded_changes)\b/iu);
+      expect(sql, level).not.toMatch(/\b(INSERT INTO|UPDATE|DELETE FROM)\s+"?security_events\b(?!_new)/iu);
+    }
+    // The table SQL itself, level by level on the real files: each step is the before-SQL with exactly its kinds added.
+    for (const level of LEVELS) {
+      const db = newHotDb({ before: next(level) });
+      const sqlOf = (t: string) => (db.prepare('SELECT sql FROM sqlite_schema WHERE type = ? AND name = ?').get('table', t) as { sql: string }).sql;
+      const before = Object.fromEntries(LEDGER_TABLES.map((t) => [t.name, sqlOf(t.name)]));
+      for (const to of LEVELS.filter((l) => l > level)) {
+        applyRange(db, next(String(Number(to) - 1)), next(to));
+        const toLevel = securityEventsLevel(sqlOf('security_events'));
+        for (const t of LEDGER_TABLES) expect(sqlOf(t.name), `${t.name} ${level} → ${to}`).toBe(expectedTableSql(t.name, before[t.name]!, false, toLevel!));
+      }
+      applyRange(db, '0027', '0028');
+      for (const t of LEDGER_TABLES) expect(sqlOf(t.name), `${t.name} ${level} → 0027`).toBe(expectedTableSql(t.name, before[t.name]!, true, '0027'));
+    }
+  });
+
+  it('one snapshot at each level, then 0022 … 0027 in one go: identical, every row and hash as before', async () => {
+    for (const level of LEVELS) {
+      const db = populated(next(level));
+      const before = await snap(db);
+      applyRange(db, next(level), '0028');
+      const after = await snap(db);
+      const c = compareSnapshots(before, after, REFERENCE);
+      expect(c.verdict, `${level}: ${c.lines.join('\n')}`).toBe('identical');
+      for (const t of LEDGER_TABLES) expect(after.tables[t.name]!.sha256, `${level} ${t.name}`).toBe(before.tables[t.name]!.sha256);
+      if (level < '0025') expect(c.lines.join('\n'), level).toContain(`security_events' kinds: at migration ${securityEventsLevel(before.schema.security_events!.sql!)} before, 0027 after`);
+      // 0026's trigger that reads guarded_changes is new since a snapshot before 0026, and held to its SQL.
+      if (level < '0026') expect(c.lines.join('\n'), level).toMatch(/New since: .*scopes_app_user_ids_no_policy/u);
+    }
+  });
+
+  it('from 0021: every damaged copy of 0027 is still a rollback', async () => {
+    for (const [what, mutate, finding] of BROKEN) {
+      const db = populated('0022');
+      const before = await snap(db);
+      applyRange(db, '0022', '0027');
+      db.exec(mutate(UNCHECKED));
+      const c = compareSnapshots(before, await snap(db), REFERENCE);
+      expect(c.verdict, what).toBe('roll_back');
+      // 0026's trigger did not exist at 0021: a damaged re-creation is caught against the checkout's migrations.
+      const expected = what.startsWith('0026’s trigger re-created') ? /CHANGED trigger scopes_app_user_ids_no_policy: its SQL is not the one this checkout/u : what.startsWith('0026’s trigger not re-created') ? /MISSING trigger scopes_app_user_ids_no_policy \(on scopes\): this checkout's migrations create it/u : finding;
+      expect(c.lines.join('\n'), what).toMatch(expected);
+    }
+  });
+
+  it('from 0021: a row lost or changed by a migration in between, or 0027 ending without a kind or rule of theirs, is a rollback', async () => {
+    const cases: [string, string, (sql: string) => string, RegExp][] = [
+      ['0023 loses an event', '0023', (s) => s.replace('FROM security_events;', "FROM security_events WHERE id <> 'se_drift';"), /LOST: 1 row\(s\) of before are gone \(first ids: se_drift\)/u],
+      ['0024 marks every event sent', '0024', (s) => s.replace('SELECT id, detected_at, kind, org_id, app_id, scope_id, detail_json, notified_at FROM security_events', 'SELECT id, detected_at, kind, org_id, app_id, scope_id, detail_json, 1 FROM security_events'), /MOVED WRONG|notified_at changed/u],
+      // A kind of a migration in between left out of 0027's own list: the end state is wrong.
+      ['0027 leaves out a kind of 0023', '0027', (s) => s.replace("'near_billing_late', ", ''), /CHANGED table security_events/u],
+      // (A rule a migration in between drops is restored by 0027's own rebuild, so only the end state is judged.)
+      ['0027 drops security_events’ json_valid', '0027', (s) => s.replace(/(CREATE TABLE security_events_new \([\s\S]*?)detail_json TEXT NOT NULL CHECK \(json_valid\(detail_json\)\)/u, '$1detail_json TEXT NOT NULL'), /CHANGED table security_events/u],
+    ];
+    for (const [what, level, mutate, finding] of cases) {
+      const db = populated('0022');
+      const before = await snap(db);
+      for (const f of FILES.filter((n) => n >= '0022' && n < '0028')) {
+        const sql = readFileSync(join(MIGRATIONS_DIR, f), 'utf8');
+        const used = f.startsWith(level) ? mutate(sql) : sql;
+        if (f.startsWith(level)) expect(used, what).not.toBe(sql);
+        db.exec(f.startsWith('0027') ? (level === '0027' ? mutate(UNCHECKED) : UNCHECKED) : used);
+      }
+      const c = compareSnapshots(before, await snap(db), REFERENCE);
+      expect(c.verdict, what).toBe('roll_back');
+      expect(c.lines.join('\n'), what).toMatch(finding);
+    }
+  });
+
+  it('from 0021: the jobs’ moves while 0022 … 0027 apply are kept; 0022 … 0026 alone are “not applied”, nothing to roll back', async () => {
+    const db = populated('0022');
+    const before = await snap(db);
+    applyRange(db, '0022', '0025');
+    db.exec("UPDATE guarded_changes SET notified_at = 10, active_from = 99, cancel_token_hash = randomblob(32) WHERE id = 'gc_001'");
+    db.exec("UPDATE security_events SET notified_at = 5 WHERE id = 'se_drift'");
+    applyRange(db, '0025', '0027');
+    const partway = compareSnapshots(before, await snap(db), REFERENCE);
+    expect(partway.verdict, partway.lines.join('\n')).toBe('not_applied');
+    applyRange(db, '0027', '0028');
+    db.exec("UPDATE guarded_changes SET status = 'cancelled', cancelled_by = 'system', cancelled_at = 14 WHERE id = 'gc_003'");
+    db.exec("INSERT INTO security_events (id, detected_at, kind, detail_json) VALUES ('se_since', 1, 'shared_wallet_policy', '{}')");
+    const c = compareSnapshots(before, await snap(db), REFERENCE);
+    expect(c.lines.join('\n')).not.toContain('MOVED WRONG');
+    expect(c.verdict).toBe('kept');
+  });
+
+  it('an unknown kind list, a level going backwards, or kinds at 0027 without its triggers: rollback; an object no migration creates: rollback', async () => {
+    const seSql = (sql: string) => ({ type: 'table', table: 'security_events', sql });
+    const db = populated('0024');
+    const before = await snap(db);
+    expect(securityEventsLevel(before.schema.security_events!.sql!)).toBe('0023');
+    expect(expectedTableSql('security_events', before.schema.security_events!.sql!, false, '0022')).toBeNull();
+    const odd = { ...before, schema: { ...before.schema, security_events: seSql(before.schema.security_events!.sql!.replace("'neon_compute_high'", "'neon_compute_high', 'made_up'")) } };
+    expect(securityEventsLevel(odd.schema.security_events.sql)).toBeNull();
+    expect(compareSnapshots(before, odd as LedgerSnapshot, REFERENCE).verdict).toBe('roll_back');
+    const level0027 = expectedTableSql('security_events', before.schema.security_events!.sql!, false, '0027')!;
+    const noTriggers = { ...before, schema: { ...before.schema, security_events: seSql(level0027) } };
+    const c = compareSnapshots(before, noTriggers as LedgerSnapshot, REFERENCE);
+    expect(c.verdict).toBe('roll_back');
+    expect(c.lines.join('\n')).toContain("security_events' kinds are at 0027 but 0027's triggers are absent");
+    applyRange(db, '0024', '0028');
+    db.exec("CREATE TRIGGER app_changes_sneaky BEFORE INSERT ON app_changes BEGIN SELECT 1; END");
+    const sneaky = compareSnapshots(before, await snap(db), REFERENCE);
+    expect(sneaky.verdict).toBe('roll_back');
+    expect(sneaky.lines.join('\n')).toContain('UNEXPECTED trigger app_changes_sneaky (on app_changes): no migration of this checkout creates it.');
+  });
+
+  it('the CLI: a relative --before or --out is relative to where the command was run (INIT_CWD), not scripts/', async () => {
+    const db = populated('0022');
+    const files = new Map<string, unknown>();
+    const lines: string[] = [];
+    let t = NOW;
+    const deps: LedgerCheckDeps = {
+      manifest: () => ({ network: 'testnet', d1Name: 'hana-id-sandbox-dev' }),
+      read: (_e, _d, s) => reader(db)(s),
+      feedState: async () => ({ get: async () => new Map(), set: async () => undefined, close: async () => undefined }),
+      secretsEnvDir: (env) => `/repo/.secrets/${env}`,
+      writeJson: (f, v) => files.set(f, JSON.parse(JSON.stringify(v))),
+      readJson: (f) => {
+        if (!files.has(f)) throw new Error(`no ${f}`);
+        return files.get(f);
+      },
+      log: (l) => lines.push(l),
+      now: () => new Date((t += 60_000)),
+      cwd: '/repo',
+      referenceSchema: () => REFERENCE,
+    };
+    expect(await ledgerCheck(['sandbox-dev', 'snapshot', '--remote', '--out', '.secrets/sandbox-dev/b.json'], deps)).toBe(0);
+    expect([...files.keys()]).toEqual(['/repo/.secrets/sandbox-dev/b.json']);
+    applyRange(db, '0022', '0028');
+    expect(await ledgerCheck(['sandbox-dev', 'compare', '--remote', '--before', '.secrets/sandbox-dev/b.json'], deps)).toBe(0);
+    expect(lines.join('\n')).toContain('Compared with /repo/.secrets/sandbox-dev/b.json');
+    expect(lines.at(-1)).toContain('Verdict: identical');
+    const cli = readFileSync(join(repoRoot, 'scripts', 'ledger-check.ts'), 'utf8');
+    expect(cli).toMatch(/cwd: invocationDir\(\)/u);
+    expect(cli).toMatch(/referenceSchema: \(\) => referenceSchema\(/u);
   });
 });

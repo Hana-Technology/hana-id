@@ -15,6 +15,11 @@
 // only the moves the API's jobs make pass (`lifecycleProblem`). The tables' own SQL, their indexes and their triggers
 // are compared too (`sqlite_schema`).
 //
+// The snapshot may be taken at any migration level from 0021 (sandbox-dev's D1 on 2026-11-25) to 0026, so one
+// snapshot comes before a single `migrations apply` of 0022 to 0027 (D924): the expected after-SQL is the before-SQL
+// changed by exactly what the migrations in between are known to change (`SECURITY_EVENT_KIND_STEPS`, held to the
+// migration files by the tests). A relative `--before` or `--out` is relative to where the command was run (INIT_CWD).
+//
 // The rows are read like every statement that can hold personal data (`apiPrivateD1Execute`, D316): remotely through
 // D1's REST API with the statement in the HTTPS body, locally from a 0600 file with wrangler's log file off, so no
 // row lands in `~/.wrangler/logs`. A snapshot holds counts, hashes and statuses, never a row's value; it is written
@@ -26,7 +31,9 @@
 // first walk's place) to the max(seq) of the snapshot taken before the migration (at most the restored one), never
 // raises it: rows between that snapshot and the bookmark may be emailed a second time, none is skipped.
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { CliError, parseCli } from './cli.ts';
 import { type SqlParam, sqlValue } from './sql.ts';
 
@@ -93,14 +100,56 @@ export const LEDGER_TABLES: readonly LedgerTable[] = [
 export const KIND_TRIGGERS = ['app_changes_actor_kind', 'app_changes_no_replace', 'guarded_changes_proposer_kind', 'guarded_changes_proposer_kind_update'] as const;
 
 /**
- * Each table's SQL after 0027, from its SQL before: the rename quotes its name, and the kind CHECK that moved to a
- * trigger is gone (`security_events`: its list three kinds longer). Anything else that differs (a CHECK, NOT NULL,
- * default, UNIQUE or column dropped or changed by the rebuild) is a rollback.
+ * `security_events`' kind CHECK at the deployed level (sandbox-dev's D1 through 0021, 2026-11-25) and the kinds each
+ * later migration that rebuilds the table appends to it, in order. 0022 to 0025 and 0027 rebuild `security_events` to
+ * widen that one CHECK and nothing else (every column, row and the index copied as they were); 0026 doesn't touch it.
+ * None of 0022 to 0026 touches `app_changes` or `guarded_changes`, or writes a row in any of the three
+ * (scripts/test/ledger-check.test.ts holds this list to the migration files). So one snapshot taken at any level from
+ * 0021 to 0026 can be compared after a single `migrations apply` of everything up to 0027 (D924).
  */
-export function expectedTableSqlAfter0027(name: LedgerTable['name'], before: string): string {
-  if (name === 'app_changes') return before.replace('CREATE TABLE app_changes (', 'CREATE TABLE "app_changes" (').replace(" CHECK (actor_kind IN ('member', 'hana', 'system', 'link'))", '');
-  if (name === 'guarded_changes') return before.replace('CREATE TABLE guarded_changes (', 'CREATE TABLE "guarded_changes" (').replace(" CHECK (proposed_by_kind IN ('member', 'hana', 'system'))", '');
-  return before.replace("'label_live')", "'label_live', 'platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked')");
+export const SECURITY_EVENT_KINDS_AT_0021: readonly string[] = ['drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low'];
+export const SECURITY_EVENT_KIND_STEPS: readonly { migration: string; added: readonly string[] }[] = [
+  { migration: '0022', added: ['evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'evm_relay_closed_slot_mined'] },
+  { migration: '0023', added: ['near_billing_late', 'neon_compute_high'] },
+  { migration: '0024', added: ['evm_relay_auto_resumed'] },
+  { migration: '0025', added: ['label_proposed', 'label_blocked', 'label_live'] },
+  { migration: '0027', added: ['platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked'] },
+];
+
+/** The kind list after each level: index 0 is 0021's, index i the list after SECURITY_EVENT_KIND_STEPS[i - 1]. */
+const KIND_LEVELS: readonly (readonly string[])[] = SECURITY_EVENT_KIND_STEPS.reduce<string[][]>((acc, s) => [...acc, [...acc.at(-1)!, ...s.added]], [[...SECURITY_EVENT_KINDS_AT_0021]]);
+const KIND_CHECK_RE = /CHECK \(kind IN \(([^)]*)\)\)/gu;
+const kindListSql = (kinds: readonly string[]): string => `CHECK (kind IN (${kinds.map((k) => `'${k}'`).join(', ')}))`;
+
+/**
+ * Which known level a `security_events` CREATE statement's kind CHECK is at: `'0021'`, or the migration of the step
+ * whose list it has; null for a statement with no single kind CHECK or a list that is no known level (a rollback).
+ */
+export function securityEventsLevel(sql: string): string | null {
+  const found = [...sql.matchAll(KIND_CHECK_RE)];
+  if (found.length !== 1) return null;
+  const at = KIND_LEVELS.findIndex((l) => kindListSql(l) === found[0]![0]);
+  if (at < 0) return null;
+  return at === 0 ? '0021' : SECURITY_EVENT_KIND_STEPS[at - 1]!.migration;
+}
+
+/**
+ * A table's SQL expected after the migrations between two snapshots, from the snapshot before:
+ * - `app_changes`, `guarded_changes`: unchanged until 0027; across 0027 the rename quotes the name and the kind CHECK
+ *   that moved to a trigger is gone;
+ * - `security_events`: the before statement with its kind list grown, by exactly the steps above, to the list of the
+ *   level `toLevel` ('0021' … '0027'); a before list at no known level, or a level going backwards, gives null.
+ * Anything else that differs (a CHECK, NOT NULL, default, UNIQUE or column dropped or changed) is a rollback.
+ */
+export function expectedTableSql(name: LedgerTable['name'], before: string, across0027: boolean, toLevel: string): string | null {
+  if (name === 'app_changes') return across0027 ? before.replace('CREATE TABLE app_changes (', 'CREATE TABLE "app_changes" (').replace(" CHECK (actor_kind IN ('member', 'hana', 'system', 'link'))", '') : before;
+  if (name === 'guarded_changes') return across0027 ? before.replace('CREATE TABLE guarded_changes (', 'CREATE TABLE "guarded_changes" (').replace(" CHECK (proposed_by_kind IN ('member', 'hana', 'system'))", '') : before;
+  const from = securityEventsLevel(before);
+  const levels = ['0021', ...SECURITY_EVENT_KIND_STEPS.map((s) => s.migration)];
+  const i = from === null ? -1 : levels.indexOf(from);
+  const j = levels.indexOf(toLevel);
+  if (i < 0 || j < i) return null;
+  return before.replace(kindListSql(KIND_LEVELS[i]!), kindListSql(KIND_LEVELS[j]!));
 }
 
 /** A row in a snapshot: its hashes and (for a table jobs update) the state of each job-written column. */
@@ -280,7 +329,7 @@ const applied = (s: LedgerSnapshot): boolean => KIND_TRIGGERS.every((k) => Objec
  * - `kept`: every row of before is there, the differences only rows written since or the jobs' own moves;
  * - `identical`: the same counts and table hashes, every index and trigger as before.
  */
-export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot): Comparison {
+export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, reference?: LedgerSnapshot['schema']): Comparison {
   const lines: string[] = [];
   let broken = false;
   let moved = false;
@@ -345,7 +394,16 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot):
     }
   }
   // The tables' own SQL: the same, or (across the migration) the old one less the moved CHECK, nothing else.
+  // The level each snapshot is at (D924): read from security_events' kind list, so a snapshot taken before 0022 to 0026
+  // compares after one `migrations apply` of them and 0027; the after level must agree with 0027's triggers.
   const migrated = !applied(before) && applied(after);
+  const fromLevel = before.schema.security_events?.sql ? securityEventsLevel(before.schema.security_events.sql) : null;
+  const toLevel = after.schema.security_events?.sql ? securityEventsLevel(after.schema.security_events.sql) : null;
+  if (fromLevel !== null && toLevel !== null && fromLevel !== toLevel) lines.push(`security_events' kinds: at migration ${fromLevel} before, ${toLevel} after (the kinds the migrations in between add).`);
+  if (toLevel !== null && (toLevel === '0027') !== applied(after)) {
+    broken = true;
+    lines.push(`CHANGED schema: security_events' kinds are at ${toLevel} but 0027's triggers are ${applied(after) ? 'present' : 'absent'}.`);
+  }
   for (const t of LEDGER_TABLES) {
     const b = before.schema[t.name];
     const a = after.schema[t.name];
@@ -354,10 +412,11 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot):
       lines.push(`MISSING table ${t.name} in the schema.`);
       continue;
     }
-    const expected = migrated ? expectedTableSqlAfter0027(t.name, b.sql) : b.sql;
+    const expected = toLevel === null ? null : expectedTableSql(t.name, b.sql, migrated, toLevel);
     if (a.sql !== expected) {
       broken = true;
-      lines.push(`CHANGED table ${t.name}: its SQL is not ${migrated ? 'the old one less the CHECK 0027 moves' : 'the same as before'} (a column, CHECK, NOT NULL, default or key differs).`);
+      const what = t.name === 'security_events' ? `the old one with the kinds of the migrations between (${fromLevel ?? 'unknown level'} → ${toLevel ?? 'unknown level'}) added` : migrated ? 'the old one less the CHECK 0027 moves' : 'the same as before';
+      lines.push(`CHANGED table ${t.name}: its SQL is not ${what} (a column, CHECK, NOT NULL, default or key differs).`);
     }
   }
   for (const [name, s] of Object.entries(before.schema)) {
@@ -373,6 +432,31 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot):
   }
   const addedSchema = Object.keys(after.schema).filter((k) => !Object.hasOwn(before.schema, k));
   if (addedSchema.length) lines.push(`New since: ${addedSchema.sort().join(', ')}.`);
+  // With the checkout's migrations as the reference (the CLI always passes it, D924), an index or trigger that appeared
+  // in between must be one those migrations create, word for word: from a snapshot at 0021, 0026's trigger on scopes
+  // that reads guarded_changes appears in between, and 0027 drops and re-creates it.
+  if (reference) {
+    for (const name of addedSchema.sort()) {
+      const n = after.schema[name]!;
+      const r = reference[name];
+      if (!r) {
+        broken = true;
+        lines.push(`UNEXPECTED ${n.type} ${name} (on ${n.table}): no migration of this checkout creates it.`);
+      } else if (r.sql !== n.sql || r.table !== n.table || r.type !== n.type) {
+        broken = true;
+        lines.push(`CHANGED ${n.type} ${name}: its SQL is not the one this checkout's migrations create.`);
+      }
+    }
+    // Once 0027 is in, every index and trigger the checkout's migrations create on (or naming) the three tables is
+    // there: one created in between (0026's on scopes) and dropped again by a damaged 0027 is in neither snapshot.
+    if (applied(after)) {
+      for (const [name, r] of Object.entries(reference).sort(([x], [y]) => x.localeCompare(y))) {
+        if (r.type === 'table' || Object.hasOwn(after.schema, name) || Object.hasOwn(before.schema, name)) continue;
+        broken = true;
+        lines.push(`MISSING ${r.type} ${name} (on ${r.table}): this checkout's migrations create it.`);
+      }
+    }
+  }
   if (broken) {
     lines.push('Verdict: ROLL BACK to the Time Travel bookmark taken before the migration (docs/operations.md "Ledger rebuild").');
     return { verdict: 'roll_back', lines };
@@ -433,6 +517,29 @@ export interface LedgerCheckDeps {
   readJson(file: string): unknown;
   log(line: string): void;
   now(): Date;
+  /**
+   * The directory a relative `--before` or `--out` is relative to: where the operator ran the command (pnpm's
+   * INIT_CWD, `invocationDir`), not scripts/, which `pnpm --filter @hana-id/scripts run ledger-check` runs in (D924).
+   */
+  cwd?: string;
+  /**
+   * The three tables' indexes and triggers, and every trigger naming them, as this checkout's migrations create them
+   * (`referenceSchema`): what an object that appeared between the snapshots must be, word for word (D924).
+   */
+  referenceSchema?: () => LedgerSnapshot['schema'];
+}
+
+/** `SCHEMA_SQL` on a fresh in-memory SQLite with every migration in `dir` applied in name order (as a fresh D1 gets them). */
+export function referenceSchema(dir: string): LedgerSnapshot['schema'] {
+  const db = new DatabaseSync(':memory:');
+  try {
+    for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) db.exec(readFileSync(join(dir, f), 'utf8'));
+    const schema: LedgerSnapshot['schema'] = {};
+    for (const r of db.prepare(SCHEMA_SQL).all() as Record<string, unknown>[]) schema[String(r.name)] = { type: String(r.type), table: String(r.tbl_name), sql: r.sql === null ? null : String(r.sql) };
+    return schema;
+  } finally {
+    db.close();
+  }
 }
 
 /** `--d1-name`: a rehearsal database only (as admin.ts's), never one that names a production network. */
@@ -501,7 +608,8 @@ export async function ledgerCheck(argv: readonly string[], deps: LedgerCheckDeps
   if (rehearsal !== undefined && !remote) throw new CliError('--d1-name is a remote rehearsal database: add --remote');
   if (rehearsal !== undefined && step === 'feed-cursor') throw new CliError('feed-cursor is for the env’s own database: the feed reads no rehearsal copy');
   const database = rehearsal ?? m.d1Name;
-  const beforeFile = step === 'compare' ? args.required('before') : args.str('before');
+  const fromCaller = (p: string | undefined): string | undefined => (p === undefined ? undefined : resolve(deps.cwd ?? process.cwd(), p));
+  const beforeFile = fromCaller(step === 'compare' ? args.required('before') : args.str('before'));
   const before = beforeFile === undefined ? undefined : parseSnapshot(deps.readJson(beforeFile), env);
   if (step === 'feed-cursor') {
     if (before && (before.database !== database || !before.remote)) throw new CliError(`--before is a snapshot of ${before.database}${before.remote ? '' : ' (local)'}, not the deployed ${database}`);
@@ -512,7 +620,7 @@ export async function ledgerCheck(argv: readonly string[], deps: LedgerCheckDeps
   if (before && before.remote !== remote) throw new CliError(`--before is a snapshot of the ${before.remote ? 'remote' : 'local'} database: run compare ${before.remote ? 'with' : 'without'} --remote`);
   if (before && before.database !== database) throw new CliError(`--before is a snapshot of ${before.database}, not ${database}`);
   const snap = await takeSnapshot((s) => deps.read(env, database, s, remote), { env, database, remote, now });
-  const out = args.str('out') ?? snapshotFile(dir, step === 'compare' ? 'after' : 'snapshot', now);
+  const out = fromCaller(args.str('out')) ?? snapshotFile(dir, step === 'compare' ? 'after' : 'snapshot', now);
   deps.writeJson(out, snap);
   deps.log(`${env}: ${database} (${remote ? 'remote' : 'local'}), ${snap.takenAt}: snapshot written to ${out}`);
   for (const t of LEDGER_TABLES) {
@@ -521,7 +629,7 @@ export async function ledgerCheck(argv: readonly string[], deps: LedgerCheckDeps
   }
   deps.log(`  ${Object.keys(snap.schema).length} tables, indexes and triggers; 0027's triggers ${applied(snap) ? 'present' : 'absent'}`);
   if (!before) return 0;
-  const c = compareSnapshots(before, snap);
+  const c = compareSnapshots(before, snap, deps.referenceSchema?.());
   deps.log(`Compared with ${beforeFile} (${before.takenAt}):`);
   for (const l of c.lines) deps.log(`  ${l}`);
   return c.verdict === 'identical' || c.verdict === 'kept' ? 0 : 1;

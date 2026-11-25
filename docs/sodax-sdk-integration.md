@@ -3,11 +3,15 @@
 Sodax is a cross-chain swap SDK: `@sodax/sdk`, its wallet kit `@sodax/wallet-sdk-react` and `@sodax/dapp-kit`. The
 aim (D909): our SDK inside Sodax's SDK, switched on from Sodax's partner portal, so that a Sodax partner turns on
 sign-in with Google or email with a switch. This page says what works today, what is missing, who would build what,
-the risks and the questions to settle with Sodax. Decisions: D909 and D913 in `decisions.md`. The build spec for the
-portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
+the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
+for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
 Last verified: 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
-in weibars on Hedera, D922); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged, not deployed: section 4's item 2, the per-app User IDs built, D919); 2026-11-25 (branch `feat/shared-scope-rules`, after PR 145's review: section 4's mark at the first
+in weibars on Hedera, D922); 2026-11-25 (branch `feat/sodax-followups`, from `next`, not merged, not deployed: Sodax's public
+source read at `7c1ff2e` (main) and the tags `@sdks@2.3.0` and `@sdks@2.4.0-rc.1`, and a local test against the
+published 2.3.0 packages, stock and with the Stellar change applied to their build output (D923): the summary, sections
+1, 2, 6 ("Sodax's other chains"), 7, 8, 9 and "Open", and the new sections 10 (Sodax's public source), 11 (the naming
+clash), 12 (inside Sodax's widget iframe)); 2026-11-25 (branch `feat/app-user-ids`, from `next`, not merged, not deployed: section 4's item 2, the per-app User IDs built, D919); 2026-11-25 (branch `feat/shared-scope-rules`, after PR 145's review: section 4's mark at the first
 app, test scopes only, D915); 2026-11-25 (branch `feat/shared-scope-rules`, from `next`, not merged, not deployed: section 4's
 auto-approve item, now refused in code once staff mark the scope as shared, D915);
 2026-11-25 (branch `docs/platform-answers`, from `next`, not merged, docs only: section 3's point 4
@@ -37,8 +41,10 @@ talked to Sodax (D913); the spec is `partner-platform-spec.md`.
 | | Today |
 |---|---|
 | Our wallet in Sodax's EVM wallet list | **Works with no Sodax-specific code**: create the client and "Journear Passport" appears (EIP-6963) |
-| Our wallet in Sodax's Stellar wallet list | **Needs a change in Sodax's kit**: its Stellar Wallets Kit can't take an extra module |
-| Signing through Sodax's own wallet providers | **Works** on EVM and (with the change above) on Stellar; a test app is refused on mainnets, as designed |
+| Our wallet in Sodax's Stellar wallet list | **Needs a change in Sodax's kit**: its Stellar Wallets Kit can't take an extra module. The change is written and tested locally, **not sent** (section 2, D923) |
+| Signing through Sodax's own wallet providers | **Works** on EVM and (with the change above) on Stellar; a test app is refused on mainnets, as designed; with the change, Sodax keeps our Stellar error code |
+| Inside Sodax's swap widget (an iframe on the partner's page) | **Works only if every page around the widget is a registered web address of the app**; the approval window names the widget's address, not the partner's page (section 12) |
+| Sodax's built-in Hana Wallet entries | Sodax's "Hana" calls also catch our Stellar module (`hana-id`); hosts can now pick another id (`journear-passport`, D923; section 11) |
 | One wallet across partner sites | **Works** (one scope); the sign-in and approval windows say the wallet is also used on other apps (D912) |
 | A switch in Sodax's portal | **Missing**: no service-to-service API exists; apps are made by Journear staff |
 | Our SDK on npm | **No** (tarballs, D706) |
@@ -46,6 +52,24 @@ talked to Sodax (D913); the spec is `partner-platform-spec.md`.
 | Sodax's chains | EVM chains (all 14 named in our windows, D910) and Stellar covered; Solana, Sui, Bitcoin, Injective, ICON and Stacks planned (below); NEAR: not planned for the swap |
 
 ## 1. What we checked, and how
+
+**2026-11-25 (D923).** The same kind of page against the published **2.3.0** packages (`@sodax/wallet-sdk-react`,
+`wallet-sdk-core`, `sdk`, `types`; installed with `--ignore-scripts`), once as published and once with the Stellar
+change of section 2 applied to their build output, and our SDK from the branch's sources, on the local stack (port base
+4810) with the pretend Google, in Chromium; and a stand-in for Sodax's swap widget (section 12) in Chromium, Firefox
+and WebKit. Only icon requests of Sodax's built-in Stellar wallets tried to leave the computer, and they were
+blocked. Sodax's own install, build, tests and scripts were not run. Results (all tested):
+
+| Check (2.3.0) | As published | With the change |
+|---|---|---|
+| Our module in `config.STELLAR.modules` | Not listed (the field doesn't exist; the list stays Albedo, xBull, HOT Wallet) | Listed as "Journear Passport" with the Journear mark |
+| Our module added 2 s after mount | Not listed (pushed into the kit's private list, as in the 2.2.0 test) | Listed (`addStellarWalletModules`) |
+| Connect through Sodax's `useXConnect` | (only with the private-list push) | The same address as our own client, for a module given in the config and one added late |
+| Reload with that connection saved | — | Restored once the module is added again (late), the same address |
+| Sign a Stellar public-network payment through Sodax's provider, test key | "Failed to sign transaction", `SIGN_TX_ERROR`, nothing else | The same message and code, plus `cause: { code: 4100, message: "Test apps (pk_test_ keys) can sign only for test networks: …" }` |
+| `removeStellarWalletModules` | — | Our wallet leaves the Stellar list; the Stellar connection is cleared |
+
+The 2.2.0 test of 2026-11-24 follows.
 
 A one-off page in a scratch folder (not in this repository): React 19, `@sodax/wallet-sdk-react` 2.2.0 (with its
 `SodaxWalletProvider`, `useXConnectors`, `useXConnect`, `useWalletProvider`), `@sodax/sdk` 2.2.0 and our SDK from
@@ -95,13 +119,28 @@ inserts our hidden frame at once (one page load and one `GET /v1/app`), so creat
 | Family | What Sodax's SDK does | Sodax code change? |
 |---|---|---|
 | EVM | Nothing beyond creating our client: wagmi's EIP-6963 discovery lists us, also when created late | No |
-| Stellar | Let its `StellarXService` take extra Stellar Wallets Kit modules (for example a `modules` option next to `allowAllModules()`), add `new HanaIdModule(hana)` there, and look for wallets again when one is added later. Read: today it builds its kit with `allowAllModules()` and takes no module option; tested: a connector in its config is replaced by its discovery | Yes, small (inferred) |
-| Stellar errors | Keep the wallet's `code` and `message` when the wallet's error isn't an `Error` object, so users see our reason, not "Failed to sign transaction" | Yes, small |
+| Stellar | Take extra Stellar Wallets Kit modules and look for wallets again when one is added later; add `new HanaIdModule(hana, { productId: JOURNEAR_PASSPORT_MODULE_ID })` (section 11). Read in source (2.3.0 and `7c1ff2e`): `packages/wallet-sdk-react/src/xchains/stellar/StellarXService.ts` builds its kit once, in a singleton, with `allowAllModules()` and no module option (lines 52-58); `src/chainRegistry.ts`'s STELLAR `discoverConnectors` (lines 287-336 at `7c1ff2e`) runs once per mount at 0, 100 and 500 ms and replaces the connector list, so a `STELLAR.connectors` entry never shows. The change (written, tested on the 2.3.0 build output, not sent): `config.STELLAR.modules`; `addStellarWalletModules` / `removeStellarWalletModules` from `@sodax/wallet-sdk-react/xchains/stellar`, which change the kit's module list and run discovery again; discovery runs ordered so an older one never overwrites a newer list | Yes, small (tested) |
+| Stellar errors | Keep the wallet's own error. Read in source: `packages/wallet-sdk-core/src/wallet-providers/stellar/StellarWalletProvider.ts` replaces a non-`Error` rejection (Stellar Wallets Kit modules reject with `{code, message, ext}`) by "Failed to sign transaction" (lines 164-169) or "Failed to get wallet address" (lines 129-134). The change: the same message and code, and the wallet's error as `cause` | Yes, small (tested) |
 | Others | Not offered until we cover the chain (section 6) | Later |
 
 **Size.** `createHana`, the Stellar module and the Sodax adapters together are about 114 kB minified, 36 kB gzipped
 (measured with esbuild from this branch). Our test page with Sodax's wallet kit was 11.3 MB minified, so ours is about
-1 percent of it; loaded on demand it costs nothing when the switch is off. Tested: bundling Sodax's kit with esbuild
+1 percent of it; loaded on demand it costs nothing when the switch is off. Measured 2026-11-25 on the worked example
+(below; esbuild, minified, code splitting on): with the switch off the widget's page code carries 1.3 kB of the add-on
+and none of our SDK; with it on, our SDK comes as 3 chunks of 106 kB minified, 35 kB gzipped, against 8.45 MB (2.25 MB
+gzipped) of the stand-in widget's own page code.
+
+**A worked example** (2026-11-25, D923; outside the repository, in the review bundle `sodax-bundle/example/`, to move
+to the sample-partner repository later): an add-on shaped like Sodax's optional Privy email login (a sub-path,
+`@sodax/wallet-sdk-react/journear`, the only entry that imports our SDK, an optional peer): a `<JournearPassport
+setting={…} />` component inside `SodaxWalletProvider` that, when the partner's setting `{ socialLogin, publishableKey }`
+arrives (after the provider mounted, as Sodax's widget fetches its partner config) and is on, imports our SDK, creates
+the client with the partner's key, adds our Stellar module (the change above) and lets EIP-6963 list us on EVM; when the
+setting turns off it removes the module, takes our connector out of wagmi (EIP-6963 has no removal event; done through
+wagmi's internal connector store in the example, by Sodax's own EVM provider in the real thing), disconnects and calls
+`hana.destroy()`. Tested in Chromium, Firefox and WebKit: the wallet appears in both lists after the config arrives,
+connects, signs, and leaves both lists with its hidden frame gone when switched off. Switching off doesn't sign the user
+out (as closing the tab); suspending the partner's app on our side ends its sign-ins (`partner-platform-spec.md` A10). Tested: bundling Sodax's kit with esbuild
 for the browser needed stand-ins for Node's `crypto` and `stream`; inferred: a partner already using Sodax's kit has
 its bundler set up for that.
 
@@ -265,12 +304,28 @@ D910); Solana; Sui;
 Bitcoin; Injective; ICON; Stacks. Real use needs live keys: Sodax has no testnet, so on testnet only the signing can
 be tried, on each chain's own test network.
 
+**Sodax's other chains: how its kit finds wallets** (read in source, `packages/wallet-sdk-react/src/chainRegistry.ts`
+at the tags; what a wallet of ours on that chain would have to plug into):
+
+| Family | How Sodax's kit finds wallets | So our wallet would |
+|---|---|---|
+| EVM | wagmi with EIP-6963 on; late announcements are picked up (`EvmHydrator.tsx` lines 30-48) | work today (tested) |
+| Stellar | Stellar Wallets Kit 1.x, `allowAllModules()`, discovery at mount | need the change of section 2 (prepared) |
+| Solana | `@solana/wallet-adapter-react` (provider-managed): Wallet Standard wallets (inferred: the adapter lists Wallet Standard wallets it detects) | register as a Wallet Standard wallet |
+| Sui | `@mysten/dapp-kit-react` (provider-managed): Wallet Standard | register as a Wallet Standard wallet |
+| Bitcoin | a fixed list: Unisat, Xverse, OKX, Hana Wallet | need a connector in Sodax's list or a config override |
+| Injective | a fixed list: MetaMask, Keplr, Leap | the same |
+| ICON | Hana Wallet only | the same |
+| Stacks | a list of providers plus a Leather probe | the same |
+| NEAR | `@hot-labs/near-connect` (its wallet manifest) | not planned for the swap (the Tech Lead, 2026-11-12) |
+| Tron, XRP, TON, Zcash, Cardano | in `@sdks@2.4.0-rc.1` and `main`, not in 2.3.0: TIP-6963 or `window.tron`; GemWallet; TonConnect; Noir Wallet; Lace | not covered or planned yet (new since this page's chain list; to add to the plan) |
+
 ## 7. Who builds what
 
 | Who | What |
 |---|---|
 | Journear | The service API and its staff screens (section 3); the per-app answers in section 4 (the shared-wallet line in our windows is built, D912); publishing the SDK; then chains in the order above |
-| Sodax | Load our SDK when the switch is on; create the client with the partner's key; accept extra Stellar Wallets Kit modules and keep wallet error codes; the portal switch and its call to our API |
+| Sodax | Load our SDK when the switch is on; create the client with the partner's key; accept extra Stellar Wallets Kit modules and keep wallet error codes (a change and its spec issue are drafted for the Tech Lead to send or not, D923); the portal switch and its call to our API; for its swap widget, register each partner's page addresses with the partner's app (section 12) |
 | Each Sodax partner | Its page meets our page requirements (popups allowed, the frame not blocked; `integration.md` section 5) |
 | The Tech Lead | The decisions in "Open" below |
 
@@ -282,7 +337,10 @@ be tried, on each chain's own test network.
 - The mainnet demo on a shared wallet (section 5).
 - Our sign-in and approval windows must open from a click: Sodax's own waits before a swap cost the click, so users
   get our "Review in Journear Passport" button instead (works, one more click).
-- Sodax's wallet kit is a large, fast-moving dependency; its Stellar change is ours to ask for, not to make.
+- Sodax's wallet kit is a large, fast-moving dependency; its Stellar change is ours to ask for, not to make. Releases
+  move fast (2.3.0 and 2.4.0-rc.1 on the same day, 2026-11-24; `main` 50 commits past 2.3.0 at `7c1ff2e`).
+- Inside Sodax's swap widget, our approval window shows the widget's address, the same on every partner's site; the
+  app's name is the only partner-specific part (section 12).
 
 ## 9. Open questions for Sodax
 
@@ -293,6 +351,16 @@ be tried, on each chain's own test network.
 4. Does Sodax want each partner's backend to get the same User ID for a person, or one per partner?
 5. Can Sodax load our SDK only for partners with the switch on, from npm, once we publish?
 6. Should partners see their own users in our portal (needs per-app access), or only through Sodax?
+7. Would Sodax take the change in their usual way (a spec issue, a maintainer's plan and `plan-approved`, then a pull
+   request from a fork), or prefer to write it themselves from the spec?
+8. Is the add-on shape right for them (a `./journear` sub-path like `./privy`, our SDK an optional peer), and would
+   they rather own it in their repository or have us maintain it?
+9. In the swap widget, can the partner's settings carry the switch and the publishable key, and can Sodax's backend
+   register each partner's page addresses with that partner's app (section 12)? Would they want the widget refused
+   when it is opened top-level for a partner (section 12, the gap)?
+10. Should their "Hana" brand calls (`useBatchConnect(['hana'])`, `useIsWalletInstalled`) match whole ids only, so
+    they never catch another wallet whose id merely contains "hana" (section 11)?
+11. Which of the chains new in 2.4.0-rc.1 (Tron, XRP, TON, Zcash, Cardano; Monad on EVM) matter to their partners?
 
 ## Open (for the Tech Lead)
 
@@ -305,3 +373,133 @@ recommendation, to be adjusted after the talk with Sodax. Still open:
   "Decided by the Tech Lead (2026-11-25)"), with who may confirm (an owner, with a fresh Google sign-in) and a rule
   for platform keys (a second owner confirms on real money) decided the same day; several design points proposed and
   still to confirm, and two open points (D914).
+- D923, to confirm (the Tech Lead): keep `hana-id` as the default Stellar module id and give hosts the `productId`
+  option (section 11); whether, when and under whose name the Stellar change, its spec issue and pull request go to
+  Sodax (section 2); the iframe setup to recommend to Sodax (section 12, option D); where the worked example lives.
+
+## 10. Sodax's public source
+
+Read in source (`gosodax/sodax-sdks`, a shallow clone at `7c1ff2e` on `main`, with the tags `@sdks@2.2.0`,
+`@sdks@2.3.0` and `@sdks@2.4.0-rc.1`), unless marked otherwise:
+
+- **All SDK code is public, under the MIT licence**: `@sodax/sdk`, `@sodax/wallet-sdk-core`,
+  `@sodax/wallet-sdk-react`, `@sodax/dapp-kit` and the rest, with the example and test apps (`apps/playground` is the
+  swap widget) and the docs site's sources. Sodax's partner portal (`portal.sodax.com`) and backend (`api.sodax.com`)
+  are not in it (inferred: private).
+- **How outside changes get in** (`CONTRIBUTING.md`, `.github/issue-workflow.md`): every change starts from an issue
+  whose body is the spec (their template: goal, requirements, non-goals, constraints, acceptance criteria); a
+  maintainer writes or accepts a plan comment and applies the `plan-approved` label; outside contributors open a pull
+  request from a fork against `main`, with `Closes #N`, a Conventional Commit title, tests beside the code and the
+  package README or docs updated (a "docs ship with code" check). Only Sodax publishes (releases are cut by
+  maintainers from a `release` branch).
+- **Versions** (tested on the npm registry, 2026-11-25): `latest` is 2.3.0 (published 2026-11-24), `rc` is
+  2.4.0-rc.1 (the same day). 2.4.0-rc.1 adds Tron, XRP, TON, Zcash and Cardano to the wallet kit (section 6).
+- **The optional Privy email login** (2.3.0): an "Email (Privy)" EVM wallet, configured as `EVM.privy: privy({ appId })`
+  from the sub-path `@sodax/wallet-sdk-react/privy`, the only entry that loads `@privy-io/react-auth`, an optional peer
+  dependency; partners who don't use it install nothing. Our worked example follows that shape (section 2). (The pull
+  request number, #486, is from the survey, not re-checked: the clone is shallow.)
+- **The swap widget** is one iframe from `https://widget.sodax.com/?embed=1&appId=…`, with
+  `allow="ethereum; solana; clipboard-write"`, `referrerpolicy="origin"` and no `sandbox` (`docs/widget/index.mdx`),
+  so popups from it are allowed. Its per-partner settings come from `GET {api}/swaps/widget/config/{appId}` →
+  `{ appId, feeBps, feeReceiver }` (`apps/playground/src/lib/appId.ts` lines 45-50), fetched in `useSwapFlow` after
+  the wallet provider's config was fixed at module level (`apps/playground/src/providers.tsx` lines 14-30).
+- **Featuring a wallet first** needs the page to call `sortConnectors(connectors, { preferred: [id] })` (exact ids);
+  the widget's wallet list (`apps/playground/src/components/WalletControls.tsx` line 45) doesn't, so wallets show in
+  the order they were found.
+
+## 11. The naming clash with Hana Wallet
+
+Hana Wallet (the browser extension, a different product) is built into Sodax's kit: EVM `io.hana.wallet` (through
+EIP-6963), ICON `hana`, Bitcoin `hana-bitcoin`, Stacks `hanaWallet.stacks`, and Stellar Wallets Kit's own `hana`
+module, all named "Hana Wallet".
+
+**What our wallet announces** (read in our code): EIP-6963 `info.name` "Journear Passport", `info.icon` the Journear
+mark (a data URI), `info.uuid` random per client, `info.rdns` the reverse of the env's sign-in host
+(`packages/web/src/client/ethereum.ts` `rdnsFor`: on sandbox-dev `dev.workers.tingtc.hana-id-auth-sandbox-dev`, so it
+contains "hana"; locally `1.0.0.127`); the Stellar Wallets Kit module's `productId` `hana-id`, `productName`
+"Journear Passport", `productUrl` the sign-in origin, `productIcon` the mark; nothing on NEAR (no wallet-selector
+entry; `hana.near` only); SDK exports `createHana`, `HanaIdModule`, `HANA_ID_MODULE_ID`.
+
+**Sodax's matcher** (`packages/wallet-sdk-react/src/utils/matchConnectorIdentifier.ts` lines 35-45) treats an
+identifier as a brand and matches any wallet whose id or name contains it, without case. It is used by
+`useBatchConnect`, `useBatchDisconnect` and `useIsWalletInstalled`; Sodax's own `apps/wallet-modal-example` shows a
+"Connect All Hana" button when `useIsWalletInstalled({ connectors: ['hana'] })` is true. Tested on 2.3.0 (no Hana
+Wallet extension present):
+
+| Call | Our module `hana-id` | Our module `journear-passport` |
+|---|---|---|
+| `useIsWalletInstalled({ connectors: ['hana'] })` | true (Stellar; and EVM where `rdns` contains "hana", as on sandbox-dev: tested with a stand-in announcement) | false |
+| `useBatchConnect({ connectors: ['hana'] }).run()` | connects **our** wallet on Stellar (our sign-in window opens) and tries our EVM entry on sandbox-dev | matches nothing, no window |
+| `useBatchDisconnect({ connectors: ['hana'] })` | would disconnect ours (read in source) | not matched |
+
+Not affected: `sortConnectors`' `preferred` (exact ids); icons and names (each connector has its own; ours is never
+shown as Hana Wallet's, read in source). When both wallets are present, `find` takes the first match, so the order
+of the list decides (read in source; the extension's modules come first on Stellar, ours is appended).
+
+**What persists an id** (read in source): Sodax's store saves each chain's connector id in `localStorage`
+(`xwagmi-store`) and restores it after a reload; a missing id makes the Stellar reconnect fail with a console warning
+and leaves the saved connection showing, so signing fails until the user connects again; wagmi saves the EVM
+connector id (`wagmi.recentConnectorId`, the `rdns`); Stellar Wallets Kit 2.x saves `@StellarWalletsKit/selectedModuleId`
+and `usedWalletsIds` (1.9.x keeps the selection in memory only); our own partner test page names `selectedWalletId:
+'hana-id'`, and `docs/integration.md` has promised partners since the rename that `productId` and `rdns` stay. Our
+vault stores neither (its records are keyed by app and scope).
+
+**Done (D923, to confirm (the Tech Lead)).** Renaming the default would make returning users pick the wallet again
+in every host that saved it (and leave Sodax's saved connection unusable until they do) and break partner code that
+names `hana-id`, so the default stays. Instead `new HanaIdModule(hana, { productId })` takes another id, and the SDK
+exports `JOURNEAR_PASSPORT_MODULE_ID` (`journear-passport`) for hosts that match by part of a name; the worked example
+uses it. Nothing is stored or derived from it; no address changes. The EVM `rdns` has no such option: it should stay
+truthful (a domain we control), and on production it comes from the production domain, still to be chosen (Q15, Q26):
+choosing one without "hana" in the sign-in host avoids the clash there (inferred). The other way round (Hana Wallet
+mistaken for ours) doesn't happen: nothing of ours matches "Hana Wallet" or `io.hana.wallet` (read in source), and the
+option refuses `hana` and `io.hana.wallet` as ids.
+
+## 12. Inside Sodax's swap widget: our wallet in a third-party iframe
+
+Sodax's widget runs as an iframe from its own origin on each partner's page. Tested 2026-11-25 with a stand-in widget
+(the worked example) on the local stack: partner pages on `http://site-b.localhost:4873` and
+`http://site-c.localhost:4875`, the widget on `http://localhost:4874`, our vault and sign-in on `127.0.0.1` (three
+different sites), in Chromium (with third-party storage partitioning switched back on: Playwright switches it off,
+shipped Chrome has it on), Firefox (with its shipped Total Cookie Protection) and WebKit (with `window.open` returning
+null in the widget, as Safari's popup blocker does after a library's waits). The same results in all three unless
+noted (tested):
+
+| Question | Result |
+|---|---|
+| Which origin do our vault and API see? | The **widget's** (the vault's parent). The vault also requires **every** page around it to be a registered origin of the app (sweep VAUL-6: `location.ancestorOrigins` where the browser has it, and the CSP `frame-ancestors` everywhere) |
+| An app that registers only the widget's origin | **Refused** on a partner's page ("didn't answer this page … and that every page framing it is too"); our wallet leaves the lists |
+| An app that registers the widget's and the partner pages' origins | Works: lists, sign-in, signing, reload |
+| The hidden frame | Loads inside the widget's iframe once the origins are registered |
+| Popups | The sign-in and approval windows open from a click in the widget (Chromium, Firefox); with popups blocked (WebKit as Safari), through our in-page "Sign in with Journear Passport" and review buttons |
+| Google sign-in | Works (a top-level window) |
+| Storage | Belongs to the partner's site: a reload keeps the session; the same widget top-level, or on another partner's site, needs its own sign-in (the Google account chosen again), and gets **the same wallet** (one scope). Chromium and Firefox partition by the top-level site (a probe page showed it); Playwright's WebKit doesn't partition `localStorage`, but our vault's records still weren't shared there; shipped Safari partitions too (inferred) |
+| The approval window's requesting site | "From {App}" and the **widget's** address (`http://localhost:4874`), not the partner's page |
+| "Also used on other apps" | With one app for all partners: no line (one app); the window looks the same on every partner's site. With one app per partner on one scope: "From Partner A Swaps", the widget's address, and "This wallet is also used on 1 other app." |
+| A partner page reusing another partner's widget settings | Refused (partner B's page is not registered for partner A's app) |
+| Switching the partner off in the widget | Our wallet leaves both lists, the connection ends, the hidden frame is removed |
+
+Not tested: the widget opened top-level with a partner's settings in the per-partner setup; read and inferred: it
+works, because the widget's origin is registered for every partner's app, so anyone can open
+`widget/?appId=<partner>` top-level and get that partner's app (the address bar then shows the widget's address).
+
+**Options for the Tech Lead** (none built):
+
+- **A. One app for the widget's origin, the partner shown from a signed config.** Sodax's backend signs "this is
+  partner X" for the widget, our window shows it. One app means one User ID set, one suspend for all, the 20-origin
+  cap if partner pages must be registered anyway (they must, as tested), and our window then trusts Sodax's signature
+  for the name it shows: a stolen Sodax signing key names any partner. Not recommended.
+- **B. The widget posts the parent's origin.** Forgeable by the widget's code and unverifiable in Firefox (no
+  `ancestorOrigins`); with VAUL-6 our vault already knows the real ancestors where the browser tells it, so this adds
+  nothing we can trust. Not recommended.
+- **C. Refuse to run framed.** Safest for the window's address, but Sodax's widget is an iframe by design: Sodax would
+  have to open a top-level page or window for sign-in and every approval. Breaks the integration.
+- **D. One app per partner, each registering the widget's origin and the partner's own pages** (works today, tested;
+  D909's model). The vault's check of every ancestor (and `frame-ancestors`) binds each partner's key to its own pages;
+  each partner gets its own name, User IDs (D913), suspend and "also used" line; the widget's embed already allows
+  popups. What it needs: Sodax's backend registers each partner's page origins with the partner's app, as the platform
+  API plans (A13), plus the widget's origin; and two small changes of ours, to propose: show the partner page's
+  address in the windows (the outermost ancestor where the browser gives it, else the app's one non-widget origin)
+  instead of the widget's, and refuse the widget's origin top-level for a partner app (allow it only as a frame), so a
+  partner's app can't be used outside the partner's pages.
+
+**Recommended: D**, to confirm (the Tech Lead), with the two changes as a later piece (not built).

@@ -22243,8 +22243,9 @@ L9 and N7). D925 is the number the caller assigned for this piece.
   11. **The CLI's `support:lookup` and `user:find` are unchanged** (scope-level codes; the operator's unaudited path);
       `uid-erase` already resolves an app's own codes (D919).
   12. **No timing padding.** A code that exists in another org and one that exists nowhere run the same statement and
-      the same audit write; the difference is a few index rows, inside D1's own latency. Pinned: the statement's rows
-      read (26 to 32 for a hit, 3 for a miss, 8 for another org's person) don't grow with the tables.
+      the same audit write; the difference is a few index rows, inside D1's own latency. Pinned as budgets: the statement's
+      rows read (measured 26 to 32 for a hit, 3 for a miss, 8 for another org's person; held to 32 to 36, 6 and 12) don't
+      grow with the tables.
 - **Found in the spec:** "authorised inside the query itself (org, scope, role read fresh)" can't hold the role in the
   API's query (point 3); "audited before it answers" with the scope-level target fixes the audit after the read (point
   4); "{Network}" in Home's line has no source (point 2); B6 doesn't say what an ambiguous Support ID does (refused in

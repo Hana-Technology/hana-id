@@ -16,7 +16,13 @@ export const SHARED_WALLET_NO_AUTO_APPROVE = 'Auto-approve is off for apps that 
 export const SHARED_SCOPE_POLICY_IN_THE_WAY =
   'An app on this scope has an auto-approve policy in force or waiting: remove it or cancel it first, then mark the scope as shared';
 
-/** Whether an app may never have an auto-approve policy: it is on a shared scope, or the platform created it. */
-export function autoApproveRefused(a: { sharedScope: boolean; createdByKind: AppCreatorKind }): boolean {
-  return a.sharedScope || a.createdByKind === 'platform';
+/**
+ * Whether an app may never have an auto-approve policy: it is on a shared scope, or Journear staff didn't create it.
+ * Fails closed: any creator but `hana` (an unknown value included) counts as the platform.
+ */
+export function autoApproveRefused(a: { sharedScope: boolean; createdByKind: AppCreatorKind | (string & {}) }): boolean {
+  return a.sharedScope || a.createdByKind !== 'hana';
 }
+
+/** Why a live scope can't be marked yet (code `env_mismatch`): D915 after PR 145's review. */
+export const SHARED_SCOPE_TEST_ONLY = 'Only a test scope can be marked as shared for now: a live shared scope needs its own security review first';

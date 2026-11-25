@@ -8,6 +8,9 @@ describe('autoApproveRefused', () => {
     expect(autoApproveRefused({ sharedScope: true, createdByKind: 'hana' })).toBe(true);
     expect(autoApproveRefused({ sharedScope: false, createdByKind: 'platform' })).toBe(true);
     expect(autoApproveRefused({ sharedScope: true, createdByKind: 'platform' })).toBe(true);
+    // Fails closed: any creator but Journear staff, an unknown value included.
+    expect(autoApproveRefused({ sharedScope: false, createdByKind: 'unknown' })).toBe(true);
+    expect(autoApproveRefused({ sharedScope: false, createdByKind: '' })).toBe(true);
   });
 
   it('the words are plain and the kinds are the migration’s', () => {

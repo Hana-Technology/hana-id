@@ -30,6 +30,7 @@ import {
   AUTO_APPROVE_NEEDS_0026,
   AUTO_APPROVE_SHARED_WALLET,
   SHARED_SCOPE_COLUMNS_SQL,
+  sharedWalletOf,
   IDLE_TTL_MIN_MS,
   parseDuration,
   parseSettingsArgs,
@@ -704,6 +705,14 @@ describe('app:settings --auto-approve on an app that shares a wallet (D915)', ()
 
   it('the column check reads 1 once migration 0026 is applied', () => {
     expect(d1Of(h.db)(SHARED_SCOPE_COLUMNS_SQL)).toEqual([{ n: 1 }]);
+  });
+
+  it('fails closed on unexpected values: a NULL mark or a creator other than hana shares a wallet; no columns is unknown', () => {
+    expect(sharedWalletOf({ app_user_ids: 0, created_by_kind: 'hana' })).toBe(false);
+    expect(sharedWalletOf({ app_user_ids: null, created_by_kind: 'hana' })).toBe(true);
+    expect(sharedWalletOf({ app_user_ids: 0, created_by_kind: 'someone' })).toBe(true);
+    expect(sharedWalletOf({ app_user_ids: 2, created_by_kind: 'hana' })).toBe(true);
+    expect(sharedWalletOf({})).toBeNull();
   });
 });
 

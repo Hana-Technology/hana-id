@@ -198,6 +198,18 @@ describe.each(['session', 'none'] as const)('register a consent, %s mode', (mode
     await expectCode((await register(app, device)).res, 409, 'policy_not_in_force');
   });
 
+  it('refuses a policy written straight into D1 on an app whose scope is marked as shared (D915): none is in force there', async () => {
+    const { app, device } = await setup(mode);
+    // The mark can't go on while the policy is there (migration 0026's trigger): mark first, then the direct write.
+    await setSettings(app.id, { auto_approve_policy: null });
+    await env.DB.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?1').bind(app.scope).run();
+    await setSettings(app.id, { auto_approve_policy: JSON.stringify(POLICY) });
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expectCode((await register(app, device)).res, 409, 'policy_not_in_force');
+    expect(errors.mock.calls.map(([line]) => JSON.parse(String(line)).event)).toContain('auto_approve_policy_shared_wallet');
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM vault_consents WHERE app_id = ?1').bind(app.id).first()).toEqual({ n: 0 });
+  });
+
   it('the status read follows the consent: active, then revoked, unknown for another id', async () => {
     const { app, near, device } = await setup(mode);
     const { consentId } = await register(app, device);

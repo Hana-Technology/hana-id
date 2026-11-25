@@ -102,7 +102,7 @@ export async function detailView(
       loginMethods: row.login_methods === 'email' || row.login_methods === 'google,email' ? row.login_methods : 'google',
     },
     // D915: the scope's shared flag and the app's creator, and the rule the screens hide the policy editor by.
-    sharedScope: row.app_user_ids === 1,
+    sharedScope: row.app_user_ids !== 0,
     createdByKind: row.created_by_kind,
     sharedWallet: sharedWallet(row),
     // Each change's status as it is in force now (changeView), so a page never offers Cancel on a change in force.
@@ -172,9 +172,12 @@ export async function planApp(
   return { app: r, origins: jsonRows<OriginRow>(r.origins_json), openChanges: jsonRows<ChangeRow>(r.changes_json), keys: jsonRows<KeyRow>(r.keys_json) };
 }
 
-/** D915: the app may never have an auto-approve policy (its scope is shared, or the platform created it). */
+/**
+ * D915: the app may never have an auto-approve policy (its scope is shared, or the platform created it). Fails closed:
+ * a scope flag that isn't 0 (a missing scope row reads NULL) and any creator but `hana` count as shared.
+ */
 export const sharedWallet = (row: Pick<AppRow, 'app_user_ids' | 'created_by_kind'>): boolean =>
-  autoApproveRefused({ sharedScope: row.app_user_ids === 1, createdByKind: row.created_by_kind });
+  autoApproveRefused({ sharedScope: row.app_user_ids !== 0, createdByKind: row.created_by_kind });
 
 /** The expected version must be the stored one (the console read it; a moved one is `version_conflict`). */
 export function expectVersion(stored: number, expected: number): void {

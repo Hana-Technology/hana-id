@@ -735,7 +735,8 @@ describe('GET /v1/app’s share field (H9: an open tab learns it was signed out)
     // The gate's app and its origins (one origin here: a row per origin), the settings, login methods, identity email,
     // the mainnet demo switch (a test app in a dev env only), the consent with its share (a policy app's), the share.
     expect(counted.statements).toHaveLength(withConsent ? 8 : 7);
-    expect(counted.rowsRead()).toBeLessThanOrEqual(withConsent ? 14 : 11);
+    // D915: the settings read joins the app's scope (one row more), so a shared-wallet app is never served a policy.
+    expect(counted.rowsRead()).toBeLessThanOrEqual(withConsent ? 15 : 12);
   });
 
   it('an idle share still reads live: time-based ends stay the vault’s own (D55), and the read moves nothing', async () => {

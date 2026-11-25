@@ -1129,23 +1129,28 @@ const SHARED_WALLET_NO_AUTO_APPROVE = 'Auto-approve is off for apps that share a
 
 /**
  * D915: the app's scope marked as shared by several partners' apps (one way), or the app created by the platform; and,
- * for a scope not marked yet, the one control that marks it. Null for an API from before migration 0026.
+ * for a test scope not marked yet, the one control that marks it, whose confirmation lists the scope's apps
+ * (`scopeApps`: their names, or null when they couldn't be read). Live scopes can't be marked for now (after PR 145's
+ * review; the API and the route refuse it too). Null for an API from before migration 0026.
  */
-function sharedWalletRow(app, orgId, ro) {
+function sharedWalletRow(app, orgId, ro, scopeApps) {
   if (app.sharedScope === undefined) return null;
   const scope = app.scopeId;
+  const listed = scopeApps === null ? ' (Its apps couldn’t be read: check them on the organisation’s page first.)' : ` Its apps: ${scopeApps.join(', ')}.`;
   const text = app.sharedScope
     ? 'On: several partners’ apps share this scope’s wallet. Auto-approve is off for every app on it. This can’t be undone.'
     : app.createdByKind === 'platform'
       ? 'This scope isn’t marked as shared, but the platform created this app, so auto-approve is off for it.'
-      : 'Off: this scope isn’t marked as shared by several partners’ apps.';
+      : app.environment === 'test'
+        ? 'Off: this scope isn’t marked as shared by several partners’ apps.'
+        : 'Off. Only a test scope can be marked as shared for now: a live shared scope needs its own security review first.';
   const control =
-    ro || app.sharedScope
+    ro || app.sharedScope || app.environment !== 'test'
       ? ''
       : actionButton(
           'Mark the scope as shared',
           () => api('POST', `/api/scopes/${encodeURIComponent(scope)}/app-user-ids`, { orgId }),
-          `Mark scope ${scope} as shared by several partners’ apps? Auto-approve is then off for every app on it, for good: this can’t be undone. It is refused while any app on the scope has an auto-approve policy in force or waiting.`,
+          `Mark scope ${scope} as shared by several partners’ apps? Auto-approve is then off for every app on it, for good: this can’t be undone. It is refused while any app on the scope has an auto-approve policy in force or waiting.${listed}`,
           true,
           { done: 'The scope is marked as shared. Auto-approve is off for every app on it.' },
         );
@@ -1942,6 +1947,16 @@ async function appPage(main, orgId, appId) {
   );
 
   const policy = app.settings && app.settings.policy;
+  // D915: the names of the scope's apps, for the mark's confirmation (read only when the mark is offered).
+  let scopeApps = null;
+  if (app.sharedScope === false && app.environment === 'test' && !app.deleted) {
+    try {
+      const d = await api('GET', `/api/orgs/${encodeURIComponent(orgId)}`);
+      scopeApps = (d.apps || []).filter((a) => a.scopeId === app.scopeId && !a.deleted).map((a) => `${a.name} (${a.id})`);
+    } catch {
+      scopeApps = null;
+    }
+  }
   // D915: an app on a shared scope, or one the platform created, never gets an auto-approve policy: no proposal form.
   const sharedWallet = app.sharedWallet === true;
   const proposePolicy = disclosure(
@@ -2009,7 +2024,7 @@ async function appPage(main, orgId, appId) {
           : 'None: every signature asks the user.',
       ro ? '' : h('div', { class: 'row' }, policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true, { done: 'Policy removed.' }) : '', sharedWallet ? '' : proposePolicy.button),
     ),
-    sharedWalletRow(app, orgId, ro),
+    sharedWalletRow(app, orgId, ro, scopeApps),
     settingRow('Other settings', h('details', { class: 'raw' }, h('summary', {}, 'Show all settings'), h('pre', {}, JSON.stringify(app.settings, null, 2))), ''),
   ];
   main.append(panel('Signing settings', {}, h('div', { class: 'settings' }, rows.filter(Boolean)), ro || sharedWallet ? '' : proposePolicy.box));

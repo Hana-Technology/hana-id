@@ -106,12 +106,33 @@ describe('migration 0026_shared_scope_rules', () => {
     expect(await db.prepare("SELECT app_user_ids, assigned_at FROM scopes WHERE scope_id = 's1'").first()).toEqual({ app_user_ids: 1, assigned_at: 7 });
   });
 
+  it('only a test scope is marked, by an update or an insert; a marked row is never deleted, replaced or re-inserted unmarked', async () => {
+    // s2 is live (its policy cleared first, so only the environment stands in the way).
+    await db.prepare("UPDATE apps SET auto_approve_policy = NULL WHERE id = 'app_a2'").run();
+    expect(await accepted("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's2'")).toBe(false);
+    expect(await accepted("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('s9', 'org_a', 'live', NULL, 1, 1, 1)")).toBe(false);
+    expect(await accepted("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('s8', 'org_a', 'test', NULL, 1, 1, 1)")).toBe(true);
+    expect(await accepted("DELETE FROM scopes WHERE scope_id = 's8'")).toBe(false);
+    expect(await accepted("INSERT OR REPLACE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s8', 'org_a', 'test', NULL, 1, 1)")).toBe(false);
+    expect(await accepted("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s8', 'org_a', 'test', NULL, 1, 1) ON CONFLICT (scope_id) DO UPDATE SET app_user_ids = 0")).toBe(false);
+    expect(await db.prepare("SELECT app_user_ids FROM scopes WHERE scope_id = 's8'").first()).toEqual({ app_user_ids: 1 });
+    // An unmarked row still deletes (no code does, but the rule is only for a marked one).
+    expect(await accepted("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s7', 'org_a', 'test', NULL, 1, 1)")).toBe(true);
+    expect(await accepted("DELETE FROM scopes WHERE scope_id = 's7'")).toBe(true);
+  });
+
   it('applying the migrations again changes nothing', async () => {
     const before = (await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name);
     await applyD1Migrations(db, env.TEST_MIGRATIONS);
     const after = (await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name);
     expect(after.slice(0, before.length)).toEqual(before);
     expect(before).toContain('0026_shared_scope_rules.sql');
-    expect(await db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name IN ('scopes_app_user_ids_one_way', 'scopes_app_user_ids_no_policy', 'apps_created_by_kind_fixed')").first()).toEqual({ n: 3 });
+    expect(
+      await db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'trigger' AND name IN ('scopes_app_user_ids_one_way', 'scopes_app_user_ids_no_policy', 'scopes_app_user_ids_test_only', 'scopes_app_user_ids_insert', 'scopes_app_user_ids_no_delete', 'apps_created_by_kind_fixed')",
+        )
+        .first(),
+    ).toEqual({ n: 6 });
   });
 });

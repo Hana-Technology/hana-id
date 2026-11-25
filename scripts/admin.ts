@@ -63,6 +63,7 @@ import { NearRpc } from './lib/near.ts';
 
 const USAGE = `Usage: admin.ts <env> <command> [options] [--remote]
   app:create --org org_legacy --name <name> --scope <scope_id> [--environment test|live] --origin <origin> [--origin …]
+                [--shared-wallet]  (a new test scope created marked as shared by several partners' apps: no auto-approve)
              [--plan free]   (--environment is required for a scope with no app yet; the key is pk_test_/pk_live_ by it)
   app:origins:add    --app <app id | publishable key> --origin <origin> [--origin …]   (staff proposals)
   app:origins:remove --app <app id | publishable key> --origin <origin> [--origin …]   (immediate)
@@ -260,7 +261,7 @@ async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
     strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email', 'mainnet-demo', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user', 'days'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google', 'request-id'],
-    booleans: ['remote', 'yes', 'allow-shared', 'json', 'reject', 'help', 'quiet', 'normal'],
+    booleans: ['remote', 'yes', 'allow-shared', 'shared-wallet', 'json', 'reject', 'help', 'quiet', 'normal'],
   });
   if (args.flag('help')) return void console.log(USAGE);
   const [envName, command, ...rest] = args.positionals;

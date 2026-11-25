@@ -13,7 +13,7 @@
 // Support ID lookup (`POST /api/support/lookup`, support.ts). D843's "Gas sponsorship" (evm-relay.ts). D894's
 // "Partner labels" (partner-labels.ts).
 import { ACCESS_JWT_HEADER } from '@hana-id/oidc';
-import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView, NEW_ORG_INVITES_MAX } from '@hana-id/console-core';
+import { type AppChange, type AuditRow, DIRECTORY_AUDIT_ACTIONS, type DirectoryAuditRow, type MemberView, NEW_ORG_INVITES_MAX, SHARED_SCOPE_TEST_ONLY } from '@hana-id/console-core';
 import type { Env } from './env.ts';
 import { auditCsv } from './export.ts';
 import { errorResponse, json, readJson } from './http.ts';
@@ -224,9 +224,10 @@ const ROUTES: Route[] = [
     method: 'POST',
     pattern: '/api/apps',
     handler: async (c) => {
+      if (c.body.appUserIds === true && c.body.environment !== 'test') return errorResponse('env_mismatch', SHARED_SCOPE_TEST_ONLY);
       const subs = await ownerSubs(c, c.body.orgId);
       if (!subs.ok) return subs.res;
-      return answer('POST /api/apps', c.staff, () => c.env.API.createApp({ ...staffCtx(c.staff), ...pick(c.body, 'orgId', 'scopeId', 'environment', 'name'), origins: c.body.origins ?? [], orgOwnerSubs: subs.subs }));
+      return answer('POST /api/apps', c.staff, () => c.env.API.createApp({ ...staffCtx(c.staff), ...pick(c.body, 'orgId', 'scopeId', 'environment', 'name', 'appUserIds'), origins: c.body.origins ?? [], orgOwnerSubs: subs.subs }));
     },
   },
   {
@@ -239,7 +240,17 @@ const ROUTES: Route[] = [
     },
   },
   // D915: mark the scope as shared by several partners' apps (one way); the API refuses it while any app on it has a policy.
-  { method: 'POST', pattern: '/api/scopes/:scope/app-user-ids', handler: (c) => answer('POST /api/scopes/:scope/app-user-ids', c.staff, () => c.env.API.setScopeAppUserIds({ ...staffCtx(c.staff), scopeId: c.params.scope, ...pick(c.body, 'orgId') })) },
+  // A live scope is refused here too, before the API's own refusal (after PR 145's review: test scopes only for now).
+  {
+    method: 'POST',
+    pattern: '/api/scopes/:scope/app-user-ids',
+    handler: (c) =>
+      answer('POST /api/scopes/:scope/app-user-ids', c.staff, async () => {
+        const listed = await c.env.API.listApps({ ...staffCtx(c.staff), ...pick(c.body, 'orgId') });
+        if (listed.ok && listed.apps.some((a) => a.scopeId === c.params.scope && a.environment !== 'test')) return { ok: false, code: 'env_mismatch', error: SHARED_SCOPE_TEST_ONLY };
+        return c.env.API.setScopeAppUserIds({ ...staffCtx(c.staff), scopeId: c.params.scope, ...pick(c.body, 'orgId') });
+      }),
+  },
   { method: 'GET', pattern: '/api/apps/:app', handler: (c) => answer('GET /api/apps/:app', c.staff, () => c.env.API.getApp({ ...staffCtx(c.staff), orgId: c.url.searchParams.get('org') ?? undefined, appId: c.params.app })) },
   { method: 'POST', pattern: '/api/apps/:app/suspend', handler: (c) => answer('POST /api/apps/:app/suspend', c.staff, () => c.env.API.setSuspended({ ...staffCtx(c.staff), appId: c.params.app, bit: c.body.bit ?? 1, suspended: true })) },
   { method: 'POST', pattern: '/api/apps/:app/resume', handler: (c) => answer('POST /api/apps/:app/resume', c.staff, () => c.env.API.setSuspended({ ...staffCtx(c.staff), appId: c.params.app, bit: c.body.bit, suspended: false })) },

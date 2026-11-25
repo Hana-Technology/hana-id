@@ -119,8 +119,8 @@ export interface AppRow {
   environment: 'test' | 'live';
   first_session_at: number | null;
   assigned_at: number;
-  /** Migration 0026 (D915): the scope is marked as shared by several partners' apps (1), one way. */
-  app_user_ids: number;
+  /** Migration 0026 (D915): the scope is marked as shared by several partners' apps (1), one way; NULL with no scope row. */
+  app_user_ids: number | null;
 }
 
 export const APP_COLUMNS =

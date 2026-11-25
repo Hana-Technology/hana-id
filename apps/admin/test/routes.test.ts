@@ -2,6 +2,7 @@
 // and email"): the staff actor lands in `app_changes` and `audit_log`; an AdminRpc suspension works with the console
 // Worker down; createApp and assignScopeOrg get the org's owners' subs from listMembers; contacts, members, invites,
 // owner grants, apps, changes, keys; the audit view and its CSV; no user export route (the Users screen: users.test.ts).
+import { newPublishableKey } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index.ts';
@@ -226,6 +227,32 @@ describe('a shared scope (D915)', () => {
     expect(policy.status).toBe(400);
     expect(await json(policy)).toEqual({ error: { code: 'policy_invalid', message: 'Auto-approve is off for apps that share a wallet' } });
     expect((await adminRequest(`/api/scopes/${app.scope}/app-user-ids`, { body: { orgId: 'org_other12345' } })).status).toBe(404);
+  });
+
+  it('a live scope is refused by the route before the API is asked to mark it, and createApp with the mark for a live app too', async () => {
+    const app = await seedHotApp();
+    const live = `s${uid().toLowerCase()}`;
+    const key = newPublishableKey('live');
+    await env.HOT_DB.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?1, ?2, 'live', NULL, 1, 1)").bind(live, app.org).run();
+    await env.HOT_DB.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan) VALUES (?1, 'Live', ?2, ?3, ?4, 'active', 'free')").bind(`app_${uid()}`, live, app.org, key).run();
+    const calls: string[] = [];
+    const api = overrideBinding(env.API, {
+      setScopeAppUserIds: async () => {
+        calls.push('setScopeAppUserIds');
+        return { ok: true, changed: true };
+      },
+    });
+    const jwt = await staffJwt();
+    const post = (path: string, body: unknown) => worker.fetch(new Request(`${ADMIN}${path}`, { method: 'POST', headers: { ...CSRF, 'cf-access-jwt-assertion': jwt }, body: JSON.stringify(body) }), envWith({ API: api }));
+    const res = await post(`/api/scopes/${live}/app-user-ids`, { orgId: app.org });
+    expect(res.status).toBe(400);
+    expect(await json(res)).toEqual({ error: { code: 'env_mismatch', message: 'Only a test scope can be marked as shared for now: a live shared scope needs its own security review first' } });
+    expect(calls).toEqual([]);
+    // The real API refuses it too.
+    expect(await json(await adminRequest(`/api/scopes/${live}/app-user-ids`, { body: { orgId: app.org } }))).toMatchObject({ error: { code: 'env_mismatch' } });
+    const created = await adminRequest('/api/apps', { body: { orgId: app.org, scopeId: 'snewlive1', environment: 'live', name: 'Live app', origins: [], appUserIds: true } });
+    expect(created.status).toBe(400);
+    expect(await json(created)).toMatchObject({ error: { code: 'env_mismatch' } });
   });
 });
 

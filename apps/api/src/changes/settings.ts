@@ -178,7 +178,7 @@ export async function setMainnetDemo(db: HotDb, env: Env, w: Writer, i: { orgId:
  * write's own transaction, so a scope marked shared between the plan read and the commit still refuses the policy
  * (`version_conflict`: read the app again, which then answers the words).
  */
-const NOT_SHARED_WALLET = raw(`(a.created_by_kind = 'hana' AND (SELECT s.app_user_ids FROM scopes s WHERE s.scope_id = a.scope_id) = 0)`);
+const NOT_SHARED_WALLET = raw(`(a.created_by_kind = 'hana' AND COALESCE((SELECT s.app_user_ids FROM scopes s WHERE s.scope_id = a.scope_id), 1) = 0)`);
 
 /** ConsoleRpc.proposeChange: a member's policy set or raw-signing enable, bound to the member's step-up token. */
 export async function proposeSettingByMember(

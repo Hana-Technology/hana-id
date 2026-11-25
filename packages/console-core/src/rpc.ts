@@ -99,6 +99,11 @@ export const createAppInput = ctx
     name: appName,
     origins: z.array(originInput).max(MAX_APP_ORIGINS),
     orgOwnerSubs: z.array(subInput).max(100),
+    /**
+     * D915 after PR 145's review: the new scope is marked as shared in the same write as its first row (a test scope
+     * only). On an existing scope it must already be marked.
+     */
+    appUserIds: z.boolean().optional(),
   })
   .strict();
 export const assignScopeOrgInput = ctx.extend({ scopeId: scopeIdInput, ...org, orgOwnerSubs: z.array(subInput).max(100) }).strict();

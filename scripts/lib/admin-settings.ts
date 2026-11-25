@@ -87,7 +87,7 @@ export interface SettingsRow {
   /** Migration 0014 (D411); absent when the hot D1 doesn't have the column yet. */
   identity_email?: string;
   /** Migration 0026 (D915): the scope is marked shared (1); absent when the hot D1 doesn't have the columns yet. */
-  app_user_ids?: number;
+  app_user_ids?: number | null;
   /** Migration 0026 (D915): who created the app; absent with `app_user_ids`. */
   created_by_kind?: string;
 }
@@ -125,9 +125,13 @@ const SETTINGS_COLUMNS =
 /** 1 when the hot D1's `apps` has migration 0014's `identity_email` column, else 0 (the table's stored definition). */
 export const IDENTITY_EMAIL_COLUMN_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'apps' AND instr(sql, 'identity_email') > 0";
 
-/** 1 when the hot D1 has migration 0026's two columns (`scopes.app_user_ids`, `apps.created_by_kind`), else 0. */
+/**
+ * 1 when the hot D1 has migration 0026's two columns (`scopes.app_user_ids`, `apps.created_by_kind`), else 0. Read from
+ * `sqlite_master` as IDENTITY_EMAIL_COLUMN_SQL is (not a pragma function, which D1 may not allow); `ALTER TABLE … ADD
+ * COLUMN` rewrites the table's stored definition. Untried against a remote D1 until first use (docs/operations.md).
+ */
 export const SHARED_SCOPE_COLUMNS_SQL =
-  "SELECT (SELECT COUNT(*) FROM pragma_table_info('scopes') WHERE name = 'app_user_ids') * (SELECT COUNT(*) FROM pragma_table_info('apps') WHERE name = 'created_by_kind') AS n";
+  "SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'scopes' AND instr(sql, 'app_user_ids') > 0) * (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'apps' AND instr(sql, 'created_by_kind') > 0) AS n";
 
 /** The refusal of a new `--auto-approve` policy on a hot D1 without migration 0026. */
 export const AUTO_APPROVE_NEEDS_0026 =
@@ -139,11 +143,11 @@ export const AUTO_APPROVE_SHARED_WALLET = `--auto-approve is refused: ${SHARED_W
 /** Whether the row's app may never have a policy (D915); null when the hot D1 doesn't have migration 0026. */
 export function sharedWalletOf(row: Pick<SettingsRow, 'app_user_ids' | 'created_by_kind'>): boolean | null {
   if (row.app_user_ids === undefined || row.created_by_kind === undefined) return null;
-  return autoApproveRefused({ sharedScope: Number(row.app_user_ids) === 1, createdByKind: row.created_by_kind === 'hana' ? 'hana' : 'platform' });
+  return autoApproveRefused({ sharedScope: row.app_user_ids === null || Number(row.app_user_ids) !== 0, createdByKind: row.created_by_kind });
 }
 
 /** The write guard's part for a new policy: the app as D1 holds it at the write is not one that shares a wallet. */
-export const NOT_SHARED_WALLET_SQL = "created_by_kind = 'hana' AND (SELECT s.app_user_ids FROM scopes s WHERE s.scope_id = apps.scope_id) = 0";
+export const NOT_SHARED_WALLET_SQL = "created_by_kind = 'hana' AND COALESCE((SELECT s.app_user_ids FROM scopes s WHERE s.scope_id = apps.scope_id), 1) = 0";
 
 /** The settings columns this database has: migration 0014's `identity_email` only once applied. */
 const settingsColumns = (identityEmail: boolean): string[] => [...SETTINGS_COLUMNS.split(', '), ...(identityEmail ? ['identity_email'] : [])];

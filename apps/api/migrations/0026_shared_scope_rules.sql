@@ -1,5 +1,7 @@
 -- D915: shared-scope rules (docs/partner-platform-spec.md piece P0, finding H3). Additive: two new columns with
--- defaults that keep every existing row as it was, and three triggers. Applied by the Tech Lead on a deployed env,
+-- defaults that keep every existing row as it was, and six triggers. `scopes_app_user_ids_no_policy` reads
+-- `guarded_changes`: migration 0027 (the ledger rebuild, piece P1) drops it before it drops that table and creates it
+-- again, word for word, after the rename (D915). Applied by the Tech Lead on a deployed env,
 -- before the API that reads the columns (the API selects both in every app read).
 --
 -- `scopes.app_user_ids`: Journear staff mark a scope whose one wallet is shared by several partners' apps
@@ -32,6 +34,31 @@ BEGIN
    WHERE EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = NEW.scope_id AND a.deleted_at IS NULL
                   AND (a.auto_approve_policy IS NOT NULL OR a.auto_approve_pending IS NOT NULL
                        OR EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = 'policy_set' AND g.status IN ('pending', 'active'))));
+END;
+
+-- Only a test scope can be marked, for now (D915 after PR 145's review): a live shared scope needs its own security
+-- review first (the Tech Lead's answer to the spec's N2).
+CREATE TRIGGER scopes_app_user_ids_test_only BEFORE UPDATE OF app_user_ids ON scopes
+WHEN OLD.app_user_ids = 0 AND NEW.app_user_ids = 1 AND NEW.environment IS NOT 'test'
+BEGIN
+  SELECT RAISE(ABORT, 'scopes: only a test scope can be marked as shared');
+END;
+
+-- An insert can't mark a live scope either, nor undo a mark by replacing the row (INSERT OR REPLACE, or an upsert:
+-- this trigger runs before the conflict is resolved, so it still sees the marked row).
+CREATE TRIGGER scopes_app_user_ids_insert BEFORE INSERT ON scopes
+BEGIN
+  SELECT RAISE(ABORT, 'scopes: only a test scope can be marked as shared')
+   WHERE NEW.app_user_ids = 1 AND NEW.environment IS NOT 'test';
+  SELECT RAISE(ABORT, 'scopes: app_user_ids is one way')
+   WHERE NEW.app_user_ids IS NOT 1 AND EXISTS (SELECT 1 FROM scopes WHERE scope_id = NEW.scope_id AND app_user_ids = 1);
+END;
+
+-- Nor by deleting the row and inserting it again: a marked scope is never deleted (no code deletes scope rows).
+CREATE TRIGGER scopes_app_user_ids_no_delete BEFORE DELETE ON scopes
+WHEN OLD.app_user_ids = 1
+BEGIN
+  SELECT RAISE(ABORT, 'scopes: a scope marked as shared is never deleted');
 END;
 
 -- Who created an app never changes.

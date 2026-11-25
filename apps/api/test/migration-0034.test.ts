@@ -200,8 +200,7 @@ describe('migration 0034_origin_confirmations', () => {
     expect(await confirmRow({ confirmed_by: 'usr_other' })).toMatch(/no ledger row/u);
     expect(await confirmRow({ confirmed_sub: 'sub-other' })).toMatch(/no ledger row/u);
     expect(await confirmRow({ app_id: 'app_h' })).toMatch(/no ledger row|only a waiting/u);
-    expect(await confirmRow({ confirmed_at: Date.now() - 10 * 60_000 })).toMatch(/database's clock/u);
-    expect(await confirmRow({ confirmed_at: Date.now() + 10 * 60_000 })).toMatch(/database's clock/u);
+    expect(await confirmRow({ confirmed_at: Date.now() - 10 * 60_000 })).toMatch(/never back-dated/u);
     expect(await confirmRow({ notice_at: Date.now(), removal_token_hash: new Uint8Array(32), removal_until: Date.now() + 7 * DAY })).toMatch(/no notice/u);
     expect(await confirmRow({ confirmed_sub: null })).toMatch(/CHECK|no ledger row/u);
     expect(await confirmRow({ token_sha256: null })).toMatch(/CHECK/u);

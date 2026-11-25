@@ -1094,7 +1094,9 @@ describe('F8: public keys whose private halves are published can’t be register
       expect(await register(jwk, { NETWORK: 'mainnet' })).toMatchObject({ ok: false, code: 'bad_request' });
     }
     // A local* test env may use them (its tests and demos).
-    expect(await register(g, { ENV_NAME: 'local-test', NETWORK: 'testnet' })).toMatchObject({ ok: true });
+    expect(await register(g, { ENV_NAME: 'local-test', NETWORK: 'testnet', API_URL: 'http://127.0.0.1:8787' })).toMatchObject({ ok: true });
+    // D931: the local* guard: a `local…` name on testnet with a real API host is not a local* test env.
+    expect(await register(g, { ENV_NAME: 'local-test', NETWORK: 'testnet', API_URL: 'https://api.example.com' })).toMatchObject({ ok: false, code: 'bad_request' });
   });
 });
 
@@ -1226,8 +1228,10 @@ describe('the second review', () => {
   });
 
   it('N6: one local* predicate for the platform minimum and the published-key rule', () => {
-    for (const e of [{ ENV_NAME: 'local-test', NETWORK: 'testnet' }, { ENV_NAME: 'local', NETWORK: 'testnet' }]) expect(isLocalTestEnv(e)).toBe(true);
-    for (const e of [{ ENV_NAME: 'local-test', NETWORK: 'mainnet' }, { ENV_NAME: 'sandbox-dev', NETWORK: 'testnet' }, { NETWORK: 'testnet' }, { ENV_NAME: 'xlocal', NETWORK: 'testnet' }]) expect(isLocalTestEnv(e)).toBe(false);
+    const API_URL = 'http://127.0.0.1:8787';
+    for (const e of [{ ENV_NAME: 'local-test', NETWORK: 'testnet', API_URL }, { ENV_NAME: 'local', NETWORK: 'testnet', API_URL: 'http://localhost:8790' }]) expect(isLocalTestEnv(e)).toBe(true);
+    // D931: the name and network alone no longer make one (the API's own URL must be loopback http too).
+    for (const e of [{ ENV_NAME: 'local-test', NETWORK: 'mainnet', API_URL }, { ENV_NAME: 'sandbox-dev', NETWORK: 'testnet', API_URL }, { NETWORK: 'testnet', API_URL }, { ENV_NAME: 'xlocal', NETWORK: 'testnet', API_URL }, { ENV_NAME: 'local-test', NETWORK: 'testnet' }, { ENV_NAME: 'local-test', NETWORK: 'testnet', API_URL: 'https://api.example.com' }]) expect(isLocalTestEnv(e)).toBe(false);
   });
 });
 

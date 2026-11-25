@@ -13,14 +13,16 @@
 -- One row per confirmed change, written by the confirmation's own batch after its ledger row (`origin.confirmed`) and
 -- before the change's `active_from` moves; never replaced, never changed but for its notice (written once), never
 -- deleted while its change exists. Who confirmed (`confirmed_by_kind`, `confirmed_by`, the step-up's verified Google
--- `confirmed_sub` for a member, the email key for four eyes), when (`confirmed_at`, by the database's clock too), and
+-- `confirmed_sub` for a member, the email key for four eyes), when (`confirmed_at`, never back-dated by the database's
+-- clock), and
 -- the sign-in's evidence: `token_sha256` is sha256 of the step-up token, the key the API reserved it under (never the
 -- token itself), and `step_up_id` the console's action (its `audit_log` row's `step_up_id`). One token confirms one set:
 -- a second request with the same token is refused. The insert trigger holds every rule the commit predicate holds that
 -- the database can see: the change a waiting, announced `origin_add` not yet in force with no waiver or expedite, not
 -- the confirmer's own; the app not deleted nor suspended by Journear (bits 1 and 2); the org not frozen; for a platform
 -- proposal its wait recorded, a member confirming, the app still in the proposing key's reach (its org, a scope it
--- names, a test scope, platform-created), the key in force and the org's switch on; for a staff proposal under four
+-- names, a test scope, platform-created), the key not revoked nor expired (by the database's clock) and the org's
+-- switch on; for a staff proposal under four
 -- eyes its wait recorded and, for a staff confirmer, another Access subject and another email than the proposer's.
 --
 -- `staff_origin_waits` (A15, D917): a web address staff propose on a platform-created app or on any app of a scope
@@ -123,8 +125,9 @@ BEGIN
    WHERE NEW.notice_at IS NOT NULL OR NEW.removal_token_hash IS NOT NULL OR NEW.removal_until IS NOT NULL;
   SELECT RAISE(ABORT, 'origin_confirmations: one fresh sign-in confirms one set of web addresses, once')
    WHERE NEW.token_sha256 IS NOT NULL AND EXISTS (SELECT 1 FROM origin_confirmations WHERE token_sha256 = NEW.token_sha256 AND request_id IS NOT NEW.request_id);
-  SELECT RAISE(ABORT, 'origin_confirmations: confirmed now, by the database''s clock')
-   WHERE NEW.confirmed_at < ((julianday('now') - 2440587.5) * 86400000.0) - 120000 OR NEW.confirmed_at > ((julianday('now') - 2440587.5) * 86400000.0) + 120000;
+  -- Never back-dated (2 minutes' skew): a later time only brings the web address in later, which nothing forbids.
+  SELECT RAISE(ABORT, 'origin_confirmations: confirmed now, never back-dated by the database''s clock')
+   WHERE NEW.confirmed_at < ((julianday('now') - 2440587.5) * 86400000.0) - 120000;
   SELECT RAISE(ABORT, 'origin_confirmations: no ledger row of this confirmer has this request id')
    WHERE NOT EXISTS (SELECT 1 FROM app_changes c WHERE c.request_id = NEW.request_id AND c.kind = 'origin.confirmed' AND c.app_id = NEW.app_id
                        AND c.actor_kind = NEW.confirmed_by_kind AND c.actor_id = NEW.confirmed_by AND c.actor_sub IS NEW.confirmed_sub);
@@ -142,8 +145,7 @@ BEGIN
               AND EXISTS (SELECT 1 FROM platform_origin_waits w WHERE w.change_id = g.id AND w.unconfirmed_active_from IS NOT NULL)
               AND EXISTS (SELECT 1 FROM platform_orgs po WHERE po.org_id = a.org_id AND po.enabled = 1 AND po.frozen = 0)
               AND EXISTS (SELECT 1 FROM platform_keys k WHERE k.id = g.proposed_by AND k.org_id = a.org_id AND k.status IN ('pending', 'active') AND k.revoked_at IS NULL
-                            AND k.active_from IS NOT NULL AND k.active_from <= ((julianday('now') - 2440587.5) * 86400000.0)
-                            AND k.expires_at > ((julianday('now') - 2440587.5) * 86400000.0)
+                            AND k.active_from IS NOT NULL AND k.expires_at > ((julianday('now') - 2440587.5) * 86400000.0)
                             AND EXISTS (SELECT 1 FROM json_each(k.scopes_json) ks WHERE ks.value = a.scope_id)))
           OR (g.proposed_by_kind = 'hana'
               AND EXISTS (SELECT 1 FROM staff_origin_waits sw WHERE sw.change_id = g.id AND sw.unconfirmed_active_from IS NOT NULL
@@ -159,7 +161,7 @@ BEGIN
       OR NEW.confirmed_sub IS NOT OLD.confirmed_sub OR NEW.confirmed_email_key IS NOT OLD.confirmed_email_key OR NEW.token_sha256 IS NOT OLD.token_sha256
       OR NEW.step_up_id IS NOT OLD.step_up_id OR NEW.reason IS NOT OLD.reason OR NEW.confirmed_at IS NOT OLD.confirmed_at
       OR OLD.notice_at IS NOT NULL OR NEW.notice_at IS NULL
-      OR NEW.notice_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000 OR NEW.notice_at > ((julianday('now') - 2440587.5) * 86400000.0) + 120000;
+      OR NEW.notice_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000;
   SELECT RAISE(ABORT, 'origin_confirmations: a removal link is never another confirmation''s')
    WHERE EXISTS (SELECT 1 FROM origin_confirmations o WHERE o.rowid IS NOT OLD.rowid AND o.removal_token_hash = NEW.removal_token_hash);
 END;

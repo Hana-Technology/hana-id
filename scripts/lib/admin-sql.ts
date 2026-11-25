@@ -134,6 +134,23 @@ export function scopeMarkSql(scopeId: string): string {
   return sql`SELECT app_user_ids FROM scopes WHERE scope_id = ${scopeId}`;
 }
 
+/**
+ * D931 (four eyes, D917): whether a staff web address on this app waits for a second person (a platform-created app,
+ * or an app on a scope marked as shared): `four_eyes` 1. The CLI adds none there (the admin portal does, with the wait).
+ */
+export function fourEyesAppSql(appId: string): string {
+  return sql`SELECT (a.created_by_kind = 'platform' OR s.app_user_ids = 1) AS four_eyes FROM apps a JOIN scopes s ON s.scope_id = a.scope_id WHERE a.id = ${appId}`;
+}
+
+/** D931: whether a guarded change is a staff proposal under four eyes (migration 0034's `staff_origin_waits`; 0 without the table). */
+export function secondPersonChangeSql(changeId: string): string {
+  return `SELECT CASE WHEN EXISTS (SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'staff_origin_waits')
+                 THEN (SELECT COUNT(*) FROM pragma_table_info('staff_origin_waits')) ELSE 0 END AS has_table, ${sql`${changeId}`} AS id`;
+}
+export function staffWaitSql(changeId: string): string {
+  return sql`SELECT COUNT(*) AS n FROM staff_origin_waits WHERE change_id = ${changeId}`;
+}
+
 /** D919: an app's User ID mode (migration 0030; ask APP_USER_IDS_COLUMN_SQL first). */
 export function appUserIdsSql(appId: string): string {
   return sql`SELECT user_ids FROM apps WHERE id = ${appId}`;

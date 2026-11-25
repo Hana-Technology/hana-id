@@ -3,7 +3,7 @@
 // isAvailable() resolves true within 1000 ms after the handshake and false without one").
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HANA_ID_ICON } from '../../src/client/icon.ts';
-import { HOT_WALLET, HanaIdModule, IS_AVAILABLE_TIMEOUT_MS } from '../../src/stellar-wallets-kit.ts';
+import { HANA_ID_MODULE_ID, HOT_WALLET, HanaIdModule, IS_AVAILABLE_TIMEOUT_MS, JOURNEAR_PASSPORT_MODULE_ID } from '../../src/stellar-wallets-kit.ts';
 import { ANSWER_TIMEOUT_MS } from '../../src/client/vault-connection.ts';
 import { EVM, LOGGED_IN, LOGGED_OUT, ORIGINS, STELLAR, type Setup, flush, setup } from './harness.ts';
 
@@ -42,6 +42,29 @@ describe('HanaIdModule', () => {
     expect(m.productUrl).toBe(ORIGINS.authOrigin);
     expect(m.productIcon).toBe(HANA_ID_ICON);
     for (const f of ['isAvailable', 'getAddress', 'signTransaction', 'signAuthEntry', 'signMessage', 'getNetwork', 'disconnect'] as const) expect(typeof m[f]).toBe('function');
+  });
+
+  // D923: Sodax's wallet kit finds Hana Wallet (the browser extension) by the substring "hana" of a wallet's id or name,
+  // so a host like it passes a productId without "hana"; the default stays 'hana-id' for hosts that stored it.
+  it('takes a productId from the host; the default stays hana-id', () => {
+    s = setup({ config: { stellar: { networkPassphrase: TESTNET } } });
+    expect(HANA_ID_MODULE_ID).toBe('hana-id');
+    expect(new HanaIdModule(s.client).productId).toBe('hana-id');
+    expect(new HanaIdModule(s.client, {}).productId).toBe('hana-id');
+    const m = new HanaIdModule(s.client, { productId: JOURNEAR_PASSPORT_MODULE_ID });
+    expect(m.productId).toBe('journear-passport');
+    expect(m.productId).not.toContain('hana');
+    expect(m.productName.toLowerCase()).not.toContain('hana');
+    expect(m.productName).toBe('Journear Passport');
+    expect(new HanaIdModule(s.client, { productId: 'partner.wallet-1' }).productId).toBe('partner.wallet-1');
+  });
+
+  it("refuses a productId that is malformed or another wallet's", () => {
+    s = setup({ config: { stellar: { networkPassphrase: TESTNET } } });
+    for (const productId of ['', 'ab', 'Journear', 'has space', '-lead', 'trail.', 'a..b', 'x'.repeat(65), 'hana', 'io.hana.wallet', 7 as unknown as string]) {
+      expect(() => new HanaIdModule(s.client, { productId }), String(productId)).toThrow(expect.objectContaining({ code: -32602 }));
+    }
+    expect(new HanaIdModule(s.client, { productId: 'x'.repeat(64) }).productId).toHaveLength(64);
   });
 
   it('isAvailable() resolves true within 1000 ms when the handshake is done', async () => {

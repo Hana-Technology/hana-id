@@ -13,8 +13,9 @@
 // - the records: one `origin.confirmed` ledger row with the member and the step-up's `sub`; the confirmation rows;
 //   `confirmedAt` in the platform's view and the console's; the notice and its ack; the removal link; the queue;
 // - the limits and the cost.
-import { CONSOLE_ERROR_STATUS, ORIGIN_CONFIRM_LIMITS, ORIGIN_REMOVAL_LINK_MS, newId, newPublishableKey, nonceOf, originChangeDigest, originConfirmDigest, personEmailKey, platformKeyDigest } from '@hana-id/console-core';
+import { CONFIRM_NOTICE_MAX_FAILURES, CONSOLE_ERROR_STATUS, ORIGIN_CONFIRM_LIMITS, ORIGIN_REMOVAL_LINK_MS, newId, newPublishableKey, nonceOf, originChangeDigest, originConfirmDigest, personEmailKey, platformKeyDigest } from '@hana-id/console-core';
 import { sha256Hex } from '../src/owner-actions.ts';
+import { SHARED_SCOPE_STAFF_ORIGIN_WAITING } from '../src/changes/admin.ts';
 import { createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -361,6 +362,20 @@ describe('an owner confirms web addresses the platform asked for', () => {
     expect(CONSOLE_ERROR_STATUS.rate_limited).toBe(429);
   });
 
+  it('after PR 159’s review: staff confirmations count in staff buckets, never in the org’s (a staffer naming an org can’t lock its owners out)', async () => {
+    const net = await network();
+    const app = await platformApp(net);
+    const set = await proposed(net, app, 1);
+    const staff2 = { ...hana(), actor: { kind: 'hana' as const, id: 'access-sub-staff-2', email: 'staff2@hana.example' } };
+    for (let k = 0; k < ORIGIN_CONFIRM_LIMITS.orgPerHour + 1; k++) {
+      const r = await no(adminOn().confirmStaffOrigins({ ...staff2, requestId: rid(), orgId: net.org, appId: app, changeIds: [set.changes[0]!.changeId], reason: 'Checked with the network on a call today' }));
+      expect(['forbidden', 'rate_limited']).toContain(r.code);
+    }
+    // The staffer hit their own limit, and the org's owners still confirm.
+    expect((await no(adminOn().confirmStaffOrigins({ ...staff2, requestId: rid(), orgId: net.org, appId: app, changeIds: [set.changes[0]!.changeId], reason: 'Checked with the network on a call today' }))).code).toBe('rate_limited');
+    await ok(confirm(net, app, set.changes));
+  });
+
   it('within its D1 cost', async () => {
     const net = await network();
     const app = await platformApp(net);
@@ -502,11 +517,21 @@ describe('the confirmation’s notice and its removal link', () => {
     expect(n.changes.map((c) => c.changeId)).toEqual(set.changes.map((c) => c.changeId));
     const tokens = set.changes.map(() => linkToken());
     const removals = await Promise.all(set.changes.map(async (c, k) => ({ changeId: c.changeId, removalTokenHash: await tokens[k]!.hash })));
-    expect((await no(adminOn().ackConfirmationNotice({ ...hana(), requestId: who.requestId, removals }))).code).toBe('forbidden');
-    expect((await no(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId, removals: removals.slice(0, 1) }))).code).toBe('bad_request');
-    const acked = await ok(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId, removals }));
-    expect(acked.removalUntil).toBe(Date.now() + ORIGIN_REMOVAL_LINK_MS);
-    expect((await no(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId, removals }))).code).toBe('not_pending');
+    // Armed before the first send (system only, exactly its web addresses, the same hashes again a no-op, others refused);
+    // acked after every send, once, only once armed.
+    expect((await no(adminOn().armConfirmationLinks({ ...hana(), requestId: who.requestId, removals }))).code).toBe('forbidden');
+    expect((await no(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: removals.slice(0, 1) }))).code).toBe('bad_request');
+    expect((await no(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId }))).code).toBe('conflict');
+    const t0 = await dbNow();
+    const armed = await ok(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals }));
+    expect(armed.removalUntil! - t0).toBeGreaterThanOrEqual(ORIGIN_REMOVAL_LINK_MS - 1000);
+    expect(armed.removalUntil! - t0).toBeLessThanOrEqual(ORIGIN_REMOVAL_LINK_MS + 60_000);
+    expect(await ok(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals }))).toMatchObject({ removalUntil: armed.removalUntil });
+    const other = await linkToken().hash;
+    expect((await no(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: [{ ...removals[0]!, removalTokenHash: other }, removals[1]!] }))).code).toBe('conflict');
+    expect((await no(adminOn().ackConfirmationNotice({ ...hana(), requestId: who.requestId }))).code).toBe('forbidden');
+    await ok(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId }));
+    expect((await no(adminOn().ackConfirmationNotice({ ...system(), requestId: who.requestId }))).code).toBe('not_pending');
     expect((await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).notices.find((x) => x.requestId === who.requestId)).toBeUndefined();
 
     // The removal link: a preview changes nothing; the removal stops it at once, single use; a wrong token is refused.
@@ -529,6 +554,27 @@ describe('the confirmation’s notice and its removal link', () => {
     expect(await one('SELECT COUNT(*) AS n FROM app_origins WHERE change_id = ?1', set.changes[1]!.changeId)).toEqual({ n: 1 });
   });
 
+  it('after PR 159’s review: a link works from its arming (another recipient refusing); a refused notice is retried later, a bounded number of times', async () => {
+    const net = await network();
+    const app = await platformApp(net);
+    const set = await proposed(net, app, 1);
+    const who = member();
+    await ok(confirm(net, app, set.changes, { who }));
+    const t = linkToken();
+    await ok(adminOn().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: [{ changeId: set.changes[0]!.changeId, removalTokenHash: await t.hash }] }));
+    // One recipient refused: noted, not acked; the link that reached the others already works.
+    expect(await ok(adminOn().noteConfirmationNoticeFailure({ ...system(), requestId: who.requestId }))).toMatchObject({ failures: 1 });
+    expect((await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).notices.find((x) => x.requestId === who.requestId)).toBeUndefined(); // waits 5 minutes
+    expect(await ok(consoleOn().removalPreview({ ...link(set.changes[0]!.changeId), changeId: set.changes[0]!.changeId, token: t.token }))).toMatchObject({ removal: { removable: true } });
+    clock.advance(5 * 60_000 + 1000);
+    expect((await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).notices.find((x) => x.requestId === who.requestId)).toMatchObject({ failures: 1 });
+    // Bounded: after CONFIRM_NOTICE_MAX_FAILURES runs, it is left (its links still work).
+    for (let k = 2; k <= CONFIRM_NOTICE_MAX_FAILURES; k++) await ok(adminOn().noteConfirmationNoticeFailure({ ...system(), requestId: who.requestId }));
+    clock.advance(2 * 3_600_000);
+    expect((await ok(adminOn().confirmationNotices({ ...system(), limit: 50 }))).notices.find((x) => x.requestId === who.requestId)).toBeUndefined();
+    await ok(consoleOn().removeOriginByLink({ ...link(set.changes[0]!.changeId), changeId: set.changes[0]!.changeId, token: t.token }));
+  });
+
   it('the staff queue lists confirmed web addresses for 7 days, with who and when, and staff ones waiting for a second person', async () => {
     const net = await network();
     const app = await platformApp(net);
@@ -543,5 +589,65 @@ describe('the confirmation’s notice and its removal link', () => {
     clock.advance(7 * DAY + 1000);
     const later = await ok(adminOn().platformQueue({ ...hana(), limit: 100 }));
     expect(later.confirmed.find((c) => c.changeId === set.changes[0]!.changeId)).toBeUndefined();
+  });
+});
+
+describe('after PR 159’s review, L1: a scope is marked shared only once no staff web address of its apps is still waiting', () => {
+  const mark = (org: string, scopeId: string, rpc: AdminRpc = adminOn()) => rpc.setScopeAppUserIds({ ...hana(), orgId: org, scopeId });
+
+  it('a staff web address waiting on a plain scope: the mark is refused (in words) until it is cancelled; then the scope is marked', async () => {
+    const app = await orgApp();
+    const p = await ok(adminOn().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://waiting.example'], expectedVersion: 0 }));
+    const r = await no(mark(app.org, app.scope));
+    expect(r).toEqual({ ok: false, code: 'conflict', error: SHARED_SCOPE_STAFF_ORIGIN_WAITING });
+    // Announced (its 60 s running): still refused.
+    await ackNotice(new HotDb(env.DB), env, { actor: { kind: 'system', id: 'admin-cron' }, requestId: rid(), now: Date.now() }, { changeId: p.changes[0]!.id, cancelTokenHash: await linkToken().hash });
+    expect((await no(mark(app.org, app.scope))).code).toBe('conflict');
+    expect(await one('SELECT app_user_ids FROM scopes WHERE scope_id = ?1', app.scope)).toEqual({ app_user_ids: 0 });
+    await ok(adminOn().cancelChange({ ...hana(), orgId: app.org, changeId: p.changes[0]!.id }));
+    expect(await ok(mark(app.org, app.scope))).toMatchObject({ changed: true });
+  });
+
+  it('a new app on a new plain scope (its first web address a no_session waiver candidate): the mark is refused while it waits', async () => {
+    const org = (await orgApp()).org;
+    ownerChain({ owners: [] });
+    const scopeId = `s${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const created = await ok(adminOn().createApp({ ...hana(), orgId: org, scopeId, environment: 'test', name: 'Plain site', origins: ['https://plain-site.example'], orgOwnerSubs: [] }));
+    expect(await one("SELECT waiver FROM guarded_changes WHERE app_id = ?1 AND kind = 'origin_add'", created.app.id)).toEqual({ waiver: 'no_session' });
+    expect((await no(mark(org, scopeId))).code).toBe('conflict');
+    expect(await one('SELECT app_user_ids FROM scopes WHERE scope_id = ?1', scopeId)).toEqual({ app_user_ids: 0 });
+  });
+
+  it('a staff web address proposed between the mark’s read and its batch: nothing marked', async () => {
+    const app = await orgApp();
+    let done = false;
+    const db = new Proxy(env.DB, {
+      get(t, p) {
+        if (p === 'batch')
+          return async (stmts: D1PreparedStatement[]) => {
+            if (!done) {
+              done = true;
+              await ok(adminOn().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://racing.example'], expectedVersion: 0 }));
+            }
+            return t.batch(stmts);
+          };
+        const v: unknown = Reflect.get(t, p);
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t) : v;
+      },
+    });
+    expect((await no(mark(app.org, app.scope, adminOn({ DB: db })))).code).toBe('version_conflict');
+    expect(await one('SELECT app_user_ids FROM scopes WHERE scope_id = ?1', app.scope)).toEqual({ app_user_ids: 0 });
+  });
+
+  it('the database refuses a bare mark while a staff web address waits (0034’s trigger); once it is working, it marks', async () => {
+    const app = await orgApp();
+    const p = await ok(adminOn().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://bare.example'], expectedVersion: 0 }));
+    const bare = await env.DB.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?1').bind(app.scope).run().then(() => 'accepted', (e: unknown) => String(e));
+    expect(bare).toMatch(/a staff web address not working yet/u);
+    // In force by the database's clock: the mark goes through.
+    const t = await dbNow();
+    await env.DB.prepare('UPDATE guarded_changes SET notified_at = ?2, active_from = ?2 WHERE id = ?1').bind(p.changes[0]!.id, t - 1000).run();
+    await env.DB.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?1').bind(app.scope).run();
+    expect(await one('SELECT app_user_ids FROM scopes WHERE scope_id = ?1', app.scope)).toEqual({ app_user_ids: 1 });
   });
 });

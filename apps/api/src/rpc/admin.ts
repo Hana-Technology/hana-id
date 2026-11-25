@@ -145,8 +145,8 @@ import {
   setPlatformOrgFrozen,
 } from '../platform/keys.ts';
 import { platformCalls, platformQueue } from '../platform/activity.ts';
-import { ackConfirmationNotice, confirmStaffOrigins, confirmationNotices } from '../changes/confirm.ts';
-import { ackConfirmationNoticeInput, confirmStaffOriginsInput, confirmationNoticesInput } from '@hana-id/console-core';
+import { ackConfirmationNotice, armConfirmationLinks, confirmStaffOrigins, confirmationNotices, noteConfirmationNoticeFailure } from '../changes/confirm.ts';
+import { ackConfirmationNoticeInput, armConfirmationLinksInput, confirmStaffOriginsInput, confirmationNoticesInput, noteConfirmationNoticeFailureInput } from '@hana-id/console-core';
 import { adminRun, noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
@@ -270,12 +270,22 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   /** D931: the confirmations whose notice (with its removal links) hasn't gone out, for the notice cron. */
   confirmationNotices(c: unknown) {
-    return runRpc(this.env, 'admin.confirmationNotices', confirmationNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db }) => ({ notices: await confirmationNotices(db, input.limit) }));
+    return runRpc(this.env, 'admin.confirmationNotices', confirmationNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db, w }) => ({ notices: await confirmationNotices(db, input.limit, w.now) }));
   }
 
-  /** D931: only the notice cron, after every send was accepted: stores the removal links' hashes (7 days). */
+  /** D931 (after PR 159's review): only the notice cron, before the first send: the removal links' hashes (7 days), once. */
+  armConfirmationLinks(c: unknown) {
+    return runRpc(this.env, 'admin.armConfirmationLinks', armConfirmationLinksInput, c, { actors: SYSTEM }, ({ input, db, w }) => armConfirmationLinks(db, w, input));
+  }
+
+  /** D931: only the notice cron, after every send was accepted (the links armed before). */
   ackConfirmationNotice(c: unknown) {
     return runRpc(this.env, 'admin.ackConfirmationNotice', ackConfirmationNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackConfirmationNotice(db, w, input));
+  }
+
+  /** D931 (after PR 159's review): only the notice cron: a recipient refused; retried later, a bounded number of times. */
+  noteConfirmationNoticeFailure(c: unknown) {
+    return runRpc(this.env, 'admin.noteConfirmationNoticeFailure', noteConfirmationNoticeFailureInput, c, { actors: SYSTEM }, ({ input, db, w }) => noteConfirmationNoticeFailure(db, w, input));
   }
 
   pendingNotices(c: unknown) {

@@ -39,7 +39,8 @@ the partner portal** link (it only opens the console's page); staff web addresse
 shared wallet go the same way, grouped per request ("New web address(es) added by Journear staff for {app}", waiting
 24 hours unless a second person confirms them); the confirmation's notice (`runConfirmationNotices`, purpose
 `origin_confirmed`) goes to the alias, the contacts and the owners with one removal link per web address (7 days),
-acked with their hashes. The **Platform queue** adds "Waiting for a second person" (a second staff member's **Confirm…**
+armed before the first send (a delivered link works while another recipient refuses), acked after every send, a
+refused run retried later and left after 24 runs; staff are "Journear staff" in these emails. The **Platform queue** adds "Waiting for a second person" (a second staff member's **Confirm…**
 with a reason of at least 20 characters, `POST /api/platform/confirm-staff-origins` → `AdminRpc.confirmStaffOrigins`,
 the Access identity as the actor; never the proposer) and "Confirmed in the last 7 days" (who asked, who confirmed and
 when, working or removed since).

@@ -238,7 +238,9 @@ export function secondPersonOriginsProposed(
     ['App', `${app} (${n.app.id})`],
     ['Organisation', n.app.orgId],
     ['Wallet settings (scope)', n.app.scopeId],
-    ['Proposed by', `Journear staff (${n.proposedBy})`],
+    // After PR 159's review: partners read "Journear staff", never a staff member's Access id (the ledger and the admin
+    // portal keep who).
+    ['Proposed by', 'Journear staff'],
     ['Proposed at', readableTime(n.proposedAt)],
   ];
   if (n.requestCountry) rows.push(['Request country', n.requestCountry]);
@@ -294,9 +296,9 @@ export function originsConfirmed(
     ['Organisation', n.app.orgId],
     ['Wallet settings (scope)', n.app.scopeId],
     staffProposal
-      ? ['Added by', `Journear staff (${n.proposedBy ?? 'unknown'})`]
+      ? ['Added by', 'Journear staff']
       : ['Requested by', n.keyLabel ? `your platform key “${oneLine(n.keyLabel, 40)}” (${n.keyId ?? ''})` : `your platform key (${n.keyId ?? ''})`],
-    ['Confirmed by', n.confirmedByKind === 'hana' ? `Journear staff (${n.confirmedBy})` : o.confirmedBy],
+    ['Confirmed by', n.confirmedByKind === 'hana' ? 'a second Journear staff member' : o.confirmedBy],
     ['Confirmed at', readableTime(n.confirmedAt)],
   ];
   const blocks: Block[] = [
@@ -304,7 +306,7 @@ export function originsConfirmed(
     {
       kind: 'p',
       text: staffProposal
-        ? `Journear staff (${n.proposedBy ?? 'unknown'}) added ${them}. On this app, a web address Journear staff add needs a second person to confirm it.`
+        ? `A Journear staff member added ${them}. On this app, a web address Journear staff add needs a second person to confirm it${n.confirmedByKind === 'hana' ? ': a second Journear staff member did' : ''}.`
         : `Your organisation’s backend asked for ${them} with its platform key.`,
     },
     { kind: 'kv', rows },

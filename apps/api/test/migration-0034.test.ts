@@ -56,6 +56,7 @@ const TRIGGERS_0034 = [
   'guarded_changes_platform_not_early',
   'app_origins_platform_not_early',
   'app_origins_platform_not_early_update',
+  'scopes_app_user_ids_no_waiting_staff_origin',
 ] as const;
 /** 0033's triggers 0034 replaces: dropped and created again under the same name. */
 const REPLACED = ['guarded_changes_platform_not_early', 'app_origins_platform_not_early', 'app_origins_platform_not_early_update'];
@@ -201,7 +202,8 @@ describe('migration 0034_origin_confirmations', () => {
     expect(await confirmRow({ confirmed_sub: 'sub-other' })).toMatch(/no ledger row/u);
     expect(await confirmRow({ app_id: 'app_h' })).toMatch(/no ledger row|only a waiting/u);
     expect(await confirmRow({ confirmed_at: Date.now() - 10 * 60_000 })).toMatch(/never back-dated/u);
-    expect(await confirmRow({ notice_at: Date.now(), removal_token_hash: new Uint8Array(32), removal_until: Date.now() + 7 * DAY })).toMatch(/no notice/u);
+    expect(await confirmRow({ links_at: Date.now(), removal_token_hash: new Uint8Array(32), removal_until: Date.now() + 7 * DAY })).toMatch(/no notice/u);
+    expect(await confirmRow({ notice_failures: 1 })).toMatch(/no notice/u);
     expect(await confirmRow({ confirmed_sub: null })).toMatch(/CHECK|no ledger row/u);
     expect(await confirmRow({ token_sha256: null })).toMatch(/CHECK/u);
     expect(await confirmRow({ token_sha256: 'Z'.repeat(64) })).toMatch(/CHECK/u);
@@ -234,13 +236,25 @@ describe('migration 0034_origin_confirmations', () => {
     for (const set of ["confirmed_by = 'usr_x'", "confirmed_sub = 'x'", 'confirmed_at = confirmed_at - 1', "token_sha256 = '" + 'c'.repeat(64) + "'", "request_id = 'rq_x'", "change_id = 'gc_x'", "origin = 'https://x.example'", "confirmed_email_key = 'x@x.example'", "step_up_id = 'act_x'"]) {
       expect(await refusal(`UPDATE origin_confirmations SET ${set} WHERE change_id = 'gc_p33'`), set).toMatch(/is fixed/u);
     }
-    // The notice: its hash and exactly 7 days, once, not back-dated.
-    const n = Date.now();
-    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1, removal_token_hash = ?2, removal_until = ?3 WHERE change_id = 'gc_p33'", n, new Uint8Array(32).fill(1), n + 8 * DAY)).toMatch(/CHECK/u);
-    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1, removal_token_hash = ?2, removal_until = ?3 WHERE change_id = 'gc_p33'", n - 10 * 60_000, new Uint8Array(32).fill(1), n - 10 * 60_000 + 7 * DAY)).toMatch(/is fixed/u);
-    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1, removal_token_hash = ?2 WHERE change_id = 'gc_p33'", n, new Uint8Array(32).fill(1))).toMatch(/CHECK/u);
-    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1, removal_token_hash = ?2, removal_until = ?3 WHERE change_id = 'gc_p33'", n, new Uint8Array(32).fill(1), n + 7 * DAY)).toBe('accepted');
-    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1, removal_token_hash = ?2, removal_until = ?3 WHERE change_id = 'gc_p33'", n + 1, new Uint8Array(32).fill(2), n + 1 + 7 * DAY)).toMatch(/is fixed/u);
+    // The removal link: armed once, its hash and exactly 7 days, neither back-dated nor ahead of the database's clock.
+    const n = await DB_NOW();
+    const LINK = "UPDATE origin_confirmations SET links_at = ?1, removal_token_hash = ?2, removal_until = ?3 WHERE change_id = 'gc_p33'";
+    expect(await refusal(LINK, n, new Uint8Array(32).fill(1), n + 8 * DAY)).toMatch(/CHECK/u);
+    expect(await refusal(LINK, n - 10 * 60_000, new Uint8Array(32).fill(1), n - 10 * 60_000 + 7 * DAY)).toMatch(/armed once, never back-dated/u);
+    expect(await refusal(LINK, n + 10 * 60_000, new Uint8Array(32).fill(1), n + 10 * 60_000 + 7 * DAY)).toMatch(/armed once, never back-dated/u);
+    expect(await refusal("UPDATE origin_confirmations SET links_at = ?1, removal_token_hash = ?2 WHERE change_id = 'gc_p33'", n, new Uint8Array(32).fill(1))).toMatch(/CHECK/u);
+    // The notice can't come before its link.
+    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1 WHERE change_id = 'gc_p33'", n)).toMatch(/CHECK/u);
+    expect(await refusal(LINK, n, new Uint8Array(32).fill(1), n + 7 * DAY)).toBe('accepted');
+    expect(await refusal(LINK, n + 1, new Uint8Array(32).fill(2), n + 1 + 7 * DAY)).toMatch(/armed once/u);
+    // A failed run counts up by one only.
+    expect(await refusal("UPDATE origin_confirmations SET notice_failures = 3 WHERE change_id = 'gc_p33'")).toMatch(/counts up by one/u);
+    expect(await refusal("UPDATE origin_confirmations SET notice_failures = notice_failures + 1, notice_failed_at = ?1 WHERE change_id = 'gc_p33'", n)).toBe('accepted');
+    // The notice: once, neither back-dated nor in the future (after PR 159's review) by the database's clock.
+    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1 WHERE change_id = 'gc_p33'", n - 10 * 60_000)).toMatch(/acked once, now by the database/u);
+    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1 WHERE change_id = 'gc_p33'", n + 10 * 60_000)).toMatch(/acked once, now by the database/u);
+    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1 WHERE change_id = 'gc_p33'", n)).toBe('accepted');
+    expect(await refusal("UPDATE origin_confirmations SET notice_at = ?1 WHERE change_id = 'gc_p33'", n + 1)).toMatch(/acked once/u);
     expect(await refusal('DELETE FROM origin_confirmations')).toMatch(/kept while its change exists/u);
     // In force now, it can't be confirmed again by anyone.
     await ledgerRow('rq_c2', 'app_p', 'member', 'usr_owner', 'sub-owner');
@@ -392,6 +406,15 @@ describe('migration 0034_origin_confirmations', () => {
     await run("DELETE FROM app_origins WHERE change_id = 'gc_sp'");
     expect(await refusal("DELETE FROM guarded_changes WHERE id = 'gc_sp'")).toBe('accepted');
     for (const t of ['origin_confirmations', 'staff_origin_waits']) expect(await db.prepare(`SELECT COUNT(*) AS n FROM ${t} WHERE change_id = 'gc_sp'`).first(), t).toEqual({ n: 0 });
+  });
+
+  it('after PR 159’s review (L1): a plain scope is never marked shared while a staff web address of its apps waits', async () => {
+    await run("INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, waiver, request_id) VALUES ('gc_plainwait', 'app_s', 'origin_add', 'https://plainwait.example', 'pending', 'hana', 'staff-1', 1, 'no_session', 'r_plainwait')");
+    expect(await refusal("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 'su'")).toMatch(/a staff web address not working yet/u);
+    // Every waiting staff web address of the scope cancelled (gc_plain, brought in earlier by a bare write, is in force):
+    // then the scope may be marked.
+    await run("UPDATE guarded_changes SET status = 'cancelled', cancelled_at = 1, cancelled_by = 's' WHERE app_id = 'app_s' AND proposed_by_kind = 'hana' AND status = 'pending' AND (active_from IS NULL OR active_from > ?1)", Date.now());
+    expect(await refusal("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 'su'")).toBe('accepted');
   });
 
   it('the database is whole, and applying the migrations again changes nothing', async () => {

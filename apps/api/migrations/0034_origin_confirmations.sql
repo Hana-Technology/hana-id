@@ -11,7 +11,7 @@
 --
 -- `origin_confirmations` (A7, A15): the only record that lets a web address come into force before its earliest time.
 -- One row per confirmed change, written by the confirmation's own batch after its ledger row (`origin.confirmed`) and
--- before the change's `active_from` moves; never replaced, never changed but for its notice (written once), never
+-- before the change's `active_from` moves; never replaced, never changed but for its removal link and notice (each written once), never
 -- deleted while its change exists. Who confirmed (`confirmed_by_kind`, `confirmed_by`, the step-up's verified Google
 -- `confirmed_sub` for a member, the email key for four eyes), when (`confirmed_at`, never back-dated by the database's
 -- clock), and
@@ -43,7 +43,7 @@
 -- guarded_changes_second_person_insert, guarded_changes_second_person_no_replace, guarded_changes_second_person_update,
 -- guarded_changes_second_person_no_replace_update, guarded_changes_second_person_no_delete,
 -- guarded_changes_confirmation_gone, guarded_changes_platform_not_early, app_origins_platform_not_early,
--- app_origins_platform_not_early_update. apps/api/test/migration-0034.test.ts checks every one is in the schema after
+-- app_origins_platform_not_early_update; and on `scopes`, scopes_app_user_ids_no_waiting_staff_origin. apps/api/test/migration-0034.test.ts checks every one is in the schema after
 -- every later migration.
 --
 -- The database's clock is `(julianday('now') - 2440587.5) * 86400000.0` (ms), as 0028's and 0033's triggers read it.
@@ -104,13 +104,17 @@ CREATE TABLE origin_confirmations (
   step_up_id          TEXT CHECK (step_up_id IS NULL OR (step_up_id GLOB 'act_*' AND length(step_up_id) <= 40)),
   reason              TEXT CHECK (reason IS NULL OR length(reason) BETWEEN 20 AND 1000),  -- a staff confirmer's
   confirmed_at        INTEGER NOT NULL,                                               -- also the change's new active_from
-  notice_at           INTEGER,                                                        -- the confirmation's notice acked
+  links_at            INTEGER,                                                        -- the removal link armed, before the first send
   removal_token_hash  BLOB UNIQUE CHECK (removal_token_hash IS NULL OR length(removal_token_hash) = 32),
   removal_until       INTEGER,
+  notice_at           INTEGER,                                                        -- the confirmation's notice acked: every send accepted
+  notice_failures     INTEGER NOT NULL DEFAULT 0 CHECK (notice_failures >= 0),        -- notice runs a recipient refused (a bounded retry)
+  notice_failed_at    INTEGER,
   CHECK ((confirmed_by_kind = 'member') = (confirmed_sub IS NOT NULL AND token_sha256 IS NOT NULL)),
   CHECK ((confirmed_by_kind = 'hana') = (reason IS NOT NULL)),
-  CHECK ((notice_at IS NULL) = (removal_token_hash IS NULL) AND (notice_at IS NULL) = (removal_until IS NULL)),
-  CHECK (removal_until IS NULL OR removal_until = notice_at + 604800000)
+  CHECK ((links_at IS NULL) = (removal_token_hash IS NULL) AND (links_at IS NULL) = (removal_until IS NULL)),
+  CHECK (removal_until IS NULL OR removal_until = links_at + 604800000),
+  CHECK (notice_at IS NULL OR links_at IS NOT NULL)
 );
 CREATE INDEX origin_confirmations_request ON origin_confirmations (request_id);
 CREATE INDEX origin_confirmations_unnoticed ON origin_confirmations (confirmed_at) WHERE notice_at IS NULL;
@@ -123,7 +127,8 @@ BEGIN
    WHERE EXISTS (SELECT 1 FROM origin_confirmations WHERE change_id = NEW.change_id)
       OR (NEW.removal_token_hash IS NOT NULL AND EXISTS (SELECT 1 FROM origin_confirmations WHERE removal_token_hash = NEW.removal_token_hash));
   SELECT RAISE(ABORT, 'origin_confirmations: a confirmation starts with no notice')
-   WHERE NEW.notice_at IS NOT NULL OR NEW.removal_token_hash IS NOT NULL OR NEW.removal_until IS NOT NULL;
+   WHERE NEW.notice_at IS NOT NULL OR NEW.links_at IS NOT NULL OR NEW.removal_token_hash IS NOT NULL OR NEW.removal_until IS NOT NULL
+      OR NEW.notice_failures IS NOT 0 OR NEW.notice_failed_at IS NOT NULL;
   SELECT RAISE(ABORT, 'origin_confirmations: one fresh sign-in confirms one set of web addresses, once')
    WHERE NEW.token_sha256 IS NOT NULL AND EXISTS (SELECT 1 FROM origin_confirmations WHERE token_sha256 = NEW.token_sha256 AND request_id IS NOT NEW.request_id);
   -- Never back-dated (2 minutes' skew): a later time only brings the web address in later, which nothing forbids.
@@ -153,16 +158,26 @@ BEGIN
                             AND sw.proposed_by IS NOT NEW.confirmed_by AND sw.proposer_email_key IS NOT NEW.confirmed_email_key))));
 END;
 
--- Fixed once written; only its notice is written, once, with the removal link's hash and its 7 days.
+-- Fixed once written. Its removal link is armed once (its hash and exactly 7 days, before the notice's first send,
+-- so a link that reached anyone works: after PR 159's review), its notice acked once and only after the link, neither
+-- back-dated nor in the future by the database's clock (5 and 2 minutes' skew); a failed notice run counts up by one.
 CREATE TRIGGER origin_confirmations_update BEFORE UPDATE ON origin_confirmations
 BEGIN
-  SELECT RAISE(ABORT, 'origin_confirmations: a confirmation is fixed; only its notice is written, once')
+  SELECT RAISE(ABORT, 'origin_confirmations: a confirmation is fixed; only its link and its notice are written, once')
    WHERE NEW.change_id IS NOT OLD.change_id OR NEW.app_id IS NOT OLD.app_id OR NEW.origin IS NOT OLD.origin OR NEW.proposal_request_id IS NOT OLD.proposal_request_id
       OR NEW.request_id IS NOT OLD.request_id OR NEW.confirmed_by_kind IS NOT OLD.confirmed_by_kind OR NEW.confirmed_by IS NOT OLD.confirmed_by
       OR NEW.confirmed_sub IS NOT OLD.confirmed_sub OR NEW.confirmed_email_key IS NOT OLD.confirmed_email_key OR NEW.token_sha256 IS NOT OLD.token_sha256
-      OR NEW.step_up_id IS NOT OLD.step_up_id OR NEW.reason IS NOT OLD.reason OR NEW.confirmed_at IS NOT OLD.confirmed_at
-      OR OLD.notice_at IS NOT NULL OR NEW.notice_at IS NULL
-      OR NEW.notice_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000;
+      OR NEW.step_up_id IS NOT OLD.step_up_id OR NEW.reason IS NOT OLD.reason OR NEW.confirmed_at IS NOT OLD.confirmed_at;
+  SELECT RAISE(ABORT, 'origin_confirmations: the removal link is armed once, never back-dated')
+   WHERE (OLD.links_at IS NOT NULL AND (NEW.links_at IS NOT OLD.links_at OR NEW.removal_token_hash IS NOT OLD.removal_token_hash OR NEW.removal_until IS NOT OLD.removal_until))
+      OR (OLD.links_at IS NULL AND NEW.links_at IS NOT NULL
+          AND (NEW.links_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000 OR NEW.links_at > ((julianday('now') - 2440587.5) * 86400000.0) + 120000));
+  SELECT RAISE(ABORT, 'origin_confirmations: the notice is acked once, now by the database''s clock')
+   WHERE (OLD.notice_at IS NOT NULL AND NEW.notice_at IS NOT OLD.notice_at)
+      OR (OLD.notice_at IS NULL AND NEW.notice_at IS NOT NULL
+          AND (NEW.notice_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000 OR NEW.notice_at > ((julianday('now') - 2440587.5) * 86400000.0) + 120000));
+  SELECT RAISE(ABORT, 'origin_confirmations: a failed notice run counts up by one')
+   WHERE NEW.notice_failures IS NOT OLD.notice_failures AND NEW.notice_failures IS NOT OLD.notice_failures + 1;
   SELECT RAISE(ABORT, 'origin_confirmations: a removal link is never another confirmation''s')
    WHERE EXISTS (SELECT 1 FROM origin_confirmations o WHERE o.rowid IS NOT OLD.rowid AND o.removal_token_hash = NEW.removal_token_hash);
 END;
@@ -248,6 +263,19 @@ CREATE TRIGGER guarded_changes_confirmation_gone AFTER DELETE ON guarded_changes
 BEGIN
   DELETE FROM origin_confirmations WHERE change_id = OLD.id;
   DELETE FROM staff_origin_waits WHERE change_id = OLD.id;
+END;
+
+-- ---- scopes: a scope is marked as shared only once no staff web address of its apps is still waiting ----
+-- (after PR 159's review, L1) A staff web address proposed while the scope was plain has no wait of its own (and may
+-- be a `no_session` waiver candidate): marking the scope before it is cancelled or in force would leave it on the plain
+-- path. The API refuses the mark in its plan read and its commit predicate; this is the backstop, as 0026's are.
+CREATE TRIGGER scopes_app_user_ids_no_waiting_staff_origin BEFORE UPDATE OF app_user_ids ON scopes
+WHEN OLD.app_user_ids = 0 AND NEW.app_user_ids = 1
+BEGIN
+  SELECT RAISE(ABORT, 'scopes: an app of this scope has a staff web address not working yet')
+   WHERE EXISTS (SELECT 1 FROM guarded_changes g JOIN apps a ON a.id = g.app_id
+                  WHERE a.scope_id = NEW.scope_id AND g.kind = 'origin_add' AND g.proposed_by_kind = 'hana' AND g.status = 'pending'
+                    AND (g.active_from IS NULL OR g.active_from > ((julianday('now') - 2440587.5) * 86400000.0)));
 END;
 
 -- ---- 0033's three earliest-time triggers, replaced: a recorded confirmation's time is the one earlier time allowed ----

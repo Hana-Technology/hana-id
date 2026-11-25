@@ -63,7 +63,9 @@ describe('the shared deploy wrapper', () => {
       expect(Object.values(scripts).join('\n'), app).not.toMatch(/(^|&& )wrangler deploy/mu);
       expect(existsSync(join(repoRoot, 'apps', app, 'scripts', 'deploy.ts')), app).toBe(false);
     }
-    expect(scriptsOf('console').deploy).toBe(`vite build && ${RUN}`);
+    // D931 (after PR 159's review, L2): the API and the console check their database has the migrations first.
+    expect(scriptsOf('console').deploy).toBe(`tsx ../../packages/env/src/check-migrations.ts --binding CONSOLE_DB --required 0007_origin_confirm_step_up.sql && vite build && ${RUN}`);
+    expect(scriptsOf('api').deploy).toBe(`tsx ../../packages/env/src/check-migrations.ts --binding DB --required 0034_origin_confirmations.sql && ${RUN}`);
     expect(scriptsOf('api')['deploy:pages']).toBe(`pnpm --filter @hana-id/web build && ${RUN} -c wrangler.vault.jsonc && ${RUN} -c wrangler.auth.jsonc`);
   });
 });

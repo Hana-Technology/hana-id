@@ -148,7 +148,8 @@ describe('the confirmation notice’s removal link', () => {
     const req = (await hot.prepare('SELECT request_id FROM origin_confirmations WHERE change_id = ?1').bind(set[0]!.changeId).first<{ request_id: string }>())!.request_id;
     const token = b64url(crypto.getRandomValues(new Uint8Array(32)));
     const hash = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', Uint8Array.from(atob(token.replace(/-/gu, '+').replace(/_/gu, '/')), (c) => c.charCodeAt(0)))));
-    expect(await admin().ackConfirmationNotice({ ...system(), requestId: req, removals: [{ changeId: set[0]!.changeId, removalTokenHash: hash }] })).toMatchObject({ ok: true });
+    expect(await admin().armConfirmationLinks({ ...system(), requestId: req, removals: [{ changeId: set[0]!.changeId, removalTokenHash: hash }] })).toMatchObject({ ok: true });
+    expect(await admin().ackConfirmationNotice({ ...system(), requestId: req })).toMatchObject({ ok: true });
     return { changeId: set[0]!.changeId, token };
   }
 

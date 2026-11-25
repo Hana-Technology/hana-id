@@ -31,7 +31,7 @@
 // Budget (D280, D380): every RPC (the page, an org's name and contacts, the ack) and every email is one call of the
 // run's budget. A notice is started only when its lookups, every email and its ack fit what is left; otherwise it and
 // the rest of the page wait whole for the next run, so a notice is never sent without the room to ack it.
-import { b64url, linkToken, linkTokenHash } from '@hana-id/console-core';
+import { CONFIRM_NOTICE_MAX_FAILURES, b64url, linkToken, linkTokenHash } from '@hana-id/console-core';
 import type { MemberNotice } from '@hana-id/console-core';
 import type { ChangeNotice, Env } from './env.ts';
 import { mailLabel } from './env.ts';
@@ -619,7 +619,7 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
  * ("a former member" otherwise, never looked up elsewhere), as the key notices name people; staff as "Journear staff".
  */
 const confirmerWords = (n: ConfirmationNotice, members: readonly MemberView[]): string =>
-  n.confirmedByKind === 'hana' ? 'Journear staff' : (members.find((m) => m.userId === n.confirmedBy)?.email ?? 'a former member');
+  n.confirmedByKind === 'hana' ? 'A second Journear staff member' : (members.find((m) => m.userId === n.confirmedBy)?.email ?? 'a former member');
 
 /**
  * `origin_confirmed` (D931): AdminRpc.confirmationNotices → for each confirmation, the org's members (one console RPC,
@@ -683,6 +683,22 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
       log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
       continue;
     }
+    // After PR 159's review: the removal links are armed before the first send (written once; the same deterministic
+    // hashes again on a retry change nothing), so a link that reached anyone works even if another recipient refuses.
+    const removals = await Promise.all(n.changes.map(async (ch, k) => ({ changeId: ch.changeId, removalTokenHash: b64url(await linkTokenHash(tokens[k]!)) })));
+    if (!budget.fits(to.length + 2, 2)) {
+      out.skipped++;
+      break;
+    }
+    const armed = await env.API.armConfirmationLinks({ ...systemCtx(), requestId: target, removals }).catch(() => null);
+    if (!armed?.ok) {
+      out.failed++;
+      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: armed?.code ?? 'upstream_unavailable', method: 'armConfirmationLinks' }, 'warn');
+      continue;
+    }
+    // A recipient already accepted isn't sent it again by this isolate (mail.ts's memo); the durable bound is the API's:
+    // a refused run is noted, retried later (5 minutes more each time, at most an hour) and left after
+    // CONFIRM_NOTICE_MAX_FAILURES runs.
     const sent = await sendToAll(sender, budget, to, message, `origin_confirmed:${target}`);
     if (sent.outOfBudget) {
       out.skipped++;
@@ -690,11 +706,13 @@ export async function runConfirmationNotices(rawEnv: Env, sender: EmailSender, b
     }
     if (!sent.allAccepted) {
       out.failed++;
-      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: 'send_failed', sent: sent.sent, failed: sent.failed }, 'warn');
+      const noted = budget.fits(0, 1) ? await env.API.noteConfirmationNoticeFailure({ ...systemCtx(), requestId: target }).catch(() => null) : null;
+      const failures = noted?.ok ? noted.failures : null;
+      const stuck = failures !== null && failures >= CONFIRM_NOTICE_MAX_FAILURES;
+      log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'rejected', code: stuck ? 'notice_stuck' : 'send_failed', sent: sent.sent, failed: sent.failed, ...(failures !== null ? { failures } : {}) }, stuck ? 'error' : 'warn');
       continue;
     }
-    const removals = await Promise.all(n.changes.map(async (ch, k) => ({ changeId: ch.changeId, removalTokenHash: b64url(await linkTokenHash(tokens[k]!)) })));
-    const ack = await env.API.ackConfirmationNotice({ ...systemCtx(), requestId: target, removals }).catch(() => null);
+    const ack = await env.API.ackConfirmationNotice({ ...systemCtx(), requestId: target }).catch(() => null);
     if (ack?.ok) {
       out.acked++;
       log({ event: 'notice', step: 'origin_confirmed', target, orgId, outcome: 'ok', sent: sent.sent, count: n.changes.length });

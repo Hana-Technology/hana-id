@@ -24,6 +24,7 @@ import {
   type ConfirmationNotice,
   type ConfirmationView,
   type ConfirmProposer,
+  CONFIRM_NOTICE_MAX_FAILURES,
   CONFIRM_OTHER_APPS_SHOWN,
   ORIGIN_CONFIRM_LIMITS,
   ORIGIN_REMOVAL_LINK_MS,
@@ -217,11 +218,24 @@ const limiter = (env: Env, name: string) => placedStub(env, env.RATE_LIMITER, na
  */
 async function admitConfirm(env: Env, w: Writer, orgId: string): Promise<void> {
   const hour = 3_600_000;
+  const L = ORIGIN_CONFIRM_LIMITS;
+  // After PR 159's review: staff count in buckets of their own (per staffer and across staff), never in an org's, so a
+  // staffer naming any org can't use up that org's owners' confirmations.
+  const buckets =
+    w.actor.kind === 'hana'
+      ? [
+          { object: `origin-confirm:staff:${actorId(w.actor)}`, limit: { name: 'origin-confirm:staff:hour', windowMs: hour, max: L.staffPerHour }, words: 'Too many confirmations from you in the last hour: try again later' },
+          { object: 'origin-confirm:staff-all', limit: { name: 'origin-confirm:staff-all:hour', windowMs: hour, max: L.staffAllPerHour }, words: 'Too many staff confirmations in the last hour: try again later' },
+        ]
+      : [
+          { object: `origin-confirm:actor:${w.actor.kind}:${actorId(w.actor)}`, limit: { name: 'origin-confirm:actor:hour', windowMs: hour, max: L.memberPerHour }, words: 'Too many confirmations from you in the last hour: try again later' },
+          { object: `origin-confirm:org:${orgId}`, limit: { name: 'origin-confirm:org:hour', windowMs: hour, max: L.orgPerHour }, words: 'Too many confirmations in this organisation in the last hour: try again later' },
+        ];
   try {
-    const m = await limiter(env, `origin-confirm:actor:${w.actor.kind}:${actorId(w.actor)}`).hit([{ name: 'origin-confirm:actor:hour', windowMs: hour, max: ORIGIN_CONFIRM_LIMITS.memberPerHour }], w.now);
-    if (!m.ok) refuse('rate_limited', 'Too many confirmations from you in the last hour: try again later');
-    const o = await limiter(env, `origin-confirm:org:${orgId}`).hit([{ name: 'origin-confirm:org:hour', windowMs: hour, max: ORIGIN_CONFIRM_LIMITS.orgPerHour }], w.now);
-    if (!o.ok) refuse('rate_limited', 'Too many confirmations in this organisation in the last hour: try again later');
+    for (const b of buckets) {
+      const r = await limiter(env, b.object).hit([b.limit], w.now);
+      if (!r.ok) refuse('rate_limited', b.words);
+    }
   } catch (err) {
     if (err instanceof RpcRefusal) throw err;
     log({ event: 'origin_confirm_limiter_failed', requestId: w.requestId, orgId }, 'error');
@@ -365,20 +379,26 @@ interface NoticeRow {
   key_label: string | null;
   contacts: string;
   changes: string;
+  failures: number;
 }
 
 /**
  * AdminRpc.confirmationNotices: the confirmations whose notice hasn't gone out, one per confirmation call (its ledger
  * request id), oldest first, each with the org's security contacts (the admin Worker adds the alias and every owner).
  */
-export async function confirmationNotices(db: HotDb, limit: number): Promise<ConfirmationNotice[]> {
+export async function confirmationNotices(db: HotDb, limit: number, now: number): Promise<ConfirmationNotice[]> {
   const rows = await db.all<NoticeRow>(
     q`SELECT f.request_id, f.confirmed_at, f.app_id, a.name AS app_name, a.org_id, a.scope_id, s.environment, f.confirmed_by_kind, f.confirmed_by, g.proposed_by_kind, g.proposed_by,
              CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS key_label,
              (SELECT json_group_array(email) FROM (SELECT email FROM org_security_contacts WHERE org_id = a.org_id ORDER BY email)) AS contacts,
-             (SELECT json_group_array(json_object('changeId', x.change_id, 'origin', x.origin)) FROM (SELECT change_id, origin FROM origin_confirmations WHERE request_id = f.request_id ORDER BY change_id) x) AS changes
-        FROM (SELECT request_id, MIN(confirmed_at) AS confirmed_at, MIN(change_id) AS first_change, app_id, confirmed_by_kind, confirmed_by
-                FROM origin_confirmations WHERE notice_at IS NULL GROUP BY request_id ORDER BY MIN(confirmed_at), request_id LIMIT ${limit}) f
+             (SELECT json_group_array(json_object('changeId', x.change_id, 'origin', x.origin)) FROM (SELECT change_id, origin FROM origin_confirmations WHERE request_id = f.request_id ORDER BY change_id) x) AS changes, f.failures
+        FROM (SELECT request_id, MIN(confirmed_at) AS confirmed_at, MIN(change_id) AS first_change, app_id, confirmed_by_kind, confirmed_by, MAX(notice_failures) AS failures
+                FROM origin_confirmations WHERE notice_at IS NULL GROUP BY request_id
+               -- A refused send waits 5 minutes more after each failure (at most an hour), comes after every other, and is
+               -- left after CONFIRM_NOTICE_MAX_FAILURES runs: its links work anyway (armed before the first send).
+               HAVING MAX(notice_failures) < ${CONFIRM_NOTICE_MAX_FAILURES}
+                  AND (MAX(notice_failed_at) IS NULL OR MAX(notice_failed_at) <= ${now} - MIN(MAX(notice_failures), 12) * 300000)
+               ORDER BY MAX(notice_failures) > 0, MIN(confirmed_at), request_id LIMIT ${limit}) f
         JOIN guarded_changes g ON g.id = f.first_change JOIN apps a ON a.id = f.app_id JOIN scopes s ON s.scope_id = a.scope_id
        ORDER BY f.confirmed_at, f.request_id`,
   );
@@ -392,6 +412,7 @@ export async function confirmationNotices(db: HotDb, limit: number): Promise<Con
       confirmedAt: r.confirmed_at,
       proposedByKind: r.proposed_by_kind === 'platform' ? 'platform' : 'hana',
       changes: (JSON.parse(r.changes) as { changeId: string; origin: string }[]).map((c) => ({ changeId: c.changeId, ...originDisplay(c.origin) })),
+      failures: r.failures,
     };
     if (r.proposed_by_kind === 'platform') {
       n.keyId = r.proposed_by;
@@ -406,24 +427,69 @@ const blob = (b64: string): ArrayBuffer => {
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
 };
 
+/** The database's clock (ms), as 0034's triggers read it: the link's and the notice's times, whatever the Worker's. */
+const DB_NOW = raw(`CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`);
+
 /**
- * AdminRpc.ackConfirmationNotice (`system` only): the notice went out to every recipient. Stores each removal link's
- * sha256 and its end (7 days), once; the list must be exactly the confirmation's web addresses.
+ * AdminRpc.armConfirmationLinks (`system` only; after PR 159's review): before the notice's first send, each removal
+ * link's sha256 and its end (7 days from now, by the database's clock), written once, so a link that reached anyone
+ * works even if another recipient keeps refusing. The list must be exactly the confirmation's web addresses; the same
+ * hashes again (a retry: the tokens are deterministic) change nothing, other hashes are refused.
  */
-export async function ackConfirmationNotice(db: HotDb, w: Writer, i: { requestId: string; removals: readonly { changeId: string; removalTokenHash: string }[] }) {
-  if (w.actor.kind !== 'system') return refuse('forbidden', 'Only the notice job acks a confirmation notice');
-  const rows = await db.all<{ change_id: string; notice_at: number | null }>(q`SELECT change_id, notice_at FROM origin_confirmations WHERE request_id = ${i.requestId} ORDER BY change_id`);
+export async function armConfirmationLinks(db: HotDb, w: Writer, i: { requestId: string; removals: readonly { changeId: string; removalTokenHash: string }[] }) {
+  if (w.actor.kind !== 'system') return refuse('forbidden', 'Only the notice job arms a confirmation’s removal links');
+  const rows = await db.all<{ change_id: string; hash_hex: string | null; removal_until: number | null }>(
+    q`SELECT change_id, CASE WHEN removal_token_hash IS NULL THEN NULL ELSE hex(removal_token_hash) END AS hash_hex, removal_until FROM origin_confirmations WHERE request_id = ${i.requestId} ORDER BY change_id`,
+  );
   if (rows.length === 0) return refuse('not_found', 'No such confirmation');
-  if (rows.some((r) => r.notice_at !== null)) return refuse('not_pending', 'This confirmation’s notice was already acked');
   const want = rows.map((r) => r.change_id);
   const got = [...new Set(i.removals.map((x) => x.changeId))].sort();
   if (got.length !== i.removals.length || got.length !== want.length || got.some((c, k) => c !== want[k])) return refuse('bad_request', 'The removal links must name exactly the confirmation’s web addresses, once each');
-  const until = w.now + ORIGIN_REMOVAL_LINK_MS;
-  const results = await db.batch(
-    i.removals.map((x) => q`UPDATE origin_confirmations SET notice_at = ${w.now}, removal_token_hash = ${blob(x.removalTokenHash)}, removal_until = ${until} WHERE change_id = ${x.changeId} AND request_id = ${i.requestId} AND notice_at IS NULL`),
-  );
-  if (results.some((r) => (r.meta.changes ?? 0) !== 1)) return refuse('not_pending', 'This confirmation’s notice was acked meanwhile');
-  return { removalUntil: until };
+  const hexOf = (b64: string) => hex(fromB64url(b64)).toUpperCase();
+  const byId = new Map(i.removals.map((x) => [x.changeId, hexOf(x.removalTokenHash)]));
+  if (rows.some((r) => r.hash_hex !== null && r.hash_hex !== byId.get(r.change_id))) return refuse('conflict', 'This confirmation’s removal links were armed with other tokens');
+  const todo = rows.filter((r) => r.hash_hex === null);
+  if (todo.length) {
+    await db.batch(
+      todo.map((r) => {
+        const x = i.removals.find((y) => y.changeId === r.change_id)!;
+        return q`UPDATE origin_confirmations SET links_at = ${DB_NOW}, removal_token_hash = ${blob(x.removalTokenHash)}, removal_until = ${DB_NOW} + ${ORIGIN_REMOVAL_LINK_MS}
+                  WHERE change_id = ${r.change_id} AND request_id = ${i.requestId} AND links_at IS NULL`;
+      }),
+    );
+  }
+  const after = await db.first<{ until: number | null }>(q`SELECT MIN(removal_until) AS until FROM origin_confirmations WHERE request_id = ${i.requestId}`);
+  return { removalUntil: after?.until ?? null };
+}
+
+/**
+ * AdminRpc.ackConfirmationNotice (`system` only): every recipient accepted the notice. Its links must be armed; the
+ * notice's time is the database's now, once.
+ */
+export async function ackConfirmationNotice(db: HotDb, w: Writer, i: { requestId: string }) {
+  if (w.actor.kind !== 'system') return refuse('forbidden', 'Only the notice job acks a confirmation notice');
+  const rows = await db.all<{ notice_at: number | null; links_at: number | null }>(q`SELECT notice_at, links_at FROM origin_confirmations WHERE request_id = ${i.requestId}`);
+  if (rows.length === 0) return refuse('not_found', 'No such confirmation');
+  if (rows.some((r) => r.links_at === null)) return refuse('conflict', 'Arm the removal links before the notice goes out');
+  if (rows.some((r) => r.notice_at !== null)) return refuse('not_pending', 'This confirmation’s notice was already acked');
+  const [r] = await db.batch([q`UPDATE origin_confirmations SET notice_at = ${DB_NOW} WHERE request_id = ${i.requestId} AND notice_at IS NULL AND links_at IS NOT NULL`]);
+  if ((r?.meta.changes ?? 0) !== rows.length) return refuse('not_pending', 'This confirmation’s notice was acked meanwhile');
+  return {};
+}
+
+/**
+ * AdminRpc.noteConfirmationNoticeFailure (`system` only): a recipient refused this run's send. The notice is offered
+ * again later (5 minutes more after each failure, at most an hour) and left after CONFIRM_NOTICE_MAX_FAILURES; answers
+ * how many runs failed, so the admin Worker reports a stuck one.
+ */
+export async function noteConfirmationNoticeFailure(db: HotDb, w: Writer, i: { requestId: string }): Promise<{ failures: number }> {
+  if (w.actor.kind !== 'system') return refuse('forbidden', 'Only the notice job notes a notice’s failure');
+  const [r] = await db.batch([
+    q`UPDATE origin_confirmations SET notice_failures = notice_failures + 1, notice_failed_at = ${w.now} WHERE request_id = ${i.requestId} AND notice_at IS NULL RETURNING notice_failures`,
+  ]);
+  const row = (r?.results?.[0] ?? null) as { notice_failures: number } | null;
+  if (!row) return refuse('not_found', 'No confirmation waiting for its notice');
+  return { failures: row.notice_failures };
 }
 
 // ---- the removal link ----

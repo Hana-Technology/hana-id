@@ -359,7 +359,8 @@ describe('the hot-DB budget', () => {
         const who = member();
         const r = await rpc.confirmOrigins({ ...who, orgId: app.org, appId: c.appId, changeIds: [c.changeId], stepUpJwt: await stepUp(nonce) });
         const removal = linkToken();
-        await adminRpc().ackConfirmationNotice({ ...system(), requestId: who.requestId, removals: [{ changeId: c.changeId, removalTokenHash: await removal.hash }] });
+        await adminRpc().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: [{ changeId: c.changeId, removalTokenHash: await removal.hash }] });
+        await adminRpc().ackConfirmationNotice({ ...system(), requestId: who.requestId });
         removalToken = removal.token;
         return r;
       }],

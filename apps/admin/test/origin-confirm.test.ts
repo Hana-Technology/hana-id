@@ -93,9 +93,9 @@ async function platformProposal(app: { id: string; org: string; scope: string },
 const changeRow = (id: string) => hot().prepare('SELECT notified_at, active_from, waiver FROM guarded_changes WHERE id = ?1').bind(id).first<{ notified_at: number | null; active_from: number | null; waiver: string | null }>();
 const confirmationRow = (id: string) =>
   hot()
-    .prepare('SELECT confirmed_by_kind, confirmed_by, reason, notice_at, removal_until, hex(removal_token_hash) AS h, request_id FROM origin_confirmations WHERE change_id = ?1')
+    .prepare('SELECT confirmed_by_kind, confirmed_by, reason, notice_at, links_at, removal_until, notice_failures, CASE WHEN removal_token_hash IS NULL THEN NULL ELSE hex(removal_token_hash) END AS h, request_id FROM origin_confirmations WHERE change_id = ?1')
     .bind(id)
-    .first<{ confirmed_by_kind: string; confirmed_by: string; reason: string | null; notice_at: number | null; removal_until: number | null; h: string | null; request_id: string }>();
+    .first<{ confirmed_by_kind: string; confirmed_by: string; reason: string | null; notice_at: number | null; links_at: number | null; removal_until: number | null; notice_failures: number; h: string | null; request_id: string }>();
 
 describe('a platform request’s email (D930, with D931’s owners and Confirm link)', () => {
   it('goes to every owner too (not viewers, not disabled owners); “or sooner if an owner … confirms them”; the Confirm link in text and HTML; no waiver', async () => {
@@ -166,7 +166,9 @@ describe('a staff request under four eyes (D931)', () => {
       expect(m.subject).toContain('New web addresses added by Journear staff for');
       for (const text of [m.text.replace(/\s+/gu, ' '), visibleText(m.html)]) {
         expect(text).toContain('Journear staff added 2 new web addresses for');
-        expect(text).toContain(`Journear staff (${STAFF_SUB})`);
+        // After PR 159's review: "Journear staff", never a staff member's Access id.
+        expect(text).toContain('Journear staff');
+        expect(text).not.toContain(STAFF_SUB);
         expect(text).toMatch(/They start working no sooner than .+ UTC, at least 24 hours after this email, or sooner if a second person confirms them, unless someone cancels them\. The second person is another Journear staff member, or an owner of your organisation in the partner portal\./u);
         expect(text).toContain('Check and confirm in the partner portal');
         expect(text).not.toMatch(/waiver|at once|loopback|no user has used/iu);
@@ -276,10 +278,11 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
     for (const m of mine) {
       expect(m.subject).toContain(`Web addresses confirmed for Test ${app.id}`);
       for (const text of [m.text.replace(/\s+/gu, ' '), visibleText(m.html)]) {
-        expect(text).toContain(`Journear staff confirmed 2 web addresses for Test ${app.id}. They work there now. If this wasn’t meant to happen, remove them here: each stops at once.`);
-        // Both people: the staff member who added them, and the second one who confirmed them.
-        expect(text).toContain(`Journear staff (${STAFF_SUB}) added them.`);
-        expect(text).toContain(`Journear staff (${SECOND.sub})`);
+        expect(text).toContain(`A second Journear staff member confirmed 2 web addresses for Test ${app.id}. They work there now. If this wasn’t meant to happen, remove them here: each stops at once.`);
+        // Both people, as "Journear staff" (never their Access ids: after PR 159's review).
+        expect(text).toContain('A Journear staff member added them. On this app, a web address Journear staff add needs a second person to confirm it: a second Journear staff member did.');
+        expect(text).not.toContain(STAFF_SUB);
+        expect(text).not.toContain(SECOND.sub);
         expect(text).toContain('Each link removes one web address and works for 7 days.');
         expect(text).toContain('international letters');
         expect(text).toContain('https://bücher.example');
@@ -296,7 +299,8 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
       expect([...token]).toEqual([...(await linkToken('originRemove', KEY, id))]);
       const row = (await confirmationRow(id))!;
       expect(row.h).toBe((await sha256Hex(token)).toUpperCase());
-      expect(row.removal_until! - row.notice_at!).toBe(7 * DAY);
+      expect(row.removal_until! - row.links_at!).toBe(7 * DAY);
+      expect(row.notice_at).not.toBeNull();
     }
     // Once only.
     const again = new FakeEmail();
@@ -309,8 +313,17 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
     const fake = new FakeEmail();
     fake.failFor.add(app.contact);
     await runConfirmationNotices(env, fake, big());
-    expect((await confirmationRow(ids[0]!))!.notice_at).toBeNull();
+    const first = (await confirmationRow(ids[0]!))!;
+    expect(first.notice_at).toBeNull();
+    // After PR 159's review: the link already works (armed before the first send), and the refused run is noted.
+    expect(first.h).not.toBeNull();
+    expect(first.notice_failures).toBe(1);
     const firstLink = linkIn(fake.attempts.find((m) => m.to === app.contact && m.text.includes(ids[0]!))!.text, `/remove/${ids[0]}`);
+    expect(first.h).toBe((await sha256Hex(tokenOf(firstLink))).toUpperCase());
+    // Not offered again within 5 minutes; then retried, to the refusing recipient only.
+    await runConfirmationNotices(env, fake, big());
+    expect(fake.attempts.filter((m) => m.to === app.contact && m.text.includes(ids[0]!))).toHaveLength(1);
+    await hot().prepare('UPDATE origin_confirmations SET notice_failed_at = notice_failed_at - 600000 WHERE change_id = ?1').bind(ids[0]!).run();
     fake.failFor.clear();
     await runConfirmationNotices(env, fake, big());
     const row = (await confirmationRow(ids[0]!))!;
@@ -339,11 +352,16 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
       { ...base, requestId: `rq_${uid()}`, confirmedBy: newId('user'), changes: [{ ...base.changes[0]!, changeId: newId('guardedChange') }] },
     ];
     const acks: unknown[] = [];
+    const arms: unknown[] = [];
     const api = overrideBinding(env.API, {
-      confirmationNotices: async () => ({ ok: true, notices }),
+      confirmationNotices: async () => ({ ok: true, notices: notices.map((n) => ({ ...n, failures: 0 })) }),
+      armConfirmationLinks: async (c: unknown) => {
+        arms.push(c);
+        return { ok: true, removalUntil: Date.now() + 7 * DAY };
+      },
       ackConfirmationNotice: async (c: unknown) => {
         acks.push(c);
-        return { ok: true, removalUntil: Date.now() + 7 * DAY };
+        return { ok: true };
       },
     });
     const fake = new FakeEmail();
@@ -356,15 +374,18 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
     expect(named!.text).toContain('The link works for 7 days.');
     const [gone] = fake.to(ALIAS).filter((m) => m.text.includes(notices[1]!.changes[0]!.changeId));
     expect(gone!.text).toContain('A former member confirmed https://order.coffeeclub.example');
-    // Each ack names exactly its confirmation's web addresses, with the hash of the link that went out.
+    // Each arming (before the sends) names exactly its confirmation's web addresses, with the hash of the link that went
+    // out; each ack then names the confirmation.
+    expect(arms).toHaveLength(2);
     expect(acks).toHaveLength(2);
-    const ack = acks[0] as { actor: { kind: string }; requestId: string; removals: { changeId: string; removalTokenHash: string }[] };
-    expect(ack.actor.kind).toBe('system');
-    expect(ack.requestId).toBe(notices[0]!.requestId);
+    const arm = arms[0] as { actor: { kind: string }; requestId: string; removals: { changeId: string; removalTokenHash: string }[] };
+    expect(arm.actor.kind).toBe('system');
+    expect(arm.requestId).toBe(notices[0]!.requestId);
+    expect((acks[0] as { requestId: string }).requestId).toBe(notices[0]!.requestId);
     const token = tokenOf(linkIn(named!.text, `/remove/${notices[0]!.changes[0]!.changeId}`));
-    expect(ack.removals).toEqual([{ changeId: notices[0]!.changes[0]!.changeId, removalTokenHash: b64url(await linkTokenHash(token)) }]);
-    // Never the token itself in an ack.
-    expect(JSON.stringify(acks)).not.toContain(/#t=([^\s]+)/u.exec(linkIn(named!.text, '/remove/'))![1]);
+    expect(arm.removals).toEqual([{ changeId: notices[0]!.changes[0]!.changeId, removalTokenHash: b64url(await linkTokenHash(token)) }]);
+    // Never the token itself in an arming or an ack.
+    expect(JSON.stringify([...arms, ...acks])).not.toContain(/#t=([^\s]+)/u.exec(linkIn(named!.text, '/remove/'))![1]);
   });
 
   it('a failing one doesn’t hold back the next; owners unreadable or an ack refused leave it for the next run', async () => {
@@ -383,12 +404,13 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
     const notices = [mk(0), mk(1), mk(2)];
     const acked: string[] = [];
     const api = overrideBinding(env.API, {
-      confirmationNotices: async () => ({ ok: true, notices }),
+      confirmationNotices: async () => ({ ok: true, notices: notices.map((n) => ({ ...n, failures: 0 })) }),
+      armConfirmationLinks: async () => ({ ok: true, removalUntil: 0 }),
       ackConfirmationNotice: async (c: unknown) => {
         const id = (c as { requestId: string }).requestId;
         if (id === notices[1]!.requestId) return { ok: false, code: 'not_pending' };
         acked.push(id);
-        return { ok: true, removalUntil: 0 };
+        return { ok: true };
       },
     });
     const members = overrideBinding(env.CONSOLE, { listMembers: async (c: unknown) => ((c as { orgId: string }).orgId === 'org_unreadable' ? { ok: false, code: 'upstream_unavailable' } : env.CONSOLE.listMembers(c)) });
@@ -405,7 +427,7 @@ describe('the confirmation’s notice (origin_confirmed)', () => {
     const page = all.notices.filter((n) => n.changes.some((c) => c.changeId === ids[0]));
     const api = overrideBinding(env.API, { confirmationNotices: async () => ({ ok: true, notices: page }) });
     const fake = new FakeEmail();
-    // The page (1), the members (1), then 4 emails (alias, contact, two owners) and the ack: 6 calls aren't enough.
+    // The page (1), the members (1), then the arming, 4 emails (alias, contact, two owners) and the ack: 6 calls aren't enough.
     const r = await runConfirmationNotices(envWith({ API: api }), fake, new Budget(6));
     expect(r.skipped).toBe(1);
     expect(fake.attempts).toEqual([]);

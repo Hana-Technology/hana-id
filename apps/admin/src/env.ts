@@ -191,7 +191,10 @@ export interface AdminRpcClient {
   /** The confirmations whose notice hasn't gone out, with the org's security contacts (the notice cron's page). */
   confirmationNotices(c: unknown): Answer<{ notices: ConfirmationNotice[] }>;
   /** System only, after every send was accepted: stores each removal link's sha256 (valid 7 days). */
-  ackConfirmationNotice(c: unknown): Answer<{ removalUntil: number }>;
+  /** After PR 159's review: the removal links armed before the first send; a refused run noted (a bounded retry). */
+  armConfirmationLinks(c: unknown): Answer<{ removalUntil: number | null }>;
+  ackConfirmationNotice(c: unknown): Answer<object>;
+  noteConfirmationNoticeFailure(c: unknown): Answer<{ failures: number }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */

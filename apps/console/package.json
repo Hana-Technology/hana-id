@@ -10,7 +10,7 @@
     "build": "vite build",
     "dev:web": "vite",
     "preview:web": "vite -c preview/vite.config.ts",
-    "deploy": "vite build && tsx ../../packages/env/src/stamped-deploy.ts",
+    "deploy": "tsx ../../packages/env/src/check-migrations.ts --binding CONSOLE_DB --required 0007_origin_confirm_step_up.sql && vite build && tsx ../../packages/env/src/stamped-deploy.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.web.config.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p web && tsc --noEmit -p preview"
   },

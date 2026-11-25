@@ -20,10 +20,11 @@ export const STAFF_CONFIRM_REASON_MIN = 20;
 /** How many other apps of a shared wallet the confirmation page names (and then "and N more"). */
 export const CONFIRM_OTHER_APPS_SHOWN = 5;
 /**
- * Confirmations per member and per org, in a clock hour (each attempt that reaches the API counts, refused ones too:
+ * Confirmations per member and per org, in a clock hour (staff: per staff member and across all staff, never against an
+ * org's own count, which a staffer could otherwise spend by naming any org: after PR 159's review) (each attempt that reaches the API counts, refused ones too:
  * a confirmation is one set of up to 20 web addresses, and the backend may propose at most 20 an hour, 30 a day).
  */
-export const ORIGIN_CONFIRM_LIMITS = { memberPerHour: 20, orgPerHour: 40 } as const;
+export const ORIGIN_CONFIRM_LIMITS = { memberPerHour: 20, orgPerHour: 40, staffPerHour: 20, staffAllPerHour: 100 } as const;
 
 const changeIds = z
   .array(guardedChangeIdInput)
@@ -47,10 +48,22 @@ export const getConfirmationInput = ctx.extend({ orgId: orgIdInput, changeId: gu
 export const removeOriginByLinkInput = ctx.extend({ changeId: guardedChangeIdInput, token: b64url32 }).strict();
 /** AdminRpc.confirmationNotices: the confirmations whose notice hasn't gone out. */
 export const confirmationNoticesInput = ctx.extend({ limit: z.number().int().min(1).max(50) }).strict();
-/** AdminRpc.ackConfirmationNotice (`system` only): the notice went out; each removal link's sha256. */
-export const ackConfirmationNoticeInput = ctx
+/**
+ * AdminRpc.armConfirmationLinks (`system` only): before the notice's first send, each removal link's sha256, so a link
+ * that reached anyone works (written once; the same hashes again are a no-op). After PR 159's review.
+ */
+export const armConfirmationLinksInput = ctx
   .extend({ requestId, removals: z.array(z.object({ changeId: guardedChangeIdInput, removalTokenHash: b64url32 }).strict()).min(1).max(ORIGIN_CONFIRM_MAX) })
   .strict();
+/** AdminRpc.ackConfirmationNotice (`system` only): every recipient accepted the notice (its links armed before). */
+export const ackConfirmationNoticeInput = ctx.extend({ requestId }).strict();
+/** AdminRpc.noteConfirmationNoticeFailure (`system` only): a recipient refused; the notice is retried later, a bounded number of times. */
+export const noteConfirmationNoticeFailureInput = ctx.extend({ requestId }).strict();
+/**
+ * A confirmation's notice is retried after a refused send at most this many runs (waiting 5 minutes more after each
+ * failure, at most an hour: about a day in all), then left (its links work all the same, armed before the first send).
+ */
+export const CONFIRM_NOTICE_MAX_FAILURES = 24;
 
 export type ConfirmOriginsInput = z.infer<typeof confirmOriginsInput>;
 export type ConfirmStaffOriginsInput = z.infer<typeof confirmStaffOriginsInput>;
@@ -58,6 +71,7 @@ export type GetConfirmationInput = z.infer<typeof getConfirmationInput>;
 export type RemoveOriginByLinkInput = z.infer<typeof removeOriginByLinkInput>;
 export type ConfirmationNoticesInput = z.infer<typeof confirmationNoticesInput>;
 export type AckConfirmationNoticeInput = z.infer<typeof ackConfirmationNoticeInput>;
+export type ArmConfirmationLinksInput = z.infer<typeof armConfirmationLinksInput>;
 
 /** Who is waited for: a platform proposal waits for an owner; a staff one under four eyes for an owner or a second staffer. */
 export type ConfirmProposer = 'platform' | 'hana';
@@ -111,6 +125,8 @@ export interface ConfirmationNotice {
   /** The proposing staff member's Access subject (a staff proposal): the notice names both people. */
   proposedBy?: string;
   changes: { changeId: string; origin: string; display: string; idn: boolean }[];
+  /** Earlier runs whose sends a recipient refused (the notice is left after CONFIRM_NOTICE_MAX_FAILURES). */
+  failures: number;
 }
 
 /** A confirmed web address in the staff queue (A11): for 7 days after its confirmation. */

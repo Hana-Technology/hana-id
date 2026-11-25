@@ -136,4 +136,35 @@ describe('stampedDeploy', () => {
     expect(localDeployProblem([], '/w', readConfig('prod-local'))).toBeNull();
     expect(localDeployProblem(['-c', 'w.jsonc'], '/w', readConfig('local-alice'))).toMatch(/local-alice, a local\* env/u);
   });
+
+  it('after PR 159’s review: no command-line ENV_NAME, NETWORK or API_URL in any spelling; an absolute --config; only a readable JSON config', () => {
+    const read = readConfig('sandbox-dev');
+    for (const argv of [
+      ['--var', 'ENV_NAME:local-dev'],
+      ['--var=ENV_NAME:local-dev'],
+      ['--var', 'X:1', 'API_URL:http://127.0.0.1:8787'],
+      ['--var', 'X:1', '--var', 'NETWORK:testnet'],
+      ['--define', 'ENV_NAME:"local"'],
+      ['--define=API_URL:"x"'],
+      ['--var', 'env_name:local'],
+      ['--var', 'API_URL=http://127.0.0.1'],
+    ]) {
+      expect(localDeployProblem(argv, '/w', read), argv.join(' ')).toMatch(/is set by the env's generated config, never on the command line/u);
+    }
+    expect(localDeployProblem(['--var', 'OTHER:1'], '/w', read)).toBeNull();
+    // An absolute --config is read where it is; a relative one in the directory.
+    const seen: string[] = [];
+    const note = (p: string) => (seen.push(p), config('sandbox-dev'));
+    expect(localDeployProblem(['--config', '/abs/wrangler.jsonc'], '/w', note)).toBeNull();
+    expect(localDeployProblem(['-c', 'rel.jsonc'], '/w', note)).toBeNull();
+    expect(seen).toEqual(['/abs/wrangler.jsonc', '/w/rel.jsonc']);
+    expect(localDeployProblem(['--config', '/abs/missing.jsonc'], '/w', () => { throw new Error('ENOENT'); })).toMatch(/can't read \/abs\/missing\.jsonc/u);
+    // A TOML config (wrangler reads it; this check can't): refused, named or found by default.
+    expect(localDeployProblem(['-c', 'wrangler.toml'], '/w', read)).toMatch(/can't read wrangler\.toml/u);
+    expect(localDeployProblem([], '/w', read, (p) => p === '/w/wrangler.toml')).toMatch(/can't read wrangler\.toml/u);
+    // wrangler.json found by default is read.
+    const found: string[] = [];
+    expect(localDeployProblem([], '/w', (p) => (found.push(p), config('local-x')), (p) => p === '/w/wrangler.json')).toMatch(/local-x, a local\* env/u);
+    expect(found).toEqual(['/w/wrangler.json']);
+  });
 });

@@ -1,8 +1,8 @@
 // The build id of this checkout (./build-id.ts, D384), read from git, and the stamped `wrangler deploy` that each
 // Worker's `deploy` script runs through the one shared wrapper, ./stamped-deploy.ts (D406). Node only.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { BUILD_VAR, type BuildId, formatBuildId, parseBuildId } from './build-id.ts';
 import { repoRoot } from './index.ts';
 
@@ -49,24 +49,34 @@ export function stampedDeployArgv(id: string, argv: readonly string[]): string[]
  * `local…`, and one it can't read (wrangler couldn't deploy it either). A Worker whose config names no env (console-auth,
  * files) is not refused: the platform's exceptions are the API's, whose config always names its env.
  */
-export function localDeployProblem(argv: readonly string[], cwd: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8')): string | null {
-  let file = 'wrangler.jsonc';
+export function localDeployProblem(argv: readonly string[], cwd: string, read: (path: string) => string = (p) => readFileSync(p, 'utf8'), exists: (path: string) => boolean = existsSync): string | null {
+  // After PR 159's review: no command-line value of the vars the `local*` exception and the platform's rules read
+  // (`--var ENV_NAME:…`, `--var=API_URL:…`, `--define NETWORK:…`, a repeated flag's later values), in any spelling.
+  const guarded = /^(?:--(?:var|define)=)?(?:ENV_NAME|NETWORK|API_URL)\s*[:=]/iu;
+  const hit = argv.find((a) => guarded.test(a));
+  if (hit !== undefined) return `refused: ${hit.split(/[:=]/u)[0]!.replace(/^--(?:var|define)=?/iu, '')} is set by the env's generated config, never on the command line`;
+  if (argv.some((a) => a === '--env' || a.startsWith('--env=') || a === '-e')) return 'refused: --env is not used here (each env has its own generated config)';
+  let file: string | undefined;
   for (let k = 0; k < argv.length; k++) {
     const a = argv[k]!;
     if ((a === '-c' || a === '--config') && argv[k + 1] !== undefined) file = argv[k + 1]!;
     else if (a.startsWith('--config=')) file = a.slice('--config='.length);
+    else if (a.startsWith('-c=')) file = a.slice(3);
   }
-  if (argv.some((a) => a === '--env' || a.startsWith('--env=') || a === '-e')) return 'refused: --env is not used here (each env has its own generated config)';
+  // Without -c, wrangler takes the first of its config names that exists: the same here; none is a refusal.
+  if (file === undefined) file = ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml'].find((f) => exists(isAbsolute(f) ? f : join(cwd, f))) ?? 'wrangler.jsonc';
+  const path = isAbsolute(file) ? file : join(cwd, file);
   let config: { vars?: Record<string, unknown> };
   try {
+    if (!/\.jsonc?$/u.test(file)) throw new Error('not JSON');
     // The generated configs are JSON with `//` comment lines (their header); nothing else is JSONC in them.
-    const text = read(join(cwd, file))
+    const text = read(path)
       .split('\n')
       .filter((l) => !l.trimStart().startsWith('//'))
       .join('\n');
     config = JSON.parse(text) as { vars?: Record<string, unknown> };
   } catch {
-    return `refused: can't read ${file} to check which env it deploys (generate it with the app's gen script first)`;
+    return `refused: can't read ${file} to check which env it deploys (only the generated JSON configs are deployed; generate it with the app's gen script first)`;
   }
   const name = config?.vars?.ENV_NAME;
   if (typeof name === 'string' && /^local/u.test(name)) return `refused: ${file} is for ${name}, a local* env: local* envs run on wrangler dev, never deployed`;

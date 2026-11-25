@@ -294,8 +294,15 @@ const orgLimiter = (c: OpContext) => placedStub(c.env, c.env.RATE_LIMITER, `plat
  */
 async function takeQuota(c: OpContext, limits: Limit[], n: number, what: string): Promise<() => Promise<void>> {
   if (n === 0) return async () => undefined;
-  const obj = orgLimiter(c);
-  const r = await obj.hit(limits, c.now, n);
+  let obj: ReturnType<typeof orgLimiter>;
+  let r: Awaited<ReturnType<ReturnType<typeof orgLimiter>['hit']>>;
+  try {
+    obj = orgLimiter(c);
+    r = await obj.hit(limits, c.now, n);
+  } catch {
+    // Fails closed, as every limiter of an ordinary platform call does.
+    throw new PlatformRefusal('rate_limiter_unavailable', 'Our rate limiter is unavailable just now: try again shortly');
+  }
   if (!r.ok) {
     const hour = Math.floor(c.now / HOUR) * HOUR;
     const limit = `platform:${r.limit}`;

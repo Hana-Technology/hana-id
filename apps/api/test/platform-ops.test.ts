@@ -1180,3 +1180,22 @@ describe('what the operations may import', () => {
   });
 });
 void [PLATFORM_OPS_LIMITS, PLATFORM_REQUEST_LIMITS, ConsoleRpc, AdminRpc];
+
+describe('the quota windows’ limiter failing', () => {
+  it('a create or a proposal fails closed (`503 rate_limiter_unavailable`), writing nothing', async () => {
+    const net = await network();
+    const a = await createdApp(net);
+    const real = env.RATE_LIMITER.idFromName.bind(env.RATE_LIMITER);
+    const before = await written();
+    vi.spyOn(env.RATE_LIMITER, 'idFromName').mockImplementation((name: string) => {
+      if (name.startsWith(`platform:${net.org}`)) throw new Error('limiter down');
+      return real(name);
+    });
+    const c = await create(net.k, { scopeId: net.s1, name: 'Limiter down' });
+    const p = await post(net.k, `/v1/platform/apps/${a.id}/origins`, { add: ['https://down.example'], expectedVersion: a.version });
+    vi.restoreAllMocks();
+    expect([c.status, c.body.code]).toEqual([503, 'rate_limiter_unavailable']);
+    expect([p.status, p.body.code]).toEqual([503, 'rate_limiter_unavailable']);
+    expect(await written()).toEqual(before);
+  });
+});

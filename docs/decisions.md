@@ -21985,8 +21985,11 @@ D917). D918 is the number the caller assigned; API migration 0028 and console mi
      in force only), so a key registered while off is reviewed too.
   8. **A key in force at once** (a staff key an owner accepted) gets the stop link in its announcement, and that
      announcement counts as its confirmation notice (no second email).
-  9. **The stop notice lists the org's waiting keys without their cancel links** (A3 says "with its cancel link"): the
-     links' tokens are never stored, only their hashes, so the notice says to cancel them in the partner portal.
+  9. **The stop notice lists the org's waiting keys, each announced one with its own cancel link** (A3): the links'
+     tokens are never stored, only their hashes, but a token is `HMAC(CANCEL_LINK_KEY, domain ‖ key id)`, so the admin
+     Worker computes it again for the notice. A key not announced yet has no link (it is announced with one later); the
+     notice says so and points to the partner portal. (Corrected after PR 149's review: the first build said the links
+     couldn't be included.)
   10. **Lapse**: a key not accepted, or not announced, within 7 days of its registration is cancelled by the hourly
       job, as a guarded change is (the spec is silent).
   11. **Who may confirm a key a second staff member approved on mainnet**: any owner of each scope (none of them
@@ -22008,7 +22011,8 @@ D917). D918 is the number the caller assigned; API migration 0028 and console mi
   (b) point 6 (A6's `platform.key_revoke` against A3's kill switch); (c) A7's status list has no end for an expired
   key (point 1); (d) A7's `platform_keys_not_early` trigger fires only when `unconfirmed_active_from` was set before the
   update, so the ack itself could write a short wait: replaced by CHECKs on the row as written and a fixed unconfirmed
-  date (point 2); (e) A3's stop notice "with its cancel link" is unbuildable without storing link tokens (point 9);
+  date (point 2); (e) withdrawn after PR 149's review: A3's stop notice "with its cancel link" is buildable, as the link tokens are
+  deterministic (point 9);
   (f) A7's `CHECK (accepted_by_kind IS NULL OR accepted_by_kind = 'member' OR accepted_by IS NOT proposed_by)` holds
   only the Access subject, not D917's "different email": the email key is held too (point 3).
 - **After two automated findings on the branch (2026-11-25)**: (1) the console's people lookup was not scoped to the
@@ -22020,6 +22024,87 @@ D917). D918 is the number the caller assigned; API migration 0028 and console mi
   drain over the next runs, oldest first; `listPlatformKeys` shows the 50 newest keys (at most 2 are live), and the
   switch-on review is checked against every key in SQL, so a key the page didn't show makes the switch-on refuse
   (`conflict`) rather than pass.
+- **After PR 149's review (2026-11-25)**, each of its findings 1 to 11 fixed, with tests:
+  1. **No REPLACE of a key or an org row.** `INSERT OR REPLACE` deletes the row it collides with without firing a DELETE
+     trigger, so it could bring a revoked key back under its id or erase a key by reusing its public key. The insert
+     trigger now refuses any insert whose id, public key, thumbprint or request id is already held, and an update
+     trigger refuses a link hash another row holds; `platform_orgs` has the same insert rule (the freeze and the switch
+     can't be reset by a REPLACE), and a new row never starts with the switch on.
+  2. **The database's own clock for an announcement and a key in force.** A trigger on the first write of
+     `notified_at` refuses one more than 5 minutes before the database's now and an unconfirmed date sooner than the
+     key's wait from it, less 2 minutes; `active` needs `active_from` (CHECK), and a move to `active` without a
+     confirmation is refused before `active_from` (plus the same 2 minutes). The skew: the Worker's and D1's clocks
+     agree within seconds; 2 minutes absorbs that and a slow batch with room to spare while being negligible against
+     the 24 h minimum; 5 minutes covers the admin's send-then-ack (the ack is written after the emails, at most a
+     5-minute run) without letting an announcement be dated meaningfully earlier.
+  3. **Owner since without a break.** `ownerSince` reads only grants not applied yet, and takes the later of
+     `role_since` and the grant's time, so a member demoted after an old grant, or removed and added again, counts from
+     the latest start of their ownership.
+  4. **The freeze mirror ordered.** The staff route freezes the API's mirror first (it only tightens), then the console
+     (whatever the API answered); it unfreezes the console first, then the mirror. The hourly check reads the console
+     again just before an unfreeze, and the unfreeze is a compare-and-swap on the mirror row's version. Hardened after
+     an automated finding: point 4a below.
+  5. **The stop notice carries the waiting keys' cancel links** (point 9 corrected, and (e) withdrawn). No other notice
+     relied on the same premise: the announcement, the confirmation and the expiry warnings already compute theirs.
+  6. **Four eyes fails closed**: on every network but `testnet`, a missing or unknown one included (the API's config
+     and the console's step-up screens alike).
+  7. **An owner's stop of a platform key is never refused by the console's shared budget or its breaker**: another org's
+     calls (or this org's other changes) must never leave an owner unable to stop a stolen key. It has limits of its own
+     instead (point 7a below). **To confirm (the Tech Lead).** **Open point:** the existing `revokeKey` (a publishable
+     key) is a kill switch held to the shared breaker (5 destructive calls per org an hour, 20 across orgs), so a burst
+     elsewhere can refuse it; not changed here.
+  8. **A contact change between registration and announcement holds the announcement**: within 7 days of a change of
+     the org's security contacts, a waiting key is left off the notices page and its ack is refused (`conflict`), so the
+     announcement goes to the contacts as they are once the 7 days have passed, never to a list just changed. (Chosen
+     over mailing the removed contacts too: the API doesn't keep the removed addresses.)
+  9. **The table holds four eyes' people**: a four-eyes confirmation needs `confirmed_email_key`, a staff acceptance
+     `accepted_email_key`, every registration `proposer_email_key` (CHECKs); `platform_orgs`' switch goes on only with
+     a review naming exactly the org's current keys, never while frozen (trigger). `security.md` says what the database
+     holds and what it leaves to code (an unfreeze's order, who may switch off).
+  10. **The acceptance screen runs the person checks** (four eyes: not the registrant's email) before any sign-in. The
+      owner-since rule is not applied to an acceptance: a staff key is accepted by the org it is for, and refusing a
+      newer owner would leave an org whose only owners are new unable to accept its own key; four eyes still keeps the
+      registrant (staff) and the accepting owner apart.
+  11. **A failing notice can't starve the others**: each failed send is recorded on the key (`notice_failures`,
+      `notice_failed_at`), the key waits 5 minutes per failure (at most an hour) before it is offered again, failures
+      come after every other notice, and from the 12th the admin logs `notice_stuck` at error level.
+  - Tests added beside each: a confirmation racing a switch-off or a freeze (it loses: nothing confirmed, the key
+    cancelled), a stop after the breaker and the budget are exhausted, both REPLACE shapes, back-dating and an early
+    `active`, the NULL email keys, the switch-on trigger, `ownerSince` with an applied grant, a demotion and a removal
+    and re-adding, the notice's backoff and order, and 0028 and 0030 applied in name order on a populated database.
+  - **For the Tech Lead to decide knowingly** (kept as built): registration is allowed while the org's switch is off
+    (point 7); a key staff register is in force at once when an owner accepts it (D914's 21); the `local*` exception to
+    the 24 h minimum is held by the env's name only until P10's guard, so P10 must be deployed before the platform is
+    switched on anywhere (now in the spec's gates row); the freeze mirror can lag the console by up to an hour when its
+    write fails (P3's request check reads the mirror: until a run repairs it, a frozen org's in-force keys would be
+    accepted by P3, and the console's own freeze still refuses its owners); a second registration of the same public
+    key is `conflict` naming the thumbprint, as before.
+- **After two automated findings on the review's fixes (2026-11-25)**:
+  - 7a. **The stop's own limits** (`platform/revoke-guard.ts`), **to confirm (the Tech Lead)**. Per member 20 a minute
+    and 100 an hour, per org 40 a minute and 200 an hour, each checked before any database work on an object keyed by
+    that member or org alone; a real incident (each of the 2 keys stopped several times over by every owner) stays far
+    below them. A repeat that changes nothing (the key not found, or already stopped) is answered from that key's
+    marker for 15 minutes without the database, and counted. A global ceiling of 300 no-ops a minute across orgs: past
+    it a no-op answers `rate_limited` and is logged at error level; a stop that changes something is never refused by
+    it. Stops that succeed are counted for an alert: 3 in an org or 10 across orgs within 10 minutes is logged
+    (`platform_key_revoke_burst`), never refused. **What can be refused:** an owner past their own limits, an org past
+    its own (both only by that org's own owners' calls), and a no-op past the global ceiling. **What can't:** a stop by
+    an owner of one org because of any other org's calls, or because of the shared budget or the breaker. An org's
+    owners who exhaust their own org's limits hold back its stops for up to the hour; the emailed stop link (its own
+    per-IP limits) and staff's stop (AdminRpc, uncounted) still work.
+  - 4a. **The unfreeze is ordered, not only re-checked.** Every freeze of the mirror writes `platform_orgs.frozen_at`
+    (a freeze that finds the row frozen too), and an unfreeze names when the console's org became active
+    (`consoleActiveSince`, the console's last freeze or unfreeze, from its audit log, else its creation; required).
+    The API accepts the unfreeze only if the mirror's last freeze is before that time, in the plan read and in the
+    commit predicate; for the hourly check also only once the freeze is older than 10 minutes (`UNFREEZE_GRACE_MS`:
+    a staff route call is two RPCs, seconds, and the check's run is two paged lists and at most 10 writes, under a
+    minute; 10 minutes is many times both, and a real unfreeze waits at most one more run). As the staff route freezes
+    the mirror first, a freeze racing the check's unfreeze at any point either lands its mirror write before the
+    unfreeze's commit (refused) or after it (frozen again). The test interleaves both halves of a staff freeze at every
+    point of the check's unfreeze path. **The remaining window, for P3:** a staff freeze whose mirror write fails (an
+    error-level log, and the route answers 502) and whose console freeze lands after the check read the console can
+    leave the mirror unfrozen while the console is frozen until the next run (at most an hour), which then freezes it
+    and logs `mirror_was_unfrozen` at error level.
 - Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation: off-chain records of
   which public keys may later act for an org's backend.
 

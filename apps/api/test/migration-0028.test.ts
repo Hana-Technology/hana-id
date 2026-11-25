@@ -278,7 +278,8 @@ describe('0028 after PR 149’s review: no replace, no back-dating, the database
   });
 
   it('platform_orgs: never replaced (the freeze kept), and the switch goes on only with the review of exactly the current keys, never while frozen', async () => {
-    expect(await refusal("INSERT INTO platform_orgs (org_id, frozen, set_by, set_at) VALUES ('org_z', 1, 's', 1)")).toBe('accepted');
+    expect(await refusal("INSERT INTO platform_orgs (org_id, frozen, set_by, set_at) VALUES ('org_z', 1, 's', 1)")).toMatch(/CHECK/u); // a freeze has its time
+    expect(await refusal("INSERT INTO platform_orgs (org_id, frozen, frozen_at, set_by, set_at) VALUES ('org_z', 1, 1, 's', 1)")).toBe('accepted');
     expect(await refusal("INSERT OR REPLACE INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_z', 's', 2)")).toMatch(/never replaced/u);
     expect(await db.prepare("SELECT frozen FROM platform_orgs WHERE org_id = 'org_z'").first()).toEqual({ frozen: 1 });
     expect(await refusal("INSERT INTO platform_orgs (org_id, enabled, set_by, set_at) VALUES ('org_y', 1, 's', 1)")).toMatch(/review/u);
@@ -291,7 +292,7 @@ describe('0028 after PR 149’s review: no replace, no back-dating, the database
     const live = (await db.prepare("SELECT json_group_array(id) AS j FROM (SELECT id FROM platform_keys WHERE org_id = 'org_a' AND status IN ('awaiting_acceptance', 'pending', 'active') AND (expires_at IS NULL OR expires_at > ?1) ORDER BY id)").bind(Date.now()).first<{ j: string }>())!.j;
     expect(await refusal("UPDATE platform_orgs SET enabled = 1, review_json = '[]', set_at = ?1 WHERE org_id = 'org_a'", Date.now())).toMatch(/review/u);
     expect(await refusal('UPDATE platform_orgs SET enabled = 1, review_json = ?2, set_at = ?1 WHERE org_id = ?3', Date.now(), live, 'org_a')).toBe('accepted');
-    expect(await refusal("UPDATE platform_orgs SET enabled = 0, frozen = 1 WHERE org_id = 'org_a'")).toBe('accepted');
+    expect(await refusal("UPDATE platform_orgs SET enabled = 0, frozen = 1, frozen_at = 1 WHERE org_id = 'org_a'")).toBe('accepted');
     expect(await refusal('UPDATE platform_orgs SET enabled = 1, review_json = ?2, set_at = ?1 WHERE org_id = ?3', Date.now(), live, 'org_a')).toMatch(/review/u);
   });
 });

@@ -71,15 +71,30 @@ export async function answer(route: string, staff: StaffRequest, call: () => Pro
 }
 
 /** The API's mirror of a console freeze (D918): true when it landed. */
-async function mirrorFreeze(env: Env, staff: StaffRequest, orgId: string, frozen: boolean): Promise<boolean> {
+async function mirrorFreeze(env: Env, staff: StaffRequest, orgId: string, frozen: boolean, consoleActiveSince?: number): Promise<boolean> {
   try {
-    const r = await env.API.setPlatformOrgFrozen({ ...staffCtx(staff), orgId, frozen });
+    const r = await env.API.setPlatformOrgFrozen({ ...staffCtx(staff), orgId, frozen, ...(consoleActiveSince !== undefined ? { consoleActiveSince } : {}) });
     if (r.ok) return true;
-    log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: r.code, step: 'platform_mirror' }, 'warn');
+    log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: r.code, step: 'platform_mirror' }, 'error');
   } catch (err) {
     log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
   }
   return false;
+}
+
+/** The unfreeze's mirror, after the console's: the console read again for when its org became active. */
+async function mirrorUnfreeze(env: Env, staff: StaffRequest, orgId: string): Promise<boolean> {
+  try {
+    const now = await env.CONSOLE.getOrg({ ...staffCtx(staff), orgId });
+    if (!now.ok || now.org.status !== 'active' || now.statusSince === undefined) {
+      log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: now.ok ? 'frozen_meanwhile' : now.code, step: 'platform_mirror' }, 'error');
+      return false;
+    }
+    return await mirrorFreeze(env, staff, orgId, false, now.statusSince);
+  } catch (err) {
+    log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
+    return false;
+  }
 }
 
 const mirrorFailed = (frozen: boolean): Response =>
@@ -216,7 +231,9 @@ const ROUTES: Route[] = [
       const mirrored = frozen ? await mirrorFreeze(c.env, c.staff, c.params.org!, true) : null;
       const res = await answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, frozen }));
       if (!res.ok) return res;
-      const ok = frozen ? mirrored! : await mirrorFreeze(c.env, c.staff, c.params.org!, false);
+      // The unfreeze names when the console's org became active (read again now): the API accepts it only if that is
+      // after the mirror's last freeze, so a staff freeze racing this unfreeze always wins.
+      const ok = frozen ? mirrored! : await mirrorUnfreeze(c.env, c.staff, c.params.org!);
       return ok ? json(200, { platformMirrored: true }) : mirrorFailed(frozen);
     },
   },

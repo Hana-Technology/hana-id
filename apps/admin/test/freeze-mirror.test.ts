@@ -26,7 +26,7 @@ function fake(orgs: Org[], mirror: Map<string, boolean>, o: { consolePage?: numb
         const p = page(orgs.map((x) => ({ ...x, key: x.id })), o.consolePage ?? 200, c.cursor);
         return { ok: true, orgs: p.slice.map((x) => ({ id: x.id, name: x.id, kind: 'partner', status: x.status, createdAt: 1 })), ...(p.next ? { next: p.next } : {}) };
       },
-      getOrg: async (c: { orgId: string }) => ({ ok: true, org: { id: c.orgId, name: c.orgId, kind: 'partner', status: o.statusNow ? o.statusNow(c.orgId) : (orgs.find((x) => x.id === c.orgId)?.status ?? 'active'), createdAt: 1 }, members: [], invites: [] }),
+      getOrg: async (c: { orgId: string }) => ({ ok: true, org: { id: c.orgId, name: c.orgId, kind: 'partner', status: o.statusNow ? o.statusNow(c.orgId) : (orgs.find((x) => x.id === c.orgId)?.status ?? 'active'), createdAt: 1 }, members: [], invites: [], statusSince: 5 }),
     },
     API: {
       platformOrgs: async (c: { cursor?: string }) => {
@@ -34,7 +34,8 @@ function fake(orgs: Org[], mirror: Map<string, boolean>, o: { consolePage?: numb
         const p = page(rows, o.apiPage ?? 500, c.cursor);
         return { ok: true, orgs: p.slice.map(({ orgId, enabled, frozen }) => ({ orgId, enabled, frozen, version: versions.get(orgId) ?? 1 })), ...(p.next ? { next: p.next } : {}) };
       },
-      setPlatformOrgFrozen: async (c: { orgId: string; frozen: boolean; expectedVersion?: number }) => {
+      setPlatformOrgFrozen: async (c: { orgId: string; frozen: boolean; expectedVersion?: number; consoleActiveSince?: number }) => {
+        if (!c.frozen && c.consoleActiveSince !== 5) return { ok: false, code: 'bad_request' };
         // As the API: an unfreeze is a compare-and-swap on the version read.
         if (c.expectedVersion !== undefined && c.expectedVersion !== (versions.get(c.orgId) ?? 1)) return { ok: false, code: 'version_conflict' };
         fixes.push({ orgId: c.orgId, frozen: c.frozen, ...(c.expectedVersion !== undefined ? { expectedVersion: c.expectedVersion } : {}) });
@@ -109,7 +110,7 @@ describe('the freeze mirror’s unfreeze (after PR 149’s review, finding 4)', 
     };
     const r = await reconcileFreezes(env);
     expect(fixes).toEqual([]);
-    expect(r).toMatchObject({ fixed: 0, failed: 1 });
+    expect(r).toMatchObject({ fixed: 0, failed: 2 });
     expect(mirror.get('org_00001')).toBe(true);
     expect(mirror.get('org_00002')).toBe(true);
   });

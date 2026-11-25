@@ -276,7 +276,14 @@ export const approvePlatformKeyInput = ctx.extend({ ...org, ...keyId, reason: st
 /** AdminRpc.setPlatformOrg: the org's platform switch. Turning it on names every key of the org still in force or waiting (the review, L5). */
 export const setPlatformOrgInput = ctx.extend({ ...org, enabled: z.boolean(), reason: z.string().trim().min(1).max(500), reviewedKeys: z.array(platformKeyIdInput).max(10).optional() }).strict();
 /** AdminRpc.setPlatformOrgFrozen: the admin Worker mirrors the console's freeze of an org. */
-export const setPlatformOrgFrozenInput = ctx.extend({ ...org, frozen: z.boolean(), expectedVersion: z.number().int().nonnegative().optional() }).strict();
+/**
+ * An unfreeze names when the console's org became active (`consoleActiveSince`, the console's last freeze or unfreeze,
+ * else its creation): the API accepts it only if that is after the mirror's last freeze (D918, the freeze mirror's order).
+ */
+export const setPlatformOrgFrozenInput = ctx
+  .extend({ ...org, frozen: z.boolean(), expectedVersion: z.number().int().nonnegative().optional(), consoleActiveSince: z.number().int().nonnegative().optional() })
+  .strict()
+  .refine((i) => i.frozen || i.consoleActiveSince !== undefined, { message: 'An unfreeze names when the console’s org became active', path: ['consoleActiveSince'] });
 export const platformKeyNoticesInput = ctx.extend({ limit: z.number().int().min(1).max(100) }).strict();
 export const ackPlatformKeyNoticeInput = ctx.extend({ ...keyId, cancelTokenHash: b64url32, revokeTokenHash: b64url32.optional() }).strict();
 export const ackPlatformKeyConfirmNoticeInput = ctx.extend({ ...keyId, revokeTokenHash: b64url32 }).strict();

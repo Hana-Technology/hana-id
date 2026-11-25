@@ -3,7 +3,9 @@
 // addresses, and which piece P3's request check will read. The staff route mirrors at once (routes.ts); this check
 // repeats any mirror that didn't land.
 //
-// An unfreeze is re-checked against the console just before it and is a compare-and-swap on the mirror row's version.
+// An unfreeze is ordered: re-checked against the console just before it, accepted by the API only if the console's
+// org became active after the mirror's last freeze and that freeze is older than its grace, and a compare-and-swap on
+// the mirror row's version. A freeze the mirror lacked is fixed and logged at error level.
 // It compares complete lists, never one page of each: every page of the console's organisations and every page of the
 // API's mirror rows (each `next` cursor followed, at most MAX_PAGES each). An org with no mirror row counts as not
 // frozen there, so a frozen console org without one is a difference to fix (never "fine"). At most MIRROR_FIXES are
@@ -73,20 +75,27 @@ export async function reconcileFreezes(env: Pick<Env, 'API' | 'CONSOLE'>): Promi
   out.backlog = Math.max(0, wrong.length - MIRROR_FIXES);
   for (const o of wrong.slice(0, MIRROR_FIXES)) {
     const freeze = o.status === 'frozen';
+    let since: number | undefined;
     if (!freeze) {
-      // An unfreeze only loosens: the console's status is read again right before it (a freeze that landed after the
-      // lists were read must win), and the mirror is unfrozen only if its row is still the version read (a
-      // compare-and-swap: a freeze mirrored meanwhile bumps it). Either moving means no unfreeze this run.
+      // An unfreeze only loosens, so it is ordered (D918): the console is read again right before it (a freeze that
+      // landed after the lists were read wins), and the API accepts it only if the console's org became active after
+      // the mirror's last freeze (a staff freeze writes the mirror first, so a freeze whose console half is still
+      // landing is always after) and that freeze is older than UNFREEZE_GRACE_MS; it is also a compare-and-swap on the
+      // row's version read with the list. Any of them moving means no unfreeze this run.
       const now = await env.CONSOLE.getOrg({ ...systemCtx(), orgId: o.id }).catch(() => null);
-      if (!now?.ok || now.org.status !== 'active') {
-        log({ event: 'freeze_mirror', orgId: o.id, outcome: 'rejected', code: now?.ok ? 'frozen_meanwhile' : 'console_unreadable' }, 'warn');
+      if (!now?.ok || now.org.status !== 'active' || now.statusSince === undefined) {
+        log({ event: 'freeze_mirror', orgId: o.id, outcome: 'rejected', code: now?.ok ? (now.org.status !== 'active' ? 'frozen_meanwhile' : 'no_status_time') : 'console_unreadable' }, 'warn');
+        out.failed++;
         continue;
       }
+      since = now.statusSince;
     }
-    const r = await env.API.setPlatformOrgFrozen({ ...systemCtx(), orgId: o.id, frozen: freeze, ...(freeze ? {} : { expectedVersion: versions.get(o.id) ?? 0 }) }).catch(() => null);
+    const r = await env.API.setPlatformOrgFrozen({ ...systemCtx(), orgId: o.id, frozen: freeze, ...(freeze ? {} : { expectedVersion: versions.get(o.id) ?? 0, consoleActiveSince: since }) }).catch(() => null);
     if (r?.ok) out.fixed++;
     else out.failed++;
-    log({ event: 'freeze_mirror', orgId: o.id, outcome: r?.ok ? 'ok' : 'rejected', ...(r && !r.ok ? { code: r.code } : {}) }, r?.ok ? 'info' : 'warn');
+    // A freeze the mirror didn't have is an error (the org's keys could have worked while it was frozen); an unfreeze
+    // fixed or held back is ordinary.
+    log({ event: 'freeze_mirror', orgId: o.id, outcome: r?.ok ? 'ok' : 'rejected', code: freeze ? 'mirror_was_unfrozen' : 'unfreeze', ...(r && !r.ok ? { step: r.code } : {}) }, freeze ? 'error' : r?.ok ? 'info' : 'warn');
   }
   if (out.backlog > 0) log({ event: 'freeze_mirror', outcome: 'rejected', code: 'backlog', count: out.backlog }, 'error');
   return out;

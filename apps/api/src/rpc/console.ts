@@ -370,11 +370,12 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   /**
    * A kill switch: immediate, no fresh sign-in, whatever the key's state; cancels the key's waiting web addresses.
    * Never refused by the members' budget or the breaker (D918 after PR 149's review: one org's burst must not leave any
-   * owner unable to stop a stolen key): admitted outside them, still held to CONSOLE_DB_LIMITS, logged for the alerts.
-   * A revocation is idempotent (a second one is `conflict` after one read), which bounds what repeating it costs.
+   * owner unable to stop a stolen key), but admitted by limits of its own (platform/revoke-guard.ts): per member and per
+   * org before any database work, a repeat that changes nothing answered from the key's marker without the database, a
+   * global ceiling on no-ops only, and an alert on a burst of stops. Still held to CONSOLE_DB_LIMITS.
    */
   revokePlatformKey(c: unknown) {
-    return runRpc(this.env, 'revokePlatformKey', revokePlatformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokePlatformKey, unmetered: true }, ({ input, db, w }) => revokePlatformKey(db, w, input));
+    return runRpc(this.env, 'revokePlatformKey', revokePlatformKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokePlatformKey, revokeGuard: true }, ({ input, db, w }) => revokePlatformKey(db, w, input));
   }
 
   /** The announcement's cancel link (`POST /api/platform-keys/cancel`): no session, the `link` actor, the link limits. */

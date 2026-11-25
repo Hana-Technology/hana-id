@@ -173,7 +173,8 @@ export interface AdminRpcClient {
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */
 export interface StaffRpcClient {
   listOrgs(c: unknown): Answer<{ orgs: OrgView[]; next?: string }>;
-  getOrg(c: unknown): Answer<{ org: OrgView; members: MemberView[]; invites: InviteView[]; grants?: OwnerGrantView[] }>;
+  /** `statusSince` (D918): the org's last freeze or unfreeze, else its creation (the freeze mirror's unfreeze names it). */
+  getOrg(c: unknown): Answer<{ org: OrgView; members: MemberView[]; invites: InviteView[]; grants?: OwnerGrantView[]; statusSince?: number }>;
   issueInvite(c: unknown): Answer<{ invite: InviteView }>;
   revokeInvite(c: unknown): Loose;
   /** The Organisations page's "Pending invites" (D696): invites to organisations not created yet, open and recently ended. */

@@ -643,6 +643,8 @@ const writeOrg = (w: Writer, orgId: string, set: { enabled?: 0 | 1; frozen?: 0 |
   q`INSERT INTO platform_orgs (org_id, enabled, frozen, set_by, set_at, version)
       SELECT ${orgId}, 0, 0, ${actorId(w.actor)}, ${w.now}, 0 WHERE ${committed(w.requestId)} AND NOT EXISTS (SELECT 1 FROM platform_orgs WHERE org_id = ${orgId})`,
   q`UPDATE platform_orgs SET ${raw(set.enabled !== undefined ? `enabled = ${set.enabled}, ` : '')}${raw(set.frozen !== undefined ? `frozen = ${set.frozen}, ` : '')}${
+    set.frozen === 1 ? q`frozen_at = ${w.now}, ` : raw('')
+  }${
     set.review !== undefined ? q`review_json = ${set.review}, ` : raw('')
   }set_by = ${actorId(w.actor)}, set_at = ${w.now}, version = version + 1 WHERE org_id = ${orgId} AND ${committed(w.requestId)}`,
 ];
@@ -693,30 +695,51 @@ export async function setPlatformOrg(db: HotDb, w: Writer, i: { orgId: string; e
  * one batch: `frozen` set, the org's waiting keys and the platform's waiting web addresses for its apps cancelled
  * (D917). Its keys in force stay (only the kill switches work for a frozen org); unfreezing changes nothing else.
  */
-export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: string; frozen: boolean; expectedVersion?: number | undefined }) {
+export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: string; frozen: boolean; expectedVersion?: number | undefined; consoleActiveSince?: number | undefined }) {
   expectReplay(w, ['platform.org_frozen']);
   if (w.actor.kind !== 'hana' && w.actor.kind !== 'system') return refuse('forbidden', 'Only Journear staff (or the admin Worker’s mirror) freeze an organisation');
-  const p = await db.first<{ replay: string | null; frozen: number | null; version: number | null; waiting: string; proposals: number }>(
-    q`SELECT ${replayRow(w.requestId)} AS replay, po.frozen, po.version, ${WAITING_KEYS_JSON(i.orgId, w.now)} AS waiting,
+  const p = await db.first<{ replay: string | null; frozen: number | null; frozen_at: number | null; version: number | null; waiting: string; proposals: number }>(
+    q`SELECT ${replayRow(w.requestId)} AS replay, po.frozen, po.frozen_at, po.version, ${WAITING_KEYS_JSON(i.orgId, w.now)} AS waiting,
              (SELECT COUNT(*) FROM guarded_changes g WHERE g.kind = 'origin_add' AND g.proposed_by_kind = 'platform' AND g.status = 'pending' AND (g.active_from IS NULL OR g.active_from > ${w.now})
                 AND g.app_id IN (SELECT id FROM apps WHERE org_id = ${i.orgId})) AS proposals
         FROM (SELECT 1) LEFT JOIN platform_orgs po ON po.org_id = ${i.orgId}`,
   );
   refuseReplay(p?.replay, w);
   const waiting = JSON.parse(p?.waiting ?? '[]') as string[];
-  // Already as asked, with nothing left waiting to cancel: no write.
-  if ((p?.frozen ?? 0) === (i.frozen ? 1 : 0) && (!i.frozen || (waiting.length === 0 && (p?.proposals ?? 0) === 0))) return { changed: false };
+  // An unfreeze of a row that isn't frozen: no write. A freeze always writes (its `frozen_at`, even on a row already
+  // frozen): an unfreeze racing it must see it.
+  if (!i.frozen && (p?.frozen ?? 0) === 0) return { changed: false };
+  const unfreezeGuard = i.frozen ? raw('1') : unfreezeOrdered(w, i.orgId, i.consoleActiveSince!);
+  if (!i.frozen) {
+    const frozenAt = p?.frozen_at ?? 0;
+    if (frozenAt >= i.consoleActiveSince!) refuse('conflict', 'The organisation was frozen here after the console last showed it active: it stays frozen');
+    if (w.actor.kind === 'system' && frozenAt > w.now - UNFREEZE_GRACE_MS) refuse('conflict', 'The organisation was frozen here a moment ago: the hourly check leaves it frozen');
+  }
   // A compare-and-swap on the row's version when asked (the hourly check's unfreeze: a freeze landing after its read wins).
   if (i.expectedVersion !== undefined && (p?.version ?? 0) !== i.expectedVersion) refuse('version_conflict', 'The organisation’s platform row changed since it was read');
-  const cas = i.expectedVersion === undefined ? raw('1') : q`COALESCE((SELECT version FROM platform_orgs WHERE org_id = ${i.orgId}), 0) = ${i.expectedVersion}`;
+  const cas = i.expectedVersion === undefined ? unfreezeGuard : q`${unfreezeGuard} AND COALESCE((SELECT version FROM platform_orgs WHERE org_id = ${i.orgId}), 0) = ${i.expectedVersion}`;
   const stmts: Q[] = [
     commitOn(w, { kind: 'platform.org_frozen', detail: { frozen: i.frozen, ...(i.frozen ? { cancelledKeys: waiting } : {}) } }, { orgId: i.orgId }, cas),
   ];
   if (i.frozen) stmts.push(cancelWaitingKeys(w, i.orgId, 'org_frozen'), ...cancelPlatformProposals(w, { orgId: i.orgId, keyId: null, reason: 'org_frozen' }));
   stmts.push(...writeOrg(w, i.orgId, { frozen: i.frozen ? 1 : 0 }));
   await runWrite(db, w, stmts);
-  return { changed: true };
+  return { changed: (p?.frozen ?? 0) !== (i.frozen ? 1 : 0) || waiting.length > 0 || (p?.proposals ?? 0) > 0 };
 }
+
+/**
+ * How long after a freeze the hourly check never unfreezes the mirror, whatever the console says (D918): longer than a
+ * staff route call (two RPCs, seconds) plus the check's own run (two paged lists and at most MIRROR_FIXES writes, well
+ * under a minute) many times over, so a freeze whose console half is still landing is never undone by a check that
+ * read the console a moment before it. A real unfreeze waits at most one more run for it.
+ */
+export const UNFREEZE_GRACE_MS = 10 * 60_000;
+
+/** The unfreeze's order in the commit predicate: the mirror's last freeze is before the console's org became active (and, for the hourly check, older than the grace). */
+const unfreezeOrdered = (w: Writer, orgId: string, consoleActiveSince: number): Q =>
+  q`COALESCE((SELECT frozen_at FROM platform_orgs WHERE org_id = ${orgId}), 0) < ${consoleActiveSince}${
+    w.actor.kind === 'system' ? q` AND COALESCE((SELECT frozen_at FROM platform_orgs WHERE org_id = ${orgId}), 0) <= ${w.now - UNFREEZE_GRACE_MS}` : raw('')
+  }`;
 
 /** AdminRpc.platformOrgs: the orgs with a switch row, in id order from after `cursor`, `next` while more remain (the admin Worker's freeze check pages through them all). */
 export async function platformOrgs(db: HotDb, limit: number, cursor?: string): Promise<{ orgs: { orgId: string; enabled: boolean; frozen: boolean; version: number }[]; next?: string }> {

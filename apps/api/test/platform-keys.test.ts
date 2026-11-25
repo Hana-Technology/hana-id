@@ -23,12 +23,14 @@ import type { Writer } from '../src/changes/cas.ts';
 import { HotDb } from '../src/changes/db.ts';
 import { platformMinDelayMs } from '../src/guarded/config.ts';
 import { platformKeysMaintenance } from '../src/platform/cron.ts';
-import { cancelPlatformKey, confirmPlatformKey, fourEyesEnv, registerPlatformKey, revokePlatformKey } from '../src/platform/keys.ts';
+import { REVOKE_LIMITS } from '../src/platform/revoke-guard.ts';
+import { placedStub } from '../src/placement.ts';
+import { UNFREEZE_GRACE_MS, cancelPlatformKey, confirmPlatformKey, fourEyesEnv, registerPlatformKey, revokePlatformKey } from '../src/platform/keys.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
 import { clearViewCaches } from '../src/views.ts';
 import { ORIGIN, call } from './helpers.ts';
-import { type DbCount, type OrgApp, STEP_UP_SUB, counted, hana, linkToken, member, orgApp, ownClock, ownerChain, rid, rows, stepUp, system } from './rpc-helpers.ts';
+import { type DbCount, type OrgApp, STEP_UP_SUB, counted, countingDb, hana, linkToken, member, orgApp, ownClock, ownerChain, rid, rows, stepUp, system } from './rpc-helpers.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -557,7 +559,7 @@ describe('an owner’s confirmation', () => {
     const k4 = (await ok(memberRegister(r4))).key;
     await announce(k4.id);
     // The mirror's flag alone (a bare write: the real mirror would also have cancelled the waiting key).
-    await env.DB.prepare("INSERT INTO platform_orgs (org_id, frozen, set_by, set_at) VALUES (?1, 1, 'test', ?2)").bind(r.app.org, Date.now()).run();
+    await env.DB.prepare("INSERT INTO platform_orgs (org_id, frozen, frozen_at, set_by, set_at) VALUES (?1, 1, ?2, 'test', ?2)").bind(r.app.org, Date.now()).run();
     expect(await no(confirmBy(r4, k4.id, second()))).toMatchObject({ code: 'forbidden' });
   });
 
@@ -790,7 +792,8 @@ describe('the org’s platform switch and the freeze mirror', () => {
     expect(await keyRow(k.id)).toMatchObject({ status: 'cancelled', cancel_reason: 'org_frozen' });
     expect((await rows<{ status: string }>('SELECT status FROM guarded_changes WHERE id = ?1', p))[0]!.status).toBe('cancelled');
     expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: true }))).changed).toBe(false);
-    await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false }));
+    clock.advance(UNFREEZE_GRACE_MS + 1000);
+    await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, consoleActiveSince: Date.now() }));
     expect((await keyRow(k.id)).status).toBe('cancelled');
     expect((await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)).toMatchObject({ orgId: r.app.org, enabled: false, frozen: false });
   });
@@ -1025,16 +1028,45 @@ describe('after PR 149’s review', () => {
   it('the freeze mirror’s unfreeze is a compare-and-swap on the row’s version (finding 4)', async () => {
     const r = await setup();
     await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
+    clock.advance(UNFREEZE_GRACE_MS + 1000);
+    const active = Date.now();
     const v = (await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)!.version;
-    expect(await no(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v - 1 }))).toMatchObject({ code: 'version_conflict' });
-    // A freeze between the read and the batch moves the version: the unfreeze writes nothing.
-    await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false }));
-    await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
-    const v2 = (await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)!.version;
+    expect(await no(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v - 1, consoleActiveSince: active }))).toMatchObject({ code: 'version_conflict' });
+    // A write between the read and the batch moves the version: the unfreeze writes nothing.
     const raced = racing(env.DB, () => env.DB.prepare('UPDATE platform_orgs SET version = version + 1 WHERE org_id = ?1').bind(r.app.org).run());
-    expect(await no(adminOn({ DB: raced }).setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v2 }))).toMatchObject({ code: 'version_conflict' });
+    expect(await no(adminOn({ DB: raced }).setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v, consoleActiveSince: active }))).toMatchObject({ code: 'version_conflict' });
     expect(await env.DB.prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(r.app.org).first()).toEqual({ frozen: 1 });
-    expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v2 + 1 }))).changed).toBe(true);
+    expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v + 1, consoleActiveSince: active }))).changed).toBe(true);
+  });
+
+  it('an unfreeze is ordered after the mirror’s last freeze: a freeze always writes its time, and the hourly check keeps a grace (automated finding)', async () => {
+    const r = await setup();
+    const row = () => env.DB.prepare('SELECT frozen, frozen_at, version FROM platform_orgs WHERE org_id = ?1').bind(r.app.org).first<{ frozen: number; frozen_at: number; version: number }>();
+    // Without the console's time an unfreeze is refused outright.
+    expect(await no(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false }))).toMatchObject({ code: 'bad_request' });
+    await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
+    const first = (await row())!;
+    // A second freeze finds the row frozen and still writes its time (a racing unfreeze must see it).
+    clock.advance(1000);
+    await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
+    const again = (await row())!;
+    expect(again).toMatchObject({ frozen: 1, frozen_at: first.frozen_at + 1000, version: first.version + 1 });
+    // The console active since before that freeze (a check that read it a moment before the freeze's console half): refused.
+    expect(await no(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false, consoleActiveSince: again.frozen_at }))).toMatchObject({ code: 'conflict' });
+    expect(await no(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false, consoleActiveSince: again.frozen_at - 1 }))).toMatchObject({ code: 'conflict' });
+    // The hourly check (system) within the grace: refused even with a later console time; staff are not held to it.
+    clock.advance(2000);
+    expect(await no(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, consoleActiveSince: Date.now() }))).toMatchObject({ code: 'conflict' });
+    expect((await row())!.frozen).toBe(1);
+    clock.advance(UNFREEZE_GRACE_MS);
+    // A freeze landing between the unfreeze's read and its batch: the commit predicate sees its newer time.
+    const raced = racing(env.DB, () => adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
+    expect(await no(adminOn({ DB: raced }).setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false, consoleActiveSince: Date.now() - 1 }))).toMatchObject({ code: 'version_conflict' });
+    expect((await row())!.frozen).toBe(1);
+    // In order (the console unfrozen after the last freeze, past the grace): unfrozen.
+    clock.advance(UNFREEZE_GRACE_MS + 1000);
+    expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, consoleActiveSince: Date.now() }))).changed).toBe(true);
+    expect((await row())!.frozen).toBe(0);
   });
 
   it('the console view says whether this member counts as the registrant for four eyes (finding 10)', async () => {
@@ -1042,5 +1074,76 @@ describe('after PR 149’s review', () => {
     const { key } = await ok(staffRegister(r, { rpc: adminOn(MAINNET) }));
     expect((await ok(consoleOn().getPlatformKey({ ...owner('owner-sub-2', 'Staff.1+x@hana.example'), orgId: r.app.org, keyId: key.id }))).key.registeredByYou).toBe(true);
     expect((await ok(consoleOn().getPlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key.registeredByYou).toBe(false);
+  });
+});
+
+describe('an owner’s stop: its own limits, never the shared budget (after PR 149’s automated findings)', () => {
+  /** ConsoleRpc without the 2 s per call (the limits' minute windows stay put), over `e`. */
+  const still = (e: Partial<Env> = {}) => new ConsoleRpc(createExecutionContext(), { ...env, ...e } as Env);
+  const fresh = () => newId('platformKey');
+
+  it('one org exhausting its own stop limits never stops another org’s owner; a member’s limit stops only that member', async () => {
+    const a = await setup();
+    const b = await setup();
+    const { key: bKey } = await ok(memberRegister(b));
+    const [a1, a2, a3] = [newId('user'), newId('user'), newId('user')];
+    const by = (id: string) => owner('owner-sub-1', 'owner@partner.example', id);
+    for (let k = 0; k < 20; k++) expect((await no(still().revokePlatformKey({ ...by(a1), orgId: a.app.org, keyId: fresh() }))).code).toBe('not_found');
+    expect(await no(still().revokePlatformKey({ ...by(a1), orgId: a.app.org, keyId: fresh() }))).toMatchObject({ code: 'rate_limited', error: expect.stringMatching(/from you/u) });
+    for (let k = 0; k < 20; k++) expect((await no(still().revokePlatformKey({ ...by(a2), orgId: a.app.org, keyId: fresh() }))).code).toBe('not_found');
+    expect(await no(still().revokePlatformKey({ ...by(a3), orgId: a.app.org, keyId: fresh() }))).toMatchObject({ code: 'rate_limited', error: expect.stringMatching(/organisation/u) });
+    // Org b's owner (the same person id as org a's, even) stops b's key at once.
+    expect((await ok(still().revokePlatformKey({ ...member(), orgId: b.app.org, keyId: bKey.id }))).key.state).toBe('revoked');
+    // The limits are their own: the console's shared budget and breaker were never drawn on.
+    expect(REVOKE_LIMITS.perMember[0].max).toBe(20);
+  });
+
+  it('a repeat that changes nothing is answered without the database, from the key’s marker, for 15 minutes', async () => {
+    const r = await setup();
+    const { key } = await ok(memberRegister(r));
+    const count: DbCount = { reads: 0, batches: 0, statements: 0 };
+    const on = () => still({ DB: countingDb(env.DB, count) });
+    const ghost = fresh();
+    expect((await no(on().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: ghost }))).code).toBe('not_found');
+    expect(count.reads).toBeGreaterThan(0);
+    count.reads = 0;
+    expect((await no(on().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: ghost }))).code).toBe('not_found');
+    expect(count).toMatchObject({ reads: 0, batches: 0 });
+    // A real stop, then its repeats: one read for the first `conflict`, none after.
+    expect((await ok(on().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key.state).toBe('revoked');
+    count.reads = 0;
+    count.batches = 0;
+    expect((await no(on().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).code).toBe('conflict');
+    expect(count.batches).toBe(0);
+    count.reads = 0;
+    expect((await no(on().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).code).toBe('conflict');
+    expect(count).toMatchObject({ reads: 0, batches: 0 });
+    // The marker is the org's: the same id in another org is read afresh.
+    const other = await setup();
+    count.reads = 0;
+    expect((await no(on().revokePlatformKey({ ...member(), orgId: other.app.org, keyId: ghost }))).code).toBe('not_found');
+    expect(count.reads).toBeGreaterThan(0);
+  });
+
+  it('past the global ceiling on no-ops a no-op answers rate_limited at error level; a stop that changes something still goes through', async () => {
+    const r = await setup();
+    const { key } = await ok(memberRegister(r));
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((l: unknown) => void errors.push(String(l)));
+    const now = Date.now();
+    const g = placedStub(env, env.RATE_LIMITER, 'pk-revoke:global');
+    for (let k = 0; k < REVOKE_LIMITS.noopGlobal[0].max; k++) await g.hit([...REVOKE_LIMITS.noopGlobal], now);
+    expect(await no(still().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: fresh() }))).toMatchObject({ code: 'rate_limited' });
+    expect(errors.some((l) => l.includes('revoke_noop_flood'))).toBe(true);
+    expect((await ok(still().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key.state).toBe('revoked');
+  });
+
+  it('a burst of stops in an org is an alert, never a refusal', async () => {
+    const r = await setup();
+    const warns: string[] = [];
+    vi.spyOn(console, 'warn').mockImplementation((l: unknown) => void warns.push(String(l)));
+    const ids = [await bareKey(r), await bareKey(r), await bareKey(r), await bareKey(r)];
+    for (const { id } of ids) expect((await ok(still().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: id }))).key.state).toBe('revoked');
+    expect(warns.some((l) => l.includes('platform_key_revoke_burst') && l.includes(r.app.org))).toBe(true);
   });
 });

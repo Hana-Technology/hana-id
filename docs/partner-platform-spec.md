@@ -1362,7 +1362,7 @@ review.
 | P4 | H1 (the reach filter in every plan read and commit predicate), H2 (cancel held to platform-proposed origin adds), M7 (live origin rules), L3 (idempotency for the ledger's lifetime, the rotated-key retry), L4 (who holds the partner bit), L15 (look-alike names within the scope), L16 (`INSERT … SELECT` of the app's mode) |
 | P5 | L7 (what is recorded and what is only counted), L14 (one email per request, lower quotas), H3's mainnet demo warning |
 | P10 | M6 (decided as N3: the owner's confirmation and its threats, A2 and A15), PR 142's review (the set write, the removal link, revocation cancelling waiting proposals, the database's earliest time, the `local*` guard) |
-| Before the platform switch is on for any org | P0 (H3, in code), the key confirmation (P2), the platform minimum (P4) and the owner's confirmation of origins (P10, M6), each built, reviewed and deployed; the "also used on other apps" line (N6) |
+| Before the platform switch is on for any org | P0 (H3, in code), the key confirmation (P2), the platform minimum (P4), the owner's confirmation of origins (P10, M6) and P10's `local*` guard (until then the 24 h platform minimum's `local*` exception is held by the env's name only: D918, after PR 149's review), each built, reviewed and deployed; the "also used on other apps" line (N6) |
 | P6 and P7 | M8 (retention and erasure), L9 (lookup volume alerts, the data-sharing rule N7), L12 (the `aud` benefit and the guide), L10 (the vectors' path) |
 | None | M1 (staff restore): closed by refusing the restore (question 8, A14) |
 | This branch | L11 (`docs/integration.md`'s `sub` row corrected), L13 (D913 split into the Tech Lead's words, their answers and what is only proposed) |

@@ -9,6 +9,7 @@ import { log } from '../log.ts';
 import { RpcRefusal, type Writer } from '../changes/cas.ts';
 import { CONSOLE_DB_LIMITS, HotDb } from '../changes/db.ts';
 import { admitLinkCall, admitMemberCall, settleMemberCall } from '../changes/guard.ts';
+import { admitRevoke, settleRevoke } from '../platform/revoke-guard.ts';
 
 export type Answer<T extends object> = ({ ok: true } & T) | RpcFail;
 
@@ -24,10 +25,11 @@ export interface CallSetup {
   /** ConsoleRpc.cancelChangeByLink: the link limits (per IP, then global) instead of the members' budget. */
   link?: boolean;
   /**
-   * D918: a kill switch that is never refused for budget (a platform key's revocation): no bucket and no breaker, still
-   * held to CONSOLE_DB_LIMITS (its `cost` keeps it a console call), and logged as `unmetered` for the alerts.
+   * D918: an owner's stop of a platform key, never refused by the shared budget or the breaker but admitted by its own
+   * limits instead (platform/revoke-guard.ts: per member, per org, a no-op repeat answered without the database, a
+   * global ceiling on no-ops); still held to CONSOLE_DB_LIMITS (its `cost` keeps it a console call).
    */
-  unmetered?: boolean;
+  revokeGuard?: boolean;
 }
 
 export interface Call<I> {
@@ -69,21 +71,28 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
   let breakerTaken = false;
   let reserveUsed = 0;
   let code: RpcCode | null = null;
+  let admittedRevoke = false;
+  const revokeOf = setup.revokeGuard ? { orgId: orgId!, keyId: (input as { keyId?: string }).keyId ?? '', method, requestId: input.requestId } : null;
   try {
     if (setup.link) await admitLinkCall(env, input.clientIp, now);
-    else if (setup.unmetered) log({ event: 'rpc_admit', ...fields, outcome: 'ok', code: 'unmetered' });
-    else if (consoleCall) {
+    else if (revokeOf) {
+      await admitRevoke(env, { ...revokeOf, userId: input.actor.kind === 'member' ? input.actor.id : input.actor.kind }, now);
+      admittedRevoke = true;
+    } else if (consoleCall) {
       ({ reserveUsed } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
       breakerTaken = !!setup.breaker;
     }
     const db = new HotDb(env.DB, consoleCall ? CONSOLE_DB_LIMITS : undefined);
     const result = await work({ input, db, w });
     log({ event: 'rpc', ...fields, outcome: 'ok' });
+    if (admittedRevoke) await settleRevoke(env, revokeOf!, null, now);
     return { ok: true, ...result };
   } catch (err) {
     if (err instanceof RpcRefusal) {
       code = err.code;
       log({ event: 'rpc', ...fields, outcome: 'rejected', code: err.code });
+      // Past the global ceiling on no-op stops, a no-op answers `rate_limited` (it changed nothing either way).
+      if (admittedRevoke && (await settleRevoke(env, revokeOf!, err.code, now)) === 'rate_limited') return { ok: false, code: 'rate_limited', error: 'Too many stops that changed nothing: try again shortly' };
       return { ok: false, code: err.code, error: err.message.slice(0, 500) };
     }
     code = 'internal';

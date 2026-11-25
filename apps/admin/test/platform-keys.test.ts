@@ -215,8 +215,9 @@ describe('the staff routes', () => {
     expect(await json(res)).toEqual({ platformMirrored: true });
     expect((await keyRow(k.id))!.status).toBe('cancelled');
     expect(await hot().prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(org).first()).toEqual({ frozen: 1 });
-    // Unfrozen in the console only (as if the mirror failed): the check fixes it.
-    await env.CONSOLE_TEST_DB.prepare("UPDATE orgs SET status = 'active' WHERE id = ?").bind(org).run();
+    // Unfrozen in the console only (as if the mirror failed), the freeze past the check's grace: the check fixes it.
+    await hot().prepare('UPDATE platform_orgs SET frozen_at = frozen_at - 3600000 WHERE org_id = ?1').bind(org).run();
+    expect((await env.CONSOLE.freezeOrg({ actor: { kind: 'hana', id: 'staff-sub-1', email: 'staff@hana.example' }, requestId: `req_${uid()}`, clientIp: '198.51.100.9', orgId: org, frozen: false })).ok).toBe(true);
     const fixed = await reconcileFreezes(env);
     expect(fixed.fixed).toBeGreaterThanOrEqual(1);
     expect(await hot().prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(org).first()).toEqual({ frozen: 0 });
@@ -270,5 +271,77 @@ describe('after PR 149’s review (admin)', () => {
     const res3 = await adminRequestWith({ API: down, CONSOLE: env.CONSOLE }, `/api/orgs/${org}/freeze`, { frozen: true });
     expect(res3.status).toBe(502);
     expect(await env.CONSOLE_TEST_DB.prepare('SELECT status FROM orgs WHERE id = ?').bind(org).first()).toEqual({ status: 'frozen' });
+  });
+});
+
+describe('the freeze mirror’s unfreeze is ordered against a staff freeze (automated finding)', () => {
+  type Point = 0 | 1 | 2 | 3;
+  const staffCtx = () => ({ actor: { kind: 'hana' as const, id: 'staff-sub-1', email: 'staff@hana.example' }, requestId: `req_${uid()}`, clientIp: '198.51.100.9' });
+  const mirror = (org: string) => hot().prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(org).first<{ frozen: number }>();
+  const consoleStatus = async (org: string) => (await env.CONSOLE_TEST_DB.prepare('SELECT status FROM orgs WHERE id = ?').bind(org).first<{ status: string }>())!.status;
+
+  /** An org whose console is active and whose mirror was left frozen an hour ago (a staff unfreeze whose mirror didn't land). */
+  async function staleMirror(): Promise<string> {
+    const { org } = await orgWithApp();
+    await hot().prepare("INSERT INTO platform_orgs (org_id, frozen, frozen_at, set_by, set_at, version) VALUES (?1, 1, ?2, 'test', ?2, 1)").bind(org, Date.now() - 3_600_000).run();
+    return org;
+  }
+
+  /**
+   * One reconcile run seeing only `org`, with `at(point)` run at each point of its unfreeze path: 0 before it, 1 after
+   * the lists (before the console is read again), 2 after that read (before the API's unfreeze), 3 after the run.
+   */
+  async function reconcileWith(org: string, at: (p: Point) => Promise<void>) {
+    const only = <T extends { ok: boolean }>(r: T, key: 'orgs', id: 'id' | 'orgId'): T =>
+      r.ok ? ({ ...r, [key]: (r as unknown as Record<string, { id?: string; orgId?: string }[]>)[key]!.filter((x) => x[id] === org), next: undefined } as T) : r;
+    const con = overrideBinding(env.CONSOLE, {
+      listOrgs: async (c: unknown) => only(await env.CONSOLE.listOrgs(c), 'orgs', 'id'),
+      getOrg: async (c: unknown) => (await at(1), env.CONSOLE.getOrg(c)),
+    });
+    const api = overrideBinding(env.API, {
+      platformOrgs: async (c: unknown) => only(await env.API.platformOrgs(c), 'orgs', 'orgId'),
+      setPlatformOrgFrozen: async (c: unknown) => ((c as { frozen: boolean }).frozen ? undefined : await at(2), env.API.setPlatformOrgFrozen(c)),
+    });
+    await at(0);
+    const r = await reconcileFreezes({ ...env, API: api, CONSOLE: con });
+    await at(3);
+    return r;
+  }
+
+  it('a staff freeze (mirror first, then the console) at every point of the unfreeze path: the mirror never ends unfrozen while the console is frozen', async () => {
+    const points: Point[] = [0, 1, 2, 3];
+    for (const a of points)
+      for (const c of points.filter((p) => p >= a)) {
+        const org = await staleMirror();
+        await reconcileWith(org, async (p) => {
+          if (p === a) expect((await env.API.setPlatformOrgFrozen({ ...staffCtx(), orgId: org, frozen: true })).ok, `mirror at ${a}`).toBe(true);
+          if (p === c) expect((await env.CONSOLE.freezeOrg({ ...staffCtx(), orgId: org, frozen: true })).ok, `console at ${c}`).toBe(true);
+        });
+        expect(await consoleStatus(org), `${a}/${c}`).toBe('frozen');
+        expect(await mirror(org), `${a}/${c}`).toEqual({ frozen: 1 });
+      }
+  });
+
+  it('with no freeze racing it, the stale mirror is unfrozen (the console became active after the mirror’s freeze, past the grace)', async () => {
+    const org = await staleMirror();
+    expect(await reconcileWith(org, async () => {})).toMatchObject({ fixed: 1, failed: 0 });
+    expect(await mirror(org)).toEqual({ frozen: 0 });
+  });
+
+  it('a staff freeze whose mirror write fails, landing mid-run: an error-level log at once, and the next run freezes the mirror', async () => {
+    const org = await staleMirror();
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((l: unknown) => void errors.push(String(l)));
+    const down = overrideBinding(env.API, { setPlatformOrgFrozen: async () => ({ ok: false, code: 'internal' }) });
+    await reconcileWith(org, async (p) => {
+      if (p === 2) expect((await adminRequestWith({ API: down }, `/api/orgs/${org}/freeze`, { frozen: true })).status).toBe(502);
+    });
+    expect(await consoleStatus(org)).toBe('frozen');
+    // The run's unfreeze went through (its order held: the console's freeze came after its read, and no mirror write was made).
+    expect(await mirror(org)).toEqual({ frozen: 0 });
+    expect(errors.some((l) => l.includes('platform_mirror'))).toBe(true);
+    await reconcileWith(org, async () => {});
+    expect(await mirror(org)).toEqual({ frozen: 1 });
+    expect(errors.some((l) => l.includes('mirror_was_unfrozen') && l.includes(org))).toBe(true);
   });
 });

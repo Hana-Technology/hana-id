@@ -214,9 +214,13 @@ CREATE TABLE platform_orgs (
   set_by            TEXT NOT NULL,
   set_at            INTEGER NOT NULL,
   version           INTEGER NOT NULL DEFAULT 0,
+  -- The last time a freeze was written (every freeze writes it, one that finds the row already frozen too): an unfreeze
+  -- is accepted only when the console's org has been active since after it (D918, the freeze mirror's order).
+  frozen_at         INTEGER,
   -- The switch-on's review (L5): the ids of every key of the org in force, waiting or awaiting acceptance, sorted, as
   -- staff confirmed them; a trigger wants it to be exactly the current set whenever the switch goes on.
-  review_json       TEXT CHECK (review_json IS NULL OR (json_valid(review_json) AND json_type(review_json) = 'array'))
+  review_json       TEXT CHECK (review_json IS NULL OR (json_valid(review_json) AND json_type(review_json) = 'array')),
+  CHECK (frozen = 0 OR frozen_at IS NOT NULL)
 );
 
 -- One row per org, never replaced (a REPLACE would reset the freeze and the switch with no trigger firing): the API

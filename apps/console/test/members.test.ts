@@ -147,6 +147,22 @@ describe('freezeOrg', () => {
     expect((await auditRows("org_id = ? AND action LIKE 'org.%'", org)).map((r) => r.action)).toEqual(['org.frozen', 'org.unfrozen']);
     expect(await staffRpc().freezeOrg({ ...hana(), orgId: LEGACY_ORG_ID, frozen: true })).toMatchObject({ code: 'forbidden' });
   });
+
+  it('getOrg says when the status last changed (the freeze mirror’s unfreeze names it, D918): creation, then each freeze and unfreeze', async () => {
+    const org = await seedOrg();
+    const since = async () => ((await staffRpc().getOrg({ ...hana(), orgId: org })) as { statusSince: number }).statusSince;
+    const created = (await db.prepare('SELECT created_at FROM orgs WHERE id = ?').bind(org).first<number>('created_at'))!;
+    expect(await since()).toBe(created);
+    expect(await staffRpc().freezeOrg({ ...hana(), orgId: org, frozen: true })).toEqual({ ok: true });
+    const at = (action: string) => db.prepare('SELECT MAX(at) AS t FROM audit_log WHERE org_id = ? AND action = ?').bind(org, action).first<number>('t');
+    const frozenAt = (await at('org.frozen'))!;
+    expect(await since()).toBe(frozenAt);
+    // A freeze of a frozen org changes nothing and moves nothing.
+    expect(await staffRpc().freezeOrg({ ...hana(), orgId: org, frozen: true })).toEqual({ ok: true });
+    expect(await since()).toBe(frozenAt);
+    expect(await staffRpc().freezeOrg({ ...hana(), orgId: org, frozen: false })).toEqual({ ok: true });
+    expect(await since()).toBe(await at('org.unfrozen'));
+  });
 });
 
 describe('the audit reads', () => {

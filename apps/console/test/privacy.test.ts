@@ -221,6 +221,12 @@ describe('audit details', () => {
           "by",
           "ticket",
         ],
+        "users.link_view": [
+          "by",
+          "kind",
+          "of",
+          "code",
+        ],
       }
     `);
     // The one exception: a refused sign-in names the person only by the sha256 of the address Google verified, as the

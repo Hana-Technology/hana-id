@@ -7,7 +7,8 @@ the risks and the questions to settle with Sodax. Decisions: D909 and D913 in `d
 portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
 Last verified: 2026-11-25 (branch `docs/platform-answers`, from `next`, not merged, docs only: section 3's point 4
-and "Open" carry the Tech Lead's answers of 2026-11-25 (D914); nothing else re-checked); 2026-11-24 (branch `feat/name-sodax-evm-chains`, from `next`, not merged, not deployed: the approval
+and "Open" carry the Tech Lead's answers of 2026-11-25 (D914), revised after PR 142's review; nothing else
+re-checked); 2026-11-24 (branch `feat/name-sodax-evm-chains`, from `next`, not merged, not deployed: the approval
 window names all 14 of Sodax's EVM chains, D910; "Chains", the summary's last row and "Who builds what" updated);
 2026-11-24 (branch `docs/partner-platform-spec`, from `next`, not merged, docs only: the Tech Lead's
 answers of 2026-11-24 (D913) in the status line, sections 3, 4, 5 and "Open", and links to `partner-platform-spec.md`;
@@ -277,5 +278,6 @@ recommendation, to be adjusted after the talk with Sodax. Still open:
 
 - Publishing the SDK (registry, licence of `@hana-id/core`), needed before Sodax can depend on it: parked (D913).
 - The spec's own questions N1 to N9: answered by the Tech Lead on 2026-11-25 (D914; `partner-platform-spec.md`,
-  "Decided by the Tech Lead (2026-11-25)"), with two points of the owner's confirmation still to confirm (who exactly
-  may confirm, and no shortcut for platform keys) and one open for mainnet preparation.
+  "Decided by the Tech Lead (2026-11-25)"), with who may confirm (an owner, with a fresh Google sign-in) and a rule
+  for platform keys (a second owner confirms on real money) decided the same day; several design points proposed and
+  still to confirm, and two open points (D914).

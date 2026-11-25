@@ -16,7 +16,12 @@ across the network's partner sites). Built on the recommendation for who vouches
 adjusted after the Tech Lead has talked to the network. This version folds in PR 139's security review (its findings
 are named H1 to H3, M1 to M9 and L1 to L16 below, each tied to the build piece it gates).
 
-Last verified: 2026-11-25 (branch `docs/platform-answers`, docs only, not merged, from `next` @ 0b99ec12: the Tech
+Last verified: 2026-11-25 (branch `docs/platform-answers`, after PR 142's review: its 16 findings folded in (revocation
+cancels waiting proposals, the confirmation's removal link, one ledger row per confirmation set, a create's origins as
+platform proposals, the email's wait line, the CLI's announce, staff proposals on shared scopes, the code citations of
+who may confirm, the database's earliest time, the `local*` guard); the Tech Lead's rule on keys (four eyes) and
+"ok with fresh sign in when confirming"; every cited file checked again against `next` @ 0b99ec12); 2026-11-25
+(branch `docs/platform-answers`, docs only, not merged, from `next` @ 0b99ec12: the Tech
 Lead's answers to N1 to N9 and question 8 (D914) folded into every section; the owner's confirmation (A15) and its
 piece P10 added; the staff restore removed (A14); the console's roles and step-up kinds and `guarded_changes` checked
 against the code); 2026-11-24 (branch `docs/partner-platform-spec`, docs only, not merged: after PR 139's security review,
@@ -179,7 +184,7 @@ network partner is created by Journear staff, as today.
 
 | Threat | What it could give | What stops or bounds it |
 |---|---|---|
-| **A stolen platform credential** (the network's private key) | Create test apps under the network's name; propose look-alike origins; remove origins, suspend apps and revoke publishable keys of the platform's apps (denial of service); read publishable keys (public anyway) | Its reach (A1) and the reach filter inside every plan read and commit (H1); every origin it adds waits at least 24 h (the platform minimum, and at least the delay) after an email to the org's security contacts and to Journear, cancellable from the email, unless an owner confirms it in our partner portal, which the key can't do (A15); creation and proposal quotas (A5); the platform's own destructive-call breaker (M3); staff revoke the key or switch the platform off for the org at once; anomaly events to staff (A5). It can never touch owners, the chain, policies, raw signing, sponsorship, the mainnet demo or labels, so it can't move or sign anything on its own |
+| **A stolen platform credential** (the network's private key) | Create test apps under the network's name; propose look-alike origins; remove origins, suspend apps and revoke publishable keys of the platform's apps (denial of service); read publishable keys (public anyway) | Its reach (A1) and the reach filter inside every plan read and commit (H1); every origin it adds waits at least 24 h (the platform minimum, and at least the delay) after an email to the org's security contacts and to Journear, cancellable from the email, unless an owner confirms it in our partner portal, which the key can't do (A15); creation and proposal quotas (A5); the platform's own destructive-call breaker (M3); staff revoke the key or switch the platform off for the org at once, and a revocation, the switch-off or a freeze of the org **also cancels every origin the key proposed that isn't in force yet** (A3), since an announced origin otherwise comes into force by itself when its time comes; anomaly events to staff (A5). It can never touch owners, the chain, policies, raw signing, sponsorship, the mainnet demo or labels, so it can't move or sign anything on its own |
 | **A malicious or compromised partner site** (one of the network's partners) | On a shared wallet: ask any of the scope's users to approve moves from the one wallet, from its own origin | The user's approval window names the app and its web address; the "also used on other apps" line (another branch; decided, N6: it ships before the platform is on for any org); auto-approve refused in code for every app on a shared scope (P0, H3), raw signing refused for test apps, sponsorship staff-only, the mainnet demo staff-only with a warning for a platform-created app (A11); staff suspend the app at once (bit 1); the network removes its origins at once. A partner has no platform key and no console |
 | **A malicious network insider** | Everything a stolen credential gives; with console access as an owner, also the cancel links and the linking view (Part B); registering a key of its own and, on a test setup, confirming it at once (A3); as an on-chain owner of the scope, proposing an origin through the platform and confirming it at once (A15), where adding it by hand on a production network would wait the full delay (the open point of A15) | Origin additions also notify Journear, and a confirmation notifies the security contacts, every owner and Journear and names who confirmed (A15); and staff see every platform proposal on the admin portal's queue; a key registered by an owner is announced to the security contacts, the org's owners and Journear, naming who registered it (M5), and on a real-money setup comes into force before the 24 h only when a **different** owner confirms it (four eyes, A3); a staff-registered key needs an owner's acceptance or a second staff member (M5); a registration within 7 days of a security-contact change is refused (M5); every call is audited where the network's other owners and Journear see it; linking lookups are audited and their volume alerted (L9); Journear's per-app suspensions can't be undone by the network |
 | **A Journear staff member acting alone** | Register a key for an org | A staff-registered key comes into force only after the network's owner accepts it with a fresh sign-in (then, proposed, at once once announced: the acceptance counts as the confirmation, A3), or a second staff member approves it (then after the delay, unless an owner confirms it), and always after the notice (M5) |
@@ -191,11 +196,11 @@ network partner is created by Journear staff, as today.
 | **Enumeration** (of apps, changes, keys, credentials) | Learn other orgs' app ids or which key ids exist | Ids are random (`newId`, 12 random bytes); unknown and foreign ids answer the same `not_found`; every authentication failure answers the same `401 unauthenticated`; failures are limited per IP, successes per key |
 | **App creation abused to phish under the network's name** | An app named like the network or a known partner, with an attacker's origin | The origin waits the delay with the announcement (the notice shows the origin, its decoded form and the internationalised-domain warning that exists today); platform origins follow the live-scope rules (no loopback, no http, no mixed-script host, M7); app names pass `normalisePartnerAppName` (`packages/console-core/src/names.ts`: Journear's names and the reviewed lists refused) and, new, a name that reads like another app's name **on the same scope** is refused (the look-alike skeleton the labels already use; apps on other scopes or of other orgs aren't compared, L15); creation quotas; staff see every platform-created app |
 | **Origin takeover of an expired domain** | A partner lets its domain lapse; someone else registers it and serves a page on an origin that is still allowed on the shared wallet | The network must remove a partner's origins when it leaves (A13); the platform's read shows each origin's age; piece P9 reports origins with no sign-in for 60 days to the network and staff (decided as a later piece, D913 question 9); HTTPS only; staff suspend at once |
-| **The dev testnet env's short delay** | On sandbox-dev the delay is 60 s and the notice job runs every 5 minutes, so an added origin is in force about a minute after its email: nobody can cancel it in time. The delay protects almost nothing there, and sandbox-dev is where the mainnet demo (real money, D428) runs | Decided (N3): a platform minimum delay of 24 h for platform-proposed origins and for platform keys, in every env but `local*` test envs (M6); an origin comes into force sooner only when an owner confirms it (A15), never on the key's word alone. The platform is not switched on for any org until the minimum and the confirmation (P4, P10) are built |
-| **A confirmation by a taken-over owner account** (someone holds one owner's Google account) | Through the platform, nothing: a Google account proposes nothing there. Together with a stolen platform key, or with any origin the key proposed: confirm an attacker's origin at once, with no time to cancel. **The accepted risk** (the Tech Lead, N3: an owner whose own Google account is taken over has more at risk than this) | The confirmation needs a console `owner` member who is also an on-chain owner of the app's scope, with a fresh Google sign-in (to confirm, A15); the confirmation's notice goes at once to the security contacts, every owner and Journear, naming who confirmed; the user's approval window names the app and its web address, with the "also used on other apps" line (N6); staff suspend the app at once; the network or an owner removes the origin at once |
+| **The dev testnet env's short delay** | On sandbox-dev the delay is 60 s and the notice job runs every 5 minutes, so an added origin is in force about a minute after its email: nobody can cancel it in time. The delay protects almost nothing there, and sandbox-dev is where the mainnet demo (real money, D428) runs | A platform minimum delay of 24 h in every env but `local*` test envs (M6): for platform-proposed origins (decided, N3) and for platform keys (decided by the Tech Lead's later rule on keys, D914). An origin or a key comes into force sooner only when an owner confirms it (A15, A3), never on the platform key's word alone. Staff proposals on a flagged scope or a platform-created app: the same minimum, proposed (A15, to confirm). The platform is not switched on for any org until the minimum and the confirmations (P2, P4, P10) are built, reviewed and deployed |
+| **A confirmation by a taken-over owner account** (someone holds one owner's Google account) | Through the platform, nothing: a Google account proposes nothing there. Together with a stolen platform key, or with any origin the key proposed: confirm an attacker's origin at once, with no time to cancel. **The accepted risk** (the Tech Lead, N3: an owner whose own Google account is taken over has more at risk than this) | The confirmation needs a console `owner` member who is also an on-chain owner of the app's scope, with a fresh Google sign-in (decided, D914, A15); the confirmation's notice goes at once to the security contacts, every owner and Journear, naming who confirmed; the user's approval window names the app and its web address, with the "also used on other apps" line (N6); staff suspend the app at once; the network or an owner removes the origin at once |
 | **Confirm fatigue** (owners confirm by habit, without reading) | An attacker's origin confirmed by a real owner | The email never confirms: its Confirm link only opens the console page; the page shows the app, the origin in full and decoded, the internationalised-domain warning, who proposed it and when; each origin is ticked one by one (none ticked at first, no "confirm all"); each confirmation is its own fresh sign-in; the platform's proposal quotas (A5) bound how many there can be |
 | **CSRF on the confirmation**, a mail scanner or a forwarded email | A confirmation nobody meant | A GET never confirms (the page only shows the proposal); the confirm is a console `POST` under the console's CSRF rules (`apps/console/src/csrf.ts`: `Sec-Fetch-Site`, `Origin`, the custom header, JSON) with a `SameSite=Strict` session, and the fresh sign-in's nonce is bound to the exact change ids, app and origins (A15); a forwarded email gives its reader the page, not a session |
-| **A confirmation racing a cancel or a key revocation** | An origin in force after someone cancelled it, or after the proposing key was revoked | The confirmation is one compare-and-swap batch whose commit predicate requires the change still `pending`, announced, not cancelled and not yet in force, the proposing key not revoked and the org's platform switch on (A15); whichever lands first wins, and a cancel or revoke that lands first makes the confirmation `not_pending` or `conflict` |
+| **A confirmation racing a cancel or a key revocation** | An origin in force after someone cancelled it, or after the proposing key was revoked | A revocation cancels the key's waiting proposals in its own batch (A3), so nothing is left to confirm; the confirmation is one compare-and-swap batch whose commit predicate requires every listed change still `pending`, announced, not cancelled and not yet in force, the proposing key in force and the org's platform switch on (A15); whichever lands first wins, and a cancel or revoke that lands first makes the confirmation write nothing |
 | **A confirmation after the app left the platform's reach** (deleted, moved, its scope dropped from the key, suspended by Journear) | An origin in force on an app the platform should no longer touch | The same commit predicate holds the proposing key's reach (A4.2) and refuses an app Journear suspended (bit 1 or 2); a refused confirmation leaves the proposal as it was (still waiting, still cancellable) |
 | **A leaked request log** at the network or in transit | A captured signed request | No bearer secret in any header; the signature covers the body and a single-use nonce, so a logged request can't be reused or altered |
 | **Our D1 read by an attacker** | The registered public keys and the call log | Public keys sign nothing; nothing secret of the network is stored on our side |
@@ -315,7 +320,8 @@ Either way the credential is then **pending**: announced by email to the org's s
 the org**, and to Journear's security alias, naming who registered it (the member's email or "Journear staff" with the
 staff member's name) and who accepted it, with a cancel link (M5; decided, N9). It then comes into force **when an
 owner confirms it** (below), or else after the delay (the greater of `appChangeDelayMs` and the platform minimum of
-24 h, in every env but `local*` test envs; decided, N3), unless it is cancelled first. Staff can't skip the wait. The
+24 h, in every env but `local*` test envs; decided by the Tech Lead's rule on keys, D914), unless it is cancelled
+first. Staff can't skip the wait. The
 public key is checked to be a valid P-256 point, unique across all orgs.
 
 **An owner's confirmation of a key** (decided by the Tech Lead 2026-11-25, D914; the "four eyes" rule). The
@@ -326,9 +332,15 @@ after a step-up of kind `platform.key_confirm`) that refuses every actor but a m
 confirm a key**, its own or another; the cancel link stays one click from the email with no sign-in. Only a `pending`,
 announced, unconfirmed and uncancelled key can be confirmed. Revocation stays immediate, whatever the key's state.
 
-- **Who may confirm:** the same bar as for an origin (A15, to confirm): a console `owner` member who is an on-chain
-  owner of **each** scope the key names, with the fresh Google sign-in (`confirmStepUp` once per scope, as the
-  registration).
+- **Who may confirm:** the same bar as for an origin (decided by the Tech Lead, D914, A15): a console `owner` member
+  who is an on-chain owner of **each** scope the key names, with the fresh Google sign-in (`confirmStepUp` once per
+  scope, as the registration). The step-up's nonce has its own label (`"hana-id/console-key-confirm/v1"`) over the
+  signer account, the env, the org, the key id, its thumbprint and scopes.
+- **The notice of a key's confirmation** (proposed, **to confirm (the Tech Lead)**, as for origins in A15): the
+  security alias, every security contact and every owner get an email naming who confirmed, with a one-click
+  **revoke link** valid 7 days (a console page `/revoke-platform-key/:id#t=` with no sign-in, a GET revokes nothing,
+  its `POST` revokes at once with the `link` actor), since a security contact need not be a console member and the
+  registration's cancel link no longer works once the key is in force.
 - **On a test setup** (a dev env: a testnet env that isn't `local*`; `local*` test envs keep their own short delay
   and no 24 h minimum): any owner who meets the bar may confirm, **including the owner who registered it**, and the
   key is in force at once. In practice that is **no wait** for an owner-registered key: the owner registers it, the
@@ -375,9 +387,27 @@ old key, with no wait at all; then register a new standby.
 
 **Revocation is immediate**, never delayed, by any of: Journear staff (admin portal, with a reason); an `owner` member
 of the org in our partner portal (no fresh sign-in, as for revoking a publishable key: a kill switch); the credential
-itself (`POST /v1/platform/credential/revoke`, allowed while the org's switch is off: check 6); and, for the whole
+itself (`POST /v1/platform/credential/revoke`, allowed while the org's switch is off: check 6); the confirmation
+notice's revoke link (proposed, above); and, for the whole
 org, staff's **platform switch** (`platform_orgs.enabled = 0`), which refuses every key of the org at once without
-revoking them. **Before staff turn a switch back on** (L5), the admin portal lists every key of the org in force and
+revoking them.
+
+**A revocation also cancels what the key left waiting.** An announced origin comes into force by itself when its
+`active_from` passes (activation is passive: `app_origins.active_from` is set at the announcement), so a stolen key's
+proposals would still come into force 24 h later after the key itself was stopped. So **in the same batch** as each
+revocation route (staff, an owner, the credential itself, the revoke link), as the hourly job's write when a key
+expires (actor `system`), as staff's switch-off of the org, and as the mirroring of a freeze into
+`platform_orgs.frozen`: every `origin_add` that key (for the switch-off and the freeze:
+any key of the org) proposed and that is still `pending` and not in force is cancelled (`status = 'cancelled'`, its
+`app_origins` row removed, as `cancelBatch` does), as one set update, with one `change.cancelled` ledger row per call
+listing the change ids (the set form of A15), its actor the revoker (the staff member, the member, the credential, or
+`system` for expiry), its detail `reason: 'key_revoked' | 'platform_off' | 'org_frozen'`. The revocation's notice
+lists them. An origin already in force stays; owners or the network remove it. Proposed, **to confirm (the Tech
+Lead)**: the same for **waiting key registrations**: staff's switch-off and a freeze cancel every key of the org that
+is `awaiting_acceptance` or `pending` (a waiting key that comes into force on its own date would otherwise work the
+moment the switch is turned back on, which L5's key review catches only for keys in force); revoking one key cancels
+no other key's registration (that one is usually its replacement), but its notice lists any waiting registration
+with its cancel link. **Before staff turn a switch back on** (L5), the admin portal lists every key of the org in force and
 staff confirm or revoke each, recorded with the `platform.org_switch` row. A revoked credential is never reactivated;
 its id is never reused.
 
@@ -401,11 +431,16 @@ and its thumbprint in the hot D1 (`platform_keys`, A7). Nothing secret of the ne
    for them; a commit predicate test moves an app's scope between the plan read and the batch.
 3. **A frozen org** (`orgs.status = 'frozen'` in the console's D1, mirrored into `platform_orgs.frozen` by the admin
    Worker when staff freeze it) keeps only the kill switches: remove origins, suspend, revoke keys, revoke the
-   credential, cancel. As the console does for its members (D356).
+   credential, cancel. As the console does for its members (D356). Mirroring the freeze cancels the platform's
+   waiting proposals (A3).
 4. **Create** works only on a scope in the credential whose shared-scope flag (`scopes.app_user_ids`, P0) is on: the
    platform never creates a scope, so no on-chain read is needed, and every app it creates gets per-app User IDs. The
    app's `user_ids` and `created_by_kind` are written by `INSERT … SELECT` from the `scopes` row inside the create
-   batch (L16), so a flag that changes between the plan read and the batch can't give the app the wrong mode.
+   batch (L16), so a flag that changes between the plan read and the batch can't give the app the wrong mode. **The
+   origins sent with a create are platform proposals**: recorded `proposed_by_kind = 'platform'` with the proposer id
+   the key's id, exactly as A4.5's proposals (today `createApp` writes its initial origins as `hana` proposals, which
+   would miss the platform minimum, be refused by the confirmation's predicate and qualify for the `no_session`
+   waiver in `lifecycle.ts`). The platform variant of create must not reuse that part of `createApp` unchanged.
 5. **Origin proposals** (M7) go through `proposeOrigins` with a `platform` proposer and are checked with the
    **live-scope rules even on a test scope**: `originProblem` is called with `environment: 'live'`, so no loopback, no
    localhost wildcard, no http and no mixed-script host label. No waiver (both waivers already require a `member` or
@@ -413,6 +448,9 @@ and its thumbprint in the hot D1 (`platform_keys`, A7). Nothing secret of the ne
    20-per-app limit unchanged; `ackNotice` sets `active_from` from the greater of `appChangeDelayMs` and the platform
    minimum (`PLATFORM_MIN_DELAY_MS`, 24 h, in every env but `local*` test envs; decided, N3) for a `platform`
    proposal. An owner's confirmation (A15) may bring it forward to the moment of the confirmation; nothing else can.
+   The admin CLI's `app:changes:announce` (`announceWrite`, `scripts/lib/admin-sql.ts`), which announces any pending
+   change with only the env's `delayMs` and can grant `no_session`, **refuses a `platform` proposal** (`forbidden`:
+   only the admin Worker announces them, so their email and its Confirm link always go out), with a test.
 6. **Resume** (L4). A new column `apps.partner_bit_by` (`'member'`, `'platform'` or NULL) says who holds the partner
    bit. The platform's suspend sets bit 4 and, only if the bit was clear, `partner_bit_by = 'platform'`. A member's
    suspend in the console always sets `partner_bit_by = 'member'`, **also when bit 4 is already set** (it then writes a
@@ -469,11 +507,11 @@ nonce, key windows) and at most three reads and two batches.
 | Part | Reused unchanged | Changed | New |
 |---|---|---|---|
 | Origin additions | `guarded_changes` `origin_add`, `app_origins` with `active_from` NULL, `MAX_APP_ORIGINS` | `proposeOrigins` takes the reach predicate (H1); `proposed_by_kind` gains `platform` (proposer id = the credential id); `checkOriginRules` called with the live rules for a platform proposal (M7) | — |
-| Announcement | `pendingNotices` → the admin Worker's email to the security alias and every security contact → `ackNotice` (the `system` actor) with the cancel link's hash; the 7-day lapse; activation by the hourly job | Platform proposals of one request are sent as **one email** listing every origin, each with its own cancel link (L14); the "Proposed by" row reads "your platform key "{label}" ({pkc_…})"; `ackNotice` applies the platform minimum delay (N3); the email also carries a **Confirm** link that only opens the console's confirmation page (A15) | The notice of a confirmation, from the change feed, to the security alias, every security contact and every owner (A15) |
-| Delay | `APP_CHANGE_DELAY_MS`; no waiver for a platform proposal | The platform minimum, 24 h, for platform proposals and platform keys in every env but `local*` test envs (`isLocalEnv`, `packages/env/src/origins.ts`; decided, N3) | — |
+| Announcement | `pendingNotices` → the admin Worker's email to the security alias and every security contact → `ackNotice` (the `system` actor) with the cancel link's hash; the 7-day lapse; activation by the hourly job | Platform proposals of one request are sent as **one email** listing every origin, each with its own cancel link (L14), to the security alias, every security contact **and every owner of the org** (owners are the ones who can confirm; proposed, to confirm, A15); the "Proposed by" row reads "your platform key "{label}" ({pkc_…})"; `ackNotice` applies the platform minimum delay (N3); the email's wait line states the platform minimum, not the env's delay ("It starts working on {date}, 24 hours from now, or sooner if an owner of your organisation confirms it"; the admin Worker passes `APP_CHANGE_DELAY_MS` into the email today, `apps/admin/src/notices.ts`), with a test; the email also carries a **Confirm** link that only opens the console's confirmation page (A15) | The notice of a confirmation, with its own ack and a one-click **removal link** valid 7 days (A15, to confirm), to the security alias, every security contact and every owner |
+| Delay | `APP_CHANGE_DELAY_MS`; no waiver for a platform proposal | The platform minimum, 24 h, in every env but `local*` test envs (A15, "Which envs are `local*`"): for platform proposals (decided, N3), for platform keys (decided by the Tech Lead's rule on keys, D914), and, proposed, for staff proposals on a flagged scope or a platform-created app (A15, to confirm) | — |
 | Cancel | `cancelChange` (an owner, staff), `cancelChangeByLink` (the email) | The platform's cancel, held to platform-proposed `origin_add` changes in its reach (H2) | — |
 | Expedite | Member proposals only, as today; never a platform proposal (decided, D913 question 11). Staff restore of a removed origin without the wait: refused (A14) | — | — |
-| Confirmation | The step-up verification (`verifyStepUpToken`, `confirmStepUp`), the console's CSRF rules, the compare-and-swap commit; `expediteChange`'s way of setting `active_from = now` and the matching `app_origins.active_from` | — | `ConsoleRpc.confirmOrigins` (a console route only: no platform route, A15); step-up kind `origin.confirm`; `guarded_changes.confirmed_*` (A7); `app_changes` kind `origin.confirmed` |
+| Confirmation | The step-up verification (`verifyStepUpToken`, `confirmStepUp`), the console's CSRF rules, the compare-and-swap commit; `expediteChange`'s way of setting `active_from = now` and the matching `app_origins.active_from`; `removeOrigins` for the removal link | — | `ConsoleRpc.confirmOrigins` (a console route only: no platform route, A15), one set per call; step-up kind `origin.confirm` with its own nonce label; `guarded_changes.confirmed_*`, `unconfirmed_active_from` and the removal link's columns with their triggers (A7); `app_changes` kind `origin.confirmed` (one row per call); `AdminRpc.confirmationNotices` and `ackConfirmationNotice`; `ConsoleRpc.removeOriginByLink` (`link` actor) |
 | Removals, suspension, keys | `removeOrigins`, `setSuspensionBit`, `createKey`, `revokeKey` | Each takes the reach predicate (H1); `apps.partner_bit_by` and the member's take-over write (A4.6) | — |
 | App creation | The body of `createApp` (name rules, first key, origins as proposals, `app.created`) | A platform variant on an existing flagged scope only: no scope creation, no on-chain owner read, never a waiver, the look-alike name check within the scope, `user_ids` and `created_by_kind` by `INSERT … SELECT` | — |
 | Auto-approve | `proposeChange`'s rules for everyone else | `proposeChange` (ConsoleRpc and AdminRpc), the admin CLI's `app:settings` and the hourly drift check refuse or flag a `policy_set` for an app on a flagged scope or created by the platform (P0, H3) | — |
@@ -515,6 +553,9 @@ CREATE TABLE platform_keys (
   four_eyes         INTEGER NOT NULL CHECK (four_eyes IN (0, 1)),
   confirmed_kind    TEXT CHECK (confirmed_kind IN ('confirm', 'acceptance')), -- 'acceptance': a staff key's owner acceptance
   confirmed_by      TEXT, confirmed_sub TEXT, confirmed_at INTEGER,
+  unconfirmed_active_from INTEGER,                        -- the ack's notified_at + the delay: in force then if unconfirmed
+  confirm_notified_at INTEGER,                            -- the confirmation's notice (proposed, A3)
+  revoke_link_hash  BLOB UNIQUE, revoke_link_until INTEGER, -- its one-click revoke link (proposed, A3)
   CHECK (proposed_by_kind = 'member' OR status IN ('awaiting_acceptance', 'cancelled') OR accepted_at IS NOT NULL),
   CHECK (accepted_by_kind IS NULL OR accepted_by_kind = 'member' OR accepted_by IS NOT proposed_by),
   CHECK ((confirmed_at IS NULL) = (confirmed_by IS NULL) AND (confirmed_at IS NULL) = (confirmed_sub IS NULL)
@@ -527,7 +568,14 @@ CREATE TABLE platform_keys (
 CREATE TRIGGER platform_keys_confirm_fixed BEFORE UPDATE OF four_eyes, confirmed_kind, confirmed_by, confirmed_sub,
   confirmed_at ON platform_keys
   WHEN NEW.four_eyes IS NOT OLD.four_eyes OR OLD.confirmed_at IS NOT NULL
+    OR (NEW.confirmed_kind = 'confirm' AND (OLD.status IS NOT 'pending' OR OLD.notified_at IS NULL))
+    OR (NEW.confirmed_kind = 'acceptance' AND OLD.status IS NOT 'awaiting_acceptance')
 BEGIN SELECT RAISE(ABORT, 'platform_keys: the confirmation is written once'); END;
+-- No earlier active_from without a confirmation, whoever writes it (as guarded_changes, below).
+CREATE TRIGGER platform_keys_not_early BEFORE UPDATE OF active_from ON platform_keys
+  WHEN OLD.unconfirmed_active_from IS NOT NULL AND NEW.active_from < OLD.unconfirmed_active_from
+    AND NEW.confirmed_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'platform_keys: a key comes into force early only when confirmed'); END;
 -- Staff's per-org switch and quotas (a missing row: off).
 CREATE TABLE platform_orgs (
   org_id TEXT PRIMARY KEY, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)), frozen INTEGER NOT NULL DEFAULT 0,
@@ -568,19 +616,45 @@ console's server, which holds members' emails and roles.
 ALTER TABLE guarded_changes ADD COLUMN confirmed_by  TEXT;     -- the console member's user id
 ALTER TABLE guarded_changes ADD COLUMN confirmed_sub TEXT;     -- the verified step-up's Google sub (an on-chain owner)
 ALTER TABLE guarded_changes ADD COLUMN confirmed_at  INTEGER;  -- also the new active_from
--- Only a platform-proposed origin_add, only once, all three together.
+-- Written by the ack for a platform proposal: when it comes into force if nobody confirms it.
+ALTER TABLE guarded_changes ADD COLUMN unconfirmed_active_from INTEGER;
+-- The confirmation's notice (A15; the removal link to confirm): its ack, and the one-click removal link's hash and end.
+ALTER TABLE guarded_changes ADD COLUMN confirm_notified_at INTEGER;
+ALTER TABLE guarded_changes ADD COLUMN removal_token_hash  BLOB;   -- UNIQUE by the index below
+ALTER TABLE guarded_changes ADD COLUMN removal_until       INTEGER;
+CREATE UNIQUE INDEX guarded_changes_removal_token ON guarded_changes (removal_token_hash)
+  WHERE removal_token_hash IS NOT NULL;
+-- Only a platform-proposed origin_add that is pending and announced, only once, all three together.
 CREATE TRIGGER guarded_changes_confirm_rule BEFORE UPDATE OF confirmed_by, confirmed_sub, confirmed_at ON guarded_changes
   WHEN OLD.confirmed_at IS NOT NULL
     OR NEW.confirmed_at IS NULL OR NEW.confirmed_by IS NULL OR NEW.confirmed_sub IS NULL
     OR OLD.kind IS NOT 'origin_add' OR OLD.proposed_by_kind IS NOT 'platform'
-BEGIN SELECT RAISE(ABORT, 'guarded_changes: only a platform origin is confirmed, once'); END;
+    OR OLD.status IS NOT 'pending' OR OLD.notified_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'guarded_changes: only a waiting, announced platform origin is confirmed, once'); END;
+-- No earlier active_from for a platform origin without a confirmation, whoever writes it.
+CREATE TRIGGER guarded_changes_platform_not_early BEFORE UPDATE OF active_from ON guarded_changes
+  WHEN OLD.proposed_by_kind = 'platform' AND OLD.unconfirmed_active_from IS NOT NULL
+    AND NEW.active_from < OLD.unconfirmed_active_from AND NEW.confirmed_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'guarded_changes: a platform origin comes into force early only when confirmed'); END;
+CREATE TRIGGER app_origins_platform_not_early BEFORE UPDATE OF active_from ON app_origins
+  WHEN EXISTS (SELECT 1 FROM guarded_changes g
+               WHERE g.app_id = NEW.app_id AND g.origin = NEW.origin AND g.kind = 'origin_add' AND g.status = 'pending'
+                 AND g.proposed_by_kind = 'platform' AND g.unconfirmed_active_from IS NOT NULL
+                 AND NEW.active_from < g.unconfirmed_active_from AND g.confirmed_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'app_origins: a platform origin comes into force early only when confirmed'); END;
 ```
 
-The confirmation is recorded three times, each in its own place: the change's `confirmed_by`, `confirmed_sub` and
-`confirmed_at` (with `active_from = confirmed_at` on the change and its `app_origins` row); one `app_changes` row
-`origin.confirmed` per origin (actor `member`, the member's id, `actor_sub` the step-up's `sub`); and a console
-`audit_log` row for the member's action, as every step-up write writes today. The ledger row is what the admin
-Worker's feed (`changesSince`) turns into the confirmation's notice (A15).
+The confirmation's batch updates `guarded_changes` first (so the `app_origins` trigger sees `confirmed_at`), then
+`app_origins`. The ack writes `unconfirmed_active_from` and `active_from` to the same value, which neither trigger
+refuses. A migration test checks each trigger against a bare D1 write.
+
+The confirmation is recorded three times, each in its own place: the changes' `confirmed_by`, `confirmed_sub` and
+`confirmed_at` (with `active_from = confirmed_at` on each change and its `app_origins` row); **one** `app_changes` row
+`origin.confirmed` for the whole call (actor `member`, the member's id, `actor_sub` the step-up's `sub`; its detail
+lists every change id and origin, since `request_id` is UNIQUE); and a console `audit_log` row for the member's
+action, as every step-up write writes today. The confirmation's notice is its own announce-and-ack pair
+(`AdminRpc.confirmationNotices`, `ackConfirmationNotice`), not read from the change feed, so its removal links are
+stored before anyone can use them (A15).
 
 **What isn't stored** (L7): a request that fails before the signature verifies has no authenticated key, and writing a
 row for each would let anyone fill the hot DB, so it is counted (the per-IP window, the per-key failure counter that
@@ -666,7 +740,7 @@ same (never who confirmed). No settings, no policy, no mainnet demo, no labels, 
 |---|---|---|---|
 | `GET /v1/platform/credential` | — | `{keyId, label, orgId, scopes, activeFrom, expiresAt, limits}` | — |
 | `POST /v1/platform/credential/revoke` | `{reason?}` (≤ 200 characters) | `{revokedAt}`; the key stops at once; allowed while the switch is off | — |
-| `POST /v1/platform/apps` | `{scopeId, name, origins?: [≤ 20]}` | `201 {app, publishableKey, changes: [{changeId, origin}]}` | `forbidden` (scope not on the key, or not flagged), `origin_refused`, `conflict` (scope assigned less than the delay ago; a name like another app's on the scope), `409 app_limit`, `no_security_contact` |
+| `POST /v1/platform/apps` | `{scopeId, name, origins?: [≤ 20]}` | `201 {app, publishableKey, changes: [{changeId, origin}]}`; the origins are platform proposals (A4.4), each waiting for an owner's confirmation or the platform minimum | `forbidden` (scope not on the key, or not flagged), `origin_refused`, `conflict` (scope assigned less than the delay ago; a name like another app's on the scope), `409 app_limit`, `no_security_contact` |
 | `GET /v1/platform/apps?scopeId=&cursor=` | — | `{apps: [PlatformApp], next?}` (50 a page, within the reach) | `forbidden` |
 | `GET /v1/platform/apps/:appId` | — | `{app}` | `not_found` |
 | `POST /v1/platform/apps/:appId/origins` | `{add: [≤ 20], expectedVersion}` | `202 {version, changes: [{changeId, origin}]}`; each waits for its announcement, then comes into force when an owner confirms it (A15) or after the delay with the platform minimum | `not_found`, `origin_refused` (the live rules, A4.5), `conflict` (duplicate, more than 20, scope assigned less than the delay ago) |
@@ -685,8 +759,11 @@ Staff and console methods (RPC, no route): `AdminRpc.registerPlatformKey`, `appr
 member), `revokePlatformKey`, `listPlatformKeys`, `setPlatformOrg`, `setScopeAppUserIds`, `platformKeyNotices`,
 `ackPlatformKeyNotice` (`system` only), `cancelPlatformKey`, `platformCalls`; `ConsoleRpc.listPlatformKeys`,
 `proposePlatformKey` and `acceptPlatformKey` (with `stepUpJwt`), `revokePlatformKey` (owner, kill switch),
-`cancelPlatformKey`, `cancelPlatformKeyByLink` (`link` actor), `platformCalls`; `ConsoleRpc.confirmOrigins` (P10,
-A15: `{changeIds: [≤ 20], stepUpJwt}`, a member actor only). Their full shapes go in `docs/api.md` when built.
+`cancelPlatformKey`, `cancelPlatformKeyByLink` (`link` actor), `platformCalls`; `ConsoleRpc.confirmPlatformKey`
+(P2, A3: `{keyId, stepUpJwt}`, a member actor only), `revokePlatformKeyByLink` (`link` actor, proposed);
+`ConsoleRpc.confirmOrigins` (P10, A15: `{appId, changeIds: [1..20], stepUpJwt}`, one app and one proposing request,
+a member actor only), `removeOriginByLink` (`link` actor, proposed); `AdminRpc.confirmationNotices` and
+`ackConfirmationNotice` (`system` only). Their full shapes go in `docs/api.md` when built.
 
 **No platform route confirms.** There is no `/v1/platform/…/confirm` and none may be added: the confirmation is the
 console's `POST /api/orgs/:org/actions` step-up (kind `origin.confirm`) and then `ConsoleRpc.confirmOrigins`, which
@@ -752,12 +829,17 @@ test (P10) walks every platform route and checks none changes `confirmed_at` or 
   page behind the usual sign-in). It shows the app's name, each waiting address of that one platform request in full
   with its decoded form and the internationalised-domain warning, which platform key proposed it and when, "Comes
   into force on {date} if nobody confirms it", and the line "This wallet is also used on {other apps}" when the
-  scope is shared. Each address has its own tick box, none ticked at first; **Confirm** then asks for the usual fresh
-  Google sign-in. Plain words on the page: "Only confirm web addresses you know belong to {app}. Once you confirm,
-  {app} can use this wallet there straight away." and, beside the cancel: "Not yours? Cancel it." A viewer, or an
-  owner who isn't an owner of the app's scope on chain, sees the page without the Confirm button and the reason
-  ("Only an owner of this wallet's settings can confirm"). The app's origins list shows "Waiting for an owner to
-  confirm, or live on {date}" for each such address.
+  scope is shared. Each address has its own tick box, none ticked at first, and there is no "confirm all";
+  **Confirm** then asks for the usual fresh Google sign-in. Plain words on the page: "Only confirm web addresses you
+  know belong to {app}. Once you confirm, {app} can use this wallet there straight away." and, beside the cancel:
+  "Not yours? Cancel it." A viewer, or an owner who isn't an owner of the app's scope on chain (the console reads the
+  scope's owners on chain for this, as `buildOwnerAction` does), sees the page without the Confirm button and the
+  reason ("Only an owner of this wallet's settings can confirm"). The app's origins list shows "Waiting for an owner
+  to confirm, or live on {date}" for each such address.
+- **Remove a confirmed web address** (P10, proposed): the page the confirmation notice's removal link opens
+  (`/remove/:changeId#t=`, no sign-in, for 7 days): the app, the address, who confirmed it and when, and one button,
+  "Remove this web address", which stops it at once. **Revoke a confirmed key** (P2, proposed): the same for a key
+  (`/revoke-platform-key/:id#t=`), "Stop this key".
 - The Users screen changes of Part B (B6).
 
 **Partner companies get no portal of their own in this version.** A member of the network's org sees every app and
@@ -810,71 +892,119 @@ question 8, first answered yes). The Tech Lead re-confirmed it as **no** on 2026
 review advised (M1): a restore that skips the delay would be a path by which an origin comes into force with no time
 for anyone to object, and a staffer tricked by someone posing as the network could use it to put an attacker's origin
 back. Nothing of it is built. An origin a stolen key removed comes back as any other: the network proposes it again
-(once its key is replaced) and an owner confirms it (A15), or a member adds it by hand.
+(once its key is replaced) and an owner confirms it (A15), or a member adds it by hand. Staff's own `addOrigins` on
+these apps is the same kind of path and is held to the platform minimum by a proposal in A15 ("Staff proposals on a
+shared scope", to confirm).
 
 ## A15. An owner's confirmation of a platform-proposed origin (decided, N3; gates P10)
 
 **The rule** (the Tech Lead, 2026-11-25, D914), the same in every env except `local*` test envs:
 
 1. An origin the platform proposes starts waiting and is announced as today (A4.5, A6): one email per request to the
-   security alias and every security contact, with its cancel link.
+   security alias and every security contact, with its cancel link. The spec adds **every owner of the org** to the
+   recipients, since only owners can confirm (proposed, to confirm (the Tech Lead), as N9 decided for keys).
 2. It comes into force **at once** when an owner of the organisation confirms it: signed in to our partner portal,
    pressing Confirm on a page that shows the app and the origin (A11). The email's Confirm link only opens that page;
    **a GET never confirms** (mail scanners open links, emails get forwarded). The cancel link stays one click from the
    email with no sign-in, as today (the page `/cancel/:changeId#t=` and its `POST`).
 3. If nobody confirms it, it comes into force after the platform minimum (24 h, and at least `appChangeDelayMs`),
-   unless it is cancelled first. So **a stolen platform key alone gets only the slow, cancellable path.**
+   unless it is cancelled first.
 
-In `local*` test envs (`isLocalEnv`) the 24 h minimum doesn't apply (the env's own delay does, so tests run); the
-confirmation works the same there.
+What follows from it (the spec's reading, not the Tech Lead's words): a stolen platform key alone gets only the slow,
+cancellable path.
 
-**Who may confirm** (proposed, **to confirm with the Tech Lead**): a console member whose role is `owner`
-(`members.role`, `apps/console/migrations/0001_init.sql`; the role read fresh on the request, `ownerNow`,
-`apps/console/src/sql.ts`) of an active org, **and** an on-chain owner (`Owner::Oidc`) of the app's scope, proven
-with the console's fresh Google sign-in (a new step-up kind `origin.confirm`), which the API verifies itself as it does
-for `ConsoleRpc.changeOrigins` (`verifyStepUpToken`, `confirmStepUp`, `apps/api/src/changes/step-up.ts`). That is the
-strictest role the console has, and the one that may add an origin by hand today (the console's `origin.add` step-up
-refuses anyone else with `not_owner`, `apps/console/src/actions.ts`), so a confirmation never lets anyone bring an
-origin into force who couldn't add it themselves. A `viewer`, or an `owner` member who isn't an on-chain owner of
-that scope, can't confirm. The Tech Lead's words were "signed in to the console, pressing Confirm"; the fresh sign-in
-is one step more, chosen because it also defeats a stolen console session and binds the confirmation to the exact
-addresses (to confirm with the rest).
+**Which envs are `local*`.** Today the only test is the env's name: `isLocalEnv` (`packages/env/src/origins.ts`,
+`/^local/`). What else exists: the manifest schema allows http and loopback URLs only for `local*` names
+(`packages/env/src/schema.ts`), `deploy-check` refuses a `local*` env ("local* envs run on wrangler dev, never
+deployed", `scripts/lib/deploy-check.ts`), and the API's generated config serves a loopback env with no deployment
+target (`apps/api/scripts/pages-wrangler.ts`). Nothing refuses a `wrangler deploy` of an env named `local…`. Proposed,
+**to confirm (the Tech Lead)**: the exemption holds only when **both** the name is `local*` **and** the env's network
+is `testnet` and its API URL is a loopback http URL (a new manifest schema rule: a `local*` env must have them, so a
+real host can never be `local*`); the generator then writes `PLATFORM_MIN_DELAY_MS` (24 h, or the env's own delay
+in such a `local*` env), the API refuses to start a guarded write with it under 24 h unless `ENV_NAME` is `local*` and
+`NETWORK` is `testnet` (as `changeConfig` refuses a short delay on mainnet), and the stamped deploy wrapper
+(`packages/env/src/stamped-deploy.ts`) refuses a `local*` env, with a test for each.
+
+**Who may confirm** (decided by the Tech Lead 2026-11-25, D914: "ok with fresh sign in when confirming"; the same for
+origins and for keys, A3): a console member whose role is `owner` (`members.role`,
+`apps/console/migrations/0001_init.sql`; the role read fresh on the request, `ownerNow`, `apps/console/src/sql.ts`)
+of an active org, **and** an on-chain owner (`Owner::Oidc`) of the app's scope, proving it is them with the console's
+fresh Google sign-in at the moment they press Confirm (a new step-up kind `origin.confirm`), which the API verifies
+itself as it does for `ConsoleRpc.changeOrigins` (`verifyStepUpToken`, `confirmStepUp`,
+`apps/api/src/changes/step-up.ts`). That is the bar for adding an origin by hand today, so a confirmation never lets
+anyone bring an origin into force who couldn't add it themselves. How today's code holds that bar, and what the
+confirmation reuses: a `viewer` is refused by the console's route matrix with `forbidden` before anything else
+(`runOrgRoute`, `apps/console/src/writes.ts`); the console builds the `origin.add` step-up without reading the chain;
+an `owner` member who isn't an on-chain owner of the scope is refused by the API's `confirmStepUp` with `not_owner`
+after the Google sign-in. So **hiding** the Confirm button from such an owner (A11) needs a chain read in the console,
+as `buildOwnerAction` already makes (`apps/console/src/actions.ts`, its `not_owner` for owner actions); the API's
+check stays the one that counts.
 
 **What the confirmation checks** (`ConsoleRpc.confirmOrigins`, one compare-and-swap batch, failing closed):
 
 - The actor is a `member` (`forbidden` otherwise: the platform, staff, the system and the link never confirm). The
-  step-up token's nonce is the `origin.confirm` layout over the signer account, the env, the org, the app, the scope
-  and the sorted list of (change id, origin), so a token for one set of addresses confirms no other; the token is
-  single use (`owner-actions:tokens`).
-- Each change is an `origin_add` proposed by the `platform`, `pending`, **announced** (`notified_at` set: a change
-  not yet announced can't be confirmed, so the security contacts always hear of it first), not cancelled, not yet in
-  force, and not already confirmed (`not_pending` otherwise).
+  step-up token's nonce is the `origin.confirm` layout, with **its own label** (`"hana-id/console-origin-confirm/v1"`,
+  so no `origin.add`, settings or owner-action token can stand in for it), over the signer account, the env, the
+  org, the app, the scope and the sorted list of (change id, origin), so a token for one set of addresses confirms no
+  other; the token is single use (`owner-actions:tokens`).
+- **One set, all or nothing.** The call names 1 to 20 changes (`bad_request` beyond 20), all on **one app** and from
+  **one proposing request** (the same `guarded_changes.request_id`), else `bad_request`. Each must be an `origin_add`
+  proposed by the `platform`, `pending`, **announced** (`notified_at` set: so the security contacts and owners always
+  hear of it first), not cancelled, not yet in force and not already confirmed; if any one fails, nothing is written
+  (`not_pending`).
 - The proposing key is still in force (not revoked, not expired) and the org's platform switch is on (`conflict`
-  otherwise: an owner who still wants the address adds it by hand). The app is still in the proposing key's reach
-  (A4.2: same org, a scope the key names, `test`, platform-created), not deleted, and not suspended by Journear
-  (bits 1 and 2) (`not_found` or `conflict`). The org isn't frozen (`forbidden`).
-- All of it is in the commit predicate, not only in the plan read, so a cancel, a key revocation, a switch-off, a
-  move of the app or a staff suspension that lands between the read and the batch makes the confirmation insert
-  nothing (`version_conflict`). A cancel and a confirmation of the same change: whichever commits first wins.
-- The batch sets `confirmed_by`, `confirmed_sub`, `confirmed_at` and `active_from = now` on the change and its
-  `app_origins` row (as `expediteChange` does), and writes one `origin.confirmed` row per origin (A7). Up to 20
-  changes of one request in one call; the console's `CONSOLE_DB_LIMITS` and costs are checked for it, as for
-  `changeOrigins`.
+  otherwise; a revocation or switch-off cancels the key's waiting proposals anyway, A3). The app is still in the
+  proposing key's reach (A4.2: same org, a scope the key names, `test`, platform-created), not deleted, and not
+  suspended by Journear (bits 1 and 2) (`not_found` or `conflict`). The org isn't frozen (`forbidden`).
+- All of it is in the commit predicate, not only in the plan read: the commit row is inserted only if the count of
+  qualifying changes among the listed ids (`json_each` of the list) equals the list's length, so a cancel, a key
+  revocation, a switch-off, a move of the app or a staff suspension that lands between the read and the batch makes
+  the confirmation write nothing (`version_conflict`). A cancel and a confirmation of the same change: whichever
+  commits first wins.
+- **Three statements**: one `origin.confirmed` row in `app_changes` for the whole call (`commitOnApp`: one row per
+  call, since `request_id` is UNIQUE; its detail lists every change id and origin, as `origin.proposed` lists its
+  origins), then one set update of `guarded_changes` (`confirmed_by`, `confirmed_sub`, `confirmed_at`, `active_from =
+  now`) and one of the matching `app_origins` rows (`active_from = now`, as `expediteChange` does), each `WHERE id IN
+  (SELECT value FROM json_each(:ids))` and guarded by the commit row's existence. Within `CONSOLE_DB_LIMITS` (2
+  reads, 1 batch, 8 statements), with its entry in the console's costs.
+- **In the database too** (A7): a trigger allows `confirmed_*` only on a platform `origin_add` that is `pending` and
+  announced, once; and a stored earliest time (`guarded_changes.unconfirmed_active_from`, written at the ack) lets a
+  trigger on `app_origins` refuse an `active_from` earlier than it unless the change is confirmed, so no other writer
+  (the CLI, a bad deploy, a bare D1 write) can bring a platform origin forward.
 
-**The notice of a confirmation.** The origin is in force before anyone else hears of the confirmation, so its notice
-is after the fact and goes wide: the admin Worker's 5-minute run reads the `origin.confirmed` rows from the change feed and emails
-the security alias, every security contact and **every owner of the org**, one email per confirmation call: "{Member
-email} confirmed {origin} for {app}. It works there now. If this wasn't meant to happen, remove the address in the
-partner portal: it stops at once." The console's Audit shows the row with the member as the actor; the staff queue
-lists it for 7 days (A11).
+**The notice of a confirmation** (proposed design; the removal link **to confirm, the Tech Lead**). The origin is in
+force before anyone else hears of the confirmation, and the announcement's cancel link then answers `not_pending`
+(`cancelChangeByLink`, `apps/api/src/changes/lifecycle.ts`: a change in force can't be cancelled), while security
+contacts need not be console members. So the confirmation's notice carries a **one-click removal link**: the admin
+Worker reads `AdminRpc.confirmationNotices` (each confirmed, un-noticed set, with the org's contacts and owners),
+emails the security alias, every security contact and **every owner of the org** one email per confirmation call:
+"{Member email} confirmed {origin} for {app}. It works there now. If this wasn't meant to happen, remove it here: it
+stops at once." with one removal link per origin, and then calls `ackConfirmationNotice` (`system` only), which stores
+`sha256` of each link's token (`guarded_changes.removal_token_hash`) and `removal_until = now + 7 days`. The link
+opens a console page (`/remove/:changeId#t=`, no sign-in; a GET removes nothing) whose `POST` removes that origin at
+once (`removeOrigins` with the `link` actor, `ConsoleRpc.removeOriginByLink`), single use, refused after
+`removal_until` or once the origin is gone. Chosen over reopening the original cancel link for a confirmed origin
+because it keeps "cancel" (before in force) and "remove" (after) as two separate, separately audited acts. The
+console's Audit shows the `origin.confirmed` row with the member as the actor and its console `audit_log` row (the
+step-up write); the staff queue lists it for 7 days (A11).
 
 **The accepted risk** (the Tech Lead, 2026-11-25, D914). One owner's Google account taken over can propose nothing
 through the platform, but it can confirm an origin a stolen platform key proposed, or both can be in one attacker's
 hands; then an attacker's origin is in force at once, with no time to cancel. The Tech Lead accepted this: "I think
 this is too pessimistic, if an owner's own Google account is taken over, then more is at risk (other than these
-stuff), his banking etc". What still bounds it: the user's approval window names the app and its web address, with
-the "also used on other apps" line (N6); the confirmation's notice to every owner, the security contacts and
-Journear; staff suspend the app at once (bit 1); the network or any owner removes the origin at once.
+stuff), his banking etc". What still bounds it (the spec's list, not the Tech Lead's words): the user's approval
+window names the app and its web address, with the "also used on other apps" line (N6); the confirmation's notice to
+every owner, the security contacts and Journear, with its removal link; staff suspend the app at once (bit 1); the
+network or any owner removes the origin at once.
+
+**Staff proposals on a shared scope** (proposed, **to confirm (the Tech Lead)**, or to accept as a risk). Staff's
+`addOrigins` on a platform-created app, or on any app of a flagged scope, waits only `appChangeDelayMs` (60 s on
+sandbox-dev) and, for a scope nobody has used, can get the `no_session` waiver (`lifecycle.ts`): the same "a staffer
+tricked by someone posing as the network" path that the refused restore had (A14, M1). Proposed: for those apps a
+staff proposal waits the platform minimum too (24 h in every env but `local*`), never gets a waiver, and can't be
+expedited; staff who need a partner site live faster ask an owner to add it, or the network to propose it and an
+owner to confirm it. Not silently accepted: if the Tech Lead prefers today's staff path there, it is recorded as an
+accepted risk in D914's follow-up.
 
 **Open, to revisit at mainnet preparation (not decided).** On a production env, an origin a member adds by hand in
 the console still waits the full guarded-change delay (at least 24 h), while an owner's confirmation of the
@@ -1102,8 +1232,12 @@ Answered "yes all" to the recommendations (D913). Each is now part of the design
 
 ## Decided by the Tech Lead (2026-11-25): the questions from PR 139's security review
 
-"yes to all except for number 3" (D914), then N3 decided differently from the recommendation after a discussion, and
-question 8 re-confirmed as no (above). Each is now part of the design above.
+How it was put (D914): the nine questions as a table numbered 1 to 9, plus "The re-check (earlier question 8)" with
+the recommendation no and the line: Reply "yes all, restore no" to accept everything. The Tech Lead answered "yes to
+all except for number 3", that is, the recommendations accepted for N1, N2 and N4 to N9, the recommendation on the
+restore being no ("number 3" is N3, not D913's question 3); the reply "Noted: yes to the other eight, and no to staff
+restoring without the wait" drew no objection. N3 was then decided differently after a discussion. Each is now part
+of the design above.
 
 - **N1.** May the platform act on apps it didn't create (the network's own site, apps staff made for it)? **No.** It
   sees and changes only apps it created (A1, A4.2).
@@ -1113,9 +1247,10 @@ question 8 re-confirmed as no (above). Each is now part of the design above.
   nothing? Recommended: 24 h in every env except `local*` test envs. **Decided differently:** the 24 h minimum stays
   for an origin nobody confirms, and an origin comes into force **at once when an owner of the organisation confirms
   it** in our partner portal; the same in every env except `local*` test envs (A15, P10). The Tech Lead accepted the
-  remaining risk of a taken-over owner account (A15). **To confirm** with the Tech Lead: who exactly may confirm (A15
-  proposes an `owner` member who is an on-chain owner of the scope, with a fresh sign-in). **Open, for mainnet
-  preparation:** a member's own origin on a production env still waits the full delay (A15).
+  remaining risk of a taken-over owner account (A15). **Who may confirm**, decided later the same day ("ok with fresh
+  sign in when confirming", D914): a console `owner` member who is an on-chain owner of the app's scope, with a fresh
+  Google sign-in when pressing Confirm, for origins and keys alike (A15, A3). **Open, for mainnet preparation:** a
+  member's own origin on a production env still waits the full delay (A15).
 - **Platform keys** (decided by the Tech Lead later the same day, D914, not part of N3's answer): a new key is
   announced and waits the 24 h platform minimum unless an owner confirms it; on a test setup any owner may confirm it,
   the registrant too, and it is in force at once; on a real-money setup only a different owner (four eyes) (A3).
@@ -1147,8 +1282,8 @@ review.
 | P3 | M2 (per-IP counts failures only), M3 (the platform's own global breaker), M4 (plain ES256, both S values, DER and raw, the high-S vector), L1 (exact regexes, one parsed path, no dot or empty segments, GET and POST only, JSON, no encoding), L2 (`ENV_NAME` signed, one key per env), L5 (self-revoke with the switch off, the key review before re-enabling), L8 (the hot-DB budget, the nonce object's name and location) |
 | P4 | H1 (the reach filter in every plan read and commit predicate), H2 (cancel held to platform-proposed origin adds), M7 (live origin rules), L3 (idempotency for the ledger's lifetime, the rotated-key retry), L4 (who holds the partner bit), L15 (look-alike names within the scope), L16 (`INSERT … SELECT` of the app's mode) |
 | P5 | L7 (what is recorded and what is only counted), L14 (one email per request, lower quotas), H3's mainnet demo warning |
-| P10 | M6 (decided as N3: the owner's confirmation and its threats, A2 and A15) |
-| Before the platform switch is on for any org | P0 (H3, in code), the platform minimum (P4) and the owner's confirmation path built and reviewed (P10, M6), the "also used on other apps" line (N6) |
+| P10 | M6 (decided as N3: the owner's confirmation and its threats, A2 and A15), PR 142's review (the set write, the removal link, revocation cancelling waiting proposals, the database's earliest time, the `local*` guard) |
+| Before the platform switch is on for any org | P0 (H3, in code), the key confirmation (P2), the platform minimum (P4) and the owner's confirmation of origins (P10, M6), each built, reviewed and deployed; the "also used on other apps" line (N6) |
 | P6 and P7 | M8 (retention and erasure), L9 (lookup volume alerts, the data-sharing rule N7), L12 (the `aud` benefit and the guide), L10 (the vectors' path) |
 | None | M1 (staff restore): closed by refusing the restore (question 8, A14) |
 | This branch | L11 (`docs/integration.md`'s `sub` row corrected), L13 (D913 split into the Tech Lead's words, his answers and what is only proposed) |
@@ -1157,15 +1292,15 @@ review.
 |---|---|---|---|---|
 | P0 | **Shared-scope rules in code** (H3): `scopes.app_user_ids`, `apps.created_by_kind`; `AdminRpc.setScopeAppUserIds` (one way, refused while a policy is in force or waiting); `proposeChange` in ConsoleRpc and AdminRpc and the admin CLI's `app:settings` refuse a `policy_set` (`policy_invalid`, "Auto-approve is off for apps that share a wallet") for an app on a flagged scope or created by the platform; the hourly drift check flags a policy on such an app; the console and the admin portal hide the policy editor for them. Ships before the platform is switched on for any org | S | Refused through each of the three paths for a flagged scope and for a platform-created app; an unflagged app unchanged; the flag refused with a waiting policy; the drift flag for a bare D1 write | **Yes** |
 | P1 | The `platform` actor: the rebuild of `app_changes`, `guarded_changes` and `security_events` with the kind triggers (A7); `ACTOR_KINDS`, `PROPOSER_KINDS`, audit titles; the notice email's "Proposed by" wording; the console's Audit rendering | S | The migration test of A7 (rows, `seq`, every index and trigger by its SQL, refusals kept, an unknown kind refused); the ops script's before and after comparison; views and the email for each actor kind | **Yes** (the ledger) |
-| P2 | Credentials: `platform_keys`, `platform_orgs`; registration by an owner of each scope and by staff with acceptance or a second staff member; the 7-day contact rule; notices to contacts, owners and the alias naming who registered and accepted; ack, cancel link, activation and expiry jobs; the four revocation routes; the switch with the key review; **the owner's confirmation of a key** (A3, A7: `ConsoleRpc.confirmPlatformKey`, step-up kind `platform.key_confirm`, `platform_keys.four_eyes` and `confirmed_*` with their CHECKs and trigger, the Confirm link in the key's announcement and the console page, the notice of a confirmation, the acceptance counting as the confirmation (proposed)); P10 reuses its page, step-up and notice machinery for origins | M to L | Each registration route; the step-up nonce bound to env, thumbprint, scopes and label (a token for another key refused); one owner of only one of two scopes refused; a staff key unusable until accepted, and the registering staffer can't approve it; a registration within 7 days of a contact change refused; the delay with no waiver, at least the 24 h platform minimum on a dev env when nobody confirms; the link cancel; immediate revocation by each route; expiry. The key confirmation: on a dev env the registrant's own confirmation brings the key into force at once; **on a production env the registrant's confirmation refused** (by the API and by a bare D1 write against the CHECK), **a second owner's confirmation brings it into force**, **one owner only: the key waits the 24 h**; a confirmer who differs only in email, or who became an owner after the registration, refused; `four_eyes` 1 on every mainnet config and fixed once written; **the platform key cannot confirm a key** (no platform route; `ConsoleRpc.confirmPlatformKey` refuses every non-member actor); a GET of the page or the link changes nothing; a confirmation before the announcement, after a cancel or after a revocation refused, and a revocation racing a confirmation (each order); a staff key's owner acceptance in force once announced, a second-staff approval waiting unless an owner confirms; a confirmation within 7 days of a contact change refused | **Yes** |
+| P2 | Credentials: `platform_keys`, `platform_orgs`; registration by an owner of each scope and by staff with acceptance or a second staff member; the 7-day contact rule; notices to contacts, owners and the alias naming who registered and accepted; ack, cancel link, activation and expiry jobs; the four revocation routes; the switch with the key review; **the owner's confirmation of a key** (A3, A7: `ConsoleRpc.confirmPlatformKey`, step-up kind `platform.key_confirm`, `platform_keys.four_eyes` and `confirmed_*` with their CHECKs and trigger, the Confirm link in the key's announcement and the console page, the notice of a confirmation, the acceptance counting as the confirmation (proposed)); P10 reuses its page, step-up and notice machinery for origins | M to L | Each registration route; the step-up nonce bound to env, thumbprint, scopes and label (a token for another key refused); one owner of only one of two scopes refused; a staff key unusable until accepted, and the registering staffer can't approve it; a registration within 7 days of a contact change refused; the delay with no waiver, at least the 24 h platform minimum on a dev env when nobody confirms; the link cancel; immediate revocation by each route; expiry. The key confirmation: on a dev env the registrant's own confirmation brings the key into force at once; **on a production env the registrant's confirmation refused** (by the API and by a bare D1 write against the CHECK), **a second owner's confirmation brings it into force**, **one owner only: the key waits the 24 h**; a confirmer who differs only in email, or who became an owner after the registration, refused; `four_eyes` 1 on every mainnet config and fixed once written; **the platform key cannot confirm a key** (no platform route; `ConsoleRpc.confirmPlatformKey` refuses every non-member actor); a GET of the page or the link changes nothing; a confirmation before the announcement, after a cancel or after a revocation refused, and a revocation racing a confirmation (each order); a staff key's owner acceptance in force once announced, a second-staff approval waiting unless an owner confirms; a confirmation within 7 days of a contact change refused; **each revocation route, expiry, the switch-off and the freeze cancelling, in the same batch, every waiting origin the key (or the org's keys) proposed, with one `change.cancelled` row naming the revoker; an origin in force left as it is; the switch-off and the freeze cancelling the org's waiting key registrations (proposed)**; the key confirmation's notice and its revoke link (single use, 7 days, a GET revoking nothing; proposed); an early `active_from` without a confirmation refused by the trigger | **Yes** |
 | P3 | Request authentication and admission: the route, A3's checks in order, the failure-only per-IP window, the nonce object (pinned), the per-key and per-org limits, the platform's breakers, `PLATFORM_DB_LIMITS`, `platform_calls`, `GET /credential`, self-revoke | M | The vectors from an independent implementation, the high-S one verifying and the DER one refused; every refusal in A3's order with its code; a path with `//`, `.`, `..`, `%2F` or a trailing slash refused; a PUT, a non-JSON or encoded body refused; a replayed nonce; a request signed for another env (`ENV_NAME` or `SIGNER_ACCOUNT`); a body or path changed after signing; the identical `401` for every authentication failure; a valid key behind an IP that is failing still admitted; self-revoke with the switch off; a platform breaker flood leaving the console's breaker untouched; each route within its cost | **Yes** |
-| P4 | Operations: create (the platform variant, the look-alike name check within the scope, quotas, `INSERT … SELECT`), list, get (the allowlisted view), origins propose (live rules; `ackNotice`'s platform minimum, `PLATFORM_MIN_DELAY_MS`, for platform proposals), remove and cancel, suspend and resume (`partner_bit_by`), keys create and revoke; the reach predicate in every reused writer; `platform_requests` | M | H1's tests (a live app, a staff-created app and another scope untouched; the scope moved between the read and the commit); H2 (a member's, staff's or policy change `not_found` to the platform's cancel); M7 (a loopback, http or mixed-script origin refused on a test scope); the platform minimum (a platform proposal's `active_from` at least 24 h after its ack on a dev env, its env's delay in a `local*` env, a member's or staff's proposal unchanged); the resume rule including a member suspending after the platform; idempotency (a retry returns the first result; another body `idempotency_conflict`; another credential `conflict`; after 7 days `already_applied`); the breaker and the reserve; a frozen org | **Yes** (with P3 if built together) |
+| P4 | Operations: create (the platform variant, the look-alike name check within the scope, quotas, `INSERT … SELECT`), list, get (the allowlisted view), origins propose (live rules; `ackNotice`'s platform minimum, `PLATFORM_MIN_DELAY_MS`, for platform proposals), remove and cancel, suspend and resume (`partner_bit_by`), keys create and revoke; the reach predicate in every reused writer; `platform_requests` | M | H1's tests (a live app, a staff-created app and another scope untouched; the scope moved between the read and the commit); H2 (a member's, staff's or policy change `not_found` to the platform's cancel); M7 (a loopback, http or mixed-script origin refused on a test scope); the platform minimum (a platform proposal's `active_from` at least 24 h after its ack on a dev env, its env's delay in a `local*` env, a member's proposal unchanged); **a create's origins recorded as platform proposals, waiting 24 h on a dev env, never given `no_session`, and confirmable**; the CLI's `app:changes:announce` refusing a platform proposal; staff proposals on a flagged scope or platform-created app waiting the minimum with no waiver (if the Tech Lead confirms it, A15); the resume rule including a member suspending after the platform; idempotency (a retry returns the first result; another body `idempotency_conflict`; another credential `conflict`; after 7 days `already_applied`); the breaker and the reserve; a frozen org | **Yes** (with P3 if built together) |
 | P5 | Screens: the console's Platform keys, activity, app badges and Audit rows; the admin portal's org switch with the key review, quotas, approvals, platform queue and activity; the mainnet demo warning; one email per request; playbooks for the new event kinds | M | Console and admin unit tests; an e2e run: register a key, accept it, create an app, propose origins, see one notice and the queue, cancel from the link | No |
 | P6 | Per-app User IDs: `appSub` in core with vectors from `packages/core/scripts/gen-identity-vectors.mjs`; `apps.user_ids` with its triggers; the mint, the session answers' Support ID; `end_user_apps` written after login; retention and the erase script (M8); the guide's `sub` text | M | Vectors from the independent generator; an existing app's `sub` and Support ID unchanged across the migration; an `'app'` app's token `sub` and `hana.supportId` agreeing with `supportIdFromSub`; two apps of a flagged scope giving different IDs, one app on an unflagged scope giving today's; the triggers; a deleted app's rows purged at 30 days, not before; erase by a per-app User ID and by a per-app Support ID | **Yes** |
 | P7 | Linking: the console's "This person on your apps" panel and per-app search (owners), its audit rows, limits and volume alert; the staff Support lookup resolving per-app IDs; Passport Home's line for a flagged scope | S to M | A viewer refused; another org's user `not_found`; every lookup audited before it answers; the limits; the alert once per window; nothing beyond the listed fields in the answer | **Yes** (with P6) |
 | P8 | The network's guide: a partner-facing document for the network (the request format, the reference signer with the DER conversion, the vectors, every endpoint, the delay, the off switches, "check `aud`"), checked by the docs test that keeps partner guides free of repo paths | S | The guide's code samples run against the local stack | No |
 | P9 (later) | The 60-day unused-origin report (an origin's last sign-in day, written at most once a day per origin), to the network and staff. No staff restore (A14) | S | The report lists an origin with no sign-in for 60 days and not one used within them; at most one write a day per origin | No |
-| P10 | **The owner's confirmation** (A15, decided N3): `ConsoleRpc.confirmOrigins` with its commit predicate; the console's step-up kind `origin.confirm` (the `pending_actions` rebuild) and its nonce layout; `guarded_changes.confirmed_*` and the trigger (A7); `origin.confirmed` in the ledger and `APP_CHANGE_KINDS`; the notice email from the change feed to the alias, the security contacts and every owner; the Confirm link in the platform proposal's email; the console's confirmation page and origin states (A11); the admin portal's queue of confirmed origins; the platform view's `confirmedAt`. After P4 and P5; before the platform is switched on for any org | M | A confirmation by an owner member who is an on-chain owner of the scope brings each ticked origin into force at once, and no other; refused for a viewer, for an owner member who isn't an on-chain owner of that scope, and for every non-member actor; no platform route can confirm or bring an `active_from` forward (every route walked); a GET of the confirm page or of the email's link changes nothing; a confirm without the console's CSRF headers refused; a step-up token for another set of changes, another app or another env refused, and a used token refused; refused before the announcement, after a cancel, after it came into force, twice; a cancel and a confirmation racing (each order; the second loses); the proposing key revoked or expired, the org's switch off, the org frozen, the app deleted, moved off the key's scopes or suspended by Journear, each between the plan read and the batch (nothing written); the trigger refusing a confirmation of a member's or staff's change and a second confirmation through a bare D1 write; the notice sent to every owner and contact after a confirmation and only once; an unconfirmed origin still waiting 24 h on a dev env and its env's delay in a `local*` env; the e2e: a platform proposal, its email, the Confirm page, the fresh sign-in, the origin working at once | **Yes** |
+| P10 | **The owner's confirmation of origins** (A15, decided N3; who may confirm decided, D914): `ConsoleRpc.confirmOrigins` with its set commit predicate (one app, one proposing request, 1 to 20 changes, all or nothing); the console's step-up kind `origin.confirm` (the `pending_actions` rebuild) with its own nonce label; `guarded_changes.confirmed_*`, `unconfirmed_active_from`, the removal link's columns and the three triggers (A7); `origin.confirmed` in the ledger and `APP_CHANGE_KINDS`; the confirmation's notice with its ack and removal link (`AdminRpc.confirmationNotices`, `ackConfirmationNotice`, `ConsoleRpc.removeOriginByLink`, the `/remove/:changeId#t=` page); owners added to the platform proposal's notice, its wait line and its Confirm link; the console's confirmation page (with the chain read that hides Confirm) and origin states (A11); the admin portal's queue of confirmed origins; the platform view's `confirmedAt`; the `local*` guard (A15, proposed). Reuses P2's page, step-up and notice machinery. After P2, P4 and P5; before the platform is switched on for any org | M | **Who and how:** a confirmation by an `owner` member who is an on-chain owner of the scope brings each ticked origin into force at once, and no other; refused for a viewer (`forbidden` from the route matrix), for an owner member who isn't an on-chain owner of that scope (`not_owner` after the sign-in), for a member demoted to viewer between creating the action and signing in, and for every non-member actor; ConsoleRpc refusing a member's or staff's change (not a platform proposal); no platform route can confirm or bring an `active_from` forward (every route walked). **The token:** a token for another set of changes, another app, another org, another scope or another env refused; a token of another kind (an `origin.add` token, a settings token) refused, the `origin.confirm` nonce having its own label; a used token refused. **Requests:** a GET of the confirm page or of the email's link changes nothing; a confirm without the console's CSRF headers refused. **State:** refused before the announcement, after a cancel, after it came into force, twice; a cancel and a confirmation racing (each order; the second loses); the proposing key revoked or expired, the org's switch off, the org frozen, the app deleted, moved off the key's scopes or suspended by Journear, each between the plan read and the batch (nothing written). **The set:** a partly stale set writes nothing; a set spanning two apps or two proposing requests refused; 21 changes refused; the call within `CONSOLE_DB_LIMITS` and its cost. **The database:** the confirm trigger refusing a member's or staff's change, a change not pending or not announced, and a second confirmation, through bare D1 writes; an early `active_from` on `guarded_changes` or `app_origins` without a confirmation refused. **Records:** one `origin.confirmed` ledger row listing every change, and the console `audit_log` row; the notice sent once to the security alias, every contact and every owner, after the ack stored the removal links; the removal link removing the origin at once, single use, refused after 7 days, a GET of it removing nothing; the staff queue listing confirmed origins for 7 days; `confirmedAt` in the platform's view, never who confirmed. **The page:** nothing ticked at first, no "confirm all", Confirm hidden for an owner who isn't an on-chain owner. **Revocation:** a revocation, a switch-off and a freeze cancelling the key's waiting proposals in their own batch, with the ledger row, and an origin in force left as it is. **Timing:** an unconfirmed origin waiting 24 h on a dev env and its env's delay in a `local*` env; the proposal email's wait line saying 24 hours on sandbox-dev's config; the `local*` guard refusing a `local*` env with a non-loopback API or a deploy. **e2e:** a platform proposal, its email, the Confirm page, the fresh sign-in, the origin working at once, the notice, the removal link | **Yes** |
 
 **Order:** P0 and P1 first (either order), then P2, P3, P4, P5, P10; P6 and P7 after P0, in parallel with Part A.
 Deploy order for each env: the API migration (with its Time Travel bookmark and comparison), then the API, then the

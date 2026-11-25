@@ -2,18 +2,22 @@
 -- rebuild"). SQLite can't widen a column CHECK in place, so `app_changes` and `guarded_changes` are rebuilt once, every
 -- column, row, `seq`, index and trigger kept, and their actor and proposer kinds move from column CHECKs to triggers:
 -- the next kind is then a DROP TRIGGER and CREATE TRIGGER, never another rebuild of the ledger. `security_events` is
--- rebuilt with three more kinds (its CHECK widened, as 0018 to 0025 did). Nothing writes `platform` or the new event
--- kinds yet (pieces P2 to P4).
+-- rebuilt with five more kinds (its CHECK widened, as 0018 to 0025 did): the platform API's two, the linking view's
+-- one (nothing writes those yet, pieces P3 to P7), and the shared-scope drift findings' two (D915's, written by the
+-- hourly drift check from this migration on). After PR 143's review each copy checks itself before its DROP, and a
+-- ledger row can't be replaced (`app_changes_no_replace`).
 --
--- Numbered 0027: 0026 is P0's (`scopes.app_user_ids`, `apps.created_by_kind`, `apps.partner_bit_by`). Neither file
--- reads or writes what the other adds, so they apply in either order (wrangler applies the unapplied files in name
--- order; 0006's header). Applied only by the Tech Lead on a deployed env, after a rehearsal on a scratch copy, with a
--- snapshot and a Time Travel bookmark first and the before-and-after comparison (`ledger-check`, docs/operations.md
--- "Ledger rebuild (hot-DB migration 0027, D916)"). Each copy also checks itself below, inside this transaction.
---
--- No foreign key points at these tables, no other table's trigger reads them, and a DROP TABLE fires no trigger (its
+-- Runs after 0026 (P0, D915: `scopes.app_user_ids`, `apps.created_by_kind` and six triggers). One of those,
+-- `scopes_app_user_ids_no_policy` (on `scopes`), reads `guarded_changes` in its body, and SQLite checks every trigger
+-- in the schema when a table is renamed: so it is dropped before `guarded_changes` is and created again, word for word
+-- as 0026 wrote it, after the renames. No other trigger and no view in the schema names the three tables (the
+-- migration test asks `sqlite_schema`), no foreign key points at them, and a DROP TABLE fires no trigger (its own
 -- triggers are dropped first), so dropping the old tables deletes nothing elsewhere (unlike `apps`, never rebuilt:
 -- 0006's header). D1 runs the file as one transaction: any failure leaves the database as it was.
+--
+-- Applied only by the Tech Lead on a deployed env, after a rehearsal on a scratch copy, with a snapshot and a Time
+-- Travel bookmark first and the before-and-after comparison (`ledger-check`, docs/operations.md "Ledger rebuild
+-- (hot-DB migration 0027, D916)").
 
 -- ---- app_changes: every column in order, `actor_kind` without its CHECK ----
 
@@ -85,6 +89,9 @@ INSERT INTO ledger_copy_check (ok)
      AND NOT EXISTS (SELECT * FROM guarded_changes_new EXCEPT SELECT * FROM guarded_changes)
      AND (SELECT COUNT(*) FROM guarded_changes) = (SELECT COUNT(*) FROM guarded_changes_new);
 
+-- 0026's trigger that reads guarded_changes goes first (a rename checks every trigger), and comes back below.
+DROP TRIGGER scopes_app_user_ids_no_policy;
+
 DROP TABLE app_changes;
 ALTER TABLE app_changes_new RENAME TO app_changes;
 DROP TABLE guarded_changes;
@@ -111,6 +118,19 @@ CREATE TRIGGER app_changes_no_early_delete BEFORE DELETE ON app_changes
 WHEN OLD.at >= (unixepoch('now', '-60 months') * 1000)
 BEGIN
   SELECT RAISE(ABORT, 'app_changes rows are kept 60 months');
+END;
+
+-- 0026's trigger, exactly as 0026 wrote it (D915: the shared-scope mark refused while an app has a policy):
+-- The flag can't be set while any app of the scope (a deleted one aside: it serves nothing and can't come back) has an
+-- auto-approve policy in force, waiting in the app's columns, or proposed (an open policy_set change). The API checks
+-- the same first and answers it in words; this is the backstop.
+CREATE TRIGGER scopes_app_user_ids_no_policy BEFORE UPDATE OF app_user_ids ON scopes
+WHEN OLD.app_user_ids = 0 AND NEW.app_user_ids = 1
+BEGIN
+  SELECT RAISE(ABORT, 'scopes: an app of this scope has an auto-approve policy in force or waiting')
+   WHERE EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = NEW.scope_id AND a.deleted_at IS NULL
+                  AND (a.auto_approve_policy IS NOT NULL OR a.auto_approve_pending IS NOT NULL
+                       OR EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = a.id AND g.kind = 'policy_set' AND g.status IN ('pending', 'active'))));
 END;
 
 -- ---- The new triggers (the kind lists are `ACTOR_KINDS` and `PROPOSER_KINDS` in @hana-id/console-core; a test compares) ----
@@ -145,12 +165,13 @@ BEGIN
   SELECT RAISE(ABORT, 'guarded_changes: unknown proposed_by_kind') WHERE NEW.proposed_by_kind NOT IN ('member', 'hana', 'system', 'platform');
 END;
 
--- ---- security_events gains the platform's two kinds and the linking lookups' one (spec A5, B6) ----
+-- ---- security_events gains the platform's two kinds, the linking lookups' one (spec A5, B6) and the shared-scope
+-- drift findings' two (D915, D916) ----
 
 CREATE TABLE security_events_new (
   id          TEXT PRIMARY KEY,
   detected_at INTEGER NOT NULL,
-  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'evm_relay_closed_slot_mined', 'near_billing_late', 'neon_compute_high', 'evm_relay_auto_resumed', 'label_proposed', 'label_blocked', 'label_live', 'platform_quota', 'platform_auth_failures', 'link_lookup_volume')),
+  kind        TEXT NOT NULL CHECK (kind IN ('drift', 'breaker', 'owner_cap', 'owner_allowance_low', 'home_budget_high', 'near_relay_budget_high', 'near_relay_balance_low', 'evm_relay_budget_high', 'evm_relay_balance_low', 'evm_relay_stuck', 'evm_relay_receipt_odd', 'evm_relay_nonce_taken', 'evm_billing_late', 'evm_relay_closed_slot_mined', 'near_billing_late', 'neon_compute_high', 'evm_relay_auto_resumed', 'label_proposed', 'label_blocked', 'label_live', 'platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked')),
   org_id      TEXT,
   app_id      TEXT,
   scope_id    TEXT,

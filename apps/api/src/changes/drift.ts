@@ -20,6 +20,12 @@
 // and `settings_version` (a policy forged again after the kill switch, which bumps the version, is reported again) or
 // per change id; findings already recorded are left out of the read, in a fixed order, so they never crowd out new ones.
 //
+// D916: since migration 0027 these two findings are security events of their own kinds (`shared_wallet_policy`,
+// `shared_scope_unmarked`), so the admin's feed and security screen give them their own titles and playbooks instead
+// of the generic "App setting in force without a notice". Their detail keeps `what` as before. On a D1 without 0027
+// (its `security_events` CHECK doesn't list them) they stay `drift` events, since an `INSERT OR IGNORE` of a kind the
+// CHECK refuses would drop the finding silently; a finding already recorded under either kind isn't recorded again.
+//
 // An `app.created` row explains nothing on its own (D228): the origins it lists are guarded changes since 0006, and
 // counting the row would let a forged in-force row for an unannounced initial origin pass.
 import type { Env } from '../env.ts';
@@ -156,7 +162,7 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
          SELECT a.id, a.org_id, a.scope_id, a.settings_version, 'change', g.id FROM guarded_changes g JOIN apps a ON a.id = g.app_id LEFT JOIN scopes s ON s.scope_id = a.scope_id
           WHERE a.deleted_at IS NULL AND ${SHARED_WALLET} AND g.kind = 'policy_set' AND g.status IN ('pending', 'active')
        ) f
-       WHERE NOT EXISTS (SELECT 1 FROM security_events e WHERE e.kind = 'drift' AND e.app_id = f.app_id
+       WHERE NOT EXISTS (SELECT 1 FROM security_events e WHERE e.kind IN ('drift', 'shared_wallet_policy') AND e.app_id = f.app_id
                            AND json_extract(e.detail_json, '$.what') = 'shared_wallet_policy' AND json_extract(e.detail_json, '$.source') = f.source
                            AND CASE WHEN f.source = 'change' THEN json_extract(e.detail_json, '$.changeId') = f.value
                                     ELSE json_extract(e.detail_json, '$.settingsVersion') = f.settings_version END)
@@ -172,13 +178,19 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
         WHERE m.kind = 'scope.app_user_ids' AND m.scope_id IS NOT NULL
           AND m.seq = (SELECT MAX(x.seq) FROM app_changes x WHERE x.kind = 'scope.app_user_ids' AND x.scope_id = m.scope_id)
           AND COALESCE(s.app_user_ids, 0) <> 1
-          AND NOT EXISTS (SELECT 1 FROM security_events e WHERE e.kind = 'drift' AND e.scope_id = m.scope_id
+          AND NOT EXISTS (SELECT 1 FROM security_events e WHERE e.kind IN ('drift', 'shared_scope_unmarked') AND e.scope_id = m.scope_id
                             AND json_extract(e.detail_json, '$.what') = 'shared_scope_unmarked' AND json_extract(e.detail_json, '$.markSeq') = m.seq)
         ORDER BY m.scope_id LIMIT ?1`,
     )
     .bind(DRIFT_BATCH)
     .all<{ scope_id: string; org_id: string; seq: number; has_row: number }>();
 
+  // The two shared-scope kinds exist once migration 0027 listed them (read only when there is a finding to record).
+  const ownKinds =
+    shared.length + unmarked.length > 0 &&
+    ((await db.prepare("SELECT instr(sql, 'shared_scope_unmarked') > 0 AS ok FROM sqlite_schema WHERE type = 'table' AND name = 'security_events'").first<{ ok: number }>())?.ok ?? 0) === 1;
+  const sharedKind = ownKinds ? 'shared_wallet_policy' : 'drift';
+  const unmarkedKind = ownKinds ? 'shared_scope_unmarked' : 'drift';
   const events: D1PreparedStatement[] = [];
   const insert = 'INSERT OR IGNORE INTO security_events (id, detected_at, kind, org_id, app_id, scope_id, detail_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)';
   for (const f of origins) {
@@ -195,11 +207,11 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
     const policyId = f.source === 'change' ? undefined : ((await storedPolicy(f.value))?.id ?? 'invalid');
     const detail = { what: 'shared_wallet_policy', source: f.source, ...(f.source === 'change' ? { changeId: f.value } : { policyId, settingsVersion: f.settings_version }) };
     const key = f.source === 'change' ? f.value : String(f.settings_version);
-    events.push(db.prepare(insert).bind(await eventId('drift', f.app_id, 'shared_wallet_policy', f.source, key), now, 'drift', f.org_id, f.app_id, f.scope_id, JSON.stringify(detail)));
+    events.push(db.prepare(insert).bind(await eventId(sharedKind, f.app_id, 'shared_wallet_policy', f.source, key), now, sharedKind, f.org_id, f.app_id, f.scope_id, JSON.stringify(detail)));
   }
   for (const u of unmarked) {
     const detail = { what: 'shared_scope_unmarked', markSeq: u.seq, scopeRow: u.has_row ? 'present' : 'missing' };
-    events.push(db.prepare(insert).bind(await eventId('drift', 'scope', u.scope_id, 'shared_scope_unmarked', String(u.seq)), now, 'drift', u.org_id, null, u.scope_id, JSON.stringify(detail)));
+    events.push(db.prepare(insert).bind(await eventId(unmarkedKind, 'scope', u.scope_id, 'shared_scope_unmarked', String(u.seq)), now, unmarkedKind, u.org_id, null, u.scope_id, JSON.stringify(detail)));
   }
   let recorded = 0;
   if (events.length) {

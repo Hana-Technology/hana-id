@@ -4,7 +4,7 @@
 // (`policy_invalid`, the shared words), in its plan read and in its commit; an unmarked app is unchanged; the hourly
 // drift check flags a policy found on such an app, however it got there; the app views carry the flags.
 import { SHARED_SCOPE_POLICY_IN_THE_WAY, SHARED_SCOPE_TEST_ONLY, SHARED_WALLET_NO_AUTO_APPROVE, autoApproveRefused, newPublishableKey, nonceOf, settingsChangeDigest } from '@hana-id/console-core';
-import { createExecutionContext } from 'cloudflare:test';
+import { applyD1Migrations, createExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sharedWallet } from '../src/changes/apps.ts';
@@ -63,8 +63,9 @@ async function platformApp(of: OrgApp): Promise<OrgApp> {
   return { id, key, scope: of.scope, org: of.org };
 }
 
+/** The app's drift findings: the generic `drift` kind and, since 0027 (D916), the shared-scope findings' own kinds. */
 const drifts = async (appId: string) =>
-  (await rows<{ detail_json: string }>("SELECT detail_json FROM security_events WHERE kind = 'drift' AND app_id = ?1", appId)).map((e) => JSON.parse(e.detail_json) as Record<string, unknown>);
+  (await rows<{ detail_json: string }>("SELECT detail_json FROM security_events WHERE kind IN ('drift', 'shared_wallet_policy', 'shared_scope_unmarked') AND app_id = ?1", appId)).map((e) => JSON.parse(e.detail_json) as Record<string, unknown>);
 
 describe('AdminRpc.setScopeAppUserIds', () => {
   it('marks the scope once, with a ledger row listing its apps; again is no change; one way (no off)', async () => {
@@ -393,7 +394,7 @@ describe('the one-way mark against direct D1 writes', () => {
     await detectDrift(env);
     await detectDrift(env);
     expect((await drifts(app.id)).filter((d) => d.what === 'shared_wallet_policy').map((d) => d.source)).toEqual(['policy']);
-    const scopeEvents = await rows<{ app_id: string | null; org_id: string; detail_json: string }>("SELECT app_id, org_id, detail_json FROM security_events WHERE kind = 'drift' AND scope_id = ?1 AND app_id IS NULL", app.scope);
+    const scopeEvents = await rows<{ app_id: string | null; org_id: string; detail_json: string }>("SELECT app_id, org_id, detail_json FROM security_events WHERE kind = 'shared_scope_unmarked' AND scope_id = ?1 AND app_id IS NULL", app.scope);
     expect(scopeEvents.map((e) => ({ ...e, detail: JSON.parse(e.detail_json) as Record<string, unknown>, detail_json: undefined }))).toEqual([
       { app_id: null, org_id: app.org, detail_json: undefined, detail: { what: 'shared_scope_unmarked', markSeq: expect.any(Number), scopeRow: 'present' } },
     ]);
@@ -451,5 +452,44 @@ describe('fail closed on unexpected values', () => {
     await env.DB.prepare('DELETE FROM scopes WHERE scope_id = ?1').bind(app.scope).run();
     await detectDrift(env);
     expect((await drifts(app.id)).filter((d) => d.what === 'shared_wallet_policy').map((d) => d.source)).toEqual(['policy']);
+  });
+});
+
+describe('the shared-scope findings’ own event kinds (D916)', () => {
+  it('a policy on a shared wallet is a shared_wallet_policy event, an undone mark a shared_scope_unmarked one; no generic drift event for either', async () => {
+    const app = await orgApp();
+    await ok(markScope(app));
+    await env.DB.prepare('UPDATE apps SET auto_approve_policy = ?2 WHERE id = ?1').bind(app.id, JSON.stringify(autoApprovePolicy('own kind'))).run();
+    await withoutTrigger('scopes_app_user_ids_one_way', async () => {
+      await env.DB.prepare('UPDATE scopes SET app_user_ids = 0 WHERE scope_id = ?1').bind(app.scope).run();
+    });
+    await detectDrift(env);
+    // The policy is also a plain `policy` drift finding (unexplained), which keeps the generic kind.
+    const kinds = await rows<{ kind: string; app_id: string | null; what: string }>("SELECT kind, app_id, json_extract(detail_json, '$.what') AS what FROM security_events WHERE scope_id = ?1 AND json_extract(detail_json, '$.what') LIKE 'shared%' ORDER BY kind", app.scope);
+    expect(kinds).toEqual([
+      { kind: 'shared_scope_unmarked', app_id: null, what: 'shared_scope_unmarked' },
+      { kind: 'shared_wallet_policy', app_id: app.id, what: 'shared_wallet_policy' },
+    ]);
+  });
+
+  it('on a D1 without 0027 they stay drift events (never dropped by the CHECK), and are not recorded again once it applies', async () => {
+    const db = env.FRESH_DB;
+    const migrations = env.TEST_MIGRATIONS;
+    const at = migrations.findIndex((m) => m.name === '0027_platform_actor.sql');
+    await applyD1Migrations(db, migrations.slice(0, at));
+    const now = Date.now();
+    await db.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('s_sh', 'org_sh', 'test', 1, 1, 1, 1)").run();
+    await db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES ('app_sh', 'Shared', 's_sh', 'org_sh', 'pk_test_Shhhhhhhhhhhhhhhhhhhhhhh')").run();
+    await db.prepare('UPDATE apps SET auto_approve_policy = ?2 WHERE id = ?1').bind('app_sh', JSON.stringify(autoApprovePolicy('before 0027'))).run();
+    await detectDrift({ DB: db }, now);
+    const sharedRows = "SELECT kind, json_extract(detail_json, '$.what') AS what FROM security_events WHERE json_extract(detail_json, '$.what') = 'shared_wallet_policy'";
+    expect((await db.prepare(sharedRows).all()).results).toEqual([{ kind: 'drift', what: 'shared_wallet_policy' }]);
+    await applyD1Migrations(db, migrations);
+    await detectDrift({ DB: db }, now + 1);
+    expect((await db.prepare(sharedRows).all()).results).toEqual([{ kind: 'drift', what: 'shared_wallet_policy' }]);
+    // A new finding after 0027 gets the kind of its own.
+    await db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, auto_approve_policy) VALUES ('app_sh2', 'Shared 2', 's_sh', 'org_sh', 'pk_test_Sh2hhhhhhhhhhhhhhhhhhhhh', ?1)").bind(JSON.stringify(autoApprovePolicy('after 0027'))).run();
+    await detectDrift({ DB: db }, now + 2);
+    expect((await db.prepare("SELECT kind FROM security_events WHERE app_id = 'app_sh2' AND json_extract(detail_json, '$.what') = 'shared_wallet_policy'").all()).results).toEqual([{ kind: 'shared_wallet_policy' }]);
   });
 });

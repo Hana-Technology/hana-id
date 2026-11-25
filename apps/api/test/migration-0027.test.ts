@@ -17,7 +17,7 @@ const KEY: Record<(typeof TABLES)[number], string> = { app_changes: 'seq', guard
 /** The kinds each table took before 0027 (0006's CHECKs; security_events as 0025 left it). */
 const OLD_ACTORS = ['member', 'hana', 'system', 'link'];
 const OLD_PROPOSERS = ['member', 'hana', 'system'];
-const NEW_EVENT_KINDS = ['platform_quota', 'platform_auth_failures', 'link_lookup_volume'];
+const NEW_EVENT_KINDS = ['platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked'];
 const OLD_EVENT_KINDS = SECURITY_EVENT_KINDS.filter((k) => !NEW_EVENT_KINDS.includes(k));
 const MONTH = 31 * 86_400_000;
 const now = Date.now();
@@ -61,6 +61,19 @@ let beforeRows: Record<string, Row[]>;
 let beforeColumns: Record<string, Row[]>;
 let beforeSchema: Map<string, { type: string; tbl: string; sql: string | null }>;
 let maxSeqBefore: number;
+/** Every trigger and view in the whole schema before 0027, by name. */
+let everyTriggerBefore: Map<string, { type: string; tbl: string; sql: string | null }>;
+const everyTriggerAndView = async () =>
+  new Map(
+    (await db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema WHERE type IN ('trigger', 'view') ORDER BY name").all<{ type: string; name: string; tbl_name: string; sql: string | null }>()).results.map((r) => [
+      r.name,
+      { type: r.type, tbl: r.tbl_name, sql: r.sql },
+    ]),
+  );
+/** Triggers and views of other tables whose SQL names a rebuilt table: each must be dropped and re-created by 0027. */
+const OUTSIDE_READERS_SQL =
+  "SELECT name FROM sqlite_schema WHERE type IN ('trigger', 'view') AND tbl_name NOT IN ('app_changes', 'guarded_changes', 'security_events') AND (instr(sql, 'app_changes') > 0 OR instr(sql, 'guarded_changes') > 0 OR instr(sql, 'security_events') > 0) ORDER BY name";
+let outsideReaders: string[];
 
 beforeAll(async () => {
   const migrations = env.TEST_MIGRATIONS;
@@ -149,6 +162,10 @@ beforeAll(async () => {
     ),
   );
 
+  // 0026's shared-scope mark (D915): one scope marked, with an app; s_t's app has an open policy_set (above).
+  await db.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES ('s_m', 'org_a', 'test', 1, 1, 1, 1)").run();
+  await db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES ('app_m', 'Marked app', 's_m', 'org_a', 'pk_test_Mmmmmmmmmmmmmmmmmmmmmmm')").run();
+
   // Before 0027: platform is refused everywhere, as is a new event kind.
   expect(await accepted("INSERT INTO app_changes (at, org_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (1, 'org_a', 'app.renamed', '{}', 'platform', 'pkc_1', 'req_pf_before')")).toBe(false);
   expect(await accepted("INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES ('gc_pf_before', 'app_t', 'origin_add', 'https://x.example', 'pending', 'platform', 'pkc_1', 1, 'r')")).toBe(false);
@@ -158,6 +175,8 @@ beforeAll(async () => {
   beforeColumns = Object.fromEntries(await Promise.all(TABLES.map(async (t) => [t, await columnsOf(t)] as const)));
   beforeSchema = await schemaOf();
   maxSeqBefore = (await db.prepare('SELECT max(seq) AS m FROM app_changes').first<{ m: number }>())!.m;
+  everyTriggerBefore = await everyTriggerAndView();
+  outsideReaders = (await db.prepare(OUTSIDE_READERS_SQL).all<{ name: string }>()).results.map((r) => r.name);
   expect(beforeRows.app_changes!.length).toBe(APP_CHANGE_KINDS.length * OLD_ACTORS.length + 2);
   expect(beforeRows.guarded_changes!.length).toBe(36);
   expect(beforeRows.security_events!.length).toBe(OLD_EVENT_KINDS.length);
@@ -198,12 +217,35 @@ describe('migration 0027_platform_actor', () => {
     expect([...after.keys()].filter((k) => k.startsWith('sqlite_autoindex_')).sort()).toEqual([...beforeSchema.keys()].filter((k) => k.startsWith('sqlite_autoindex_')).sort());
   });
 
-  it('each table’s SQL is the old one less the kind CHECK it moved (security_events: three kinds more)', async () => {
+  it('every trigger and view in the whole schema is there after with the same SQL; only 0027’s four triggers are new', async () => {
+    const after = await everyTriggerAndView();
+    expect([...after.keys()].filter((k) => !everyTriggerBefore.has(k)).sort()).toEqual(['app_changes_actor_kind', 'app_changes_no_replace', 'guarded_changes_proposer_kind', 'guarded_changes_proposer_kind_update']);
+    for (const [name, b] of everyTriggerBefore) expect(after.get(name), name).toEqual(b);
+  });
+
+  it('the schema’s other readers of the rebuilt tables, found by asking sqlite_schema, are exactly the ones 0027 drops and re-creates', async () => {
+    // Found before 0027 (not by reading the files): today only 0026's scopes_app_user_ids_no_policy.
+    expect(outsideReaders).toEqual(['scopes_app_user_ids_no_policy']);
+    const file = env.TEST_MIGRATIONS.find((m) => m.name === FILE)!.queries.join('\n');
+    for (const name of outsideReaders) {
+      expect(file, name).toContain(`DROP TRIGGER ${name}`);
+      expect(file, name).toContain(everyTriggerBefore.get(name)!.sql!);
+    }
+    expect((await db.prepare(OUTSIDE_READERS_SQL).all<{ name: string }>()).results.map((r) => r.name)).toEqual(outsideReaders);
+  });
+
+  it('the re-created 0026 trigger still refuses the shared-wallet mark while an app has a policy proposed, and the mark stays one way', async () => {
+    expect(await refusal("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's_t'")).toMatch(/auto-approve policy in force or waiting/u);
+    expect(await refusal("UPDATE scopes SET app_user_ids = 0 WHERE scope_id = 's_m'")).toMatch(/one way/u);
+    expect(await db.prepare("SELECT app_user_ids FROM scopes WHERE scope_id = 's_m'").first()).toEqual({ app_user_ids: 1 });
+  });
+
+  it('each table’s SQL is the old one less the kind CHECK it moved (security_events: five kinds more)', async () => {
     const after = await schemaOf();
     const quoted = (sql: string, t: string) => sql.replace(`CREATE TABLE ${t} (`, `CREATE TABLE "${t}" (`);
     expect(after.get('app_changes')!.sql).toBe(quoted(beforeSchema.get('app_changes')!.sql!, 'app_changes').replace(" CHECK (actor_kind IN ('member', 'hana', 'system', 'link'))", ''));
     expect(after.get('guarded_changes')!.sql).toBe(quoted(beforeSchema.get('guarded_changes')!.sql!, 'guarded_changes').replace(" CHECK (proposed_by_kind IN ('member', 'hana', 'system'))", ''));
-    expect(after.get('security_events')!.sql).toBe(beforeSchema.get('security_events')!.sql!.replace("'label_live')", "'label_live', 'platform_quota', 'platform_auth_failures', 'link_lookup_volume')"));
+    expect(after.get('security_events')!.sql).toBe(beforeSchema.get('security_events')!.sql!.replace("'label_live')", "'label_live', 'platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked')"));
   });
 
   it('the trigger lists and the CHECK list are console-core’s ACTOR_KINDS, PROPOSER_KINDS and SECURITY_EVENT_KINDS', async () => {

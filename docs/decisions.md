@@ -22427,8 +22427,11 @@ this branch fixes it. The deploy list it produced is kept outside the repository
   9. *L6:* the checklist's retention check applies on any day the month's run hasn't completed, not only the 1st.
   10. *L7:* the playbooks `near-relay-budget-high` and `near-relay-balance-low` and `mainnet-readiness.md` 1.21 give
      sandbox-dev's values after judging (5 and 2 NEAR); `docs/playbooks.md` regenerated.
-  11. *L8:* the names test's 2,000-character block holds the doubling ratio under 8 (catches cubic growth) and each call
-     under 2 s. *L9:* `clickToClose` requires the window open and the button visible before the click and accepts only
+  11. *L8:* the names test's 2,000-character block holds the cost ratio over a quadrupling (2,000 against 500
+     characters) under 32, between quadratic's 16 and cubic's 64, and each call under 2 s. A doubling ratio under 8, as
+     asked, failed once in verify at 8.9 for a rule measured as quadratic (0.15, 0.38, 1.27, 4.53 ms at 500 to 4,000
+     characters): a doubling leaves too little room between quadratic's 4 and cubic's 8 for a loaded machine's noise.
+     **To confirm.** *L9:* `clickToClose` requires the window open and the button visible before the click and accepts only
      the "has been closed" error. *L10:* the vault-consents check refuses any timer over 0 ms.
   12. *L11:* `deploy-check <env> --usage-binding` reads the `USAGE_DB` id from `apps/api/wrangler.jsonc` and asks
      `wrangler hyperdrive get <id>` (a new read-only remote call) for its name, which must be `usage.writerHyperdrive`

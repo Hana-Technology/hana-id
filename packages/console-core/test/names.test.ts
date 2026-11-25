@@ -439,12 +439,14 @@ describe('D891: no rule is slow (no catastrophic backtracking)', () => {
         passportProblemIn(n);
         brandNameIn(n);
       };
-      const full = cost(check(name), 3);
-      const half = cost(check(name.slice(0, Math.ceil(name.length / 2))), 3);
-      // Twice the characters: a linear or quadratic rule costs 2 to 4 times as much, a cubic one 8 (after PR 151's
-      // review, L8: under 32 caught only n^5), and none may take seconds outright (a generous ceiling for a loaded machine).
-      expect(full / half, `${name.slice(0, 20)}: 2,000 vs 1,000 characters`).toBeLessThan(8);
-      expect(full / 3, `${name.slice(0, 20)}: one call on 2,000 characters`).toBeLessThan(2000);
+      const full = cost(check(name), 20);
+      const quarter = cost(check(name.slice(0, Math.ceil(name.length / 4))), 20);
+      // Four times the characters: a quadratic rule costs 16 times as much, a cubic one 64 (after PR 151's review, L8:
+      // the doubling ratio under 32 caught only n^5). Measured over the quadrupling, not a doubling, so the bound sits
+      // between the two with room for a loaded machine's noise (the version step is quadratic: 0.15, 0.38, 1.27 and 4.53
+      // ms at 500 to 4,000 characters, 2026-11-25), and none may take seconds outright.
+      expect(full / quarter, `${name.slice(0, 20)}: 2,000 vs 500 characters`).toBeLessThan(32);
+      expect(full / 20, `${name.slice(0, 20)}: one call on 2,000 characters`).toBeLessThan(2000);
     }
   });
 });

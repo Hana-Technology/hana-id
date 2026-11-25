@@ -22040,7 +22040,7 @@ D917). D918 is the number the caller assigned; API migration 0028 and console mi
   3. **Owner since without a break.** `ownerSince` reads only grants not applied yet, and takes the later of
      `role_since` and the grant's time, so a member demoted after an old grant, or removed and added again, counts from
      the latest start of their ownership.
-  4. **The freeze mirror ordered.** The staff route freezes the API's mirror first (it only tightens), then the console
+  4. **The freeze mirror ordered** (superseded by the second review's state machine, below). The staff route freezes the API's mirror first (it only tightens), then the console
      (whatever the API answered); it unfreezes the console first, then the mirror. The hourly check reads the console
      again just before an unfreeze, and the unfreeze is a compare-and-swap on the mirror row's version. Hardened after
      an automated finding: point 4a below.
@@ -22080,7 +22080,7 @@ D917). D918 is the number the caller assigned; API migration 0028 and console mi
     accepted by P3, and the console's own freeze still refuses its owners); a second registration of the same public
     key is `conflict` naming the thumbprint, as before.
 - **After two automated findings on the review's fixes (2026-11-25)**:
-  - 7a. **The stop's own limits** (`platform/revoke-guard.ts`), **to confirm (the Tech Lead)**. Per member 20 a minute
+  - 7a. **The stop's own limits** (`platform/revoke-guard.ts`; it fails open if the limiter errors, second review 4), **to confirm (the Tech Lead)**. Per member 20 a minute
     and 100 an hour, per org 40 a minute and 200 an hour, each checked before any database work on an object keyed by
     that member or org alone; a real incident (each of the 2 keys stopped several times over by every owner) stays far
     below them. A repeat that changes nothing (the key not found, or already stopped) is answered from that key's
@@ -22104,7 +22104,59 @@ D917). D918 is the number the caller assigned; API migration 0028 and console mi
     point of the check's unfreeze path. **The remaining window, for P3:** a staff freeze whose mirror write fails (an
     error-level log, and the route answers 502) and whose console freeze lands after the check read the console can
     leave the mirror unfrozen while the console is frozen until the next run (at most an hour), which then freezes it
-    and logs `mirror_was_unfrozen` at error level.
+    and logs `mirror_was_unfrozen` at error level. **Superseded the same day** by the second review's rule (below):
+    this ordering could leave the mirror frozen for good, and two staff at once could still unfreeze it wrongly.
+- **After the second review of the fix commits (2026-11-25)**, all eight findings fixed, with tests:
+  1. and 2. **The freeze mirror, as a state machine** (replaces 4 and 4a above; `consoleActiveSince`, `statusSince` and
+     the ordering condition are gone). The console's `orgs.status` is the truth; the API's `platform_orgs` holds the
+     mirror (`frozen`, `frozen_at`, `version`). Its moves:
+     - *freeze* (staff, or the hourly check after reading the console frozen): always written, `frozen_at` = now (on a
+       row already frozen too);
+     - *unfreeze* (staff, or the check, each only after reading the console active just before): refused while
+       `frozen_at` is less than 10 minutes old (`PLATFORM_UNFREEZE_GRACE_MS`, console-core `mirrorUnfreeze`, the one
+       rule for every caller), in the plan read and the commit predicate; the check's is also a compare-and-swap on the
+       version it listed;
+     - the staff freeze route: mirror, console, mirror again; if the console's freeze fails the answer says the keys
+       were stopped anyway (`console_freeze_failed`) and the check turns them back on if the org stays active;
+     - the staff unfreeze route: console, a fresh read, mirror; inside the grace the mirror stays frozen and the answer
+       says so (`mirror_held`);
+     - the check: for each difference, a fresh console read, then the write towards it.
+     **Invariants**: (I1) the mirror is never unfrozen while the console is frozen beyond one check, and never
+     silently: an unfreeze needs a console read showing active and a freeze older than the grace, and every staff
+     console freeze is preceded by a mirror freeze, so a racing unfreeze lands inside the grace; it can happen only
+     when the staff route's mirror writes fail (logged at error level, answered 502), or a call stalls longer than the
+     grace between its read and its write, and the next check freezes it (`mirror_was_unfrozen`, error level).
+     (I2) the mirror is frozen while the console is active at most the grace plus one check, and always repairable
+     without touching the console: `frozen_at` moves only with a freeze, which follows a console freeze or a read of
+     one, so once the grace has passed the next check's unfreeze is accepted. **Proof**:
+     `apps/admin/test/freeze-mirror-interleavings.test.ts` runs the real staff route and the real check against a model
+     of the console and of the API's rule, over every ordering of two staff members' calls (freeze and unfreeze, two
+     freezes, two unfreezes) and one check's, from four starting states, with no failure or any one call failing
+     (334,902 runs); after each it asserts I1 (or an error-level log) and that one check after the grace reaches the
+     console's state with no console write. With the grace set to 0 it finds finding 2's ordering at once. The API's
+     commit predicate is raced in `apps/api/test/platform-keys.test.ts`. **Remaining windows**: I1's above (a failed
+     mirror write or a stalled call: up to one hourly check, error-logged), and I2's (after a freeze whose console half
+     failed, or an unfreeze within 10 minutes of a freeze: up to 10 minutes plus one check, about 70 minutes). A held
+     unfreeze repeats only if a new freeze lands in each window, itself logged; the grace (10 min) is shorter than the
+     time between checks (an hour), so a hold never outlasts one check on its own.
+  3. **The hold after a contact change no longer outlives the lapse.** The lapse now runs 7 days from the later of the
+     registration and the end of the hold (the last security-contact change + 7 days), and never past 28 days after the
+     registration however often the contacts change (`PLATFORM_KEY_HOLD_MAX_MS`). (The review proposed measuring it
+     from the change itself; that would end at the very time the hold does, racing the announcement, so it runs from
+     the hold's end.) A held key's view carries `heldUntil`; the console says "Waiting until {date}: your security
+     contacts changed recently." (or "Can be accepted from {date}…"), the admin panel "held until {date}".
+  4. **An owner's stop fails open if its own limiter errors**: logged at error level (`revoke_limiter_failed`), the stop
+     goes ahead; a refusal by the limits themselves stays a refusal.
+  5. **`platform_orgs` can't be moved or judged by a supplied time**: a trigger refuses any change of `org_id` (so no
+     rename of a row whose switch is on, and no `UPDATE OR REPLACE` onto a frozen org's row); the switch-on trigger
+     judges key expiry by the database's clock, not `set_at`.
+  6. **A key's year is fixed**: a CHECK holds `expires_at = active_from + 365 days`, and a trigger keeps both dates of a
+     key once recorded in force (`platform_keys_life_fixed`).
+  7. **Every way a notice can't go out is recorded as a failure** (owners unreadable, email not rendered, a recipient
+     refused), so none of them can starve the notices page.
+  8. **0028's header names every trigger** a future rebuild of either table must create again, and
+     `migration-0028.test.ts` checks after the last migration that every one is there with 0028's SQL (a later
+     migration that adds a trigger on these tables names it in the test's `LATER` list); `operations.md` says the same.
 - Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation: off-chain records of
   which public keys may later act for an org's backend.
 

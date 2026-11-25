@@ -412,6 +412,9 @@ const ERRORS = {
   // The gate of D242 (not member passkeys, which aren't built): one partner organisation until passkeys ship, off testnet (D698).
   passkeys_required: ['Only one partner organisation for now', 'Until partner passkeys ship, only one partner organisation can exist on this network (testnet has no such limit), and another partner organisation, or an open invite to create one, already exists. Revoke that invite under Pending invites if it was a mistake, or choose type Internal.'],
   org_frozen: ['This organisation is frozen', 'Unfreeze it first if the change should go ahead.'],
+  mirror_failed: ['Platform keys weren’t updated', 'The organisation’s own change went through. Press the button again; the hourly check repeats it too.'],
+  mirror_held: ['Platform keys stay stopped for now', 'They were stopped less than 10 minutes ago. The hourly check turns them back on; nothing else to do.'],
+  console_freeze_failed: ['The organisation wasn’t frozen', 'Its platform keys were stopped anyway. Press Freeze again; if it stays unfrozen, the hourly check turns its platform keys back on.'],
   user_disabled: ['This user is disabled', 'Enable the user first if the change should go ahead.'],
   already_member: ['This person is already a member', 'Change their role in Members instead.'],
   invite_invalid: ['That invite can’t be used', 'It was revoked, accepted or has expired. Send a new invite.'],
@@ -1730,7 +1733,16 @@ async function platformPanel(main, o) {
     if (k.state === 'awaiting_acceptance' || k.state === 'waiting' || k.state === 'in_force') actions.push(actionButton('Stop', () => api('POST', `/api/orgs/${id}/platform-keys/${encodeURIComponent(k.id)}/revoke`, { reason: 'Stopped by Journear staff from the admin portal' }), `Stop the key “${k.label}” now? It stops at once for good, and web addresses it asked for that still wait are cancelled.`, true, { done: 'Key stopped.' }));
     return tr(
       h('span', {}, k.label, h('span', { class: 'sub' }, mono(k.id))),
-      h('span', {}, badge(label, tone), k.activeFrom && (k.state === 'waiting' || k.state === 'in_force') ? h('span', { class: 'sub' }, `${k.state === 'waiting' ? 'from' : 'since'} ${time(k.activeFrom)}`) : ''),
+      h(
+        'span',
+        {},
+        badge(label, tone),
+        k.heldUntil
+          ? h('span', { class: 'sub' }, `held until ${time(k.heldUntil)}: the security contacts changed recently`)
+          : k.activeFrom && (k.state === 'waiting' || k.state === 'in_force')
+            ? h('span', { class: 'sub' }, `${k.state === 'waiting' ? 'from' : 'since'} ${time(k.activeFrom)}`)
+            : '',
+      ),
       mono(k.thumbprint),
       k.scopes.map((s) => mono(s)),
       h('span', {}, by, h('span', { class: 'sub' }, time(k.proposedAt))),

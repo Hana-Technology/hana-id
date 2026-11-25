@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Budget } from '../src/mail.ts';
 import { runPlatformKeyNotices } from '../src/notices.ts';
 import { reconcileFreezes } from '../src/platform.ts';
+import { systemCtx } from '../src/rpc.ts';
 import { createExecutionContext } from 'cloudflare:test';
 import { ADMIN, ALIAS, CONSOLE, CSRF, FakeEmail, adminRequest, envWith, json, linkIn, overrideBinding, seedConsoleMember, seedConsoleOrg, seedHotApp, sha256Hex, staffJwt, stubNetwork, tokenOf, uid } from './helpers.ts';
 
@@ -255,17 +256,36 @@ describe('after PR 149’s review (admin)', () => {
     expect(errors.some((l) => l.includes('"code":"notice_stuck"') && l.includes(k.id))).toBe(true);
   });
 
-  it('freezing mirrors into the API first, unfreezing frees the console first (finding 4)', async () => {
+  it('a notice whose owners can’t be read is recorded as a failure too, so it can’t hold the page back (second review, finding 7)', async () => {
+    const a = await orgWithApp();
+    const ka = await memberKey(a.org, a.app.scope, a.owner);
+    const con = overrideBinding(env.CONSOLE, { listMembers: async (c: unknown) => ((c as { orgId: string }).orgId === a.org ? { ok: false, code: 'internal' } : env.CONSOLE.listMembers(c)) });
+    await runPlatformKeyNotices(envWith({ CONSOLE: con }), new FakeEmail(), big());
+    expect(await hot().prepare('SELECT notice_failures, notified_at FROM platform_keys WHERE id = ?1').bind(ka.id).first()).toEqual({ notice_failures: 1, notified_at: null });
+    // Offered again only after its backoff, and after every other notice.
+    const page = async () => (await env.API.platformKeyNotices({ ...systemCtx(), limit: 100 })) as { ok: true; notices: { key: { id: string } }[] };
+    expect((await page()).notices.map((n) => n.key.id)).not.toContain(ka.id);
+  });
+
+  it('freezing writes the mirror, the console, the mirror again; unfreezing frees the console, reads it, then the mirror (inside the grace: held, and said)', async () => {
     const { org } = await orgWithApp();
     const order: string[] = [];
     const api = overrideBinding(env.API, { setPlatformOrgFrozen: async (c: unknown) => (order.push(`api:${(c as { frozen: boolean }).frozen}`), env.API.setPlatformOrgFrozen(c)) });
-    const con = overrideBinding(env.CONSOLE, { freezeOrg: async (c: unknown) => (order.push(`console:${(c as { frozen: boolean }).frozen}`), env.CONSOLE.freezeOrg(c)) });
+    const con = overrideBinding(env.CONSOLE, {
+      freezeOrg: async (c: unknown) => (order.push(`console:${(c as { frozen: boolean }).frozen}`), env.CONSOLE.freezeOrg(c)),
+      getOrg: async (c: unknown) => (order.push('console:read'), env.CONSOLE.getOrg(c)),
+    });
     // Through the real route with the bindings replaced.
     const res = await adminRequestWith({ API: api, CONSOLE: con }, `/api/orgs/${org}/freeze`, { frozen: true });
     expect(res.status).toBe(200);
     const res2 = await adminRequestWith({ API: api, CONSOLE: con }, `/api/orgs/${org}/freeze`, { frozen: false });
-    expect(res2.status).toBe(200);
-    expect(order).toEqual(['api:true', 'console:true', 'console:false', 'api:false']);
+    expect(res2.status).toBe(409);
+    expect(await res2.json()).toMatchObject({ error: { code: 'mirror_held', message: expect.stringMatching(/less than 10 minutes ago/u) } });
+    expect(order).toEqual(['api:true', 'console:true', 'api:true', 'console:false', 'console:read', 'api:false']);
+    // Past the grace, pressing Unfreeze again frees the mirror (the console is already active).
+    await hot().prepare('UPDATE platform_orgs SET frozen_at = frozen_at - 3600000 WHERE org_id = ?1').bind(org).run();
+    expect((await adminRequestWith({ API: api, CONSOLE: con }, `/api/orgs/${org}/freeze`, { frozen: false })).status).toBe(200);
+    expect(await hot().prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(org).first()).toEqual({ frozen: 0 });
     // A failed mirror on a freeze still freezes the console, and says so.
     const down = overrideBinding(env.API, { setPlatformOrgFrozen: async () => ({ ok: false, code: 'internal' }) });
     const res3 = await adminRequestWith({ API: down, CONSOLE: env.CONSOLE }, `/api/orgs/${org}/freeze`, { frozen: true });
@@ -274,7 +294,7 @@ describe('after PR 149’s review (admin)', () => {
   });
 });
 
-describe('the freeze mirror’s unfreeze is ordered against a staff freeze (automated finding)', () => {
+describe('the freeze mirror against the real API and console: a staff freeze racing the check (the exhaustive proof: freeze-mirror-interleavings.test.ts)', () => {
   type Point = 0 | 1 | 2 | 3;
   const staffCtx = () => ({ actor: { kind: 'hana' as const, id: 'staff-sub-1', email: 'staff@hana.example' }, requestId: `req_${uid()}`, clientIp: '198.51.100.9' });
   const mirror = (org: string) => hot().prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(org).first<{ frozen: number }>();
@@ -322,7 +342,7 @@ describe('the freeze mirror’s unfreeze is ordered against a staff freeze (auto
       }
   });
 
-  it('with no freeze racing it, the stale mirror is unfrozen (the console became active after the mirror’s freeze, past the grace)', async () => {
+  it('with no freeze racing it, the stale mirror is unfrozen (the console reads active, the mirror’s freeze is past the grace)', async () => {
     const org = await staleMirror();
     expect(await reconcileWith(org, async () => {})).toMatchObject({ fixed: 1, failed: 0 });
     expect(await mirror(org)).toEqual({ frozen: 0 });
@@ -337,7 +357,8 @@ describe('the freeze mirror’s unfreeze is ordered against a staff freeze (auto
       if (p === 2) expect((await adminRequestWith({ API: down }, `/api/orgs/${org}/freeze`, { frozen: true })).status).toBe(502);
     });
     expect(await consoleStatus(org)).toBe('frozen');
-    // The run's unfreeze went through (its order held: the console's freeze came after its read, and no mirror write was made).
+    // The check's unfreeze went through (the console read active, the mirror's freeze an hour old, and the staff route's
+    // mirror writes both failed): the remaining window, said at error level at once.
     expect(await mirror(org)).toEqual({ frozen: 0 });
     expect(errors.some((l) => l.includes('platform_mirror'))).toBe(true);
     await reconcileWith(org, async () => {});

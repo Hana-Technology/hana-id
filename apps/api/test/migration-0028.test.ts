@@ -77,6 +77,23 @@ const insertKey = (o: Record<string, unknown> = {}) => {
   return refusal(`INSERT INTO platform_keys (${cols.join(', ')}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(', ')})`, ...cols.map((c) => row[c])).then((r) => ({ r, id: row.id as string }));
 };
 
+/** Every trigger 0028 creates, as its header lists them: a later rebuild of either table must create each again. */
+const TRIGGERS_0028 = [
+  'platform_keys_insert',
+  'platform_keys_fixed',
+  'platform_keys_confirm_fixed',
+  'platform_keys_not_early',
+  'platform_keys_announced_now',
+  'platform_keys_active_on_time',
+  'platform_keys_no_replace_update',
+  'platform_keys_life_fixed',
+  'platform_keys_status_moves',
+  'platform_keys_no_early_delete',
+  'platform_orgs_insert',
+  'platform_orgs_org_fixed',
+  'platform_orgs_switch_on',
+] as const;
+
 const DB_NOW = async (): Promise<number> => (await db.prepare("SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS t").first<{ t: number }>())!.t;
 
 describe('migration 0028_platform_keys', () => {
@@ -88,19 +105,7 @@ describe('migration 0028_platform_keys', () => {
     expect(new Set(added.map((o) => o.tbl_name))).toEqual(new Set([...NEW_TABLES, 'd1_migrations'].filter((t) => added.some((o) => o.tbl_name === t))));
     expect(added.filter((o) => o.type === 'table').map((o) => o.name).sort()).toEqual(NEW_TABLES);
     expect(added.filter((o) => o.type === 'index' && !o.name.startsWith('sqlite_autoindex_')).map((o) => o.name).sort()).toEqual(['platform_keys_due', 'platform_keys_expiry', 'platform_keys_org', 'platform_keys_unnotified']);
-    expect(added.filter((o) => o.type === 'trigger').map((o) => o.name).sort()).toEqual([
-      'platform_keys_active_on_time',
-      'platform_keys_announced_now',
-      'platform_keys_confirm_fixed',
-      'platform_keys_fixed',
-      'platform_keys_insert',
-      'platform_keys_no_early_delete',
-      'platform_keys_no_replace_update',
-      'platform_keys_not_early',
-      'platform_keys_status_moves',
-      'platform_orgs_insert',
-      'platform_orgs_switch_on',
-    ]);
+    expect(added.filter((o) => o.type === 'trigger').map((o) => o.name).sort()).toEqual([...TRIGGERS_0028].sort());
   });
 
   it('no new trigger reads the ledger’s tables (ledger-check and 0027’s readers are untouched)', async () => {
@@ -167,11 +172,11 @@ describe('migration 0028_platform_keys', () => {
     const { id } = await insertKey({ four_eyes: 1 });
     expect(await refusal('UPDATE platform_keys SET active_from = ?2, expires_at = ?3 WHERE id = ?1', id, now, now + 1)).toMatch(/CHECK/u);
     expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3 WHERE id = ?1', id, now, now + 1000)).toMatch(/CHECK|back-dated/u); // shorter than its wait
-    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', id, now, now + 86_400_000, now + 2 * 86_400_000)).toBe('accepted');
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', id, now, now + 86_400_000, now + 86_400_000 + 31_536_000_000)).toBe('accepted');
     expect(await refusal('UPDATE platform_keys SET active_from = ?2 WHERE id = ?1', id, now + 1)).toMatch(/early only when confirmed/u);
     expect(await refusal('UPDATE platform_keys SET unconfirmed_active_from = ?2 WHERE id = ?1', id, now + 90_000_000)).toMatch(/early only when confirmed/u);
     const confirm = (by: string, sub: string, mail: string) =>
-      refusal("UPDATE platform_keys SET confirmed_kind = 'confirm', confirmed_by = ?2, confirmed_sub = ?3, confirmed_email_key = ?4, confirmed_at = ?5, active_from = ?5, status = 'active', activated_recorded_at = ?5 WHERE id = ?1", id, by, sub, mail, now + 5);
+      refusal("UPDATE platform_keys SET confirmed_kind = 'confirm', confirmed_by = ?2, confirmed_sub = ?3, confirmed_email_key = ?4, confirmed_at = ?5, active_from = ?5, expires_at = ?5 + 31536000000, status = 'active', activated_recorded_at = ?5 WHERE id = ?1", id, by, sub, mail, now + 5);
     expect(await confirm('usr_a', 'sub-b', 'b@a.example')).toMatch(/CHECK/u);
     expect(await confirm('usr_b', 'sub-a', 'b@a.example')).toMatch(/CHECK/u);
     expect(await confirm('usr_b', 'sub-b', 'a@a.example')).toMatch(/CHECK/u);
@@ -251,16 +256,16 @@ describe('0028 after PR 149’s review: no replace, no back-dating, the database
     const now = await DB_NOW();
     const k = await insertKey({ four_eyes: 1 });
     // The review's write: back-dated two days, in force a day ago, recorded active, with four eyes.
-    expect(await refusal("UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4, status = 'active', activated_recorded_at = ?3 WHERE id = ?1", k.id, now - 2 * 86_400_000, now - 86_400_000, now + 300 * 86_400_000)).toMatch(/back-dated/u);
+    expect(await refusal("UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4, status = 'active', activated_recorded_at = ?3 WHERE id = ?1", k.id, now - 2 * 86_400_000, now - 86_400_000, now - 86_400_000 + 31_536_000_000)).toMatch(/back-dated/u);
     // Six minutes back: refused; a 24 h wait that would end in 23 h: refused.
     expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3 WHERE id = ?1', k.id, now - 360_000, now - 360_000 + 86_400_000)).toMatch(/back-dated/u);
     expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3 WHERE id = ?1', k.id, now, now + 23 * 3_600_000)).toMatch(/back-dated|CHECK/u);
     // A real announcement: then `active` before the date is refused without a confirmation.
-    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', k.id, now, now + 86_400_000, now + 366 * 86_400_000)).toBe('accepted');
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', k.id, now, now + 86_400_000, now + 86_400_000 + 31_536_000_000)).toBe('accepted');
     expect(await refusal("UPDATE platform_keys SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1", k.id, now)).toMatch(/only once its date has passed/u);
     // A short local* wait already passed (within the skew): accepted, then recorded active.
     const local = await insertKey({ min_delay_ms: 60_000 });
-    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', local.id, now - 110_000, now - 50_000, now + 86_400_000)).toBe('accepted');
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', local.id, now - 110_000, now - 50_000, now - 50_000 + 31_536_000_000)).toBe('accepted');
     expect(await refusal("UPDATE platform_keys SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1", local.id, now)).toBe('accepted');
     // `active` with no date at all is refused by the CHECK.
     const bare = await insertKey();
@@ -270,7 +275,7 @@ describe('0028 after PR 149’s review: no replace, no back-dating, the database
   it('four eyes wants the confirmer’s email key and a staff approval’s; every registration records the registrant’s', async () => {
     const now = await DB_NOW();
     const k = await insertKey({ four_eyes: 1 });
-    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', k.id, now, now + 86_400_000, now + 366 * 86_400_000)).toBe('accepted');
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', k.id, now, now + 86_400_000, now + 86_400_000 + 31_536_000_000)).toBe('accepted');
     expect(await refusal("UPDATE platform_keys SET confirmed_kind = 'confirm', confirmed_by = 'usr_b', confirmed_sub = 'sub-b', confirmed_email_key = NULL, confirmed_at = ?2, active_from = ?2, status = 'active', activated_recorded_at = ?2 WHERE id = ?1", k.id, now)).toMatch(/CHECK/u);
     const s = await insertKey({ proposed_by_kind: 'hana', proposed_by: 'staff-1', proposer_sub: null, proposer_email_key: 's1@h.example', proposal_note: 'phone', status: 'awaiting_acceptance' });
     expect(await refusal("UPDATE platform_keys SET status = 'pending', accepted_by_kind = 'hana', accepted_by = 'staff-2', accepted_email_key = NULL, accept_note = 'x', accepted_at = 1 WHERE id = ?1", s.id)).toMatch(/CHECK/u);
@@ -338,5 +343,48 @@ describe('0028 then 0030 (per-app User IDs, D919) in name order on a populated d
     expect(await m.prepare("UPDATE platform_keys SET status = 'active', activated_recorded_at = 1 WHERE id = 'pkc_Mmmmmmmmmmmmm'").run().then(() => 'accepted', (e: unknown) => String(e))).toMatch(/CHECK|date/u);
     expect(await m.prepare('PRAGMA quick_check').all()).toMatchObject({ results: [{ quick_check: 'ok' }] });
     expect((await m.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>()).results.map((r) => r.name)).toEqual(all.map((x) => x.name));
+  });
+});
+
+describe('0028 after the second review: no row moved, the switch-on by the database’s clock, a key’s year fixed', () => {
+  it('an org’s row is never moved to another org, nor replaced through UPDATE OR REPLACE', async () => {
+    expect(await refusal("INSERT INTO platform_orgs (org_id, set_by, set_at) VALUES ('org_m1', 's', 1)")).toBe('accepted');
+    expect(await refusal("INSERT INTO platform_orgs (org_id, frozen, frozen_at, set_by, set_at) VALUES ('org_m2', 1, 1, 's', 1)")).toBe('accepted');
+    expect(await refusal("UPDATE platform_orgs SET org_id = 'org_m3' WHERE org_id = 'org_m1'")).toMatch(/never moved/u);
+    expect(await refusal("UPDATE OR REPLACE platform_orgs SET org_id = 'org_m2' WHERE org_id = 'org_m1'")).toMatch(/never moved/u);
+    expect(await db.prepare("SELECT org_id, frozen FROM platform_orgs WHERE org_id IN ('org_m1', 'org_m2') ORDER BY org_id").all()).toMatchObject({ results: [{ org_id: 'org_m1', frozen: 0 }, { org_id: 'org_m2', frozen: 1 }] });
+  });
+
+  it('the switch-on judges the keys’ expiry by the database’s clock: a set_at ten years ahead with an empty review is refused', async () => {
+    const k = await insertKey({ org_id: 'org_b', scopes_json: '["sb"]' });
+    expect(k.r).toBe('accepted');
+    expect(await refusal("UPDATE platform_orgs SET enabled = 0, frozen = 0 WHERE org_id = 'org_b'")).toBe('accepted'); // org_b's row, from the review tests above
+    expect(await refusal("UPDATE platform_orgs SET enabled = 1, review_json = '[]', set_at = ?1 WHERE org_id = 'org_b'", Date.now() + 10 * 31_536_000_000)).toMatch(/review/u);
+    expect(await refusal('UPDATE platform_orgs SET enabled = 1, review_json = ?2, set_at = ?1 WHERE org_id = ?3', Date.now(), JSON.stringify([k.id]), 'org_b')).toBe('accepted');
+  });
+
+  it('a key works exactly a year from when it came into force, and once in force its dates never move', async () => {
+    const now = await DB_NOW();
+    const k = await insertKey({ min_delay_ms: 60_000 });
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', k.id, now - 110_000, now - 50_000, now - 50_000 + 100 * 31_536_000_000)).toMatch(/CHECK/u);
+    expect(await refusal('UPDATE platform_keys SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3, expires_at = ?4 WHERE id = ?1', k.id, now - 110_000, now - 50_000, now - 50_000 + 31_536_000_000)).toBe('accepted');
+    expect(await refusal("UPDATE platform_keys SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1", k.id, now)).toBe('accepted');
+    expect(await refusal('UPDATE platform_keys SET expires_at = expires_at + 100 * 31536000000 WHERE id = ?1', k.id)).toMatch(/CHECK|keeps its dates/u);
+    expect(await refusal('UPDATE platform_keys SET active_from = active_from + 1000, expires_at = expires_at + 1000 WHERE id = ?1', k.id)).toMatch(/keeps its dates/u);
+  });
+});
+
+describe('0028’s triggers after every later migration (a later rebuild of platform_keys or platform_orgs must create them again)', () => {
+  /** Triggers a later migration adds on these tables, by name: a migration that adds one lists it here. */
+  const LATER: string[] = [];
+  it('every trigger on platform_keys and platform_orgs is there after the last migration, with 0028’s SQL', async () => {
+    const m = env.MIGRATION_DB;
+    await applyD1Migrations(m, env.TEST_MIGRATIONS);
+    const on = async (d: D1Database) =>
+      new Map((await d.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'trigger' AND tbl_name IN ('platform_keys', 'platform_orgs') ORDER BY name").all<{ name: string; sql: string }>()).results.map((r) => [r.name, r.sql]));
+    const at28 = await on(db);
+    const last = await on(m);
+    expect([...last.keys()].sort()).toEqual([...TRIGGERS_0028, ...LATER].sort());
+    for (const name of TRIGGERS_0028) expect(last.get(name), name).toBe(at28.get(name));
   });
 });

@@ -29,8 +29,30 @@ export const PLATFORM_MIN_DELAY_MS = DAY_MS;
 export const PLATFORM_KEYS_PER_ORG = 2;
 /** No registration, acceptance or confirmation within 7 days of a change of the org's security contacts (M5). */
 export const PLATFORM_KEY_CONTACT_WAIT_MS = 7 * DAY_MS;
-/** A key not announced, or not accepted, within 7 days of its registration lapses (as a guarded change does). */
+/**
+ * A key not announced, or not accepted, within 7 days lapses (as a guarded change does). The 7 days run from its
+ * registration, or from the end of a hold after a security-contact change when that is later (the hold refuses the
+ * announcement and the acceptance), and never past PLATFORM_KEY_HOLD_MAX_MS after its registration.
+ */
 export const PLATFORM_KEY_LAPSE_MS = 7 * DAY_MS;
+/** However often the security contacts change, a key not announced or accepted lapses 28 days after its registration. */
+export const PLATFORM_KEY_HOLD_MAX_MS = 28 * DAY_MS;
+
+/**
+ * The freeze mirror's grace (D918, after the second review): an unfreeze of the API's mirror is refused while its last
+ * freeze is younger than this, whoever asks. A staff route call (three RPCs) and the hourly check's read-then-write of
+ * one org take seconds; 10 minutes is many times both, so a freeze racing an unfreeze always lands inside it.
+ */
+export const PLATFORM_UNFREEZE_GRACE_MS = 10 * 60_000;
+
+/**
+ * The freeze mirror's one rule for an unfreeze (D918): nothing to do when the row isn't frozen; refused while the last
+ * freeze is younger than the grace; else allowed. The caller must have read the console's org as active just before.
+ */
+export function mirrorUnfreeze(row: { frozen: boolean; frozenAt: number | null } | null, now: number): 'not_frozen' | 'too_soon' | 'allowed' {
+  if (!row?.frozen) return 'not_frozen';
+  return (row.frozenAt ?? 0) > now - PLATFORM_UNFREEZE_GRACE_MS ? 'too_soon' : 'allowed';
+}
 /** The confirmation notice's one-click revoke link works for 7 days (A3, proposed). */
 export const PLATFORM_KEY_REVOKE_LINK_MS = 7 * DAY_MS;
 /** The expiry warnings: 30 and 7 days before (A3). Stored as the stage reached (`expiry_notice_stage`). */
@@ -275,15 +297,11 @@ export const registerPlatformKeyInput = ctx.extend({ ...org, scopeIds, label, pu
 export const approvePlatformKeyInput = ctx.extend({ ...org, ...keyId, reason: staffReason }).strict();
 /** AdminRpc.setPlatformOrg: the org's platform switch. Turning it on names every key of the org still in force or waiting (the review, L5). */
 export const setPlatformOrgInput = ctx.extend({ ...org, enabled: z.boolean(), reason: z.string().trim().min(1).max(500), reviewedKeys: z.array(platformKeyIdInput).max(10).optional() }).strict();
-/** AdminRpc.setPlatformOrgFrozen: the admin Worker mirrors the console's freeze of an org. */
 /**
- * An unfreeze names when the console's org became active (`consoleActiveSince`, the console's last freeze or unfreeze,
- * else its creation): the API accepts it only if that is after the mirror's last freeze (D918, the freeze mirror's order).
+ * AdminRpc.setPlatformOrgFrozen: the admin Worker mirrors the console's freeze of an org. An unfreeze follows
+ * `mirrorUnfreeze`; `expectedVersion` makes it a compare-and-swap on the row read with the hourly check's list.
  */
-export const setPlatformOrgFrozenInput = ctx
-  .extend({ ...org, frozen: z.boolean(), expectedVersion: z.number().int().nonnegative().optional(), consoleActiveSince: z.number().int().nonnegative().optional() })
-  .strict()
-  .refine((i) => i.frozen || i.consoleActiveSince !== undefined, { message: 'An unfreeze names when the console’s org became active', path: ['consoleActiveSince'] });
+export const setPlatformOrgFrozenInput = ctx.extend({ ...org, frozen: z.boolean(), expectedVersion: z.number().int().nonnegative().optional() }).strict();
 export const platformKeyNoticesInput = ctx.extend({ limit: z.number().int().min(1).max(100) }).strict();
 export const ackPlatformKeyNoticeInput = ctx.extend({ ...keyId, cancelTokenHash: b64url32, revokeTokenHash: b64url32.optional() }).strict();
 export const ackPlatformKeyConfirmNoticeInput = ctx.extend({ ...keyId, revokeTokenHash: b64url32 }).strict();
@@ -334,6 +352,8 @@ export interface PlatformKeyView {
   revokedByKind?: string;
   revokeReason?: string;
   lastUsedAt?: number;
+  /** A key not announced (or not accepted) yet, held after a change of the org's security contacts until this date (M5). */
+  heldUntil?: number;
 }
 
 /** The platform switch of an org as the admin portal sees it (a missing row: off). */

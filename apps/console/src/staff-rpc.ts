@@ -109,9 +109,6 @@ export class StaffRpc extends WorkerEntrypoint<Env> {
       invites: await invitesOf(this.db, i.orgId),
       // Additive (D283): the live owner grants, so staff can cancel one by id from the admin console.
       grants: await grantsOf(this.db, i.orgId),
-      // Additive (D918): when the org's status last changed (its last freeze or unfreeze, else its creation). The freeze
-      // mirror's unfreeze names it, and the API accepts the unfreeze only if it is after the mirror's last freeze.
-      statusSince: await statusSince(this.db, i.orgId),
     }));
   }
 
@@ -280,13 +277,4 @@ async function logosProbe(env: Env): Promise<ConsoleHealth['logos']> {
   } catch {
     return 'error';
   }
-}
-
-/** When an org's status last changed: its last `org.frozen` or `org.unfrozen` audit row, else its creation. */
-async function statusSince(db: D1Database, orgId: string): Promise<number> {
-  const r = await db
-    .prepare("SELECT COALESCE((SELECT MAX(at) FROM audit_log WHERE org_id = ?1 AND action IN ('org.frozen', 'org.unfrozen')), (SELECT created_at FROM orgs WHERE id = ?1), 0) AS t")
-    .bind(orgId)
-    .first<{ t: number }>();
-  return r?.t ?? 0;
 }

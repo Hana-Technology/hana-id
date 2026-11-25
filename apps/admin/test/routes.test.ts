@@ -54,7 +54,8 @@ describe('the staff actor', () => {
     expect((await lastChange(app.id))!.kind).toMatch(/suspen/u);
     const org = await post(`/api/orgs/${app.org}/freeze`, { frozen: true });
     expect(org.status).toBe(503);
-    expect(await json(org)).toMatchObject({ error: { code: 'upstream_unavailable' } });
+    // The freeze's first mirror write landed (D918): the answer says the platform keys were stopped anyway.
+    expect(await json(org)).toMatchObject({ error: { code: 'console_freeze_failed', message: expect.stringMatching(/platform keys were already stopped/u) } });
   });
 
   it('RPC refusals keep their console-core status', async () => {

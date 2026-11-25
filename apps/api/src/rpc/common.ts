@@ -76,7 +76,13 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
   try {
     if (setup.link) await admitLinkCall(env, input.clientIp, now);
     else if (revokeOf) {
-      await admitRevoke(env, { ...revokeOf, userId: input.actor.kind === 'member' ? input.actor.id : input.actor.kind }, now);
+      // A kill switch fails open: if the stop's own limiter can't answer, the stop goes ahead (logged at error level).
+      try {
+        await admitRevoke(env, { ...revokeOf, userId: input.actor.kind === 'member' ? input.actor.id : input.actor.kind }, now);
+      } catch (err) {
+        if (err instanceof RpcRefusal) throw err;
+        log({ event: 'rpc_admit', ...fields, outcome: 'error', code: 'revoke_limiter_failed' }, 'error');
+      }
       admittedRevoke = true;
     } else if (consoleCall) {
       ({ reserveUsed } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));

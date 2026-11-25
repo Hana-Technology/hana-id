@@ -31,6 +31,8 @@ import {
   type PlatformKeyView,
   type PlatformOrgView,
   PLATFORM_KEY_CONTACT_WAIT_MS,
+  PLATFORM_UNFREEZE_GRACE_MS,
+  mirrorUnfreeze,
   PLATFORM_KEY_LIFETIME_MS,
   PLATFORM_KEY_REVOKE_LINK_MS,
   PLATFORM_KEY_WORDS,
@@ -97,6 +99,8 @@ export interface PlatformKeyRow {
   notice_failed_at: number | null;
   cancel_hash_hex: string | null;
   revoke_hash_hex: string | null;
+  /** The org's last change of its security contacts (the hold of M5), or null. */
+  contacts_changed_at: number | null;
 }
 
 export const PLATFORM_KEY_COLUMNS = (k: string): Q =>
@@ -108,7 +112,9 @@ export const PLATFORM_KEY_COLUMNS = (k: string): Q =>
       'revoke_reason', 'end_request_id', 'end_notified_at', 'expiry_notice_stage', 'last_used_at', 'notice_failures', 'notice_failed_at',
     ]
       .map((c) => `${k}.${c}`)
-      .join(', ') + `, hex(${k}.cancel_token_hash) AS cancel_hash_hex, hex(${k}.revoke_link_hash) AS revoke_hash_hex`,
+      .join(', ') +
+      `, hex(${k}.cancel_token_hash) AS cancel_hash_hex, hex(${k}.revoke_link_hash) AS revoke_hash_hex` +
+      `, (SELECT MAX(pkcc.at) FROM app_changes pkcc WHERE pkcc.org_id = ${k}.org_id AND pkcc.kind = 'org.security_contacts') AS contacts_changed_at`,
   );
 
 // ---- predicates over a key `k` ----
@@ -191,6 +197,9 @@ export function platformKeyView(r: PlatformKeyRow, now: number, staff: boolean):
     if (r.revoke_reason !== null && (staff || r.revoked_by_kind !== 'hana')) v.revokeReason = r.revoke_reason;
   }
   if (r.last_used_at !== null) v.lastUsedAt = r.last_used_at;
+  // Held after a security-contact change (M5): not announced or accepted before this date.
+  const held = r.contacts_changed_at === null ? null : r.contacts_changed_at + PLATFORM_KEY_CONTACT_WAIT_MS;
+  if (held !== null && held > now && (r.status === 'awaiting_acceptance' || (r.status === 'pending' && r.notified_at === null))) v.heldUntil = held;
   return v;
 }
 
@@ -695,7 +704,7 @@ export async function setPlatformOrg(db: HotDb, w: Writer, i: { orgId: string; e
  * one batch: `frozen` set, the org's waiting keys and the platform's waiting web addresses for its apps cancelled
  * (D917). Its keys in force stay (only the kill switches work for a frozen org); unfreezing changes nothing else.
  */
-export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: string; frozen: boolean; expectedVersion?: number | undefined; consoleActiveSince?: number | undefined }) {
+export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: string; frozen: boolean; expectedVersion?: number | undefined }) {
   expectReplay(w, ['platform.org_frozen']);
   if (w.actor.kind !== 'hana' && w.actor.kind !== 'system') return refuse('forbidden', 'Only Journear staff (or the admin Worker’s mirror) freeze an organisation');
   const p = await db.first<{ replay: string | null; frozen: number | null; frozen_at: number | null; version: number | null; waiting: string; proposals: number }>(
@@ -706,18 +715,18 @@ export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: str
   );
   refuseReplay(p?.replay, w);
   const waiting = JSON.parse(p?.waiting ?? '[]') as string[];
-  // An unfreeze of a row that isn't frozen: no write. A freeze always writes (its `frozen_at`, even on a row already
-  // frozen): an unfreeze racing it must see it.
-  if (!i.frozen && (p?.frozen ?? 0) === 0) return { changed: false };
-  const unfreezeGuard = i.frozen ? raw('1') : unfreezeOrdered(w, i.orgId, i.consoleActiveSince!);
+  // A freeze always writes (its `frozen_at`, even on a row already frozen: the grace runs from the latest freeze). An
+  // unfreeze follows the mirror's one rule (console-core `mirrorUnfreeze`), in the plan and in the commit predicate.
+  let guard: Q = raw('1');
   if (!i.frozen) {
-    const frozenAt = p?.frozen_at ?? 0;
-    if (frozenAt >= i.consoleActiveSince!) refuse('conflict', 'The organisation was frozen here after the console last showed it active: it stays frozen');
-    if (w.actor.kind === 'system' && frozenAt > w.now - UNFREEZE_GRACE_MS) refuse('conflict', 'The organisation was frozen here a moment ago: the hourly check leaves it frozen');
+    const rule = mirrorUnfreeze(p?.frozen === 1 ? { frozen: true, frozenAt: p.frozen_at } : null, w.now);
+    if (rule === 'not_frozen') return { changed: false };
+    if (rule === 'too_soon') refuse('conflict', 'The organisation’s platform keys were frozen less than 10 minutes ago: they stay frozen until the hourly check');
+    guard = q`COALESCE((SELECT frozen_at FROM platform_orgs WHERE org_id = ${i.orgId}), 0) <= ${w.now - PLATFORM_UNFREEZE_GRACE_MS}`;
   }
-  // A compare-and-swap on the row's version when asked (the hourly check's unfreeze: a freeze landing after its read wins).
+  // A compare-and-swap on the row's version when asked (the hourly check's unfreeze: any write since its read wins).
   if (i.expectedVersion !== undefined && (p?.version ?? 0) !== i.expectedVersion) refuse('version_conflict', 'The organisation’s platform row changed since it was read');
-  const cas = i.expectedVersion === undefined ? unfreezeGuard : q`${unfreezeGuard} AND COALESCE((SELECT version FROM platform_orgs WHERE org_id = ${i.orgId}), 0) = ${i.expectedVersion}`;
+  const cas = i.expectedVersion === undefined ? guard : q`${guard} AND COALESCE((SELECT version FROM platform_orgs WHERE org_id = ${i.orgId}), 0) = ${i.expectedVersion}`;
   const stmts: Q[] = [
     commitOn(w, { kind: 'platform.org_frozen', detail: { frozen: i.frozen, ...(i.frozen ? { cancelledKeys: waiting } : {}) } }, { orgId: i.orgId }, cas),
   ];
@@ -726,20 +735,6 @@ export async function setPlatformOrgFrozen(db: HotDb, w: Writer, i: { orgId: str
   await runWrite(db, w, stmts);
   return { changed: (p?.frozen ?? 0) !== (i.frozen ? 1 : 0) || waiting.length > 0 || (p?.proposals ?? 0) > 0 };
 }
-
-/**
- * How long after a freeze the hourly check never unfreezes the mirror, whatever the console says (D918): longer than a
- * staff route call (two RPCs, seconds) plus the check's own run (two paged lists and at most MIRROR_FIXES writes, well
- * under a minute) many times over, so a freeze whose console half is still landing is never undone by a check that
- * read the console a moment before it. A real unfreeze waits at most one more run for it.
- */
-export const UNFREEZE_GRACE_MS = 10 * 60_000;
-
-/** The unfreeze's order in the commit predicate: the mirror's last freeze is before the console's org became active (and, for the hourly check, older than the grace). */
-const unfreezeOrdered = (w: Writer, orgId: string, consoleActiveSince: number): Q =>
-  q`COALESCE((SELECT frozen_at FROM platform_orgs WHERE org_id = ${orgId}), 0) < ${consoleActiveSince}${
-    w.actor.kind === 'system' ? q` AND COALESCE((SELECT frozen_at FROM platform_orgs WHERE org_id = ${orgId}), 0) <= ${w.now - UNFREEZE_GRACE_MS}` : raw('')
-  }`;
 
 /** AdminRpc.platformOrgs: the orgs with a switch row, in id order from after `cursor`, `next` while more remain (the admin Worker's freeze check pages through them all). */
 export async function platformOrgs(db: HotDb, limit: number, cursor?: string): Promise<{ orgs: { orgId: string; enabled: boolean; frozen: boolean; version: number }[]; next?: string }> {

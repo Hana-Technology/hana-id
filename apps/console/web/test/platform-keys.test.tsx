@@ -108,6 +108,15 @@ describe('the Platform keys list', () => {
 });
 
 describe('one key’s page', () => {
+  it('a key held after a security-contact change says until when, and why (D918)', async () => {
+    signedIn();
+    routes['/api/orgs/org_a/platform-keys/pkc_Kq2Lm9Xc4PzWb7'] = {
+      body: { key: KEY({ notifiedAt: undefined, activeFrom: undefined, heldUntil: NOW + 4 * 24 * H }), people: { usr_a: 'me@partner.example' }, role: 'owner', accept: { allowed: false, reason: 'x' }, confirm: { allowed: false, reason: 'x' }, now: NOW },
+    };
+    at('/orgs/org_a/platform-keys/pkc_Kq2Lm9Xc4PzWb7');
+    expect(await screen.findByText(/Waiting until .*: your security contacts changed recently\./u)).toBeTruthy();
+  });
+
   it('offers Confirm only when the server says this member may', async () => {
     signedIn();
     routes['/api/orgs/org_a/platform-keys/pkc_Kq2Lm9Xc4PzWb7'] = { body: { key: KEY({ proposedBy: 'usr_b' }), people: { usr_b: 'boss@partner.example' }, role: 'owner', accept: { allowed: false, reason: 'x' }, confirm: { allowed: true }, now: NOW } };

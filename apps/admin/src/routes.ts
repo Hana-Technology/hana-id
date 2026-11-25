@@ -70,35 +70,77 @@ export async function answer(route: string, staff: StaffRequest, call: () => Pro
   return json(200, shape ? shape(rest) : rest);
 }
 
-/** The API's mirror of a console freeze (D918): true when it landed. */
-async function mirrorFreeze(env: Env, staff: StaffRequest, orgId: string, frozen: boolean, consoleActiveSince?: number): Promise<boolean> {
+/**
+ * One write of the API's freeze mirror (D918): `ok`, `held` (an unfreeze inside the grace after the last freeze), or
+ * `failed` (logged at error level).
+ */
+async function mirrorWrite(env: Env, staff: StaffRequest, orgId: string, frozen: boolean): Promise<'ok' | 'held' | 'failed'> {
   try {
-    const r = await env.API.setPlatformOrgFrozen({ ...staffCtx(staff), orgId, frozen, ...(consoleActiveSince !== undefined ? { consoleActiveSince } : {}) });
-    if (r.ok) return true;
+    const r = await env.API.setPlatformOrgFrozen({ ...staffCtx(staff), orgId, frozen });
+    if (r.ok) return 'ok';
+    if (!frozen && r.code === 'conflict') {
+      log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: 'mirror_held', step: 'platform_mirror' }, 'warn');
+      return 'held';
+    }
     log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: r.code, step: 'platform_mirror' }, 'error');
   } catch (err) {
     log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
   }
-  return false;
+  return 'failed';
 }
 
-/** The unfreeze's mirror, after the console's: the console read again for when its org became active. */
-async function mirrorUnfreeze(env: Env, staff: StaffRequest, orgId: string): Promise<boolean> {
-  try {
-    const now = await env.CONSOLE.getOrg({ ...staffCtx(staff), orgId });
-    if (!now.ok || now.org.status !== 'active' || now.statusSince === undefined) {
-      log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'rejected', code: now.ok ? 'frozen_meanwhile' : now.code, step: 'platform_mirror' }, 'error');
-      return false;
+/**
+ * The staff freeze and unfreeze with the API's mirror (D918, the mirror's rule in docs/security.md):
+ * - freeze: the mirror (it only tightens), then the console, then the mirror again, so the latest freeze of the mirror
+ *   is after the console's and any unfreeze racing it falls inside the grace. If the console's freeze fails, the answer
+ *   says the keys were stopped anyway and the hourly check turns them back on (the console stays active);
+ * - unfreeze: the console, then a fresh read of it, then the mirror only if the console reads active. Inside the grace
+ *   after a freeze the mirror stays frozen and the answer says the hourly check frees it.
+ */
+export async function staffFreeze(c: RouteCtx, frozen: boolean): Promise<Response> {
+  const orgId = c.params.org!;
+  const route = 'POST /api/orgs/:org/freeze';
+  if (frozen) {
+    const first = await mirrorWrite(c.env, c.staff, orgId, true);
+    const res = await answer(route, c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId, frozen }));
+    if (!res.ok) {
+      if (first !== 'ok') return res;
+      log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'rejected', code: 'console_freeze_failed', step: 'platform_mirror' }, 'error');
+      return json(res.status, { error: { code: 'console_freeze_failed', message: `The organisation wasn’t frozen (HTTP ${res.status}), but its platform keys were already stopped. Press Freeze again. If it stays unfrozen, the hourly check turns its platform keys back on.` } });
     }
-    return await mirrorFreeze(env, staff, orgId, false, now.statusSince);
-  } catch (err) {
-    log({ event: 'bff', route: 'POST /api/orgs/:org/freeze', requestId: staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
-    return false;
+    const second = await mirrorWrite(c.env, c.staff, orgId, true);
+    return first === 'ok' || second === 'ok' ? json(200, { platformMirrored: true }) : mirrorFailed(true);
   }
+  const res = await answer(route, c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId, frozen }));
+  if (!res.ok) return res;
+  let status: string | null = null;
+  try {
+    const now = await c.env.CONSOLE.getOrg({ ...staffCtx(c.staff), orgId });
+    status = now.ok ? now.org.status : null;
+  } catch (err) {
+    log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'error', code: 'upstream_unavailable', step: 'platform_mirror', error: errorName(err) }, 'error');
+  }
+  if (status !== 'active') {
+    // Frozen again meanwhile (another staff member), or unreadable: the mirror stays as it is.
+    log({ event: 'bff', route, requestId: c.staff.requestId, outcome: 'rejected', code: status === null ? 'console_unreadable' : 'frozen_meanwhile', step: 'platform_mirror' }, 'warn');
+    return mirrorFailed(false);
+  }
+  const w = await mirrorWrite(c.env, c.staff, orgId, false);
+  if (w === 'ok') return json(200, { platformMirrored: true });
+  if (w === 'held')
+    return json(409, { error: { code: 'mirror_held', message: 'The organisation is unfrozen. Its platform keys were stopped less than 10 minutes ago, so they stay stopped for now; the hourly check turns them back on.' } });
+  return mirrorFailed(false);
 }
 
 const mirrorFailed = (frozen: boolean): Response =>
-  json(502, { error: { code: 'mirror_failed', message: `The organisation is ${frozen ? 'frozen' : 'unfrozen'} in the console, but its platform keys weren’t updated. Press the button again; the hourly check repeats it too.` } });
+  json(502, {
+    error: {
+      code: 'mirror_failed',
+      message: frozen
+        ? 'The organisation is frozen, but its platform keys weren’t updated. Press Freeze again; the hourly check repeats it too.'
+        : 'The organisation is unfrozen, but its platform keys weren’t turned back on. Press Unfreeze again; the hourly check repeats it too.',
+    },
+  });
 
 const pick = (b: Record<string, unknown>, ...keys: string[]): Record<string, unknown> => {
   const out: Record<string, unknown> = {};
@@ -219,22 +261,13 @@ const ROUTES: Route[] = [
     },
   },
   {
-    // D918 (after PR 149's review): the API's mirror of the freeze, ordered so a failure never leaves a frozen org's keys
-    // working. Freezing: the API first (it only tightens: the org's waiting keys and web addresses are cancelled), then
-    // the console, whatever the API answered (a freeze never waits on the API). Unfreezing: the console first, then the
-    // API. A mirror that didn't land is said in the answer (pressing again repeats it); the hourly check repeats it too.
+    // D918: the console's freeze with the API's mirror (`staffFreeze`: mirror, console, mirror; unfreeze: console, a
+    // fresh read, mirror). A mirror that didn't land is said in the answer; the hourly check repeats it too.
     method: 'POST',
     pattern: '/api/orgs/:org/freeze',
     handler: async (c) => {
       if (typeof c.body.frozen !== 'boolean') return answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, ...pick(c.body, 'frozen') }));
-      const frozen = c.body.frozen;
-      const mirrored = frozen ? await mirrorFreeze(c.env, c.staff, c.params.org!, true) : null;
-      const res = await answer('POST /api/orgs/:org/freeze', c.staff, () => c.env.CONSOLE.freezeOrg({ ...staffCtx(c.staff), orgId: c.params.org, frozen }));
-      if (!res.ok) return res;
-      // The unfreeze names when the console's org became active (read again now): the API accepts it only if that is
-      // after the mirror's last freeze, so a staff freeze racing this unfreeze always wins.
-      const ok = frozen ? mirrored! : await mirrorUnfreeze(c.env, c.staff, c.params.org!);
-      return ok ? json(200, { platformMirrored: true }) : mirrorFailed(frozen);
+      return staffFreeze(c, c.body.frozen);
     },
   },
   // ---- platform keys (D918): the org's keys and switch; staff register (held for an owner's acceptance or a second

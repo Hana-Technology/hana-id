@@ -20,6 +20,14 @@
 -- is written once at registration too, and the announcement's unconfirmed date can never be sooner.
 -- `platform_orgs` is staff's switch per org (a missing row: off) and the mirror of a console freeze.
 -- Times are integer ms UTC.
+--
+-- A FUTURE REBUILD of either table (SQLite can't change a CHECK in place, so a rebuild copies the rows into a new
+-- table and drops the old one, which drops its triggers) must create every trigger below again, with the same SQL:
+-- platform_keys_insert, platform_keys_fixed, platform_keys_confirm_fixed, platform_keys_not_early,
+-- platform_keys_announced_now, platform_keys_active_on_time, platform_keys_no_replace_update, platform_keys_life_fixed,
+-- platform_keys_status_moves, platform_keys_no_early_delete, platform_orgs_insert, platform_orgs_org_fixed,
+-- platform_orgs_switch_on. apps/api/test/migration-0028.test.ts checks every one is in the schema after every later
+-- migration ("0028's triggers after every later migration"); a migration that rebuilds a table adds its own check.
 
 CREATE TABLE platform_keys (
   id                      TEXT PRIMARY KEY CHECK (id GLOB 'pkc_*'),
@@ -97,6 +105,8 @@ CREATE TABLE platform_keys (
          OR (confirmed_email_key IS NOT NULL AND confirmed_by IS NOT proposed_by AND confirmed_sub IS NOT proposer_sub AND confirmed_email_key IS NOT proposer_email_key)),
   -- In force only once announced; the unconfirmed date always written with the announcement.
   CHECK (active_from IS NULL OR (notified_at IS NOT NULL AND unconfirmed_active_from IS NOT NULL AND expires_at IS NOT NULL)),
+  -- A key works 365 days from the moment it comes into force, never longer (D918 after the second review).
+  CHECK (expires_at IS NULL OR (active_from IS NOT NULL AND expires_at = active_from + 31536000000)),
   CHECK ((notified_at IS NULL) = (unconfirmed_active_from IS NULL)),
   CHECK (unconfirmed_active_from IS NULL OR unconfirmed_active_from >= notified_at + min_delay_ms),
   -- A real-money setup always waits at least the 24 h platform minimum for an unconfirmed key.
@@ -185,6 +195,14 @@ BEGIN
   SELECT RAISE(ABORT, 'platform_keys: a key is never replaced');
 END;
 
+-- Once recorded in force, a key's dates are fixed (its year can't be stretched or moved by any writer).
+CREATE TRIGGER platform_keys_life_fixed BEFORE UPDATE OF active_from, expires_at ON platform_keys
+  WHEN OLD.status IN ('active', 'expired', 'revoked') AND OLD.active_from IS NOT NULL
+   AND (NEW.active_from IS NOT OLD.active_from OR NEW.expires_at IS NOT OLD.expires_at)
+BEGIN
+  SELECT RAISE(ABORT, 'platform_keys: a key in force keeps its dates');
+END;
+
 -- A key's state only moves forward, and a cancelled, revoked or expired key never comes back (its id is never reused).
 CREATE TRIGGER platform_keys_status_moves BEFORE UPDATE OF status ON platform_keys
   WHEN NEW.status IS NOT OLD.status AND NOT (
@@ -214,8 +232,8 @@ CREATE TABLE platform_orgs (
   set_by            TEXT NOT NULL,
   set_at            INTEGER NOT NULL,
   version           INTEGER NOT NULL DEFAULT 0,
-  -- The last time a freeze was written (every freeze writes it, one that finds the row already frozen too): an unfreeze
-  -- is accepted only when the console's org has been active since after it (D918, the freeze mirror's order).
+  -- The last time a freeze was written (every freeze writes it, one that finds the row already frozen too): the API
+  -- refuses an unfreeze while it is less than 10 minutes old (D918, the freeze mirror's grace).
   frozen_at         INTEGER,
   -- The switch-on's review (L5): the ids of every key of the org in force, waiting or awaiting acceptance, sorted, as
   -- staff confirmed them; a trigger wants it to be exactly the current set whenever the switch goes on.
@@ -231,12 +249,21 @@ BEGIN
   SELECT RAISE(ABORT, 'platform_orgs: the switch goes on only with the review of every key') WHERE NEW.enabled = 1;
 END;
 
+-- An org's row is never moved to another org (a rename could carry a switch that is on, or with UPDATE OR REPLACE
+-- delete the other org's frozen row).
+CREATE TRIGGER platform_orgs_org_fixed BEFORE UPDATE OF org_id ON platform_orgs
+  WHEN NEW.org_id IS NOT OLD.org_id
+BEGIN
+  SELECT RAISE(ABORT, 'platform_orgs: an org''s row is never moved');
+END;
+
 -- The switch goes on only with the review naming exactly the org's keys in force, waiting or awaiting acceptance, and
--- never while the org is frozen. (An unfreeze and a switch-off are staff's legitimate writes: nothing here holds them.)
+-- never while the org is frozen; a key's expiry is judged by the database's clock, never a time the writer supplies.
+-- (An unfreeze and a switch-off are staff's legitimate writes: nothing here holds them.)
 CREATE TRIGGER platform_orgs_switch_on BEFORE UPDATE OF enabled ON platform_orgs
   WHEN OLD.enabled = 0 AND NEW.enabled = 1
    AND (NEW.frozen = 1 OR NEW.review_json IS NOT (SELECT json_group_array(id) FROM (SELECT id FROM platform_keys k WHERE k.org_id = NEW.org_id
-          AND k.status IN ('awaiting_acceptance', 'pending', 'active') AND (k.expires_at IS NULL OR k.expires_at > NEW.set_at) ORDER BY id)))
+          AND k.status IN ('awaiting_acceptance', 'pending', 'active') AND (k.expires_at IS NULL OR k.expires_at > ((julianday('now') - 2440587.5) * 86400000.0)) ORDER BY id)))
 BEGIN
   SELECT RAISE(ABORT, 'platform_orgs: the switch goes on only with the review of every key');
 END;

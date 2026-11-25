@@ -35,8 +35,10 @@ const PER_ORG = 2;
 export function stateWords(k: PlatformKeyView, now: number): { label: string; tone: 'ok' | 'warn' | 'neutral' | 'danger' | 'accent'; line?: string } {
   switch (k.state) {
     case 'awaiting_acceptance':
+      if (k.heldUntil !== undefined) return { label: 'Waiting for your acceptance', tone: 'warn', line: `Can be accepted from ${when(k.heldUntil)}: your security contacts changed recently.` };
       return { label: 'Waiting for your acceptance', tone: 'warn', line: 'Journear registered it. An owner accepts it here.' };
     case 'waiting':
+      if (k.heldUntil !== undefined) return { label: 'Waiting', tone: 'warn', line: `Waiting until ${when(k.heldUntil)}: your security contacts changed recently.` };
       if (k.notifiedAt === undefined) return { label: 'Waiting', tone: 'warn', line: 'Journear is emailing your security contacts and owners about it.' };
       return {
         label: k.fourEyes ? 'Waiting for another owner' : 'Waiting',

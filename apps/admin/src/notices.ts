@@ -350,6 +350,18 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
   const orgs = new OrgLookups(env);
   const members = new Map<string, MemberView[] | null>();
   const ctx = mailContext(env);
+  /**
+   * A notice that couldn't go out this run (its owners unreadable, its email not rendered, a recipient refused): recorded,
+   * so the page retries it later and after every other notice (none can hold the page back); from the 12th failure in
+   * a row it is reported at error level as stuck (D918 after PR 149's review and the second review).
+   */
+  const noteFailure = async (n: PlatformKeyNotice, code: string, f: Record<string, unknown> = {}, level: 'warn' | 'error' = 'warn') => {
+    out.failed++;
+    const noted = budget.fits(1, 1) ? await env.API.notePlatformKeyNoticeFailure({ ...systemCtx(), keyId: n.key.id }).catch(() => null) : null;
+    const failures = noted?.ok ? noted.failures : (n.failures ?? 0) + 1;
+    const stuck = failures >= STUCK_AFTER;
+    log({ event: 'notice', step: 'platform_key', target: n.key.id, orgId: n.key.orgId, outcome: 'rejected', code: stuck ? 'notice_stuck' : code, count: failures, ...f, ...(stuck ? { error: code } : {}) }, stuck ? 'error' : level);
+  };
   for (const n of page.notices) {
     const id = n.key.id;
     const orgId = n.key.orgId;
@@ -364,9 +376,8 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
     }
     const list = members.get(orgId);
     if (!list) {
-      // Without the owners the notice would miss people it must reach (N9): it waits for the next run.
-      out.failed++;
-      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'rejected', code: 'owners_unavailable' }, 'warn');
+      // Without the owners the notice would miss people it must reach (N9): it waits, recorded as a failure.
+      await noteFailure(n, 'owners_unavailable');
       continue;
     }
     const orgName = await orgs.name(orgId);
@@ -400,8 +411,7 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
               ? platformKeyStopped(ctx, n, people, { waitingLinks })
               : platformKeyExpiring(ctx, n, people);
     } catch (err) {
-      out.failed++;
-      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'error', code: 'render_failed', error: errorName(err) }, 'error');
+      await noteFailure(n, 'render_failed', { error: errorName(err) }, 'error');
       continue;
     }
     const sent = await sendToAll(sender, budget, to, message, `platform_key_${n.kind}:${id}${n.kind === 'expiring' ? `:${n.stage}` : ''}`);
@@ -410,12 +420,7 @@ export async function runPlatformKeyNotices(rawEnv: Env, sender: EmailSender, bu
       break;
     }
     if (!sent.allAccepted) {
-      out.failed++;
-      // Recorded, so the page retries it later and after every other notice (one refusing recipient can't hold the page
-      // back); from the 12th failure in a row it is reported at error level as stuck (D918 after PR 149's review).
-      const noted = budget.fits(1, 1) ? await env.API.notePlatformKeyNoticeFailure({ ...systemCtx(), keyId: id }).catch(() => null) : null;
-      const failures = noted?.ok ? noted.failures : (n.failures ?? 0) + 1;
-      log({ event: 'notice', step: 'platform_key', target: id, orgId, outcome: 'rejected', code: failures >= STUCK_AFTER ? 'notice_stuck' : 'send_failed', sent: sent.sent, failed: sent.failed, count: failures }, failures >= STUCK_AFTER ? 'error' : 'warn');
+      await noteFailure(n, 'send_failed', { sent: sent.sent, failed: sent.failed });
       continue;
     }
     const base = { ...systemCtx(), keyId: id };

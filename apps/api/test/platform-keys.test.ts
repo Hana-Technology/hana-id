@@ -10,6 +10,7 @@ import {
   CONSOLE_ERROR_STATUS,
   PLATFORM_KEY_LIFETIME_MS,
   PLATFORM_MIN_DELAY_MS,
+  PLATFORM_UNFREEZE_GRACE_MS,
   newId,
   nonceOf,
   parsePlatformPublicKey,
@@ -25,7 +26,7 @@ import { platformMinDelayMs } from '../src/guarded/config.ts';
 import { platformKeysMaintenance } from '../src/platform/cron.ts';
 import { REVOKE_LIMITS } from '../src/platform/revoke-guard.ts';
 import { placedStub } from '../src/placement.ts';
-import { UNFREEZE_GRACE_MS, cancelPlatformKey, confirmPlatformKey, fourEyesEnv, registerPlatformKey, revokePlatformKey } from '../src/platform/keys.ts';
+import { cancelPlatformKey, confirmPlatformKey, fourEyesEnv, registerPlatformKey, revokePlatformKey } from '../src/platform/keys.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
 import { clearViewCaches } from '../src/views.ts';
@@ -387,7 +388,7 @@ describe('the announcement and the wait', () => {
   it('the hourly job records a key in force once, by the database’s clock (a local* key whose 60 s wait has passed)', async () => {
     const r = await setup();
     const db = await dbNow();
-    const { id } = await bareKey(r, { min_delay_ms: 60_000, notified_at: db - 110_000, unconfirmed_active_from: db - 50_000, active_from: db - 50_000, expires_at: db + PLATFORM_KEY_LIFETIME_MS });
+    const { id } = await bareKey(r, { min_delay_ms: 60_000, notified_at: db - 110_000, unconfirmed_active_from: db - 50_000, active_from: db - 50_000, expires_at: db - 50_000 + PLATFORM_KEY_LIFETIME_MS });
     expect((await platformKeysMaintenance(env, db)).activated).toBeGreaterThanOrEqual(1);
     expect(await keyRow(id)).toMatchObject({ status: 'active', activated_recorded_at: db });
     expect(await ledger(r.app.org, 'platform.key_active')).toHaveLength(1);
@@ -792,8 +793,8 @@ describe('the org’s platform switch and the freeze mirror', () => {
     expect(await keyRow(k.id)).toMatchObject({ status: 'cancelled', cancel_reason: 'org_frozen' });
     expect((await rows<{ status: string }>('SELECT status FROM guarded_changes WHERE id = ?1', p))[0]!.status).toBe('cancelled');
     expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: true }))).changed).toBe(false);
-    clock.advance(UNFREEZE_GRACE_MS + 1000);
-    await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, consoleActiveSince: Date.now() }));
+    clock.advance(PLATFORM_UNFREEZE_GRACE_MS + 1000);
+    await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false }));
     expect((await keyRow(k.id)).status).toBe('cancelled');
     expect((await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)).toMatchObject({ orgId: r.app.org, enabled: false, frozen: false });
   });
@@ -1028,44 +1029,38 @@ describe('after PR 149’s review', () => {
   it('the freeze mirror’s unfreeze is a compare-and-swap on the row’s version (finding 4)', async () => {
     const r = await setup();
     await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
-    clock.advance(UNFREEZE_GRACE_MS + 1000);
+    clock.advance(PLATFORM_UNFREEZE_GRACE_MS + 1000);
     const active = Date.now();
     const v = (await ok(adminOn().platformOrgs({ ...system(), limit: 500 }))).orgs.find((o) => o.orgId === r.app.org)!.version;
-    expect(await no(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v - 1, consoleActiveSince: active }))).toMatchObject({ code: 'version_conflict' });
+    expect(await no(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v - 1 }))).toMatchObject({ code: 'version_conflict' });
     // A write between the read and the batch moves the version: the unfreeze writes nothing.
     const raced = racing(env.DB, () => env.DB.prepare('UPDATE platform_orgs SET version = version + 1 WHERE org_id = ?1').bind(r.app.org).run());
-    expect(await no(adminOn({ DB: raced }).setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v, consoleActiveSince: active }))).toMatchObject({ code: 'version_conflict' });
+    expect(await no(adminOn({ DB: raced }).setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v }))).toMatchObject({ code: 'version_conflict' });
     expect(await env.DB.prepare('SELECT frozen FROM platform_orgs WHERE org_id = ?1').bind(r.app.org).first()).toEqual({ frozen: 1 });
-    expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v + 1, consoleActiveSince: active }))).changed).toBe(true);
+    expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, expectedVersion: v + 1 }))).changed).toBe(true);
   });
 
-  it('an unfreeze is ordered after the mirror’s last freeze: a freeze always writes its time, and the hourly check keeps a grace (automated finding)', async () => {
+  it('the mirror’s unfreeze rule: refused inside the grace after the latest freeze (whoever asks), which every freeze restarts; a freeze racing it wins (second review)', async () => {
     const r = await setup();
     const row = () => env.DB.prepare('SELECT frozen, frozen_at, version FROM platform_orgs WHERE org_id = ?1').bind(r.app.org).first<{ frozen: number; frozen_at: number; version: number }>();
-    // Without the console's time an unfreeze is refused outright.
-    expect(await no(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false }))).toMatchObject({ code: 'bad_request' });
+    expect((await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false }))).changed).toBe(false); // nothing frozen
     await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
     const first = (await row())!;
-    // A second freeze finds the row frozen and still writes its time (a racing unfreeze must see it).
-    clock.advance(1000);
+    // A second freeze finds the row frozen and still writes its time: the grace runs from the latest freeze.
+    clock.advance(PLATFORM_UNFREEZE_GRACE_MS - 1000);
     await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
     const again = (await row())!;
-    expect(again).toMatchObject({ frozen: 1, frozen_at: first.frozen_at + 1000, version: first.version + 1 });
-    // The console active since before that freeze (a check that read it a moment before the freeze's console half): refused.
-    expect(await no(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false, consoleActiveSince: again.frozen_at }))).toMatchObject({ code: 'conflict' });
-    expect(await no(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false, consoleActiveSince: again.frozen_at - 1 }))).toMatchObject({ code: 'conflict' });
-    // The hourly check (system) within the grace: refused even with a later console time; staff are not held to it.
+    expect(again).toMatchObject({ frozen: 1, frozen_at: first.frozen_at + PLATFORM_UNFREEZE_GRACE_MS - 1000, version: first.version + 1 });
     clock.advance(2000);
-    expect(await no(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, consoleActiveSince: Date.now() }))).toMatchObject({ code: 'conflict' });
-    expect((await row())!.frozen).toBe(1);
-    clock.advance(UNFREEZE_GRACE_MS);
-    // A freeze landing between the unfreeze's read and its batch: the commit predicate sees its newer time.
+    for (const who of [hana(), system()]) expect(await no(adminOn().setPlatformOrgFrozen({ ...who, orgId: r.app.org, frozen: false })), who.actor.kind).toMatchObject({ code: 'conflict' });
+    // Past the grace, a freeze landing between the unfreeze's read and its batch: the commit predicate sees its newer time.
+    clock.advance(PLATFORM_UNFREEZE_GRACE_MS);
     const raced = racing(env.DB, () => adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: true }));
-    expect(await no(adminOn({ DB: raced }).setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false, consoleActiveSince: Date.now() - 1 }))).toMatchObject({ code: 'version_conflict' });
+    expect(await no(adminOn({ DB: raced }).setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false }))).toMatchObject({ code: 'version_conflict' });
     expect((await row())!.frozen).toBe(1);
-    // In order (the console unfrozen after the last freeze, past the grace): unfrozen.
-    clock.advance(UNFREEZE_GRACE_MS + 1000);
-    expect((await ok(adminOn().setPlatformOrgFrozen({ ...system(), orgId: r.app.org, frozen: false, consoleActiveSince: Date.now() }))).changed).toBe(true);
+    // Past the grace after that freeze, with nothing racing: unfrozen, by staff as by the check.
+    clock.advance(PLATFORM_UNFREEZE_GRACE_MS + 1000);
+    expect((await ok(adminOn().setPlatformOrgFrozen({ ...hana(), orgId: r.app.org, frozen: false }))).changed).toBe(true);
     expect((await row())!.frozen).toBe(0);
   });
 
@@ -1138,6 +1133,16 @@ describe('an owner’s stop: its own limits, never the shared budget (after PR 1
     expect((await ok(still().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key.state).toBe('revoked');
   });
 
+  it('if the stop’s own limiter can’t answer, the stop goes ahead, logged at error level (second review, finding 4)', async () => {
+    const r = await setup();
+    const { key } = await ok(memberRegister(r));
+    const errors: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((l: unknown) => void errors.push(String(l)));
+    const broken = { idFromName: () => ({}), get: () => new Proxy({}, { get: () => () => Promise.reject(new Error('limiter down')) }) } as unknown as Env['RATE_LIMITER'];
+    expect((await ok(still({ RATE_LIMITER: broken }).revokePlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key.state).toBe('revoked');
+    expect(errors.some((l) => l.includes('revoke_limiter_failed'))).toBe(true);
+  });
+
   it('a burst of stops in an org is an alert, never a refusal', async () => {
     const r = await setup();
     const warns: string[] = [];
@@ -1145,5 +1150,60 @@ describe('an owner’s stop: its own limits, never the shared budget (after PR 1
     const ids = [await bareKey(r), await bareKey(r), await bareKey(r), await bareKey(r)];
     for (const { id } of ids) expect((await ok(still().revokePlatformKey({ ...member(), orgId: r.app.org, keyId: id }))).key.state).toBe('revoked');
     expect(warns.some((l) => l.includes('platform_key_revoke_burst') && l.includes(r.app.org))).toBe(true);
+  });
+});
+
+describe('the hold after a security-contact change and the lapse (second review, finding 3)', () => {
+  const contacts = (r: Reg, email: string) => ok(adminOn().setSecurityContacts({ ...hana(), orgId: r.app.org, emails: [email] }));
+  const onPage = async (id: string) => (await ok(adminOn().platformKeyNotices({ ...system(), limit: 100 }))).notices.filter((n) => n.key.id === id).map((n) => n.kind);
+
+  it('a contact change on day 3 holds the key until day 10, shown on its page; it is announced then, not cancelled', async () => {
+    const r = await setup();
+    const { key } = await ok(memberRegister(r));
+    clock.advance(3 * DAY);
+    await contacts(r, 'day3@partner.example');
+    const view = async () => (await ok(consoleOn().getPlatformKey({ ...member(), orgId: r.app.org, keyId: key.id }))).key;
+    const held = (await view()).heldUntil!;
+    expect(held).toBeGreaterThan(Date.now() + 7 * DAY - 60_000);
+    // Day 9: the old 7-day lapse would have cancelled it; it waits.
+    clock.advance(6 * DAY);
+    await platformKeysMaintenance(env);
+    expect((await keyRow(key.id)).status).toBe('pending');
+    expect(await onPage(key.id)).toEqual([]);
+    // Day 10, past the hold: on the notices page, and announced.
+    clock.advance(held + 60_000 - Date.now());
+    await platformKeysMaintenance(env);
+    expect((await keyRow(key.id)).status).toBe('pending');
+    expect((await view()).heldUntil).toBeUndefined();
+    expect(await onPage(key.id)).toEqual(['announce']);
+    await announce(key.id);
+    expect((await keyRow(key.id)).notified_at).not.toBeNull();
+  });
+
+  it('a key not announced 7 days after its hold ends lapses then; repeated contact changes hold it 28 days at most', async () => {
+    const r = await setup();
+    const { key } = await ok(memberRegister(r));
+    clock.advance(2 * DAY);
+    await contacts(r, 'a@partner.example');
+    // The hold ends on day 9; the lapse is day 16: a day before, nothing; after, cancelled.
+    clock.advance(13 * DAY);
+    await platformKeysMaintenance(env);
+    expect((await keyRow(key.id)).status).toBe('pending');
+    clock.advance(DAY + 60_000);
+    await platformKeysMaintenance(env);
+    expect(await keyRow(key.id)).toMatchObject({ status: 'cancelled', cancel_reason: 'not_announced' });
+
+    const s = await setup();
+    const k2 = (await ok(memberRegister(s))).key;
+    // A change every 6 days keeps it held: it lapses 28 days after its registration all the same.
+    for (let d = 0; d < 4; d++) {
+      clock.advance(6 * DAY);
+      await contacts(s, `c${d}@partner.example`);
+      await platformKeysMaintenance(env);
+      expect((await keyRow(k2.id)).status, `day ${(d + 1) * 6}`).toBe('pending');
+    }
+    clock.advance(4 * DAY + 60_000);
+    await platformKeysMaintenance(env);
+    expect(await keyRow(k2.id)).toMatchObject({ status: 'cancelled', cancel_reason: 'not_announced' });
   });
 });

@@ -3,16 +3,26 @@
 //   Nothing waits for this: a key is in force by the predicate (keys.ts KEY_IN_FORCE);
 // - ends a key a year after it came into force (`expired`, `platform.key_expired`), and in the same batch cancels every
 //   web address it proposed that is still waiting (actor `system`, reason `key_expired`; A3);
-// - lapses a key not accepted, or not announced, within 7 days of its registration (`cancelled` by `system`).
+// - lapses a key not accepted, or not announced, within 7 days of its registration, or of the end of its hold after a
+//   security-contact change, and at the latest 28 days after its registration (`cancelled` by `system`).
 // Each key is one D1 batch; every write after the first only if the first happened in this run, and each ledger row has
 // a request id derived from the key, so two overlapping runs record a key once.
-import { PLATFORM_KEY_LAPSE_MS } from '@hana-id/console-core';
+import { PLATFORM_KEY_CONTACT_WAIT_MS, PLATFORM_KEY_HOLD_MAX_MS, PLATFORM_KEY_LAPSE_MS } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
 import { type Writer, runWrite } from '../changes/cas.ts';
 import { HotDb } from '../changes/db.ts';
-import { prepare, q } from '../changes/sql.ts';
+import { prepare, q, raw } from '../changes/sql.ts';
 import { cancelPlatformProposals } from './keys.ts';
+
+/**
+ * A waiting key's lapse is due (D918 after the second review): 7 days from its registration, or from the end of the
+ * hold after a security-contact change when that is later (the hold refuses its announcement and its acceptance), and
+ * never later than 28 days after its registration however often the contacts change. Over `platform_keys` unaliased.
+ */
+const LAPSE_DUE = (now: number): string =>
+  `MIN(MAX(platform_keys.proposed_at, COALESCE((SELECT MAX(c.at) FROM app_changes c WHERE c.org_id = platform_keys.org_id AND c.kind = 'org.security_contacts'), 0) + ${PLATFORM_KEY_CONTACT_WAIT_MS})` +
+  ` + ${PLATFORM_KEY_LAPSE_MS}, platform_keys.proposed_at + ${PLATFORM_KEY_HOLD_MAX_MS}) <= ${Math.floor(now)}`;
 
 export const PLATFORM_CRON_BATCH = 100;
 
@@ -86,7 +96,7 @@ export async function platformKeysMaintenance(env: Pick<Env, 'DB'>, now = Date.n
   const { results: stale } = await db
     .prepare(
       `SELECT id, org_id, CASE WHEN status = 'awaiting_acceptance' THEN 'not_accepted' ELSE 'not_announced' END AS reason FROM platform_keys
-        WHERE proposed_at <= ?1 AND (status = 'awaiting_acceptance' OR (status = 'pending' AND notified_at IS NULL)) ORDER BY proposed_at, id LIMIT ?2`,
+        WHERE proposed_at <= ?1 AND (status = 'awaiting_acceptance' OR (status = 'pending' AND notified_at IS NULL)) AND ${LAPSE_DUE(now)} ORDER BY proposed_at, id LIMIT ?2`,
     )
     .bind(now - PLATFORM_KEY_LAPSE_MS, PLATFORM_CRON_BATCH)
     .all<{ id: string; org_id: string; reason: 'not_accepted' | 'not_announced' }>();
@@ -96,7 +106,7 @@ export async function platformKeysMaintenance(env: Pick<Env, 'DB'>, now = Date.n
       prepare(
         db,
         q`UPDATE platform_keys SET status = 'cancelled', cancelled_at = ${now}, cancelled_by_kind = 'system', cancelled_by = 'cron', cancel_reason = ${k.reason}
-           WHERE id = ${k.id} AND proposed_at <= ${now - PLATFORM_KEY_LAPSE_MS} AND (status = 'awaiting_acceptance' OR (status = 'pending' AND notified_at IS NULL))`,
+           WHERE id = ${k.id} AND proposed_at <= ${now - PLATFORM_KEY_LAPSE_MS} AND (status = 'awaiting_acceptance' OR (status = 'pending' AND notified_at IS NULL)) AND ${raw(LAPSE_DUE(now))}`,
       ),
       db
         .prepare(

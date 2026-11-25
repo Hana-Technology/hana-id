@@ -166,7 +166,7 @@ export function consentRevokePayload(consentId: Uint8Array): Bytes {
 }
 
 /**
- * How many apps of one scope (one wallet) Passport Home's answers carry (D922), one number for the API and the page:
+ * How many apps of one scope (one wallet) Passport Home's answers carry, one number for the API and the page:
  * a list answer (`GET /v1/home/apps` without `all`), an explicit full answer (`?scopeId=…&all=1` or `?appId=…&all=1`,
  * which Home sends only for "Show all apps"), and `GET /v1/home/devices`' apps of a scope.
  */

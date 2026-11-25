@@ -34,6 +34,6 @@ const UNSAFE_LINE_ALL = new RegExp(String.raw`[\p{Cc}${INVISIBLE_CHARS}]`, 'gu')
 /**
  * One-line text with every character `isDisplaySafeLine` refuses (controls C0, DEL and C1, bidi controls, zero-width and
  * other invisible characters) replaced by "?": for text printed to a terminal or a log that may hold a partner's raw
- * key or words (D922: `admin labels:check`), so an escape sequence can't rewrite the screen.
+ * key or words, so an escape sequence can't rewrite the screen.
  */
 export const displaySafeLine = (text: string): string => text.replace(UNSAFE_LINE_ALL, '?');

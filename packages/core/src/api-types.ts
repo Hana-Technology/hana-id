@@ -79,6 +79,12 @@ export interface AppConfig {
    * check.
    */
   partnerLabels?: unknown;
+  /**
+   * The other apps that use this app's wallet (its scope): `{count, names}`, on the vault's own read only, `count` 0
+   * when the app is alone; absent on any other read and when the API couldn't read it. Typed unknown on purpose: the
+   * vault reads it with its own check, and treats anything it refuses as no answer.
+   */
+  otherApps?: unknown;
   requestId: string;
 }
 

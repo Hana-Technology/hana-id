@@ -35,6 +35,9 @@ const FILES = [
   'auth/home-sign-ins.ts',
   // D902: Home's own "Cancel this link".
   'auth/home-link-cancel.ts',
+  // D912: the shared-wallet line of the sign-in and approval windows, and the app names' stand-in.
+  'auth/shared-wallet.ts',
+  'auth/app-name.ts',
   'client/user-messages.ts',
   'vault/approvals.ts',
   // The sponsored action's words (SPONSOR_TEXT: the vault's errors and the approval flow's notes). client/evm-sponsor.ts's

@@ -47,5 +47,16 @@ export function bootVault(win: Window, env: HanaEnv, scriptStart?: number): Vaul
     ...(win.performance ? { perfNow: () => win.performance.now() } : {}),
     ...(scriptStart !== undefined ? { boot: { scriptStart } } : {}),
     deviceLabel: deviceLabel(win.navigator?.userAgent),
+    // D912: the last answer about the other apps that use the wallet, kept on the vault origin (null when refused).
+    keptStore: localStore(win),
   });
+}
+
+/** The vault origin's localStorage, or null when the browser refuses it (blocked storage, a sandboxed frame). */
+function localStore(win: Window): Storage | null {
+  try {
+    return win.localStorage;
+  } catch {
+    return null;
+  }
 }

@@ -38,12 +38,13 @@ import {
   planExistsSql,
   printable,
   removeOriginsWrite,
+  appUserIdsSql,
   scopeMarkSql,
   scopeSql,
   suspensionWrite,
   writeCommand,
 } from './admin-sql.ts';
-import { SHARED_SCOPE_COLUMNS_SQL, announceHint } from './admin-settings.ts';
+import { APP_USER_IDS_COLUMN_SQL, SHARED_SCOPE_COLUMNS_SQL, announceHint } from './admin-settings.ts';
 import { type Args, CliError } from './cli.ts';
 import { newAppId } from './pk.ts';
 
@@ -222,8 +223,11 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
     plan,
     origins: origins.map((origin) => ({ changeId: deps.ids.change(), origin })),
   };
-  if (!commit(deps, createAppWrite(app, { createScope: !scope, now, actor: deps.actor, requestId, sharedWallet }))) throw new Error(STALE_WRITE);
-  deps.log(`${at(now)} Created app ${app.id} "${printable(name)}" (org ${orgId}, ${environment} scope ${scopeId}${scope ? '' : ', new'}${sharedWallet ? ', shared by several partners’ apps: no auto-approve' : ''}, plan ${plan}) in ${where}`);
+  const userIdsColumn = Number(deps.d1(APP_USER_IDS_COLUMN_SQL)[0]?.n ?? 0) > 0;
+  if (!commit(deps, createAppWrite(app, { createScope: !scope, now, actor: deps.actor, requestId, sharedWallet, userIdsColumn }))) throw new Error(STALE_WRITE);
+  // D919: what the write gave the app, read back (the mark could have been set meanwhile).
+  const ownIds = userIdsColumn && (deps.d1(appUserIdsSql(app.id))[0]?.user_ids ?? null) === 'app';
+  deps.log(`${at(now)} Created app ${app.id} "${printable(name)}" (org ${orgId}, ${environment} scope ${scopeId}${scope ? '' : ', new'}${sharedWallet ? ', shared by several partners’ apps: no auto-approve' : ''}${ownIds ? ', its own User IDs' : ''}, plan ${plan}) in ${where}`);
   deps.log(`Publishable key: ${app.publishableKey}`);
   deps.log(`Origins (staff proposals, not in force until announced${scope ? ' and appChangeDelayMs has passed' : '; the no_session waiver applies while the scope has no login'}):`);
   for (const o of app.origins) deps.log(`  ${o.changeId}  ${o.origin}`);

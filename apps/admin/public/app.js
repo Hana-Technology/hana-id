@@ -3557,6 +3557,7 @@ const RETENTION_LABELS = {
   directoryIdentities: 'wallet directory identities',
   emailConsentsPurged: 'email consents of deleted apps',
   nameSharesPurged: 'name shares of deleted apps',
+  userAppsPurged: 'shared-wallet app sign-ins of deleted apps',
   userEventsExpired: 'key exports and mainnet demo signatures (24 months)',
   userEventsDeadScopes: 'key exports and mainnet demo signatures of scopes left without apps',
   appChangesDeleted: 'app_changes (60 months)',

@@ -45,7 +45,19 @@ export async function seedPlan(id: string, perMinute: number, perDay: number, pe
  * the 0006 triggers, as in a deployed env.
  */
 export async function seedApp(
-  opts: { scope?: string; key?: string; status?: string; suspendedBy?: number; plan?: string; origins?: string[]; firstSession?: number | null; firstLogin?: number | null; db?: D1Database } = {},
+  opts: {
+    scope?: string;
+    key?: string;
+    status?: string;
+    suspendedBy?: number;
+    plan?: string;
+    origins?: string[];
+    firstSession?: number | null;
+    firstLogin?: number | null;
+    db?: D1Database;
+    /** A new scope row marked as shared by several partners' apps (D915; a test scope). Apps then get their own User IDs (D919). */
+    sharedScope?: boolean;
+  } = {},
 ): Promise<SeededApp> {
   const db = opts.db ?? env.DB;
   const id = `app_${uid()}`;
@@ -53,13 +65,32 @@ export async function seedApp(
   const scope = opts.scope ?? `s${uid()}`;
   const now = Date.now();
   const environment = key.startsWith('pk_live_') ? 'live' : 'test';
-  await db
-    .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?1, 'org_legacy', ?2, ?3, ?4, ?4)")
-    .bind(scope, environment, opts.firstSession === undefined ? now : opts.firstSession, now)
-    .run();
-  await db.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
-    .bind(id, `Test ${id}`, scope, key, opts.status ?? 'active', opts.plan ?? 'free')
-    .run();
+  if (opts.sharedScope) {
+    await db
+      .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES (?1, 'org_legacy', ?2, ?3, ?4, ?4, 1)")
+      .bind(scope, environment, opts.firstSession === undefined ? now : opts.firstSession, now)
+      .run();
+  } else {
+    await db
+      .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?1, 'org_legacy', ?2, ?3, ?4, ?4)")
+      .bind(scope, environment, opts.firstSession === undefined ? now : opts.firstSession, now)
+      .run();
+  }
+  // A given `db` may predate migration 0030 (no `user_ids`); env.DB has it: the mode from the scope's mark, as the API's
+  // createApp writes it (D919).
+  if (opts.db) {
+    await db.prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, plan) VALUES (?1, ?2, ?3, ?4, ?5, ?6)')
+      .bind(id, `Test ${id}`, scope, key, opts.status ?? 'active', opts.plan ?? 'free')
+      .run();
+  } else {
+    await db
+      .prepare(
+        `INSERT INTO apps (id, name, scope_id, publishable_key, status, plan, user_ids)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, CASE s.app_user_ids WHEN 1 THEN 'app' WHEN 0 THEN 'scope' END FROM scopes s WHERE s.scope_id = ?3`,
+      )
+      .bind(id, `Test ${id}`, scope, key, opts.status ?? 'active', opts.plan ?? 'free')
+      .run();
+  }
   // A given `db` may predate migration 0016 (rpc-issuer's pre-0010 database), so it isn't marked.
   const firstLogin = opts.firstLogin === undefined ? now : opts.firstLogin;
   if (!opts.db && firstLogin !== null) await db.prepare('UPDATE apps SET first_login_at = ?2 WHERE id = ?1').bind(id, firstLogin).run();

@@ -452,6 +452,140 @@
       "sub": "u1_ZdB8b0cpdCh3XzeilneuDQ"
     }
   },
+  "app_subs": {
+    "app": {
+      "title": "app sub: Google root, app_0123456789abcdef in scope s1",
+      "parts": [
+        [
+          "\"hana-id/idt-app-sub/v1\"",
+          "68616e612d69642f6964742d6170702d7375622f7631"
+        ],
+        [
+          "0x00",
+          "00"
+        ],
+        [
+          "borsh(scope \"s1\")",
+          "020000007331"
+        ],
+        [
+          "borsh(appId \"app_0123456789abcdef\")",
+          "140000006170705f30313233343536373839616263646566"
+        ],
+        [
+          "scopeSubBytes (16)",
+          "11ca081634f9940599b24d3ceb67bc4e"
+        ]
+      ],
+      "preimage_hex": "68616e612d69642f6964742d6170702d7375622f763100020000007331140000006170705f3031323334353637383961626364656611ca081634f9940599b24d3ceb67bc4e",
+      "scope_id": "s1",
+      "app_id": "app_0123456789abcdef",
+      "scope_sub": "u1_EcoIFjT5lAWZsk0862e8Tg",
+      "app_sub_bytes_hex": "c428e860e4a80ad4e02efea2d2dbb159",
+      "app_sub": "u1_xCjoYOSoCtTgLv6i0tuxWQ",
+      "support_id": "HANA-RGME-GR74",
+      "scope_support_id": "HANA-2750-G5HM"
+    },
+    "other_app": {
+      "title": "app sub: the same person, another app of scope s1",
+      "parts": [
+        [
+          "\"hana-id/idt-app-sub/v1\"",
+          "68616e612d69642f6964742d6170702d7375622f7631"
+        ],
+        [
+          "0x00",
+          "00"
+        ],
+        [
+          "borsh(scope \"s1\")",
+          "020000007331"
+        ],
+        [
+          "borsh(appId \"app_fedcba9876543210\")",
+          "140000006170705f66656463626139383736353433323130"
+        ],
+        [
+          "scopeSubBytes (16)",
+          "11ca081634f9940599b24d3ceb67bc4e"
+        ]
+      ],
+      "preimage_hex": "68616e612d69642f6964742d6170702d7375622f763100020000007331140000006170705f6665646362613938373635343332313011ca081634f9940599b24d3ceb67bc4e",
+      "scope_id": "s1",
+      "app_id": "app_fedcba9876543210",
+      "scope_sub": "u1_EcoIFjT5lAWZsk0862e8Tg",
+      "app_sub_bytes_hex": "85a3913cadae6468854c6e5613737834",
+      "app_sub": "u1_haORPK2uZGiFTG5WE3N4NA",
+      "support_id": "HANA-GPHS-2F5D",
+      "scope_support_id": "HANA-2750-G5HM"
+    },
+    "other_scope": {
+      "title": "app sub: the same person and app id in scope s2",
+      "parts": [
+        [
+          "\"hana-id/idt-app-sub/v1\"",
+          "68616e612d69642f6964742d6170702d7375622f7631"
+        ],
+        [
+          "0x00",
+          "00"
+        ],
+        [
+          "borsh(scope \"s2\")",
+          "020000007332"
+        ],
+        [
+          "borsh(appId \"app_0123456789abcdef\")",
+          "140000006170705f30313233343536373839616263646566"
+        ],
+        [
+          "scopeSubBytes (16)",
+          "c73080a83d36ba4b2100ac88ca141e2f"
+        ]
+      ],
+      "preimage_hex": "68616e612d69642f6964742d6170702d7375622f763100020000007332140000006170705f30313233343536373839616263646566c73080a83d36ba4b2100ac88ca141e2f",
+      "scope_id": "s2",
+      "app_id": "app_0123456789abcdef",
+      "scope_sub": "u1_xzCAqD02ukshAKyIyhQeLw",
+      "app_sub_bytes_hex": "2d9a7d6b71588eb6f4a30422fe6638bd",
+      "app_sub": "u1_LZp9a3FYjrb0owQi_mY4vQ",
+      "support_id": "HANA-5PD7-TTVH",
+      "scope_support_id": "HANA-RWR8-1A1X"
+    },
+    "email_root": {
+      "title": "app sub: an email-login root, app_0123456789abcdef in scope s1",
+      "parts": [
+        [
+          "\"hana-id/idt-app-sub/v1\"",
+          "68616e612d69642f6964742d6170702d7375622f7631"
+        ],
+        [
+          "0x00",
+          "00"
+        ],
+        [
+          "borsh(scope \"s1\")",
+          "020000007331"
+        ],
+        [
+          "borsh(appId \"app_0123456789abcdef\")",
+          "140000006170705f30313233343536373839616263646566"
+        ],
+        [
+          "scopeSubBytes (16)",
+          "65d07c6f47297428775f37a29677ae0d"
+        ]
+      ],
+      "preimage_hex": "68616e612d69642f6964742d6170702d7375622f763100020000007331140000006170705f3031323334353637383961626364656665d07c6f47297428775f37a29677ae0d",
+      "scope_id": "s1",
+      "app_id": "app_0123456789abcdef",
+      "scope_sub": "u1_ZdB8b0cpdCh3XzeilneuDQ",
+      "app_sub_bytes_hex": "94271018f53dcd8fac62fa5a86073e29",
+      "app_sub": "u1_lCcQGPU9zY-sYvpahgc-KQ",
+      "support_id": "HANA-JGKH-067N",
+      "scope_support_id": "HANA-CQ87-RVT7"
+    }
+  },
   "sids": {
     "app": {
       "title": "sid: app_0123456789abcdef, session key seed 7",

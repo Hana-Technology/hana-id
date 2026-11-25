@@ -29,7 +29,7 @@
 import { appKeyPairs, appKeyProblem } from '../bls.ts';
 import { hex, sha256 } from '../bytes.ts';
 import { eventId } from '../changes/guard.ts';
-import { identityKeyHex, sessionSupportId } from '../directory/store.ts';
+import { identityKeyHex, scopeSupportId } from '../directory/store.ts';
 import { inBackground, syncAfterLogin } from '../directory/sync.ts';
 import type { Env } from '../env.ts';
 import { type OwnerActionWindow, NOT_EXECUTED, chainGate, chainGateResponse, checkClientScope, done, hitAll, lap, lapRelay, limiter, loginTokenRefusal, newCtx, reject, settle } from '../handlers.ts';
@@ -276,8 +276,9 @@ export async function handleHomeLogin(request: Request, env: Env, requestId: str
     const root = standing.member?.root ?? { provider: token.provider, sub: token.sub };
     if (recorded) await inBackground(exec, () => syncAfterLogin(env, scopeId, { provider: token.provider, sub: token.sub }, null, standing, { requestId, endpoint: ctx.endpoint }));
     await inBackground(exec, () => recordKeyExport(env, { appId: null, scopeId, root, chain: null, requestId }));
-    // A code staff can't look up is worse than none (D395): none without a directory row.
-    const supportId = recorded ? await sessionSupportId(env, scopeId, root) : undefined;
+    // A code staff can't look up is worse than none (D395): none without a directory row. Home is Journear's own page: the
+    // person's scope-level code, whatever the scope's apps give (D919).
+    const supportId = recorded ? await scopeSupportId(env, scopeId, root) : undefined;
     return done(ctx, 200, {
       result: { big_y: r.big_y, big_c: r.big_c },
       session: { scope_id: scopeId, expires_at_ms: req.expiresAtMs, max_uses: req.maxUses, used: 1 },

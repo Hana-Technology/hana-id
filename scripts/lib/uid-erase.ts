@@ -19,6 +19,15 @@
 //                                issuer's user_emails below; none when the tables aren't there yet)
 //   the issuer's user directory  the email issuer's D1 (D269): the identities' user_email_apps rows of the scope, and
 //                                each identity's user_emails row once it has no app row left (D276's `user:erase`)
+//   the apps signed in on        the API's D1 (migration 0030, D919): the users' end_user_apps rows (which apps of a
+//                                shared scope they used, with each app's own User ID and Support ID; none when the
+//                                table isn't there yet)
+//
+// The person is named by their sign-in (`--provider` and `--sub`, as before) or, D919, by a User ID or Support ID a
+// partner or the user gave: `--user-id u1_…` or `--support-id HANA-XXXX-XXXX`, either the scope's (the wallet
+// directory's `end_users`) or one app's own (`end_user_apps`), resolved in the scope to exactly one person and then to
+// that person's account root as the wallet directory knows it (never printed). Several people behind one Support ID
+// (40 bits) refuse: the operator asks for the User ID instead.
 //
 // The account is read from the chain, the source of truth (get_identity, get_account): the identity named, its account
 // root and the account's members. Every uid that can carry the user's ledger rows is erased: the root's (the account's
@@ -37,11 +46,12 @@
 // idempotent. No address is ever printed, nor a consent's User ID; the sub is the operator's own input.
 import { USER_ID_RE, formatSupportId, internalIdOf, scopeIdInput, uid as uidOf, uidOfInternalId } from '@hana-id/console-core';
 import { identitySub } from '@hana-id/core/identity';
+import { SUPPORT_ID_RE } from '@hana-id/core/support-id';
 import type { Manifest } from '@hana-id/env';
 import { type Args, CliError, parseCli } from './cli.ts';
 import { sql } from './sql.ts';
 
-export const UID_ERASE_USAGE = `Usage: uid-erase.ts <env> --scope <scope id> --provider <provider> --sub <sub | -> --ticket <ref> [--remote] [--no-ledger] [--yes]
+export const UID_ERASE_USAGE = `Usage: uid-erase.ts <env> --scope <scope id> (--provider <provider> --sub <sub | -> | --user-id <u1_… | -> | --support-id <HANA-XXXX-XXXX>) --ticket <ref> [--remote] [--no-ledger] [--yes]
   An end user's erasure request for one scope (D90, D361): the usage ledger's uids (usage.erase_uid, as usage_admin
   over .secrets/<env>/neon-usage-admin.url), the wallet directory's rows and the user's key export and mainnet demo
   events (the API's D1), the issuer directory's rows (the email issuer's D1), and the account's email consents with
@@ -50,6 +60,8 @@ export const UID_ERASE_USAGE = `Usage: uid-erase.ts <env> --scope <scope id> --p
   sponsored EVM sends' audit rows (D848). The account (root
   and members) is read from the chain. Without --yes, prints the plan with the counts and changes nothing.
   --sub -       read the sub from stdin (kept out of the shell history)
+  --user-id     the person by a User ID instead (the scope's, or one app's own on a shared scope, D919); - reads stdin
+  --support-id  the person by a Support ID instead (the scope's or one app's own); refused when several people share it
   --ticket      the support reference of the request (no email address in it); recorded in ops.erasures
   --remote      the deployed D1 databases (default: local, as admin.ts)
   --no-ledger   an env without a usage ledger: skip it (nothing is recorded in ops.erasures then)`;
@@ -114,6 +126,8 @@ export interface Plan {
   nameTables: boolean;
   /** Whether the API's D1 has migration 0022's evm_sponsor_sends. */
   sponsorTable: boolean;
+  /** Whether the API's D1 has migration 0030's end_user_apps (D919). */
+  userAppsTable: boolean;
   /**
    * Every wallet address of those users (the directory's wallets and their own events'), for their `user_events` rows
    * by address. Never printed or recorded.
@@ -121,6 +135,8 @@ export interface Plan {
   addresses: string[];
   ledger: { events: number; appUsers: number } | null;
   directory: { users: number; wallets: number; identities: number };
+  /** The users' end_user_apps rows (null: no table, migration 0030). */
+  userApps: number | null;
   /** The account's email_consents rows of the scope (null: no table). */
   consents: number | null;
   /** The name shares and Hana Home names that go (null: no tables, migration 0021). */
@@ -138,6 +154,9 @@ export const NAME_TABLES_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE ty
 
 /** 1 when the API's D1 has migration 0022's evm_sponsor_sends table (D848). */
 export const SPONSOR_TABLE_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'evm_sponsor_sends'";
+
+/** 1 when the API's D1 has migration 0030's end_user_apps table (D919). */
+export const USER_APPS_TABLE_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'end_user_apps'";
 
 /** 1 when the API's D1 has migration 0014's email_consents table. */
 export const CONSENT_TABLE_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'email_consents'";
@@ -249,9 +268,9 @@ async function userAddresses(c: Ctx, internalIds: readonly string[], events: boo
   return [...new Set(rows.map((r) => String(r.address)))].sort();
 }
 
-type CountsOf = Pick<Plan, 'uids' | 'internalIds' | 'account' | 'identities' | 'userSubs' | 'consentTable' | 'nameTables' | 'sponsorTable' | 'addresses'> & { eventsTable: boolean };
+type CountsOf = Pick<Plan, 'uids' | 'internalIds' | 'account' | 'identities' | 'userSubs' | 'consentTable' | 'nameTables' | 'sponsorTable' | 'userAppsTable' | 'addresses'> & { eventsTable: boolean };
 
-async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'directory' | 'consents' | 'names' | 'issuer' | 'events' | 'sponsorSends'>> {
+async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'directory' | 'userApps' | 'consents' | 'names' | 'issuer' | 'events' | 'sponsorSends'>> {
   let ledger: Plan['ledger'] = null;
   if (c.ledger) {
     const [r] = await c.ledger.query<{ events: string; app_users: string }>(
@@ -268,6 +287,7 @@ async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'direc
     c.remote,
   );
   const directory = { users: num(d?.users), wallets: num(d?.wallets), identities: num(d?.identities) };
+  const userApps = p.userAppsTable ? num((await c.deps.apiD1(c.m, `SELECT COUNT(*) AS n FROM end_user_apps WHERE ${w.users}`, c.remote))[0]?.n) : null;
   const consents = p.consentTable ? num((await c.deps.apiD1(c.m, `SELECT COUNT(*) AS n FROM email_consents WHERE ${consentWhere(c, p)}`, c.remote))[0]?.n) : null;
   const events = p.eventsTable ? num((await c.deps.apiD1(c.m, `SELECT COUNT(*) AS n FROM user_events WHERE ${w.events}`, c.remote))[0]?.n) : null;
   const sponsorSends = p.sponsorTable ? num((await c.deps.apiD1(c.m, `SELECT COUNT(*) AS n FROM evm_sponsor_sends WHERE ${w.sponsor}`, c.remote))[0]?.n) : null;
@@ -286,7 +306,7 @@ async function counts(c: Ctx, p: CountsOf): Promise<Pick<Plan, 'ledger' | 'direc
     );
     issuer = { apps: num(i?.apps), emails: num(i?.emails) };
   }
-  return { ledger, directory, consents, names, issuer, events, sponsorSends };
+  return { ledger, directory, userApps, consents, names, issuer, events, sponsorSends };
 }
 
 /** Internal ids per read: 500 quoted ids is about 16 KB, well inside D1's 100 KB statement limit. */
@@ -365,9 +385,10 @@ export async function planErasure(c: Ctx, named: Identity): Promise<Plan> {
   const consentTable = num((await c.deps.apiD1(c.m, CONSENT_TABLE_SQL, c.remote))[0]?.n) > 0;
   const nameTables = num((await c.deps.apiD1(c.m, NAME_TABLES_SQL, c.remote))[0]?.n) > 0;
   const sponsorTable = num((await c.deps.apiD1(c.m, SPONSOR_TABLE_SQL, c.remote))[0]?.n) > 0;
+  const userAppsTable = num((await c.deps.apiD1(c.m, USER_APPS_TABLE_SQL, c.remote))[0]?.n) > 0;
   const eventsTable = await hasUserEvents(c);
   const addresses = await userAddresses(c, internalIds, eventsTable);
-  const base = { scopeId: c.scopeId, account, identities, uids, internalIds, users, userSubs: [...userSubs], consentTable, nameTables, sponsorTable, addresses };
+  const base = { scopeId: c.scopeId, account, identities, uids, internalIds, users, userSubs: [...userSubs], consentTable, nameTables, sponsorTable, userAppsTable, addresses };
   return { ...base, ...(await counts(c, { ...base, eventsTable })), otherScopes: await otherScopes(c, identities, eventsTable) };
 }
 
@@ -383,6 +404,9 @@ export function formatPlan(p: Plan, where: string): string[] {
       .join(', ')}`,
     p.ledger ? `  ledger    ${p.ledger.events} event(s) lose their uid, ${p.ledger.appUsers} app_users row(s) deleted` : '  ledger    skipped (--no-ledger)',
     `  wallets   ${p.directory.users} user row(s), ${p.directory.wallets} wallet row(s), ${p.directory.identities} identity row(s) deleted (the API's D1)`,
+    p.userApps === null
+      ? "  app ids   none: the API's D1 has no end_user_apps table (migration 0030 not applied)"
+      : `  app ids   ${p.userApps} row(s) of the apps of a shared scope they signed in on, with each app's own IDs, deleted (the API's D1, D919)`,
     p.consents === null
       ? "  consents  none: the API's D1 has no email_consents table (migration 0014 not applied)"
       : `  consents  ${p.consents} email consent row(s) of the scope deleted, with any address shared with an app (the API's D1, D411)`,
@@ -426,6 +450,8 @@ async function erase(c: Ctx, p: Plan): Promise<Record<string, number>> {
       // Before the wallets and users, for the same reason (and its user_id references end_users).
       ...(p.sponsorSends !== null ? [`DELETE FROM evm_sponsor_sends WHERE ${w.sponsor} RETURNING 's' AS t`] : []),
       `DELETE FROM end_user_wallets WHERE ${w.users} RETURNING 'w' AS t`,
+      // D919: before end_users (its user_id references end_users; D1's cascade would take them, this counts them).
+      ...(p.userApps !== null ? [`DELETE FROM end_user_apps WHERE ${w.users} RETURNING 'a' AS t`] : []),
       `DELETE FROM end_user_identities WHERE ${w.identities} RETURNING 'i' AS t`,
       // Before end_users: the consents' belt-and-braces match reads its token_sub.
       ...(p.consentTable ? [`DELETE FROM email_consents WHERE ${consentWhere(c, p)} RETURNING 'c' AS t`] : []),
@@ -438,6 +464,7 @@ async function erase(c: Ctx, p: Plan): Promise<Record<string, number>> {
   out.directoryWallets = dir.filter((r) => r.t === 'w').length;
   out.directoryIdentities = dir.filter((r) => r.t === 'i').length;
   out.directoryUsers = dir.filter((r) => r.t === 'u').length;
+  if (p.userApps !== null) out.userApps = dir.filter((r) => r.t === 'a').length;
   if (p.consentTable) out.emailConsents = dir.filter((r) => r.t === 'c').length;
   if (p.nameTables) {
     out.nameShares = dir.filter((r) => r.t === 'n').length;
@@ -460,9 +487,57 @@ async function erase(c: Ctx, p: Plan): Promise<Record<string, number>> {
   return out;
 }
 
+/** How the operator named the person: by sign-in (provider and sub), or by a User ID or Support ID (D919). */
+function personInput(args: Args): { kind: 'sub' } | { kind: 'userId' | 'supportId'; value: string } {
+  const userId = args.str('user-id');
+  const supportId = args.str('support-id');
+  const bySub = args.str('provider') !== undefined || args.str('sub') !== undefined;
+  if ([bySub, userId !== undefined, supportId !== undefined].filter(Boolean).length !== 1) {
+    throw new CliError('Name the person one way: --provider and --sub, or --user-id, or --support-id');
+  }
+  if (userId !== undefined) {
+    if (userId !== '-' && !USER_ID_RE.test(userId)) throw new CliError('--user-id takes a User ID (u1_ and 22 characters), or - to read it from stdin');
+    return { kind: 'userId', value: userId };
+  }
+  if (supportId !== undefined) {
+    const v = supportId.trim().toUpperCase();
+    if (!SUPPORT_ID_RE.test(v)) throw new CliError('--support-id takes a Support ID (HANA-XXXX-XXXX)');
+    return { kind: 'supportId', value: v };
+  }
+  return { kind: 'sub' };
+}
+
+/**
+ * D919: the person in the scope behind a User ID or Support ID, the scope's (`end_users`) or one app's own
+ * (`end_user_apps`), as their account root's identity from the wallet directory. Refused when nobody or several people
+ * match, or the directory has no sign-in for the person's root (then the operator names the sign-in instead). Nothing
+ * here is printed: the plan names the person by internal id and the scope's IDs, as for a sub.
+ */
+export async function resolvePerson(c: Ctx, by: { userId: string } | { supportId: string }): Promise<Identity> {
+  if ('userId' in by && !USER_ID_RE.test(by.userId)) throw new CliError('Not a User ID (u1_ and 22 characters)');
+  const userAppsTable = num((await c.deps.apiD1(c.m, USER_APPS_TABLE_SQL, c.remote))[0]?.n) > 0;
+  const scope = sql`${c.scopeId}`;
+  const [col, appCol, value] = 'userId' in by ? ['token_sub', 'app_sub', by.userId] : ['support_code', 'support_code', by.supportId.slice(5).replace('-', '')];
+  const v = sql`${value}`;
+  const people = await c.deps.apiD1(
+    c.m,
+    `SELECT DISTINCT user_id FROM (SELECT user_id FROM end_users WHERE scope_id = ${scope} AND ${col} = ${v}${
+      userAppsTable ? ` UNION SELECT e.user_id FROM end_user_apps e JOIN end_users u ON u.user_id = e.user_id WHERE u.scope_id = ${scope} AND e.${appCol} = ${v}` : ''
+    }) ORDER BY user_id`,
+    c.remote,
+  );
+  const what = 'userId' in by ? 'User ID' : 'Support ID';
+  if (people.length === 0) throw new CliError(`No person with this ${what} in scope ${c.scopeId}${userAppsTable ? '' : " (the API's D1 has no end_user_apps yet: an app's own IDs can't be resolved)"}`);
+  if (people.length > 1) throw new CliError(`${people.length} people in scope ${c.scopeId} share this ${what}: name the person by User ID, or by --provider and --sub`);
+  const internalId = String(people[0]!.user_id);
+  const roots = await c.deps.apiD1(c.m, `SELECT provider, sub FROM end_user_identities WHERE scope_id = ${scope} AND user_id = ${sql`${internalId}`} AND role = 'root' AND sub IS NOT NULL`, c.remote);
+  if (roots.length !== 1) throw new CliError(`The wallet directory has no sign-in for this person's account in scope ${c.scopeId}: name it by --provider and --sub`);
+  return { provider: String(roots[0]!.provider), sub: checkSub(String(roots[0]!.sub)) };
+}
+
 /** Runs `uid-erase <argv>`; returns the plan (and with --yes the counts erased), or null for --help. */
 export async function uidErase(argv: readonly string[], deps: UidEraseDeps): Promise<{ plan: Plan; erased?: Record<string, number> } | null> {
-  const args: Args = parseCli(argv, { strings: ['scope', 'provider', 'sub', 'ticket'], booleans: ['remote', 'no-ledger', 'yes', 'help'] });
+  const args: Args = parseCli(argv, { strings: ['scope', 'provider', 'sub', 'user-id', 'support-id', 'ticket'], booleans: ['remote', 'no-ledger', 'yes', 'help'] });
   if (args.flag('help')) {
     deps.log(UID_ERASE_USAGE);
     return null;
@@ -473,11 +548,15 @@ export async function uidErase(argv: readonly string[], deps: UidEraseDeps): Pro
   if (m.network !== 'testnet') throw new Error(`envs/${m.name}.json is not a testnet env (testnet only until the mainnet readiness review)`);
   const scope = scopeIdInput.safeParse(args.required('scope'));
   if (!scope.success) throw new CliError('--scope takes a scope id (s…)');
-  const provider = args.required('provider');
-  if (!PROVIDER_RE.test(provider)) throw new CliError('--provider takes a provider name (google, email, …)');
-  let sub = args.required('sub');
-  if (sub === '-') sub = await deps.readLine('Sub: ');
-  const named = { provider, sub: checkSub(sub) };
+  const by = personInput(args);
+  let named: Identity | null = null;
+  if (by.kind === 'sub') {
+    const provider = args.required('provider');
+    if (!PROVIDER_RE.test(provider)) throw new CliError('--provider takes a provider name (google, email, …)');
+    let sub = args.required('sub');
+    if (sub === '-') sub = await deps.readLine('Sub: ');
+    named = { provider, sub: checkSub(sub) };
+  }
   const ticket = checkTicket(args.str('ticket'));
   const remote = args.flag('remote');
   const where = `${remote ? 'remote' : 'local'} D1s, ${args.flag('no-ledger') ? 'no ledger' : `${m.name}'s ledger`}`;
@@ -486,6 +565,8 @@ export async function uidErase(argv: readonly string[], deps: UidEraseDeps): Pro
   if (!args.flag('no-ledger') && !ledger) throw new CliError(`No .secrets/${m.name}/neon-usage-admin.url: run usage-setup ${m.name} roles, or pass --no-ledger for an env without a ledger`);
   const c: Ctx = { m, remote, scopeId: scope.data, ticket, deps, ledger };
   try {
+    if (by.kind !== 'sub') named = await resolvePerson(c, by.kind === 'userId' ? { userId: by.value === '-' ? (await deps.readLine('User ID: ')).trim() : by.value } : { supportId: by.value });
+    if (!named) throw new CliError('Name the person: --provider and --sub, --user-id or --support-id');
     const plan = await planErasure(c, named);
     for (const l of formatPlan(plan, where)) deps.log(l);
     if (!args.flag('yes')) {
@@ -494,7 +575,7 @@ export async function uidErase(argv: readonly string[], deps: UidEraseDeps): Pro
     }
     const erased = await erase(c, plan);
     const after = await counts(c, { ...plan, eventsTable: plan.events !== null });
-    const left = [after.ledger?.events, after.ledger?.appUsers, after.directory.users, after.directory.wallets, after.directory.identities, after.consents, after.names?.shares, after.names?.profiles, after.events, after.sponsorSends, after.issuer?.apps, after.issuer?.emails].reduce<number>((a, b) => a + (b ?? 0), 0);
+    const left = [after.ledger?.events, after.ledger?.appUsers, after.directory.users, after.directory.wallets, after.directory.identities, after.userApps, after.consents, after.names?.shares, after.names?.profiles, after.events, after.sponsorSends, after.issuer?.apps, after.issuer?.emails].reduce<number>((a, b) => a + (b ?? 0), 0);
     if (left > 0) throw new Error(`Rows remain after the erasure (${left}); nothing was recorded. Run it again: every step is idempotent.`);
     if (c.ledger) {
       await c.ledger.query('INSERT INTO ops.erasures (ticket, operator, scope_id, rows) VALUES ($1, $2, $3, $4::jsonb)', [ticket, deps.operator.slice(0, 128), scope.data, JSON.stringify(erased)]);

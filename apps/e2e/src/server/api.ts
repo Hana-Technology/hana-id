@@ -171,6 +171,12 @@ export interface AppSpec {
    * doesn't): Hana Home then lists the app to a user the wallet directory has no row for (GET /v1/home/apps, D462).
    */
   launched?: boolean;
+  /**
+   * The scope is marked as shared by several partners' apps (`scopes.app_user_ids`, migration 0026; a test scope only).
+   * Set when the scope row is first created here (an existing scope keeps its mark). An app created on a marked scope
+   * gets its own User IDs (`apps.user_ids` 'app', migration 0030, D919), as the API's createApp writes it.
+   */
+  sharedScope?: boolean;
 }
 
 export interface MockApiOptions {
@@ -284,11 +290,15 @@ export class MockApi {
     // The hot DB after migration 0006: the scope row (one environment per scope; a key of the other one is refused by
     // its triggers), the app, its key in app_keys, and its origins in force (active_from 0, as migrated).
     this.d1.db
-      .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?, 'org_legacy', ?, ?, ?, ?)")
-      .run(scopeId, spec.live ? 'live' : 'test', now, now, now);
+      .prepare("INSERT OR IGNORE INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at, app_user_ids) VALUES (?, 'org_legacy', ?, ?, ?, ?, ?)")
+      .run(scopeId, spec.live ? 'live' : 'test', now, now, now, spec.sharedScope ? 1 : 0);
+    // The User ID mode from the scope's mark, as the API's createApp writes it (D919): 'app' on a marked scope.
     this.d1.db
-      .prepare('INSERT INTO apps (id, name, scope_id, publishable_key, status, persistence, raw_sign, auto_approve_policy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(appId, spec.name ?? 'E2E Partner', scopeId, pk, spec.status ?? 'active', s.persistence ?? 'session', s.rawSign ?? 'off', s.autoApprovePolicy ? JSON.stringify(s.autoApprovePolicy) : null);
+      .prepare(
+        `INSERT INTO apps (id, name, scope_id, publishable_key, status, persistence, raw_sign, auto_approve_policy, user_ids)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?, CASE s.app_user_ids WHEN 1 THEN 'app' WHEN 0 THEN 'scope' END FROM scopes s WHERE s.scope_id = ?`,
+      )
+      .run(appId, spec.name ?? 'E2E Partner', scopeId, pk, spec.status ?? 'active', s.persistence ?? 'session', s.rawSign ?? 'off', s.autoApprovePolicy ? JSON.stringify(s.autoApprovePolicy) : null, scopeId);
     if (spec.status === 'suspended') this.d1.db.prepare('UPDATE apps SET suspended_by = 1 WHERE id = ?').run(appId);
     if (spec.loginMethods) this.d1.db.prepare('UPDATE apps SET login_methods = ? WHERE id = ?').run(spec.loginMethods, appId);
     if (spec.mainnetDemo) this.d1.db.prepare('UPDATE apps SET mainnet_demo = 1 WHERE id = ?').run(appId);
@@ -501,8 +511,8 @@ export class MockApi {
     const result = mpcAnswer(b.pk1, session.path);
     const nearTx = this.chain.newTxHash();
     this.chain.txs.set(nearTx, result);
-    // As the Worker's /v1/login (C15): the account root's Support ID, by the Worker's own code.
-    const supportId = await this.api.sessionSupportId(this.env, app.scope_id, pi);
+    // As the Worker's /v1/login (C15, D919): the Support ID this app gives the account root, by the Worker's own code.
+    const supportId = await this.api.sessionSupportId(this.env, app, pi);
     return this.api.done(ctx, 200, { result, session: { scope_id: session.scope_id, expires_at_ms: session.expires_at_ms, max_uses: session.max_uses, used: 1 }, nearTx, ...(supportId ? { supportId } : {}) });
   }
 

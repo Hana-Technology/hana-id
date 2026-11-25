@@ -10,13 +10,15 @@
 //
 // A user's three ids (D312, D346) come from two keys: the internal id (`hu_…`, the row's key) from USER_ID_KEY, the
 // User ID (`u1_…`, the identity token's `sub`, core identity.ts `identitySub`) and its Support ID from
-// IDENTITY_SUB_KEY. Without either key nothing is written (`directory_unavailable`): a row without the id partners see
+// IDENTITY_SUB_KEY. On a scope marked as shared (migration 0030, D919), each app the person signs in on also gets a row
+// in `end_user_apps` with the User ID and Support ID that app gives them: its own for an app whose `user_ids` is 'app'
+// (core `appSub`), the scope-level ones for a 'scope' app. Without either key nothing is written (`directory_unavailable`): a row without the id partners see
 // would be a user the partner console can't name, and one without the internal id couldn't be joined to the ledger.
 //
 // SECURITY: the rows hold subs and wallet addresses (personal data, D269's cost): nothing here logs a row, a sub, a key
 // or an address; failures log the endpoint, the app and a code.
 import { formatSupportId, internalIdOf, supportCodeOf, uid } from '@hana-id/console-core';
-import { identitySub } from '@hana-id/core/identity';
+import { identitySub, subForApp } from '@hana-id/core/identity';
 import { hex } from '../bytes.ts';
 import type { Env } from '../env.ts';
 import { identitySubKey } from '../identity/signer.ts';
@@ -51,16 +53,84 @@ export async function directoryUser(env: Pick<Env, 'USER_ID_KEY' | 'IDENTITY_SUB
   return { internalId: internalIdOf(await uid(key, { scopeId, provider: root.provider, sub: root.sub })), userId, supportCode: supportCodeOf(userId) };
 }
 
+/** What of an app decides the User ID it gives (migration 0030, D919). */
+export type AppIds = { id: string; scope_id: string; user_ids: string };
+
+/**
+ * The User ID (`u1_…`, the identity token's `sub`) and Support code `app` gives the account rooted at `root` (D919):
+ * the scope-level ones for a 'scope' app, its own for an 'app' app (core `subForApp`). Null for a mode that is neither
+ * (fail closed: never a guess at which ID a partner gets).
+ */
+export function appUserIds(subKey: Uint8Array, app: AppIds, root: IdentityRef): { userId: string; supportCode: string } | null {
+  let userId: string;
+  try {
+    userId = subForApp(subKey, { scopeId: app.scope_id, appId: app.id, userIds: app.user_ids }, root);
+  } catch {
+    return null;
+  }
+  return { userId, supportCode: supportCodeOf(userId) };
+}
+
 /**
  * The Support ID (`HANA-XXXX-XXXX`) the session answers (`/v1/login`, `/v1/sessions`) carry for the account rooted at
- * `root` (C15, D276 as amended by D346): exactly `directoryUser`'s code, the value `end_users.support_code` holds for
- * that user, so what a user reads out is what staff look up. Undefined when the env can't write the directory (either
- * key missing or malformed): a code nobody could resolve is never shown. No log here: the directory's own sync notes
- * the missing key (`noteDirectoryUnavailable`).
+ * `root` on `app` (C15, D276 as amended by D346; D919): the short form of the `sub` that app's identity tokens carry,
+ * so `hana.supportId` equals `supportIdFromSub(token.sub)` in the partner's backend. For a 'scope' app that is exactly
+ * `directoryUser`'s code, the value `end_users.support_code` holds (what staff look up); for an 'app' app it is that
+ * app's own, the value its `end_user_apps` row holds. Undefined when the env can't write the directory (either key
+ * missing or malformed: a code nobody could resolve is never shown) or the app's mode is unknown. No log here: the
+ * directory's own sync notes the missing key (`noteDirectoryUnavailable`).
  */
-export async function sessionSupportId(env: Pick<Env, 'USER_ID_KEY' | 'IDENTITY_SUB_KEY'>, scopeId: string, root: IdentityRef): Promise<string | undefined> {
+export async function sessionSupportId(env: Pick<Env, 'USER_ID_KEY' | 'IDENTITY_SUB_KEY'>, app: AppIds, root: IdentityRef): Promise<string | undefined> {
+  const user = await directoryUser(env, app.scope_id, root);
+  if (typeof user === 'string') return undefined;
+  const subKey = identitySubKey(env);
+  if (typeof subKey === 'string') return undefined;
+  const ids = appUserIds(subKey, app, root);
+  return ids ? formatSupportId(ids.supportCode) : undefined;
+}
+
+/**
+ * The scope-level Support ID of the account rooted at `root` (Passport Home's, D919: Home is Journear's own page, so it
+ * keeps the person's one code for the scope, which staff and the scope's owner resolve). Undefined as
+ * `sessionSupportId`.
+ */
+export async function scopeSupportId(env: Pick<Env, 'USER_ID_KEY' | 'IDENTITY_SUB_KEY'>, scopeId: string, root: IdentityRef): Promise<string | undefined> {
   const user = await directoryUser(env, scopeId, root);
   return typeof user === 'string' ? undefined : formatSupportId(user.supportCode);
+}
+
+/**
+ * The person's row for `app` (migration 0030, D919): only for an app on a scope marked as shared (read in the statement
+ * itself, so a stale cached app never writes one elsewhere, and the 0030 trigger refuses any other), with the User ID
+ * and Support code that app gives them, chosen in the statement by the app's stored mode. Times only move forward.
+ * `ids` holds both forms; the statement keeps the one matching `apps.user_ids` (an unknown mode matches neither, and the
+ * NOT NULL column then refuses the row: fail closed).
+ */
+export function upsertUserApp(
+  db: D1Database,
+  internalId: string,
+  app: { id: string; scope_id: string },
+  ids: { scope: { userId: string; supportCode: string }; app: { userId: string; supportCode: string } },
+  at: number,
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO end_user_apps (user_id, app_id, app_sub, support_code, first_seen_at, last_seen_at)
+       SELECT ?1, a.id, CASE a.user_ids WHEN 'app' THEN ?4 WHEN 'scope' THEN ?6 END, CASE a.user_ids WHEN 'app' THEN ?5 WHEN 'scope' THEN ?7 END, ?8, ?8
+         FROM apps a JOIN scopes s ON s.scope_id = a.scope_id
+        WHERE a.id = ?2 AND a.scope_id = ?3 AND s.app_user_ids = 1
+       ON CONFLICT (user_id, app_id) DO UPDATE SET first_seen_at = MIN(first_seen_at, excluded.first_seen_at), last_seen_at = MAX(last_seen_at, excluded.last_seen_at)`,
+    )
+    .bind(internalId, app.id, app.scope_id, ids.app.userId, ids.app.supportCode, ids.scope.userId, ids.scope.supportCode, at);
+}
+
+/** Both of `app`'s possible IDs for `user` (the statement above picks by the stored mode); null without the sub key. */
+export function userAppIds(env: Pick<Env, 'IDENTITY_SUB_KEY'>, app: { id: string; scope_id: string }, root: IdentityRef): Parameters<typeof upsertUserApp>[3] | null {
+  const subKey = identitySubKey(env);
+  if (typeof subKey === 'string') return null;
+  const scope = appUserIds(subKey, { ...app, user_ids: 'scope' }, root)!;
+  const own = appUserIds(subKey, { ...app, user_ids: 'app' }, root)!;
+  return { scope, app: own };
 }
 
 /** The contract's identity key of `ref` in `scopeId`, hex. */

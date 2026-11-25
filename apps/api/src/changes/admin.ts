@@ -103,8 +103,14 @@ export async function createApp(
     }
   }
   stmts.push(
-    q`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version)
-      SELECT ${appId}, ${name}, ${i.scopeId}, ${i.orgId}, ${publishableKey}, 'active', ${DEFAULT_PLAN}, ${w.now}, ${changes.length ? 1 : 0} WHERE ${when}`,
+    // D919 (migration 0030): the app's User ID mode from the scope's mark as the batch sees it (`INSERT … SELECT`, after
+    // the scope's own insert above when it is new), so a mark set between the plan read and this batch is never missed:
+    // 'app' on a marked scope, 'scope' otherwise; any other mark matches neither, the NOT NULL column refuses the row
+    // and 0030's trigger refuses a mode that contradicts the mark (fail closed).
+    q`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version, user_ids)
+      SELECT ${appId}, ${name}, ${i.scopeId}, ${i.orgId}, ${publishableKey}, 'active', ${DEFAULT_PLAN}, ${w.now}, ${changes.length ? 1 : 0},
+             (SELECT CASE s.app_user_ids WHEN 1 THEN 'app' WHEN 0 THEN 'scope' END FROM scopes s WHERE s.scope_id = ${i.scopeId})
+       WHERE ${when}`,
     q`INSERT INTO app_keys (id, app_id, key, created_by, created_at) SELECT ${keyId}, ${appId}, ${publishableKey}, ${actorId(w.actor)}, ${w.now} WHERE ${when}`,
   );
   if (changes.length) {

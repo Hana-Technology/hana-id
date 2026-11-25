@@ -104,9 +104,10 @@ export interface EvmNativeUnits {
   readonly decimals: number;
   /**
    * The unit a gas price is shown in, with its decimals from the smallest unit: "gwei" (9) where the smallest unit is
-   * wei; a chain with its own unit name has no "gwei" to borrow, so its gas price is shown raw, in that unit (0).
+   * wei. Null on a chain with its own unit name, which has no "gwei" to borrow: its gas price is shown as the value
+   * rows are, the coin and the raw number ("0.00000071 HBAR (710000000000 weibars)").
    */
-  readonly gasPrice: { readonly name: string; readonly decimals: number };
+  readonly gasPrice: { readonly name: string; readonly decimals: number } | null;
 }
 
 /** The units a raw native amount and a gas price are shown in on this chain (the approval window's details, the consent screen). */
@@ -114,7 +115,7 @@ export function evmNativeUnits(chainId: number): EvmNativeUnits {
   const named = Number.isSafeInteger(chainId) && Object.hasOwn(EVM_SMALLEST_UNIT_NAMES, chainId) ? (EVM_SMALLEST_UNIT_NAMES[chainId] as string) : null;
   return named === null
     ? { smallest: 'wei', decimals: EVM_NATIVE_DECIMALS, gasPrice: { name: 'gwei', decimals: 9 } }
-    : { smallest: named, decimals: EVM_NATIVE_DECIMALS, gasPrice: { name: named, decimals: 0 } };
+    : { smallest: named, decimals: EVM_NATIVE_DECIMALS, gasPrice: null };
 }
 
 export interface EvmChainInfo {

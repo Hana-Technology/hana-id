@@ -57,6 +57,7 @@ const homeScope = (scopeId = S1, apps: { appId: string; name: string; status?: '
   addresses: [],
   apps: apps.map((a) => ({ appId: a.appId, name: a.name, status: a.status ?? 'active', environment: 'live', origins: [], logoUrl: null })),
   appsTotal: apps.length,
+  appsOpen: apps.filter((a) => (a.status ?? 'active') === 'active').length,
 });
 
 async function start(o: { isGesture?: boolean } = {}): Promise<Harness> {

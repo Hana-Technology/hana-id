@@ -850,9 +850,9 @@ test('a wallet used on more apps than the list carries: the row counts them, the
   const requests: string[] = [];
   await routeApps(context, (url) => {
     requests.push(url.search);
-    // The list carries 10 of the wallet's 24 apps and the count; the wallet alone ("Show all apps") every one.
-    if (url.searchParams.get('scopeId') === 's1') return { status: 200, body: { scopes: [{ ...LIST.scopes[0], apps: many(24), appsTotal: 24 }], nextCursor: null } };
-    return { status: 200, body: { scopes: [{ ...LIST.scopes[0], apps: many(10), appsTotal: 24 }, LIST.scopes[2]], nextCursor: null } };
+    // The list carries 10 of the wallet's 24 apps and the counts; the full answer ("Show all apps", `all=1`) every one.
+    if (url.searchParams.get('scopeId') === 's1' && url.searchParams.get('all') === '1') return { status: 200, body: { scopes: [{ ...LIST.scopes[0], apps: many(24), appsTotal: 24, appsOpen: 24 }], nextCursor: null } };
+    return { status: 200, body: { scopes: [{ ...LIST.scopes[0], apps: many(10), appsTotal: 24, appsOpen: 24 }, LIST.scopes[2]], nextCursor: null } };
   });
   await page.goto(`${AUTH_ORIGIN}/home`);
   await signIn(page);
@@ -868,6 +868,10 @@ test('a wallet used on more apps than the list carries: the row counts them, the
   await expect(page.locator('.home-app-all .home-app')).toHaveCount(24);
   await expect(page.locator('#home-more-apps')).toHaveCount(0);
   await expect(page.locator('.home-app-all .home-app').nth(10)).toBeFocused();
-  expect(requests.at(-1)).toBe('?scopeId=s1');
+  expect(requests.at(-1)).toBe('?scopeId=s1&all=1');
   await shots(page, '22-more-apps-all', browserName);
+  // Back on the list, the row still names 10 and counts the rest.
+  await page.locator('#home-back').click();
+  await expect(row.locator('.home-row-name')).toHaveCount(10);
+  await expect(row.locator('.home-row-more')).toHaveText('and 14 more apps');
 });

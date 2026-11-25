@@ -105,14 +105,14 @@ describe('the folded details count a raw native amount in the chain’s own unit
     const r = detailRows(el);
     expect(r['Value']).toBe('1 (1000000000000000000 weibars)');
     expect(r['Maximum network fee']).toBe('0.01491 (14910000000000000 weibars)');
-    expect(r['Max fee per gas']).toBe('710000000000 weibars');
-    expect(r['Priority fee per gas']).toBe('0 weibars');
+    expect(r['Max fee per gas']).toBe('0.00000071 HBAR (710000000000 weibars)');
+    expect(r['Priority fee per gas']).toBe('0 HBAR (0 weibars)');
     expect(el.querySelector('details.request-details')?.textContent).not.toMatch(/\bg?wei\b/u);
     // The main view's fee is the same amount in HBAR.
     expect(el.querySelector('dl.summary-facts')?.textContent).toContain('Up to 0.01491 HBAR');
     // A legacy transaction's gas price too.
     const legacy = evm({ type: '0x0', gasPrice: '0xa54f4c3c00', maxFeePerGas: undefined as never, maxPriorityFeePerGas: undefined as never }, 295);
-    expect(detailRows(renderApproval(dom(document), legacy, 'Partner App'))['Gas price']).toBe('710000000000 weibars');
+    expect(detailRows(renderApproval(dom(document), legacy, 'Partner App'))['Gas price']).toBe('0.00000071 HBAR (710000000000 weibars)');
   });
 
   it('every other chain, named or not: wei and gwei, as before', () => {
@@ -125,6 +125,7 @@ describe('the folded details count a raw native amount in the chain’s own unit
     }
     // Hedera's test network has no name, but its relay counts in weibars too.
     expect(detailRows(renderApproval(dom(document), evm(fees, 296), 'Partner App'))['Value']).toBe('1 (1000000000000000000 weibars)');
+    expect(detailRows(renderApproval(dom(document), evm(fees, 296), 'Partner App'))['Max fee per gas']).toBe('0.00000071 (710000000000 weibars)');
     expect(nativeAmount(296, '1500000000000000000')).toBe('1.5 of this network’s own coin (1500000000000000000 weibars)');
   });
 });

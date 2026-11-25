@@ -63,10 +63,15 @@ const nativeRaw = (chainId: number, v: bigint) => {
   const u = evmNativeUnits(chainId);
   return `${formatUnits(v, u.decimals)} (${v} ${u.smallest})`;
 };
-/** A gas price: "0.5 gwei"; on a chain whose smallest unit has its own name, raw in that unit ("710000000000 weibars"). */
+/**
+ * A gas price: "0.5 gwei"; on a chain whose smallest unit has its own name (no "gwei" to borrow), as an amount of the
+ * coin with its raw number, as the value rows: "0.00000071 HBAR (710000000000 weibars)".
+ */
 const gasPrice = (chainId: number, v: bigint) => {
-  const g = evmNativeUnits(chainId).gasPrice;
-  return `${formatUnits(v, g.decimals)} ${g.name}`;
+  const u = evmNativeUnits(chainId);
+  if (u.gasPrice) return `${formatUnits(v, u.gasPrice.decimals)} ${u.gasPrice.name}`;
+  const symbol = evmChainInfo(chainId)?.nativeSymbol;
+  return `${formatUnits(v, u.decimals)}${symbol ? ` ${symbol}` : ''} (${v} ${u.smallest})`;
 };
 
 const mono = (d: Dom, text: string) => d.h('code', { class: 'mono' }, text);

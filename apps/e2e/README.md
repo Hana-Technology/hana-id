@@ -77,7 +77,8 @@ page's address.
 
 A wallet used on more apps than one answer carries (D922): `tests/home.spec.ts` "more apps than the list carries" routes
 a list of 10 of 24 apps with `appsTotal`, checks the row's "and 14 more apps", the wallet page's line and "Show all apps"
-(one `?scopeId=` read, every app shown, focus on the first new one), and saves its screens with `HANA_SHOTS_DIR`. The
+(one `?scopeId=…&all=1` read, every app shown, focus on the first new one; back on the list the row still names 10),
+and saves its screens with `HANA_SHOTS_DIR`. The
 approval window's details in the chain's own unit (weibars on Hedera) are in `tests/approval-summary.spec.ts`.
 
 Passport Home's views and Back (D893): `tests/home.spec.ts` walks the front page as rows (opened with a click, Enter and

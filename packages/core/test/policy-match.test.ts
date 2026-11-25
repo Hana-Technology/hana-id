@@ -535,6 +535,14 @@ describe('EVM transactions', () => {
       expect(reason(match(evmTx({ to: EVM_VAULT, data: deposit, gas: 100_001n })))).toBe('fee_too_high');
     });
 
+    it('names the raw unit in the chain’s own words: weibars on Hedera, wei elsewhere (D922)', () => {
+      const big = evmTx({ to: EVM_VAULT, data: deposit, gas: 1n, value: 101_001n });
+      expect(match(big)).toMatchObject({ ok: false, reason: 'value_too_high', detail: 'Value 101001 is over 101000 wei' });
+      const onHedera = { ...POLICY, evm: { ...POLICY.evm!, chains: POLICY.evm!.chains.map((c) => ({ ...c, chainId: 295 })) } };
+      expect(match(evmTx({ to: EVM_VAULT, data: deposit, gas: 1n, value: 101_001n }, 295), onHedera)).toMatchObject({ ok: false, reason: 'value_too_high', detail: 'Value 101001 is over 101000 weibars' });
+      expect(match(evmTx({ to: EVM_VAULT, data: deposit, gas: 100_001n }, 295), onHedera)).toMatchObject({ reason: 'fee_too_high', detail: expect.stringMatching(/ weibars$/u) });
+    });
+
     it('counts fees against the daily total even when no value is sent', () => {
       const approve0 = evmTx({ to: EVM_USDC, data: approve(EVM_VAULT) });
       let usage = usageToday(null, NOW);

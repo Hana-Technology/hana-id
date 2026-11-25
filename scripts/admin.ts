@@ -22,7 +22,7 @@
 // .secrets/<env>/neon-usage-admin.url ("ledger unavailable" without it). labels:check re-parses every stored Request
 // labels version waiting or in force with this checkout's parser and compares its lines with a baseline
 // (lib/admin-labels-check.ts, D922), read only, through apiPrivateD1Execute.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { loadEnv, type Manifest } from '@hana-id/env';
@@ -57,8 +57,10 @@ import { type UserCmdDeps, userFindCommand, userList } from './lib/admin-users.t
 import { retentionIssuer } from './lib/admin-retention.ts';
 import { statusTokenFromSecrets, watchdogTestPage } from './lib/admin-test-page.ts';
 import { type SupportLedgerConn, supportLookupCommand } from './lib/admin-support.ts';
-import { LABELS_CHECK_USAGE, labelsCheck } from './lib/admin-labels-check.ts';
-import { assertPrivate, parseSecretJson, secretsDir, writeSecretJson } from './lib/secrets.ts';
+import { LABELS_CHECK_USAGE, labelsCheck, readBaselineFile, writeNewSecretJson } from './lib/admin-labels-check.ts';
+import { observe } from './lib/deploy-check.ts';
+import { localBuild } from '@hana-id/env/local-build';
+import { secretsDir } from './lib/secrets.ts';
 import { ROLE_FILES, readRoleUrl } from './lib/usage-setup.ts';
 import { redact } from './lib/usage-migrate.ts';
 import pg from 'pg';
@@ -266,7 +268,7 @@ async function main(): Promise<void> {
   const args = parseCli(process.argv.slice(2), {
     strings: ['name', 'scope', 'plan', 'app', 'org', 'environment', 'persistence', 'session-ttl', 'idle-ttl', 'raw-sign', 'google-web-client', 'auto-approve', 'identity-email', 'mainnet-demo', 'args', 'gas', 'member', 'approve-with', 'limit', 'remove', 'add', 'd1-name', 'provider', 'search', 'email', 'sub', 'address', 'user', 'days', 'baseline', 'out'],
     multiple: ['origin', 'client', 'owner-near', 'owner-google', 'request-id'],
-    booleans: ['remote', 'yes', 'allow-shared', 'shared-wallet', 'json', 'reject', 'help', 'quiet', 'normal', 'save'],
+    booleans: ['remote', 'yes', 'allow-shared', 'shared-wallet', 'json', 'reject', 'help', 'quiet', 'normal', 'save', 'same-build'],
   });
   if (args.flag('help')) return void console.log(USAGE);
   const [envName, command, ...rest] = args.positionals;
@@ -393,15 +395,18 @@ async function main(): Promise<void> {
       return;
     case 'labels:check':
       process.exitCode = await labelsCheck(
-        { env: m.name, network: m.network, database: m.cloudflare.d1Name, remote, save: args.flag('save'), out: args.str('out'), baseline: args.str('baseline') },
+        { env: m.name, network: m.network, database: m.cloudflare.d1Name, remote, save: args.flag('save'), out: args.str('out'), baseline: args.str('baseline'), sameBuild: args.flag('same-build') },
         {
           read: (statement) => apiPrivateD1Execute(m, statement, { remote }),
-          secretsEnvDir: secretsDir,
-          writeJson: writeSecretJson,
-          readJson(file) {
-            assertPrivate(file);
-            return parseSecretJson<unknown>(readFileSync(file, 'utf8'), file);
+          async build(isRemote) {
+            const local = localBuild();
+            // The API's deployed build id, as deploy-check reads it (GET /v1/health's `build`); never fails the check.
+            const deployed = isRemote ? (await observe({ name: 'api', group: 'api', url: `${m.apiUrl.replace(/\/+$/u, '')}/v1/health`, kind: 'json' })).build?.id ?? null : null;
+            return { commit: local.head, dirty: local.dirty, deployed };
           },
+          secretsEnvDir: secretsDir,
+          writeNew: writeNewSecretJson,
+          readJson: readBaselineFile,
           log: (line) => console.log(line),
           now: () => new Date(),
         },

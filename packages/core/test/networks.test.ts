@@ -113,7 +113,7 @@ describe('chain names and native coins, from Hana’s own tables', () => {
   });
 
   it('the unit a raw native amount is counted in (D922): weibars on Hedera and its test networks, wei everywhere else; 18 decimals on every chain', () => {
-    for (const id of [295, 296, 297]) expect(evmNativeUnits(id), String(id)).toEqual({ smallest: 'weibars', decimals: 18, gasPrice: { name: 'weibars', decimals: 0 } });
+    for (const id of [295, 296, 297]) expect(evmNativeUnits(id), String(id)).toEqual({ smallest: 'weibars', decimals: 18, gasPrice: null });
     for (const id of [...Object.keys(TEST_EVM_CHAINS), ...Object.keys(KNOWN_EVM_MAINNETS)].map(Number).filter((id) => id !== 295)) {
       expect(evmNativeUnits(id), String(id)).toEqual({ smallest: 'wei', decimals: 18, gasPrice: { name: 'gwei', decimals: 9 } });
     }

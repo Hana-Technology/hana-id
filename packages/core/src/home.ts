@@ -164,3 +164,12 @@ export function consentRevokePayload(consentId: Uint8Array): Bytes {
   if (consentId.length !== CONSENT_ID_BYTES) throw new Error(`consentId must be ${CONSENT_ID_BYTES} bytes`);
   return concatBytes(utf8('consent-revoke'), toBytes(consentId));
 }
+
+/**
+ * How many apps of one scope (one wallet) Passport Home's answers carry (D922), one number for the API and the page:
+ * a list answer (`GET /v1/home/apps` without `all`), an explicit full answer (`?scopeId=…&all=1` or `?appId=…&all=1`,
+ * which Home sends only for "Show all apps"), and `GET /v1/home/devices`' apps of a scope.
+ */
+export const HOME_APPS_PER_SCOPE = 10;
+export const HOME_APPS_ALL_MAX = 100;
+export const HOME_DEVICE_APPS_PER_SCOPE = 100;

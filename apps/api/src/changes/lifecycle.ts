@@ -230,12 +230,14 @@ export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: s
   const loopback = loopbackWaiver(env, config.network, c, c.environment ?? 'live');
   // D929 (A4.5, N3): a web address the platform proposed waits the greater of the env's delay, the platform minimum
   // (24 h in every env but a `local*` test env) and the wait its proposal recorded, never with a waiver; the ack writes
-  // that time as its earliest (`unconfirmed_active_from`), which the database then holds (migration 0033's triggers).
+  // that time as its earliest (`platform_origin_waits.unconfirmed_active_from`, first), which the database then holds
+  // (migration 0033's triggers): the change's `active_from` and its origin row's are that time, never sooner.
   const platform = c.proposed_by_kind === 'platform';
   const platformWait = Math.max(config.delayMs, platformMinDelayMs(env));
+  const recordedWait = (t: string): Q => q`COALESCE((SELECT pw.min_delay_ms FROM platform_origin_waits pw WHERE pw.change_id = ${raw(t)}.id), ${PLATFORM_MIN_DELAY_MS})`;
   const at = (t: string): Q =>
     platform
-      ? q`(${w.now} + MAX(${platformWait}, COALESCE(${raw(t)}.min_delay_ms, ${PLATFORM_MIN_DELAY_MS})))`
+      ? q`(${w.now} + MAX(${platformWait}, ${recordedWait(t)}))`
       : loopback
         ? q`${w.now}`
         : q`CASE WHEN ${noSessionWaiver(t, w.now)} THEN ${w.now} ELSE ${later} END`;
@@ -252,9 +254,17 @@ export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: s
       null,
       q`g.status = 'pending' AND g.notified_at IS NULL AND a.deleted_at IS NULL`,
     ),
-    q`UPDATE guarded_changes SET notified_at = ${w.now}, active_from = ${at('guarded_changes')}, ${platform ? q`unconfirmed_active_from = ${at('guarded_changes')}, ` : raw('')}waiver = ${waiver('guarded_changes')}, cancel_token_hash = ${blob}
-       WHERE id = ${c.id} AND status = 'pending' AND notified_at IS NULL AND ${committed(w.requestId)}`,
   ];
+  if (platform) {
+    stmts.push(
+      q`UPDATE platform_origin_waits SET unconfirmed_active_from = ${w.now} + MAX(${platformWait}, min_delay_ms)
+         WHERE change_id = ${c.id} AND unconfirmed_active_from IS NULL AND ${committed(w.requestId)}`,
+    );
+  }
+  stmts.push(
+    q`UPDATE guarded_changes SET notified_at = ${w.now}, active_from = ${platform ? q`(SELECT pw.unconfirmed_active_from FROM platform_origin_waits pw WHERE pw.change_id = guarded_changes.id)` : at('guarded_changes')}, waiver = ${waiver('guarded_changes')}, cancel_token_hash = ${blob}
+       WHERE id = ${c.id} AND status = 'pending' AND notified_at IS NULL AND ${committed(w.requestId)}`,
+  );
   if (c.kind === 'origin_add') {
     stmts.push(q`UPDATE app_origins SET active_from = ${activeFrom} WHERE app_id = ${c.app_id} AND change_id = ${c.id} AND active_from IS NULL AND ${committed(w.requestId)}`);
   } else if (c.kind === 'policy_set') {

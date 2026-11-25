@@ -199,9 +199,10 @@ export const PLATFORM_ROUTES: readonly PlatformRoute[] = [
   {
     method: 'POST',
     path: '/v1/platform/apps',
-    // The plan read; the batch of six (commit, app, key, changes, origin rows, the request's record); a failed batch's
-    // diagnostic read (or, instead, a retry's one read of what it first did).
-    cost: 12,
+    // The plan read; the batch of seven (commit, app, key, the web addresses' waits, changes, origin rows, the request's
+    // record); a failed batch's diagnostic read (or, instead, a retry's one read of what it first did). 12 through the
+    // hot DB's own count (PLATFORM_DB_LIMITS), 13 with the announced keys' list.
+    cost: 13,
     idempotency: 'required',
     validate: check(platformCreateAppBody),
     run: (c) => createPlatformApp(c, c.body),
@@ -218,9 +219,9 @@ export const PLATFORM_ROUTES: readonly PlatformRoute[] = [
     method: 'POST',
     path: '/v1/platform/apps/:appId/origins',
     params: { appId: APP_ID },
-    // The plan read; the batch of five (commit, origins version, changes, origin rows, the request's record); a
-    // diagnostic read.
-    cost: 11,
+    // The plan read; the batch of six (commit, origins version, the waits, changes, origin rows, the request's record);
+    // a diagnostic read.
+    cost: 12,
     idempotency: 'required',
     validate: check(platformAddOriginsBody),
     run: (c) => addPlatformOrigins(c, c.params.appId!, c.body),

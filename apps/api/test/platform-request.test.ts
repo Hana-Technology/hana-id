@@ -707,7 +707,8 @@ describe('each route within its hot-DB cost (L8)', () => {
       ['POST', '/v1/platform/credential/revoke', 11],
       ...PLATFORM_ROUTES.slice(2).map((r) => [r.method, r.path, r.cost]),
     ]);
-    for (const r of PLATFORM_ROUTES) expect(r.cost, r.path).toBeLessThanOrEqual(12);
+    // Each within PLATFORM_DB_LIMITS' 12 through the hot DB, plus the announced keys' list (read outside it).
+    for (const r of PLATFORM_ROUTES) expect(r.cost, r.path).toBeLessThanOrEqual(13);
     for (const [route, fault] of [[PLATFORM_ROUTES[0]!, undefined], [PLATFORM_ROUTES[1]!, undefined], [PLATFORM_ROUTES[1]!, 1]] as const) {
       const k = await seedKey();
       const count: DbCount = { reads: 0, batches: 0, statements: 0 };

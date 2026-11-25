@@ -247,8 +247,9 @@ describe('app:changes:announce', () => {
 
   it('refuses a web address a platform key proposed (D929: only the admin Worker announces those, with their 24 h wait), writing nothing', async () => {
     seedHotApp(h.db, { id: 'app_p', key: APP_KEY, scope: 's1', origins: [] });
-    h.db.exec(`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id, min_delay_ms)
-               VALUES ('gc_p', 'app_p', 'origin_add', 'https://p.example.com', 'pending', 'platform', 'pkc_4Rm8Vq2Lz7Wx9Kd', ${NOW}, 'pf_x', 86400000)`);
+    h.db.exec(`INSERT INTO platform_origin_waits (change_id, app_id, origin, key_id, min_delay_ms, at) VALUES ('gc_p', 'app_p', 'https://p.example.com', 'pkc_4Rm8Vq2Lz7Wx9Kd', 86400000, ${NOW})`);
+    h.db.exec(`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id)
+               VALUES ('gc_p', 'app_p', 'origin_add', 'https://p.example.com', 'pending', 'platform', 'pkc_4Rm8Vq2Lz7Wx9Kd', ${NOW}, 'pf_x')`);
     h.db.exec("INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES ('app_p', 'https://p.example.com', NULL, 'gc_p')");
     const before = ledger('app_p').length;
     await expect(announce('gc_p')).rejects.toThrow(/proposed by a platform key: only the admin Worker announces those/u);

@@ -112,6 +112,17 @@ export async function platformProposeOrigins(
 }
 
 /**
+ * D929: the waits of the platform's proposals in `list` (JSON objects with the change id under `idField` and the
+ * origin), written in the proposal's batch before the guarded changes (migration 0033's `platform_origin_waits`): the
+ * proposing key (the writer's actor), the wait from the announcement, the earliest time left for the ack.
+ */
+export function platformWaits(w: Writer, appId: string, list: string, minDelayMs: number, idField: 'id' | 'changeId'): Q {
+  return q`INSERT INTO platform_origin_waits (change_id, app_id, origin, key_id, min_delay_ms, at)
+    SELECT json_extract(value, ${`$.${idField}`}), ${appId}, json_extract(value, '$.origin'), ${actorId(w.actor)}, ${minDelayMs}, ${w.now}
+      FROM json_each(${list}) WHERE ${committed(w.requestId)}`;
+}
+
+/**
  * The write behind addOrigins (staff: `token` null), changeOrigins (a member's verified token) and the platform's
  * proposals (`platform`). Staff and platform proposals are refused for `appChangeDelayMs` after the scope's assignment;
  * a member's are not (spec "Staff proposals").
@@ -189,14 +200,12 @@ async function proposeOrigins(
       q`DELETE FROM app_origins WHERE app_id = ${i.appId} AND origin IN (SELECT value FROM json_each(${removed})) AND ${committed(w.requestId)}`,
     );
   }
+  // A platform proposal's wait first (migration 0033: its guarded change can't be written without it).
+  if (platform) stmts.push(platformWaits(w, i.appId, list, platform.minDelayMs, 'id'));
   stmts.push(
-    platform
-      ? q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id, min_delay_ms)
-          SELECT json_extract(value, '$.id'), ${i.appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', ${by.kind}, ${by.id}, NULL, ${w.now}, ${w.requestId}, ${platform.minDelayMs}
-            FROM json_each(${list}) WHERE ${committed(w.requestId)}`
-      : q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id)
-          SELECT json_extract(value, '$.id'), ${i.appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', ${by.kind}, ${by.id}, ${by.sub}, ${w.now}, ${w.requestId}
-            FROM json_each(${list}) WHERE ${committed(w.requestId)}`,
+    q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id)
+      SELECT json_extract(value, '$.id'), ${i.appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', ${by.kind}, ${by.id}, ${by.sub}, ${w.now}, ${w.requestId}
+        FROM json_each(${list}) WHERE ${committed(w.requestId)}`,
     q`INSERT INTO app_origins (app_id, origin, active_from, change_id)
       SELECT ${i.appId}, json_extract(value, '$.origin'), NULL, json_extract(value, '$.id') FROM json_each(${list}) WHERE ${committed(w.requestId)}`,
   );

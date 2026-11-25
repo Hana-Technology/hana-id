@@ -183,7 +183,8 @@ export interface LedgerSnapshot {
   takenAt: string;
   tables: Record<string, TableSnapshot>;
   /** The three tables, their indexes and their triggers (automatic indexes have no SQL: null), by name. */
-  schema: Record<string, { type: string; table: string; sql: string | null }>;
+  /** `file` (a reference only, D929): the migration that creates the object. */
+  schema: Record<string, { type: string; table: string; sql: string | null; file?: string }>;
   /** The migrations the database has recorded (`d1_migrations`, by name), or null without that table (a test). */
   applied: string[] | null;
   /** The checkout the snapshot was taken from (the CLI): its commit and whether its `apps/api/migrations` was dirty. */
@@ -505,9 +506,12 @@ export function compareSnapshots(before: LedgerSnapshot, after: LedgerSnapshot, 
     }
     // Once 0027 is in, every index and trigger the checkout's migrations create on (or naming) the three tables is
     // there: one created in between (0026's on scopes) and dropped again by a damaged 0027 is in neither snapshot.
+    // D929: an object a later migration creates (0033's triggers naming guarded_changes) is required only once the
+    // database recorded that migration; with no record, only those of 0027 and before.
+    const required = (file: string | undefined): boolean => file === undefined || (after.applied !== null ? after.applied.includes(file) : file <= REBUILD_FILE);
     if (applied(after)) {
       for (const [name, r] of Object.entries(reference).sort(([x], [y]) => x.localeCompare(y))) {
-        if (r.type === 'table' || Object.hasOwn(after.schema, name) || Object.hasOwn(before.schema, name)) continue;
+        if (r.type === 'table' || Object.hasOwn(after.schema, name) || Object.hasOwn(before.schema, name) || !required(r.file)) continue;
         broken = true;
         lines.push(`MISSING ${r.type} ${name} (on ${r.table}): this checkout's migrations create it.`);
       }
@@ -615,13 +619,26 @@ export function cannotJudge(before: LedgerSnapshot, after: LedgerSnapshot, check
   return out;
 }
 
-/** `SCHEMA_SQL` on a fresh in-memory SQLite with every migration in `dir` applied in name order (as a fresh D1 gets them). */
+/** The rebuild's own file: with no record of what a database applied, objects of later files aren't required (D929). */
+const REBUILD_FILE = '0027_platform_actor.sql';
+
+/**
+ * `SCHEMA_SQL` on a fresh in-memory SQLite with every migration in `dir` applied in name order (as a fresh D1 gets
+ * them), each object with the file that first created it (`file`, D929).
+ */
 export function referenceSchema(dir: string): LedgerSnapshot['schema'] {
   const db = new DatabaseSync(':memory:');
   try {
-    for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) db.exec(readFileSync(join(dir, f), 'utf8'));
     const schema: LedgerSnapshot['schema'] = {};
-    for (const r of db.prepare(SCHEMA_SQL).all() as Record<string, unknown>[]) schema[String(r.name)] = { type: String(r.type), table: String(r.tbl_name), sql: r.sql === null ? null : String(r.sql) };
+    const created: Record<string, string> = {};
+    for (const f of readdirSync(dir).filter((n) => n.endsWith('.sql')).sort()) {
+      db.exec(readFileSync(join(dir, f), 'utf8'));
+      for (const r of db.prepare(SCHEMA_SQL).all() as Record<string, unknown>[]) created[String(r.name)] ??= f;
+    }
+    for (const r of db.prepare(SCHEMA_SQL).all() as Record<string, unknown>[]) {
+      const name = String(r.name);
+      schema[name] = { type: String(r.type), table: String(r.tbl_name), sql: r.sql === null ? null : String(r.sql), file: created[name]! };
+    }
     return schema;
   } finally {
     db.close();

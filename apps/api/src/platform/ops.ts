@@ -46,7 +46,7 @@ import { RpcRefusal, type Writer, actorId, commitOn, committed, expectReplay, re
 import type { HotDb } from '../changes/db.ts';
 import { createKey, revokeKey } from '../changes/keys.ts';
 import { cancelChange } from '../changes/lifecycle.ts';
-import { checkOriginRules, normaliseAll, platformProposeOrigins, removeOrigins, requireChangeConfig } from '../changes/origins.ts';
+import { checkOriginRules, normaliseAll, platformProposeOrigins, platformWaits, removeOrigins, requireChangeConfig } from '../changes/origins.ts';
 import { appName } from '../changes/settings.ts';
 import { type Q, q, raw } from '../changes/sql.ts';
 import { type PartnerBitBy, setSuspensionBit } from '../changes/suspension.ts';
@@ -468,10 +468,12 @@ async function writeCreate(
     q`INSERT INTO app_keys (id, app_id, key, created_by, created_at) SELECT ${keyId}, ${appId}, ${publishableKey}, ${actorId(w.actor)}, ${c.now} WHERE ${when}`,
   ];
   if (changes.length) {
-    // The first web addresses are platform proposals with the platform's wait (A4.4): never staff proposals, never a waiver.
+    // The first web addresses are platform proposals with the platform's wait (A4.4): never staff proposals, never a
+    // waiver; each one's wait first (migration 0033).
     stmts.push(
-      q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id, min_delay_ms)
-        SELECT json_extract(value, '$.changeId'), ${appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', 'platform', ${actorId(w.actor)}, ${c.now}, ${w.requestId}, ${i.minDelayMs}
+      platformWaits(w, appId, list, i.minDelayMs, 'changeId'),
+      q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id)
+        SELECT json_extract(value, '$.changeId'), ${appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', 'platform', ${actorId(w.actor)}, ${c.now}, ${w.requestId}
           FROM json_each(${list}) WHERE ${when}`,
       q`INSERT INTO app_origins (app_id, origin, active_from, change_id)
         SELECT ${appId}, json_extract(value, '$.origin'), NULL, json_extract(value, '$.changeId') FROM json_each(${list}) WHERE ${when}`,

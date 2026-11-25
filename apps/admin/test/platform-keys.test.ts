@@ -161,6 +161,8 @@ describe('the platform key notices', () => {
     expect((await keyRow(k.id))!.confirm_notified_at).not.toBeNull();
     // A waiting web address the key proposed, then staff stop the key.
     const gc = newId('guardedChange');
+    // Its wait first, as the platform's proposal writes it (API migration 0033, D929).
+    await hot().prepare("INSERT INTO platform_origin_waits (change_id, app_id, origin, key_id, min_delay_ms, at) VALUES (?1, ?2, 'https://w.partner.example', ?3, 86400000, ?4)").bind(gc, app.id, k.id, now).run();
     await hot().prepare("INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES (?1, ?2, 'origin_add', 'https://w.partner.example', 'pending', 'platform', ?3, ?4, ?5)").bind(gc, app.id, k.id, now, `pf_${gc}`).run();
     const stop = await adminRequest(`/api/orgs/${org}/platform-keys/${k.id}/revoke`, { body: { reason: 'The network asked us to' } });
     expect(stop.status).toBe(200);

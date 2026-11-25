@@ -437,6 +437,24 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
     }
   });
 
+  it('D929: a later migration’s trigger naming the ledger (0033’s) is required only once the database recorded that migration', async () => {
+    const db = populated('0027');
+    const before = await snap(db);
+    applyRange(db, '0027', '0028');
+    const after = await snap(db);
+    const upTo27 = FILES.filter((f) => f < '0028');
+    expect(compareSnapshots(before, { ...after, applied: upTo27 }, REFERENCE).verdict).toBe('identical');
+    expect(REFERENCE.guarded_changes_platform_not_early?.file).toBe(file('0033'));
+    const claims33 = compareSnapshots(before, { ...after, applied: [...upTo27, file('0033')] }, REFERENCE);
+    expect(claims33.verdict).toBe('roll_back');
+    expect(claims33.lines.join('\n')).toMatch(/MISSING trigger guarded_changes_platform_not_early \(on guarded_changes\)/u);
+    // With 0033 applied for real, its triggers are there and held to their SQL.
+    applyRange(db, '0028', '0034');
+    const all = await snap(db);
+    const c = compareSnapshots(before, { ...all, applied: FILES.filter((f) => f < '0034') }, REFERENCE);
+    expect(c.lines.join('\n')).not.toMatch(/MISSING|UNEXPECTED|CHANGED trigger/u);
+  });
+
   it('from 0021: every damaged copy of 0027 is still a rollback', async () => {
     for (const [what, mutate, finding] of BROKEN) {
       const db = populated('0022');

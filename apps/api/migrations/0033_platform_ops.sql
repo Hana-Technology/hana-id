@@ -1,8 +1,9 @@
 -- D929: the platform API's app operations (piece P4 of docs/partner-platform-spec.md, A4, A7, A9, A15; findings H1,
--- H2, L3, L4, M7). Additive: one new table with its index and three triggers, two new columns on `guarded_changes` with
--- nine triggers, one new column on `apps` with two triggers, and two triggers on `app_origins`. No table is rebuilt and
--- no existing index, trigger or view is touched (0033's test compares every one by `sqlite_schema`); no existing row
--- changes. Applied by the Tech Lead on a deployed env before the API that writes it (docs/operations.md "Platform app
+-- H2, L3, L4, M7). Additive: two new tables (`platform_requests` with an index and three triggers,
+-- `platform_origin_waits` with three), ten triggers on `guarded_changes` (no column: `ledger-check` holds that table's
+-- shape, below), one new column on `apps` with two triggers, and two triggers on `app_origins`. No table is rebuilt
+-- and no existing index, trigger or view is touched (0033's test compares every one by `sqlite_schema`); no existing
+-- row changes. Applied by the Tech Lead on a deployed env before the API that writes it (docs/operations.md "Platform app
 -- operations (hot-DB migration 0033, D929)"); nothing writes the platform's rows until an org's platform switch is on.
 --
 -- `platform_requests` (A9, L3): one row per platform write that committed, beside its ledger row, in the same batch:
@@ -12,26 +13,29 @@
 -- months) still answers `already_applied` or `conflict`. Never updated or replaced, never deleted within 7 days; the
 -- admin Worker's monthly retention job purges older rows (AdminRpc.purgePlatformRequests).
 --
--- `guarded_changes.min_delay_ms` and `unconfirmed_active_from` (A4.5, A7, A15): the earliest time a web address the
--- platform proposed may come into force, held by the database itself. The proposal writes its wait once
--- (`min_delay_ms`: the greater of appChangeDelayMs and the platform minimum of 24 h; `local*` test envs keep their own
--- delay, at least 60 s); the announcement's ack writes `unconfirmed_active_from` once, at least that wait after it, by
--- the database's clock too; `active_from` (and the matching `app_origins.active_from`) is never earlier, whoever
--- writes it. No waiver and no expedite for a platform proposal. Nothing brings one into force sooner: an owner's
--- confirmation (piece P10) will replace `guarded_changes_platform_not_early` and `app_origins_platform_not_early*`
--- with versions that allow `active_from` = the confirmation's time, and add the confirmation's columns and rules.
+-- `platform_origin_waits` (A4.5, A7, A15): the earliest time a web address the platform proposed may come into force,
+-- held by the database itself (A7 puts it in `guarded_changes.unconfirmed_active_from`; a table of its own instead, as
+-- `ledger-check` refuses a reshape of the ledger's tables). The proposal writes its wait once (`min_delay_ms`: the
+-- greater of appChangeDelayMs and the platform minimum of 24 h; `local*` test envs keep their own delay, at least 60 s);
+-- the announcement's ack writes `unconfirmed_active_from` once, at least that wait after it, by the database's clock
+-- too; the change's `active_from` (and the matching `app_origins.active_from`) is never earlier, whoever writes it. No
+-- waiver and no expedite for a platform proposal. Nothing brings one into force sooner: an owner's confirmation (piece
+-- P10) will replace `guarded_changes_platform_not_early` and `app_origins_platform_not_early*` with versions that allow
+-- `active_from` = the confirmation's time, and add the confirmation's own record and rules.
 --
 -- `apps.partner_bit_by` (A4.6, L4): who holds the partner suspension (bit 4): `platform` (the network's backend set
 -- it and no member has taken it over), `member` (a member of the org, or staff, set it, or took it over), or NULL. NULL
 -- with bit 4 set (every suspension written before 0033: only members and staff set bit 4 then) reads as a member's, so
 -- the platform can't resume it (fail closed). Never set while bit 4 is clear.
 --
--- A FUTURE REBUILD of `guarded_changes`, `app_origins`, `apps` or `platform_requests` must create every trigger below
--- again, with the same SQL: platform_requests_insert, platform_requests_no_update, platform_requests_no_early_delete,
--- guarded_changes_platform_insert, guarded_changes_platform_fixed, guarded_changes_platform_announced,
--- guarded_changes_platform_not_early, guarded_changes_platform_no_waiver, guarded_changes_platform_active_on_time,
--- guarded_changes_platform_status_moves, guarded_changes_platform_no_delete, guarded_changes_platform_no_replace_update,
--- app_origins_platform_not_early, app_origins_platform_not_early_update, apps_partner_bit_by, apps_platform_insert.
+-- A FUTURE REBUILD of `guarded_changes`, `app_origins`, `apps`, `platform_requests` or `platform_origin_waits` must
+-- create every trigger below again, with the same SQL: platform_requests_insert, platform_requests_no_update,
+-- platform_requests_no_early_delete, platform_origin_waits_insert, platform_origin_waits_update,
+-- platform_origin_waits_no_delete, guarded_changes_platform_insert, guarded_changes_platform_fixed,
+-- guarded_changes_platform_announced, guarded_changes_platform_not_early, guarded_changes_platform_no_waiver,
+-- guarded_changes_platform_active_on_time, guarded_changes_platform_status_moves, guarded_changes_platform_no_delete,
+-- guarded_changes_platform_wait_gone, guarded_changes_platform_no_replace_update, app_origins_platform_not_early,
+-- app_origins_platform_not_early_update, apps_partner_bit_by, apps_platform_insert.
 -- apps/api/test/migration-0033.test.ts checks every one is in the schema after every later migration.
 --
 -- The database's clock is `(julianday('now') - 2440587.5) * 86400000.0` (ms), as 0028's triggers read it: an
@@ -74,55 +78,94 @@ BEGIN
   SELECT RAISE(ABORT, 'platform_requests rows are kept 7 days');
 END;
 
--- ---- guarded_changes: a platform proposal's earliest time ----
+-- ---- a platform proposal's wait and earliest time (`platform_origin_waits`) ----
+-- One row per web address the platform proposed, written in the proposal's batch before its guarded change, and its
+-- earliest time written once by the announcement's ack before the change's `active_from`. In a table of its own, not
+-- as columns of `guarded_changes`: `ledger-check` (the deploy step of migration 0027, D916, D924) refuses any later
+-- migration that reshapes the ledger's tables, and 0033 may be applied in the same deploy as 0027.
 
-ALTER TABLE guarded_changes ADD COLUMN min_delay_ms INTEGER;              -- a platform proposal's wait from its announcement
-ALTER TABLE guarded_changes ADD COLUMN unconfirmed_active_from INTEGER;   -- written by the ack: in force then, not before
+CREATE TABLE platform_origin_waits (
+  change_id               TEXT PRIMARY KEY CHECK (change_id GLOB 'gc_*'),
+  app_id                  TEXT NOT NULL,
+  origin                  TEXT NOT NULL,
+  key_id                  TEXT NOT NULL CHECK (key_id GLOB 'pkc_*'),                  -- the proposing key
+  min_delay_ms            INTEGER NOT NULL CHECK (min_delay_ms >= 60000),              -- its wait from the announcement
+  unconfirmed_active_from INTEGER,                                                      -- written by the ack: not before
+  at                      INTEGER NOT NULL
+);
 
--- A platform proposal starts as a waiting web address with its wait (at least 60 s) and nothing announced; an insert that
--- would replace a platform proposal (by its id or its cancel link's hash) is refused before the conflict is resolved.
+-- Never replaced; a wait for a change that exists already can't be written (it would be a wait the proposal didn't have).
+CREATE TRIGGER platform_origin_waits_insert BEFORE INSERT ON platform_origin_waits
+BEGIN
+  SELECT RAISE(ABORT, 'platform_origin_waits: a wait is written once, before its proposal')
+   WHERE EXISTS (SELECT 1 FROM platform_origin_waits WHERE change_id = NEW.change_id)
+      OR EXISTS (SELECT 1 FROM guarded_changes WHERE id = NEW.change_id)
+      OR NEW.unconfirmed_active_from IS NOT NULL;
+END;
+
+-- Only the earliest time is written, once, at least the wait from the database's now (less 2 minutes' skew).
+CREATE TRIGGER platform_origin_waits_update BEFORE UPDATE ON platform_origin_waits
+  WHEN NEW.change_id IS NOT OLD.change_id OR NEW.app_id IS NOT OLD.app_id OR NEW.origin IS NOT OLD.origin OR NEW.key_id IS NOT OLD.key_id
+    OR NEW.min_delay_ms IS NOT OLD.min_delay_ms OR NEW.at IS NOT OLD.at
+    OR OLD.unconfirmed_active_from IS NOT NULL OR NEW.unconfirmed_active_from IS NULL
+    OR NEW.unconfirmed_active_from < ((julianday('now') - 2440587.5) * 86400000.0) + OLD.min_delay_ms - 120000
+BEGIN
+  SELECT RAISE(ABORT, 'platform_origin_waits: only the earliest time is written, once, at least the wait away');
+END;
+
+-- Kept while its proposal exists (it goes with it: guarded_changes_platform_wait_gone).
+CREATE TRIGGER platform_origin_waits_no_delete BEFORE DELETE ON platform_origin_waits
+  WHEN EXISTS (SELECT 1 FROM guarded_changes WHERE id = OLD.change_id)
+BEGIN
+  SELECT RAISE(ABORT, 'platform_origin_waits: a wait is kept while its proposal exists');
+END;
+
+-- ---- guarded_changes: a platform proposal never comes into force before its earliest time ----
+
+-- A platform proposal starts as a waiting web address, nothing announced, with its wait already written for this
+-- app, web address and key; an insert that would replace a platform proposal (by its id or its cancel link's hash) is
+-- refused before the conflict is resolved.
 CREATE TRIGGER guarded_changes_platform_insert BEFORE INSERT ON guarded_changes
 BEGIN
   SELECT RAISE(ABORT, 'guarded_changes: a platform proposal starts as a waiting web address with its wait, not announced')
    WHERE NEW.proposed_by_kind = 'platform'
-     AND (NEW.kind IS NOT 'origin_add' OR NEW.status IS NOT 'pending' OR NEW.min_delay_ms IS NULL OR NEW.min_delay_ms < 60000
-          OR NEW.notified_at IS NOT NULL OR NEW.active_from IS NOT NULL OR NEW.unconfirmed_active_from IS NOT NULL
-          OR NEW.waiver IS NOT NULL OR NEW.expedited_by IS NOT NULL OR NEW.cancel_token_hash IS NOT NULL);
+     AND (NEW.kind IS NOT 'origin_add' OR NEW.status IS NOT 'pending' OR NEW.notified_at IS NOT NULL OR NEW.active_from IS NOT NULL
+          OR NEW.waiver IS NOT NULL OR NEW.expedited_by IS NOT NULL OR NEW.cancel_token_hash IS NOT NULL
+          OR NOT EXISTS (SELECT 1 FROM platform_origin_waits w WHERE w.change_id = NEW.id AND w.app_id = NEW.app_id AND w.origin = NEW.origin
+                          AND w.key_id = NEW.proposed_by AND w.unconfirmed_active_from IS NULL));
   SELECT RAISE(ABORT, 'guarded_changes: a platform proposal is never replaced')
    WHERE EXISTS (SELECT 1 FROM guarded_changes o WHERE o.proposed_by_kind = 'platform'
                   AND (o.id = NEW.id OR (NEW.cancel_token_hash IS NOT NULL AND o.cancel_token_hash = NEW.cancel_token_hash)));
 END;
 
--- Its web address, app, proposer, request and wait never change, and no other change becomes a platform one.
-CREATE TRIGGER guarded_changes_platform_fixed BEFORE UPDATE OF id, app_id, kind, origin, proposed_by_kind, proposed_by, proposed_at, request_id, min_delay_ms ON guarded_changes
+-- Its web address, app, proposer and request never change, and no other change becomes a platform one.
+CREATE TRIGGER guarded_changes_platform_fixed BEFORE UPDATE OF id, app_id, kind, origin, proposed_by_kind, proposed_by, proposed_at, request_id ON guarded_changes
   WHEN (OLD.proposed_by_kind = 'platform' OR NEW.proposed_by_kind = 'platform')
    AND (NEW.id IS NOT OLD.id OR NEW.app_id IS NOT OLD.app_id OR NEW.kind IS NOT OLD.kind OR NEW.origin IS NOT OLD.origin
         OR NEW.proposed_by_kind IS NOT OLD.proposed_by_kind OR NEW.proposed_by IS NOT OLD.proposed_by OR NEW.proposed_at IS NOT OLD.proposed_at
-        OR NEW.request_id IS NOT OLD.request_id OR NEW.min_delay_ms IS NOT OLD.min_delay_ms)
+        OR NEW.request_id IS NOT OLD.request_id)
 BEGIN
-  SELECT RAISE(ABORT, 'guarded_changes: a platform proposal''s web address, app, proposer and wait are fixed');
+  SELECT RAISE(ABORT, 'guarded_changes: a platform proposal''s web address, app, proposer and request are fixed');
 END;
 
--- Announced once, its earliest time written once with it: at least its wait after the announcement, which is never
--- back-dated by more than 5 minutes, and at least its wait from the database's now (less 2 minutes).
-CREATE TRIGGER guarded_changes_platform_announced BEFORE UPDATE OF notified_at, unconfirmed_active_from ON guarded_changes
+-- Announced once, never back-dated by more than 5 minutes, and only once its earliest time is written, at least its
+-- wait after the announcement.
+CREATE TRIGGER guarded_changes_platform_announced BEFORE UPDATE OF notified_at ON guarded_changes
   WHEN OLD.proposed_by_kind = 'platform'
    AND ((OLD.notified_at IS NOT NULL AND NEW.notified_at IS NOT OLD.notified_at)
-        OR (OLD.unconfirmed_active_from IS NOT NULL AND NEW.unconfirmed_active_from IS NOT OLD.unconfirmed_active_from)
-        OR ((NEW.notified_at IS NULL) <> (NEW.unconfirmed_active_from IS NULL))
         OR (OLD.notified_at IS NULL AND NEW.notified_at IS NOT NULL
-            AND (OLD.min_delay_ms IS NULL
-                 OR NEW.unconfirmed_active_from < NEW.notified_at + OLD.min_delay_ms
-                 OR NEW.notified_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000
-                 OR NEW.unconfirmed_active_from < ((julianday('now') - 2440587.5) * 86400000.0) + OLD.min_delay_ms - 120000)))
+            AND (NEW.notified_at < ((julianday('now') - 2440587.5) * 86400000.0) - 300000
+                 OR NOT EXISTS (SELECT 1 FROM platform_origin_waits w WHERE w.change_id = OLD.id AND w.unconfirmed_active_from IS NOT NULL
+                                 AND w.unconfirmed_active_from >= NEW.notified_at + w.min_delay_ms))))
 BEGIN
   SELECT RAISE(ABORT, 'guarded_changes: a platform proposal is announced once, never back-dated, its earliest time at least its wait away');
 END;
 
 -- Never in force before its earliest time (P10 replaces this with a version that also allows an owner's confirmation).
-CREATE TRIGGER guarded_changes_platform_not_early BEFORE UPDATE OF active_from, unconfirmed_active_from ON guarded_changes
+CREATE TRIGGER guarded_changes_platform_not_early BEFORE UPDATE OF active_from ON guarded_changes
   WHEN OLD.proposed_by_kind = 'platform' AND NEW.active_from IS NOT NULL
-   AND (NEW.unconfirmed_active_from IS NULL OR NEW.active_from < NEW.unconfirmed_active_from)
+   AND NOT EXISTS (SELECT 1 FROM platform_origin_waits w WHERE w.change_id = OLD.id AND w.unconfirmed_active_from IS NOT NULL
+                    AND NEW.active_from >= w.unconfirmed_active_from)
 BEGIN
   SELECT RAISE(ABORT, 'guarded_changes: a web address the platform proposed comes into force no earlier than its wait allows');
 END;
@@ -158,6 +201,13 @@ BEGIN
   SELECT RAISE(ABORT, 'guarded_changes: a waiting platform proposal is never deleted');
 END;
 
+-- Its wait goes with it (retention's delete of an old cancelled or ended proposal).
+CREATE TRIGGER guarded_changes_platform_wait_gone AFTER DELETE ON guarded_changes
+  WHEN OLD.proposed_by_kind = 'platform'
+BEGIN
+  DELETE FROM platform_origin_waits WHERE change_id = OLD.id;
+END;
+
 -- An UPDATE OR REPLACE onto a platform proposal's id or cancel link's hash would delete it (no DELETE trigger fires).
 CREATE TRIGGER guarded_changes_platform_no_replace_update BEFORE UPDATE OF id, cancel_token_hash ON guarded_changes
   WHEN EXISTS (SELECT 1 FROM guarded_changes o WHERE o.rowid IS NOT OLD.rowid AND o.proposed_by_kind = 'platform'
@@ -172,18 +222,18 @@ END;
 
 CREATE TRIGGER app_origins_platform_not_early BEFORE INSERT ON app_origins
   WHEN NEW.active_from IS NOT NULL
-   AND EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = NEW.app_id AND g.origin = NEW.origin AND g.kind = 'origin_add'
-                AND g.proposed_by_kind = 'platform' AND g.status = 'pending'
-                AND (g.unconfirmed_active_from IS NULL OR NEW.active_from < g.unconfirmed_active_from))
+   AND EXISTS (SELECT 1 FROM guarded_changes g LEFT JOIN platform_origin_waits w ON w.change_id = g.id
+                WHERE g.app_id = NEW.app_id AND g.origin = NEW.origin AND g.kind = 'origin_add' AND g.proposed_by_kind = 'platform' AND g.status = 'pending'
+                  AND (w.unconfirmed_active_from IS NULL OR NEW.active_from < w.unconfirmed_active_from))
 BEGIN
   SELECT RAISE(ABORT, 'app_origins: a web address the platform proposed comes into force no earlier than its wait allows');
 END;
 
 CREATE TRIGGER app_origins_platform_not_early_update BEFORE UPDATE ON app_origins
   WHEN NEW.active_from IS NOT NULL
-   AND EXISTS (SELECT 1 FROM guarded_changes g WHERE g.app_id = NEW.app_id AND g.origin = NEW.origin AND g.kind = 'origin_add'
-                AND g.proposed_by_kind = 'platform' AND g.status = 'pending'
-                AND (g.unconfirmed_active_from IS NULL OR NEW.active_from < g.unconfirmed_active_from))
+   AND EXISTS (SELECT 1 FROM guarded_changes g LEFT JOIN platform_origin_waits w ON w.change_id = g.id
+                WHERE g.app_id = NEW.app_id AND g.origin = NEW.origin AND g.kind = 'origin_add' AND g.proposed_by_kind = 'platform' AND g.status = 'pending'
+                  AND (w.unconfirmed_active_from IS NULL OR NEW.active_from < w.unconfirmed_active_from))
 BEGIN
   SELECT RAISE(ABORT, 'app_origins: a web address the platform proposed comes into force no earlier than its wait allows');
 END;

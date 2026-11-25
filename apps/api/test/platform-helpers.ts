@@ -197,18 +197,20 @@ export async function platformProposal(appId: string, keyId: string, origin: str
   const id = o.id ?? newId('guardedChange');
   const now = Date.now();
   const minDelay = o.inForce ? 60_000 : DAY;
+  await env.DB.prepare('INSERT INTO platform_origin_waits (change_id, app_id, origin, key_id, min_delay_ms, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)').bind(id, appId, origin, keyId, minDelay, now).run();
   await env.DB.prepare(
-    `INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id, min_delay_ms)
-     VALUES (?1, ?2, 'origin_add', ?3, 'pending', 'platform', ?4, ?5, ?6, ?7)`,
+    `INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id)
+     VALUES (?1, ?2, 'origin_add', ?3, 'pending', 'platform', ?4, ?5, ?6)`,
   )
-    .bind(id, appId, origin, keyId, now - 10 * 60_000, `pf_${id}`, minDelay)
+    .bind(id, appId, origin, keyId, now - 10 * 60_000, `pf_${id}`)
     .run();
   await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, NULL, ?3)').bind(appId, origin, id).run();
   // In force by the database's clock (a test may have moved Date.now on): its triggers judge by that one.
   const dbNow = (await env.DB.prepare("SELECT CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS t").first<{ t: number }>())!.t;
   const notified = o.inForce ? dbNow - 280_000 : now;
   const from = o.inForce ? dbNow - 50_000 : (o.activeFrom ?? now + DAY);
-  await env.DB.prepare('UPDATE guarded_changes SET notified_at = ?2, unconfirmed_active_from = ?3, active_from = ?3 WHERE id = ?1').bind(id, notified, from).run();
+  await env.DB.prepare('UPDATE platform_origin_waits SET unconfirmed_active_from = ?2 WHERE change_id = ?1').bind(id, from).run();
+  await env.DB.prepare('UPDATE guarded_changes SET notified_at = ?2, active_from = ?3 WHERE id = ?1').bind(id, notified, from).run();
   await env.DB.prepare('UPDATE app_origins SET active_from = ?3 WHERE app_id = ?1 AND change_id = ?2').bind(appId, id, from).run();
   if (o.inForce) await env.DB.prepare("UPDATE guarded_changes SET status = 'active', activated_recorded_at = ?2 WHERE id = ?1").bind(id, dbNow).run();
   return id;

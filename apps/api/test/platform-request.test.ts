@@ -20,7 +20,7 @@ import { AdminRpc } from '../src/rpc/admin.ts';
 import { ConsoleRpc } from '../src/rpc/console.ts';
 import vectors from '../../../packages/console-core/test/platform-request-vectors.json' with { type: 'json' };
 import { call } from './helpers.ts';
-import { type Seeded, callsOf, deliver, freeze, freshIp, freshNow, keyPair, keyRow, read, seedKey, send, switchOff, switchOn } from './platform-helpers.ts';
+import { type Sent, callsOf, deliver, freeze, freshIp, freshNow, keyPair, keyRow, read, seedKey, send, switchOff, switchOn } from './platform-helpers.ts';
 import { type DbCount, countingDb, orgApp, rows } from './rpc-helpers.ts';
 
 const MIN = 60_000;
@@ -105,7 +105,7 @@ describe('every refusal in A3’s order, with its code', () => {
     const ip = freshIp();
     await failIp(ip, now);
     await fillOverflow(now);
-    let r = await send(k, { now, ip, method: 'PUT', path: '/v1/platform//x', headers: { origin: 'https://evil.example' } });
+    let r: Omit<Sent, 'request'> = await send(k, { now, ip, method: 'PUT', path: '/v1/platform//x', headers: { origin: 'https://evil.example' } });
     expect([r.status, r.body.code, r.body.limit]).toEqual([429, 'rate_limited', 'platform:ip']);
     expect(Number(r.res.headers.get('retry-after'))).toBeGreaterThan(0);
     await emptyOverflow(now);
@@ -732,7 +732,7 @@ describe('the nonce object', () => {
 // ---- the limiters failing ----
 
 /** The limiter namespace with objects whose name matches `bad` failing every call. */
-function failingLimiter(bad: RegExp): DurableObjectNamespace {
+function failingLimiter(bad: RegExp): typeof env.RATE_LIMITER {
   const ns = env.RATE_LIMITER;
   const names = new Map<string, string>();
   return {
@@ -746,14 +746,14 @@ function failingLimiter(bad: RegExp): DurableObjectNamespace {
       if (!bad.test(names.get(id.toString()) ?? '')) return stub;
       return new Proxy(stub, { get: () => () => Promise.reject(new Error('limiter down')) });
     },
-  } as unknown as DurableObjectNamespace;
+  } as unknown as typeof env.RATE_LIMITER;
 }
 
 describe('when a limiter errors: admission fails closed, the self-revoke goes ahead', () => {
   for (const [what, re] of [['the per-IP object', /^platform:ip:/u], ['the nonce object', /^platform-nonce:/u], ['the key’s object', /^platform:key:/u], ['the bucket’s object', /^console-rpc/u]] as const) {
     it(`${what}: 503 for the credential read`, async () => {
       const k = await seedKey();
-      const r = await send(k, { now: freshNow(), bindings: { RATE_LIMITER: failingLimiter(re) as typeof env.RATE_LIMITER } });
+      const r = await send(k, { now: freshNow(), bindings: { RATE_LIMITER: failingLimiter(re) } });
       expect([r.status, r.body.code]).toEqual([503, 'rate_limiter_unavailable']);
       expect(await callsOf(k.id)).toEqual([]);
     });
@@ -761,7 +761,7 @@ describe('when a limiter errors: admission fails closed, the self-revoke goes ah
 
   it('every limiter down: the self-revoke still stops the key (a replay of it could only stop the same key)', async () => {
     const k = await seedKey();
-    const r = await send(k, { now: freshNow(), method: 'POST', path: '/v1/platform/credential/revoke', bindings: { RATE_LIMITER: failingLimiter(/./u) as typeof env.RATE_LIMITER } });
+    const r = await send(k, { now: freshNow(), method: 'POST', path: '/v1/platform/credential/revoke', bindings: { RATE_LIMITER: failingLimiter(/./u) } });
     expect(r.status).toBe(200);
     expect((await keyRow(k.id)).status).toBe('revoked');
   });

@@ -22058,3 +22058,92 @@ and 0029 are piece P2's, built at the same time; 0030 doesn't depend on them).
   Still required then: the Tech Lead's "go ahead deploy", `verify --full` on the deploy commit, and the migrations
   applied by the Tech Lead. The deployed admin Worker keeps its hand-set 30-minute trigger until that deploy.
 - Address impact: **none** (docs only).
+
+## Sodax follow-ups: the naming clash, the Stellar change for Sodax's kit, the add-on example, the widget in an iframe (branch `feat/sodax-followups`), 2026-11-25
+
+From `next` @ ca37652b, with `next` @ 4776f6af merged in; not merged, not deployed. D923 is the number the caller
+assigned. Three follow-ups to a survey of Sodax's public source (`gosodax/sodax-sdks`, read at `7c1ff2e`, tags
+`@sdks@2.3.0` and `@sdks@2.4.0-rc.1`); `docs/sodax-sdk-integration.md` sections 1, 2, 6 and 10 to 12 have the detail.
+
+### D923. Hosts that match wallets by part of a name get another Stellar module id (`journear-passport`), the default stays `hana-id`; a Stellar change for Sodax's kit is prepared, not sent; in Sodax's widget iframe every page around the widget must be registered, and one app per partner is recommended
+
+- **Date:** 2026-11-25 · **Status:** built and tested (the `productId` option); prepared locally for the Tech Lead,
+  **not sent** (the change to Sodax's kit, its spec issue and pull request drafts, the worked example); every choice
+  below **to confirm (the Tech Lead)** · **Relates to:** D706, D765, D774, D909, D912, D913, D914, D919; Q15, Q26;
+  sweep VAUL-6.
+- **Nothing went to Sodax or to any outside repository.** No fork, issue, pull request, comment, star or push on
+  `gosodax/*`; no message to anyone. Sodax's install, build, tests and scripts were not run; its published 2.3.0
+  packages were installed with `--ignore-scripts` in a scratch folder for the tests. The bundle for the Tech Lead is in
+  `~/Documents/hana-id-review-files/sodax-bundle/` (outside the repository): `stellar-modules.patch` (two commits on
+  Sodax's `main` @ `7c1ff2e`, author set to a placeholder), `spec-issue-draft.md`, `pr-description-draft.md`,
+  `screenshots/`, `scratch-test/` (the harness, its report and the patched-build diff) and `example/`.
+- **1. The naming clash (tested on 2.3.0).** Sodax's kit matches brand identifiers by substring of a wallet's id or
+  name (`matchConnectorIdentifier`, used by `useBatchConnect`, `useBatchDisconnect`, `useIsWalletInstalled`), and has
+  Hana Wallet (the browser extension) built in. Our Stellar module's `productId` `hana-id` contains "hana", and so does
+  our EIP-6963 `rdns` on sandbox-dev (`dev.workers.tingtc.hana-id-auth-sandbox-dev`, from the sign-in host). Without
+  the extension, `useIsWalletInstalled({ connectors: ['hana'] })` was true because of us, and
+  `useBatchConnect({ connectors: ['hana'] })` connected **our** wallet (our sign-in window opened); Sodax's own example
+  app shows a "Connect All Hana" button on that test. Names and icons don't clash (each connector has its own).
+  - **Changed in our code:** `new HanaIdModule(hana, { productId })` and the export `JOURNEAR_PASSPORT_MODULE_ID`
+    (`'journear-passport'`); the default stays `'hana-id'`. With it, neither call matched us (tested). The option
+    accepts 3 to 64 lower-case letters, digits, `-` or `.`, never `hana` or `io.hana.wallet`, else `-32602`. Tests in
+    `packages/web/test/client/stellar-wallets-kit.test.ts`; `docs/integration.md` (0.5.0's notes and the Stellar
+    Wallets Kit section) and `packages/web/README.md` say when to use it.
+  - **Why not rename the default, to confirm (the Tech Lead):** the id is stored by hosts (Sodax's `xwagmi-store`;
+    Stellar Wallets Kit 2.x's `@StellarWalletsKit/selectedModuleId`; partner code such as our own e2e partner page's
+    `selectedWalletId: 'hana-id'`), and `integration.md` promised partners it stays. A rename would make every
+    returning user pick the wallet again, leave Sodax's saved Stellar connection unusable until they do (its reconnect
+    fails with a warning; read in source), and break partner code naming it. A user would not be stranded from
+    funds (the wallet is the same), only made to choose again.
+  - **The EVM side, to confirm (the Tech Lead):** no change. `rdns` should name a domain we control; on production it
+    comes from the production domain (Q15, Q26, open): one whose sign-in host has no "hana" avoids the clash there.
+    Asking Sodax to match whole ids only is question 10 for Sodax.
+- **2. The Stellar change for Sodax's kit (written, tested locally, not sent).** In a local branch of the clone, two
+  Conventional Commits: `fix(wallet-sdk-core)`: `StellarWalletError` keeps the wallet's error as `cause` (message and
+  code unchanged); `feat(wallet-sdk-react)`: `config.STELLAR.modules`, and `addStellarWalletModules` /
+  `removeStellarWalletModules` from the stellar sub-path, which change the kit's module list (owned by `StellarXService`
+  and handed to the kit by reference) and run discovery again, with discovery runs ordered so an older run never
+  overwrites a newer list; a saved connection to an added module is restored. Unit tests in their style, not run;
+  README, `docs/CONNECTORS.md` and changesets. Tested by applying the same change to the published 2.3.0 build output:
+  our wallet listed when passed in the config and when added 2 s after mount (it wasn't before), connected with the
+  same address as our client, restored after a reload, removed cleanly; a test key's public-network refusal kept our
+  code (`cause.code` 4100; before: only "Failed to sign transaction"). Screenshots before and after in the bundle.
+  - **To confirm (the Tech Lead):** whether, when and under whose name to open the spec issue and later the pull
+    request (their process: spec issue, a maintainer's plan and `plan-approved`, then a fork pull request); the commit
+    author is a placeholder.
+- **3. The worked example (outside the repository).** `sodax-bundle/example/`: an add-on shaped like Sodax's optional
+  Privy login (`@sodax/wallet-sdk-react/journear`, our SDK an optional peer, a dynamic import) with a stand-in
+  widget whose partner settings `{ socialLogin, publishableKey }` arrive after mount; it adds our Stellar module with
+  `productId: 'journear-passport'`, relies on EIP-6963 for EVM, and on switch-off removes the module, takes our EVM
+  connector out of wagmi (through wagmi's internal connector store: in Sodax's real code their EVM provider would),
+  disconnects and destroys the client (no sign-out: suspending the partner's app does that, A10). Measured: 1.3 kB in
+  the widget's page code when off; 106 kB minified, 35 kB gzipped, loaded only when on. A README for Sodax's
+  developers in plain words. Tested in Chromium, Firefox and WebKit on the local stack, with screenshots.
+  - **To confirm (the Tech Lead):** that it moves to the sample-partner repository (`~/Documents/hana-id-sample-partner`,
+    untouched here) once the Stellar change is accepted, or earlier as a preview; that switch-off doesn't sign out.
+- **4. The widget in a third-party iframe (tested, three engines; section 12).** The vault sees the widget's origin as
+  its parent and refuses unless every page around it is a registered origin of the app (VAUL-6), so an app that lists
+  only the widget's origin doesn't work on a partner's page; with the partner's page registered too, sign-in (popup, or
+  our in-page button when popups are blocked), Google, signing and reload work. Storage belongs to the partner's site
+  (Chromium with partitioning on, Firefox): each partner site, and the widget top-level, need their own sign-in, and
+  give the same wallet. The approval window names the app and the **widget's** address. With one app per partner on
+  one scope, the window names the partner's app and shows "This wallet is also used on 1 other app."; a partner page
+  reusing another partner's widget settings is refused. Options A (one app, partner named from a signed config),
+  B (the widget posts the parent's origin), C (refuse framing), D (one app per partner, each registering the widget's
+  origin and the partner's pages).
+  - **Recommended: D, to confirm (the Tech Lead)**, with two later changes of ours, proposed, not built: show the
+    partner page's address in our windows (the outermost ancestor where the browser gives it, else the app's one
+    non-widget origin), and allow the widget's origin only as a frame for a partner app (read and inferred: today
+    anyone can open the widget top-level with a partner's settings and get that partner's app).
+- **Also found (read in source):** 2.4.0-rc.1 and `main` add Tron, XRP, TON, Zcash and Cardano to Sodax's wallet kit
+  (not in 2.3.0), and Monad on EVM; `docs/sodax-sdk-integration.md`'s chain plan doesn't cover them yet (question 11
+  for Sodax). Sodax's `CONNECTORS.md` says a `connectors` override replaces a chain's defaults, which for Stellar is
+  undone by discovery (the change's docs say so).
+- **Differences from the survey:** none in what it said; its line numbers match `7c1ff2e` (re-read). Not in it: the
+  chain families added after 2.3.0 (above); the contribution process is written in `.github/issue-workflow.md`, which
+  `CONTRIBUTING.md` doesn't link; Stellar discovery's lines are 287-336 on `main`, not in 2.3.0's file (which lacks
+  the later chains), whose STELLAR entry is the same code.
+- Address impact: **none.** Checked: the `productId` option is display and selection only; nothing derives from it or
+  stores it on our side (the vault's records are keyed by app and scope; `RESERVED_RAW_PREFIX` `'hana-id'` in
+  `packages/web/src/vault/signing.ts`, the raw-signing domain prefix, is a separate constant and unchanged); no change
+  to the contract, a key, a path, an address derivation, the `rdns` or any origin.

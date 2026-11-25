@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
+Last verified: 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
 from `@hana-id/brand`'s `LOCKUP`, outlined, D789); 2026-11-12 (branch `feat/journear-design-console`, not merged, not deployed: the SPA on the Journear
 Passport design system, "Brand" and "Patterns" below, D765: its tokens, component classes, self-hosted Archivo and IBM
 Plex and the Journear lockup; toasts, the save bar, setting rows, choice cards, validate on blur, the stats strip; the
@@ -112,7 +112,9 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
   key hidden (D703 as amended by D704). The titles and the details' words are `@hana-id/console-core/audit-words`,
   shared with the admin's feed digests (D704): every audit action and app-change kind has a past-tense title ("Invite
   revoked", "Suspension lifted", …; `test/privacy.test.ts` wants one for each action), an unknown code reads as its
-  words.
+  words. Who did it: a member by their address ("a member" on an app change), "Journear", "system", "emailed link", or
+  "your platform key pkc_…" (the org's network backend, D916; nothing writes it yet); a waiting change proposed by the
+  platform reads "Requested by your platform key pkc_…".
 - **Users** (`/orgs/:org/users`): on where the env's manifest sets `console.usersScreen: true` (`gen` writes
   `USERS_SCREEN`; testnet only, sandbox-dev has it on, D702); off elsewhere, the tab hidden and its routes `404` (D357).
   It shows a user's email address only once the user shared it with one of the org's apps (D411); an app name that

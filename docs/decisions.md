@@ -21186,3 +21186,88 @@ held it) when it was built; it sits after D913, which reached `next` first.
   still write a Hedera value's raw number as "wei" (`render-approval.ts`, the value and fee rows), where the consent
   screen now says "weibars".
 - Address impact: none (display only; no key, path or derivation changes).
+
+## The `platform` actor: the ledger rebuilt with its kinds as triggers (branch `feat/platform-actor`), 2026-11-25
+
+From `next` @ 0b99ec12; not merged, not deployed, migration applied nowhere. Piece P1 of `docs/partner-platform-spec.md`
+(its A7, finding M9). D916 was given to this piece when it was started; P0, built at the same time, holds migration 0026.
+
+### D916. The ledger can hold and show a `platform` actor: `app_changes` and `guarded_changes` rebuilt once with their kinds as triggers, `security_events` with three more kinds, the views' words, and `ledger-check` for the deploy
+- Date 2026-11-25 · Status: **built** (the design is the Tech Lead's D913 and the spec's A7; the points marked "to
+  confirm (the Tech Lead)" below were decided while building) · Relates to D90, D704, D894, D913 · Built: migration
+  0027, the views, `ledger-check`
+- **What it does.** Nothing can act as `platform` yet; after this piece the ledger and the views can hold and show it.
+  - **Migration 0027** (`apps/api/migrations/0027_platform_actor.sql`), as A7 orders it: `app_changes_new` and
+    `guarded_changes_new` with every column in order, the kind CHECK left off each; a copy with explicit column lists,
+    `seq` copied as it is; the old tables dropped (no foreign key or other table's trigger reads them, and a DROP TABLE
+    fires no trigger) and the new ones renamed; then every index and trigger of 0006, word for word, and the kind
+    triggers: `app_changes_actor_kind` (`member`, `hana`, `system`, `link`, `platform`) and
+    `guarded_changes_proposer_kind` (`member`, `hana`, `system`, `platform`). The next kind is a DROP TRIGGER and
+    CREATE TRIGGER, never another rebuild. `security_events` gains `platform_quota`, `platform_auth_failures` and
+    `link_lookup_volume`, its CHECK widened by a rebuild as 0018 to 0025 did. It reads nothing P0's 0026 adds, so the
+    two apply in either order.
+  - **console-core**: `ACTOR_KINDS` and `PROPOSER_KINDS` gain `platform`; the three event kinds get titles ("Platform
+    key: a limit was reached", "Platform key: many failed requests in a minute", "Many look-ups of one person across
+    apps"). The RPC `actor` union is unchanged, so `ConsoleRpc` and `AdminRpc` refuse a `platform` actor at their input
+    check until P3 and P4 add it.
+  - **Words.** The change notice's "Proposed by": "your platform key (pkc_…)". The "Changed by" rows and the feed
+    digests' "By": "a platform key (pkc_…)". The console's Audit: "your platform key pkc_…"; a waiting change: "Requested
+    by your platform key pkc_…". The admin SPA: "Platform key". Each list is exhaustive over the kinds, so a later kind
+    can't reach a page or an email unnamed; a kind a newer API wrote reads as itself.
+  - **`ledger-check`** (`scripts/ledger-check.ts`): the deploy step's before-and-after comparison (A7, M9). Every row of
+    the three tables is read in its key's order through `wrangler d1 execute --json` and hashed locally: per table the
+    row count, `max(seq)` and a SHA-256 over every row; per row a hash of all columns and of the columns no job writes.
+    Indexes and triggers are compared by their SQL. Snapshots hold no row and go to `.secrets/<env>/` (0600). The deploy
+    steps are in `docs/operations.md` "Ledger rebuild (hot-DB migration 0027, D916)": not during the monthly retention
+    job, the Time Travel bookmark, the snapshot, the migration, the comparison (a rollback to the bookmark on any loss),
+    then the API, then the admin and console Workers.
+- **Tests.** `apps/api/test/migration-0027.test.ts`: on a database holding every app change kind by every actor of
+  before, every guarded change kind, status and proposer, with and without waivers and cancel link hashes, every
+  security event kind, a `seq` gap left by a purged row and a `seq` far above the rest: every row back unchanged and in
+  order, `max(seq)` kept and the next row after it; every column; every index and trigger by its SQL, only the three
+  kind triggers new; each table's SQL the old one less the moved CHECK; the trigger lists equal to `ACTOR_KINDS` and
+  `PROPOSER_KINDS`; `platform` taken, unknown kinds (case, spaces, empty, NULL, `link` as a proposer) refused;
+  append-only, 60 months, the unique request id, JSON, every `guarded_changes` rule and the event kinds kept. Each of
+  six broken copies of the migration (an index dropped, `seq` not copied, the 60-month rule changed, a kind left out,
+  the update trigger on another column, a row skipped) fails it. `scripts/test/ledger-check.test.ts`: the real
+  migration `identical`; seven broken copies `roll_back`; the jobs' writes in between `kept`; a lifecycle write can't
+  hide a fixed column's change; paging changes no hash; no snapshot holds a row's value. Views: the notice, "Changed by"
+  and the digests for each kind (`apps/admin/test/email.test.ts`), the console's Audit and waiting change for each
+  kind (`apps/console/web/test/ux.test.tsx`), the console's `audit_log` CHECK against its own list.
+- **Decided while building, to confirm (the Tech Lead):**
+  1. **An update trigger as well.** A7 names only `BEFORE INSERT` triggers, saying an insert is the only write the
+     ledger allows. That holds for `app_changes`, not for `guarded_changes`, whose lifecycle columns are updated: its
+     old column CHECK also refused an update of `proposed_by_kind`. So 0027 adds
+     `guarded_changes_proposer_kind_update` (`BEFORE UPDATE OF proposed_by_kind`, the same list) to keep that refusal.
+  2. **`security_events` keeps a CHECK**, widened by a rebuild as 0018 to 0025 did (A7's words for it), not a trigger:
+     the table is updated too (`notified_at`), and a CHECK holds updates without a second trigger.
+  3. **The console's `audit_log` keeps its own list** (`AUDIT_LOG_ACTOR_KINDS`, the four kinds of before). `ACTOR_KINDS`
+     was also the list a test holds that table's CHECK to; the console never records a `platform` row (the platform
+     acts only through the API), so its D1 isn't rebuilt. Console rows' views use the console list, app changes' views
+     `ACTOR_KINDS`. The staff audit filter keeps `ACTOR_KINDS`, so an export can be filtered to the platform's rows.
+  4. **The key's id, not its label, for now.** A6 and A11 name the actor by the key's label ("your platform key
+     "{label}" ({pkc_…})"); labels live in `platform_keys`, which P2 adds. Until then every view names the key by its
+     `pkc_…` id; P2 or P5 adds the label.
+  5. **"Changed by" for an emailed link** now says "an emailed link" (it fell through to "the system" before; no
+     notice with that row has a `link` actor today).
+  6. **What `ledger-check` calls a rollback.** A7 says any difference is a rollback. The API and the admin Worker keep
+     running while the migration applies, so between the two snapshots a notice can be acknowledged (a guarded
+     change's lifecycle columns), an event emailed (`notified_at`) and ledger rows added. The check rolls back on a
+     row lost, a column no job writes changed (any column of an `app_changes` row), a new ledger row at or below the old
+     `max(seq)`, or an index or trigger missing or changed; rows written since and lifecycle-only updates are reported
+     (how many, the first keys) as `kept`. The deploy steps keep it away from the monthly retention job, whose
+     deletions would read as lost rows.
+  7. **Wording** of the three event titles and of "your platform key" / "a platform key" / "Platform key" (plain words,
+     to be read again with P5's screens).
+- **Found in A7 while building** (the spec's design not changed): (a) point 1 above; (b) point 6 above; (c) `ACTOR_KINDS`
+  is also the console's `audit_log` list (point 3); (d) D1 refuses `PRAGMA integrity_check` (`SQLITE_AUTH`), so the
+  migration test runs `PRAGMA quick_check` and `foreign_key_check` and checks the kind rules itself; (e) a renamed
+  table's SQL in `sqlite_schema` quotes its name (`CREATE TABLE "app_changes"`), so "every table the same SQL" can only
+  mean the same SQL less the moved CHECK, which is what the test checks. Not built here, as the P1 row leaves them to
+  later pieces: the console's `pending_actions` rebuild (P2), playbooks for the new event kinds (P5), and the change
+  notice's waiver sentence, which a platform proposal never qualifies for (P5's one email per request).
+- **Merging beside P0**: 0026 must not rebuild `security_events` (0027's copy would refuse a kind 0027 doesn't list);
+  the migration tests that list every migration file (0003's, 0006's) gain 0026 and 0027 from the two branches, a
+  plain text merge.
+- Address impact: **none.** Nothing touches the contract, a key, a path or an address derivation: a D1 table rebuild,
+  views and words, and an ops script.

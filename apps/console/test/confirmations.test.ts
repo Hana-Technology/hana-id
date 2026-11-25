@@ -43,7 +43,7 @@ async function ownerOfSharedApp() {
 /** Staff web addresses on the shared wallet's app (four eyes), announced, as AdminRpc writes and acks them. */
 async function staffSet(app: { id: string; org: string }, origins: string[]) {
   const ver = (await hot.prepare('SELECT origins_version AS v FROM apps WHERE id = ?1').bind(app.id).first<{ v: number }>())!.v;
-  const r = await admin().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: origins, expectedVersion: ver });
+  const r = (await admin().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: origins, expectedVersion: ver })) as { ok: boolean; changes: { id: string; origin?: string }[] };
   if (!r.ok) throw new Error(JSON.stringify(r));
   for (const c of r.changes) expect(await admin().ackNotice({ ...system(), changeId: c.id, cancelTokenHash: await randomHash() })).toMatchObject({ ok: true });
   return r.changes.map((c) => ({ changeId: c.id, origin: c.origin! }));
@@ -114,7 +114,7 @@ describe('the step-up `origin.confirm`', () => {
     expect(wrongApp.body.error.code).toBe('not_found');
     // Not announced yet: nothing confirmable.
     const ver = (await hot.prepare('SELECT origins_version AS v FROM apps WHERE id = ?1').bind(app.id).first<{ v: number }>())!.v;
-    const quiet = await admin().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://c.partner.example'], expectedVersion: ver });
+    const quiet = (await admin().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://c.partner.example'], expectedVersion: ver })) as { ok: boolean; code?: string; changes: { id: string }[] };
     if (!quiet.ok) throw new Error(quiet.code);
     const q = await postAs<{ error: { code: string; message: string } }>(m, `/api/orgs/${m.org}/actions`, { kind: 'origin.confirm', params: { appId: app.id, changeIds: [quiet.changes[0]!.id] } });
     expect(q.body.error.code).toBe('not_pending');

@@ -69,7 +69,7 @@ import { acceptPlatformKey, cancelPlatformKey, cancelPlatformKeyByLink, confirmP
 import { platformCalls } from '../platform/activity.ts';
 import { runRpc } from './common.ts';
 import { confirmOrigins, getConfirmation, removalPreview, removeOriginByLink } from '../changes/confirm.ts';
-import { confirmOriginsInput, getConfirmationInput, removeOriginByLinkInput } from '@hana-id/console-core';
+import { confirmOriginsInput, getConfirmationInput, personEmailKey, removeOriginByLinkInput } from '@hana-id/console-core';
 
 const MEMBER = ['member'] as const;
 const LINK = ['link'] as const;
@@ -270,7 +270,7 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
 
   /** The page the email's Confirm link opens: reads only (a GET never confirms). */
   getConfirmation(c: unknown) {
-    return runRpc(this.env, 'getConfirmation', getConfirmationInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getConfirmation }, ({ input, db, w }) => getConfirmation(db, input, w.now));
+    return runRpc(this.env, 'getConfirmation', getConfirmationInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getConfirmation }, ({ input, db, w }) => getConfirmation(db, input, w.now, input.actor.kind === 'member' ? personEmailKey(input.actor.email) : undefined));
   }
 
   /** The removal page's details (`POST /api/remove/preview`: the token is in the body, never a URL): reads only. */

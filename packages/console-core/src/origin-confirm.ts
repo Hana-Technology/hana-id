@@ -87,6 +87,11 @@ export interface ConfirmationView {
   keyLabel?: string | null;
   proposedAt: number;
   changes: ConfirmationChange[];
+  /**
+   * A staff proposal the caller can't confirm because they are its proposer (signed in with the proposing staff
+   * member's email: one person, D917's four eyes); then no change is `confirmable` for them.
+   */
+  sameAsProposer?: true;
 }
 
 /** AdminRpc.confirmationNotices: one confirmation call, to be emailed with one removal link per web address. */
@@ -159,6 +164,7 @@ export const CONFIRM_WORDS = {
   secondPersonLine: (date: string) => `Waiting for a second person to confirm, or starts working on ${date}`,
   notAnnounced: 'Its email hasn’t gone out yet, so it can’t be confirmed yet. Try again in a few minutes.',
   onlyOwner: 'Only an owner of this wallet’s settings can confirm.',
+  sameAsProposer: 'You added these web addresses, so a second person must confirm them.',
   confirmButton: 'Confirm',
   noneTicked: 'Tick each web address you know belongs to this app first.',
   removeButton: 'Remove this web address',

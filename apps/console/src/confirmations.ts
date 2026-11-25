@@ -42,6 +42,7 @@ const ctxOf = (c: OrgCaller, info: RequestInfo) => ({ actor: actorOf(c.session) 
 export async function confirmAbility(env: Env, c: OrgCaller, view: ConfirmationView): Promise<ConfirmAbility> {
   if (c.role !== 'owner') return { allowed: false, code: 'forbidden', reason: 'Only an owner of your organisation can confirm.' };
   if (c.orgStatus !== 'active') return { allowed: false, code: 'forbidden', reason: 'Journear has frozen your organisation, so web addresses can’t be confirmed.' };
+  if (view.sameAsProposer) return { allowed: false, code: 'forbidden', reason: CONFIRM_WORDS.sameAsProposer };
   if (!view.changes.some((ch) => ch.confirmable)) {
     const quiet = view.changes.some((ch) => ch.state === 'waiting_announcement');
     return { allowed: false, code: 'not_pending', reason: quiet ? CONFIRM_WORDS.notAnnounced : 'Nothing here is waiting to be confirmed.' };

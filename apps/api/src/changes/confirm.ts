@@ -292,6 +292,7 @@ interface ViewRow {
   proposed_by: string;
   proposed_at: number;
   second_person: number;
+  staff_email_key: string | null;
   key_label: string | null;
   changes: string;
   others: string;
@@ -303,10 +304,11 @@ interface ViewRow {
  * proposing request on that app with its state, and the other apps of a shared wallet. One read; changes nothing.
  * A change that isn't a platform proposal or a staff one under four eyes, or isn't the org's, is `not_found`.
  */
-export async function getConfirmation(db: HotDb, i: { orgId: string; changeId: string }, now: number): Promise<{ confirmation: ConfirmationView }> {
+export async function getConfirmation(db: HotDb, i: { orgId: string; changeId: string }, now: number, viewerEmailKey?: string): Promise<{ confirmation: ConfirmationView }> {
   const r = await db.first<ViewRow>(
     q`SELECT g.id AS change_id, a.id AS app_id, a.name AS app_name, a.scope_id, s.environment, s.app_user_ids AS shared, a.deleted_at,
              g.request_id, g.proposed_by_kind, g.proposed_by, g.proposed_at, EXISTS (SELECT 1 FROM staff_origin_waits sw WHERE sw.change_id = g.id) AS second_person,
+             (SELECT sw.proposer_email_key FROM staff_origin_waits sw WHERE sw.change_id = g.id) AS staff_email_key,
              CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS key_label,
              (SELECT json_group_array(json_object('id', o.id, 'origin', o.origin, 'status', o.status, 'notified_at', o.notified_at, 'active_from', o.active_from,
                                                    'confirmed_at', oc.confirmed_at, 'waited', COALESCE(pw.unconfirmed_active_from, sw2.unconfirmed_active_from)))
@@ -322,10 +324,12 @@ export async function getConfirmation(db: HotDb, i: { orgId: string; changeId: s
   );
   if (!r || r.change_id === null || r.deleted_at !== null) return refuse('not_found', NOT_VISIBLE);
   const rows = JSON.parse(r.changes) as { id: string; origin: string; status: string; notified_at: number | null; active_from: number | null; confirmed_at: number | null; waited: number | null }[];
+  // D917: the viewer who added a staff proposal (by email) is never its second person.
+  const self = viewerEmailKey !== undefined && r.staff_email_key !== null && r.staff_email_key === viewerEmailKey;
   const changes = rows.map((c): ConfirmationChange => {
     const inForce = c.status === 'active' || (c.status === 'pending' && c.active_from !== null && c.active_from <= now);
     const state: ConfirmationChange['state'] = c.status === 'cancelled' ? 'cancelled' : c.status === 'ended' ? 'ended' : inForce ? 'in_force' : c.notified_at === null ? 'waiting_announcement' : 'waiting';
-    const v: ConfirmationChange = { changeId: c.id, ...originDisplay(c.origin), state, activeFrom: c.confirmed_at ?? c.waited ?? c.active_from, confirmable: state === 'waiting' && c.confirmed_at === null };
+    const v: ConfirmationChange = { changeId: c.id, ...originDisplay(c.origin), state, activeFrom: c.confirmed_at ?? c.waited ?? c.active_from, confirmable: state === 'waiting' && c.confirmed_at === null && !self };
     if (c.confirmed_at !== null) v.confirmedAt = c.confirmed_at;
     return v;
   });
@@ -340,6 +344,7 @@ export async function getConfirmation(db: HotDb, i: { orgId: string; changeId: s
     view.keyId = r.proposed_by;
     view.keyLabel = r.key_label;
   }
+  if (self) view.sameAsProposer = true;
   return { confirmation: view };
 }
 

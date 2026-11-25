@@ -436,8 +436,13 @@ describe('staff web addresses on a shared wallet: four eyes', () => {
     const q2 = await staffProposal(net);
     await announce(q2.id);
     const jwt = await stepUp(nonceOf(await originConfirmDigest({ signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: net.org, appId: net.site.id, scopeId: net.scope, changes: [{ changeId: q2.id, origin: q2.origin }] })));
-    // An owner signed in with the proposing staff member's email is the same person: refused, by the API and the database.
+    // An owner signed in with the proposing staff member's email is the same person: the page says so (nothing
+    // confirmable for them), and the confirmation is refused, by the API and the database.
     const twin = { ...member(), actor: { ...member().actor, email: 'staff@hana.example' } };
+    const seen = await ok(consoleOn().getConfirmation({ ...twin, orgId: net.org, changeId: q2.id }));
+    expect(seen.confirmation.sameAsProposer).toBe(true);
+    expect(seen.confirmation.changes.every((c) => !c.confirmable)).toBe(true);
+    expect((await ok(consoleOn().getConfirmation({ ...member(), orgId: net.org, changeId: q2.id }))).confirmation.sameAsProposer).toBeUndefined();
     expect((await no(consoleOn().confirmOrigins({ ...twin, orgId: net.org, appId: net.site.id, changeIds: [q2.id], stepUpJwt: jwt }))).code).toBe('forbidden');
     const jwt2 = await stepUp(nonceOf(await originConfirmDigest({ signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: net.org, appId: net.site.id, scopeId: net.scope, changes: [{ changeId: q2.id, origin: q2.origin }] })));
     await ok(consoleOn().confirmOrigins({ ...member(), orgId: net.org, appId: net.site.id, changeIds: [q2.id], stepUpJwt: jwt2 }));

@@ -24253,4 +24253,5 @@ caller assigned.
     (k) naming Sodax in the guide (its first paragraph and the front-end section); (l) the global breaker, 30
     destructive calls an hour across every organisation, lets one network's runaway script block every network's
     remove, suspend and key revoke through the API (owners and staff still act in the portals; already open under
-    D929); (m) lone surrogates refused in every display-safe line, not only names (messages with one shown as hex).
+    D929); (m) lone surrogates refused in every display-safe line, not only names (messages with one shown as hex,
+    the manifest's operator names refused too: this reverses D904's "a lone surrogate allowed, to confirm").

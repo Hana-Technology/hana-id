@@ -160,6 +160,10 @@ export function appDetails(now: number): AppDetail[] {
       settingsVersion: 0,
       origins: [],
       settings: { persistence: 'session', sessionTtlMs: 12 * H, idleTtlMs: 2 * H, googleWebClientId: null, rawSign: 'off', policy: null },
+      // D915: a new partner app on a scope Journear marked as shared by several partners' apps: no auto-approve.
+      sharedScope: true,
+      createdByKind: 'hana',
+      sharedWallet: true,
       changes: [],
       keys: [{ id: 'key_Rb9Xc2Lp7', prefix: 'pk_test_', key: `pk_test_${hex('r1', 32)}`, createdBy: 'hana', createdAt: now - 3 * H }],
     },

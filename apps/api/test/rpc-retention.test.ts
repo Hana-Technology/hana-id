@@ -107,6 +107,14 @@ describe('AdminRpc.purgeAudit (5 years, D90)', () => {
     expect([await changeExists(proposed), await changeExists(announced), await changeExists(blocked), await changeExists(orphan), await changeExists(guardedAnnounce)]).toEqual([true, true, true, false, false]);
   });
 
+  it('keeps every scope mark (D915): drift reads it for as long as the scope exists; a scope row beside it of another kind goes', async () => {
+    const app = await orgApp();
+    const mark = await change({ ...app, id: null as never }, now() - 70 * MONTH, 'scope.app_user_ids', { appUserIds: 1, apps: [app.id] });
+    const other = await change({ ...app, id: null as never }, now() - 70 * MONTH, 'scope.assigned', { from: 'org_legacy', to: app.org });
+    await adminRpc().purgeAudit({ ...system(), before: now(), limit: 500 });
+    expect([await changeExists(mark), await changeExists(other)]).toEqual([true, false]);
+  });
+
   it('deletes guarded changes closed more than 60 months ago and every change of an app deleted that long ago; open ones stay', async () => {
     const app = await orgApp();
     const cancelled = await guarded(app.id, { status: 'cancelled', proposedAt: now() - 70 * MONTH, closedAt: now() - 69 * MONTH });

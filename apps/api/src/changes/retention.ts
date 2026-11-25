@@ -13,7 +13,7 @@
 // changes what derivation depends on: paths and identities are on chain; these rows are indexes and history.
 import { DELETED_APP_GRACE_MS, type ApiPurgeAuditResult, type DeletedAppsResult, type PurgeDirectoryResult, type PurgeUserEventsResult } from '@hana-id/console-core';
 import type { HotDb } from './db.ts';
-import { DRIFT_LEDGER_KINDS } from './drift.ts';
+import { DRIFT_LEDGER_KINDS, SHARED_SCOPE_LEDGER_KIND } from './drift.ts';
 import { type Q, q, raw } from './sql.ts';
 
 const kinds = (list: readonly string[]): Q => raw(list.map((k) => `'${k.replace(/'/gu, "''")}'`).join(', '));
@@ -33,6 +33,9 @@ const DRIFT_ROW = q`(c.app_id IS NOT NULL
   AND EXISTS (SELECT 1 FROM app_changes b WHERE b.app_id = c.app_id AND b.kind = 'migration.baseline')
   AND (c.kind IN (${kinds(DRIFT_LEDGER_KINDS)})
        OR EXISTS (SELECT 1 FROM json_each(c.detail_json, '$.parts') p WHERE json_extract(p.value, '$.kind') IN (${kinds(DRIFT_LEDGER_KINDS)}))))`;
+
+/** D915: a scope's mark, which drift reads for as long as the scope exists: never purged. */
+const SCOPE_MARK_ROW = q`(c.kind = ${SHARED_SCOPE_LEDGER_KIND})`;
 
 /**
  * A guarded change past 60 months that nothing reads any more: closed (cancelled or ended) that long ago and no origin
@@ -57,7 +60,7 @@ const LABEL_ROW = q`((c.kind LIKE 'labels.%' OR (c.kind IN ('change.announced', 
 export async function purgeAudit(db: HotDb, i: { before: number; limit: number }): Promise<ApiPurgeAuditResult> {
   const cutoff = auditCutoff(i.before);
   const [changes, guarded] = await db.batch([
-    q`DELETE FROM app_changes WHERE seq IN (SELECT c.seq FROM app_changes c WHERE c.at < ${cutoff} AND NOT ${DRIFT_ROW} AND NOT ${LABEL_ROW} ORDER BY c.seq LIMIT ${i.limit})`,
+    q`DELETE FROM app_changes WHERE seq IN (SELECT c.seq FROM app_changes c WHERE c.at < ${cutoff} AND NOT ${DRIFT_ROW} AND NOT ${LABEL_ROW} AND NOT ${SCOPE_MARK_ROW} ORDER BY c.seq LIMIT ${i.limit})`,
     q`DELETE FROM guarded_changes WHERE id IN (SELECT g.id FROM guarded_changes g WHERE ${OLD_GUARDED(cutoff)} ORDER BY g.proposed_at, g.id LIMIT ${i.limit})`,
   ]);
   return { appChanges: changes!.meta.changes ?? 0, guardedChanges: guarded!.meta.changes ?? 0 };

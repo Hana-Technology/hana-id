@@ -174,6 +174,47 @@ describe('a fresh sign-in, end to end in the SPA', () => {
   });
 });
 
+describe('an app that shares a wallet (D915)', () => {
+  const shared = (extra: Record<string, unknown> = {}) => ({ ...APP, sharedScope: true, createdByKind: 'hana', sharedWallet: true, ...extra });
+
+  it('Signing shows that auto-approve is off and no policy editor, even for an on-chain owner; raw signing is unchanged', async () => {
+    signedIn();
+    routes['/api/orgs/org_a/apps/app_1'] = { body: { app: shared() } };
+    at('/orgs/org_a/apps/app_1/signing');
+    expect(await screen.findByText(/Auto-approve is off for apps that share a wallet\. This app uses the same wallet as other apps/u)).toBeTruthy();
+    expect(screen.queryByLabelText(/Policy \(JSON/u)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Check and preview' })).toBeNull();
+    // Raw signing waits for the scope's on-chain owners to be read, as before.
+    expect(await screen.findByRole('button', { name: /Turn raw signing on/u })).toBeTruthy();
+    expect(screen.queryByLabelText(/Policy \(JSON/u)).toBeNull();
+  });
+
+  it('a platform-created app on an unmarked scope gets the same; a policy found there can still be removed', async () => {
+    signedIn();
+    routes['/api/orgs/org_a/apps/app_1'] = { body: { app: shared({ sharedScope: false, createdByKind: 'platform', settings: { ...APP.settings, policy: { policyId: 'p'.repeat(64), label: 'Found', json: {} } } }) } };
+    at('/orgs/org_a/apps/app_1/signing');
+    expect(await screen.findByText(/Auto-approve is off for apps that share a wallet/u)).toBeTruthy();
+    expect(screen.queryByLabelText(/Policy \(JSON/u)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Remove the policy' })).toBeTruthy();
+  });
+
+  it('the overview says it is off and doesn’t suggest a policy; an app that doesn’t share one still does', async () => {
+    signedIn();
+    routes['/api/orgs/org_a/apps/app_1'] = { body: { app: shared() } };
+    at('/orgs/org_a/apps/app_1');
+    expect(await screen.findByText('Off for apps that share a wallet: users approve every request')).toBeTruthy();
+    expect(screen.queryByText(/an auto-approve policy \(/u)).toBeNull();
+    cleanup();
+    routes['/api/orgs/org_a/apps/app_1'] = { body: { app: { ...APP, sharedScope: false, createdByKind: 'hana', sharedWallet: false } } };
+    at('/orgs/org_a/apps/app_1');
+    expect(await screen.findByText('None: users approve every request')).toBeTruthy();
+    expect(screen.getByText(/an auto-approve policy \(/u)).toBeTruthy();
+    cleanup();
+    at('/orgs/org_a/apps/app_1/signing');
+    expect(await screen.findByLabelText(/Policy \(JSON/u)).toBeTruthy();
+  });
+});
+
 describe('immediate writes', () => {
   it('a key revoke needs a second click, then posts with the CSRF header', async () => {
     signedIn();

@@ -34,7 +34,7 @@ const NOW = Date.UTC(2026, 10, 2, 9);
 // the acknowledged notice (sandbox-dev itself has one since M4; see the refusal test).
 const { console: _console, files: _files, admin: _admin, usage: _usage, email: _email, ownerGrantDelayMs: _ownerGrant, ...sandbox } = loadEnv('sandbox-dev');
 const DELAY = sandbox.appChangeDelayMs;
-const SPEC = { strings: ['org', 'name', 'scope', 'environment', 'plan', 'app'], multiple: ['origin'] };
+const SPEC = { strings: ['org', 'name', 'scope', 'environment', 'plan', 'app'], multiple: ['origin'], booleans: ['shared-wallet'] };
 /** Fixture publishable keys (public by design; low-entropy so they read as fixtures). */
 const fixtureKey = (word: string) => `pk_test_${word.repeat(6)}`;
 const APP_KEY = fixtureKey('App');
@@ -80,6 +80,42 @@ const ledger = (appId: string) =>
   );
 /** The gate's origin predicate (apps/api/src/apps.ts getAppByKey): the origins in force at `now`. */
 const inForce = (appId: string, now: number) => (h.db.prepare('SELECT origin FROM app_origins WHERE app_id = ? AND active_from <= ? ORDER BY origin').all(appId, now) as { origin: string }[]).map((r) => r.origin);
+
+describe('app:create --shared-wallet (D915 after PR 145’s review)', () => {
+  const mark = (scope: string) => (h.db.prepare('SELECT app_user_ids FROM scopes WHERE scope_id = ?').get(scope) as { app_user_ids: number } | undefined)?.app_user_ids;
+
+  it('a new test scope is created marked, with the mark’s own ledger row; its app shares the wallet', async () => {
+    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet']);
+    expect(mark('s7')).toBe(1);
+    const rows = h.db.prepare("SELECT kind, app_id, detail_json, request_id FROM app_changes WHERE scope_id = 's7' ORDER BY seq").all() as { kind: string; app_id: string | null; detail_json: string; request_id: string }[];
+    expect(rows.map((r) => [r.kind, r.app_id])).toEqual([
+      ['scope.app_user_ids', null],
+      ['app.created', 'app_1'],
+    ]);
+    expect(JSON.parse(rows[0]!.detail_json)).toEqual({ appUserIds: 1, apps: ['app_1'], atCreate: true });
+    expect(rows[0]!.request_id).toBe(`${rows[1]!.request_id}:mark`);
+    expect(JSON.parse(rows[1]!.detail_json)).toMatchObject({ appUserIds: true });
+    expect(out()).toContain('shared by several partners’ apps: no auto-approve');
+  });
+
+  it('on an existing scope only when it is already marked; never for a live scope; not on a D1 without migration 0026', async () => {
+    seedHotApp(h.db, { id: 'app_old', key: OLD_KEY, scope: 's1' });
+    await expect(create(['--org', 'org_legacy', '--name', 'W', '--scope', 's1', '--origin', 'https://p.example.com', '--shared-wallet'])).rejects.toThrow('exists and isn\'t marked as shared');
+    h.db.prepare("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's1'").run();
+    await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's1', '--origin', 'https://p.example.com', '--shared-wallet']);
+    expect(h.db.prepare("SELECT COUNT(*) AS n FROM app_changes WHERE kind = 'scope.app_user_ids'").get()).toEqual({ n: 0 });
+    await expect(create(['--org', 'org_legacy', '--name', 'L', '--scope', 's8', '--environment', 'live', '--origin', 'https://p.example.com', '--shared-wallet'])).rejects.toThrow('Only a test scope can be marked as shared');
+    expect(mark('s8')).toBeUndefined();
+    h.db = newHotDb({ before: '0026' });
+    h.deps.d1 = d1Of(h.db);
+    await expect(create(['--org', 'org_legacy', '--name', 'P', '--scope', 's8', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet'])).rejects.toThrow('needs migration 0026');
+    // Without the flag, a new scope is unmarked as before (on a D1 with 0026).
+    h.db = newHotDb();
+    h.deps.d1 = d1Of(h.db);
+    await create(['--org', 'org_legacy', '--name', 'P', '--scope', 's8', '--environment', 'test', '--origin', 'https://p.example.com']);
+    expect(mark('s8')).toBe(0);
+  });
+});
 
 describe('app:create', () => {
   it('on a new scope: needs --org and --environment, writes the scope, the app, its key by environment, origins as proposals with the no_session waiver', async () => {

@@ -2,6 +2,7 @@
 // and email"): the staff actor lands in `app_changes` and `audit_log`; an AdminRpc suspension works with the console
 // Worker down; createApp and assignScopeOrg get the org's owners' subs from listMembers; contacts, members, invites,
 // owner grants, apps, changes, keys; the audit view and its CSV; no user export route (the Users screen: users.test.ts).
+import { newPublishableKey } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index.ts';
@@ -211,6 +212,50 @@ describe('apps, changes, keys', () => {
   });
 });
 
+describe('a shared scope (D915)', () => {
+  it('marks the app’s scope through the real API as the staff actor, once; then a staff policy is refused in the shared words; another org is not_found', async () => {
+    const app = await seedHotApp();
+    const res = await adminRequest(`/api/scopes/${app.scope}/app-user-ids`, { body: { orgId: app.org } });
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({ changed: true });
+    expect(await env.HOT_DB.prepare('SELECT app_user_ids FROM scopes WHERE scope_id = ?1').bind(app.scope).first()).toEqual({ app_user_ids: 1 });
+    expect(await env.HOT_DB.prepare("SELECT actor_kind, actor_id FROM app_changes WHERE kind = 'scope.app_user_ids' AND scope_id = ?1").bind(app.scope).first()).toEqual({ actor_kind: 'hana', actor_id: STAFF_SUB });
+    expect(await json(await adminRequest(`/api/scopes/${app.scope}/app-user-ids`, { body: { orgId: app.org } }))).toEqual({ changed: false });
+    const detail = await json<{ app: { sharedScope: boolean; sharedWallet: boolean } }>(await adminRequest(`/api/apps/${app.id}?org=${app.org}`));
+    expect(detail.app).toMatchObject({ sharedScope: true, sharedWallet: true });
+    const policy = await adminRequest(`/api/apps/${app.id}/changes`, { body: { orgId: app.org, kind: 'policy_set', policy: { v: 1 }, expectedVersion: (await hotVersion(app.id)).settings } });
+    expect(policy.status).toBe(400);
+    expect(await json(policy)).toEqual({ error: { code: 'policy_invalid', message: 'Auto-approve is off for apps that share a wallet' } });
+    expect((await adminRequest(`/api/scopes/${app.scope}/app-user-ids`, { body: { orgId: 'org_other12345' } })).status).toBe(404);
+  });
+
+  it('a live scope is refused by the route before the API is asked to mark it, and createApp with the mark for a live app too', async () => {
+    const app = await seedHotApp();
+    const live = `s${uid().toLowerCase()}`;
+    const key = newPublishableKey('live');
+    await env.HOT_DB.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?1, ?2, 'live', NULL, 1, 1)").bind(live, app.org).run();
+    await env.HOT_DB.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan) VALUES (?1, 'Live', ?2, ?3, ?4, 'active', 'free')").bind(`app_${uid()}`, live, app.org, key).run();
+    const calls: string[] = [];
+    const api = overrideBinding(env.API, {
+      setScopeAppUserIds: async () => {
+        calls.push('setScopeAppUserIds');
+        return { ok: true, changed: true };
+      },
+    });
+    const jwt = await staffJwt();
+    const post = (path: string, body: unknown) => worker.fetch(new Request(`${ADMIN}${path}`, { method: 'POST', headers: { ...CSRF, 'cf-access-jwt-assertion': jwt }, body: JSON.stringify(body) }), envWith({ API: api }));
+    const res = await post(`/api/scopes/${live}/app-user-ids`, { orgId: app.org });
+    expect(res.status).toBe(400);
+    expect(await json(res)).toEqual({ error: { code: 'env_mismatch', message: 'Only a test scope can be marked as shared for now: a live shared scope needs its own security review first' } });
+    expect(calls).toEqual([]);
+    // The real API refuses it too.
+    expect(await json(await adminRequest(`/api/scopes/${live}/app-user-ids`, { body: { orgId: app.org } }))).toMatchObject({ error: { code: 'env_mismatch' } });
+    const created = await adminRequest('/api/apps', { body: { orgId: app.org, scopeId: 'snewlive1', environment: 'live', name: 'Live app', origins: [], appUserIds: true } });
+    expect(created.status).toBe(400);
+    expect(await json(created)).toMatchObject({ error: { code: 'env_mismatch' } });
+  });
+});
+
 describe('audit and CSV', () => {
   it('GET /api/audit: console rows by filter, and with an org filter its app changes', async () => {
     const app = await seedHotApp();
@@ -291,6 +336,7 @@ describe('the route table', () => {
         "POST /api/owner-grants/:id/cancel",
         "POST /api/apps",
         "POST /api/scopes/:scope/assign",
+        "POST /api/scopes/:scope/app-user-ids",
         "GET /api/apps/:app",
         "POST /api/apps/:app/suspend",
         "POST /api/apps/:app/resume",

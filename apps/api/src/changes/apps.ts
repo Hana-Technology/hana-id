@@ -2,7 +2,7 @@
 // and the plan read every app write starts with. Every org-facing query has `WHERE org_id = ?`: org A asking for org
 // B's app is `not_found`, exactly like an app that doesn't exist.
 import type { AppDetail, AppSummary, GuardedChange } from '@hana-id/console-core';
-import { originDisplay } from '@hana-id/console-core';
+import { autoApproveRefused, originDisplay } from '@hana-id/console-core';
 import { NOT_YET, type Writer, refuse, refuseReplay, replayRow } from './cas.ts';
 import type { HotDb } from './db.ts';
 import { policyInForce, rawSignInForce, storedPolicy } from './policy.ts';
@@ -101,6 +101,10 @@ export async function detailView(
       identityEmail: row.identity_email === 'on_request' || row.identity_email === 'at_login' ? row.identity_email : 'off',
       loginMethods: row.login_methods === 'email' || row.login_methods === 'google,email' ? row.login_methods : 'google',
     },
+    // D915: the scope's shared flag and the app's creator, and the rule the screens hide the policy editor by.
+    sharedScope: row.app_user_ids !== 0,
+    createdByKind: row.created_by_kind,
+    sharedWallet: sharedWallet(row),
     // Each change's status as it is in force now (changeView), so a page never offers Cancel on a change in force.
     changes: latestPolicyOnly(changes.map((c) => changeView(c, now))),
     keys: keys.map(keyView),
@@ -167,6 +171,13 @@ export async function planApp(
   if (r.deleted_at !== null && !i.allowDeleted) return refuse('not_found', 'The app is deleted');
   return { app: r, origins: jsonRows<OriginRow>(r.origins_json), openChanges: jsonRows<ChangeRow>(r.changes_json), keys: jsonRows<KeyRow>(r.keys_json) };
 }
+
+/**
+ * D915: the app may never have an auto-approve policy (its scope is shared, or the platform created it). Fails closed:
+ * a scope flag that isn't 0 (a missing scope row reads NULL) and any creator but `hana` count as shared.
+ */
+export const sharedWallet = (row: Pick<AppRow, 'app_user_ids' | 'created_by_kind'>): boolean =>
+  autoApproveRefused({ sharedScope: row.app_user_ids !== 0, createdByKind: row.created_by_kind });
 
 /** The expected version must be the stored one (the console read it; a moved one is `version_conflict`). */
 export function expectVersion(stored: number, expected: number): void {

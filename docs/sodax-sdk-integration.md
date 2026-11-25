@@ -6,7 +6,10 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909 and D913 in `decisions.md`. The build spec for the
 portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-25 (branch `docs/platform-answers`, from `next`, not merged, docs only: section 3's point 4
+Last verified: 2026-11-25 (branch `feat/shared-scope-rules`, after PR 145's review: section 4's mark at the first
+app, test scopes only, D915); 2026-11-25 (branch `feat/shared-scope-rules`, from `next`, not merged, not deployed: section 4's
+auto-approve item, now refused in code once staff mark the scope as shared, D915);
+2026-11-25 (branch `docs/platform-answers`, from `next`, not merged, docs only: section 3's point 4
 and "Open" carry the Tech Lead's answers of 2026-11-25 (D914), revised after PR 142's review; nothing else
 re-checked);
 2026-11-24 (branch `feat/shared-wallet-line`, after PR 141's review: section 4's count and "may" line,
@@ -164,7 +167,9 @@ still lists the apps that use a wallet. The line must be live before the partner
 
 - auto-approve policies: the consent screen now names the other apps (D912), but a consent given while the scope
   had N apps isn't asked again when another joins, so a policy can outlast what the user was told (auto-approved Sodax
-  swaps stay deferred, D708);
+  swaps stay deferred, D708). Refused in code (D915) once Journear staff mark the scope as shared (one way; test scopes
+  only for now) and for every app the platform creates: until the scope is marked it is still a rule kept by hand, so
+  mark Sodax's test scope when its first app is created (`admin app:create … --shared-wallet`, `docs/operations.md`);
 - raw signing (already refused for test apps);
 - the mainnet demo, except under staff's per-app rule (section 5);
 - gas sponsorship for EVM actions (not live), until each partner's sponsored calls are reviewed.

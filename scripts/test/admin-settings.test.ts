@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { policyId } from '@hana-id/core/policy';
+import { SHARED_WALLET_NO_AUTO_APPROVE } from '@hana-id/console-core';
 import { loadEnv } from '@hana-id/env';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { type AppCmdDeps, appChangesAnnounce } from '../lib/admin-apps.ts';
@@ -26,6 +27,10 @@ import {
   formatDuration,
   IDENTITY_EMAIL_COLUMN_SQL,
   IDENTITY_EMAIL_NEEDS_0014,
+  AUTO_APPROVE_NEEDS_0026,
+  AUTO_APPROVE_SHARED_WALLET,
+  SHARED_SCOPE_COLUMNS_SQL,
+  sharedWalletOf,
   IDLE_TTL_MIN_MS,
   parseDuration,
   parseSettingsArgs,
@@ -621,6 +626,93 @@ describe('app:settings --auto-approve', () => {
     ]);
     await h.run(['--auto-approve', 'off']);
     expect(output()).toContain('auto-approve: already off');
+  });
+});
+
+describe('app:settings --auto-approve on an app that shares a wallet (D915)', () => {
+  const file = (name: string, value: unknown) => {
+    h.files.set(name, typeof value === 'string' ? value : JSON.stringify(value));
+    return name;
+  };
+  const nothingWritten = () => {
+    expect(row(h.db)).toMatchObject({ settings_version: 0, auto_approve_policy: null, auto_approve_pending: null });
+    expect(changes(h.db)).toEqual([]);
+    expect(ledger(h.db)).toEqual([]);
+  };
+
+  it('refuses a new policy for an app on a marked scope, with the words, before reading the file; off still works', async () => {
+    h.db.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?').run(SCOPE);
+    await expect(h.run(['--auto-approve', file('p.json', policy())])).rejects.toThrow(AUTO_APPROVE_SHARED_WALLET);
+    expect(AUTO_APPROVE_SHARED_WALLET).toContain(SHARED_WALLET_NO_AUTO_APPROVE);
+    // Even an invalid file: the shared-wallet refusal comes first.
+    await expect(h.run(['--auto-approve', file('bad.json', '{"v":1,')])).rejects.toThrow(AUTO_APPROVE_SHARED_WALLET);
+    nothingWritten();
+    // The display says so; `off` (nothing to remove) is no change, not a refusal.
+    await h.run([]);
+    expect(output()).toContain(`${SHARED_WALLET_NO_AUTO_APPROVE}: the app's scope is shared by several partners' apps, or the platform created it`);
+    await h.run(['--auto-approve', 'off']);
+    expect(output()).toContain('auto-approve: already off');
+  });
+
+  it('refuses a new policy for an app the platform created, on an unmarked scope', async () => {
+    h.db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, created_at, created_by_kind) VALUES ('app_platform1', 'Platform', ?, 'org_legacy', 'pk_test_platform1abcdefgh', 1, 'platform')").run(SCOPE);
+    h.db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES ('key_platform1', 'app_platform1', 'pk_test_platform1abcdefgh', 'test', 1)").run();
+    await expect(h.run(['app_platform1', '--auto-approve', file('p.json', policy())])).rejects.toThrow(AUTO_APPROVE_SHARED_WALLET);
+    expect(h.db.prepare("SELECT COUNT(*) AS n FROM guarded_changes WHERE app_id = 'app_platform1'").get()).toEqual({ n: 0 });
+    // The staff-created app on the same scope is unchanged.
+    await h.run(['--auto-approve', file('p.json', policy())]);
+    expect(changes(h.db)).toMatchObject([{ kind: 'policy_set', status: 'pending' }]);
+  });
+
+  it('an unmarked app is unchanged; raw signing is another rule', async () => {
+    await h.run([LIVE_KEY, '--auto-approve', file('p.json', policy())]);
+    expect(changes(h.db, LIVE)).toMatchObject([{ kind: 'policy_set', status: 'pending' }]);
+    h.db.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?').run(SCOPE);
+    expect(row(h.db, LIVE)).toMatchObject({ app_user_ids: 0, created_by_kind: 'hana' });
+  });
+
+  it('is in the write guard: a scope marked after the read makes the stale plan commit nothing', async () => {
+    const before = row(h.db);
+    const plan = planSettings(before, { autoApprove: { text: JSON.stringify(policy()), file: 'p.json' } }, { now: NOW, requestId: 'stale', newChangeId: () => 'gc_stale' });
+    h.db.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?').run(SCOPE);
+    const rows = d1Of(h.db)(`${[...plan.write!.statements, "SELECT COUNT(*) AS committed FROM app_changes WHERE request_id = 'stale'"].join(';\n')};`);
+    expect(Number(rows[0]!.committed)).toBe(0);
+    nothingWritten();
+  });
+
+  it('the guard is only on a new policy: other settings of a marked app still change', async () => {
+    h.db.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?').run(SCOPE);
+    await h.run(['--persistence', 'none']);
+    expect(row(h.db)).toMatchObject({ persistence: 'none', settings_version: 1 });
+  });
+
+  describe('on a hot D1 without migration 0026', () => {
+    beforeEach(() => {
+      const old = newHotDb({ before: '0026' });
+      seedHotApp(old, { id: APP, key: KEY, scope: SCOPE });
+      h.db = old;
+    });
+
+    it('the column check reads 0; a new policy is refused ("apply it first"); off and other settings still work', async () => {
+      expect(d1Of(h.db)(SHARED_SCOPE_COLUMNS_SQL)).toEqual([{ n: 0 }]);
+      await expect(h.run(['--auto-approve', file('p.json', policy())])).rejects.toThrow(AUTO_APPROVE_NEEDS_0026);
+      expect(h.db.prepare('SELECT COUNT(*) AS n FROM guarded_changes').get()).toEqual({ n: 0 });
+      await h.run(['--persistence', 'none']);
+      await h.run(['--auto-approve', 'off']);
+      expect(h.db.prepare('SELECT persistence FROM apps WHERE id = ?').get(APP)).toEqual({ persistence: 'none' });
+    });
+  });
+
+  it('the column check reads 1 once migration 0026 is applied', () => {
+    expect(d1Of(h.db)(SHARED_SCOPE_COLUMNS_SQL)).toEqual([{ n: 1 }]);
+  });
+
+  it('fails closed on unexpected values: a NULL mark or a creator other than hana shares a wallet; no columns is unknown', () => {
+    expect(sharedWalletOf({ app_user_ids: 0, created_by_kind: 'hana' })).toBe(false);
+    expect(sharedWalletOf({ app_user_ids: null, created_by_kind: 'hana' })).toBe(true);
+    expect(sharedWalletOf({ app_user_ids: 0, created_by_kind: 'someone' })).toBe(true);
+    expect(sharedWalletOf({ app_user_ids: 2, created_by_kind: 'hana' })).toBe(true);
+    expect(sharedWalletOf({})).toBeNull();
   });
 });
 

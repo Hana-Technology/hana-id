@@ -14,12 +14,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { admitMemberCall } from '../src/changes/guard.ts';
 import { HotDb } from '../src/changes/db.ts';
 import { placedStub } from '../src/placement.ts';
-import { PLATFORM_LIMITS, PLATFORM_WINDOWS, UNAUTHENTICATED_MESSAGE, ipPrefix, isPlatformPath } from '../src/platform/request.ts';
+import { DUMMY_KEY, PLATFORM_LIMITS, PLATFORM_WINDOWS, UNAUTHENTICATED_MESSAGE, ipPrefix, isPlatformPath, platformIpSubject } from '../src/platform/request.ts';
 import { PLATFORM_ROUTES, platformRequestId } from '../src/platform/routes.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { ConsoleRpc } from '../src/rpc/console.ts';
 import vectors from '../../../packages/console-core/test/platform-request-vectors.json' with { type: 'json' };
 import { call } from './helpers.ts';
+import worker from '../src/index.ts';
+import routesSource from '../src/platform/routes.ts?raw';
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { type Sent, callsOf, deliver, freeze, freshIp, freshNow, keyPair, keyRow, read, seedKey, send, switchOff, switchOn } from './platform-helpers.ts';
 import { type DbCount, countingDb, orgApp, rows } from './rpc-helpers.ts';
 
@@ -34,12 +37,9 @@ async function failIp(ip: string, now: number) {
   const subject = `v4:${ip}`;
   for (let i = 0; i < PLATFORM_REQUEST_LIMITS.failuresPerIpPerMinute; i++) await limiter(`platform:ip:${subject}`).hit([...PLATFORM_WINDOWS.ip], now);
 }
-const overflow = () => placedStub(env, env.RATE_LIMITER, 'platform:ip-overflow');
-async function fillOverflow(now: number) {
-  for (let i = 0; i < PLATFORM_REQUEST_LIMITS.overflowPerMinute; i++) await overflow().hit([...PLATFORM_WINDOWS.overflow], now);
-}
-async function emptyOverflow(now: number) {
-  for (let i = 0; i < PLATFORM_REQUEST_LIMITS.overflowPerMinute; i++) await overflow().unhit([...PLATFORM_WINDOWS.overflow], now);
+/** Fills a key's own overflow window (as 20 requests naming it from a full IP would). */
+async function fillKeyOverflow(keyId: string, now: number) {
+  for (let i = 0; i < PLATFORM_REQUEST_LIMITS.overflowPerKeyPerMinute; i++) await placedStub(env, env.RATE_LIMITER, `platform:keyfail:${keyId}`).hit([...PLATFORM_WINDOWS.overflow], now);
 }
 const events = (kind: string, org: string) => rows<{ id: string; detail_json: string }>('SELECT id, detail_json FROM security_events WHERE kind = ?1 AND org_id = ?2', kind, org);
 const noCors = (headers: [string, string][]) => expect(headers.filter(([k]) => k.startsWith('access-control-'))).toEqual([]);
@@ -101,14 +101,13 @@ describe('every refusal in A3’s order, with its code', () => {
     const now = freshNow();
     const bad = { signature: (s: string) => `${s.slice(0, 10)}${s[10] === 'A' ? 'B' : 'A'}${s.slice(11)}` };
 
-    // 1. The IP's window and the overflow both full: 429, whatever else is wrong.
+    // 1. The IP's window full and the key's own overflow full: 429, whatever else is wrong.
     const ip = freshIp();
     await failIp(ip, now);
-    await fillOverflow(now);
+    await fillKeyOverflow(k.id, now);
     let r: Omit<Sent, 'request'> = await send(k, { now, ip, method: 'PUT', path: '/v1/platform//x', headers: { origin: 'https://evil.example' } });
     expect([r.status, r.body.code, r.body.limit]).toEqual([429, 'rate_limited', 'platform:ip']);
     expect(Number(r.res.headers.get('retry-after'))).toBeGreaterThan(0);
-    await emptyOverflow(now);
 
     // 2. An Origin: 403 browser_refused, no CORS header, before the method or the path.
     r = await send(k, { now, method: 'PUT', path: '/v1/platform//x', headers: { origin: 'https://evil.example' } });
@@ -433,7 +432,7 @@ describe('one answer for every authentication failure', () => {
 // ---- the per-IP window (M2) ----
 
 describe('the per-IP window counts only requests not admitted (M2)', () => {
-  it('admitted requests never use it; failures fill it; a valid key behind a failing IP is still admitted through the overflow', async () => {
+  it('admitted requests never use it; failures fill it; past it only a key id announced here gets in, under its own overflow', async () => {
     const k = await seedKey();
     const now = freshNow();
     const ip = freshIp();
@@ -442,17 +441,46 @@ describe('the per-IP window counts only requests not admitted (M2)', () => {
     // Someone else fails from the same IP until its window is full...
     const stranger = { id: 'pkc_7Hq2Vx9Lm4Rt8Ko', privateKey: (await keyPair()).privateKey };
     for (let i = 0; i < PLATFORM_REQUEST_LIMITS.failuresPerIpPerMinute; i++) expect((await send(stranger, { now, ip })).status).toBe(401);
-    // ... and the valid key is still admitted, through the overflow window, whose slot it then gives back.
-    const r = await send(k, { now, ip });
-    expect(r.status).toBe(200);
-    // The failing one keeps being answered (401), each time under the shared overflow window.
-    expect((await send(stranger, { now, ip })).status).toBe(401);
-    // With the overflow full too, both are refused at check 1 (the residual: a flood from many IPs at once).
-    await fillOverflow(now);
-    expect((await send(k, { now, ip })).body.limit).toBe('platform:ip');
-    await emptyOverflow(now);
+    // ... then a random key id from it is refused at check 1, with no D1 read; the valid key is still admitted, through its own overflow.
+    const reads = vi.spyOn(HotDb.prototype, 'first');
+    expect((await send(stranger, { now, ip })).body.limit).toBe('platform:ip');
+    expect(reads).not.toHaveBeenCalled();
+    for (let i = 0; i < 10; i++) expect((await send(k, { now: now + 30_000 + i * 600, ip })).status, String(i)).toBe(200);
+    // Admitted requests give their overflow slot back, so it never fills with them.
+    expect(await placedStub(env, env.RATE_LIMITER, `platform:keyfail:${k.id}`).hit([...PLATFORM_WINDOWS.overflow], now)).toMatchObject({ ok: true });
     // Another IP is untouched.
     expect((await send(k, { now })).status).toBe(200);
+  });
+
+  it('the true residual: an attacker who knows a key id and shares its IP can fill that key’s overflow; the key’s self-revoke still gets in', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    // Every Worker's cross-zone subrequest arrives as one address (Cloudflare: 2a06:98c0:3600::103), one subject here.
+    const ip = '2a06:98c0:3600::103';
+    for (let i = 0; i < PLATFORM_REQUEST_LIMITS.failuresPerIpPerMinute; i++) await limiter(`platform:ip:v6:2a06:98c0:3600::/48`).hit([...PLATFORM_WINDOWS.ip], now);
+    // The attacker names the victim's key id with bad signatures until the key's overflow is full.
+    const other = (await keyPair()).privateKey;
+    for (let i = 0; i < PLATFORM_REQUEST_LIMITS.overflowPerKeyPerMinute; i++) expect((await send(k, { now, ip, signWith: other })).status).toBe(401);
+    const get = await send(k, { now, ip });
+    expect([get.status, get.body.limit]).toEqual([429, 'platform:ip']);
+    // The self-revoke, signed by the key, is still checked (its pre-auth window) and stops the key.
+    const stop = await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke' });
+    expect(stop.status).toBe(200);
+    expect((await keyRow(k.id)).status).toBe('revoked');
+  });
+
+  it('the self-revoke’s pre-auth window is strictly bounded per key id', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const ip = freshIp();
+    await failIp(ip, now);
+    await fillKeyOverflow(k.id, now);
+    const other = (await keyPair()).privateKey;
+    for (let i = 0; i < PLATFORM_REQUEST_LIMITS.revokePreauthPerKeyPerMinute; i++) expect((await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke', signWith: other })).status).toBe(401);
+    expect((await send(k, { now, ip, method: 'POST', path: '/v1/platform/credential/revoke' })).body.limit).toBe('platform:ip');
+    expect((await keyRow(k.id)).status).toBe('active');
+    // From any IP whose window isn't full it works at once.
+    expect((await send(k, { now, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(200);
   });
 
   it('a refusal after a valid signature (switch off, replay) counts as not admitted', async () => {
@@ -468,6 +496,10 @@ describe('the per-IP window counts only requests not admitted (M2)', () => {
   it('the IP prefix recorded is a /24 or a /48', () => {
     expect(ipPrefix('v4:203.0.113.77')).toBe('203.0.113.0/24');
     expect(ipPrefix('v6:2001:db8:1:2::/64')).toBe('2001:db8:1::/48');
+    // The failure window's subject: IPv6 by /48 (F5).
+    expect(platformIpSubject('2001:db8:1:2:3:4:5:6')).toBe('v6:2001:db8:1::/48');
+    expect(platformIpSubject('2001:db8:1:ffff::1')).toBe('v6:2001:db8:1::/48');
+    expect(platformIpSubject('203.0.113.77')).toBe('v4:203.0.113.77');
     expect(ipPrefix('other:unknown')).toBeNull();
   });
 });
@@ -492,7 +524,7 @@ describe('the org’s switch and freeze, and the self-revoke', () => {
     expect(r.body).toEqual({ revokedAt: now, requestId: expect.any(String) });
     expect(await keyRow(k.id)).toMatchObject({ status: 'revoked', revoked_at: now, revoked_by_kind: 'platform', revoked_by: k.id, revoke_reason: 'Rotating to the standby key' });
     const ledger = await rows<{ kind: string; actor_kind: string; actor_id: string; request_id: string; detail_json: string }>('SELECT kind, actor_kind, actor_id, request_id, detail_json FROM app_changes WHERE org_id = ?1 ORDER BY seq', k.org);
-    const rid = await platformRequestId(k.org, 'stop-0001');
+    const rid = await platformRequestId(k.org, 'stop-0001', k.id);
     expect(ledger.map((l) => [l.kind, l.actor_kind, l.actor_id, l.request_id])).toEqual([
       ['platform.key_revoked', 'platform', k.id, rid],
       ['change.cancelled', 'platform', k.id, `${rid}:cancelled`],
@@ -617,8 +649,8 @@ describe('GET /v1/platform/credential and the call log', () => {
 describe('each route within its hot-DB cost (L8)', () => {
   it('the declared costs and PLATFORM_DB_LIMITS hold, the failure path of the revoke included', async () => {
     expect(PLATFORM_ROUTES.map((r) => [r.method, r.path, r.cost])).toEqual([
-      ['GET', '/v1/platform/credential', 3],
-      ['POST', '/v1/platform/credential/revoke', 10],
+      ['GET', '/v1/platform/credential', 4],
+      ['POST', '/v1/platform/credential/revoke', 11],
     ]);
     for (const [route, fault] of [[PLATFORM_ROUTES[0]!, undefined], [PLATFORM_ROUTES[1]!, undefined], [PLATFORM_ROUTES[1]!, 1]] as const) {
       const k = await seedKey();
@@ -626,7 +658,8 @@ describe('each route within its hot-DB cost (L8)', () => {
       const r = await send(k, { now: freshNow(), method: route.method, path: route.path, bindings: { DB: countingDb(env.DB, count, fault === undefined ? {} : { faultAt: fault }) } });
       expect(r.status, `${route.path} ${fault ?? ''}`).toBe(fault === undefined ? 200 : 500);
       expect(count.statements, route.path).toBeLessThanOrEqual(route.cost);
-      expect(count.reads).toBeLessThanOrEqual(3);
+      // The call's three reads at most, and the announced keys' list (once every 30 s per isolate; here, after a seed).
+      expect(count.reads).toBeLessThanOrEqual(4);
       expect(count.batches).toBeLessThanOrEqual(2);
       if (fault !== undefined) {
         // The failed revoke changed nothing and is recorded as the 500 it answered.
@@ -647,15 +680,16 @@ describe('each route within its hot-DB cost (L8)', () => {
     const b = await seedKey({ org: a.app });
     const other = await seedKey();
     const now = freshNow();
-    // 40 tokens, 3 a call, 10 kept for kill switches: 10 calls, then the org's bucket says no.
+    // 40 tokens, 4 a call, 10 kept for kill switches: 7 calls, then the org's bucket says no.
     const results: number[] = [];
-    for (let i = 0; i < 12; i++) results.push((await send(i % 2 ? a : b, { now })).status);
-    expect(results.slice(0, 10)).toEqual(Array(10).fill(200));
+    for (let i = 0; i < 7; i++) results.push((await send(i % 2 ? a : b, { now })).status);
+    expect(results).toEqual(Array(7).fill(200));
     const refused = await send(a, { now });
     expect([refused.status, refused.body.limit]).toEqual([429, 'platform:budget_org']);
-    expect((await send(other, { now })).status).toBe(200);
+    // The platform as a whole never takes the console's shared bucket below its floor: another org's call a second later.
+    expect((await send(other, { now: now + 1000 })).status).toBe(200);
     // The key's minute wasn't charged for the refused ones (unhit), so it isn't what refuses.
-    expect(PLATFORM_LIMITS.perOrg).toEqual({ ratePerS: 5, burst: 40, reserve: 10 });
+    expect(PLATFORM_LIMITS.perOrg).toEqual({ ratePerS: 8, burst: 40, reserve: 10 });
   });
 });
 
@@ -663,7 +697,7 @@ describe('each route within its hot-DB cost (L8)', () => {
 
 describe('the platform’s destructive-call breaker is its own (M3)', () => {
   const consoleRpcObj = () => placedStub(env, env.RATE_LIMITER, 'console-rpc');
-  const platformAdmit = (org: string, now: number) => consoleRpcObj().consoleAdmit({ ns: 'platform', org, cost: 1, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, now);
+  const platformAdmit = (org: string, now: number) => consoleRpcObj().platformAdmit({ org, cost: 1, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, now);
 
   it('a platform flood fills only the platform’s counters: the console’s breaker and its kill switches are untouched, and the reverse', async () => {
     const now = freshNow();
@@ -689,7 +723,7 @@ describe('the platform’s destructive-call breaker is its own (M3)', () => {
     const now = freshNow() + 3 * HOUR;
     for (let i = 0; i < 10; i++) {
       expect((await platformAdmit(org, now + i)).ok).toBe(true);
-      await consoleRpcObj().consoleSettle({ ns: 'platform', org, at: now + i, breaker: true, reserveUsed: 0, limits: PLATFORM_LIMITS }, now + i);
+      await consoleRpcObj().platformSettle({ org, at: now + i, breaker: true, reserveUsed: 0, limits: PLATFORM_LIMITS }, now + i);
     }
     expect((await platformAdmit(org, now + 20)).ok).toBe(true);
   });
@@ -813,5 +847,232 @@ describe('what an authenticated platform request can reach', () => {
     expect(change).toMatchObject({ status: 'cancelled', active_from: (before.change[0] as Record<string, unknown>).active_from });
     expect(await rows("SELECT id FROM platform_keys WHERE confirmed_at IS NOT NULL AND org_id = ?1 AND id != ?2", k.org, k.id)).toEqual([]);
     expect(await rows('SELECT id FROM guarded_changes WHERE app_id = ?1 AND status = ?2', k.app.id, 'active')).toEqual([]);
+  });
+});
+
+// ---- after PR 156's review ----
+
+describe('F1: the self-revoke skips the limits only when it can stop the key', () => {
+  it('invalid self-revokes go through the key’s windows like any call: at most 60 a minute recorded, the rest 429 and not stored', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const bodies = ['{"bad":1}', '[]', 'not json', JSON.stringify({ reason: 'x'.repeat(201) })];
+    const statuses: number[] = [];
+    for (let i = 0; i < 120; i++) statuses.push((await send(k, { now: now + i * 300, method: 'POST', path: '/v1/platform/credential/revoke', body: bodies[i % 4] })).status);
+    expect(statuses.filter((x) => x === 400)).toHaveLength(PLATFORM_REQUEST_LIMITS.perKeyPerMinute);
+    expect(statuses.filter((x) => x === 429)).toHaveLength(120 - PLATFORM_REQUEST_LIMITS.perKeyPerMinute);
+    expect(await callsOf(k.id)).toHaveLength(PLATFORM_REQUEST_LIMITS.perKeyPerMinute);
+    expect((await keyRow(k.id)).status).toBe('active');
+    // A valid self-revoke still stops it at once, the key's minute full or not.
+    expect((await send(k, { now: now + 40_000, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(200);
+    expect((await keyRow(k.id)).status).toBe('revoked');
+  });
+
+  it('a thief filling the nonce cap can’t hold back the network’s own self-revoke', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const obj = placedStub(env, env.RATE_LIMITER, `platform-nonce:${k.id}`);
+    for (let i = 0; i < PLATFORM_REQUEST_LIMITS.noncesPerKeyPerMinute; i++) expect(await obj.reserveNonce(`thief${i}`, now + 120_000, [...PLATFORM_WINDOWS.nonce], now)).toBe('ok');
+    expect((await send(k, { now })).body.limit).toBe('platform:nonce');
+    const stop = await send(k, { now, method: 'POST', path: '/v1/platform/credential/revoke', body: JSON.stringify({ reason: 'Stolen' }) });
+    expect(stop.status).toBe(200);
+    expect((await keyRow(k.id)).status).toBe('revoked');
+    // Its nonce is still single use.
+    expect((await read(await deliver(stop.request(), now))).status).toBe(401);
+  });
+
+  it('a valid self-revoke that loses a race is charged to the key’s windows; concurrent ones: one stops it, each recorded', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const rs = await Promise.all(Array.from({ length: 6 }, () => send(k, { now, method: 'POST', path: '/v1/platform/credential/revoke' })));
+    expect(rs.filter((r) => r.status === 200)).toHaveLength(1);
+    for (const r of rs.filter((x) => x.status !== 200)) expect([401, 409]).toContain(r.status);
+    expect((await keyRow(k.id)).status).toBe('revoked');
+    const lost = rs.filter((r) => r.status === 409).length;
+    // The losers that reached the route are charged: the key's minute shows them (60 less what they used).
+    const left = await placedStub(env, env.RATE_LIMITER, `platform:key:${k.id}`).hit([{ name: 'req:minute', windowMs: MIN, max: PLATFORM_REQUEST_LIMITS.perKeyPerMinute - lost }], now);
+    expect(left.ok).toBe(true);
+  });
+});
+
+describe('F3: the platform’s own global bucket, and a floor in the console’s', () => {
+  it('a platform flood from several orgs leaves an ordinary console call of another org admitted', async () => {
+    const now = freshNow();
+    const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
+    const orgs = await Promise.all(Array.from({ length: 6 }, async () => (await orgApp()).org));
+    let admitted = 0;
+    for (const org of orgs) for (let i = 0; i < 20; i++) if ((await obj.platformAdmit({ org, cost: 3, limits: PLATFORM_LIMITS }, now)).ok) admitted++;
+    // The platform as a whole took at most what is above the console's floor (60 − 30 = 30 tokens: 10 calls of 3).
+    expect(admitted).toBe(10);
+    const third = (await orgApp()).org;
+    expect(await admitMemberCall(env, { org: third, cost: 8 }, now)).toMatchObject({ reserveUsed: 0 });
+    // A platform kill switch may go lower, never into the console's kill-switch reserve (20): here the console's own call
+    // just took the bucket to 22, so a platform kill switch of 3 waits; the console's kill switch doesn't.
+    expect(await obj.platformAdmit({ org: orgs[0]!, cost: 3, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_shared' });
+    expect(await admitMemberCall(env, { org: third, cost: 5, killSwitch: true }, now)).toMatchObject({ reserveUsed: expect.any(Number) });
+    // A second later the bucket has refilled (30 a second) and the platform's kill switch goes through.
+    expect((await obj.platformAdmit({ org: orgs[0]!, cost: 3, killSwitch: true, limits: PLATFORM_LIMITS }, now + 1000)).ok).toBe(true);
+  });
+
+  it('the platform’s own rate holds across orgs: 10 statements a second over time', async () => {
+    const now = freshNow();
+    const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
+    const orgs = await Promise.all(Array.from({ length: 4 }, async () => (await orgApp()).org));
+    let admitted = 0;
+    // 10 seconds, every org trying 10 calls of cost 3 a second: the platform's bucket (10/s, burst 60, 15 kept) bounds it.
+    for (let t = 0; t < 10; t++) for (const org of orgs) for (let i = 0; i < 10; i++) if ((await obj.platformAdmit({ org, cost: 3, limits: PLATFORM_LIMITS }, now + t * 1000)).ok) admitted++;
+    expect(admitted * 3).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.burst - PLATFORM_LIMITS.platform.reserve + 10 * PLATFORM_LIMITS.platform.ratePerS);
+  });
+});
+
+describe('F4: one Idempotency-Key for the self-revoke of both keys of an org', () => {
+  it('stops both: the request id names the key', async () => {
+    const a = await seedKey({ switchOn: false });
+    const b = await seedKey({ org: a.app });
+    const now = freshNow();
+    expect((await send(a, { now, method: 'POST', path: '/v1/platform/credential/revoke', idempotencyKey: 'revoke-key-0001' })).status).toBe(200);
+    expect((await send(b, { now, method: 'POST', path: '/v1/platform/credential/revoke', idempotencyKey: 'revoke-key-0001' })).status).toBe(200);
+    expect((await keyRow(a.id)).status).toBe('revoked');
+    expect((await keyRow(b.id)).status).toBe('revoked');
+    expect(await platformRequestId(a.org, 'revoke-key-0001', a.id)).not.toBe(await platformRequestId(a.org, 'revoke-key-0001', b.id));
+    // App writes (piece P4) keep A9's org-wide id: a retry from the org's other key is `conflict`.
+    expect(await platformRequestId(a.org, 'op-1')).toBe(await platformRequestId(a.org, 'op-1'));
+  });
+});
+
+describe('F5: failures of a known key stop calling its object once the minute’s alert fired; unknown ids never reach D1', () => {
+  it('after the 10th failure in a minute, more failures make no call to the key’s failure object; its admitted traffic is unaffected', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const other = (await keyPair()).privateKey;
+    for (let i = 0; i < 10; i++) await send(k, { now, signWith: other });
+    const names: string[] = [];
+    const real = env.RATE_LIMITER.idFromName.bind(env.RATE_LIMITER);
+    vi.spyOn(env.RATE_LIMITER, 'idFromName').mockImplementation((n: string) => {
+      names.push(n);
+      return real(n);
+    });
+    for (let i = 0; i < 20; i++) await send(k, { now, signWith: other });
+    expect(names.filter((n) => n.startsWith(`platform:keyfail:${k.id}`))).toEqual([]);
+    expect((await send(k, { now })).status).toBe(200);
+  });
+
+  it('a well-formed key id that isn’t announced here gets the 401 with no D1 read', async () => {
+    const now = freshNow();
+    const reads = vi.spyOn(HotDb.prototype, 'first');
+    const r = await send({ id: 'pkc_7Hq2Vx9Lm4Rt8Kj', privateKey: (await keyPair()).privateKey }, { now });
+    expect(r.status).toBe(401);
+    expect(reads).not.toHaveBeenCalled();
+  });
+});
+
+describe('F7: the dummy key, and a signature with a known private key', () => {
+  it('the dummy point is hashed to the curve as documented (not a multiple of the generator)', async () => {
+    const p = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffffn;
+    const b = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604bn;
+    const pow = (x: bigint, e: bigint) => {
+      let r = 1n;
+      x %= p;
+      while (e > 0n) {
+        if (e & 1n) r = (r * x) % p;
+        x = (x * x) % p;
+        e >>= 1n;
+      }
+      return r;
+    };
+    let found: string | null = null;
+    for (let i = 0; i < 100 && !found; i++) {
+      const h = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8(`journear-platform-v1 dummy verification key ${i}`) as Uint8Array<ArrayBuffer>));
+      const x = BigInt(`0x${Buffer.from(h).toString('hex')}`) % p;
+      const rhs = (((x * x * x - 3n * x + b) % p) + p) % p;
+      let y = pow(rhs, (p + 1n) / 4n);
+      if ((y * y) % p !== rhs) continue;
+      if (y & 1n) y = p - y;
+      found = `04${x.toString(16).padStart(64, '0')}${y.toString(16).padStart(64, '0')}`;
+    }
+    expect(Buffer.from(DUMMY_KEY).toString('hex')).toBe(found);
+  });
+
+  it('a request signed with private key 1 (the generator’s) never authenticates, whatever the key id names', async () => {
+    const one = b64url(fromHex(`${'0'.repeat(63)}1`));
+    const g = { kty: 'EC', crv: 'P-256', x: 'axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY', y: 'T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU' };
+    const d1 = await crypto.subtle.importKey('jwk', { ...g, d: one }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+    const now = freshNow();
+    const live = await seedKey();
+    const waiting = await seedKey({ state: 'pending' });
+    for (const [name, k] of [['unknown id', { id: 'pkc_7Hq2Vx9Lm4Rt8Kg', privateKey: d1 }], ['a key in force', { id: live.id, privateKey: d1 }], ['a waiting key', { id: waiting.id, privateKey: d1 }]] as const) {
+      expect((await send(k, { now })).status, name).toBe(401);
+    }
+  });
+});
+
+describe('F8: public keys whose private halves are published can’t be registered', () => {
+  it('the generator, its double and the vectors’ key are refused outside a local* test env', async () => {
+    const app = await orgApp();
+    const staff = { actor: { kind: 'hana' as const, id: 'access-sub-staff-1', email: 'staff@hana.example' }, clientIp: '198.51.100.2' };
+    const register = (jwk: Record<string, string>, e: Partial<typeof env> = {}) =>
+      new AdminRpc(createExecutionContext(), { ...env, ...e } as typeof env).registerPlatformKey({ ...staff, requestId: `req_${Math.random().toString(36).slice(2, 12)}`, orgId: app.org, scopeIds: [app.scope], label: 'Test key', publicKey: JSON.stringify(jwk), reason: 'Thumbprint checked with the network by phone' });
+    const g = { kty: 'EC', crv: 'P-256', x: 'axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY', y: 'T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU' };
+    for (const jwk of [g, { kty: 'EC', crv: 'P-256', x: vectors.key.jwk.x, y: vectors.key.jwk.y }]) {
+      expect(await register(jwk)).toMatchObject({ ok: false, code: 'bad_request', error: expect.stringMatching(/published/u) });
+      expect(await register(jwk, { NETWORK: 'mainnet' })).toMatchObject({ ok: false, code: 'bad_request' });
+    }
+    // A local* test env may use them (its tests and demos).
+    expect(await register(g, { ENV_NAME: 'local-test', NETWORK: 'testnet' })).toMatchObject({ ok: true });
+  });
+});
+
+describe('F10: through the real router, and what the routes may import', () => {
+  it('an OPTIONS with an Origin is 403 with no CORS header; a signed request replayed through index.ts is 409', async () => {
+    const k = await seedKey();
+    const ctx = createExecutionContext();
+    const pre = await worker.fetch!(new Request('https://api.test/v1/platform/credential', { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST', 'cf-connecting-ip': freshIp() } }) as never, env as never, ctx);
+    expect(pre.status).toBe(403);
+    expect([...pre.headers.keys()].filter((h) => h.startsWith('access-control'))).toEqual([]);
+    const first = await send(k, {});
+    expect(first.status).toBe(200);
+    const again = await worker.fetch!(first.request() as never, env as never, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(again.status).toBe(409);
+  });
+
+  it('the routes import only what reading and stopping the key needs (a route confirming or accepting anything fails here)', () => {
+    const imports = [...routesSource.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+'([^']+)'/gu)].map((m) => ({ from: m[2]!, names: m[1]!.split(',').map((n: string) => n.trim().replace(/^type\s+/u, '')).filter(Boolean) }));
+    const ALLOWED: Record<string, string[]> = {
+      '@hana-id/console-core': ['Actor', 'PLATFORM_REQUEST_LIMITS', 'PlatformCredentialView', 'b64url', 'platformRevokeBody', 'randomBytes', 'sha256', 'utf8'],
+      '../env.ts': ['Env'],
+      '../changes/cas.ts': ['Writer', 'refuse'],
+      '../changes/db.ts': ['HotDb'],
+      './keys.ts': ['revokePlatformKeyNow'],
+      './request.ts': ['AuthRow'],
+    };
+    for (const i of imports) {
+      expect(Object.keys(ALLOWED), i.from).toContain(i.from);
+      for (const n of i.names) expect(ALLOWED[i.from], `${n} from ${i.from}`).toContain(n);
+    }
+    // No dynamic import, no other module, nothing named like a confirmation or an acceptance anywhere in it.
+    expect(routesSource).not.toMatch(/import\(/u);
+    expect(routesSource).not.toMatch(/\b(confirm|accept|approve|register|propose)[A-Z]\w*\(/u);
+    expect(routesSource).not.toMatch(/rpc\//u);
+  });
+});
+
+describe('F11: a failure after the key’s windows counted gives the charge back', () => {
+  it('the platform admission failing: 503, and the key’s minute is untouched', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const failing = failingLimiter(/^console-rpc/u);
+    for (let i = 0; i < 70; i++) expect((await send(k, { now, bindings: { RATE_LIMITER: failing } })).status).toBe(503);
+    expect(await placedStub(env, env.RATE_LIMITER, `platform:key:${k.id}`).hit([{ name: 'req:minute', windowMs: MIN, max: 1 }], now)).toMatchObject({ ok: true });
+  });
+
+  it('the call log failing: 500, the charge and the last-used marker given back (the next call writes last_used_at)', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const count: DbCount = { reads: 0, batches: 0, statements: 0 };
+    expect((await send(k, { now, bindings: { DB: countingDb(env.DB, count, { faultAt: 0 }) } })).status).toBe(500);
+    expect((await keyRow(k.id)).last_used_at).toBeNull();
+    expect((await send(k, { now: now + 1000 })).status).toBe(200);
+    expect((await keyRow(k.id)).last_used_at).toBe(now + 1000);
   });
 });

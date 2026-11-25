@@ -5,6 +5,7 @@
 import { PLATFORM_KEY_LIFETIME_MS, jwkThumbprint, newId, signPlatformRequest } from '@hana-id/console-core';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { clearKnownKeyIds } from '../src/platform/known-keys.ts';
 import { handlePlatform } from '../src/platform/request.ts';
 import { type OrgApp, orgApp } from './rpc-helpers.ts';
 
@@ -60,6 +61,8 @@ export async function seedKey(
       .run();
   }
   if (o.switchOn !== false) await switchOn(app.org);
+  // Written by bare D1 writes: the isolate's list of announced keys (known-keys.ts) reads them at the next request.
+  clearKnownKeyIds();
   return { id, org: app.org, scope: app.scope, app, ...pair };
 }
 

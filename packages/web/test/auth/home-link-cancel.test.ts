@@ -166,13 +166,14 @@ async function harness(o: Opts = {}): Promise<H> {
     if (!el) throw new Error(`No #${id} on the page: ${pageText()}`);
     (el as HTMLElement).click();
   };
-  // Waits by the clock, not by a count of turns: the page's WebCrypto work (signing, the relay's decryption) runs off the
-  // event loop, and on a loaded machine 300 turns came and went before it finished (verify on 2026-11-25, D922's review).
+  // Until the tracked work is done, or has had 300 turns of the event loop with no WebCrypto call running (what is left
+  // then waits on the test: the child's hello, the relay read). A WebCrypto call takes real time on the thread pool,
+  // long under load, so it is awaited, never counted in turns (D924: these tests failed on a loaded machine).
   h.idle = async () => {
-    const until = Date.now() + 5_000;
-    while (Date.now() < until) {
+    for (let quiet = 0; quiet < 300; ) {
       await new Promise((r) => setImmediate(r));
       if (running.size === 0) return;
+      quiet = (await cryptoSettled()) ? 0 : quiet + 1;
     }
   };
   h.mount = () => document.getElementById('app')!.replaceChildren(h.section.appView(scopeOf(o.scope)));
@@ -188,7 +189,12 @@ async function harness(o: Opts = {}): Promise<H> {
   h.google = async (claims = {}, payload) => {
     const p = parseParams(h.child!.received.at(-1));
     if (!p) throw new Error('no parameters were posted');
-    for (const until = Date.now() + 5_000; relayResolve === null && Date.now() < until; ) await new Promise((r) => setImmediate(r));
+    // Until the page asks for the relay read: by the clock (up to 5 s, PR 150), with every WebCrypto call in flight
+    // awaited on the way, as idle() does (D924).
+    for (const until = Date.now() + 5_000; relayResolve === null && Date.now() < until; ) {
+      await new Promise((r) => setImmediate(r));
+      await cryptoSettled();
+    }
     if (!relayResolve) throw new Error('no relay read');
     const body: RelayPayload = payload ?? { idToken: await signer.sign({ iss: 'https://accounts.google.com', aud: CLIENT_ID, sub: G.sub, nonce: p.nonce, iat: Math.floor(T0 / 1000), exp: Math.floor(T0 / 1000) + 3600, ...claims }) };
     // The relay key the child got (a clone: the page zeroes its own copy of the message's).
@@ -213,7 +219,32 @@ const waitingRow = (): HTMLElement => document.querySelector('#home-sign-ins-lis
 const stageOf = (): string | null => document.querySelector('.home-sign-in-cancel')?.getAttribute('data-stage') ?? null;
 const panelText = (): string => document.querySelector('.home-sign-in-cancel')?.textContent ?? '';
 
-beforeEach(() => resetDom());
+/**
+ * The WebCrypto calls still running (signing, verifying and encrypting the Google token and the relay payload): the
+ * only work in these flows that takes real time. `cryptoSettled` waits for every one running and says whether there was any.
+ */
+const cryptoInFlight = new Set<Promise<unknown>>();
+const SUBTLE_METHODS = ['sign', 'verify', 'encrypt', 'decrypt', 'digest', 'importKey', 'exportKey', 'deriveKey', 'deriveBits', 'generateKey', 'wrapKey', 'unwrapKey'] as const;
+async function cryptoSettled(): Promise<boolean> {
+  if (cryptoInFlight.size === 0) return false;
+  await Promise.allSettled([...cryptoInFlight]);
+  return true;
+}
+
+beforeEach(() => {
+  resetDom();
+  const subtle = globalThis.crypto.subtle;
+  for (const m of SUBTLE_METHODS) {
+    const original = (subtle[m] as (...a: unknown[]) => Promise<unknown>).bind(subtle);
+    vi.spyOn(subtle, m).mockImplementation(((...a: unknown[]) => {
+      const p = original(...a);
+      cryptoInFlight.add(p);
+      const done = () => void cryptoInFlight.delete(p);
+      p.then(done, done);
+      return p;
+    }) as never);
+  }
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('which rows offer “Cancel this link” in Home', () => {

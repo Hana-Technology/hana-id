@@ -88,8 +88,13 @@ async function signedIn(o: { browser?: Browser; settings?: Partial<VaultConfig['
   return t;
 }
 
+/**
+ * Waits for `check` (it polls: the tab's events and the record arrive through real message ports and IndexedDB), up to
+ * 10 s of real time rather than a count of polls, so a loaded machine slows it and never fails it (D924).
+ */
 const eventually = async (check: () => boolean | Promise<boolean>, what: string): Promise<void> => {
-  for (let i = 0; i < 300 && !(await check()); i++) await sleepReal(5);
+  const deadline = Date.now() + 10_000;
+  while (!(await check()) && Date.now() < deadline) await sleepReal(5);
   expect(await check(), what).toBe(true);
 };
 /** Lets the vault's async work after a timer (the read, its answer, the re-arm) finish. */
@@ -138,6 +143,11 @@ async function endedByRevoke(t: Tab, prk: Uint8Array, shareId: Uint8Array): Prom
   expect(prk.every((b) => b === 0)).toBe(true);
   expect(await t.waitEvent('disconnect')).toEqual({ code: 4900 });
   expect(disconnectedWith(t)).toEqual(['signed_out']);
+  // The vault sends `accountsChanged {addresses: null}` right after the disconnect, as its own port message: wait for it
+  // to arrive rather than read the list at once (D924: on a loaded machine it was still in flight).
+  const disconnectAt = t.events.findLastIndex((e) => e.event === 'disconnect');
+  await eventually(() => t.events.slice(disconnectAt + 1).some((e) => e.event === 'accountsChanged'), 'accountsChanged after the disconnect');
+  expect(t.events.slice(disconnectAt + 1).find((e) => e.event === 'accountsChanged')!.data).toEqual({ addresses: null });
   expect(t.events.filter((e) => e.event === 'accountsChanged').at(-1)!.data).toEqual({ addresses: null });
   expect(await statusOf(t)).toBe('logged_out');
   await eventually(async () => (await stored(t)) === undefined, 'the record deleted');

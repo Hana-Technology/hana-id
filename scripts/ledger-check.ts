@@ -4,14 +4,16 @@
 // "Ledger rebuild (hot-DB migration 0027, D916)"), and the rollback's feed cursor step. See lib/ledger-check.ts. Rows
 // are read with apiPrivateD1Execute (remote: D1's REST API, the statement in the HTTPS body; local: a 0600 file, with
 // wrangler's log file off), so no row reaches wrangler's logs; never prints or writes a row.
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadEnv } from '@hana-id/env';
+import { loadEnv, repoRoot } from '@hana-id/env';
 import pg from 'pg';
 import { withRehearsalD1 } from './lib/admin-apps.ts';
+import { invocationDir } from './lib/admin-settings.ts';
 import { run } from './lib/cli.ts';
 import { apiPrivateD1Execute } from './lib/d1.ts';
-import { LEDGER_CHECK_USAGE, ledgerCheck } from './lib/ledger-check.ts';
+import { LEDGER_CHECK_USAGE, ledgerCheck, referenceSchema } from './lib/ledger-check.ts';
 import { assertPrivate, parseSecretJson, secretsDir, writeSecretJson } from './lib/secrets.ts';
 import { ROLE_FILES, readRoleUrl } from './lib/usage-setup.ts';
 import { redact } from './lib/usage-migrate.ts';
@@ -53,5 +55,18 @@ run(async () => {
     },
     log: (line) => console.log(line),
     now: () => new Date(),
+    // A relative --before or --out is relative to where pnpm was run (INIT_CWD), not scripts/ (D924).
+    cwd: invocationDir(),
+    // What an index or trigger new since the snapshot must be: as this checkout's migrations create it (D924).
+    referenceSchema: () => referenceSchema(join(repoRoot, 'apps', 'api', 'migrations')),
+    // The commit and whether apps/api/migrations is dirty, recorded in each snapshot and checked by compare (D924).
+    checkout: () => {
+      const git = (...a: string[]) => execFileSync('git', ['-C', repoRoot, ...a], { encoding: 'utf8' });
+      return {
+        commit: git('rev-parse', 'HEAD').trim(),
+        migrationsDirty: git('status', '--porcelain', '--untracked-files=all', '--', 'apps/api/migrations').trim() !== '',
+        migrationFiles: readdirSync(join(repoRoot, 'apps', 'api', 'migrations')).filter((n) => n.endsWith('.sql')).sort(),
+      };
+    },
   });
 }, LEDGER_CHECK_USAGE);

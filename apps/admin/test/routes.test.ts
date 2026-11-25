@@ -211,6 +211,24 @@ describe('apps, changes, keys', () => {
   });
 });
 
+describe('a shared scope (D915)', () => {
+  it('marks the app’s scope through the real API as the staff actor, once; then a staff policy is refused in the shared words; another org is not_found', async () => {
+    const app = await seedHotApp();
+    const res = await adminRequest(`/api/scopes/${app.scope}/app-user-ids`, { body: { orgId: app.org } });
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({ changed: true });
+    expect(await env.HOT_DB.prepare('SELECT app_user_ids FROM scopes WHERE scope_id = ?1').bind(app.scope).first()).toEqual({ app_user_ids: 1 });
+    expect(await env.HOT_DB.prepare("SELECT actor_kind, actor_id FROM app_changes WHERE kind = 'scope.app_user_ids' AND scope_id = ?1").bind(app.scope).first()).toEqual({ actor_kind: 'hana', actor_id: STAFF_SUB });
+    expect(await json(await adminRequest(`/api/scopes/${app.scope}/app-user-ids`, { body: { orgId: app.org } }))).toEqual({ changed: false });
+    const detail = await json<{ app: { sharedScope: boolean; sharedWallet: boolean } }>(await adminRequest(`/api/apps/${app.id}?org=${app.org}`));
+    expect(detail.app).toMatchObject({ sharedScope: true, sharedWallet: true });
+    const policy = await adminRequest(`/api/apps/${app.id}/changes`, { body: { orgId: app.org, kind: 'policy_set', policy: { v: 1 }, expectedVersion: (await hotVersion(app.id)).settings } });
+    expect(policy.status).toBe(400);
+    expect(await json(policy)).toEqual({ error: { code: 'policy_invalid', message: 'Auto-approve is off for apps that share a wallet' } });
+    expect((await adminRequest(`/api/scopes/${app.scope}/app-user-ids`, { body: { orgId: 'org_other12345' } })).status).toBe(404);
+  });
+});
+
 describe('audit and CSV', () => {
   it('GET /api/audit: console rows by filter, and with an org filter its app changes', async () => {
     const app = await seedHotApp();
@@ -291,6 +309,7 @@ describe('the route table', () => {
         "POST /api/owner-grants/:id/cancel",
         "POST /api/apps",
         "POST /api/scopes/:scope/assign",
+        "POST /api/scopes/:scope/app-user-ids",
         "GET /api/apps/:app",
         "POST /api/apps/:app/suspend",
         "POST /api/apps/:app/resume",

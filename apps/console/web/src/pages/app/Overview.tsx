@@ -116,7 +116,7 @@ export function Overview() {
           </Step>
         </ol>
         <p className="muted small">
-          Optional: a logo (<Link to={`${base}/branding`}>Branding</Link>), your own Google client (guide, section 6), an auto-approve policy (<Link to={`${base}/signing`}>Signing</Link>, section 9), and verifying the identity token on your backend (section 15).
+          Optional: a logo (<Link to={`${base}/branding`}>Branding</Link>), your own Google client (guide, section 6), {a.sharedWallet ? '' : <>an auto-approve policy (<Link to={`${base}/signing`}>Signing</Link>, section 9), </>}and verifying the identity token on your backend (section 15).
         </p>
       </Panel>
       <div className="grid-2">
@@ -149,7 +149,7 @@ export function Overview() {
         >
           <dl className="facts">
             <dt>Auto-approve policy</dt>
-            <dd>{s.policy ? `“${s.policy.label}”` : 'None: users approve every request'}</dd>
+            <dd>{s.policy ? `“${s.policy.label}”` : a.sharedWallet ? 'Off for apps that share a wallet: users approve every request' : 'None: users approve every request'}</dd>
             <dt>Raw signing</dt>
             <dd>{s.rawSign === 'approval' ? <Badge tone="warn">On, with approval</Badge> : 'Off'}</dd>
             <dt>Environment</dt>

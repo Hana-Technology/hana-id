@@ -3,7 +3,10 @@
 // users will see before proposing it with a fresh sign-in (`policy.set`, announced, then active after the delay). Raw
 // signing: off at once (a kill switch), on through a fresh sign-in (live apps only: test apps never sign raw). Proposing
 // a policy or turning raw signing on needs an on-chain owner of the app's scope (the API refuses anyone else,
-// `not_owner`): for an owner who isn't one, ChainOwner.tsx's line stands in for the editor and the button.
+// `not_owner`): for an owner who isn't one, ChainOwner.tsx's line stands in for the editor and the button. An app that
+// shares a wallet with other apps (its scope is marked shared, or the platform created it: D915) has no editor at all,
+// only the line saying auto-approve is off; Remove stays, as a kill switch, should a policy ever be found there.
+import { SHARED_WALLET_NO_AUTO_APPROVE } from '@hana-id/console-core/shared-scope';
 import { useState } from 'react';
 import { ApiError, postJson } from '../../api.ts';
 import { useStepUp, useWrite } from '../../lib.tsx';
@@ -69,7 +72,9 @@ function Policy({ chain }: { chain: ChainOwner }) {
         <WriteNote error={w.error} />
       </div>
       <PendingChanges ctl={ctl} kinds={['policy_set']} title="Policy waiting to take effect" />
-      {!owner ? (
+      {app.sharedWallet ? (
+        <Why>{SHARED_WALLET_NO_AUTO_APPROVE}. This app uses the same wallet as other apps, so users approve every request themselves.</Why>
+      ) : !owner ? (
         <Why>Only owners can set or remove the policy.</Why>
       ) : frozen ? (
         <Why>A new policy can’t be proposed while Journear has frozen the organisation. Removing the policy still works.</Why>

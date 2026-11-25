@@ -25,6 +25,7 @@ import {
   type Actor,
   type AppDetail,
   type OwnerActionBody,
+  SHARED_WALLET_NO_AUTO_APPROVE,
   STEP_UP_KINDS,
   appIdInput,
   b64url,
@@ -296,6 +297,8 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
     }
     case 'policy.set': {
       const app = await appOf(env, ctx, c.orgId, p.appId as string);
+      // D915: the API refuses it too, in its plan read and its commit; here it is said before any sign-in.
+      if (app.sharedWallet) no('policy_invalid', SHARED_WALLET_NO_AUTO_APPROVE);
       const v = await validatePolicy(p.policy, app.settings.sessionTtlMs);
       if (!v.ok) return no('policy_invalid', v.problems.join('; ').slice(0, 1000));
       if (app.changes.some((x) => x.kind === 'policy_set' && x.status === 'pending')) no('conflict', 'A policy change is already pending: cancel it first');

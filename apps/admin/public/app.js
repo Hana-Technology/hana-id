@@ -1113,6 +1113,7 @@ const LOG_KIND = {
   'origin.removed': 'Origin removed',
   'org.security_contacts': 'Security contacts replaced',
   'scope.assigned': 'Scope moved to this organisation',
+  'scope.app_user_ids': 'Scope marked as a shared wallet',
   'labels.proposed': 'Request labels proposed',
   'labels.removed': 'Request labels removed',
   'labels.activated': 'Request labels in force',
@@ -1123,6 +1124,34 @@ const LOG_KIND = {
   'labels.review_on': 'Journear review of request labels turned on',
   'labels.review_off': 'Journear review of request labels turned off',
 };
+/** D915: the words the API and the console use (`@hana-id/console-core` SHARED_WALLET_NO_AUTO_APPROVE; a test holds the copy). */
+const SHARED_WALLET_NO_AUTO_APPROVE = 'Auto-approve is off for apps that share a wallet';
+
+/**
+ * D915: the app's scope marked as shared by several partners' apps (one way), or the app created by the platform; and,
+ * for a scope not marked yet, the one control that marks it. Null for an API from before migration 0026.
+ */
+function sharedWalletRow(app, orgId, ro) {
+  if (app.sharedScope === undefined) return null;
+  const scope = app.scopeId;
+  const text = app.sharedScope
+    ? 'On: several partners’ apps share this scope’s wallet. Auto-approve is off for every app on it. This can’t be undone.'
+    : app.createdByKind === 'platform'
+      ? 'This scope isn’t marked as shared, but the platform created this app, so auto-approve is off for it.'
+      : 'Off: this scope isn’t marked as shared by several partners’ apps.';
+  const control =
+    ro || app.sharedScope
+      ? ''
+      : actionButton(
+          'Mark the scope as shared',
+          () => api('POST', `/api/scopes/${encodeURIComponent(scope)}/app-user-ids`, { orgId }),
+          `Mark scope ${scope} as shared by several partners’ apps? Auto-approve is then off for every app on it, for good: this can’t be undone. It is refused while any app on the scope has an auto-approve policy in force or waiting.`,
+          true,
+          { done: 'The scope is marked as shared. Auto-approve is off for every app on it.' },
+        );
+  return settingRow('Shared wallet', text, control);
+}
+
 const logKind = (k) => h('span', {}, LOG_KIND[k] || k, LOG_KIND[k] ? h('span', { class: 'sub' }, h('code', {}, k)) : '');
 
 // ---- navigation ----
@@ -1913,6 +1942,8 @@ async function appPage(main, orgId, appId) {
   );
 
   const policy = app.settings && app.settings.policy;
+  // D915: an app on a shared scope, or one the platform created, never gets an auto-approve policy: no proposal form.
+  const sharedWallet = app.sharedWallet === true;
   const proposePolicy = disclosure(
     'Propose an auto-approve policy',
     h(
@@ -1971,12 +2002,17 @@ async function appPage(main, orgId, appId) {
         ),
     settingRow(
       'Auto-approve policy',
-      policy ? h('span', {}, `${policy.label || 'Unnamed policy'}: signs within its limits without asking, once each user consents.`, h('details', { class: 'raw' }, h('summary', {}, 'Show the policy'), h('pre', {}, JSON.stringify(policy, null, 2)))) : 'None: every signature asks the user.',
-      ro ? '' : h('div', { class: 'row' }, policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true, { done: 'Policy removed.' }) : '', proposePolicy.button),
+      policy
+        ? h('span', {}, `${policy.label || 'Unnamed policy'}: signs within its limits without asking, once each user consents.`, h('details', { class: 'raw' }, h('summary', {}, 'Show the policy'), h('pre', {}, JSON.stringify(policy, null, 2))))
+        : sharedWallet
+          ? `${SHARED_WALLET_NO_AUTO_APPROVE}: every signature asks the user.`
+          : 'None: every signature asks the user.',
+      ro ? '' : h('div', { class: 'row' }, policy ? actionButton('Remove the policy', () => api('POST', `${base}/off`, { orgId, what: 'policy', expectedVersion: app.settingsVersion }), 'Remove the auto-approve policy? Auto-signing stops within 10 s.', true, { done: 'Policy removed.' }) : '', sharedWallet ? '' : proposePolicy.button),
     ),
+    sharedWalletRow(app, orgId, ro),
     settingRow('Other settings', h('details', { class: 'raw' }, h('summary', {}, 'Show all settings'), h('pre', {}, JSON.stringify(app.settings, null, 2))), ''),
   ];
-  main.append(panel('Signing settings', {}, h('div', { class: 'settings' }, rows.filter(Boolean)), ro ? '' : proposePolicy.box));
+  main.append(panel('Signing settings', {}, h('div', { class: 'settings' }, rows.filter(Boolean)), ro || sharedWallet ? '' : proposePolicy.box));
 
   const now = Date.now();
   main.append(

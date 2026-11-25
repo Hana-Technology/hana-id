@@ -238,6 +238,8 @@ const ROUTES: Route[] = [
       return answer('POST /api/scopes/:scope/assign', c.staff, () => c.env.API.assignScopeOrg({ ...staffCtx(c.staff), scopeId: c.params.scope, orgId: c.body.orgId, orgOwnerSubs: subs.subs }));
     },
   },
+  // D915: mark the scope as shared by several partners' apps (one way); the API refuses it while any app on it has a policy.
+  { method: 'POST', pattern: '/api/scopes/:scope/app-user-ids', handler: (c) => answer('POST /api/scopes/:scope/app-user-ids', c.staff, () => c.env.API.setScopeAppUserIds({ ...staffCtx(c.staff), scopeId: c.params.scope, ...pick(c.body, 'orgId') })) },
   { method: 'GET', pattern: '/api/apps/:app', handler: (c) => answer('GET /api/apps/:app', c.staff, () => c.env.API.getApp({ ...staffCtx(c.staff), orgId: c.url.searchParams.get('org') ?? undefined, appId: c.params.app })) },
   { method: 'POST', pattern: '/api/apps/:app/suspend', handler: (c) => answer('POST /api/apps/:app/suspend', c.staff, () => c.env.API.setSuspended({ ...staffCtx(c.staff), appId: c.params.app, bit: c.body.bit ?? 1, suspended: true })) },
   { method: 'POST', pattern: '/api/apps/:app/resume', handler: (c) => answer('POST /api/apps/:app/resume', c.staff, () => c.env.API.setSuspended({ ...staffCtx(c.staff), appId: c.params.app, bit: c.body.bit, suspended: false })) },

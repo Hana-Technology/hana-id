@@ -76,6 +76,8 @@ export interface AdminRpcClient {
   revokeKey(c: unknown): Loose;
   createApp(c: unknown): Loose;
   assignScopeOrg(c: unknown): Loose;
+  /** D915: marks a scope as shared by several partners' apps (one way). */
+  setScopeAppUserIds(c: unknown): Answer<{ changed: boolean }>;
   deleteApp(c: unknown): Loose;
   setSuspended(c: unknown): Loose;
   suspendOrg(c: unknown): Loose;

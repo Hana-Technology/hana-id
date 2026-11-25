@@ -29,6 +29,12 @@ export interface App {
   /** When this app saw its first successful login, or null (Hana Home doesn't list it to strangers, D462). */
   first_login_at: number | null;
   /**
+   * Migration 0030 (D919): which User ID the app gives its users, fixed at creation. 'scope': the person's scope-level
+   * User ID (every app made before per-app IDs, and every app on a scope not marked as shared); 'app': its own
+   * (core identity.ts `appSub`). Anything else is refused where it is read (core `subForApp` throws), never guessed.
+   */
+  user_ids: 'scope' | 'app' | (string & {});
+  /**
    * The key's prefix names the other environment than its scope. The 0006 triggers refuse such a row, so this is a
    * second check only: the gate refuses it (403 scope_conflict) so a test key's dev-env privileges never reach a live
    * scope even after a direct D1 write.
@@ -63,7 +69,7 @@ export async function getAppByKey(db: D1Database, publishableKey: string, now = 
   const row = await db
     .prepare(
       `SELECT a.id, a.name, a.scope_id, a.org_id, a.plan, a.suspended_by, a.status, a.logo_key, a.google_web_client_id,
-              k.key AS publishable_key, s.environment, s.first_session_at, a.first_login_at, p.per_minute, p.per_day, p.per_ip_minute
+              k.key AS publishable_key, s.environment, s.first_session_at, a.first_login_at, a.user_ids, p.per_minute, p.per_day, p.per_ip_minute
          FROM app_keys k JOIN apps a ON a.id = k.app_id JOIN scopes s ON s.scope_id = a.scope_id JOIN plans p ON p.id = a.plan
         WHERE k.key = ?1 AND (k.revoked_at IS NULL OR k.revoked_at > ?2) AND a.deleted_at IS NULL`,
     )

@@ -267,7 +267,7 @@ async function login(request: Request, env: Env, ctx: Ctx, exec?: ExecutionConte
     // link's judged root, else the standing's (a member's root, or the identity itself). Left out when the standing is
     // only the fail-open guess (a member's root unknown) or the env can't write the directory.
     const root = linkedRoot ?? (standing.confirmed ? (standing.member?.root ?? { provider: token.provider, sub: token.sub }) : null);
-    const supportId = root ? await sessionSupportId(env, app.scope_id, root) : undefined;
+    const supportId = root ? await sessionSupportId(env, app, root) : undefined;
     // An export (D430): the key can now reach the export window, so staff see a key_exported event for the account's
     // user (the root whose path the session opened; a member's root when it isn't confirmed yet). No key, token or path.
     if (gate.caller.page === 'auth') {

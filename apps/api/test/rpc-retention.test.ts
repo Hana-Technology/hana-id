@@ -164,6 +164,67 @@ describe('AdminRpc.deletedApps (the ledger’s app_users purge, 30 days after de
   });
 });
 
+describe('AdminRpc.purgeDirectory: end_user_apps (D919, M8)', () => {
+  const appRow = (userId: string, appId: string) =>
+    db()
+      .prepare('INSERT INTO end_user_apps (user_id, app_id, app_sub, support_code, first_seen_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 2)')
+      .bind(userId, appId, `u1_${appId.slice(-21).padStart(21, 'C')}A`, 'ABCDEFGH')
+      .run();
+  const rowsOf = async (userId: string) => (await db().prepare('SELECT app_id FROM end_user_apps WHERE user_id = ?1 ORDER BY app_id').bind(userId).all<{ app_id: string }>()).results.map((r) => r.app_id);
+  const person = async (scope: string, n: number) => {
+    const userId = `hu_${String(n).padStart(26, '0')}`;
+    await db().prepare('INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 2)').bind(userId, `u1_${String(n).padStart(21, 'D')}A`, userId.slice(3, 11).toUpperCase(), scope).run();
+    return userId;
+  };
+  const sharedScopeApps = async (n: number) => {
+    const live = await orgApp();
+    await db().prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?1').bind(live.scope).run();
+    const own = [];
+    for (let i = 0; i < n; i++) {
+      const id = `app_${uid()}`;
+      await db().prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, user_ids) VALUES (?1, ?2, ?3, ?4, ?5, 'active', 'free', 'app')").bind(id, `Own ${id}`, live.scope, live.org, newKey('pk_test_')).run();
+      own.push(id);
+    }
+    return { live, own };
+  };
+
+  it("a deleted app's rows go 30 days after its deletion and not before; a live app's stay", async () => {
+    const t = now();
+    const { live, own } = await sharedScopeApps(2);
+    const [gone, recent] = own as [string, string];
+    const u = await person(live.scope, 2001);
+    for (const a of [live.id, gone, recent]) await appRow(u, a);
+    await deleteAppAt(gone, t - 30 * DAY);
+    await deleteAppAt(recent, t - 30 * DAY + 60_000);
+    const r = (await adminRpc().purgeDirectory({ ...system(), before: t, limit: 100 })) as { ok: boolean; userApps: number };
+    expect(r.ok).toBe(true);
+    expect(await rowsOf(u)).toEqual([live.id, recent].sort());
+    // A `before` further back keeps the one that has passed 30 days too.
+    await appRow(u, gone);
+    await adminRpc().purgeDirectory({ ...system(), before: t - 31 * DAY, limit: 100 });
+    expect(await rowsOf(u)).toEqual([gone, live.id, recent].sort());
+    // Past 30 days, the recent one goes as well.
+    await deleteAppAt(recent, t - 31 * DAY);
+    const again = (await adminRpc().purgeDirectory({ ...system(), before: t, limit: 100 })) as { userApps: number };
+    expect(again.userApps).toBeGreaterThanOrEqual(2);
+    expect(await rowsOf(u)).toEqual([live.id]);
+  });
+
+  it("a scope left without apps takes each person's rows with them, counted", async () => {
+    const t = now();
+    const { live, own } = await sharedScopeApps(1);
+    const u = await person(live.scope, 2002);
+    for (const a of [live.id, own[0]!]) await appRow(u, a);
+    await deleteAppAt(live.id, t - 40 * DAY);
+    await deleteAppAt(own[0]!, t - 40 * DAY);
+    const r = (await adminRpc().purgeDirectory({ ...system(), before: t, limit: 100 })) as { users: number; userApps: number };
+    expect(r.users).toBeGreaterThanOrEqual(1);
+    expect(r.userApps).toBeGreaterThanOrEqual(2);
+    expect(await rowsOf(u)).toEqual([]);
+    expect(await db().prepare('SELECT COUNT(*) AS n FROM end_users WHERE user_id = ?1').bind(u).first()).toEqual({ n: 0 });
+  });
+});
+
 describe('AdminRpc.purgeDirectory (the wallet directory of a scope left without apps)', () => {
   const user = async (scope: string, n: number) => {
     const userId = `hu_${String(n).padStart(26, '0')}`;
@@ -191,7 +252,7 @@ describe('AdminRpc.purgeDirectory (the wallet directory of a scope left without 
     const deadUsers = [await user(dead.scope, 1001), await user(dead.scope, 1002), await user(dead.scope, 1003)];
     const kept = [await user(recent.scope, 1004), await user(mixedLive.scope, 1005)];
     const first = (await adminRpc().purgeDirectory({ ...system(), before: t, limit: 2 })) as { ok: boolean; scopes: number; users: number; wallets: number; identities: number };
-    expect(first).toEqual({ ok: true, scopes: 1, users: 2, wallets: 2, identities: 2, emailConsents: 0, nameShares: 0 });
+    expect(first).toEqual({ ok: true, scopes: 1, users: 2, wallets: 2, identities: 2, emailConsents: 0, nameShares: 0, userApps: 0 });
     const second = (await adminRpc().purgeDirectory({ ...system(), before: t, limit: 2 })) as { users: number };
     expect(second.users).toBe(1);
     for (const u of deadUsers) expect(await userExists(u)).toBe(0);

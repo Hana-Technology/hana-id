@@ -105,6 +105,9 @@ export async function detailView(
     sharedScope: row.app_user_ids !== 0,
     createdByKind: row.created_by_kind,
     sharedWallet: sharedWallet(row),
+    // D919: the User ID the app gives its users ('app': its own; anything unexpected is shown as its own too, the
+    // stricter reading, as the token mint refuses it).
+    userIds: row.user_ids === 'scope' ? 'scope' : 'app',
     // Each change's status as it is in force now (changeView), so a page never offers Cancel on a change in force.
     changes: latestPolicyOnly(changes.map((c) => changeView(c, now))),
     keys: keys.map(keyView),

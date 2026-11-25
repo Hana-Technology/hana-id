@@ -202,7 +202,7 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
   });
   await step('directory', async () => {
     for (;;) {
-      const r = await rpc<{ scopes: number; users: number; wallets: number; identities: number; emailConsents?: number; nameShares?: number }>('directory', () =>
+      const r = await rpc<{ scopes: number; users: number; wallets: number; identities: number; emailConsents?: number; nameShares?: number; userApps?: number }>('directory', () =>
         api.purgeDirectory({ ...systemCtx(), before: deletedAppCutoff(d.now), limit: RETENTION_BATCH }),
       );
       if (!r) return;
@@ -214,7 +214,10 @@ export async function runRetention(d: RetentionDeps): Promise<RetentionSummary> 
       add('emailConsentsPurged', r.emailConsents ?? 0);
       // D714: a deleted app's name shares, the same way (an API before migration 0021's build answers none).
       add('nameSharesPurged', r.nameShares ?? 0);
-      if (r.users < RETENTION_BATCH && (r.emailConsents ?? 0) < RETENTION_BATCH && (r.nameShares ?? 0) < RETENTION_BATCH) return;
+      // D919: a deleted app's rows of which apps of a shared scope a person used (an API before migration 0030's build
+      // answers none). Only the deleted apps' half can fill a page on its own; the users' half follows the user page.
+      add('userAppsPurged', r.userApps ?? 0);
+      if (r.users < RETENTION_BATCH && (r.emailConsents ?? 0) < RETENTION_BATCH && (r.nameShares ?? 0) < RETENTION_BATCH && (r.userApps ?? 0) < RETENTION_BATCH) return;
     }
   });
   await step('user_events', async () => {

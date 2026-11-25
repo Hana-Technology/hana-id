@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-24 (shared-scope `sub`; request labels, app names, Hedera); 2026-11-23 (programs; gas sponsorship; sign-in buttons); 2026-11-19 (NEAR calls; fees), SDK 0.5.0.
+Last verified against code: 2026-11-25 (an app's own `sub` and Support ID on a shared wallet); 2026-11-24 (shared-scope `sub`; request labels, Hedera); 2026-11-23 (gas sponsorship), SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -659,12 +659,13 @@ button.addEventListener('click', async () => {
 - <a id="support-id"></a>**Support ID** (SDK 0.2.0 or later). While a user is logged in,
   `hana.supportId` is their Support ID, `HANA-XXXX-XXXX` (`useHana().supportId` in React; `supportIdChanged` when it
   changes; null when logged out). It is the short form of the identity token's `sub` (section 15), so it is the same
-  in every app of your scope and for every sign-in method of the user's account, and your backend can compute it from
-  the `sub` it stores (`supportIdFromSub`, [section 15](#15-identity-token-your-backend)). It carries no address, email or Google account, and it isn't a credential: Journear's staff change
+  wherever the user's `sub` is (on most apps, every app of your scope; on an app with its own `sub`, that app only)
+  and for every sign-in method of the user's account, and your backend can compute it from the `sub` it stores (`supportIdFromSub`, [section 15](#15-identity-token-your-backend)). It carries no address, email or Google account, and it isn't a credential: Journear's staff change
   nothing on a code alone. Show it where your users look for help, put it in your diagnostics, and give it to Journear
   when you escalate, with the error `code`, its request ID (`error.requestId`, section 13), when it happened and the
   app; Journear's support finds the user, their logins and sessions by it, and a failed request by its request ID (Journear Passport
-  keeps no user id on failed requests). The Journear Passport
+  keeps no user id on failed requests). Not yet for an app with a `sub` of its own on a wallet several partners share:
+  Journear's support can't find those Support IDs on their own yet, so send the user's `sub` with it. The Journear Passport
   approval popup also shows it in its details ("Show details"), so a user can read it out. It comes from Journear Passport's API with the
   session: `null` for a session saved before this release (until the user's next login) and on an environment that
   can't compute it. An SDK older than 0.2.0 never receives it (the vault gives older SDKs exactly the answers they
@@ -2248,7 +2249,7 @@ past the Journear Passport session:
 |---|---|
 | `iss` | `{Hana API}/v1/identity` (sandbox-dev: `https://hana-id-api-sandbox-dev.tingtc.workers.dev/v1/identity`; a stable Journear Passport hostname replaces it before any partner goes live) |
 | `aud` | your app id (`app_…`), not your publishable key |
-| `sub` | `u1_…` (25 characters): stable per user in your app's scope, the same for every login method of their account and after a key rotation; different at every partner outside your scope, but the same for every app that shares your scope (and so the user's wallet), even another company's; never the Google `sub`. Always check `aud`, so a token minted for another app is never taken as yours. It is also the user's User ID on the partner portal's **Users** page, and their Support ID `HANA-XXXX-XXXX` is its short form, which you can compute yourself to show beside your own records ([Support ID from the `sub`](#support-id-from-sub)) |
+| `sub` | `u1_…` (25 characters): the user's ID in your app, stable, the same for every login method of their account and after a key rotation; never the Google `sub`. Usually it is the same for every app that shares your scope (and so the user's wallet), even another company's, and different everywhere else. An app that joins a wallet several partners share gets a `sub` of its own instead: an ID for each user that no other app sees, although the wallet (and so `wallets`) is the same on all of them. Either way, key users on `sub` in your app and always check `aud`, so a token minted for another app is never taken as yours. It is also the user's User ID on the partner portal's **Users** page (on a wallet several partners share, the page shows the wallet's own User ID), and their Support ID `HANA-XXXX-XXXX` is its short form, which you can compute yourself to show beside your own records ([Support ID from the `sub`](#support-id-from-sub)) |
 | `sid` | `s1_…`: one per Journear Passport session, shared by its tabs and reloads, new at every interactive login, never repeated |
 | `iat`, `exp`, `jti` | seconds; `exp` ≤ `iat` + 3600 and never past the session's end; `jti` is random |
 | `wallets` | `[{chain: 'stellar', address: 'G…'}, {chain: 'evm', address: '0x…'}]`, a real JSON array; the holder of this Journear Passport session proved control of each address's key (a signature bound to this session and app). Stellar and EVM only: the user's NEAR account isn't listed (SDK 0.4.0 changes nothing here); prove it with `hana.near.signMessage` ([section 8, NEAR](#near)) |
@@ -2444,7 +2445,9 @@ Rules:
    named in the token's header; and for anything of value (credits, payouts, account access) pin the thumbprints,
    judged on the key itself (`calculateJwkThumbprint`), never on its `kid`. Refuse to start when the app id or the
    issuer is missing or empty: most JWT libraries, `jose` included, skip a check whose expected value is undefined.
-2. Key users by `sub`, not by email or address. Store `sid` to run one session per device and to block a signed-out
+2. Key users by `sub`, not by email or address, and only together with your `aud`: a `sub` is unique within one app,
+   and on a wallet several partners share each app gets its own. To know one user across two of your own sites, use
+   one app with both web addresses, not two apps. Store `sid` to run one session per device and to block a signed-out
    `sid`; a new interactive login always brings a new `sid`. Unlinking a login method later gives a different wallet
    and so a different `sub`: to you that is a different user.
 3. The token is evidence of identity at `iat`, not your session: run your own session and end it when your page
@@ -2494,7 +2497,7 @@ cache expires, ≤ 10 min). Pinned thumbprints are the only defence that doesn't
 | Privy | Journear Passport |
 |---|---|
 | access token `sid` | `sid` (same semantics; a Journear Passport session lasts ≤ 12 h by default, 2 h idle) |
-| `sub` (`did:privy:…`) | `sub` (`u1_…`, per scope). Users get new wallets with Journear Passport; map existing users to new `sub`s yourself |
+| `sub` (`did:privy:…`) | `sub` (`u1_…`, per scope, or per app on a wallet several partners share). Users get new wallets with Journear Passport; map existing users to new `sub`s yourself |
 | `iss: "privy.io"` | `iss: "{Hana API}/v1/identity"` |
 | `aud: <Privy app id>` | `aud: app_…` |
 | access + identity token, one key pasted from Privy's dashboard | one identity token, keys from the JWKS URL (and thumbprints pinned from this guide) |

@@ -133,6 +133,12 @@ export const IDENTITY_EMAIL_COLUMN_SQL = "SELECT COUNT(*) AS n FROM sqlite_maste
 export const SHARED_SCOPE_COLUMNS_SQL =
   "SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'scopes' AND instr(sql, 'app_user_ids') > 0) * (SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'apps' AND instr(sql, 'created_by_kind') > 0) AS n";
 
+/**
+ * 1 when the hot D1's `apps` has migration 0030's `user_ids` column (D919), else 0, read as SHARED_SCOPE_COLUMNS_SQL is.
+ * `app:create` then writes the new app's mode from its scope's mark; without it, the column isn't there to write.
+ */
+export const APP_USER_IDS_COLUMN_SQL = "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'apps' AND instr(sql, 'user_ids TEXT') > 0";
+
 /** The refusal of a new `--auto-approve` policy on a hot D1 without migration 0026. */
 export const AUTO_APPROVE_NEEDS_0026 =
   "A new --auto-approve policy needs migration 0026 (0026_shared_scope_rules.sql) on this env's hot D1, to check the app doesn't share a wallet: apply it first. --auto-approve off works without it";

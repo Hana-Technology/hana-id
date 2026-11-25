@@ -488,7 +488,8 @@ describe('the shared-scope findings’ own event kinds (D916)', () => {
     await detectDrift({ DB: db }, now + 1);
     expect((await db.prepare(sharedRows).all()).results).toEqual([{ kind: 'drift', what: 'shared_wallet_policy' }]);
     // A new finding after 0027 gets the kind of its own.
-    await db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, auto_approve_policy) VALUES ('app_sh2', 'Shared 2', 's_sh', 'org_sh', 'pk_test_Sh2hhhhhhhhhhhhhhhhhhhhh', ?1)").bind(JSON.stringify(autoApprovePolicy('after 0027'))).run();
+    // On a marked scope a new app gets its own User IDs (migration 0030, D919).
+    await db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, auto_approve_policy, user_ids) VALUES ('app_sh2', 'Shared 2', 's_sh', 'org_sh', 'pk_test_Sh2hhhhhhhhhhhhhhhhhhhhh', ?1, 'app')").bind(JSON.stringify(autoApprovePolicy('after 0027'))).run();
     await detectDrift({ DB: db }, now + 2);
     expect((await db.prepare("SELECT kind FROM security_events WHERE app_id = 'app_sh2' AND json_extract(detail_json, '$.what') = 'shared_wallet_policy'").all()).results).toEqual([{ kind: 'shared_wallet_policy' }]);
   });

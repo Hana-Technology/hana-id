@@ -23677,7 +23677,11 @@ From `next` @ bcb121bd; not merged, not deployed, migration applied nowhere. Pie
   7. **N4**: a replayed key create (and the create's `publishableKey`) returns that key by its id, whatever the view's
      newest 20 hold.
   8. **N7, fixed (a one-line fold)**: the look-alike key leaves out the Arabic tatweel (U+0640), at the end of a name
-     too.
+     too, and (after the second review) before the "rn"/"vv" folds, so "Acrـne" reads as "Acme" and "VـV" as "W"; a
+     name of tatweels alone has an empty key, never compared.
+  - **After the second review of these fixes**: nothing above Low; the tatweel moved before the folds (point 8), the
+     docs now say `getApp` still lists every key (point 1's open point), and the simultaneous duplicate's quota is
+     recorded below.
   9. **The flake** the reviewer saw once in five runs: ten runs of `migration-0033`, `platform-request` and
      `platform-keys` together passed every time; the tightest clock margin found in this branch's test helper (the
      in-force platform proposal's, 10 s against 0033's skew rules) is widened to about a minute.
@@ -23690,6 +23694,11 @@ From `next` @ bcb121bd; not merged, not deployed, migration applied nowhere. Pie
       before, 2 just after); a sliding window would hold 2 in any 60 minutes.
     - **N5, the partner bit's holder.** A suspension staff set on bit 4 shows to the platform as `byOrganisation`;
       and the org's other platform key can resume a suspension key A set (the holder is "the platform", not a key).
+    - **Two identical requests at the same moment** (after the second review of PR 157's fixes): both may take
+      their quota units before either batch; the loser's `already_applied` isn't refunded, as the winner's ledger
+      row exists, so the org spends two units for one write. Only the sender's own org pays; kept as accepted
+      behaviour, to confirm. Possible fix: a per-attempt marker (the attempt's own id recorded with its units, so only
+      the attempt whose batch committed keeps them).
     - **N6, remove's reach over others' proposals.** The platform's remove of a web address also cancels a waiting
       addition of the same address that a member or staff proposed (the writer closes every open `origin_add` of that
       address on the app).

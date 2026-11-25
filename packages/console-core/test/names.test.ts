@@ -461,6 +461,12 @@ describe('look-alike app names on one scope (D929, the platform API’s create, 
     expect(namesLookAlike('سواب', 'سـواب')).toBe(true);
     expect(namesLookAlike('Acme Swap', 'Acme Swap\u0640')).toBe(true);
     expect(namesLookAlike('سواب', 'سوا')).toBe(false);
+    // Inside a folded pair too: "rـn" is "m", "VـV" is "W".
+    expect(namesLookAlike('Acme Swap', 'Acr\u0640ne Swap')).toBe(true);
+    expect(namesLookAlike('Acme Wallet', 'Acme V\u0640Vallet')).toBe(true);
+    // A name of tatweels alone has an empty key, never compared.
+    expect(appNameLookalikeKey('\u0640\u0640')).toBe('');
+    expect(namesLookAlike('\u0640', '\u0640\u0640')).toBe(false);
     expect(namesLookAlike('Acme Swap', 'Acme Swap Pro')).toBe(false);
     expect(namesLookAlike('Acme Swap', 'Acme Swop')).toBe(false);
     // Nothing to compare: never alike.

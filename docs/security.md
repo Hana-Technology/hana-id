@@ -921,7 +921,8 @@ address or existing ID changes; an app created here gets its own User IDs as any
   never names the other app, and no answer gives the ledger's sequence.
 - **Quotas** (A5) per org, kept low: 2 creations an hour and 5 a UTC day; 20 web addresses an hour and 30 a day; 20
   publishable keys an hour and 50 a day (revoked keys are kept: churn is bounded, and with two `app_keys` indexes no
-  read grows with an app's revoked history, after PR 157's review, M1); 30 waiting; 10 apps (staff raise
+  platform read and no key write grows with an app's revoked history, after PR 157's review, M1; the console's and
+  staff's own app read, `getApp`, still lists every key, open in D929); 30 waiting; 10 apps (staff raise
   `platform_orgs`). A quota is taken after the write's checks and given back only when nothing committed. The kill switches (remove, cancel, suspend, key revoke) work while
   frozen and spend only the platform's own reserve; remove, suspend and key revoke are counted by the platform's
   breaker (10 an org, 30 across orgs an hour), refunded once when they changed nothing.

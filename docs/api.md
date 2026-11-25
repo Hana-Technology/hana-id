@@ -2604,7 +2604,10 @@ actor (its id the key's) and answer the first result again to a retry:
   `409 conflict` (anything else): the ledger's request id is kept 60 months. A replay of a write whose app has left the
   reach since (deleted, its scope dropped from the key) is `404 not_found`, the cancel's included; a replayed key create
   returns that key, however many keys came after it. A write refused or failed records nothing: its key can be used again. Two
-  copies of one request sent at once: one writes; the other is `409 already_applied`.
+  copies of one request sent at once: one writes; the other is `409 already_applied`. **Accepted (to confirm):**
+  both copies may have taken a quota unit by then, and the loser's isn't given back (the winner's ledger row exists),
+  so a create, proposal or key create sent twice at the same moment can spend two of the org's own units for one
+  write; it costs no other org anything.
 
 **The app view** (`PlatformApp`, console-core `platform-ops.ts`), an allowlist:
 
@@ -2644,9 +2647,10 @@ diagnostic read), charged to the org's bucket before the route runs; each route 
 batches, 12 statements through the hot DB; the announced keys' list is read outside it). Rows read on an org with 10
 apps of 20 web addresses and 5 keys each, pinned by `apps/api/test/platform-ops.test.ts`: the list about 350, a read
 about 40, a create about 250 and a proposal about 200 (both count the org's waiting web addresses), the others 25 to
-70. An app with thousands of revoked keys costs no more: the view reads its 20 newest keys down an index, and every
-key write (the console's and staff's too) reads only the keys unrevoked or in their grace and the one it names
-(after PR 157's review; tested with 3 000 revoked keys).
+70. An app with thousands of revoked keys costs the platform no more: the view reads its 20 newest keys down an
+index, and every key write (the console's and staff's too) reads only the keys unrevoked or in their grace and the one
+it names (after PR 157's review; tested with 3 000 revoked keys). Not yet the console's and staff's own app read
+(`getApp`), which still lists every key of the app (open, D929).
 
 **The rules, by operation:**
 

@@ -44,6 +44,7 @@ import {
   type AccountResult,
   type AppConfig,
   type ApprovalSubject,
+  type OtherApps,
   type WalletChain,
   logoUrlOn,
   type LoginMethod,
@@ -116,6 +117,7 @@ import { type LoginContext, type LoginMode, type LoginRequest, type LoginStage, 
 import { type IssuerApi, issuerApi } from './issuer.ts';
 import type { GoogleEmailFlow } from '../auth/google.ts';
 import { NearView } from './near.ts';
+import { type KeptStore, OTHER_APPS_WAIT_MS, keepOtherApps, readKeptOtherApps, readServedOtherApps } from './other-apps.ts';
 import { isLoopbackHost } from '../client/urls.ts';
 import {
   type ConsentV1,
@@ -268,6 +270,8 @@ export interface VaultOptions {
   popupWatch?: Partial<PopupWatch>;
   /** The coarse label a new share names this device by in Hana Home (device-label.ts; boot.ts reads the User-Agent), or none. */
   deviceLabel?: string | null;
+  /** D912: the vault origin's localStorage, where the last answer about the other apps is kept (other-apps.ts); none: not kept. */
+  keptStore?: KeptStore | null;
 }
 
 interface Share {
@@ -659,6 +663,11 @@ export class Vault {
    */
   private labels: { docs: VerifiedLabel[]; at: number; sent: number } | null = null;
   /**
+   * D912: the other apps that use this wallet, from the latest GET /v1/app answer that had them (other-apps.ts), with
+   * when that read was sent (perfNow); null until one did. An answer without them (a failed read) keeps what is known.
+   */
+  private otherApps: { apps: OtherApps; sent: number } | null = null;
+  /**
    * D900: what the vault last read of a labelled NEAR contract's code, by account: the hash both providers agreed on, or
    * null (couldn't check), with when that read was sent (as `labels`). Used only while younger than NEAR_CODE_FRESH_MS.
    */
@@ -719,6 +728,9 @@ export class Vault {
     o.host.onVisibilityChange?.(() => this.onVisibilityChange());
     // A back/forward-cache restore: its timers were frozen, so it is checked as a tab shown again (D681).
     o.host.onPageRestore?.(() => this.onVisibilityChange());
+    // D912: the last answer naming other apps this vault origin kept (never a count of 0; any read replaces it: `sent` -∞).
+    const kept = readKeptOtherApps(o.keptStore, o.config.appId, this.clock.now());
+    if (kept) this.otherApps = { apps: kept.apps, sent: Number.NEGATIVE_INFINITY };
     this.constructedAt = this.perfNow();
   }
 
@@ -813,6 +825,10 @@ export class Vault {
       partnerLabels: {
         forRequest: (subject) => this.labelsForWindow(subject),
         refresh: (subject) => this.refreshLabels(subject),
+      },
+      otherApps: {
+        current: () => this.otherAppsForWindow(),
+        refresh: () => this.refreshOtherApps(),
       },
     });
     port.onmessage = (m) => void this.onPortMessage(m.data);
@@ -951,6 +967,7 @@ export class Vault {
         this.statusFailures = 0;
         this.logoUrl = logoUrlOn(this.env.filesOrigin, app.logoUrl, this.config.appId);
         this.applyServedLabels(app, at, sent);
+        this.applyServedOtherApps(app, at, sent);
         this.applyServedPolicy(app, at, sent);
         this.applyServedRawSign(app, at);
         this.applyServedConsent(app, consentId, at, sent);
@@ -969,6 +986,33 @@ export class Vault {
       });
     }
     return this.appConfigPromise;
+  }
+
+  // ---- the other apps that use this wallet (D912) ----
+
+  /** Keeps the other apps GET /v1/app (sent at `sent`) served; no answer, or a read sent before the one kept, changes nothing. */
+  private applyServedOtherApps(app: AppConfig, at: number, sent: number): void {
+    const apps = readServedOtherApps(app.otherApps);
+    if (!apps || (this.otherApps && this.otherApps.sent > sent)) return;
+    this.otherApps = { apps, sent };
+    keepOtherApps(this.o.keptStore, this.config.appId, apps, at);
+  }
+
+  /**
+   * What the approval window gets: the apps last served, or 'unknown' before any answer had them (the queue then waits
+   * once for a read, at most OTHER_APPS_WAIT_MS: `refreshOtherApps`).
+   */
+  private otherAppsForWindow(): OtherApps | 'unknown' {
+    return this.otherApps?.apps ?? 'unknown';
+  }
+
+  /** A fresh GET /v1/app for the other apps, waited for at most OTHER_APPS_WAIT_MS; never rejects. */
+  private refreshOtherApps(): Promise<void> {
+    let timer: unknown = null;
+    const late = new Promise<void>((resolve) => {
+      timer = this.timers.setTimeout(resolve, OTHER_APPS_WAIT_MS);
+    });
+    return Promise.race([this.refreshPolicy().catch(() => undefined), late]).finally(() => this.timers.clearTimeout(timer));
   }
 
   // ---- partner labels (D896) ----
@@ -1704,6 +1748,7 @@ export class Vault {
       jwks: (kid) => this.jwks(kid),
       appConfig: () => this.appConfig(),
       appRtt: (app) => this.appRtts.get(app),
+      otherApps: () => this.otherAppsForWindow(),
       parentWindow: this.host.parent,
       progress,
       // A banner's Cancel or Remove in the login popup (spec "Notices"): the partner hears it, and the snapshot follows.

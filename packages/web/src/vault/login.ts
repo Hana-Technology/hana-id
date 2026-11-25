@@ -74,6 +74,7 @@ import {
   type AppConfig,
   type Bytes,
   logoUrlOn,
+  type OtherApps,
   type CkdResult,
   type EmailChainKey,
   type EmailSignerPolicy,
@@ -138,6 +139,7 @@ import { VaultError, apiErrorToVault, sessionKeyError } from './errors.ts';
 import { type GoogleMatch, type IssuerApi, MatchBusy, type MatchRequest } from './issuer.ts';
 import { GOOGLE_CANCELLED_RELAY_ERROR, GOOGLE_EMAIL_FLOW, type GoogleEmailFlow } from '../auth/google.ts';
 import { type NearView, ckdResultOf } from './near.ts';
+import { readServedOtherApps, windowOtherApps } from './other-apps.ts';
 import { PathCheckError, confirmPath } from '../path-check.ts';
 import { type Clock, type Timers, type WindowMessageEvent, type WindowRef, realTimers, sleep } from './runtime.ts';
 
@@ -273,6 +275,8 @@ export interface LoginContext {
   appConfig(): Promise<AppConfig>;
   /** pk_test_ timings: the round trip of the GET /v1/app request that answered `app`, on the vault's clock. */
   appRtt?(app: AppConfig): number | undefined;
+  /** D912: what the vault knows of the other apps that use the wallet (its latest read, or its kept answer), or 'unknown'. */
+  otherApps?(): OtherApps | 'unknown';
   /** window.parent (partner mode authenticates the popup by its opener). */
   parentWindow: unknown;
   progress(stage: LoginStage): void;
@@ -416,6 +420,10 @@ type AuthParams = {
   relayKey: Uint8Array;
   /** Batch C11: the app's logo, from this login's GET /v1/app, on the build's files origin (core logoUrlOn). */
   logoUrl?: string;
+  /** D912: the other apps that use this wallet, from this login's GET /v1/app (other-apps.ts); only when there is one. */
+  otherApps?: OtherApps;
+  /** D912: no answer at all about the other apps (other-apps.ts `windowOtherApps`). */
+  otherAppsUnknown?: true;
 };
 
 const fail = (code: ConstructorParameters<typeof VaultError>[0], message: string, data?: Record<string, unknown>) => new VaultError(code, message, data);
@@ -912,6 +920,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         pk: config.publishableKey,
         appName: config.appName,
         ...logoOf(env, config.appId, app),
+        ...windowOtherApps(readServedOtherApps(app.otherApps) ?? ctx.otherApps?.() ?? null),
         parentOrigin: ctx.parentOrigin,
         scopeId: config.scopeId,
         signer: env.signer,
@@ -1739,6 +1748,7 @@ export class PendingLink extends PopupTask<MadeLink> {
         pk: config.publishableKey,
         appName: config.appName,
         ...logoOf(env, config.appId, app),
+        ...windowOtherApps(readServedOtherApps(app.otherApps) ?? ctx.otherApps?.() ?? null),
         parentOrigin: ctx.parentOrigin,
         scopeId,
         signer: env.signer,

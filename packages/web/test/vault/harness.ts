@@ -284,8 +284,11 @@ export class FakeBackend {
   readonly viewLies = new Map<string, (method: string, args: Record<string, unknown>) => unknown>();
   /** Per endpoint: a JSON-RPC body to answer instead (a lying or different provider), or undefined to answer normally. */
   readonly rpcLies = new Map<string, (body: { method: string; params: Record<string, unknown> }) => Record<string, unknown> | undefined>();
-  /** What GET /v1/app answers. */
-  app: Record<string, unknown> = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: CLIENT_ID, mode: 'shared' }, name: 'Partner' };
+  /**
+   * What GET /v1/app answers. `otherApps` as the API answers the vault's own read of an app alone on its scope (D912);
+   * a test of an older API or a failed read deletes it.
+   */
+  app: Record<string, unknown> = { scopeId: SCOPE, signer: ENV.signer, google: { clientId: CLIENT_ID, mode: 'shared' }, name: 'Partner', otherApps: { count: 0, names: [] } };
   /** The auto-approve policy in force that GET /v1/app answers: each new tab's page sets it (the page is current). */
   autoApprovePolicy: Record<string, unknown> | null = null;
   /** The raw-signing setting in force that GET /v1/app answers (each new tab's page sets it, as for the policy). */

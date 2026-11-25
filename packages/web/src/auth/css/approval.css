@@ -134,7 +134,9 @@ div.partner-label p.partner-attribution {
   color: var(--jp-fg-muted);
 }
 
-div.partner-label :is(.partner-words, .partner-value) {
+div.partner-label :is(.partner-words, .partner-value),
+/* D912: the other apps' names under the shared-wallet line are partner text too (css/base.css). */
+.shared-wallet-apps .partner-words {
   unicode-bidi: isolate;
   padding: 0 0.25em;
   border: 1px solid var(--jp-border);

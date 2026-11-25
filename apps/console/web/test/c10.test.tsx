@@ -184,7 +184,9 @@ describe('an app that shares a wallet (D915)', () => {
     expect(await screen.findByText(/Auto-approve is off for apps that share a wallet\. This app uses the same wallet as other apps/u)).toBeTruthy();
     expect(screen.queryByLabelText(/Policy \(JSON/u)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Check and preview' })).toBeNull();
-    expect(screen.getByRole('button', { name: /Turn raw signing on/u })).toBeTruthy();
+    // Raw signing waits for the scope's on-chain owners to be read, as before.
+    expect(await screen.findByRole('button', { name: /Turn raw signing on/u })).toBeTruthy();
+    expect(screen.queryByLabelText(/Policy \(JSON/u)).toBeNull();
   });
 
   it('a platform-created app on an unmarked scope gets the same; a policy found there can still be removed', async () => {

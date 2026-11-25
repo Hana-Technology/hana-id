@@ -11,7 +11,7 @@ import { rotateKey } from '../src/changes/keys.ts';
 import { removeOrigins } from '../src/changes/origins.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
-import { ORIGIN, call } from './helpers.ts';
+import { ORIGIN, call, seedApp } from './helpers.ts';
 import { hex, labelChangeDigest, nonceOf, originChangeDigest, ownerActionNonce, settingsChangeDigest, sha256, utf8 } from '@hana-id/console-core';
 
 /** A partner label document (D894) for the budget test: a made-up contract on the NEAR test network. */
@@ -294,6 +294,15 @@ describe('the hot-DB budget', () => {
         const userId = `u1_${'E'.repeat(21)}A`;
         await env.DB.prepare('INSERT OR IGNORE INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 1)').bind(`hu_${'1'.repeat(26)}`, userId, '11111111', app.scope).run();
         return rpc.getUser({ ...member(), orgId: app.org, userId });
+      }],
+      // D925: a person of a marked scope of the org, across its apps (one SELECT; the limits are RateLimiter objects).
+      ['linkUser', async (rpc) => {
+        const shared = await seedApp({ sharedScope: true });
+        await env.DB.prepare('UPDATE scopes SET org_id = ?2 WHERE scope_id = ?1').bind(shared.scope, app.org).run();
+        const userId = `u1_${'F'.repeat(21)}A`;
+        await env.DB.prepare('INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 1)').bind(`hu_${'2'.repeat(26)}`, userId, '22222222', shared.scope).run();
+        await env.DB.prepare('INSERT INTO end_user_apps (user_id, app_id, app_sub, support_code, first_seen_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 1)').bind(`hu_${'2'.repeat(26)}`, shared.id, `u1_${'G'.repeat(21)}A`, '33333333').run();
+        return rpc.linkUser({ ...member(), orgId: app.org, query: `u1_${'G'.repeat(21)}A`, purpose: 'search' });
       }],
     ];
     expect(new Set(calls.map(([m]) => m))).toEqual(new Set(Object.keys(CONSOLE_COSTS)));

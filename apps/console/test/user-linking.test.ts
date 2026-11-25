@@ -214,3 +214,15 @@ describe('userLinkView: the allowlist', () => {
     expect(userLinkView(odd)!.apps[0]!.appName).toBe('Unnamed app');
   });
 });
+
+describe('the console table the lookup writes, as the schema has it (sqlite_schema)', () => {
+  it('audit_log’s triggers and views are the known set: append-only, kept 60 months; the row is a plain insert', async () => {
+    const r = await db.prepare("SELECT type, name FROM sqlite_schema WHERE type IN ('trigger', 'view') AND (tbl_name = 'audit_log' OR sql LIKE '%audit_log%') ORDER BY type, name").all<{ type: string; name: string }>();
+    expect(r.results.map((x) => `${x.type}:${x.name}`)).toMatchInlineSnapshot(`
+      [
+        "trigger:audit_log_no_early_delete",
+        "trigger:audit_log_no_update",
+      ]
+    `);
+  });
+});

@@ -220,6 +220,11 @@ export const appSummary = z
     logoUrl: urlString().optional(),
     /** Email login is on (`apps.login_methods` lists it; an API before batch 9's build omits it). */
     emailOn: z.boolean().optional(),
+    /**
+     * D925: the app's scope is marked as shared (`scopes.app_user_ids`), so the Users screen offers its owners the search
+     * across apps. An API before D925's build omits it in the list (the detail has had it since D915).
+     */
+    sharedScope: z.boolean().optional(),
     createdAt: ms,
   })
   .strict();

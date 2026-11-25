@@ -376,3 +376,21 @@ it('fixtures: the per-app IDs differ from the scope’s and from each other (so 
   expect(identitySub(KEY, n.before.scope, { provider: 'google', sub: n.sub })).toBe(n.person.userId);
   void newId;
 });
+
+describe('the tables this piece reads and writes, as the schema has them (sqlite_schema)', () => {
+  it('every trigger and view naming them is the known set: the linking view adds none and relies on these', async () => {
+    const named = async (table: string) =>
+      (await env.DB.prepare("SELECT type, name FROM sqlite_schema WHERE type IN ('trigger', 'view') AND (tbl_name = ?1 OR sql LIKE '%' || ?1 || '%') ORDER BY type, name").bind(table).all<{ type: string; name: string }>()).results.map((r) => `${r.type}:${r.name}`);
+    expect({
+      end_user_apps: await named('end_user_apps'),
+      security_events: await named('security_events'),
+    }).toMatchInlineSnapshot(`
+      {
+        "end_user_apps": [
+          "trigger:end_user_apps_insert",
+        ],
+        "security_events": [],
+      }
+    `);
+  });
+});

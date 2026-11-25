@@ -100,7 +100,7 @@ export const KIND_TRIGGERS = ['app_changes_actor_kind', 'app_changes_no_replace'
 export function expectedTableSqlAfter0027(name: LedgerTable['name'], before: string): string {
   if (name === 'app_changes') return before.replace('CREATE TABLE app_changes (', 'CREATE TABLE "app_changes" (').replace(" CHECK (actor_kind IN ('member', 'hana', 'system', 'link'))", '');
   if (name === 'guarded_changes') return before.replace('CREATE TABLE guarded_changes (', 'CREATE TABLE "guarded_changes" (').replace(" CHECK (proposed_by_kind IN ('member', 'hana', 'system'))", '');
-  return before.replace("'label_live')", "'label_live', 'platform_quota', 'platform_auth_failures', 'link_lookup_volume')");
+  return before.replace("'label_live')", "'label_live', 'platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked')");
 }
 
 /** A row in a snapshot: its hashes and (for a table jobs update) the state of each job-written column. */

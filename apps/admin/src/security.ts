@@ -39,6 +39,9 @@ export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object
   near_billing_late: 'near-billing-late',
   // D872: the usage database's free monthly compute allowance.
   neon_compute_high: 'neon-compute-high',
+  // D916: D915's drift findings, kinds of their own since migration 0027.
+  shared_wallet_policy: 'shared-wallet-policy',
+  shared_scope_unmarked: 'shared-scope-unmarked',
 });
 
 export function withWords(e: SecurityEvent): SecurityEvent & { title: string; playbook: { id: string; title: string } | null } {

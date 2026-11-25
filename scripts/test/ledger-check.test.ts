@@ -73,7 +73,7 @@ function populated(): DatabaseSync {
         );
       }
   const se = db.prepare('INSERT INTO security_events (id, detected_at, kind, org_id, detail_json, notified_at) VALUES (?, ?, ?, ?, ?, ?)');
-  SECURITY_EVENT_KINDS.filter((k) => !['platform_quota', 'platform_auth_failures', 'link_lookup_volume'].includes(k)).forEach((k, i) => se.run(`se_${k}`, NOW - i, k, i % 2 ? 'org_a' : null, '{}', i % 2 ? NOW : null));
+  SECURITY_EVENT_KINDS.filter((k) => !['platform_quota', 'platform_auth_failures', 'link_lookup_volume', 'shared_wallet_policy', 'shared_scope_unmarked'].includes(k)).forEach((k, i) => se.run(`se_${k}`, NOW - i, k, i % 2 ? 'org_a' : null, '{}', i % 2 ? NOW : null));
   return db;
 }
 
@@ -93,6 +93,9 @@ describe('ledger-check: snapshot and compare around migration 0027', () => {
     expect(c.verdict).toBe('identical');
     expect(c.lines.join('\n')).toContain(`New since: ${[...KIND_TRIGGERS].sort().join(', ')}.`);
     for (const t of LEDGER_TABLES) expect(after.tables[t.name]!.sha256, t.name).toBe(before.tables[t.name]!.sha256);
+    // The other table's trigger that reads guarded_changes is in the comparison.
+    expect(Object.keys(before.schema)).toContain('scopes_app_user_ids_no_policy');
+    expect(after.schema.scopes_app_user_ids_no_policy).toEqual(before.schema.scopes_app_user_ids_no_policy);
   });
 
   it('paging changes no hash; a snapshot holds no row value', async () => {
@@ -121,13 +124,16 @@ describe('ledger-check: snapshot and compare around migration 0027', () => {
       ['the status CHECK dropped', (s) => s.replace("status                TEXT NOT NULL CHECK (status IN ('pending', 'active', 'cancelled', 'ended')),", 'status                TEXT NOT NULL,'), /CHANGED table guarded_changes/u],
       ['json_valid dropped', (s) => s.replace("detail_json TEXT NOT NULL CHECK (json_valid(detail_json)), -- allowlisted fields only", 'detail_json TEXT NOT NULL, -- allowlisted fields only'), /CHANGED table app_changes/u],
       ['a NOT NULL dropped', (s) => s.replace('  at          INTEGER NOT NULL,\n  org_id      TEXT NOT NULL,\n  app_id      TEXT,', '  at          INTEGER,\n  org_id      TEXT NOT NULL,\n  app_id      TEXT,'), /CHANGED table app_changes/u],
-      ['a new event kind left out', (s) => s.replace("'platform_auth_failures', 'link_lookup_volume')", "'platform_auth_failures')"), /CHANGED table security_events/u],
+      ['a new event kind left out', (s) => s.replace("'link_lookup_volume', 'shared_wallet_policy'", "'shared_wallet_policy'"), /CHANGED table security_events/u],
       ['a lost ledger row', (s) => s.replace('FROM app_changes;', 'FROM app_changes WHERE seq <> 70000;'), /app_changes: .*\n {2}LOST: 1 row\(s\)/u],
       ['a lost guarded change', (s) => s.replace('FROM guarded_changes;', "FROM guarded_changes WHERE id <> 'gc_007';"), /LOST: 1 row\(s\) of before are gone \(first ids: gc_007\)/u],
       ['a changed ledger row', (s) => s.replace('SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, actor_kind', "SELECT seq, at, org_id, app_id, scope_id, kind, detail_json, CASE actor_kind WHEN 'link' THEN 'system' ELSE actor_kind END"), /CHANGED: \d+ row\(s\) differ in a column no job writes \(the table is append-only\)/u],
       ['a changed proposer', (s) => s.replace('proposed_at, request_country, waiver, notified_at, active_from, cancel_token_hash, activated_recorded_at, expedited_by, expedite_reason, ended_at, cancelled_by, cancelled_at, request_id FROM guarded_changes', 'proposed_at + 1, request_country, waiver, notified_at, active_from, cancel_token_hash, activated_recorded_at, expedited_by, expedite_reason, ended_at, cancelled_by, cancelled_at, request_id FROM guarded_changes'), /guarded_changes: .*\n {2}CHANGED: 36/u],
       ['seq renumbered', (s) => s.replace('SELECT seq, at, org_id', 'SELECT NULL, at, org_id'), /SEQ: /u],
       ['a dropped index', (s) => s.replace('CREATE INDEX guarded_changes_due ON guarded_changes (status, active_from);', ''), /MISSING index guarded_changes_due/u],
+      // 0026's trigger on scopes reads guarded_changes: 0027 re-creates it, and the comparison holds it to its SQL.
+      ['0026’s trigger re-created altered', (s) => s.replace("g.status IN ('pending', 'active'))));\nEND;", "g.status IN ('pending'))));\nEND;"), /CHANGED trigger scopes_app_user_ids_no_policy/u],
+      ['0026’s trigger not re-created', (s) => s.replace(/CREATE TRIGGER scopes_app_user_ids_no_policy [\s\S]*?\nEND;/u, ''), /MISSING trigger scopes_app_user_ids_no_policy \(on scopes\)/u],
       ['an altered trigger', (s) => s.replace("'-60 months') * 1000)\nBEGIN\n  SELECT RAISE(ABORT, 'app_changes rows are kept 60 months')", "'-6 months') * 1000)\nBEGIN\n  SELECT RAISE(ABORT, 'app_changes rows are kept 60 months')"), /CHANGED trigger app_changes_no_early_delete/u],
     ];
     for (const [what, mutate, finding] of broken) {

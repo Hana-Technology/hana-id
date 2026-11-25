@@ -36,13 +36,13 @@ export function Suspend() {
           <ConfirmButton
             label="Take the suspension over"
             confirm="Take it over (only owners can resume)"
-            detail="The app stays suspended. Your backend can no longer resume it: only an owner can, with a fresh Google sign-in."
+            detail="The app will be suspended, and only your organisation can resume it: your backend can’t. An owner resumes it with a fresh Google sign-in."
             busy={w.busy}
             onConfirm={() =>
               void w.run(async () => {
                 await postJson(`/api/orgs/${org}/apps/${app.id}/suspend`, {});
                 ctl.reload();
-                return 'Taken over: only an owner can resume it now.';
+                return 'Done: the app is suspended, and only an owner of your organisation can resume it.';
               })
             }
           />

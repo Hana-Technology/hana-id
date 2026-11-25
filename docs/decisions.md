@@ -23823,3 +23823,26 @@ number the caller assigned.
   origins in the staff queue, the staff proposals' four eyes, the `local*` guard.
 - Address impact: **none.** Screens, reads and the words of an email; no contract call, key, path or address
   derivation, and no ID changes.
+- **After PR 158's review (2026-11-25)**, nothing above Low; each item fixed, with tests:
+  1. **A request cut by a full notice page is read again whole** (`notices.ts` `wholeRequest`): `pendingNotices` with a
+     limit wider by one request's most (20 + 20), from the same start, and the request taken whole from there; only a
+     request still cut then (or no room in the budget for the read) waits, each skip logged `request_cut`. Before, one
+     stuck older notice ahead of a 20-address request held that request back on every run until the 7-day lapse
+     cancelled it unannounced. Tests: the reviewer's case (a failing older notice, then a 20-address request: sent whole
+     on the first run, one email per recipient), a request still cut after the wider read (skipped, logged), and the
+     budget (alias and 10 contacts: 11 sends and 20 acks after both page reads, within one run's 40 calls and 30 RPCs).
+  2. **The email's date is a lower bound**: "They start working no sooner than {date}, at least 24 hours after this
+     email" (text and HTML), since the wait starts at the ack after every send and a copy from an earlier attempt would
+     otherwise state an earlier time than the real one. `api.md` and `security.md` say so; the test holds the stated
+     date at or before the real one.
+  3. **The take-over in the Audit**: `ConsoleRpc.setSuspended` answers `takenOver: true`; the console's `app.suspended`
+     row keeps its code with `takenOver` in its details (allowed in `AUDIT_DETAIL_KEYS`), and the Audit titles it, and the
+     API's `suspension.set` row with `takenOver`, "Suspension taken over from your backend" (console-core `entryLabel`).
+  4. **The take-over's words are true in a race** (the backend resumed just before the click): "The app will be
+     suspended, and only your organisation can resume it: your backend can’t." and "Done: the app is suspended, and only
+     an owner of your organisation can resume it."
+  5. **The admin's route words** are compared with console-core's (`PLATFORM_ROUTE_WORDS`, now exported) in both
+     directions, no pinned count.
+  6. **The tab's name** in `packages/web/README.md`, `partner-start-here.md` and `operations.md`'s onboarding table.
+  To confirm (the Tech Lead), added to the list above: the lower-bound wording (item 2) and the take-over's title and
+  words (items 3 and 4).

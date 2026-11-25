@@ -180,7 +180,8 @@ const ROUTES: OrgRouteDef[] = [
       const b = await body(c, z.object({}).strict(), 'Expected {} (resuming is a fresh sign-in: the app.resume action)');
       if (!b.ok) return b.res;
       const r = await c.env.API.setSuspended({ ...ctxOf(c), orgId: c.caller.orgId, appId: appOf(c), suspended: true });
-      return answered(c, 'setSuspended', 'app.suspended', appOf(c), r, (x) => ({ suspendedBy: x.suspendedBy }), (x) => ({ suspendedBy: x.suspendedBy }));
+      // D930: a take-over of the backend's suspension keeps the action code, with `takenOver` in its details.
+      return answered(c, 'setSuspended', 'app.suspended', appOf(c), r, (x) => ({ suspendedBy: x.suspendedBy, ...(x.takenOver ? { takenOver: true } : {}) }), (x) => ({ suspendedBy: x.suspendedBy, ...(x.takenOver ? { takenOver: true } : {}) }));
     },
   },
   {

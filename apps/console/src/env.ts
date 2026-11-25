@@ -72,7 +72,8 @@ export interface ConsoleRpcClient {
   updateSettings(c: UpdateSettingsInput): Answer<{ version: number }>;
   /** A guarded change (`gc_`) or a request labels version (`lc_`, D894): the answer is that change's own view. */
   cancelChange(c: CancelChangeInput): Answer<{ change: GuardedChange | LabelChangeView }>;
-  setSuspended(c: ConsoleSetSuspendedInput): Answer<{ suspendedBy: number }>;
+  /** `takenOver` (D930): the member took the backend's (platform's) suspension over. */
+  setSuspended(c: ConsoleSetSuspendedInput): Answer<{ suspendedBy: number; takenOver?: true }>;
   createKey(c: CreateKeyInput): Answer<{ key: KeyView }>;
   rotateKey(c: RotateKeyInput): Answer<{ key: KeyView; oldKeyRevokedAt: number }>;
   revokeKey(c: RevokeKeyInput): Answer<object>;

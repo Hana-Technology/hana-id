@@ -5,8 +5,8 @@
 import { newId, parsePlatformPublicKey } from '@hana-id/console-core';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { breathe, getAs, member } from './c10.ts';
-import { seedHotApp } from './helpers.ts';
+import { breathe, getAs, member, postAs } from './c10.ts';
+import { auditRows, seedHotApp } from './helpers.ts';
 
 beforeEach(async () => {
   await breathe(700);
@@ -110,5 +110,25 @@ describe('the platform keys the screens name', () => {
     const r = await getAs<{ owners: number }>(m, `/api/orgs/${m.org}/platform-keys/${key}`);
     expect(r.status).toBe(200);
     expect(r.body.owners).toBe(2);
+  });
+});
+
+describe('an owner taking over the backend’s suspension (D930)', () => {
+  it('keeps the action code app.suspended with takenOver in its details; a plain suspend has none', async () => {
+    const m = await member('owner');
+    const app = await seedHotApp(m.org);
+    // The backend's suspension, as the platform's write leaves it.
+    await hot.prepare("UPDATE apps SET suspended_by = 4, partner_bit_by = 'platform' WHERE id = ?1").bind(app.id).run();
+    const r = await postAs<{ suspendedBy: number; takenOver?: boolean }>(m, `/api/orgs/${m.org}/apps/${app.id}/suspend`, {});
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ suspendedBy: 4, takenOver: true });
+    const plain = await seedHotApp(m.org);
+    const p = await postAs<Record<string, unknown>>(m, `/api/orgs/${m.org}/apps/${plain.id}/suspend`, {});
+    expect(p.body).not.toHaveProperty('takenOver');
+    const rows = await auditRows("action = 'app.suspended' AND org_id = ?", m.org);
+    expect(rows.map((x) => JSON.parse(x.details_json) as Record<string, unknown>)).toEqual([
+      { suspendedBy: 4, takenOver: true },
+      { suspendedBy: 4 },
+    ]);
   });
 });

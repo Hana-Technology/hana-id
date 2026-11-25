@@ -76,4 +76,4 @@ export type PlatformQueue = {
   keys: PlatformKeyView[];
 };
 
-export { platformRouteWords } from './platform-words.ts';
+export { PLATFORM_ROUTE_WORDS, platformRouteWords } from './platform-words.ts';

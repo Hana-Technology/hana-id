@@ -74,7 +74,9 @@ describe('a platform request’s web addresses: one email', () => {
       expect(m.text).toContain('your platform key “Sodax partner backend”');
       expect(m.text).toContain(key);
       // The real wait and its date, not the env's one minute; no waiver, and nothing that brings it forward.
-      expect(m.text).toContain('24 hours after this email');
+      // A lower bound: the ack, after every send, starts the wait.
+      expect(m.text).toContain('no sooner than');
+      expect(m.text).toContain('at least 24 hours after this email');
       expect(m.text).not.toMatch(/waiver|at once|1 min/iu);
       expect(m.text).toContain('international letters');
       expect(m.text).toContain('https://bücher.example');
@@ -95,12 +97,14 @@ describe('a platform request’s web addresses: one email', () => {
       expect(row!.notified_at!).toBeGreaterThanOrEqual(before);
     }
     // The stated date is the ack's time to within the run (the plain text may wrap between its words).
-    const m = /working on\s+(\d{1,2})\s+([A-Z][a-z]+)\s+(\d{4}),\s+(\d{2}):(\d{2})\s+UTC/u.exec(mine[0]!.text);
+    const m = /no sooner than\s+(\d{1,2})\s+([A-Z][a-z]+)\s+(\d{4}),\s+(\d{2}):(\d{2})\s+UTC/u.exec(mine[0]!.text);
     expect(m, mine[0]!.text).not.toBeNull();
     const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const stated = Date.UTC(Number(m![3]), months.indexOf(m![2]!), Number(m![1]), Number(m![4]), Number(m![5]));
     const at = (await changeRow(ids[0]!))!.active_from!;
-    expect(Math.abs(stated - at)).toBeLessThan(3 * 60_000);
+    // Never later than the real time (minutes are cut), and close to it.
+    expect(stated).toBeLessThanOrEqual(at);
+    expect(at - stated).toBeLessThan(3 * 60_000);
   });
 
   it('two requests on one app: two emails; a member’s proposal keeps its own email with the env’s delay', async () => {
@@ -146,7 +150,31 @@ describe('a platform request’s web addresses: one email', () => {
     for (const id of ids) expect((await changeRow(id))!.notified_at).toBeNull();
   });
 
-  it('a request cut off by the end of a full page waits for the next run, so it goes out whole', async () => {
+  it('the reviewer’s case: one stuck older notice ahead of a 20-address request; the request still goes out whole on the first run', async () => {
+    // A: an older staff proposal whose only contact refuses mail, so it stays unannounced at the head of every page.
+    const a = await seedHotApp();
+    const stuck = await platformProposal(a, await platformKey(a.org, a.scope), [`https://stuck-${uid()}.partner.example`]);
+    await new Promise((r) => setTimeout(r, 5));
+    // B: one platform request of 20 web addresses: with A ahead, the page of 20 cuts it.
+    const b = await seedHotApp(undefined, { origins: [] });
+    const ids = await platformProposal(
+      b,
+      await platformKey(b.org, b.scope),
+      Array.from({ length: 20 }, (_, k) => `https://p${k}-${uid().toLowerCase()}.partner.example`),
+    );
+    const fake = new FakeEmail();
+    fake.failFor.add(a.contact);
+    const warn = vi.spyOn(console, 'warn');
+    for (let run = 0; run < 3; run++) await runChangeNotices(env, fake, new Budget());
+    for (const id of ids) expect((await changeRow(id))!.notified_at, id).not.toBeNull();
+    expect((await changeRow(stuck[0]!))!.notified_at).toBeNull();
+    // One email per recipient for B, listing all 20, sent on the first run only.
+    const toB = fake.sent.filter((m) => ids.every((id) => m.text.includes(`/cancel/${id}`)));
+    expect(toB.map((m) => m.to).sort()).toEqual([ALIAS, b.contact].sort());
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('request_cut'))).toBe(false);
+  });
+
+  it('a request still cut off after the wider read waits whole, and the skip is logged as request_cut', async () => {
     const app = await seedHotApp();
     const key = await platformKey(app.org, app.scope);
     const firsts = await platformProposal(app, key, [`https://lead-${uid()}.partner.example`]);
@@ -154,13 +182,34 @@ describe('a platform request’s web addresses: one email', () => {
     const all = (await env.API.pendingNotices({ actor: { kind: 'system', id: 'test' }, requestId: `rq_${uid()}`, clientIp: '127.0.0.1', limit: 100 })) as { ok: true; notices: ChangeNotice[] };
     const lead = all.notices.find((n) => n.change.id === firsts[0])!;
     const cut = all.notices.find((n) => n.change.id === tail[0])!;
-    // A full page whose last request may go on past it: the lead goes out, the tail waits.
-    const page = [...Array.from({ length: NOTICE_PAGE - 2 }, () => lead), lead, cut].slice(-NOTICE_PAGE);
-    const api = overrideBinding(env.API, { pendingNotices: async () => ({ ok: true, notices: page }) });
+    // Every page, whatever its size, is full and ends with the tail's request: it can't be read whole.
+    const pageOf = (limit: number) => [...Array.from({ length: limit - 1 }, () => lead), cut];
+    const api = overrideBinding(env.API, { pendingNotices: async (c: unknown) => ({ ok: true, notices: pageOf((c as { limit: number }).limit) }) });
     const fake = new FakeEmail();
-    await runChangeNotices(envWith({ API: api }), fake, big());
+    const warn = vi.spyOn(console, 'warn');
+    const r = await runChangeNotices(envWith({ API: api }), fake, big());
+    expect(r.skipped).toBeGreaterThanOrEqual(1);
     expect((await changeRow(tail[0]!))!.notified_at).toBeNull();
     expect((await changeRow(firsts[0]!))!.notified_at).not.toBeNull();
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('"code":"request_cut"'))).toBe(true);
+  });
+
+  it('a 20-address request to the alias and 10 contacts fits one run’s budget after both page reads (11 sends, 20 acks)', async () => {
+    // Whatever earlier tests left waiting goes out first, so this run's budget is the case's own.
+    await runChangeNotices(env, new FakeEmail(), big());
+    const contacts = Array.from({ length: 10 }, (_, k) => `c${k}-${uid()}@partner.example`);
+    const lead = await seedHotApp();
+    await platformProposal(lead, await platformKey(lead.org, lead.scope), [`https://lead-${uid()}.partner.example`]);
+    await new Promise((r) => setTimeout(r, 5));
+    const app = await seedHotApp(undefined, { origins: [], contacts });
+    const ids = await platformProposal(app, await platformKey(app.org, app.scope), Array.from({ length: 20 }, (_, k) => `https://q${k}-${uid().toLowerCase()}.partner.example`));
+    const fake = new FakeEmail();
+    fake.failFor.add(lead.contact);
+    // The run's own budget (40 calls, 30 of them RPCs): the page, the lead's sends and its ack refused, the wider page,
+    // 11 sends and 20 acks.
+    await runChangeNotices(env, fake, new Budget());
+    for (const id of ids) expect((await changeRow(id))!.notified_at, id).not.toBeNull();
+    expect(fake.sent.filter((m) => m.text.includes(`/cancel/${ids[0]}`))).toHaveLength(11);
   });
 });
 

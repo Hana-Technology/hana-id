@@ -1,7 +1,7 @@
 // The platform API's routes in plain words for the screens (D930): the console's Platform activity and the admin
 // portal's. Its own module, with no schema, so the console's SPA bundles only this (as audit-words.ts).
 /** A route template in plain words for the screens (the template itself stays beside it for support). */
-const ROUTE_WORDS: Readonly<Record<string, string>> = {
+export const PLATFORM_ROUTE_WORDS: Readonly<Record<string, string>> = {
   'GET /v1/platform/credential': 'Read its own key',
   'POST /v1/platform/credential/revoke': 'Stop its own key',
   'POST /v1/platform/apps': 'Create an app',
@@ -16,4 +16,4 @@ const ROUTE_WORDS: Readonly<Record<string, string>> = {
 };
 
 /** What a call did, in plain words; a route this build doesn't know reads as its template. */
-export const platformRouteWords = (method: string, route: string): string => ROUTE_WORDS[`${method} ${route}`] ?? `${method} ${route}`;
+export const platformRouteWords = (method: string, route: string): string => PLATFORM_ROUTE_WORDS[`${method} ${route}`] ?? `${method} ${route}`;

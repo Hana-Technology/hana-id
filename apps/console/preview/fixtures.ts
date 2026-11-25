@@ -495,6 +495,8 @@ export function audit(now: number): AuditAnswer {
   const c = (seq: number, at: number, action: string, extra: Record<string, unknown>) => ({ source: 'console' as const, seq, at, actorKind: 'member' as const, actorId: 'usr_Ak3Pz8Qw2n', actorEmail: 'aiko.tanaka@examplelabs.example', requestId: `${hex(`rq${seq}`, 16)}-SIN`, outcome: 'ok' as const, action, details: {}, ...extra });
   return {
     entries: [
+      // D930: an owner took the backend's suspension over.
+      c(213, now - 4 * 60_000, 'app.suspended', { appId: 'app_Pk9Sr4Mx7q', target: 'app_Pk9Sr4Mx7q', details: { suspendedBy: 4, takenOver: true } }),
       c(212, now - 9 * 60_000, 'step_up.confirmed', { appId: 'app_Lm4Pq9Zs2v', details: { kind: 'origin.add' } }),
       // D916: a row written by the org's platform key.
       { source: 'api', seq: 985, at: now - 20 * 60_000, appId: 'app_Ts6Ry1Hn8b', kind: 'origin.proposed', detail: { changeId: 'gc_Pf3Lk8Wd2', origin: 'https://shop.partner-one.example' }, actorKind: 'platform', actorId: 'pkc_Wk7Hq2Lm9Xc4Pz', requestId: `pf_${hex('rq985', 29)}` },

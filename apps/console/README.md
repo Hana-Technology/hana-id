@@ -122,7 +122,8 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
   Apps list and an app's header mark an app the backend made ("Made by your backend"); its Overview says which key made
   it, its shared wallet and its User IDs; its **Web addresses** tab (the Origins tab, renamed in plain words) marks what
   the backend asked for and says it waits 24 hours; **Suspend** names who holds the suspension (Journear, an owner, or
-  the backend, which an owner can **Take the suspension over**); **Platform keys** shows each key's wallet settings,
+  the backend, which an owner can **Take the suspension over**: the Audit row keeps `app.suspended` with `takenOver` and
+reads "Suspension taken over from your backend"); **Platform keys** shows each key's wallet settings,
   last use, who accepted it, "Working, expires soon", and the frozen and one-owner lines. Pages no wider than a phone at
   390 and 360 px (a table's hidden words and the upgrades' commands kept inside their boxes).
 - **Users** (`/orgs/:org/users`): on where the env's manifest sets `console.usersScreen: true` (`gen` writes

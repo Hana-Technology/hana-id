@@ -2,7 +2,7 @@
 // newest first, a page at a time. Rows of one request (the same request id) are shown together.
 import type { AuditAnswer, PartnerAuditEntry } from '@hana-id/console-core';
 // The subpath, not the package root: the SPA bundles only these functions, not the schemas.
-import { actionLabel, detailFields as coreDetailFields, detailValue as coreDetailValue } from '@hana-id/console-core/audit-words';
+import { actionLabel, detailFields as coreDetailFields, detailValue as coreDetailValue, entryLabel } from '@hana-id/console-core/audit-words';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError, getJson } from '../api.ts';
@@ -127,7 +127,7 @@ export function Audit() {
                 {e.actorKind === 'platform' && <div className="mono small muted">{e.actorId}</div>}
               </td>
               <td>
-                <span className="audit-what">{actionLabel(what(e))}</span>
+                <span className="audit-what">{entryLabel(what(e), e.source === 'console' ? e.details : e.detail)}</span>
                 {e.source === 'console' && e.outcome === 'failed' && <Badge tone="danger">Failed</Badge>}
                 <div>
                   <code className="small muted">{what(e)}</code>

@@ -147,7 +147,7 @@ export interface PlatformOriginLine {
  * The web addresses one request of a platform key asked for (D930; docs/partner-platform-spec.md A6, finding L14): one
  * email for the whole request, every address with its own cancel link, to the security alias and every security
  * contact. The wait is the one the ack gives (`waitMs`, from AdminRpc.pendingNotices: at least 24 h outside `local*`
- * test envs) and the date is stated; no waiver sentence, since none applies to a platform proposal, and nothing brings
+ * test envs), stated as a lower bound with its earliest date (the ack comes after the sends); no waiver sentence, since none applies to a platform proposal, and nothing brings
  * one forward yet (the owner's confirmation is piece P10, which adds its line and Confirm link here).
  */
 export function platformOriginsProposed(
@@ -183,7 +183,9 @@ export function platformOriginsProposed(
   blocks.push(
     {
       kind: 'p',
-      text: `${many ? 'They start' : 'It starts'} working on ${readableTime(o.now + n.waitMs)}, ${waitWords(n.waitMs)} after this email, unless someone cancels ${many ? 'them' : 'it'}. Web addresses your platform key asks for always wait the full time: nothing makes them start sooner.`,
+      // A lower bound (D930 after PR 158's review): the wait is counted from the ack, after every send, and a recipient
+      // who got an earlier attempt's copy holds an earlier date, so the email never states an exact time.
+      text: `${many ? 'They start' : 'It starts'} working no sooner than ${readableTime(o.now + n.waitMs)}, at least ${waitWords(n.waitMs)} after this email, unless someone cancels ${many ? 'them' : 'it'}. Web addresses your platform key asks for always wait the full time: nothing makes them start sooner.`,
     },
     { kind: 'p', text: `If you didn’t expect this, cancel ${many ? 'each one you don’t recognise' : 'it'} now. ${many ? 'Each link cancels one web address. ' : ''}The page asks you to confirm; opening the link alone changes nothing.` },
     { kind: 'p', text: `An owner can also cancel ${many ? 'them' : 'it'} in the partner portal, and Journear security can cancel ${many ? 'them' : 'it'} from the admin portal.` },

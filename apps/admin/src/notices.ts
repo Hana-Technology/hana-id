@@ -85,11 +85,19 @@ export async function runChangeNotices(rawEnv: Env, sender: EmailSender, budget:
     const n = notices[i]!;
     if (n.platform) {
       // D930 (L14): one email for every web address one platform request asked for on one app (the page lists them
-      // together). A request cut off by the end of a full page waits whole for the next run, unless it is the page.
-      const group = platformGroup(notices, i);
+      // together). A request that reaches the end of a full page may go on past it: the page is read again, wider by
+      // one request's most (MAX_ORIGINS_PER_REQUEST), from the same start, and the request taken whole from there
+      // (after PR 158's review: otherwise one stuck older notice ahead of a 20-address request held it back on every
+      // run). Only a request still cut off after that, or no room for the read, waits; each such skip is logged.
+      let group = platformGroup(notices, i);
       if (i + group.length === notices.length && notices.length >= NOTICE_PAGE && i > 0) {
-        out.skipped += group.length;
-        break;
+        const whole = await wholeRequest(env, budget, n);
+        if (!whole) {
+          out.skipped += group.length;
+          log({ event: 'notice', step: 'change_pending', target: n.platform.requestId, orgId: n.app.orgId, outcome: 'skipped', code: 'request_cut', count: group.length }, 'warn');
+          break;
+        }
+        group = whole;
       }
       i += group.length;
       const r = await sendPlatformGroup(env, sender, budget, key, group);
@@ -129,6 +137,26 @@ export async function runChangeNotices(rawEnv: Env, sender: EmailSender, budget:
     }
   }
   return out;
+}
+
+/** The most web addresses one platform request names (a create or a proposal: at most 20, `MAX_APP_ORIGINS`). */
+export const MAX_ORIGINS_PER_REQUEST = 20;
+
+/**
+ * The whole of `first`'s request, from a page read again wider by one request's most from the same start (the page
+ * orders by proposal time, then request: rows ahead of the request can only have left it), or null when there is no
+ * room for the read, it fails, or the request still reaches the end of the wider page.
+ */
+async function wholeRequest(env: Env, budget: Budget, first: ChangeNotice): Promise<ChangeNotice[] | null> {
+  if (!budget.fits(1, 1)) return null;
+  const limit = NOTICE_PAGE + MAX_ORIGINS_PER_REQUEST;
+  const page = await env.API.pendingNotices({ ...systemCtx(), limit }).catch(() => null);
+  if (!page?.ok) return null;
+  const wide = page.notices as ChangeNotice[];
+  const at = wide.findIndex((x) => x.change.id === first.change.id);
+  if (at < 0) return null;
+  const group = platformGroup(wide, at);
+  return at + group.length === wide.length && wide.length >= limit ? null : group;
 }
 
 /** The platform proposals from `i` on that one request made on one app (consecutive on the page: it orders by request). */

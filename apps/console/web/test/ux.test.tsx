@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, nav, resetSession } from '../src/api.ts';
 import { App } from '../src/App.tsx';
 import { explain } from '../src/messages.ts';
+import { entryLabel } from '@hana-id/console-core/audit-words';
 import { actionLabel, detail, detailFields, detailValue, who } from '../src/pages/Audit.tsx';
 import { when } from '../src/lib.tsx';
 import { logoProblem } from '../src/pages/app/Branding.tsx';
@@ -570,6 +571,21 @@ describe('navigation', () => {
     fireEvent.click(screen.getByLabelText('Only what your backend did with its platform key'));
     expect(screen.getAllByText('Web address asked for')).toHaveLength(1);
     expect(screen.queryByText('a member')).toBeNull();
+    // D930: an owner's take-over of the backend's suspension reads as such, its code kept, in both logs.
+    expect(entryLabel('app.suspended', { suspendedBy: 4, takenOver: true })).toBe('Suspension taken over from your backend');
+    expect(entryLabel('suspension.set', { bit: 4, takenOver: true })).toBe('Suspension taken over from your backend');
+    expect(entryLabel('app.suspended', { suspendedBy: 4 })).toBe('App suspended');
+  });
+
+  it('an owner’s take-over of the backend’s suspension reads as such on the Audit page (D930)', async () => {
+    routes['/api/me'] = { body: ME };
+    routes['/api/orgs/org_a'] = { body: { org: { id: 'org_a', name: 'Acme', status: 'active' }, role: 'owner' } };
+    routes['/api/orgs/org_a/audit'] = {
+      body: { entries: [{ source: 'console', seq: 9, at: 0, actorKind: 'member', actorId: 'usr_1', actorEmail: 'me@partner.example', appId: 'app_1', action: 'app.suspended', target: 'app_1', details: { suspendedBy: 4, takenOver: true }, requestId: 'req_takeover1', outcome: 'ok' }] },
+    };
+    at('/orgs/org_a/audit');
+    expect(await screen.findByText('Suspension taken over from your backend')).toBeTruthy();
+    expect(screen.getByText('app.suspended')).toBeTruthy();
   });
 
   it('the audit’s details read as words: dates, null as none, lists of objects as plain lists, unknown keys kept', async () => {

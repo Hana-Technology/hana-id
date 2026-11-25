@@ -5,7 +5,7 @@
 // who holds its partner suspension, and its mainnet demo switch asks staff to confirm the shared wallet's risk (H3).
 // The route words are the same as console-core's (platform-words.ts).
 import { readFileSync } from 'node:fs';
-import { platformRouteWords } from '@hana-id/console-core';
+import { PLATFORM_ROUTE_WORDS } from '@hana-id/console-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type Answer, type Call, boot, closeWindow } from './boot.ts';
 import { appDetail, orgPlatform, platformCalls, platformQueue } from './preview-data.ts';
@@ -96,8 +96,10 @@ describe('the route words', () => {
     const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
     const block = /const ROUTE_WORDS = \{([\s\S]*?)\n\};/u.exec(source)![1]!;
     const pairs = [...block.matchAll(/^\s*'([A-Z]+) ([^']+)': '([^']+)',$/gmu)].map((m) => [m[1]!, m[2]!, m[3]!] as const);
+    // Every line of the block was read, and the two maps hold the same routes (both directions) with the same words.
     expect(pairs).toHaveLength(block.trim().split('\n').length);
-    expect(pairs.length).toBe(11);
-    for (const [method, route, words] of pairs) expect(words, `${method} ${route}`).toBe(platformRouteWords(method, route));
+    const admin = Object.fromEntries(pairs.map(([method, route, words]) => [`${method} ${route}`, words]));
+    expect(Object.keys(admin).sort()).toEqual(Object.keys(PLATFORM_ROUTE_WORDS).sort());
+    for (const [k, words] of Object.entries(PLATFORM_ROUTE_WORDS)) expect(admin[k], k).toBe(words);
   });
 });

@@ -187,6 +187,15 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
 };
 
 /** An action or change code in words: its title from `ACTION_TITLES`, else its own words (`some_new.kind` → "Some new kind"). */
+/**
+ * D930: a row's title with its details: an owner's take-over of the backend's suspension (`app.suspended` in the
+ * console's log, `suspension.set` in the API's, each with `takenOver`) keeps its code but reads as what it was.
+ */
+export function entryLabel(code: string, detail: Record<string, unknown> | undefined): string {
+  if ((code === 'app.suspended' || code === 'suspension.set') && detail?.takenOver === true) return 'Suspension taken over from your backend';
+  return actionLabel(code);
+}
+
 export function actionLabel(code: string): string {
   const title = Object.hasOwn(ACTION_TITLES, code) ? ACTION_TITLES[code] : undefined;
   if (title) return title;

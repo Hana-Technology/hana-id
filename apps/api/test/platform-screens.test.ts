@@ -65,8 +65,11 @@ describe('the app views', () => {
     expect((await view()).partnerBitBy).toBeUndefined();
     expect((await post(net.k, `/v1/platform/apps/${app.id}/suspend`, { suspended: true })).status).toBe(200);
     expect((await view()).partnerBitBy).toBe('platform');
-    expect(await consoleRpc().setSuspended({ ...member(), orgId: net.org, appId: app.id, suspended: true })).toMatchObject({ ok: true });
+    // D930: the answer says it was a take-over (the console's audit row then says so).
+    expect(await consoleRpc().setSuspended({ ...member(), orgId: net.org, appId: app.id, suspended: true })).toMatchObject({ ok: true, takenOver: true });
     expect((await view()).partnerBitBy).toBe('member');
+    // A second suspend by a member is no take-over: nothing written, no flag.
+    expect(await consoleRpc().setSuspended({ ...member(), orgId: net.org, appId: app.id, suspended: true })).not.toHaveProperty('takenOver');
     // Journear's own bit alone names no partner holder.
     const other = await createdApp(net);
     expect(await adminRpc().setSuspended({ ...hana(), appId: other.id, bit: 1, suspended: true })).toMatchObject({ ok: true });

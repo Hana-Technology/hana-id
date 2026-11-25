@@ -32,7 +32,7 @@ import { policyCheckRoute } from './policy.ts';
 import { pendingUpgradesRoute } from './governance.ts';
 import { ledgerCsvRoute, statementFileRoute, statementViewRoute, statementsRoute, usageRoute } from './reports.ts';
 import { helperRoute, scopeOfOrg, scopeRoute } from './scopes.ts';
-import { usersRoute, usersScreenOn } from './users.ts';
+import { linkRoute, usersRoute, usersScreenOn } from './users.ts';
 import { PLATFORM_KEY_ID, cancelRoute as cancelPlatformKeyRoute, keyRoute as platformKeyRoute, listRoute as platformKeysRoute, revokeRoute as revokePlatformKeyRoute } from './platform-keys.ts';
 
 export interface RouteCall {
@@ -54,6 +54,8 @@ interface OrgRouteDef {
   frozenOk: boolean;
   /** Off routes are 404 (the Users screen behind its flag). */
   enabled?: (env: Env) => boolean;
+  /** A route that isn't `frozenOk` but records its own frozen refusal (it runs, and answers `org_frozen` itself). */
+  recordsFrozen?: boolean;
   run: (c: RouteCall) => Promise<Response>;
 }
 
@@ -348,6 +350,17 @@ const ROUTES: OrgRouteDef[] = [
   // ---- end users (D310, behind USERS_SCREEN) ----
   { method: 'GET', re: /^\/users$/u, role: 'viewer', frozenOk: true, enabled: usersScreenOn, run: (c) => usersRoute(c.env, c.url, c.info, { ...ctxOf(c), orgId: c.caller.orgId }, undefined) },
   { method: 'GET', re: /^\/users\/([^/]{1,64})$/u, role: 'viewer', frozenOk: true, enabled: usersScreenOn, run: (c) => usersRoute(c.env, c.url, c.info, { ...ctxOf(c), orgId: c.caller.orgId }, c.m[1]) },
+  // D925: one person across the org's apps (owners only, D913 question 5). Not while frozen (PR 153's review: a freeze is
+  // staff's containment, and a look-up removes pseudonymity): the route records that refusal itself.
+  {
+    method: 'POST',
+    re: /^\/users\/link$/u,
+    role: 'owner',
+    frozenOk: false,
+    recordsFrozen: true,
+    enabled: usersScreenOn,
+    run: (c) => linkRoute(c.env, c.request, c.info, { ...ctxOf(c), orgId: c.caller.orgId }, writerOf(c), { hd: c.caller.session.hd, orgStatus: c.caller.orgStatus }),
+  },
 ];
 
 const ORG_PREFIX = /^\/api\/orgs\/(org_[A-Za-z0-9]{1,64})(\/.*)$/u;
@@ -363,7 +376,7 @@ export function writeRoutesFor(pathname: string, env: Env): { orgId: string; res
 /** Runs the matched route for a resolved caller, applying the role and frozen rules. */
 export async function runOrgRoute(def: OrgRouteDef, rest: string, request: Request, env: Env, info: RequestInfo, caller: OrgCaller): Promise<Response> {
   if (def.role === 'owner' && caller.role !== 'owner') return errorResponse('forbidden', 'Only an owner of the organisation can do this');
-  if (!def.frozenOk && caller.orgStatus !== 'active') return errorResponse('org_frozen', 'Journear has frozen this organisation: only cancels and kill switches work until it is unfrozen');
+  if (!def.frozenOk && caller.orgStatus !== 'active' && !def.recordsFrozen) return errorResponse('org_frozen', 'Journear has frozen this organisation: only cancels and kill switches work until it is unfrozen');
   const m = def.re.exec(rest)!;
   try {
     return await def.run({ request, url: new URL(request.url), env, info, caller, m });

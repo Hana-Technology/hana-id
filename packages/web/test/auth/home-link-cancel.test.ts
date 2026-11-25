@@ -49,7 +49,7 @@ function views(chain: Chain, scopeId: string, who: { provider: string; sub: stri
 /** A Google wallet (root G) with the email E waiting to join it, at `epoch`. */
 const waiting = (epoch = 4): Chain => ({ opened: new Set([key(G)]), accounts: [{ root: G, members: [{ who: E, effectiveAtMs: T0 + 3_600_000, active: false }], epoch }] });
 
-const scopeOf = (o: Partial<HomeScope> = {}): HomeScope => ({ scopeId: S, mine: true, coverage: 'shared', googleClientId: CLIENT_ID, supportId: null, addresses: [], apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: ['https://sodax.example'], logoUrl: null }], appsTotal: 1, appsOpen: 1, ...o });
+const scopeOf = (o: Partial<HomeScope> = {}): HomeScope => ({ scopeId: S, mine: true, coverage: 'shared', googleClientId: CLIENT_ID, supportId: null, addresses: [], sharedScope: false, apps: [{ appId: 'app_sodax1', name: 'Sodax', status: 'active', environment: 'live', origins: ['https://sodax.example'], logoUrl: null }], appsTotal: 1, appsOpen: 1, ...o });
 
 interface Opts {
   who?: HomeSignInsWho | null;

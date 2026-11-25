@@ -79,6 +79,11 @@ export const AUDIT_DETAIL_KEYS = {
   // D410: the Users screen's wallet-directory find (a wallet, User ID, internal id or Support ID), org-less, recorded
   // before it reads: the query's kind and the ticket.
   'users.find': ['by', 'ticket'],
+  // D925: an owner's look-up of one person across the org's apps (the panel or the per-app search), recorded before it
+  // answers: what opened it, the kind of code (User ID or Support ID) and whose (the scope's or an app's own), or the
+  // refusal's code. `target` is the person's scope-level User ID (none when nothing was found), `app_id` the app whose
+  // own code matched; never the code that was typed.
+  'users.link_view': ['by', 'kind', 'of', 'code'],
   // D843: the EVM relayer's staff tools from the admin portal, org-less (the relayer is the env's): before the tool runs,
   // which tool, the chain, the slot and the staffer's note; after it, the relayer's answer (`done`, or its reason).
   'evm_relay.staff_action': ['tool', 'chainId', 'slot', 'note', 'keyConfirmed'],
@@ -227,6 +232,7 @@ export async function queryAudit(db: D1Database, filters: AuditFilters, cursor: 
   if (filters.actorKind !== undefined) add('actor_kind = ?', filters.actorKind);
   if (filters.actorId !== undefined) add('actor_id = ?', filters.actorId);
   if (filters.action !== undefined) add('action = ?', filters.action);
+  if (filters.target !== undefined) add('target = ?', filters.target);
   if (filters.from !== undefined) where.push(`at >= ${lit(filters.from)}`);
   if (filters.to !== undefined) where.push(`at < ${lit(filters.to)}`);
   if (cursor !== undefined) where.push(`seq < ${lit(Number(cursor))}`);

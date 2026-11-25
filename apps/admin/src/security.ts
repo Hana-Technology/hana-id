@@ -42,6 +42,8 @@ export const SECURITY_EVENT_PLAYBOOKS: Readonly<Record<string, string>> = Object
   // D916: D915's drift findings, kinds of their own since migration 0027.
   shared_wallet_policy: 'shared-wallet-policy',
   shared_scope_unmarked: 'shared-scope-unmarked',
+  // D925: the linking view's volume alert.
+  link_lookup_volume: 'link-lookup-volume',
 });
 
 export function withWords(e: SecurityEvent): SecurityEvent & { title: string; playbook: { id: string; title: string } | null } {

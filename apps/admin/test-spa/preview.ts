@@ -128,7 +128,7 @@ async function apiAnswer(method: string, url: URL, body: Record<string, unknown>
   if (p === '/api/users/search') return ok(data.userSearch);
   if (p === '/api/users/find') return body.ticket ? ok({ users: [data.walletUser] }) : refuse(400, 'bad_request', 'A support reference (ticket: 1–64 letters, digits or ._#:-) is required to find a user');
   if (p === '/api/users/get') return body.ticket ? ok(data.userGet(String(body.provider), String(body.sub))) : refuse(400, 'bad_request', 'A support reference (ticket: 1–64 letters, digits or ._#:-) is required to open a user');
-  if (p === '/api/support/lookup') return ok(data.supportLookup(Array.isArray(body.requestIds) ? body.requestIds.length : 0));
+  if (p === '/api/support/lookup') return ok(data.supportLookup(Array.isArray(body.requestIds) ? body.requestIds.length : 0, typeof body.query === 'string' ? body.query : ''));
   if (p === '/api/apps') return ok({ app: { id: 'app_01jdzpreview' }, publishableKey: 'pk_test_previewfakekey000004' });
   if ((m = /^\/api\/exports\/([^/]+)\/(\d{4}-\d{2})$/u.exec(p))) return ok({ rows: 8241, asOf: Date.now(), finalGas: '551264900000000000', finalTokens: '55126490000000000000000000', sha256: 'c0ffee11'.repeat(8), file: `ledger-${m[2]}.csv` });
   if (p === '/api/statements' || /\/issue$/u.test(p)) return ok({ ok: true });

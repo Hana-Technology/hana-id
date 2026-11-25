@@ -283,6 +283,25 @@ describe('GET /v1/home/apps: the list and the overlay', () => {
     expect(other).not.toHaveProperty('addresses');
   });
 
+  it('D925: the user’s own listing says whether its apps share a wallet several partners use (a marked scope); nobody else’s does', async () => {
+    const marked = await seedApp({ sharedScope: true });
+    const plain = await seedApp();
+    near.allowShared.add(marked.scope).add(plain.scope);
+    // Its own Google account, so the overlay other tests measure isn't grown by these rows.
+    const sub = `marked-${uid()}`;
+    await seedUser(marked.scope, { sub });
+    await seedUser(plain.scope, { sub });
+    const id = await newIdentity({ sub });
+    expect(await one(id, marked.scope)).toMatchObject({ mine: true, sharedScope: true });
+    expect(await one(id, plain.scope)).toMatchObject({ mine: true, sharedScope: false });
+    // PR 153's review: someone else's listing never says (a stranger browsing the list learns nothing of the mark).
+    const stranger = await newIdentity({ sub: `nobody-${uid()}` });
+    const theirs = await one(stranger, marked.scope);
+    expect(theirs).toMatchObject({ mine: false });
+    expect(theirs).not.toHaveProperty('sharedScope');
+    expect((await walk()).filter((x) => !x.mine).some((x) => 'sharedScope' in x)).toBe(false);
+  });
+
   it('only addresses at key_index 0, the ones Home can derive', async () => {
     const app = await seedApp();
     await seedUser(app.scope, { wallets: [{ chain: 'stellar', address: `G${'C'.repeat(55)}`, keyIndex: 3 }, { chain: 'evm', address: `0x${'b'.repeat(40)}` }] });

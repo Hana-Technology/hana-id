@@ -38,6 +38,9 @@
 //   POST /__e2e/lane/labels {action, …}    partner labels (D894, lane-labels.ts): an org whose on-chain owner proposes,
 //                                          the notice's ack, the hourly job, GET /v1/app as the vault reads it, the
 //                                          staff tools and switches, the hand test's states (labelsControl below)
+//   POST /__e2e/lane/linking               D925: in the labels org, a new scope marked as shared with an app of before
+//                                          and one made after the mark, and one person signed in on both (the wallet
+//                                          directory's rows, by SQL) → {orgId, scopeId, apps, person}
 //   POST /__e2e/lane/run {times?}          time passes for the relayer: its alarm runs (then the API cron's relay check)
 //   POST /__e2e/lane/acquire               waits until no other test holds the lane, then holds it → {lease}; a lease
 //                                          ends by `release {lease}` or after 3 minutes (a test that died). The suite's
@@ -665,6 +668,41 @@ async function labelsControl(b: Record<string, unknown>): Promise<Record<string,
   }
 }
 
+let linkingSeeds = 0;
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const randomOf = (alphabet: string, n: number): string => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => alphabet[b % alphabet.length]).join('');
+const B64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+/** A User ID of the right form (`u1_` and the base64url of 16 bytes) for the seeded rows: the console only shows it. */
+const laneUserId = (): string => `u1_${randomOf(B64URL, 21)}${'AQgw'[crypto.getRandomValues(new Uint8Array(1))[0]! % 4]}`;
+
+/**
+ * POST /__e2e/lane/linking (D925): the partner console's linking view needs a person on a scope marked as shared, with
+ * an app of before (the scope's IDs) and an app made after the mark (its own). Seeded in the labels org's hot DB by
+ * SQL, as the directory's writes would leave it (apps/api migration 0030's triggers check every row).
+ */
+async function linkingSeed(): Promise<Record<string, unknown>> {
+  const { orgId } = (await lane.labels.state()) as { orgId: string };
+  const db = lane.d1.db;
+  const n = ++linkingSeeds;
+  const scopeId = `stafflink${n}`;
+  const now = Date.now();
+  db.prepare("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES (?, ?, 'test', ?, ?, ?)").run(scopeId, orgId, now, now, now);
+  const apps = { before: { id: `app_link${n}coffee`, name: 'Coffee Club' }, own: { id: `app_link${n}stamps`, name: 'Stamp Rally Passport' } };
+  const insertApp = db.prepare("INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, user_ids) VALUES (?, ?, ?, ?, ?, 'active', 'free', ?)");
+  insertApp.run(apps.before.id, apps.before.name, scopeId, orgId, `pk_test_link${n}coffee`, 'scope');
+  db.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?').run(scopeId);
+  insertApp.run(apps.own.id, apps.own.name, scopeId, orgId, `pk_test_link${n}stamps`, 'app');
+  const internal = `hu_${randomOf('0123456789abcdefghjkmnpqrstvwxyz', 26)}`;
+  const person = { userId: laneUserId(), supportCode: randomOf(CROCKFORD, 8), ownUserId: laneUserId(), ownSupportCode: randomOf(CROCKFORD, 8) };
+  db.prepare('INSERT INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)').run(internal, person.userId, person.supportCode, scopeId, now - 9 * 86_400_000, now);
+  db.prepare("INSERT INTO end_user_identities (scope_id, identity_key, user_id, provider, sub, role, status, effective_at, first_seen_at, observed_at) VALUES (?, ?, ?, 'google', ?, 'root', 'active', NULL, ?, ?)").run(scopeId, 'ab'.repeat(32), internal, `e2e-link-${n}`, now, now);
+  const row = db.prepare('INSERT INTO end_user_apps (user_id, app_id, app_sub, support_code, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)');
+  row.run(internal, apps.before.id, person.userId, person.supportCode, now - 9 * 86_400_000, now - 2 * 86_400_000);
+  row.run(internal, apps.own.id, person.ownUserId, person.ownSupportCode, now - 3 * 86_400_000, now - 3_600_000);
+  const fmt = (c: string) => `HANA-${c.slice(0, 4)}-${c.slice(4)}`;
+  return { orgId, scopeId, apps, person: { userId: person.userId, supportId: fmt(person.supportCode), ownUserId: person.ownUserId, ownSupportId: fmt(person.ownSupportCode) } };
+}
+
 async function control(request: Request, url: URL): Promise<Response> {
   if (url.pathname === '/__e2e/access/sign-in' && request.method === 'GET') {
     const who = SIGN_IN_AS[url.searchParams.get('as') ?? 'staff'];
@@ -700,6 +738,7 @@ async function control(request: Request, url: URL): Promise<Response> {
       return json(200, await lane.state());
     }
     if (url.pathname === '/__e2e/lane/labels') return json(200, await labelsControl(b as Record<string, unknown>));
+    if (url.pathname === '/__e2e/lane/linking') return json(200, await linkingSeed());
     if (url.pathname === '/__e2e/lane/run') {
       await lane.run(typeof b.times === 'number' && b.times >= 1 && b.times <= 10 ? b.times : 1);
       return json(200, await lane.state());

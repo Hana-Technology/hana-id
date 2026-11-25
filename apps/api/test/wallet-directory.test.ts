@@ -513,7 +513,7 @@ describe('ConsoleRpc: users for partners', () => {
     expect(list.ok).toBe(true);
     expect(list.users.map((u) => u.userId)).toEqual([a.userId]);
     const [u] = list.users;
-    expect(Object.keys(u!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'name', 'scopeId', 'supportId', 'userId', 'wallets']);
+    expect(Object.keys(u!).sort()).toEqual(['accounts', 'createdAt', 'email', 'lastSeenAt', 'name', 'scopeId', 'sharedScope', 'supportId', 'userId', 'wallets']);
     expect(u!.email).toBeNull();
     expect(u!.name).toBeNull();
     expect(u!.accounts).toEqual([{ kind: 'google', status: 'active' }]);

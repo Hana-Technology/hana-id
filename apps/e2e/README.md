@@ -29,6 +29,16 @@ pinned as this stack derived them on `next` @ e59e9c64 before the change; the ap
 ID; each new app's token carries a `sub` of its own, and `hana.supportId` on each page is the short form of that page's
 `sub`; `/__e2e/wallets` lists the person's `end_user_apps` rows (`apps`) with each app's IDs.
 
+Linking (D925): `tests/user-linking-console.spec.ts` runs the partner console in each browser's admin lane with the
+Users screen on (`USERS_SCREEN = "1"` in `src/server/lane-console.ts`); `POST /__e2e/lane/linking` seeds, in the labels
+org, a scope marked as shared with an app of before and one made after the mark and one person signed in on both (the
+wallet directory's rows by SQL, under migration 0030's triggers). The owner finds the person by the newer app's own
+Support ID, sees each app's IDs with the sharing rule, opens "This person on your apps", and the Audit lists both
+look-ups. `tests/home-shared-wallet.spec.ts` signs a person in on an app made after its scope's mark and opens
+Passport Home: the wallet's page says the company behind these apps can see which of them they use, and labels the
+scope-level Support ID "Journear Support ID"; an ordinary wallet keeps the usual words. Both save their screens with
+`HANA_SHOTS_DIR=<dir>` (Chromium only).
+
 The shared-wallet line (D912): `tests/shared-wallet.spec.ts` puts two apps on a scope of their own (with a suspended
 one, one with no web address and one no one has signed in to, which don't count; the others are made `launched`, since
 the mocked /v1/login records no first sign-in) and sees "This wallet is also used on 1 other app." under who is asking

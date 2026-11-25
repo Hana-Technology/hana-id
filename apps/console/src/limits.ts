@@ -17,10 +17,11 @@ export const CONSOLE_RATE_LIMITS: readonly { name: 'CONSOLE_IP_LIMIT'; namespace
 ];
 
 /**
- * The routes that share a count: sign-in (C9) and the emailed links per IP, and logo uploads (batch C11) per org, since
- * each one is a paid Images transform (logo.ts).
+ * The routes that share a count: sign-in (C9) and the emailed links per IP, logo uploads (batch C11) per org, since
+ * each one is a paid Images transform (logo.ts), and the look-ups across apps (D925) per member, a flood limit before the
+ * API's own limits so a flood of refusals can't fill the audit.
  */
-export type LimitedRoute = 'auth' | 'link' | 'logo';
+export type LimitedRoute = 'auth' | 'link' | 'logo' | 'lookup';
 
 /** Key of a route's window: env, route and subject (an IP's `ip.ts` `ipSubject`, or the org id for `logo`). */
 export const consoleIpKey = (envName: string, route: LimitedRoute, ipSubject: string): string => `${envName}:console-${route}:${ipSubject}`;

@@ -33,6 +33,8 @@ function bundleApi(): string {
 }
 
 const HOT_DB_ID = 'hana-id-test-hot';
+/** A test-only `IDENTITY_SUB_KEY` (32 bytes, base64): never any env's. */
+const TEST_IDENTITY_SUB_KEY = Buffer.alloc(32, 7).toString('base64');
 const UPSTREAM_DB_ID = 'hana-id-test-upstream';
 const UPSTREAM_WORKER = 'fake-upstream';
 
@@ -46,7 +48,7 @@ export default defineConfig(async () => {
         wrangler: { configPath: TEST_WRANGLER_CONFIG },
         miniflare: {
           // The console client's secret is a throwaway test value: Google's token endpoint is mocked in the tests.
-          bindings: { TEST_MIGRATIONS: migrations, TEST_API_MIGRATIONS: apiMigrations, CONSOLE_GOOGLE_CLIENT_SECRET: 'test-console-client-secret' },
+          bindings: { TEST_MIGRATIONS: migrations, TEST_API_MIGRATIONS: apiMigrations, CONSOLE_GOOGLE_CLIENT_SECRET: 'test-console-client-secret', TEST_IDENTITY_SUB_KEY },
           // MIGRATION_DB and FRESH_DB: empty databases for the migration tests (0005's rebuild, D918).
           d1Databases: { HOT_DB: HOT_DB_ID, FAKE_UPSTREAM: UPSTREAM_DB_ID, MIGRATION_DB: 'console-migration-db', FRESH_DB: 'console-fresh-db' },
           // ISSUER stands in for the issuer's ConsoleIssuerRpc (test/fake-upstream.js): the deployed binding is written by gen.
@@ -78,6 +80,9 @@ export default defineConfig(async () => {
                 RELAYER_KEYS: '[]',
                 // D894: partner labels on in this test API, for the `labels.set` / `labels.remove` step-ups.
                 PARTNER_LABELS: 'on',
+                // D925: the linking view's audit reference is keyed by it (a throwaway test value, shared with the tests
+                // as TEST_IDENTITY_SUB_KEY so they can compute the reference the console writes).
+                IDENTITY_SUB_KEY: TEST_IDENTITY_SUB_KEY,
               },
             },
             { name: UPSTREAM_WORKER, modules: true, scriptPath: here('./test/fake-upstream.js'), compatibilityDate: COMPATIBILITY_DATE, d1Databases: { FAKE_UPSTREAM: UPSTREAM_DB_ID } },

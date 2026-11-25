@@ -55,7 +55,7 @@ const SHARED = `FROM email_consents c JOIN apps a ON a.id = c.app_id AND a.org_i
 const NAME_SHARED = `FROM name_shares n JOIN apps a ON a.id = n.app_id AND a.org_id = s.org_id AND a.scope_id = u.scope_id AND a.deleted_at IS NULL
      JOIN home_profiles p ON p.provider = n.provider AND p.sub = n.sub
      WHERE n.user_sub = u.token_sub AND ${LIVE_NAME_SHARE('(unixepoch() * 1000)')}`;
-const PARTNER_COLUMNS = raw(`u.token_sub, u.support_code, u.scope_id, u.created_at, u.last_seen_at,
+const PARTNER_COLUMNS = raw(`u.token_sub, u.support_code, u.scope_id, u.created_at, u.last_seen_at, s.app_user_ids,
   (SELECT c.email ${SHARED} ORDER BY c.decided_at DESC, c.app_id LIMIT 1) AS email,
   (SELECT json_object('given_name', p.given_name, 'family_name', p.family_name) ${NAME_SHARED} ORDER BY n.shared_at DESC, n.app_id LIMIT 1) AS name_json,
   (SELECT json_group_array(json_object('provider', i.provider, 'status', i.status, 'effective_at', i.effective_at, 'role', i.role))
@@ -73,6 +73,8 @@ interface Row {
   name_json?: string | null;
   /** getUser only: every shared address, per app. */
   emails_json?: string;
+  /** Partner rows: the scope's mark (D915), so the screen can say these are the person's IDs for every app (D925). */
+  app_user_ids?: number | null;
   token_sub: string;
   support_code: string;
   scope_id: string;
@@ -159,7 +161,7 @@ export function partnerUser(r: Row, now: number): PartnerUser {
     .sort(byWallet);
   const shared = typeof r.name_json === 'string' ? (JSON.parse(r.name_json) as Json) : null;
   const name = shared ? nameOf(shared.given_name, shared.family_name) : null;
-  const user: PartnerUser = { userId: r.token_sub, supportId: formatSupportId(r.support_code), scopeId: r.scope_id, createdAt: r.created_at, lastSeenAt: r.last_seen_at, accounts, wallets, email: typeof r.email === 'string' ? r.email : null, name };
+  const user: PartnerUser = { userId: r.token_sub, supportId: formatSupportId(r.support_code), scopeId: r.scope_id, createdAt: r.created_at, lastSeenAt: r.last_seen_at, accounts, wallets, email: typeof r.email === 'string' ? r.email : null, name, sharedScope: r.app_user_ids === 1 };
   if (r.emails_json !== undefined) {
     user.emails = list(r.emails_json)
       .map((e) => ({ appId: String(e.app_id), appName: String(e.app_name), email: String(e.email), sharedAt: n(e.decided_at) }))
@@ -196,10 +198,12 @@ function searchClause(s: UserSearch | null, opts: { staff: boolean; provider?: s
       if (!address) return refuse('bad_request', 'search: not a valid address');
       return q`u.user_id IN (SELECT user_id FROM end_user_wallets WHERE chain = ${s.chain} AND address = ${address})`;
     }
+    // Staff also find a person by an app's own User ID or Support ID (D925: `end_user_apps`, an app made after its scope
+    // was marked); a partner's search reads the scope-level IDs only (the owners' cross-app search is ConsoleRpc.linkUser).
     case 'userId':
-      return q`u.token_sub = ${s.userId}`;
+      return opts.staff ? q`(u.token_sub = ${s.userId} OR u.user_id IN (SELECT user_id FROM end_user_apps WHERE app_sub = ${s.userId}))` : q`u.token_sub = ${s.userId}`;
     case 'supportId':
-      return q`u.support_code = ${s.code}`;
+      return opts.staff ? q`(u.support_code = ${s.code} OR u.user_id IN (SELECT user_id FROM end_user_apps WHERE support_code = ${s.code}))` : q`u.support_code = ${s.code}`;
     case 'internalId':
       return opts.staff ? q`u.user_id = ${s.internalId}` : refuse('bad_request', NOT_A_SEARCH);
     case 'email':

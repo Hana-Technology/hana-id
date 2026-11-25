@@ -582,6 +582,8 @@ describe('the Users screen (D310, D346)', () => {
 });
 
 describe('one person across the org’s apps (D925)', () => {
+  /** A label of the facts, its "(all your apps)" on a line of its own. */
+  const dt = (text: string) => (_: string, el: Element | null) => el?.tagName === 'DT' && el.textContent === text;
   const PERSON = { userId: 'u1_AbCdEfGhIjKlMnOpQrStUv', supportId: 'HANA-ABCD-EFGH', scopeId: 's1', createdAt: 0, lastSeenAt: 0, accounts: [{ kind: 'google', status: 'active' }], wallets: [], email: null, name: null, sharedScope: true };
   const LINK = {
     userId: PERSON.userId,
@@ -609,8 +611,8 @@ describe('one person across the org’s apps (D925)', () => {
     expect(await screen.findByText(PERSON.userId)).toBeTruthy();
     expect(screen.getAllByText('all your apps')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: `Open ${PERSON.userId}` }));
-    expect(await screen.findByText('User ID (all your apps)')).toBeTruthy();
-    expect(screen.getByText('Support ID (all your apps)')).toBeTruthy();
+    expect(await screen.findByText(dt('User ID (all your apps)'))).toBeTruthy();
+    expect(screen.getByText(dt('Support ID (all your apps)'))).toBeTruthy();
   });
 
   it('a viewer: no search across apps, and the detail says only owners can see each app’s ID; nothing is asked of the server', async () => {
@@ -647,7 +649,7 @@ describe('one person across the org’s apps (D925)', () => {
     expect(await screen.findByText('This is the Support ID Stamp Rally has for this person.')).toBeTruthy();
     expect(bodyOf('/api/orgs/org_a/users/link')).toEqual({ query: 'hana-7q2m-k4xp', purpose: 'search' });
     fireEvent.click(screen.getByRole('button', { name: 'Open this person' }));
-    expect(await screen.findByText('User ID (all your apps)')).toBeTruthy();
+    expect(await screen.findByText(dt('User ID (all your apps)'))).toBeTruthy();
   });
 
   it('a refusal reads in plain words: not found, ambiguous, the limits', async () => {

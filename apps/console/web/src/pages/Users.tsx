@@ -66,6 +66,16 @@ export const LINK_TEXT = {
   truncated: 'Only the 100 apps they used most recently are listed.',
 } as const;
 
+/** "(all your apps)" under a label, on a line of its own, so the label stays narrow and the ID beside it whole. */
+function AllApps() {
+  return (
+    <>
+      {' '}
+      <span className="dt-sub">({LINK_TEXT.allApps})</span>
+    </>
+  );
+}
+
 /** What the code that matched is, in plain words. */
 function matchText(l: UserLink): string {
   const what = l.match.kind === 'userId' ? 'User ID' : 'Support ID';
@@ -203,11 +213,15 @@ function FindAcrossApps({ org, onOpen }: { org: string; onOpen: (userId: string)
             <strong>{matchText(l.link)}</strong>
           </p>
           <dl className="facts">
-            <dt>User ID ({LINK_TEXT.allApps})</dt>
+            <dt>
+              User ID <AllApps />
+            </dt>
             <dd>
               <code className="mono small">{l.link.userId}</code>
             </dd>
-            <dt>Support ID ({LINK_TEXT.allApps})</dt>
+            <dt>
+              Support ID <AllApps />
+            </dt>
             <dd className="mono nowrap">{l.link.supportId}</dd>
           </dl>
           <LinkTable link={l.link} />
@@ -291,7 +305,7 @@ function EmailText({ email }: { email: string }) {
 /** One user's detail: the list's fields and, per app, the address the user shared with it. */
 function UserDetail({ org, userId, owner, onClose }: { org: string; userId: string; owner: boolean; onClose: () => void }) {
   const r = useApi<{ user: PartnerUser }>(`/api/orgs/${org}/users/${encodeURIComponent(userId)}`);
-  const all = r.data?.user.sharedScope ? ` (${LINK_TEXT.allApps})` : '';
+  const all = r.data?.user.sharedScope ? <AllApps /> : null;
   return (
     <Panel
       title="User"
@@ -437,8 +451,8 @@ export function Users() {
                         <CopyButton value={u.userId} label="User ID" />
                         {u.sharedScope && <div className="muted small">{LINK_TEXT.allApps}</div>}
                       </td>
-                      <td className="mono">
-                        {u.supportId}
+                      <td>
+                        <span className="mono nowrap">{u.supportId}</span>
                         {u.sharedScope && <div className="muted small">{LINK_TEXT.allApps}</div>}
                       </td>
                       <td>{u.name ? nameText(u.name) : <span className="muted">{NOT_SHARED}</span>}</td>

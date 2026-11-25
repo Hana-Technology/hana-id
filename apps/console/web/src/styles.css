@@ -849,6 +849,10 @@ tr.failed td {
 .link-rule {
   margin: 12px 0;
 }
+.facts dt .dt-sub {
+  display: block;
+  font-size: var(--jp-text-xs, 0.75rem);
+}
 .find-result {
   margin-top: 16px;
 }

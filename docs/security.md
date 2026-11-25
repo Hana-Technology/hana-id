@@ -809,15 +809,17 @@ are piece P4's).
   body and headers byte for byte. An unknown or not-in-force key is verified against a fixed dummy point hashed to the
   curve (nobody knows its private key; a key's own point is used only when it is in force and imports, F7), so check 5
   always costs one import and one verification. **What stays observable, honestly** (F2, F5, N4): an id on the
-  isolate's list of announced keys costs one D1 read and any other id none; and past a full IP window a listed id's
+  isolate's list of announced keys costs one D1 read and any other id none; past a full IP window an unlisted id's 401
+  comes at once, faster than a verification (it says only "not on the list", which the 429 there used to say
+  outright); and past a full IP window a listed id's
   overflow fills (a 429 after 20 requests naming it from one subject) where an unlisted one keeps getting the 401. So
   someone who already holds a key id can learn whether it is still announced here; ids are 96 random bits, so nobody
   else learns anything. A known key's failure counter runs after the answer, on its own failure object, and stops calling it once
   the minute's alert has fired. The reason is in the request log only; failures are never stored in `platform_calls`.
 - **The per-IP window counts only requests not admitted** (M2): failures and refusals after a valid signature (switch
   off, frozen, replay, rate limited) use it; an admitted request gives its slot back. Its subject is an IPv4 address
-  or an IPv6 /48 (F5). When it is full: an id not on the isolate's list of announced keys gets the one 401 with no D1
-  read (N4); a listed id goes on under that key's own overflow window **for that IP subject** (20 a minute, N1), so an
+  or an IPv6 /48 (F5). When it is full: an id not on the isolate's list of announced keys gets the one 401 at once, with
+  no body read, no D1 read and no verification, so the work stays bounded (N4); a listed id goes on under that key's own overflow window **for that IP subject** (20 a minute, N1), so an
   attacker on another address spends nothing of a victim's; past that, a self-revoke's signature is checked against
   the listed point, CPU only, and a valid one always goes on to check 5 (which still decides: a key stopped since the
   list was read fails there); failed ones are counted, 60 a minute per key and subject, past which revokes from that
@@ -838,10 +840,15 @@ are piece P4's).
   `platform:breaker:org:<org>` (10) and `platform:breaker:global` (30 a rolling hour), apart from the console's
   `console:breaker:*`. The platform's calls take from the org's bucket, the platform's own global bucket (10 statements
   a second) and the console's global bucket. An ordinary platform call never takes the console's below 30 of its 60
-  tokens, so a flood from every network at once leaves the console at least half its burst. A platform kill switch is
-  never refused by the console's bucket (charged, clamped at 0: a console flood can't hold it back, N2); what gates the
-  platform's kill switches is the org's own bucket, the platform's own bucket and reserve (each org at most 8 of that
-  reserve a minute) and the platform's breaker.
+  tokens, so a flood from every network at once leaves the console at least half its burst. A platform kill switch neither reads
+  nor charges the console's bucket (N2 and its review): a console flood can't refuse it, and it can never spend the
+  console's own kill-switch reserve. What gates the platform's kill switches is the org's own bucket, the platform's own
+  bucket and reserve (each org at most 8 of that reserve a minute) and the platform's breaker. **Their worst case on the
+  hot database:** all platform calls together draw on the platform's bucket, 10 statements a second with a burst of 60,
+  so kill switches add at most 660 statements in a first minute and 600 a minute after that beyond what the console's
+  bucket counts; and once P4's kill switches exist they are destructive calls held by the platform's breaker (30 an
+  hour across orgs, at most 12 statements each: 360 statements an hour). A valid self-revoke has no admission: at most
+  10 a minute per key (N3), and the first that lands stops the key.
 - **Who may authenticate**: a key in force here (announced, its date passed, not expired, not revoked) of an org whose
   switch is on and which isn't frozen, read from the API's mirror. **The freeze's lag, honestly:** the mirror follows a
   console freeze at once through the staff route, but if both of that route's mirror writes fail (an error-level log,

@@ -23272,6 +23272,19 @@ number the caller assigned; API migration 0032 (0031 is piece P7's).
      only when it finds and removes that admission's reserve-share entry, so a second settle of the same `at` refunds
      nothing (tested); the published-key rule and the platform minimum share one predicate (`guarded/config.ts`
      `isLocalTestEnv`).
+  - **After an automated review of these fixes (2026-11-25)**, two more, with tests:
+    - **The unlisted id's work.** N4's first fix let an id not on the list, past a full IP window, go on to the body
+      read and a dummy verification with no bound. Now it gets the uniform 401 at once (the same bytes as any
+      authentication failure) with no body read, no D1 read and no verification: tested with 40 requests (zero body
+      pulls, zero D1 statements, zero imports and verifications, the bytes equal to a normal 401's). Faster than a real
+      verification, a timing difference only past a full IP window, revealing only "not on the list".
+    - **The console's kill-switch reserve.** N2's first fix charged a platform kill switch against `console:bucket`
+      clamped at 0, so a burst of them could eat the console's own reserve. Now a platform kill switch neither reads nor
+      charges `console:bucket`: a console flood can't refuse it, and it never spends the console's reserve. Tested both
+      ways (a sustained console flood: platform kill switches admitted; the console's bucket at its reserve and a burst
+      of platform kill switches at their maximum: a console kill switch still takes its share of the reserve). Worst
+      case on the hot database (`security.md`): the platform's bucket bounds all its calls, so its kill switches add at
+      most 660 statements in a first minute and 600 a minute after, and, held by the breaker in P4, 360 an hour.
   7. **N7, recorded:** the announced-key list costs one D1 read per isolate every 30 s, which any request (even one
      refused at check 1) can be the one to trigger, and is charged to no bucket; a newly announced key is unusable for
      every request for up to 30 s; waiting keys (before their date) and expired keys not yet marked by the hourly job

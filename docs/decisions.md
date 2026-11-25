@@ -23151,6 +23151,19 @@ number the caller assigned; API migration 0032 (0031 is piece P7's).
   11. **The credential view** adds the key's `thumbprint` to A8's fields.
   12. **The vectors carry no private key** (the secret scan flags one; nothing needs it): the generator derives it from
       a fixed string. The test env's names are the vectors' (`sandbox-test`, `signer.test.near`).
+  22. **The console's pages**: `/confirm/:changeId` (the email's link: reads the org, then
+      `/orgs/:org/apps/:app/confirm/:changeId`), `/remove/:changeId#t=` (no sign-in); the words (shared
+      `CONFIRM_WORDS`, copied into the SPA word for word, a test holding the copy equal, since the SPA imports only types
+      from console-core), the state names "Waiting", "Not emailed yet", "Working", "Cancelled", "Removed"; the Web
+      addresses tab's "Waiting for an owner to confirm, or starts working on {date}" ("… a second person …" for staff)
+      with **Check and confirm** (for every member, once the email has gone out), "Confirmed on {date} by an owner" /
+      "… by Journear staff", and the note "Only confirm a web address you know belongs to this app. If one isn’t yours,
+      cancel it." in place of P5's "nothing makes them start sooner".
+  23. **Viewers and owners who can't confirm see no tick boxes** (not only no Confirm button); any owner can still cancel
+      from the page. "This wallet is also used on {apps}" shows whenever other apps share the wallet settings.
+  24. **Signed out**, the confirmation page asks to sign in and open the link again (the console's sign-in always lands on
+      `/`, and the SPA keeps nothing in browser storage); carrying a return path through the sign-in is a later change.
+  25. **The removal button** uses the danger style (the cancel pages don't).
 - **Found in the spec** (its design not changed beyond the points above): (a) **dot segments can't be refused as
   written**: the runtime parses `request.url` (WHATWG URL) before the Worker sees it, resolving `.`, `..` and `%2E`; so
   the path rule refuses what survives (`//`, `%2F`, a trailing slash), a request signed over a dot path fails its
@@ -23963,3 +23976,43 @@ for it). D931 is the number the caller assigned; API migration 0034 and console 
       only when both sides are the checkout's own versions at their levels.
   15. **The page tells a staff proposer** who opens it as an owner that a second person must confirm
       (`sameAsProposer`), so they aren't sent to a sign-in that the API would refuse.
+  16. **The emails' words**: the platform request's wait line "They start working no sooner than {date}, at least 24
+      hours after this email, or sooner if an owner of your organisation confirms them, unless someone cancels them." and
+      its **Check and confirm in the partner portal** link ("That link only opens the partner portal … Opening the link
+      alone changes nothing."); the staff request's subject "New web address(es) added by Journear staff for {app}" and
+      "or sooner if a second person confirms them … another Journear staff member, or an owner of your organisation in
+      the partner portal"; the confirmation's notice "Web address(es) confirmed for {app}", "{who} confirmed {web
+      address} for {app}. It works there now. If this wasn’t meant to happen, remove it here: it stops at once.", one
+      "Remove {web address}" link each, "works for 7 days".
+  17. **Owners** are the console's members with role `owner`, not disabled, read once per run per org (as the key
+      notices); an org the console doesn't know has none (its emails still go to the alias and the contacts).
+  18. **Staff are named by their Access subject** in the emails (the change notice's "Proposed by" row already does);
+      `ConfirmationNotice` carries no staff email, so a staff confirmer reads "Journear staff" in the sentence.
+  19. **The confirmation's notice runs second** in the notice run (after the change notices): those web addresses
+      already work.
+  20. **The staff Confirm acts on one request on one app** (the rows already emailed together), not one web address:
+      one confirmation, one notice.
+  21. **The staff screen's route** `POST /api/platform/confirm-staff-origins` (the Access identity as the actor, any other
+      body field dropped).
+- **Found in the spec** (its design not changed beyond the points above): (a) A7's `guarded_changes` columns and
+  triggers for the confirmation, `unconfirmed_active_from` and `second_person` can't be built as written while
+  `ledger-check` holds that table's shape (point 1; D929 found the same for P4); (b) A15's batch has four statements,
+  not three (the confirmation rows); (c) A7's `guarded_changes_confirm_rule` compares `confirmed_by` with
+  `proposed_by` only, which leaves an owner with the proposing staffer's email (point 4) and a second staffer with
+  the same email (D917) through: both are held; (d) A15's "the proposing key is still in force" can only be judged by
+  revocation and expiry in a trigger (point 3); (e) A11's removal page "who confirmed it and when" needs the token to
+  read anything, so it is a `POST` preview (point 9); (f) the spec's P10 row puts the `local*` guard's manifest rule and
+  deploy refusal under "to confirm" (A15): built as proposed (point 13); (g) the P4 row's staff proposals "with no
+  waiver … through AdminRpc and the CLI": the CLI can't hold four eyes, so it refuses (point 12); (h) D929's point 2
+  (`ledger-check` reading a replaced trigger as changed) is real: the test shows the hazard against the final schema
+  and its fix (point 14).
+- **Residual risks**: the accepted risk of A15 (one owner's Google account taken over, together with a stolen platform
+  key, puts an attacker's web address in force at once; bounded by the notice, the removal link, the queue and the off
+  switches); the on-chain owner is read seconds before the batch, not inside it; the console's role check is the
+  console's (a compromised console server could skip it, not the on-chain owner or the token); one person with two
+  separate identities (two Google accounts both on-chain owners, or two staff identities with two emails); an org's
+  members can use up its 40 confirmations an hour (the web addresses still come in after 24 h); a writer with full D1
+  write access can write a ledger row and a confirmation row together; on a production env a confirmation is faster
+  than adding a web address by hand (A15's open point, unchanged).
+- Address impact: **none.** Off-chain records of when a web address may use an app; no contract call, no key, path or
+  address derivation, no ID changes.

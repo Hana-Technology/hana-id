@@ -6,7 +6,10 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909 and D913 in `decisions.md`. The build spec for the
 portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-24 (branch `feat/shared-wallet-line`, after PR 141's review: section 4's count and "may" line,
+Last verified: 2026-11-25 (branch `docs/platform-answers`, from `next`, not merged, docs only: section 3's point 4
+and "Open" carry the Tech Lead's answers of 2026-11-25 (D914), revised after PR 142's review; nothing else
+re-checked);
+2026-11-24 (branch `feat/shared-wallet-line`, after PR 141's review: section 4's count and "may" line,
 D912); 2026-11-24 (branch `feat/shared-wallet-line`, from `next`, not merged, not deployed: the sign-in and
 approval windows now say when the wallet is also used on other apps, D912: the summary's row, section 4, section 7);
 2026-11-24 (branch `feat/name-sodax-evm-chains`, from `next`, not merged, not deployed: the approval
@@ -21,8 +24,9 @@ address-freeze wording; facts on the origin exception, demo prices and partner l
 **Status in one line:** the Tech Lead decided that every Sodax partner site shares one wallet (one app per partner, all
 in Sodax's organisation on one scope). Test and live apps never share a scope (D51), so that is one test scope now and
 a separate live scope, with different addresses, later. Nothing for the portal switch is built. Who vouches for each
-partner's web address: built on the recommendation (Sodax vouches; every address waits the usual delay and
-announcement), to be adjusted after the Tech Lead has talked to Sodax (D913); the spec is `partner-platform-spec.md`.
+partner's web address: built on the recommendation (Sodax vouches; every address is announced as usual and
+comes into force when one of Sodax's owners confirms it, or after 24 h, D914), to be adjusted after the Tech Lead has
+talked to Sodax (D913); the spec is `partner-platform-spec.md`.
 
 ## Summary
 
@@ -125,9 +129,11 @@ a protected environment, and removing `"private": true` (`operations.md`, "Publi
    and create keys. Nothing on chain, no owners, no auto-approve policy, no raw signing, never the mainnet demo.
 3. **Limits.** A few apps per day per credential, at most 20 web addresses per app (as today), live apps only once
    live keys exist and only with Journear staff's approval.
-4. **The delays stay.** Every web address it adds is a proposal like a staff one: announced to Sodax's security
-   contacts and to Journear, cancellable from the email, in force at least 24 hours later on production. Removing and
-   suspending are immediate.
+4. **The delays stay, unless an owner confirms.** Every web address it adds is a proposal like a staff one:
+   announced to Sodax's security contacts and to Journear, cancellable from the email. It is in force at once when one
+   of Sodax's owners confirms it in our partner portal (signed in, on a page that shows the app and the address), and
+   otherwise 24 hours later, in every env except local test envs (the Tech Lead, 2026-11-25, D914;
+   `partner-platform-spec.md` A15). Removing and suspending are immediate.
 5. **Audit.** Every call is recorded as the service actor in the existing change and audit records, with the
    request id, and shown in the portal's Audit page and the staff portal.
 6. **Off switch.** Journear staff can revoke the credential at once; the partner switch off in Sodax's portal maps to
@@ -285,4 +291,7 @@ shared scope gets its own User ID, with linking for Sodax and staff; the service
 recommendation, to be adjusted after the talk with Sodax. Still open:
 
 - Publishing the SDK (registry, licence of `@hana-id/core`), needed before Sodax can depend on it: parked (D913).
-- The spec's own questions (`partner-platform-spec.md`, "Open questions for the Tech Lead").
+- The spec's own questions N1 to N9: answered by the Tech Lead on 2026-11-25 (D914; `partner-platform-spec.md`,
+  "Decided by the Tech Lead (2026-11-25)"), with who may confirm (an owner, with a fresh Google sign-in) and a rule
+  for platform keys (a second owner confirms on real money) decided the same day; several design points proposed and
+  still to confirm, and two open points (D914).

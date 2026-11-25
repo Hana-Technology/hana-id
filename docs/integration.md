@@ -284,6 +284,10 @@ at `^0.5.0`).
   `SPONSORSHIP_REASON_NAMES`, `NEAR_RELAY_REASON_NAMES`, and the types `SponsorReason`, `KnownSponsorReason`,
   `SponsorshipReason`, `KnownSponsorshipReason` and `NearRelayReason` (a known reason, or any string, so a new reason
   never breaks your build).
+- New: `new HanaIdModule(hana, { productId })` sets the Stellar Wallets Kit module's id; the default stays `'hana-id'`.
+  Only for a host that finds other wallets by part of their id or name: pass `JOURNEAR_PASSPORT_MODULE_ID`
+  (`'journear-passport'`) where "hana" would also catch Journear Passport (Sodax's wallet kit finds Hana Wallet that
+  way; [Stellar Wallets Kit](#stellar-wallets-kit-ids)). Everyone else changes nothing.
 - `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` are no longer `4200`. On a chain without
   gas sponsorship, `wallet_getCapabilities` answers no capabilities and `wallet_sendCalls` is `5710` (unsupported
   chain). `eth_sendTransaction` is unchanged (never sponsored).
@@ -1087,7 +1091,26 @@ import { HanaIdModule } from '@hana-id/web/stellar-wallets-kit';
 const kit = new StellarWalletsKit({ network, modules: [new HanaIdModule(hana), ...otherModules] });
 ```
 
-The module's `productId` is `'hana-id'`; the picker shows its `productName`, "Journear Passport", and the Journear mark. `isAvailable()` is true once the vault is up, `getAddress()` logs in when
+The module's `productId` is `'hana-id'`; the picker shows its `productName`, "Journear Passport", and the Journear mark.
+
+<a id="stellar-wallets-kit-ids"></a>**Its id in a host that matches by name (0.5.0).** Some wallet kits find a wallet
+by part of its id or name: Sodax's wallet kit, asked for Hana Wallet (the browser extension) as `'hana'`, also takes
+any wallet whose id contains "hana", so `'hana-id'` is taken for Hana Wallet, and a "Connect Hana" button opens
+Journear Passport's sign-in instead. In such a host, pass the other id from the start:
+
+```ts
+import { HanaIdModule, JOURNEAR_PASSPORT_MODULE_ID } from '@hana-id/web/stellar-wallets-kit';
+
+new HanaIdModule(hana, { productId: JOURNEAR_PASSPORT_MODULE_ID }); // 'journear-passport'
+```
+
+Choose it once: kits and hosts may store the id to restore the user's wallet after a reload, so changing it later
+makes returning users pick the wallet again (and a host that named `'hana-id'` in its code, as `selectedWalletId`,
+must change too). A `productId` is 3 to 64 lower-case letters, digits, `-` or `.`, and never `'hana'` or
+`'io.hana.wallet'` (Hana Wallet's). The EVM side has no such option: EIP-6963's `rdns` comes from Journear Passport's
+own web address (see [EVM](#evm-eip-1193)).
+
+`isAvailable()` is true once the vault is up, `getAddress()` logs in when
 needed (with the button fallback when SWK's own awaits cost the popup), the sign methods open the approval popup in
 your click the same way, `disconnect()` is `hana.logout()`. Errors are
 SWK's `{code, message, ext}`, with `4001` for a rejection and the Journear Passport code in `ext`. Journear Passport only signs, so

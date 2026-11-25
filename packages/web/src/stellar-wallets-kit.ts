@@ -7,7 +7,7 @@
 // | Field or method | Value |
 // |---|---|
 // | moduleType | HOT_WALLET |
-// | productId | 'hana-id' ('hana' is already Hana Wallet's module) |
+// | productId | 'hana-id' ('hana' is already Hana Wallet's module), or the host's `productId` option (D923) |
 // | productName, productUrl, productIcon | 'Journear Passport', the env's authOrigin, the Journear mark (data: URI) |
 // | isAvailable() | true within 1000 ms when the handshake is done, false otherwise |
 // | getAddress() | {address}; logs in if needed, with the launcher fallback when the popup is blocked |
@@ -22,6 +22,25 @@ import { HanaError, RpcCode, toSwkError } from './client/errors.ts';
 import { HANA_ID_ICON, HANA_ID_NAME } from './client/icon.ts';
 
 export const HANA_ID_MODULE_ID = 'hana-id';
+/**
+ * The id a host that matches wallets by substring should pass as `productId` (D923): `'hana-id'` contains "hana", so
+ * Sodax's wallet kit's brand calls for Hana Wallet (`['hana']`) catch it. The default stays `'hana-id'`: hosts and
+ * partner code that stored or named it keep working.
+ */
+export const JOURNEAR_PASSPORT_MODULE_ID = 'journear-passport';
+/** A `productId` option: lower-case letters and digits, single `-` or `.` between them, 3 to 64 characters. */
+const PRODUCT_ID_PATTERN = /^(?=.{3,64}$)[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
+/** Ids that name Hana Wallet (the browser extension) in the kits we know of; never ours. */
+const OTHER_WALLET_IDS: readonly string[] = ['hana', 'io.hana.wallet'];
+
+export interface HanaIdModuleOptions {
+  /**
+   * The module's `productId`, which the kit and its host use as the wallet's id (and may store, to restore the user's
+   * choice). Default `'hana-id'`. Pick it once: changing it later makes returning users choose the wallet again in
+   * hosts that stored the old id. Use `JOURNEAR_PASSPORT_MODULE_ID` in a host that finds Hana Wallet by "hana".
+   */
+  productId?: string;
+}
 /** SWK's `ModuleType.HOT_WALLET` (the same string in 1.9.x and 2.x). */
 export const HOT_WALLET = 'HOT_WALLET';
 export const IS_AVAILABLE_TIMEOUT_MS = 1000;
@@ -55,14 +74,19 @@ export class HanaIdModule {
    * `any` to fit both kits' `ModuleInterface`; its value is always 'HOT_WALLET'.
    */
   readonly moduleType: any = HOT_WALLET;
-  readonly productId = HANA_ID_MODULE_ID;
+  readonly productId: string;
   readonly productName = HANA_ID_NAME;
   readonly productUrl: string;
   readonly productIcon = HANA_ID_ICON;
   readonly #hana: HanaClient;
 
-  constructor(hana: HanaClient) {
+  constructor(hana: HanaClient, options: HanaIdModuleOptions = {}) {
+    const productId = options.productId ?? HANA_ID_MODULE_ID;
+    if (typeof productId !== 'string' || !PRODUCT_ID_PATTERN.test(productId) || OTHER_WALLET_IDS.includes(productId)) {
+      throw new HanaError(RpcCode.invalidParams, 'productId must be 3 to 64 lower-case letters, digits, "-" or "." and not another wallet\'s id');
+    }
     this.#hana = hana;
+    this.productId = productId;
     this.productUrl = hana.authOrigin;
   }
 

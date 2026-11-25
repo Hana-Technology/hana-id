@@ -694,7 +694,7 @@ describe('revocation', () => {
     expect((await rows<{ status: string; cancelled_by: string }>('SELECT status, cancelled_by FROM guarded_changes WHERE id = ?1', p2))[0]).toEqual({ status: 'cancelled', cancelled_by: 'link' });
     expect(await no(byLink(revoke.token))).toMatchObject({ code: 'conflict' });
 
-    // The key itself (piece P3's self-revoke route will call this writer), only its own id, also with the switch off.
+    // The key itself (the platform API's self-revoke calls this writer, D927), only its own id, also with the switch off.
     const r3 = { ...r, publicKey: await newPublicKey() };
     const k3 = await inForce(r3);
     const p3 = await platformProposal(r.app, k3.id, 'https://k.partner.example');

@@ -1,5 +1,5 @@
 // Platform keys (D918; docs/partner-platform-spec.md A3, A7): a network's backend's request-signing keys, their life
-// and their records. Nothing authenticates with a key yet (piece P3); this is the credential's life cycle:
+// and their records (a key in force authenticates the platform API: platform/request.ts, D927). The life cycle:
 //
 // - registration by an on-chain owner of each scope it names (ConsoleRpc.proposePlatformKey: the step-up of kind
 //   `platform.key_add`, its nonce over the signer, env, org, scopes, thumbprint and label, `confirmStepUpScopes` once

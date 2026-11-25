@@ -1,7 +1,7 @@
 // Platform keys (D918; docs/partner-platform-spec.md A3 "Registration, rotation, revocation", "An owner's confirmation
 // of a key", A7): a network's backend signs its requests to the platform API with an ECDSA P-256 key whose public half
 // is registered here for one organisation, one env and one or two of its test scopes. Only the public key is ever sent
-// or stored; nothing can authenticate with a key yet (piece P3). This module holds what the API, the console and the
+// or stored; a key in force authenticates the platform API (platform-request.ts, D927). This module holds what the API, the console and the
 // admin Worker share: the words, the limits, the key's parsing and RFC 7638 thumbprint, the label rule, the step-up
 // layouts' inputs, the RPC inputs and the views.
 import { z } from '@hana-id/env/zod';

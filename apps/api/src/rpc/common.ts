@@ -18,7 +18,7 @@ export interface CallSetup {
   actors: readonly Actor['kind'][];
   /** ConsoleRpc only: the call's cost in hot-DB statements (its ceiling), charged before it runs. */
   cost?: number;
-  /** ConsoleRpc only: a kill switch, which may spend the budget's reserves. */
+  /** ConsoleRpc only: a kill switch, admitted by its org's kill bucket and the global kill bucket only (D937). */
   killSwitch?: boolean;
   /** ConsoleRpc only: a destructive call, counted by the breaker for this org (refunded when it changed nothing). */
   breaker?: boolean;
@@ -43,7 +43,7 @@ export interface InputSchema<I> {
   safeParse(v: unknown): { success: true; data: I } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } };
 }
 
-/** Outcomes after which a call is settled (breaker slot and reserve tokens back): it found nothing it could destroy. */
+/** Outcomes after which a breaker call is settled (its slot back; D937: no tokens): it found nothing it could destroy. */
 const REFUNDED: ReadonlySet<RpcCode> = new Set(['not_found', 'conflict', 'version_conflict', 'already_applied', 'bad_request']);
 
 export async function runRpc<I extends { actor: Actor; requestId: string; clientIp: string }, T extends object>(
@@ -69,7 +69,7 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
   const now = Date.now();
   const w: Writer = { actor: input.actor, requestId: input.requestId, now };
   let breakerTaken = false;
-  let reserveUsed = 0;
+  let overflowTaken = false;
   // The admission's time on the limiter's clock (D935, H1): what the settlement names.
   let admittedAt = now;
   let code: RpcCode | null = null;
@@ -87,8 +87,10 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
       }
       admittedRevoke = true;
     } else if (consoleCall) {
-      ({ reserveUsed, at: admittedAt } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
+      const admitted = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now);
+      admittedAt = admitted.at;
       breakerTaken = !!setup.breaker;
+      overflowTaken = admitted.overflow === true;
     }
     const db = new HotDb(env.DB, consoleCall ? CONSOLE_DB_LIMITS : undefined);
     const result = await work({ input, db, w });
@@ -107,7 +109,12 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
     log({ event: 'rpc', ...fields, outcome: 'error', code: 'internal' }, 'error');
     return { ok: false, code: 'internal' };
   } finally {
-    const changedNothing = (code === null && !w.wrote) || (code !== null && REFUNDED.has(code));
-    if (changedNothing && (breakerTaken || reserveUsed > 0)) await settleMemberCall(env, { org: orgId!, at: admittedAt, breaker: breakerTaken, reserveUsed });
+    // D937 (after PR 164's review): a refusal before any batch was sent (`policy_invalid`, `near_unavailable`, an
+    // internal error in the plan read, …) wrote nothing and is settled too. Safe for every breaker call
+    // (removeOrigins, frameOnlyOrigins, rotateKey, updateSettings): each changes state only through runWrite's one D1
+    // batch, with no other effect; once a batch was sent, only the outcomes in REFUNDED (the batch's commit row didn't
+    // apply) are settled, and an unknown outcome (`internal`) keeps its slot.
+    const changedNothing = (code === null && !w.wrote) || (code !== null && (!w.batched || REFUNDED.has(code)));
+    if (changedNothing && breakerTaken) await settleMemberCall(env, { org: orgId!, at: admittedAt, breaker: true, ...(overflowTaken ? { overflow: true } : {}) });
   }
 }

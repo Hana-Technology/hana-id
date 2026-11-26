@@ -769,7 +769,7 @@ describe('the platform’s destructive-call breaker is its own (M3)', () => {
     for (let i = 0; i < PLATFORM_LIMITS.breaker.floor; i++) expect((await platformAdmit(orgs[3]!, now + 45 + i)).ok).toBe(true);
     expect(await platformAdmit(orgs[3]!, now + 50)).toMatchObject({ ok: false, limit: 'breaker_global' });
     // The console's breaker for the same orgs: every destructive console call still admitted.
-    for (const org of orgs) expect(await admitMemberCall(env, { org, cost: 5, killSwitch: true, breaker: true }, now + 60)).toMatchObject({ reserveUsed: expect.any(Number) });
+    for (const org of orgs) expect(await admitMemberCall(env, { org, cost: 5, killSwitch: true, breaker: true }, now + 60)).toMatchObject({ at: expect.any(Number) });
     // And the reverse: the console's breaker full (5 per org) leaves the platform's for a fresh org alone.
     const fresh = (await orgApp()).org;
     const later = now + 30 * MIN;
@@ -977,10 +977,10 @@ describe('F3: the platform’s own global bucket, and a floor in the console’s
     // The platform as a whole took at most what is above the console's floor (60 − 30 = 30 tokens: 10 calls of 3).
     expect(admitted).toBe(10);
     const third = (await orgApp()).org;
-    expect(await admitMemberCall(env, { org: third, cost: 8 }, now)).toMatchObject({ reserveUsed: 0 });
+    expect(await admitMemberCall(env, { org: third, cost: 8 }, now)).toMatchObject({ at: expect.any(Number) });
     // A platform kill switch is never refused by the console's bucket (N2), and the console's kill switch still goes through.
     expect((await obj.platformAdmit({ org: orgs[0]!, cost: 3, killSwitch: true, limits: PLATFORM_LIMITS }, now)).ok).toBe(true);
-    expect(await admitMemberCall(env, { org: third, cost: 5, killSwitch: true }, now)).toMatchObject({ reserveUsed: expect.any(Number) });
+    expect(await admitMemberCall(env, { org: third, cost: 5, killSwitch: true }, now)).toMatchObject({ at: expect.any(Number) });
   });
 
   it('N2: a sustained console flood never holds back a platform kill switch', async () => {
@@ -1278,21 +1278,21 @@ describe('the review of the second round', () => {
     expect(importKey).not.toHaveBeenCalled();
   });
 
-  it('a burst of platform kill switches at their maximum leaves the console’s kill-switch reserve untouched', async () => {
+  it('a burst of platform kill switches at their maximum leaves the console’s kill switches untouched (D937: their own buckets)', async () => {
     const now = freshNow();
     const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
     const consoleOrg = (await orgApp()).org;
     const consoleOrgs = await Promise.all(Array.from({ length: 6 }, async () => (await orgApp()).org));
-    // The console's ordinary calls take its global bucket to its reserve (20 of 60) and are then refused.
+    // The console's ordinary calls take its global bucket (60; D937: no reserve) and are then refused.
     let refused = false;
-    for (let i = 0; i < 60 && !refused; i++) await admitMemberCall(env, { org: consoleOrgs[i % 6]!, cost: 1 }, now).catch(() => (refused = true));
+    for (let i = 0; i < 61 && !refused; i++) await admitMemberCall(env, { org: consoleOrgs[i % 6]!, cost: 1 }, now).catch(() => (refused = true));
     expect(refused).toBe(true);
     // Platform kill switches, as many as they are allowed, from many orgs at once.
     let kills = 0;
     for (let i = 0; i < 40; i++) if ((await obj.platformAdmit({ org: (await orgApp()).org, cost: 6, killSwitch: true, limits: PLATFORM_LIMITS }, now)).ok) kills++;
     expect(kills).toBeGreaterThan(0);
-    // The console's reserve is all still there: a console kill switch of 12 (its org's share) goes through, an ordinary call still doesn't.
+    // The console's kill switches never shared either bucket: one of 12 goes through, an ordinary call still doesn't.
     await expect(admitMemberCall(env, { org: consoleOrg, cost: 1 }, now)).rejects.toMatchObject({ code: 'rate_limited' });
-    expect(await admitMemberCall(env, { org: consoleOrg, cost: 12, killSwitch: true }, now)).toMatchObject({ reserveUsed: 12 });
+    expect(await admitMemberCall(env, { org: consoleOrg, cost: 12, killSwitch: true }, now)).toMatchObject({ at: expect.any(Number) });
   });
 });

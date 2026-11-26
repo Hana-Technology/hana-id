@@ -50,7 +50,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
 import { getApp, listApps, listChanges } from '../changes/apps.ts';
 import { refuse } from '../changes/cas.ts';
-import { withKeyRevokeQuota } from '../changes/guard.ts';
+import { withKeyRevokeQuota, withSuspensionQuota } from '../changes/guard.ts';
 import { createKey, revokeKey, rotateKey } from '../changes/keys.ts';
 import { cancelChange, cancelChangeByLink } from '../changes/lifecycle.ts';
 import { changeOrigins, frameOnlyOrigins, removeOrigins } from '../changes/origins.ts';
@@ -204,7 +204,10 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
     }));
   }
 
-  /** A kill switch: immediate, no step-up; counted by the breaker. */
+  /**
+   * A kill switch (it signs users out): immediate, no step-up; counted by the breaker, the org's first 3 of its hour past
+   * a full global count while the global overflow has room (D937).
+   */
   removeOrigins(c: unknown) {
     return runRpc(this.env, 'removeOrigins', removeOriginsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.removeOrigins, killSwitch: true, breaker: true }, ({ input, db, w }) => removeOrigins(db, w, input));
   }
@@ -316,19 +319,29 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'removeLabels', removeLabelsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.removeLabels, killSwitch: true }, ({ input, db, w }) => removeLabels(db, this.env, w, input));
   }
 
-  /** The partner bit (4) only: a member never sets or clears Hana's bits 1 and 2. Suspending is counted by the breaker. */
+  /**
+   * The partner bit (4) only: a member never sets or clears Hana's bits 1 and 2. D937: suspending is a pure, reversible
+   * stop, outside the breaker: a kill switch held to its org's own 20 suspensions a clock hour, counted only when it
+   * changes something (changes/guard.ts). Resuming is an ordinary call (the console asks for a fresh sign-in first).
+   */
   setSuspended(c: unknown) {
     const suspending = (c as { suspended?: unknown } | null)?.suspended === true;
-    return runRpc(this.env, 'setSuspended', consoleSetSuspendedInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.setSuspended, killSwitch: suspending, breaker: suspending }, ({ input, db, w }) =>
+    return runRpc(this.env, 'setSuspended', consoleSetSuspendedInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.setSuspended, killSwitch: suspending }, ({ input, db, w }) => {
+      const set = () => setSuspensionBit(db, w, { orgId: input.orgId, appId: input.appId, bit: 4, suspended: input.suspended });
       // D930: `takenOver` when the member took the platform's suspension over (the console's audit row says so).
-      setSuspensionBit(db, w, { orgId: input.orgId, appId: input.appId, bit: 4, suspended: input.suspended }).then(({ suspendedBy, takenOver }) => ({ suspendedBy, ...(takenOver ? { takenOver } : {}) })),
-    );
+      return (input.suspended ? withSuspensionQuota(this.env, w, input.orgId, set) : set()).then(({ suspendedBy, takenOver }) => ({ suspendedBy, ...(takenOver ? { takenOver } : {}) }));
+    });
   }
 
   createKey(c: unknown) {
     return runRpc(this.env, 'createKey', createKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.createKey }, ({ input, db, w }) => createKey(db, w, input));
   }
 
+  /**
+   * D937: not a stop (the old key works for the 24 h grace; the immediate stop is revokeKey) but destructive and not
+   * undoable (an unwanted rotation breaks the partner's site when the grace ends): an ordinary call counted by the
+   * breaker, as before.
+   */
   rotateKey(c: unknown) {
     return runRpc(this.env, 'rotateKey', rotateKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.rotateKey, breaker: true }, ({ input, db, w }) => rotateKey(db, w, input));
   }
@@ -360,8 +373,8 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
    * (D274), token reservation, caps and usage event), with three console rules: the scope must be one of the org's
    * (`not_found`), the owner token's optional claims are checked strictly (`forbidden`), and a refusal before the relay
    * is an RpcCode (`token_has_pii` → `forbidden`, the claim's name in the message). Once relayed, the answer is the relay's
-   * `{status, result?, nearTx?, code?, error?}`. The safety methods (cancel, remove a client, disable shared login) may
-   * use the budget's kill-switch reserve.
+   * `{status, result?, nearTx?, code?, error?}`. The safety methods (cancel, remove a client, disable shared login) are
+   * kill switches: the kill buckets (D937).
    */
   ownerAction(c: unknown) {
     const method = (c as { body?: { method?: unknown } } | null)?.body?.method;
@@ -384,7 +397,7 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
         const claim = typeof body.data?.claim === 'string' ? ` (claim: ${body.data.claim.slice(0, 64)})` : '';
         return refuse(OWNER_ACTION_CODES[code ?? ''] ?? 'internal', `${code ?? 'internal'}: ${error ?? 'refused'}${claim}`);
       }
-      // Relayed: something may have changed on chain (the breaker and the reserve keep what it took).
+      // Relayed: something may have changed on chain (it is not settled as a call that changed nothing).
       w.wrote = true;
       return {
         status,

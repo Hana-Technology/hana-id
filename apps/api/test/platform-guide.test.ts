@@ -249,10 +249,11 @@ describe('docs/platform-guide.md', () => {
 
   it('states the numbers the code holds', () => {
     const L = PLATFORM_REQUEST_LIMITS;
-    expect([L.perKeyPerMinute, L.perKeyPerDay, L.failuresPerIpPerMinute, L.breaker.perOrgPerHour, L.breaker.globalPerHour]).toEqual([60, 2000, 30, 10, 30]);
+    expect([L.perKeyPerMinute, L.perKeyPerDay, L.failuresPerIpPerMinute, L.breaker.perOrgPerHour, L.breaker.globalPerHour, L.breaker.floorPerOrgPerHour]).toEqual([60, 2000, 30, 10, 30, 5]);
+    expect([L.killReservePerKeyPerMinute, L.killReservePerKeyPerDay]).toEqual([10, 100]);
     expect([PLATFORM_CLOCK_SKEW_MS, PLATFORM_BODY_MAX]).toEqual([60_000, 16 * 1024]);
     const O = PLATFORM_OPS_LIMITS;
-    expect([O.creationsPerHour, O.proposalsPerHour, O.waitingPerOrg, O.keyCreationsPerHour, O.keyCreationsPerDay, O.listPage]).toEqual([2, 20, 30, 20, 50, 50]);
+    expect([O.creationsPerHour, O.proposalsPerHour, O.waitingPerOrg, O.keyCreationsPerHour, O.keyCreationsPerDay, O.listPage, O.stopsPerHour]).toEqual([2, 20, 30, 20, 50, 50, 60]);
     for (const s of [
       '60 requests a minute and 2,000 a UTC day',
       '30 failed requests a minute',
@@ -263,7 +264,11 @@ describe('docs/platform-guide.md', () => {
       'at most 30 web addresses waiting',
       '10 apps',
       '20 an hour and 50 a UTC day',
-      '10 an hour per organisation and 30 an hour across every organisation',
+      '10 an hour per organisation and 30 an hour across every organisation; your first 5 in any hour always pass',
+      '10 more a minute and 100 more a UTC day, for off switches only',
+      '60 an hour per organisation, counting only those that changed something',
+      '`platform:key:kill:minute`, `platform:key:kill:day`',
+      '`platform:stops:hour`',
     ]) {
       expect(guide, s).toContain(s);
     }

@@ -6,7 +6,9 @@ creates and manages a Journear Passport app for that partner, with no person at 
 is Sodax's backend team. Everything your backend needs is in this guide; the integration guide (`integration.md`,
 sent with our SDK) covers the partner's page and our SDK.
 
-Last verified: 2026-11-26, against the platform API's code and tests (built, not deployed anywhere yet).
+Last verified: 2026-11-26, against the platform API's code and tests (built, not deployed anywhere yet); 2026-11-26
+again for the off switches' limits (section 8: the removal limit's per-organisation floor, suspensions and key
+revocations outside it with a limit of their own, each key's reserve for off switches).
 
 > **Not available yet.** The platform API is built and tested, but it is **not deployed** in any environment and
 > **not switched on** for any organisation. Journear switches it on per organisation. The API's address and the
@@ -781,7 +783,8 @@ than 20; the scope given to your organisation moments ago); `429 rate_limited` (
 `POST /v1/platform/apps/:appId/origins/remove` with `{ "remove": ["https://shop.acme.example"], "expectedVersion": 2 }`.
 Answer `200 { version }`. Immediate: a waiting address is cancelled, a working one stops working, and the users who
 signed in there are signed out. Refusals: `404`, `400 bad_request` (not an address of the app), `409
-version_conflict`. This is an off switch: it works while your organisation is frozen.
+version_conflict`. This is an off switch: it works while your organisation is frozen. Because it signs people out, it
+counts against the removal limit ([section 8](#8-limits-refusals-and-the-off-switches)).
 
 ### Cancel a waiting web address
 
@@ -794,7 +797,8 @@ backend didn't make), `409 not_pending` (already working, cancelled or ended: re
 
 `POST /v1/platform/apps/:appId/suspend` with `{ "suspended": true }` or `{ "suspended": false }`. Answer
 `200 { suspended }` (the view's object). Suspending stops the app at once: no sign-in and no call to Journear works
-for it, and pages already open stop on their next call. Sending the state it already has changes nothing. You may
+for it, and pages already open stop on their next call. Sending the state it already has changes nothing and uses
+none of your limit of stops ([section 8](#8-limits-refusals-and-the-off-switches)). You may
 resume only a suspension your backend set (`youCanResume`): if an owner suspended the app in the portal, or took your
 suspension over, resuming is `403 forbidden`, and only an owner can lift it. Journear's own suspension is never yours
 to lift.
@@ -805,7 +809,7 @@ to lift.
   At most 5 unrevoked keys per app (`409 key_limit`).
 - `POST /v1/platform/apps/:appId/keys/:keyId/revoke` with `{}`: revoked at once, `200 {}`, or
   `{ "warning": "last_key" }` when it was the app's last valid key (the app then stops working). `409 conflict` if
-  it was already revoked.
+  it was already revoked (that uses none of your limit of stops).
 
 To rotate a partner's publishable key: create the new one, publish it in your partner configuration, wait until your
 caches have turned over, then revoke the old one.
@@ -930,6 +934,7 @@ All limits are provisional and kept low while you have few partners. Journear ca
 | Limit | Value | Refusal (`limit` in the body) |
 |---|---|---|
 | Requests per platform key | 60 requests a minute and 2,000 a UTC day | `429`, `platform:key:req:minute`, `platform:key:req:day` |
+| Off switches per platform key, once its requests are used up | 10 more a minute and 100 more a UTC day, for off switches only | `429`, `platform:key:kill:minute`, `platform:key:kill:day` |
 | Fresh nonces per key | 300 a minute | `429`, `platform:nonce` |
 | Failed requests per IP address | 30 failed requests a minute (an IPv6 /48 counts as one address); successes don't count | `429`, `platform:ip` |
 | App creations per organisation | 2 an hour and 5 a UTC day | `429`, `platform:creations:hour`, `platform:creations:day` |
@@ -939,24 +944,37 @@ All limits are provisional and kept low while you have few partners. Journear ca
 | Web addresses per app (working or waiting) | 20, the widget's address included | `409 conflict` |
 | Publishable keys | 5 unrevoked per app; your keys create at most 20 an hour and 50 a UTC day | `409 key_limit`; `429`, `platform:keys:hour`, `platform:keys:day` |
 | Platform keys per organisation | 2 working, waiting or awaiting acceptance | (in the portal) |
-| Destructive calls (remove, suspend, revoke a publishable key) | 10 an hour per organisation and 30 an hour across every organisation | `429`, `platform:breaker_org`, `platform:breaker_global` ("ask Journear security") |
+| Web address removals | 10 an hour per organisation and 30 an hour across every organisation; your first 5 in any hour always pass, whatever other organisations did | `429`, `platform:breaker_org`, `platform:breaker_global` ("ask Journear security") |
+| Stops: suspending an app, revoking a publishable key | 60 an hour per organisation, counting only those that changed something; never limited by other organisations | `429`, `platform:stops:hour` |
 | Journear's database budget | per organisation and shared | `429`, `platform:budget_org`, `platform:budget_platform`, `platform:budget_shared`, `platform:budget_reserve` |
 | Self-revokes | 10 a minute per key | `429`, `platform:key:revoke:minute` |
 
-Clock hours and UTC days are fixed windows; the destructive-call limit is a rolling hour (the last 60 minutes). A
-refused or replayed write doesn't use a unit of the creation, address or key quotas, with two exceptions: every
-request admitted counts against your key's 60 a minute and 2,000 a day, whatever its answer; and two copies of one
-write sent at the same moment may both use a unit ([section 6](#6-retries-idempotency-and-versions)).
+Clock hours and UTC days are fixed windows; the removal limit is a rolling hour (the last 60 minutes). A refused or
+replayed write doesn't use a unit of the creation, address, key or stop quotas, and a removal that changed nothing
+gets its unit back, with two exceptions: every request admitted counts against your key's 60 a minute and 2,000 a day
+(or, for an off switch past those, its own 10 and 100), whatever its answer; and two copies of one write sent at the
+same moment may both use a unit ([section 6](#6-retries-idempotency-and-versions)).
 
 **`429`** looks like `{ "error": "…", "code": "rate_limited", "limit": "platform:creations:day", "retryAfterS": 3600,
 "requestId": "…" }` with a `retry-after` header in seconds. Wait that long. For a minute window, back off and retry;
-for an hour or a day window, queue the work and tell your team. The destructive-call limit (the "breaker") protects
-against a runaway script or a stolen key: if you hit it, stop and talk to Journear. Your off switches (remove,
-cancel, suspend, revoke a publishable key) keep a small reserve of Journear's database budget, so they keep working
-when ordinary calls are refused for that budget. They are **not** exempt from anything else: they still count
-against your key's 60 a minute and 2,000 a day and its 300 nonces a minute, and remove, suspend and revoke count
-against the destructive-call limit. Only the key's self-revoke skips those. If your key's own windows are full in an
-emergency, use your standby key, or stop things in the partner portal, which these limits don't touch.
+for an hour or a day window, queue the work and tell your team. The removal limit (the "breaker") protects against a
+runaway script or a stolen key signing people out: if you hit it, stop and talk to Journear.
+
+**Your off switches** (remove, cancel, suspend, revoke a publishable key) are built to keep working when other limits
+are full:
+
+- **Other organisations can't use them up.** Your first 5 removals in any hour pass even when the limit across every
+  organisation is full. Suspending and revoking a publishable key aren't counted by that limit at all: they have your
+  organisation's own 60 an hour. Cancelling a waiting address counts against neither.
+- **A key that used up its requests can still stop things.** Past its 60 a minute or 2,000 a day, a key still has 10
+  off switches a minute and 100 a UTC day of its own. Ordinary calls stay refused.
+- **They keep a reserve of Journear's database budget**, so they keep working when ordinary calls are refused for
+  that budget, yours or other organisations'. At worst one waits a second or two (`retry-after`).
+- **Not exempt from everything:** each key's 300 nonces a minute, your organisation's own database budget and the
+  limits above still apply. Only the key's self-revoke skips those.
+
+If your key's own windows are full in an emergency, use your standby key, or stop things in the partner portal, which
+these limits don't touch.
 
 **`401 unauthenticated`** is one identical answer for every authentication failure ([section 4](#the-signature)).
 Don't retry it in a loop: after 30 failures a minute from one address, even your valid requests from that address go
@@ -1121,6 +1139,9 @@ is live.
 | `key_limit` | 409 | The app has 5 unrevoked publishable keys | Revoke one first |
 | `no_security_contact` | 409 | Your organisation has no security contact | Ask Journear |
 | `rate_limited` | 429 | A limit of [section 8](#8-limits-refusals-and-the-off-switches); `limit` says which | Wait `retry-after` |
+| `rate_limited` with `platform:breaker_org` or `platform:breaker_global` | 429 | Too many web addresses removed this hour (yours, or, past your first 5, across every organisation) | Stop and talk to Journear; suspending the app still works |
+| `rate_limited` with `platform:stops:hour` | 429 | Your organisation suspended apps or revoked publishable keys 60 times this hour | Wait `retry-after`; owners can still stop things in the partner portal |
+| `rate_limited` with `platform:key:kill:minute` or `platform:key:kill:day` | 429 | This key used up its requests and then its off-switch reserve | Use your standby key, or stop things in the partner portal |
 | `internal` | 500 | Something failed on Journear's side | Retry with backoff (same Idempotency-Key); if it persists, send Journear the request id |
 | `rate_limiter_unavailable` | 503 | Journear's limiter didn't answer | Retry after a few seconds |
 

@@ -1,8 +1,8 @@
 // Migration 0035 (D934, piece P12 of docs/partner-platform-spec.md): additive. Applied to a database holding rows in
 // every table around it (every migration before it): every row and every schema object of before is there after,
 // unchanged (asked of `sqlite_schema`: every table, index, trigger and view of the whole schema), but `app_origins`,
-// which gains exactly one column, `frame_only`, 0 on every existing row (today's behaviour); only its two triggers are
-// new; the ledger tables keep their shape. Then every rule against bare D1 writes: a frame-only web address is never
+// which gains exactly one column, `frame_only`, 0 on every existing row (today's behaviour); only its three triggers
+// and the index `app_changes_kind_app` are new; the ledger tables keep their shape. Then every rule against bare D1 writes: a frame-only web address is never
 // made usable anywhere in place (an update, a replace, an upsert), the flag is 0 or 1 and never on the localhost
 // wildcard; setting it (a tightening) and removing the row (the way back) still work. Applying it again changes
 // nothing; every trigger it creates is there after the last migration, with its SQL (a later migration that adds one
@@ -61,7 +61,7 @@ beforeAll(async () => {
 });
 
 describe('migration 0035_frame_only_origins', () => {
-  it('every table, index, trigger and view of before is there with the same SQL, but app_origins, which gains one column; only its two triggers are new; the ledger’s tables keep their shape', async () => {
+  it('every table, index, trigger and view of before is there with the same SQL, but app_origins, which gains one column; only its three triggers and one index on app_changes are new; the ledger’s tables keep their shape', async () => {
     const after = await schema();
     for (const [name, o] of before) {
       if (name === 'app_origins') continue;
@@ -73,8 +73,9 @@ describe('migration 0035_frame_only_origins', () => {
         "change_id TEXT, frame_only INTEGER NOT NULL DEFAULT 0 CHECK (frame_only IN (0, 1) AND (frame_only = 0 OR origin <> 'http://localhost:*')),",
       ),
     );
-    expect([...after.keys()].filter((k) => !before.has(k)).sort()).toEqual([...TRIGGERS_0035].sort());
+    expect([...after.keys()].filter((k) => !before.has(k)).sort()).toEqual([...TRIGGERS_0035, 'app_changes_kind_app'].sort());
     for (const t of TRIGGERS_0035) expect(after.get(t)?.tbl_name, t).toBe('app_origins');
+    expect(after.get('app_changes_kind_app')).toMatchObject({ type: 'index', tbl_name: 'app_changes', sql: 'CREATE INDEX app_changes_kind_app ON app_changes (kind, app_id, seq)' });
     // `ledger-check` holds the ledger's tables to their shape: 0035 adds none of their columns, and only one to app_origins.
     for (const t of ['apps', 'guarded_changes', 'app_changes', 'security_events']) expect(await cols(t), t).toEqual(beforeCols[t]);
     expect(await cols('app_origins')).toEqual([...beforeCols.app_origins!, 'frame_only']);
@@ -152,6 +153,7 @@ describe('0035’s triggers after every later migration (a later rebuild of app_
     const at35 = await schema(db);
     const last = await schema(m);
     for (const name of TRIGGERS_0035) if (!LATER.includes(name)) expect(last.get(name)?.sql, name).toBe(at35.get(name)!.sql);
+    expect(last.get('app_changes_kind_app')?.sql).toBe(at35.get('app_changes_kind_app')!.sql);
     expect(last.get('app_origins')?.sql).toContain("frame_only INTEGER NOT NULL DEFAULT 0 CHECK (frame_only IN (0, 1) AND (frame_only = 0 OR origin <> 'http://localhost:*'))");
   });
 });

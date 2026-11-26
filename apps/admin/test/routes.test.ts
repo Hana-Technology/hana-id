@@ -215,7 +215,7 @@ describe('apps, changes, keys', () => {
 
 describe('frame-only web addresses (D934)', () => {
   it('a staff add marked frame-only is a pending change with the mark; a tightening works at once, once; the ledger says so as the staff actor', async () => {
-    const app = await seedHotApp();
+    const app = await seedHotApp(undefined, { origins: ['https://app.partner.example', 'https://kept.partner.example'] });
     const v = await hotVersion(app.id);
     const added = await json<{ changes: { id: string; origin: string; frameOnly?: true }[] }>(
       await adminRequest(`/api/apps/${app.id}/origins`, { body: { orgId: app.org, add: ['https://widget.network.example', 'https://shop.partner.example'], frameOnly: ['https://widget.network.example'], expectedVersion: v.origins } }),
@@ -226,6 +226,7 @@ describe('frame-only web addresses (D934)', () => {
     ]);
     expect(await env.HOT_DB.prepare('SELECT origin, frame_only FROM app_origins WHERE app_id = ?1 ORDER BY origin').bind(app.id).all().then((r) => r.results)).toEqual([
       { origin: 'https://app.partner.example', frame_only: 0 },
+      { origin: 'https://kept.partner.example', frame_only: 0 },
       { origin: 'https://shop.partner.example', frame_only: 0 },
       { origin: 'https://widget.network.example', frame_only: 1 },
     ]);
@@ -242,6 +243,8 @@ describe('frame-only web addresses (D934)', () => {
     // Again: already frame-only (409); another org's app: 404.
     expect((await adminRequest(`/api/apps/${app.id}/origins/frame-only`, { body: { orgId: app.org, origins: ['https://app.partner.example'], expectedVersion: before + 1 } })).status).toBe(409);
     expect((await adminRequest(`/api/apps/${app.id}/origins/frame-only`, { body: { orgId: 'org_other12345', origins: ['https://app.partner.example'], expectedVersion: before + 1 } })).status).toBe(404);
+    // Never the last web address in force that works on its own page (the waiting shop one doesn't count): 409.
+    expect((await adminRequest(`/api/apps/${app.id}/origins/frame-only`, { body: { orgId: app.org, origins: ['https://kept.partner.example'], expectedVersion: before + 1 } })).status).toBe(409);
     // The app's read marks both.
     const detail = await json<{ app: { origins: { origin: string; frameOnly?: true }[] } }>(await adminRequest(`/api/apps/${app.id}?org=${app.org}`));
     expect(detail.app.origins.filter((o) => o.frameOnly).map((o) => o.origin)).toEqual(['https://app.partner.example', 'https://widget.network.example']);

@@ -712,9 +712,10 @@ key at once ([section 3](#stop-a-key-at-once)). Answers `{ revokedAt }`. The `Id
   or inside a page the app doesn't list. A string, or `"frameOnly": false`, is usable anywhere, as before. The mark is
   part of the web address's request: an owner sees it when they confirm, and it waits like any address. To take it
   off later, remove the address and ask for it again without the mark (that waits again); an owner in your
-  organisation can add the mark to an address at once in our partner portal. An app always keeps at least one web
-  address without the mark: a create whose addresses are all marked is `400 bad_request`, and a proposal that would
-  leave none is `409 conflict`.
+  organisation can add the mark to an address at once in our partner portal. A create whose addresses are all marked
+  is `400 bad_request`, and a proposal of only marked addresses is `409 conflict` unless the app already has a working
+  (not waiting) address without the mark. Removing or cancelling an address is never refused, so it can still leave
+  an app with only marked addresses (which then work nowhere until you add a page).
 
 **Answer `201`:**
 

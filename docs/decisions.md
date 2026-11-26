@@ -24445,3 +24445,37 @@ caller assigned (D933 is unused, D935 another branch's).
   5. The consent sentence names the widget's address, and a consent given there also applies on the same partner's
      other pages that frame the widget (unchanged behaviour: a consent binds the parent origin).
   6. Whether to build the follow-up for L1 (the top-level page proving itself by `event.origin`).
+- **After PR 162's second review (2026-11-26; no High, two Medium in the new drift check, two Low).** Changed:
+  - **M1, a false drift alarm (proved).** A tightening named only the web address, so after a tightened waiting add
+    was cancelled (by an owner or staff, `change.cancelled`), expired unannounced (the hourly job, no ledger row of the
+    app) or cancelled by its platform key's revocation (`change.cancelled` with no app), a later plain add of the same
+    address was reported. Now each `origin.frame_only` entry records the change id its row had (`changeId`, null for a
+    row with none), and drift reports a row only when its own change id was marked by its proposal, or a tightening
+    named it with that same change id and no removal since. A later add is a new change. Tested for the three paths,
+    each followed by a plain re-add (no finding), with the true positives kept.
+  - **M2, the drift read's cost (measured).** The first version scanned `app_changes` twice for every origin row,
+    every hour. Now one read: a materialised pass over the four origin ledger kinds through a new index in 0035,
+    `app_changes_kind_app (kind, app_id, seq)` (applied nowhere, so 0035 was edited; `ledger-check` reports it as new
+    and holds it to its SQL, tested), then one primary-key look-up of `app_origins` per fact (`CROSS JOIN` keeps that
+    order). Tested: the query plan searches the index and scans neither the ledger nor `app_origins`, and with 20,000
+    other ledger rows and 500 web addresses its rows read stay under 20,000. Cost per run in `operations.md`.
+  - **L1, the "always keeps one" claim.** (a) Only web addresses **in force** count when deciding whether a tightening,
+    a proposal of only frame-only adds or the console's fresh sign-in would leave none; a waiting one and the
+    `http://localhost:*` pattern don't. A brand-new app's first addresses all wait, so its first proposal must carry
+    at least one address without the mark (a create or proposal with a usable-anywhere add is never refused); a
+    frame-only address alone can be proposed once a page is in force. Nothing legitimate is made impossible: the
+    network's create normally carries the partner's page and the widget together. (b) Every doc now says what holds:
+    those are refused; removals and cancellations (kill switches, the expiry, a key's revocation) never are, and can
+    leave none.
+  - **L2:** `integration.md` uses the same Firefox wording as the other docs.
+  - **Notes:** the `ledger-check` test's title says three triggers and the index; the drift reads are tolerant of an
+    odd ledger row: a detail that isn't valid JSON reads as `{}`, an array entry that isn't an object is skipped
+    (`CASE WHEN e.type = 'object'`), so one odd row can't stop the run (tested with strings and numbers where objects
+    are written). The pre-existing origin drift query had the same risk (`json_extract` over an entry of the removals'
+    lists); fixed the same way.
+- **Open points (the Tech Lead), from the second review:**
+  1. Retention: for an app with no `migration.baseline` row, the 60-month purge can delete the `origin.proposed`,
+     `app.created` or `origin.frame_only` rows the frame-only drift check needs; after that the check sees nothing for
+     that row (the flag itself stays, held by the triggers).
+  2. `frameOnlyOrigins` on `ConsoleRpc` accepts any member actor; the owner role is enforced in the console's route,
+     as for removals (a pre-existing pattern of the console's kill switches).

@@ -11,7 +11,9 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAppByKey } from '../src/apps.ts';
-import { detectDrift } from '../src/changes/drift.ts';
+import { DRIFT_BATCH, FRAME_ONLY_DRIFT_SQL, detectDrift } from '../src/changes/drift.ts';
+import { ANNOUNCE_WITHIN_MS, guardedChangesMaintenance } from '../src/guarded/cron.ts';
+import { platformProposal, seedKey } from './platform-helpers.ts';
 import worker from '../src/index.ts';
 import { forgetCachedApps } from '../src/app-cache.ts';
 import { clearViewCaches } from '../src/views.ts';
@@ -121,7 +123,7 @@ describe('a tightening: frameOnlyOrigins (an owner or staff), at once', () => {
     ]);
     const [l] = await rows<{ kind: string; actor_kind: string; detail_json: string }>("SELECT kind, actor_kind, detail_json FROM app_changes WHERE app_id = ?1 AND kind = 'origin.frame_only'", app.id);
     expect(l).toMatchObject({ kind: 'origin.frame_only', actor_kind: 'member' });
-    expect(JSON.parse(l!.detail_json)).toEqual({ origins: [{ origin: 'https://soon.example', wasInForce: false }, { origin: WIDGET, wasInForce: true }] });
+    expect(JSON.parse(l!.detail_json)).toEqual({ origins: [{ origin: 'https://soon.example', changeId: waiting.id, wasInForce: false }, { origin: WIDGET, changeId: null, wasInForce: true }] });
     // The pending change still waits as before, now frame-only.
     expect((await ok(adminRpc().pendingNotices({ ...system(), limit: 100 }))).notices.find((n) => n.change.id === waiting.id)?.change.frameOnly).toBe(true);
     // The vault page is read fresh: it inlines the in-force frame-only one only; frame-ancestors still lists it.
@@ -132,7 +134,11 @@ describe('a tightening: frameOnlyOrigins (an owner or staff), at once', () => {
     // Staff too; but never the app's last web address that works on its own page (the same refusal for both).
     expect(await adminRpc().frameOnlyOrigins({ ...hana(), orgId: app.org, appId: app.id, origins: [PAGE], expectedVersion: 2 })).toMatchObject({ ok: false, code: 'conflict', error: NO_ANYWHERE_ORIGIN });
     expect(await consoleRpc(clock).frameOnlyOrigins({ ...member(), orgId: app.org, appId: app.id, origins: [PAGE], expectedVersion: 2 })).toMatchObject({ ok: false, code: 'conflict', error: NO_ANYWHERE_ORIGIN });
-    await ok(adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://kiosk.example'], expectedVersion: 2 }));
+    const kiosk = (await ok(adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://kiosk.example'], expectedVersion: 2 }))).changes[0]!;
+    // Only once that other one is in force (a waiting one could still be cancelled, expire or be revoked).
+    expect(await adminRpc().frameOnlyOrigins({ ...hana(), orgId: app.org, appId: app.id, origins: [PAGE], expectedVersion: 3 })).toMatchObject({ ok: false, code: 'conflict' });
+    await ack(kiosk.id);
+    clock.advance(DELAY + 1);
     await ok(adminRpc().frameOnlyOrigins({ ...hana(), orgId: app.org, appId: app.id, origins: [PAGE], expectedVersion: 3 }));
     expect(await inlined(await vaultPage(app.key))).toMatchObject({ frameOnly: [PAGE, WIDGET].sort() });
   });
@@ -143,8 +149,12 @@ describe('a tightening: frameOnlyOrigins (an owner or staff), at once', () => {
       remove ? null : adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add, frameOnly, expectedVersion });
     expect(await staff([WIDGET], [WIDGET], 0)).toMatchObject({ ok: false, code: 'conflict', error: NO_ANYWHERE_ORIGIN });
     expect(await gate(app.id)).toEqual([]);
-    await ok(staff([WIDGET, PAGE], [WIDGET], 0)!);
-    // With a usable-anywhere row there, a frame-only add alone is fine.
+    const first = await ok(staff([WIDGET, PAGE], [WIDGET], 0)!);
+    // A usable-anywhere address only waiting doesn't count (a cancel, an expiry or a revoke can still take it away).
+    expect(await staff(['https://w2.example'], ['https://w2.example'], 1)).toMatchObject({ ok: false, code: 'conflict', error: NO_ANYWHERE_ORIGIN });
+    // In force, it does: a frame-only add alone is fine.
+    for (const c of first.changes) await ack(c.id);
+    clock.advance(DELAY + 1);
     await ok(staff(['https://w2.example'], ['https://w2.example'], 1)!);
     // A member’s: removing the only usable-anywhere one while adding only frame-only ones is refused before the step-up.
     ownerChain();
@@ -250,5 +260,98 @@ describe('drift: a frame-only web address made usable anywhere by a bare delete 
     await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, NULL, ?3)').bind(app.id, WIDGET, c.id).run();
     await detectDrift(env);
     expect((await findings(app.id)).map((f) => f.origin)).toEqual([WIDGET]);
+  });
+});
+
+describe('drift after PR 162’s second review: a tightening is tied to its row’s change; the read is one pass over the origin ledger', () => {
+  const findings = async (appId: string) =>
+    (await rows<{ detail_json: string }>("SELECT detail_json FROM security_events WHERE app_id = ?1 AND kind = 'drift'", appId)).map((r) => JSON.parse(r.detail_json) as { what: string; origin: string }).filter((d) => d.what === 'frame_only');
+  const X = 'https://x.example';
+
+  /** Staff propose X (waiting, usable anywhere), and an owner tightens it while it waits. */
+  async function tightenedWaiting(app: OrgApp, version: number): Promise<string> {
+    const c = (await ok(adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: [X], expectedVersion: version }))).changes[0]!;
+    await ok(consoleRpc(clock).frameOnlyOrigins({ ...member(), orgId: app.org, appId: app.id, origins: [X], expectedVersion: version + 1 }));
+    const [t] = await rows<{ detail_json: string }>("SELECT detail_json FROM app_changes WHERE app_id = ?1 AND kind = 'origin.frame_only' ORDER BY seq DESC LIMIT 1", app.id);
+    expect(JSON.parse(t!.detail_json)).toEqual({ origins: [{ origin: X, changeId: c.id, wasInForce: false }] });
+    return c.id;
+  }
+  /** X added again as usable anywhere (a new change), then drift. */
+  async function plainAgainThenDrift(app: OrgApp) {
+    const v = (await appRow(app.id)).origins_version as number;
+    await ok(adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: [X], expectedVersion: v }));
+    expect(await gate(app.id)).toContainEqual({ origin: X, frame_only: 0, active_from: null });
+    await detectDrift(env);
+    expect(await findings(app.id)).toEqual([]);
+  }
+
+  it('cancelled by staff, then added again as usable anywhere: no finding', async () => {
+    const app = await orgApp({ origins: [PAGE] });
+    const id = await tightenedWaiting(app, 0);
+    await ok(adminRpc().cancelChange({ ...hana(), orgId: app.org, changeId: id }));
+    await plainAgainThenDrift(app);
+  });
+
+  it('expired unannounced (the hourly job, no ledger row of the app), then added again: no finding', async () => {
+    const app = await orgApp({ origins: [PAGE] });
+    await tightenedWaiting(app, 0);
+    clock.advance(ANNOUNCE_WITHIN_MS + 1);
+    await guardedChangesMaintenance(env);
+    expect(await gate(app.id)).not.toContainEqual(expect.objectContaining({ origin: X }));
+    await plainAgainThenDrift(app);
+  });
+
+  it('cancelled by the proposing platform key’s revocation (a ledger row with no app), then added again: no finding', async () => {
+    const app = await orgApp({ origins: [PAGE] });
+    const k = await seedKey({ org: app });
+    const id = await platformProposal(app.id, k.id, X);
+    await ok(consoleRpc(clock).frameOnlyOrigins({ ...member(), orgId: app.org, appId: app.id, origins: [X], expectedVersion: 0 }));
+    await ok(adminRpc().revokePlatformKey({ ...hana(), orgId: app.org, keyId: k.id, reason: 'Revoked in a test' }));
+    expect(await rows('SELECT 1 FROM app_origins WHERE change_id = ?1', id)).toEqual([]);
+    await plainAgainThenDrift(app);
+  });
+
+  it('one odd ledger row (a plain string where an object was written) never stops the run', async () => {
+    const app = await orgApp({ origins: [PAGE, WIDGET] });
+    for (const [kind, detail] of [
+      ['origin.frame_only', { origins: [WIDGET, 7] }],
+      ['origin.proposed', { changes: ['gc_x'], removed: 'nope' }],
+      ['origin.removed', { origins: [WIDGET] }],
+      ['app.created', { origins: 'https://y.example' }],
+    ] as const) {
+      await env.DB.prepare("INSERT INTO app_changes (at, org_id, app_id, kind, detail_json, actor_kind, actor_id, request_id) VALUES (?1, ?2, ?3, ?4, ?5, 'system', 'test', ?6)")
+        .bind(Date.now(), app.org, app.id, kind, JSON.stringify(detail), `odd_${uid()}`)
+        .run();
+    }
+    await expect(detectDrift(env)).resolves.toMatchObject({ found: expect.any(Number) });
+    expect(await findings(app.id)).toEqual([]);
+  });
+
+  it('at a realistic size the read goes through the kind index: no scan of the ledger, and few rows read', async () => {
+    const plan = (await env.DB.prepare(`EXPLAIN QUERY PLAN ${FRAME_ONLY_DRIFT_SQL}`).bind(DRIFT_BATCH).all<{ detail: string }>()).results.map((r) => r.detail);
+    expect(plan.some((d) => /SEARCH c USING (COVERING )?INDEX app_changes_kind_app/u.test(d))).toBe(true);
+    expect(plan.filter((d) => /^SCAN c\b/u.test(d))).toEqual([]);
+    expect(plan.filter((d) => /SCAN o\b/u.test(d))).toEqual([]);
+    // 20 000 ledger rows of other kinds and 500 web addresses, a few frame-only facts: the read stays small.
+    const app = await orgApp({ origins: [PAGE] });
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+       INSERT INTO app_changes (at, org_id, app_id, kind, detail_json, actor_kind, actor_id, request_id)
+       SELECT 1, ?1, ?2, 'settings.updated', '{}', 'system', 'bulk', 'bulk_' || ?2 || '_' || i FROM n`,
+    )
+      .bind(app.org, app.id)
+      .run();
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+       INSERT INTO app_origins (app_id, origin, active_from) SELECT ?1, 'https://o' || i || '.example', 0 FROM n`,
+    )
+      .bind(app.id)
+      .run();
+    await ok(consoleRpc(clock).frameOnlyOrigins({ ...member(), orgId: app.org, appId: app.id, origins: ['https://o1.example', 'https://o2.example'], expectedVersion: 0 }));
+    const r = await env.DB.prepare(FRAME_ONLY_DRIFT_SQL).bind(DRIFT_BATCH).all();
+    // Every origin-kind ledger row of the whole test database and a look-up per candidate; far below one ledger scan.
+    const ledger = (await env.DB.prepare("SELECT COUNT(*) AS n FROM app_changes WHERE kind IN ('origin.proposed', 'app.created', 'origin.frame_only', 'origin.removed')").first<{ n: number }>())!.n;
+    expect(r.meta.rows_read).toBeLessThan(ledger * 6 + 2_000);
+    expect(r.meta.rows_read).toBeLessThan(20_000);
   });
 });

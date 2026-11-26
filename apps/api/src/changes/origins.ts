@@ -72,23 +72,32 @@ export async function frameOnlyOrigins(db: HotDb, w: Writer, i: { orgId: string 
   if (unknown.length) refuse('bad_request', `Not an origin of this app: ${unknown.join(', ')}`);
   const already = list.filter((o) => rows.get(o)!.frame_only === 1);
   if (already.length) refuse('conflict', `Already frame-only: ${already.join(', ')}`);
-  // At least one web address that works on its own page stays (in force or waiting), also as the batch sees it.
-  if (!plan.origins.some((o) => o.frame_only !== 1 && !list.includes(o.origin))) refuse('conflict', NO_ANYWHERE_ORIGIN);
+  // At least one web address in force that works on its own page stays (never the localhost wildcard, a pattern), also
+  // as the batch sees it. A waiting one doesn't count: a cancel, an expiry or a key's revocation can still take it away.
+  if (!plan.origins.some((o) => anywhereInForce(o, w.now) && !list.includes(o.origin))) refuse('conflict', NO_ANYWHERE_ORIGIN);
   const json = JSON.stringify(list);
   await runWrite(db, w, [
     commitOnApp(
       w,
-      { kind: 'origin.frame_only', detail: { origins: list.map((o) => ({ origin: o, wasInForce: (rows.get(o)!.active_from ?? null) !== null && rows.get(o)!.active_from! <= w.now })) } },
+      // Each with the change id its row has now (null for a row with none): drift ties the tightening to that row only,
+      // so a later add of the same web address (a new change) is never taken for it.
+      { kind: 'origin.frame_only', detail: { origins: list.map((o) => ({ origin: o, changeId: rows.get(o)!.change_id ?? null, wasInForce: (rows.get(o)!.active_from ?? null) !== null && rows.get(o)!.active_from! <= w.now })) } },
       i.appId,
       i.orgId,
       q`a.origins_version = ${i.expectedVersion} AND a.deleted_at IS NULL
-        AND EXISTS (SELECT 1 FROM app_origins ka WHERE ka.app_id = a.id AND ka.frame_only = 0 AND ka.origin NOT IN (SELECT value FROM json_each(${json})))`,
+        AND EXISTS (SELECT 1 FROM app_origins ka WHERE ka.app_id = a.id AND ${ANYWHERE_IN_FORCE('ka', w.now)} AND ka.origin NOT IN (SELECT value FROM json_each(${json})))`,
     ),
     q`UPDATE apps SET origins_version = origins_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
     q`UPDATE app_origins SET frame_only = 1 WHERE app_id = ${i.appId} AND origin IN (SELECT value FROM json_each(${json})) AND ${committed(w.requestId)}`,
   ]);
   return { version: i.expectedVersion + 1 };
 }
+
+/** D934: a row that is in force now, not frame-only and not the localhost wildcard: one that works on its own page. */
+const anywhereInForce = (o: { origin: string; active_from: number | null; frame_only?: number }, now: number): boolean =>
+  o.frame_only !== 1 && o.origin !== LOCALHOST_WILDCARD && o.active_from !== null && o.active_from <= now;
+/** The same as SQL over the `app_origins` alias `ka`. */
+const ANYWHERE_IN_FORCE = (ka: string, now: number): Q => q`${raw(ka)}.frame_only = 0 AND ${raw(ka)}.origin <> ${LOCALHOST_WILDCARD} AND ${raw(ka)}.active_from IS NOT NULL AND ${raw(ka)}.active_from <= ${now}`;
 
 /** The guarded-change configuration, or `internal` (spec "Topology and config": a missing or out-of-range delay refuses every guarded change). */
 export function requireChangeConfig(env: Env) {
@@ -240,7 +249,7 @@ async function proposeOrigins(
   // D934: a proposal with frame-only adds keeps at least one web address that works on its own page (a usable-anywhere
   // add, or a row of the app not removed here). Without frame-only adds nothing changes.
   const anywhereAdd = add.some((o) => !frameOnly.includes(o));
-  if (frameOnly.length > 0 && !anywhereAdd && !plan.origins.some((o) => o.frame_only !== 1 && !remove.includes(o.origin))) refuse('conflict', NO_ANYWHERE_ORIGIN);
+  if (frameOnly.length > 0 && !anywhereAdd && !plan.origins.some((o) => anywhereInForce(o, w.now) && !remove.includes(o.origin))) refuse('conflict', NO_ANYWHERE_ORIGIN);
   // The platform's cap on waiting web addresses across the org (A5), checked before the batch as its create checks it
   // (platform/ops.ts): a full cap is a 429 with the hour to wait, not the commit predicate's version_conflict, which a
   // client would answer by reading again and resending (after PR 160's review, M1). The predicate below keeps the rule
@@ -290,7 +299,7 @@ async function proposeOrigins(
         AND NOT EXISTS (SELECT 1 FROM guarded_changes WHERE app_id = a.id AND kind = 'origin_add' AND status IN ('pending', 'active')
                          AND origin IN (SELECT value FROM json_each(${origins})))${waitingHolds}${
                            frameOnly.length > 0 && !anywhereAdd
-                             ? q` AND EXISTS (SELECT 1 FROM app_origins ka WHERE ka.app_id = a.id AND ka.frame_only = 0 AND ka.origin NOT IN (SELECT value FROM json_each(${removed})))`
+                             ? q` AND EXISTS (SELECT 1 FROM app_origins ka WHERE ka.app_id = a.id AND ${ANYWHERE_IN_FORCE('ka', w.now)} AND ka.origin NOT IN (SELECT value FROM json_each(${removed})))`
                              : raw('')
                          }`,
     ),

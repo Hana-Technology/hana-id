@@ -1,8 +1,10 @@
 -- D934 (piece P12 of docs/partner-platform-spec.md, A13; D923, D926): a web address an app may use only inside a frame,
 -- for a network's widget served from its own web address inside its partners' pages. Additive: one column on
--- `app_origins` and three triggers on it. No column is added to `guarded_changes` (`ledger-check` holds the ledger tables'
--- shape, D929), no table is rebuilt, no other index, trigger or view is touched (0035's test compares every one by
--- `sqlite_schema`) and no existing row changes: every row reads `frame_only = 0`, today's behaviour. Applied by the
+-- `app_origins`, three triggers on it, and one index on `app_changes` (`app_changes_kind_app`: the hourly drift check
+-- reads only the origin ledger kinds through it, once a run, instead of scanning the ledger). No column is added to
+-- `guarded_changes` or `app_changes` (`ledger-check` holds the ledger tables' shape, D929; an index isn't shape), no
+-- table is rebuilt, no other index, trigger or view is touched (0035's test compares every one by `sqlite_schema`) and
+-- no existing row changes: every row reads `frame_only = 0`, today's behaviour. Applied by the
 -- Tech Lead on a deployed env before the API that reads it (docs/operations.md "Frame-only web addresses (hot-DB
 -- migration 0035, D934)"); the API's login-path read names the column, so the API needs it first.
 --
@@ -19,11 +21,13 @@
 -- a frame-only one would replace it unseen by the first two). What a trigger can't tell apart: a bare writer deleting
 -- a frame-only row and inserting it again as usable anywhere is, at this level, a removal and a new add; the API's
 -- hourly drift check (`apps/api/src/changes/drift.ts`) reports a row reading 0 whose ledger says frame-only (its
--- proposal marked it, or an `origin.frame_only` row named it with no removal since). Never for the
+-- proposal marked its change id, or an `origin.frame_only` row named its web address with its change id and no removal
+-- since). Never for the
 -- `http://localhost:*` wildcard (a pattern, never a page's address).
 --
 -- A FUTURE REBUILD of `app_origins` must create these triggers again, with the same SQL: app_origins_frame_only_kept,
--- app_origins_frame_only_no_replace, app_origins_fixed (and 0033's and 0034's, as 0034's header lists them). apps/api/test/migration-0035.test.ts
+-- app_origins_frame_only_no_replace, app_origins_fixed (and 0033's and 0034's, as 0034's header lists them); a rebuild
+-- of `app_changes` must create `app_changes_kind_app` again. apps/api/test/migration-0035.test.ts
 -- checks every one is in the schema after every later migration.
 --
 -- Nothing here changes a key, a path or an address: the flag only decides which pages may use an app's vault.
@@ -52,3 +56,7 @@ CREATE TRIGGER app_origins_fixed BEFORE UPDATE OF origin, app_id ON app_origins
 BEGIN
   SELECT RAISE(ABORT, 'app_origins: a row keeps its web address and app (remove it and add another)');
 END;
+
+-- The drift check's read of the origin ledger kinds (`origin.proposed`, `app.created`, `origin.frame_only`,
+-- `origin.removed`), by kind, without a scan of the whole ledger.
+CREATE INDEX app_changes_kind_app ON app_changes (kind, app_id, seq);

@@ -317,7 +317,9 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
       if (marked.includes(LOCALHOST_WILDCARD)) no('bad_request', `${LOCALHOST_WILDCARD} can't be frame-only: it is a pattern, not a page's web address`);
       const frameOnly = marked.filter((o) => fresh.includes(o));
       // As the API refuses it: at least one web address that works on its own page stays.
-      if (frameOnly.length > 0 && fresh.every((o) => frameOnly.includes(o)) && !app.origins.some((o) => o.frameOnly !== true && !remove.includes(o.origin))) no('conflict', NO_ANYWHERE_ORIGIN);
+      const nowMs = Date.now();
+      const anywhere = (o: (typeof app.origins)[number]) => o.frameOnly !== true && o.origin !== LOCALHOST_WILDCARD && o.activeFrom !== null && o.activeFrom <= nowMs;
+      if (frameOnly.length > 0 && fresh.every((o) => frameOnly.includes(o)) && !app.origins.some((o) => anywhere(o) && !remove.includes(o.origin))) no('conflict', NO_ANYWHERE_ORIGIN);
       const digest = await originChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: app.id, add: fresh, remove, frameOnly, originsVersion: app.originsVersion });
       return {
         // `frame_only` only when there is one, so every other action is the older one (and its digest v1).

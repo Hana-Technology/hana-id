@@ -89,6 +89,49 @@ interface FrameOnlyFinding {
   change_id: string | null;
 }
 
+/** A ledger array entry's field, only when the entry is an object (a plain string or number never reaches json_extract). */
+const FIELD = (field: string) => `CASE WHEN e.type = 'object' THEN json_extract(e.value, '$.${field}') END`;
+/** A ledger row's detail as JSON, or `{}` when it isn't valid JSON: one odd row never stops the run. */
+const DETAIL = "CASE WHEN json_valid(c.detail_json) THEN c.detail_json ELSE '{}' END";
+
+/**
+ * D934 (after PR 162's second review): the frame-only drift read. One pass over the origin ledger kinds, through
+ * migration 0035's `app_changes_kind_app` index (never a scan of the whole ledger, never once per origin row): the
+ * proposals' marks (`origin.proposed` `changes`, `app.created` `origins`, entries with `frameOnly`), the tightenings
+ * (`origin.frame_only` `origins`, each with the change id its row had) and the removals (`origin.removed` `origins`,
+ * `origin.proposed` `removed`); then one primary-key look-up of `app_origins` per candidate (`CROSS JOIN` keeps that order: the planner would
+ * otherwise walk every origin row). A row reading 0 is reported
+ * when its own change id was marked by its proposal, or when a tightening named its web address with its change id
+ * (`IS`: a row with none matches a tightening of a row with none) and no removal of that web address came after. A
+ * later add of the same web address is a new change id, so a cancelled, expired or revoked add never counts.
+ */
+export const FRAME_ONLY_DRIFT_SQL = `
+  WITH facts AS MATERIALIZED (
+    SELECT c.app_id, c.seq, 'm' AS f, ${FIELD('origin')} AS origin, ${FIELD('changeId')} AS change_id
+      FROM app_changes c, json_each(${DETAIL}, CASE WHEN c.kind = 'app.created' THEN '$.origins' ELSE '$.changes' END) e
+     WHERE c.kind IN ('origin.proposed', 'app.created') AND c.app_id IS NOT NULL AND ${FIELD('frameOnly')} = 1
+    UNION ALL
+    SELECT c.app_id, c.seq, 't', ${FIELD('origin')}, ${FIELD('changeId')}
+      FROM app_changes c, json_each(${DETAIL}, '$.origins') e
+     WHERE c.kind = 'origin.frame_only' AND c.app_id IS NOT NULL AND e.type = 'object'
+    UNION ALL
+    SELECT c.app_id, c.seq, 'r', ${FIELD('origin')}, NULL
+      FROM app_changes c, json_each(${DETAIL}, CASE WHEN c.kind = 'origin.removed' THEN '$.origins' ELSE '$.removed' END) e
+     WHERE c.kind IN ('origin.removed', 'origin.proposed') AND c.app_id IS NOT NULL AND e.type = 'object'
+  ),
+  removed AS (SELECT app_id, origin, MAX(seq) AS seq FROM facts WHERE f = 'r' AND typeof(origin) = 'text' GROUP BY app_id, origin),
+  candidates AS (
+    SELECT app_id, origin, change_id FROM facts WHERE f = 'm' AND typeof(origin) = 'text' AND typeof(change_id) = 'text'
+    UNION
+    SELECT t.app_id, t.origin, t.change_id FROM facts t LEFT JOIN removed r ON r.app_id = t.app_id AND r.origin = t.origin
+     WHERE t.f = 't' AND typeof(t.origin) = 'text' AND (r.seq IS NULL OR r.seq < t.seq)
+  )
+  SELECT DISTINCT o.app_id, a.org_id, a.scope_id, o.origin, o.change_id
+    FROM candidates k CROSS JOIN app_origins o CROSS JOIN apps a
+   WHERE o.app_id = k.app_id AND o.origin = k.origin AND a.id = o.app_id
+     AND a.deleted_at IS NULL AND o.frame_only = 0 AND o.change_id IS k.change_id
+   ORDER BY o.app_id, o.origin LIMIT ?1`;
+
 interface SharedWalletFinding {
   app_id: string;
   org_id: string;
@@ -126,11 +169,11 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
         WHERE o.active_from IS NOT NULL AND o.active_from <= ?1 AND a.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM guarded_changes g WHERE g.id = o.change_id AND g.app_id = o.app_id AND g.kind = 'origin_add' AND g.origin = o.origin
                            AND g.notified_at IS NOT NULL AND g.active_from IS NOT NULL AND g.active_from <= o.active_from AND g.status IN ('pending', 'active'))
-          AND NOT (o.active_from = 0 AND EXISTS (SELECT 1 FROM app_changes b, json_each(b.detail_json, '$.origins') j
+          AND NOT (o.active_from = 0 AND EXISTS (SELECT 1 FROM app_changes b, json_each(CASE WHEN json_valid(b.detail_json) THEN b.detail_json ELSE '{}' END, '$.origins') j
                                                  WHERE b.kind = 'migration.baseline' AND b.app_id = o.app_id AND j.value = o.origin
-                                                   AND NOT EXISTS (SELECT 1 FROM app_changes e, json_each(e.detail_json, CASE WHEN e.kind = 'origin.removed' THEN '$.origins' ELSE '$.removed' END) r
+                                                   AND NOT EXISTS (SELECT 1 FROM app_changes e, json_each(CASE WHEN json_valid(e.detail_json) THEN e.detail_json ELSE '{}' END, CASE WHEN e.kind = 'origin.removed' THEN '$.origins' ELSE '$.removed' END) r
                                                                     WHERE e.app_id = o.app_id AND e.seq > b.seq AND e.kind IN (${kindIn(ORIGIN_ENDS)})
-                                                                      AND json_extract(r.value, '$.origin') = o.origin)))
+                                                                      AND (CASE WHEN r.type = 'object' THEN json_extract(r.value, '$.origin') END) = o.origin)))
         ORDER BY o.app_id, o.origin LIMIT ?2`,
     )
     .bind(now, DRIFT_BATCH)
@@ -138,23 +181,7 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
   // D934: a frame-only web address made usable anywhere by a bare delete and insert (header). Only on a D1 with
   // migration 0035's column (an env not migrated yet has no frame-only address to check).
   const hasFrameOnly = (await db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('app_origins') WHERE name = 'frame_only'").first<{ n: number }>())?.n === 1;
-  const { results: frameOnly } = !hasFrameOnly
-    ? { results: [] as FrameOnlyFinding[] }
-    : await db
-    .prepare(
-      `SELECT o.app_id, a.org_id, a.scope_id, o.origin, o.change_id FROM app_origins o JOIN apps a ON a.id = o.app_id
-        WHERE a.deleted_at IS NULL AND o.frame_only = 0
-          AND ((o.change_id IS NOT NULL AND EXISTS (SELECT 1 FROM app_changes p, json_each(p.detail_json, CASE WHEN p.kind = 'app.created' THEN '$.origins' ELSE '$.changes' END) c
-                                                    WHERE p.app_id = o.app_id AND p.kind IN ('origin.proposed', 'app.created')
-                                                      AND json_extract(c.value, '$.changeId') = o.change_id AND json_extract(c.value, '$.frameOnly') = 1))
-            OR EXISTS (SELECT 1 FROM app_changes t, json_each(t.detail_json, '$.origins') j
-                        WHERE t.app_id = o.app_id AND t.kind = 'origin.frame_only' AND json_extract(j.value, '$.origin') = o.origin
-                          AND NOT EXISTS (SELECT 1 FROM app_changes e, json_each(e.detail_json, CASE WHEN e.kind = 'origin.removed' THEN '$.origins' ELSE '$.removed' END) r
-                                           WHERE e.app_id = o.app_id AND e.seq > t.seq AND e.kind IN (${kindIn(ORIGIN_ENDS)}) AND json_extract(r.value, '$.origin') = o.origin)))
-        ORDER BY o.app_id, o.origin LIMIT ?1`,
-    )
-    .bind(DRIFT_BATCH)
-    .all<FrameOnlyFinding>();
+  const { results: frameOnly } = hasFrameOnly ? await db.prepare(FRAME_ONLY_DRIFT_SQL).bind(DRIFT_BATCH).all<FrameOnlyFinding>() : { results: [] as FrameOnlyFinding[] };
   const inForceClock = `(g.status = 'active' OR g.active_from <= ${Number(now)})`;
   const { results: settings } = await db
     .prepare(

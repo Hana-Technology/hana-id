@@ -23846,3 +23846,9 @@ number the caller assigned.
   6. **The tab's name** in `packages/web/README.md`, `partner-start-here.md` and `operations.md`'s onboarding table.
   To confirm (the Tech Lead), added to the list above: the lower-bound wording (item 2) and the take-over's title and
   words (items 3 and 4).
+- **Decided by the Tech Lead (2026-11-26):** point 2 of "Decided while building" is settled as **"Web addresses
+  (origins)"** on the console's tab and its page's heading (the fresh sign-in's "Back to …" link names the tab the
+  same); every other text keeps the plain "web address" wording as built (emails, confirm and cancel pages, audit
+  titles, buttons, body text, the sign-in review step). The guides that name the tab use the new name
+  (`integration.md`, `partner-start-here.md`, `packages/web/README.md`, `operations.md`'s onboarding table). The tab
+  row still fits 390 and 360 px with no sideways page scroll (it scrolls inside its own row, as before).

@@ -312,7 +312,7 @@ const LABELS_OUTCOME: Record<string, string> = {
 };
 
 const APP_TAB: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.settings': 'sessions', 'app.resume': 'suspend' };
-const TAB_LABEL: Record<string, string> = { origins: 'Web addresses', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login', labels: 'Request labels' };
+const TAB_LABEL: Record<string, string> = { origins: 'Web addresses (origins)', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login', labels: 'Request labels' };
 
 /**
  * The server's `returnTo`, only as one of the console's own pages that start actions: an app's tab, a scope's page or

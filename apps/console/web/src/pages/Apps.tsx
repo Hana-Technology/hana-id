@@ -142,7 +142,7 @@ export const useApp = (): AppCtl => useOutletContext<AppCtl>();
 
 const SECTIONS = [
   ['', 'Overview'],
-  ['origins', 'Web addresses'],
+  ['origins', 'Web addresses (origins)'],
   ['keys', 'Keys'],
   ['sessions', 'Login & sessions'],
   ['email', 'Email login'],

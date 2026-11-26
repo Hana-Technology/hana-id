@@ -370,9 +370,9 @@ export async function handleIdentityToken(request: Request, env: Env, requestId:
   // Single use, once the proof is known to be a live session's (D176): an atomic test-and-set on the session's own
   // object (swept by an alarm), so random keys never create markers. Then the account root's flood limit.
   try {
-    if (!(await limiter(env, identityProofLimiter(pkHex)).reserve(await proofMarker(req), req.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now, req.issuedAtMs + IDENTITY_PROOF_WINDOW_MS))) {
-      return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
-    }
+    const fresh = await limiter(env, identityProofLimiter(pkHex)).reserveFresh(await proofMarker(req), req.issuedAtMs + IDENTITY_PROOF_MARKER_MS, req.issuedAtMs + IDENTITY_PROOF_WINDOW_MS, now);
+    if (fresh === 'stale') return done(ctx, 400, { error: 'The session proof is too old or too new', code: 'stale_proof', serverTimeMs: Date.now() });
+    if (fresh === 'used') return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
     const subBytes = identitySubBytes(config.subKey, app.scope_id, root);
     const hit = await env.IDENTITY_ROOT_LIMIT.limit({ key: identityRootKey(env.ENV_NAME, app.scope_id, hex(subBytes)) });
     if (!hit.success) return reject(ctx, 429, 'rate_limited', 'Rate limit exceeded (account per minute)', { 'retry-after': String(IDENTITY_LIMIT_PERIOD_S) });

@@ -24490,8 +24490,9 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
 
 ### D935. No organisation's kill switches are blockable by other organisations: each org's kill switches have a budget of their own and nothing else; the platform's breaker counts only web address removals, each org's first 5 an hour past the global count; suspensions and key revocations have their own limits; every limiter on its object's monotone clock; at most 20 organisations with the platform on
 - Date 2026-11-26 · Status: **built**; the principle **decided by the Tech Lead 2026-11-26** (decision 10); the design
-  after PR 161's second full review is the coordinator's; the figures and the points under "To confirm" are **to
-  confirm (the Tech Lead)**: nothing else of this entry is settled · Relates to D918 (point 7's open point), D927, D928
+  after PR 161's second full review is the coordinator's; **settled by the Tech Lead 2026-11-26**: the cap of 20
+  organisations, platform key revocations at 20 an hour and the accepted stolen-key weakness (below); the other figures
+  and the points under "To confirm" are **to confirm (the Tech Lead)** · Relates to D918 (point 7's open point), D927, D928
   (its D918 list), D929 (L4), D932 ((l)) · Built: `apps/api/src/rate-limiter.ts` (the object's `clock`, `platformAdmit`
   and `platformSettle`, honest waits in `hit`, `hitSliding`, `hitMark`), `platform/request.ts` (`PLATFORM_LIMITS`, the
   body's deadline and the clock read again, `PLATFORM_WINDOWS.killReserve`), `platform/routes.ts`, `platform/ops.ts`
@@ -24626,7 +24627,8 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
     object after timestamp + 120 s (a D1 stall of over 60 s between) was taken as new. **Fixed:** `reserveNonce` and
     `reserve` take a `notAfter`; past it on the object's clock they refuse (`'stale'`, answered `400 stale_request`;
     `false`, answered as each caller's "already used"). Passed by the platform's nonce (timestamp + 60 s), the session
-    proofs of the identity token, email login, the mainnet demo and gas sponsorship (`issuedAtMs` + the proof window),
+    proofs of the identity token, email-sharing consent (`identity/email.ts`), the mainnet demo and gas sponsorship
+    (`issuedAtMs` + the proof window),
     Home's request counter (its `expiresAtMs`), owner tokens and step-up tokens (their `expMs`). Tested at the object and
     through the handler with an 11 s D1 stall (a request 50 s old at its checks answered `stale_request`, not a replay).
   - **L2, a switched-off org's place in the count of 20.** **Chosen: dropped at the switch-off.** `AdminRpc.setPlatformOrg`
@@ -24640,14 +24642,32 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
     (capped by the org's share of the console's reserve); `giveBackNotCharged` (`evm/sponsor-settle.ts`) is the one undo
     that can un-count (it gives back units on a window it didn't take them from, if the window is still current); every
     Durable Object call of the limiter now reads and writes one more row (`clock`).
-- **To confirm (the Tech Lead):**
+- **After PR 161's focused review (2026-11-26)** ("ready to merge"; three Low and notes), each fixed, with tests:
+  - **Peeks no longer mark.** `near/relay.ts`'s in-flight check, `evm/sponsor.ts`'s and `platform/revoke-guard.ts`'s
+    no-op probes used `reserve(key, now, now)`, relying on the marker being born expired; with a caller's clock more
+    than 5 s ahead (clamped) it lived and refused the same request's real mark. Now a read that writes nothing,
+    `marked(key)`. Tested with a caller 8 s ahead of a clamped object: peek then mark succeeds (the old peek blocked it).
+  - **A stale marker answers as stale, not as "already used".** `reserve` lost its `notAfter`; `reserveFresh(key,
+    until, notAfter)` answers `'ok'`, `'used'` or `'stale'`, and each caller its existing code: `stale_proof` with
+    `serverTimeMs` (identity token, email-sharing consent, mainnet demo), `stale_session_proof` with `serverTimeMs` (gas
+    sponsorship, its own existing code), `home_identity_expired` (Home's counter), `token_expired` (owner tokens),
+    `forbidden` "The step-up token is not valid (token_expired)" (step-up, its existing message shape); no new code.
+    A test per call site (the object's `reserveFresh` answering `'stale'`).
+  - **`platformForgetOrg` is awaited in a `try`** (an error before a promise exists is caught too), and the e2e admin
+    lane's limiter passes it (and `reserveFresh`, `marked`) to the real object; the stack's allow-all limiter answers
+    them too.
+  - **Notes:** a manifest named `sandbox-test` is refused by `parseManifest` (every `envs/<name>.json` goes through it;
+    tested); the schema itself still accepts the name, because the apps' fixed test manifests (`TEST_MANIFEST` in each
+    `gen-wrangler`) are parsed by it in their own tests: that is the explicit test-only path. `caller_clock_ahead` is
+    logged at most once a minute per object (tested). "email login" corrected to email-sharing consent above.
+- **Settled by the Tech Lead (2026-11-26):**
   1. **The cap of 20 organisations with the platform switched on**, as the hard ceiling on the platform's database load
      (raising it is a code change).
-  2. **Platform publishable key revocations at 20 an organisation a clock hour**, apart from suspensions at 60 (a
-     revocation can't be undone; in an emergency, suspend first).
-  3. **L1, accepted, not fixed:** a thief holding one of an organisation's two platform keys can spend the
-     organisation's kill bucket with no-ops and hold back the other key's API kill switches (the owner revokes the
-     stolen key in the portal; the portal's and staff's stops are unaffected).
+  2. **Platform publishable key revocations at 20 an organisation a clock hour**, apart from suspensions at 60.
+  3. **The accepted weakness:** one of an organisation's two platform keys, if stolen, can spend the organisation's kill
+     budget (with no-ops) until it is revoked in the portal, holding back the other key's API kill switches; the
+     portal's and staff's stops are unaffected.
+- **To confirm (the Tech Lead):**
   4. The kill bucket at 2.5 statements a second, burst 44 (about 13 kill switches a minute, 4 at once), no-ops included.
   5. The breaker's floor at 5 an org a rolling hour, floor calls counted on the global list too.
   6. Each key's kill-switch reserve at 10 a minute and 100 a UTC day.

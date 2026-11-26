@@ -4,13 +4,13 @@
 // on, exact fields, within the cap); the export window's /v1/login records `key_exported` without key material.
 import { env } from 'cloudflare:workers';
 import { createExecutionContext } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { consoleRpc, hana, member, orgApp, system } from './rpc-helpers.ts';
 import { STAFF_USER_EVENTS_MAX } from '@hana-id/console-core';
 import { identityMessage, mainnetDemoEventPayload } from '@hana-id/core/identity';
 import { MAINNET_DEMO_EVENTS_PER_HOUR, toMainnetDemoEvent, toMainnetDemoReport } from '../src/mainnet-demo.ts';
-import { appHeaders, call, chain, newKey, newSessionKey, seedApp, sessionKeyPair, uid } from './helpers.ts';
+import { appHeaders, call, chain, newKey, newSessionKey, seedApp, sessionKeyPair, staleMarkers, uid } from './helpers.ts';
 import { randomPrk, walletProofs } from './identity-helpers.ts';
 import { spentSession, vaultSetup } from './vault-helpers.ts';
 import { AUTH, hanaHeaders, loginBody, withCombinedCall } from './login-helpers.ts';
@@ -133,6 +133,17 @@ describe('POST /v1/mainnet-demo/events (D428, as reviewed)', () => {
     // Too old.
     expect((await report(app, (await reportBody(app, spk, { issuedAtMs: Date.now() - 120_000 })).body)).status).toBe(400);
     expect((await rows(app.id)).length).toBe(1);
+  });
+
+  it('a proof whose marker\'s object is already past the proof window: 400 stale_proof with serverTimeMs (D935: a stall after the check)', async () => {
+    const { app, near } = await demoSession();
+    const spk = spentSession(near, app.scope);
+    const once = (await reportBody(app, spk)).body;
+    staleMarkers();
+    const r = await report(app, once);
+    vi.restoreAllMocks();
+    const j = await body(r);
+    expect([r.status, j.code, typeof j.serverTimeMs]).toEqual([400, 'stale_proof', 'number']);
   });
 
   it('refuses another user’s address: a wallet proof made for another session, or for another app', async () => {

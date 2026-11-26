@@ -30,7 +30,7 @@ import { clearJwksCache } from '@hana-id/oidc';
 import { KeyPair, type KeyPairString } from '@near-js/crypto';
 import { GOVERNANCE_METHODS, UPDATER_METHODS, parseRelayerKeys } from '../src/relayer-config.ts';
 import { clearViewCaches, parsePendingShared } from '../src/views.ts';
-import { NAMED_PII_CLAIMS, call, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
+import { NAMED_PII_CLAIMS, call, minuteHeadroom, staleMarkers, startOfMinuteClock } from './helpers.ts';
 import { NearMock, type RsaSigner, makeJwt, panic, rsaSigner } from './near-mock.ts';
 import { eventFor, ledger } from './usage-ledger.ts';
 
@@ -444,6 +444,15 @@ describe('owner-action checks before relaying (each relayed tx costs relayer all
     expect((await post(rejected)).status).toBe(422);
     expect((await post(rejected)).status).toBe(409);
     expect(n.sent).toHaveLength(2);
+  });
+
+  it('an owner token whose single-use object is already past its expiry answers 401 token_expired, not token_used (D935: a stall after the check)', async () => {
+    near();
+    const auth = await oidc();
+    staleMarkers();
+    const r = await post({ method: 'cancel_change', args: { scope_id: 's1', auth, change_id: 0 } });
+    vi.restoreAllMocks();
+    expect([r.status, (await json(r)).code]).toEqual([401, 'token_expired']);
   });
 
   it('relays concurrent copies of one owner token only once (atomic reservation)', async () => {

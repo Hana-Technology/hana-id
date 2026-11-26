@@ -3,6 +3,8 @@ import { baseEncode } from '@near-js/utils';
 import { bls12_381 } from '@noble/curves/bls12-381';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
+import { vi } from 'vitest';
+import { RateLimiter } from '../src/rate-limiter.ts';
 import worker from '../src/index.ts';
 import { ckdPayload, createProofPayload, revokePayload, sessionMessage, sessionNonce } from '../src/session-crypto.ts';
 import { NearMock, type RsaSigner, rsaSigner } from './near-mock.ts';
@@ -377,4 +379,13 @@ export async function minuteHeadroom(headroomMs = 8000): Promise<void> {
   // The real clock (`new Date()` doesn't follow a spied Date.now): the windows it waits for are on it.
   const left = 60_000 - (new Date().getTime() % 60_000);
   if (left < headroomMs) await new Promise((r) => setTimeout(r, left + 250));
+}
+
+/**
+ * D935 (after PR 161's focused review): every rate limiter object's `reserveFresh` answers `'stale'`, as when a stall
+ * after the request's freshness check took the object's clock past it (the objects run in this isolate); undone by
+ * `vi.restoreAllMocks()`.
+ */
+export function staleMarkers(): void {
+  vi.spyOn(RateLimiter.prototype, 'reserveFresh').mockReturnValue('stale');
 }

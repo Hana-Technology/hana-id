@@ -381,9 +381,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
       // D935 (L2): switched off, the org leaves the limiter's count of orgs using kill switches (best effort: else it
       // drops out within the minute).
       if (!input.enabled && r.changed) {
-        await placedStub(this.env, this.env.RATE_LIMITER, CONSOLE_LIMITER)
-          .platformForgetOrg(input.orgId)
-          .catch(() => log({ event: 'platform', outcome: 'error', code: 'kill_orgs_forget_failed', orgId: input.orgId }, 'error'));
+        try {
+          await placedStub(this.env, this.env.RATE_LIMITER, CONSOLE_LIMITER).platformForgetOrg(input.orgId);
+        } catch {
+          log({ event: 'platform', outcome: 'error', code: 'kill_orgs_forget_failed', orgId: input.orgId }, 'error');
+        }
       }
       return r;
     });

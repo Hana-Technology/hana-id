@@ -497,8 +497,11 @@ describe('after PR 161’s third review', () => {
   it('L1: a marker or a nonce past its not-after on the object’s clock is refused, not reserved anew', async () => {
     const stub = fresh();
     const t = start();
-    expect(await stub.reserve('m', t + 120_000, t, t + 60_000)).toBe(true);
-    expect(await stub.reserve('m2', t + 200_000, t + 90_000, t + 60_000)).toBe(false);
+    expect(await stub.reserveFresh('m', t + 120_000, t + 60_000, t)).toBe('ok');
+    expect(await stub.reserveFresh('m', t + 120_000, t + 60_000, t + 1000)).toBe('used');
+    expect(await stub.reserveFresh('m2', t + 200_000, t + 60_000, t + 90_000)).toBe('stale');
+    // The stale one wrote nothing.
+    expect(await stub.marked('m2', t + 90_000)).toBe(false);
     expect(await stub.reserveNonce('n', t + 120_000, [...PLATFORM_WINDOWS.nonce], t + 61_000, t + 60_000)).toBe('stale');
     // Within its window: fine; the one refused as stale was never marked.
     const s2 = fresh();
@@ -554,5 +557,46 @@ describe('after PR 161’s third review', () => {
     await switchOn(gone);
     expect(await new AdminRpc(createExecutionContext(), env).setPlatformOrg({ ...hana(), orgId: gone, enabled: false, reason: 'Offboarded' })).toMatchObject({ ok: true });
     expect((await cpc.platformAdmit({ org: newcomer, cost: 1, killSwitch: true, limits: L }, t + 20)).ok).toBe(true);
+  });
+});
+
+describe('after PR 161’s focused review', () => {
+  const clampedStub = async () => {
+    const stub = fresh();
+    await runInDurableObject(stub, (instance) => {
+      const o = instance as unknown as { env: typeof env };
+      o.env = { ...o.env, LIMITER_TRUST_CALLER_CLOCK: undefined };
+    });
+    return stub;
+  };
+
+  it('a peek writes nothing: with a caller 8 s ahead of the object (clamped), peek then mark succeeds; the old peek by `reserve` blocked the mark', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const stub = await clampedStub();
+      const ahead = Date.now() + 8000;
+      // As near/relay.ts and evm/sponsor.ts now do: a read, then the real mark.
+      expect(await stub.marked('digest', ahead)).toBe(false);
+      expect(await stub.reserve('digest', ahead + 60_000, ahead)).toBe(true);
+      expect(await stub.marked('digest', ahead)).toBe(true);
+      // The old way: a `reserve` ending at the caller's time left a live marker (8 s − 5 s) that refused the real one.
+      const old = await clampedStub();
+      expect(await old.reserve('digest', ahead, ahead)).toBe(true);
+      expect(await old.reserve('digest', ahead + 60_000, ahead)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('`caller_clock_ahead` is logged at most once a minute per object', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((l: unknown) => void lines.push(String(l)));
+    try {
+      const stub = await clampedStub();
+      for (let i = 0; i < 5; i++) await stub.hit([{ name: 'w', windowMs: MIN, max: 100 }], Date.now() + HOUR);
+      expect(lines.filter((l) => l.includes('"caller_clock_ahead"'))).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

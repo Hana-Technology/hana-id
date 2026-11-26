@@ -15,7 +15,7 @@ import { sessionNonce } from '../src/session-crypto.ts';
 import { clearViewCaches, type ConfigView } from '../src/views.ts';
 import vectors from '../../../packages/core/test/vectors/home-v1.json';
 import { emailEnv, emailToken, withEmail } from './email-helpers.ts';
-import { GOOGLE_ISS, appHeaders, call, chain, google, newSessionKey, seedApp, sessionBody, uid, type Chain, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
+import { GOOGLE_ISS, appHeaders, call, chain, google, newSessionKey, seedApp, sessionBody, staleMarkers, uid, type Chain, minuteHeadroom, startOfMinuteClock } from './helpers.ts';
 
 const AUTH = env.AUTH_ORIGIN!;
 const SHARED = 'shared-client.apps.googleusercontent.com';
@@ -375,6 +375,14 @@ describe('Home identity: every refusal in the spec’s list', () => {
     const r = await refusal(await gate(makeRequest(id.headerFor(7))));
     expect([r.status, r.code]).toEqual([409, 'counter_reused']);
     expect((await gate(makeRequest(id.headerFor(8)))).ok).toBe(true);
+  });
+
+  it('a counter whose object is already past the request\'s expiry answers home_identity_expired, not counter_reused (D935: a stall after the check)', async () => {
+    const id = await newIdentity();
+    staleMarkers();
+    const r = await refusal(await gate(makeRequest(id.headerFor(11))));
+    vi.restoreAllMocks();
+    expect([r.status, r.code]).toEqual([401, 'home_identity_expired']);
   });
 
   it('counters are per Home key: another key may use the same value', async () => {

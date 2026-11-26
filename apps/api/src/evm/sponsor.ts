@@ -298,9 +298,9 @@ function proofRefusal(ctx: Ctx, method: EvmSponsorRequestMethod, env: Env, app: 
  */
 async function sessionBound(env: Env, ctx: Ctx, app: App, parentOrigin: string, chain: Readonly<EvmSponsorChainConfig>, account: Hex, p: { sessionPk: Uint8Array; nonce: Uint8Array; issuedAtMs: number }, now: number): Promise<Step<Session>> {
   try {
-    if (!(await limiter(env, identityProofLimiter(hex(p.sessionPk))).reserve(await proofMarker({ sessionPk: p.sessionPk, issuedAtMs: p.issuedAtMs, nonce: p.nonce }), p.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now, p.issuedAtMs + IDENTITY_PROOF_WINDOW_MS))) {
-      return { ok: false, response: reject(ctx, 409, 'proof_replayed', 'This session proof was already used') };
-    }
+    const fresh = await limiter(env, identityProofLimiter(hex(p.sessionPk))).reserveFresh(await proofMarker({ sessionPk: p.sessionPk, issuedAtMs: p.issuedAtMs, nonce: p.nonce }), p.issuedAtMs + IDENTITY_PROOF_MARKER_MS, p.issuedAtMs + IDENTITY_PROOF_WINDOW_MS, now);
+    if (fresh === 'stale') return { ok: false, response: done(ctx, 400, { error: 'The session proof is too old or too new', code: 'stale_session_proof', serverTimeMs: Date.now() }) };
+    if (fresh === 'used') return { ok: false, response: reject(ctx, 409, 'proof_replayed', 'This session proof was already used') };
   } catch {
     return { ok: false, response: reject(ctx, 503, 'rate_limiter_unavailable', 'Try again') };
   }
@@ -865,8 +865,8 @@ async function sendChecked(env: Env, ctx: Ctx, app: App, config: EvmSponsorConfi
   try {
     const floor = BigInt(await limiter(env, account).floor(NONCE_FLOOR));
     if (req.executeNonce < floor) return (await replayAnswer(env, ctx, app, chain.chainId, digest)) ?? done(ctx, 409, { error: 'The batch nonce is already used', code: 'nonce_stale', executeNonce: floor.toString() });
-    const t = Date.now();
-    if (!(await limiter(env, account).reserve(digest, t, t))) return (await replayAnswer(env, ctx, app, chain.chainId, digest)) ?? inProgress(ctx);
+    // A read, never a marker (D935 after PR 161's focused review: a peek that marked could block this batch's own mark).
+    if (await limiter(env, account).marked(digest)) return (await replayAnswer(env, ctx, app, chain.chainId, digest)) ?? inProgress(ctx);
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }

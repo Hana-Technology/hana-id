@@ -140,8 +140,13 @@ export class RateLimiter extends DurableObject<Env> {
     // would poison the object until real time caught up: markers born expired, buckets frozen), logged when cut. Lifted
     // only in the tests' env, which run objects at simulated times.
     if (from > own + CALLER_CLOCK_LEAD_MS && !(this.env.LIMITER_TRUST_CALLER_CLOCK === '1' && this.env.ENV_NAME === 'sandbox-test')) {
-      const name = (this.ctx.id as { name?: string }).name ?? '';
-      log({ event: 'rate_limiter', outcome: 'error', code: 'caller_clock_ahead', what: name.split(/[:@]/u)[0] || 'unnamed', aheadMs: Math.round(from - own) }, 'error');
+      // Logged at most once a minute per object (the object's kind and how far ahead, nothing else).
+      const minute = Math.floor(own / 60_000);
+      if (kv.get<number>('clock:logged') !== minute) {
+        kv.put('clock:logged', minute);
+        const name = (this.ctx.id as { name?: string }).name ?? '';
+        log({ event: 'rate_limiter', outcome: 'error', code: 'caller_clock_ahead', what: name.split(/[:@]/u)[0] || 'unnamed', aheadMs: Math.round(from - own) }, 'error');
+      }
       from = own + CALLER_CLOCK_LEAD_MS;
     }
     const t = Math.max(before, own, from);
@@ -226,17 +231,41 @@ export class RateLimiter extends DurableObject<Env> {
    * the same key can't all pass. A call reads one row however many markers the object holds (D475): an expired marker
    * no longer counts, and the alarm deletes it.
    */
-  reserve(key: string, untilMs: number, caller?: number, notAfter?: number): boolean {
+  reserve(key: string, untilMs: number, caller?: number): boolean {
     const kv = this.ctx.storage.kv;
     const now = this.clock(caller);
-    // D935 (after PR 161's third review, L1): what the marker guards was checked fresh on the caller's clock; past its
-    // `notAfter` on this one (a stall between), refused rather than marked anew.
-    if (notAfter !== undefined && now > notAfter) return false;
     const until = kv.get<number>(`mark:${key}`);
     if (until !== undefined && until > now) return false;
     kv.put(`mark:${key}`, untilMs);
     void this.scheduleMarkerSweep(untilMs);
     return true;
+  }
+
+  /**
+   * D935 (after PR 161's third review, L1): `reserve` for a marker guarding something the caller checked fresh until
+   * `notAfter` on its own clock: `'stale'` when this object's clock is already past it (a stall between the check and
+   * here), `'used'` when an unexpired marker exists, else `'ok'` and marked until `untilMs`. Atomic in the object.
+   */
+  reserveFresh(key: string, untilMs: number, notAfter: number, caller?: number): 'ok' | 'used' | 'stale' {
+    const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
+    if (now > notAfter) return 'stale';
+    const until = kv.get<number>(`mark:${key}`);
+    if (until !== undefined && until > now) return 'used';
+    kv.put(`mark:${key}`, untilMs);
+    void this.scheduleMarkerSweep(untilMs);
+    return 'ok';
+  }
+
+  /**
+   * Whether an unexpired marker `key` exists, writing nothing (after PR 161's focused review: a "peek" by a `reserve`
+   * that ends at the caller's time would, with the caller's clock ahead of this one's, leave a live marker that blocks
+   * the same request's real one).
+   */
+  marked(key: string, caller?: number): boolean {
+    const now = this.clock(caller);
+    const until = this.ctx.storage.kv.get<number>(`mark:${key}`);
+    return until !== undefined && until > now;
   }
 
   /**

@@ -238,7 +238,7 @@ function laneLimiter(real: MemoryNamespace<Record<string, (...a: unknown[]) => u
       const obj = real.get(id);
       const via = (m: string) => async (...a: unknown[]) => obj[m]!(...a);
       // D930: the platform API's admission and its marks are the real object's too (lane-platform.ts signs requests).
-      return { ...allowAllLimiter.get(id), consoleAdmit: async () => ({ ok: true as const, reserveUsed: 0 }), consoleSettle: async () => undefined, reserve: via('reserve'), release: via('release'), platformAdmit: via('platformAdmit'), hitMark: via('hitMark'), reserveNonce: via('reserveNonce'), platformSettle: via('platformSettle') };
+      return { ...allowAllLimiter.get(id), consoleAdmit: async () => ({ ok: true as const, reserveUsed: 0 }), consoleSettle: async () => undefined, reserve: via('reserve'), reserveFresh: via('reserveFresh'), marked: via('marked'), release: via('release'), platformAdmit: via('platformAdmit'), hitMark: via('hitMark'), reserveNonce: via('reserveNonce'), platformSettle: via('platformSettle'), platformForgetOrg: via('platformForgetOrg') };
     },
   };
 }

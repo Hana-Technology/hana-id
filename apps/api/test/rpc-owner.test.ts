@@ -12,7 +12,7 @@ import { detectDrift } from '../src/changes/drift.ts';
 import { validatePolicy } from '../src/changes/policy.ts';
 import { forgetCapEvents, OWNER_ACTIONS_PER_IP_MINUTE } from '../src/handlers.ts';
 import { clearViewCaches } from '../src/views.ts';
-import { GOOGLE_ISS, NAMED_PII_CLAIMS, ORIGIN, call, google, uid } from './helpers.ts';
+import { GOOGLE_ISS, NAMED_PII_CLAIMS, ORIGIN, call, google, staleMarkers, uid } from './helpers.ts';
 import {
   CONSOLE_AUD as CONSOLE,
   DELAY,
@@ -152,6 +152,16 @@ describe('ConsoleRpc.changeOrigins: the API verifies the member’s step-up itse
     await env.DB.prepare('DELETE FROM app_origins WHERE app_id = ?1 AND origin = ?2').bind(app.id, NEW).run();
     await env.DB.prepare("UPDATE guarded_changes SET status = 'cancelled' WHERE app_id = ?1").bind(app.id).run();
     expect(await consoleRpc(clock).changeOrigins({ ...member(), orgId: app.org, appId: app.id, add: [NEW], remove: [], expectedVersion: 0, stepUpJwt: jwt })).toMatchObject({ ok: false, code: 'token_used' });
+  });
+
+  it('a step-up token whose single-use object is already past its expiry is refused as expired, not token_used (D935: a stall after the check)', async () => {
+    near();
+    const app = await orgApp();
+    const jwt = await stepUp(await originNonce(app, [NEW], [], 0));
+    staleMarkers();
+    const r = await consoleRpc(clock).changeOrigins({ ...member(), orgId: app.org, appId: app.id, add: [NEW], remove: [], expectedVersion: 0, stepUpJwt: jwt });
+    vi.restoreAllMocks();
+    expect(r).toMatchObject({ ok: false, code: 'forbidden', error: 'The step-up token is not valid (token_expired)' });
   });
 
   it('a replayed request id is already_applied (before the token check), and a refused origin is origin_refused', async () => {

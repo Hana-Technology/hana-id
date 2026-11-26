@@ -12,7 +12,7 @@ import { purgeDirectory } from '../src/changes/retention.ts';
 import { HotDb } from '../src/changes/db.ts';
 import { EMAIL_CONSENT_ENDPOINTS, appIdentityEmail, consentAddress, emailKeys, emailMac, isFullAddressTerm, toConsentBody } from '../src/identity/email.ts';
 import { clearIdentitySignerCache } from '../src/identity/signer.ts';
-import { ORIGIN, type SeededApp, call, sessionKeyPair, uid } from './helpers.ts';
+import { ORIGIN, type SeededApp, call, sessionKeyPair, staleMarkers, uid } from './helpers.ts';
 import { mint, verifyToken } from './identity-helpers.ts';
 import { adminRpc, consoleRpc, member, newOrg, orgApp, rid, system } from './rpc-helpers.ts';
 import { type Share, createShare, setSettings, vaultHeaders, vaultSetup } from './vault-helpers.ts';
@@ -289,6 +289,15 @@ describe('the consent endpoints', () => {
     const { clearViewCaches } = await import('../src/views.ts');
     clearViewCaches();
     expect((await json(await consent(app, fresh.spk, EMAIL_CONSENT_ENDPOINTS.state))).code).toBe('session_ended');
+  });
+
+  it('a proof whose marker\'s object is already past the proof window answers 400 stale_proof with serverTimeMs (D935: a stall after the check)', async () => {
+    const { app, spk } = await setup('at_login');
+    staleMarkers();
+    const r = await consent(app, spk, EMAIL_CONSENT_ENDPOINTS.state);
+    vi.restoreAllMocks();
+    const j = (await json(r)) as Record<string, unknown>;
+    expect([r.status, j.code, typeof j.serverTimeMs]).toEqual([400, 'stale_proof', 'number']);
   });
 
   it('body shapes: exactly the fields of each endpoint', () => {

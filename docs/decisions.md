@@ -24701,7 +24701,7 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
 
 - **Date:** 2026-11-26 · **Status:** built and tested; the choices below **to confirm (the Tech Lead)** · **Relates
   to:** D114 (HanaClient a type only), D838 (EIP-5792 on the provider), D909 and D926 (Sodax's toggle),
-  `sodax-sdk-integration.md` · **Built:** `packages/web` (`client/ethereum.ts`, `client/client.ts`, `index.ts`; tests
+  `sodax-sdk-integration.md` · **Built:** `packages/web` (`client/ethereum.ts`, `client/client.ts`, `index.ts`; after the review also `packages/react` `provider.tsx` and its test `test/eip6963-remount.test.tsx`; tests
   `test/client/eip6963-lifecycle.test.ts` with the real `mipd` 0.0.7 store and real `@wagmi/core` 3.6.5, devDependencies
   only, both already in the workspace's lockfile through `apps/e2e`), `scripts/pack-smoke/types.ts`; docs
   `integration.md` (section 3 "Turning the wallet off and on", the events, section 8 EVM, the 0.5.0 release notes and
@@ -24786,21 +24786,74 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
 - **Behaviour for hosts that never destroy:** the same requests, answers and events. One observable difference: the
   announced provider is `hana.eip6963.provider`, not `hana.ethereum` (`detail.provider === hana.ethereum` is now
   false). Kept: `isHanaId`, `chainId`, `chainIds` on it.
-- **Limits.** A page that creates the new client before destroying the old one (both alive for a moment) gets a second
-  slot, and wagmi keeps the first, which goes dormant until a later client takes it: destroy first (React's effect
-  clean-up does; `HanaProvider` defers its destroy by a microtask so strict mode keeps one client). Two copies of the
-  SDK bundled into one page have separate slot lists (module memory), as before.
+- **Limits.** ~~A page that creates the new client before destroying the old one gets a second slot, and wagmi keeps
+  the first, which goes dormant: destroy first (React's effect clean-up does).~~ Wrong, and fixed after PR 163's
+  review (below): a `HanaProvider` `key` remount created the new client before destroying the old one. Two copies of
+  the SDK bundled into one page have separate slot lists (module memory), as before.
+- **After PR 163's review (2026-11-26)** (independent review: nothing Critical or High; one Medium, three Low; the
+  security model holds), each fixed, with tests:
+  - **M1, a key remount left the kept entry dead.** `HanaProvider` (`packages/react/src/provider.tsx`) delayed
+    `destroy()` by a microtask (for strict mode's cleanup then setup on the same component, which must take the same
+    client back), and React runs a `key` remount's old cleanup and new setup in one go, so the new client was created
+    while the old one still held the slot: a second uuid, and wagmi's connector on the freed first slot rejected with
+    4900 while the new client was live (the reviewer's uuids over a → b → c: U1, U2, U1). Two fixes, both kept:
+    - **(b) No second slot in the common cases.** `HanaProvider` keeps each released client's destroy in a
+      module-level set; a provider about to create a client runs them first (each runs once: then or from its
+      microtask). Only a setup that creates flushes; a strict-mode or `<Activity>` setup that takes its own client
+      back never does, so a client still owned is never destroyed early (strict mode runs every cleanup of the subtree,
+      then every setup, all retakes). And `destroy()` frees the slot first (`release()`, before `retire()`), so a
+      client created during the destroy (a synchronous `disconnect` listener's) takes the same slot; until a client
+      takes it, the slot still forwards the old client's last events (so wagmi hears it go).
+    - **(a) For hosts that still create first:** a slot no live client holds (`owner` null) forwards to the client
+      of the page's lowest held slot, if there is one (`rebalance`, on every take, release and stop), so every entry a
+      store kept reaches a live client whenever one exists. All such slots, not only the lowest: a store created
+      later may have kept a later one. A new client takes the lowest slot no live client holds, also one forwarding to
+      another client (that client keeps its own slot); a slot a live client holds is never rebound. When the
+      announced provider moves to another client it says what changed for its listeners, in a provider's order
+      (`accountsChanged` with the new client's accounts, `chainChanged`, then `connect` or `disconnect`), so wagmi
+      follows. A request goes to the client bound when it is made and returns that client's own promise, so an answer
+      is never resolved by another client (tested: the entry moves on before the answer; the first client's answer
+      arrives, the new client's vault sees nothing). Chosen together because (b) alone can't cover a non-React host
+      that creates first, and (a) alone would still give a key remount a second uuid.
+  - **L1, one mutable object for the page.** The announced provider is frozen in its constructor (its state is in
+    private fields, as the Emitter base's listener map; wagmi assigns nothing to it, tested): an assignment to
+    `request` or a new field throws, and forwarding still works.
+  - **L2, cut off by `hana.ethereum.removeAllListeners()`.** The announced provider hears `hana.ethereum` through a
+    module-private sink (`#sinks`, called from `emit` before the public listeners), no longer through `on()`.
+  - **L3, an unclear refusal.** With no client bound, the announced provider rejects with 4900 and the message
+    "Journear Passport is turned off on this page." (`userMessage` still reads the generic 4900 sentence). The guide
+    says a kit that can't filter its list shows it when the dormant entry is clicked, and how to filter (connector
+    `id` = `hana.eip6963.info.rdns`).
+  - **Test gaps closed:** a real React `key` remount a → b → c (React 19, and 18 through the react18 suite; plain and
+    under StrictMode): one uuid, one vault frame, wagmi's one connector connected to each client in turn; StrictMode
+    with the real provider component; a create-B-then-destroy-A wagmi test (the connector follows B, then a third
+    client, then back to B); a `disconnect` listener that re-creates the client synchronously (same detail, one
+    uuid); wagmi with real `localStorage`: a user who pressed the host's disconnect is connected again by wagmi once
+    the wallet is back with the session restored (wagmi's `accountsChanged` path ignores its "disconnected" mark).
+    The reviewer showed the same happens on a plain reload on `next`, so it is not a regression; the guide says so
+    and tells hosts to keep their own flag. Each M1 test fails without its fix (checked by reverting the provider's
+    flush: the uuid changes).
+  - **Residual:** a client that creates first still gives a list that shows every announcement two entries (both
+    live); when two clients go in the same tick, wagmi's throwaway connectors for a later slot can log an unhandled
+    4900 from their own async handler (wagmi's, seen only in the test that destroyed them in that order).
+  - **Settled by the review: the slot key stays rdns only**, for the reviewer's reasons: the environment is already in
+    the rdns; keying by publishable key would bring the dead duplicate back for a page that switches apps; a page is
+    one trust domain (it created both clients). The guide says that switching to another app with the same
+    environment moves the same wallet entry to the new app.
+  - Docs: `integration.md` (section 3's list rewritten, its wrong sentence "a React effect's clean-up already runs
+    first" replaced; section 10; the 0.5.0 notes), `packages/web/README.md`, `packages/react/README.md`, this entry's
+    limits.
 - **To confirm (the Tech Lead):**
   1. The announced provider is a separate object from `hana.ethereum` (needed for mipd and wagmi; see above), so
      `detail.provider !== hana.ethereum` for every host, also one that never destroys. The alternative (one
      `hana.ethereum` object shared by successive clients) would keep that identity but make a destroyed client's
      `hana.ethereum` come back to life with another client's config.
-  2. Slots keyed by rdns only: a client of another app (another publishable key) on the same environment takes a freed
-     slot, so wagmi's connector moves to it (its accounts change).
-  3. After the wallet comes back with the session restored, wagmi reconnects on its own, even if the user had pressed
-     the host's disconnect before the wallet went off (wagmi's own `accountsChanged` handling).
-  4. `hana.ethereum` after `destroy()` now emits `accountsChanged []` and `disconnect` and refuses `eth_chainId` and
+  2. After the wallet comes back with the session restored, wagmi reconnects on its own, even if the user had pressed
+     the host's disconnect before (as on a plain reload).
+  3. `hana.ethereum` after `destroy()` now emits `accountsChanged []` and `disconnect` and refuses `eth_chainId` and
      reads with 4900 (0.4.x answered them and emitted nothing); listed as a change in the 0.5.0 notes.
+  4. A new client may take a slot that forwards to another live client (that client keeps its own slot): the shared
+     entry moves to the newest client.
   5. Someone checks the EIP-6963 wording quoted above against the published EIP (quoted from memory).
 - Address impact: **none.** Announcement and provider lifecycle only; nothing touches how a key or path is derived,
   the vault, the contract or any address: no wallet address changes.

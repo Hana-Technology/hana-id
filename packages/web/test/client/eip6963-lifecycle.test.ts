@@ -9,8 +9,8 @@ import { sepolia } from 'viem/chains';
 import { Window as HappyWindow } from 'happy-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderRpcError } from '../../src/client/errors.ts';
-import { type EthereumHost, HanaEthereumProvider, announceEip6963, rdnsFor } from '../../src/client/ethereum.ts';
-import { EVM, LOGGED_IN, ORIGINS, type Setup, flush, rpcFetch, setup } from './harness.ts';
+import { type EthereumHost, type HanaEip6963Provider, HanaEthereumProvider, announceEip6963, rdnsFor } from '../../src/client/ethereum.ts';
+import { EVM, EVM_2, FakeVault, LOGGED_IN, ORIGINS, STELLAR_2, type Setup, flush, rpcFetch, setup } from './harness.ts';
 
 const SEPOLIA = 11155111;
 const EVM_CONFIG = { chains: [{ id: SEPOLIA, rpcUrl: 'https://sepolia.rpc.test' }], defaultChainId: SEPOLIA };
@@ -28,18 +28,35 @@ afterEach(() => {
   window.removeEventListener('eip6963:announceProvider', onAnnounce);
   for (const s of alive) s.client.destroy();
   alive = [];
+  // The page's slots outlive a test (module memory): a test's wagmi must not hear the next test's clients.
+  for (const d of announced) (d.provider as unknown as HanaEip6963Provider).removeAllListeners();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
 
-/** A client with `evm`, its vault answering eth_accounts as the logged-in user. */
+/** A client with `evm`, its vault (on its own, newest, frame) answering eth_accounts as the logged-in user. */
 function client(): Setup {
-  const s = setup({ config: { evm: EVM_CONFIG }, fetch: rpcFetch({ eth_blockNumber: '0x10' }) });
+  const made = setup({ config: { evm: EVM_CONFIG }, fetch: rpcFetch({ eth_blockNumber: '0x10' }) });
+  const frames = document.querySelectorAll<HTMLIFrameElement>('iframe[name^="hana-vault-"]');
+  const frame = frames[frames.length - 1]!;
+  const s = frame === made.frame ? made : { ...made, frame, vault: new FakeVault(frame) };
   s.vault.handle('eth_accounts', () => ({ result: [EVM] }));
   alive.push(s);
   return s;
 }
+
+/** The second user, as another app's vault would report them. */
+const LOGGED_IN_2 = { ...LOGGED_IN, addresses: { stellar: STELLAR_2, evm: EVM_2 } };
+
+function wagmi(storage?: 'local') {
+  return createConfig({
+    chains: [sepolia],
+    transports: { [sepolia.id]: http('https://sepolia.rpc.test') },
+    ...(storage ? {} : { storage: null }),
+  });
+}
+const oursIn = (config: ReturnType<typeof wagmi>) => getConnectors(config).filter((c) => c.name === 'Journear Passport');
 
 async function refused(p: Promise<unknown>, code: number): Promise<ProviderRpcError> {
   const e = await p.then(
@@ -327,5 +344,155 @@ describe('real wallet lists', () => {
       expect(ours()).toHaveLength(1);
       await expect(connect(config, { connector })).rejects.toMatchObject({ code: 4900 });
     }
+  });
+
+  it('wagmi: a host that creates the new client before destroying the old one keeps one working connector', async () => {
+    const config = wagmi();
+    const a = client();
+    await a.vault.connect(LOGGED_IN);
+    await flush();
+    const [connector] = oursIn(config);
+    expect(getAccount(config)).toMatchObject({ status: 'connected', address: EVM });
+    // B while A lives: an announcement of its own (another uuid), which wagmi skips (it has this rdns).
+    const b = client();
+    b.vault.handle('eth_accounts', () => ({ result: [EVM_2] }));
+    await b.vault.connect(LOGGED_IN_2);
+    await flush();
+    expect(b.client.eip6963!.info.uuid).not.toBe(a.client.eip6963!.info.uuid);
+    expect(oursIn(config)).toEqual([connector]);
+    a.client.destroy();
+    await flush();
+    // A's entry, the one wagmi kept, now reaches B, and says so (B's account).
+    expect(getAccount(config)).toMatchObject({ status: 'connected', address: EVM_2, connector });
+    const seenByA = a.vault.requests.length;
+    expect(await (await connector!.getProvider() as { request(x: { method: string }): Promise<unknown> }).request({ method: 'eth_accounts' })).toEqual([EVM_2]);
+    await disconnect(config);
+    await expect(connect(config, { connector: connector! })).resolves.toMatchObject({ accounts: [EVM_2] });
+    expect(a.vault.requests).toHaveLength(seenByA);
+    // A third client takes the first slot back (it has no live client of its own); B keeps its own.
+    const c = client();
+    expect(c.client.eip6963).toBe(a.client.eip6963);
+    await c.vault.connect(LOGGED_IN);
+    await flush();
+    expect(getAccount(config)).toMatchObject({ status: 'connected', address: EVM });
+    expect(await b.client.eip6963!.provider.request({ method: 'eth_accounts' })).toEqual([EVM_2]);
+    // C goes: the first entry moves back to B, which is still on (wagmi sees B's account).
+    c.client.destroy();
+    await flush();
+    expect(getAccount(config)).toMatchObject({ status: 'connected', address: EVM_2, connector });
+    b.client.destroy();
+    await flush();
+    expect(getAccount(config).status).toBe('disconnected');
+  });
+
+  it('a request is answered by the client bound when it was made, even if the entry moves on before the answer', async () => {
+    const a = client();
+    await a.vault.connect(LOGGED_IN);
+    const b = client();
+    await b.vault.connect(LOGGED_IN_2);
+    b.vault.handle('eth_accounts', () => 'manual');
+    a.client.destroy();
+    const entry = a.client.eip6963!.provider;
+    const pending = entry.request({ method: 'eth_accounts' });
+    await flush();
+    const asked = b.vault.last('eth_accounts');
+    // The entry moves to C before B answers.
+    const c = client();
+    expect(c.client.eip6963!.provider).toBe(entry);
+    await c.vault.connect(LOGGED_IN);
+    b.vault.reply(asked.id, [EVM_2]);
+    await expect(pending).resolves.toEqual([EVM_2]);
+    expect(c.vault.seen('eth_accounts')).toHaveLength(0);
+  });
+
+  it('wagmi: a disconnect listener that creates the new client synchronously gets the same entry', async () => {
+    const config = wagmi();
+    const a = client();
+    await a.vault.connect(LOGGED_IN);
+    await flush();
+    const [connector] = oursIn(config);
+    const detail = a.client.eip6963!;
+    let c: Setup | undefined;
+    a.client.ethereum.on('disconnect', () => {
+      c = client();
+    });
+    a.client.destroy();
+    expect(c).toBeDefined();
+    expect(c!.client.eip6963).toBe(detail);
+    await flush();
+    expect(getAccount(config).status).toBe('disconnected');
+    await c!.vault.connect(LOGGED_IN);
+    await flush();
+    expect(oursIn(config)).toEqual([connector]);
+    expect(getAccount(config)).toMatchObject({ status: 'connected', address: EVM, connector });
+    expect(new Set(announced.map((d) => d.info.uuid))).toEqual(new Set([detail.info.uuid]));
+  });
+
+  it('wagmi with real storage: a user who disconnected, then the wallet off and on, is connected again by wagmi once the session is restored', async () => {
+    localStorage.clear();
+    const config = wagmi('local');
+    await flush();
+    const a = client();
+    await a.vault.connect(LOGGED_IN);
+    await flush();
+    const [connector] = oursIn(config);
+    if (getAccount(config).status !== 'connected') await connect(config, { connector: connector! });
+    await disconnect(config);
+    await flush();
+    expect(getAccount(config).status).toBe('disconnected');
+    expect(Object.keys(localStorage).some((k) => k.includes('disconnected'))).toBe(true);
+    a.client.destroy();
+    const b = client();
+    await b.vault.connect(LOGGED_IN);
+    await flush();
+    // Observed: wagmi's own accountsChanged handling connects again, its "disconnected" mark notwithstanding (as a
+    // reload of the page does). A host that must honour the user's choice keeps its own flag.
+    expect(oursIn(config)).toEqual([connector]);
+    expect(getAccount(config)).toMatchObject({ status: 'connected', address: EVM });
+    localStorage.clear();
+  });
+});
+
+describe('the announced provider itself', () => {
+  it('is frozen: a page script can neither replace request nor add a field for later clients', async () => {
+    const a = client();
+    await a.vault.connect(LOGGED_IN);
+    const p = a.client.eip6963!.provider as unknown as Record<string, unknown>;
+    expect(Object.isFrozen(p)).toBe(true);
+    expect(() => {
+      p.request = () => Promise.resolve(['0xevil']);
+    }).toThrow(TypeError);
+    expect(() => {
+      p.extra = 1;
+    }).toThrow(TypeError);
+    a.client.destroy();
+    const b = client();
+    await b.vault.connect(LOGGED_IN);
+    expect(await b.client.eip6963!.provider.request({ method: 'eth_accounts' })).toEqual([EVM]);
+    const heard = vi.fn();
+    b.client.eip6963!.provider.on('accountsChanged', heard);
+    b.vault.emit('accountsChanged', { addresses: null });
+    await flush();
+    expect(heard).toHaveBeenCalledWith([]);
+  });
+
+  it("keeps hearing hana.ethereum's events after the host calls hana.ethereum.removeAllListeners()", async () => {
+    const a = client();
+    const p = a.client.eip6963!.provider;
+    const heard: unknown[] = [];
+    p.on('accountsChanged', (x) => heard.push(x));
+    p.on('connect', (x) => heard.push(x));
+    a.client.ethereum.removeAllListeners();
+    await a.vault.connect(LOGGED_IN);
+    a.vault.emit('accountsChanged', { addresses: null });
+    await flush();
+    expect(heard).toEqual([[EVM], { chainId: '0xaa36a7' }, []]);
+  });
+
+  it('while the wallet is off, rejects with 4900 in its own words', async () => {
+    const a = client();
+    a.client.destroy();
+    const e = await refused(a.client.eip6963!.provider.request({ method: 'eth_requestAccounts' }), 4900);
+    expect(e.message).toBe('Journear Passport is turned off on this page.');
   });
 });

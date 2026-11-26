@@ -24700,7 +24700,7 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
 - Address impact: **none.** Limiter state, admission rules and a staff switch's cap; nothing touches the contract, a
   key, a path or an address derivation.
 
-### D937. No organisation's console kill switches are blockable by other organisations: kill switches in a budget class of their own (each org's kill bucket and a global one, each org's first 5 a minute past it), suspensions out of the console's breaker on the org's own 20 a clock hour, the console breaker's first 3 an org past the global count, rotation stays in the breaker, no token refunds
+### D937. No organisation's console suspensions or kill-switch budget are blockable by other organisations: kill switches in a budget class of their own (each org's kill bucket and a global one, each org's first 5 a minute past it), suspensions out of the console's breaker on the org's own 20 a clock hour, the console breaker's first 3 an org past the global 20 within a global overflow of 60 (a hard 80 an hour), rotation stays in the breaker, no token refunds
 - Date 2026-11-26 · Status: **built** (branch `fix/console-kill-limits`, from `next`, not merged, not deployed); the fix
   of D935's point 8 **approved by the Tech Lead 2026-11-26**; the design and every figure below are the coordinator's,
   **to confirm (the Tech Lead)** · Relates to D935 (point 8 of its "To confirm", its residual risk (g), its recorded
@@ -24758,13 +24758,29 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
      (`setSuspended(false)`: the org's and the global ordinary buckets, not a kill switch, not in the breaker, not
      counted), the console asking for a fresh sign-in first (the `app.resume` action).
   5. **The breaker keeps removals, frame-only tightenings, rotations and a web-client change** (5 an org, 20 across
-     orgs a rolling hour), and **each org's first 3 of its rolling hour pass whatever the global count**, every
-     admitted one still counted on both lists (the platform's floor rule, D935). Three of five: one incident's
-     removals on up to three apps (one removal call can remove every web address of one app) always pass, while the
-     global 20 still bounds the rest (at most 3 × N + 20 breaker calls a rolling hour). A floor of 5 would make the
-     global count meaningless (nobody ever past it). Refused by the global count, the object's wait is the sooner of
-     the global list's and the org's own floor's expiries (a retry at that time is admitted); with the org's own 5
-     full too, the later.
+     orgs a rolling hour). With the global 20 full, **each org's first 3 of its rolling hour still pass while a global
+     overflow (`console:breaker:overflow`, 60 a rolling hour) has room**, counted there and on the org's and the global
+     list (an admission answers `overflow: true`; its settlement gives the slot back on all three). Three of five: one
+     incident's removals on up to three apps (one removal call can remove every web address of one app); a floor of 5
+     would leave the global count meaningless. Refused by the global count, the object's wait is the sooner of the
+     global list's slide below 20 and the later of the org's floor's and the overflow's slides (a retry then is
+     admitted); with the org's own 5 full too, the later.
+     **What the global breaker is for, and why the overflow is bounded** (after the automated review of this branch's
+     first commit, Medium: a floor alone made the ceiling 3 × N + 20, unbounded since console organisations aren't
+     capped): a hard ceiling on mass destructive changes across many organisations at once (many stolen owner sessions,
+     or one console bug every session runs), so staff can react before partners' users are signed out everywhere. Only
+     owners make these calls, and only a staff invite creates an organisation (D89: a member can't), so holding many
+     organisations is costly but not impossible over time. **The hard ceiling: 20 + 60 = 80 breaker calls across every
+     org in any rolling hour** (non-floor admissions need the global count under 20, floor admissions the overflow
+     under 60), however many organisations. 60 is 20 organisations' floors: a burst three times the global limit,
+     which no shared incident of a few partners reaches, so the floor holds for every org in all but a flood by
+     dozens of organisations. **What that gives back** (the trade-off): about 24 organisations' owners at once (4
+     filling the global 20, 20 more spending their 3; 80 calls) can again refuse every other org's console removals,
+     frame-only tightenings and rotations for up to an hour, where before D937 4 organisations and 20 calls did it. The
+     victim can still suspend the app (never refused by other orgs: its own 20 and its kill floor), revoke its keys,
+     turn things off, and ask staff, whose removal in the admin portal is never limited. **The platform's breaker floor
+     (D935) has the same shape and is already bounded**: by the cap of 20 organisations with the platform on, at most
+     5 × 20 + 30 = 130 removals an hour; unchanged here.
   6. **Rotation stays in the breaker, as an ordinary call.** It stops nothing now (the old key works for its 24 h grace;
      `revokeKey` is the immediate stop, outside the breaker and never blockable by other orgs), so it needs no kill
      switch's guarantee; but it can't be undone (an unwanted rotation breaks the partner's site when the grace ends)
@@ -24785,7 +24801,7 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   | Ordinary console calls | org 10 a second, burst 40 (30 usable); global 30 a second, burst 60 (40 usable) | org 10 a second, burst 40; global 30 a second, burst 60; no reserve |
   | Token refunds | a kill switch that changed nothing gave its reserve tokens back, charged to its org (which could go below zero) | none |
   | Console breaker: what it counts | suspend, rotate, remove, frame-only, a web-client change | rotate, remove, frame-only, a web-client change |
-  | Console breaker numbers | 5 an org, 20 across orgs a rolling hour | the same, each org's first 3 of its hour past the global 20 |
+  | Console breaker numbers | 5 an org, 20 across orgs a rolling hour (20 at most) | the same; past the global 20 each org's first 3 of its hour while a global overflow of 60 has room (80 at most) |
   | Console suspensions | the breaker (5 an org with every other destructive call) | 20 an org a clock hour, only those that change something; never another org's |
   | Console resume | ordinary | ordinary (unchanged) |
   | Console `revokeKey` | 20 an org a clock hour (D935), spending the reserve | the same 20, on the kill buckets |
@@ -24807,7 +24823,7 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   Before this branch the console's kill switches were inside its 1 860 / 1 800; they are now on top of it.
   **What a compromised console session can do in an hour**, at most, per organisation: suspend 20 apps (before: 5
   destructive calls of any kind; staff and the owners resume), revoke 20 publishable keys (unchanged), make 5 breaker
-  calls (3 of them whatever other orgs do), and turn off, remove labels and cancel platform keys at its kill rate (10
+  calls (3 of them past a full global count while the overflow has room), and turn off, remove labels and cancel platform keys at its kill rate (10
   a minute); suspending and removing are an owner's in the console.
 - **Tests** (`apps/api/test/console-kill-limits.test.ts`, its own database and objects, the real `console-rpc` object
   and the real ConsoleRpc handlers; `rpc-cas.test.ts`, `platform-keys.test.ts`, `platform-ops.test.ts`,
@@ -24817,14 +24833,22 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   - the starvation above now gone: two orgs' revocations refused by their quota leave a third org's suspend and
     removal passing; four orgs reading at full rate, with and without 4 more flooding kill switches, leave a victim's
     kill switches at its own rate (12 of 12 in the minute; before: 4 of 60);
-  - **a victim beside 4, then 40, organisations exhausting their limits** (each with its 20 suspensions and 20
+  - **a victim beside 4, 20, then 40 organisations exhausting their limits** (each with its 20 suspensions and 20
     revocations of the hour used, rotating until its breaker refuses, then firing stops that change nothing until its
-    own kill bucket refuses, and one more between each of the victim's calls): the victim's 3 removals (its floor
-    through the full breaker) and 20 suspensions (its own limit), one stop every 12 s, all pass; its 4th removal and
-    21st suspension are refused; with 40 others the global kill bucket is kept empty (the victim passed on its floor),
-    with 4 it isn't;
+    own kill bucket refuses, and one more between each of the victim's calls; one stop of the victim every 12 s): its
+    20 suspensions (its own limit) pass in all three, its 21st is refused; its 3 removals (its floor) pass beside 4 and
+    20 (48 of the overflow used), and beside 40 (the overflow full: 80 breaker calls, the ceiling) are refused, as is
+    its 4th in every case; staff's removal passes; with 40 others the global kill bucket is kept empty (the victim's
+    suspensions passed on its kill floor), with 4 it isn't;
+  - the breaker's hard ceiling: 100 orgs trying 5 each at once, exactly 80 pass; 100 orgs at random times over three
+    hours, no rolling hour above 80 (and one at 80); the overflow full, a victim under its floor refused with the sooner
+    of the global count's and the overflow's slides (30 min), refused a second earlier, admitted at it; its suspension
+    passes; a settlement gives back exactly one slot from the lists the call was on (the overflow only for an overflow
+    admission, beside another of the same millisecond); through the handler, a removal on the overflow that changed
+    nothing (`not_found`, `version_conflict`) leaves all three lists as they were, a real one adds one to each;
   - parallel calls at each edge: 5 suspensions at 18 of 20, exactly 2 pass; the breaker's floor (global 20 full, an
-    org at 2 of 3), 3 removals at once, exactly 1; the org's breaker (4 of 5), 3 rotations at once, exactly 1; the kill
+    org at 2 of 3), 3 removals at once, exactly 1; the overflow (58 of 60), four orgs' removals at once, exactly 2,
+    their suspensions all passing; the org's breaker (4 of 5), 3 rotations at once, exactly 1; the kill
     floor (global kill bucket empty, an org at 3 of 5), 4 suspensions at once, exactly 2;
   - no-ops: 30 suspensions that change nothing (already suspended, not found) count nothing towards the 20, a
     take-over of the platform's suspension counts; 40 orgs flooding no-op stops leave another org's kill bucket, floor,
@@ -24849,7 +24873,14 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   1. The console's kill buckets: each org 1 statement a second, burst 60 (10 kill switches at once, 10 a minute); every
      org together 10 a second, burst 300.
   2. Each org's floor through the global kill bucket: its first 5 kill switches of a rolling minute.
-  3. The console breaker's floor at 3 of each org's 5 a rolling hour, floor calls counted on the global list too.
+  3. The console breaker's floor at 3 of each org's 5 a rolling hour, within a global overflow of 60 a rolling hour
+     (a hard 80 breaker calls an hour across orgs). **An explicit trade-off between a hard global ceiling and never
+     refusing a victim's removal:** bounded (built), about 24 organisations' owners at once can refuse other orgs'
+     console removals for up to an hour, while suspensions, revocations and staff's removals are never refused;
+     unbounded (the floor alone), no org's first 3 removals are ever refused, but removals across orgs grow 3 an hour
+     per organisation with no cap. **Recommended: bounded**, since the real emergency stop is the suspension, which is
+     never blockable, and a hard ceiling on mass removals is the breaker's whole purpose; revisit the 60 (or the 3) if
+     the console's organisations grow past about 100.
   4. Console suspensions at 20 an org a clock hour, apart from the breaker; resume unchanged (ordinary).
   5. Rotation stays in the breaker as an ordinary call (not a stop).
   6. The reserves removed: ordinary console calls now have their buckets' whole burst (40 an org, 60 together, from
@@ -24861,7 +24892,9 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
      member can create and revoke 20 keys and use up the org's 20 console revocations for the rest of the clock hour;
      owners still suspend, and staff and the platform revoke. Possible fix: a console key-creation quota (counted on
      `console-stops:<org>`, before the batch, as these).
-- **Residual risks.** (a) Under a coordinated flood by more than ten organisations' members at once, an org's kill
+- **Residual risks.** (0) The breaker's bounded overflow (above): about 24 organisations' owners at once, 80 breaker
+  calls, refuse every other org's console removals, frame-only tightenings and rotations for up to an hour (before D937:
+  4 organisations, 20 calls); suspensions, revocations, the other kill switches and staff's removals stay open. (a) Under a coordinated flood by more than ten organisations' members at once, an org's kill
   switches beyond its 5 a minute wait for the global kill bucket (seconds); its first 5 never do. (b) The ceiling
   grows with the number of organisations (above). (c) An org's own no-ops (a script, a person clicking fast) use its
   own kill bucket and floor. (d) The suspension and revocation windows are clock hours (up to 40 across a boundary).

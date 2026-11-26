@@ -69,6 +69,7 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
   const now = Date.now();
   const w: Writer = { actor: input.actor, requestId: input.requestId, now };
   let breakerTaken = false;
+  let overflowTaken = false;
   // The admission's time on the limiter's clock (D935, H1): what the settlement names.
   let admittedAt = now;
   let code: RpcCode | null = null;
@@ -86,8 +87,10 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
       }
       admittedRevoke = true;
     } else if (consoleCall) {
-      ({ at: admittedAt } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
+      const admitted = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now);
+      admittedAt = admitted.at;
       breakerTaken = !!setup.breaker;
+      overflowTaken = admitted.overflow === true;
     }
     const db = new HotDb(env.DB, consoleCall ? CONSOLE_DB_LIMITS : undefined);
     const result = await work({ input, db, w });
@@ -107,6 +110,6 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
     return { ok: false, code: 'internal' };
   } finally {
     const changedNothing = (code === null && !w.wrote) || (code !== null && REFUNDED.has(code));
-    if (changedNothing && breakerTaken) await settleMemberCall(env, { org: orgId!, at: admittedAt, breaker: true });
+    if (changedNothing && breakerTaken) await settleMemberCall(env, { org: orgId!, at: admittedAt, breaker: true, ...(overflowTaken ? { overflow: true } : {}) });
   }
 }

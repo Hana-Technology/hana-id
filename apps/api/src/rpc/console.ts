@@ -206,7 +206,7 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
 
   /**
    * A kill switch (it signs users out): immediate, no step-up; counted by the breaker, the org's first 3 of its hour past
-   * the global count (D937).
+   * a full global count while the global overflow has room (D937).
    */
   removeOrigins(c: unknown) {
     return runRpc(this.env, 'removeOrigins', removeOriginsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.removeOrigins, killSwitch: true, breaker: true }, ({ input, db, w }) => removeOrigins(db, w, input));

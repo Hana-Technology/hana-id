@@ -7,8 +7,9 @@
 //   org together (console organisations are not capped); each org's first 5 kill switches of a rolling minute pass
 //   whatever it holds. No token is ever given back;
 // - the destructive-call breaker (removeOrigins, frameOnlyOrigins, rotateKey, a web-client change): 5 per org and 20
-//   across orgs per rolling hour, counted per call (D93 Q21), each org's first 3 of its hour past the global count (D937);
-//   a call that changed nothing gets its slot back. Not a suspension or a publishable key's revocation (D935, D937: a
+//   across orgs per rolling hour, counted per call (D93 Q21); with the global 20 full, each org's first 3 of its hour
+//   still pass while a global overflow of 60 a rolling hour has room (D937: at most 80 across orgs an hour, however
+//   many orgs); a call that changed nothing gets its slot back. Not a suspension or a publishable key's revocation (D935, D937: a
 //   stop is never blockable by the shared breaker): each is held instead to its org's own 20 a clock hour, counted only
 //   when it changes something (`console-stops:<orgId>`);
 // - emailed-link cancels (no session, no org), outside the members' budget: a per-IP limiter (IPv6 by /64), then one
@@ -33,8 +34,11 @@ export const CONSOLE_LIMITS = {
   global: { ratePerS: 30, burst: 60 },
   /** Emailed-link cancels' token reads together (one D1 read each): 50 a second, burst 100. */
   linkRead: { ratePerS: 50, burst: 100 },
-  /** 5 an org and 20 across orgs a rolling hour; each org's first 3 of its hour past the global 20 (D937). */
-  breaker: { windowMs: HOUR_MS, perOrg: 5, global: 20, floor: 3 },
+  /**
+   * 5 an org and 20 across orgs a rolling hour; with the global 20 full, each org's first 3 of its hour still pass while
+   * the global overflow's 60 a rolling hour (20 orgs' floors) has room (D937): at most 80 across orgs a rolling hour.
+   */
+  breaker: { windowMs: HOUR_MS, perOrg: 5, global: 20, floor: 3, overflow: 60 },
   /**
    * D937, the kill switches' only budget. Each org: 1 statement/s, burst 60 (10 of the largest kill switch, 6, at once;
    * 10 a minute after). Every org together: 10 statements/s, burst 300 (50 at once, 100 a minute), so it bites only when
@@ -124,16 +128,16 @@ const limiter = (env: Env) => placedStub(env, env.RATE_LIMITER, CONSOLE_LIMITER)
  * Admits one member call; throws `rate_limited` when a bucket or the breaker refuses. Answers the admission's time on
  * the limiter's clock (what settleMemberCall names when the call changed nothing).
  */
-export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.now()): Promise<{ at: number }> {
+export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.now()): Promise<{ at: number; overflow?: true }> {
   const r = await limiter(env).consoleAdmit({ ...a, limits: CONSOLE_LIMITS }, now);
-  if (r.ok) return { at: r.at };
+  if (r.ok) return r.overflow ? { at: r.at, overflow: true } : { at: r.at };
   if (r.notify) await breakerEvent(env.DB, r.limit === 'breaker_org' ? a.org : null, now);
   const breaker = r.limit === 'breaker_org' || r.limit === 'breaker_global';
   throw new RpcRefusal('rate_limited', breaker ? 'Too many destructive changes this hour: ask Journear security' : 'Too many console calls: try again shortly');
 }
 
 /** Settles a breaker call admitted at `at` that changed nothing: its breaker slot back (D937: no tokens). */
-export async function settleMemberCall(env: Env, s: { org: string; at: number; breaker: boolean }): Promise<void> {
+export async function settleMemberCall(env: Env, s: { org: string; at: number; breaker: boolean; overflow?: boolean }): Promise<void> {
   try {
     await limiter(env).consoleSettle(s);
   } catch {
@@ -165,7 +169,7 @@ export async function breakerEvent(db: D1Database, orgId: string | null, now: nu
         now,
         'breaker',
         orgId,
-        JSON.stringify({ limit: scope, windowStart: hour, perOrg: CONSOLE_LIMITS.breaker.perOrg, global: CONSOLE_LIMITS.breaker.global, floor: CONSOLE_LIMITS.breaker.floor }),
+        JSON.stringify({ limit: scope, windowStart: hour, perOrg: CONSOLE_LIMITS.breaker.perOrg, global: CONSOLE_LIMITS.breaker.global, floor: CONSOLE_LIMITS.breaker.floor, overflow: CONSOLE_LIMITS.breaker.overflow }),
       )
       .run();
   } catch {

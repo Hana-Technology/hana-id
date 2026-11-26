@@ -39,8 +39,10 @@ export interface Bucket {
  *   (`console:kill`), never from the ordinary buckets. The global kill bucket is the bound on every org together (console
  *   organisations are not capped); each org's first `kill.floor.calls` kill switches of a rolling `kill.floor.windowMs`
  *   pass whatever it holds (every admitted kill switch counted on the org's floor list), still taking what it holds.
- * - A breaker call also takes a slot in its org's and in the global rolling hour; each org's first `breaker.floor` of its
- *   hour pass whatever the global count (every admitted one counted on both lists).
+ * - A breaker call also takes a slot in its org's and in the global rolling hour; with the global count full, each org's
+ *   first `breaker.floor` of its hour still pass while the global overflow (`breaker.overflow` a rolling hour) has room,
+ *   counted there too (every admitted call is on its org's and the global list). So at most `global + overflow` breaker
+ *   calls pass in any rolling hour, however many orgs there are (console organisations are not capped).
  * No token is ever given back; only a breaker call that changed nothing gets its slot back (`consoleSettle`). An
  * emailed-link cancel (`link`) takes one token from the link bucket only, never the members' budget.
  */
@@ -59,8 +61,11 @@ export interface ConsoleAdmission {
     global: Bucket;
     /** The link cancel's token reads (D1 protection), taken before the read. */
     linkRead: Bucket;
-    /** `floor`: each org's first `floor` breaker calls of its rolling hour pass whatever the global count. */
-    breaker: { windowMs: number; perOrg: number; global: number; floor: number };
+    /**
+     * `floor`: each org's first `floor` breaker calls of its rolling hour pass a full global count while the global
+     * `overflow` (floor admissions past the global count, a rolling hour) has room.
+     */
+    breaker: { windowMs: number; perOrg: number; global: number; floor: number; overflow: number };
     /** The kill switches' only budget: each org's own bucket, the global one, and each org's floor through the global. */
     kill: { perOrg: Bucket; global: Bucket; floor: { windowMs: number; calls: number } };
   };
@@ -105,8 +110,11 @@ export type PlatformAdmitResult = { ok: true; at: number } | { ok: false; limit:
  * `notify`: the first breaker refusal of this limit (the org's, or the global one) in this clock hour, the only one the
  * caller writes a security event for.
  */
-/** `at`: the admission's time on the object's clock (what `consoleSettle` needs). */
-export type ConsoleAdmitResult = { ok: true; at: number } | { ok: false; limit: ConsoleLimit; retryAfterS: number; notify: boolean };
+/**
+ * `at`: the admission's time on the object's clock, `overflow`: the call was admitted on its org's floor past a full
+ * global count (both what `consoleSettle` needs).
+ */
+export type ConsoleAdmitResult = { ok: true; at: number; overflow?: true } | { ok: false; limit: ConsoleLimit; retryAfterS: number; notify: boolean };
 
 /** What a member call that changed nothing gives back (consoleSettle): its breaker slot, nothing else (D937). */
 export interface ConsoleSettlement {
@@ -115,6 +123,8 @@ export interface ConsoleSettlement {
   at: number;
   /** Its breaker slot. */
   breaker: boolean;
+  /** Its slot was also on the global overflow (the admission answered `overflow`). */
+  overflow?: boolean;
 }
 
 export type HitResult = { ok: true; soft?: string[] } | { ok: false; limit: string; retryAfterS: number };
@@ -391,17 +401,23 @@ export class RateLimiter extends DurableObject<Env> {
     const until = (t: number | undefined, windowMs: number) => ((t ?? now) + windowMs - now) / 1000;
     // The entry that must slide out of `list` for fewer than `keep` to remain.
     const slideOut = (list: number[], keep: number) => [...list].sort((a, b) => a - b)[list.length - keep];
-    // The breaker: a call passes once the org is under its limit AND (under its floor OR the global count under its
-    // limit); with no other call, the later of the two, the second the sooner of its two expiries.
+    // The breaker: a call passes once the org is under its limit AND (the global count under its limit OR (the org
+    // under its floor AND the global overflow under its limit)); with no other call, the later of the first and the
+    // sooner of the second's: the global count's slide, or (the later of the org's floor slide and the overflow's).
     const W = L.breaker.windowMs;
     const bOrgKey = `console:breaker:org:${org}`;
     const bOrg = r.breaker ? recent(bOrgKey, W) : [];
     const bGlobal = r.breaker ? recent('console:breaker:global', W) : [];
+    const bOver = r.breaker ? recent('console:breaker:overflow', W) : [];
+    const overflow = r.breaker && bGlobal.length >= L.breaker.global;
     let breakerShort: { limit: ConsoleLimit; waitS: number } | null = null;
     if (r.breaker) {
       const orgWait = bOrg.length >= L.breaker.perOrg ? until(slideOut(bOrg, L.breaker.perOrg), W) : 0;
-      const globalWait =
-        bOrg.length >= L.breaker.floor && bGlobal.length >= L.breaker.global ? Math.min(until(slideOut(bGlobal, L.breaker.global), W), until(slideOut(bOrg, L.breaker.floor), W)) : 0;
+      let globalWait = 0;
+      if (overflow && (bOrg.length >= L.breaker.floor || bOver.length >= L.breaker.overflow)) {
+        const floorWait = Math.max(bOrg.length >= L.breaker.floor ? until(slideOut(bOrg, L.breaker.floor), W) : 0, bOver.length >= L.breaker.overflow ? until(slideOut(bOver, L.breaker.overflow), W) : 0);
+        globalWait = Math.min(until(slideOut(bGlobal, L.breaker.global), W), floorWait);
+      }
       if (orgWait > 0 || globalWait > 0) breakerShort = { limit: orgWait > 0 ? 'breaker_org' : 'breaker_global', waitS: Math.max(orgWait, globalWait) };
     }
     const orgKey = `console:bucket:org:${org}`;
@@ -446,20 +462,23 @@ export class RateLimiter extends DurableObject<Env> {
     if (r.breaker) {
       kv.put(bOrgKey, [...bOrg, now]);
       kv.put('console:breaker:global', [...bGlobal, now]);
+      if (overflow) kv.put('console:breaker:overflow', [...bOver, now]);
     }
-    return { ok: true, at: now };
+    return overflow ? { ok: true, at: now, overflow: true } : { ok: true, at: now };
   }
 
   /**
    * D937: a breaker call admitted at `at` (as consoleAdmit answered) that changed nothing (`not_found`, `conflict`,
-   * `version_conflict`, a replay, a bad input, or a no-op; rpc/common.ts) gets its breaker slot back, once (the entry
-   * is removed). No tokens are ever given back: a kill switch that changed nothing has paid its org's kill bucket.
+   * `version_conflict`, a replay, a bad input, or a no-op; rpc/common.ts) gets its breaker slot back, once (one entry of
+   * its time is removed from its org's list, the global list and, when it was admitted there, the overflow: entries of
+   * one time are interchangeable on a list). No tokens are ever given back: a kill switch that changed nothing has paid
+   * its org's kill bucket.
    */
   consoleSettle(s: ConsoleSettlement): void {
     if (!s.breaker) return;
     const kv = this.ctx.storage.kv;
     this.clock();
-    for (const key of [`console:breaker:org:${s.org}`, 'console:breaker:global']) {
+    for (const key of [`console:breaker:org:${s.org}`, 'console:breaker:global', ...(s.overflow ? ['console:breaker:overflow'] : [])]) {
       const list = kv.get<number[]>(key) ?? [];
       const i = list.indexOf(s.at);
       if (i >= 0) kv.put(key, [...list.slice(0, i), ...list.slice(i + 1)]);

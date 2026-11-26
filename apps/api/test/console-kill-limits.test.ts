@@ -69,7 +69,7 @@ describe('the numbers and the two budget classes', () => {
       perOrg: { ratePerS: 10, burst: 40 },
       global: { ratePerS: 30, burst: 60 },
       linkRead: { ratePerS: 50, burst: 100 },
-      breaker: { windowMs: HOUR, perOrg: 5, global: 20, floor: 3 },
+      breaker: { windowMs: HOUR, perOrg: 5, global: 20, floor: 3, overflow: 60 },
       kill: { perOrg: { ratePerS: 1, burst: 60 }, global: { ratePerS: 10, burst: 300 }, floor: { windowMs: MIN, calls: 5 } },
     });
     expect(CONSOLE_SUSPENSIONS).toEqual([{ name: 'suspensions:hour', windowMs: HOUR, max: 20 }]);
@@ -178,13 +178,13 @@ describe('the bucket-level starvation found before D937 (D935 residual risk (g))
   }, 180_000);
 });
 
-describe('a victim beside 4, then 40, organisations exhausting their breaker and limits (the real handlers)', () => {
+describe('a victim beside 4, 20, then 40 organisations exhausting their breaker and limits (the real handlers)', () => {
   async function scenario(others: number) {
     const clock = ownClock({ freeze: true });
     const rpc = consoleRpc();
     // The others: one app each, every key revocation and suspension of the hour already used; each rotates its key until
-    // refused (the breaker: 5 an org, 20 across orgs, each org's first 3 past the global 20), then fires stops that change
-    // nothing until its own kill bucket refuses them.
+    // refused (the breaker: 5 an org, 20 across orgs; past the 20, each org's first 3 while the overflow's 60 has room),
+    // then fires stops that change nothing until its own kill bucket refuses them.
     const crowd = await Promise.all(Array.from({ length: others }, () => orgApp()));
     for (const o of crowd) {
       expect(await stops(o.org).hit(CONSOLE_SUSPENSIONS, Date.now(), 20)).toMatchObject({ ok: true });
@@ -195,7 +195,7 @@ describe('a victim beside 4, then 40, organisations exhausting their breaker and
       clock.advance(1000); // the ordinary budget's second (30 statements: five rotations)
       for (let i = 0; i < 6; i++) if ((await rpc.rotateKey({ ...member(), orgId: o.org, appId: o.id, keyId: await liveKey(o.id) })).ok) rotated++;
     }
-    expect(rotated).toBe(others === 4 ? 20 : 20 + (others - 4) * 3);
+    expect(rotated).toBe(Math.min(20 + Math.max(0, others - 4) * 3, 80));
     const noOp = async (o: { org: string; id: string }, i: number) =>
       i % 2 === 0 ? rpc.setSuspended({ ...member(), orgId: o.org, appId: o.id, suspended: true }) : rpc.revokeKey({ ...member(), orgId: o.org, appId: o.id, keyId: await liveKey(o.id) });
     for (const o of crowd) for (let i = 0; i < 13; i++) expect(await noOp(o, i)).toMatchObject({ ok: false, code: 'rate_limited' });
@@ -203,37 +203,138 @@ describe('a victim beside 4, then 40, organisations exhausting their breaker and
     // (its kill floor, 5 a rolling minute), the others firing a stop that changes nothing between each.
     const victim = newOrg();
     const victimApps = await Promise.all(Array.from({ length: 21 }, () => orgApp({ org: victim, origins: [ORIGIN, SECOND] })));
-    const answers: string[] = [];
-    const step = async (call: () => Promise<{ ok: boolean; code?: string }>) => {
+    const removals: string[] = [];
+    const suspensions: string[] = [];
+    const step = async (into: string[], call: () => Promise<{ ok: boolean; code?: string }>) => {
       clock.advance(12_000);
       for (const [i, o] of crowd.entries()) await noOp(o, i);
       const r = await call();
-      answers.push(r.ok ? 'ok' : r.code!);
+      into.push(r.ok ? 'ok' : r.code!);
     };
-    for (const a of victimApps.slice(0, 3)) await step(() => rpc.removeOrigins({ ...member(), orgId: victim, appId: a.id, remove: [SECOND], expectedVersion: 0 }));
-    for (const a of victimApps.slice(0, 20)) await step(() => rpc.setSuspended({ ...member(), orgId: victim, appId: a.id, suspended: true }));
-    expect(answers).toEqual(Array(23).fill('ok'));
+    for (const a of victimApps.slice(0, 3)) await step(removals, () => rpc.removeOrigins({ ...member(), orgId: victim, appId: a.id, remove: [SECOND], expectedVersion: 0 }));
+    for (const a of victimApps.slice(0, 20)) await step(suspensions, () => rpc.setSuspended({ ...member(), orgId: victim, appId: a.id, suspended: true }));
+    expect(suspensions).toEqual(Array(20).fill('ok'));
     for (const a of victimApps.slice(0, 20)) expect((await appRow(a.id)).suspended_by).toBe(4);
     // What the global kill bucket holds after the victim's last stop: with 40 others it was kept empty (the victim passed
     // on its floor).
     const k = await runInDurableObject(consoleObject(), (_i, st) => st.storage.kv.get<{ tokens: number; at: number }>('console:kill') ?? null);
     const globalLeft = held(k, L.kill.global, Date.now());
-    // Past its floor the breaker's global 20 applies (removals), past its 20 its own limit (suspensions).
+    // Past its floor the breaker's global count applies (removals), past its 20 its own limit (suspensions).
     clock.advance(12_000);
     expect(await rpc.removeOrigins({ ...member(), orgId: victim, appId: victimApps[3]!.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: false, code: 'rate_limited' });
     clock.advance(12_000);
     expect(await rpc.setSuspended({ ...member(), orgId: victim, appId: victimApps[20]!.id, suspended: true })).toMatchObject({ ok: false, code: 'rate_limited' });
     expect((await appRow(victimApps[20]!.id)).suspended_by).toBe(0);
-    return globalLeft;
+    // Staff's removal is never limited.
+    expect(await adminRpc().removeOrigins({ ...hana(), orgId: victim, appId: victimApps[3]!.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: true });
+    return { removals, globalLeft };
   }
 
   it('4 others: every stop of the victim passes, up to its floor of removals and its own 20 suspensions', async () => {
-    expect(await scenario(4)).toBeGreaterThan(MAX_KILL_COST);
+    const r = await scenario(4);
+    expect(r.removals).toEqual(['ok', 'ok', 'ok']);
+    expect(r.globalLeft).toBeGreaterThan(MAX_KILL_COST);
   }, 120_000);
 
-  it('40 others: the same, with the global kill bucket kept empty by them (the victim passes on its floor)', async () => {
-    expect(await scenario(40)).toBeLessThan(MAX_KILL_COST);
+  it('20 others (48 of the overflow’s 60 used): the same, the victim’s removals on its floor', async () => {
+    const r = await scenario(20);
+    expect(r.removals).toEqual(['ok', 'ok', 'ok']);
   }, 240_000);
+
+  it('40 others (the overflow full: 80 breaker calls in the hour, the hard ceiling): the victim’s removals are refused, its 20 suspensions all pass, staff’s removal passes', async () => {
+    const r = await scenario(40);
+    expect(r.removals).toEqual(['rate_limited', 'rate_limited', 'rate_limited']);
+    expect(r.globalLeft).toBeLessThan(MAX_KILL_COST);
+  }, 300_000);
+});
+
+describe('the console breaker’s hard ceiling: the global 20 and the overflow’s 60', () => {
+  it('100 orgs each trying 5 at once: exactly 80 pass (20, then 60 on floors), the rest refused `breaker_global`', async () => {
+    const stub = fresh();
+    const t = start();
+    let ok = 0;
+    for (const [i, o] of orgsOf(100, 'many').entries()) for (let k = 0; k < 5; k++) if ((await slot(stub, o, t + i)).ok) ok++;
+    expect(ok).toBe(80);
+  });
+
+  it('100 orgs trying their floor at random times over three hours: no rolling hour ever holds more than 80', async () => {
+    const stub = fresh();
+    const r = rng(937);
+    const t0 = start();
+    const orgs = orgsOf(100, 'spread');
+    const admitted: number[] = [];
+    let t = t0;
+    for (let step = 0; step < 3000; step++) {
+      t += Math.floor(r() * 7000);
+      const a = await slot(stub, orgs[Math.floor(r() * orgs.length)]!, t);
+      if (a.ok) admitted.push(a.at);
+    }
+    expect(t - t0).toBeGreaterThan(2 * HOUR);
+    for (const at of admitted) expect(admitted.filter((x) => x > at - HOUR && x <= at).length).toBeLessThanOrEqual(80);
+    // And it is reached: some hour holds all 80.
+    expect(Math.max(...admitted.map((at) => admitted.filter((x) => x > at - HOUR && x <= at).length))).toBe(80);
+  });
+
+  it('the overflow full: a victim under its floor is refused with the sooner of the global count’s and the overflow’s slide; at that time it passes, a second earlier it doesn’t', async () => {
+    const stub = fresh();
+    const t = start();
+    // The global 20 at t, the overflow's 60 from 20 orgs' floors at t + 10 min … t + 29 min.
+    for (const o of orgsOf(4, 'g')) for (let k = 0; k < 5; k++) expect((await slot(stub, o, t)).ok).toBe(true);
+    for (const [i, o] of orgsOf(20, 'f').entries()) for (let k = 0; k < 3; k++) expect((await slot(stub, o, t + (10 + i) * MIN)).ok).toBe(true);
+    const [v] = orgsOf(1, 'victim');
+    const now = t + 40 * MIN;
+    const refused = await slot(stub, v!, now);
+    expect(refused).toMatchObject({ ok: false, limit: 'breaker_global' });
+    // The overflow's oldest (t + 10 min) leaves at t + 70 min, before the global count can fall under 20 (61 of 80
+    // must leave: t + 79 min).
+    const wait = (refused as { retryAfterS: number }).retryAfterS;
+    expect(wait).toBe(30 * 60);
+    expect((await slot(stub, v!, now + (wait - 1) * 1000)).ok).toBe(false);
+    expect(await slot(stub, v!, now + wait * 1000)).toMatchObject({ ok: true, overflow: true });
+    // The victim's suspensions never touch the breaker.
+    expect(await kill(stub, v!, 5, now)).toMatchObject({ ok: true });
+  });
+
+  it('a settlement gives back exactly one slot from the lists the call was on: the overflow only for an overflow admission, even beside one of the same millisecond', async () => {
+    const stub = fresh();
+    const t = start();
+    for (const o of orgsOf(4, 'g')) for (let k = 0; k < (o.endsWith('_3') ? 4 : 5); k++) expect((await slot(stub, o, t)).ok).toBe(true);
+    const [a, b] = orgsOf(2, 'ab');
+    // A takes the 20th global slot, B (same millisecond) the first overflow slot.
+    const ra = await slot(stub, a!, t + 1000);
+    const rb = await slot(stub, b!, t + 1000);
+    expect(ra).toEqual({ ok: true, at: t + 1000 });
+    expect(rb).toEqual({ ok: true, at: t + 1000, overflow: true });
+    const lists = () =>
+      runInDurableObject(stub, (_i, st) => ({
+        a: (st.storage.kv.get<number[]>(`console:breaker:org:${a!}`) ?? []).length,
+        b: (st.storage.kv.get<number[]>(`console:breaker:org:${b!}`) ?? []).length,
+        global: (st.storage.kv.get<number[]>('console:breaker:global') ?? []).length,
+        overflow: (st.storage.kv.get<number[]>('console:breaker:overflow') ?? []).length,
+      }));
+    expect(await lists()).toEqual({ a: 1, b: 1, global: 21, overflow: 1 });
+    await stub.consoleSettle({ org: a!, at: t + 1000, breaker: true });
+    expect(await lists()).toEqual({ a: 0, b: 1, global: 20, overflow: 1 });
+    await stub.consoleSettle({ org: b!, at: t + 1000, breaker: true, overflow: true });
+    expect(await lists()).toEqual({ a: 0, b: 0, global: 19, overflow: 0 });
+  });
+
+  it('through the handler: a removal on the overflow that changed nothing gives its slot back to all three lists', async () => {
+    ownClock({ freeze: true });
+    const t = Date.now();
+    for (const o of orgsOf(4, 'g')) for (let k = 0; k < 5; k++) expect((await slot(consoleObject(), o, t)).ok).toBe(true);
+    const app = await orgApp({ origins: [ORIGIN, SECOND] });
+    const lengths = () =>
+      runInDurableObject(consoleObject(), (_i, st) =>
+        [`console:breaker:org:${app.org}`, 'console:breaker:global', 'console:breaker:overflow'].map((k) => (st.storage.kv.get<number[]>(k) ?? []).filter((x) => x > Date.now() - HOUR).length),
+      );
+    const before = await lengths();
+    expect(await consoleRpc().removeOrigins({ ...member(), orgId: app.org, appId: 'app_none', remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: false, code: 'not_found' });
+    expect(await consoleRpc().removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 9 })).toMatchObject({ ok: false, code: 'version_conflict' });
+    expect(await lengths()).toEqual(before);
+    expect(await consoleRpc().removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: true });
+    expect(await lengths()).toEqual([before[0]! + 1, before[1]! + 1, before[2]! + 1]);
+  });
 });
 
 describe('parallel calls at each edge (the real handlers)', () => {
@@ -262,6 +363,19 @@ describe('parallel calls at each edge (the real handlers)', () => {
     const out = await Promise.all(apps.slice(2).map((a) => consoleRpc().removeOrigins({ ...member(), orgId: org, appId: a.id, remove: [SECOND], expectedVersion: 0 })));
     expect(out.filter((r) => r.ok)).toHaveLength(1);
     expect(out.filter((r) => !r.ok).map((r) => (r as { code: string }).code)).toEqual(['rate_limited', 'rate_limited']);
+  });
+
+  it('the overflow’s edge: the global 20 full and 58 of the overflow’s 60 used, four orgs’ removals at once, exactly two pass', async () => {
+    ownClock({ freeze: true });
+    const t = Date.now();
+    for (const o of orgsOf(4, 'g')) for (let k = 0; k < 5; k++) expect((await slot(consoleObject(), o, t)).ok).toBe(true);
+    for (const [i, o] of orgsOf(20, 'f').entries()) for (let k = 0; k < (i === 19 ? 1 : 3); k++) expect((await slot(consoleObject(), o, t)).ok).toBe(true);
+    const apps = await Promise.all([1, 2, 3, 4].map(() => orgApp({ origins: [ORIGIN, SECOND] })));
+    const out = await Promise.all(apps.map((a) => consoleRpc().removeOrigins({ ...member(), orgId: a.org, appId: a.id, remove: [SECOND], expectedVersion: 0 })));
+    expect(out.filter((r) => r.ok)).toHaveLength(2);
+    expect(out.filter((r) => !r.ok).map((r) => (r as { code: string }).code)).toEqual(['rate_limited', 'rate_limited']);
+    // Their suspensions all pass.
+    for (const a of apps) expect(await consoleRpc().setSuspended({ ...member(), orgId: a.org, appId: a.id, suspended: true })).toMatchObject({ ok: true, suspendedBy: 4 });
   });
 
   it('the org’s breaker edge: 4 of its 5 used, the global count low, three rotations at once, exactly one passes', async () => {

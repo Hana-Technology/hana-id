@@ -30,9 +30,9 @@
 //   8. A valid self-revoke: only its own window (10 a minute on the key's object, N3). Anything else: the key's own
 //      windows (`platform:key:<keyId>`, pinned: 60 a minute, 2 000 a UTC day; a kill switch past them, its own reserve
 //      of 10 a minute and 100 a UTC day, D935) and the platform's
-//      admission on the `console-rpc` object (rate-limiter.ts `platformAdmit`): an ordinary call, the org's bucket,
-//      the platform's global bucket and the console's global bucket above a floor the platform never takes; a kill
-//      switch, its org's kill bucket only (D935); and the platform's own destructive-call breaker on web address
+//      admission on the `console-rpc` object (rate-limiter.ts `platformAdmit`): an ordinary call, the org's bucket and
+//      the platform's global bucket, never any of the console's (D938); a kill switch, its org's kill bucket only
+//      (D935); and the platform's own destructive-call breaker on web address
 //      removals, each org's first 5 an hour past the global count (M3, F3, D935). An invalid self-revoke goes through 8
 //      like any other call.
 //
@@ -73,7 +73,7 @@ import { placedStub } from '../placement.ts';
 import type { Limit, PlatformAdmission, RateLimiter } from '../rate-limiter.ts';
 import { RpcRefusal } from '../changes/cas.ts';
 import { HotDb, PLATFORM_DB_LIMITS } from '../changes/db.ts';
-import { CONSOLE_LIMITS, CONSOLE_LIMITER, HOUR_MS } from '../changes/guard.ts';
+import { CONSOLE_LIMITER, HOUR_MS } from '../changes/guard.ts';
 import { q } from '../changes/sql.ts';
 import { platformQuotaEvent, platformSecurityEvent } from './events.ts';
 import { KEY_IN_FORCE } from './keys.ts';
@@ -120,10 +120,11 @@ export const PLATFORM_WINDOWS = {
 } as const satisfies Record<string, Limit[]>;
 
 /**
- * The platform's admission on the `console-rpc` object (A5; F3; D935 after PR 161's second full review): two budget
- * classes that never charge each other. An ordinary call: the org's own bucket (8 statements a second, burst 40: 520 a
- * minute), the platform's global bucket (10 a second, burst 60: 660 in a first minute, 600 after) and the console's
- * global bucket, never below 30 of its 60 tokens, so the console always keeps at least half its burst; no reserve. A
+ * The platform's admission on the `console-rpc` object (A5; F3; D935 after PR 161's second full review; D938): two
+ * budget classes that never charge each other, on buckets of the platform's own (no platform call touches any of the
+ * console's, nor a console call any of these). An ordinary call: the org's own bucket (8 statements a second, burst 40:
+ * 520 a minute) and the platform's global bucket (10 a second, burst 60: 660 in a first minute, 600 after), which alone
+ * bounds every org's ordinary calls together, whatever the number of organisations; no reserve. A
  * kill switch: its org's kill bucket only (2.5 statements a second, burst 44: about 13 a minute, 4 at once), so no other
  * org can slow it and it slows nobody's ordinary calls; at most MAX_PLATFORM_ORGS orgs' kill buckets a minute (the
  * backstop to the cap on orgs switched on). Removals also take a breaker slot (10 per org, 30 across orgs a rolling
@@ -132,7 +133,6 @@ export const PLATFORM_WINDOWS = {
 export const PLATFORM_LIMITS = {
   perOrg: { ratePerS: 8, burst: 40 },
   platform: { ratePerS: 10, burst: 60 },
-  shared: { ratePerS: CONSOLE_LIMITS.global.ratePerS, burst: CONSOLE_LIMITS.global.burst, sharedFloor: 30 },
   breaker: { windowMs: HOUR_MS, perOrg: L.breaker.perOrgPerHour, global: L.breaker.globalPerHour, floor: L.breaker.floorPerOrgPerHour },
   kill: { ratePerS: L.killBucket.ratePerS, burst: L.killBucket.burst },
   maxOrgs: MAX_PLATFORM_ORGS,

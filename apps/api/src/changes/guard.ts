@@ -16,8 +16,9 @@
 //   token of a global link-read budget sized for D1 (50 reads/s, burst 100), both before the token is read. Nothing
 //   limits a cancel after that: one whose token verifies on a pending change always runs (D229).
 // The member, kill and link buckets and the breaker live on one RateLimiter object (`console-rpc`), so a member call is
-// admitted or refused in one step. The first breaker refusal of a limit in a clock hour writes a `breaker` security
-// event (the object remembers it, so later refusals cost no write). AdminRpc is neither counted nor charged.
+// admitted or refused in one step. The platform API's admission is on the same object but on buckets of its own: the
+// two surfaces never share a bucket (D938). The first breaker refusal of a limit in a clock hour writes a `breaker`
+// security event (the object remembers it, so later refusals cost no write). AdminRpc is neither counted nor charged.
 import { base58, sha256, utf8 } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { ipSubject } from '../ip.ts';
@@ -30,7 +31,7 @@ export const HOUR_MS = 60 * 60 * 1000;
 export const CONSOLE_LIMITS = {
   /** Each org's ordinary calls: 10 statements/s, burst 40. */
   perOrg: { ratePerS: 10, burst: 40 },
-  /** Every org's ordinary calls together (the spec's budget): 30 statements/s, burst 60. */
+  /** Every org's ordinary calls together (the spec's budget): 30 statements/s, burst 60; no platform call touches it (D938). */
   global: { ratePerS: 30, burst: 60 },
   /** Emailed-link cancels' token reads together (one D1 read each): 50 a second, burst 100. */
   linkRead: { ratePerS: 50, burst: 100 },

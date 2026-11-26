@@ -25,6 +25,8 @@ export const APP_CHANGE_KINDS = [
   'origin.activated',
   'origin.proposed',
   'origin.removed',
+  // D934: web addresses set to work only inside the app's other web addresses (a tightening, at once).
+  'origin.frame_only',
   // D931: web addresses a second person confirmed (one row per confirmation, listing them).
   'origin.confirmed',
   'policy.activated',
@@ -105,6 +107,7 @@ export const ACTION_TITLES: Readonly<Record<string, string>> = {
   'origin.confirmed': 'Web addresses confirmed',
   'origin.activated': 'Web address working',
   'origin.removed': 'Web address removed',
+  'origin.frame_only': 'Web address set to work only inside your other pages',
   'origins.removed': 'Web addresses removed',
   'origin.link_remove': 'Web address removed from an emailed link',
   'policy.proposed': 'Policy proposed',

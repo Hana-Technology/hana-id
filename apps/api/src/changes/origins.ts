@@ -3,7 +3,7 @@
 // the full delay and the blocking notice, never a waiver, refused for `appChangeDelayMs` after a scope assignment) and
 // member proposals (ConsoleRpc.changeOrigins: the API-verified step-up, changes/step-up.ts; removes sent with them
 // apply at once in the same batch).
-import { type Environment, MAX_APP_ORIGINS, newId, nonceOf, normaliseOrigin, OriginError, originChangeDigest, originProblem, personEmailKey } from '@hana-id/console-core';
+import { type Environment, LOCALHOST_WILDCARD, MAX_APP_ORIGINS, newId, nonceOf, normaliseOrigin, OriginError, originChangeDigest, originProblem, personEmailKey } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { changeConfig, platformMinDelayMs } from '../guarded/config.ts';
 import { expectVersion, planApp } from './apps.ts';
@@ -25,6 +25,60 @@ export function normaliseAll(input: readonly string[]): string[] {
     }
   }
   return [...out].sort();
+}
+
+/**
+ * D934: the stored form of each web address marked frame-only, which must each be one of `add` (already normalised);
+ * `bad_request` otherwise, or for the localhost wildcard (a pattern, never a page's address). Sorted.
+ */
+export function normaliseFrameOnly(add: readonly string[], input: readonly string[] | undefined): string[] {
+  const frameOnly = normaliseAll(input ?? []);
+  const stray = frameOnly.filter((o) => !add.includes(o));
+  if (stray.length) refuse('bad_request', `Marked frame-only but not added: ${stray.join(', ')}`);
+  if (frameOnly.includes(LOCALHOST_WILDCARD)) refuse('bad_request', `${LOCALHOST_WILDCARD} can't be frame-only: it is a pattern, not a page's web address`);
+  return frameOnly;
+}
+
+/**
+ * D934: the JSON list a proposal's batch inserts from: each change's id (under `idField`) and web address, and
+ * `frameOnly: true` for one the app may use only inside its other web addresses (never `false`: the ledger's detail
+ * then reads as before for every other add).
+ */
+export function changeList<K extends 'id' | 'changeId'>(add: readonly string[], frameOnly: readonly string[], idField: K): ({ origin: string; frameOnly?: true } & Record<K, string>)[] {
+  return add.map((origin) => ({ [idField]: newId('guardedChange'), origin, ...(frameOnly.includes(origin) ? { frameOnly: true as const } : {}) }) as { origin: string; frameOnly?: true } & Record<K, string>);
+}
+
+/** The gate rows of a proposal's changes (`list`, changeList's JSON): each waiting, frame-only as marked. */
+export function gateRows(w: Writer, appId: string, list: string, idField: 'id' | 'changeId'): Q {
+  return q`INSERT INTO app_origins (app_id, origin, active_from, change_id, frame_only)
+    SELECT ${appId}, json_extract(value, '$.origin'), NULL, json_extract(value, ${`$.${idField}`}), CASE WHEN json_extract(value, '$.frameOnly') = 1 THEN 1 ELSE 0 END
+      FROM json_each(${list}) WHERE ${committed(w.requestId)}`;
+}
+
+/**
+ * D934 (ConsoleRpc and AdminRpc `frameOnlyOrigins`): web addresses of the app set to work only inside its other web
+ * addresses, at once (a tightening: a page that used one on its own stops at its next load), one origins_version
+ * bump and one `origin.frame_only` ledger row. Each must be a row of the app (in force or waiting), not the localhost
+ * wildcard, and not frame-only already. Never the other way: migration 0035 refuses clearing the flag in place.
+ */
+export async function frameOnlyOrigins(db: HotDb, w: Writer, i: { orgId: string | null; appId: string; origins: readonly string[]; expectedVersion: number }): Promise<{ version: number }> {
+  expectReplay(w, ['origin.frame_only']);
+  const list = normaliseAll(i.origins);
+  if (list.includes(LOCALHOST_WILDCARD)) refuse('bad_request', `${LOCALHOST_WILDCARD} can't be frame-only: it is a pattern, not a page's web address`);
+  const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { origins: true } });
+  expectVersion(plan.app.origins_version, i.expectedVersion);
+  const rows = new Map(plan.origins.map((o) => [o.origin, o]));
+  const unknown = list.filter((o) => !rows.has(o));
+  if (unknown.length) refuse('bad_request', `Not an origin of this app: ${unknown.join(', ')}`);
+  const already = list.filter((o) => rows.get(o)!.frame_only === 1);
+  if (already.length) refuse('conflict', `Already frame-only: ${already.join(', ')}`);
+  const json = JSON.stringify(list);
+  await runWrite(db, w, [
+    commitOnApp(w, { kind: 'origin.frame_only', detail: { origins: list.map((o) => ({ origin: o, wasInForce: (rows.get(o)!.active_from ?? null) !== null && rows.get(o)!.active_from! <= w.now })) } }, i.appId, i.orgId, q`a.origins_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
+    q`UPDATE apps SET origins_version = origins_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
+    q`UPDATE app_origins SET frame_only = 1 WHERE app_id = ${i.appId} AND origin IN (SELECT value FROM json_each(${json})) AND ${committed(w.requestId)}`,
+  ]);
+  return { version: i.expectedVersion + 1 };
 }
 
 /** The guarded-change configuration, or `internal` (spec "Topology and config": a missing or out-of-range delay refuses every guarded change). */
@@ -71,7 +125,7 @@ export async function removeOrigins(db: HotDb, w: Writer, i: { orgId: string | n
  * AdminRpc.addOrigins: each origin a staff proposal (a pending origin_add, an `app_origins` row with `active_from` NULL
  * that never matches until the notice is acked and the delay passes), one origins_version bump. Never a waiver.
  */
-export async function addOrigins(db: HotDb, env: Env, w: Writer, i: { orgId: string; appId: string; add: readonly string[]; expectedVersion: number }) {
+export async function addOrigins(db: HotDb, env: Env, w: Writer, i: { orgId: string; appId: string; add: readonly string[]; frameOnly?: readonly string[]; expectedVersion: number }) {
   const { changes } = await proposeOrigins(db, env, w, { ...i, remove: [] }, null);
   return { changes };
 }
@@ -86,7 +140,7 @@ export async function changeOrigins(
   db: HotDb,
   env: Env,
   w: Writer,
-  i: { orgId: string; appId: string; add: readonly string[]; remove: readonly string[]; expectedVersion: number; stepUpJwt: string },
+  i: { orgId: string; appId: string; add: readonly string[]; remove: readonly string[]; frameOnly?: readonly string[]; expectedVersion: number; stepUpJwt: string },
 ) {
   const token = await verifyStepUpToken(env, i.stepUpJwt, w.actor, w.now);
   return proposeOrigins(db, env, w, i, token);
@@ -106,7 +160,7 @@ export async function platformProposeOrigins(
   db: HotDb,
   env: Env,
   w: Writer,
-  i: { orgId: string; appId: string; add: readonly string[]; expectedVersion: number; minDelayMs: number; waitingMax: number },
+  i: { orgId: string; appId: string; add: readonly string[]; frameOnly?: readonly string[]; expectedVersion: number; minDelayMs: number; waitingMax: number },
 ) {
   if (!w.reach || (w.actor.kind as string) !== 'platform') return refuse('forbidden', 'Only the platform proposes this way');
   return proposeOrigins(db, env, w, { ...i, remove: [] }, null, { minDelayMs: i.minDelayMs, waitingMax: i.waitingMax });
@@ -150,7 +204,7 @@ async function proposeOrigins(
   db: HotDb,
   env: Env,
   w: Writer,
-  i: { orgId: string; appId: string; add: readonly string[]; remove: readonly string[]; expectedVersion: number },
+  i: { orgId: string; appId: string; add: readonly string[]; remove: readonly string[]; frameOnly?: readonly string[]; expectedVersion: number },
   token: StepUpToken | null,
   platform?: { minDelayMs: number; waitingMax: number },
 ): Promise<{ version: number; changes: ReturnType<typeof changeView>[] }> {
@@ -158,6 +212,7 @@ async function proposeOrigins(
   const config = requireChangeConfig(env);
   const add = normaliseAll(i.add);
   const remove = normaliseAll(i.remove);
+  const frameOnly = normaliseFrameOnly(add, i.frameOnly);
   const both = add.filter((o) => remove.includes(o));
   if (both.length) refuse('bad_request', `Both added and removed: ${both.join(', ')}`);
   const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, with: { origins: true, changes: true, ...(platform ? { platformWaiting: i.orgId } : {}) } });
@@ -188,7 +243,7 @@ async function proposeOrigins(
   if (token) {
     // Steps 4–6 of the API verification, after the version check and every input and state check (a refusal before
     // the reservation leaves the token unused).
-    const expectedNonce = nonceOf(await originChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: i.appId, add, remove, originsVersion: plan.app.origins_version }));
+    const expectedNonce = nonceOf(await originChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: i.appId, add, remove, frameOnly, originsVersion: plan.app.origins_version }));
     await confirmStepUp(env, token, { expectedNonce, scopeId: plan.app.scope_id });
     w.sub = token.sub;
   }
@@ -202,11 +257,11 @@ async function proposeOrigins(
     ? q` AND (SELECT COUNT(*) FROM guarded_changes wg WHERE wg.kind = 'origin_add' AND wg.proposed_by_kind = 'platform' AND wg.status = 'pending'
                 AND (wg.active_from IS NULL OR wg.active_from > ${w.now}) AND wg.app_id IN (SELECT id FROM apps WHERE org_id = ${i.orgId})) + ${add.length} <= ${platform.waitingMax}`
     : raw('');
-  const changes = add.map((origin) => ({ id: newId('guardedChange'), origin }));
+  const changes = changeList(add, frameOnly, 'id');
   const list = JSON.stringify(changes);
   const origins = JSON.stringify(add);
   const removed = JSON.stringify(remove);
-  const detail: Record<string, unknown> = { changes: changes.map((c) => ({ changeId: c.id, origin: c.origin })) };
+  const detail: Record<string, unknown> = { changes: changes.map((c) => ({ changeId: c.id, origin: c.origin, ...(c.frameOnly ? { frameOnly: true } : {}) })) };
   if (remove.length) detail.removed = remove.map((o) => ({ origin: o, wasInForce: (rows.get(o)?.active_from ?? null) !== null && rows.get(o)!.active_from! <= w.now }));
   const stmts: Q[] = [
     commitOnApp(
@@ -239,8 +294,7 @@ async function proposeOrigins(
     q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_id)
       SELECT json_extract(value, '$.id'), ${i.appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', ${by.kind}, ${by.id}, ${by.sub}, ${w.now}, ${w.requestId}
         FROM json_each(${list}) WHERE ${committed(w.requestId)}`,
-    q`INSERT INTO app_origins (app_id, origin, active_from, change_id)
-      SELECT ${i.appId}, json_extract(value, '$.origin'), NULL, json_extract(value, '$.id') FROM json_each(${list}) WHERE ${committed(w.requestId)}`,
+    gateRows(w, i.appId, list, 'id'),
   );
   try {
     await runWrite(db, w, stmts);
@@ -269,6 +323,7 @@ async function proposeOrigins(
     cancelled_by: null,
     cancelled_at: null,
     request_id: w.requestId,
+    frame_only: c.frameOnly ? 1 : 0,
   }));
   return { version: i.expectedVersion + 1, changes: proposed.map(changeView) };
 }

@@ -41,6 +41,7 @@ import {
   newRequestId,
   type OtherApps,
   parseWindowMessage,
+  type FrameSite,
 } from '@hana-id/core';
 import type { MainnetDemoPriceBook } from '@hana-id/core/mainnet-demo-prices';
 import type { AutoApprovePolicyV1 } from '@hana-id/core/policy';
@@ -165,6 +166,8 @@ export interface ApprovalDeps {
   /** "Stop sharing" was clicked: revoke every address of this app and account; resolves whether it worked. */
   onEmailRevoke?(): Promise<boolean>;
   parentOrigin: string;
+  /** P11 (D934): where the page asking sits (frame.ts), only when it is framed: every window message carries it. */
+  frame?: FrameSite;
   /** A pk_test_ app: every request and consent screen says Hana signs only for test networks (D39). */
   testApp?: boolean;
   /** Whether that test app has the mainnet demo on, as last read: the popup's note then says what the demo allows. */
@@ -564,6 +567,7 @@ export class Approvals {
       id: item.id,
       appName: this.d.appName,
       parentOrigin: this.d.parentOrigin,
+      ...(this.d.frame ? { frame: this.d.frame } : {}),
       position,
       queued,
       ...(this.d.testApp ? { testApp: true } : {}),

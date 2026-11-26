@@ -36,10 +36,18 @@ export interface ChangeRow {
   /** D931 (an app's read only): its confirmation, when a second person confirmed it. */
   confirmed_at?: number | null;
   confirmed_by_kind?: 'member' | 'hana' | null;
+  /** D934: an origin add's gate row is frame-only (FRAME_ONLY_OF); absent in a plan read. */
+  frame_only?: number | null;
 }
 
 export const CHANGE_COLUMNS =
   'id, app_id, kind, origin, policy_json, policy_id, status, proposed_by_kind, proposed_by, proposer_sub, proposed_at, request_country, waiver, notified_at, active_from, expedited_by, cancelled_by, cancelled_at, request_id';
+
+/**
+ * D934: whether an origin add's web address is frame-only, from its gate row (migration 0035), as `frame_only` (NULL
+ * when the row is gone: cancelled, removed). `g` is the guarded_changes alias.
+ */
+export const FRAME_ONLY_OF = (g: string): string => `(SELECT ao.frame_only FROM app_origins ao WHERE ao.app_id = ${g}.app_id AND ao.change_id = ${g}.id) AS frame_only`;
 
 /** The same columns as a JSON object, for plan reads that aggregate an app's changes into one value. */
 export const CHANGE_JSON = (alias: string): string =>
@@ -66,6 +74,7 @@ export function changeView(r: ChangeRow, now?: number): GuardedChange {
     activeFrom: r.active_from,
   };
   if (r.origin !== null) Object.assign(v, originDisplay(r.origin));
+  if (r.kind === 'origin_add' && r.frame_only === 1) v.frameOnly = true;
   if (r.policy_id !== null) v.policyId = r.policy_id;
   if (r.request_country !== null) v.requestCountry = r.request_country;
   if (r.waiver !== null) v.waiver = r.waiver;

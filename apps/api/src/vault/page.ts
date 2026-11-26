@@ -1,11 +1,12 @@
 // The vault page, `GET {VAULT_ORIGIN}/vault?pk=<publishable key>` (docs/batch-b-spec.md "Origins and pages"): the
 // hidden iframe that holds the keys. The HTML is rendered per request so it can inline the app's D1 config (no chain
-// RPC, so a reload unlocks with one API call) and set `frame-ancestors` to the app's origins. Its script is a static
+// RPC, so a reload unlocks with one API call) and set `frame-ancestors` to the app's origins (frame-only ones included:
+// they are ancestors by definition; the vault itself refuses one at the top, D934). Its script is a static
 // asset from @hana-id/web, loaded with `'self'`; until that bundle is built the script path simply 404s.
 import { type App, PUBLISHABLE_KEY_RE, appSuspended, getAppByKey } from '../apps.ts';
 import type { Env } from '../env.ts';
 import { log } from '../log.ts';
-import { MAX_APP_ORIGINS, servedOrigins } from './origins.ts';
+import { MAX_APP_ORIGINS, servedFrameOnly, servedOrigins } from './origins.ts';
 import { mainnetDemoOn } from '../mainnet-demo-setting.ts';
 import { type AppSettings, effectiveSettings, getSettingsRow } from './settings.ts';
 
@@ -24,6 +25,11 @@ export interface VaultConfig {
   appName: string;
   scopeId: string;
   origins: string[];
+  /**
+   * D934: those of `origins` the app may use only inside a frame; present only when there is one, so every other app's
+   * page inlines exactly the config older vault bundles take (a bundle refuses an unknown key).
+   */
+  frameOnly?: string[];
   /** `mainnetDemo: true` only for an app with the demo on, in a dev testnet env (D428); absent otherwise. */
   settings: AppSettings & { mainnetDemo?: true };
   publishableKey: string;
@@ -162,12 +168,14 @@ export async function handleVaultPage(request: Request, env: Env, requestId: str
   const origins = servedOrigins(env.ENV_NAME, app);
   // The admin CLI refuses more; an app over the cap is refused rather than served a partial list.
   if (origins.length > MAX_APP_ORIGINS) return errorPage(403, requestId, app.id, 'too_many_origins', head);
+  const frameOnly = servedFrameOnly(env.ENV_NAME, app);
   const config: VaultConfig = {
     v: 1,
     appId: app.id,
     appName: app.name,
     scopeId: app.scope_id,
     origins,
+    ...(frameOnly.length > 0 ? { frameOnly } : {}),
     settings: mainnetDemo ? { ...settings, mainnetDemo: true } : settings,
     publishableKey: app.publishable_key,
     serverTimeMs: Date.now(),

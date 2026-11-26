@@ -98,11 +98,13 @@ import {
   toHex,
   vaultPayload,
   walletRecordEvmDigest,
+  type FrameSite,
 } from '@hana-id/core';
 import { chainAddress, deriveAddresses } from '@hana-id/core/derivation';
 import { consentRegisterPayload, consentRevokePayload } from '@hana-id/core/home';
 import { type AutoApproveResult, matchAutoApprovePolicy, recordAutoApproveUse } from '@hana-id/core/policy';
 import type { HanaEnv } from '../hana-env.ts';
+import { frameRuleAllows, frameSiteOf } from './frame.ts';
 import { type ConsentProof, VaultApi } from './api.ts';
 import { SHARE_LAUNCHER_HELLO_MS, type ConsentSigner, type SheetOutcome, ShareSheet, consentProof } from './email-share.ts';
 import { type CachedIdentity, cacheUsable, copyProofs, demoEventBody, makeWalletProofs, mintBody, tokenIatMs } from './identity.ts';
@@ -215,6 +217,11 @@ export interface VaultHost {
    * nested framing is then refused by the CSP `frame-ancestors` alone).
    */
   ancestorOrigins?(): readonly string[] | undefined;
+  /**
+   * D934: whether the parent is the top-level page (`window.parent === window.top`, readable across origins in every
+   * browser; true when it can't be read). Absent: true (a host that can't tell is treated as top-level).
+   */
+  parentIsTop?(): boolean;
   /** Subscribes to the vault window's `message` events. */
   onMessage(listener: (e: WindowMessageEvent) => void): void;
   /** window.open from the vault's browsing context (inside a launcher click). */
@@ -598,6 +605,8 @@ export class Vault {
   private readonly bundleCkdKeyHash: Uint8Array;
 
   private parentOrigin: string | null = null;
+  /** D934 (P11): where the parent sits, as checked at the hello (frame.ts); undefined while top-level or before it. */
+  private frame: FrameSite | undefined;
   /**
    * Whether the SDK on the port takes `supportId` in hana_status, hana_login and `ready` (its hello's `sdk` is
    * SUPPORT_ID_SDK_MIN or later): an older SDK's validators refuse a key they don't know, so it gets the old shapes.
@@ -775,6 +784,15 @@ export class Vault {
     this.approvals?.handleMessage(e);
   }
 
+  /** D934: the host's answer, top-level when it has none or it throws (the stricter reading for a frame-only parent). */
+  private parentIsTop(): boolean {
+    try {
+      return this.host.parentIsTop?.() ?? true;
+    } catch {
+      return true;
+    }
+  }
+
   private tryHello(e: WindowMessageEvent): void {
     const hello = parseWindowMessage(e.data, ['hana:hello']);
     if (!hello) return;
@@ -786,6 +804,12 @@ export class Vault {
     // another site is refused here too, on top of the CSP's frame-ancestors (which checks every ancestor as well).
     const ancestors = this.host.ancestorOrigins?.();
     if (ancestors !== undefined && !ancestors.every((o) => parentAllowed(this.config, o, this.env.devEnv))) return;
+    // D934 (P12): a web address the app may use only inside a frame is never the top-level page; the same silence
+    // as every other refusal here (nothing tells the page which rule refused it, or which addresses the app has).
+    const facts = { parentOrigin: e.origin, parentIsTop: this.parentIsTop(), ancestors };
+    if (!frameRuleAllows(this.config, facts)) return;
+    // D934 (P11): where the page sits, for the windows.
+    this.frame = frameSiteOf(this.config, facts);
     const port = e.ports[0]!;
     this.helloAt = this.perfNow();
     this.parentOrigin = e.origin;
@@ -814,6 +838,7 @@ export class Vault {
       emailShared: () => (this.live()?.emailState ?? this.liveDormant()?.emailState) === 'granted',
       onEmailRevoke: () => this.revokeEmailSharing(),
       parentOrigin: e.origin,
+      ...(this.frame ? { frame: this.frame } : {}),
       open: (url, name, features) => this.host.open(url, name, features),
       launcher: this.launcher,
       timers: this.timers,
@@ -1739,6 +1764,7 @@ export class Vault {
       env: this.env,
       config: this.config,
       parentOrigin: this.parentOrigin!,
+      ...(this.frame ? { frame: this.frame } : {}),
       persistence: this.persistence,
       api: this.api!,
       near: this.near!,
@@ -2987,6 +3013,7 @@ export class Vault {
       pk: this.config.publishableKey,
       appName: this.config.appName,
       parentOrigin: signer.parentOrigin,
+      ...(this.frame ? { frame: this.frame } : {}),
       logoUrl: this.logoUrl,
       ownGoogleClient,
       state,
@@ -3919,6 +3946,7 @@ export class Vault {
         pk: this.config.publishableKey,
         appName: this.config.appName,
         parentOrigin: this.parentOrigin!,
+        ...(this.frame ? { frame: this.frame } : {}),
         scopeId: this.config.scopeId,
         signer: this.env.signer,
         keyIndex: 0,

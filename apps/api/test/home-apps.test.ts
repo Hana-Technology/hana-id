@@ -480,6 +480,13 @@ describe('GET /v1/home/apps: the list and the overlay', () => {
     expect(entry?.apps[0]).toMatchObject({ origins: ['https://a.example.com'], logoUrl: 'https://files.test/logos/x.png' });
   });
 
+  it('D934: a web address the app may use only inside a frame (a widget’s) is never listed: Home names pages to open', async () => {
+    const app = await seedApp({ origins: ['https://partner.example.com'] });
+    await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, frame_only) VALUES (?1, ?2, 0, 1)').bind(app.id, 'https://a-widget.example.com').run();
+    const entry = await one(await newIdentity(), app.scope);
+    expect(entry?.apps[0]?.origins).toEqual(['https://partner.example.com']);
+  });
+
   it('a partner-controlled name is returned as data, unchanged', async () => {
     const app = await seedApp();
     const name = `<img src=x onerror=alert(1)> "'${uid()}`;

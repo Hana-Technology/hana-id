@@ -175,8 +175,8 @@ describe('POST /v1/platform/apps (A4.4)', () => {
       suspended: { byJournear: false, byOrganisation: false, byYou: false, youCanResume: false },
       originsVersion: 1,
       origins: [
-        { origin: 'https://acme.example', display: 'https://acme.example', idn: false, state: 'waiting_announcement', activeFrom: null, confirmedAt: null, changeId: expect.stringMatching(/^gc_/u) },
-        { origin: 'https://widget.network.example', display: 'https://widget.network.example', idn: false, state: 'waiting_announcement', activeFrom: null, confirmedAt: null, changeId: expect.stringMatching(/^gc_/u) },
+        { origin: 'https://acme.example', display: 'https://acme.example', idn: false, state: 'waiting_announcement', activeFrom: null, confirmedAt: null, changeId: expect.stringMatching(/^gc_/u), frameOnly: false },
+        { origin: 'https://widget.network.example', display: 'https://widget.network.example', idn: false, state: 'waiting_announcement', activeFrom: null, confirmedAt: null, changeId: expect.stringMatching(/^gc_/u), frameOnly: false },
       ],
       keys: [{ id: expect.stringMatching(/^key_/u), key: r.body.publishableKey, createdAt: now, revokedAt: null }],
     });
@@ -325,6 +325,47 @@ describe('POST /v1/platform/apps (A4.4)', () => {
     expect([more.status, more.body.code]).toEqual([409, 'conflict']);
   });
 
+  it('D934: the widget’s web address marked `frameOnly: true` in a create and a proposal; a string or `false` is usable anywhere; a retry answers the same', async () => {
+    const net = await network();
+    const widget = 'https://widget.network.example';
+    const idk = `create-frame-${newId('app').slice(4, 12)}`;
+    const body = { scopeId: net.s1, name: `Frames ${newId('app').slice(4, 10)}`, origins: ['https://acme.example', { origin: widget, frameOnly: true }, { origin: 'https://b.example', frameOnly: false }] };
+    const r = await create(net.k, body, { idempotencyKey: idk });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const app = r.body.app as { id: string; originsVersion: number; origins: { origin: string; frameOnly: boolean }[] };
+    expect(app.origins.map((o) => [o.origin, o.frameOnly])).toEqual([
+      ['https://acme.example', false],
+      ['https://b.example', false],
+      [widget, true],
+    ]);
+    expect((r.body.changes as { origin: string; frameOnly?: true }[]).map((c) => [c.origin, c.frameOnly ?? false])).toEqual([
+      ['https://acme.example', false],
+      ['https://b.example', false],
+      [widget, true],
+    ]);
+    expect(await rows('SELECT origin, frame_only FROM app_origins WHERE app_id = ?1 ORDER BY origin', app.id)).toEqual([
+      { origin: 'https://acme.example', frame_only: 0 },
+      { origin: 'https://b.example', frame_only: 0 },
+      { origin: widget, frame_only: 1 },
+    ]);
+    const replay = await create(net.k, body, { idempotencyKey: idk });
+    expect(replay.body.changes).toEqual(r.body.changes);
+    // A proposal: the same entries.
+    const p = await post(net.k, `/v1/platform/apps/${app.id}/origins`, { add: [{ origin: 'https://w2.network.example', frameOnly: true }, 'https://c.example'], expectedVersion: app.originsVersion });
+    expect(p.status, JSON.stringify(p.body)).toBe(202);
+    expect((p.body.changes as { origin: string; frameOnly?: true }[]).map((c) => [c.origin, c.frameOnly ?? false])).toEqual([
+      ['https://c.example', false],
+      ['https://w2.network.example', true],
+    ]);
+    const view = await get(net.k, `/v1/platform/apps/${app.id}`);
+    expect(((view.body.app as { origins: { origin: string; frameOnly: boolean }[] }).origins).filter((o) => o.frameOnly).map((o) => o.origin)).toEqual(['https://w2.network.example', widget]);
+    // A malformed entry (another field, a non-boolean) is `bad_request`, nothing written.
+    for (const bad of [{ origin: 'https://d.example', frameOnly: 'yes' }, { origin: 'https://d.example', frameOnly: true, extra: 1 }, { frameOnly: true }]) {
+      expect((await post(net.k, `/v1/platform/apps/${app.id}/origins`, { add: [bad], expectedVersion: app.originsVersion + 1 })).body.code).toBe('bad_request');
+    }
+    expect(await rows("SELECT 1 FROM app_origins WHERE app_id = ?1 AND origin = 'https://d.example'", app.id)).toEqual([]);
+  });
+
   it('web addresses on a scope given to the org only just now wait: `conflict`; with no web address the app is created', async () => {
     const net = await network();
     await env.DB.prepare('UPDATE scopes SET assigned_at = ?2 WHERE scope_id = ?1').bind(net.s1, Date.now() + 30 * DAY).run();
@@ -377,7 +418,7 @@ describe('GET /v1/platform/apps and /v1/platform/apps/:appId (A8)', () => {
     const app = r.body.app as Record<string, unknown>;
     expect(Object.keys(app).sort()).toEqual(['createdAt', 'createdBy', 'environment', 'id', 'keys', 'name', 'origins', 'originsVersion', 'scopeId', 'suspended', 'userIds']);
     expect(JSON.stringify(r.body)).not.toMatch(/policy|rawSign|mainnet|label|googleWebClient|proposer|sub"|email|settings/iu);
-    expect(Object.keys((app.origins as Record<string, unknown>[])[0]!).sort()).toEqual(['activeFrom', 'changeId', 'confirmedAt', 'display', 'idn', 'origin', 'state']);
+    expect(Object.keys((app.origins as Record<string, unknown>[])[0]!).sort()).toEqual(['activeFrom', 'changeId', 'confirmedAt', 'display', 'frameOnly', 'idn', 'origin', 'state']);
     expect(Object.keys((app.keys as Record<string, unknown>[])[0]!).sort()).toEqual(['createdAt', 'id', 'key', 'revokedAt']);
   });
 
@@ -1187,6 +1228,8 @@ const OPS_IMPORTS: Record<string, string[]> = {
     'platformRemoveOriginsBody',
     'scopeIdInput',
     'sha256',
+    // D934: the per-address `frameOnly` entries, split into the web addresses and those marked.
+    'splitOriginEntries',
     'utf8',
   ],
   '../env.ts': ['Env'],
@@ -1202,7 +1245,8 @@ const OPS_IMPORTS: Record<string, string[]> = {
   // origin writers (the platform's proposal with the live rules and the wait; the immediate removal), suspension.
   '../changes/keys.ts': ['createKey', 'revokeKey'],
   '../changes/lifecycle.ts': ['cancelChange'],
-  '../changes/origins.ts': ['checkOriginRules', 'normaliseAll', 'platformProposeOrigins', 'platformWaits', 'removeOrigins', 'requireChangeConfig'],
+  // D934: the frame-only marks, checked against the adds, and the change list and gate rows that carry them.
+  '../changes/origins.ts': ['changeList', 'checkOriginRules', 'gateRows', 'normaliseAll', 'normaliseFrameOnly', 'platformProposeOrigins', 'platformWaits', 'removeOrigins', 'requireChangeConfig'],
   // The app name rule only (never the settings writers).
   '../changes/settings.ts': ['appName'],
   '../changes/sql.ts': ['Q', 'q', 'raw'],

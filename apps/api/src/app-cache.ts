@@ -34,7 +34,7 @@ export async function getAppByKeyCached(db: D1Database, publishableKey: string, 
   entries.delete(publishableKey);
   const app = await getAppByKey(db, publishableKey);
   if (!app) return null;
-  const frozen: App = Object.freeze({ ...app, origins: Object.freeze([...app.origins]) as string[] });
+  const frozen: App = Object.freeze({ ...app, origins: Object.freeze([...app.origins]) as string[], frameOnlyOrigins: Object.freeze([...app.frameOnlyOrigins]) as string[] });
   if (entries.size >= APP_CACHE_MAX) entries.delete(entries.keys().next().value as string);
   // Stamped with the time the read started: the entry never outlives TTL from what D1 could have answered.
   entries.set(publishableKey, { app: frozen, at: t });

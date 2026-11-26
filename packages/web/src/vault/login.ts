@@ -130,6 +130,7 @@ import {
   verifyEmailIdToken,
   verifyGoogleIdToken,
   zero,
+  type FrameSite,
 } from '@hana-id/core';
 import { type WalletAddresses, deriveWalletAddresses, extractPrk } from '@hana-id/core/derivation';
 import type { HanaEnv } from '../hana-env.ts';
@@ -277,6 +278,8 @@ export interface LoginContext {
   appRtt?(app: AppConfig): number | undefined;
   /** D912: what the vault knows of the other apps that use the wallet (its latest read, or its kept answer), or 'unknown'. */
   otherApps?(): OtherApps | 'unknown';
+  /** P11 (D934): where the page asking sits, as the vault checked it at the hello (frame.ts); absent: top-level. */
+  frame?: FrameSite;
   /** window.parent (partner mode authenticates the popup by its opener). */
   parentWindow: unknown;
   progress(stage: LoginStage): void;
@@ -424,6 +427,8 @@ type AuthParams = {
   otherApps?: OtherApps;
   /** D912: no answer at all about the other apps (other-apps.ts `windowOtherApps`). */
   otherAppsUnknown?: true;
+  /** P11 (D934): where the page asking sits (frame.ts `frameSiteOf`), only when it is framed. */
+  frame?: FrameSite;
 };
 
 const fail = (code: ConstructorParameters<typeof VaultError>[0], message: string, data?: Record<string, unknown>) => new VaultError(code, message, data);
@@ -922,6 +927,7 @@ export class PendingLogin extends PopupTask<LoginSuccess> {
         ...logoOf(env, config.appId, app),
         ...windowOtherApps(readServedOtherApps(app.otherApps) ?? ctx.otherApps?.() ?? null),
         parentOrigin: ctx.parentOrigin,
+        ...(ctx.frame ? { frame: ctx.frame } : {}),
         scopeId: config.scopeId,
         signer: env.signer,
         clientId: app.google.clientId,
@@ -1750,6 +1756,7 @@ export class PendingLink extends PopupTask<MadeLink> {
         ...logoOf(env, config.appId, app),
         ...windowOtherApps(readServedOtherApps(app.otherApps) ?? ctx.otherApps?.() ?? null),
         parentOrigin: ctx.parentOrigin,
+        ...(ctx.frame ? { frame: ctx.frame } : {}),
         scopeId,
         signer: env.signer,
         clientId: app.google.clientId,

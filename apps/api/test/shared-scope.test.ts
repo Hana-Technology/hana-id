@@ -449,7 +449,14 @@ describe('fail closed on unexpected values', () => {
     const app = await orgApp();
     await env.DB.prepare('UPDATE apps SET auto_approve_policy = ?2 WHERE id = ?1').bind(app.id, JSON.stringify(autoApprovePolicy('orphan'))).run();
     // Only possible with the backstops gone: the row deleted behind every check (the app's own triggers don't fire on it).
-    await env.DB.prepare('DELETE FROM scopes WHERE scope_id = ?1').bind(app.scope).run();
+    // 0034's scopes_no_delete_with_apps is one of those backstops: dropped for this bare write, then put back.
+    const trigger = (await env.DB.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'scopes_no_delete_with_apps'").first<{ sql: string }>())!.sql;
+    await env.DB.prepare('DROP TRIGGER scopes_no_delete_with_apps').run();
+    try {
+      await env.DB.prepare('DELETE FROM scopes WHERE scope_id = ?1').bind(app.scope).run();
+    } finally {
+      await env.DB.prepare(trigger).run();
+    }
     await detectDrift(env);
     expect((await drifts(app.id)).filter((d) => d.what === 'shared_wallet_policy').map((d) => d.source)).toEqual(['policy']);
   });

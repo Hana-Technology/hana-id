@@ -31,6 +31,11 @@ export interface ChangeRow {
   cancelled_by: string | null;
   cancelled_at: number | null;
   request_id: string;
+  /** D931 (an app's read only: getApp): a staff proposal under four eyes (it has a `staff_origin_waits` row). */
+  second_person?: number | null;
+  /** D931 (an app's read only): its confirmation, when a second person confirmed it. */
+  confirmed_at?: number | null;
+  confirmed_by_kind?: 'member' | 'hana' | null;
 }
 
 export const CHANGE_COLUMNS =
@@ -68,6 +73,13 @@ export function changeView(r: ChangeRow, now?: number): GuardedChange {
   if (r.expedited_by !== null) v.expeditedBy = r.expedited_by;
   if (r.cancelled_by !== null) v.cancelledBy = r.cancelled_by;
   if (r.cancelled_at !== null) v.cancelledAt = r.cancelled_at;
+  // D931: what the confirmation screens need: one request's web addresses are confirmed together.
+  if (r.second_person === 1) v.secondPerson = true;
+  if (r.proposed_by_kind === 'platform' || r.second_person === 1) v.requestId = r.request_id;
+  if (r.confirmed_at !== undefined && r.confirmed_at !== null) {
+    v.confirmedAt = r.confirmed_at;
+    if (r.confirmed_by_kind) v.confirmedByKind = r.confirmed_by_kind;
+  }
   return v;
 }
 

@@ -144,6 +144,15 @@ describe('audit details', () => {
           "requiredHd",
         ],
         "org.unfrozen": [],
+        "origin.confirmed": [
+          "code",
+          "confirmed",
+          "requestId",
+        ],
+        "origin.link_remove": [
+          "code",
+          "changeId",
+        ],
         "origin.proposed": [
           "code",
           "version",

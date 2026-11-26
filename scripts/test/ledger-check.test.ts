@@ -10,7 +10,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { APP_CHANGE_KINDS, SECURITY_EVENT_KINDS } from '@hana-id/console-core';
 import { describe, expect, it } from 'vitest';
 import { CliError } from '../lib/cli.ts';
-import { type Checkout, type FeedState, type LedgerCheckDeps, type LedgerSnapshot, FEED_CURSOR_KEYS, VERDICT_EXIT, KIND_TRIGGERS, LEDGER_TABLES, SECURITY_EVENT_KINDS_AT_0021, SECURITY_EVENT_KIND_STEPS, compareSnapshots, expectedTableSql, ledgerCheck, lifecycleProblem, pageSql, referenceSchema, securityEventsLevel, takeSnapshot } from '../lib/ledger-check.ts';
+import { type Checkout, type FeedState, type LedgerCheckDeps, type LedgerSnapshot, FEED_CURSOR_KEYS, VERDICT_EXIT, KIND_TRIGGERS, LEDGER_TABLES, SECURITY_EVENT_KINDS_AT_0021, SECURITY_EVENT_KIND_STEPS, compareSnapshots, expectedTableSql, ledgerCheck, levelOf, lifecycleProblem, pageSql, referenceSchema, securityEventsLevel, takeSnapshot } from '../lib/ledger-check.ts';
 import { MIGRATIONS_DIR, newHotDb } from './hot-db.ts';
 import { repoRoot } from '@hana-id/env';
 
@@ -444,15 +444,49 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
     const after = await snap(db);
     const upTo27 = FILES.filter((f) => f < '0028');
     expect(compareSnapshots(before, { ...after, applied: upTo27 }, REFERENCE).verdict).toBe('identical');
-    expect(REFERENCE.guarded_changes_platform_not_early?.file).toBe(file('0033'));
-    const claims33 = compareSnapshots(before, { ...after, applied: [...upTo27, file('0033')] }, REFERENCE);
+    // D931: 0034 creates it again (its replacement); at 0033's level it is 0033's.
+    expect(REFERENCE.guarded_changes_platform_not_early?.file).toBe(file('0034'));
+    const AT33 = referenceSchema(MIGRATIONS_DIR, file('0033'));
+    expect(AT33.guarded_changes_platform_not_early?.file).toBe(file('0033'));
+    const claims33 = compareSnapshots(before, { ...after, applied: [...upTo27, file('0033')] }, AT33);
     expect(claims33.verdict).toBe('roll_back');
     expect(claims33.lines.join('\n')).toMatch(/MISSING trigger guarded_changes_platform_not_early \(on guarded_changes\)/u);
-    // With 0033 applied for real, its triggers are there and held to their SQL.
+    // With 0033 applied for real, its triggers are there and held to their SQL, at the database's level.
     applyRange(db, '0028', '0034');
     const all = await snap(db);
-    const c = compareSnapshots(before, { ...all, applied: FILES.filter((f) => f < '0034') }, REFERENCE);
+    const c = compareSnapshots(before, { ...all, applied: FILES.filter((f) => f < '0034') }, AT33);
     expect(c.lines.join('\n')).not.toMatch(/MISSING|UNEXPECTED|CHANGED trigger/u);
+  });
+
+  it('D931 (D929 point 2): a database with 0033 and not 0034 reads 0033’s triggers as they should be; with 0034, 0034’s; a snapshot across 0034 reads them as replaced, never changed', async () => {
+    const db = populated('0027');
+    const before = await snap(db);
+    applyRange(db, '0027', '0034');
+    const at33 = await snap(db);
+    const to33 = FILES.filter((f) => f < '0034');
+    const ref = (applied: readonly string[] | null) => referenceSchema(MIGRATIONS_DIR, levelOf(applied, FILES));
+    // The hazard itself: against the checkout's final schema, 0033's versions read as changed.
+    expect(compareSnapshots(before, { ...at33, applied: to33 }, REFERENCE).lines.join('\n')).toMatch(/CHANGED trigger guarded_changes_platform_not_early: its SQL is not the one this checkout/u);
+    // At the database's own level: nothing missing, unexpected or changed.
+    const c33 = compareSnapshots(before, { ...at33, applied: to33 }, ref(to33));
+    expect(c33.lines.join('\n')).not.toMatch(/MISSING|UNEXPECTED|CHANGED/u);
+    expect(c33.verdict).not.toBe('roll_back');
+    // Then 0034: a snapshot at 0033 compared after 0034 reads the three as replaced by 0034.
+    applyRange(db, '0034', '0035');
+    const at34 = await snap(db);
+    const to34 = FILES.filter((f) => f < '0035');
+    const across = compareSnapshots({ ...at33, applied: to33 }, { ...at34, applied: to34 }, ref(to34), ref(to33));
+    expect(across.verdict, across.lines.join('\n')).not.toBe('roll_back');
+    for (const t of ['guarded_changes_platform_not_early', 'app_origins_platform_not_early', 'app_origins_platform_not_early_update']) expect(across.lines.join('\n')).toContain(`Replaced by a later migration: trigger ${t} (${file('0034')})`);
+    // A replacement the checkout doesn't make is still a change: 0033's trigger edited by hand.
+    db.exec("DROP TRIGGER app_origins_platform_not_early_update; CREATE TRIGGER app_origins_platform_not_early_update BEFORE UPDATE ON app_origins BEGIN SELECT 1 FROM guarded_changes WHERE 0; END;");
+    const tampered = compareSnapshots({ ...at33, applied: to33 }, { ...(await snap(db)), applied: to34 }, ref(to34), ref(to33));
+    expect(tampered.verdict).toBe('roll_back');
+    expect(tampered.lines.join('\n')).toMatch(/CHANGED trigger app_origins_platform_not_early_update: its SQL differs from before/u);
+    // levelOf: the latest known file the database recorded; none, or none known: the whole checkout.
+    expect(levelOf(to33, FILES)).toBe(file('0033'));
+    expect(levelOf(null, FILES)).toBeUndefined();
+    expect(levelOf(['9999_foreign.sql'], FILES)).toBeUndefined();
   });
 
   it('from 0021: every damaged copy of 0027 is still a rollback', async () => {
@@ -566,7 +600,8 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
     expect(lines.at(-1)).toContain('Verdict: identical');
     const cli = readFileSync(join(repoRoot, 'scripts', 'ledger-check.ts'), 'utf8');
     expect(cli).toMatch(/cwd: invocationDir\(\)/u);
-    expect(cli).toMatch(/referenceSchema: \(\) => referenceSchema\(/u);
+    // D931: at the level the database recorded.
+    expect(cli).toMatch(/referenceSchema: \(applied\) => \{[\s\S]*?referenceSchema\(dir, levelOf\(applied, /u);
   });
 });
 

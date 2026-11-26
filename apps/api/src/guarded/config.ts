@@ -19,17 +19,39 @@ export const PLATFORM_MIN_DELAY_MS = DAY_MS;
 export const fourEyesNetwork = (network: string | undefined): boolean => network !== 'testnet';
 
 /**
- * The platform minimum for this env (D914, D918): 24 h everywhere except a `local*` env on testnet, which keeps its own
- * short delay (0 here: the guarded-change delay then applies alone). Fails closed: any other name, a missing name, or
- * any other network (mainnet above all) gets the 24 h. The rest of the `local*` guard the spec proposes (the manifest
- * rule, the deploy wrapper's refusal) is piece P10's.
+ * D931 (the `local*` guard, A15): an API URL a `local*` env may have: http on a loopback host (localhost, 127.x, ::1).
+ * The manifest schema requires it of every `local*` env (packages/env schema.ts), so a deployed host is never `local*`.
  */
-/** A `local*` test env (its name `local…` and its network `testnet`): the one predicate for the platform's exceptions. */
-export function isLocalTestEnv(env: { ENV_NAME?: string; NETWORK?: string }): boolean {
-  return typeof env.ENV_NAME === 'string' && /^local/u.test(env.ENV_NAME) && env.NETWORK === 'testnet';
+export function isLoopbackHttpUrl(url: string | undefined): boolean {
+  if (typeof url !== 'string') return false;
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' || u.username || u.password) return false;
+  const h = u.hostname.toLowerCase();
+  return h === 'localhost' || h === '[::1]' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/u.test(h);
 }
 
-export function platformMinDelayMs(env: { ENV_NAME?: string; NETWORK?: string }): number {
+/**
+ * A `local*` test env: the one predicate for the platform's exceptions (the 24 h minimum's, a known test key's). It
+ * fails closed: it holds only when **all three** hold, its name `local…`, its network `testnet` and its API URL a
+ * loopback http URL (D931, the `local*` guard of A15; before it, the name and network alone, D918). A deploy of an env
+ * named `local…` to a real host therefore still waits 24 h, and the stamped deploy wrapper refuses one anyway
+ * (packages/env local-build.ts).
+ */
+export function isLocalTestEnv(env: { ENV_NAME?: string; NETWORK?: string; API_URL?: string }): boolean {
+  return typeof env.ENV_NAME === 'string' && /^local/u.test(env.ENV_NAME) && env.NETWORK === 'testnet' && isLoopbackHttpUrl(env.API_URL);
+}
+
+/**
+ * The platform minimum for this env (D914, D918, D931): 24 h everywhere except a `local*` test env (isLocalTestEnv),
+ * which keeps its own short delay (0 here: the guarded-change delay then applies alone). Any other name, a missing
+ * name, another network (mainnet above all) or a non-loopback API URL gets the 24 h.
+ */
+export function platformMinDelayMs(env: { ENV_NAME?: string; NETWORK?: string; API_URL?: string }): number {
   return isLocalTestEnv(env) ? 0 : PLATFORM_MIN_DELAY_MS;
 }
 

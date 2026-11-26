@@ -121,7 +121,8 @@ test('a key registered by staff, accepted by the owner; the backend’s app and 
   await expect(page.getByText('your platform key “Coffee network backend”').first()).toBeVisible();
   await page.getByRole('link', { name: /^Web addresses/u }).click();
   await expect(page.getByText('Asked for by your backend').first()).toBeVisible();
-  await expect(page.getByText(/Waiting 24 hours after its email/u).first()).toBeVisible();
+  // D931: the line says it waits for an owner, or starts working on its date.
+  await expect(page.getByText(/Waiting for an owner to confirm, or starts working on/u).first()).toBeVisible();
   await shot(page, info, 'console-app-web-addresses');
 
   // Cancelled from the email's link (on the console's origin), with no sign-in needed; a GET alone changes nothing.

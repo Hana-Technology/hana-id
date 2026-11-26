@@ -7,7 +7,7 @@
   "scripts": {
     "gen": "tsx scripts/gen-wrangler.ts",
     "dev": "wrangler dev",
-    "deploy": "tsx ../../packages/env/src/stamped-deploy.ts",
+    "deploy": "tsx ../../packages/env/src/stamped-deploy.ts --require-migrations DB:0034_origin_confirmations.sql",
     "deploy:pages": "pnpm --filter @hana-id/web build && tsx ../../packages/env/src/stamped-deploy.ts -c wrangler.vault.jsonc && tsx ../../packages/env/src/stamped-deploy.ts -c wrangler.auth.jsonc",
     "cf-typegen": "wrangler types --env-interface Env src/worker-configuration.d.ts",
     "test": "vitest run && vitest run -c vitest.scripts.config.ts && vitest run -c vitest.usage.config.ts",

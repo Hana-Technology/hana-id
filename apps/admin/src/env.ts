@@ -4,6 +4,7 @@
 // each is optional in the type so a missing one fails closed at the step that needs it (no notice is acked, no email
 // leaves, the watchdog shows as not configured) instead of at start-up.
 import type {
+  ConfirmationNotice,
   PlatformKeyNotice,
   PlatformCallsPage,
   PlatformKeyView,
@@ -57,6 +58,11 @@ export interface ChangeNotice {
   policy?: unknown;
   /** D930: a web address the platform proposed: its request (one email per request), the wait the ack gives it, its key. */
   platform?: { keyId: string; keyLabel: string | null; requestId: string; waitMs: number };
+  /**
+   * D931: a staff proposal under four eyes (a platform-created app or a shared wallet): its request (one email per
+   * request) and the wait the ack gives it unless a second person confirms it; no waiver.
+   */
+  secondPerson?: { requestId: string; waitMs: number };
 }
 
 /** One app's origins as `AdminRpc.getApp` describes them (the fields the watcher's SetAllowShared notice reads). */
@@ -179,6 +185,16 @@ export interface AdminRpcClient {
   notePlatformKeyNoticeFailure(c: unknown): Answer<{ failures: number }>;
   ackPlatformKeyEndNotice(c: unknown): Answer<Record<string, never>>;
   ackPlatformKeyExpiryNotice(c: unknown): Answer<Record<string, never>>;
+  // ---- the confirmation of web addresses (D931) ----
+  /** A second staff member (never the proposer) confirms a staff set under four eyes, with a reason: in force at once. */
+  confirmStaffOrigins(c: unknown): Answer<{ confirmedAt: number; changes: { changeId: string; origin: string; display: string; idn: boolean }[] }>;
+  /** The confirmations whose notice hasn't gone out, with the org's security contacts (the notice cron's page). */
+  confirmationNotices(c: unknown): Answer<{ notices: ConfirmationNotice[]; stuck: number; notSent: number }>;
+  /** System only, after every send was accepted: stores each removal link's sha256 (valid 7 days). */
+  /** After PR 159's review: the removal links armed before the first send; a refused run noted (a bounded retry). */
+  armConfirmationLinks(c: unknown): Answer<{ removalUntil: number | null }>;
+  ackConfirmationNotice(c: unknown): Answer<object>;
+  noteConfirmationNoticeFailure(c: unknown): Answer<{ failures: number }>;
 }
 
 /** The console's `StaffRpc` entrypoint (apps/console/src/staff-rpc.ts) over the `CONSOLE` service binding. */

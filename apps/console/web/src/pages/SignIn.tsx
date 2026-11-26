@@ -7,7 +7,7 @@ import { ApiError, startSignIn } from '../api.ts';
 import { SIGN_IN_MESSAGES, useFragmentToken } from '../lib.tsx';
 import { Callout, Lockup } from '../ui.tsx';
 
-function SignInButton({ invite, label }: { invite?: string; label: string }) {
+export function SignInButton({ invite, label }: { invite?: string; label: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const go = async () => {

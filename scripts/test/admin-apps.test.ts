@@ -85,7 +85,7 @@ describe('app:create --shared-wallet (D915 after PR 145’s review)', () => {
   const mark = (scope: string) => (h.db.prepare('SELECT app_user_ids FROM scopes WHERE scope_id = ?').get(scope) as { app_user_ids: number } | undefined)?.app_user_ids;
 
   it('a new test scope is created marked, with the mark’s own ledger row; its app shares the wallet', async () => {
-    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet']);
+    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--shared-wallet']);
     expect(mark('s7')).toBe(1);
     const rows = h.db.prepare("SELECT kind, app_id, detail_json, request_id FROM app_changes WHERE scope_id = 's7' ORDER BY seq").all() as { kind: string; app_id: string | null; detail_json: string; request_id: string }[];
     expect(rows.map((r) => [r.kind, r.app_id])).toEqual([
@@ -100,20 +100,45 @@ describe('app:create --shared-wallet (D915 after PR 145’s review)', () => {
 
   it('on an existing scope only when it is already marked; never for a live scope; not on a D1 without migration 0026', async () => {
     seedHotApp(h.db, { id: 'app_old', key: OLD_KEY, scope: 's1' });
-    await expect(create(['--org', 'org_legacy', '--name', 'W', '--scope', 's1', '--origin', 'https://p.example.com', '--shared-wallet'])).rejects.toThrow('exists and isn\'t marked as shared');
+    await expect(create(['--org', 'org_legacy', '--name', 'W', '--scope', 's1', '--shared-wallet'])).rejects.toThrow('exists and isn\'t marked as shared');
     h.db.prepare("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's1'").run();
-    await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's1', '--origin', 'https://p.example.com', '--shared-wallet']);
+    await create(['--org', 'org_legacy', '--name', 'W', '--scope', 's1', '--shared-wallet']);
     expect(h.db.prepare("SELECT COUNT(*) AS n FROM app_changes WHERE kind = 'scope.app_user_ids'").get()).toEqual({ n: 0 });
-    await expect(create(['--org', 'org_legacy', '--name', 'L', '--scope', 's8', '--environment', 'live', '--origin', 'https://p.example.com', '--shared-wallet'])).rejects.toThrow('Only a test scope can be marked as shared');
+    await expect(create(['--org', 'org_legacy', '--name', 'L', '--scope', 's8', '--environment', 'live', '--shared-wallet'])).rejects.toThrow('Only a test scope can be marked as shared');
     expect(mark('s8')).toBeUndefined();
     h.db = newHotDb({ before: '0026' });
     h.deps.d1 = d1Of(h.db);
-    await expect(create(['--org', 'org_legacy', '--name', 'P', '--scope', 's8', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet'])).rejects.toThrow('needs migration 0026');
+    await expect(create(['--org', 'org_legacy', '--name', 'P', '--scope', 's8', '--environment', 'test', '--shared-wallet'])).rejects.toThrow('needs migration 0026');
     // Without the flag, a new scope is unmarked as before (on a D1 with 0026).
     h.db = newHotDb();
     h.deps.d1 = d1Of(h.db);
     await create(['--org', 'org_legacy', '--name', 'P', '--scope', 's8', '--environment', 'test', '--origin', 'https://p.example.com']);
     expect(mark('s8')).toBe(0);
+  });
+});
+
+describe('four eyes on a shared wallet (D931, D917): the CLI adds no staff web address there', () => {
+  it('app:create with origins on a scope marked as shared (new or existing), app:origins:add on such an app or a platform-created one, and the announce of one: refused, nothing written', async () => {
+    await expect(create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet'])).rejects.toThrow(/waits for a second person \(four eyes\): add it in the admin portal/u);
+    expect(h.db.prepare("SELECT COUNT(*) AS n FROM apps WHERE name = 'Partner'").get()).toEqual({ n: 0 });
+    seedHotApp(h.db, { id: 'app_old', key: OLD_KEY, scope: 's1' });
+    h.db.prepare("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's1'").run();
+    await expect(create(['--org', 'org_legacy', '--name', 'Second', '--scope', 's1', '--origin', 'https://p.example.com'])).rejects.toThrow(/four eyes/u);
+    const before = h.db.prepare('SELECT COUNT(*) AS n FROM guarded_changes').get();
+    await expect(appOriginsAdd(sandbox, args(['--app', 'app_old', '--origin', 'https://p.example.com']), 'local D1 test', h.deps)).rejects.toThrow(/four eyes/u);
+    // A platform-created app on a plain scope too.
+    h.db.exec("INSERT INTO scopes (scope_id, org_id, environment, first_session_at, created_at, assigned_at) VALUES ('s2', 'org_legacy', 'test', 1, 0, 0)");
+    h.db.exec(`INSERT INTO apps (id, name, scope_id, org_id, publishable_key, status, plan, created_at, origins_version, created_by_kind) VALUES ('app_pl', 'Pl', 's2', 'org_legacy', '${APP_KEY}', 'active', 'free', 0, 0, 'platform')`);
+    await expect(appOriginsAdd(sandbox, args(['--app', 'app_pl', '--origin', 'https://p.example.com']), 'local D1 test', h.deps)).rejects.toThrow(/four eyes/u);
+    // On a shared wallet the app is created with no web address; a plain scope still needs one.
+    await create(['--org', 'org_legacy', '--name', 'Bare', '--scope', 's1']);
+    await expect(create(['--org', 'org_legacy', '--name', 'Plain', '--scope', 's8', '--environment', 'test'])).rejects.toThrow('At least one --origin is required');
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM guarded_changes').get()).toEqual(before);
+    // A staff web address under four eyes (written by AdminRpc, with its wait) is never announced by the CLI.
+    h.db.exec(`INSERT INTO staff_origin_waits (change_id, app_id, origin, proposed_by, proposer_email_key, min_delay_ms, at) VALUES ('gc_sp', 'app_old', 'https://sp.example.com', 'staff-1', 'staff@hana.example', 86400000, ${NOW})`);
+    h.db.exec(`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES ('gc_sp', 'app_old', 'origin_add', 'https://sp.example.com', 'pending', 'hana', 'staff-1', ${NOW}, 'r_sp')`);
+    await expect(appChangesAnnounce(sandbox, 'gc_sp', 'local D1 test', h.deps)).rejects.toThrow(/waits for a second person/u);
+    expect(change('gc_sp')).toMatchObject({ notified_at: null, active_from: null });
   });
 });
 
@@ -124,19 +149,19 @@ describe('app:create: the app’s User ID mode (D919, migration 0030)', () => {
     await create(['--org', 'org_legacy', '--name', 'Plain', '--scope', 's8', '--environment', 'test', '--origin', 'https://p.example.com']);
     expect(mode('app_1')).toBe('scope');
     expect(out()).not.toContain('its own User IDs');
-    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet']);
+    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--shared-wallet']);
     expect(mode('app_2')).toBe('app');
     expect(out()).toContain('its own User IDs');
     seedHotApp(h.db, { id: 'app_old', key: OLD_KEY, scope: 's1' });
     h.db.prepare("UPDATE scopes SET app_user_ids = 1 WHERE scope_id = 's1'").run();
-    await create(['--org', 'org_legacy', '--name', 'Second', '--scope', 's1', '--origin', 'https://p.example.com']);
+    await create(['--org', 'org_legacy', '--name', 'Second', '--scope', 's1', '--shared-wallet']);
     expect(mode('app_3')).toBe('app');
     // The app of before keeps its mode.
     expect(mode('app_old')).toBe('scope');
   });
 
   it('records the mode in the ledger’s app.created row, and a mark set between the read and the write creates nothing', async () => {
-    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--origin', 'https://p.example.com', '--shared-wallet']);
+    await create(['--org', 'org_legacy', '--name', 'Partner', '--scope', 's7', '--environment', 'test', '--shared-wallet']);
     expect(ledger('app_1')[0]!.detail).toMatchObject({ userIds: 'app', appUserIds: true });
     seedHotApp(h.db, { id: 'app_old', key: OLD_KEY, scope: 's1' });
     await create(['--org', 'org_legacy', '--name', 'Plain', '--scope', 's1', '--origin', 'https://p.example.com']);

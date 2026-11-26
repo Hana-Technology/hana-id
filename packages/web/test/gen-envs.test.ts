@@ -80,7 +80,7 @@ describe('hanaEnv', () => {
 
   it('mirrors isDevEnv as devEnv', () => {
     expect(hanaEnv(prod)?.devEnv).toBe(false);
-    expect(hanaEnv(manifest({ name: 'local-dev', vaultOrigin: 'http://localhost:8787', authOrigin: 'http://localhost:8788' }))?.devEnv).toBe(true);
+    expect(hanaEnv(manifest({ name: 'local-dev', apiUrl: 'http://127.0.0.1:8790', vaultOrigin: 'http://localhost:8787', authOrigin: 'http://localhost:8788' }))?.devEnv).toBe(true);
   });
 
   it('skips a manifest without the Hana origins', () => {
@@ -129,7 +129,7 @@ describe('envs.generated.ts', () => {
   });
 
   it('the package build (--package) refuses no envs and local envs, and accepts the deployed ones', async () => {
-    const local = manifest({ name: 'local-dev', vaultOrigin: 'http://localhost:8787', authOrigin: 'http://localhost:8788' });
+    const local = manifest({ name: 'local-dev', apiUrl: 'http://127.0.0.1:8790', vaultOrigin: 'http://localhost:8787', authOrigin: 'http://localhost:8788' });
     expect(() => envsModule([noOrigins], { forPackage: true })).toThrow(/Can't build the @hana-id\/web package: no envs\/<env>\.json sets both/u);
     expect(() => envsModule([sandbox, local], { forPackage: true })).toThrow(/local-dev is a local \(loopback\) env/u);
     expect(envsModule([sandbox, local])).toContain('"local-dev"'); // the dev build keeps it

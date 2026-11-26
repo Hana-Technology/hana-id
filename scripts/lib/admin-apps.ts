@@ -27,6 +27,9 @@ import {
   changeSql,
   createAppWrite,
   findAppSql,
+  fourEyesAppSql,
+  secondPersonChangeSql,
+  staffWaitSql,
   listAppsSql,
   normaliseOrigin,
   openChangesSql,
@@ -147,10 +150,10 @@ function commit(deps: Pick<AppCmdDeps, 'd1'>, write: HotWrite): boolean {
 
 export const STALE_WRITE = 'The app changed since it was read (another admin command or a D1 edit): nothing was written. Run the command again.';
 
-/** --origin values, normalised and de-duplicated; at least one. */
-export function originArgs(args: Args): string[] {
+/** --origin values, normalised and de-duplicated; at least one (unless `optional`). */
+export function originArgs(args: Args, optional = false): string[] {
   const list = args.list('origin').map(normaliseOrigin);
-  if (!list.length) throw new CliError('At least one --origin is required');
+  if (!list.length && !optional) throw new CliError('At least one --origin is required');
   return [...new Set(list)];
 }
 
@@ -185,7 +188,8 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
   const plan = assertPlanId(args.str('plan') ?? 'free');
   const given = args.str('environment');
   const wanted = given === undefined ? undefined : assertEnvironment(given);
-  const origins = originArgs(args);
+  // D931: on a shared wallet an app is created with no web address (staff add them in the admin portal, four eyes).
+  const origins = originArgs(args, true);
   const now = deps.now();
   if (!(await deps.scopeOnChain(scopeId))) throw new Error(`Scope ${scopeId} is not registered on ${m.signer} (admin.ts ${m.name} scope:register …)`);
   await deps.requireC3Api();
@@ -226,6 +230,10 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
   const userIdsColumn = Number(deps.d1(APP_USER_IDS_COLUMN_SQL)[0]?.n ?? 0) > 0;
   // D919: the mode the app gets, from the mark as read now (a new scope gets `--shared-wallet`'s); the write holds it.
   const marked = scope ? Number(deps.d1(scopeMarkSql(scopeId))[0]?.app_user_ids ?? 0) === 1 : sharedWallet;
+  // D931 (four eyes, D917): on a shared wallet a staff web address waits for a second person; the CLI writes none,
+  // and creates the app there with none (an existing marked scope included, with or without --shared-wallet).
+  if (origins.length && marked) throw new Error(FOUR_EYES_CLI);
+  if (!origins.length && !marked) throw new CliError('At least one --origin is required');
   const userIds = userIdsColumn ? (marked ? 'app' : 'scope') : undefined;
   if (!commit(deps, createAppWrite(app, { createScope: !scope, now, actor: deps.actor, requestId, sharedWallet, ...(userIds ? { userIds } : {}) }))) throw new Error(STALE_WRITE);
   // D919: what the write gave the app, read back (the mark could have been set meanwhile).
@@ -237,9 +245,18 @@ export async function appCreate(m: M, args: Args, where: string, deps: AppCmdDep
   for (const o of app.origins) deps.log(`  ${announceHint(m, o.changeId)}`);
 }
 
+/**
+ * D931 (four eyes, D917): what the CLI answers for a staff web address on a platform-created app or a shared wallet.
+ * The admin portal adds it as a staff proposal that waits 24 hours unless a second person confirms it; the CLI has no
+ * second person and no wait of its own, so it adds none.
+ */
+export const FOUR_EYES_CLI =
+  'A web address staff add to a platform-created app or a shared wallet waits for a second person (four eyes): add it in the admin portal (forbidden here)';
+
 /** app:origins:add --app <app> --origin <o>…: staff proposals. */
 export async function appOriginsAdd(m: M, args: Args, where: string, deps: AppCmdDeps): Promise<void> {
   const app = liveApp(deps, args.required('app'));
+  if (Number(deps.d1(fourEyesAppSql(app.id))[0]?.four_eyes ?? 0) === 1) throw new Error(FOUR_EYES_CLI);
   const wanted = originArgs(args);
   const now = deps.now();
   assertAssignedLongEnough(m, { scope_id: app.scope_id, assigned_at: app.assigned_at }, now);
@@ -364,6 +381,11 @@ export async function appChangesAnnounce(m: M, changeId: string, where: string, 
   // D929 (docs/partner-platform-spec.md A4.5): a web address the platform proposed is announced only by the admin
   // Worker, so its email (and later its Confirm link) always goes out and its platform wait always applies.
   if (change.proposed_by_kind === 'platform') throw new Error(`${changeId} was proposed by a platform key: only the admin Worker announces those (forbidden here)`);
+  // D931: nor a staff web address under four eyes (its wait, its Confirm link and the owners as recipients are the
+  // admin Worker's).
+  if (Number(deps.d1(secondPersonChangeSql(changeId))[0]?.has_table ?? 0) > 0 && Number(deps.d1(staffWaitSql(changeId))[0]?.n ?? 0) > 0) {
+    throw new Error(`${changeId} waits for a second person (a shared wallet): only the admin Worker announces those (forbidden here)`);
+  }
   await deps.requireC3Api(REQUIRED_HOT_DB_ANNOUNCE);
   const app = findApp(deps, change.app_id);
   const now = deps.now();

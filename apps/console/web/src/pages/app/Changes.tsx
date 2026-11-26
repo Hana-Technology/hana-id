@@ -1,9 +1,13 @@
 // An app's guarded changes (origin adds, policy sets, raw signing on): where each is (requested, announced, in
 // effect), who asked, and the owner's Cancel while it is pending (`POST /api/orgs/:org/changes/:id/cancel`, immediate,
-// open in a frozen org too).
+// open in a frozen org too). D931: a web address your backend asked for, or one Journear staff added to a shared
+// wallet, waits for someone to confirm it: "Check and confirm" opens its confirmation page (for everyone: the page
+// says who can confirm).
 import type { GuardedChange } from '@hana-id/console-core';
+import { Link } from 'react-router-dom';
 import { postJson } from '../../api.ts';
-import { useNow, useWrite } from '../../lib.tsx';
+import { CONFIRM_WORDS } from '../../confirm-words.ts';
+import { useNow, useWrite, when } from '../../lib.tsx';
 import { Badge, ChangeTrack, ConfirmButton, WriteNote, proposer } from '../../ui.tsx';
 import type { AppCtl } from '../Apps.tsx';
 
@@ -22,17 +26,23 @@ export function changeTitle(c: GuardedChange): string {
  */
 export const isWaiting = (c: GuardedChange, now: number): boolean => c.status === 'pending' && (c.activeFrom === null || c.activeFrom === undefined || c.activeFrom > now);
 
-/** A platform proposal's wait in words: whole hours ("24 hours"), else minutes (a local test setup's short wait). */
-const waitWords = (ms: number): string => (ms >= 3_600_000 ? `${Math.round(ms / 3_600_000)} hours` : `${Math.max(1, Math.round(ms / 60_000))} minutes`);
+/**
+ * D931: a web address that waits for someone to confirm it: one your backend asked for (an owner of the wallet's
+ * settings confirms it), or one Journear staff added to a shared wallet or an app your backend made (a second person
+ * confirms it: an owner, or another staff member).
+ */
+export const waitsForConfirmation = (c: GuardedChange): boolean => c.kind === 'origin_add' && (c.proposedByKind === 'platform' || c.secondPerson === true);
 
 /** One-line state for tables and summaries. */
 export function changeState(c: GuardedChange, now: number): string {
-  // D930: a web address your backend asked for always waits 24 hours after its email (outside local test setups), and
-  // nothing brings it forward yet (an owner's confirmation is still to come: docs/partner-platform-spec.md A15, P10).
-  if (isWaiting(c, now) && c.proposedByKind === 'platform')
+  // D930, D931: such a web address waits 24 hours after its email (outside local test setups) unless someone confirms
+  // it first.
+  if (isWaiting(c, now) && waitsForConfirmation(c))
     return c.notifiedAt === undefined
       ? 'Waiting for the announcement email: its 24 hours start once it is sent'
-      : `Waiting ${waitWords((c.activeFrom ?? 0) - c.notifiedAt)} after its email: starts working ${new Date(c.activeFrom ?? 0).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
+      : c.secondPerson === true
+        ? CONFIRM_WORDS.secondPersonLine(when(c.activeFrom))
+        : CONFIRM_WORDS.waitingLine(when(c.activeFrom));
   if (isWaiting(c, now)) return c.notifiedAt === undefined ? 'Waiting for the announcement email: the delay starts once it is sent' : `Pending: active from ${new Date(c.activeFrom ?? 0).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
   if (c.status === 'active' || c.status === 'pending') return 'In effect';
   return c.status === 'cancelled' ? 'Cancelled' : 'Ended';
@@ -63,21 +73,28 @@ export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }:
                   </>
                 )}
               </span>
-              {ctl.owner && (
-                <ConfirmButton
-                  label="Cancel"
-                  confirm="Cancel this change"
-                  detail="It never takes effect. You can request it again later."
-                  busy={w.busy}
-                  onConfirm={() =>
-                    void w.run(async () => {
-                      await postJson(`/api/orgs/${ctl.org}/changes/${c.id}/cancel`, {});
-                      ctl.reload();
-                      return 'Cancelled. It won’t take effect.';
-                    })
-                  }
-                />
-              )}
+              <span className="pending-actions">
+                {waitsForConfirmation(c) && c.notifiedAt !== undefined && (
+                  <Link className="jp-btn jp-btn-secondary jp-btn-sm" to={`/orgs/${ctl.org}/apps/${ctl.app.id}/confirm/${c.id}`}>
+                    Check and confirm
+                  </Link>
+                )}
+                {ctl.owner && (
+                  <ConfirmButton
+                    label="Cancel"
+                    confirm="Cancel this change"
+                    detail="It never takes effect. You can request it again later."
+                    busy={w.busy}
+                    onConfirm={() =>
+                      void w.run(async () => {
+                        await postJson(`/api/orgs/${ctl.org}/changes/${c.id}/cancel`, {});
+                        ctl.reload();
+                        return 'Cancelled. It won’t take effect.';
+                      })
+                    }
+                  />
+                )}
+              </span>
             </div>
             {c.proposedByKind === 'platform' && (
               <p className="pending-by small">
@@ -93,9 +110,7 @@ export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }:
         ))}
       </ul>
       <p className="muted small">Each change is announced by email to your organisation’s security contacts, then takes effect after the security delay. Until then any owner can cancel it here, or anyone with the email can use its cancel link.</p>
-      {list.some((c) => c.proposedByKind === 'platform') && (
-        <p className="muted small">Web addresses your backend asks for always wait 24 hours after their email, and nothing makes them start sooner. If one isn’t yours, cancel it.</p>
-      )}
+      {list.some(waitsForConfirmation) && <p className="muted small">Only confirm a web address you know belongs to this app. If one isn’t yours, cancel it.</p>}
       <WriteNote error={w.error} />
     </div>
   );

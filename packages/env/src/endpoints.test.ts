@@ -23,7 +23,20 @@ describe('rpc, rpcFallback and apiUrl: https outside local* envs', () => {
   it('allows http only for a loopback host in a local* env', () => {
     const local = { ...raw(), name: 'local-dev', vaultOrigin: 'http://localhost:8787', authOrigin: 'http://localhost:8788' };
     expect(issues({ ...local, rpc: 'http://127.0.0.1:3030', apiUrl: 'http://localhost:8790' })).toEqual([]);
-    expect(issues({ ...local, rpc: 'http://rpc.example.com' })).toHaveLength(1);
+    expect(issues({ ...local, apiUrl: 'http://localhost:8790', rpc: 'http://rpc.example.com' })).toHaveLength(1);
+  });
+
+  it('D931, the local* guard: a local* env is on testnet with its API on a loopback http URL, so a real host is never local*', () => {
+    const local = { ...raw(), name: 'local-dev', vaultOrigin: 'http://localhost:8787', authOrigin: 'http://localhost:8788', rpc: 'http://127.0.0.1:3030' };
+    expect(issues({ ...local, apiUrl: 'http://127.0.0.1:8790' })).toEqual([]);
+    expect(issues({ ...local, apiUrl: 'http://[::1]:8790' })).toEqual([]);
+    const loopbackMsg = 'apiUrl: a local* env has its API on a loopback http URL (http://127.0.0.1:…), so a deployed host is never local*';
+    expect(issues({ ...local, apiUrl: 'https://api.sandbox.example.com' })).toContain(loopbackMsg);
+    expect(issues({ ...local, apiUrl: 'https://localhost:8790' })).toContain(loopbackMsg);
+    // The network enum is testnet-only today; the rule holds it for a local* env whatever that enum later allows.
+    expect(issues({ ...local, apiUrl: 'http://127.0.0.1:8790', network: 'mainnet' }).some((i) => i.startsWith('network: '))).toBe(true);
+    // Not a local* name: the rule doesn't apply (and http is refused there anyway).
+    expect(issues({ ...raw(), name: 'prod-local' }).filter((i) => i.includes('local* env has'))).toEqual([]);
   });
 
   it('refuses other schemes', () => {

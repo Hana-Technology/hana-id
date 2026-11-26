@@ -1857,11 +1857,13 @@ const ROUTE_WORDS = {
 /**
  * D930 (docs/partner-platform-spec.md A11): the platform queue. Every web address a platform key asked for that isn't
  * working yet, and every platform key still waiting, across organisations, soonest first, so staff see each before it
- * works. Cancelling a web address is on its app's page; a key's Stop and Cancel are on its organisation's page. An
- * owner's confirmation of a web address (and the queue's 7 days of confirmed ones) comes with piece P10.
+ * works. Cancelling a web address is on its app's page; a key's Stop and Cancel are on its organisation's page. D931
+ * (piece P10): the web addresses staff added to a platform-created app or a shared wallet that wait for a second person
+ * (another staff member confirms them here, with a reason; never the one who added them), and every web address a
+ * second person confirmed in the last 7 days, for review after the fact (suspend the app or remove it on its page).
  */
 async function platformQueuePage(main) {
-  main.append(pageHead('Platform queue', { subtitle: 'What networks’ platform keys asked for that isn’t working yet: each web address waits at least 24 hours after its email, and each key waits for its acceptance or its time. Check each one; cancel a web address on its app’s page, a key on its organisation’s page.' }));
+  main.append(pageHead('Platform queue', { subtitle: 'What networks’ platform keys asked for that isn’t working yet: each web address waits at least 24 hours after its email, or less if an owner confirms it, and each key waits for its acceptance or its time. Below them, staff web addresses waiting for a second person, and what a second person confirmed in the last 7 days. Check each one; cancel or remove a web address on its app’s page, a key on its organisation’s page.' }));
   const q = await api('GET', '/api/platform-queue');
   const left = (at) => (typeof at === 'number' ? (at > Date.now() ? `in ${Math.max(1, Math.round((at - Date.now()) / 3_600_000))} h` : 'due now') : '');
   const origins = q.origins.map((o) =>
@@ -1890,6 +1892,100 @@ async function platformQueuePage(main) {
     );
   });
   main.append(panel('Platform keys waiting', { hint: 'Registered, not working yet: awaiting an owner’s acceptance, or announced and waiting for an owner’s confirmation or their time.' }, table(['Key', 'Organisation', 'State', 'Registered by', 'Registered'], keys, { empty: 'No platform key waiting.' })));
+  main.append(secondPersonPanel(q.secondPerson || [], left));
+  main.append(confirmedPanel(q.confirmed || []));
+}
+
+/** A web address with its decoded form and the lookalike flag (the queue's way). */
+const queueOrigin = (o) => h('span', {}, o.idn ? h('span', {}, o.display, ' ', badge('IDN', 'warning')) : o.display, o.idn ? h('span', { class: 'sub' }, mono(o.origin)) : '');
+const queueApp = (o) => h('span', {}, link(`/orgs/${encodeURIComponent(o.orgId)}/apps/${encodeURIComponent(o.appId)}`, o.appName), h('span', { class: 'sub' }, mono(o.appId)), h('span', { class: 'sub' }, link(`/orgs/${encodeURIComponent(o.orgId)}`, o.orgId)));
+/** A staff member by their Access identity, "(you)" when it is the one signed in. */
+const staffWho = (sub) => h('span', {}, `${BRAND.company} staff`, h('span', { class: 'sub' }, mono(sub)), me && me.sub === sub ? h('span', { class: 'sub' }, '(you)') : '');
+
+/** D931: the second staff member's reason, at least 20 characters (console-core STAFF_CONFIRM_REASON_MIN). */
+const STAFF_CONFIRM_REASON_MIN = 20;
+
+/** The Confirm action of one staff request on one app: a reason, then AdminRpc.confirmStaffOrigins over its web addresses. */
+function staffConfirmControl(group) {
+  const ready = group.filter((o) => typeof o.notifiedAt === 'number');
+  if (!ready.length) return h('span', { class: 'muted' }, 'Its email hasn’t gone out yet, so it can’t be confirmed yet.');
+  const first = ready[0];
+  const many = ready.length > 1;
+  const d = disclosure(
+    'Confirm…',
+    form(
+      [{ name: 'reason', type: 'textarea', label: 'Why you confirm it, and how you checked', placeholder: 'Checked with Aisyah (owner) on a call to her listed number that these are their sites', required: true, minlength: STAFF_CONFIRM_REASON_MIN, maxlength: 1000, size: 'wide', help: 'At least 20 characters. Kept in the audit log, with your name. The organisation’s members can read it in their activity log, so write nothing private.' }],
+      'Confirm',
+      (v) => api('POST', '/api/platform/confirm-staff-origins', { orgId: first.orgId, appId: first.appId, changeIds: ready.map((o) => o.changeId), reason: v.reason }),
+      {
+        confirm: `Confirm ${many ? `these ${ready.length} web addresses` : first.origin} for ${first.appName}? ${many ? 'They start' : 'It starts'} working at once. The organisation’s security contacts and owners are emailed, with a link to remove ${many ? 'each one' : 'it'}.`,
+        done: many ? 'Confirmed. The web addresses work now.' : 'Confirmed. The web address works now.',
+        vertical: true,
+      },
+    ),
+  );
+  d.button.classList.add('jp-btn-sm');
+  return h('div', { class: 'inline-action' }, d.button, d.box);
+}
+
+/** D931: staff web addresses on a platform-created app or a shared wallet waiting for a second person, one row per request and app. */
+function secondPersonPanel(rows, left) {
+  const groups = [];
+  for (const o of rows) {
+    const g = groups.find((x) => x[0].requestId === o.requestId && x[0].appId === o.appId);
+    if (g) g.push(o);
+    else groups.push([o]);
+  }
+  const trs = groups.map((g) => {
+    const o = g[0];
+    const sent = g.map((x) => x.notifiedAt).filter((x) => typeof x === 'number');
+    const from = g.map((x) => x.activeFrom).filter((x) => typeof x === 'number');
+    // Three columns, so the table fits its panel at desktop width: the Confirm… control under the web addresses, who
+    // added them under the app, and the two times together.
+    return tr(
+      h('div', { class: 'stack' }, ...g.map(queueOrigin), staffConfirmControl(g)),
+      h('div', { class: 'stack' }, queueApp(o), h('span', {}, 'Added by ', staffWho(o.proposedBy), h('span', { class: 'sub' }, time(o.proposedAt)))),
+      h(
+        'div',
+        { class: 'stack' },
+        sent.length ? h('span', {}, 'Email sent ', time(Math.min(...sent))) : badge('Email not sent yet', 'warning'),
+        from.length ? h('span', {}, 'Starts working if nobody confirms: ', time(Math.max(...from)), h('span', { class: 'sub' }, left(Math.max(...from)))) : '',
+      ),
+    );
+  });
+  return panel(
+    'Waiting for a second person',
+    { hint: 'Web addresses Journear staff added to a platform-created app or an app on a shared wallet. Each starts working 24 hours after its email unless a second person confirms it sooner: another staff member here, or an owner in the partner portal. The staff member who added it can’t confirm it.' },
+    table(['Web address', 'App, organisation and who added it', 'When'], trs, { empty: 'Nothing is waiting for a second person.' }),
+  );
+}
+
+/** After PR 159's second review: whether the organisation was told of a confirmation (its email, with the removal link). */
+function noticeState(o) {
+  if (o.notice === 'sent') return h('span', { class: 'sub' }, 'Organisation told');
+  if (o.notice === 'not_sent') return h('span', { class: 'sub' }, badge('Not told', 'bad'), ` the email failed ${o.noticeFailures} times`);
+  if (o.notice === 'retrying') return h('span', { class: 'sub' }, badge('Email retrying', 'warning'), ` failed ${o.noticeFailures} ${o.noticeFailures === 1 ? 'time' : 'times'} so far`);
+  return h('span', { class: 'sub' }, 'Email not sent yet');
+}
+
+/** D931: every web address a second person confirmed in the last 7 days, newest first: in force before staff see it here. */
+function confirmedPanel(rows) {
+  const asked = (o) => (o.proposedByKind === 'platform' ? actor('platform', o.proposedBy) : staffWho(o.proposedBy));
+  const by = (o) => (o.confirmedByKind === 'hana' ? staffWho(o.confirmedBy) : h('span', {}, 'An owner', h('span', { class: 'sub' }, mono(o.confirmedBy))));
+  const trs = rows.map((o) =>
+    tr(
+      queueOrigin(o),
+      queueApp(o),
+      asked(o),
+      h('span', {}, by(o), h('span', { class: 'sub' }, time(o.confirmedAt))),
+      h('span', {}, o.removed ? badge('Removed since', '') : badge('Working', 'ok'), noticeState(o)),
+    ),
+  );
+  return panel(
+    'Confirmed in the last 7 days',
+    { hint: 'They started working when they were confirmed. Review each one: if one looks wrong, open its app to suspend the app or remove the web address. “Email retrying” is tried again, at most an hour apart, for 7 days after the confirmation; “Not told” means the email to the organisation kept failing for 7 days: tell its owners yourself (docs/operations.md, notice_stuck).' },
+    table(['Web address', 'App and organisation', 'Asked for by', 'Confirmed by', 'Now'], trs, { empty: 'Nothing was confirmed in the last 7 days.' }),
+  );
 }
 
 function dangerPanel(o, legacy) {
@@ -2061,8 +2157,17 @@ function originsHelp(app) {
     ' A staff proposal always waits the full period after its email',
     loopback ? ' (only the partner’s own proposal of a localhost origin takes effect at once)' : '',
     ', and is refused for one waiting period after the scope moved to this organisation.',
+    fourEyes(app) ? ` ${FOUR_EYES_WAIT}` : '',
   ].join('');
 }
+
+/**
+ * D931 (four eyes): staff web addresses on an app the platform created, or on a shared wallet, wait for a second person:
+ * they start working 24 hours after their email unless another staff member (Platform queue) or an owner (partner
+ * portal) confirms them sooner.
+ */
+const fourEyes = (app) => app.createdByKind === 'platform' || app.sharedScope === true;
+const FOUR_EYES_WAIT = 'On this app a web address you add waits 24 hours after its email unless a second person confirms it: another staff member in the Platform queue, or an owner in the partner portal. You can’t confirm your own.';
 
 /**
  * H3 (docs/partner-platform-spec.md A11; D930): the mainnet demo on an app that shares one wallet with other apps (its
@@ -2132,7 +2237,9 @@ async function appPage(main, orgId, appId) {
               [{ name: 'add', label: 'Origins to add', placeholder: 'https://new.partner.example', required: true, size: 'wide', help: originsHelp(app) }],
               'Propose',
               (v) => api('POST', `${base}/origins`, { orgId, add: lines(v.add), expectedVersion: app.originsVersion }),
-              { confirm: 'Propose these origins? The security contacts are emailed and they take effect after the delay.', done: 'Origins proposed. They take effect after the waiting period, once the email has gone out.' },
+              fourEyes(app)
+                ? { confirm: `Propose these origins? The security contacts and owners are emailed. ${FOUR_EYES_WAIT}`, done: 'Origins proposed. They wait for a second person, or 24 hours after their email.' }
+                : { confirm: 'Propose these origins? The security contacts are emailed and they take effect after the delay.', done: 'Origins proposed. They take effect after the waiting period, once the email has gone out.' },
             ),
           ),
     ),

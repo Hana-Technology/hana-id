@@ -7,7 +7,8 @@
 //   SIGN-IN   `GET /__e2e/console/sign-in?to=/path` on the console origin: the lane labels org's owner (the Google
 //             `sub` the lane's chain lists as an on-chain owner of its scope) as a console member and owner, and a
 //             session made by the console's own `createSession`, its cookie set, then the page. (The console's Google
-//             sign-in itself is tested in apps/console.)
+//             sign-in itself is tested in apps/console.) `&as=viewer`: the org's viewer instead (D931), never an
+//             on-chain owner.
 //   GOOGLE    the fresh sign-in: the console's real `/start` (on the console's auth origin, apps/console's
 //             `handleAuthOrigin`, as console-auth forwards it) answers its 303 to Google; the edge answers for Google
 //             at once, as the scope owner consenting: back to the real `/callback` with a code. The console's own code
@@ -35,6 +36,10 @@ export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 /** The lane owner's console account (lane-only test values). */
 export const LANE_CONSOLE_USER = 'usr_e2elabelsowner';
 export const LANE_CONSOLE_EMAIL = 'owner@stamp-rally.e2e.invalid';
+/** The lane org's viewer (`/__e2e/console/sign-in?as=viewer`, D931's e2e): a console member only. */
+export const LANE_VIEWER_USER = 'usr_e2elabelsviewer';
+const LANE_VIEWER_SUB = 'e2e-labels-viewer';
+export const LANE_VIEWER_EMAIL = 'viewer@stamp-rally.e2e.invalid';
 const HOST_PREFIX = '__Host-';
 const STAND_IN_PREFIX = 'e2e-host-';
 
@@ -106,22 +111,26 @@ export class ConsoleLane {
     }
   }
 
-  /** The lane labels org's owner as a console member (an owner since yesterday), mirrored from the lane's labels org. */
-  private async member(): Promise<{ orgId: string }> {
+  /**
+   * The lane labels org's owner as a console member (an owner since yesterday), mirrored from the lane's labels org;
+   * with `viewer`, the org's viewer instead (D931's e2e: a member who opens a confirmation page and can't confirm).
+   */
+  private async member(viewer = false): Promise<{ orgId: string; userId: string }> {
     const s = await this.d.labels.state();
     const db = this.d.db.db;
     const now = Date.now();
     db.prepare("INSERT OR IGNORE INTO orgs (id, name, kind, status, created_at) VALUES (?, 'Stamp Rally Ltd', 'partner', 'active', ?)").run(s.orgId, now);
-    db.prepare("INSERT OR IGNORE INTO console_users (id, provider, sub, email, created_at) VALUES (?, 'google', ?, ?, ?)").run(LANE_CONSOLE_USER, LANE_OWNER_SUB, LANE_CONSOLE_EMAIL, now);
-    db.prepare("INSERT OR IGNORE INTO members (org_id, user_id, role, role_since, added_by, added_at) VALUES (?, ?, 'owner', ?, 'e2e', ?)").run(s.orgId, LANE_CONSOLE_USER, now - 86_400_000, now - 86_400_000);
-    return { orgId: s.orgId };
+    const [userId, sub, email, role] = viewer ? [LANE_VIEWER_USER, LANE_VIEWER_SUB, LANE_VIEWER_EMAIL, 'viewer'] : [LANE_CONSOLE_USER, LANE_OWNER_SUB, LANE_CONSOLE_EMAIL, 'owner'];
+    db.prepare("INSERT OR IGNORE INTO console_users (id, provider, sub, email, created_at) VALUES (?, 'google', ?, ?, ?)").run(userId, sub, email, now);
+    db.prepare("INSERT OR IGNORE INTO members (org_id, user_id, role, role_since, added_by, added_at) VALUES (?, ?, ?, ?, 'e2e', ?)").run(s.orgId, userId, role, now - 86_400_000, now - 86_400_000);
+    return { orgId: s.orgId, userId };
   }
 
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.origin === this.d.origin && url.pathname === '/__e2e/console/sign-in' && request.method === 'GET') {
-      const { orgId } = await this.member();
-      const { cookieValue } = await createSession(this.d.db, { userId: LANE_CONSOLE_USER, hd: null, now: Date.now() });
+      const { orgId, userId } = await this.member(url.searchParams.get('as') === 'viewer');
+      const { cookieValue } = await createSession(this.d.db, { userId, hd: null, now: Date.now() });
       const to = (url.searchParams.get('to') ?? `/orgs/${orgId}`).replaceAll('{org}', orgId);
       const target = /^\/(?!\/)[^\s\\]*$/u.test(to) ? to : '/';
       return new Response(null, { status: 302, headers: { location: target, 'set-cookie': `${STAND_IN_PREFIX}hana_cs=${cookieValue}; HttpOnly; SameSite=Strict; Path=/`, 'cache-control': 'no-store' } });

@@ -14,6 +14,8 @@
 //   CREATE    the network's backend: a signed `POST /v1/platform/apps` (console-core `signPlatformRequest`) through
 //             apps/api's own Worker, with the lane's env name and signer, as a network's backend sends it.
 //   STATE     the org's waiting platform proposals (the hot DB), for the test's checks.
+//   GATE      D931 (piece P10's e2e run): whether a web address may use an app now, by apps/api's own `GET /v1/app` with
+//             the app's publishable key and that Origin, as a partner page asks it.
 import { API_URL, E2E_ENV, ENV_NAME } from '../stack.ts';
 import { ACCESS_SUBS, E2E_STAFF } from './access.ts';
 import type { ApiModules } from './api-modules.ts';
@@ -29,6 +31,9 @@ interface ConsoleCore {
   signPlatformRequest(privateKey: CryptoKey, i: { envName: string; signerAccount: string; method: 'GET' | 'POST'; path: string; keyId: string; idempotencyKey?: string; body?: string }): Promise<{ headers: Record<string, string>; body: Uint8Array }>;
 }
 const core = (await import(CONSOLE_CORE)) as ConsoleCore;
+// The API's isolate-wide list of announced platform keys (refreshed every 30 s): the same module instance the lane's
+// Worker runs (api-modules.ts loads apps/api/src by this same URL).
+const { clearKnownKeyIds } = (await import(new URL('../../../api/src/platform/known-keys.ts', import.meta.url).href)) as { clearKnownKeyIds(): void };
 type Message = { to: string; subject: string; text: string; html: string };
 const { runNotices } = (await import(SRC('admin', 'notices.ts'))) as { runNotices(env: unknown, sender: { configured: boolean; send(m: Message): Promise<{ ok: true; id: string }> }, budget: unknown): Promise<unknown> };
 const { Budget } = (await import(SRC('admin', 'mail.ts'))) as { Budget: new (left?: number, rpc?: number) => unknown };
@@ -115,18 +120,33 @@ export class PlatformLane {
     if (!key) throw new Error('platform create: the org has no key in force');
     const path = '/v1/platform/apps';
     const body = JSON.stringify({ scopeId: s.scopeId, name: i.name, origins: i.origins });
+    // Specs in one lane run seconds apart, each with a fresh key: the isolate's list of announced keys (refreshed
+    // every 30 s) would still be the previous spec's, and the new key "unknown". Forgotten here, as 30 s later.
+    clearKnownKeyIds();
     const signed = await core.signPlatformRequest(this.privateKey, { envName: ENV_NAME, signerAccount: E2E_ENV.signer, method: 'POST', path, keyId: key.id, idempotencyKey: `e2e-${crypto.randomUUID()}`, body });
     const req = new Request(`${API_URL}${path}`, { method: 'POST', headers: { ...signed.headers, 'cf-connecting-ip': '203.0.113.50' }, body });
     const res = await this.d.modules.worker.fetch(req, this.d.api.env, this.exec);
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
   }
 
-  /** The org's platform proposals and their state. */
-  state(): { proposals: { id: string; origin: string; status: string; notified: boolean }[] } {
+  /** The org's platform proposals and their state (`activeFrom`: when it works, or works from; null until announced). */
+  state(): { proposals: { id: string; origin: string; status: string; notified: boolean; activeFrom: number | null }[] } {
     const s = this.current();
     const rows = this.d.d1.db
-      .prepare("SELECT g.id, g.origin, g.status, g.notified_at FROM guarded_changes g JOIN apps a ON a.id = g.app_id WHERE a.org_id = ? AND g.proposed_by_kind = 'platform' ORDER BY g.proposed_at, g.id")
-      .all(s.orgId) as { id: string; origin: string; status: string; notified_at: number | null }[];
-    return { proposals: rows.map((r) => ({ id: r.id, origin: r.origin, status: r.status, notified: r.notified_at !== null })) };
+      .prepare("SELECT g.id, g.origin, g.status, g.notified_at, g.active_from FROM guarded_changes g JOIN apps a ON a.id = g.app_id WHERE a.org_id = ? AND g.proposed_by_kind = 'platform' ORDER BY g.proposed_at, g.id")
+      .all(s.orgId) as { id: string; origin: string; status: string; notified_at: number | null; active_from: number | null }[];
+    return { proposals: rows.map((r) => ({ id: r.id, origin: r.origin, status: r.status, notified: r.notified_at !== null, activeFrom: r.active_from })) };
+  }
+
+  /**
+   * D931: whether `origin` may use the app now, by the API's own gate: `GET /v1/app` through apps/api's Worker with the
+   * app's publishable key, from a partner page on `origin`. → its status and refusal code (`origin_not_allowed`).
+   */
+  async gate(i: { key: string; origin: string }): Promise<{ status: number; code: string | null }> {
+    const req = new Request(`${API_URL}/v1/app`, { headers: { 'x-hana-key': i.key, origin: i.origin, 'cf-connecting-ip': '203.0.113.51' } });
+    const res = await this.d.modules.worker.fetch(req, this.d.api.env, this.exec);
+    const body = (await res.json().catch(() => ({}))) as { error?: { code?: string } | string; code?: string };
+    const code = typeof body.error === 'object' ? (body.error.code ?? null) : (body.code ?? (typeof body.error === 'string' ? body.error : null));
+    return { status: res.status, code };
   }
 }

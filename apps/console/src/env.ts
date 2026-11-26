@@ -47,6 +47,7 @@ import type {
 } from '@hana-id/console-core';
 import type { z } from '@hana-id/env/zod';
 import type { PlatformCallsInput, PlatformCallsPage, listPlatformKeysInput, platformKeyByLinkInput, platformKeyInput, proposePlatformKeyInput, revokePlatformKeyInput, stepUpPlatformKeyInput } from '@hana-id/console-core';
+import type { ConfirmOriginsInput, ConfirmationView, GetConfirmationInput, RemoveOriginByLinkInput } from '@hana-id/console-core';
 import type { ConsoleUsersClient } from './users.ts';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -102,6 +103,14 @@ export interface ConsoleRpcClient {
   revokePlatformKeyByLink(c: z.infer<typeof platformKeyByLinkInput>): Answer<{ key: { id: string; label: string; state: 'cancelled' | 'revoked' } }>;
   /** D930: one page of the org's platform calls (the Platform activity page). */
   platformCalls(c: PlatformCallsInput): Answer<PlatformCallsPage>;
+  // D931: an owner's confirmation of web addresses (the step-up kind `origin.confirm`; confirmations.ts), its page's
+  // view, and the confirmation notice's removal link (the `link` actor).
+  confirmOrigins(c: ConfirmOriginsInput): Answer<{ confirmedAt: number; changes: { changeId: string; origin: string; display: string; idn: boolean }[] }>;
+  getConfirmation(c: GetConfirmationInput): Answer<{ confirmation: ConfirmationView }>;
+  removalPreview(c: RemoveOriginByLinkInput): Answer<{
+    removal: { changeId: string; appName: string; origin: string; display: string; idn: boolean; confirmedAt: number; confirmedByKind: 'member' | 'hana'; confirmedBy: string; orgId: string; until: number; removable: boolean };
+  }>;
+  removeOriginByLink(c: RemoveOriginByLinkInput): Answer<{ removed: { changeId: string; appName: string; origin: string; display: string; idn: boolean } }>;
 }
 
 export interface Env {

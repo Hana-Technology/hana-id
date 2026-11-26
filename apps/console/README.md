@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-26 (branch `feat/platform-screens`: the tab and its heading "Web addresses (origins)", the Tech Lead's choice, D930); 2026-11-25 (branch `feat/platform-screens`, not merged, not deployed: the platform's screens, the Web addresses tab, the Users intro's wording, phone width, the preview's platform apps and activity, D930); 2026-11-25 (branch `feat/app-user-linking`, not merged, not deployed: "Users": the linking view for owners, the "(all your apps)" labels, D925); 2026-11-25 (branch `feat/platform-keys`, from `next`, not merged, not deployed: "Layout"'s platform key files, the preview's platform keys answers and demo actions `act_demo_key_add` and `act_demo_key_confirm`, D918); 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
+Last verified: 2026-11-26 (branch `feat/owner-confirmation`, merged with `next` after PR 158: the confirmation page's back link and sign-in note and the fresh sign-in's line name the tab "Web addresses (origins)", D931); 2026-11-26 (branch `feat/platform-screens`: the tab and its heading "Web addresses (origins)", the Tech Lead's choice, D930); 2026-11-26 (branch `feat/owner-confirmation`, not merged, not deployed: the confirmation page, the removal page, `origin.confirm` on the fresh sign-in's page, the Web addresses tab's Check and confirm, the preview's `staff-proposer` scenario and pages, D931); 2026-11-25 (branch `feat/platform-screens`, not merged, not deployed: the platform's screens, the Web addresses tab, the Users intro's wording, phone width, the preview's platform apps and activity, D930); 2026-11-25 (branch `feat/app-user-linking`, not merged, not deployed: "Users": the linking view for owners, the "(all your apps)" labels, D925); 2026-11-25 (branch `feat/platform-keys`, from `next`, not merged, not deployed: "Layout"'s platform key files, the preview's platform keys answers and demo actions `act_demo_key_add` and `act_demo_key_confirm`, D918); 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
 from `@hana-id/brand`'s `LOCKUP`, outlined, D789); 2026-11-12 (branch `feat/journear-design-console`, not merged, not deployed: the SPA on the Journear
 Passport design system, "Brand" and "Patterns" below, D765: its tokens, component classes, self-hosted Archivo and IBM
 Plex and the Journear lockup; toasts, the save bar, setting rows, choice cards, validate on blur, the stats strip; the
@@ -228,9 +228,13 @@ corepack pnpm --filter @hana-id/console preview:web   # http://127.0.0.1:5178
 
 Pick a scenario, then a page: `http://127.0.0.1:5178/__preview/<scenario>?to=<path>`. Scenarios: `owner` (the
 default), `viewer`, `frozen`, `multi` (two organisations), `new-org` (no apps), `signed-out`, `errors`,
-`not-chain-owner` (an owner whose Google account isn't an on-chain owner of the scope),
+`not-chain-owner` (an owner whose Google account isn't an on-chain owner of the scope), `staff-proposer` (D931: an
+owner signed in with the email of the staff member who added a shared wallet's web address),
 `session-ending` (4 min before the session's 12 h end: the warning) and `session-ended` (reads work, every write
-answers 401: the "Your session has ended" banner; switch to `owner` in another tab, then Try again). The org is
+answers 401: the "Your session has ended" banner; switch to `owner` in another tab, then Try again). D931's pages: the confirmation page `/orgs/org_7Hq2Lm9Xc4/apps/app_Pk3Cf8Ld2w/confirm/gc_Pk4Ws9Ra1` (and the
+email's link `/confirm/gc_Pk4Ws9Ra1`), a staff one `/orgs/org_7Hq2Lm9Xc4/apps/app_Rw2Bt7Kd5c/confirm/gc_Hs4Rb8Tq2`, the
+removal page `/remove/gc_Pk9Cf4Mn3#t=` + 43 `A`s, the fresh sign-in's `act_demo_confirm`, `act_demo_confirm_ok` and
+`act_demo_confirm_failed`. The org is
 `org_7Hq2Lm9Xc4`; its apps `app_Lm4Pq9Zs2v` (live, with changes waiting), `app_Ts6Ry1Hn8b` (test), `app_Rw2Bt7Kd5c`
 (new, no origins), `app_Lg5Yn3Wq8d` (suspended). The fresh sign-in page's states: `/actions/act_demo_origin`,
 `act_demo_policy`, `act_demo_settings`, `act_demo_invite`, `act_demo_owner`, `act_demo_ok`, `act_demo_failed`,

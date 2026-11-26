@@ -15,9 +15,11 @@ import { Signing } from './pages/app/Signing.tsx';
 import { Suspend } from './pages/app/Suspend.tsx';
 import { Audit } from './pages/Audit.tsx';
 import { CancelChange, CancelOwner, CancelPlatformKey, RevokePlatformKey } from './pages/Cancel.tsx';
+import { ConfirmOrigins, FindConfirmation } from './pages/ConfirmOrigins.tsx';
 import { ConfirmPlatformKey, PlatformKeyPage, PlatformKeys } from './pages/PlatformKeys.tsx';
 import { PlatformActivity } from './pages/PlatformActivity.tsx';
 import { Members } from './pages/Members.tsx';
+import { RemoveOrigin } from './pages/RemoveOrigin.tsx';
 import { ScopePage } from './pages/Scope.tsx';
 import { StatementPage, Statements } from './pages/Statements.tsx';
 import { Framed, Home, OrgShell } from './pages/Shell.tsx';
@@ -51,6 +53,9 @@ export function App() {
       <Route path="/cancel-platform-key/:keyId" element={<CancelPlatformKey />} />
       <Route path="/revoke-platform-key/:keyId" element={<RevokePlatformKey />} />
       <Route path="/confirm-platform-key/:keyId" element={<Framed>{() => <ConfirmPlatformKey />}</Framed>} />
+      {/* D931: the email's Confirm link (finds the org, then the page below) and the confirmation notice's removal link. */}
+      <Route path="/confirm/:changeId" element={<FindConfirmation />} />
+      <Route path="/remove/:changeId" element={<RemoveOrigin />} />
       <Route path="/actions/:id" element={<Framed>{(me) => <ActionPage me={me} />}</Framed>} />
       <Route path="/" element={<Home />} />
       <Route path="/orgs/:org" element={<OrgShell />}>
@@ -68,6 +73,7 @@ export function App() {
           <Route path="suspend" element={<Suspend />} />
           <Route path="*" element={<NotFound />} />
         </Route>
+        <Route path="apps/:app/confirm/:changeId" element={<ConfirmOrigins />} />
         <Route path="scopes/:scope" element={<ScopePage />} />
         <Route path="members" element={<Members />} />
         <Route path="platform-keys" element={<PlatformKeys />} />

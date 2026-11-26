@@ -15,6 +15,8 @@ import {
   linkTokenMatches,
   nonceOf,
   originChangeDigest,
+  originConfirmDigest,
+  ORIGIN_CONFIRM_MAX,
   ownerActionDigest,
   pathIdentity,
   settingsChangeDigest,
@@ -100,6 +102,33 @@ describe('console layouts match the independent implementation', () => {
     expect(b64url(await linkToken('ownerGrantCancel', key(v.inputs.link_key_hex), v.owner_grant_cancel.grant_id))).toBe(v.owner_grant_cancel.token);
     await expect(linkToken('invite', new Uint8Array(16), 'inv_x')).rejects.toThrow();
     await expect(linkToken('invite', new Uint8Array(32), '')).rejects.toThrow();
+  });
+
+  it('D931: the origin confirmation layout, its own domain, over exactly the set (sorted by change id); the removal link', async () => {
+    const o = v.origin_confirm;
+    const input = { signer: SIGNER, env: o.env, orgId: o.org_id, appId: o.app_id, scopeId: o.scope_id, changes: o.changes.map((c: { change_id: string; origin: string }) => ({ changeId: c.change_id, origin: c.origin })) };
+    const d = await originConfirmDigest(input);
+    expect(b64url(d)).toBe(o.nonce);
+    expect(nonceOf(d)).toBe(o.nonce);
+    // The order given doesn't matter; every field does.
+    expect(nonceOf(await originConfirmDigest({ ...input, changes: [...input.changes].reverse() }))).toBe(o.nonce);
+    for (const other of [{ env: 'sandbox-x' }, { orgId: 'org_other' }, { appId: 'app_other' }, { scopeId: 's10' }, { signer: 'other.testnet' }, { changes: input.changes.slice(0, 1) }, { changes: [{ ...input.changes[0]!, origin: 'https://other.example' }, input.changes[1]!] }]) {
+      expect(nonceOf(await originConfirmDigest({ ...input, ...other })), JSON.stringify(other)).not.toBe(o.nonce);
+    }
+    expect(o.preimage_hex.startsWith(Buffer.from(DOMAINS.originConfirm).toString('hex'))).toBe(true);
+    expect(new Set(Object.values(DOMAINS)).size).toBe(Object.values(DOMAINS).length);
+    await expect(originConfirmDigest({ ...input, changes: [] })).rejects.toThrow(/1 to 20/u);
+    await expect(originConfirmDigest({ ...input, changes: Array.from({ length: ORIGIN_CONFIRM_MAX + 1 }, (_, k) => ({ changeId: `gc_${k}a`, origin: `https://a${k}.example` })) })).rejects.toThrow(/1 to 20/u);
+    await expect(originConfirmDigest({ ...input, changes: [input.changes[0]!, input.changes[0]!] })).rejects.toThrow(/twice/u);
+    await expect(originConfirmDigest({ ...input, changes: [{ changeId: 'gc_a', origin: 'https://Shop.example' }] })).rejects.toThrow(/normalised/u);
+    await expect(originConfirmDigest({ ...input, changes: [{ changeId: 'lc_a', origin: 'https://shop.example' }] })).rejects.toThrow(/change id/u);
+    await expect(originConfirmDigest({ ...input, scopeId: '' })).rejects.toThrow(/scope/u);
+    const r = v.origin_remove_link;
+    const t = await linkToken('originRemove', key(v.inputs.link_key_hex), r.change_id);
+    expect(b64url(t)).toBe(r.token);
+    expect(hex(await linkTokenHash(t))).toBe(r.token_hash_hex);
+    // Never a cancel link's token for the same id.
+    expect(b64url(await linkToken('cancelLink', key(v.inputs.link_key_hex), r.change_id))).not.toBe(r.token);
   });
 
   it('uid: per scope, provider and sub; key_index ignored', async () => {

@@ -12,7 +12,7 @@ import { removeOrigins } from '../src/changes/origins.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
 import { ORIGIN, call, seedApp, uid } from './helpers.ts';
-import { hex, labelChangeDigest, nonceOf, originChangeDigest, ownerActionNonce, parsePlatformPublicKey, platformKeyDigest, settingsChangeDigest, sha256, utf8 } from '@hana-id/console-core';
+import { hex, labelChangeDigest, nonceOf, originChangeDigest, originConfirmDigest, ownerActionNonce, parsePlatformPublicKey, platformKeyDigest, settingsChangeDigest, sha256, utf8 } from '@hana-id/console-core';
 
 /** A partner label document (D894) for the budget test: a made-up contract on the NEAR test network. */
 const LABEL_DOC = JSON.stringify({
@@ -237,6 +237,8 @@ describe('the hot-DB budget', () => {
     if (!pending2.ok) throw new Error(pending2.code);
     let created: { key: { id: string } } | undefined;
     let labelId: string | undefined;
+    let confirmable: { appId: string; scopeId: string; changeId: string; origin: string } | undefined;
+    let removalToken: string | undefined;
     const pk = { one: await newPlatformPublicKey(), two: await newPlatformPublicKey(), three: await newPlatformPublicKey(), four: await newPlatformPublicKey(), five: await newPlatformPublicKey() };
     const keys: Record<string, string> = {};
     const keyNonce = async (kind: 'add' | 'accept' | 'confirm', keyId: string, publicKey: string, label: string) => {
@@ -340,6 +342,30 @@ describe('the hot-DB budget', () => {
       }],
       // D930: one page of the org's platform calls (one read).
       ['platformCalls', (rpc) => rpc.platformCalls({ ...member(), orgId: app.org, limit: 50 })],
+      // D931: an owner's confirmation of a staff web address on a shared wallet (four eyes), its page, and its notice's
+      // removal link (the preview and the removal).
+      ['getConfirmation', async (rpc) => {
+        const shared = await orgApp({ org: app.org });
+        await env.DB.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?1').bind(shared.scope).run();
+        const p = await adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: shared.id, add: ['https://four-eyes.example.com'], expectedVersion: 0 });
+        if (!p.ok) throw new Error(p.code);
+        await adminRpc().ackNotice({ ...system(), changeId: p.changes[0]!.id, cancelTokenHash: await linkToken().hash });
+        confirmable = { appId: shared.id, scopeId: shared.scope, changeId: p.changes[0]!.id, origin: 'https://four-eyes.example.com' };
+        return rpc.getConfirmation({ ...member(), orgId: app.org, changeId: confirmable.changeId });
+      }],
+      ['confirmOrigins', async (rpc) => {
+        const c = confirmable!;
+        const nonce = nonceOf(await originConfirmDigest({ signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: app.org, appId: c.appId, scopeId: c.scopeId, changes: [{ changeId: c.changeId, origin: c.origin }] }));
+        const who = member();
+        const r = await rpc.confirmOrigins({ ...who, orgId: app.org, appId: c.appId, changeIds: [c.changeId], stepUpJwt: await stepUp(nonce) });
+        const removal = linkToken();
+        await adminRpc().armConfirmationLinks({ ...system(), requestId: who.requestId, removals: [{ changeId: c.changeId, removalTokenHash: await removal.hash }] });
+        await adminRpc().ackConfirmationNotice({ ...system(), requestId: who.requestId });
+        removalToken = removal.token;
+        return r;
+      }],
+      ['removalPreview', (rpc) => rpc.removalPreview({ ...link(confirmable!.changeId), changeId: confirmable!.changeId, token: removalToken! })],
+      ['removeOriginByLink', (rpc) => rpc.removeOriginByLink({ ...link(confirmable!.changeId), changeId: confirmable!.changeId, token: removalToken! })],
       ['getUser', async (rpc) => {
         const userId = `u1_${'E'.repeat(21)}A`;
         await env.DB.prepare('INSERT OR IGNORE INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 1)').bind(`hu_${'1'.repeat(26)}`, userId, '11111111', app.scope).run();

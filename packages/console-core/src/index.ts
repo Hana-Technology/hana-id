@@ -14,6 +14,7 @@ export * from './layouts.ts';
 export * from './linking.ts';
 export * from './names.ts';
 export * from './origins.ts';
+export * from './origin-confirm.ts';
 export * from './owner-actions.ts';
 export * from './partner.ts';
 export * from './platform-activity.ts';

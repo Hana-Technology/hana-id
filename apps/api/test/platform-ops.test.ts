@@ -541,7 +541,8 @@ describe('a platform proposal waits 24 h on a dev env, and nothing brings it in 
     const [c1, c2] = a.changes.map((c) => c.changeId);
     await adminRpc().ackNotice({ ...system(), changeId: c1!, cancelTokenHash: await linkToken().hash });
     const t = await dbNow();
-    const early = /no earlier than its wait|announced once|in force only once|never comes back|never deleted|never replaced|takes no waiver|are fixed|written once|only the earliest time|is kept while/u;
+    // D931: a staff row onto a platform-created app's web address is also refused by 0034's four-eyes rule.
+    const early = /no earlier than its wait|announced once|in force only once|never comes back|never deleted|never replaced|takes no waiver|are fixed|written once|only the earliest time|is kept while|starts waiting with its wait/u;
     const attempts: [string, string, unknown[]][] = [
       ['the change in force now', 'UPDATE guarded_changes SET active_from = ?2 WHERE id = ?1', [c1, t]],
       ['the earliest time moved', 'UPDATE platform_origin_waits SET unconfirmed_active_from = ?2 WHERE change_id = ?1', [c1, t]],
@@ -578,14 +579,15 @@ describe('a platform proposal waits 24 h on a dev env, and nothing brings it in 
   it('in a `local*` test env the platform minimum gives way to the env’s own delay; a member’s proposal keeps the env’s delay everywhere', async () => {
     const net = await network();
     const a = await createdApp(net, ['https://partner.example']);
-    const local = { ...env, ENV_NAME: 'local-test', NETWORK: 'testnet' } as typeof env;
+    // D931: a `local*` test env is also one whose API is on a loopback http URL (the local* guard).
+    const local = { ...env, ENV_NAME: 'local-test', NETWORK: 'testnet', API_URL: 'http://127.0.0.1:8787' } as typeof env;
     await ackNotice(new HotDb(env.DB), local, { actor: { kind: 'system', id: 'admin-cron' }, requestId: rid(), now: Date.now() }, { changeId: a.changes[0]!.changeId, cancelTokenHash: await linkToken().hash });
     const g = await one<{ notified_at: number; active_from: number }>('SELECT notified_at, active_from FROM guarded_changes WHERE id = ?1', a.changes[0]!.changeId);
     // Proposed on this dev env (24 h recorded), announced in a local one: the recorded wait still holds.
     expect(g.active_from - g.notified_at).toBe(DAY);
     // Proposed in a local env: its wait is the env's delay (60 s here).
     const before = (await one<{ v: number }>('SELECT origins_version AS v FROM apps WHERE id = ?1', a.id)).v;
-    const p = await post(net.k, `/v1/platform/apps/${a.id}/origins`, { add: ['https://local.example'], expectedVersion: before }, { envName: 'local-test', bindings: { ENV_NAME: 'local-test', NETWORK: 'testnet' } as Partial<typeof env> });
+    const p = await post(net.k, `/v1/platform/apps/${a.id}/origins`, { add: ['https://local.example'], expectedVersion: before }, { envName: 'local-test', bindings: { ENV_NAME: 'local-test', NETWORK: 'testnet', API_URL: 'http://127.0.0.1:8787' } as Partial<typeof env> });
     expect(p.status, JSON.stringify(p.body)).toBe(202);
     const lc = (p.body.changes as { changeId: string }[])[0]!.changeId;
     expect((await one<{ min_delay_ms: number }>('SELECT min_delay_ms FROM platform_origin_waits WHERE change_id = ?1', lc)).min_delay_ms).toBe(60_000);

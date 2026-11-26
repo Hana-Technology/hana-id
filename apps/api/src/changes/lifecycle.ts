@@ -23,6 +23,8 @@ interface ChangePlan extends ChangeRow {
   deleted_at: number | null;
   environment: 'test' | 'live' | null;
   token_hash_hex: string | null;
+  /** D931: a staff proposal under four eyes: its recorded wait (migration 0034's `staff_origin_waits`), else null. */
+  sw_min_delay_ms: number | null;
 }
 
 /** The plan read of a change write: the change, its app (in `orgId` when given) and scope, and the replay check. */
@@ -32,7 +34,8 @@ async function planChange(db: HotDb, i: { changeId: string; orgId: string | null
   // D929 (H1, H2): with the platform's reach, only its own waiting web addresses on apps in its reach are found.
   const reach = i.w.reach;
   const r = await db.first<ChangePlan>(
-    q`SELECT ${replayRow(i.w.requestId)} AS replay, g.id AS change_id, ${raw(cols)}, a.org_id, a.scope_id, a.deleted_at, s.environment, hex(g.cancel_token_hash) AS token_hash_hex
+    q`SELECT ${replayRow(i.w.requestId)} AS replay, g.id AS change_id, ${raw(cols)}, a.org_id, a.scope_id, a.deleted_at, s.environment, hex(g.cancel_token_hash) AS token_hash_hex,
+             (SELECT sw.min_delay_ms FROM staff_origin_waits sw WHERE sw.change_id = g.id) AS sw_min_delay_ms
         FROM (SELECT 1) LEFT JOIN guarded_changes g ON g.id = ${i.changeId}${reach ? q` AND ${reach.change}` : raw('')}
         LEFT JOIN apps a ON a.id = g.app_id AND ${org}${reach ? q` AND ${reach.app}` : raw('')} LEFT JOIN scopes s ON s.scope_id = a.scope_id`,
   );
@@ -148,10 +151,16 @@ export interface Notice {
    * real time; `keyLabel` names the proposing key (its org's, null if it can't be read).
    */
   platform?: { keyId: string; keyLabel: string | null; requestId: string; waitMs: number };
+  /**
+   * D931: a staff proposal under four eyes (a platform-created app or a shared wallet): it waits `waitMs` from the
+   * announcement unless a second person (an owner, or another staff member) confirms it; no waiver. Its email goes to
+   * every owner too, with the Confirm link.
+   */
+  secondPerson?: { requestId: string; waitMs: number };
 }
 
 /** The rows `pendingNotices` reads: the change, its app and scope, the org's contacts, and a platform proposal's wait and key. */
-type NoticeRow = ChangeRow & { app_name: string; org_id: string; scope_id: string; environment: 'test' | 'live'; contacts: string; pw_min_delay_ms: number | null; pk_label: string | null };
+type NoticeRow = ChangeRow & { app_name: string; org_id: string; scope_id: string; environment: 'test' | 'live'; contacts: string; pw_min_delay_ms: number | null; pk_label: string | null; sw_min_delay_ms: number | null };
 
 /**
  * AdminRpc.pendingNotices: every pending change not yet announced (oldest first, one request's changes together), with
@@ -164,6 +173,7 @@ export async function pendingNotices(db: HotDb, limit: number, env?: Env): Promi
     q`SELECT ${raw(cols)}, a.name AS app_name, a.org_id, a.scope_id, s.environment,
              (SELECT json_group_array(email) FROM (SELECT email FROM org_security_contacts WHERE org_id = a.org_id ORDER BY email)) AS contacts,
              (SELECT pw.min_delay_ms FROM platform_origin_waits pw WHERE pw.change_id = g.id) AS pw_min_delay_ms,
+             (SELECT sw.min_delay_ms FROM staff_origin_waits sw WHERE sw.change_id = g.id) AS sw_min_delay_ms,
              CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS pk_label
         FROM guarded_changes g JOIN apps a ON a.id = g.app_id JOIN scopes s ON s.scope_id = a.scope_id
        WHERE g.status = 'pending' AND g.notified_at IS NULL AND a.deleted_at IS NULL
@@ -187,6 +197,9 @@ export async function pendingNotices(db: HotDb, limit: number, env?: Env): Promi
     if (r.proposed_by_kind === 'platform') {
       // As ackNotice: MAX(the env's delay, the platform minimum, the recorded wait, or the minimum when none is recorded).
       n.platform = { keyId: r.proposed_by, keyLabel: r.pk_label, requestId: r.request_id, waitMs: Math.max(envWait, r.pw_min_delay_ms ?? PLATFORM_MIN_DELAY_MS) };
+    } else if (r.proposed_by_kind === 'hana' && r.sw_min_delay_ms !== null) {
+      // D931: as ackNotice gives it: MAX(the env's delay, the platform minimum, the recorded wait).
+      n.secondPerson = { requestId: r.request_id, waitMs: Math.max(envWait, r.sw_min_delay_ms) };
     }
     return n;
   });
@@ -261,15 +274,19 @@ export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: s
   // that time as its earliest (`platform_origin_waits.unconfirmed_active_from`, first), which the database then holds
   // (migration 0033's triggers): the change's `active_from` and its origin row's are that time, never sooner.
   const platform = c.proposed_by_kind === 'platform';
+  // D931 (four eyes, D917): a staff proposal on a platform-created app or a shared wallet waits like a platform one
+  // (its earliest time in `staff_origin_waits`, held by migration 0034), with no waiver, unless a second person confirms it.
+  const second = !platform && c.proposed_by_kind === 'hana' && c.sw_min_delay_ms !== null;
   const platformWait = Math.max(config.delayMs, platformMinDelayMs(env));
-  const recordedWait = (t: string): Q => q`COALESCE((SELECT pw.min_delay_ms FROM platform_origin_waits pw WHERE pw.change_id = ${raw(t)}.id), ${PLATFORM_MIN_DELAY_MS})`;
+  const waitTable = raw(second ? 'staff_origin_waits' : 'platform_origin_waits');
+  const recordedWait = (t: string): Q => q`COALESCE((SELECT pw.min_delay_ms FROM ${waitTable} pw WHERE pw.change_id = ${raw(t)}.id), ${PLATFORM_MIN_DELAY_MS})`;
   const at = (t: string): Q =>
-    platform
+    platform || second
       ? q`(${w.now} + MAX(${platformWait}, ${recordedWait(t)}))`
       : loopback
         ? q`${w.now}`
         : q`CASE WHEN ${noSessionWaiver(t, w.now)} THEN ${w.now} ELSE ${later} END`;
-  const waiver = (t: string): Q => (platform ? raw('NULL') : loopback ? q`'loopback'` : q`CASE WHEN ${noSessionWaiver(t, w.now)} THEN 'no_session' END`);
+  const waiver = (t: string): Q => (platform || second ? raw('NULL') : loopback ? q`'loopback'` : q`CASE WHEN ${noSessionWaiver(t, w.now)} THEN 'no_session' END`);
   const activeFrom = q`(SELECT active_from FROM guarded_changes WHERE id = ${c.id})`;
   const stmts: Q[] = [
     commitOnChange(
@@ -283,14 +300,14 @@ export async function ackNotice(db: HotDb, env: Env, w: Writer, i: { changeId: s
       q`g.status = 'pending' AND g.notified_at IS NULL AND a.deleted_at IS NULL`,
     ),
   ];
-  if (platform) {
+  if (platform || second) {
     stmts.push(
-      q`UPDATE platform_origin_waits SET unconfirmed_active_from = ${w.now} + MAX(${platformWait}, min_delay_ms)
+      q`UPDATE ${waitTable} SET unconfirmed_active_from = ${w.now} + MAX(${platformWait}, min_delay_ms)
          WHERE change_id = ${c.id} AND unconfirmed_active_from IS NULL AND ${committed(w.requestId)}`,
     );
   }
   stmts.push(
-    q`UPDATE guarded_changes SET notified_at = ${w.now}, active_from = ${platform ? q`(SELECT pw.unconfirmed_active_from FROM platform_origin_waits pw WHERE pw.change_id = guarded_changes.id)` : at('guarded_changes')}, waiver = ${waiver('guarded_changes')}, cancel_token_hash = ${blob}
+    q`UPDATE guarded_changes SET notified_at = ${w.now}, active_from = ${platform || second ? q`(SELECT pw.unconfirmed_active_from FROM ${waitTable} pw WHERE pw.change_id = guarded_changes.id)` : at('guarded_changes')}, waiver = ${waiver('guarded_changes')}, cancel_token_hash = ${blob}
        WHERE id = ${c.id} AND status = 'pending' AND notified_at IS NULL AND ${committed(w.requestId)}`,
   );
   if (c.kind === 'origin_add') {

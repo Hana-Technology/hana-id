@@ -206,6 +206,15 @@ export function OriginText({ origin, display, idn }: { origin: string; display: 
   );
 }
 
+/** Under a list of web addresses with an IDN one (the review of an add, a confirmation, the removal link's page). */
+export function IdnWarning({ one = false }: { one?: boolean }) {
+  return (
+    <Callout tone="warn">
+      {one ? 'This web address uses' : 'A web address above uses'} international letters (an internationalised, punycode name): check the plain form is the domain you own.
+    </Callout>
+  );
+}
+
 // ---- forms ----
 
 export interface FieldControl {

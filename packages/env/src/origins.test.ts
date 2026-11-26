@@ -15,7 +15,8 @@ const raw = (): Record<string, unknown> => {
 /** sandbox-dev with the given name and origins (undefined drops the field). */
 function manifest(name: string, vaultOrigin: string | undefined, authOrigin: string | undefined): Record<string, unknown> {
   const { vaultOrigin: _v, authOrigin: _a, ...rest } = raw();
-  return { ...rest, name, ...(vaultOrigin === undefined ? {} : { vaultOrigin }), ...(authOrigin === undefined ? {} : { authOrigin }) };
+  // D931: a local* env has its API on a loopback http URL (the local* guard).
+  return { ...rest, name, ...(/^local/u.test(name) ? { apiUrl: 'http://127.0.0.1:8790' } : {}), ...(vaultOrigin === undefined ? {} : { vaultOrigin }), ...(authOrigin === undefined ? {} : { authOrigin }) };
 }
 
 const messages = (m: Record<string, unknown>) => manifestSchema.safeParse(m).error?.issues.map((i) => `${i.path.join('.')}: ${i.message}`) ?? [];
@@ -202,8 +203,9 @@ describe('manifestSchema: vaultOrigin / authOrigin', () => {
   it('allows loopback only for local* env names', () => {
     const local = manifest('local-dev', 'http://localhost:8787', 'http://127.0.0.1:8788');
     expect(messages(local)).toEqual([]);
-    expect(messages({ ...local, name: 'sandbox-dev' })).toEqual([expect.stringMatching(/^vaultOrigin: .*loopback only in local/u), expect.stringMatching(/^authOrigin: .*loopback only in local/u)]);
-    expect(messages({ ...local, name: 'prod' })).toHaveLength(2);
+    // D931: renamed out of local*, its loopback apiUrl is refused too; the origins' messages are the ones looked at here.
+    expect(messages({ ...local, name: 'sandbox-dev' }).filter((m) => !m.startsWith('apiUrl: '))).toEqual([expect.stringMatching(/^vaultOrigin: .*loopback only in local/u), expect.stringMatching(/^authOrigin: .*loopback only in local/u)]);
+    expect(messages({ ...local, name: 'prod' }).filter((m) => !m.startsWith('apiUrl: '))).toHaveLength(2);
   });
 
   it('refuses one origin for both, in every env', () => {

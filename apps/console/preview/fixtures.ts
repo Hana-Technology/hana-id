@@ -34,6 +34,12 @@ export function livePolicy(): { policyId: string; label: string; json: unknown }
 
 const idnOrigin = (display: string): string => new URL(display).origin;
 
+/** D931: Coffee Club's internationalised web address (its punycode form is what the browser sends). */
+const CAFE_DISPLAY = 'https://cafè.coffeeclub.example';
+const CAFE = idnOrigin(CAFE_DISPLAY);
+/** D931: the request id of Coffee Club's three-address platform request. */
+const REQ_COFFEE = 'pf_coffee_request';
+
 export function me(scenario: { multi: boolean; users: boolean; role: 'owner' | 'viewer'; frozen: boolean }): MeAnswer {
   return {
     user: { id: 'usr_Ak3Pz8Qw2n', email: 'aiko.tanaka@examplelabs.example' },
@@ -161,6 +167,7 @@ export function appDetails(now: number): AppDetail[] {
           proposedAt: now - 20 * 60_000,
           notifiedAt: now - 17 * 60_000,
           activeFrom: now + 24 * H - 17 * 60_000,
+          requestId: 'pf_staging_request',
         },
       ],
       keys: [{ id: 'key_Tq1Wv6Ms3', prefix: 'pk_test_', key: `pk_test_${hex('t1', 32)}`, createdBy: 'hana', createdAt: now - 52 * D }],
@@ -172,23 +179,32 @@ export function appDetails(now: number): AppDetail[] {
       environment: 'test',
       suspendedBy: 0,
       deleted: false,
-      activeOrigins: 0,
-      pendingChanges: 0,
+      activeOrigins: 1,
+      pendingChanges: 1,
       createdAt: now - 3 * H,
       orgId: ORG_ID,
-      originsVersion: 0,
+      originsVersion: 2,
       settingsVersion: 0,
-      origins: [],
+      origins: [
+        { origin: 'https://beta.rewards.example', display: 'https://beta.rewards.example', idn: false, activeFrom: now - D - 20 * H, changeId: 'gc_Hs6Cn2Wd9' },
+        { origin: 'https://rewards-beta.example', display: 'https://rewards-beta.example', idn: false, activeFrom: now + 24 * H - 45 * 60_000, changeId: 'gc_Hs4Rb8Tq2' },
+      ],
       settings: { persistence: 'session', sessionTtlMs: 12 * H, idleTtlMs: 2 * H, googleWebClientId: null, rawSign: 'off', policy: null },
       // D915: a new partner app on a scope Journear marked as shared by several partners' apps: no auto-approve.
       sharedScope: true,
       createdByKind: 'hana',
       sharedWallet: true,
-      changes: [],
+      // D931: on a shared wallet a web address Journear staff add waits for a second person (an owner here, or another
+      // staff member); one waits, one a second staff member confirmed.
+      changes: [
+        { id: 'gc_Hs4Rb8Tq2', appId: 'app_Rw2Bt7Kd5c', kind: 'origin_add', origin: 'https://rewards-beta.example', display: 'https://rewards-beta.example', idn: false, status: 'pending', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: now - 50 * 60_000, notifiedAt: now - 45 * 60_000, activeFrom: now + 24 * H - 45 * 60_000, requestId: 'rq_hs4rb8tq2', secondPerson: true },
+        { id: 'gc_Hs6Cn2Wd9', appId: 'app_Rw2Bt7Kd5c', kind: 'origin_add', origin: 'https://beta.rewards.example', display: 'https://beta.rewards.example', idn: false, status: 'active', proposedByKind: 'hana', proposedBy: 'hana', proposedAt: now - 2 * D, notifiedAt: now - 2 * D + 5 * 60_000, activeFrom: now - D - 20 * H, requestId: 'rq_hs6cn2wd9', secondPerson: true, confirmedAt: now - D - 20 * H, confirmedByKind: 'hana' },
+      ],
       keys: [{ id: 'key_Rb9Xc2Lp7', prefix: 'pk_test_', key: `pk_test_${hex('r1', 32)}`, createdBy: 'hana', createdAt: now - 3 * H }],
     },
-    // D930: an app the org's backend made with its platform key on the shared wallet: one web address working, two it
-    // asked for in one request still waiting (one emailed, one not yet), its own User IDs.
+    // D930: an app the org's backend made with its platform key on the shared wallet: one web address working, one an
+    // owner confirmed (D931), a request of three it asked for (two waiting after their email, one an IDN, and one
+    // cancelled), and a later request whose email hasn't gone out yet; its own User IDs.
     {
       id: 'app_Pk3Cf8Ld2w',
       name: 'Coffee Club',
@@ -196,16 +212,18 @@ export function appDetails(now: number): AppDetail[] {
       environment: 'test',
       suspendedBy: 0,
       deleted: false,
-      activeOrigins: 1,
-      pendingChanges: 2,
+      activeOrigins: 2,
+      pendingChanges: 3,
       createdAt: now - 2 * D,
       orgId: ORG_ID,
-      originsVersion: 3,
+      originsVersion: 5,
       settingsVersion: 0,
       origins: [
         { origin: 'https://coffeeclub.example', display: 'https://coffeeclub.example', idn: false, activeFrom: now - D, changeId: 'gc_Pk1Hd3Vc8' },
+        { origin: 'https://menu.coffeeclub.example', display: 'https://menu.coffeeclub.example', idn: false, activeFrom: now - 2 * H, changeId: 'gc_Pk9Cf4Mn3' },
         { origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, activeFrom: now + 24 * H - 12 * 60_000, changeId: 'gc_Pk4Ws9Ra1' },
-        { origin: 'https://widget.lumenpay.io', display: 'https://widget.lumenpay.io', idn: false, activeFrom: null, changeId: 'gc_Pk5Tq2Nb6' },
+        { origin: CAFE, display: CAFE_DISPLAY, idn: true, activeFrom: now + 24 * H - 12 * 60_000, changeId: 'gc_Pk6Id3Ka7' },
+        { origin: 'https://gift.coffeeclub.example', display: 'https://gift.coffeeclub.example', idn: false, activeFrom: null, changeId: 'gc_Pk5Tq2Nb6' },
       ],
       settings: { persistence: 'session', sessionTtlMs: 12 * H, idleTtlMs: 2 * H, googleWebClientId: null, rawSign: 'off', policy: null },
       sharedScope: true,
@@ -214,8 +232,11 @@ export function appDetails(now: number): AppDetail[] {
       userIds: 'app',
       createdByKey: WORKING_PKC,
       changes: [
-        { id: 'gc_Pk4Ws9Ra1', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, status: 'pending', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 15 * 60_000, notifiedAt: now - 12 * 60_000, activeFrom: now + 24 * H - 12 * 60_000 },
-        { id: 'gc_Pk5Tq2Nb6', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: 'https://widget.lumenpay.io', display: 'https://widget.lumenpay.io', idn: false, status: 'pending', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 15 * 60_000 },
+        { id: 'gc_Pk4Ws9Ra1', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, status: 'pending', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 15 * 60_000, notifiedAt: now - 12 * 60_000, activeFrom: now + 24 * H - 12 * 60_000, requestId: REQ_COFFEE },
+        { id: 'gc_Pk6Id3Ka7', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: CAFE, display: CAFE_DISPLAY, idn: true, status: 'pending', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 15 * 60_000, notifiedAt: now - 12 * 60_000, activeFrom: now + 24 * H - 12 * 60_000, requestId: REQ_COFFEE },
+        { id: 'gc_Pk7Lt8Wq2', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: 'https://loyalty.coffeeclub.example', display: 'https://loyalty.coffeeclub.example', idn: false, status: 'cancelled', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 15 * 60_000, notifiedAt: now - 12 * 60_000, cancelledBy: 'usr_Dm7Vx2Kp4r', cancelledAt: now - 8 * 60_000, requestId: REQ_COFFEE },
+        { id: 'gc_Pk5Tq2Nb6', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: 'https://gift.coffeeclub.example', display: 'https://gift.coffeeclub.example', idn: false, status: 'pending', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 3 * 60_000, requestId: 'pf_gift_request' },
+        { id: 'gc_Pk9Cf4Mn3', appId: 'app_Pk3Cf8Ld2w', kind: 'origin_add', origin: 'https://menu.coffeeclub.example', display: 'https://menu.coffeeclub.example', idn: false, status: 'active', proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', proposedAt: now - 3 * H, notifiedAt: now - 3 * H + 4 * 60_000, activeFrom: now - 2 * H, requestId: 'pf_menu_request', confirmedAt: now - 2 * H, confirmedByKind: 'member' },
       ],
       keys: [{ id: 'key_Pk7Rt3Wm1', prefix: 'pk_test_', key: `pk_test_${hex('cc1', 32)}`, createdBy: 'pkc_Wk7Hq2Lm9Xc4Pz', createdAt: now - 2 * D }],
     },
@@ -501,7 +522,7 @@ export function audit(now: number): AuditAnswer {
       // D916: a row written by the org's platform key.
       { source: 'api', seq: 985, at: now - 20 * 60_000, appId: 'app_Ts6Ry1Hn8b', kind: 'origin.proposed', detail: { changeId: 'gc_Pf3Lk8Wd2', origin: 'https://shop.partner-one.example' }, actorKind: 'platform', actorId: 'pkc_Wk7Hq2Lm9Xc4Pz', requestId: `pf_${hex('rq985', 29)}` },
       // D930: the backend made an app with its platform key, and suspended another.
-      { source: 'api', seq: 986, at: now - 15 * 60_000, appId: 'app_Pk3Cf8Ld2w', kind: 'app.created', detail: { name: 'Coffee Club', plan: 'free', environment: 'test', keyId: 'key_Pk7Rt3Wm1', scopeCreated: false, waiver: null, userIds: 'app', createdBy: 'platform', origins: [{ changeId: 'gc_Pk4Ws9Ra1', origin: 'https://order.coffeeclub.example' }, { changeId: 'gc_Pk5Tq2Nb6', origin: 'https://widget.lumenpay.io' }] }, actorKind: 'platform', actorId: 'pkc_Wk7Hq2Lm9Xc4Pz', requestId: `pf_${hex('rq986', 29)}` },
+      { source: 'api', seq: 986, at: now - 15 * 60_000, appId: 'app_Pk3Cf8Ld2w', kind: 'app.created', detail: { name: 'Coffee Club', plan: 'free', environment: 'test', keyId: 'key_Pk7Rt3Wm1', scopeCreated: false, waiver: null, userIds: 'app', createdBy: 'platform', origins: [{ changeId: 'gc_Pk4Ws9Ra1', origin: 'https://order.coffeeclub.example' }, { changeId: 'gc_Pk6Id3Ka7', origin: CAFE }, { changeId: 'gc_Pk7Lt8Wq2', origin: 'https://loyalty.coffeeclub.example' }] }, actorKind: 'platform', actorId: 'pkc_Wk7Hq2Lm9Xc4Pz', requestId: `pf_${hex('rq986', 29)}` },
       { source: 'api', seq: 987, at: now - 6 * 60_000, appId: 'app_Pk9Sr4Mx7q', kind: 'suspension.set', detail: { bit: 4 }, actorKind: 'platform', actorId: 'pkc_Wk7Hq2Lm9Xc4Pz', requestId: `pf_${hex('rq987', 29)}` },
       // A staff-created app's first origin: announced with the no_session waiver, then recorded by the hourly job.
       { source: 'api', seq: 984, at: now - 40 * 60_000, appId: 'app_Rw2Bt7Kd5c', kind: 'origin.activated', detail: { changeId: 'gc_Rw7Lh2Qa9', kind: 'origin_add', origin: 'http://localhost:5173', policyId: null, activeFrom: now - 3 * H + 4 * 60_000 }, actorKind: 'system', actorId: 'cron', requestId: `${hex('rq984', 16)}-SIN` },
@@ -579,4 +600,59 @@ export function platformCalls(now: number): import('@hana-id/console-core').Plat
     c(407, 2 * H, 'POST', '/v1/platform/apps/:appId/origins', 400, 'app_Pk9Sr4Mx7q', 'origin_refused'),
     c(406, 3 * H, 'GET', '/v1/platform/credential', 200),
   ];
+}
+
+// ---- an owner's confirmation of web addresses (D931) ----
+
+/**
+ * The confirmation page's view of each request (`GET …/confirmations/:changeId`), built from the app fixtures above so
+ * the two agree: every web address of the change's request on its app, its state on the server's clock, the key's label
+ * or staff, and the other apps of the wallet. Undefined for a change no confirmation page shows (a member's own).
+ */
+export function confirmationView(now: number, changeId: string): import('@hana-id/console-core').ConfirmationView | undefined {
+  const apps = appDetails(now);
+  const app = apps.find((a) => a.changes.some((c) => c.id === changeId));
+  const first = app?.changes.find((c) => c.id === changeId);
+  if (!app || !first || first.kind !== 'origin_add' || !first.requestId || !(first.proposedByKind === 'platform' || first.secondPerson)) return undefined;
+  const others = apps.filter((a) => a.scopeId === app.scopeId && a.id !== app.id && !a.deleted).map((a) => a.name).sort();
+  const labels = Object.fromEntries(platformKeys(now).map((k) => [k.id, k.label]));
+  const changes = app.changes
+    .filter((c) => c.kind === 'origin_add' && c.requestId === first.requestId)
+    .sort((x, y) => (x.origin! < y.origin! ? -1 : 1))
+    .map((c) => {
+      const inForce = c.status === 'active' || (c.status === 'pending' && typeof c.activeFrom === 'number' && c.activeFrom <= now);
+      const state = c.status === 'cancelled' ? 'cancelled' : c.status === 'ended' ? 'ended' : inForce ? 'in_force' : c.notifiedAt === undefined ? 'waiting_announcement' : 'waiting';
+      return { changeId: c.id, origin: c.origin!, display: c.display!, idn: c.idn ?? false, state, activeFrom: c.confirmedAt ?? c.activeFrom ?? null, ...(c.confirmedAt !== undefined ? { confirmedAt: c.confirmedAt } : {}), confirmable: state === 'waiting' && c.confirmedAt === undefined } as const;
+    });
+  return {
+    app: { id: app.id, name: app.name, scopeId: app.scopeId, environment: app.environment, sharedScope: app.sharedScope ?? false, otherApps: others.slice(0, 5), otherAppsTotal: others.length },
+    requestId: first.requestId,
+    proposedByKind: first.proposedByKind === 'platform' ? 'platform' : 'hana',
+    ...(first.proposedByKind === 'platform' ? { keyId: first.proposedBy, keyLabel: labels[first.proposedBy] ?? null } : {}),
+    proposedAt: first.proposedAt,
+    changes,
+  };
+}
+
+/** Whether this member may confirm now, as the console's server answers it (apps/console/src/confirmations.ts). */
+export function confirmAbility(view: import('@hana-id/console-core').ConfirmationView, s: { role: 'owner' | 'viewer'; frozen: boolean; chainOwner: boolean }): { allowed: true } | { allowed: false; reason: string; code: string } {
+  if (s.role !== 'owner') return { allowed: false, code: 'forbidden', reason: 'Only an owner of your organisation can confirm.' };
+  if (s.frozen) return { allowed: false, code: 'forbidden', reason: 'Journear has frozen your organisation, so web addresses can’t be confirmed.' };
+  if (view.sameAsProposer) return { allowed: false, code: 'forbidden', reason: 'You added these web addresses, so a second person must confirm them.' };
+  if (!view.changes.some((c) => c.confirmable))
+    return { allowed: false, code: 'not_pending', reason: view.changes.some((c) => c.state === 'waiting_announcement') ? 'Its email hasn’t gone out yet, so it can’t be confirmed yet. Try again in a few minutes.' : 'Nothing here is waiting to be confirmed.' };
+  if (!s.chainOwner) return { allowed: false, code: 'not_owner', reason: 'Only an owner of this wallet’s settings can confirm.' };
+  return { allowed: true };
+}
+
+/**
+ * The removal link's page (`POST /api/remove/preview`): Coffee Club's confirmed menu web address (removable), and one
+ * already removed through its link. The confirmer is a member by address; staff are "Journear staff".
+ */
+export function removalPreview(now: number, changeId: string) {
+  if (changeId === 'gc_Pk9Cf4Mn3')
+    return { changeId, appName: 'Coffee Club', origin: 'https://menu.coffeeclub.example', display: 'https://menu.coffeeclub.example', idn: false, confirmedAt: now - 2 * H, confirmedByKind: 'member' as const, confirmedBy: 'aiko.tanaka@examplelabs.example', until: now - 2 * H + 7 * D, removable: true };
+  if (changeId === 'gc_Rm2Xp7Lk4')
+    return { changeId, appName: 'Coffee Club', origin: CAFE, display: CAFE_DISPLAY, idn: true, confirmedAt: now - 3 * D, confirmedByKind: 'hana' as const, confirmedBy: 'Journear staff', until: now + 4 * D, removable: false };
+  return undefined;
 }

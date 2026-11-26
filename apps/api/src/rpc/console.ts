@@ -68,6 +68,8 @@ import { isLabelChange } from '../labels/sql.ts';
 import { acceptPlatformKey, cancelPlatformKey, cancelPlatformKeyByLink, confirmPlatformKey, getPlatformKey, listPlatformKeys, registerPlatformKey, revokePlatformKey, revokePlatformKeyByLink } from '../platform/keys.ts';
 import { platformCalls } from '../platform/activity.ts';
 import { runRpc } from './common.ts';
+import { confirmOrigins, getConfirmation, removalPreview, removeOriginByLink } from '../changes/confirm.ts';
+import { confirmOriginsInput, getConfirmationInput, personEmailKey, removeOriginByLinkInput } from '@hana-id/console-core';
 
 const MEMBER = ['member'] as const;
 const LINK = ['link'] as const;
@@ -128,6 +130,13 @@ export const CONSOLE_COSTS = {
   revokePlatformKeyByLink: 8,
   /** D930: one read (a page of the org's platform calls, at most PLATFORM_CALLS_SCAN rows looked through). */
   platformCalls: 1,
+  /** D931: plan read, a batch of four (commit, confirmations, changes, gate rows), one diagnostic read. */
+  confirmOrigins: 6,
+  /** D931: one read (the confirmation page). */
+  getConfirmation: 1,
+  /** D931: the removal link's plan read (the preview), and its batch of four with one diagnostic read. */
+  removalPreview: 1,
+  removeOriginByLink: 6,
 } as const;
 
 /**
@@ -246,6 +255,32 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
     return runRpc(this.env, 'cancelChangeByLink', cancelChangeByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.cancelChangeByLink, link: true }, ({ input, db, w }): Promise<{ change: object }> =>
       isLabelChange(input.changeId) ? cancelLabelChangeByLink(db, w, input) : cancelChangeByLink(db, w, input),
     );
+  }
+
+  // ---- D931: an owner's confirmation of web addresses that wait for a second person, and its notice's removal link ----
+
+  /**
+   * An owner's confirmation (the step-up of kind `origin.confirm`, verified here: its nonce over exactly these changes,
+   * the on-chain owner read uncached, single use). A member actor only. Not counted by the breaker: it brings web
+   * addresses into force, it stops nothing.
+   */
+  confirmOrigins(c: unknown) {
+    return runRpc(this.env, 'confirmOrigins', confirmOriginsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.confirmOrigins }, ({ input, db, w }) => confirmOrigins(db, this.env, w, input));
+  }
+
+  /** The page the email's Confirm link opens: reads only (a GET never confirms). */
+  getConfirmation(c: unknown) {
+    return runRpc(this.env, 'getConfirmation', getConfirmationInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.getConfirmation }, ({ input, db, w }) => getConfirmation(db, input, w.now, input.actor.kind === 'member' ? personEmailKey(input.actor.email) : undefined));
+  }
+
+  /** The removal page's details (`POST /api/remove/preview`: the token is in the body, never a URL): reads only. */
+  removalPreview(c: unknown) {
+    return runRpc(this.env, 'removalPreview', removeOriginByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.removalPreview, link: true }, ({ input, db, w }) => removalPreview(db, w, input));
+  }
+
+  /** The confirmation notice's one-click removal link (`POST /api/remove`, 7 days, single use): the `link` actor. */
+  removeOriginByLink(c: unknown) {
+    return runRpc(this.env, 'removeOriginByLink', removeOriginByLinkInput, c, { actors: LINK, cost: CONSOLE_COSTS.removeOriginByLink, link: true }, ({ input, db, w }) => removeOriginByLink(db, w, input));
   }
 
   // ---- partner labels (D894): an on-chain owner's proposals and removals, bound to the step-up; no UI yet (piece 4) ----

@@ -53,6 +53,11 @@ export const STEP_UP_KINDS = [
   'platform.key_add',
   'platform.key_accept',
   'platform.key_confirm',
+  /**
+   * D931: an owner's confirmation of web addresses the platform asked for (or staff added to a shared wallet), bound to
+   * exactly that set (layouts.ts originConfirmDigest); they are in force at once.
+   */
+  'origin.confirm',
 ] as const;
 export const OWNER_ACTION_METHODS = ['propose_change', 'execute_change', 'cancel_change', 'remove_client', 'disable_shared_login'] as const;
 
@@ -211,6 +216,13 @@ export const guardedChange = z
     expeditedBy: z.string().optional(),
     cancelledBy: z.string().optional(),
     cancelledAt: ms.optional(),
+    /** D931: the proposing request (its web addresses are confirmed together), for a platform or four-eyes proposal. */
+    requestId: z.string().optional(),
+    /** D931: a staff proposal under four eyes (a platform-created app or a shared wallet): it waits for a second person. */
+    secondPerson: z.boolean().optional(),
+    /** D931: when a second person confirmed it (it came into force then), and whether an owner or staff. */
+    confirmedAt: ms.optional(),
+    confirmedByKind: z.enum(['member', 'hana']).optional(),
   })
   .strict();
 export type GuardedChange = z.infer<typeof guardedChange>;

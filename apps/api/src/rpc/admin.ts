@@ -145,6 +145,8 @@ import {
   setPlatformOrgFrozen,
 } from '../platform/keys.ts';
 import { platformCalls, platformQueue } from '../platform/activity.ts';
+import { ackConfirmationNotice, armConfirmationLinks, confirmStaffOrigins, confirmationNotices, noteConfirmationNoticeFailure } from '../changes/confirm.ts';
+import { ackConfirmationNoticeInput, armConfirmationLinksInput, confirmStaffOriginsInput, confirmationNoticesInput, noteConfirmationNoticeFailureInput } from '@hana-id/console-core';
 import { adminRun, noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
@@ -255,6 +257,35 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   expediteChange(c: unknown) {
     return runRpc(this.env, 'admin.expediteChange', expediteChangeInput, c, { actors: HANA }, ({ input, db, w }) => expediteChange(db, w, input));
+  }
+
+  /**
+   * D931 (four eyes, D917): a second staff member confirms web addresses another staff member added to a
+   * platform-created app or a shared wallet (another Access subject and email, with a reason): in force at once. Never
+   * a platform proposal (only an owner confirms those, in the partner portal).
+   */
+  confirmStaffOrigins(c: unknown) {
+    return runRpc(this.env, 'admin.confirmStaffOrigins', confirmStaffOriginsInput, c, { actors: HANA }, ({ input, db, w }) => confirmStaffOrigins(db, this.env, w, input));
+  }
+
+  /** D931: the confirmations whose notice (with its removal links) hasn't gone out, for the notice cron. */
+  confirmationNotices(c: unknown) {
+    return runRpc(this.env, 'admin.confirmationNotices', confirmationNoticesInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db, w }) => confirmationNotices(db, input.limit, w.now));
+  }
+
+  /** D931 (after PR 159's review): only the notice cron, before the first send: the removal links' hashes (7 days), once. */
+  armConfirmationLinks(c: unknown) {
+    return runRpc(this.env, 'admin.armConfirmationLinks', armConfirmationLinksInput, c, { actors: SYSTEM }, ({ input, db, w }) => armConfirmationLinks(db, w, input));
+  }
+
+  /** D931: only the notice cron, after every send was accepted (the links armed before). */
+  ackConfirmationNotice(c: unknown) {
+    return runRpc(this.env, 'admin.ackConfirmationNotice', ackConfirmationNoticeInput, c, { actors: SYSTEM }, ({ input, db, w }) => ackConfirmationNotice(db, w, input));
+  }
+
+  /** D931 (after PR 159's reviews): only the notice cron: a run failed; retried later, until 7 days after the confirmation. */
+  noteConfirmationNoticeFailure(c: unknown) {
+    return runRpc(this.env, 'admin.noteConfirmationNoticeFailure', noteConfirmationNoticeFailureInput, c, { actors: SYSTEM }, ({ input, db, w }) => noteConfirmationNoticeFailure(db, w, input));
   }
 
   pendingNotices(c: unknown) {

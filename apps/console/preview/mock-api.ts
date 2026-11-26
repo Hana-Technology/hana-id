@@ -7,7 +7,8 @@
 import { canonicalJson, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import * as F from './fixtures.ts';
 
-export const SCENARIOS = ['owner', 'viewer', 'frozen', 'multi', 'new-org', 'signed-out', 'errors', 'session-ending', 'session-ended', 'not-chain-owner'] as const;
+// `staff-proposer` (D931): an owner signed in with the email of the staff member who added a four-eyes web address.
+export const SCENARIOS = ['owner', 'viewer', 'frozen', 'multi', 'new-org', 'signed-out', 'errors', 'session-ending', 'session-ended', 'not-chain-owner', 'staff-proposer'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
 export interface Answer {
@@ -72,6 +73,13 @@ function demoAction(id: string, now: number): ActionRecord | undefined {
       return { id, kind: 'platform.key_add', status: 'pending', decoded: { scopeIds: ['s_lumen_test'], label: 'Production backend', thumbprint: F.platformKeys(now)[0]!.thumbprint, fourEyes: false }, expiresAt, returnTo: `/orgs/${F.ORG_ID}/platform-keys` };
     case 'act_demo_key_confirm':
       return { id, kind: 'platform.key_confirm', status: 'pending', decoded: { keyId: 'pkc_Ws4Bn8Rt5Wp1Qa', label: 'Standby key', thumbprint: F.platformKeys(now)[1]!.thumbprint, scopeIds: ['s_lumen_test', 's_rewards_test'], proposedByKind: 'member', fourEyes: true }, expiresAt, returnTo: `/orgs/${F.ORG_ID}/platform-keys` };
+    // D931: an owner's confirmation of two of Coffee Club's web addresses (one an IDN), before and after the sign-in.
+    case 'act_demo_confirm':
+      return { id, kind: 'origin.confirm', status: 'pending', decoded: decodedFor('origin.confirm', { appId: 'app_Pk3Cf8Ld2w', changeIds: ['gc_Pk4Ws9Ra1', 'gc_Pk6Id3Ka7'] }, now), expiresAt, returnTo: `/orgs/${F.ORG_ID}/apps/app_Pk3Cf8Ld2w/origins` };
+    case 'act_demo_confirm_ok':
+      return { id, kind: 'origin.confirm', status: 'ok', decoded: decodedFor('origin.confirm', { appId: 'app_Pk3Cf8Ld2w', changeIds: ['gc_Pk4Ws9Ra1', 'gc_Pk6Id3Ka7'] }, now), expiresAt: now - 60_000, returnTo: `/orgs/${F.ORG_ID}/apps/app_Pk3Cf8Ld2w/origins`, outcome: { status: 'ok', confirmedAt: now - 90_000, confirmed: 2 } };
+    case 'act_demo_confirm_failed':
+      return { id, kind: 'origin.confirm', status: 'failed', decoded: decodedFor('origin.confirm', { appId: 'app_Pk3Cf8Ld2w', changeIds: ['gc_Pk4Ws9Ra1'] }, now), expiresAt: now - 60_000, returnTo: `/orgs/${F.ORG_ID}/apps/app_Pk3Cf8Ld2w/origins`, outcome: { status: 'failed', code: 'not_owner' } };
     case 'act_demo_expired':
       return { id, kind: 'raw_sign.on', status: 'expired', decoded: { appId: app.id, appName: app.name, settingsVersion: 12 }, expiresAt: now - 30_000 };
     default:
@@ -130,6 +138,14 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
       const k = F.platformKeys(now).find((x) => x.id === params.keyId);
       return k ? { keyId: k.id, label: k.label, thumbprint: k.thumbprint, scopeIds: k.scopes, proposedByKind: k.proposedByKind, fourEyes: k.fourEyes } : {};
     }
+    case 'origin.confirm': {
+      // D931: as the console builds it (confirmations.ts buildConfirmation): the ticked web addresses, sorted.
+      const ids = ((params.changeIds as unknown[]) ?? []).map(String).sort();
+      const v = ids[0] ? F.confirmationView(now, ids[0]) : undefined;
+      if (!v) return base;
+      const shown = v.changes.filter((c) => ids.includes(c.changeId)).map((c) => ({ changeId: c.changeId, origin: c.origin, display: c.display, idn: c.idn, activeFrom: c.activeFrom }));
+      return { appId: v.app.id, appName: v.app.name, scopeId: v.app.scopeId, proposedByKind: v.proposedByKind, ...(v.keyLabel !== undefined ? { keyLabel: v.keyLabel } : {}), changes: shown };
+    }
     case 'owner_action':
       return { scopeId: params.scopeId, actionNonce: 6, method: params.method, ...(params.aud ? { aud: params.aud, provider: String(params.aud).startsWith('email:') ? 'email' : 'google', immediate: true } : {}), ...(params.change ? { change: (params.change as { kind?: string }).kind === 'AddEmailClient' ? { kind: 'AddClient', provider: 'email', aud: `email:${String(params.scopeId)}` } : params.change } : {}) };
     default:
@@ -141,7 +157,7 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
 function returnFor(orgId: string, kind: string, params: Record<string, unknown>, r: unknown): string {
   const page = typeof r === 'object' && r !== null ? (r as { page?: unknown }).page : undefined;
   const appId = typeof params.appId === 'string' ? params.appId : typeof r === 'object' && r !== null && typeof (r as { appId?: unknown }).appId === 'string' ? (r as { appId: string }).appId : undefined;
-  const def: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.resume': 'suspend', 'app.settings': 'sessions', owner_action: 'scope' };
+  const def: Record<string, string> = { 'origin.add': 'origins', 'origin.confirm': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.resume': 'suspend', 'app.settings': 'sessions', owner_action: 'scope' };
   const p = typeof page === 'string' && ['origins', 'signing', 'suspend', 'sessions', 'email', 'scope', 'members', 'platform-keys'].includes(page) ? page : (def[kind] ?? (kind.startsWith('platform.') ? 'platform-keys' : 'members'));
   if (p === 'members') return `/orgs/${orgId}/members`;
   if (p === 'platform-keys') return `/orgs/${orgId}/platform-keys`;
@@ -157,6 +173,17 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   const role = scenario === 'viewer' ? 'viewer' : 'owner';
   const frozen = scenario === 'frozen';
   if (path === '/api/auth/start' && method === 'POST') return ok({ startUrl: '/__preview/owner?to=/' });
+  // D931: the confirmation notice's removal link (no session: any scenario). `errors`: the link has expired.
+  if ((path === '/api/remove/preview' || path === '/api/remove') && method === 'POST') {
+    const b = (body ?? {}) as { changeId?: unknown; token?: unknown };
+    if (typeof b.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(b.token)) return fail(400, 'bad_request', 'Expected {changeId, token}');
+    if (scenario === 'errors') return fail(403, 'forbidden', 'This link has expired: an owner can remove the web address in the partner portal');
+    const p = F.removalPreview(now, String(b.changeId));
+    if (!p) return fail(403, 'forbidden', 'This link is not valid for this web address');
+    if (path === '/api/remove/preview') return ok(p);
+    if (!p.removable) return fail(409, 'not_pending', 'This web address was already removed');
+    return ok({ changeId: p.changeId, appName: p.appName, origin: p.origin, display: p.display, idn: p.idn });
+  }
   if (scenario === 'signed-out') return fail(401, 'unauthenticated', 'Sign in again');
   if (path === '/api/auth/logout' && method === 'POST') return ok({});
   // The session's end: `session-ending` is 4 min from its 12 h absolute end (the warning; inside a demo action's
@@ -179,6 +206,12 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
     return ok(a);
   }
   if (path === '/api/cancel' || path === '/api/owner-grants/cancel' || path === '/api/platform-keys/cancel' || path === '/api/platform-keys/revoke') return scenario === 'errors' ? fail(409, 'not_pending', 'not_pending') : ok({});
+  // D931: which organisation the email's Confirm link's change is in.
+  const confirmOrg = /^\/api\/confirmations\/([^/]+)\/org$/u.exec(path);
+  if (confirmOrg) {
+    const v = F.confirmationView(now, confirmOrg[1]!);
+    return v ? ok({ orgId: F.ORG_ID, appId: v.app.id }) : fail(404, 'not_found', 'Not found');
+  }
   const keyOrg = /^\/api\/platform-keys\/([^/]+)\/org$/u.exec(path);
   if (keyOrg) return F.platformKeys(now).some((k) => k.id === keyOrg[1]) ? ok({ orgId: F.ORG_ID }) : fail(404, 'not_found', 'Not found');
 
@@ -223,6 +256,16 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   if (keyM) {
     const k = F.platformKeys(now).find((x) => x.id === keyM[1]);
     return k ? ok({ key: { ...k, ...(k.id === 'pkc_Ws4Bn8Rt5Wp1Qa' && role === 'owner' ? { registeredByYou: true } : {}) }, people: F.PLATFORM_PEOPLE, role, ...F.platformKeyAbilities(k.id, role, frozen), owners: 2, now }) : fail(404, 'not_found', 'No such platform key in this organisation');
+  }
+  // D931: the confirmation page: the request's web addresses and whether this member may confirm them now.
+  const confM = /^\/confirmations\/([^/]+)$/u.exec(rest);
+  if (confM) {
+    const found = apps.length ? F.confirmationView(now, confM[1]!) : undefined;
+    if (!found) return fail(404, 'not_found', 'No such web address waiting on this app');
+    // `staff-proposer`: the owner is the staff member who added a four-eyes web address: nothing is theirs to confirm.
+    const mine = scenario === 'staff-proposer' && found.proposedByKind === 'hana';
+    const v = mine ? { ...found, sameAsProposer: true as const, changes: found.changes.map((c) => ({ ...c, confirmable: false })) } : found;
+    return ok({ confirmation: v, ability: F.confirmAbility(v, { role, frozen, chainOwner: scenario !== 'not-chain-owner' }), role, now });
   }
   // `not-chain-owner`: an owner in the console whose Google account isn't an on-chain owner of the scope (D652).
   if (rest.startsWith('/scopes/')) return ok(F.scope(now, scenario !== 'not-chain-owner'));

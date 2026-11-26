@@ -13,7 +13,7 @@ import { withRehearsalD1 } from './lib/admin-apps.ts';
 import { invocationDir } from './lib/admin-settings.ts';
 import { run } from './lib/cli.ts';
 import { apiPrivateD1Execute } from './lib/d1.ts';
-import { LEDGER_CHECK_USAGE, ledgerCheck, referenceSchema } from './lib/ledger-check.ts';
+import { LEDGER_CHECK_USAGE, ledgerCheck, levelOf, referenceSchema } from './lib/ledger-check.ts';
 import { assertPrivate, parseSecretJson, secretsDir, writeSecretJson } from './lib/secrets.ts';
 import { ROLE_FILES, readRoleUrl } from './lib/usage-setup.ts';
 import { redact } from './lib/usage-migrate.ts';
@@ -58,7 +58,11 @@ run(async () => {
     // A relative --before or --out is relative to where pnpm was run (INIT_CWD), not scripts/ (D924).
     cwd: invocationDir(),
     // What an index or trigger new since the snapshot must be: as this checkout's migrations create it (D924).
-    referenceSchema: () => referenceSchema(join(repoRoot, 'apps', 'api', 'migrations')),
+    // D931: at the level the database recorded (a trigger a later migration replaces is the version it should have).
+    referenceSchema: (applied) => {
+      const dir = join(repoRoot, 'apps', 'api', 'migrations');
+      return referenceSchema(dir, levelOf(applied, readdirSync(dir).filter((n) => n.endsWith('.sql'))));
+    },
     // The commit and whether apps/api/migrations is dirty, recorded in each snapshot and checked by compare (D924).
     checkout: () => {
       const git = (...a: string[]) => execFileSync('git', ['-C', repoRoot, ...a], { encoding: 'utf8' });

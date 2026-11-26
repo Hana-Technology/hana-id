@@ -10,7 +10,7 @@ import { getApp } from './apps.ts';
 import { type Writer, actorId, commitOn, committed, refuse, refuseReplay, replayRow, runWrite, expectReplay } from './cas.ts';
 import { requireOwnersInOrg } from './chain.ts';
 import type { HotDb } from './db.ts';
-import { checkOriginRules, normaliseAll, requireChangeConfig } from './origins.ts';
+import { checkOriginRules, normaliseAll, requireChangeConfig, staffWaits } from './origins.ts';
 import { appName } from './settings.ts';
 import { type Q, q, raw } from './sql.ts';
 import { APP_CHANGE_COLUMNS, type AppChangeRow, type SecurityEventRow, appChangeView, scopeView, securityEventView } from './views.ts';
@@ -75,7 +75,8 @@ export async function createApp(
   const appId = newId('app');
   const keyId = newId('key');
   const publishableKey = newPublishableKey(i.environment);
-  const waiver = createScope ? 'no_session' : null;
+  // D931: a scope this call marks as shared gives its first origins no waiver: they wait for a second person (four eyes).
+  const waiver = createScope && !mark ? 'no_session' : null;
   const changes = origins.map((origin) => ({ changeId: newId('guardedChange'), origin }));
   const scopeHolds: Q = createScope
     ? q`NOT EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId})`
@@ -119,6 +120,8 @@ export async function createApp(
   );
   if (changes.length) {
     stmts.push(
+      // D931: on a shared wallet the initial origins are staff proposals under four eyes (their waits first).
+      staffWaits(env, w, appId, list, 'changeId', config.delayMs),
       q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, waiver, request_id)
         SELECT json_extract(value, '$.changeId'), ${appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', 'hana', ${actorId(w.actor)}, ${w.now}, ${waiver}, ${w.requestId}
           FROM json_each(${list}) WHERE ${when}`,
@@ -157,6 +160,19 @@ export async function assignScopeOrg(db: HotDb, env: Env, w: Writer, i: { scopeI
 }
 
 /** An app of scope `s` (not deleted) with an auto-approve policy in force, waiting in its columns, or proposed. */
+/**
+ * D931 (after PR 159's review, L1): an app of the scope has a staff web address not working yet (pending and not in
+ * force: one waiting for its email, or for its time, a `no_session` waiver candidate among them). Marking the scope then
+ * would leave it on the plain path (no four eyes, no 24 h), so the mark waits until it is cancelled or working.
+ */
+export const SCOPE_HAS_WAITING_STAFF_ORIGIN = (scopeId: string, now: number): Q =>
+  q`EXISTS (SELECT 1 FROM guarded_changes g JOIN apps a ON a.id = g.app_id WHERE a.scope_id = ${scopeId} AND a.deleted_at IS NULL
+              AND g.kind = 'origin_add' AND g.proposed_by_kind = 'hana' AND g.status = 'pending' AND (g.active_from IS NULL OR g.active_from > ${now}))`;
+
+/** In words: why the scope can't be marked yet. */
+export const SHARED_SCOPE_STAFF_ORIGIN_WAITING =
+  'An app of this scope has web addresses Journear staff added that aren’t working yet: cancel them, or wait until they work, then mark the scope as shared';
+
 const SCOPE_HAS_POLICY = (scopeId: string): Q =>
   q`EXISTS (SELECT 1 FROM apps a WHERE a.scope_id = ${scopeId} AND a.deleted_at IS NULL
               AND (a.auto_approve_policy IS NOT NULL OR a.auto_approve_pending IS NOT NULL
@@ -173,8 +189,9 @@ const SCOPE_HAS_POLICY = (scopeId: string): Q =>
  */
 export async function setScopeAppUserIds(db: HotDb, w: Writer, i: { scopeId: string; orgId: string }): Promise<{ changed: boolean }> {
   expectReplay(w, ['scope.app_user_ids'], null);
-  const r = await db.first<{ replay: string | null; org_id: string | null; environment: Environment | null; app_user_ids: number | null; has_policy: number }>(
-    q`SELECT ${replayRow(w.requestId)} AS replay, s.org_id, s.environment, s.app_user_ids, ${SCOPE_HAS_POLICY(i.scopeId)} AS has_policy
+  const r = await db.first<{ replay: string | null; org_id: string | null; environment: Environment | null; app_user_ids: number | null; has_policy: number; staff_waiting: number }>(
+    q`SELECT ${replayRow(w.requestId)} AS replay, s.org_id, s.environment, s.app_user_ids, ${SCOPE_HAS_POLICY(i.scopeId)} AS has_policy,
+             ${SCOPE_HAS_WAITING_STAFF_ORIGIN(i.scopeId, w.now)} AS staff_waiting
         FROM (SELECT 1) LEFT JOIN scopes s ON s.scope_id = ${i.scopeId}`,
   );
   refuseReplay(r?.replay, w);
@@ -182,6 +199,7 @@ export async function setScopeAppUserIds(db: HotDb, w: Writer, i: { scopeId: str
   if (r.app_user_ids === 1) return { changed: false };
   if (r.environment !== 'test') refuse('env_mismatch', SHARED_SCOPE_TEST_ONLY);
   if (r.has_policy) refuse('conflict', SHARED_SCOPE_POLICY_IN_THE_WAY);
+  if (r.staff_waiting) refuse('conflict', SHARED_SCOPE_STAFF_ORIGIN_WAITING);
   await runWrite(db, w, [
     commitOn(
       w,
@@ -190,7 +208,8 @@ export async function setScopeAppUserIds(db: HotDb, w: Writer, i: { scopeId: str
         detail: q`json_object('appUserIds', 1, 'apps', (SELECT json_group_array(id) FROM (SELECT id FROM apps WHERE scope_id = ${i.scopeId} AND deleted_at IS NULL ORDER BY created_at, id)))`,
       },
       { orgId: i.orgId, scopeId: i.scopeId },
-      q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = 'test' AND app_user_ids = 0) AND NOT ${SCOPE_HAS_POLICY(i.scopeId)}`,
+      q`EXISTS (SELECT 1 FROM scopes WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND environment = 'test' AND app_user_ids = 0) AND NOT ${SCOPE_HAS_POLICY(i.scopeId)}
+        AND NOT ${SCOPE_HAS_WAITING_STAFF_ORIGIN(i.scopeId, w.now)}`,
     ),
     q`UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ${i.scopeId} AND org_id = ${i.orgId} AND ${committed(w.requestId)}`,
   ]);

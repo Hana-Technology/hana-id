@@ -10,6 +10,7 @@ import { CONFIRM_WORDS } from '../../confirm-words.ts';
 import { useNow, useWrite, when } from '../../lib.tsx';
 import { Badge, ChangeTrack, ConfirmButton, WriteNote, proposer } from '../../ui.tsx';
 import type { AppCtl } from '../Apps.tsx';
+import { FRAME_WORDS } from '../../frame-words.ts';
 
 const TITLE: Record<GuardedChange['kind'], string> = { origin_add: 'Add web address', policy_set: 'Set the auto-approve policy', raw_sign_on: 'Turn raw signing on' };
 
@@ -66,6 +67,12 @@ export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }:
             <div className="pending-head">
               <span className="pending-what">
                 {changeTitle(c)}
+                {c.frameOnly && (
+                  <>
+                    {' '}
+                    <Badge tone="info">{FRAME_WORDS.badge}</Badge>
+                  </>
+                )}
                 {c.idn && (
                   <>
                     {' '}

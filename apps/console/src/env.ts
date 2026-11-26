@@ -23,6 +23,7 @@ import type {
   PendingUpgradesInput,
   PendingUpgradesView,
   RemoveOriginsInput,
+  FrameOnlyOriginsInput,
   RevokeKeyInput,
   RotateKeyInput,
   RpcFail,
@@ -69,6 +70,8 @@ export interface ConsoleRpcClient {
   changeOrigins(c: ChangeOriginsInput): Answer<{ version: number; changes: GuardedChange[] }>;
   proposeChange(c: ConsoleProposeChangeInput): Answer<{ version: number; change: GuardedChange }>;
   removeOrigins(c: RemoveOriginsInput): Answer<{ version: number }>;
+  /** D934: web addresses set to work only inside the app's other web addresses, at once (a tightening, like a removal). */
+  frameOnlyOrigins(c: FrameOnlyOriginsInput): Answer<{ version: number }>;
   turnOff(c: TurnOffInput): Answer<{ version: number }>;
   updateSettings(c: UpdateSettingsInput): Answer<{ version: number }>;
   /** A guarded change (`gc_`) or a request labels version (`lc_`, D894): the answer is that change's own view. */

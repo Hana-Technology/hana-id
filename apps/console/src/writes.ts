@@ -146,6 +146,19 @@ const ROUTES: OrgRouteDef[] = [
     },
   },
   {
+    // D934: a tightening, like a removal: immediate, no fresh sign-in, open while the org is frozen.
+    method: 'POST',
+    re: new RegExp(`^/apps/(${APP})/origins/frame-only$`, 'u'),
+    role: 'owner',
+    frozenOk: true,
+    run: async (c) => {
+      const b = await body(c, z.object({ origins: z.array(z.string().min(1).max(2048)).min(1).max(20), expectedVersion: version }).strict(), 'Expected {origins, expectedVersion}');
+      if (!b.ok) return b.res;
+      const r = await c.env.API.frameOnlyOrigins({ ...ctxOf(c), orgId: c.caller.orgId, appId: appOf(c), ...b.value });
+      return answered(c, 'frameOnlyOrigins', 'origin.frame_only', appOf(c), r, (x) => ({ version: x.version, origins: b.value.origins.length }), (x) => ({ version: x.version }));
+    },
+  },
+  {
     method: 'POST',
     re: new RegExp(`^/apps/(${APP})/off$`, 'u'),
     role: 'owner',

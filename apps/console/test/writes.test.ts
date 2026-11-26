@@ -47,6 +47,7 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
   return [
     { method: 'POST', path: `${o}/actions`, body: { kind: 'member.invite', params: { email: 'matrix@partner.example', role: 'viewer' } } },
     { method: 'POST', path: `${o}/apps/${app.id}/origins/remove`, body: { remove: ['https://app.partner.example'], expectedVersion: r.origins_version } },
+    { method: 'POST', path: `${o}/apps/${app.id}/origins/frame-only`, body: { origins: ['https://app.partner.example'], expectedVersion: r.origins_version } },
     { method: 'POST', path: `${o}/apps/${app.id}/off`, body: { what: 'raw_sign', expectedVersion: r.settings_version } },
     { method: 'GET', path: `${o}/apps/${app.id}/email` },
     { method: 'POST', path: `${o}/changes/gc_unknown1/cancel`, body: {} },
@@ -154,7 +155,7 @@ describe('the role matrix (spec "Roles and permissions")', () => {
     }
     const open = ROUTE_TABLE.filter((r) => r.frozenOk && r.method === 'POST').map((r) => r.pattern);
     expect(open.sort()).toEqual(
-      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/platform-keys\\/(pkc_[1-9A-HJ-NP-Za-km-z]{12,17})\\/revoke$', '^\\/platform-keys\\/(pkc_[1-9A-HJ-NP-Za-km-z]{12,17})\\/cancel$'].sort(),
+      ['^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/keys\\/(key_[A-Za-z0-9_]{1,96})\\/revoke$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/off$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/remove$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/origins\\/frame-only$', '^\\/apps\\/(app_[A-Za-z0-9]{1,64})\\/suspend$', '^\\/changes\\/((?:gc|lc)_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/invites\\/(inv_[A-Za-z0-9]{1,64})\\/revoke$', '^\\/owner-grants\\/(og_[A-Za-z0-9]{1,64})\\/cancel$', '^\\/platform-keys\\/(pkc_[1-9A-HJ-NP-Za-km-z]{12,17})\\/revoke$', '^\\/platform-keys\\/(pkc_[1-9A-HJ-NP-Za-km-z]{12,17})\\/cancel$'].sort(),
     );
   });
 
@@ -304,6 +305,27 @@ describe('origins, policy and raw signing off (immediate, no step-up)', () => {
     expect((await postAs(m, `/api/orgs/${m.org}/apps/${app.id}/origins/remove`, { remove: ['https://b.partner.example'], expectedVersion: r.origins_version })).status).toBe(200);
     expect((await hot.prepare('SELECT origin FROM app_origins WHERE app_id = ?').bind(app.id).all<{ origin: string }>()).results.map((x) => x.origin)).toEqual(['https://a.partner.example']);
     expect((await auditRows("org_id = ? AND action = 'origins.removed'", m.org)).map((x) => JSON.parse(x.details_json))).toEqual([{ version: r.origins_version + 1, removed: 1 }]);
+  });
+});
+
+describe('D934: a web address set to work only inside the app’s other web addresses (immediate, no step-up)', () => {
+  it('an owner sets it at once; audited with the API’s answer; again is refused, nothing written; a bad body is refused', async () => {
+    const m = await member('owner');
+    const app = await seedHotApp(m.org, ['https://a.partner.example', 'https://widget.partner.example']);
+    const r = (await appRow(app.id))!;
+    const path = `/api/orgs/${m.org}/apps/${app.id}/origins/frame-only`;
+    expect(await postAs(m, path, { origins: ['https://widget.partner.example'], expectedVersion: r.origins_version })).toEqual({ status: 200, body: { version: r.origins_version + 1 } });
+    expect((await hot.prepare('SELECT origin, frame_only FROM app_origins WHERE app_id = ? ORDER BY origin').bind(app.id).all()).results).toEqual([
+      { origin: 'https://a.partner.example', frame_only: 0 },
+      { origin: 'https://widget.partner.example', frame_only: 1 },
+    ]);
+    expect((await auditRows("org_id = ? AND action = 'origin.frame_only'", m.org)).map((x) => [x.outcome, JSON.parse(x.details_json)])).toEqual([['ok', { version: r.origins_version + 1, origins: 1 }]]);
+    const again = await postAs<{ error: { code: string } }>(m, path, { origins: ['https://widget.partner.example'], expectedVersion: r.origins_version + 1 });
+    expect([again.status, again.body.error.code]).toEqual([409, 'conflict']);
+    expect((await auditRows("org_id = ? AND action = 'origin.frame_only'", m.org)).map((x) => [x.outcome, JSON.parse(x.details_json)])[1]).toEqual(['failed', { code: 'conflict' }]);
+    expect((await postAs(m, path, { origins: [], expectedVersion: 0 })).status).toBe(400);
+    expect((await postAs(m, path, { origins: ['https://a.partner.example'], expectedVersion: 0, frameOnly: true })).status).toBe(400);
+    expect((await appRow(app.id))!.origins_version).toBe(r.origins_version + 1);
   });
 });
 

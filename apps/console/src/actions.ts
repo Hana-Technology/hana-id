@@ -41,6 +41,7 @@ import {
   labelIdInput,
   newId,
   nonceOf,
+  LOCALHOST_WILDCARD,
   normaliseOrigin,
   originChangeDigest,
   originDisplay,
@@ -100,7 +101,8 @@ export type StepUpCode = ErrorCode | 'sub_mismatch' | 'session_ended' | 'step_up
 
 const originList = z.array(z.string().min(1).max(2048)).max(20);
 const params = {
-  'origin.add': z.object({ appId: appIdInput, add: originList.min(1), remove: originList.default([]) }).strict(),
+  // D934: `frameOnly`, those of `add` the app may use only inside its other web addresses (a widget's).
+  'origin.add': z.object({ appId: appIdInput, add: originList.min(1), remove: originList.default([]), frameOnly: originList.optional() }).strict(),
   'policy.set': z.object({ appId: appIdInput, policy: z.unknown().optional() }).strict(),
   'raw_sign.on': z.object({ appId: appIdInput }).strict(),
   'app.resume': z.object({ appId: appIdInput }).strict(),
@@ -308,10 +310,23 @@ async function build(env: Env, c: OrgCaller, ctx: RpcCtx, kind: StepUpKind, raw:
         }
       }
       if (app.origins.length - remove.length + fresh.length > 20) no('conflict', 'An app has at most 20 active or pending origins');
-      const digest = await originChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: app.id, add: fresh, remove, originsVersion: app.originsVersion });
+      // D934: the frame-only marks, each one of the adds (already-listed ones are dropped with them), never the wildcard.
+      const marked = normalised((p.frameOnly as string[] | undefined) ?? [], 'frameOnly');
+      for (const o of marked) if (!add.includes(o)) no('bad_request', `${o} is marked frame-only but not added`);
+      if (marked.includes(LOCALHOST_WILDCARD)) no('bad_request', `${LOCALHOST_WILDCARD} can't be frame-only: it is a pattern, not a page's web address`);
+      const frameOnly = marked.filter((o) => fresh.includes(o));
+      const digest = await originChangeDigest({ signer: env.SIGNER_ACCOUNT, appId: app.id, add: fresh, remove, frameOnly, originsVersion: app.originsVersion });
       return {
-        action: { ...base, app_id: app.id, add: fresh, remove, origins_version: app.originsVersion },
-        decoded: { appId: app.id, appName: app.name, environment: app.environment, add: fresh.map(originDisplay), remove: remove.map(originDisplay), originsVersion: app.originsVersion },
+        // `frame_only` only when there is one, so every other action is the older one (and its digest v1).
+        action: { ...base, app_id: app.id, add: fresh, remove, ...(frameOnly.length ? { frame_only: frameOnly } : {}), origins_version: app.originsVersion },
+        decoded: {
+          appId: app.id,
+          appName: app.name,
+          environment: app.environment,
+          add: fresh.map((o) => ({ ...originDisplay(o), ...(frameOnly.includes(o) ? { frameOnly: true } : {}) })),
+          remove: remove.map(originDisplay),
+          originsVersion: app.originsVersion,
+        },
         digest,
       };
     }
@@ -860,8 +875,22 @@ async function runApiKind(env: Env, w: Writer, a: LiveAction, act: Record<string
   const failed = (code: string, error?: string): Outcome => ({ status: 'failed', code, ...(error ? { message: error.slice(0, 500) } : {}) });
   switch (a.kind) {
     case 'origin.add': {
-      const r = await env.API.changeOrigins({ ...ctx, orgId, appId: appId!, add: act.add as string[], remove: act.remove as string[], expectedVersion: act.origins_version as number, stepUpJwt: jwt });
-      await auditOutcome(env, w, a, 'origin.proposed', { appId, ok: r.ok, details: r.ok ? { version: r.version, added: (act.add as string[]).length, removed: (act.remove as string[]).length } : { code: r.code } });
+      const frameOnly = (act.frame_only as string[] | undefined) ?? [];
+      const r = await env.API.changeOrigins({
+        ...ctx,
+        orgId,
+        appId: appId!,
+        add: act.add as string[],
+        remove: act.remove as string[],
+        ...(frameOnly.length ? { frameOnly } : {}),
+        expectedVersion: act.origins_version as number,
+        stepUpJwt: jwt,
+      });
+      await auditOutcome(env, w, a, 'origin.proposed', {
+        appId,
+        ok: r.ok,
+        details: r.ok ? { version: r.version, added: (act.add as string[]).length, removed: (act.remove as string[]).length, ...(frameOnly.length ? { frameOnly: frameOnly.length } : {}) } : { code: r.code },
+      });
       return r.ok ? { status: 'ok', version: r.version, changeIds: r.changes.map((x) => x.id).join(',') } : failed(r.code, r.error);
     }
     case 'policy.set':

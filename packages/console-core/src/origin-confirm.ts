@@ -182,7 +182,7 @@ export interface SecondPersonQueueRow {
 }
 
 export const confirmationChangeView = z
-  .object({ changeId: z.string(), origin: z.string(), display: z.string(), idn: z.boolean(), state: z.string(), activeFrom: ms.nullable(), confirmedAt: ms.optional(), confirmable: z.boolean() })
+  .object({ changeId: z.string(), origin: z.string(), display: z.string(), idn: z.boolean(), state: z.string(), activeFrom: ms.nullable(), confirmedAt: ms.optional(), confirmable: z.boolean(), frameOnly: z.literal(true).optional() })
   .strict();
 
 /**

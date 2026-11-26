@@ -79,6 +79,46 @@ describe('origin.add: build, confirm with Google, the API verifies and proposes'
     for (const t of google.issued) expect(dump).not.toContain(t);
   });
 
+  it('D934: frame-only adds: the v2 nonce over the marked ones; the API stores them frame-only; the review says which; the audit counts them', async () => {
+    const { m, app } = await ownerWithApp();
+    const a = await createAction(m, 'origin.add', { appId: app.id, add: ['https://shop.partner.example', 'https://Widget.Partner.example'], frameOnly: ['https://widget.partner.example/'] });
+    expect(a.decoded).toMatchObject({
+      add: [
+        { origin: 'https://shop.partner.example', display: 'https://shop.partner.example', idn: false },
+        { origin: 'https://widget.partner.example', display: 'https://widget.partner.example', idn: false, frameOnly: true },
+      ],
+    });
+    expect((a.decoded as { add: Record<string, unknown>[] }).add[0]).not.toHaveProperty('frameOnly');
+    const version = (await env.HOT_DB.prepare('SELECT origins_version AS v FROM apps WHERE id = ?').bind(app.id).first<number>('v'))!;
+    const v2 = nonceOf(await originChangeDigest({ signer: 'signer.test.near', appId: app.id, add: ['https://shop.partner.example', 'https://widget.partner.example'], remove: [], frameOnly: ['https://widget.partner.example'], originsVersion: version }));
+    const s = await stepUp(google, m, a.id);
+    expect(s.nonce).toBe(v2);
+    expect((await actionOf(m, a.id)).body).toMatchObject({ status: 'ok', kind: 'origin.add' });
+    expect((await env.HOT_DB.prepare('SELECT origin, frame_only FROM app_origins WHERE app_id = ? AND active_from IS NULL ORDER BY origin').bind(app.id).all()).results).toEqual([
+      { origin: 'https://shop.partner.example', frame_only: 0 },
+      { origin: 'https://widget.partner.example', frame_only: 1 },
+    ]);
+    expect((await auditRows("action = 'origin.proposed' AND org_id = ?", m.org)).map((x) => JSON.parse(x.details_json))).toEqual([{ version: version + 1, added: 2, removed: 0, frameOnly: 1 }]);
+  });
+
+  it('D934: without a frame-only mark the action and its nonce are the older ones (v1); a mark that isn’t an add, or the localhost wildcard, is refused before Google', async () => {
+    const { m, app } = await ownerWithApp();
+    const a = await createAction(m, 'origin.add', { appId: app.id, add: ['https://plain.partner.example'], frameOnly: [] });
+    expect((a.decoded as { add: Record<string, unknown>[] }).add[0]).not.toHaveProperty('frameOnly');
+    const stored = await db.prepare('SELECT action_json FROM pending_actions WHERE id = ?').bind(a.id).first<string>('action_json');
+    expect(JSON.parse(stored!)).not.toHaveProperty('frame_only');
+    const version = (await env.HOT_DB.prepare('SELECT origins_version AS v FROM apps WHERE id = ?').bind(app.id).first<number>('v'))!;
+    expect((await stepUp(google, m, a.id)).nonce).toBe(nonceOf(await originChangeDigest({ signer: 'signer.test.near', appId: app.id, add: ['https://plain.partner.example'], remove: [], originsVersion: version })));
+    for (const params of [
+      { appId: app.id, add: ['https://x.partner.example'], frameOnly: ['https://y.partner.example'] },
+      { appId: app.id, add: ['http://localhost:*'], frameOnly: ['http://localhost:*'] },
+      { appId: app.id, add: ['https://x.partner.example'], frameOnly: 'https://x.partner.example' },
+    ]) {
+      const r = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'origin.add', params });
+      expect([r.status, (r.body as { error: { code: string } }).error.code], JSON.stringify(params)).toEqual([400, 'bad_request']);
+    }
+  });
+
   it('is single use: a second fresh sign-in for the same action is refused before Google', async () => {
     const { m, app } = await ownerWithApp();
     const a = await createAction(m, 'origin.add', { appId: app.id, add: ['https://one.partner.example'] });

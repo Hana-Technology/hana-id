@@ -41,7 +41,10 @@ export const AUDIT_DETAIL_KEYS = {
   // ConsoleRpc are outcome rows written after the RPC returns (app_changes, the API's, is authoritative), with the
   // RpcCode of a refusal. `requiredHd` is the org's own Workspace domain (its setting, not a person's).
   'step_up.failed': ['kind', 'code'],
-  'origin.proposed': ['code', 'version', 'added', 'removed'],
+  // D934: `frameOnly`, how many of the adds the app may use only inside its other web addresses.
+  'origin.proposed': ['code', 'version', 'added', 'removed', 'frameOnly'],
+  // D934: an owner set web addresses to work only inside the app's other web addresses (immediate, like a removal).
+  'origin.frame_only': ['code', 'version', 'origins'],
   // D931: an owner's confirmation (a step-up; app_changes' `origin.confirmed`, the API's, is authoritative) and the
   // confirmation notice's removal link (no session): ids, counts and codes only.
   'origin.confirmed': ['code', 'confirmed', 'requestId'],

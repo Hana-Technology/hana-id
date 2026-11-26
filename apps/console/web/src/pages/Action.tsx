@@ -8,6 +8,7 @@ import { confirmWithGoogle } from '../api.ts';
 import { duration, relative, useApi, useNow, useWrite, when } from '../lib.tsx';
 import { explain } from '../messages.ts';
 import { CONFIRM_WORDS, confirmedLine } from '../confirm-words.ts';
+import { FRAME_WORDS } from '../frame-words.ts';
 import { Callout, ErrorNote, IconShield, IdnWarning, Loading, OriginText, PageHeader, Panel, WriteNote } from '../ui.tsx';
 import { identityEmailLabel } from './app/Sessions.tsx';
 import { ConsentPreview } from './Consent.tsx';
@@ -45,7 +46,7 @@ const TITLES: Record<string, string> = {
 
 const GUARDED = new Set(['origin.add', 'policy.set', 'raw_sign.on']);
 
-type O = { origin: string; display: string; idn: boolean };
+type O = { origin: string; display: string; idn: boolean; frameOnly?: boolean };
 const str = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
 
 function OwnerChange({ change }: { change: Record<string, unknown> }) {
@@ -164,6 +165,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
             {add.map((o) => (
               <li key={o.origin}>
                 Add <OriginText {...o} />
+                {o.frameOnly ? FRAME_WORDS.review : ''}
               </li>
             ))}
             {remove.map((o) => (
@@ -172,6 +174,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
               </li>
             ))}
           </ul>
+          {add.some((o) => o.frameOnly) && <p className="muted small">{FRAME_WORDS.reviewNote}</p>}
           {add.some((o) => o.idn) && <IdnWarning />}
         </>
       );
@@ -191,6 +194,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
             {list.map((o) => (
               <li key={o.origin}>
                 Confirm <OriginText {...o} />
+                {o.frameOnly ? FRAME_WORDS.review : ''}
               </li>
             ))}
           </ul>

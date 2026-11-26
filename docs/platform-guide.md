@@ -974,7 +974,8 @@ are full:
   off switches a minute and 100 a UTC day of its own. Ordinary calls stay refused.
 - **They have database budget of their own**: your organisation gets 13 off switches a minute (4 at once) that
   no other organisation can use, whatever others do. Past those, they share a small reserve with every organisation,
-  and one may wait for `retry-after` (seconds, at most a minute).
+  and one may wait for `retry-after` (seconds, at most a minute). Off switches go first: while several organisations
+  use theirs at once, your ordinary calls may get `429` `platform:budget_platform` for up to about half a minute.
 - **Not exempt from everything:** each key's 300 nonces a minute, your organisation's own database budget and the
   limits above still apply. Only the key's self-revoke skips those.
 

@@ -390,16 +390,28 @@ export class RateLimiter extends DurableObject<Env> {
       kv.put('platform:breaker:global', [...bGlobal, now]);
     };
     // D935 after PR 161's reviews: a kill switch is paid first from its org's own slice, which no other org can use, so
-    // an org's kill switches never depend on what other orgs do; only past the slice does it draw on the shared bucket.
-    if (r.killSwitch) {
+    // an org's kill switches never depend on what other orgs do; only past the slice does it draw on the shared bucket
+    // as before. A slice-path kill switch is still charged to the platform's bucket, which it may take below its reserve
+    // and below zero (never below `killSlice.burst` per org that used its slice in the last minute): global load stays
+    // counted, and ordinary calls of every org wait for the refill while kill switches go first. Not for an org past
+    // its no-op window (`killNoops`): its kill switches then take the shared path only, so no-ops can't keep the
+    // bucket low through the slice.
+    const noops = (kv.get<number[]>(`platform:kill-noops:org:${r.org}`) ?? []).filter((t) => t > now - L.killNoops.windowMs);
+    if (r.killSwitch && noops.length < L.killNoops.max) {
       const sliceKey = `platform:kill:org:${r.org}`;
       const slice = fill(sliceKey, L.killSlice);
       if (slice >= r.cost) {
         const takenKey = `${sliceKey}:taken`;
-        const takenSlice = (kv.get<{ at: number; n: number; settled?: true }[]>(takenKey) ?? []).filter((e) => e.at > now - 60_000);
+        const takenSlice = (kv.get<{ at: number; n: number; g?: number; settled?: true }[]>(takenKey) ?? []).filter((e) => e.at > now - 60_000);
+        const active = Object.fromEntries(Object.entries(kv.get<Record<string, number>>('platform:kill:active') ?? {}).filter(([, t]) => t > now - 60_000));
+        active[r.org] = now;
+        const floor = -L.killSlice.burst * Object.keys(active).length;
+        const charged = Math.max(0, Math.min(r.cost, platformTokens - floor));
         kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
         kv.put(sliceKey, { tokens: slice - r.cost, at: now });
-        kv.put(takenKey, [...takenSlice, { at: now, n: r.cost }]);
+        kv.put('platform:bucket', { tokens: platformTokens - charged, at: now });
+        kv.put('platform:kill:active', active);
+        kv.put(takenKey, [...takenSlice, { at: now, n: r.cost, g: charged }]);
         commitBreaker();
         return { ok: true, reserveUsed: 0, sliceUsed: r.cost };
       }
@@ -448,10 +460,13 @@ export class RateLimiter extends DurableObject<Env> {
       return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
     };
     // Finds this admission's unsettled entry and marks it settled with what stays spent; null when there is none.
+    // `g`: what a slice-path admission charged the platform's bucket (less than its cost only at the bucket's floor).
+    let charged = 0;
     const settleEntry = (key: string, n: number, back: (n: number) => number): number | null => {
-      const list = kv.get<{ at: number; n: number; settled?: true }[]>(key) ?? [];
+      const list = kv.get<{ at: number; n: number; g?: number; settled?: true }[]>(key) ?? [];
       const i = list.findIndex((e) => e.at === s.at && e.n === n && !e.settled);
       if (i < 0) return null;
+      charged = list[i]!.g ?? n;
       const b = back(n);
       kv.put(key, [...list.slice(0, i), ...(b === n ? [] : [{ at: s.at, n: n - b, settled: true as const }]), ...list.slice(i + 1)]);
       return b;
@@ -467,8 +482,11 @@ export class RateLimiter extends DurableObject<Env> {
       const sliceKey = `platform:kill:org:${s.org}`;
       const b = settleEntry(`${sliceKey}:taken`, sliceUsed, back);
       if (b === null) return;
-      // The slice is the org's own: nothing to move onto its bucket (which paid the call's whole cost at admission).
+      // The slice is the org's own: nothing to move onto its bucket (which paid the call's whole cost at admission). The
+      // platform's bucket gets back the same unused part, never more than it was charged (no token minted).
       kv.put(sliceKey, { tokens: Math.min(s.limits.killSlice.burst, fill(sliceKey, s.limits.killSlice) + b), at: now });
+      const toBucket = Math.max(0, b - (sliceUsed - charged));
+      if (toBucket > 0) kv.put('platform:bucket', { tokens: Math.min(s.limits.platform.burst, fill('platform:bucket', s.limits.platform) + toBucket), at: now });
     } else {
       const b = settleEntry(`platform:reserve:org:${s.org}`, s.reserveUsed, back);
       if (b === null) return;

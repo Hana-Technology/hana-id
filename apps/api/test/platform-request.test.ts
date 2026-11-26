@@ -1434,6 +1434,74 @@ describe('D935: the breaker’s per-org floor, the kill switches’ share of the
     for (const n of alone.perMinute) expect(n).toBeGreaterThanOrEqual(10);
   }, 240_000);
 
+  it('slice-path kill switches still count on the platform’s bucket: 6 orgs spending their slices at once each get their guaranteed rate, a 7th org too, the total stays within 660 + 194 × N in a first minute and 600 + 150 × N after, ordinary calls wait and recover within (44 × N + 35) / 10 s', async () => {
+    const t0 = freshNow() + 20 * HOUR;
+    const orgs = await newOrgs(6);
+    const [late, ordinary] = await newOrgs(2);
+    const N = orgs.length + 1; // the 7th joins in the second minute
+    const perOrgMinute = new Map<string, number[]>();
+    const costPerMinute = [0, 0];
+    let ordinaryDuring = [0, 0];
+    for (let tick = 0; tick < 2 * 600; tick++) {
+      const t = t0 + tick * 100;
+      const minute = Math.floor(tick / 600);
+      for (const org of tick >= 600 ? [...orgs, late!] : orgs) {
+        const r = await obj().platformAdmit({ org, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, t);
+        if (r.ok) {
+          costPerMinute[minute]! += 11;
+          if ((r.sliceUsed ?? 0) > 0) {
+            const m = perOrgMinute.get(org) ?? [0, 0];
+            m[minute]!++;
+            perOrgMinute.set(org, m);
+          }
+        }
+      }
+      if ((await obj().platformAdmit({ org: ordinary!, cost: 5, limits: PLATFORM_LIMITS }, t + 50)).ok) {
+        costPerMinute[minute]! += 5;
+        ordinaryDuring[minute]!++;
+      }
+    }
+    // Every org at its guaranteed rate from its own slice (the 7th from its first minute, the bucket deep below zero).
+    for (const org of orgs) {
+      expect(perOrgMinute.get(org)![0], 'first minute').toBeGreaterThanOrEqual(Math.floor((44 + 60 * 2.5) / 11));
+      expect(perOrgMinute.get(org)![1], 'second minute').toBeGreaterThanOrEqual(Math.floor((60 * 2.5) / 11));
+    }
+    expect(perOrgMinute.get(late!)![1]).toBeGreaterThanOrEqual(Math.floor((44 + 60 * 2.5) / 11));
+    // Everything admitted stays within the stated bound: the shared bucket's 60 and 600 a minute, plus each org's slice,
+    // 44 and 150 a minute: 660 + 194 × N in a first minute, 600 + 150 × N after.
+    expect(costPerMinute[0]).toBeLessThanOrEqual(660 + 194 * orgs.length);
+    expect(costPerMinute[1]).toBeLessThanOrEqual(600 + 150 * N);
+    // Ordinary calls waited while the slices were spent (the bucket at its floor) ...
+    expect(ordinaryDuring[1]).toBeLessThanOrEqual(5);
+    // ... and recover within (44 × N + 22 + 13) / 10 s once they stop.
+    const stop = t0 + 2 * 600 * 100;
+    let recovered: number | null = null;
+    for (let tick = 0; tick < 600 && recovered === null; tick++) {
+      const t = stop + tick * 100;
+      if ((await obj().platformAdmit({ org: ordinary!, cost: 5, limits: PLATFORM_LIMITS }, t)).ok) recovered = t;
+    }
+    expect(recovered).not.toBeNull();
+    expect(recovered! - stop).toBeLessThanOrEqual(((44 * N + 22 + 13) / 10) * 1000);
+    ordinaryDuring = [0, 0];
+  }, 240_000);
+
+  it('a no-op on the slice path gives the slice and the platform’s bucket back the same unused part, never more than charged; once', async () => {
+    const now = freshNow() + 25 * HOUR;
+    const [org, probe] = await newOrgs(2);
+    // A roomy org bucket, so only the slice and the platform's bucket decide.
+    const ROOMY = { ...PLATFORM_LIMITS, perOrg: { ratePerS: 8, burst: 100, reserve: 10 } };
+    const r = await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: ROOMY }, now);
+    expect(r).toMatchObject({ ok: true, sliceUsed: 11 });
+    const settle = () => obj().platformSettle({ org: org!, at: now, breaker: false, reserveUsed: 0, sliceUsed: 11, ran: 3, limits: ROOMY }, now);
+    await settle();
+    await settle();
+    // The platform's bucket: 60 − 11 + 8 = 57. An ordinary call may take it to its reserve of 22: 35, not 36.
+    expect(await obj().platformAdmit({ org: probe!, cost: 36, limits: ROOMY }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
+    // The slice: 44 − 11 + 8 = 41: three more of 11 now (33), not four.
+    for (let i = 0; i < 3; i++) expect(await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: ROOMY }, now)).toMatchObject({ ok: true, sliceUsed: 11 });
+    expect(((await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: ROOMY }, now)) as { sliceUsed?: number }).sliceUsed).toBeUndefined();
+  });
+
   it('L1: `breaker_global`’s retry-after is when the call would pass: the global count falling below 30 (floor calls take the list past it) or the org’s below its floor', async () => {
     const t0 = freshNow();
     const [a, b, c, d, e, f] = await newOrgs(6);

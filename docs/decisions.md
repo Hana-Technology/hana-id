@@ -24427,8 +24427,26 @@ unused and D934 is held by another branch, so this is D935.
     with no neighbours. The slice is bounded by what already holds real kill switches (10 removals, 60 suspensions, 20
     revocations an hour, at most 30 waiting cancels, the key's windows and kill reserve) and by the org's own bucket.
     **The hot database's worst case now scales with the orgs switched on:** the shared bucket's 660 statements in a
-    first minute and 600 a minute after, **plus 44 and 150 a minute per org** (its slice): at most 660 + 44 × N, then
-    600 + 150 × N a minute; and each org is held to its own bucket's 520 a minute whatever the path.
+    first minute and 600 a minute after, **plus each org's slice, 44 at once and 150 a minute**: at most 660 + 194 × N,
+    then 600 + 150 × N a minute; and each org is held to its own bucket's 520 a minute whatever the path. (Corrected
+    after the third review, below: as first built here the slice path wasn't charged to the shared bucket at all.)
+  - **The third review (Medium): slice-path kill switches outside the global budget.** Kill switches paid from an
+    org's slice were charged to the org's bucket and the slice but not to `platform:bucket`, so nothing global counted
+    them. **Resolved:** a slice-path kill switch is still charged to the platform's bucket, which it may take below its
+    reserve and below zero, down to **−44 × the orgs that used their slices in the last minute** (`platform:kill:active`;
+    a charge past that floor is cut there); ordinary calls of every org then wait for the refill, kill switches going
+    first, and the slice path never looks at the bucket, so a deep deficit can't hold back another org's. **The global
+    bound:** at most **660 + 194 × N statements in a first minute and 600 + 150 × N a minute after**, N the orgs with
+    the platform switched on (staff switch them on one at a time after review; none today). **Ordinary calls recover
+    within (44 × N + 35) / 10 s** once the slices stop (about 30 s for 6 orgs); while more than 4 orgs spend their
+    whole slices continuously, they wait for as long as that lasts, which each org can sustain only with real kill
+    switches (bounded per hour) and 20 refunded no-ops a minute: an org past its no-op window gets no slice (its kill
+    switches take the shared path) until it clears. **Refunds stay consistent:** a slice-path no-op gives the slice and
+    the platform's bucket back the same unused part, never more than the bucket was charged (the admission records
+    it), once. Tested: 6 orgs spending their slices at once and a 7th joining with the bucket deep below zero, each at
+    its guaranteed rate (at least 17 in its first minute, 13 after), the total within the bound in both minutes,
+    ordinary calls of another org held (at most 5 in the second minute) and admitted again within the stated time;
+    the no-op's refund to both, once.
   - **L1, `breaker_global`'s wait.** It was the oldest entry's expiry, wrong once floor calls take the list past 30 (a
     retry at the stated time was refused again for about 20 s). Now the sooner of the expiry of the global list's
     30th newest and of the org's 5th newest (lists sorted, as settles remove entries); `breaker_org`'s likewise from
@@ -24467,8 +24485,9 @@ unused and D934 is held by another branch, so this is D935.
   4. Each key's kill-switch reserve at **10 a minute and 100 a UTC day**, used only once the ordinary windows are full.
   5. **Each org's own kill-switch slice** at **2.5 statements a second, burst 44** (13 kill switches a minute, 4 at
      once; after PR 161's reviews), with the shared reserve at **22 tokens, 11 an org a minute** past it (was 15 and 8;
-     the throw fixed), and **20 refunded no-ops an org a minute**. The hot database's bound gains a per-org term (150
-     statements a minute an org).
+     the throw fixed), and **20 refunded no-ops an org a minute**; slice-path kill switches charged to the shared
+     bucket down to **−44 × the active orgs**, so the hot database's bound is 660 + 194 × N, then 600 + 150 × N a
+     minute, and ordinary platform calls may wait up to (44 × N + 35) / 10 s after many orgs stop things at once.
   6. **The console's `revokeKey`** at **20 an org a clock hour** of its own (the recorded decision is about it; the brief
      framed the platform's): the console's key creation has no quota of its own, so this also bounds a member's
      create-and-revoke churn (revoked keys are kept, and the console's `getApp` still lists every key, D929's open
@@ -24484,7 +24503,9 @@ unused and D934 is held by another branch, so this is D935.
   10. The figures are code constants: staff can't raise them per org by a D1 write, unlike `max_apps`.
 - **Residual risks.** (a) N, the orgs switched on, has no cap in code, so the global ceiling grows with it (5 × N +
   30): a cap on enabled orgs, or a hard ceiling far above the floor, would bound it at the cost of making the floor
-  refusable again; the same N now also multiplies the hot database's per-org term (150 statements a minute an org).
+  refusable again; the same N now also multiplies the hot database's per-org term (150 statements a minute an org)
+  and the ordinary calls' wait after a burst of kill switches ((44 × N + 35) / 10 s), and while more than 4 orgs keep
+  spending their slices, every org's ordinary platform calls wait.
   (b) Within its own slice (13 a minute, 4 at once) an org never waits on others; past it, its kill switches share
   the reserve first come and may wait for its share (under a minute) or the refill (a second or two), never an
   hour. (c) An org's own ordinary calls can still delay

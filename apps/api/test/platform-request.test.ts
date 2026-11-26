@@ -23,7 +23,7 @@ import vectors from '../../../packages/console-core/test/platform-request-vector
 import { call } from './helpers.ts';
 import worker from '../src/index.ts';
 import routesSource from '../src/platform/routes.ts?raw';
-import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test';
 import { type Sent, callsOf, deliver, freeze, freshIp, freshNow, importProblems, keyPair, keyRow, platformProposal, read, seedKey, send, switchOff, switchOn } from './platform-helpers.ts';
 import { type DbCount, countingDb, orgApp, rows } from './rpc-helpers.ts';
 
@@ -1501,6 +1501,90 @@ describe('D935: the breaker’s per-org floor, the kill switches’ share of the
     for (let i = 0; i < 3; i++) expect(await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: ROOMY }, now)).toMatchObject({ ok: true, sliceUsed: 11 });
     expect(((await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: ROOMY }, now)) as { sliceUsed?: number }).sliceUsed).toBeUndefined();
   });
+
+  it('a slice entry without its recorded charge (`g`) refunds nothing to the platform’s bucket', async () => {
+    const now = freshNow() + 30 * HOUR;
+    const [org] = await newOrgs(1);
+    const r = await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now);
+    expect(r).toMatchObject({ ok: true, sliceUsed: 11 });
+    type Entry = { at: number; n: number; g?: number };
+    const takenKey = `platform:kill:org:${org!}:taken`;
+    const before = await runInDurableObject(obj(), (_i, state) => {
+      const kv = state.storage.kv;
+      const list = kv.get<Entry[]>(takenKey)!;
+      expect(list.at(-1)).toMatchObject({ at: now, n: 11, g: 11 });
+      kv.put(takenKey, list.map((e) => (e.at === now ? { at: e.at, n: e.n } : e)));
+      return kv.get('platform:bucket');
+    });
+    await obj().platformSettle({ org: org!, at: now, breaker: false, reserveUsed: 0, sliceUsed: 11, ran: 3, limits: PLATFORM_LIMITS }, now);
+    expect(await runInDurableObject(obj(), (_i, state) => state.storage.kv.get('platform:bucket'))).toEqual(before);
+  });
+
+  it('no admit and settle sequence mints tokens: the platform’s bucket never exceeds its start, plus its refill, less what was charged, plus at most what each settle may give back once', async () => {
+    type Entry = { at: number; n: number; g?: number };
+    for (const seed0 of [1, 7, 935, 4242, 31337]) {
+      let seed = seed0;
+      const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+      const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
+      const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`platform-mint-property-${seed0}-${Date.now()}`));
+      const orgs = ['org_a', 'org_b', 'org_c', 'org_d'];
+      const L = PLATFORM_LIMITS;
+      let t = freshNow();
+      const t0 = t;
+      const start = L.platform.burst;
+      let charged = 0;
+      let mayReturn = 0;
+      const pending: { org: string; at: number; reserveUsed: number; sliceUsed: number; g: number; settled: boolean }[] = [];
+      const bucketAt = async (at: number) =>
+        runInDurableObject(stub, (_i, state) => {
+          const st = state.storage.kv.get<{ tokens: number; at: number }>('platform:bucket');
+          return st ? Math.min(L.platform.burst, st.tokens + (Math.max(0, at - st.at) / 1000) * L.platform.ratePerS) : L.platform.burst;
+        });
+      for (let step = 0; step < 400; step++) {
+        // Small steps, so the bucket stays below its burst and a minted token would show.
+        t += Math.floor(rand() * 120);
+        const op = rand();
+        const org = pick(orgs);
+        if (op < 0.3) {
+          const cost = 1 + Math.floor(rand() * 13);
+          if ((await stub.platformAdmit({ org, cost, limits: L }, t)).ok) charged += cost;
+        } else if (op < 0.7) {
+          const cost = 5 + Math.floor(rand() * 7);
+          const r = await stub.platformAdmit({ org, cost, killSwitch: true, limits: L }, t);
+          if (!r.ok) continue;
+          // `real`: what the bucket was really charged; `g`: what the entry says (0 once stripped), all a settle may return.
+          let g = cost;
+          let real = cost;
+          if ((r.sliceUsed ?? 0) > 0) {
+            g = real = await runInDurableObject(stub, (_i, state) => state.storage.kv.get<Entry[]>(`platform:kill:org:${org}:taken`)!.find((e) => e.at === t && e.n === cost)!.g!);
+            // Sometimes the entry loses its `g`, as an entry from before the field would have none.
+            if (rand() < 0.4) {
+              await runInDurableObject(stub, (_i, state) => {
+                const key = `platform:kill:org:${org}:taken`;
+                state.storage.kv.put(key, state.storage.kv.get<Entry[]>(key)!.map((e) => (e.at === t && e.n === cost ? { at: e.at, n: e.n } : e)));
+              });
+              g = 0;
+            }
+          }
+          charged += real;
+          pending.push({ org, at: t, reserveUsed: r.reserveUsed, sliceUsed: r.sliceUsed ?? 0, g, settled: false });
+        } else if (pending.length > 0) {
+          const p = pick(pending);
+          const ran = Math.floor(rand() * 13);
+          await stub.platformSettle({ org: p.org, at: p.at, breaker: false, reserveUsed: p.reserveUsed, sliceUsed: p.sliceUsed, ran, limits: L }, t);
+          if (!p.settled) {
+            // The most a first settle may give the bucket back: the unused part, never more than it was charged.
+            const n = p.sliceUsed > 0 ? p.sliceUsed : p.reserveUsed;
+            const back = n - Math.min(n, ran);
+            mayReturn += p.sliceUsed > 0 ? Math.max(0, back - (p.sliceUsed - p.g)) : back;
+            p.settled = true;
+          }
+        }
+        const bound = start + ((t - t0) / 1000) * L.platform.ratePerS - charged + mayReturn;
+        expect(await bucketAt(t), `seed ${seed0} step ${step}`).toBeLessThanOrEqual(bound + 1e-6);
+      }
+    }
+  }, 120_000);
 
   it('L1: `breaker_global`’s retry-after is when the call would pass: the global count falling below 30 (floor calls take the list past it) or the org’s below its floor', async () => {
     const t0 = freshNow();

@@ -881,7 +881,8 @@ section).
   `503`; a first-come share large enough for several a minute would let one org take the whole reserve.) **No-ops:** a
   kill switch that changed nothing gets back the tokens it didn't run (`ran`: its hot-DB statements, its call log row
   and the announced keys' read), to its slice and the same part to the platform's bucket (never more than the bucket
-  was charged: no token minted), or to the reserve, only for the org's first 20 no-ops a minute
+  was charged, as the admission recorded it; an entry with no record gives it nothing: no token minted, tested with
+  random admit and settle sequences), or to the reserve, only for the org's first 20 no-ops a minute
   (`platform:kill-noops:org:<org>`); past those it pays in full, and the org's kill switches take the shared path only
   until the window clears. What stays spent of the reserve still counts against
   the org's share. No-ops never touch the suspensions or revocations quotas. Also gating them: the org's own bucket, the

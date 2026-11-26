@@ -24447,6 +24447,15 @@ unused and D934 is held by another branch, so this is D935.
     its guaranteed rate (at least 17 in its first minute, 13 after), the total within the bound in both minutes,
     ordinary calls of another org held (at most 5 in the second minute) and admitted again within the stated time;
     the no-op's refund to both, once.
+  - **A fourth automated finding: a slice entry without its recorded charge minted tokens.** The settle read
+    `g ?? n`, so an entry with no `g` (one admitted before the field, or any path not setting it) counted as having
+    charged the platform's bucket its whole cost and refunded it. **Resolved:** `g ?? 0` (such an entry refunds nothing
+    to the bucket); the slice path, the only one that charges the bucket through a slice entry, always records `g`; the
+    reserve path refunds at most what it took of the reserve, which it was charged. Tested: an entry with its `g`
+    removed leaves the bucket's stored state unchanged; and a property test (5 seeds, 400 random admits of ordinary
+    calls and kill switches, settles with random `ran`, repeated settles, 40 % of slice entries stripped of `g`, small
+    time steps so the bucket stays below its burst) holds the bucket at or below its start plus its refill, less what
+    was charged, plus at most what each first settle may give back. Both fail with the old fallback.
   - **L1, `breaker_global`'s wait.** It was the oldest entry's expiry, wrong once floor calls take the list past 30 (a
     retry at the stated time was refused again for about 20 s). Now the sooner of the expiry of the global list's
     30th newest and of the org's 5th newest (lists sorted, as settles remove entries); `breaker_org`'s likewise from

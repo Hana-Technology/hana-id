@@ -460,13 +460,14 @@ export class RateLimiter extends DurableObject<Env> {
       return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
     };
     // Finds this admission's unsettled entry and marks it settled with what stays spent; null when there is none.
-    // `g`: what a slice-path admission charged the platform's bucket (less than its cost only at the bucket's floor).
+    // `g`: what a slice-path admission charged the platform's bucket (less than its cost only at the bucket's floor). An
+    // entry without it (none is written so now) counts as having charged nothing, so it refunds nothing to the bucket.
     let charged = 0;
     const settleEntry = (key: string, n: number, back: (n: number) => number): number | null => {
       const list = kv.get<{ at: number; n: number; g?: number; settled?: true }[]>(key) ?? [];
       const i = list.findIndex((e) => e.at === s.at && e.n === n && !e.settled);
       if (i < 0) return null;
-      charged = list[i]!.g ?? n;
+      charged = list[i]!.g ?? 0;
       const b = back(n);
       kv.put(key, [...list.slice(0, i), ...(b === n ? [] : [{ at: s.at, n: n - b, settled: true as const }]), ...list.slice(i + 1)]);
       return b;

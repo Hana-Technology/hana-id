@@ -135,8 +135,12 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
     )
     .bind(now, DRIFT_BATCH)
     .all<OriginFinding>();
-  // D934: a frame-only web address made usable anywhere by a bare delete and insert (header).
-  const { results: frameOnly } = await db
+  // D934: a frame-only web address made usable anywhere by a bare delete and insert (header). Only on a D1 with
+  // migration 0035's column (an env not migrated yet has no frame-only address to check).
+  const hasFrameOnly = (await db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('app_origins') WHERE name = 'frame_only'").first<{ n: number }>())?.n === 1;
+  const { results: frameOnly } = !hasFrameOnly
+    ? { results: [] as FrameOnlyFinding[] }
+    : await db
     .prepare(
       `SELECT o.app_id, a.org_id, a.scope_id, o.origin, o.change_id FROM app_origins o JOIN apps a ON a.id = o.app_id
         WHERE a.deleted_at IS NULL AND o.frame_only = 0

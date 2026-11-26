@@ -738,15 +738,16 @@ describe('each route within its hot-DB cost (L8)', () => {
     const b = await seedKey({ org: a.app });
     const other = await seedKey();
     const now = freshNow();
-    // 4 a call: in a burst the console's floor (an ordinary platform call leaves it 30 of its 60) holds first, at 7 calls;
-    // the org's own 40 (no reserve since D935) would allow 10.
+    // 4 a call: the org's own 40 (no reserve since D935) holds first, at 10 calls; the platform's 60 would allow 15. (Before
+    // D938 the console's floor held first, at 7 calls, refused `platform:budget_shared`: an ordinary platform call left
+    // the console's bucket 30 of its 60. It no longer touches that bucket.)
     const results: number[] = [];
-    for (let i = 0; i < 7; i++) results.push((await send(i % 2 ? a : b, { now })).status);
-    expect(results).toEqual(Array(7).fill(200));
+    for (let i = 0; i < 10; i++) results.push((await send(i % 2 ? a : b, { now })).status);
+    expect(results).toEqual(Array(10).fill(200));
     const refused = await send(a, { now });
-    expect([refused.status, refused.body.limit]).toEqual([429, 'platform:budget_shared']);
-    // The platform as a whole never takes the console's shared bucket below its floor: another org's call a second later.
-    expect((await send(other, { now: now + 1000 })).status).toBe(200);
+    expect([refused.status, refused.body.limit]).toEqual([429, 'platform:budget_org']);
+    // Another org's call at the same instant: the platform's bucket still holds 20.
+    expect((await send(other, { now })).status).toBe(200);
     // The key's minute wasn't charged for the refused ones (unhit), so it isn't what refuses.
     expect(PLATFORM_LIMITS.perOrg).toEqual({ ratePerS: 8, burst: 40 });
   });
@@ -967,17 +968,19 @@ describe('F1: the self-revoke skips the limits only when it can stop the key', (
   });
 });
 
-describe('F3: the platform’s own global bucket, and a floor in the console’s', () => {
+describe('F3: the platform’s own global bucket, never the console’s (D938)', () => {
   it('a platform flood from several orgs leaves an ordinary console call of another org admitted', async () => {
     const now = freshNow();
     const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
     const orgs = await Promise.all(Array.from({ length: 6 }, async () => (await orgApp()).org));
     let admitted = 0;
     for (const org of orgs) for (let i = 0; i < 20; i++) if ((await obj.platformAdmit({ org, cost: 3, limits: PLATFORM_LIMITS }, now)).ok) admitted++;
-    // The platform as a whole took at most what is above the console's floor (60 − 30 = 30 tokens: 10 calls of 3).
-    expect(admitted).toBe(10);
+    // The platform as a whole took its own global bucket's 60 (20 calls of 3; each org's own 40 allows 13). Before D938:
+    // 10, what was above the console's floor (60 − 30 = 30 tokens).
+    expect(admitted).toBe(20);
     const third = (await orgApp()).org;
-    expect(await admitMemberCall(env, { org: third, cost: 8 }, now)).toMatchObject({ at: expect.any(Number) });
+    // The console's whole burst is left: an ordinary console call of 40 (its org's whole bucket) passes.
+    expect(await admitMemberCall(env, { org: third, cost: 40 }, now)).toMatchObject({ at: expect.any(Number) });
     // A platform kill switch is never refused by the console's bucket (N2), and the console's kill switch still goes through.
     expect((await obj.platformAdmit({ org: orgs[0]!, cost: 3, killSwitch: true, limits: PLATFORM_LIMITS }, now)).ok).toBe(true);
     expect(await admitMemberCall(env, { org: third, cost: 5, killSwitch: true }, now)).toMatchObject({ at: expect.any(Number) });

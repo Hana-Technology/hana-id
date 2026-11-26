@@ -74,10 +74,11 @@ export interface ConsoleAdmission {
 export type ConsoleLimit = 'budget_org' | 'budget' | 'budget_kill' | 'budget_kill_global' | 'link' | 'breaker_org' | 'breaker_global';
 
 /**
- * D927, D935 (after PR 161's second full review): one platform request's admission, on the same `console-rpc` object as
- * the console's. Two budget classes that never charge each other:
- * - an ordinary call takes `cost` from its org's bucket (`platform:bucket:org:<org>`), the platform's global bucket
- *   (`platform:bucket`) and the console's global bucket (`console:bucket`, never below `sharedFloor`), with no reserve;
+ * D927, D935 (after PR 161's second full review), D938: one platform request's admission, on the same `console-rpc`
+ * object as the console's but on buckets of its own: no platform call reads or charges any of the console's buckets,
+ * and no console call any of the platform's. Two budget classes that never charge each other:
+ * - an ordinary call takes `cost` from its org's bucket (`platform:bucket:org:<org>`) and the platform's global bucket
+ *   (`platform:bucket`), with no reserve; the global bucket alone bounds every org's ordinary calls together;
  * - a kill switch takes `cost` from its org's kill bucket (`platform:kill:org:<org>`) and nothing else, so no other org's
  *   calls, ordinary or kill, can slow it, and it never slows anyone else's ordinary calls. At most `maxOrgs` distinct
  *   orgs' kill buckets are used in any minute (the backstop to the cap on orgs switched on): a further org's kill switch
@@ -93,8 +94,6 @@ export interface PlatformAdmission {
   limits: {
     perOrg: Bucket;
     platform: Bucket;
-    /** The console's global bucket, as CONSOLE_LIMITS.global (its rate and burst), and the floor ordinary platform calls leave. */
-    shared: Bucket & { sharedFloor: number };
     breaker: { windowMs: number; perOrg: number; global: number; floor: number };
     /** Each org's kill bucket: its kill switches' only budget. */
     kill: Bucket;
@@ -102,7 +101,7 @@ export interface PlatformAdmission {
     maxOrgs: number;
   };
 }
-export type PlatformLimit = 'budget_org' | 'budget_platform' | 'budget_shared' | 'budget_kill' | 'kill_orgs' | 'breaker_org' | 'breaker_global';
+export type PlatformLimit = 'budget_org' | 'budget_platform' | 'budget_kill' | 'kill_orgs' | 'breaker_org' | 'breaker_global';
 /** `at`: the admission's time on the object's clock (what `platformSettle` needs). */
 export type PlatformAdmitResult = { ok: true; at: number } | { ok: false; limit: PlatformLimit; retryAfterS: number; notify: boolean };
 
@@ -535,7 +534,6 @@ export class RateLimiter extends DurableObject<Env> {
     let orgs: Record<string, number> = {};
     let org = 0;
     let platform = 0;
-    let shared = 0;
     if (r.killSwitch) {
       // The cap on orgs switched on, backstopped here: at most `maxOrgs` distinct orgs' kill buckets in any minute.
       orgs = Object.fromEntries(Object.entries(kv.get<Record<string, number>>('platform:kill:orgs') ?? {}).filter(([, t]) => t > now - 60_000));
@@ -547,11 +545,10 @@ export class RateLimiter extends DurableObject<Env> {
       need('budget_kill', kill, r.cost, L.kill.ratePerS, L.kill.burst);
     } else {
       org = fill(orgKey, L.perOrg);
+      // D938: the platform's own buckets only (before, also the console's `console:bucket`, at cost + 30).
       platform = fill('platform:bucket', L.platform);
-      shared = fill('console:bucket', L.shared);
       need('budget_org', org, r.cost, L.perOrg.ratePerS, L.perOrg.burst);
       need('budget_platform', platform, r.cost, L.platform.ratePerS, L.platform.burst);
-      need('budget_shared', shared, r.cost + L.shared.sharedFloor, L.shared.ratePerS, L.shared.burst);
     }
     if (breakerShort || short.length > 0) {
       const all = breakerShort ? [breakerShort, ...short] : short;
@@ -565,7 +562,6 @@ export class RateLimiter extends DurableObject<Env> {
     } else {
       kv.put(orgKey, { tokens: Math.max(0, org - r.cost), at: now });
       kv.put('platform:bucket', { tokens: Math.max(0, platform - r.cost), at: now });
-      kv.put('console:bucket', { tokens: Math.max(0, shared - r.cost), at: now });
     }
     if (r.breaker) {
       kv.put(bOrgKey, [...bOrg, now]);

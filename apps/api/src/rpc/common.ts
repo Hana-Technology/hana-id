@@ -109,7 +109,12 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
     log({ event: 'rpc', ...fields, outcome: 'error', code: 'internal' }, 'error');
     return { ok: false, code: 'internal' };
   } finally {
-    const changedNothing = (code === null && !w.wrote) || (code !== null && REFUNDED.has(code));
+    // D937 (after PR 164's review): a refusal before any batch was sent (`policy_invalid`, `near_unavailable`, an
+    // internal error in the plan read, …) wrote nothing and is settled too. Safe for every breaker call
+    // (removeOrigins, frameOnlyOrigins, rotateKey, updateSettings): each changes state only through runWrite's one D1
+    // batch, with no other effect; once a batch was sent, only the outcomes in REFUNDED (the batch's commit row didn't
+    // apply) are settled, and an unknown outcome (`internal`) keeps its slot.
+    const changedNothing = (code === null && !w.wrote) || (code !== null && (!w.batched || REFUNDED.has(code)));
     if (changedNothing && breakerTaken) await settleMemberCall(env, { org: orgId!, at: admittedAt, breaker: true, ...(overflowTaken ? { overflow: true } : {}) });
   }
 }

@@ -24775,7 +24775,8 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
      under 60), however many organisations. 60 is 20 organisations' floors: a burst three times the global limit,
      which no shared incident of a few partners reaches, so the floor holds for every org in all but a flood by
      dozens of organisations. **What that gives back** (the trade-off): about 24 organisations' owners at once (4
-     filling the global 20, 20 more spending their 3; 80 calls) can again refuse every other org's console removals,
+     filling the global 20, 20 more spending their 3; 80 calls, each one whose batch ran: after PR 164's review a refusal
+     before the batch gives its slot back) can again refuse every other org's console removals,
      frame-only tightenings and rotations for up to an hour, where before D937 4 organisations and 20 calls did it. The
      victim can still suspend the app (never refused by other orgs: its own 20 and its kill floor), revoke its keys,
      turn things off, and ask staff, whose removal in the admin portal is never limited. **The platform's breaker floor
@@ -24869,39 +24870,83 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   - the hard ceiling at N = 20 and N = 100 over ten idle minutes and two burst minutes (within min(120 N, 900 + 30 N)
     and min(60 N, 600 + 30 N), each org's floor reached);
   - untouched and passing: `platform-limits.test.ts` and the freeze-mirror interleaving test.
+- **After PR 164's independent review (2026-11-26)** ("simple and sound enough to merge"; nothing Medium or above
+  introduced; small items), each fixed or recorded, with tests (`console-kill-limits.test.ts` "after PR 164's review"):
+  - **Low (proved), fixed: a breaker call refused without changing anything kept its slot.** Only `not_found`,
+    `conflict`, `version_conflict`, `already_applied` and `bad_request` were settled, so a web-client change refused
+    `policy_invalid` (a session TTL lowered under a stored or proposed policy, before any write) or `near_unavailable`
+    held its org's, the global and the overflow slot (the reviewer's run: the global 20 full, one org with a pending
+    policy proposal, four such calls: 20/0/0 → 23/3/3, the app row unchanged). So, contrary to what this entry said
+    before, holding breaker and overflow slots did **not** need calls that change something. **Now:** `runWrite` marks
+    the writer `batched` just before it sends its batch, and a call refused before that is settled whatever its code;
+    once a batch was sent, only the outcomes above are (the commit row didn't apply), and an unknown outcome
+    (`internal` after the batch) keeps its slot. Safe: every breaker call (`removeOrigins`, `frameOnlyOrigins`,
+    `rotateKey`, `updateSettings`) changes state only through that one D1 batch, with no other effect, so no batch
+    means nothing changed; a call that did change something always sent its batch and is settled only when D1 says
+    its commit row didn't apply. Holding a slot now takes a call whose batch ran. Tested: the reviewer's sequence (the
+    lists as they were, the org's 3 floor removals still passing), a web-client change to the client already set
+    answering `ok` six times with no slot kept (the no-op case `rpc-cas` lost when the suspension left the breaker),
+    and a batch failing with an unknown outcome keeping its slot.
+  - **Low (reasoned), accepted and recorded: one compromised owner session can hold its own org's kill bucket near
+    zero cheaply.** An `ownerAction` safety method that changes nothing (a precheck refusal) costs 2 kill tokens; sent
+    about every 2 s it keeps the org's kill bucket (1 a second) under 5, so the real owner's console suspend (5) or
+    removal (6) is refused for as long as the script runs (before this PR, from the org's ordinary bucket of 10 a
+    second, it took about 5 calls a second). Not fixed: charging the kill bucket only once a call is known to write
+    would let pre-checks run free (a probe), and a separate budget for them is machinery; the fix isn't a few lines with
+    an obvious proof. Mitigations: staff's stops (the admin portal) are never limited, the platform's stops are
+    separate, and an owner removes the hostile member.
+  - **Notes:** an organisation's own kill switches now run at about 12 at once (60 tokens at a cost of 5), then one
+    every 5–6 s (before: from the org's ordinary bucket, 10 statements a second); residual risk (g) corrected below;
+    the follow-ups below added to "To confirm". Nothing is settled by the Tech Lead yet.
 - **To confirm (the Tech Lead):**
-  1. The console's kill buckets: each org 1 statement a second, burst 60 (10 kill switches at once, 10 a minute); every
-     org together 10 a second, burst 300.
-  2. Each org's floor through the global kill bucket: its first 5 kill switches of a rolling minute.
-  3. The console breaker's floor at 3 of each org's 5 a rolling hour, within a global overflow of 60 a rolling hour
-     (a hard 80 breaker calls an hour across orgs). **An explicit trade-off between a hard global ceiling and never
-     refusing a victim's removal:** bounded (built), about 24 organisations' owners at once can refuse other orgs'
-     console removals for up to an hour, while suspensions, revocations and staff's removals are never refused;
-     unbounded (the floor alone), no org's first 3 removals are ever refused, but removals across orgs grow 3 an hour
-     per organisation with no cap. **Recommended: bounded**, since the real emergency stop is the suspension, which is
-     never blockable, and a hard ceiling on mass removals is the breaker's whole purpose; revisit the 60 (or the 3) if
-     the console's organisations grow past about 100.
+  1. **The trade-off on removals: a hard global ceiling against never refusing a victim's removal.** The console
+     breaker's floor at 3 of each org's 5 a rolling hour, within a global overflow of 60 a rolling hour: a hard 80
+     breaker calls an hour across orgs. Bounded (built): about 24 organisations' owners at once (80 calls whose batch
+     ran) can refuse other orgs' console removals for up to an hour, while suspensions, revocations and staff's
+     removals are never refused. Unbounded (the floor alone): no org's first 3 removals are ever refused, but removals
+     across orgs grow 3 an hour per organisation with no cap. **Recommended: bounded**, since the real emergency stop
+     is the suspension, which is never blockable, and a hard ceiling on mass removals is the breaker's whole purpose;
+     revisit the 60 (or the 3) if the console's organisations grow past about 100.
+  2. The console's kill buckets: each org 1 statement a second, burst 60 (10 kill switches at once, 10 a minute; about
+     12 at once of cost 5, then one every 5–6 s); every org together 10 a second, burst 300.
+  3. Each org's floor through the global kill bucket: its first 5 kill switches of a rolling minute.
   4. Console suspensions at 20 an org a clock hour, apart from the breaker; resume unchanged (ordinary).
   5. Rotation stays in the breaker as an ordinary call (not a stop).
   6. The reserves removed: ordinary console calls now have their buckets' whole burst (40 an org, 60 together, from
      30 and 40); the console's kill switches are on top of the console's 30 statements a second.
   7. The bound on the number of console organisations: the kill-switch ceiling grows by 30 statements a minute per
-     organisation with no cap; proposed: review before 100 organisations (a floor of 3, or a cap as the platform's).
-  8. The RPC answers carry no retry-after; the console shows a fixed "try again" message for a refused stop.
-  9. **Related open point, not built (from D935's point 7):** console key creation has no quota, so a hostile console
-     member can create and revoke 20 keys and use up the org's 20 console revocations for the rest of the clock hour;
-     owners still suspend, and staff and the platform revoke. Possible fix: a console key-creation quota (counted on
-     `console-stops:<org>`, before the batch, as these).
+     organisation with no cap. **Proposed backstop (the reviewer's), not built:** give the kill floor to at most M
+     distinct organisations a minute (hard ceiling 900 + 30 M statements in a first minute), as the platform's
+     `platform:kill:orgs`; trigger: before onboarding passes about 50 organisations, or before the one-partner gate
+     lifts on mainnet.
+  8. The accepted weakness above: one compromised owner session can hold its own org's kill bucket under a stop's cost
+     with `ownerAction` safety calls that change nothing (2 tokens about every 2 s); mitigations: staff's stops are
+     unlimited, an owner removes the hostile member.
+  9. **Open follow-up:** stop charging the platform's ordinary calls to the console's `console:bucket`, so the two
+     surfaces never share a bucket (their combined ordinary ceiling 1 800 → 2 400 statements a minute: the console's
+     30 a second and the platform's 10 a second apart). See residual risk (g).
+  10. The RPC answers carry no retry-after; the console shows a fixed "try again" message for a refused stop.
+  11. **Open point (pre-existing):** no playbook covers the console's `breaker` security event (org or global).
+  12. **Related open point, not built (from D935's point 7):** console key creation has no quota, so a hostile console
+      member can create and revoke 20 keys and use up the org's 20 console revocations for the rest of the clock
+      hour; owners still suspend, and staff and the platform revoke. Possible fix: a console key-creation quota
+      (counted on `console-stops:<org>`, before the batch, as these).
 - **Residual risks.** (0) The breaker's bounded overflow (above): about 24 organisations' owners at once, 80 breaker
-  calls, refuse every other org's console removals, frame-only tightenings and rotations for up to an hour (before D937:
-  4 organisations, 20 calls); suspensions, revocations, the other kill switches and staff's removals stay open. (a) Under a coordinated flood by more than ten organisations' members at once, an org's kill
-  switches beyond its 5 a minute wait for the global kill bucket (seconds); its first 5 never do. (b) The ceiling
-  grows with the number of organisations (above). (c) An org's own no-ops (a script, a person clicking fast) use its
-  own kill bucket and floor. (d) The suspension and revocation windows are clock hours (up to 40 across a boundary).
-  (e) A hostile owner can spend the org's 20 suspensions with suspend-and-resume cycles (each resume a fresh sign-in);
-  an owner can do far more, and staff clear any suspension. (f) A compromised console session suspends up to 20 apps
-  an hour instead of 5. (g) The console's ordinary calls can now take its global bucket to zero, below the 30 the
-  platform's ordinary calls leave (as before, those then wait; the platform's kill switches never use it).
+  calls whose batch ran, refuse every other org's console removals, frame-only tightenings and rotations for up to an
+  hour (before D937: 4 organisations, 20 calls); suspensions, revocations, the other kill switches and staff's removals
+  stay open. (a) Under a coordinated flood by more than ten organisations' members at once, an org's kill switches
+  beyond its 5 a minute wait for the global kill bucket (seconds); its first 5 never do. (b) The ceiling grows with the
+  number of organisations (above). (c) An org's own no-ops (a script, a person clicking fast) use its own kill bucket
+  and floor; a compromised owner session can hold it down (above). (d) The suspension and revocation windows are clock
+  hours (up to 40 across a boundary). (e) A hostile owner can spend the org's 20 suspensions with suspend-and-resume
+  cycles (each resume a fresh sign-in); an owner can do far more, and staff clear any suspension. (f) A compromised
+  console session suspends up to 20 apps an hour instead of 5. (g) **A console ordinary flood starves the platform's
+  ordinary calls; this was already true on `next` before D937** (the reviewer measured 0 admitted on both branches
+  with three organisations' members flooding reads): `platformAdmit` needs `console:bucket` at the call's cost plus 30,
+  which protects the console from the platform, not the reverse; the console's ordinary calls taking the bucket to
+  zero (where the reserve used to stop them at 20) changes nothing for that. This PR improved the kill-flood cases
+  (platform ordinary calls admitted beside a console kill flood 1 of 300 → 93 of 300, since console kill switches no
+  longer touch that bucket); the platform's kill switches never use it. Follow-up in "To confirm" 9.
 - **Docs:** `security.md` (the console's bound in "Invariants"), `api.md` ("Breaker and budget", the limiter's keys, the
   objects), `operations.md` ("The partner console's kill switches"), `architecture.md` (the RPC writes row); the
   console README lists no limits.

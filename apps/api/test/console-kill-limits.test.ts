@@ -13,6 +13,7 @@ import { placedStub } from '../src/placement.ts';
 import type { ConsoleAdmission } from '../src/rate-limiter.ts';
 import { CONSOLE_COSTS, ConsoleRpc } from '../src/rpc/console.ts';
 import { ORIGIN } from './helpers.ts';
+import { autoApprovePolicy } from './vault-helpers.ts';
 import { adminRpc, appRow, consoleRpc, hana, member, newOrg, orgApp, ownClock, rows } from './rpc-helpers.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -691,5 +692,54 @@ describe('the ConsoleRpc setup', () => {
       { cost: 5, killSwitch: false, breaker: false },
       { cost: 6, killSwitch: false, breaker: true },
     ]);
+  });
+});
+
+describe('after PR 164’s review', () => {
+  const breakerLists = (org: string) =>
+    runInDurableObject(consoleObject(), (_i, st) =>
+      [`console:breaker:org:${org}`, 'console:breaker:global', 'console:breaker:overflow'].map((k) => (st.storage.kv.get<number[]>(k) ?? []).filter((x) => x > Date.now() - HOUR).length),
+    );
+
+  it('a breaker call refused before any batch (a web-client change with a session TTL under a proposed policy: `policy_invalid`) gives its slot back to all three lists; the app row is unchanged', async () => {
+    ownClock({ freeze: true });
+    const t = Date.now();
+    // The reviewer's sequence: the global 20 full, an org with a pending policy proposal, four such calls.
+    for (const o of orgsOf(4, 'g')) for (let k = 0; k < 5; k++) expect((await slot(consoleObject(), o, t)).ok).toBe(true);
+    const app = await orgApp({ live: true });
+    expect(await adminRpc().proposeChange({ ...hana(), orgId: app.org, appId: app.id, kind: 'policy_set', policy: autoApprovePolicy('12h'), expectedVersion: 0 })).toMatchObject({ ok: true });
+    const before = await breakerLists(app.org);
+    const row = await appRow(app.id);
+    for (let i = 0; i < 4; i++) {
+      expect(await consoleRpc().updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: 1, sessionTtlMs: 2 * HOUR, idleTtlMs: HOUR, googleWebClientId: null }), `call ${i + 1}`).toMatchObject({ ok: false, code: 'policy_invalid' });
+    }
+    // Before the fix: org 0 → 3, global 20 → 23, overflow 0 → 3 (the fourth refused `rate_limited`), nothing written.
+    expect(await breakerLists(app.org)).toEqual(before);
+    expect(await appRow(app.id)).toEqual(row);
+    // The org's floor is whole: three removals pass on the overflow.
+    for (let i = 0; i < 3; i++) {
+      const a = await orgApp({ org: app.org, origins: [ORIGIN, SECOND] });
+      expect(await consoleRpc().removeOrigins({ ...member(), orgId: app.org, appId: a.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: true });
+    }
+  });
+
+  it('a breaker call that answers ok and changes nothing (a web-client change to the client already set) gives its slot back', async () => {
+    ownClock({ freeze: true });
+    const app = await orgApp();
+    const current = (await appRow(app.id)).google_web_client_id as string | null;
+    const before = await breakerLists(app.org);
+    for (let i = 0; i < 6; i++) expect(await consoleRpc().updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: 0, googleWebClientId: current })).toEqual({ ok: true, version: 0 });
+    expect(await breakerLists(app.org)).toEqual(before);
+  });
+
+  it('a breaker call whose batch was sent and failed with an unknown outcome (`internal`) keeps its slot', async () => {
+    ownClock({ freeze: true });
+    const app = await orgApp({ origins: [ORIGIN, SECOND] });
+    const before = await breakerLists(app.org);
+    const db = env.DB;
+    const spy = vi.spyOn(db, 'batch').mockRejectedValueOnce(new Error('D1 lost the answer'));
+    expect(await consoleRpc().removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 0 })).toMatchObject({ ok: false, code: 'internal' });
+    spy.mockRestore();
+    expect(await breakerLists(app.org)).toEqual([before[0]! + 1, before[1]! + 1, before[2]!]);
   });
 });

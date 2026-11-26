@@ -15,7 +15,8 @@
 // popup (login.ts) and, inside the user's click, the approval popup for signing requests (approval-window.ts, D99),
 // and relays requests over the port. Everything it learns is public (addresses, expiry, status, the user's Support ID).
 // Beyond the spec's list it also exposes cancelLogin() (the port's hana_cancelLogin), the auto-approve port methods,
-// destroy() (React's HanaProvider unmount), and the `loginProgress`, `autoApproved` and `launcher` events.
+// destroy() (React's HanaProvider unmount; then `destroyed`, D936), `eip6963` (the announcement wallet lists hold,
+// D936), and the `loginProgress`, `autoApproved` and `launcher` events.
 import {
   ErrorCode,
   IDENTITY_MAX_MAX_AGE_MS,
@@ -44,7 +45,7 @@ import { APPROVE_POPUP_FEATURES, type ApprovalTicket, ApprovalWindows } from './
 import { randomHex } from './random.ts';
 import { Emitter } from './emitter.ts';
 import { HanaError, RpcCode, asHanaError, hanaError } from './errors.ts';
-import { type EvmConfig, HanaEthereumProvider, announceEip6963, rdnsFor, validateEvmConfig } from './ethereum.ts';
+import { type Eip6963Announcement, type Eip6963ProviderDetail, type EvmConfig, HanaEthereumProvider, announceEip6963, rdnsFor, validateEvmConfig } from './ethereum.ts';
 import { LoginAttempt, type LoginOptions, loginRequest, openLoginPopup } from './login.ts';
 import { type HanaProfile, profileFromIdentityToken, sameProfile } from './profile.ts';
 import { type FetchLike } from './rpc.ts';
@@ -144,6 +145,12 @@ export interface HanaEvents {
    * the prices change.
    */
   mainnetDemoChanged: [MainnetDemo | null];
+  /**
+   * `destroy()` ran: the client is gone for good (`hana.destroyed` is true from then on). It fires once, after
+   * `hana.ethereum` said `accountsChanged []` and `disconnect`, and is the last event: every listener is dropped
+   * right after it. Drop the client and anything you built on it (a connector over `hana.ethereum`).
+   */
+  destroyed: [];
 }
 
 /** The vault's price book as a page reads it. */
@@ -248,7 +255,7 @@ export class HanaClient extends Emitter<HanaEvents> {
   #destroyed = false;
   /** The handshake failed or the port died: status stays 'error'. */
   #vaultDown = false;
-  #stopEip6963: (() => void) | null = null;
+  #eip6963: Eip6963Announcement | null = null;
   /** The vault's latest `mainnetDemo` announcement, or null. */
   #mainnetDemo: MainnetDemo | null = null;
   /** The vault's latest price book, kept apart so the announcement can arrive on either side of it. */
@@ -341,11 +348,28 @@ export class HanaClient extends Emitter<HanaEvents> {
       },
     );
     this.ready.catch(() => {});
-    if (evm !== undefined) this.#stopEip6963 = announceEip6963(deps.win, this.ethereum, rdnsFor(this.authOrigin));
+    if (evm !== undefined) this.#eip6963 = announceEip6963(deps.win, this.ethereum, rdnsFor(this.authOrigin));
   }
 
   get status(): HanaStatus {
     return this.#status;
+  }
+
+  /**
+   * The page's EIP-6963 announcement for this client's environment (`eip6963:announceProvider`), frozen: `info`
+   * (`uuid`, `name`, `icon`, `rdns`) and `provider`; null without `evm`. Wallet lists hold this detail. Every client of
+   * the environment in the page has the same one, before and after any `destroy()`, so a list that keeps the first
+   * announcement of a uuid (wagmi) keeps one working entry. Its `provider` forwards to the `hana.ethereum` of the
+   * newest live client, else the next newest, else rejects with 4900. The uuid is random, lives in memory for the
+   * page's lifetime only, and is never stored.
+   */
+  get eip6963(): Eip6963ProviderDetail | null {
+    return this.#eip6963?.detail ?? null;
+  }
+
+  /** True once `destroy()` ran (the `destroyed` event). */
+  get destroyed(): boolean {
+    return this.#destroyed;
   }
 
   /** True for a `pk_test_` key: test networks only, and plaintext http RPC URLs allowed (the adapters read it). */
@@ -642,16 +666,27 @@ export class HanaClient extends Emitter<HanaEvents> {
     return profileFromIdentityToken(await this.getIdentityToken(opts));
   }
 
-  /** Removes the vault iframe and every listener; pending and later calls reject with 4900. */
+  /**
+   * Turns the wallet off on this page, for good: removes the vault iframe; pending and later calls reject with 4900;
+   * `hana.ethereum` emits `accountsChanged []` and `disconnect` (4900), then rejects every request with 4900 and lets
+   * go of this client (it refuses from before the first of those events); the page's EIP-6963 entry
+   * (`hana.eip6963.provider`) moves to the next newest live client of the environment, or, with none, rejects with 4900
+   * and stops answering `eip6963:requestProvider` until a new client is created; `destroyed` fires; every listener
+   * is dropped. It doesn't log out: a new client on the page finds the session as a reload would. Idempotent.
+   */
   destroy(): void {
     if (this.#destroyed) return;
     this.#destroyed = true;
     this.#attempt?.abort(hanaError(ErrorCode.disconnected));
     this.#attempt = null;
-    this.#stopEip6963?.();
+    // This client leaves the page's entry first: it moves at once to the next newest live client, else it stays for this
+    // one's last events (so wagmi hears the wallet go). hana.ethereum refuses everything before it says them.
+    this.#eip6963?.release();
+    this.ethereum.retire();
+    this.#eip6963?.stop();
     this.#conn.destroy();
+    this.emit('destroyed');
     this.removeAllListeners();
-    this.ethereum.removeAllListeners();
   }
 
   #request<M extends PortMethod>(method: M, params?: PortParamsMap[M]): Promise<PortResultMap[M]> {

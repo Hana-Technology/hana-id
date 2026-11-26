@@ -6,7 +6,7 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
 for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-26 (branch `feat/widget-frames`, after PR 162's review: the windows' wording and the Firefox residual, D934); 2026-11-26 (branch `feat/widget-frames`: section 12 and "Open", P11 and P12 built, D934); 2026-11-26 (branch `docs/platform-guide`, after PRs 158 and 159 merged: "Open" and section 12, the Tech Lead's settled module id and approved P11 and P12, D923, D926); 2026-11-26 (branch `docs/platform-guide`, from `feat/owner-confirmation`, not merged, docs only: the summary's portal-switch row and a pointer at the top of section 3 to `platform-guide.md`, D932; no other text changed); 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
+Last verified: 2026-11-26 (branch `feat/sdk-stable-announce`, after PR 163's second review: one EIP-6963 entry per environment, D936); 2026-11-26 (branch `feat/sdk-stable-announce`: the EIP-6963 uuid and the toggle-off step, D936); 2026-11-26 (branch `feat/widget-frames`, after PR 162's review: the windows' wording and the Firefox residual, D934); 2026-11-26 (branch `feat/widget-frames`: section 12 and "Open", P11 and P12 built, D934); 2026-11-26 (branch `docs/platform-guide`, after PRs 158 and 159 merged: "Open" and section 12, the Tech Lead's settled module id and approved P11 and P12, D923, D926); 2026-11-26 (branch `docs/platform-guide`, from `feat/owner-confirmation`, not merged, docs only: the summary's portal-switch row and a pointer at the top of section 3 to `platform-guide.md`, D932; no other text changed); 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
 answers to D923 (D926): the fork holding the Stellar change (section 2, "The Stellar change, on our fork"), the
 widget decided as one app per partner (section 12), switching off decided, the worked example's home (section 2), "Open";
 nothing else re-checked); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
@@ -165,7 +165,9 @@ arrives (after the provider mounted, as Sodax's widget fetches its partner confi
 the client with the partner's key, adds our Stellar module (the change above) and lets EIP-6963 list us on EVM; when the
 setting turns off it removes the module, takes our connector out of wagmi (EIP-6963 has no removal event; done through
 wagmi's internal connector store in the example, by Sodax's own EVM provider in the real thing), disconnects and calls
-`hana.destroy()`. Tested in Chromium, Firefox and WebKit: the wallet appears in both lists after the config arrives,
+`hana.destroy()`. From the SDK on `next` with D936, that wagmi step (and the example's EIP-6963 store reset) is no longer
+needed: the page keeps one announcement, whose provider follows the newest live client, so wagmi lists us once
+through one working connector; the example keeps them until it takes that build. Tested in Chromium, Firefox and WebKit: the wallet appears in both lists after the config arrives,
 connects, signs, and leaves both lists with its hidden frame gone when switched off. Decided (the Tech Lead,
 2026-11-25, D926): switching a partner off doesn't sign its users out (as closing the tab); suspending the partner's
 app on our side ends its sign-ins (`partner-platform-spec.md` A10). In the sample-partner repository the example has
@@ -460,7 +462,8 @@ EIP-6963), ICON `hana`, Bitcoin `hana-bitcoin`, Stacks `hanaWallet.stacks`, and 
 module, all named "Hana Wallet".
 
 **What our wallet announces** (read in our code): EIP-6963 `info.name` "Journear Passport", `info.icon` the Journear
-mark (a data URI), `info.uuid` random per client, `info.rdns` the reverse of the env's sign-in host
+mark (a data URI), `info.uuid` random, one per page and environment, kept when the wallet is turned off and on
+(D936), `info.rdns` the reverse of the env's sign-in host
 (`packages/web/src/client/ethereum.ts` `rdnsFor`: on sandbox-dev `dev.workers.tingtc.hana-id-auth-sandbox-dev`, so it
 contains "hana"; locally `1.0.0.127`); the Stellar Wallets Kit module's `productId` `hana-id`, `productName`
 "Journear Passport", `productUrl` the sign-in origin, `productIcon` the mark; nothing on NEAR (no wallet-selector

@@ -11,8 +11,10 @@ import { createSodaxEvmProvider, createSodaxStellarProvider } from '@hana-id/sod
 import {
   HANA_ENVIRONMENTS,
   type HanaAddresses,
+  type Eip6963ProviderDetail,
   type HanaClient,
   type HanaConfig,
+  type HanaEip6963Provider,
   HanaError,
   type HanaEthereumProvider,
   type HanaProfile,
@@ -45,6 +47,12 @@ export function wire(): {
   hana.on('accountsChanged', (a) => void a?.evm.toLowerCase());
   hana.on('profileChanged', (p: HanaProfile | null) => void p?.givenName?.toLowerCase());
   void hana.getProfile({ maxAgeMs: 60_000 }).then((p: ReactHanaProfile | null) => p?.familyName ?? hana.profile?.familyName ?? null);
+  // Turning the wallet off and on: the EIP-6963 announcement wallet lists hold, and the destroyed signal.
+  const announced: Eip6963ProviderDetail | null = hana.eip6963;
+  const listed: HanaEip6963Provider | undefined = announced?.provider;
+  void listed?.request({ method: 'eth_chainId' });
+  void announced?.info.uuid.toLowerCase();
+  hana.on('destroyed', () => void hana.destroyed);
   return {
     hana,
     evm: createSodaxEvmProvider(hana, { chainId: 84532, rpcUrl: 'https://sepolia.base.org' }),

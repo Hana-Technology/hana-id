@@ -76,6 +76,30 @@ await hana.logout();
 
 Create one client per page and keep it; `hana.destroy()` removes it.
 
+### Turning the wallet off and on (0.5.0)
+
+`hana.destroy()` turns the wallet off on the page; a new `createHana` turns it on again, in either order (a
+`HanaProvider` `key` remount included). The user stays signed in, and no address changes.
+
+- The old client is gone for good: from the first moment of `destroy()`, `hana.ethereum` rejects every request with
+  `4900`; it then emits `accountsChanged []` and `disconnect` (`4900`). `destroyed` fires last (`hana.destroyed` is
+  then `true`).
+- EVM wallet lists need no clean-up. Journear Passport has one EIP-6963 announcement per page and environment,
+  `hana.eip6963` (`{ info, provider }`, frozen): the same `uuid` and `provider` for every client, forwarding to the
+  newest live client's `hana.ethereum` (`4900` while the wallet is off). wagmi lists "Journear Passport" once,
+  through the same connector: don't reset its EIP-6963 store or remove the connector. When the wallet comes back with
+  the user still signed in, wagmi reconnects by itself, even after the user's "Disconnect" (as on a plain reload).
+- While the wallet is off, wagmi still lists that connector (`id` is `hana.eip6963.info.rdns`) and connecting through
+  it fails with `4900`, "Journear Passport is turned off on this page.": leave it out of the list you show.
+- One entry per environment: two apps alive at once on one environment share it (the newest one's; the older is
+  reachable through its own `hana.ethereum`), and switching to another app moves the entry to it.
+- Anything built on `hana.ethereum` itself (viem's `custom(hana.ethereum)`, ethers) belongs to that client: build it
+  again on the new one, or once on `hana.eip6963.provider`.
+- The entry is shared by everything on the page: on it, remove only your own listeners (`removeListener`), never
+  `removeAllListeners()`.
+
+The `uuid` is random, in memory for the page's lifetime only, never stored: a reload or another site gets a new one.
+
 ### Environments
 
 `environment` names a Journear Passport deployment. Its origins, NEAR accounts, RPC and pinned MPC key are built into this

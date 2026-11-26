@@ -59,8 +59,12 @@ describe('EIP-6963', () => {
   it('announces on creation with {uuid, name, icon, rdns} and the provider, and re-announces on requestProvider', async () => {
     s = setup({ config: { evm: EVM_CONFIG } });
     expect(announced).toHaveLength(1);
-    const detail = announced[0]!.detail as { info: { uuid: string; name: string; icon: string; rdns: string }; provider: unknown };
-    expect(detail.provider).toBe(s.client.ethereum);
+    const detail = announced[0]!.detail as { info: { uuid: string; name: string; icon: string; rdns: string }; provider: { request(a: { method: string }): Promise<unknown>; isHanaId?: boolean } };
+    // The announced provider is the page's (D936; eip6963-lifecycle.test.ts), forwarding to hana.ethereum.
+    expect(detail).toBe(s.client.eip6963);
+    expect(detail.provider).not.toBe(s.client.ethereum);
+    expect(detail.provider.isHanaId).toBe(true);
+    expect(await detail.provider.request({ method: 'eth_chainId' })).toBe('0xaa36a7');
     expect(detail.info.uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
     expect(detail.info.name).toBe('Journear Passport');
     expect(detail.info.icon).toBe(HANA_ID_ICON);
@@ -80,6 +84,7 @@ describe('EIP-6963', () => {
     announced = [];
     s = setup();
     expect(announced).toHaveLength(0);
+    expect(s.client.eip6963).toBeNull();
   });
 
   it('rdns is the reverse of the authOrigin host', () => {

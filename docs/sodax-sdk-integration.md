@@ -6,7 +6,7 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
 for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-26 (branch `docs/platform-guide`, after PRs 158 and 159 merged: "Open" and section 12, the Tech Lead's settled module id and approved P11 and P12, D923, D926); 2026-11-26 (branch `docs/platform-guide`, from `feat/owner-confirmation`, not merged, docs only: the summary's portal-switch row and a pointer at the top of section 3 to `platform-guide.md`, D932; no other text changed); 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
+Last verified: 2026-11-26 (branch `feat/widget-frames`: section 12 and "Open", P11 and P12 built, D934); 2026-11-26 (branch `docs/platform-guide`, after PRs 158 and 159 merged: "Open" and section 12, the Tech Lead's settled module id and approved P11 and P12, D923, D926); 2026-11-26 (branch `docs/platform-guide`, from `feat/owner-confirmation`, not merged, docs only: the summary's portal-switch row and a pointer at the top of section 3 to `platform-guide.md`, D932; no other text changed); 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
 answers to D923 (D926): the fork holding the Stellar change (section 2, "The Stellar change, on our fork"), the
 widget decided as one app per partner (section 12), switching off decided, the worked example's home (section 2), "Open";
 nothing else re-checked); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
@@ -419,8 +419,9 @@ recommendation, to be adjusted after the talk with Sodax. Still open:
 - Settled by the Tech Lead (2026-11-26, D923): `hana-id` stays the default Stellar module id, with `journear-passport`
   offered through the `productId` option for hosts (section 11). Still to confirm: no EVM change, the production
   domain decides it (section 11).
-- Approved by the Tech Lead (2026-11-26, D926), to build: pieces P11 (the partner's page in our windows) and P12 (the
-  widget's origin only as a frame) in `partner-platform-spec.md`'s build plan.
+- Approved by the Tech Lead (2026-11-26, D926) and built on `feat/widget-frames` (D934, not merged, not deployed):
+  pieces P11 (the partner's page in our windows) and P12 (the widget's origin only as a frame). Sodax's backend marks
+  the widget's address `{ "origin": "…", "frameOnly": true }` in each partner app's create (`platform-guide.md`).
 
 ## 10. Sodax's public source
 
@@ -551,4 +552,7 @@ works, because the widget's origin is registered for every partner's app, so any
 app lists the widget's address and the partner's own pages (`partner-platform-spec.md` A10, A13). The two changes are
 **approved** (the Tech Lead, 2026-11-26, D926), to build as pieces P11 and P12 of that spec's build plan; P12's reason (anyone can open the
 widget top-level with a partner's settings and get that partner's app) was read in our code and inferred, not
-tested.
+tested. **Built** on `feat/widget-frames` (D934): with the widget's address marked frame-only, the widget opened on its
+own is refused (tested in Chromium, Firefox and WebKit, `apps/e2e/tests/widget-frames.spec.ts`; unmarked, it works
+there as before), and the windows say "You're on {partner page}. This uses a widget from {widget}." where the browser
+names the page around the frame, and that it didn't say (with the page to check against) where it doesn't.

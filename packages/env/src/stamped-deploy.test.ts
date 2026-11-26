@@ -65,7 +65,7 @@ describe('the shared deploy wrapper', () => {
     }
     // D931 (after PR 159's review, L2): the API and the console check their database has the migrations first.
     expect(scriptsOf('console').deploy).toBe(`vite build && ${RUN} --require-migrations CONSOLE_DB:0007_origin_confirm_step_up.sql`);
-    expect(scriptsOf('api').deploy).toBe(`${RUN} --require-migrations DB:0034_origin_confirmations.sql`);
+    expect(scriptsOf('api').deploy).toBe(`${RUN} --require-migrations DB:0035_frame_only_origins.sql`);
     expect(scriptsOf('api')['deploy:pages']).toBe(`pnpm --filter @hana-id/web build && ${RUN} -c wrangler.vault.jsonc && ${RUN} -c wrangler.auth.jsonc`);
   });
 });

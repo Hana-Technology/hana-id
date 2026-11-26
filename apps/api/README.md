@@ -256,7 +256,7 @@ pnpm --filter @hana-id/scripts run deploy-check <env> --d1   # API, page Workers
 `deploy` and `deploy:pages` run the shared wrapper `packages/env/src/stamped-deploy.ts` (D406, D931), which checks the
 one generated config (`-c <file>`, else `wrangler.jsonc` here) and runs `wrangler deploy -c <it> [--dry-run] --var
 HANA_BUILD:<build id>` (this checkout's commit, `-dirty` for uncommitted changes; `@hana-id/env/local-build`); it takes
-no other argument. `deploy` first checks that the remote D1 has migration 0034 (`--require-migrations`, which runs
+no other argument. `deploy` first checks that the remote D1 has migration 0035 (`--require-migrations`; D934: the login path reads `app_origins.frame_only`, which runs
 `wrangler d1 migrations list … --remote` even with `--dry-run`, so it needs credentials). Never deploy with a raw
 `wrangler deploy`: the Worker then reports `build: null` and `deploy-check` fails.
 

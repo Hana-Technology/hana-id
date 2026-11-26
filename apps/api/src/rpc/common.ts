@@ -18,7 +18,7 @@ export interface CallSetup {
   actors: readonly Actor['kind'][];
   /** ConsoleRpc only: the call's cost in hot-DB statements (its ceiling), charged before it runs. */
   cost?: number;
-  /** ConsoleRpc only: a kill switch, which may spend the budget's reserves. */
+  /** ConsoleRpc only: a kill switch, admitted by its org's kill bucket and the global kill bucket only (D937). */
   killSwitch?: boolean;
   /** ConsoleRpc only: a destructive call, counted by the breaker for this org (refunded when it changed nothing). */
   breaker?: boolean;
@@ -43,7 +43,7 @@ export interface InputSchema<I> {
   safeParse(v: unknown): { success: true; data: I } | { success: false; error: { issues: { path: PropertyKey[]; message: string }[] } };
 }
 
-/** Outcomes after which a call is settled (breaker slot and reserve tokens back): it found nothing it could destroy. */
+/** Outcomes after which a breaker call is settled (its slot back; D937: no tokens): it found nothing it could destroy. */
 const REFUNDED: ReadonlySet<RpcCode> = new Set(['not_found', 'conflict', 'version_conflict', 'already_applied', 'bad_request']);
 
 export async function runRpc<I extends { actor: Actor; requestId: string; clientIp: string }, T extends object>(
@@ -69,7 +69,6 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
   const now = Date.now();
   const w: Writer = { actor: input.actor, requestId: input.requestId, now };
   let breakerTaken = false;
-  let reserveUsed = 0;
   // The admission's time on the limiter's clock (D935, H1): what the settlement names.
   let admittedAt = now;
   let code: RpcCode | null = null;
@@ -87,7 +86,7 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
       }
       admittedRevoke = true;
     } else if (consoleCall) {
-      ({ reserveUsed, at: admittedAt } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
+      ({ at: admittedAt } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
       breakerTaken = !!setup.breaker;
     }
     const db = new HotDb(env.DB, consoleCall ? CONSOLE_DB_LIMITS : undefined);
@@ -108,6 +107,6 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
     return { ok: false, code: 'internal' };
   } finally {
     const changedNothing = (code === null && !w.wrote) || (code !== null && REFUNDED.has(code));
-    if (changedNothing && (breakerTaken || reserveUsed > 0)) await settleMemberCall(env, { org: orgId!, at: admittedAt, breaker: breakerTaken, reserveUsed });
+    if (changedNothing && breakerTaken) await settleMemberCall(env, { org: orgId!, at: admittedAt, breaker: true });
   }
 }

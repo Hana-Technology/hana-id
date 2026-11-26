@@ -1,17 +1,20 @@
-// ConsoleRpc's admission (docs/batch-c-spec.md §RPC "Destructive-call breaker", "Hot-DB budget"; D228):
-// - the hot-DB budget: per-org token buckets under a global one (the spec's 30 statements/s, burst 60), each with a
-//   reserve that only the kill switches (removeOrigins, turnOff, revokeKey, setSuspended(true)) may spend, so neither
-//   one org nor a flood of reads or settings writes can starve another org's kill switches. One org takes at most 12
-//   tokens of the global reserve a minute, and a kill switch that changed nothing gives back what it took of the
-//   reserve, charged to its org's own bucket instead, so no org can drain the reserve with no-op kill switches;
-// - the destructive-call breaker (setSuspended(true), rotateKey, removeOrigins, a web-client change): 5 per org and 20
-//   across orgs per rolling hour, counted per call (D93 Q21); a call that changed nothing gets its slot back. Not
-//   revokeKey (D935, the Tech Lead's decision: stopping a publishable key is never blockable by the shared breaker): it
-//   is held instead to its org's own 20 revocations a clock hour, counted only when it revokes something;
+// ConsoleRpc's admission (docs/batch-c-spec.md §RPC "Destructive-call breaker", "Hot-DB budget"; D228, D935, D937):
+// - two budget classes that never charge each other (D937, as the platform's in D935). Ordinary member calls: per-org
+//   token buckets under a global one (the spec's 30 statements/s, burst 60), with no reserve. Kill switches (suspend,
+//   removeOrigins, frameOnlyOrigins, turnOff, revokeKey, removeLabels, cancelPlatformKey, an owner action's safety
+//   methods): each org's own kill bucket and the console's global kill bucket, never the ordinary ones, so no org's
+//   reads, writes or kill switches can take what another org's kill switches need. The global kill bucket bounds every
+//   org together (console organisations are not capped); each org's first 5 kill switches of a rolling minute pass
+//   whatever it holds. No token is ever given back;
+// - the destructive-call breaker (removeOrigins, frameOnlyOrigins, rotateKey, a web-client change): 5 per org and 20
+//   across orgs per rolling hour, counted per call (D93 Q21), each org's first 3 of its hour past the global count (D937);
+//   a call that changed nothing gets its slot back. Not a suspension or a publishable key's revocation (D935, D937: a
+//   stop is never blockable by the shared breaker): each is held instead to its org's own 20 a clock hour, counted only
+//   when it changes something (`console-stops:<orgId>`);
 // - emailed-link cancels (no session, no org), outside the members' budget: a per-IP limiter (IPv6 by /64), then one
 //   token of a global link-read budget sized for D1 (50 reads/s, burst 100), both before the token is read. Nothing
 //   limits a cancel after that: one whose token verifies on a pending change always runs (D229).
-// The member and link buckets and the breaker live on one RateLimiter object (`console-rpc`), so a member call is
+// The member, kill and link buckets and the breaker live on one RateLimiter object (`console-rpc`), so a member call is
 // admitted or refused in one step. The first breaker refusal of a limit in a clock hour writes a `breaker` security
 // event (the object remembers it, so later refusals cost no write). AdminRpc is neither counted nor charged.
 import { base58, sha256, utf8 } from '@hana-id/console-core';
@@ -24,13 +27,21 @@ import { RpcRefusal, type Writer } from './cas.ts';
 
 export const HOUR_MS = 60 * 60 * 1000;
 export const CONSOLE_LIMITS = {
-  /** Each org's share: 10 statements/s, burst 40, the last 10 for its kill switches. */
-  perOrg: { ratePerS: 10, burst: 40, reserve: 10 },
-  /** Every org together (the spec's budget): 30 statements/s, burst 60, the last 20 for kill switches, 12 a minute per org. */
-  global: { ratePerS: 30, burst: 60, reserve: 20, reserveShare: { windowMs: 60_000, max: 12 } },
+  /** Each org's ordinary calls: 10 statements/s, burst 40. */
+  perOrg: { ratePerS: 10, burst: 40 },
+  /** Every org's ordinary calls together (the spec's budget): 30 statements/s, burst 60. */
+  global: { ratePerS: 30, burst: 60 },
   /** Emailed-link cancels' token reads together (one D1 read each): 50 a second, burst 100. */
   linkRead: { ratePerS: 50, burst: 100 },
-  breaker: { windowMs: HOUR_MS, perOrg: 5, global: 20 },
+  /** 5 an org and 20 across orgs a rolling hour; each org's first 3 of its hour past the global 20 (D937). */
+  breaker: { windowMs: HOUR_MS, perOrg: 5, global: 20, floor: 3 },
+  /**
+   * D937, the kill switches' only budget. Each org: 1 statement/s, burst 60 (10 of the largest kill switch, 6, at once;
+   * 10 a minute after). Every org together: 10 statements/s, burst 300 (50 at once, 100 a minute), so it bites only when
+   * more than ten orgs use kill switches at their full rate at once. Each org's first 5 kill switches of a rolling minute
+   * pass whatever the global bucket holds (one app's every stop: suspend, remove, revoke, turn off, cancel a platform key).
+   */
+  kill: { perOrg: { ratePerS: 1, burst: 60 }, global: { ratePerS: 10, burst: 300 }, floor: { windowMs: 60_000, calls: 5 } },
 } as const satisfies ConsoleAdmission['limits'];
 /** Emailed-link cancels per client IP (IPv6 by /64). */
 export const LINK_PER_IP: Limit[] = [
@@ -48,20 +59,28 @@ export const CONSOLE_LIMITER = 'console-rpc';
 export const CONSOLE_KEY_REVOKES: Limit[] = [{ name: 'key-revokes:hour', windowMs: HOUR_MS, max: 20 }];
 
 /**
- * D935: runs a member's publishable key revocation with its org's own window (`console-stops:<orgId>`, pinned), taken just
- * before the batch (after the plan read and every check, so a revocation that changes nothing, a key already revoked or
- * not found, never counts), and given back if the write then fails with no ledger row of its request id (one read
- * straight from D1 on the failure path only; if that read fails, nothing is given back). A limiter error refuses the
- * call (fails closed, as the breaker did).
+ * D937: a member's app suspensions per org a clock hour, outside the breaker (a pure, reversible stop: only this org's
+ * own suspensions count towards it; the platform's have their own 60). Every app of an org of up to 20 apps suspended in
+ * one hour (one app per partner is recommended, D926; a platform org creates at most 10 by default), with room for a
+ * suspension made again after a resume; low enough to bound suspend-and-resume churn on the hot database.
  */
-export async function withKeyRevokeQuota<T>(env: Env, w: Writer, orgId: string, write: () => Promise<T>): Promise<T> {
+export const CONSOLE_SUSPENSIONS: Limit[] = [{ name: 'suspensions:hour', windowMs: HOUR_MS, max: 20 }];
+
+/**
+ * D935, D937: runs a member's stop (a publishable key revocation, an app suspension) with its org's own window
+ * (`console-stops:<orgId>`, pinned), taken just before the batch (after the plan read and every check, so a stop that
+ * changes nothing, a key already revoked, an app already suspended, not found, never counts), and given back if the write
+ * then fails with no ledger row of its request id (one read straight from D1 on the failure path only; if that read
+ * fails, nothing is given back). A limiter error refuses the call (fails closed, as the breaker did).
+ */
+export async function withStopQuota<T>(env: Env, w: Writer, orgId: string, stop: { limits: Limit[]; code: string; message: string }, write: () => Promise<T>): Promise<T> {
   const obj = placedStub(env, env.RATE_LIMITER, `console-stops:${orgId}`);
   let taken: number | null = null;
   w.beforeBatch = async () => {
-    const r = await obj.hit(CONSOLE_KEY_REVOKES, w.now);
+    const r = await obj.hit(stop.limits, w.now);
     if (!r.ok) {
-      log({ event: 'console_rpc', outcome: 'rejected', code: 'key_revokes_full', orgId }, 'warn');
-      throw new RpcRefusal('rate_limited', 'Your organisation has revoked many publishable keys this hour: try again later, or ask Journear security');
+      log({ event: 'console_rpc', outcome: 'rejected', code: stop.code, orgId }, 'warn');
+      throw new RpcRefusal('rate_limited', stop.message);
     }
     taken = w.now;
   };
@@ -73,11 +92,19 @@ export async function withKeyRevokeQuota<T>(env: Env, w: Writer, orgId: string, 
         (r) => r !== null,
         () => true,
       );
-      if (!committed) await obj.unhit(CONSOLE_KEY_REVOKES, taken).catch(() => undefined);
+      if (!committed) await obj.unhit(stop.limits, taken).catch(() => undefined);
     }
     throw err;
   }
 }
+
+/** D935: a member's publishable key revocation with its org's 20 a clock hour. */
+export const withKeyRevokeQuota = <T>(env: Env, w: Writer, orgId: string, write: () => Promise<T>): Promise<T> =>
+  withStopQuota(env, w, orgId, { limits: CONSOLE_KEY_REVOKES, code: 'key_revokes_full', message: 'Your organisation has revoked many publishable keys this hour: try again later, or ask Journear security' }, write);
+
+/** D937: a member's app suspension with its org's 20 a clock hour. */
+export const withSuspensionQuota = <T>(env: Env, w: Writer, orgId: string, write: () => Promise<T>): Promise<T> =>
+  withStopQuota(env, w, orgId, { limits: CONSOLE_SUSPENSIONS, code: 'suspensions_full', message: 'Your organisation has suspended many apps this hour: try again later, or ask Journear security' }, write);
 
 /** A deterministic security event id (`se_` + base58 of 12 bytes of a hash), so a repeated finding is written once. */
 export async function eventId(...parts: string[]): Promise<string> {
@@ -94,24 +121,21 @@ export interface MemberAdmission {
 const limiter = (env: Env) => placedStub(env, env.RATE_LIMITER, CONSOLE_LIMITER);
 
 /**
- * Admits one member call; throws `rate_limited` when a bucket or the breaker refuses. Answers how many global reserve
- * tokens it took (settled back by settleMemberCall when the call changed nothing).
+ * Admits one member call; throws `rate_limited` when a bucket or the breaker refuses. Answers the admission's time on
+ * the limiter's clock (what settleMemberCall names when the call changed nothing).
  */
-export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.now()): Promise<{ reserveUsed: number; at: number }> {
+export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.now()): Promise<{ at: number }> {
   const r = await limiter(env).consoleAdmit({ ...a, limits: CONSOLE_LIMITS }, now);
-  if (r.ok) return { reserveUsed: r.reserveUsed, at: r.at };
+  if (r.ok) return { at: r.at };
   if (r.notify) await breakerEvent(env.DB, r.limit === 'breaker_org' ? a.org : null, now);
   const breaker = r.limit === 'breaker_org' || r.limit === 'breaker_global';
   throw new RpcRefusal('rate_limited', breaker ? 'Too many destructive changes this hour: ask Journear security' : 'Too many console calls: try again shortly');
 }
 
-/**
- * Settles a member call admitted at `at` that changed nothing: its breaker slot back, and the global reserve tokens it
- * took moved onto its org's own bucket.
- */
-export async function settleMemberCall(env: Env, s: { org: string; at: number; breaker: boolean; reserveUsed: number }): Promise<void> {
+/** Settles a breaker call admitted at `at` that changed nothing: its breaker slot back (D937: no tokens). */
+export async function settleMemberCall(env: Env, s: { org: string; at: number; breaker: boolean }): Promise<void> {
   try {
-    await limiter(env).consoleSettle({ ...s, limits: CONSOLE_LIMITS });
+    await limiter(env).consoleSettle(s);
   } catch {
     log({ event: 'console_rpc', outcome: 'error', code: 'settle_failed' }, 'error');
   }
@@ -141,7 +165,7 @@ export async function breakerEvent(db: D1Database, orgId: string | null, now: nu
         now,
         'breaker',
         orgId,
-        JSON.stringify({ limit: scope, windowStart: hour, perOrg: CONSOLE_LIMITS.breaker.perOrg, global: CONSOLE_LIMITS.breaker.global }),
+        JSON.stringify({ limit: scope, windowStart: hour, perOrg: CONSOLE_LIMITS.breaker.perOrg, global: CONSOLE_LIMITS.breaker.global, floor: CONSOLE_LIMITS.breaker.floor }),
       )
       .run();
   } catch {

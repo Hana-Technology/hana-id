@@ -24700,166 +24700,129 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
 - Address impact: **none.** Limiter state, admission rules and a staff switch's cap; nothing touches the contract, a
   key, a path or an address derivation.
 
-### D936. Turning the wallet off and on in one page: one EIP-6963 announcement per page and wallet slot (a page-lifetime uuid and a provider that follows the live client); `hana.destroy()` retires `hana.ethereum` for good; `hana.eip6963`, the `destroyed` event and `hana.destroyed`
+### D936. Turning the wallet off and on in one page: one EIP-6963 entry per page and environment (a page-lifetime uuid and a provider that follows the newest live client); `hana.destroy()` retires `hana.ethereum` for good; `hana.eip6963`, the `destroyed` event and `hana.destroyed`
 
-- **Date:** 2026-11-26 · **Status:** built and tested; the choices below **to confirm (the Tech Lead)** · **Relates
-  to:** D114 (HanaClient a type only), D838 (EIP-5792 on the provider), D909 and D926 (Sodax's toggle),
-  `sodax-sdk-integration.md` · **Built:** `packages/web` (`client/ethereum.ts`, `client/client.ts`, `index.ts`; after the review also `packages/react` `provider.tsx` and its test `test/eip6963-remount.test.tsx`; tests
-  `test/client/eip6963-lifecycle.test.ts` with the real `mipd` 0.0.7 store and real `@wagmi/core` 3.6.5, devDependencies
-  only, both already in the workspace's lockfile through `apps/e2e`), `scripts/pack-smoke/types.ts`; docs
-  `integration.md` (section 3 "Turning the wallet off and on", the events, section 8 EVM, the 0.5.0 release notes and
-  upgrade step 5), `packages/web/README.md`, `platform-guide.md` (section 10's toggle-off bullet), `architecture.md`,
-  `sodax-sdk-integration.md`. SDK version unchanged: 0.5.0 is not published yet, so this joins its notes.
+- **Date:** 2026-11-26 · **Status:** built and tested (PR 163, after two independent reviews); the choices below **to
+  confirm (the Tech Lead)** · **Relates to:** D114 (HanaClient a type only), D838 (EIP-5792 on the provider), D909 and
+  D926 (Sodax's toggle), `sodax-sdk-integration.md` · **Built:** `packages/web` (`client/ethereum.ts`,
+  `client/client.ts`, `client/emitter.ts`, `index.ts`; tests `test/client/eip6963-lifecycle.test.ts`), `packages/react`
+  (test `test/eip6963-remount.test.tsx` only; `provider.tsx` unchanged), `scripts/pack-smoke/types.ts`. Real `mipd`
+  0.0.7, `@wagmi/core` 3.6.5 and `viem` 2.57.7 as devDependencies of the two packages (already in the lockfile through
+  `apps/e2e`). Docs `integration.md`, `packages/web/README.md`, `packages/react/README.md` (unchanged in the end),
+  `platform-guide.md` section 10, `architecture.md`, `sodax-sdk-integration.md`. SDK version unchanged: 0.5.0 is not
+  published yet, so this joins its notes.
 - **The problem.** A host embedding our wallet in its wallet kit (Sodax's, on wagmi) turned it off (`destroy()`) and
   on (`createHana`). Each client announced a fresh `crypto.randomUUID()` with `hana.ethereum` as the provider. EIP-6963
-  has no "gone" event; mipd (wagmi's EIP-6963 store) keeps every announcement it has seen by uuid, and wagmi makes a
-  connector per mipd entry, skipping any rdns it already has. So the page listed "Journear Passport" twice, and the
-  first, dead, entry was the one connect used. The sample's add-on worked around it with `config._internal`
-  (`mipd.reset()` and the connector list's `setState`), not public API.
-- **Found while building: a stable uuid alone is not enough.** mipd 0.0.7's store ignores an announcement whose uuid
-  it already has (first wins; read in `mipd/dist/esm/store.js`), and wagmi's connector for an rdns keeps the provider
-  object of the first announcement. With the uuid kept but `hana.ethereum` per client as the provider, mipd keeps one
-  entry whose provider is the destroyed client's (tested: its request rejects "The Journear Passport vault is
-  disconnected"). So what the store keeps must itself work again: the announced provider object has to be the same
-  object across clients. Tested both ways: the new tests fail against the old behaviour (fresh uuid per client) and
-  against "stable uuid, per-client provider"; they pass with the design below.
+  has no "gone" event. mipd (wagmi's EIP-6963 store) keeps the first announcement of each uuid and ignores later ones
+  with the same uuid (`mipd/dist/esm/store.js`); wagmi makes a connector per mipd entry and skips an rdns it already
+  has. So the page listed "Journear Passport" twice, and the first, dead, entry was the one connect used. The sample's
+  add-on worked around it with `config._internal` (`mipd.reset()`, the connector list's `setState`), not public API.
+- **A stable uuid alone is not enough** (tested): with the uuid kept but `hana.ethereum` per client as the provider,
+  mipd keeps one entry whose provider is the destroyed client's. What the store keeps must itself work again, so the
+  announced provider object is the same object for the page's lifetime.
 - **The design.**
-  - **Slots.** Per window and `rdns`, a list of slots in creation order, in module memory (a `WeakMap` keyed by the
-    window). A client with `evm` takes the first slot no live client holds, else a new one. A slot is its frozen
-    detail `{ info: { uuid, name, icon, rdns }, provider }`, made once: the uuid a fresh `crypto.randomUUID()`, the
-    provider a `HanaEip6963Provider`. `stop()` (from `destroy()`) removes the `eip6963:requestProvider` listener and
-    frees the slot. The next client re-announces the same frozen detail object at once and on every request.
-  - **The cache key is the rdns** (the env's sign-in host, reversed): exactly what a host can tell apart in the
-    announcement (`name` and `icon` are constants). Clients alive at once never share a slot whatever their key or
-    config, so two apps or keys on one page get two announcements; two environments have two rdns. A freed slot goes
-    to the next client of that rdns even if its publishable key differs: for the host it is the same wallet, and
-    keying by key would bring the dead duplicate back for a host that switches apps. Tested: distinct while alive
-    (same rdns and different rdns), a freed slot reused, another rdns's freed slot never taken.
-  - **`HanaEip6963Provider`** (exported as a type only): EIP-1193 `request` plus the SDK's Emitter (`on`,
-    `removeListener`, …), `isHanaId`, and `chainId`/`chainIds` read from the live client. It forwards `request`
-    synchronously (so a click's user activation still opens the popup) and the four events of the bound
-    `hana.ethereum`; with none bound it rejects with 4900 and emits nothing. It holds no reference to a destroyed
-    client (its forwarding listeners are removed at unbind). Binding is module-private (a static block), so page code
-    can't point it elsewhere; one constructed by a page stays unbound.
-  - **`hana.ethereum` stays per client** and after `destroy()` is retired for good (`retire()`): `accountsChanged []`
-    (if it had an account) and `disconnect` (a 4900 `ProviderRpcError`, only if it had emitted `connect` and not
-    already `disconnect`, so a vault that died first doesn't say it twice), then every request rejects with 4900, the
-    ones it answered itself (`eth_chainId`) and the RPC's (reads, `eth_sendRawTransaction`) too; before this they still
-    worked after `destroy()`. Its client is swapped for a frozen dead host, its nonce and batch maps are cleared and its
-    listeners dropped, so a host still holding it keeps neither the client nor the removed frame alive. The 4900's
-    message is the vault-gone one (`hanaError(4900)`), the code every method that reached the vault already gave.
-  - **`destroy()` order:** retire `hana.ethereum` (its events reach the announced provider's listeners, so wagmi
-    sees the wallet go), stop the announcement, destroy the vault connection, emit `destroyed`, drop every listener.
-    The client-level `disconnect` is still not emitted on `destroy()` (unchanged).
-  - **New API, the smallest in the SDK's style:** `hana.eip6963` (the frozen detail, or null without `evm`; the same
-    object each re-creation), the `destroyed` event (last event, once) and `hana.destroyed` (for a listener that comes
-    late), types `Eip6963ProviderDetail` and `HanaEip6963Provider`. No wagmi dependency in the SDK.
+  - **One entry per window and rdns** (the env's sign-in host, reversed): one frozen detail `{ info: { uuid, name,
+    icon, rdns }, provider }`, made by the first client of that environment in the page, in module memory (a `WeakMap`
+    keyed by the window). Every later client of the environment announces the same detail object, at creation and on
+    every `eip6963:requestProvider` while any client of it lives. So every uuid-keyed store has exactly one entry, in
+    every order of creates and destroys (tested with real mipd: off/on ×3, and create-first sequences).
+  - **It follows the newest live client:** `HanaEip6963Provider` forwards `request` to the `hana.ethereum` of the
+    newest live client of its environment, else the next newest, else none (then 4900, "Journear Passport is turned off
+    on this page."). A request goes to the client bound when it is made and returns that client's own promise, so an
+    answer is never resolved by another client. When it moves it says what changed for its listeners, in a provider's
+    order: `accountsChanged` with the new client's accounts, `chainChanged`, then `connect` or `disconnect` (never a
+    second `connect`). It hears `hana.ethereum` through a module-private sink called before the public listeners, so
+    a host's `hana.ethereum.removeAllListeners()` can't cut it off. It is frozen in its constructor (state in private
+    fields), so a page script can't swap `request` for every later client. Binding is module-private (static blocks).
+  - **No event after a move.** An event being delivered when the entry moves on (a listener destroyed or created a
+    client) is not delivered further: the entry keeps a generation, changed on every move and when its client starts
+    being destroyed, and `Emitter.emitWhile` stops between listeners once it changed; `hana.ethereum.emit` skips a sink
+    detached during the delivery and stops once the provider retired. Otherwise a later listener heard the destroyed
+    client's account after the entry had reported the other client's (the second review's L1, proved and tested).
+  - **`destroy()` order:** the client leaves the entry (`release()`: it moves at once to the next newest live client,
+    else stays on this one for its last events), then `hana.ethereum.retire()`, then `stop()` (the entry lets go of
+    this client and, with none left, stops answering `eip6963:requestProvider`), the vault connection, `destroyed`, and
+    every listener dropped. A client created during the destroy (a listener of the teardown events) is the newest; the
+    entry moves to it once the old client's last events are out.
+  - **`hana.ethereum` after `destroy()`** is retired for good: it refuses everything with 4900 first (the retired host
+    swapped in before any event, so a call made from inside its own teardown listeners, or through the entry, is
+    refused: the second review's L3, proved and tested), then `accountsChanged []` (if it had an account) and
+    `disconnect` (4900, only if connected and not already said), then drops its listeners. Before, it still answered
+    `eth_chainId` and reads after `destroy()`. It holds a frozen dead host, so nothing keeps the client or the removed
+    frame alive. The 4900's message is the vault-gone one.
+  - **New API:** `hana.eip6963` (the frozen detail, or null without `evm`), the `destroyed` event (last, once) and
+    `hana.destroyed`, types `Eip6963ProviderDetail` and `HanaEip6963Provider`. No wagmi dependency in the SDK.
+- **What is given up:** two apps (or keys) alive at once on one page and one environment don't each get their own
+  EIP-6963 entry: the entry is the newest one's, and the older client is reachable through its own `hana.ethereum`
+  (wagmi keeps one connector per rdns anyway). Two environments have two entries. Switching to another app on the
+  same environment moves the entry to the new app (its accounts change). A page is one trust domain: it created both.
+- **History (short).** A first version kept one entry per *slot* (clients alive at once held their own slots and
+  uuids). The first review found that `HanaProvider`'s `key` remount creates the new client a microtask before the old
+  one is destroyed (its delay keeps strict mode's cleanup-then-setup on one client), so the new client took a second
+  slot and wagmi's connector on the first went dead. The fix added slot borrowing, a replay on every move, a
+  pending-destroy flush in `HanaProvider` and the module-private sink, the frozen provider and the "turned off"
+  message. The second review found it sound but more complex than needed, and the flush could destroy a client its
+  provider was about to take back under `<Activity>`. The Tech Lead's decision: one entry following the newest client.
+  It removed the slots, the borrowing and the flush (`HanaProvider` is back to `next`'s, unchanged by this PR),
+  kept the sink, the frozen provider and the message, and fixed the second review's L1 and L3 within it.
 - **What EIP-6963 says, and why this complies** (quoted from memory of the final EIP text; no network was used):
   `info.uuid` is "a globally unique identifier the Wallet Provider that MUST be (UUIDv4 compliant) to uniquely
   distinguish different EIP-1193 provider sessions that have matching properties defined below during the lifetime of
   the page", and "the cryptographic uniqueness provided by UUIDv4 guarantees that two independent EIP6963ProviderInfo
   objects can be separately identified". The wallet announces on load and again on every `eip6963:requestProvider`,
-  with the event's `detail` frozen; there is no removal event, and nothing asks for a new uuid on re-announcement. So
-  the uuid's scope is a provider session within the page's lifetime. Here a uuid names exactly one announced provider
-  object for the whole page lifetime (never another object under the same uuid), that object is an EIP-1193 provider
-  whose session spans disconnects (it emits `disconnect` and later `connect`, as EIP-1193 allows), and two providers
-  present at once (matching name, icon and rdns) always have different v4 uuids. That is how a browser extension
-  behaves (one uuid per page load, kept while it locks and unlocks). The old behaviour also complied (each client was
-  a new provider object); the change is that the wallet the page turns back on is the same provider session.
-- **Privacy.** The uuid is not a secret (every script on the page can read it, as any wallet's), but it must not let
+  with the event's `detail` frozen; there is no removal event, and nothing asks for a new uuid on re-announcement.
+  Here a uuid names exactly one announced provider object for the page's lifetime, an EIP-1193 provider whose session
+  spans disconnects (`disconnect`, later `connect`, as EIP-1193 allows), as a browser extension keeps one uuid per page
+  load while it locks and unlocks; there are never two announced providers with matching properties, so nothing needs
+  telling apart.
+- **Privacy.** The uuid is not a secret (every script on the page can read it, as any wallet's), but it can't let
   sites recognise a user: it is random (`crypto.randomUUID`), derived from nothing (no user, key, app or address),
   held only in module memory, never written to `localStorage`, `sessionStorage`, IndexedDB or a cookie, and a new page
-  load, another tab, another window or another origin gets a new one (tested: another window, a fresh module and no
-  storage write). Reusing it within one page tells the page nothing it doesn't already know (it created both clients).
-  It says nothing about whether the user is signed in.
-- **What a wagmi host still does** (tested with real `@wagmi/core` 3.6.5 and `mipd` 0.0.7, three off/on cycles): no
-  store reset and no connector removal. wagmi keeps one "Journear Passport" connector (its `id` is the rdns), the
-  same object each cycle; `destroy()` ends its connection (status `disconnected`); after re-creation with the session
-  restored wagmi connects again by itself (its `accountsChanged` path, as for an unlocked extension), and the page's
-  own `disconnect` and `connect` go to the live client. While the wallet is off wagmi still lists that connector, and
-  connecting through it rejects with 4900: a host that shouldn't show the wallet while off filters it out of the list
-  it renders (by `id` or `hana.eip6963.info.rdns`), which needs no internals. A connector or viem client a host built
-  on `hana.ethereum` itself belongs to that client: rebuild it, or build it once on `hana.eip6963.provider`.
+  load, another tab, window or origin gets a new one (tested: another window, a fresh module, no storage write). It
+  says nothing about whether the user is signed in.
+- **What a wagmi host does** (tested with real `@wagmi/core` and React 18 and 19): nothing. One "Journear Passport"
+  connector (its `id` is the rdns), the same object over off/on ×3, `key` remounts a → b → c (plain and under
+  StrictMode), mount and unmount ×3, create-B-then-destroy-A (the connector follows B, on B's chain, then A again), and
+  a client re-created inside a teardown listener. `destroy()` ends its connection; when the wallet comes back with the
+  session restored, wagmi connects again by itself, also after the user pressed the host's disconnect (tested with
+  real `localStorage`: wagmi's `accountsChanged` path ignores its "disconnected" mark; the second review showed the same
+  on a plain reload on `next`, so not a regression). While the wallet is off the connector stays listed and connecting
+  rejects with 4900 "Journear Passport is turned off on this page."; a host that shouldn't show it filters its own list
+  by connector `id`. A connector or viem client built on `hana.ethereum` itself belongs to that client.
 - **What the sample's add-on can delete** once it takes a build with this (not touched here): `forgetEvmWallet` and its
   call, the `WagmiInternal` type and every `config._internal` use (`mipd.reset()`, `connectors.setState`), and the
-  explicit wagmi `disconnect` loop with `connectorsOf` (which compares connectors with `client.ethereum` and would now
-  find none: `destroy()` ends wagmi's connection itself). If the kit must not list the wallet while it is off, it
-  needs a filter on its own EVM list instead. Its test helpers that read `_internal.mipd` and expect 0 entries after
-  the switch goes off would see 1 dormant entry.
-- **Behaviour for hosts that never destroy:** the same requests, answers and events. One observable difference: the
-  announced provider is `hana.eip6963.provider`, not `hana.ethereum` (`detail.provider === hana.ethereum` is now
-  false). Kept: `isHanaId`, `chainId`, `chainIds` on it.
-- **Limits.** ~~A page that creates the new client before destroying the old one gets a second slot, and wagmi keeps
-  the first, which goes dormant: destroy first (React's effect clean-up does).~~ Wrong, and fixed after PR 163's
-  review (below): a `HanaProvider` `key` remount created the new client before destroying the old one. Two copies of
-  the SDK bundled into one page have separate slot lists (module memory), as before.
-- **After PR 163's review (2026-11-26)** (independent review: nothing Critical or High; one Medium, three Low; the
-  security model holds), each fixed, with tests:
-  - **M1, a key remount left the kept entry dead.** `HanaProvider` (`packages/react/src/provider.tsx`) delayed
-    `destroy()` by a microtask (for strict mode's cleanup then setup on the same component, which must take the same
-    client back), and React runs a `key` remount's old cleanup and new setup in one go, so the new client was created
-    while the old one still held the slot: a second uuid, and wagmi's connector on the freed first slot rejected with
-    4900 while the new client was live (the reviewer's uuids over a → b → c: U1, U2, U1). Two fixes, both kept:
-    - **(b) No second slot in the common cases.** `HanaProvider` keeps each released client's destroy in a
-      module-level set; a provider about to create a client runs them first (each runs once: then or from its
-      microtask). Only a setup that creates flushes; a strict-mode or `<Activity>` setup that takes its own client
-      back never does, so a client still owned is never destroyed early (strict mode runs every cleanup of the subtree,
-      then every setup, all retakes). And `destroy()` frees the slot first (`release()`, before `retire()`), so a
-      client created during the destroy (a synchronous `disconnect` listener's) takes the same slot; until a client
-      takes it, the slot still forwards the old client's last events (so wagmi hears it go).
-    - **(a) For hosts that still create first:** a slot no live client holds (`owner` null) forwards to the client
-      of the page's lowest held slot, if there is one (`rebalance`, on every take, release and stop), so every entry a
-      store kept reaches a live client whenever one exists. All such slots, not only the lowest: a store created
-      later may have kept a later one. A new client takes the lowest slot no live client holds, also one forwarding to
-      another client (that client keeps its own slot); a slot a live client holds is never rebound. When the
-      announced provider moves to another client it says what changed for its listeners, in a provider's order
-      (`accountsChanged` with the new client's accounts, `chainChanged`, then `connect` or `disconnect`), so wagmi
-      follows. A request goes to the client bound when it is made and returns that client's own promise, so an answer
-      is never resolved by another client (tested: the entry moves on before the answer; the first client's answer
-      arrives, the new client's vault sees nothing). Chosen together because (b) alone can't cover a non-React host
-      that creates first, and (a) alone would still give a key remount a second uuid.
-  - **L1, one mutable object for the page.** The announced provider is frozen in its constructor (its state is in
-    private fields, as the Emitter base's listener map; wagmi assigns nothing to it, tested): an assignment to
-    `request` or a new field throws, and forwarding still works.
-  - **L2, cut off by `hana.ethereum.removeAllListeners()`.** The announced provider hears `hana.ethereum` through a
-    module-private sink (`#sinks`, called from `emit` before the public listeners), no longer through `on()`.
-  - **L3, an unclear refusal.** With no client bound, the announced provider rejects with 4900 and the message
-    "Journear Passport is turned off on this page." (`userMessage` still reads the generic 4900 sentence). The guide
-    says a kit that can't filter its list shows it when the dormant entry is clicked, and how to filter (connector
-    `id` = `hana.eip6963.info.rdns`).
-  - **Test gaps closed:** a real React `key` remount a → b → c (React 19, and 18 through the react18 suite; plain and
-    under StrictMode): one uuid, one vault frame, wagmi's one connector connected to each client in turn; StrictMode
-    with the real provider component; a create-B-then-destroy-A wagmi test (the connector follows B, then a third
-    client, then back to B); a `disconnect` listener that re-creates the client synchronously (same detail, one
-    uuid); wagmi with real `localStorage`: a user who pressed the host's disconnect is connected again by wagmi once
-    the wallet is back with the session restored (wagmi's `accountsChanged` path ignores its "disconnected" mark).
-    The reviewer showed the same happens on a plain reload on `next`, so it is not a regression; the guide says so
-    and tells hosts to keep their own flag. Each M1 test fails without its fix (checked by reverting the provider's
-    flush: the uuid changes).
-  - **Residual:** a client that creates first still gives a list that shows every announcement two entries (both
-    live); when two clients go in the same tick, wagmi's throwaway connectors for a later slot can log an unhandled
-    4900 from their own async handler (wagmi's, seen only in the test that destroyed them in that order).
-  - **Settled by the review: the slot key stays rdns only**, for the reviewer's reasons: the environment is already in
-    the rdns; keying by publishable key would bring the dead duplicate back for a page that switches apps; a page is
-    one trust domain (it created both clients). The guide says that switching to another app with the same
-    environment moves the same wallet entry to the new app.
-  - Docs: `integration.md` (section 3's list rewritten, its wrong sentence "a React effect's clean-up already runs
-    first" replaced; section 10; the 0.5.0 notes), `packages/web/README.md`, `packages/react/README.md`, this entry's
-    limits.
+  explicit wagmi `disconnect` loop with `connectorsOf` (`destroy()` ends wagmi's connection; `connectorsOf` compares
+  with `client.ethereum` and would find nothing). A filter on its own EVM list only if the kit must hide the wallet
+  while off. Its test helpers that expect 0 mipd entries after the switch goes off would see 1 (dormant).
+- **Tests:** `eip6963-lifecycle.test.ts` (23: one entry and uuid over off/on ×3; clients alive at once share it,
+  newest then next newest; another rdns its own; the "say what changed" sequence across chains; per-page uuid and no
+  storage; after `destroy()`: every method 4900, no listener, no frame, requests from inside the teardown listeners
+  refused (L3); a retired provider never reaches its host; a never-destroying host sees the client's own checks
+  (4200, 4100, 4902); no event after a move, with one client and with two (L1); a request answered by the client bound
+  when made; frozen; sink after `removeAllListeners()`; real mipd; real wagmi ×5; and a randomised state machine: 40
+  rounds of 14 steps, up to 4 clients on mixed chains, creates and destroys also inside the entry's and `hana.ethereum`'s
+  `accountsChanged` and `disconnect` listeners, checking at every step that the entry is bound to the newest live
+  client, that what its listeners heard is that client's state, no duplicate `connect`, and that a request reaches that
+  client's vault only; passed on 8 further seeds), and `eip6963-remount.test.tsx` (React 19: 7, React 18: 6 and
+  `<Activity>` skipped: key remount ×2 modes, two providers ×2 modes, `<Activity>` hide/show with a key remount in the
+  same task, mount/unmount ×2 modes). The L1 and L3 tests fail with their fixes reverted (checked).
+- **Residual.** A listener that changes clients from inside its own handler can leave later listeners of that one
+  delivery without that event (they get the entry's correction, not the event itself); the state they end with is the
+  bound client's. When two clients go in the same tick, wagmi's own throwaway connectors can log an unhandled 4900
+  from their async handlers (wagmi's code).
 - **To confirm (the Tech Lead):**
-  1. The announced provider is a separate object from `hana.ethereum` (needed for mipd and wagmi; see above), so
-     `detail.provider !== hana.ethereum` for every host, also one that never destroys. The alternative (one
-     `hana.ethereum` object shared by successive clients) would keep that identity but make a destroyed client's
-     `hana.ethereum` come back to life with another client's config.
-  2. After the wallet comes back with the session restored, wagmi reconnects on its own, even if the user had pressed
-     the host's disconnect before (as on a plain reload).
-  3. `hana.ethereum` after `destroy()` now emits `accountsChanged []` and `disconnect` and refuses `eth_chainId` and
-     reads with 4900 (0.4.x answered them and emitted nothing); listed as a change in the 0.5.0 notes.
-  4. A new client may take a slot that forwards to another live client (that client keeps its own slot): the shared
-     entry moves to the newest client.
+  1. The announced provider is a separate object from `hana.ethereum`, so `detail.provider !== hana.ethereum` for
+     every host, also one that never destroys.
+  2. wagmi reconnects on its own when the wallet comes back with the session restored, also after the user pressed
+     the host's disconnect (as on a reload).
+  3. `hana.ethereum` after `destroy()` emits `accountsChanged []` and `disconnect` and refuses everything with 4900
+     (0.4.x answered `eth_chainId` and reads, and emitted nothing); listed as a change in the 0.5.0 notes.
+  4. One entry per environment per page: two apps alive at once on one environment share it (the newest's), the older
+     one reachable through its own `hana.ethereum`.
   5. Someone checks the EIP-6963 wording quoted above against the published EIP (quoted from memory).
 - Address impact: **none.** Announcement and provider lifecycle only; nothing touches how a key or path is derived,
   the vault, the contract or any address: no wallet address changes.
+
 ### D937. No organisation's console suspensions or kill-switch budget are blockable by other organisations: kill switches in a budget class of their own (each org's kill bucket and a global one, each org's first 5 a minute past it), suspensions out of the console's breaker on the org's own 20 a clock hour, the console breaker's first 3 an org past the global 20 within a global overflow of 60 (a hard 80 an hour), rotation stays in the breaker, no token refunds
 - Date 2026-11-26 · Status: **built** (branch `fix/console-kill-limits`, from `next`, not merged, not deployed); the fix
   of D935's point 8 **approved by the Tech Lead 2026-11-26**; the design and every figure below are the coordinator's,

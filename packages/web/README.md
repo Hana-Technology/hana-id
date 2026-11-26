@@ -78,22 +78,21 @@ Create one client per page and keep it; `hana.destroy()` removes it.
 
 ### Turning the wallet off and on (0.5.0)
 
-`hana.destroy()` turns the wallet off on the page; a new `createHana` turns it on again. Destroy the old client
-first (`@hana-id/react`'s `HanaProvider` does, also on a `key` remount). The user stays signed in, and no address
-changes.
+`hana.destroy()` turns the wallet off on the page; a new `createHana` turns it on again, in either order (a
+`HanaProvider` `key` remount included). The user stays signed in, and no address changes.
 
-- The old client is gone for good: `hana.ethereum` emits `accountsChanged []` and `disconnect` (`4900`), then rejects
-  every request with `4900`. `destroyed` fires last (`hana.destroyed` is then `true`).
-- EVM wallet lists need no clean-up. Journear Passport keeps one EIP-6963 announcement per page and environment,
-  `hana.eip6963` (`{ info, provider }`, frozen): the same `uuid` and `provider` each time the wallet comes back, and
-  that `provider` forwards to the live client's `hana.ethereum` (`4900` while the wallet is off). wagmi lists
-  "Journear Passport" once, through the same connector: don't reset its EIP-6963 store or remove the connector. When
-  the wallet comes back with the user still signed in, wagmi reconnects by itself, even after the user's
-  "Disconnect" (as on a plain reload). Another app on the same environment takes over the same entry.
+- The old client is gone for good: from the first moment of `destroy()`, `hana.ethereum` rejects every request with
+  `4900`; it then emits `accountsChanged []` and `disconnect` (`4900`). `destroyed` fires last (`hana.destroyed` is
+  then `true`).
+- EVM wallet lists need no clean-up. Journear Passport has one EIP-6963 announcement per page and environment,
+  `hana.eip6963` (`{ info, provider }`, frozen): the same `uuid` and `provider` for every client, forwarding to the
+  newest live client's `hana.ethereum` (`4900` while the wallet is off). wagmi lists "Journear Passport" once,
+  through the same connector: don't reset its EIP-6963 store or remove the connector. When the wallet comes back with
+  the user still signed in, wagmi reconnects by itself, even after the user's "Disconnect" (as on a plain reload).
 - While the wallet is off, wagmi still lists that connector (`id` is `hana.eip6963.info.rdns`) and connecting through
   it fails with `4900`, "Journear Passport is turned off on this page.": leave it out of the list you show.
-- Created before the old one is destroyed, a new client gets an entry of its own; the old entry moves to it when the
-  old client goes, so wagmi's connector keeps working.
+- One entry per environment: two apps alive at once on one environment share it (the newest one's; the older is
+  reachable through its own `hana.ethereum`), and switching to another app moves the entry to it.
 - Anything built on `hana.ethereum` itself (viem's `custom(hana.ethereum)`, ethers) belongs to that client: build it
   again on the new one, or once on `hana.eip6963.provider`.
 

@@ -301,14 +301,15 @@ the tarballs you use together (they depend on each other at `^0.5.0`).
   (`'journear-passport'`) where "hana" would also catch Journear Passport (Sodax's wallet kit finds Hana Wallet that
   way; [Stellar Wallets Kit](#stellar-wallets-kit-ids)). Everyone else changes nothing.
 - New: turning the wallet off and on in one page ([section 3](#turning-the-wallet-off-and-on)). `hana.eip6963` is the
-  EIP-6963 announcement (`{ info, provider }`, frozen), the same object every time a client of the same environment is
-  created after the last one was destroyed, so wallet lists such as wagmi's show "Journear Passport" once, through
-  one working entry, with no clean-up of yours. The `destroyed` event and `hana.destroyed` say `destroy()` ran. New
-  type exports: `Eip6963ProviderDetail`, `HanaEip6963Provider`. `HanaProvider`, remounted with a new `key`, now
-  destroys the old client before it creates the new one.
+  EIP-6963 announcement (`{ info, provider }`, frozen), the same object for every client of the environment in the
+  page, following the newest one, so wallet lists such as wagmi's show "Journear Passport" once, through one working
+  entry, with no clean-up of yours. The `destroyed` event and `hana.destroyed` say `destroy()` ran. New
+  type exports: `Eip6963ProviderDetail`, `HanaEip6963Provider`. One page has one entry per environment: two apps
+  alive at once on one environment share it (the newest one's).
 - Changed: the provider the EIP-6963 announcement carries is no longer `hana.ethereum` itself but
-  `hana.eip6963.provider`, which forwards to it (same answers, same events). After `hana.destroy()`, `hana.ethereum`
-  emits `accountsChanged []` and `disconnect` (`4900`) and rejects every request with `4900`; 0.4.x still answered
+  `hana.eip6963.provider`, which forwards to the newest client's (same answers, same events), and two clients alive
+  at once on one environment no longer announce themselves separately. After `hana.destroy()`, `hana.ethereum`
+  rejects every request with `4900` and emits `accountsChanged []` and `disconnect` (`4900`); 0.4.x still answered
   `eth_chainId` and read-only calls, and emitted nothing.
 - `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` are no longer `4200`. On a chain without
   gas sponsorship, `wallet_getCapabilities` answers no capabilities and `wallet_sendCalls` is `5710` (unsupported
@@ -576,20 +577,19 @@ Also check that `localhost` reaches your server: a server listening on IPv6 only
 ### Turning the wallet off and on
 
 SDK 0.5.0. A page can turn Journear Passport off with `hana.destroy()` and on again with a new `createHana` (a wallet
-kit's switch, a settings page, or React's strict mode, which mounts twice). Destroy the old client before you create
-the new one, so the new one takes over the page's wallet entry. `HanaProvider` does this for you, also when you
-remount it with a new `key` ([section 10](#10-react)).
+kit's switch, a settings page, a `HanaProvider` remounted with a new `key`, or React's strict mode, which mounts
+twice). The order doesn't matter: the new client may be created before or after the old one is destroyed.
 
-- **The old client is gone for good.** `hana.ethereum` emits `accountsChanged []` and `disconnect` (`4900`), then
-  rejects every request with `4900` (`eth_chainId` and reads too) and keeps nothing of the client. `destroyed` fires,
-  the last event (`hana.destroyed` is then `true`). The user is still signed in: the new client finds the session as a
-  reload would.
+- **The old client is gone for good.** From the first moment of `destroy()`, `hana.ethereum` rejects every request
+  with `4900` (`eth_chainId` and reads too, also a call made from one of its own listeners); it then emits
+  `accountsChanged []` and `disconnect` (`4900`) and keeps nothing of the client. `destroyed` fires, the last event
+  (`hana.destroyed` is then `true`). The user is still signed in: the new client finds the session as a reload would.
 - **EVM wallet lists need nothing from you.** EIP-6963 has no "wallet gone" event, and lists such as wagmi's keep the
-  first announcement of each `uuid`. So Journear Passport keeps one announcement per page and environment, the same
-  every time the wallet comes back: `hana.eip6963`, `{ info, provider }`, frozen (`null` without `evm`). Its
-  `provider` forwards to the `hana.ethereum` of the live client; while the wallet is off it rejects with `4900`.
-  wagmi lists "Journear Passport" once, through the same connector, so don't reset its EIP-6963 store or remove the
-  connector. Its connection ends when the wallet goes.
+  first announcement of each `uuid`. So Journear Passport has one announcement per page and environment, the same for
+  every client: `hana.eip6963`, `{ info, provider }`, frozen (`null` without `evm`). Its `provider` forwards to the
+  `hana.ethereum` of the newest client that is still on, else the next newest; while the wallet is off it rejects with
+  `4900`. wagmi lists "Journear Passport" once, through the same connector, so don't reset its EIP-6963 store or
+  remove the connector. Its connection ends when the wallet goes.
 - **When the wallet comes back** with the user still signed in, wagmi connects again by itself, as it does for an
   unlocked browser extension, even if the user had pressed your "Disconnect" before (wagmi does the same on a plain
   reload of the page). To honour that choice, keep your own flag and don't show the wallet as connected.
@@ -597,16 +597,13 @@ remount it with a new `key` ([section 10](#10-react)).
   connecting through it fails with `4900` and the message "Journear Passport is turned off on this page.". To hide it,
   leave the connector with that `id` out of the list you show; a kit that can't filter its list shows that error when
   the entry is clicked.
-- **Switching to another app with the same environment** moves the same wallet entry to the new app: wagmi's
-  connector then reports the new app's account.
-- **If you create the new client first** (both alive for a moment), it gets an entry of its own, and the old entry
-  moves to it when the old client is destroyed, so wagmi's one connector keeps working; a list that shows every
-  announcement shows Journear Passport twice.
+- **One entry per environment.** Two clients alive at once on one page and one environment (two apps, or two keys)
+  share it: it is the newest one's, and the older client is reachable through its own `hana.ethereum` only (wagmi
+  keeps one connector per wallet anyway). Switching to another app with the same environment moves the same wallet
+  entry to the new app: wagmi's connector then reports the new app's account. Two environments have two entries.
 - **What you built on `hana.ethereum` itself** (viem's `custom(hana.ethereum)`, ethers' `BrowserProvider`, a connector
   you created with it) belongs to that client: build it again on the new `hana.ethereum`, or once on
-  `hana.eip6963.provider`, which follows the live client. The two answer the same, but they are different objects.
-- **Two clients alive at once** (two apps or environments on one page) have two announcements, each with its own
-  `uuid`.
+  `hana.eip6963.provider`, which follows the newest client. The two answer the same, but they are different objects.
 
 The `uuid` is random, kept in memory for the page's lifetime and never stored: a reload, another tab or another site
 gets a new one, so it can't be used to recognise a user across pages. Turning the wallet off and on changes no address.
@@ -1997,8 +1994,8 @@ const { identityToken, refresh, error } = useIdentityToken(); // for your backen
 ```
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
-  switch app or environment, remount it (a `key`). With SDK 0.5.0 it destroys the old client before it creates the
-  new one, so EVM wallet lists keep one entry ([Turning the wallet off and on](#turning-the-wallet-off-and-on)).
+  switch app or environment, remount it (a `key`); EVM wallet lists keep one entry
+  ([Turning the wallet off and on](#turning-the-wallet-off-and-on)).
 - `login(options)` takes `hana.login()`'s options (`{ method, emailHint }`, [section 4](#4-log-in-log-out)); the event
   `onClick={login}` passes is ignored (SDK releases after 0.2.0; with 0.2.0, `login` ignores every argument: use
   `useHana().client.login({ method })`). Bad options reject with `-32602` before any popup.

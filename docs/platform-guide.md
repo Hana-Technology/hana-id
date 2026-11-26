@@ -1037,7 +1037,8 @@ checks every page around it, so an app that lists only the widget's address is r
 partner B's page can't use partner A's app. The widget's address counts as one of the app's 20. Two things to know:
 the approval window names the **widget's** web address, not the partner's page (the app's name is what tells
 partners apart); and anyone can open the widget's own page, outside any partner's site, with a partner's settings
-and get that partner's app. A later change of ours is proposed to close that gap; it isn't built.
+and get that partner's app. Two changes of ours are planned, not built yet: our windows will also show the partner's
+page, and an app will be able to accept the widget's address only inside a partner's page, which closes that gap.
 
 **Switching a partner off in your portal doesn't sign its users out** on their devices: your SDK just stops loading
 ours, as closing the tab would. Suspending the partner's app is what ends its sign-ins

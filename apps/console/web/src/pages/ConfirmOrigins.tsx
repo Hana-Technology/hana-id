@@ -4,7 +4,7 @@
 // request with its state, and, for a member who may confirm, one tick box per waiting web address (none ticked at
 // first, no "confirm all"). Confirm builds the `origin.confirm` action for exactly the ticked ones and goes to its
 // review page, where the fresh Google sign-in confirms them. Reading the page never confirms anything; the server
-// checks everything again at the confirmation. Beside each waiting one, an owner's Cancel (the Web addresses tab's).
+// checks everything again at the confirmation. Beside each waiting one, an owner's Cancel (the Web addresses (origins) tab's).
 import type { ConfirmationChange, ConfirmationView } from '@hana-id/console-core';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -83,7 +83,7 @@ export function FindConfirmation() {
       <AuthCard title={CONFIRM_WORDS.pageTitle}>
         <p className="lede">Sign in to the partner portal first, with the Google account you use for it.</p>
         <SignInButton label="Sign in with Google" />
-        <p className="auth-foot">After you sign in, open the Confirm link in the email again. You can also find the web addresses on the app’s Web addresses tab.</p>
+        <p className="auth-foot">After you sign in, open the Confirm link in the email again. You can also find the web addresses on the app’s Web addresses (origins) tab.</p>
       </AuthCard>
     );
   if (state === 'loading') return <Loading label="Opening the web addresses…" />;
@@ -107,7 +107,7 @@ export function ConfirmOrigins() {
   const step = useStepUp(org!, { page: 'origins', appId });
   const w = useWrite();
   const [ticked, setTicked] = useState<string[]>([]);
-  const back = { to: `/orgs/${org}/apps/${appId}/origins`, label: 'Web addresses' };
+  const back = { to: `/orgs/${org}/apps/${appId}/origins`, label: 'Web addresses (origins)' };
   if (r.error)
     return (
       <>

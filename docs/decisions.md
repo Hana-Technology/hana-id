@@ -23859,6 +23859,12 @@ number the caller assigned.
   6. **The tab's name** in `packages/web/README.md`, `partner-start-here.md` and `operations.md`'s onboarding table.
   To confirm (the Tech Lead), added to the list above: the lower-bound wording (item 2) and the take-over's title and
   words (items 3 and 4).
+- **Decided by the Tech Lead (2026-11-26):** point 2 of "Decided while building" is settled as **"Web addresses
+  (origins)"** on the console's tab and its page's heading (the fresh sign-in's "Back to …" link names the tab the
+  same); every other text keeps the plain "web address" wording as built (emails, confirm and cancel pages, audit
+  titles, buttons, body text, the sign-in review step). The guides that name the tab use the new name
+  (`integration.md`, `partner-start-here.md`, `packages/web/README.md`, `operations.md`'s onboarding table). The tab
+  row still fits 390 and 360 px with no sideways page scroll (it scrolls inside its own row, as before).
 
 ## The owner's confirmation of web addresses, and four eyes on staff ones on a shared wallet (branch `feat/owner-confirmation`), 2026-11-25
 
@@ -23868,7 +23874,8 @@ for it). D931 is the number the caller assigned; API migration 0034 and console 
 
 ### D931. An owner who is an on-chain owner of the scope confirms, with a fresh sign-in bound to exactly those web addresses, what the platform asked for, and it works at once; staff web addresses on a shared wallet need a second person too, else 24 h; the database lets nothing in early without a recorded confirmation
 - Date 2026-11-25/26 · Status: **built** (the design is the spec's A15, A7, A11 and the Tech Lead's D914 and D917); every
-  point under "Decided while building" is **to confirm (the Tech Lead)** · Relates to D89, D244, D912, D914, D917, D918,
+  point under "Decided while building" and every "To confirm" point below was **settled by the Tech Lead on
+  2026-11-26** (see the last item) · Relates to D89, D244, D912, D914, D917, D918,
   D924, D927, D929, D930 · Built: API `src/changes/confirm.ts`, `changes/{origins,lifecycle,admin,apps,views}.ts`,
   `guarded/config.ts`, `platform/{ops,activity}.ts`, `rpc/{console,admin}.ts`, migration 0034; console-core
   `origin-confirm.ts`, `layouts.ts` (`originConfirmDigest`, the `originRemove` link), `types.ts`, `audit-words.ts`,
@@ -24126,3 +24133,12 @@ for it). D931 is the number the caller assigned; API migration 0034 and console 
   To confirm (the Tech Lead): (j) the 7-day retry window, and "Not told" kept 7 days more in the queue; (k) refusing
   `CLOUDFLARE_ENV` and `WRANGLER_CI_OVERRIDE_NAME` outright (an operator who sets them for another project must unset
   them to deploy).
+- **Settled by the Tech Lead (2026-11-26).** The P10 screenshots are approved, and the recommendations on the open
+  points accepted: (g) the staff member's Access id **stays** in the older partner emails (`changePending`'s "Proposed
+  by", the platform key emails' `byWords`): D704 is kept, and only the confirmation and second-person emails say
+  "Journear staff" alone; (h) a second staff member's typed reason **stays visible** to the organisation's members in
+  the partner portal's audit (the admin form keeps its warning); every other point on D931's "To confirm" lists (the
+  first build's, and a–f, i–k after the reviews) is **accepted as built**. With PR 158 merged, the console's tab and
+  its page's heading read "Web addresses (origins)" (D930); P10's screens, tests and guides that name the tab (the
+  confirmation page's back link and its sign-in note, the fresh sign-in's "when it takes effect" line) use that name,
+  and all other wording stays the plain "web address".

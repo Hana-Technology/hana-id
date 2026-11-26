@@ -355,12 +355,15 @@ describe('empty states and the app overview', () => {
     expect(screen.queryByText('Changes waiting')).toBeNull();
     expect(screen.queryByText(/Pending: active from/u)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
-    expect(screen.getByRole('link', { name: 'Web addresses' }).querySelector('.tab-dot')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Web addresses (origins)' }).querySelector('.tab-dot')).toBeNull();
     // The Origins tab shows it as active, with Remove, and nothing waiting.
-    fireEvent.click(screen.getByRole('link', { name: 'Web addresses' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Web addresses (origins)' }));
     const row = (await screen.findAllByText('http://localhost:5173')).map((e) => e.closest('tr')).find(Boolean)!;
     expect(within(row).getByText('Active')).toBeTruthy();
     expect(screen.queryByText('Web addresses waiting to take effect')).toBeNull();
+    // The Tech Lead's label (D930): the tab and the page's heading say "Web addresses (origins)"; the rest says web address.
+    expect(screen.getByRole('heading', { name: 'Web addresses (origins)' })).toBeTruthy();
+    expect(screen.getByLabelText(/^Web addresses to add/u)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
   });
 

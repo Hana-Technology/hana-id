@@ -186,7 +186,7 @@ describe('the confirmation page', () => {
     expect(await screen.findByText(CONFIRM_WORDS.onlyOwner)).toBeTruthy();
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull();
-    // "Not yours? Cancel it." beside each waiting one: the Web addresses tab's cancel, a second click to do it.
+    // "Not yours? Cancel it." beside each waiting one: the Web addresses (origins) tab's cancel, a second click to do it.
     expect(screen.getAllByText(CONFIRM_WORDS.notYours)).toHaveLength(2);
     fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' })[0]!);
     expect(posts()).toHaveLength(0);
@@ -253,7 +253,7 @@ describe('the action page for origin.confirm', () => {
     routes['/api/actions/act_c'] = action({ status: 'ok', outcome: { status: 'ok', confirmedAt: NOW, confirmed: 2 } });
     at('/actions/act_c');
     expect(await screen.findByText('Done: 2 web addresses work for Coffee Club now.')).toBeTruthy();
-    expect(screen.getAllByRole('link', { name: 'Back to Web addresses' })[0]!.getAttribute('href')).toBe('/orgs/org_a/apps/app_1/origins');
+    expect(screen.getAllByRole('link', { name: 'Back to Web addresses (origins)' })[0]!.getAttribute('href')).toBe('/orgs/org_a/apps/app_1/origins');
     cleanup();
     routes['/api/actions/act_c'] = action({ status: 'failed', outcome: { status: 'failed', code: 'not_owner' } });
     at('/actions/act_c');
@@ -322,7 +322,7 @@ describe('the removal link’s page', () => {
   });
 });
 
-describe('the Web addresses tab', () => {
+describe('the Web addresses (origins) tab', () => {
   const base = { appId: 'app_1', kind: 'origin_add', idn: false, status: 'pending', proposedAt: NOW - H };
   const APP = {
     id: 'app_1', name: 'Coffee Club', scopeId: 's1', environment: 'test', suspendedBy: 0, deleted: false, activeOrigins: 2, pendingChanges: 3, createdAt: 0, orgId: 'org_a', originsVersion: 3, settingsVersion: 0,

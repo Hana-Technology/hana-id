@@ -43,7 +43,7 @@ The partner platform's screens (D930): `tests/platform-screens.spec.ts` runs, in
 registering a network's platform key in the admin portal, the owner accepting it in the partner console with a fresh
 sign-in, the admin Worker's real notice step announcing it, the network's backend creating an app with two web
 addresses, ONE email per recipient for that request (both addresses, each its own cancel link, the real 24 hours, no
-waiver), the Platform queue, the console's "Made by your backend" and Web addresses tab, the cancel from the emailed
+waiver), the Platform queue, the console's "Made by your backend" and Web addresses (origins) tab, the cancel from the emailed
 link, and the Platform activity. `POST /__e2e/lane/platform {action}` (`src/server/lane-platform.ts`): `reset` (the labels
 org with its scope marked as shared and a fresh key pair, whose private half never leaves the lane), `notices` (the
 admin's real `runNotices`, the messages kept in memory: no mail leaves the stack), `switch`, `create` (a signed

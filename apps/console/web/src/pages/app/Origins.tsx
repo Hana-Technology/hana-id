@@ -44,7 +44,7 @@ export function Origins() {
   return (
     <div className="stack">
       <Panel
-        title="Allowed web addresses"
+        title="Web addresses (origins)"
         description={
           <>
             The wallet loads only on pages served from one of these exact web addresses (the start of the address, like https://app.example.com, with no path). Removing one signs out the users who signed in there.

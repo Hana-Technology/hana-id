@@ -978,11 +978,12 @@ describe('after PR 149’s review', () => {
     const r = await setup();
     const { key } = await ok(memberRegister(r));
     await announce(key.id);
-    // Fill the org's breaker hour with destructive calls (5 suspensions of 5 apps), and its bucket with reads.
-    const apps = [r.app, ...(await Promise.all([1, 2, 3, 4, 5].map(() => sameScopeApp(r.app))))];
+    // Fill the org's breaker hour with destructive calls (D937: 5 rotations of the app's key; suspensions are outside the
+    // breaker), and its bucket with reads.
     let refused: { code?: string } | undefined;
-    for (const a of apps) {
-      const res = await consoleOn().setSuspended({ ...member(), orgId: r.app.org, appId: a.id, suspended: true });
+    for (let i = 0; i < 6; i++) {
+      const keyId = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1 AND revoked_at IS NULL', r.app.id))[0]!.id;
+      const res = await consoleOn().rotateKey({ ...member(), orgId: r.app.org, appId: r.app.id, keyId });
       if (!res.ok) refused = res;
     }
     expect(refused).toMatchObject({ code: 'rate_limited' });

@@ -50,6 +50,11 @@ export interface Writer {
   expect?: ReplayExpect;
   /** Set by runWrite once the write applied (a no-op or a refusal leaves it unset; the breaker refunds those). */
   wrote?: boolean;
+  /**
+   * D937 (after PR 164's review): set by runWrite just before it sends the batch. A write refused before (unset) wrote
+   * nothing, whatever its code: the console breaker gives its slot back (rpc/common.ts).
+   */
+  batched?: boolean;
   /** The sub of an API-verified step-up (changes/step-up.ts), recorded as `app_changes.actor_sub`; unset otherwise. */
   sub?: string;
   /**
@@ -166,6 +171,7 @@ export function refuseReplay(row: string | StoredReplay | null | undefined, w: W
 export async function runWrite(db: HotDb, w: Writer, stmts: readonly Q[]): Promise<D1Result[]> {
   let results: D1Result[];
   if (w.beforeBatch) await w.beforeBatch();
+  w.batched = true;
   try {
     results = await db.batch(w.batchTail?.length ? [...stmts, ...w.batchTail] : stmts);
   } catch (err) {

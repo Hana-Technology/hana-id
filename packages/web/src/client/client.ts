@@ -356,13 +356,12 @@ export class HanaClient extends Emitter<HanaEvents> {
   }
 
   /**
-   * What this client announces through EIP-6963 (`eip6963:announceProvider`), frozen: `info` (`uuid`, `name`, `icon`,
-   * `rdns`) and `provider`; null without `evm`. Wallet lists hold this detail. Its `provider` forwards to the
-   * `hana.ethereum` of a live client and survives `destroy()`: a client created after this one is destroyed (or while
-   * it is being destroyed), with the same `environment`, announces the same detail (same `uuid`, same `provider`), so a
-   * list that keeps the first announcement of a uuid (wagmi) keeps one working entry; while another client of the same
-   * environment lives, the entry forwards to it. Clients alive at once have distinct ones. The uuid is random, lives in
-   * memory for the page's lifetime only, and is never stored.
+   * The page's EIP-6963 announcement for this client's environment (`eip6963:announceProvider`), frozen: `info`
+   * (`uuid`, `name`, `icon`, `rdns`) and `provider`; null without `evm`. Wallet lists hold this detail. Every client of
+   * the environment in the page has the same one, before and after any `destroy()`, so a list that keeps the first
+   * announcement of a uuid (wagmi) keeps one working entry. Its `provider` forwards to the `hana.ethereum` of the
+   * newest live client, else the next newest, else rejects with 4900. The uuid is random, lives in memory for the
+   * page's lifetime only, and is never stored.
    */
   get eip6963(): Eip6963ProviderDetail | null {
     return this.#eip6963?.detail ?? null;
@@ -670,9 +669,9 @@ export class HanaClient extends Emitter<HanaEvents> {
   /**
    * Turns the wallet off on this page, for good: removes the vault iframe; pending and later calls reject with 4900;
    * `hana.ethereum` emits `accountsChanged []` and `disconnect` (4900), then rejects every request with 4900 and lets
-   * go of this client; the EIP-6963 announcement stops answering `eip6963:requestProvider`, and its provider
-   * (`hana.eip6963.provider`) moves to another live client of the same environment, or rejects with 4900 until a new
-   * client takes it over; `destroyed` fires; every listener
+   * go of this client (it refuses from before the first of those events); the page's EIP-6963 entry
+   * (`hana.eip6963.provider`) moves to the next newest live client of the environment, or, with none, rejects with 4900
+   * and stops answering `eip6963:requestProvider` until a new client is created; `destroyed` fires; every listener
    * is dropped. It doesn't log out: a new client on the page finds the session as a reload would. Idempotent.
    */
   destroy(): void {
@@ -680,8 +679,8 @@ export class HanaClient extends Emitter<HanaEvents> {
     this.#destroyed = true;
     this.#attempt?.abort(hanaError(ErrorCode.disconnected));
     this.#attempt = null;
-    // The slot is free first, so a client created from here on (a `disconnect` listener's) takes it; it moves at once to
-    // another live client if there is one, else it still forwards this one's last events (so wagmi hears the wallet go).
+    // This client leaves the page's entry first: it moves at once to the next newest live client, else it stays for this
+    // one's last events (so wagmi hears the wallet go). hana.ethereum refuses everything before it says them.
     this.#eip6963?.release();
     this.ethereum.retire();
     this.#eip6963?.stop();

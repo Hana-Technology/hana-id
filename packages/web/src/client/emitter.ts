@@ -58,9 +58,18 @@ export class Emitter<Events extends { [K in keyof Events]: unknown[] }> {
 
   /** Calls every listener of `event` in order, on a snapshot of the list. Returns whether there was any. */
   emit<E extends keyof Events>(event: E, ...args: Events[E]): boolean {
+    return this.emitWhile(() => true, event, ...args);
+  }
+
+  /**
+   * As emit, but stops before the next listener once `going()` is false: for an emitter whose state moved on during
+   * the delivery (a listener destroyed its source), so later listeners don't hear an event that no longer holds.
+   */
+  protected emitWhile<E extends keyof Events>(going: () => boolean, event: E, ...args: Events[E]): boolean {
     const list = this.#listeners.get(event);
     if (!list || list.length === 0) return false;
     for (const l of [...list]) {
+      if (!going()) break;
       try {
         (l as unknown as (...a: Events[E]) => void)(...args);
       } catch (e) {

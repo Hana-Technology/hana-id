@@ -59,9 +59,8 @@ const { demo, known } = useMainnetDemo();                     // Journear's sand
 ```
 
 - `HanaProvider` creates one client, also under strict mode, and destroys it on unmount. It reads `config` once; to
-  switch app or environment, remount it (a `key`): since 0.5.0 the old client is destroyed before the new one is
-  created, so EVM wallet lists such as wagmi's keep one Journear Passport entry. A config `createHana` refuses
-  (unknown environment, malformed key) throws from its render, to your error boundary.
+  switch app or environment, remount it (a `key`). A config `createHana` refuses (unknown environment, malformed
+  key) throws from its render, to your error boundary.
 - `login(options)` passes `{ method: 'google' | 'email', emailHint }` to `hana.login()`; the event `onClick={login}`
   passes is ignored (SDK releases after 0.2.0; 0.2.0's `login` ignores every argument, so use
   `useHana().client.login({ method })` there).

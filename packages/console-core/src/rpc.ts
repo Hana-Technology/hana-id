@@ -53,6 +53,12 @@ export const listAppsInput = ctx.extend(org).strict();
 export const getAppInput = ctx.extend(app).strict();
 export const removeOriginsInput = ctx.extend({ ...app, remove: origins, expectedVersion: version }).strict();
 /**
+ * D934: the refusal when a change would leave an app with no web address that works on its own page (every one
+ * frame-only): such an app could never be used, and its frame-only addresses would have nothing to sit inside.
+ */
+export const NO_ANYWHERE_ORIGIN = 'At least one of the app’s web addresses must work on its own page, not only inside another: this would leave none.';
+
+/**
  * D934: web addresses of the app set to work only inside its other web addresses (frame-only): a tightening, at once,
  * like a removal (no step-up, open in a frozen org). The way back is a removal and a new add.
  */

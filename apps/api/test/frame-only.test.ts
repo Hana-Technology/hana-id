@@ -5,12 +5,13 @@
 // org's kill-switch path), never cleared but by a removal and a new add; read by the login path (App.frameOnlyOrigins),
 // inlined in the vault page only when the app has one in force, kept out of Passport Home's list (home-apps.test.ts)
 // and of the dev-env session endpoints, and shown in the app's read, the announcements and the ledger.
-import { nonceOf, originChangeDigest } from '@hana-id/console-core';
+import { NO_ANYWHERE_ORIGIN, nonceOf, originChangeDigest } from '@hana-id/console-core';
 import { clearJwksCache } from '@hana-id/oidc';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAppByKey } from '../src/apps.ts';
+import { detectDrift } from '../src/changes/drift.ts';
 import worker from '../src/index.ts';
 import { forgetCachedApps } from '../src/app-cache.ts';
 import { clearViewCaches } from '../src/views.ts';
@@ -128,9 +129,28 @@ describe('a tightening: frameOnlyOrigins (an owner or staff), at once', () => {
     expect(frameAncestors(page)).toBe([PAGE, WIDGET].sort().join(' '));
     const config = await inlined(page);
     expect(config).toMatchObject({ origins: [PAGE, WIDGET].sort(), frameOnly: [WIDGET] });
-    // Staff too.
-    await ok(adminRpc().frameOnlyOrigins({ ...hana(), orgId: app.org, appId: app.id, origins: [PAGE], expectedVersion: 2 }));
+    // Staff too; but never the app's last web address that works on its own page (the same refusal for both).
+    expect(await adminRpc().frameOnlyOrigins({ ...hana(), orgId: app.org, appId: app.id, origins: [PAGE], expectedVersion: 2 })).toMatchObject({ ok: false, code: 'conflict', error: NO_ANYWHERE_ORIGIN });
+    expect(await consoleRpc(clock).frameOnlyOrigins({ ...member(), orgId: app.org, appId: app.id, origins: [PAGE], expectedVersion: 2 })).toMatchObject({ ok: false, code: 'conflict', error: NO_ANYWHERE_ORIGIN });
+    await ok(adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: ['https://kiosk.example'], expectedVersion: 2 }));
+    await ok(adminRpc().frameOnlyOrigins({ ...hana(), orgId: app.org, appId: app.id, origins: [PAGE], expectedVersion: 3 }));
     expect(await inlined(await vaultPage(app.key))).toMatchObject({ frameOnly: [PAGE, WIDGET].sort() });
+  });
+
+  it('a proposal can’t leave the app with only frame-only web addresses; one usable-anywhere add or row is enough', async () => {
+    const app = await orgApp({ origins: [] });
+    const staff = (add: string[], frameOnly: string[], expectedVersion: number, remove?: string[]) =>
+      remove ? null : adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add, frameOnly, expectedVersion });
+    expect(await staff([WIDGET], [WIDGET], 0)).toMatchObject({ ok: false, code: 'conflict', error: NO_ANYWHERE_ORIGIN });
+    expect(await gate(app.id)).toEqual([]);
+    await ok(staff([WIDGET, PAGE], [WIDGET], 0)!);
+    // With a usable-anywhere row there, a frame-only add alone is fine.
+    await ok(staff(['https://w2.example'], ['https://w2.example'], 1)!);
+    // A member’s: removing the only usable-anywhere one while adding only frame-only ones is refused before the step-up.
+    ownerChain();
+    const add = ['https://w3.example'];
+    const jwt = await stepUp(nonceOf(await originChangeDigest({ signer: SIGNER, appId: app.id, add, remove: [PAGE], frameOnly: add, originsVersion: 2 })));
+    expect(await consoleRpc(clock).changeOrigins({ ...member(), orgId: app.org, appId: app.id, add, remove: [PAGE], frameOnly: add, expectedVersion: 2, stepUpJwt: jwt })).toMatchObject({ ok: false, code: 'conflict' });
   });
 
   it('refuses, writing nothing: not an origin of the app, already frame-only, the localhost wildcard, a stale version', async () => {
@@ -200,5 +220,35 @@ describe('the confirmation page and the staff queue mark a frame-only web addres
       ['https://tea.example', false],
       [WIDGET, true],
     ]);
+  });
+});
+
+describe('drift: a frame-only web address made usable anywhere by a bare delete and insert', () => {
+  const findings = async (appId: string) =>
+    (await rows<{ detail_json: string }>("SELECT detail_json FROM security_events WHERE app_id = ?1 AND kind = 'drift'", appId)).map((r) => JSON.parse(r.detail_json) as { what: string; origin: string }).filter((d) => d.what === 'frame_only');
+
+  it('a tightened address put back as usable anywhere is reported; a removal and a new add is not', async () => {
+    const app = await orgApp({ origins: [PAGE, WIDGET, 'https://tea.example'] });
+    await ok(consoleRpc(clock).frameOnlyOrigins({ ...member(), orgId: app.org, appId: app.id, origins: [WIDGET, 'https://tea.example'], expectedVersion: 0 }));
+    // The bare writer: delete and insert (the triggers can't tell this from a removal and an add).
+    await env.DB.prepare('DELETE FROM app_origins WHERE app_id = ?1 AND origin = ?2').bind(app.id, WIDGET).run();
+    await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, 0)').bind(app.id, WIDGET).run();
+    // The way back done properly for the other one.
+    await ok(consoleRpc(clock).removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: ['https://tea.example'], expectedVersion: 1 }));
+    await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, 0)').bind(app.id, 'https://tea.example').run();
+    await detectDrift(env);
+    expect((await findings(app.id)).map((f) => f.origin)).toEqual([WIDGET]);
+    // Once only.
+    await detectDrift(env);
+    expect(await findings(app.id)).toHaveLength(1);
+  });
+
+  it('an address its proposal marked, put back under the same change as usable anywhere, is reported', async () => {
+    const app = await orgApp({ origins: [PAGE] });
+    const c = (await ok(adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: [WIDGET], frameOnly: [WIDGET], expectedVersion: 0 }))).changes[0]!;
+    await env.DB.prepare('DELETE FROM app_origins WHERE app_id = ?1 AND origin = ?2').bind(app.id, WIDGET).run();
+    await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, NULL, ?3)').bind(app.id, WIDGET, c.id).run();
+    await detectDrift(env);
+    expect((await findings(app.id)).map((f) => f.origin)).toEqual([WIDGET]);
   });
 });

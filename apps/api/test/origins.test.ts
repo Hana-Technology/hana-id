@@ -53,7 +53,7 @@ describe('originAllowed', () => {
 
 describe('checkCaller', () => {
   const env = { ENV_NAME: 'sandbox-x', VAULT_ORIGIN: VAULT, AUTH_ORIGIN: AUTH };
-  const app = { environment: 'test' as const, origins: [ORIGIN] };
+  const app = { environment: 'test' as const, origins: [ORIGIN], frameOnlyOrigins: [] as string[] };
   const headers = (h: Record<string, string>): Headers => new Headers(h);
 
   it('a Hana page acts for its parent; CORS echoes the page even when the parent is refused', () => {

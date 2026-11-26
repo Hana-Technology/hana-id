@@ -6,7 +6,7 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
 for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-26 (branch `feat/widget-frames`: section 12 and "Open", P11 and P12 built, D934); 2026-11-26 (branch `docs/platform-guide`, after PRs 158 and 159 merged: "Open" and section 12, the Tech Lead's settled module id and approved P11 and P12, D923, D926); 2026-11-26 (branch `docs/platform-guide`, from `feat/owner-confirmation`, not merged, docs only: the summary's portal-switch row and a pointer at the top of section 3 to `platform-guide.md`, D932; no other text changed); 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
+Last verified: 2026-11-26 (branch `feat/widget-frames`, after PR 162's review: the windows' wording and the Firefox residual, D934); 2026-11-26 (branch `feat/widget-frames`: section 12 and "Open", P11 and P12 built, D934); 2026-11-26 (branch `docs/platform-guide`, after PRs 158 and 159 merged: "Open" and section 12, the Tech Lead's settled module id and approved P11 and P12, D923, D926); 2026-11-26 (branch `docs/platform-guide`, from `feat/owner-confirmation`, not merged, docs only: the summary's portal-switch row and a pointer at the top of section 3 to `platform-guide.md`, D932; no other text changed); 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
 answers to D923 (D926): the fork holding the Stellar change (section 2, "The Stellar change, on our fork"), the
 widget decided as one app per partner (section 12), switching off decided, the worked example's home (section 2), "Open";
 nothing else re-checked); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
@@ -554,5 +554,7 @@ app lists the widget's address and the partner's own pages (`partner-platform-sp
 widget top-level with a partner's settings and get that partner's app) was read in our code and inferred, not
 tested. **Built** on `feat/widget-frames` (D934): with the widget's address marked frame-only, the widget opened on its
 own is refused (tested in Chromium, Firefox and WebKit, `apps/e2e/tests/widget-frames.spec.ts`; unmarked, it works
-there as before), and the windows say "You're on {partner page}. This uses a widget from {widget}." where the browser
-names the page around the frame, and that it didn't say (with the page to check against) where it doesn't.
+there as before; in Firefox without `location.ancestorOrigins` any script on the widget's own address can get round it
+with one inner frame), and the windows keep the widget's address as the site asking and add "Shown inside a page at
+{partner page}." where the browser names the page around the frame, and "Shown inside another page. Check your
+browser's address bar shows a site you trust." where it doesn't.

@@ -307,11 +307,11 @@ describe('/export: the app’s logo (batch C11)', () => {
     expect(document.querySelector('img.app-logo')?.getAttribute('src')).toBe(logo('b'));
   });
 
-  it('P11 (D934): a framed page’s context names the partner’s page and the widget in the box', async () => {
+  it('P11 (D934): a framed page’s context: the page asking in the box as before, the neutral note under it', async () => {
     const r = run({ frame: { top: 'https://coffeeclub.example' } });
     await ready(r);
     const box = document.querySelector('.asker-framed')!;
-    expect([...box.children].map((c) => c.textContent)).toEqual(['For your wallet in Partner App at https://coffeeclub.example', `This uses a widget from ${PARTNER}.`]);
+    expect([...box.children].map((c) => c.textContent)).toEqual([`For your wallet in Partner App at ${PARTNER}`, 'Shown inside a page at https://coffeeclub.example.']);
     // Its "Confirm it's you" sign-in child is told the same.
     await signIn(r);
     expect(parseWindowMessage(r.child.received[0], ['hana:auth-params'])?.frame).toEqual({ top: 'https://coffeeclub.example' });

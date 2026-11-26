@@ -33,7 +33,7 @@ const KEPT = ['scopes', 'apps', 'app_keys', 'app_changes', 'guarded_changes', 'p
 const rowsOf = async (t: string) => (await db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all()).results;
 const cols = async (t: string, d: D1Database = db) => (await d.prepare(`SELECT name FROM pragma_table_info('${t}')`).all<{ name: string }>()).results.map((r) => r.name);
 
-const TRIGGERS_0035 = ['app_origins_frame_only_kept', 'app_origins_frame_only_no_replace'] as const;
+const TRIGGERS_0035 = ['app_origins_frame_only_kept', 'app_origins_frame_only_no_replace', 'app_origins_fixed'] as const;
 const KEPT_AGAIN = /becomes usable anywhere only by being removed and proposed again/u;
 
 let before: Map<string, Obj>;
@@ -117,6 +117,20 @@ describe('migration 0035_frame_only_origins', () => {
     expect(await refusal("INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES ('app_l', 'https://frame.example', NULL, 'gc_again')")).toBe('accepted');
     // Another app listing the same web address is its own row: one app's flag never touches another's.
     expect(await refusal("INSERT INTO app_origins (app_id, origin, active_from) VALUES ('app_l', 'https://widget.example', 0)")).toBe('accepted');
+  });
+
+  it('a row keeps its web address and app: no rename (the review’s UPDATE OR REPLACE onto a frame-only row included)', async () => {
+    await run("INSERT INTO app_origins (app_id, origin, active_from) VALUES ('app_w', 'https://spare.example', 0)");
+    for (const sql of [
+      "UPDATE OR REPLACE app_origins SET origin = 'https://widget.example' WHERE app_id = 'app_w' AND origin = 'https://spare.example'",
+      "UPDATE app_origins SET origin = 'https://elsewhere.example' WHERE app_id = 'app_w' AND origin = 'https://spare.example'",
+      "UPDATE app_origins SET app_id = 'app_l' WHERE app_id = 'app_w' AND origin = 'https://spare.example'",
+    ]) {
+      expect(await refusal(sql), sql).toMatch(/keeps its web address and app/u);
+    }
+    expect(await db.prepare("SELECT frame_only FROM app_origins WHERE app_id = 'app_w' AND origin = 'https://widget.example'").first()).toEqual({ frame_only: 1 });
+    // Setting a column to its own value isn't a move.
+    expect(await refusal("UPDATE app_origins SET origin = origin, active_from = 1 WHERE app_id = 'app_w' AND origin = 'https://spare.example'")).toBe('accepted');
   });
 
   it('the database is whole, and applying the migrations again changes nothing', async () => {

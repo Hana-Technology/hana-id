@@ -19,7 +19,6 @@ import {
   nameCollision,
   shortAddress,
   verifiedContractOnAll,
-  type FrameSite,
 } from '@hana-id/core';
 import type { AutoApprovePolicyV1, FunctionRule } from '@hana-id/core/policy';
 import { BRAND } from '@hana-id/brand';
@@ -137,8 +136,6 @@ export interface ConsentView {
   readonly policy: AutoApprovePolicyV1;
   readonly appName: string;
   readonly parentOrigin: string;
-  /** P11 (D934): where the page asking sits; the sentence then names the top-level page, or no site when unknown. */
-  readonly frame?: FrameSite;
   /** When the consent would end (the vault's min(now + maxConsentMs, session expiry)). */
   readonly expiresAtMs: number;
   /** Now, for "about … from now". */
@@ -154,11 +151,10 @@ export const lingeringSignaturesNote = (appName: string): string =>
 
 /** The consent body (everything above the Allow / Don't allow buttons). */
 export function renderConsent(d: Dom, view: ConsentView): HTMLElement {
-  const { policy, appName, parentOrigin, frame } = view;
-  const site = frame === undefined ? parentOrigin : frame.top;
+  const { policy, appName, parentOrigin } = view;
   const parts: Child[] = [
     d.h('h1', {}, 'Allow automatic approvals?'),
-    d.h('p', {}, d.h('strong', {}, appName), ...(site !== null ? [' at ', originText(d, site)] : []), ` wants ${BRAND.company} to approve some requests without asking you each time.`),
+    d.h('p', {}, d.h('strong', {}, appName), ' at ', originText(d, parentOrigin), ` wants ${BRAND.company} to approve some requests without asking you each time.`),
     d.h('p', { class: 'label' }, `“${policy.label}”`),
     alert(
       d,

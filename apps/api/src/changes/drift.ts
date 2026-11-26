@@ -26,6 +26,11 @@
 // (its `security_events` CHECK doesn't list them) they stay `drift` events, since an `INSERT OR IGNORE` of a kind the
 // CHECK refuses would drop the finding silently; a finding already recorded under either kind isn't recorded again.
 //
+// D934: a web address whose row reads usable anywhere (`frame_only` 0) while the ledger says it is frame-only (its
+// proposal marked it: `origin.proposed` or `app.created` detail for its change id with `frameOnly`; or an
+// `origin.frame_only` row named it with no removal since) is a finding of its own (`what` `frame_only`): migration
+// 0035's triggers refuse clearing the flag in place, so only a bare delete and insert gets there.
+//
 // An `app.created` row explains nothing on its own (D228): the origins it lists are guarded changes since 0006, and
 // counting the row would let a forged in-force row for an unannounced initial origin pass.
 import type { Env } from '../env.ts';
@@ -46,7 +51,7 @@ const ORIGIN_ENDS = ['origin.removed', 'origin.proposed'];
  * (changes/retention.ts) keeps these rows, and any row whose `parts` name one, for a live app that has a baseline, so a
  * value the baseline explains never turns into a false drift finding when its row turns 60 months old (D364).
  */
-export const DRIFT_LEDGER_KINDS: readonly string[] = ['migration.baseline', ...ORIGIN_ENDS, ...POLICY_ENDS, ...RAW_ENDS];
+export const DRIFT_LEDGER_KINDS: readonly string[] = ['migration.baseline', ...ORIGIN_ENDS, ...POLICY_ENDS, ...RAW_ENDS, 'origin.frame_only'];
 /**
  * D915: a scope's mark (`app_id` NULL). Drift reads every such row, for every scope, for as long as the scope exists
  * (scopes are never deleted), so the retention purge never deletes one (D364).
@@ -73,6 +78,14 @@ interface OriginFinding {
   scope_id: string;
   origin: string;
   active_from: number;
+  change_id: string | null;
+}
+
+interface FrameOnlyFinding {
+  app_id: string;
+  org_id: string;
+  scope_id: string;
+  origin: string;
   change_id: string | null;
 }
 
@@ -122,6 +135,22 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
     )
     .bind(now, DRIFT_BATCH)
     .all<OriginFinding>();
+  // D934: a frame-only web address made usable anywhere by a bare delete and insert (header).
+  const { results: frameOnly } = await db
+    .prepare(
+      `SELECT o.app_id, a.org_id, a.scope_id, o.origin, o.change_id FROM app_origins o JOIN apps a ON a.id = o.app_id
+        WHERE a.deleted_at IS NULL AND o.frame_only = 0
+          AND ((o.change_id IS NOT NULL AND EXISTS (SELECT 1 FROM app_changes p, json_each(p.detail_json, CASE WHEN p.kind = 'app.created' THEN '$.origins' ELSE '$.changes' END) c
+                                                    WHERE p.app_id = o.app_id AND p.kind IN ('origin.proposed', 'app.created')
+                                                      AND json_extract(c.value, '$.changeId') = o.change_id AND json_extract(c.value, '$.frameOnly') = 1))
+            OR EXISTS (SELECT 1 FROM app_changes t, json_each(t.detail_json, '$.origins') j
+                        WHERE t.app_id = o.app_id AND t.kind = 'origin.frame_only' AND json_extract(j.value, '$.origin') = o.origin
+                          AND NOT EXISTS (SELECT 1 FROM app_changes e, json_each(e.detail_json, CASE WHEN e.kind = 'origin.removed' THEN '$.origins' ELSE '$.removed' END) r
+                                           WHERE e.app_id = o.app_id AND e.seq > t.seq AND e.kind IN (${kindIn(ORIGIN_ENDS)}) AND json_extract(r.value, '$.origin') = o.origin)))
+        ORDER BY o.app_id, o.origin LIMIT ?1`,
+    )
+    .bind(DRIFT_BATCH)
+    .all<FrameOnlyFinding>();
   const inForceClock = `(g.status = 'active' OR g.active_from <= ${Number(now)})`;
   const { results: settings } = await db
     .prepare(
@@ -196,6 +225,10 @@ export async function detectDrift(env: Pick<Env, 'DB'>, now = Date.now()): Promi
   for (const f of origins) {
     const detail = { what: 'origin', origin: f.origin, activeFrom: f.active_from, changeId: f.change_id };
     events.push(db.prepare(insert).bind(await eventId('drift', f.app_id, 'origin', f.origin, String(f.active_from)), now, 'drift', f.org_id, f.app_id, f.scope_id, JSON.stringify(detail)));
+  }
+  for (const f of frameOnly) {
+    const detail = { what: 'frame_only', origin: f.origin, changeId: f.change_id };
+    events.push(db.prepare(insert).bind(await eventId('drift', f.app_id, 'frame_only', f.origin, f.change_id ?? ''), now, 'drift', f.org_id, f.app_id, f.scope_id, JSON.stringify(detail)));
   }
   for (const f of settings) {
     // A policy's id (when it validates) names it in the email; its text (the partner's own config) stays in D1.

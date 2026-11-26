@@ -69,27 +69,23 @@ describe('frameRuleAllows (P12)', () => {
 });
 
 describe('frameSiteOf (P11)', () => {
-  const site = (frameOnly: string[] | undefined, parentOrigin: string, parentIsTop: boolean, ancestors?: string[], origins = [P, W]) =>
-    frameSiteOf({ origins, ...(frameOnly ? { frameOnly } : {}) }, { parentOrigin, parentIsTop, ancestors });
-  it('nothing when the parent is the top-level page (the windows show it, as before)', () => {
-    expect(site([W], P, true)).toBeUndefined();
-    expect(site(undefined, W, true, [W])).toBeUndefined();
+  const site = (parentOrigin: string, parentIsTop: boolean, ancestors?: string[]) => frameSiteOf({ parentOrigin, parentIsTop, ancestors });
+  it('nothing when the parent is the top-level page (the windows are the older ones)', () => {
+    expect(site(P, true)).toBeUndefined();
+    expect(site(W, true, [W])).toBeUndefined();
   });
   it('the top-level page where the browser names it: the last ancestor, if not the parent itself', () => {
-    expect(site([W], W, false, [W, P])).toEqual({ top: P });
-    expect(site(undefined, W, false, [W, Q, P], [P, Q, W])).toEqual({ top: P });
-    expect(site(undefined, P, false, [P, P])).toBeUndefined();
+    expect(site(W, false, [W, P])).toEqual({ top: P });
+    expect(site(W, false, [W, Q, P])).toEqual({ top: P });
+    expect(site(P, false, [P, P])).toBeUndefined();
   });
-  it('else that the browser didn’t say, with the one page to expect for a frame-only parent (never the localhost wildcard)', () => {
-    expect(site([W], W, false)).toEqual({ top: null, expected: P });
-    expect(site([W], W, false, undefined, [P, Q, W])).toEqual({ top: null });
-    expect(site([W], W, false, undefined, [P, W, 'http://localhost:*'])).toEqual({ top: null, expected: P });
-    expect(site(undefined, W, false)).toEqual({ top: null });
-    expect(site([W], P, false)).toEqual({ top: null });
+  it('else only that the browser didn’t say: never a guess from the app’s list', () => {
+    expect(site(W, false)).toEqual({ top: null });
+    expect(site(P, false)).toEqual({ top: null });
   });
   it('every answer is a FrameSite the windows take', () => {
-    for (const s of [{ top: P }, { top: null }, { top: null, expected: P }]) expect(isFrameSite(s, W)).toBe(true);
-    for (const bad of [{ top: W }, { top: null, expected: W }, { top: P, expected: P }, { top: 'nope' }, { top: undefined }, {}, { top: null, extra: 1 }, null]) expect(isFrameSite(bad, W), JSON.stringify(bad)).toBe(false);
+    for (const s of [{ top: P }, { top: null }]) expect(isFrameSite(s, W)).toBe(true);
+    for (const bad of [{ top: W }, { top: null, expected: P }, { top: P, expected: P }, { top: 'nope' }, { top: undefined }, {}, { top: null, extra: 1 }, null]) expect(isFrameSite(bad, W), JSON.stringify(bad)).toBe(false);
   });
 });
 
@@ -139,8 +135,7 @@ async function params(o: Parameters<typeof openTab>[1], origin: string): Promise
 describe('the windows are told where the page is (P11)', () => {
   it('sign-in: the top-level page where the browser names it; the browser’s silence otherwise; nothing at the top', async () => {
     expect((await params({ config: cfg([W]), ancestorOrigin: W, ancestorOrigins: [W, P] }, W)).frame).toEqual({ top: P });
-    expect((await params({ config: cfg([W]), parentIsTop: false }, W)).frame).toEqual({ top: null, expected: P });
-    expect((await params({ config: cfg(undefined, [P, Q, W]), parentIsTop: false }, W)).frame).toEqual({ top: null });
+    expect((await params({ config: cfg([W]), parentIsTop: false }, W)).frame).toEqual({ top: null });
     const top = await params({ config: cfg([W]) }, P);
     expect(top).not.toHaveProperty('frame');
     expect(top.parentOrigin).toBe(P);

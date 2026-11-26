@@ -81,11 +81,11 @@ describe('opener modes', () => {
 });
 
 describe('the sheet', () => {
-  it('P11 (D934): a framed page says where the person is and whose widget it is, under "From {App}"', async () => {
+  it('P11 (D934): a framed page asking: "From {App}" and its address as before, the neutral note under them', async () => {
     start('?from=vault');
     win.message(request({ frame: { top: 'https://coffeeclub.example' } }), ENV.vaultOrigin, vault);
     await flush();
-    expect([...document.querySelector('header.app')!.children].map((c) => c.textContent)).toEqual(['From Partner App', 'You’re on https://coffeeclub.example.', `This uses a widget from ${PARTNER}.`]);
+    expect([...document.querySelector('header.app')!.children].map((c) => c.textContent)).toEqual(['From Partner App', PARTNER, 'Shown inside a page at https://coffeeclub.example.']);
     expect(parseWindowMessage(request({ frame: { top: PARTNER } }), ['hana:email-share-request'])).toBeNull();
   });
 

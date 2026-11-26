@@ -809,7 +809,7 @@ export class Vault {
     const facts = { parentOrigin: e.origin, parentIsTop: this.parentIsTop(), ancestors };
     if (!frameRuleAllows(this.config, facts)) return;
     // D934 (P11): where the page sits, for the windows.
-    this.frame = frameSiteOf(this.config, facts);
+    this.frame = frameSiteOf(facts);
     const port = e.ports[0]!;
     this.helloAt = this.perfNow();
     this.parentOrigin = e.origin;

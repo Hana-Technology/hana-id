@@ -117,6 +117,11 @@ describe('origin.add: build, confirm with Google, the API verifies and proposes'
       const r = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'origin.add', params });
       expect([r.status, (r.body as { error: { code: string } }).error.code], JSON.stringify(params)).toEqual([400, 'bad_request']);
     }
+    // D934: adding only frame-only addresses while removing every one that works on its own page: refused before Google.
+    const own = (await env.HOT_DB.prepare('SELECT origin FROM app_origins WHERE app_id = ? AND frame_only = 0').bind(app.id).all<{ origin: string }>()).results.map((x) => x.origin);
+    expect(own.length).toBeGreaterThan(0);
+    const lone = await postAs(m, `/api/orgs/${m.org}/actions`, { kind: 'origin.add', params: { appId: app.id, add: ['https://w.partner.example'], remove: own, frameOnly: ['https://w.partner.example'] } });
+    expect([lone.status, (lone.body as { error: { code: string } }).error.code]).toEqual([409, 'conflict']);
   });
 
   it('is single use: a second fresh sign-in for the same action is refused before Google', async () => {

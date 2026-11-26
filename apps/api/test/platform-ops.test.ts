@@ -359,6 +359,9 @@ describe('POST /v1/platform/apps (A4.4)', () => {
     ]);
     const view = await get(net.k, `/v1/platform/apps/${app.id}`);
     expect(((view.body.app as { origins: { origin: string; frameOnly: boolean }[] }).origins).filter((o) => o.frameOnly).map((o) => o.origin)).toEqual(['https://w2.network.example', widget]);
+    // D934: a create whose web addresses are all frame-only is refused (nothing to sit inside).
+    const lone = await create(net.k, { scopeId: net.s1, name: `Lone ${newId('app').slice(4, 10)}`, origins: [{ origin: 'https://w9.network.example', frameOnly: true }] });
+    expect([lone.status, lone.body.code]).toEqual([400, 'bad_request']);
     // A malformed entry (another field, a non-boolean) is `bad_request`, nothing written.
     for (const bad of [{ origin: 'https://d.example', frameOnly: 'yes' }, { origin: 'https://d.example', frameOnly: true, extra: 1 }, { frameOnly: true }]) {
       expect((await post(net.k, `/v1/platform/apps/${app.id}/origins`, { add: [bad], expectedVersion: app.originsVersion + 1 })).body.code).toBe('bad_request');
@@ -1214,6 +1217,8 @@ const OPS_IMPORTS: Record<string, string[]> = {
     'PlatformApp',
     'PlatformChange',
     'PlatformOrigin',
+    // D934: the refusal when no web address would work on its own page.
+    'NO_ANYWHERE_ORIGIN',
     'PLATFORM_OPS_LIMITS',
     'SUSPENSION_BITS',
     'appIdInput',

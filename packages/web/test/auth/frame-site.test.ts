@@ -1,15 +1,16 @@
 // @vitest-environment happy-dom
 // P11 (D934): when the page asking for the wallet sits inside another page (a network's widget on a partner's site),
-// Journear's windows say where the person is, from what the vault checked (core protocol.ts FrameSite): the sign-in
-// window (/login, and the email step from its stored context), the approval window (a request and the consent
-// screen), the email sharing sheet and the export window. "You're on {top}. This uses a widget from {widget}." where
-// the browser named the top-level page; where it didn't, the widget's line and a plain "check your address bar" (with
-// the one page to expect, when the vault had exactly one). Without the field, every window is exactly the older one.
+// Journear's windows keep the page asking as their subject, exactly as before ("Signing in to {App} at {widget}",
+// "From {App}" and its address, the consent sentence), and add one neutral line under it, from what the vault checked
+// (core protocol.ts FrameSite): "Shown inside a page at {top}." where the browser named the top-level page, else "Shown
+// inside another page. Check your browser's address bar shows a site you trust." The top-level page is never the
+// subject, nor in the "at" slot: an app can list any site, so a listed site proves nothing about who runs the app.
+// Without the field, every window is exactly the older one.
 import { type FrameSite, evmTxSigningPayload, newRequestId, parseEvmTxRequest, parseWindowMessage, relayIdFor, sessionNonce } from '@hana-id/core';
 import { policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startApprovePage } from '../../src/auth/approve-page.ts';
-import { FRAME_TEXT, askerBox, dom, frameLines } from '../../src/auth/dom.ts';
+import { FRAME_TEXT, askerBox, dom, frameNote } from '../../src/auth/dom.ts';
 import { type EmailApi } from '../../src/auth/email-api.ts';
 import { startEmailPage } from '../../src/auth/email-page.ts';
 import { EMAIL_ENTRY_PREFIX, readEmailContext } from '../../src/auth/email-storage.ts';
@@ -28,7 +29,8 @@ const WIDGET = PARTNER;
 const PAGE = 'https://coffeeclub.example';
 const ON: FrameSite = { top: PAGE };
 const UNKNOWN: FrameSite = { top: null };
-const EXPECTED: FrameSite = { top: null, expected: PAGE };
+const INSIDE = `Shown inside a page at ${PAGE}.`;
+const INSIDE_UNKNOWN = 'Shown inside another page. Check your browser’s address bar shows a site you trust.';
 
 beforeEach(() => {
   resetDom();
@@ -41,30 +43,32 @@ afterEach(() => {
 
 const text = (el: Element | null) => (el?.textContent ?? '').replace(/\s+/gu, ' ').trim();
 
-describe('the words (dom.ts frameLines, askerBox)', () => {
-  it('plain words, the addresses as text nodes', () => {
+describe('the words (dom.ts frameNote, askerBox)', () => {
+  it('a neutral line in plain words, the address a text node', () => {
     const d = dom(document);
-    expect(frameLines(d, WIDGET, ON).map(text)).toEqual([`You’re on ${PAGE}.`, `This uses a widget from ${WIDGET}.`]);
-    expect(frameLines(d, WIDGET, UNKNOWN).map(text)).toEqual([`This uses a widget from ${WIDGET}.`, 'Your browser didn’t say which site you’re on. Check your browser’s address bar shows a site you trust.']);
-    expect(frameLines(d, WIDGET, EXPECTED).map(text)).toEqual([`This uses a widget from ${WIDGET}.`, `Your browser didn’t say which site you’re on. It should be ${PAGE}: check your browser’s address bar.`]);
-    expect(FRAME_TEXT.youAreOn).toBe('You’re on ');
+    expect(text(frameNote(d, ON))).toBe(INSIDE);
+    expect(text(frameNote(d, UNKNOWN))).toBe(INSIDE_UNKNOWN);
+    expect(FRAME_TEXT.insideAt).toBe('Shown inside a page at ');
+    // Never a headline about where the person is, nor anything that reads as the site vouching for the app.
+    expect(JSON.stringify(FRAME_TEXT)).not.toMatch(/You’re on|You're on|on behalf|by /u);
   });
-  it('the box: one paragraph as before when not framed; framed, the site the browser named, or none', () => {
+  it('the box: one paragraph as before when not framed; framed, the same paragraph (the page asking in the "at" slot), then the note', () => {
     const d = dom(document);
     const plain = askerBox(d, ['Signing in to ', d.h('strong', {}, 'Coffee Club')], WIDGET);
     expect(plain.tagName).toBe('P');
     expect(plain.className).toBe('asker');
     expect(text(plain)).toBe(`Signing in to Coffee Club at ${WIDGET}`);
-    const on = askerBox(d, ['Signing in to ', d.h('strong', {}, 'Coffee Club')], WIDGET, ON);
-    expect(on.className).toBe('asker asker-framed');
-    expect([...on.children].map(text)).toEqual([`Signing in to Coffee Club at ${PAGE}`, `This uses a widget from ${WIDGET}.`]);
-    const unknown = askerBox(d, ['Signing in to ', d.h('strong', {}, 'Coffee Club')], WIDGET, EXPECTED);
-    expect([...unknown.children].map(text)).toEqual(['Signing in to Coffee Club.', `This uses a widget from ${WIDGET}.`, `Your browser didn’t say which site you’re on. It should be ${PAGE}: check your browser’s address bar.`]);
+    for (const [f, note] of [
+      [ON, INSIDE],
+      [UNKNOWN, INSIDE_UNKNOWN],
+    ] as const) {
+      const box = askerBox(d, ['Signing in to ', d.h('strong', {}, 'Coffee Club')], WIDGET, f);
+      expect(box.className).toBe('asker asker-framed');
+      expect([...box.children].map(text)).toEqual([`Signing in to Coffee Club at ${WIDGET}`, note]);
+    }
   });
   it('an address with markup in it stays text (the vault sends only origins anyway)', () => {
-    const d = dom(document);
-    const lines = frameLines(d, WIDGET, { top: 'https://<img src=x>.example' });
-    expect(lines[0]!.querySelector('img')).toBeNull();
+    expect(frameNote(dom(document), { top: 'https://<img src=x>.example' }).querySelector('img')).toBeNull();
   });
 });
 
@@ -115,30 +119,28 @@ function loginSetup() {
 
 describe('the sign-in window (/login)', () => {
   it('the validator takes a FrameSite, never one naming the page asking as the top, nor anything else', () => {
-    for (const f of [ON, UNKNOWN, EXPECTED]) expect(parseWindowMessage(authParams({ frame: f }), ['hana:auth-params'])).not.toBeNull();
-    for (const bad of [{ top: WIDGET }, { top: null, expected: WIDGET }, { top: PAGE, expected: PAGE }, { top: 'not an origin' }, { top: PAGE, extra: 1 }, 'coffeeclub.example', true]) {
+    for (const f of [ON, UNKNOWN]) expect(parseWindowMessage(authParams({ frame: f }), ['hana:auth-params'])).not.toBeNull();
+    for (const bad of [{ top: WIDGET }, { top: null, expected: PAGE }, { top: PAGE, expected: PAGE }, { top: 'not an origin' }, { top: PAGE, extra: 1 }, 'coffeeclub.example', true]) {
       expect(parseWindowMessage(authParams({ frame: bad }), ['hana:auth-params']), JSON.stringify(bad)).toBeNull();
     }
   });
 
-  it('the chooser names the partner’s page and the widget; the email step gets it in its context', async () => {
+  it('the chooser: the page asking stays in the "at" slot, the note under it; the email step gets it in its context', async () => {
     const s = loginSetup();
     const params = authParams({ methods: ['google', 'email'], frame: ON });
     s.win.message(params, ENV.vaultOrigin, s.vault);
     expect((await s.page.done).stage).toBe('choosing');
-    expect([...document.querySelector('.asker-framed')!.children].map(text)).toEqual([`Signing in to Coffee Club at ${PAGE}`, `This uses a widget from ${WIDGET}.`]);
-    expect(pageText()).not.toContain(`Coffee Club at ${WIDGET}`);
+    expect([...document.querySelector('.asker-framed')!.children].map(text)).toEqual([`Signing in to Coffee Club at ${WIDGET}`, INSIDE]);
+    expect(pageText()).not.toContain(`Coffee Club at ${PAGE}`);
     (document.getElementById('continue-email') as HTMLButtonElement).click();
     expect(readEmailContext(s.win.sessionStorage, params.relayId, NOW)!.context.frame).toEqual(ON);
   });
 
-  it('the browser didn’t say: no site after the app, the widget’s line and the check, on the way to Google too', async () => {
+  it('the browser didn’t say: the same line, then the check, on the way to Google too', async () => {
     const s = loginSetup();
-    s.win.message(authParams({ frame: EXPECTED }), ENV.vaultOrigin, s.vault);
+    s.win.message(authParams({ frame: UNKNOWN }), ENV.vaultOrigin, s.vault);
     expect((await s.page.done).stage).toBe('redirecting');
-    expect(pageText()).toContain('Signing in to Coffee Club.');
-    expect(pageText()).toContain(`This uses a widget from ${WIDGET}.`);
-    expect(pageText()).toContain(`It should be ${PAGE}: check your browser’s address bar.`);
+    expect([...document.querySelector('.asker-framed')!.children].map(text)).toEqual([`Signing in to Coffee Club at ${WIDGET}`, INSIDE_UNKNOWN]);
   });
 
   it('not framed: exactly the older box', async () => {
@@ -147,7 +149,7 @@ describe('the sign-in window (/login)', () => {
     await s.page.done;
     expect(document.querySelector('.asker-framed')).toBeNull();
     expect(text(document.querySelector('p.asker'))).toBe(`Signing in to Coffee Club at ${WIDGET}`);
-    expect(pageText()).not.toContain('widget');
+    expect(pageText()).not.toContain('Shown inside');
   });
 });
 
@@ -207,7 +209,7 @@ describe('the sign-in window (/login/email)', () => {
     const page = emailSetup(ON);
     await flush();
     expect(page.stage).toBe('address');
-    expect([...document.querySelector('.asker-framed')!.children].map(text)).toEqual([`Signing in to Coffee Club at ${PAGE}`, `This uses a widget from ${WIDGET}.`]);
+    expect([...document.querySelector('.asker-framed')!.children].map(text)).toEqual([`Signing in to Coffee Club at ${WIDGET}`, INSIDE]);
   });
   it('a stored frame it can’t read refuses the context as a whole, as any malformed field', async () => {
     const page = emailSetup({ top: WIDGET });
@@ -272,34 +274,32 @@ describe('the approval window (/approve)', () => {
   it('the validators take the field on a request and the consent screen, and only of its shape', () => {
     for (const [m, t] of [[evmRequest, 'hana:approve-request'], [consentRequest, 'hana:consent-request']] as const) {
       expect(parseWindowMessage(m({ frame: ON }), [t])).not.toBeNull();
-      expect(parseWindowMessage(m({ frame: EXPECTED }), [t])).not.toBeNull();
+      expect(parseWindowMessage(m({ frame: UNKNOWN }), [t])).not.toBeNull();
       expect(parseWindowMessage(m({ frame: { top: WIDGET } }), [t])).toBeNull();
-      expect(parseWindowMessage(m({ frame: { top: null, expected: 'x' } }), [t])).toBeNull();
+      expect(parseWindowMessage(m({ frame: { top: null, expected: PAGE } }), [t])).toBeNull();
     }
   });
 
-  it('a request: "From {App}", then where the person is and the widget, in the box', () => {
+  it('a request: "From {App}" and the page asking’s address as before, then the note', () => {
     send(evmRequest({ frame: ON }));
-    expect(box()).toEqual(['From Coffee Club', `You’re on ${PAGE}.`, `This uses a widget from ${WIDGET}.`]);
+    expect(box()).toEqual(['From Coffee Club', WIDGET, INSIDE]);
   });
 
-  it('a request where the browser didn’t say: the widget and the check', () => {
+  it('a request where the browser didn’t say: the note with the check', () => {
     send(evmRequest({ frame: UNKNOWN }));
-    expect(box()).toEqual(['From Coffee Club', `This uses a widget from ${WIDGET}.`, 'Your browser didn’t say which site you’re on. Check your browser’s address bar shows a site you trust.']);
+    expect(box()).toEqual(['From Coffee Club', WIDGET, INSIDE_UNKNOWN]);
   });
 
-  it('the consent screen: the box, and its sentence names the partner’s page (or no site when unknown)', () => {
+  it('the consent screen: the box with the note; its sentence still names the page asking, never the page around it', () => {
     send(consentRequest({ frame: ON }));
-    expect(box()).toEqual(['From Coffee Club', `You’re on ${PAGE}.`, `This uses a widget from ${WIDGET}.`]);
-    expect(pageText()).toContain(`Coffee Club at ${PAGE} wants Journear to approve some requests`);
-    resetDom();
-    send(consentRequest({ frame: UNKNOWN }));
-    expect(pageText()).toContain('Coffee Club wants Journear to approve some requests');
+    expect(box()).toEqual(['From Coffee Club', WIDGET, INSIDE]);
+    expect(pageText()).toContain(`Coffee Club at ${WIDGET} wants Journear to approve some requests`);
+    expect(pageText()).not.toContain(`Coffee Club at ${PAGE}`);
   });
 
   it('not framed: the box is the older one (the app, then its address)', () => {
     send(evmRequest());
     expect(box()).toEqual(['From Coffee Club', WIDGET]);
-    expect(pageText()).not.toContain('widget');
+    expect(pageText()).not.toContain('Shown inside');
   });
 });

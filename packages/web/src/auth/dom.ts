@@ -75,39 +75,30 @@ export function originText(d: Dom, origin: string, tag: 'span' | 'p' = 'span'): 
 }
 
 /**
- * P11 (D934): the words for where the person is, when the page asking for the wallet sits inside another page (a
- * network's widget on a partner's site). Plain words; the vault checked every address itself (vault/frame.ts).
+ * P11 (D934): the words for a page asking for the wallet that is shown inside another page (a network's widget on a
+ * partner's site). A neutral, secondary fact under the page asking, which stays the subject: an app can list any site,
+ * so the top-level page is never presented as who is asking or as vouching for it.
  */
 export const FRAME_TEXT = Object.freeze({
-  youAreOn: 'You’re on ',
-  widgetFrom: 'This uses a widget from ',
-  unknown: 'Your browser didn’t say which site you’re on.',
-  expectedLead: 'It should be ',
-  expectedEnd: ': check your browser’s address bar.',
-  checkAny: 'Check your browser’s address bar shows a site you trust.',
+  insideAt: 'Shown inside a page at ',
+  insideUnknown: 'Shown inside another page. Check your browser’s address bar shows a site you trust.',
 });
 
-/**
- * The lines that say where the page asking is, for a box of who is asking (FrameSite, core protocol.ts): the top-level
- * page the browser named, then the widget's address; or the widget's address, then that the browser didn't say, with
- * the page to expect when the vault had exactly one.
- */
-export function frameLines(d: Dom, parentOrigin: string, frame: FrameSite): HTMLElement[] {
-  const widget = d.h('p', { class: 'frame-widget' }, FRAME_TEXT.widgetFrom, originText(d, parentOrigin), '.');
-  if (frame.top !== null) return [d.h('p', { class: 'frame-top' }, FRAME_TEXT.youAreOn, originText(d, frame.top), '.'), widget];
-  const check = frame.expected !== undefined ? [FRAME_TEXT.expectedLead, originText(d, frame.expected), FRAME_TEXT.expectedEnd] : [FRAME_TEXT.checkAny];
-  return [widget, d.h('p', { class: 'frame-unknown' }, FRAME_TEXT.unknown, ' ', ...check)];
+/** The line under who is asking for a framed page (FrameSite, core protocol.ts). */
+export function frameNote(d: Dom, frame: FrameSite): HTMLElement {
+  return frame.top !== null
+    ? d.h('p', { class: 'frame-note' }, FRAME_TEXT.insideAt, originText(d, frame.top), '.')
+    : d.h('p', { class: 'frame-note' }, FRAME_TEXT.insideUnknown);
 }
 
 /**
- * Who is asking, as the sign-in, export and email windows say it: "{lead} at {site}" in one box (`.asker`). Framed
- * (P11): the site is the top-level page the browser named, then a line for the widget; or, when the browser didn't
- * say, "{lead}." and the widget's and the check's lines. Not framed: exactly the one paragraph it always was.
+ * Who is asking, as the sign-in, export and email windows say it: "{lead} at {page asking}" in one box (`.asker`), as
+ * before. Framed (P11): the same paragraph, then the frame note in the same box. Not framed: exactly the one paragraph.
  */
 export function askerBox(d: Dom, lead: Child[], parentOrigin: string, frame?: FrameSite): HTMLElement {
-  if (!frame) return d.h('p', { class: 'asker' }, ...lead, ' at ', originText(d, parentOrigin));
-  if (frame.top !== null) return d.h('div', { class: 'asker asker-framed' }, d.h('p', {}, ...lead, ' at ', originText(d, frame.top)), frameLines(d, parentOrigin, frame)[1]!);
-  return d.h('div', { class: 'asker asker-framed' }, d.h('p', {}, ...lead, '.'), ...frameLines(d, parentOrigin, frame));
+  const line = (cls?: string) => d.h('p', cls ? { class: cls } : {}, ...lead, ' at ', originText(d, parentOrigin));
+  if (!frame) return line('asker');
+  return d.h('div', { class: 'asker asker-framed' }, line(), frameNote(d, frame));
 }
 
 /**

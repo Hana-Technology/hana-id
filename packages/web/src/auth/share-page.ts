@@ -27,7 +27,7 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ApproveGuard, type GuardInput, guardInputOf } from './approve-guard.ts';
-import { type Dom, dom, errorView, frameLines, originText } from './dom.ts';
+import { type Dom, dom, errorView, frameNote, originText } from './dom.ts';
 import { GuardHint, coarsePointer, quietly } from './guard-hint.ts';
 import { appLogo } from './logo.ts';
 import { BTN, alert } from './ui.ts';
@@ -195,8 +195,8 @@ export function startSharePage(deps: SharePageDeps): SharePage {
   }
 
   function header(m: WindowMessage<'hana:email-share-request'>): HTMLElement {
-    // P11 (D934): a framed page says where the person is and whose widget it is, as the approval window does.
-    return d.h('header', { class: 'app' }, d.h('p', {}, appLogo(d, env, m.logoUrl), 'From ', d.h('strong', {}, m.appName)), ...(m.frame ? frameLines(d, m.parentOrigin, m.frame) : [originText(d, m.parentOrigin, 'p')]));
+    // P11 (D934): a framed page asking gets the approval window's neutral line under its address.
+    return d.h('header', { class: 'app' }, d.h('p', {}, appLogo(d, env, m.logoUrl), 'From ', d.h('strong', {}, m.appName)), originText(d, m.parentOrigin, 'p'), m.frame ? frameNote(d, m.frame) : null);
   }
 
   function answer(a: 'granted' | 'declined' | 'revoke' | 'keep'): void {

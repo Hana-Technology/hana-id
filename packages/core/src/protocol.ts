@@ -60,20 +60,18 @@ export interface OtherApps {
   names: string[];
 }
 /**
- * Where the page that uses the wallet (the vault's parent, `parentOrigin`) sits, as the vault checked it
- * itself, never as a page or the SDK said: absent when the parent is the top-level page (the window shows it, as
- * before). `{ top }`: the parent is framed, and the browser's `location.ancestorOrigins` names the top-level page, the
- * address in the browser's bar (every ancestor is one of the app's web addresses: the vault refuses any other).
- * `{ top: null }`: the parent is framed but the browser doesn't say by whom (no `ancestorOrigins`: Firefox before it
- * shipped there); `expected` then names the one page the app lists for a frame-only parent (a network's widget), as
- * what the address bar should show, never as where the person is. Never sent to the partner page.
+ * Where the page that uses the wallet (the vault's parent, `parentOrigin`) sits, as the vault checked it itself, never
+ * as a page or the SDK said: absent when the parent is the top-level page. `{ top }`: the parent is framed, and the
+ * browser's `location.ancestorOrigins` names the top-level page (every ancestor is one of the app's web addresses: the
+ * vault refuses any other). `{ top: null }`: the parent is framed but the browser doesn't say by whom. The windows show
+ * it only as a secondary fact under the page asking, never in its place: an app listing a site proves nothing about
+ * who runs it. Never sent to the partner page.
  */
-export type FrameSite = { top: string } | { top: null; expected?: string };
+export type FrameSite = { top: string } | { top: null };
 
 export function isFrameSite(v: unknown, parentOrigin: unknown): v is FrameSite {
-  if (!isPlainObject(v) || !exactKeys(v, ['top'], ['expected'])) return false;
-  if (v.top === null) return v.expected === undefined || (isOrigin(v.expected) && v.expected !== parentOrigin);
-  return v.expected === undefined && isOrigin(v.top) && v.top !== parentOrigin;
+  if (!isPlainObject(v) || !exactKeys(v, ['top'])) return false;
+  return v.top === null || (isOrigin(v.top) && v.top !== parentOrigin);
 }
 
 /** How many other apps a window names at most; the rest are counted ("and 3 more"). */

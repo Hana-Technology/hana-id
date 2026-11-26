@@ -3,7 +3,7 @@
 // the full delay and the blocking notice, never a waiver, refused for `appChangeDelayMs` after a scope assignment) and
 // member proposals (ConsoleRpc.changeOrigins: the API-verified step-up, changes/step-up.ts; removes sent with them
 // apply at once in the same batch).
-import { type Environment, LOCALHOST_WILDCARD, MAX_APP_ORIGINS, newId, nonceOf, normaliseOrigin, OriginError, originChangeDigest, originProblem, personEmailKey } from '@hana-id/console-core';
+import { type Environment, LOCALHOST_WILDCARD, MAX_APP_ORIGINS, NO_ANYWHERE_ORIGIN, newId, nonceOf, normaliseOrigin, OriginError, originChangeDigest, originProblem, personEmailKey } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { changeConfig, platformMinDelayMs } from '../guarded/config.ts';
 import { expectVersion, planApp } from './apps.ts';
@@ -72,9 +72,18 @@ export async function frameOnlyOrigins(db: HotDb, w: Writer, i: { orgId: string 
   if (unknown.length) refuse('bad_request', `Not an origin of this app: ${unknown.join(', ')}`);
   const already = list.filter((o) => rows.get(o)!.frame_only === 1);
   if (already.length) refuse('conflict', `Already frame-only: ${already.join(', ')}`);
+  // At least one web address that works on its own page stays (in force or waiting), also as the batch sees it.
+  if (!plan.origins.some((o) => o.frame_only !== 1 && !list.includes(o.origin))) refuse('conflict', NO_ANYWHERE_ORIGIN);
   const json = JSON.stringify(list);
   await runWrite(db, w, [
-    commitOnApp(w, { kind: 'origin.frame_only', detail: { origins: list.map((o) => ({ origin: o, wasInForce: (rows.get(o)!.active_from ?? null) !== null && rows.get(o)!.active_from! <= w.now })) } }, i.appId, i.orgId, q`a.origins_version = ${i.expectedVersion} AND a.deleted_at IS NULL`),
+    commitOnApp(
+      w,
+      { kind: 'origin.frame_only', detail: { origins: list.map((o) => ({ origin: o, wasInForce: (rows.get(o)!.active_from ?? null) !== null && rows.get(o)!.active_from! <= w.now })) } },
+      i.appId,
+      i.orgId,
+      q`a.origins_version = ${i.expectedVersion} AND a.deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM app_origins ka WHERE ka.app_id = a.id AND ka.frame_only = 0 AND ka.origin NOT IN (SELECT value FROM json_each(${json})))`,
+    ),
     q`UPDATE apps SET origins_version = origins_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
     q`UPDATE app_origins SET frame_only = 1 WHERE app_id = ${i.appId} AND origin IN (SELECT value FROM json_each(${json})) AND ${committed(w.requestId)}`,
   ]);
@@ -228,6 +237,10 @@ async function proposeOrigins(
   const dup = add.filter((o) => have.has(o));
   if (dup.length) refuse('conflict', `Already an origin of this app (in force or pending): ${dup.join(', ')}`);
   if (have.size - remove.length + add.length > MAX_APP_ORIGINS) refuse('conflict', `At most ${MAX_APP_ORIGINS} active or pending origins per app`);
+  // D934: a proposal with frame-only adds keeps at least one web address that works on its own page (a usable-anywhere
+  // add, or a row of the app not removed here). Without frame-only adds nothing changes.
+  const anywhereAdd = add.some((o) => !frameOnly.includes(o));
+  if (frameOnly.length > 0 && !anywhereAdd && !plan.origins.some((o) => o.frame_only !== 1 && !remove.includes(o.origin))) refuse('conflict', NO_ANYWHERE_ORIGIN);
   // The platform's cap on waiting web addresses across the org (A5), checked before the batch as its create checks it
   // (platform/ops.ts): a full cap is a 429 with the hour to wait, not the commit predicate's version_conflict, which a
   // client would answer by reading again and resending (after PR 160's review, M1). The predicate below keeps the rule
@@ -275,7 +288,11 @@ async function proposeOrigins(
                                    UNION SELECT origin FROM guarded_changes WHERE app_id = a.id AND kind = 'origin_add' AND status IN ('pending', 'active'))) - ${remove.length} + ${add.length} <= ${MAX_APP_ORIGINS}
         AND NOT EXISTS (SELECT 1 FROM app_origins WHERE app_id = a.id AND origin IN (SELECT value FROM json_each(${origins})))
         AND NOT EXISTS (SELECT 1 FROM guarded_changes WHERE app_id = a.id AND kind = 'origin_add' AND status IN ('pending', 'active')
-                         AND origin IN (SELECT value FROM json_each(${origins})))${waitingHolds}`,
+                         AND origin IN (SELECT value FROM json_each(${origins})))${waitingHolds}${
+                           frameOnly.length > 0 && !anywhereAdd
+                             ? q` AND EXISTS (SELECT 1 FROM app_origins ka WHERE ka.app_id = a.id AND ka.frame_only = 0 AND ka.origin NOT IN (SELECT value FROM json_each(${removed})))`
+                             : raw('')
+                         }`,
     ),
     q`UPDATE apps SET origins_version = origins_version + 1 WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
   ];

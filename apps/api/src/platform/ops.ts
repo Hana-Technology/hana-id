@@ -34,6 +34,7 @@ import {
   platformAddOriginsBody,
   platformCreateAppBody,
   splitOriginEntries,
+  NO_ANYWHERE_ORIGIN,
   platformRemoveOriginsBody,
   scopeIdInput,
   sha256,
@@ -426,6 +427,8 @@ export async function createPlatformApp(c: OpContext, body: unknown): Promise<Op
   const entries = splitOriginEntries(b.origins ?? []);
   const origins = normaliseAll(entries.origins);
   const frameOnly = normaliseFrameOnly(origins, entries.frameOnly);
+  // D934: a new app's web addresses can't all be frame-only (nothing to sit inside).
+  if (origins.length > 0 && frameOnly.length === origins.length) refuse('bad_request', NO_ANYWHERE_ORIGIN);
   checkOriginRules(c.env, 'live', origins);
   const config = requireChangeConfig(c.env);
   const minDelayMs = proposalWait(c.env);

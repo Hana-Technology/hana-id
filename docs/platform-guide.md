@@ -711,8 +711,10 @@ key at once ([section 3](#stop-a-key-at-once)). Answers `{ revokedAt }`. The `Id
   addresses (the partner's pages), never when someone opens the widget's address on its own, in a window of its own,
   or inside a page the app doesn't list. A string, or `"frameOnly": false`, is usable anywhere, as before. The mark is
   part of the web address's request: an owner sees it when they confirm, and it waits like any address. To take it
-  off later, remove the address and ask for it again without the mark (that waits again); a member of your
-  organisation can add the mark to an address at once in our partner portal.
+  off later, remove the address and ask for it again without the mark (that waits again); an owner in your
+  organisation can add the mark to an address at once in our partner portal. An app always keeps at least one web
+  address without the mark: a create whose addresses are all marked is `400 bad_request`, and a proposal that would
+  leave none is `409 conflict`.
 
 **Answer `201`:**
 
@@ -1046,10 +1048,13 @@ checks every page around it, so an app that lists only the widget's address is r
 partner B's page can't use partner A's app. The widget's address counts as one of the app's 20. **Mark the widget's
 address `frameOnly`** (in the create or the proposal): then anyone opening the widget's own page outside the
 partner's pages, with the partner's settings, gets nothing (our wallet answers as for a site the app doesn't list).
-Unmarked, it works there too, as before. Our sign-in and approval windows name the partner's page the person is on
-("You're on https://swap.acme.example. This uses a widget from https://widget.network.example."), read from the
-browser itself; in a browser that doesn't say which page is around a frame (older Firefox), they say so and name the
-partner's page to check the address bar against, when the app lists exactly one.
+Unmarked, it works there too, as before. Our sign-in and approval windows still name the widget's address as the
+site asking, and add, read from the browser itself, "Shown inside a page at https://swap.acme.example."; in a browser
+that doesn't say which page is around a frame (Firefox without `location.ancestorOrigins`; whether release Firefox has
+it is not confirmed), they say "Shown inside another page. Check your browser's address bar shows a site you trust."
+**In such a browser the mark can be defeated by any script running on the widget's own address**: one inner frame of
+its own (a plain frame or an `about:srcdoc` one) makes the widget look framed, and the browser doesn't say by whom. Keep
+the widget's own pages free of anything that frames them, and of third-party scripts you don't control.
 
 **Switching a partner off in your portal doesn't sign its users out** on their devices: your SDK just stops loading
 ours, as closing the tab would. Suspending the partner's app is what ends its sign-ins

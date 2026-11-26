@@ -7,8 +7,9 @@
 //   a page the app doesn't list, inside a sandboxed frame without its own origin, or inside a data: frame, the vault answers
 //   nothing (`vault_unavailable`, `no_answer`), exactly as for any web address the app doesn't list. Where the browser
 //   names every ancestor (`location.ancestorOrigins`), a widget framed by its own address at the top is refused too.
-// - P11: the sign-in window and the approval window say "You're on {partner page}. This uses a widget from {widget}."
-//   (an about:blank/srcdoc frame in between is the partner page's own and changes nothing).
+// - P11: the windows keep the page asking (the widget) as their subject, as before, and add one neutral line under
+//   it: "Shown inside a page at {partner page}." (an about:srcdoc frame of the partner's page in between changes
+//   nothing). The page around it is never in the "at" slot or the consent sentence.
 // The same browser without `ancestorOrigins` (Firefox with it turned off, as Firefox releases before it shipped) is
 // widget-frames-no-ancestors.spec.ts.
 //
@@ -19,6 +20,7 @@ import { expect, fontsLoaded, newApp, partnerUrl, test } from './fixtures.ts';
 import { PAGE, WIDGET, approvalWindow, finishSignIn, launcherWindow, neverReady, partnerPage, readyOf, signInWindow, widget, widgetApp } from './widget-steps.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
+const INSIDE = `Shown inside a page at ${PAGE}.`;
 
 const lines = (popup: Page, sel: string) => popup.locator(`${sel} > p`).allTextContents().then((t) => t.map((x) => x.replace(/\s+/gu, ' ').trim()));
 
@@ -36,23 +38,23 @@ async function shoot(popup: Page, name: string): Promise<void> {
 }
 
 test.describe('P12: the widget’s web address only inside the partner’s page', () => {
-  test('inside the partner’s page it works: the sign-in and approval windows name the partner’s page and the widget (P11)', async ({ page, browserName }) => {
+  test('inside the partner’s page it works: the windows keep the widget as the page asking and add “Shown inside a page at {partner page}” (P11)', async ({ page, browserName }) => {
     const app = await widgetApp();
     await partnerPage(page, PAGE, partnerUrl(app));
     const f = await widget(page);
     expect((await readyOf(f)).ready).toBe('ok');
     const signIn = await signInWindow(page, f);
     // Chromium, WebKit and this Firefox name every ancestor: the window names the page in the address bar.
-    expect(await lines(signIn, '.asker-framed')).toEqual([`Signing in to Coffee Club at ${PAGE}`, `This uses a widget from ${WIDGET}.`]);
+    expect(await lines(signIn, '.asker-framed')).toEqual([`Signing in to Coffee Club at ${WIDGET}`, INSIDE]);
     if (browserName === 'chromium') await shoot(signIn, 'e2e-sign-in-framed');
     await finishSignIn(f, signIn);
     const approval = await approvalWindow(page, f);
-    expect(await lines(approval, 'header.app')).toEqual(['From Coffee Club', `You’re on ${PAGE}.`, `This uses a widget from ${WIDGET}.`]);
+    expect(await lines(approval, 'header.app')).toEqual(['From Coffee Club', WIDGET, INSIDE]);
     if (browserName === 'chromium') await shoot(approval, 'e2e-approval-framed');
     await approval.getByRole('button', { name: 'Reject', exact: true }).click();
   });
 
-  test('the consent and export windows name the partner’s page and the widget too', async ({ page, browserName }) => {
+  test('the consent and export windows add the same line; the consent sentence names the widget', async ({ page, browserName }) => {
     const policy = {
       v: 1,
       label: 'Swaps',
@@ -66,13 +68,13 @@ test.describe('P12: the widget’s web address only inside the partner’s page'
     await finishSignIn(f, await signInWindow(page, f));
     const consent = await launcherWindow(page, f, 'consent', 'requestAutoApprove', 'Review in Journear Passport');
     await expect(consent.getByRole('heading', { name: 'Allow automatic approvals?' })).toBeVisible();
-    expect(await lines(consent, 'header.app')).toEqual(['From Coffee Club', `You’re on ${PAGE}.`, `This uses a widget from ${WIDGET}.`]);
-    await expect(consent.getByText(`Coffee Club at ${PAGE} wants Journear to approve some requests`)).toBeVisible();
+    expect(await lines(consent, 'header.app')).toEqual(['From Coffee Club', WIDGET, INSIDE]);
+    await expect(consent.getByText(`Coffee Club at ${WIDGET} wants Journear to approve some requests`)).toBeVisible();
     if (browserName === 'chromium') await shoot(consent, 'e2e-consent-framed');
     await consent.getByRole('button', { name: 'Don’t allow', exact: true }).click();
     const exportWindow = await launcherWindow(page, f, 'export', 'exportKey', 'Export key in Journear Passport', 'evm');
     await expect(exportWindow.locator('.asker-framed')).toBeVisible();
-    expect(await lines(exportWindow, '.asker-framed')).toEqual([`For your wallet in Coffee Club at ${PAGE}`, `This uses a widget from ${WIDGET}.`]);
+    expect(await lines(exportWindow, '.asker-framed')).toEqual([`For your wallet in Coffee Club at ${WIDGET}`, INSIDE]);
     if (browserName === 'chromium') await shoot(exportWindow, 'e2e-export-framed');
     await exportWindow.close();
   });
@@ -123,20 +125,21 @@ test.describe('P12: the widget’s web address only inside the partner’s page'
     }
   });
 
-  test('a srcdoc frame of the partner’s page in between changes nothing: it works and names the partner’s page', async ({ page }) => {
+  test('a srcdoc frame of the partner’s page in between changes nothing', async ({ page }) => {
     const app = await widgetApp();
     await partnerPage(page, PAGE, partnerUrl(app), 'srcdoc');
     const f = await widget(page);
     expect((await readyOf(f)).ready).toBe('ok');
     const signIn = await signInWindow(page, f);
-    expect(await lines(signIn, '.asker-framed')).toEqual([`Signing in to Coffee Club at ${PAGE}`, `This uses a widget from ${WIDGET}.`]);
+    expect(await lines(signIn, '.asker-framed')).toEqual([`Signing in to Coffee Club at ${WIDGET}`, INSIDE]);
     await signIn.close();
   });
 
-  test('the widget framed by a page of its own address at the top is refused where the browser names every ancestor', async ({ page }) => {
+  test('the widget framed by a page of its own address at the top is refused where the browser names every ancestor, also through a srcdoc frame of its own', async ({ page }) => {
     const app = await widgetApp();
-    await partnerPage(page, WIDGET, partnerUrl(app));
-    const f = await widget(page);
-    expect(await readyOf(f)).toMatchObject({ ready: 'error', error: 'vault_unavailable' });
+    for (const mode of ['plain', 'srcdoc'] as const) {
+      await partnerPage(page, WIDGET, partnerUrl(app), mode);
+      expect(await readyOf(await widget(page)), mode).toMatchObject({ ready: 'error', error: 'vault_unavailable' });
+    }
   });
 });

@@ -213,8 +213,10 @@ and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per 
   other web addresses frames it, never when someone opens the widget's address on its own, in a window of its own, or
   inside a page you don't list. The tick goes through the same Google confirmation, email and delay as the address.
   **Use only inside your pages** sets it on an address you already have, at once; to let such an address work on its
-  own again, remove it and add it again (that waits like any new address). Journear's sign-in and approval windows then
-  name the page the person is on: "You're on {your page}. This uses a widget from {widget}."
+  own again, remove it and add it again (that waits like any new address). Your app always keeps one address without
+  the tick. Journear's windows still name the widget's address as the site asking and add "Shown inside a page at
+  {your page}." In a browser that doesn't say which page is around a frame (some Firefox versions), any script on the
+  widget's own address can get round the tick with one inner frame of its own.
 - Live apps must use `https://` and can't use loopback origins. Wildcard hosts, IP addresses (other than loopback for
   test apps) and Journear Passport's own origins are refused ("A Journear origin can't be an app's origin").
 

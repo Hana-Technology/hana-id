@@ -15,11 +15,11 @@
 // page above it is one of the app's web addresses (`frame-ancestors`), but which one the browser doesn't say (the
 // residual: a frame-only page framed by a page of a frame-only address of the same app).
 //
-// P11, `frameSiteOf`: what the windows say about where the person is (core protocol.ts FrameSite): nothing more when
-// the parent is the top-level page; the top-level page's address when `ancestors` names it; else that the browser
-// didn't say, with the one page the app lists to expect for a frame-only parent.
+// P11, `frameSiteOf`: what the windows add about where the page asking is shown (core protocol.ts FrameSite): nothing
+// when the parent is the top-level page; the top-level page's address when `ancestors` names it; else that the browser
+// didn't say. The windows keep the page asking (the parent) as their subject and show this only as a secondary fact.
 import type { FrameSite } from '@hana-id/core';
-import { LOCALHOST_WILDCARD, type VaultConfig } from './config.ts';
+import type { VaultConfig } from './config.ts';
 
 export interface FrameFacts {
   parentOrigin: string;
@@ -40,14 +40,11 @@ export function frameRuleAllows(config: Pick<VaultConfig, 'frameOnly'>, f: Frame
 }
 
 /** P11: the window's FrameSite for this parent, or undefined when the parent is the top-level page (see the header). */
-export function frameSiteOf(config: Pick<VaultConfig, 'origins' | 'frameOnly'>, f: FrameFacts): FrameSite | undefined {
+export function frameSiteOf(f: FrameFacts): FrameSite | undefined {
   if (parentOnTop(f)) return undefined;
   if (f.ancestors !== undefined) {
     const top = f.ancestors[f.ancestors.length - 1];
     return top === undefined || top === f.parentOrigin ? undefined : { top };
   }
-  const frameOnly = new Set(config.frameOnly ?? []);
-  if (!frameOnly.has(f.parentOrigin)) return { top: null };
-  const pages = config.origins.filter((o) => o !== LOCALHOST_WILDCARD && !frameOnly.has(o) && o !== f.parentOrigin);
-  return pages.length === 1 ? { top: null, expected: pages[0]! } : { top: null };
+  return { top: null };
 }

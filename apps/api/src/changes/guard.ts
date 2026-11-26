@@ -56,24 +56,24 @@ export const CONSOLE_KEY_REVOKES: Limit[] = [{ name: 'key-revokes:hour', windowM
  */
 export async function withKeyRevokeQuota<T>(env: Env, w: Writer, orgId: string, write: () => Promise<T>): Promise<T> {
   const obj = placedStub(env, env.RATE_LIMITER, `console-stops:${orgId}`);
-  let taken = false;
+  let taken: number | null = null;
   w.beforeBatch = async () => {
     const r = await obj.hit(CONSOLE_KEY_REVOKES, w.now);
     if (!r.ok) {
       log({ event: 'console_rpc', outcome: 'rejected', code: 'key_revokes_full', orgId }, 'warn');
       throw new RpcRefusal('rate_limited', 'Your organisation has revoked many publishable keys this hour: try again later, or ask Journear security');
     }
-    taken = true;
+    taken = w.now;
   };
   try {
     return await write();
   } catch (err) {
-    if (taken) {
+    if (taken !== null) {
       const committed = await env.DB.prepare('SELECT 1 AS x FROM app_changes WHERE request_id = ?1').bind(w.requestId).first().then(
         (r) => r !== null,
         () => true,
       );
-      if (!committed) await obj.unhit(CONSOLE_KEY_REVOKES, w.now).catch(() => undefined);
+      if (!committed) await obj.unhit(CONSOLE_KEY_REVOKES, taken).catch(() => undefined);
     }
     throw err;
   }
@@ -97,9 +97,9 @@ const limiter = (env: Env) => placedStub(env, env.RATE_LIMITER, CONSOLE_LIMITER)
  * Admits one member call; throws `rate_limited` when a bucket or the breaker refuses. Answers how many global reserve
  * tokens it took (settled back by settleMemberCall when the call changed nothing).
  */
-export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.now()): Promise<{ reserveUsed: number }> {
+export async function admitMemberCall(env: Env, a: MemberAdmission, now = Date.now()): Promise<{ reserveUsed: number; at: number }> {
   const r = await limiter(env).consoleAdmit({ ...a, limits: CONSOLE_LIMITS }, now);
-  if (r.ok) return { reserveUsed: r.reserveUsed };
+  if (r.ok) return { reserveUsed: r.reserveUsed, at: r.at };
   if (r.notify) await breakerEvent(env.DB, r.limit === 'breaker_org' ? a.org : null, now);
   const breaker = r.limit === 'breaker_org' || r.limit === 'breaker_global';
   throw new RpcRefusal('rate_limited', breaker ? 'Too many destructive changes this hour: ask Journear security' : 'Too many console calls: try again shortly');

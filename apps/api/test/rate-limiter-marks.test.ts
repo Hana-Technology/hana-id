@@ -80,15 +80,16 @@ describe('row reads do not grow with the markers held', () => {
 
     expect(withLive.rows).toBe(base.rows);
     expect(withExpired.rows).toBe(base.rows);
-    // The counter's get, its list entry, and the marker's get.
-    expect(base.rows).toBeLessThanOrEqual(3);
+    // The counter's get, its list entry, the marker's get, and (D935) the object's clock, once for each of the two calls.
+    expect(base.rows).toBeLessThanOrEqual(5);
   });
 
   it('reserve alone reads one row, and hit alone doesn’t read a marker', async () => {
     const stub = newStub();
     await seedMarks(stub, 500, NOW + MINUTE);
-    expect((await rowsRead(stub, (o) => o.reserve('x', NOW + MINUTE, NOW))).rows).toBe(1);
-    expect((await rowsRead(stub, (o) => o.hit(WINDOW, NOW))).rows).toBeLessThanOrEqual(2);
+    // The marker, and (D935) the object's clock; hit: its counter, its list entry and the clock.
+    expect((await rowsRead(stub, (o) => o.reserve('x', NOW + MINUTE, NOW))).rows).toBe(2);
+    expect((await rowsRead(stub, (o) => o.hit(WINDOW, NOW))).rows).toBeLessThanOrEqual(3);
   });
 
   it('hit reads only its own limits’ counters, not another limit’s', async () => {
@@ -96,7 +97,7 @@ describe('row reads do not grow with the markers held', () => {
     await runInDurableObject(stub, (_i, state) => {
       for (let i = 0; i < 200; i++) state.storage.kv.put(`other:${i}@${NOW}`, 1);
     });
-    expect((await rowsRead(stub, (o) => o.hit(WINDOW, NOW))).rows).toBeLessThanOrEqual(2);
+    expect((await rowsRead(stub, (o) => o.hit(WINDOW, NOW))).rows).toBeLessThanOrEqual(3);
   });
 });
 

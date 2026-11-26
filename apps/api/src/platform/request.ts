@@ -30,10 +30,15 @@
 //   8. A valid self-revoke: only its own window (10 a minute on the key's object, N3). Anything else: the key's own
 //      windows (`platform:key:<keyId>`, pinned: 60 a minute, 2 000 a UTC day; a kill switch past them, its own reserve
 //      of 10 a minute and 100 a UTC day, D935) and the platform's
-//      admission on the `console-rpc` object (rate-limiter.ts `platformAdmit`): the org's bucket, the platform's own
-//      global bucket, the console's global bucket above a floor the platform never takes, and the platform's own
-//      destructive-call breaker on web address removals, each org's first 5 an hour past the global count (M3, F3,
-//      D935). An invalid self-revoke goes through 8 like any other call.
+//      admission on the `console-rpc` object (rate-limiter.ts `platformAdmit`): an ordinary call, the org's bucket,
+//      the platform's global bucket and the console's global bucket above a floor the platform never takes; a kill
+//      switch, its org's kill bucket only (D935); and the platform's own destructive-call breaker on web address
+//      removals, each org's first 5 an hour past the global count (M3, F3, D935). An invalid self-revoke goes through 8
+//      like any other call.
+//
+// The body must all arrive within 5 s (else 400), and the request's clock is read again once it has: the timestamp
+// window holds then too, and every limiter and record uses that time (D935, H1). The limiters reckon on their own
+// clocks anyway.
 //
 // Only then is the body parsed and the route run, within PLATFORM_DB_LIMITS, and the call written to `platform_calls`
 // (with, at most once an hour per key, `last_used_at`). A limiter that errors is 503 rate_limiter_unavailable; for the
@@ -49,6 +54,7 @@ import {
   PLATFORM_PATH_RE,
   PLATFORM_QUERY_RE,
   PLATFORM_REQUEST_LIMITS,
+  MAX_PLATFORM_ORGS,
   type PlatformErrorCode,
   PLATFORM_ERROR_STATUS,
   RPC_HTTP_STATUS,
@@ -114,27 +120,22 @@ export const PLATFORM_WINDOWS = {
 } as const satisfies Record<string, Limit[]>;
 
 /**
- * The platform's admission on the `console-rpc` object (A5; after PR 156's review, F3): the org's own bucket (8
- * statements a second, burst 40, the last 10 for kill switches: both of its keys at their full 60 a minute); the
- * platform's own global bucket (10 statements a second, burst 60, the last 22 for kill switches, at most 11 of them an
- * org a minute: one whole kill switch); D935 after PR 161's reviews: before any of that, each org's own kill-switch
- * slice (2.5 statements a second, burst 44: 13 kill switches a minute, 4 at once), which no other org can use, so an
- * org's kill switches never depend on other orgs; the shared bucket and its reserve only past the slice; the console's global bucket charged too: an ordinary platform call never takes it below
- * 30 of its 60 tokens, so the console always keeps at least half its burst; a platform kill switch neither reads nor
- * charges it (N2 and its review: a console flood can't refuse it, and it never spends the console's kill-switch
- * reserve), bounded by the org's bucket, the platform's own bucket and reserve, each org's share of it and the breaker;
- * its own breaker on web address removals (10 per org, 30 across orgs a rolling hour, each org's first 5 passing
- * whatever the global count: D935). To confirm (the Tech Lead): the numbers.
+ * The platform's admission on the `console-rpc` object (A5; F3; D935 after PR 161's second full review): two budget
+ * classes that never charge each other. An ordinary call: the org's own bucket (8 statements a second, burst 40: 520 a
+ * minute), the platform's global bucket (10 a second, burst 60: 660 in a first minute, 600 after) and the console's
+ * global bucket, never below 30 of its 60 tokens, so the console always keeps at least half its burst; no reserve. A
+ * kill switch: its org's kill bucket only (2.5 statements a second, burst 44: about 13 a minute, 4 at once), so no other
+ * org can slow it and it slows nobody's ordinary calls; at most MAX_PLATFORM_ORGS orgs' kill buckets a minute (the
+ * backstop to the cap on orgs switched on). Removals also take a breaker slot (10 per org, 30 across orgs a rolling
+ * hour, each org's first 5 past the global count). No tokens are given back. To confirm (the Tech Lead): the numbers.
  */
 export const PLATFORM_LIMITS = {
-  perOrg: { ratePerS: 8, burst: 40, reserve: 10 },
-  platform: { ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 11 } },
+  perOrg: { ratePerS: 8, burst: 40 },
+  platform: { ratePerS: 10, burst: 60 },
   shared: { ratePerS: CONSOLE_LIMITS.global.ratePerS, burst: CONSOLE_LIMITS.global.burst, sharedFloor: 30 },
   breaker: { windowMs: HOUR_MS, perOrg: L.breaker.perOrgPerHour, global: L.breaker.globalPerHour, floor: L.breaker.floorPerOrgPerHour },
-  /** D935 after PR 161's reviews: each org's own slice for its kill switches, 2.5 statements a second, burst 44 (13 of cost 11 a minute, 4 at once). */
-  killSlice: { ratePerS: 2.5, burst: 44 },
-  /** No-op kill switches an org may have refunded a minute (past it a no-op pays its whole cost). */
-  killNoops: { windowMs: MIN, max: 20 },
+  kill: { ratePerS: L.killBucket.ratePerS, burst: L.killBucket.burst },
+  maxOrgs: MAX_PLATFORM_ORGS,
 } as const satisfies PlatformAdmission['limits'];
 
 /** What a call refused before its route (a bad body after admission) is charged: the key's read and the call's row. */
@@ -237,22 +238,36 @@ async function verifyWith(key: CryptoKey, signature: Uint8Array, message: Uint8A
   }
 }
 
-/** Reads a body up to `max` bytes (streamed: never buffered beyond it); null when it is longer. */
-async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
+/**
+ * Reads a body up to `max` bytes (streamed: never buffered beyond it); null when it is longer, `'slow'` when it hasn't
+ * all arrived `deadlineMs` after the read began (D935, H1: a slow upload can't hold a request open past its clock).
+ */
+async function readCapped(request: Request, max: number, deadlineMs = L.bodyDeadlineMs): Promise<Uint8Array | null | 'slow'> {
   if (!request.body) return new Uint8Array(0);
   const out = new Uint8Array(max);
   let size = 0;
   const reader = request.body.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<'slow'>((resolve) => {
+    timer = setTimeout(() => resolve('slow'), deadlineMs);
+  });
   for (;;) {
-    const { done, value } = await reader.read();
+    const next = await Promise.race([reader.read(), late]);
+    if (next === 'slow') {
+      await reader.cancel().catch(() => undefined);
+      return 'slow';
+    }
+    const { done, value } = next;
     if (done) break;
     if (size + value.byteLength > max) {
+      clearTimeout(timer);
       await reader.cancel().catch(() => undefined);
       return null;
     }
     out.set(value, size);
     size += value.byteLength;
   }
+  clearTimeout(timer);
   return out.slice(0, size);
 }
 
@@ -300,7 +315,7 @@ function jsonObject(body: Uint8Array): Record<string, unknown> | undefined {
 const NOT_AN_OBJECT = 'The body must be a JSON object (send {} when there is nothing to say)';
 
 /** The platform API: checks 1 to 8, then the route, then its record. `now` is injectable for the tests' clocks. */
-export async function handlePlatform(request: Request, url: URL, env: Env, requestId: string, ctx: ExecutionContext, now = Date.now()): Promise<Response> {
+export async function handlePlatform(request: Request, url: URL, env: Env, requestId: string, ctx: ExecutionContext, injectedNow?: number): Promise<Response> {
   const method = request.method;
   const path = url.pathname;
   const h = request.headers;
@@ -311,8 +326,13 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   const sentKeyId = h.get(PLATFORM_HEADERS.keyId);
   const idWellFormed = sentKeyId !== null && PLATFORM_HEADER_RES.keyId.test(sentKeyId);
   const fields: { route: string; keyId?: string; orgId?: string } = { route: 'unmatched', ...(idWellFormed ? { keyId: sentKeyId } : {}) };
-  const hourMark = Math.floor(now / HOUR_MS);
 
+  // D935 (H1): the request's clock. `now` is its time at the start, then read again once the body has arrived, so every
+  // limiter, the timestamp window and the records use a time taken after the upload. A test injects a fixed time.
+  const realStart = performance.now();
+  const clock = () => injectedNow ?? Date.now();
+  let now = clock();
+  let hourMark = Math.floor(now / HOUR_MS);
   const finish = (o: Outcome): Response => {
     const outcome = o.status < 400 ? 'ok' : o.status >= 500 ? 'error' : 'rejected';
     log(
@@ -328,7 +348,7 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
         ...(fields.keyId ? { platformKeyId: fields.keyId } : {}),
         ...(fields.orgId ? { orgId: fields.orgId } : {}),
         ...(prefix ? { ipPrefix: prefix } : {}),
-        latencyMs: Date.now() - now,
+        latencyMs: Math.round(performance.now() - realStart),
       },
       o.status >= 500 ? 'error' : o.status === 401 || o.status === 429 ? 'warn' : 'info',
     );
@@ -349,16 +369,16 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   // failure, the work bounded); a listed id under its own overflow window for
   // this IP subject (N1: one address can't spend another's); past that too, a self-revoke is still checked, its
   // signature against the listed point before any refusal (`preauth`, N1); anything else is 429.
-  let slot: { obj: DurableObjectStub<RateLimiter>; limits: Limit[] } | null = null;
+  let slot: { obj: DurableObjectStub<RateLimiter>; limits: Limit[]; at: number } | null = null;
   let preauth: { obj: DurableObjectStub<RateLimiter>; retryAfterS: number } | null = null;
   try {
     const ip = ipObj(env, subject);
     const r = await ip.hit([...PLATFORM_WINDOWS.ip], now);
-    if (r.ok) slot = { obj: ip, limits: [...PLATFORM_WINDOWS.ip] };
+    if (r.ok) slot = { obj: ip, limits: [...PLATFORM_WINDOWS.ip], at: now };
     else if (await isKnown()) {
       const kf = keyFailObj(env, sentKeyId!, subject);
       const o = await kf.hit([...PLATFORM_WINDOWS.overflow], now);
-      if (o.ok) slot = { obj: kf, limits: [...PLATFORM_WINDOWS.overflow] };
+      if (o.ok) slot = { obj: kf, limits: [...PLATFORM_WINDOWS.overflow], at: now };
       else if (revokePath) preauth = { obj: kf, retryAfterS: r.retryAfterS };
       else {
         log({ event: 'platform', requestId, code: 'key_overflow_full', platformKeyId: sentKeyId!, ...(prefix ? { ipPrefix: prefix } : {}) }, 'warn');
@@ -372,7 +392,7 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   const giveBackSlot = async () => {
     if (!slot) return;
     try {
-      await slot.obj.unhit(slot.limits, now);
+      await slot.obj.unhit(slot.limits, slot.at);
     } catch {
       log({ event: 'platform', requestId, outcome: 'error', code: 'ip_unhit_failed' }, 'error');
     }
@@ -420,8 +440,14 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   if (Math.abs(now - timestamp) > PLATFORM_CLOCK_SKEW_MS) return finish(refusal('stale_request', 'The request’s timestamp is more than 60 seconds from our clock', { serverTimeMs: now }));
 
   // 5. The key: on the announced list (else no D1 read), in force here, its point importing, the signature verifying.
-  const body = method === 'GET' ? await readCapped(request, 0) : await readCapped(request, PLATFORM_BODY_MAX);
-  if (body === null) return finish(refusal('bad_request', method === 'GET' ? 'A GET has no body' : `The body is larger than ${PLATFORM_BODY_MAX} bytes`));
+  const read = method === 'GET' ? await readCapped(request, 0) : await readCapped(request, PLATFORM_BODY_MAX);
+  if (read === 'slow') return finish(refusal('bad_request', `The body took longer than ${L.bodyDeadlineMs / 1000} seconds to arrive: send it at once`));
+  if (read === null) return finish(refusal('bad_request', method === 'GET' ? 'A GET has no body' : `The body is larger than ${PLATFORM_BODY_MAX} bytes`));
+  const body = read;
+  // The clock again, now the body is in (H1): the timestamp window holds at this time too, and every later check uses it.
+  now = clock();
+  hourMark = Math.floor(now / HOUR_MS);
+  if (Math.abs(now - timestamp) > PLATFORM_CLOCK_SKEW_MS) return finish(refusal('stale_request', 'The request’s timestamp is more than 60 seconds from our clock', { serverTimeMs: now }));
   const bodyHash = await bodySha256Hex(body);
   const message = utf8(
     platformRequestMessage({
@@ -505,12 +531,13 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   let charged = false;
   // D935: the windows the call was counted on (a kill switch past the ordinary ones: its reserve's).
   let chargedWindows: Limit[] = [...PLATFORM_WINDOWS.key];
+  let chargedAt = now;
   let lastUsed = false;
-  let settle: { breaker: boolean; reserveUsed: number; sliceUsed: number } | null = null;
+  let settle: { breaker: boolean; at: number } | null = null;
   const undoCharge = async () => {
     if (!charged) return;
     try {
-      await kobj.unhit(chargedWindows, now);
+      await kobj.unhit(chargedWindows, chargedAt);
       if (lastUsed) await kobj.release(`last-used@${hourMark}`);
     } catch {
       log({ event: 'platform', requestId, outcome: 'error', code: 'key_unhit_failed', platformKeyId: keyId }, 'error');
@@ -546,6 +573,7 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
         return finish(limited(`platform:key:${k.limit}`, k.retryAfterS));
       }
       charged = true;
+      chargedAt = now;
       if (k.reserve) chargedWindows = [...PLATFORM_WINDOWS.killReserve];
       lastUsed = k.marked === true;
       stage = 'admit';
@@ -554,9 +582,17 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
         await undoCharge();
         if (b.notify) ctx.waitUntil(quotaEvent(env, key.org_id, keyId, `platform:${b.limit}`, now));
         const breakerRefusal = b.limit === 'breaker_org' || b.limit === 'breaker_global';
-        return finish(limited(`platform:${b.limit}`, b.retryAfterS, breakerRefusal ? 'Too many destructive changes this hour: ask Journear security' : 'Too many platform requests just now: try again shortly'));
+        if (b.limit === 'kill_orgs') log({ event: 'platform', requestId, outcome: 'error', code: 'kill_orgs_full', platformKeyId: keyId, orgId: key.org_id }, 'error');
+        const words = breakerRefusal
+          ? 'Too many destructive changes this hour: ask Journear security'
+          : b.limit === 'budget_kill'
+            ? 'Too many off switches from your organisation just now (about 13 a minute): try again shortly'
+            : b.limit === 'kill_orgs'
+              ? 'Journear can’t take off switches from your organisation through the API just now: stop things in the partner portal, or ask Journear'
+              : 'Too many platform requests just now: try again shortly';
+        return finish(limited(`platform:${b.limit}`, b.retryAfterS, words));
       }
-      settle = { breaker, reserveUsed: b.reserveUsed, sliceUsed: b.sliceUsed ?? 0 };
+      settle = { breaker, at: b.at };
     } catch {
       // F11: a failure after the key's windows counted gives the charge and the last-used marker back.
       await undoCharge();
@@ -611,12 +647,10 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
       log({ event: 'platform', requestId, outcome: 'error', code: 'key_limiter_failed', platformKeyId: keyId }, 'error');
     }
   }
-  // A destructive call that changed nothing gets its breaker slot back, and its reserve tokens move to the org's bucket.
-  if (settle && (settle.breaker || settle.reserveUsed > 0 || settle.sliceUsed > 0) && !wrote) {
+  // A removal that changed nothing gets its breaker slot back (no tokens are ever given back, D935).
+  if (settle && settle.breaker && !wrote) {
     try {
-      // `ran`: the statements this call ran through the hot DB, its call log row and, at most, the announced keys' read
-      // (L2 of PR 161's review: those stay paid from the platform's bucket).
-      await consoleObj(env).platformSettle({ org: key.org_id, at: now, breaker: settle.breaker, reserveUsed: settle.reserveUsed, sliceUsed: settle.sliceUsed, ran: db.statements + 2, limits: PLATFORM_LIMITS }, now);
+      await consoleObj(env).platformSettle({ org: key.org_id, at: settle.at, breaker: true });
     } catch {
       log({ event: 'platform', requestId, outcome: 'error', code: 'settle_failed' }, 'error');
     }

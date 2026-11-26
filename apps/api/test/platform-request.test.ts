@@ -23,14 +23,12 @@ import vectors from '../../../packages/console-core/test/platform-request-vector
 import { call } from './helpers.ts';
 import worker from '../src/index.ts';
 import routesSource from '../src/platform/routes.ts?raw';
-import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test';
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { type Sent, callsOf, deliver, freeze, freshIp, freshNow, importProblems, keyPair, keyRow, platformProposal, read, seedKey, send, switchOff, switchOn } from './platform-helpers.ts';
 import { type DbCount, countingDb, orgApp, rows } from './rpc-helpers.ts';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
-/** The platform's limits with no kill-switch slice: the shared bucket's own path, alone (D935). */
-const NO_SLICE = { ...PLATFORM_LIMITS, killSlice: { ratePerS: 0, burst: 0 } };
 const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 afterEach(() => vi.restoreAllMocks());
 
@@ -607,11 +605,6 @@ describe('the org’s switch and freeze, and the self-revoke', () => {
 
   it('a key that expires, is stopped, or whose org is frozen or switched off between two requests is refused at once', async () => {
     const now = freshNow();
-    const expiring = await seedKey();
-    const row = await keyRow(expiring.id);
-    expect((await send(expiring, { now: (row.expires_at as number) - 1 })).status).toBe(200);
-    expect((await send(expiring, { now: row.expires_at as number })).status).toBe(401);
-
     const stopped = await seedKey();
     expect((await send(stopped, { now })).status).toBe(200);
     const admin = new AdminRpc({ waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext, env);
@@ -627,6 +620,12 @@ describe('the org’s switch and freeze, and the self-revoke', () => {
     expect((await send(off, { now })).status).toBe(200);
     await switchOff(off.org);
     expect((await send(off, { now })).body.code).toBe('platform_off');
+
+    // Last (D935: a request run a year on moves this isolate's test clock there).
+    const expiring = await seedKey();
+    const row = await keyRow(expiring.id);
+    expect((await send(expiring, { now: (row.expires_at as number) - 1 })).status).toBe(200);
+    expect((await send(expiring, { now: row.expires_at as number })).status).toBe(401);
   });
 
   it('two keys of one org each work with their own windows and nonces; stopping one leaves the other', async () => {
@@ -739,16 +738,17 @@ describe('each route within its hot-DB cost (L8)', () => {
     const b = await seedKey({ org: a.app });
     const other = await seedKey();
     const now = freshNow();
-    // 40 tokens, 4 a call, 10 kept for kill switches: 7 calls, then the org's bucket says no.
+    // 4 a call: in a burst the console's floor (an ordinary platform call leaves it 30 of its 60) holds first, at 7 calls;
+    // the org's own 40 (no reserve since D935) would allow 10.
     const results: number[] = [];
     for (let i = 0; i < 7; i++) results.push((await send(i % 2 ? a : b, { now })).status);
     expect(results).toEqual(Array(7).fill(200));
     const refused = await send(a, { now });
-    expect([refused.status, refused.body.limit]).toEqual([429, 'platform:budget_org']);
+    expect([refused.status, refused.body.limit]).toEqual([429, 'platform:budget_shared']);
     // The platform as a whole never takes the console's shared bucket below its floor: another org's call a second later.
     expect((await send(other, { now: now + 1000 })).status).toBe(200);
     // The key's minute wasn't charged for the refused ones (unhit), so it isn't what refuses.
-    expect(PLATFORM_LIMITS.perOrg).toEqual({ ratePerS: 8, burst: 40, reserve: 10 });
+    expect(PLATFORM_LIMITS.perOrg).toEqual({ ratePerS: 8, burst: 40 });
   });
 });
 
@@ -786,7 +786,7 @@ describe('the platform’s destructive-call breaker is its own (M3)', () => {
     const now = freshNow() + 3 * HOUR;
     for (let i = 0; i < 10; i++) {
       expect((await platformAdmit(org, now + i)).ok).toBe(true);
-      await consoleRpcObj().platformSettle({ org, at: now + i, breaker: true, reserveUsed: 0, limits: PLATFORM_LIMITS }, now + i);
+      await consoleRpcObj().platformSettle({ org, at: now + i, breaker: true });
     }
     expect((await platformAdmit(org, now + 20)).ok).toBe(true);
   });
@@ -989,9 +989,10 @@ describe('F3: the platform’s own global bucket, and a floor in the console’s
     const consoleOrgs = await Promise.all(Array.from({ length: 4 }, async () => (await orgApp()).org));
     const network = (await orgApp()).org;
     let admitted = 0;
+    // 5 s apart: the network's own kill bucket (2.5 a second, D935) refills each one's 11.
     for (let t = 0; t < 10; t++) {
-      for (const org of consoleOrgs) for (let i = 0; i < 20; i++) await admitMemberCall(env, { org, cost: 1 }, now + t * 1000).catch(() => undefined);
-      if ((await obj.platformAdmit({ org: network, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now + t * 1000 + 1)).ok) admitted++;
+      for (const org of consoleOrgs) for (let i = 0; i < 20; i++) await admitMemberCall(env, { org, cost: 1 }, now + t * 5000).catch(() => undefined);
+      if ((await obj.platformAdmit({ org: network, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now + t * 5000 + 1)).ok) admitted++;
     }
     expect(admitted).toBe(10);
   });
@@ -1001,9 +1002,9 @@ describe('F3: the platform’s own global bucket, and a floor in the console’s
     const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
     const orgs = await Promise.all(Array.from({ length: 4 }, async () => (await orgApp()).org));
     let admitted = 0;
-    // 10 seconds, every org trying 10 calls of cost 3 a second: the platform's bucket (10/s, burst 60, 15 kept) bounds it.
+    // 10 seconds, every org trying 10 calls of cost 3 a second: the platform's bucket (10/s, burst 60, no reserve) bounds it.
     for (let t = 0; t < 10; t++) for (const org of orgs) for (let i = 0; i < 10; i++) if ((await obj.platformAdmit({ org, cost: 3, limits: PLATFORM_LIMITS }, now + t * 1000)).ok) admitted++;
-    expect(admitted * 3).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.burst - PLATFORM_LIMITS.platform.reserve + 10 * PLATFORM_LIMITS.platform.ratePerS);
+    expect(admitted * 3).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.burst + 10 * PLATFORM_LIMITS.platform.ratePerS);
   });
 });
 
@@ -1216,21 +1217,18 @@ describe('the second review', () => {
     expect((await send(k, { now: now + MIN, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(200);
   });
 
-  it('N6: a second settle of the same admission refunds nothing', async () => {
+  it('N6: a second settle of the same admission gives nothing back (D935: only a breaker slot, once; never tokens)', async () => {
     const org = (await orgApp()).org;
     const now = freshNow();
     const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
-    // Take the platform's bucket down to its reserve (60 → 22, two kill switches of 19 from other orgs), then a kill switch that dips into it.
-    for (let i = 0; i < 2; i++) expect(await obj.platformAdmit({ org: (await orgApp()).org, cost: 19, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
-    const kill = await obj.platformAdmit({ org, cost: 6, killSwitch: true, limits: NO_SLICE }, now);
-    expect(kill).toMatchObject({ ok: true, reserveUsed: expect.any(Number) });
-    const used = (kill as { reserveUsed: number }).reserveUsed;
-    expect(used).toBeGreaterThan(0);
-    const settle = () => obj.platformSettle({ org, at: now, breaker: false, reserveUsed: used, limits: NO_SLICE }, now);
-    await settle();
-    await settle();
-    // One refund only: the reserve holds exactly what the kill switch took back, so an ordinary call still can't reach it.
-    expect(await obj.platformAdmit({ org: (await orgApp()).org, cost: 1, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
+    const r = await obj.platformAdmit({ org, cost: 1, killSwitch: true, breaker: true, limits: PLATFORM_LIMITS }, now);
+    expect(r).toMatchObject({ ok: true, at: now });
+    for (let i = 1; i < 10; i++) expect((await obj.platformAdmit({ org, cost: 1, killSwitch: true, breaker: true, limits: PLATFORM_LIMITS }, now + i)).ok).toBe(true);
+    // Its 10 used; one settle gives one back, a second of the same admission nothing.
+    await obj.platformSettle({ org, at: now, breaker: true });
+    await obj.platformSettle({ org, at: now, breaker: true });
+    expect((await obj.platformAdmit({ org, cost: 1, killSwitch: true, breaker: true, limits: PLATFORM_LIMITS }, now + 20)).ok).toBe(true);
+    expect(await obj.platformAdmit({ org, cost: 1, killSwitch: true, breaker: true, limits: PLATFORM_LIMITS }, now + 21)).toMatchObject({ ok: false, limit: 'breaker_org' });
   });
 
   it('N6: one local* predicate for the platform minimum and the published-key rule', () => {
@@ -1296,387 +1294,5 @@ describe('the review of the second round', () => {
     // The console's reserve is all still there: a console kill switch of 12 (its org's share) goes through, an ordinary call still doesn't.
     await expect(admitMemberCall(env, { org: consoleOrg, cost: 1 }, now)).rejects.toMatchObject({ code: 'rate_limited' });
     expect(await admitMemberCall(env, { org: consoleOrg, cost: 12, killSwitch: true }, now)).toMatchObject({ reserveUsed: 12 });
-  });
-});
-
-// ---- D935: no org's kill switches blockable by other orgs, and a key past its windows can still stop things ----
-
-describe('D935: the breaker’s per-org floor, the kill switches’ share of the platform reserve, the per-key kill reserve', () => {
-  const obj = () => placedStub(env, env.RATE_LIMITER, 'console-rpc');
-  const removal = (org: string, now: number) => obj().platformAdmit({ org, cost: 11, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, now);
-  const newOrgs = (n: number) => Promise.all(Array.from({ length: n }, async () => (await orgApp()).org));
-
-  it('the numbers', () => {
-    expect(PLATFORM_LIMITS.breaker).toEqual({ windowMs: HOUR, perOrg: 10, global: 30, floor: 5 });
-    expect(PLATFORM_LIMITS.platform).toEqual({ ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 11 } });
-    expect(PLATFORM_LIMITS.killSlice).toEqual({ ratePerS: 2.5, burst: 44 });
-    expect(PLATFORM_LIMITS.killNoops).toEqual({ windowMs: MIN, max: 20 });
-    expect(PLATFORM_WINDOWS.killReserve).toEqual([
-      { name: 'kill:minute', windowMs: MIN, max: 10 },
-      { name: 'kill:day', windowMs: 24 * HOUR, max: 100 },
-    ]);
-    // Every kill switch's whole cost fits one org's share of the platform's reserve, and the reserve holds two of them.
-    for (const r of PLATFORM_ROUTES.filter((x) => x.killSwitch || x.flags)) {
-      expect(r.cost, r.path).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.reserveShare.max);
-      expect(2 * r.cost, r.path).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.reserve);
-      // Each org's own slice: 4 of the costliest at once, at least 10 a minute.
-      expect(4 * r.cost, r.path).toBeLessThanOrEqual(PLATFORM_LIMITS.killSlice.burst);
-      expect(Math.floor((60 * PLATFORM_LIMITS.killSlice.ratePerS) / r.cost), r.path).toBeGreaterThanOrEqual(10);
-    }
-    // Only the web address removal is counted by the breaker.
-    expect(PLATFORM_ROUTES.filter((r) => r.breaker).map((r) => r.path)).toEqual(['/v1/platform/apps/:appId/origins/remove']);
-    expect(PLATFORM_ROUTES.find((r) => r.path === '/v1/platform/apps/:appId/suspend')!.flags!({ suspended: true })).toEqual({ killSwitch: true, allowFrozen: true });
-  });
-
-  it('three orgs filling the global breaker: a fourth org’s removals pass up to its floor and are refused above it; parallel calls at the floor and at the org’s edge', async () => {
-    const now = freshNow();
-    const [a, b, c, d, e, f] = await newOrgs(6);
-    // Spaced 4 s apart, so the platform's bucket is never what refuses.
-    let t = now;
-    for (const org of [a!, b!, c!]) for (let i = 0; i < 10; i++) expect((await removal(org, (t += 4000))).ok).toBe(true);
-    for (let i = 0; i < 5; i++) expect((await removal(d!, (t += 4000))).ok, `floor ${i}`).toBe(true);
-    expect(await removal(d!, (t += 4000))).toMatchObject({ ok: false, limit: 'breaker_global', notify: true });
-    // Eight at once from a fifth org, the global count full: exactly its floor of 5 pass.
-    t += 4000;
-    const burst = await Promise.all(Array.from({ length: 8 }, (_, i) => obj().platformAdmit({ org: e!, cost: 1, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, t + i)));
-    expect(burst.filter((r) => r.ok)).toHaveLength(5);
-    expect(burst.filter((r) => !r.ok).map((r) => (r as { limit: string }).limit)).toEqual(['breaker_global', 'breaker_global', 'breaker_global']);
-    // At the org's own edge (the global window slid out): 8 used, four at once, exactly 2 pass.
-    const later = t + 2 * HOUR;
-    for (let i = 0; i < 8; i++) expect((await removal(f!, later + 4000 * i)).ok).toBe(true);
-    const edge = await Promise.all(Array.from({ length: 4 }, (_, i) => obj().platformAdmit({ org: f!, cost: 1, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, later + 40_000 + i)));
-    expect(edge.filter((r) => r.ok)).toHaveLength(2);
-    expect(edge.filter((r) => !r.ok).map((r) => (r as { limit: string }).limit)).toEqual(['breaker_org', 'breaker_org']);
-  });
-
-  it('the worst case in any order: at most 10 an org and 5 × orgs + 30 in all; every org gets at least its floor', async () => {
-    const now = freshNow();
-    const orgs = await newOrgs(9);
-    // A fixed pseudo-random order of 15 attempts per org (more than either limit), all within one hour.
-    let seed = 935;
-    const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
-    const attempts = orgs.flatMap((o) => Array<string>(15).fill(o));
-    for (let i = attempts.length - 1; i > 0; i--) {
-      const j = Math.floor(rand() * (i + 1));
-      [attempts[i], attempts[j]] = [attempts[j]!, attempts[i]!];
-    }
-    const admitted = new Map<string, number>();
-    for (const [i, org] of attempts.entries()) {
-      const r = await obj().platformAdmit({ org, cost: 1, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, now + 2000 * i);
-      if (r.ok) admitted.set(org, (admitted.get(org) ?? 0) + 1);
-    }
-    const total = [...admitted.values()].reduce((x, y) => x + y, 0);
-    expect(total).toBeLessThanOrEqual(5 * orgs.length + 30);
-    for (const o of orgs) {
-      expect(admitted.get(o) ?? 0).toBeGreaterThanOrEqual(5);
-      expect(admitted.get(o) ?? 0).toBeLessThanOrEqual(10);
-    }
-  });
-
-  it('past its slice, the shared bucket at its reserve never refuses an org’s kill switch of the full cost (it was a 503 when one call needed more than the share)', async () => {
-    const now = freshNow();
-    const [x, y, killer, second, third] = await newOrgs(5);
-    // The shared path alone (no slice). Two orgs take the bucket to exactly its reserve (60 → 22, none of it from the
-    // reserve); ordinary calls are then refused.
-    for (const org of [x!, y!]) expect(await obj().platformAdmit({ org, cost: 19, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
-    expect(await obj().platformAdmit({ org: x!, cost: 1, limits: NO_SLICE }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
-    // A kill switch of cost 11 takes all of it from the reserve: admitted.
-    expect(await obj().platformAdmit({ org: killer!, cost: 11, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: true, reserveUsed: 11 });
-    // That org's share is spent for the minute; another org's kill switch still finds the rest of the reserve.
-    expect(await obj().platformAdmit({ org: killer!, cost: 11, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: false, limit: 'budget_reserve' });
-    expect(await obj().platformAdmit({ org: second!, cost: 11, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: true, reserveUsed: 11 });
-    // Empty now: a third waits for the refill (a second), not an hour.
-    expect(await obj().platformAdmit({ org: third!, cost: 11, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: false, limit: 'budget_platform', retryAfterS: 2 });
-    expect(await obj().platformAdmit({ org: third!, cost: 11, killSwitch: true, limits: NO_SLICE }, now + 1100)).toMatchObject({ ok: true });
-  });
-
-  // After PR 161's reviews, M1 and the review of its fix: the reviewer's scenario. The victim org tries a kill switch of
-  // cost 11 every 100 ms for 5 simulated minutes while its neighbours either keep the shared bucket busy (an ordinary
-  // call of cost 5 each every 100 ms, far past the bucket's 10 a second) or spam kill switches as hard as their own
-  // limits allow (one every 100 ms each, half of them no-ops settled as such). With a first-come share an org got about
-  // one a minute; its own slice gives it at least 10 every minute, the same with any neighbours.
-  type Neighbours = 'none' | 'busy' | 'killing';
-  async function victimRun(kind: Neighbours, count: number): Promise<{ perMinute: number[]; fromSlice: number }> {
-    const t0 = freshNow() + 30 * MIN;
-    const [victim, ...others] = await newOrgs(count + 1);
-    const perMinute = Array<number>(5).fill(0);
-    let fromSlice = 0;
-    for (let tick = 0; tick < 5 * 600; tick++) {
-      const t = t0 + tick * 100;
-      for (const [i, org] of others.entries()) {
-        if (kind === 'busy') await obj().platformAdmit({ org, cost: 5, limits: PLATFORM_LIMITS }, t);
-        else if (kind === 'killing') {
-          const r = await obj().platformAdmit({ org, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, t);
-          if (r.ok && (tick + i) % 2 === 0) await obj().platformSettle({ org, at: t, breaker: false, reserveUsed: r.reserveUsed, sliceUsed: r.sliceUsed ?? 0, ran: 3, limits: PLATFORM_LIMITS }, t);
-        }
-      }
-      const v = await obj().platformAdmit({ org: victim!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, t + 50);
-      if (v.ok) {
-        perMinute[Math.floor(tick / 600)]!++;
-        if ((v.sliceUsed ?? 0) > 0) fromSlice++;
-      }
-    }
-    return { perMinute, fromSlice };
-  }
-
-  it('M1: an org’s kill switches never depend on other orgs: at least 10 every minute with 2 or 5 neighbours keeping the bucket busy, or 5 spamming kill switches and no-ops; its slice’s share exactly the same as alone', async () => {
-    const alone = await victimRun('none', 0);
-    for (const [kind, count] of [['busy', 2], ['busy', 5], ['killing', 5]] as const) {
-      const r = await victimRun(kind, count);
-      for (const n of r.perMinute) expect(n, `${kind} ${count}`).toBeGreaterThanOrEqual(10);
-      // The slice is the org's alone: at least as many came from it as with no neighbours at all (alone it also took
-      // more from the idle shared bucket, which its own org bucket then paid for).
-      expect(r.fromSlice, `${kind} ${count}`).toBeGreaterThanOrEqual(alone.fromSlice);
-      expect(r.fromSlice, `${kind} ${count}`).toBeGreaterThanOrEqual(5 * Math.floor((60 * PLATFORM_LIMITS.killSlice.ratePerS) / 11));
-      // 60 suspensions in under 10 minutes.
-      expect(r.perMinute.reduce((a, b) => a + b, 0), `${kind} ${count}`).toBeGreaterThanOrEqual(60);
-    }
-    for (const n of alone.perMinute) expect(n).toBeGreaterThanOrEqual(10);
-  }, 240_000);
-
-  it('slice-path kill switches still count on the platform’s bucket: 6 orgs spending their slices at once each get their guaranteed rate, a 7th org too, the total stays within 660 + 194 × N in a first minute and 600 + 150 × N after, ordinary calls wait and recover within (44 × N + 35) / 10 s', async () => {
-    const t0 = freshNow() + 20 * HOUR;
-    const orgs = await newOrgs(6);
-    const [late, ordinary] = await newOrgs(2);
-    const N = orgs.length + 1; // the 7th joins in the second minute
-    const perOrgMinute = new Map<string, number[]>();
-    const costPerMinute = [0, 0];
-    let ordinaryDuring = [0, 0];
-    for (let tick = 0; tick < 2 * 600; tick++) {
-      const t = t0 + tick * 100;
-      const minute = Math.floor(tick / 600);
-      for (const org of tick >= 600 ? [...orgs, late!] : orgs) {
-        const r = await obj().platformAdmit({ org, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, t);
-        if (r.ok) {
-          costPerMinute[minute]! += 11;
-          if ((r.sliceUsed ?? 0) > 0) {
-            const m = perOrgMinute.get(org) ?? [0, 0];
-            m[minute]!++;
-            perOrgMinute.set(org, m);
-          }
-        }
-      }
-      if ((await obj().platformAdmit({ org: ordinary!, cost: 5, limits: PLATFORM_LIMITS }, t + 50)).ok) {
-        costPerMinute[minute]! += 5;
-        ordinaryDuring[minute]!++;
-      }
-    }
-    // Every org at its guaranteed rate from its own slice (the 7th from its first minute, the bucket deep below zero).
-    for (const org of orgs) {
-      expect(perOrgMinute.get(org)![0], 'first minute').toBeGreaterThanOrEqual(Math.floor((44 + 60 * 2.5) / 11));
-      expect(perOrgMinute.get(org)![1], 'second minute').toBeGreaterThanOrEqual(Math.floor((60 * 2.5) / 11));
-    }
-    expect(perOrgMinute.get(late!)![1]).toBeGreaterThanOrEqual(Math.floor((44 + 60 * 2.5) / 11));
-    // Everything admitted stays within the stated bound: the shared bucket's 60 and 600 a minute, plus each org's slice,
-    // 44 and 150 a minute: 660 + 194 × N in a first minute, 600 + 150 × N after.
-    expect(costPerMinute[0]).toBeLessThanOrEqual(660 + 194 * orgs.length);
-    expect(costPerMinute[1]).toBeLessThanOrEqual(600 + 150 * N);
-    // Ordinary calls waited while the slices were spent (the bucket at its floor) ...
-    expect(ordinaryDuring[1]).toBeLessThanOrEqual(5);
-    // ... and recover within (44 × N + 22 + 13) / 10 s once they stop.
-    const stop = t0 + 2 * 600 * 100;
-    let recovered: number | null = null;
-    for (let tick = 0; tick < 600 && recovered === null; tick++) {
-      const t = stop + tick * 100;
-      if ((await obj().platformAdmit({ org: ordinary!, cost: 5, limits: PLATFORM_LIMITS }, t)).ok) recovered = t;
-    }
-    expect(recovered).not.toBeNull();
-    expect(recovered! - stop).toBeLessThanOrEqual(((44 * N + 22 + 13) / 10) * 1000);
-    ordinaryDuring = [0, 0];
-  }, 240_000);
-
-  it('a no-op on the slice path gives the slice and the platform’s bucket back the same unused part, never more than charged; once', async () => {
-    const now = freshNow() + 25 * HOUR;
-    const [org, probe] = await newOrgs(2);
-    // A roomy org bucket, so only the slice and the platform's bucket decide.
-    const ROOMY = { ...PLATFORM_LIMITS, perOrg: { ratePerS: 8, burst: 100, reserve: 10 } };
-    const r = await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: ROOMY }, now);
-    expect(r).toMatchObject({ ok: true, sliceUsed: 11 });
-    const settle = () => obj().platformSettle({ org: org!, at: now, breaker: false, reserveUsed: 0, sliceUsed: 11, ran: 3, limits: ROOMY }, now);
-    await settle();
-    await settle();
-    // The platform's bucket: 60 − 11 + 8 = 57. An ordinary call may take it to its reserve of 22: 35, not 36.
-    expect(await obj().platformAdmit({ org: probe!, cost: 36, limits: ROOMY }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
-    // The slice: 44 − 11 + 8 = 41: three more of 11 now (33), not four.
-    for (let i = 0; i < 3; i++) expect(await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: ROOMY }, now)).toMatchObject({ ok: true, sliceUsed: 11 });
-    expect(((await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: ROOMY }, now)) as { sliceUsed?: number }).sliceUsed).toBeUndefined();
-  });
-
-  it('a slice entry without its recorded charge (`g`) refunds nothing to the platform’s bucket', async () => {
-    const now = freshNow() + 30 * HOUR;
-    const [org] = await newOrgs(1);
-    const r = await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now);
-    expect(r).toMatchObject({ ok: true, sliceUsed: 11 });
-    type Entry = { at: number; n: number; g?: number };
-    const takenKey = `platform:kill:org:${org!}:taken`;
-    const before = await runInDurableObject(obj(), (_i, state) => {
-      const kv = state.storage.kv;
-      const list = kv.get<Entry[]>(takenKey)!;
-      expect(list.at(-1)).toMatchObject({ at: now, n: 11, g: 11 });
-      kv.put(takenKey, list.map((e) => (e.at === now ? { at: e.at, n: e.n } : e)));
-      return kv.get('platform:bucket');
-    });
-    await obj().platformSettle({ org: org!, at: now, breaker: false, reserveUsed: 0, sliceUsed: 11, ran: 3, limits: PLATFORM_LIMITS }, now);
-    expect(await runInDurableObject(obj(), (_i, state) => state.storage.kv.get('platform:bucket'))).toEqual(before);
-  });
-
-  it('no admit and settle sequence mints tokens: the platform’s bucket never exceeds its start, plus its refill, less what was charged, plus at most what each settle may give back once', async () => {
-    type Entry = { at: number; n: number; g?: number };
-    for (const seed0 of [1, 7, 935, 4242, 31337]) {
-      let seed = seed0;
-      const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
-      const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)]!;
-      const stub = env.RATE_LIMITER.get(env.RATE_LIMITER.idFromName(`platform-mint-property-${seed0}-${Date.now()}`));
-      const orgs = ['org_a', 'org_b', 'org_c', 'org_d'];
-      const L = PLATFORM_LIMITS;
-      let t = freshNow();
-      const t0 = t;
-      const start = L.platform.burst;
-      let charged = 0;
-      let mayReturn = 0;
-      const pending: { org: string; at: number; reserveUsed: number; sliceUsed: number; g: number; settled: boolean }[] = [];
-      const bucketAt = async (at: number) =>
-        runInDurableObject(stub, (_i, state) => {
-          const st = state.storage.kv.get<{ tokens: number; at: number }>('platform:bucket');
-          return st ? Math.min(L.platform.burst, st.tokens + (Math.max(0, at - st.at) / 1000) * L.platform.ratePerS) : L.platform.burst;
-        });
-      for (let step = 0; step < 400; step++) {
-        // Small steps, so the bucket stays below its burst and a minted token would show.
-        t += Math.floor(rand() * 120);
-        const op = rand();
-        const org = pick(orgs);
-        if (op < 0.3) {
-          const cost = 1 + Math.floor(rand() * 13);
-          if ((await stub.platformAdmit({ org, cost, limits: L }, t)).ok) charged += cost;
-        } else if (op < 0.7) {
-          const cost = 5 + Math.floor(rand() * 7);
-          const r = await stub.platformAdmit({ org, cost, killSwitch: true, limits: L }, t);
-          if (!r.ok) continue;
-          // `real`: what the bucket was really charged; `g`: what the entry says (0 once stripped), all a settle may return.
-          let g = cost;
-          let real = cost;
-          if ((r.sliceUsed ?? 0) > 0) {
-            g = real = await runInDurableObject(stub, (_i, state) => state.storage.kv.get<Entry[]>(`platform:kill:org:${org}:taken`)!.find((e) => e.at === t && e.n === cost)!.g!);
-            // Sometimes the entry loses its `g`, as an entry from before the field would have none.
-            if (rand() < 0.4) {
-              await runInDurableObject(stub, (_i, state) => {
-                const key = `platform:kill:org:${org}:taken`;
-                state.storage.kv.put(key, state.storage.kv.get<Entry[]>(key)!.map((e) => (e.at === t && e.n === cost ? { at: e.at, n: e.n } : e)));
-              });
-              g = 0;
-            }
-          }
-          charged += real;
-          pending.push({ org, at: t, reserveUsed: r.reserveUsed, sliceUsed: r.sliceUsed ?? 0, g, settled: false });
-        } else if (pending.length > 0) {
-          const p = pick(pending);
-          const ran = Math.floor(rand() * 13);
-          await stub.platformSettle({ org: p.org, at: p.at, breaker: false, reserveUsed: p.reserveUsed, sliceUsed: p.sliceUsed, ran, limits: L }, t);
-          if (!p.settled) {
-            // The most a first settle may give the bucket back: the unused part, never more than it was charged.
-            const n = p.sliceUsed > 0 ? p.sliceUsed : p.reserveUsed;
-            const back = n - Math.min(n, ran);
-            mayReturn += p.sliceUsed > 0 ? Math.max(0, back - (p.sliceUsed - p.g)) : back;
-            p.settled = true;
-          }
-        }
-        const bound = start + ((t - t0) / 1000) * L.platform.ratePerS - charged + mayReturn;
-        expect(await bucketAt(t), `seed ${seed0} step ${step}`).toBeLessThanOrEqual(bound + 1e-6);
-      }
-    }
-  }, 120_000);
-
-  it('L1: `breaker_global`’s retry-after is when the call would pass: the global count falling below 30 (floor calls take the list past it) or the org’s below its floor', async () => {
-    const t0 = freshNow();
-    const [a, b, c, d, e, f] = await newOrgs(6);
-    let t = t0;
-    for (const org of [a!, b!, c!]) for (let i = 0; i < 10; i++) expect((await removal(org, (t += 4000))).ok).toBe(true);
-    for (let i = 0; i < 5; i++) expect((await removal(d!, (t += 4000))).ok).toBe(true);
-    const refused = await removal(d!, (t += 4000));
-    expect(refused).toMatchObject({ ok: false, limit: 'breaker_global' });
-    const at = t + (refused as { retryAfterS: number }).retryAfterS * 1000;
-    // The 6th oldest of the 35 slides out first (the old answer, the oldest's, was refused again for about 20 s).
-    expect(at).toBe(t0 + 6 * 4000 + HOUR + Math.ceil((t0 + 6 * 4000 + HOUR - t) / 1000) * 1000 - (t0 + 6 * 4000 + HOUR - t));
-    expect((await removal(d!, at - 1000)).ok).toBe(false);
-    expect(await removal(d!, at)).toMatchObject({ ok: true });
-    // The other case: the org's own floor frees first. e uses its 5 early; later a and b their 10, c and f their floor of
-    // 5: 35 on the global list, whose 30th newest slides out well after e's oldest.
-    const u0 = at + 2 * HOUR;
-    for (let i = 0; i < 5; i++) expect((await removal(e!, u0 + 1000 * i)).ok).toBe(true);
-    let u = u0 + 20 * MIN;
-    for (const [org, n] of [[a!, 10], [b!, 10], [c!, 5], [f!, 5]] as const) for (let i = 0; i < n; i++) expect((await removal(org, (u += 4000))).ok).toBe(true);
-    const r2 = await removal(e!, (u += 4000));
-    expect(r2).toMatchObject({ ok: false, limit: 'breaker_global' });
-    const at2 = u + (r2 as { retryAfterS: number }).retryAfterS * 1000;
-    expect(at2).toBeLessThan(u0 + HOUR + 1000 + 1000);
-    expect(await removal(e!, at2)).toMatchObject({ ok: true });
-  });
-
-  it('L2: a no-op gets back only what it didn’t run, and what stays spent still counts against the org’s share; once only', async () => {
-    // Past every time the tests above used on the shared object (its bucket refills only forwards in time).
-    const now = freshNow() + 10 * HOUR;
-    const [x, y, org, other] = await newOrgs(4);
-    for (const o of [x!, y!]) expect(await obj().platformAdmit({ org: o, cost: 19, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
-    const kill = await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: NO_SLICE }, now);
-    expect(kill).toMatchObject({ ok: true, reserveUsed: 11 });
-    // It ran 3 statements and changed nothing: 8 go back, 3 stay spent (11 tokens left of the 22, not 22) ...
-    const settle = () => obj().platformSettle({ org: org!, at: now, breaker: false, reserveUsed: 11, ran: 3, limits: NO_SLICE }, now);
-    await settle();
-    await settle(); // ... once.
-    // The 3 still count against the org's share: its next dip of 11 is over the 11 a minute (it went through before
-    // the fix, the share entry deleted).
-    expect(await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: false, limit: 'budget_reserve' });
-    const third = (await newOrgs(1))[0]!;
-    expect(await obj().platformAdmit({ org: other!, cost: 11, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: true, reserveUsed: 11 });
-    expect(await obj().platformAdmit({ org: third, cost: 9, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
-    expect(await obj().platformAdmit({ org: third, cost: 8, killSwitch: true, limits: NO_SLICE }, now)).toMatchObject({ ok: true });
-  });
-
-  it('no-op kill switches from an org’s slice: refunded less what they ran for 20 a minute, then not at all; another org untouched; the spammer’s statements bounded', async () => {
-    const now = freshNow() + 12 * HOUR;
-    const [spammer, victim] = await newOrgs(2);
-    const victimAlone = async (start: number) => {
-      let n = 0;
-      for (let i = 0; i < 600; i++) if (((await obj().platformAdmit({ org: victim!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, start + i * 100)) as { sliceUsed?: number }).sliceUsed) n++;
-      return n;
-    };
-    // The victim alone over a minute, then with the spammer sending a no-op kill switch every 100 ms.
-    const alone = await victimAlone(now);
-    const later = now + 2 * HOUR;
-    let victimWith = 0;
-    let spammerAdmitted = 0;
-    let fromSlice = 0;
-    for (let i = 0; i < 600; i++) {
-      const t = later + i * 100;
-      const r = await obj().platformAdmit({ org: spammer!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, t);
-      if (r.ok) {
-        spammerAdmitted++;
-        if ((r.sliceUsed ?? 0) > 0) fromSlice++;
-        await obj().platformSettle({ org: spammer!, at: t, breaker: false, reserveUsed: r.reserveUsed, sliceUsed: r.sliceUsed ?? 0, ran: 3, limits: PLATFORM_LIMITS }, t);
-      }
-      if (((await obj().platformAdmit({ org: victim!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, t + 50)) as { sliceUsed?: number }).sliceUsed) victimWith++;
-    }
-    // What the victim's own slice gave it is never less with the spammer next door (at least 13 a minute).
-    expect(victimWith).toBeGreaterThanOrEqual(alone);
-    expect(victimWith).toBeGreaterThanOrEqual(Math.floor((60 * PLATFORM_LIMITS.killSlice.ratePerS) / 11));
-    // The spammer: every admission paid its 11 from its own bucket (40 at once, 8 a second): at most 47 in the minute,
-    // so at most 47 × 3 statements run; its slice gave back 8 each for only the first 20 no-ops.
-    expect(spammerAdmitted).toBeLessThanOrEqual(Math.floor((40 + 60 * 8) / 11));
-    expect(spammerAdmitted * 3).toBeLessThanOrEqual(141);
-    expect(fromSlice).toBeLessThanOrEqual(Math.floor((44 + 60 * 2.5 + 20 * 8) / 11) + 1);
-  }, 120_000);
-
-  it('a key past its ordinary windows: kill switches counted on their own reserve, exactly 10 of 15 at once; anything else still refused', async () => {
-    const k = await seedKey();
-    const now = freshNow();
-    const kobj = placedStub(env, env.RATE_LIMITER, `platform:key:${k.id}`);
-    expect(await kobj.hit([{ ...PLATFORM_WINDOWS.key[1], max: Number.MAX_SAFE_INTEGER }], now, PLATFORM_REQUEST_LIMITS.perKeyPerDay)).toMatchObject({ ok: true });
-    const out = await Promise.all(Array.from({ length: 15 }, (_, i) => kobj.hitMark([...PLATFORM_WINDOWS.key], `last-used@test-${i}`, now + HOUR, now + i, [...PLATFORM_WINDOWS.killReserve])));
-    expect(out.filter((r) => r.ok && r.reserve === true)).toHaveLength(10);
-    expect(out.filter((r) => !r.ok).map((r) => (r as { limit: string }).limit)).toEqual(Array(5).fill('kill:minute'));
-    expect(await kobj.hitMark([...PLATFORM_WINDOWS.key], 'last-used@test-x', now + HOUR, now + 100)).toMatchObject({ ok: false, limit: 'req:day' });
-    // The ordinary windows weren't touched by the reserve's calls: giving back one reserve call frees a reserve slot only.
-    await kobj.unhit([...PLATFORM_WINDOWS.killReserve], now);
-    expect(await kobj.hitMark([...PLATFORM_WINDOWS.key], 'last-used@test-y', now + HOUR, now + 200, [...PLATFORM_WINDOWS.killReserve])).toMatchObject({ ok: true, reserve: true });
   });
 });

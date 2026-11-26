@@ -326,9 +326,10 @@ async function takeQuota(c: OpContext, limits: Limit[], n: number, what: string)
     );
     throw new PlatformRefusal('rate_limited', `Your organisation has reached its limit of ${what}: try again later`, { limit, retryAfterS: r.retryAfterS }, { 'retry-after': String(r.retryAfterS) });
   }
+  const at = c.now;
   return async () => {
     try {
-      await obj.unhit(limits, c.now, n);
+      await obj.unhit(limits, at, n);
     } catch {
       // A window not given back counts one write too many against the org's own quota, never someone else's.
     }

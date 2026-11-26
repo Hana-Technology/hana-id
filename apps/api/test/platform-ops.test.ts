@@ -656,10 +656,11 @@ describe('POST /v1/platform/apps/:appId/origins and …/origins/remove', () => {
 
   it('proposal windows count web addresses: 20 an hour (one full app’s worth), 30 a UTC day; a refused proposal doesn’t count', async () => {
     const net = await network();
-    let base = freshNow();
-    base = Math.ceil(base / DAY) * DAY + HOUR + 1000;
     const a = await createdApp(net, [], {});
     const b = await createdApp(net, [], { scope: net.s2 });
+    // After the setup's own requests (D935: the limiter's objects never go back in time).
+    let base = freshNow();
+    base = Math.ceil(base / DAY) * DAY + HOUR + 1000;
     let va = a.version;
     let vb = b.version;
     const add = async (app: string, v: number, k: number, from: number, now: number) => post(net.k, `/v1/platform/apps/${app}/origins`, { add: Array.from({ length: k }, (_, i) => `https://p${from + i}.example`), expectedVersion: v }, { now });
@@ -971,35 +972,37 @@ describe('the platform’s breaker and reserve for its kill switches', () => {
     const remove = (app: string, at: number, expectedVersion = 0) => post(net.k, `/v1/platform/apps/${app}/origins/remove`, { remove: ['https://live.example'], expectedVersion }, { now: at });
     // A removal at a stale version changed nothing: its slot comes back.
     expect((await remove(apps[0]!, now, 7)).status).toBe(409);
-    for (let i = 0; i < 10; i++) expect((await remove(apps[i]!, now + 3000 * (i + 1))).status, String(i)).toBe(200);
-    const over = await remove(apps[10]!, now + 40_000);
+    // 5 s apart: the org's kill bucket (2.5 a second) refills a removal's 11 between them.
+    for (let i = 0; i < 10; i++) expect((await remove(apps[i]!, now + 5000 * (i + 1))).status, String(i)).toBe(200);
+    const over = await remove(apps[10]!, now + 60_000);
     expect([over.status, over.body.limit]).toEqual([429, 'platform:breaker_org']);
     expect(await rows('SELECT origin FROM app_origins WHERE app_id = ?1', apps[10]!)).toHaveLength(1);
     // D935: with the org's breaker full, suspending and revoking a publishable key still go through.
-    expect((await post(net.k, `/v1/platform/apps/${apps[10]!}/suspend`, { suspended: true }, { now: now + 43_000 })).status).toBe(200);
+    expect((await post(net.k, `/v1/platform/apps/${apps[10]!}/suspend`, { suspended: true }, { now: now + 65_000 })).status).toBe(200);
     const keyId = (await one<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', apps[9]!)).id;
-    expect((await post(net.k, `/v1/platform/apps/${apps[9]!}/keys/${keyId}/revoke`, {}, { now: now + 46_000 })).status).toBe(200);
+    expect((await post(net.k, `/v1/platform/apps/${apps[9]!}/keys/${keyId}/revoke`, {}, { now: now + 70_000 })).status).toBe(200);
     // A resume isn't counted either.
-    expect((await post(net.k, `/v1/platform/apps/${apps[10]!}/suspend`, { suspended: false }, { now: now + 49_000 })).status).toBe(200);
+    expect((await post(net.k, `/v1/platform/apps/${apps[10]!}/suspend`, { suspended: false }, { now: now + 75_000 })).status).toBe(200);
   });
 
-  it('a kill switch spends the platform’s reserve when ordinary calls have emptied the org’s bucket, never the console’s', async () => {
+  it('D935: a kill switch has its own budget: ordinary calls that emptied the org’s bucket don’t refuse it, and it never touches the console’s', async () => {
     const net = await network();
     const a = await createdApp(net);
     const now = freshNow();
-    // 40 tokens, 10 kept for kill switches: GETs of cost 5 until the org's bucket refuses.
+    // 40 tokens, no reserve: GETs of cost 5 until the org's ordinary bucket refuses.
     let refused: Record<string, unknown> | null = null;
     for (let i = 0; i < 10 && !refused; i++) {
       const r = await get(net.k, `/v1/platform/apps/${a.id}`, { now });
       if (r.status === 429) refused = r.body;
     }
-    expect(refused).toMatchObject({ limit: 'platform:budget_org' });
-    expect((await post(net.k, `/v1/platform/apps/${a.id}/keys`, {}, { now })).body.limit).toBe('platform:budget_org');
+    // The org's bucket or the console's shared one (an ordinary platform call leaves the console 30 of its 60), whichever is short first.
+    expect(String(refused!.limit)).toMatch(/^platform:budget_(org|shared)$/u);
+    expect(String((await post(net.k, `/v1/platform/apps/${a.id}/keys`, {}, { now })).body.limit)).toMatch(/^platform:budget_(org|shared)$/u);
     const kill = await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now });
     expect(kill.status).toBe(200);
     // The console's own budget for this org is untouched: a member's call is admitted at the same moment.
     await expect(admitMemberCall(env, { org: net.org, cost: 5 }, now)).resolves.toMatchObject({ reserveUsed: 0 });
-    expect(PLATFORM_LIMITS.perOrg.reserve).toBe(10);
+    expect(PLATFORM_LIMITS.perOrg).toEqual({ ratePerS: 8, burst: 40 });
   });
 
   it('D935: three orgs filling the global breaker: a fourth org’s removals pass up to its floor of 5 and are refused above it; its suspensions, key revocations and cancels all still pass', async () => {
@@ -1033,9 +1036,9 @@ describe('the platform’s breaker and reserve for its kill switches', () => {
 
   it('D935: suspensions are held to 60 an org a clock hour; one that changes nothing costs nothing, even when the hour is full; another org untouched', async () => {
     const net = await network();
-    const now = freshNow();
     const a = await createdApp(net);
     const b = await createdApp(net);
+    const now = freshNow();
     const quotas = placedStub(env, env.RATE_LIMITER, `platform:${net.org}`);
     expect(SUSPENSION_WINDOWS).toEqual([{ name: 'suspensions:hour', windowMs: HOUR, max: 60 }]);
     expect(await quotas.hit(SUSPENSION_WINDOWS, now, 59)).toMatchObject({ ok: true });
@@ -1059,8 +1062,8 @@ describe('the platform’s breaker and reserve for its kill switches', () => {
 
   it('D935 after PR 161’s review: publishable key revocations have their own 20 an org a clock hour (not reversible); no-ops never count, even when full; suspending still works', async () => {
     const net = await network();
-    const now = freshNow();
     const a = await createdApp(net);
+    const now = freshNow();
     const quotas = placedStub(env, env.RATE_LIMITER, `platform:${net.org}`);
     expect(KEY_REVOKE_WINDOWS).toEqual([{ name: 'key-revokes:hour', windowMs: HOUR, max: 20 }]);
     expect(PLATFORM_OPS_LIMITS.keyRevokesPerHour).toBe(20);
@@ -1089,19 +1092,20 @@ describe('the platform’s breaker and reserve for its kill switches', () => {
     const net = await network();
     const now = freshNow();
     const apps: string[] = [];
-    for (let i = 0; i < 5; i++) apps.push((await bareApp(net.org, net.s1)).id);
+    // Four at once: the org's kill bucket holds four kill switches (44), so only the quota decides.
+    for (let i = 0; i < 4; i++) apps.push((await bareApp(net.org, net.s1)).id);
     const quotas = placedStub(env, env.RATE_LIMITER, `platform:${net.org}`);
     expect(await quotas.hit(SUSPENSION_WINDOWS, now, 58)).toMatchObject({ ok: true });
     expect(await quotas.hit(KEY_REVOKE_WINDOWS, now, 18)).toMatchObject({ ok: true });
-    // Spaced 2 s apart in their timestamps so the buckets aren't what refuses; sent at once.
-    const out = await Promise.all(apps.map((id, i) => post(net.k, `/v1/platform/apps/${id}/suspend`, { suspended: true }, { now: now + 2000 * i })));
+    const out = await Promise.all(apps.map((id) => post(net.k, `/v1/platform/apps/${id}/suspend`, { suspended: true }, { now })));
     expect(out.filter((r) => r.status === 200)).toHaveLength(2);
-    expect(out.filter((r) => r.status !== 200).map((r) => r.body.limit)).toEqual(['platform:suspensions:hour', 'platform:suspensions:hour', 'platform:suspensions:hour']);
+    expect(out.filter((r) => r.status !== 200).map((r) => r.body.limit)).toEqual(['platform:suspensions:hour', 'platform:suspensions:hour']);
     expect((await one<{ n: number }>('SELECT COUNT(*) AS n FROM apps WHERE org_id = ?1 AND suspended_by = 4', net.org)).n).toBe(2);
     const keyIds = await Promise.all(apps.map(async (id) => (await one<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', id)).id));
-    const revokes = await Promise.all(apps.map((id, i) => post(net.k, `/v1/platform/apps/${id}/keys/${keyIds[i]!}/revoke`, {}, { now: now + 12_000 + 2000 * i })));
+    // 20 s later: the kill bucket full again.
+    const revokes = await Promise.all(apps.map((id, i) => post(net.k, `/v1/platform/apps/${id}/keys/${keyIds[i]!}/revoke`, {}, { now: now + 20_000 })));
     expect(revokes.filter((r) => r.status === 200)).toHaveLength(2);
-    expect(revokes.filter((r) => r.status !== 200).map((r) => r.body.limit)).toEqual(['platform:key-revokes:hour', 'platform:key-revokes:hour', 'platform:key-revokes:hour']);
+    expect(revokes.filter((r) => r.status !== 200).map((r) => r.body.limit)).toEqual(['platform:key-revokes:hour', 'platform:key-revokes:hour']);
   });
 
   it('D935: a key past its 2 000 a day still revokes a publishable key within its kill reserve (10 a minute, 100 a day), and is refused beyond it; ordinary calls stay refused', async () => {
@@ -1117,8 +1121,9 @@ describe('the platform’s breaker and reserve for its kill switches', () => {
     const k2 = await seedKey({ org: net.site, scopes: [net.s1, net.s2] });
     const extra = (await post(k2, `/v1/platform/apps/${a.id}/keys`, {}, { now: now + 1000 })).body.key as { id: string };
     expect((await post(net.k, `/v1/platform/apps/${a.id}/keys/${extra.id}/revoke`, {}, { now: now + 2000 })).status).toBe(200);
-    for (let i = 1; i < 10; i++) expect((await post(net.k, '/v1/platform/changes/gc_none/cancel', {}, { now: now + 2000 + 2000 * i })).status, String(i)).toBe(404);
-    const past = await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 25_000 });
+    // 5 s apart: the org's kill bucket (2.5 a second) refills each one's 11.
+    for (let i = 1; i < 10; i++) expect((await post(net.k, '/v1/platform/changes/gc_none/cancel', {}, { now: now + 2000 + 5000 * i })).status, String(i)).toBe(404);
+    const past = await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 55_000 });
     expect([past.status, past.body.limit]).toEqual([429, 'platform:key:kill:minute']);
     // The next minute it works again, until the day's 100.
     expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 61_000 })).status).toBe(200);
@@ -1203,11 +1208,17 @@ describe('each route within its D1 cost (statements and rows read)', () => {
     cases.push({ route: byPath('/v1/platform/apps/:appId/keys', 'POST'), path: `/v1/platform/apps/${s.app}/keys`, body: {}, rows: 0 });
     cases.push({ route: byPath('/v1/platform/apps/:appId/keys/:keyId/revoke', 'POST'), path: `/v1/platform/apps/${s.app}/keys/${s.key}/revoke`, body: {}, rows: 0 });
     const measured: Record<string, number[]> = {};
-    for (const c of cases) {
+    const base = freshNow();
+    for (const [i, c] of cases.entries()) {
       const acc = { statements: 0, rowsRead: 0 };
       const count: DbCount = { reads: 0, batches: 0, statements: 0 };
+      // 10 s apart (every budget refilled), each after a read of the key that loads the announced keys' list at the same
+      // moment (D935: the test clock moves on with each request, so the list, cached 30 s, would otherwise be read in
+      // every measured call; how often it is read is the route's cost, pinned above, not its rows).
+      const now = base + 10_000 * i;
+      await get(net.k, '/v1/platform/credential', { now });
       // Both wrappers: statements by the HotDb's own shape, rows by D1's report.
-      const r = c.route.method === 'GET' ? await get(net.k, c.path, { bindings: { DB: rowsDb(acc) } }) : await post(net.k, c.path, c.body, { bindings: { DB: rowsDb(acc) } });
+      const r = c.route.method === 'GET' ? await get(net.k, c.path, { now, bindings: { DB: rowsDb(acc) } }) : await post(net.k, c.path, c.body, { now, bindings: { DB: rowsDb(acc) } });
       expect(r.status, `${c.route.path} ${JSON.stringify(r.body)}`).toBeLessThan(300);
       expect(acc.statements, c.route.path).toBeLessThanOrEqual(c.route.cost);
       void count;
@@ -1396,13 +1407,18 @@ describe('after PR 157’s review', () => {
     const a = await createdApp(net);
     await revokedHistory(a.id);
     const acc = { statements: 0, rowsRead: 0 };
-    const view = await get(net.k, `/v1/platform/apps/${a.id}`, { bindings: { DB: rowsDb(acc) } });
+    // The announced keys' list loaded first at the same moment (D935: see the route-cost test).
+    const at = freshNow();
+    await get(net.k, '/v1/platform/credential', { now: at });
+    const view = await get(net.k, `/v1/platform/apps/${a.id}`, { now: at, bindings: { DB: rowsDb(acc) } });
     expect(view.status).toBe(200);
     expect((view.body.app as { keys: unknown[] }).keys).toHaveLength(20);
     expect(acc.rowsRead).toBeLessThanOrEqual(80);
     for (const [path, rowsMax] of [[`/v1/platform/apps/${a.id}/keys`, 60], [`/v1/platform/apps/${a.id}/keys/${a.keyId}/revoke`, 60]] as const) {
       const w = { statements: 0, rowsRead: 0, log: [] as string[] };
-      const r = await post(net.k, path, {}, { bindings: { DB: rowsDb(w) } });
+      const t = freshNow();
+      await get(net.k, '/v1/platform/credential', { now: t });
+      const r = await post(net.k, path, {}, { now: t, bindings: { DB: rowsDb(w) } });
       expect(r.status, path).toBeLessThan(300);
       expect(w.rowsRead, `${path} ${w.log.join('\n')}`).toBeLessThanOrEqual(rowsMax);
     }

@@ -106,7 +106,21 @@ export const PLATFORM_REQUEST_LIMITS = {
    * pass whatever the global count, so other orgs can't use up an org's kill switches.
    */
   breaker: { perOrgPerHour: 10, globalPerHour: 30, floorPerOrgPerHour: 5 },
+  /**
+   * D935 (after PR 161's second full review): each org's kill bucket, its kill switches' only budget: 2.5 statements a
+   * second, burst 44 (about 13 kill switches of the largest cost, 11, a minute; 4 at once). No-ops pay in full.
+   */
+  killBucket: { ratePerS: 2.5, burst: 44 },
+  /** Body bytes must all arrive within this many ms of the request (H1: a slow upload can't stale the clock). */
+  bodyDeadlineMs: 5000,
 } as const;
+
+/**
+ * D935: the most organisations with the platform switched on at once: the hard ceiling on the platform's load on the
+ * hot database (staff's switch-on refuses past it; the kill budget is backstopped at it). Raising it is a reviewed code
+ * change.
+ */
+export const MAX_PLATFORM_ORGS = 20;
 
 /** The error codes the platform API answers (stable; `docs/api.md` "Platform API"), with their HTTP status. */
 export const PLATFORM_ERROR_STATUS = {

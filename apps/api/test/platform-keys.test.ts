@@ -38,7 +38,7 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 let clock: ReturnType<typeof ownClock>;
 beforeEach(() => {
-  clock = ownClock({ freeze: true });
+  clock = ownClock({ freeze: true, monotone: true });
   clearJwksCache();
   clearViewCaches();
 });

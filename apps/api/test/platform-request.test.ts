@@ -763,6 +763,8 @@ describe('the platform’s destructive-call breaker is its own (M3)', () => {
     for (let i = 0; i < 10; i++) expect((await platformAdmit(orgs[0]!, now + i)).ok).toBe(true);
     expect(await platformAdmit(orgs[0]!, now + 10)).toMatchObject({ ok: false, limit: 'breaker_org', notify: true });
     for (let i = 0; i < 20; i++) expect((await platformAdmit(orgs[1 + (i % 2)]!, now + 20 + i)).ok).toBe(true);
+    // D935: a fourth org's first 5 pass the full global count (its floor); its 6th doesn't.
+    for (let i = 0; i < PLATFORM_LIMITS.breaker.floor; i++) expect((await platformAdmit(orgs[3]!, now + 45 + i)).ok).toBe(true);
     expect(await platformAdmit(orgs[3]!, now + 50)).toMatchObject({ ok: false, limit: 'breaker_global' });
     // The console's breaker for the same orgs: every destructive console call still admitted.
     for (const org of orgs) expect(await admitMemberCall(env, { org, cost: 5, killSwitch: true, breaker: true }, now + 60)).toMatchObject({ reserveUsed: expect.any(Number) });
@@ -771,7 +773,9 @@ describe('the platform’s destructive-call breaker is its own (M3)', () => {
     const later = now + 30 * MIN;
     for (let i = 0; i < 5; i++) await admitMemberCall(env, { org: fresh, cost: 1, killSwitch: true, breaker: true }, later + i);
     await expect(admitMemberCall(env, { org: fresh, cost: 1, killSwitch: true, breaker: true }, later + 6)).rejects.toMatchObject({ code: 'rate_limited' });
-    expect((await platformAdmit(fresh, later + 7)).ok).toBe(false); // the platform's global window is still full from the flood above
+    // The platform's global window is still full from the flood above: a fresh org gets its floor of 5 (D935), then no more ...
+    for (let i = 0; i < PLATFORM_LIMITS.breaker.floor; i++) expect((await platformAdmit(fresh, later + 7 + i)).ok).toBe(true);
+    expect((await platformAdmit(fresh, later + 20)).ok).toBe(false);
     expect((await platformAdmit(fresh, now + 2 * HOUR)).ok).toBe(true); // ... until it slides out, whatever the console's state
   });
 
@@ -1214,8 +1218,8 @@ describe('the second review', () => {
     const org = (await orgApp()).org;
     const now = freshNow();
     const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
-    // Take the platform's bucket down to its reserve (60 → 15, three kill switches of 15 from other orgs), then a kill switch that dips into it.
-    for (let i = 0; i < 3; i++) expect(await obj.platformAdmit({ org: (await orgApp()).org, cost: 15, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
+    // Take the platform's bucket down to its reserve (60 → 22, two kill switches of 19 from other orgs), then a kill switch that dips into it.
+    for (let i = 0; i < 2; i++) expect(await obj.platformAdmit({ org: (await orgApp()).org, cost: 19, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
     const kill = await obj.platformAdmit({ org, cost: 6, killSwitch: true, limits: PLATFORM_LIMITS }, now);
     expect(kill).toMatchObject({ ok: true, reserveUsed: expect.any(Number) });
     const used = (kill as { reserveUsed: number }).reserveUsed;
@@ -1290,5 +1294,105 @@ describe('the review of the second round', () => {
     // The console's reserve is all still there: a console kill switch of 12 (its org's share) goes through, an ordinary call still doesn't.
     await expect(admitMemberCall(env, { org: consoleOrg, cost: 1 }, now)).rejects.toMatchObject({ code: 'rate_limited' });
     expect(await admitMemberCall(env, { org: consoleOrg, cost: 12, killSwitch: true }, now)).toMatchObject({ reserveUsed: 12 });
+  });
+});
+
+// ---- D935: no org's kill switches blockable by other orgs, and a key past its windows can still stop things ----
+
+describe('D935: the breaker’s per-org floor, the kill switches’ share of the platform reserve, the per-key kill reserve', () => {
+  const obj = () => placedStub(env, env.RATE_LIMITER, 'console-rpc');
+  const removal = (org: string, now: number) => obj().platformAdmit({ org, cost: 11, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, now);
+  const newOrgs = (n: number) => Promise.all(Array.from({ length: n }, async () => (await orgApp()).org));
+
+  it('the numbers', () => {
+    expect(PLATFORM_LIMITS.breaker).toEqual({ windowMs: HOUR, perOrg: 10, global: 30, floor: 5 });
+    expect(PLATFORM_LIMITS.platform).toEqual({ ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 11 } });
+    expect(PLATFORM_WINDOWS.killReserve).toEqual([
+      { name: 'kill:minute', windowMs: MIN, max: 10 },
+      { name: 'kill:day', windowMs: 24 * HOUR, max: 100 },
+    ]);
+    // Every kill switch's whole cost fits one org's share of the platform's reserve, and the reserve holds two of them.
+    for (const r of PLATFORM_ROUTES.filter((x) => x.killSwitch || x.flags)) {
+      expect(r.cost, r.path).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.reserveShare.max);
+      expect(2 * r.cost, r.path).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.reserve);
+    }
+    // Only the web address removal is counted by the breaker.
+    expect(PLATFORM_ROUTES.filter((r) => r.breaker).map((r) => r.path)).toEqual(['/v1/platform/apps/:appId/origins/remove']);
+    expect(PLATFORM_ROUTES.find((r) => r.path === '/v1/platform/apps/:appId/suspend')!.flags!({ suspended: true })).toEqual({ killSwitch: true, allowFrozen: true });
+  });
+
+  it('three orgs filling the global breaker: a fourth org’s removals pass up to its floor and are refused above it; parallel calls at the floor and at the org’s edge', async () => {
+    const now = freshNow();
+    const [a, b, c, d, e, f] = await newOrgs(6);
+    // Spaced 4 s apart, so the platform's bucket is never what refuses.
+    let t = now;
+    for (const org of [a!, b!, c!]) for (let i = 0; i < 10; i++) expect((await removal(org, (t += 4000))).ok).toBe(true);
+    for (let i = 0; i < 5; i++) expect((await removal(d!, (t += 4000))).ok, `floor ${i}`).toBe(true);
+    expect(await removal(d!, (t += 4000))).toMatchObject({ ok: false, limit: 'breaker_global', notify: true });
+    // Eight at once from a fifth org, the global count full: exactly its floor of 5 pass.
+    t += 4000;
+    const burst = await Promise.all(Array.from({ length: 8 }, (_, i) => obj().platformAdmit({ org: e!, cost: 1, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, t + i)));
+    expect(burst.filter((r) => r.ok)).toHaveLength(5);
+    expect(burst.filter((r) => !r.ok).map((r) => (r as { limit: string }).limit)).toEqual(['breaker_global', 'breaker_global', 'breaker_global']);
+    // At the org's own edge (the global window slid out): 8 used, four at once, exactly 2 pass.
+    const later = t + 2 * HOUR;
+    for (let i = 0; i < 8; i++) expect((await removal(f!, later + 4000 * i)).ok).toBe(true);
+    const edge = await Promise.all(Array.from({ length: 4 }, (_, i) => obj().platformAdmit({ org: f!, cost: 1, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, later + 40_000 + i)));
+    expect(edge.filter((r) => r.ok)).toHaveLength(2);
+    expect(edge.filter((r) => !r.ok).map((r) => (r as { limit: string }).limit)).toEqual(['breaker_org', 'breaker_org']);
+  });
+
+  it('the worst case in any order: at most 10 an org and 5 × orgs + 30 in all; every org gets at least its floor', async () => {
+    const now = freshNow();
+    const orgs = await newOrgs(9);
+    // A fixed pseudo-random order of 15 attempts per org (more than either limit), all within one hour.
+    let seed = 935;
+    const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+    const attempts = orgs.flatMap((o) => Array<string>(15).fill(o));
+    for (let i = attempts.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [attempts[i], attempts[j]] = [attempts[j]!, attempts[i]!];
+    }
+    const admitted = new Map<string, number>();
+    for (const [i, org] of attempts.entries()) {
+      const r = await obj().platformAdmit({ org, cost: 1, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, now + 2000 * i);
+      if (r.ok) admitted.set(org, (admitted.get(org) ?? 0) + 1);
+    }
+    const total = [...admitted.values()].reduce((x, y) => x + y, 0);
+    expect(total).toBeLessThanOrEqual(5 * orgs.length + 30);
+    for (const o of orgs) {
+      expect(admitted.get(o) ?? 0).toBeGreaterThanOrEqual(5);
+      expect(admitted.get(o) ?? 0).toBeLessThanOrEqual(10);
+    }
+  });
+
+  it('other orgs holding the platform’s bucket at its reserve never refuse an org’s kill switch of the full cost (it was a 503 when one call needed more than the share)', async () => {
+    const now = freshNow();
+    const [x, y, killer, second, third] = await newOrgs(5);
+    // Two orgs take the bucket to exactly its reserve (60 → 22, none of it from the reserve); ordinary calls are then refused.
+    for (const org of [x!, y!]) expect(await obj().platformAdmit({ org, cost: 19, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
+    expect(await obj().platformAdmit({ org: x!, cost: 1, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
+    // A kill switch of cost 11 takes all of it from the reserve: admitted.
+    expect(await obj().platformAdmit({ org: killer!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 11 });
+    // That org's share is spent for the minute; another org's kill switch still finds the rest of the reserve.
+    expect(await obj().platformAdmit({ org: killer!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_reserve' });
+    expect(await obj().platformAdmit({ org: second!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 11 });
+    // Empty now: a third waits for the refill (a second), not an hour.
+    expect(await obj().platformAdmit({ org: third!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform', retryAfterS: 2 });
+    expect(await obj().platformAdmit({ org: third!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now + 1100)).toMatchObject({ ok: true });
+  });
+
+  it('a key past its ordinary windows: kill switches counted on their own reserve, exactly 10 of 15 at once; anything else still refused', async () => {
+    const k = await seedKey();
+    const now = freshNow();
+    const kobj = placedStub(env, env.RATE_LIMITER, `platform:key:${k.id}`);
+    expect(await kobj.hit([{ ...PLATFORM_WINDOWS.key[1], max: Number.MAX_SAFE_INTEGER }], now, PLATFORM_REQUEST_LIMITS.perKeyPerDay)).toMatchObject({ ok: true });
+    const out = await Promise.all(Array.from({ length: 15 }, (_, i) => kobj.hitMark([...PLATFORM_WINDOWS.key], `last-used@test-${i}`, now + HOUR, now + i, [...PLATFORM_WINDOWS.killReserve])));
+    expect(out.filter((r) => r.ok && r.reserve === true)).toHaveLength(10);
+    expect(out.filter((r) => !r.ok).map((r) => (r as { limit: string }).limit)).toEqual(Array(5).fill('kill:minute'));
+    expect(await kobj.hitMark([...PLATFORM_WINDOWS.key], 'last-used@test-x', now + HOUR, now + 100)).toMatchObject({ ok: false, limit: 'req:day' });
+    // The ordinary windows weren't touched by the reserve's calls: giving back one reserve call frees a reserve slot only.
+    await kobj.unhit([...PLATFORM_WINDOWS.killReserve], now);
+    expect(await kobj.hitMark([...PLATFORM_WINDOWS.key], 'last-used@test-y', now + HOUR, now + 200, [...PLATFORM_WINDOWS.killReserve])).toMatchObject({ ok: true, reserve: true });
   });
 });

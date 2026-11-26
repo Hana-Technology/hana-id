@@ -66,7 +66,11 @@ export interface PlatformAdmission {
     platform: Bucket & { reserve: number; reserveShare: { windowMs: number; max: number } };
     /** The console's global bucket, as CONSOLE_LIMITS.global (its rate and burst), and the floor ordinary platform calls leave. */
     shared: Bucket & { sharedFloor: number };
-    breaker: { windowMs: number; perOrg: number; global: number };
+    /**
+     * D935: `floor`, the org's first calls of its rolling hour that the global count never refuses (so other orgs can't
+     * use up an org's kill switches); every admitted call still counts on both lists.
+     */
+    breaker: { windowMs: number; perOrg: number; global: number; floor: number };
   };
 }
 export type PlatformLimit = 'budget_org' | 'budget_platform' | 'budget_shared' | 'budget_reserve' | 'breaker_org' | 'breaker_global';
@@ -285,7 +289,7 @@ export class RateLimiter extends DurableObject<Env> {
     const share = r.limits.global.reserveShare;
     const taken = (kv.get<{ at: number; n: number }[]>(shareKey) ?? []).filter((e) => e.at > now - share.windowMs);
     if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) {
-      return refuse('budget_reserve', (taken[0]!.at + share.windowMs - now) / 1000);
+      return refuse('budget_reserve', ((taken[0]?.at ?? now) + share.windowMs - now) / 1000);
     }
     kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
     kv.put('console:bucket', { tokens: globalTokens - r.cost, at: now });
@@ -355,7 +359,9 @@ export class RateLimiter extends DurableObject<Env> {
     const bGlobal = r.breaker ? recent('platform:breaker:global') : [];
     const until = (oldest: number | undefined) => ((oldest ?? now) + L.breaker.windowMs - now) / 1000;
     if (r.breaker && bOrg.length >= L.breaker.perOrg) return refuse('breaker_org', until(bOrg[0]));
-    if (r.breaker && bGlobal.length >= L.breaker.global) return refuse('breaker_global', until(bGlobal[0]));
+    // D935: below its floor an org's call passes whatever the global count (other orgs can't use up its kill switches);
+    // above it the global count holds, every call (floor ones too) counted on it.
+    if (r.breaker && bOrg.length >= L.breaker.floor && bGlobal.length >= L.breaker.global) return refuse('breaker_global', until(bGlobal[0]));
     const orgFloor = r.killSwitch ? 0 : L.perOrg.reserve;
     const platformFloor = r.killSwitch ? 0 : L.platform.reserve;
     if (orgTokens - r.cost < orgFloor) return refuse('budget_org', (r.cost + orgFloor - orgTokens) / L.perOrg.ratePerS);
@@ -365,7 +371,8 @@ export class RateLimiter extends DurableObject<Env> {
     const shareKey = `platform:reserve:org:${r.org}`;
     const share = L.platform.reserveShare;
     const taken = (kv.get<{ at: number; n: number }[]>(shareKey) ?? []).filter((e) => e.at > now - share.windowMs);
-    if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) return refuse('budget_reserve', (taken[0]!.at + share.windowMs - now) / 1000);
+    // (D935: `taken` may be empty when one call alone would need more than the share; it is refused for the window, not thrown.)
+    if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) return refuse('budget_reserve', ((taken[0]?.at ?? now) + share.windowMs - now) / 1000);
     kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
     kv.put('platform:bucket', { tokens: platformTokens - r.cost, at: now });
     if (!r.killSwitch) kv.put('console:bucket', { tokens: sharedTokens - r.cost, at: now });
@@ -517,12 +524,24 @@ export class RateLimiter extends DurableObject<Env> {
   /**
    * D927: `hit(limits)` and, only when it counted, a test-and-set of the marker `mark` until `untilMs` (`reserve`): one
    * call for a platform key's request windows and its once-an-hour `last_used_at` write. `marked` is true when this call
-   * set the marker.
+   * set the marker. D935: with `reserve` (a kill switch's own windows), a request the ordinary windows refuse is counted
+   * there instead when they have room (`reserve: true`: give back those windows, not the ordinary ones).
    */
-  hitMark(limits: Limit[], mark: string, untilMs: number, now: number = Date.now()): HitResult & { marked?: boolean } {
-    const r = this.hit(limits, now);
+  hitMark(limits: Limit[], mark: string, untilMs: number, now: number = Date.now(), reserve: Limit[] = []): HitResult & { marked?: boolean; reserve?: true } {
+    let r = this.hit(limits, now);
+    let fromReserve = false;
+    // D935: a kill switch past the ordinary windows takes from its own reserve windows instead (counted apart, in the
+    // same call, so parallel requests can't both take the last slot). Refused by both: the reserve's window is named,
+    // with the sooner of the two waits.
+    if (!r.ok && reserve.length > 0) {
+      const first = r;
+      const again = this.hit(reserve, now);
+      if (!again.ok) return { ...again, retryAfterS: Math.min(first.retryAfterS, again.retryAfterS) };
+      r = again;
+      fromReserve = true;
+    }
     if (!r.ok) return r;
-    return { ...r, marked: this.reserve(mark, untilMs, now) };
+    return { ...r, marked: this.reserve(mark, untilMs, now), ...(fromReserve ? { reserve: true as const } : {}) };
   }
 
   /** Drops a marker (a reservation whose relay definitely did not execute). */

@@ -28,10 +28,12 @@
 //      the nonce until timestamp + 120 s on `platform-nonce:<keyId>` (pinned), at most 300 fresh nonces a minute per key:
 //      a second use is 409 request_replayed, past the cap 429.
 //   8. A valid self-revoke: only its own window (10 a minute on the key's object, N3). Anything else: the key's own
-//      windows (`platform:key:<keyId>`, pinned: 60 a minute, 2 000 a UTC day) and the platform's
+//      windows (`platform:key:<keyId>`, pinned: 60 a minute, 2 000 a UTC day; a kill switch past them, its own reserve
+//      of 10 a minute and 100 a UTC day, D935) and the platform's
 //      admission on the `console-rpc` object (rate-limiter.ts `platformAdmit`): the org's bucket, the platform's own
 //      global bucket, the console's global bucket above a floor the platform never takes, and the platform's own
-//      destructive-call breaker (M3, F3). An invalid self-revoke goes through 8 like any other call.
+//      destructive-call breaker on web address removals, each org's first 5 an hour past the global count (M3, F3,
+//      D935). An invalid self-revoke goes through 8 like any other call.
 //
 // Only then is the body parsed and the route run, within PLATFORM_DB_LIMITS, and the call written to `platform_calls`
 // (with, at most once an hour per key, `last_used_at`). A limiter that errors is 503 rate_limiter_unavailable; for the
@@ -99,6 +101,14 @@ export const PLATFORM_WINDOWS = {
     { name: 'req:minute', windowMs: MIN, max: L.perKeyPerMinute },
     { name: 'req:day', windowMs: DAY, max: L.perKeyPerDay },
   ],
+  /**
+   * D935: a kill switch's own reserve per key, counted apart and only once the ordinary windows above are full, so a key
+   * that used its 60 a minute or 2 000 a day can still stop things (10 a minute, 100 a UTC day).
+   */
+  killReserve: [
+    { name: 'kill:minute', windowMs: MIN, max: L.killReservePerKeyPerMinute },
+    { name: 'kill:day', windowMs: DAY, max: L.killReservePerKeyPerDay },
+  ],
   /** Failed signatures for a known key id: the 10th in a minute raises `platform_auth_failures`. */
   authFailures: [{ name: 'authfail:minute', windowMs: MIN, max: L.authFailuresAlert - 1 }],
 } as const satisfies Record<string, Limit[]>;
@@ -106,18 +116,20 @@ export const PLATFORM_WINDOWS = {
 /**
  * The platform's admission on the `console-rpc` object (A5; after PR 156's review, F3): the org's own bucket (8
  * statements a second, burst 40, the last 10 for kill switches: both of its keys at their full 60 a minute); the
- * platform's own global bucket (10 statements a second, burst 60, the last 15 for kill switches, at most 8 of them an
- * org a minute); the console's global bucket charged too: an ordinary platform call never takes it below 30 of its 60
- * tokens, so the console always keeps at least half its burst; a platform kill switch neither reads nor charges it (N2
- * and its review: a console flood can't refuse it, and it never spends the console's kill-switch reserve), bounded by
- * the org's bucket, the platform's own bucket and reserve, each org's share of it and the breaker; its own breaker (10
- * per org, 30 across orgs an hour). To confirm (the Tech Lead): the numbers.
+ * platform's own global bucket (10 statements a second, burst 60, the last 22 for kill switches, at most 11 of them an
+ * org a minute: D935, one kill switch's whole cost, so other orgs' ordinary calls holding the bucket at its reserve can't
+ * refuse an org's kill switch); the console's global bucket charged too: an ordinary platform call never takes it below
+ * 30 of its 60 tokens, so the console always keeps at least half its burst; a platform kill switch neither reads nor
+ * charges it (N2 and its review: a console flood can't refuse it, and it never spends the console's kill-switch
+ * reserve), bounded by the org's bucket, the platform's own bucket and reserve, each org's share of it and the breaker;
+ * its own breaker on web address removals (10 per org, 30 across orgs a rolling hour, each org's first 5 passing
+ * whatever the global count: D935). To confirm (the Tech Lead): the numbers.
  */
 export const PLATFORM_LIMITS = {
   perOrg: { ratePerS: 8, burst: 40, reserve: 10 },
-  platform: { ratePerS: 10, burst: 60, reserve: 15, reserveShare: { windowMs: MIN, max: 8 } },
+  platform: { ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 11 } },
   shared: { ratePerS: CONSOLE_LIMITS.global.ratePerS, burst: CONSOLE_LIMITS.global.burst, sharedFloor: 30 },
-  breaker: { windowMs: HOUR_MS, perOrg: L.breaker.perOrgPerHour, global: L.breaker.globalPerHour },
+  breaker: { windowMs: HOUR_MS, perOrg: L.breaker.perOrgPerHour, global: L.breaker.globalPerHour, floor: L.breaker.floorPerOrgPerHour },
 } as const satisfies PlatformAdmission['limits'];
 
 /** What a call refused before its route (a bad body after admission) is charged: the key's read and the call's row. */
@@ -486,12 +498,14 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   // 8. The key's windows and the platform's admission; a valid self-revoke skips them (charged afterwards if it failed).
   const kobj = keyObj(env, keyId);
   let charged = false;
+  // D935: the windows the call was counted on (a kill switch past the ordinary ones: its reserve's).
+  let chargedWindows: Limit[] = [...PLATFORM_WINDOWS.key];
   let lastUsed = false;
   let settle: { breaker: boolean; reserveUsed: number } | null = null;
   const undoCharge = async () => {
     if (!charged) return;
     try {
-      await kobj.unhit([...PLATFORM_WINDOWS.key], now);
+      await kobj.unhit(chargedWindows, now);
       if (lastUsed) await kobj.release(`last-used@${hourMark}`);
     } catch {
       log({ event: 'platform', requestId, outcome: 'error', code: 'key_unhit_failed', platformKeyId: keyId }, 'error');
@@ -511,9 +525,12 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
     }
   } else {
     const cost = problem === null ? route.cost : REFUSED_CALL_COST;
+    const killSwitch = problem === null && flags.killSwitch;
+    const breaker = problem === null && flags.breaker;
     let stage = 'key';
     try {
-      const k = await kobj.hitMark([...PLATFORM_WINDOWS.key], `last-used@${hourMark}`, now + HOUR_MS, now);
+      // D935: a kill switch the ordinary windows refuse is counted on its own reserve instead (atomic in the key's object).
+      const k = await kobj.hitMark([...PLATFORM_WINDOWS.key], `last-used@${hourMark}`, now + HOUR_MS, now, killSwitch ? [...PLATFORM_WINDOWS.killReserve] : []);
       if (!k.ok) {
         ctx.waitUntil(
           kobj
@@ -524,10 +541,9 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
         return finish(limited(`platform:key:${k.limit}`, k.retryAfterS));
       }
       charged = true;
+      if (k.reserve) chargedWindows = [...PLATFORM_WINDOWS.killReserve];
       lastUsed = k.marked === true;
       stage = 'admit';
-      const killSwitch = problem === null && flags.killSwitch;
-      const breaker = problem === null && flags.breaker;
       const b = await consoleObj(env).platformAdmit({ org: key.org_id, cost, ...(killSwitch ? { killSwitch: true } : {}), ...(breaker ? { breaker: true } : {}), limits: PLATFORM_LIMITS }, now);
       if (!b.ok) {
         await undoCharge();

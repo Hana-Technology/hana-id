@@ -109,11 +109,11 @@ export interface PlatformRoute {
   allowFrozen?: boolean;
   /** May spend the bucket's reserve. */
   killSwitch?: boolean;
-  /** Counted by the platform's destructive-call breaker. */
+  /** Counted by the platform's destructive-call breaker (D935: only the web address removal). */
   breaker?: boolean;
   /**
-   * Flags that depend on a valid body (the suspend route: suspending is a kill switch, allowed while frozen and counted
-   * by the breaker; resuming is none of these). Merged over the static ones.
+   * Flags that depend on a valid body (the suspend route: suspending is a kill switch, allowed while frozen; resuming is
+   * neither). Merged over the static ones.
    */
   flags?(body: Record<string, unknown>): { killSwitch?: boolean; breaker?: boolean; allowFrozen?: boolean };
   run(c: RouteContext): Promise<RouteAnswer>;
@@ -260,7 +260,8 @@ export const PLATFORM_ROUTES: readonly PlatformRoute[] = [
     cost: 10,
     idempotency: 'required',
     validate: check(platformSuspendBody),
-    flags: (body) => (body.suspended === true ? { killSwitch: true, breaker: true, allowFrozen: true } : {}),
+    // D935: suspending is a stop (it only takes away), outside the breaker; held to the org's stops a clock hour instead.
+    flags: (body) => (body.suspended === true ? { killSwitch: true, allowFrozen: true } : {}),
     run: (c) => suspendPlatformApp(c, c.params.appId!, platformSuspendBody.parse(c.body).suspended),
   },
   {
@@ -281,8 +282,9 @@ export const PLATFORM_ROUTES: readonly PlatformRoute[] = [
     cost: 10,
     idempotency: 'required',
     allowFrozen: true,
+    // D935: a stop, outside the breaker (the Tech Lead's decision: never blockable by the shared breaker); held to the
+    // org's stops a clock hour instead.
     killSwitch: true,
-    breaker: true,
     validate: check(platformEmptyBody),
     run: (c) => revokePublishableKey(c, c.params.appId!, c.params.keyId!),
   },

@@ -93,7 +93,19 @@ export const PLATFORM_REQUEST_LIMITS = {
   noncesPerKeyPerMinute: 300,
   /** Failed signatures for one known key id in a minute that raise a `platform_auth_failures` event. */
   authFailuresAlert: 10,
-  breaker: { perOrgPerHour: 10, globalPerHour: 30 },
+  /**
+   * D935: the kill switches' own reserve per key (remove, cancel, suspend, a publishable key's revoke), counted apart
+   * from the ordinary windows and used only once those are full, so a key past its 60 a minute or 2 000 a day can still
+   * stop things.
+   */
+  killReservePerKeyPerMinute: 10,
+  killReservePerKeyPerDay: 100,
+  /**
+   * The destructive-call breaker: web address removals (D935: suspending an app and revoking a publishable key are
+   * stops, outside it). 10 per org and 30 across orgs a rolling hour; each org's first `floorPerOrgPerHour` of its hour
+   * pass whatever the global count, so other orgs can't use up an org's kill switches.
+   */
+  breaker: { perOrgPerHour: 10, globalPerHour: 30, floorPerOrgPerHour: 5 },
 } as const;
 
 /** The error codes the platform API answers (stable; `docs/api.md` "Platform API"), with their HTTP status. */

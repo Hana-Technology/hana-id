@@ -18,7 +18,9 @@ import { admitMemberCall } from '../src/changes/guard.ts';
 import { ackNotice } from '../src/changes/lifecycle.ts';
 import { guardedChangesMaintenance } from '../src/guarded/cron.ts';
 import { readOtherApps } from '../src/other-apps.ts';
-import { PLATFORM_LIMITS } from '../src/platform/request.ts';
+import { PLATFORM_LIMITS, PLATFORM_WINDOWS } from '../src/platform/request.ts';
+import { STOP_WINDOWS } from '../src/platform/ops.ts';
+import { placedStub } from '../src/placement.ts';
 import { PLATFORM_ROUTES } from '../src/platform/routes.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
 import { ConsoleRpc } from '../src/rpc/console.ts';
@@ -928,20 +930,28 @@ describe('the key and the org, checked again inside each write’s commit', () =
 // ---- the breaker and the reserve ----
 
 describe('the platform’s breaker and reserve for its kill switches', () => {
-  it('destructive calls (remove, suspend, key revoke): 10 an org an hour, then `429 platform:breaker_org`; a call that changed nothing gets its slot back (once)', async () => {
+  it('web address removals: 10 an org an hour, then `429 platform:breaker_org`; a removal that changed nothing gets its slot back; suspensions and key revocations are outside it (D935)', async () => {
     const net = await network();
     const now = freshNow();
     const apps: string[] = [];
-    for (let i = 0; i < 11; i++) apps.push((await bareApp(net.org, net.s1)).id);
-    // A no-op suspend (resume of a running app) isn't destructive; a suspend of an app already suspended changed nothing.
-    expect((await post(net.k, `/v1/platform/apps/${apps[0]!}/suspend`, { suspended: true }, { now })).status).toBe(200);
-    expect((await post(net.k, `/v1/platform/apps/${apps[0]!}/suspend`, { suspended: true }, { now: now + 10 })).status).toBe(200); // refunded
-    for (let i = 1; i < 10; i++) expect((await post(net.k, `/v1/platform/apps/${apps[i]!}/suspend`, { suspended: true }, { now: now + 3000 * i })).status, String(i)).toBe(200);
-    const over = await post(net.k, `/v1/platform/apps/${apps[10]!}/suspend`, { suspended: true }, { now: now + 40_000 });
+    for (let i = 0; i < 11; i++) {
+      const id = (await bareApp(net.org, net.s1)).id;
+      await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, ?3)').bind(id, 'https://live.example', 1).run();
+      apps.push(id);
+    }
+    const remove = (app: string, at: number, expectedVersion = 0) => post(net.k, `/v1/platform/apps/${app}/origins/remove`, { remove: ['https://live.example'], expectedVersion }, { now: at });
+    // A removal at a stale version changed nothing: its slot comes back.
+    expect((await remove(apps[0]!, now, 7)).status).toBe(409);
+    for (let i = 0; i < 10; i++) expect((await remove(apps[i]!, now + 3000 * (i + 1))).status, String(i)).toBe(200);
+    const over = await remove(apps[10]!, now + 40_000);
     expect([over.status, over.body.limit]).toEqual([429, 'platform:breaker_org']);
-    // A resume isn't counted: still admitted.
-    expect((await post(net.k, `/v1/platform/apps/${apps[1]!}/suspend`, { suspended: false }, { now: now + 43_000 })).status).toBe(200);
-    expect((await one<{ s: number }>("SELECT COUNT(*) AS s FROM apps WHERE org_id = ?1 AND suspended_by = 4", net.org)).s).toBe(9);
+    expect(await rows('SELECT origin FROM app_origins WHERE app_id = ?1', apps[10]!)).toHaveLength(1);
+    // D935: with the org's breaker full, suspending and revoking a publishable key still go through.
+    expect((await post(net.k, `/v1/platform/apps/${apps[10]!}/suspend`, { suspended: true }, { now: now + 43_000 })).status).toBe(200);
+    const keyId = (await one<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', apps[9]!)).id;
+    expect((await post(net.k, `/v1/platform/apps/${apps[9]!}/keys/${keyId}/revoke`, {}, { now: now + 46_000 })).status).toBe(200);
+    // A resume isn't counted either.
+    expect((await post(net.k, `/v1/platform/apps/${apps[10]!}/suspend`, { suspended: false }, { now: now + 49_000 })).status).toBe(200);
   });
 
   it('a kill switch spends the platform’s reserve when ordinary calls have emptied the org’s bucket, never the console’s', async () => {
@@ -961,6 +971,108 @@ describe('the platform’s breaker and reserve for its kill switches', () => {
     // The console's own budget for this org is untouched: a member's call is admitted at the same moment.
     await expect(admitMemberCall(env, { org: net.org, cost: 5 }, now)).resolves.toMatchObject({ reserveUsed: 0 });
     expect(PLATFORM_LIMITS.perOrg.reserve).toBe(10);
+  });
+
+  it('D935: three orgs filling the global breaker: a fourth org’s removals pass up to its floor of 5 and are refused above it; its suspensions, key revocations and cancels all still pass', async () => {
+    const net = await network();
+    const now = freshNow();
+    const cpc = placedStub(env, env.RATE_LIMITER, 'console-rpc');
+    // Three other orgs' removals, each its 10 an hour: the global 30 full.
+    for (let o = 0; o < 3; o++) {
+      const org = (await orgApp()).org;
+      for (let i = 0; i < 10; i++) expect((await cpc.platformAdmit({ org, cost: 11, breaker: true, killSwitch: true, limits: PLATFORM_LIMITS }, now + 4000 * (10 * o + i))).ok).toBe(true);
+    }
+    const t = now + 4000 * 30;
+    const apps: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      const id = (await bareApp(net.org, net.s1)).id;
+      await env.DB.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?1, ?2, ?3)').bind(id, 'https://live.example', 1).run();
+      apps.push(id);
+    }
+    const remove = (app: string, at: number) => post(net.k, `/v1/platform/apps/${app}/origins/remove`, { remove: ['https://live.example'], expectedVersion: 0 }, { now: at });
+    for (let i = 0; i < 5; i++) expect((await remove(apps[i]!, t + 3000 * i)).status, `floor ${i}`).toBe(200);
+    const over = await remove(apps[5]!, t + 15_000);
+    expect([over.status, over.body.limit]).toEqual([429, 'platform:breaker_global']);
+    expect(over.body.retryAfterS).toBeGreaterThan(0);
+    expect(await rows('SELECT origin FROM app_origins WHERE app_id = ?1', apps[5]!)).toHaveLength(1);
+    // The stops and the cancel aren't counted by the breaker at all.
+    expect((await post(net.k, `/v1/platform/apps/${apps[5]!}/suspend`, { suspended: true }, { now: t + 18_000 })).status).toBe(200);
+    const keyId = (await one<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', apps[4]!)).id;
+    expect((await post(net.k, `/v1/platform/apps/${apps[4]!}/keys/${keyId}/revoke`, {}, { now: t + 21_000 })).status).toBe(200);
+    expect((await post(net.k, '/v1/platform/changes/gc_none/cancel', {}, { now: t + 24_000 })).status).toBe(404);
+  });
+
+  it('D935: stops (suspend, key revoke) are held to 60 an org a clock hour; one that changes nothing costs nothing, even when the hour is full; another org untouched', async () => {
+    const net = await network();
+    const now = freshNow();
+    const a = await createdApp(net);
+    const b = await createdApp(net);
+    const stops = placedStub(env, env.RATE_LIMITER, `platform:${net.org}`);
+    expect(STOP_WINDOWS).toEqual([{ name: 'stops:hour', windowMs: HOUR, max: 60 }]);
+    expect(await stops.hit(STOP_WINDOWS, now, 58)).toMatchObject({ ok: true });
+    // The 59th: a suspension.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 1000 })).status).toBe(200);
+    // Already suspended: nothing written, nothing counted.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 4000 })).status).toBe(200);
+    // The 60th: a key revocation (the app's second key).
+    const k2 = (await post(net.k, `/v1/platform/apps/${b.id}/keys`, {}, { now: now + 7000 })).body.key as { id: string };
+    expect((await post(net.k, `/v1/platform/apps/${b.id}/keys/${k2.id}/revoke`, {}, { now: now + 10_000 })).status).toBe(200);
+    // Full: a real stop is refused, writing nothing ...
+    const before = await stateOf(net.org);
+    const over = await post(net.k, `/v1/platform/apps/${b.id}/suspend`, { suspended: true }, { now: now + 13_000 });
+    expect([over.status, over.body.limit]).toEqual([429, 'platform:stops:hour']);
+    const overKey = await post(net.k, `/v1/platform/apps/${b.id}/keys/${b.keyId}/revoke`, {}, { now: now + 16_000 });
+    expect([overKey.status, overKey.body.limit]).toEqual([429, 'platform:stops:hour']);
+    expect(await stateOf(net.org)).toEqual(before);
+    // ... and stops that change nothing still answer what they are: already revoked, already suspended, an unknown key.
+    expect((await post(net.k, `/v1/platform/apps/${b.id}/keys/${k2.id}/revoke`, {}, { now: now + 19_000 })).body.code).toBe('conflict');
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 22_000 })).status).toBe(200);
+    expect((await post(net.k, `/v1/platform/apps/${b.id}/keys/key_none/revoke`, {}, { now: now + 25_000 })).status).toBe(404);
+    // A resume isn't a stop.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: false }, { now: now + 28_000 })).status).toBe(200);
+    // Another org's stops are its own.
+    const other = await network();
+    const c = await createdApp(other);
+    expect((await post(other.k, `/v1/platform/apps/${c.id}/suspend`, { suspended: true }, { now: now + 31_000 })).status).toBe(200);
+  });
+
+  it('D935: parallel stops at the edge of the hour: exactly the room left goes through', async () => {
+    const net = await network();
+    const now = freshNow();
+    const apps: string[] = [];
+    for (let i = 0; i < 5; i++) apps.push((await bareApp(net.org, net.s1)).id);
+    expect(await placedStub(env, env.RATE_LIMITER, `platform:${net.org}`).hit(STOP_WINDOWS, now, 58)).toMatchObject({ ok: true });
+    // Spaced 2 s apart in their timestamps so the buckets aren't what refuses; sent at once.
+    const out = await Promise.all(apps.map((id, i) => post(net.k, `/v1/platform/apps/${id}/suspend`, { suspended: true }, { now: now + 2000 * i })));
+    expect(out.filter((r) => r.status === 200)).toHaveLength(2);
+    expect(out.filter((r) => r.status !== 200).map((r) => r.body.limit)).toEqual(['platform:stops:hour', 'platform:stops:hour', 'platform:stops:hour']);
+    expect((await one<{ n: number }>('SELECT COUNT(*) AS n FROM apps WHERE org_id = ?1 AND suspended_by = 4', net.org)).n).toBe(2);
+  });
+
+  it('D935: a key past its 2 000 a day still revokes a publishable key within its kill reserve (10 a minute, 100 a day), and is refused beyond it; ordinary calls stay refused', async () => {
+    const net = await network();
+    const a = await createdApp(net);
+    const now = freshNow();
+    const kobj = placedStub(env, env.RATE_LIMITER, `platform:key:${net.k.id}`);
+    // The day's window filled (whatever the key already used today: the same window, its limit lifted for this hit).
+    expect(await kobj.hit([{ ...PLATFORM_WINDOWS.key[1], max: Number.MAX_SAFE_INTEGER }], now, PLATFORM_REQUEST_LIMITS.perKeyPerDay)).toMatchObject({ ok: true });
+    const read = await get(net.k, `/v1/platform/apps/${a.id}`, { now });
+    expect([read.status, read.body.limit]).toEqual([429, 'platform:key:req:day']);
+    // Its kill switches: a key revocation (a second key made by the org's other platform key), then cancels, 10 in the minute.
+    const k2 = await seedKey({ org: net.site, scopes: [net.s1, net.s2] });
+    const extra = (await post(k2, `/v1/platform/apps/${a.id}/keys`, {}, { now: now + 1000 })).body.key as { id: string };
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/keys/${extra.id}/revoke`, {}, { now: now + 2000 })).status).toBe(200);
+    for (let i = 1; i < 10; i++) expect((await post(net.k, '/v1/platform/changes/gc_none/cancel', {}, { now: now + 2000 + 2000 * i })).status, String(i)).toBe(404);
+    const past = await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 25_000 });
+    expect([past.status, past.body.limit]).toEqual([429, 'platform:key:kill:minute']);
+    // The next minute it works again, until the day's 100.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 61_000 })).status).toBe(200);
+    expect(await kobj.hit([{ ...PLATFORM_WINDOWS.killReserve[1], max: Number.MAX_SAFE_INTEGER }], now + 62_000, PLATFORM_REQUEST_LIMITS.killReservePerKeyPerDay - 11)).toMatchObject({ ok: true });
+    const day = await post(net.k, `/v1/platform/apps/${a.id}/keys/${a.keyId}/revoke`, {}, { now: now + 125_000 });
+    expect([day.status, day.body.limit]).toEqual([429, 'platform:key:kill:day']);
+    expect((await one<{ r: number | null }>('SELECT revoked_at AS r FROM app_keys WHERE id = ?1', a.keyId)).r).toBeNull();
+    // A resume is no kill switch: refused by the ordinary day.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: false }, { now: now + 128_000 })).body.limit).toBe('platform:key:req:day');
   });
 });
 

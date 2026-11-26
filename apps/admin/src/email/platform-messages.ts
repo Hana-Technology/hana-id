@@ -6,7 +6,7 @@
 // fingerprint (the RFC 7638 thumbprint) identifies it.
 import { type ConfirmationNotice, type PlatformKeyNotice, CONFIRM_WORDS, ORIGIN_REMOVAL_LINK_MS } from '@hana-id/console-core';
 import { durationWords } from '@hana-id/console-core/duration-words';
-import type { MailContext } from './messages.ts';
+import { FRAME_ONLY_ROW, type MailContext } from './messages.ts';
 import { type Block, type Design, type Rendered, oneLine, readableTime, render } from './render.ts';
 
 /** A wait in words, in hours up to 3 days ("24 hours", as the spec's line says), else as the other notices word it. */
@@ -141,6 +141,8 @@ export interface PlatformOriginLine {
   origin: string;
   display?: string | undefined;
   idn?: boolean | undefined;
+  /** D934: the app may use it only inside its other web addresses (the email says where it works). */
+  frameOnly?: boolean | undefined;
   cancelUrl: string;
 }
 
@@ -149,9 +151,11 @@ export interface PlatformOriginLine {
  * letters, and its button. The button names the plain (ASCII) form, never the decoded one an attacker chose to look like
  * another site.
  */
-function originBlocks(l: { origin: string; display?: string | undefined; idn?: boolean | undefined }, button: { one: string; many: (origin: string) => string; url: string }, many: boolean): Block[] {
+function originBlocks(l: { origin: string; display?: string | undefined; idn?: boolean | undefined; frameOnly?: boolean | undefined }, button: { one: string; many: (origin: string) => string; url: string }, many: boolean): Block[] {
   const r: [string, string][] = [['Web address', l.origin]];
   if (l.display && l.display !== l.origin) r.push(['Shown as', l.display]);
+  // D934: only for a frame-only one; every other line is exactly the one before.
+  if (l.frameOnly === true) r.push([...FRAME_ONLY_ROW]);
   const out: Block[] = [{ kind: 'kv', rows: r }];
   if (l.idn) out.push({ kind: 'warn', text: `This web address uses international letters. Its plain form is ${l.origin}; check that it is the site you expect and not a lookalike.` });
   out.push({ kind: 'link', label: many ? button.many(oneLine(l.origin, 120)) : button.one, url: button.url });
@@ -268,6 +272,8 @@ export interface ConfirmedOriginLine {
   origin: string;
   display?: string | undefined;
   idn?: boolean | undefined;
+  /** D934: as PlatformOriginLine's (when the confirmation's notice carries it). */
+  frameOnly?: boolean | undefined;
   removeUrl: string;
 }
 

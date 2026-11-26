@@ -213,6 +213,41 @@ describe('apps, changes, keys', () => {
   });
 });
 
+describe('frame-only web addresses (D934)', () => {
+  it('a staff add marked frame-only is a pending change with the mark; a tightening works at once, once; the ledger says so as the staff actor', async () => {
+    const app = await seedHotApp();
+    const v = await hotVersion(app.id);
+    const added = await json<{ changes: { id: string; origin: string; frameOnly?: true }[] }>(
+      await adminRequest(`/api/apps/${app.id}/origins`, { body: { orgId: app.org, add: ['https://widget.network.example', 'https://shop.partner.example'], frameOnly: ['https://widget.network.example'], expectedVersion: v.origins } }),
+    );
+    expect(added.changes.map((c) => [c.origin, c.frameOnly ?? false])).toEqual([
+      ['https://shop.partner.example', false],
+      ['https://widget.network.example', true],
+    ]);
+    expect(await env.HOT_DB.prepare('SELECT origin, frame_only FROM app_origins WHERE app_id = ?1 ORDER BY origin').bind(app.id).all().then((r) => r.results)).toEqual([
+      { origin: 'https://app.partner.example', frame_only: 0 },
+      { origin: 'https://shop.partner.example', frame_only: 0 },
+      { origin: 'https://widget.network.example', frame_only: 1 },
+    ]);
+    // A mark on an address it doesn't add: refused, nothing written.
+    const stray = await adminRequest(`/api/apps/${app.id}/origins`, { body: { orgId: app.org, add: ['https://other.partner.example'], frameOnly: ['https://nope.example'], expectedVersion: (await hotVersion(app.id)).origins } });
+    expect(stray.status).toBe(400);
+    // The tightening: at once, one ledger row by the staff member.
+    const before = (await hotVersion(app.id)).origins;
+    const tight = await adminRequest(`/api/apps/${app.id}/origins/frame-only`, { body: { orgId: app.org, origins: ['https://app.partner.example'], expectedVersion: before } });
+    expect(tight.status).toBe(200);
+    expect(await json(tight)).toEqual({ version: before + 1 });
+    expect(await env.HOT_DB.prepare("SELECT frame_only FROM app_origins WHERE app_id = ?1 AND origin = 'https://app.partner.example'").bind(app.id).first()).toEqual({ frame_only: 1 });
+    expect(await env.HOT_DB.prepare("SELECT actor_kind, actor_id FROM app_changes WHERE kind = 'origin.frame_only' AND app_id = ?1").bind(app.id).first()).toEqual({ actor_kind: 'hana', actor_id: STAFF_SUB });
+    // Again: already frame-only (409); another org's app: 404.
+    expect((await adminRequest(`/api/apps/${app.id}/origins/frame-only`, { body: { orgId: app.org, origins: ['https://app.partner.example'], expectedVersion: before + 1 } })).status).toBe(409);
+    expect((await adminRequest(`/api/apps/${app.id}/origins/frame-only`, { body: { orgId: 'org_other12345', origins: ['https://app.partner.example'], expectedVersion: before + 1 } })).status).toBe(404);
+    // The app's read marks both.
+    const detail = await json<{ app: { origins: { origin: string; frameOnly?: true }[] } }>(await adminRequest(`/api/apps/${app.id}?org=${app.org}`));
+    expect(detail.app.origins.filter((o) => o.frameOnly).map((o) => o.origin)).toEqual(['https://app.partner.example', 'https://widget.network.example']);
+  });
+});
+
 describe('a shared scope (D915)', () => {
   it('marks the app’s scope through the real API as the staff actor, once; then a staff policy is refused in the shared words; another org is not_found', async () => {
     const app = await seedHotApp();
@@ -379,6 +414,7 @@ describe('the route table', () => {
         "POST /api/apps/:app/delete",
         "POST /api/apps/:app/origins",
         "POST /api/apps/:app/origins/remove",
+        "POST /api/apps/:app/origins/frame-only",
         "POST /api/apps/:app/changes",
         "POST /api/apps/:app/off",
         "POST /api/apps/:app/mainnet-demo",

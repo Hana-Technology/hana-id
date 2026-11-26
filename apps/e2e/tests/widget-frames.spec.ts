@@ -16,7 +16,7 @@
 import type { Page } from '@playwright/test';
 import { DEMO_ORIGIN } from '../src/stack.ts';
 import { expect, fontsLoaded, newApp, partnerUrl, test } from './fixtures.ts';
-import { PAGE, WIDGET, approvalWindow, finishSignIn, neverReady, partnerPage, readyOf, signInWindow, widget, widgetApp } from './widget-steps.ts';
+import { PAGE, WIDGET, approvalWindow, finishSignIn, launcherWindow, neverReady, partnerPage, readyOf, signInWindow, widget, widgetApp } from './widget-steps.ts';
 
 const SHOTS = process.env.HANA_SHOTS_DIR;
 
@@ -50,6 +50,31 @@ test.describe('P12: the widget’s web address only inside the partner’s page'
     expect(await lines(approval, 'header.app')).toEqual(['From Coffee Club', `You’re on ${PAGE}.`, `This uses a widget from ${WIDGET}.`]);
     if (browserName === 'chromium') await shoot(approval, 'e2e-approval-framed');
     await approval.getByRole('button', { name: 'Reject', exact: true }).click();
+  });
+
+  test('the consent and export windows name the partner’s page and the widget too', async ({ page, browserName }) => {
+    const policy = {
+      v: 1,
+      label: 'Swaps',
+      maxConsentMs: 3_600_000,
+      limits: { perDayCount: 3 },
+      evm: { chains: [{ chainId: 8453, maxValueWei: '1000', maxValueWeiPerDay: '3000', maxFeeWei: '1000', contracts: [{ address: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', name: 'Example vault', selectors: [{ selector: '0xb6b55f25', signature: 'deposit(uint256)' }] }] }] },
+    };
+    const app = await widgetApp({ policy });
+    await partnerPage(page, PAGE, partnerUrl(app));
+    const f = await widget(page);
+    await finishSignIn(f, await signInWindow(page, f));
+    const consent = await launcherWindow(page, f, 'consent', 'requestAutoApprove', 'Review in Journear Passport');
+    await expect(consent.getByRole('heading', { name: 'Allow automatic approvals?' })).toBeVisible();
+    expect(await lines(consent, 'header.app')).toEqual(['From Coffee Club', `You’re on ${PAGE}.`, `This uses a widget from ${WIDGET}.`]);
+    await expect(consent.getByText(`Coffee Club at ${PAGE} wants Journear to approve some requests`)).toBeVisible();
+    if (browserName === 'chromium') await shoot(consent, 'e2e-consent-framed');
+    await consent.getByRole('button', { name: 'Don’t allow', exact: true }).click();
+    const exportWindow = await launcherWindow(page, f, 'export', 'exportKey', 'Export key in Journear Passport', 'evm');
+    await expect(exportWindow.locator('.asker-framed')).toBeVisible();
+    expect(await lines(exportWindow, '.asker-framed')).toEqual([`For your wallet in Coffee Club at ${PAGE}`, `This uses a widget from ${WIDGET}.`]);
+    if (browserName === 'chromium') await shoot(exportWindow, 'e2e-export-framed');
+    await exportWindow.close();
   });
 
   test('opened on its own (top-level), the widget’s address is refused as any address the app doesn’t list: vault_unavailable, no_answer', async ({ page }) => {

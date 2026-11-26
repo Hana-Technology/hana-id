@@ -8,8 +8,24 @@ export const WIDGET = PARTNER_ORIGIN;
 export const PAGE = SITE_B_ORIGIN;
 
 /** The widget's app: the partner's page and the widget, the widget frame-only (email on, so the chooser shows). */
-export const widgetApp = (o: { frameOnly?: boolean } = {}): Promise<App> =>
-  newApp({ name: 'Coffee Club', origins: [PAGE, WIDGET], ...(o.frameOnly === false ? {} : { frameOnly: [WIDGET] }), loginMethods: 'google,email' });
+export const widgetApp = (o: { frameOnly?: boolean; policy?: Record<string, unknown> } = {}): Promise<App> =>
+  newApp({
+    name: 'Coffee Club',
+    origins: [PAGE, WIDGET],
+    ...(o.frameOnly === false ? {} : { frameOnly: [WIDGET] }),
+    loginMethods: 'google,email',
+    ...(o.policy ? { settings: { autoApprovePolicy: o.policy } } : {}),
+  });
+
+/** Opens the window behind the vault's launcher button `label`, after the widget ran `action`. */
+export async function launcherWindow(page: Page, f: Frame, name: string, action: string, label: string, ...args: unknown[]): Promise<Page> {
+  await f.evaluate(([n, a, rest]) => (window as any).e2e.run(n, a, ...(rest as unknown[])), [name, action, args] as const);
+  const button = page.frameLocator('#widget').frameLocator(VAULT_FRAME).getByRole('button', { name: label });
+  await expect(button).toBeVisible();
+  const popupP = page.waitForEvent('popup');
+  await button.click();
+  return popupP;
+}
 
 /** The partner's page on `origin` (the stack's /shop, src/server/partner.ts) framing the widget as `mode` says. */
 export async function partnerPage(page: Page, origin: string, widgetUrl: string, mode: 'plain' | 'sandbox' | 'srcdoc' | 'data' = 'plain'): Promise<void> {

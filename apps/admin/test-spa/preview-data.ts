@@ -188,11 +188,12 @@ const platformApp = (orgId: string) => ({
     origins: [
       { origin: 'https://coffeeclub.example', display: 'https://coffeeclub.example', idn: false, activeFrom: ago(DAY) },
       { origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, activeFrom: NOW + 23 * HOUR },
-      { origin: 'https://widget.lumenpay.example', display: 'https://widget.lumenpay.example', idn: false, activeFrom: null },
+      // D934: the network's widget, usable only inside the app's other web addresses.
+      { origin: 'https://widget.lumenpay.example', display: 'https://widget.lumenpay.example', idn: false, activeFrom: null, frameOnly: true as const },
     ],
     changes: [
       { id: 'gc_01jdplat1', kind: 'origin_add', origin: 'https://order.coffeeclub.example', status: 'pending', proposedAt: ago(70 * MIN), proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', notifiedAt: ago(60 * MIN), activeFrom: NOW + 23 * HOUR },
-      { id: 'gc_01jdplat2', kind: 'origin_add', origin: 'https://widget.lumenpay.example', status: 'pending', proposedAt: ago(70 * MIN), proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', activeFrom: null },
+      { id: 'gc_01jdplat2', kind: 'origin_add', origin: 'https://widget.lumenpay.example', status: 'pending', proposedAt: ago(70 * MIN), proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', activeFrom: null, frameOnly: true as const },
     ],
     settings: { rawSign: 'off', persistence: 'session', policy: null, mainnetDemo: false },
     sharedScope: true,
@@ -224,7 +225,7 @@ export function platformQueue() {
   const p = orgPlatform('org_01jc8lumenpay');
   return {
     origins: [
-      { changeId: 'gc_01jdplat2', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', scopeId: 's5d1e8a0c2f6ba', origin: 'https://widget.lumenpay.example', display: 'https://widget.lumenpay.example', idn: false, keyId: 'pkc_Wk7Hq2Lm9Xc4Pz', keyLabel: 'Production backend', proposedAt: ago(70 * MIN) },
+      { changeId: 'gc_01jdplat2', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', scopeId: 's5d1e8a0c2f6ba', origin: 'https://widget.lumenpay.example', display: 'https://widget.lumenpay.example', idn: false, frameOnly: true as const, keyId: 'pkc_Wk7Hq2Lm9Xc4Pz', keyLabel: 'Production backend', proposedAt: ago(70 * MIN) },
       { changeId: 'gc_01jdplat1', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', scopeId: 's5d1e8a0c2f6ba', origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, keyId: 'pkc_Wk7Hq2Lm9Xc4Pz', keyLabel: 'Production backend', proposedAt: ago(70 * MIN), notifiedAt: ago(60 * MIN), activeFrom: NOW + 23 * HOUR },
       { changeId: 'gc_01jdplat3', appId: 'app_01jdplattiles', appName: 'Tile Shop', orgId: 'org_01jc8lumenpay', scopeId: 's5d1e8a0c2f6ba', origin: 'https://xn--tilshop-yya.example', display: 'https://tilèshop.example', idn: true, keyId: 'pkc_Wk7Hq2Lm9Xc4Pz', keyLabel: 'Production backend', proposedAt: ago(5 * HOUR), notifiedAt: ago(5 * HOUR), activeFrom: NOW + 19 * HOUR },
     ],

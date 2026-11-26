@@ -22,11 +22,48 @@ export function partnerHost(): Handler {
       if (coop !== null && COOP_VALUES.has(coop)) headers['cross-origin-opener-policy'] = coop;
       return new Response(await readFile(`${PARTNER_DIR}index.html`), { headers });
     }
+    // D934: a partner's site framing a network's widget (tests/widget-frames*.spec.ts), served by the stack itself so the
+    // browser sees a loopback page (a routed page has no address, and Chromium's local network access checks then block
+    // its loopback frames). `widget` must be a URL on a loopback origin of the stack; `mode` frames it plainly, in a
+    // sandboxed frame without its own origin, inside an about:srcdoc frame of this page, or inside a data: frame.
+    if (url.pathname === '/shop') {
+      const widget = shopWidget(url.searchParams.get('widget'));
+      if (widget === null) return new Response('Bad widget', { status: 400 });
+      return new Response(shopHtml(widget, url.searchParams.get('mode') ?? 'plain'), { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    }
     if (url.pathname === '/app.js') {
       return new Response(await readFile(`${PARTNER_DIR}app.js`), { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' } });
     }
     return new Response('Not found', { status: 404 });
   };
+}
+
+/** The widget's URL for /shop: an http URL on localhost or a *.localhost host (the stack's loopback origins), or null. */
+function shopWidget(raw: string | null): string | null {
+  if (raw === null) return null;
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname.endsWith('.localhost')) ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+const attr = (v: string): string => v.replace(/&/gu, '&amp;').replace(/"/gu, '&quot;').replace(/</gu, '&lt;');
+
+/** The partner's page (/shop): its heading, then the widget framed as `mode` says. */
+function shopHtml(widget: string, mode: string): string {
+  const frame = (src: string, extra = '') => `<iframe id="widget" title="Swap" src="${attr(src)}"${extra} style="width:100%;height:640px;border:1px solid #ccc"></iframe>`;
+  const inner = frame(widget);
+  const body =
+    mode === 'sandbox'
+      ? frame(widget, ' sandbox="allow-scripts allow-popups allow-forms"')
+      : mode === 'srcdoc'
+        ? `<iframe id="outer" title="Shop" srcdoc="${attr(`<!doctype html><body style="margin:0">${inner}</body>`)}" style="width:100%;height:680px;border:0"></iframe>`
+        : mode === 'data'
+          ? `<iframe id="outer" title="Shop" src="${attr(`data:text/html,${encodeURIComponent(inner)}`)}" style="width:100%;height:680px;border:0"></iframe>`
+          : inner;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Coffee Club</title></head><body><h1>Coffee Club</h1><p>Our shop’s swap:</p>${body}</body></html>`;
 }
 
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type' };

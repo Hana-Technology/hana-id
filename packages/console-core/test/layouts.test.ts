@@ -68,6 +68,38 @@ describe('console layouts match the independent implementation', () => {
     expect(nonceOf(await originChangeDigest({ signer: SIGNER, appId: a.app_id, add: a.add, remove: [], originsVersion: 0 }))).toBe(a.nonce);
   });
 
+  it('D934: frame-only adds give the v2 digest over the sorted frame-only list; none (or an empty list) gives v1 exactly', async () => {
+    const base = { signer: SIGNER, appId: 'app_x', remove: ['https://old.example'], originsVersion: 7 };
+    const add = ['https://widget.example', 'https://partner.example'];
+    const v1 = await originChangeDigest({ ...base, add });
+    expect(hex(await originChangeDigest({ ...base, add, frameOnly: [] }))).toBe(hex(v1));
+    const v2 = await originChangeDigest({ ...base, add, frameOnly: ['https://widget.example'] });
+    expect(hex(v2)).not.toBe(hex(v1));
+    // The preimage, written out: the v2 domain, then the v1 fields with the frame-only list before the version.
+    const str = (x: string) => {
+      const b = new TextEncoder().encode(x);
+      const n = new Uint8Array(4);
+      new DataView(n.buffer).setUint32(0, b.length, true);
+      return [...n, ...b];
+    };
+    const vec = (xs: string[]) => {
+      const n = new Uint8Array(4);
+      new DataView(n.buffer).setUint32(0, xs.length, true);
+      return [...n, ...xs.flatMap(str)];
+    };
+    const ver = new Uint8Array(8);
+    new DataView(ver.buffer).setBigUint64(0, 7n, true);
+    const pre = Uint8Array.from([...new TextEncoder().encode('hana-id/origin-change/v2'), ...str(SIGNER), ...str('app_x'), ...vec(['https://partner.example', 'https://widget.example']), ...vec(['https://old.example']), ...vec(['https://widget.example']), ...ver]);
+    expect(hex(v2)).toBe(hex(new Uint8Array(await crypto.subtle.digest('SHA-256', pre))));
+    // Which adds are frame-only is bound: another choice, or both, is another digest.
+    const other = await originChangeDigest({ ...base, add, frameOnly: ['https://partner.example'] });
+    const both = await originChangeDigest({ ...base, add, frameOnly: [...add].reverse() });
+    expect(new Set([hex(v1), hex(v2), hex(other), hex(both)]).size).toBe(4);
+    await expect(originChangeDigest({ ...base, add, frameOnly: ['https://elsewhere.example'] })).rejects.toThrow(/one of the adds/u);
+    await expect(originChangeDigest({ ...base, add, frameOnly: ['https://widget.example', 'https://widget.example'] })).rejects.toThrow(/duplicate/u);
+    await expect(originChangeDigest({ ...base, add, frameOnly: ['https://Widget.example'] })).rejects.toThrow(/not a normalised origin/u);
+  });
+
   it('origin change refuses unnormalised, duplicate, overlapping or missing adds', async () => {
     const base = { signer: SIGNER, appId: 'app_x', remove: [] as string[], originsVersion: 0 };
     await expect(originChangeDigest({ ...base, add: ['https://App.example'] })).rejects.toThrow(/not a normalised origin/u);

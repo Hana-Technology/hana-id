@@ -9,17 +9,31 @@ import { scopeIdInput } from './rpc.ts';
 
 const originInput = z.string().min(1).max(2048);
 const version = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/**
+ * D934: a web address to propose, as a string (usable anywhere, as before), or `{ origin, frameOnly }`: with
+ * `frameOnly: true` the app may use it only inside another of its web addresses (a network's widget in a partner's
+ * page); the vault refuses it as the top-level page.
+ */
+export const platformOriginEntry = z.union([originInput, z.object({ origin: originInput, frameOnly: z.boolean() }).strict()]);
+export type PlatformOriginEntry = z.infer<typeof platformOriginEntry>;
+/** The entries split: every web address as given, and those marked `frameOnly: true`. */
+export function splitOriginEntries(entries: readonly PlatformOriginEntry[]): { origins: string[]; frameOnly: string[] } {
+  return {
+    origins: entries.map((e) => (typeof e === 'string' ? e : e.origin)),
+    frameOnly: entries.flatMap((e) => (typeof e !== 'string' && e.frameOnly ? [e.origin] : [])),
+  };
+}
 
 /** `POST /v1/platform/apps`: a test app on one of the key's shared scopes, its name and its first web addresses. */
 export const platformCreateAppBody = z
   .object({
     scopeId: scopeIdInput,
     name: z.string().min(1).max(4 * APP_NAME_MAX),
-    origins: z.array(originInput).max(MAX_APP_ORIGINS).optional(),
+    origins: z.array(platformOriginEntry).max(MAX_APP_ORIGINS).optional(),
   })
   .strict();
 /** `POST /v1/platform/apps/:appId/origins`: web addresses to propose (each waits; A4.5). */
-export const platformAddOriginsBody = z.object({ add: z.array(originInput).min(1).max(MAX_APP_ORIGINS), expectedVersion: version }).strict();
+export const platformAddOriginsBody = z.object({ add: z.array(platformOriginEntry).min(1).max(MAX_APP_ORIGINS), expectedVersion: version }).strict();
 /** `POST /v1/platform/apps/:appId/origins/remove`: web addresses to stop at once. */
 export const platformRemoveOriginsBody = z.object({ remove: z.array(originInput).min(1).max(MAX_APP_ORIGINS), expectedVersion: version }).strict();
 /** `POST /v1/platform/apps/:appId/suspend`: suspend (true) or resume (false) the app's partner suspension. */
@@ -75,6 +89,8 @@ export interface PlatformOrigin {
   confirmedAt: number | null;
   /** The guarded change that proposed it, when there is one. */
   changeId?: string;
+  /** D934: the app may use it only inside another of its web addresses (never as the top-level page). */
+  frameOnly: boolean;
 }
 
 /** The app view (A8): an allowlist, never settings outside it, staff identities, Google subs or the mainnet demo. */

@@ -24308,6 +24308,180 @@ caller assigned.
   (l), the global breaker, stays open under D929 (revisit before real money). (Fixed by D935, 2026-11-26.) After PRs 158 and 159 merged, the
   console's tab is "Web addresses (origins)" (D930): the guide doesn't name the tab, so nothing here changed for it.
 
+
+## A network's widget inside a partner's page: the partner's page in our windows (P11) and the widget's address only as a frame (P12) (branch `feat/widget-frames`), 2026-11-26
+
+From `next` @ `96fb0ec7` (with PR 160 merged in at `bd7917f1`), not merged, not deployed. D934 is the number the
+caller assigned (D933 is unused, D935 another branch's).
+
+### D934. A web address can be marked "only inside the app's other web addresses" (frame-only), enforced by the vault from what the browser itself says; set with its own guarded add or at once as a tightening, never cleared in place; the windows name the top-level page where the browser names it and say so where it doesn't
+
+- **Date:** 2026-11-26 · **Status:** built and tested (Chromium, Firefox and WebKit); the choices below **to confirm
+  (the Tech Lead)** · **Relates to:** D912, D917, D923, D926, D929, D930, D931, D932; sweep VAUL-6;
+  `partner-platform-spec.md` A10, A13, P11, P12; `platform-guide.md` · **Built:** migration 0035, `apps/api`,
+  `packages/core` (`FrameSite`), `packages/console-core`, `packages/web` (vault `frame.ts`, the windows), `apps/console`,
+  `apps/admin`, `apps/e2e`; docs `api.md`, `architecture.md`, `security.md`, `operations.md`, `integration.md`,
+  `platform-guide.md`, `partner-platform-spec.md`'s status, `sodax-sdk-integration.md`, the READMEs.
+- **Approved by the Tech Lead** (2026-11-26) to build both pieces, as the caller put it.
+- **P12, the flag.** `app_origins.frame_only` (0 or 1; every existing row 0, today's behaviour; never on
+  `http://localhost:*`). Kept on the gate row, not on `guarded_changes` (whose shape `ledger-check` holds, D929): the
+  row is written with the add's proposal, so every screen, email and confirmation of the add reads it from there.
+  - **Set** with the address's own proposal, each path guarded unchanged: a member's add (the console's tick box; the
+    fresh sign-in binds it: `originChangeDigest` takes `frameOnly` and, when non-empty, uses a new domain
+    `hana-id/origin-change/v2` with the sorted frame-only list before the version; with none, the v1 digest exactly as
+    before), staff's add (`AdminRpc.addOrigins` `frameOnly`), the platform's create and proposal (each entry a string, as
+    before, or `{origin, frameOnly}`). Announcement email ("Where it works: only inside the app's other web
+    addresses…"), wait, cancel link, owner's confirmation (the page shows it) and four eyes apply as to any add.
+  - **Tightening, at once:** `ConsoleRpc`/`AdminRpc.frameOnlyOrigins` (an owner in the console, staff in the admin):
+    like a removal (no fresh sign-in, open in a frozen org, counted by the breaker), one `origins_version` bump, ledger
+    kind `origin.frame_only`. Not offered to the platform API (not asked for; the network can remove and re-add).
+  - **Loosening is a remove and a new add**, which waits as any add. Migration 0035's triggers refuse clearing the flag
+    in place (an update, a replace, an upsert), so no write path, old or new, can loosen it silently. Chosen over a new
+    "loosen" change kind because that would reshape `guarded_changes` (refused) or need a second pending row for one
+    address (the gate's one-row-per-address rule and 0033/0034's triggers); the cost is that the address stops working
+    during the new add's wait, rare for a widget's address.
+- **P12, enforcement in the vault** (`packages/web/src/vault/frame.ts`, at the hello, after every existing check): the
+  vault page inlines `frameOnly` (only when the app has one in force, so every other page is byte-for-byte the older
+  config) and keeps the address in `frame-ancestors`. The vault refuses a frame-only parent that is the top-level page
+  (`window.parent === window.top`: readable across origins in every browser; a throw reads as top-level) and any frame
+  whose top-level page (the last `location.ancestorOrigins` entry) is frame-only. Same silence as every refusal: no
+  `connected`, the SDK's `vault_unavailable` / `no_answer`; nothing says which rule or which addresses. Also: a
+  frame-only origin never calls the dev-env session endpoints itself (the API can't tell a framed page; `403
+  origin_not_allowed`, the unlisted answer), and Passport Home never lists one (its "where it runs" and cancel button
+  open pages). `GET /v1/app`, the NEAR relay and sponsorship status from such a page are unchanged.
+- **P11, the windows** (core `FrameSite`, an optional `frame` field on `hana:auth-params`, `hana:approve-request`,
+  `hana:consent-request`, `hana:export-context`, `hana:email-share-request`, and the email step's stored context): set
+  only by the vault from the same reads. `{top}`: the top-level page named by `ancestorOrigins` (each ancestor already
+  checked as one of the app's) when it isn't the parent: "You're on {top}. This uses a widget from {widget}." (sign-in:
+  "Signing in to {App} at {top}" and the widget line). `{top: null}`: framed but the browser doesn't say by whom: "This
+  uses a widget from {widget}. Your browser didn't say which site you're on." and either "It should be {page}: check
+  your browser's address bar." (a frame-only parent whose app has exactly one other web address) or "Check your
+  browser's address bar shows a site you trust." Not framed: the windows are exactly the older ones. Display only: the
+  approval and consent digests, shares, records and tokens still bind the parent (the widget's) origin.
+- **Per browser (tested, e2e `widget-frames.spec.ts`, `widget-frames-no-ancestors.spec.ts`):** Chromium 156, WebKit and
+  the suite's Firefox 157 Nightly (which has `ancestorOrigins`) name the partner's page and refuse a widget framed by its
+  own address at the top. Firefox without it (pref `dom.location.ancestorOrigins.enabled` off; release Firefox may lack
+  it): the "didn't say" lines, and the widget framed by its own address at the top is taken (residual below). In every
+  browser: refused on its own, in a window it opens itself, inside a page the app doesn't list, in a sandboxed frame
+  without `allow-same-origin`, in a `data:` frame; a `srcdoc` frame of the partner's page in between changes nothing.
+- **Address impact: none.** Nothing derives from the flag or the frame site; no key, path, derivation, record AAD,
+  digest of a signed request or contract changes; nobody's wallet address changes. The only new digest is the console
+  step-up's v2 origin-change layout (a nonce, not a key).
+- **Where it differs from the spec's rows:** (1) P11's Firefox fallback: the spec says show "the app's one origin that
+  isn't the widget's" as the site; built as a check, not a claim ("It should be {page}: check your address bar"),
+  because without `ancestorOrigins` the top could also be the widget's own address, so naming it as where the person is
+  would show an unverified address as verified. (2) P12: "the flag can only be set with the origin's own proposal":
+  built so, plus a tightening at once (the safe direction), as the caller asked to decide. (3) The spec's "framed by a
+  listed partner page accepted" holds in every browser for a page the app lists; "an origin marked frame-only accepted
+  only when another of the app's origins is around it" holds exactly where `ancestorOrigins` exists, and only as "some
+  page of the app's is above it" elsewhere (residual).
+- **Residuals:** (a) without `ancestorOrigins`, a frame-only page framed by a page of a frame-only address of the same
+  app at the top is taken (needs the widget's own site to frame its own pages; Sodax's widget doesn't, as far as read);
+  (b) a tightening reaches a vault at its next page load (an open one keeps its session until reload; a removal stops it
+  at once); (c) Passport Home's device list still says a widget session is "on {widget}" (the share binds the parent
+  origin; not changed); (d) the localhost wildcard can't be frame-only (exact loopback origins can).
+- **Migrations:** API 0035 only (additive; `ledger-check` reads a snapshot across it as identical, tested); the API's
+  `deploy` now requires it (`--require-migrations DB:0035_frame_only_origins.sql`), since the login path reads the
+  column. Runbook: `operations.md` "Frame-only web addresses (hot-DB migration 0035, D934)".
+- **To confirm (the Tech Lead):**
+  1. The words, end users: "You're on {page}. This uses a widget from {widget}."; "Your browser didn't say which site
+     you're on. It should be {page}: check your browser's address bar." / "Check your browser's address bar shows a
+     site you trust."; full web addresses with `https://` shown as in the windows today (the brief's example drops
+     `https://`; consistent with the existing line under "From {App}").
+  2. The words, partners: console tick box "Only inside your other web addresses (for a widget)", badge "Only inside
+     your pages", button "Use only inside your pages"; admin "Only inside the app's other web addresses"; the email row
+     "Where it works: Only inside the app's other web addresses (for example a widget in an iframe). Opened on its own,
+     the wallet won't load there."
+  3. Loosening only by remove and re-add (the address stops working during the new add's wait); tightening at once by
+     an owner or staff, no fresh sign-in, no email (as a removal).
+  4. The Firefox fallback as a check against the one expected page, not a named site (differs from the spec's P11 row).
+  5. Residual (a) accepted until Firefox ships `ancestorOrigins` everywhere, or a further piece (for example a tiny
+     script on the partner's page that answers the vault from `window.top`, proving its origin by `event.source`).
+  6. No platform API route for the tightening; the platform API marks only at create and propose.
+  7. Passport Home keeps showing a widget session's device as "on {widget}" (residual c).
+- **After PR 162's review (2026-11-26; no High, one Medium, four Low).** Changed on the same branch:
+  - **M1, the windows' wording (replaces "To confirm" points 1 and 4 above).** The page asking (the widget) stays the
+    subject everywhere it was before, exactly as on `next`: "Signing in to {App} at {widget}", "From {App}" and the
+    widget's address, the consent sentence "{App} at {widget} wants Journear…", and everything a record binds. The
+    top-level page appears only as one neutral, muted line under it: "Shown inside a page at {top}." where the
+    browser names it, else "Shown inside another page. Check your browser's address bar shows a site you trust." Why:
+    nobody checks that an app's web addresses belong to whoever runs the app, so an app listing a popular site that
+    frames its content (an embed, user content, an ad slot) would, with the first wording, get "Signing in to S
+    Rewards at https://S", passing the very check people are taught against phishing. The "It should be {page}" hint
+    is gone for the same reason (it named a listed site as the one to expect); `FrameSite` lost its `expected` field.
+  - **L1, Firefox without `ancestorOrigins` (proved by the reviewer).** Any script on the widget's own address defeats
+    frame-only there with one inner frame of its own (a plain one, or `about:srcdoc`/`about:blank`, which have their
+    creator's origin): the vault sees a framed parent and the browser doesn't say by whom. No sound check exists from
+    what the vault can read: `window.top === window.parent.parent` gives only the depth; `document.referrer` is the
+    parent's and can be suppressed; the top-level page's origin can't be read across origins. Stated plainly in
+    `security.md`, `architecture.md`, the guide and the integration guide; tested as it is (the e2e's Firefox lane
+    without `ancestorOrigins`, plain and `srcdoc`); refused where the browser names every ancestor (tested, also
+    through `srcdoc`). **Possible follow-up, not built:** the vault posts to `window.top` and takes an answer only from
+    `event.source === window.top`, whose `event.origin` the browser sets, from our code on that page (the SDK or a
+    small helper) on a registered address that isn't frame-only; a protocol change.
+  - **L2, release Firefox.** The docs no longer imply release Firefox has `ancestorOrigins`: "Firefox without
+    `location.ancestorOrigins` (not confirmed in release builds)", and the fallback is treated as possibly every
+    Firefox user's.
+  - **L3, rows moved by a bare write (proved).** `UPDATE OR REPLACE app_origins SET origin = …` could replace a
+    frame-only row unseen. 0035 (applied nowhere, so edited) adds `app_origins_fixed`: no change of a row's `origin` or
+    `app_id` (no code renames one). A bare delete and insert is, to a trigger, a removal and an add: the hourly drift
+    check now reports a row reading 0 whose ledger says frame-only (its proposal's `frameOnly` for its change id, or an
+    `origin.frame_only` row naming it with no removal since): `what: 'frame_only'`. The 0035 header claims exactly this.
+  - **L4, rollback fails open.** Rolling the API or the pages back past this release turns frame-only off while rows
+    read 1. Not made fail-closed (an older build can't take part in any version handshake); the runbook says not to
+    roll back past it while any frame-only address exists, or to remove those addresses first.
+  - **Notes:** the guide says an owner (not "a member") can tighten; every app keeps at least one web address that
+    isn't frame-only (a tightening, a proposal or the console's fresh sign-in that would leave none is `conflict`, a
+    platform create of only frame-only addresses `400 bad_request`; one message, console-core `NO_ANYWHERE_ORIGIN`);
+    `checkCaller` now requires the frame-only list, so a future caller can't leave it out and fail open.
+  - Screens re-captured (every end-user window); console, admin and emails unchanged by these fixes.
+- **To confirm (the Tech Lead), after the review** (replacing points 1 and 4 above):
+  1. The end-user line "Shown inside a page at {top}." and "Shown inside another page. Check your browser's address
+     bar shows a site you trust.", muted, under the page asking, which stays the subject.
+  2. Someone checks whether release Firefox (and Firefox ESR) has `location.ancestorOrigins` turned on; until then the
+     fallback line, and residual L1, may apply to every Firefox user.
+  3. Tightening keeps a removal's guards and exposure (an owner or any staff member, no fresh sign-in, no email,
+     counted by the breaker), or requires a fresh sign-in as adding does.
+  4. The public vault page now also inlines which of an app's web addresses are frame-only (the list itself was
+     already public in it and in `frame-ancestors`).
+  5. The consent sentence names the widget's address, and a consent given there also applies on the same partner's
+     other pages that frame the widget (unchanged behaviour: a consent binds the parent origin).
+  6. Whether to build the follow-up for L1 (the top-level page proving itself by `event.origin`).
+- **After PR 162's second review (2026-11-26; no High, two Medium in the new drift check, two Low).** Changed:
+  - **M1, a false drift alarm (proved).** A tightening named only the web address, so after a tightened waiting add
+    was cancelled (by an owner or staff, `change.cancelled`), expired unannounced (the hourly job, no ledger row of the
+    app) or cancelled by its platform key's revocation (`change.cancelled` with no app), a later plain add of the same
+    address was reported. Now each `origin.frame_only` entry records the change id its row had (`changeId`, null for a
+    row with none), and drift reports a row only when its own change id was marked by its proposal, or a tightening
+    named it with that same change id and no removal since. A later add is a new change. Tested for the three paths,
+    each followed by a plain re-add (no finding), with the true positives kept.
+  - **M2, the drift read's cost (measured).** The first version scanned `app_changes` twice for every origin row,
+    every hour. Now one read: a materialised pass over the four origin ledger kinds through a new index in 0035,
+    `app_changes_kind_app (kind, app_id, seq)` (applied nowhere, so 0035 was edited; `ledger-check` reports it as new
+    and holds it to its SQL, tested), then one primary-key look-up of `app_origins` per fact (`CROSS JOIN` keeps that
+    order). Tested: the query plan searches the index and scans neither the ledger nor `app_origins`, and with 20,000
+    other ledger rows and 500 web addresses its rows read stay under 20,000. Cost per run in `operations.md`.
+  - **L1, the "always keeps one" claim.** (a) Only web addresses **in force** count when deciding whether a tightening,
+    a proposal of only frame-only adds or the console's fresh sign-in would leave none; a waiting one and the
+    `http://localhost:*` pattern don't. A brand-new app's first addresses all wait, so its first proposal must carry
+    at least one address without the mark (a create or proposal with a usable-anywhere add is never refused); a
+    frame-only address alone can be proposed once a page is in force. Nothing legitimate is made impossible: the
+    network's create normally carries the partner's page and the widget together. (b) Every doc now says what holds:
+    those are refused; removals and cancellations (kill switches, the expiry, a key's revocation) never are, and can
+    leave none.
+  - **L2:** `integration.md` uses the same Firefox wording as the other docs.
+  - **Notes:** the `ledger-check` test's title says three triggers and the index; the drift reads are tolerant of an
+    odd ledger row: a detail that isn't valid JSON reads as `{}`, an array entry that isn't an object is skipped
+    (`CASE WHEN e.type = 'object'`), so one odd row can't stop the run (tested with strings and numbers where objects
+    are written). The pre-existing origin drift query had the same risk (`json_extract` over an entry of the removals'
+    lists); fixed the same way.
+- **Open points (the Tech Lead), from the second review:**
+  1. Retention: for an app with no `migration.baseline` row, the 60-month purge can delete the `origin.proposed`,
+     `app.created` or `origin.frame_only` rows the frame-only drift check needs; after that the check sees nothing for
+     that row (the flag itself stays, held by the triggers).
+  2. `frameOnlyOrigins` on `ConsoleRpc` accepts any member actor; the owner role is enforced in the console's route,
+     as for removals (a pre-existing pattern of the console's kill switches).
+
 ## Kill switches no other organisation can block (branch `fix/kill-switch-limits`), 2026-11-26
 
 From `next` @ 96fb0ec7, merged with `next` @ bd7917f1 (PR 160); not merged, not deployed, no migration. The Tech

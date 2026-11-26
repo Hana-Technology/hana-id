@@ -223,6 +223,11 @@ export const guardedChange = z
     /** D931: when a second person confirmed it (it came into force then), and whether an owner or staff. */
     confirmedAt: ms.optional(),
     confirmedByKind: z.enum(['member', 'hana']).optional(),
+    /**
+     * D934: an origin add whose web address the app may use only inside a frame (inside one of its other web
+     * addresses, as a network's widget), as its gate row holds it (migration 0035).
+     */
+    frameOnly: z.literal(true).optional(),
   })
   .strict();
 export type GuardedChange = z.infer<typeof guardedChange>;
@@ -257,7 +262,7 @@ export const appDetail = appSummary
     orgId: id,
     originsVersion: z.number().int().nonnegative(),
     settingsVersion: z.number().int().nonnegative(),
-    origins: z.array(z.object({ origin: z.string(), display: z.string(), idn: z.boolean(), activeFrom: ms.nullable(), changeId: id.optional() }).strict()),
+    origins: z.array(z.object({ origin: z.string(), display: z.string(), idn: z.boolean(), activeFrom: ms.nullable(), changeId: id.optional(), frameOnly: z.literal(true).optional() }).strict()),
     settings: z
       .object({
         persistence: z.enum(['session', 'none']),

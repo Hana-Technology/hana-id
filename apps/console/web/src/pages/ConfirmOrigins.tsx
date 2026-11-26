@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError, getJson, postJson } from '../api.ts';
 import { CONFIRM_WORDS, appNames } from '../confirm-words.ts';
+import { FRAME_WORDS } from '../frame-words.ts';
 import { useApi, useOrg, useStepUp, useWrite, when } from '../lib.tsx';
 import { Badge, Callout, ConfirmButton, ErrorNote, IdnWarning, Loading, OriginText, PageHeader, Panel, StepUpHint, Why, WriteNote } from '../ui.tsx';
 import { Framed } from './Shell.tsx';
@@ -175,6 +176,11 @@ export function ConfirmOrigins() {
                       <div className="oc-origin">
                         <OriginText origin={c.origin} display={c.display} idn={c.idn} />
                       </div>
+                    )}
+                    {c.frameOnly && (
+                      <p className="oc-frame small">
+                        <Badge tone="info">{FRAME_WORDS.badge}</Badge> {FRAME_WORDS.confirm}
+                      </p>
                     )}
                     <p className="oc-state small">
                       <Badge tone={s.tone}>{s.badge}</Badge>

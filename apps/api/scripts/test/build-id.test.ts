@@ -25,7 +25,7 @@ describe('build id (D384)', () => {
 
   it('deploy and deploy:pages stamp every Worker; deploy:pages builds the pages first', () => {
     // D931 (after PR 159's review, L2): the migration check first.
-    expect(scripts.deploy).toBe('tsx ../../packages/env/src/stamped-deploy.ts --require-migrations DB:0034_origin_confirmations.sql');
+    expect(scripts.deploy).toBe('tsx ../../packages/env/src/stamped-deploy.ts --require-migrations DB:0035_frame_only_origins.sql');
     const steps = scripts['deploy:pages']!.split(' && ');
     expect(steps).toEqual(['pnpm --filter @hana-id/web build', 'tsx ../../packages/env/src/stamped-deploy.ts -c wrangler.vault.jsonc', 'tsx ../../packages/env/src/stamped-deploy.ts -c wrangler.auth.jsonc']);
     expect(Object.values(scripts).join('\n')).not.toMatch(/(^|&& )wrangler deploy/mu);

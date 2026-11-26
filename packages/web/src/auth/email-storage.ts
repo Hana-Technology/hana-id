@@ -15,7 +15,7 @@
 //   store holds no address), and when it lapses (24 h after the mail). /login/email sends it with each `start` while it lasts: the issuer counts it only for that exact address,
 //   once, and ignores it otherwise. It can't sign anyone in either. Dropped after a sign-in with that address, or once
 //   it lapsed.
-import { RELAY_ID_PATTERN, type LoginMethod, type OtherApps, base64UrlDecode, base64UrlEncode, isEmailHint, isLogoUrl, isOtherApps, sha256, utf8 } from '@hana-id/core';
+import { type FrameSite, RELAY_ID_PATTERN, type LoginMethod, type OtherApps, base64UrlDecode, base64UrlEncode, isEmailHint, isFrameSite, isLogoUrl, isOtherApps, sha256, utf8 } from '@hana-id/core';
 import { LOGIN_ENTRY_MAX_AGE_MS } from './login-storage.ts';
 
 export const EMAIL_ENTRY_PREFIX = 'hana.email.';
@@ -47,6 +47,8 @@ export interface EmailContext {
   /** D912: the vault had no answer about the other apps (the line says the wallet may be shared). */
   otherAppsUnknown?: true;
   parentOrigin: string;
+  /** P11 (D934): where the page asking sits, as auth-params carried it (the vault checked it). */
+  frame?: FrameSite;
   scopeId: string;
   sessionPublicKey: Uint8Array;
   expiresAtMs: number;
@@ -134,6 +136,7 @@ function decode(raw: string | null): Stored | null {
       (c.otherApps === undefined || isOtherApps(c.otherApps)) &&
       (c.otherAppsUnknown === undefined || (c.otherAppsUnknown === true && c.otherApps === undefined)) &&
       typeof c.parentOrigin === 'string' &&
+      (c.frame === undefined || isFrameSite(c.frame, c.parentOrigin)) &&
       typeof c.scopeId === 'string' &&
       typeof c.sessionPublicKey === 'string' &&
       isInt(c.expiresAtMs) &&

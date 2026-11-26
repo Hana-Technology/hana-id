@@ -5,7 +5,11 @@
 // field is left (validate on blur), and never sends either.
 // D931: a web address that came into force by a confirmation says when, and whether an owner or Journear staff
 // confirmed it; the waiting list (Changes.tsx) links each one that waits for a confirmation to its page.
+// D934: a web address the app may use only inside its other web addresses (a widget's) says so; the add form's tick box
+// marks every address of its request so; an owner sets one usable anywhere to that at once (like a removal: no fresh
+// sign-in, open in a frozen org); the way back is a removal and a new add, which waits like any.
 import type { GuardedChange } from '@hana-id/console-core';
+import { FRAME_WORDS } from '../../frame-words.ts';
 import { useState } from 'react';
 import { postJson } from '../../api.ts';
 import { useNow, useStepUp, useTouched, useWrite, when } from '../../lib.tsx';
@@ -15,6 +19,8 @@ import { ChainOwnerGate, useChainOwner } from './ChainOwner.tsx';
 import { PendingChanges } from './Changes.tsx';
 
 const MAX_PER_REQUEST = 20;
+/** The test apps' localhost pattern (console-core's LOCALHOST_WILDCARD; the SPA imports only types from there): never frame-only. */
+const LOCALHOST_WILDCARD = 'http://localhost:*';
 
 /** D931: "Confirmed on {date} by an owner" (or "by Journear staff"). */
 export const confirmedWords = (c: Pick<GuardedChange, 'confirmedAt' | 'confirmedByKind'>): string => `Confirmed on ${when(c.confirmedAt)} ${c.confirmedByKind === 'hana' ? 'by Journear staff' : 'by an owner'}`;
@@ -28,6 +34,7 @@ export function Origins() {
   const step = useStepUp(org, { page: 'origins', appId: app.id });
   const chain = useChainOwner(org, app.scopeId, owner && !frozen);
   const [text, setText] = useState('');
+  const [frameOnly, setFrameOnly] = useState(false);
   const touched = useTouched<'origins'>();
   const base = `/api/orgs/${org}/apps/${app.id}`;
   const add = text
@@ -75,6 +82,13 @@ export function Origins() {
                 <tr key={o.origin}>
                   <td>
                     <OriginText {...o} />
+                    {o.frameOnly && (
+                      <>
+                        {' '}
+                        <Badge tone="info">{FRAME_WORDS.badge}</Badge>
+                        <div className="muted small frame-only-note">{FRAME_WORDS.wayBack}</div>
+                      </>
+                    )}
                     {o.changeId !== undefined && byBackend.has(o.changeId) && (
                       <div>
                         <Badge tone="info">Asked for by your backend</Badge>
@@ -97,6 +111,21 @@ export function Origins() {
                   </td>
                   {owner && (
                     <td className="cell-actions">
+                      {!o.frameOnly && o.origin !== LOCALHOST_WILDCARD && (
+                        <ConfirmButton
+                          label={FRAME_WORDS.tighten}
+                          confirm={FRAME_WORDS.tightenConfirm}
+                          detail={FRAME_WORDS.tightenDetail(o.display)}
+                          busy={w.busy}
+                          onConfirm={() =>
+                            void w.run(async () => {
+                              await postJson(`${base}/origins/frame-only`, { origins: [o.origin], expectedVersion: app.originsVersion });
+                              ctl.reload();
+                              return FRAME_WORDS.tightenDone(o.display);
+                            })
+                          }
+                        />
+                      )}{' '}
                       {o.activeFrom !== null ? (
                         <ConfirmButton
                           label="Remove"
@@ -139,7 +168,7 @@ export function Origins() {
             onSubmit={(e) => {
               e.preventDefault();
               touched.all();
-              if (!tooMany && add.length > 0) void step.start('origin.add', { appId: app.id, add });
+              if (!tooMany && add.length > 0) void step.start('origin.add', { appId: app.id, add, ...(frameOnly ? { frameOnly: add } : {}) });
             }}
           >
             <Field
@@ -153,6 +182,16 @@ export function Origins() {
             >
               {(c) => <textarea {...c} className="jp-input mono" value={text} onChange={(e) => setText(e.target.value)} onBlur={touched.blur('origins')} rows={3} placeholder="https://app.example.com" />}
             </Field>
+            <div className="jp-field">
+              <label className="jp-check">
+                <input type="checkbox" checked={frameOnly} onChange={(e) => setFrameOnly(e.target.checked)} aria-describedby="frame-only-hint" />
+                <span>{FRAME_WORDS.tick}</span>
+              </label>
+              <p className="jp-hint" id="frame-only-hint">
+                {FRAME_WORDS.tickHint}
+                {frameOnly ? ` ${FRAME_WORDS.tickAll}` : ''}
+              </p>
+            </div>
             <div className="form-actions">
               <button type="submit" className="jp-btn jp-btn-primary" disabled={step.busy || add.length === 0 || tooMany}>
                 Review and confirm with Google

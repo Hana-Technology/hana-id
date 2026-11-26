@@ -2,7 +2,7 @@
 // /share-email (D411, D438–D442; auth/share-page.ts) and the login popup's hand-off to it (auth/share-handoff.ts), and
 // the approval popup's "Stop sharing" (D442): the sender checks, the address read from the API with the vault's proof,
 // the guarded "Share email", "Not now", the already-shared sheet, the D42 caveat, and closing on the vault's word.
-import { evmTxSigningPayload, newRequestId, parseEvmTxRequest } from '@hana-id/core';
+import { evmTxSigningPayload, newRequestId, parseEvmTxRequest, parseWindowMessage } from '@hana-id/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARD_DELAY_MS } from '../../src/auth/approve-guard.ts';
 import { EMAIL_SHARED_TEXT, startApprovePage } from '../../src/auth/approve-page.ts';
@@ -81,6 +81,14 @@ describe('opener modes', () => {
 });
 
 describe('the sheet', () => {
+  it('P11 (D934): a framed page asking: "From {App}" and its address as before, the neutral note under them', async () => {
+    start('?from=vault');
+    win.message(request({ frame: { top: 'https://coffeeclub.example' } }), ENV.vaultOrigin, vault);
+    await flush();
+    expect([...document.querySelector('header.app')!.children].map((c) => c.textContent)).toEqual(['From Partner App', PARTNER, 'Shown inside a page at https://coffeeclub.example.']);
+    expect(parseWindowMessage(request({ frame: { top: PARTNER } }), ['hana:email-share-request'])).toBeNull();
+  });
+
   it('says hello until the vault answers, reads the address with the vault’s proof, and records "Share email" behind the guard', async () => {
     start('?from=vault');
     expect(pageText()).toContain('Loading');

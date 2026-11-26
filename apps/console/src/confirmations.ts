@@ -97,9 +97,10 @@ export async function buildConfirmation(env: Env, c: OrgCaller, ctx: { actor: Ac
   const ids = [...p.changeIds].sort();
   const changes = ids.map((id) => ({ changeId: id, origin: byId.get(id)!.origin }));
   const digest = await originConfirmDigest({ signer: env.SIGNER_ACCOUNT, env: env.ENV_NAME, orgId: c.orgId, appId: v.app.id, scopeId: v.app.scopeId, changes });
+  // D934: the API marks a web address the app may use only inside its other web addresses; the review says so.
   const shown = ids.map((id) => {
     const ch = byId.get(id)!;
-    return { changeId: id, origin: ch.origin, display: ch.display, idn: ch.idn, activeFrom: ch.activeFrom };
+    return { changeId: id, origin: ch.origin, display: ch.display, idn: ch.idn, activeFrom: ch.activeFrom, ...(ch.frameOnly ? { frameOnly: true } : {}) };
   });
   return {
     action: { app_id: v.app.id, scope_id: v.app.scopeId, change_ids: ids, origins: changes.map((x) => x.origin), request_id: v.requestId },

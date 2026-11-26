@@ -254,10 +254,11 @@ describe('0006 on a sandbox-dev-shaped database (0001–0005 and 0008 applied, t
     // wrangler applies the unapplied files in name order: here 0006 alone, after 0008 (as batch C3's deploy did; later
     // files came with later batches).
     await applyD1Migrations(db, ALL.filter((m) => m.name < '0009'));
-    // getAppByKey now reads 0016's marker and 0030's mode: this block checks 0006's answers with today's read, then the
-    // last test drops them.
+    // getAppByKey now reads 0016's marker, 0030's mode and 0035's frame-only flag: this block checks 0006's answers
+    // with today's read, then the last test drops them.
     await db.prepare('ALTER TABLE apps ADD COLUMN first_login_at INTEGER').run();
     await db.prepare("ALTER TABLE apps ADD COLUMN user_ids TEXT NOT NULL DEFAULT 'scope'").run();
+    await db.prepare('ALTER TABLE app_origins ADD COLUMN frame_only INTEGER NOT NULL DEFAULT 0').run();
   });
 
   it('applies 0006 last and only 0006', async () => {
@@ -355,9 +356,10 @@ describe('0006 on a sandbox-dev-shaped database (0001–0005 and 0008 applied, t
   it('then the later files apply in name order (0009 batch C4, 0010 email login, 0011 the wallet directory, 0012 the last token sighting, 0013 the mainnet demo and user events, 0014 email sharing, 0015 link counts, 0016 the Home list, 0017 vault consents, 0019 NEAR wallets), every app Google-only and sharing no email', async () => {
     await db.prepare('ALTER TABLE apps DROP COLUMN first_login_at').run();
     await db.prepare('ALTER TABLE apps DROP COLUMN user_ids').run();
+    await db.prepare('ALTER TABLE app_origins DROP COLUMN frame_only').run();
     await applyD1Migrations(db, ALL);
     const { results } = await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all<{ name: string }>();
-    expect(results.map((r) => r.name).slice(-24)).toEqual(['0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql', '0014_email_sharing.sql', '0015_link_usage.sql', '0016_home_apps.sql', '0017_vault_consents.sql', '0018_home_usage.sql', '0019_near_wallets.sql', '0020_near_relay_events.sql', '0021_profile_names.sql', '0022_evm_sponsor.sql', '0023_near_relay_billing.sql', '0024_evm_relay_auto_resumed.sql', '0025_partner_labels.sql', '0026_shared_scope_rules.sql', '0027_platform_actor.sql', '0028_platform_keys.sql', '0030_app_user_ids.sql', '0031_end_user_apps_recent.sql', '0032_platform_calls.sql', '0033_platform_ops.sql', '0034_origin_confirmations.sql']);
+    expect(results.map((r) => r.name).slice(-25)).toEqual(['0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql', '0014_email_sharing.sql', '0015_link_usage.sql', '0016_home_apps.sql', '0017_vault_consents.sql', '0018_home_usage.sql', '0019_near_wallets.sql', '0020_near_relay_events.sql', '0021_profile_names.sql', '0022_evm_sponsor.sql', '0023_near_relay_billing.sql', '0024_evm_relay_auto_resumed.sql', '0025_partner_labels.sql', '0026_shared_scope_rules.sql', '0027_platform_actor.sql', '0028_platform_keys.sql', '0030_app_user_ids.sql', '0031_end_user_apps_recent.sql', '0032_platform_calls.sql', '0033_platform_ops.sql', '0034_origin_confirmations.sql', '0035_frame_only_origins.sql']);
     const sharing = await db.prepare('SELECT DISTINCT identity_email FROM apps').all<{ identity_email: string }>();
     expect(sharing.results.map((r) => r.identity_email)).toEqual(['off']);
     expect(await db.prepare('SELECT COUNT(*) AS n FROM email_consents').first()).toEqual({ n: 0 });
@@ -396,7 +398,7 @@ describe('0006 on an empty database, in order', () => {
     accepted(db, 'INSERT INTO apps (id, name, scope_id, org_id, publishable_key) VALUES (?1, ?1, ?2, ?3, ?4)', id, scopeId, org, key);
 
   beforeAll(async () => {
-    expect(ALL.map((m) => m.name)).toEqual(['0001_init.sql', '0002_issuer_key_missing.sql', '0003_vault.sql', '0004_issuer_key_observations.sql', '0005_issuer_key_sync.sql', '0006_dashboard_expand.sql', '0008_identity_token.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql', '0014_email_sharing.sql', '0015_link_usage.sql', '0016_home_apps.sql', '0017_vault_consents.sql', '0018_home_usage.sql', '0019_near_wallets.sql', '0020_near_relay_events.sql', '0021_profile_names.sql', '0022_evm_sponsor.sql', '0023_near_relay_billing.sql', '0024_evm_relay_auto_resumed.sql', '0025_partner_labels.sql', '0026_shared_scope_rules.sql', '0027_platform_actor.sql', '0028_platform_keys.sql', '0030_app_user_ids.sql', '0031_end_user_apps_recent.sql', '0032_platform_calls.sql', '0033_platform_ops.sql', '0034_origin_confirmations.sql']);
+    expect(ALL.map((m) => m.name)).toEqual(['0001_init.sql', '0002_issuer_key_missing.sql', '0003_vault.sql', '0004_issuer_key_observations.sql', '0005_issuer_key_sync.sql', '0006_dashboard_expand.sql', '0008_identity_token.sql', '0009_session_markers.sql', '0010_login_methods.sql', '0011_wallet_directory.sql', '0012_issuer_key_last_token.sql', '0013_mainnet_demo_events.sql', '0014_email_sharing.sql', '0015_link_usage.sql', '0016_home_apps.sql', '0017_vault_consents.sql', '0018_home_usage.sql', '0019_near_wallets.sql', '0020_near_relay_events.sql', '0021_profile_names.sql', '0022_evm_sponsor.sql', '0023_near_relay_billing.sql', '0024_evm_relay_auto_resumed.sql', '0025_partner_labels.sql', '0026_shared_scope_rules.sql', '0027_platform_actor.sql', '0028_platform_keys.sql', '0030_app_user_ids.sql', '0031_end_user_apps_recent.sql', '0032_platform_calls.sql', '0033_platform_ops.sql', '0034_origin_confirmations.sql', '0035_frame_only_origins.sql']);
     await applyD1Migrations(db, ALL);
     await scope('sa', 'test');
     await scope('sl', 'live');

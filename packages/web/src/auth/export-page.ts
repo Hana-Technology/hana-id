@@ -66,7 +66,7 @@ import type { HanaEnv } from '../hana-env.ts';
 import type { AuthApi } from './api.ts';
 import { ChainLoginError, loginOnChain } from './chain-login.ts';
 import { ServerClock } from './clock.ts';
-import { type Dom, dom, errorView, originText } from './dom.ts';
+import { type Dom, askerBox, dom, errorView } from './dom.ts';
 import { PageError, apiErrorCode, errorMessage, safetyStop, sessionKeyText } from './errors.ts';
 import { appLogo } from './logo.ts';
 import type { NearReader } from './near-rpc.ts';
@@ -382,7 +382,7 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         { class: 'panel export' },
         d.h('h1', {}, `Export your ${CHAIN_NAMES[ctx.chain]} key`),
         exportSteps(d, 1),
-        d.h('p', { class: 'asker' }, appLogo(d, env, logoUrl()), 'For your wallet in ', d.h('strong', {}, app?.name ?? ctx.appName), ' at ', originText(d, ctx.parentOrigin)),
+        askerBox(d, [appLogo(d, env, logoUrl()), 'For your wallet in ', d.h('strong', {}, app?.name ?? ctx.appName)], ctx.parentOrigin, ctx.frame),
         account('Address', ctx.address),
         alert(d, 'danger', { class: 'warn' }, EXPORT_WARNING),
         d.h('p', { class: 'muted' }, both ? 'To be sure it’s you, sign in again first, with Google or with a code sent to your email.' : 'To be sure it’s you, sign in with Google again first.'),
@@ -457,6 +457,8 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         appName: a.name ?? ctx.appName,
         ...(logoUrl() ? { logoUrl: logoUrl()! } : {}),
         parentOrigin: ctx.parentOrigin,
+        // P11 (D934): the "Confirm it's you" sign-in says where the page is, as the export window does.
+        ...(ctx.frame ? { frame: { ...ctx.frame } } : {}),
         scopeId: ctx.scopeId,
         signer: env.signer,
         clientId: a.google.clientId,

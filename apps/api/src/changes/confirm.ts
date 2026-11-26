@@ -327,6 +327,7 @@ export async function getConfirmation(db: HotDb, i: { orgId: string; changeId: s
              (SELECT sw.proposer_email_key FROM staff_origin_waits sw WHERE sw.change_id = g.id) AS staff_email_key,
              CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS key_label,
              (SELECT json_group_array(json_object('id', o.id, 'origin', o.origin, 'status', o.status, 'notified_at', o.notified_at, 'active_from', o.active_from,
+                                                'frame_only', (SELECT ao.frame_only FROM app_origins ao WHERE ao.app_id = o.app_id AND ao.change_id = o.id),
                                                    'confirmed_at', oc.confirmed_at, 'waited', COALESCE(pw.unconfirmed_active_from, sw2.unconfirmed_active_from)))
                 FROM (SELECT * FROM guarded_changes WHERE app_id = g.app_id AND request_id = g.request_id AND kind = 'origin_add' ORDER BY origin LIMIT 20) o
                 LEFT JOIN origin_confirmations oc ON oc.change_id = o.id
@@ -339,13 +340,13 @@ export async function getConfirmation(db: HotDb, i: { orgId: string; changeId: s
          AND (g.proposed_by_kind = 'platform' OR EXISTS (SELECT 1 FROM staff_origin_waits sw WHERE sw.change_id = g.id))`,
   );
   if (!r || r.change_id === null || r.deleted_at !== null) return refuse('not_found', NOT_VISIBLE);
-  const rows = JSON.parse(r.changes) as { id: string; origin: string; status: string; notified_at: number | null; active_from: number | null; confirmed_at: number | null; waited: number | null }[];
+  const rows = JSON.parse(r.changes) as { id: string; origin: string; status: string; notified_at: number | null; active_from: number | null; confirmed_at: number | null; waited: number | null; frame_only: number | null }[];
   // D917: the viewer who added a staff proposal (by email) is never its second person.
   const self = viewerEmailKey !== undefined && r.staff_email_key !== null && r.staff_email_key === viewerEmailKey;
   const changes = rows.map((c): ConfirmationChange => {
     const inForce = c.status === 'active' || (c.status === 'pending' && c.active_from !== null && c.active_from <= now);
     const state: ConfirmationChange['state'] = c.status === 'cancelled' ? 'cancelled' : c.status === 'ended' ? 'ended' : inForce ? 'in_force' : c.notified_at === null ? 'waiting_announcement' : 'waiting';
-    const v: ConfirmationChange = { changeId: c.id, ...originDisplay(c.origin), state, activeFrom: c.confirmed_at ?? c.waited ?? c.active_from, confirmable: state === 'waiting' && c.confirmed_at === null && !self };
+    const v: ConfirmationChange = { changeId: c.id, ...originDisplay(c.origin), state, activeFrom: c.confirmed_at ?? c.waited ?? c.active_from, confirmable: state === 'waiting' && c.confirmed_at === null && !self, ...(c.frame_only === 1 ? { frameOnly: true as const } : {}) };
     if (c.confirmed_at !== null) v.confirmedAt = c.confirmed_at;
     return v;
   });
@@ -393,7 +394,7 @@ export async function confirmationNotices(db: HotDb, limit: number, now: number)
     q`SELECT f.request_id, f.confirmed_at, f.app_id, a.name AS app_name, a.org_id, a.scope_id, s.environment, f.confirmed_by_kind, f.confirmed_by, g.proposed_by_kind, g.proposed_by,
              CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS key_label,
              (SELECT json_group_array(email) FROM (SELECT email FROM org_security_contacts WHERE org_id = a.org_id ORDER BY email)) AS contacts,
-             (SELECT json_group_array(json_object('changeId', x.change_id, 'origin', x.origin)) FROM (SELECT change_id, origin FROM origin_confirmations WHERE request_id = f.request_id ORDER BY change_id) x) AS changes, f.failures
+             (SELECT json_group_array(json_object('changeId', x.change_id, 'origin', x.origin, 'frameOnly', (SELECT ao.frame_only FROM app_origins ao WHERE ao.app_id = x.app_id AND ao.change_id = x.change_id))) FROM (SELECT change_id, origin, app_id FROM origin_confirmations WHERE request_id = f.request_id ORDER BY change_id) x) AS changes, f.failures
         FROM (SELECT request_id, MIN(confirmed_at) AS confirmed_at, MIN(change_id) AS first_change, app_id, confirmed_by_kind, confirmed_by, MAX(notice_failures) AS failures
                 FROM origin_confirmations WHERE notice_at IS NULL GROUP BY request_id
                -- After PR 159's third review: a failed run waits 5 minutes more after each failure (at most an hour) and
@@ -423,7 +424,7 @@ export async function confirmationNotices(db: HotDb, limit: number, now: number)
       confirmedBy: r.confirmed_by,
       confirmedAt: r.confirmed_at,
       proposedByKind: r.proposed_by_kind === 'platform' ? 'platform' : 'hana',
-      changes: (JSON.parse(r.changes) as { changeId: string; origin: string }[]).map((c) => ({ changeId: c.changeId, ...originDisplay(c.origin) })),
+      changes: (JSON.parse(r.changes) as { changeId: string; origin: string; frameOnly: number | null }[]).map((c) => ({ changeId: c.changeId, ...originDisplay(c.origin), ...(c.frameOnly === 1 ? { frameOnly: true as const } : {}) })),
       failures: r.failures,
     };
     if (r.proposed_by_kind === 'platform') {

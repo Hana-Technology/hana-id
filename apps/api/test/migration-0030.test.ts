@@ -114,6 +114,8 @@ describe('migration 0030_app_user_ids', () => {
   });
 
   it("an existing app's User ID and Support ID are what they were, through the API's own reads and code", async () => {
+    // getAppByKey also reads 0035's frame-only flag: added for this read at 0030's level, and dropped after it.
+    await db.prepare('ALTER TABLE app_origins ADD COLUMN frame_only INTEGER NOT NULL DEFAULT 0').run();
     for (const [app, key] of [['app_a1', KEYS.a1], ['app_m1', KEYS.m1], ['app_l1', KEYS.l1]] as const) {
       const row = (await getAppByKey(db, key))!;
       expect(row.user_ids, app).toBe('scope');
@@ -126,6 +128,7 @@ describe('migration 0030_app_user_ids', () => {
     const u = (await db.prepare("SELECT token_sub, support_code FROM end_users WHERE scope_id = 's2'").first<{ token_sub: string; support_code: string }>())!;
     expect(u.token_sub).toBe(before.app_m1!.sub);
     expect(formatSupportId(u.support_code)).toBe(before.app_m1!.supportId);
+    await db.prepare('ALTER TABLE app_origins DROP COLUMN frame_only').run();
   });
 
   it("the mode takes only 'scope' or 'app'", async () => {

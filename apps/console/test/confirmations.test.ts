@@ -41,9 +41,9 @@ async function ownerOfSharedApp() {
 }
 
 /** Staff web addresses on the shared wallet's app (four eyes), announced, as AdminRpc writes and acks them. */
-async function staffSet(app: { id: string; org: string }, origins: string[]) {
+async function staffSet(app: { id: string; org: string }, origins: string[], frameOnly: string[] = []) {
   const ver = (await hot.prepare('SELECT origins_version AS v FROM apps WHERE id = ?1').bind(app.id).first<{ v: number }>())!.v;
-  const r = (await admin().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: origins, expectedVersion: ver })) as { ok: boolean; changes: { id: string; origin?: string }[] };
+  const r = (await admin().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: origins, ...(frameOnly.length ? { frameOnly } : {}), expectedVersion: ver })) as { ok: boolean; changes: { id: string; origin?: string }[] };
   if (!r.ok) throw new Error(JSON.stringify(r));
   for (const c of r.changes) expect(await admin().ackNotice({ ...system(), changeId: c.id, cancelTokenHash: await randomHash() })).toMatchObject({ ok: true });
   return r.changes.map((c) => ({ changeId: c.id, origin: c.origin! }));
@@ -73,6 +73,24 @@ describe('the confirmation page', () => {
     expect((await getAs(stranger, `/api/confirmations/${set[0]!.changeId}/org`)).status).toBe(404);
     expect((await request(`/api/orgs/${m.org}/confirmations/${set[0]!.changeId}`)).status).toBe(401);
     expect(await Promise.all(set.map((c) => activeFrom(c.changeId)))).toEqual(before);
+  });
+});
+
+describe('D934: a frame-only web address on the confirmation page and in its step-up', () => {
+  it('the page marks the one the app may use only inside its other web addresses, from the app’s own rows; the review says so too', async () => {
+    const { m, app } = await ownerOfSharedApp();
+    const set = await staffSet(app, ['https://shop.partner.example', 'https://widget.partner.example'], ['https://widget.partner.example']);
+    const page = await getAs<{ confirmation: { changes: { origin: string; frameOnly?: true }[] } }>(m, `/api/orgs/${m.org}/confirmations/${set[0]!.changeId}`);
+    expect(page.body.confirmation.changes.map((c) => [c.origin, c.frameOnly ?? false]).sort()).toEqual([
+      ['https://shop.partner.example', false],
+      ['https://widget.partner.example', true],
+    ]);
+    const a = await createAction(m, 'origin.confirm', { appId: app.id, changeIds: set.map((c) => c.changeId) });
+    const shown = (a.decoded as { changes: { origin: string; frameOnly?: true }[] }).changes;
+    expect(shown.map((c) => [c.origin, c.frameOnly ?? false]).sort()).toEqual([
+      ['https://shop.partner.example', false],
+      ['https://widget.partner.example', true],
+    ]);
   });
 });
 

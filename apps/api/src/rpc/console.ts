@@ -26,6 +26,7 @@ import {
   pendingUpgradesInput,
   pendingUpgradesView,
   removeOriginsInput,
+  frameOnlyOriginsInput,
   revokeKeyInput,
   rotateKeyInput,
   setLogoInput,
@@ -52,7 +53,7 @@ import { refuse } from '../changes/cas.ts';
 import { withKeyRevokeQuota } from '../changes/guard.ts';
 import { createKey, revokeKey, rotateKey } from '../changes/keys.ts';
 import { cancelChange, cancelChangeByLink } from '../changes/lifecycle.ts';
-import { changeOrigins, removeOrigins } from '../changes/origins.ts';
+import { changeOrigins, frameOnlyOrigins, removeOrigins } from '../changes/origins.ts';
 import { proposeSettingByMember, setLogo, turnOff, updateSettings } from '../changes/settings.ts';
 import { setSuspensionBit } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
@@ -84,6 +85,8 @@ export const CONSOLE_COSTS = {
   getApp: 4,
   listChanges: 1,
   removeOrigins: 6,
+  /** D934: plan read, a batch of three (commit, version, the rows' flag), one diagnostic read. */
+  frameOnlyOrigins: 5,
   turnOff: 5,
   updateSettings: 4,
   setLogo: 4,
@@ -204,6 +207,14 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   /** A kill switch: immediate, no step-up; counted by the breaker. */
   removeOrigins(c: unknown) {
     return runRpc(this.env, 'removeOrigins', removeOriginsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.removeOrigins, killSwitch: true, breaker: true }, ({ input, db, w }) => removeOrigins(db, w, input));
+  }
+
+  /**
+   * D934: a tightening, like a removal: immediate, no step-up, open in a frozen org; counted by the breaker (it can stop
+   * an app's pages that used the web address on their own).
+   */
+  frameOnlyOrigins(c: unknown) {
+    return runRpc(this.env, 'frameOnlyOrigins', frameOnlyOriginsInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.frameOnlyOrigins, killSwitch: true, breaker: true }, ({ input, db, w }) => frameOnlyOrigins(db, w, input));
   }
 
   /** A kill switch (policy removed, raw signing off): immediate, not counted by the breaker. */

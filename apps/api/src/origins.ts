@@ -98,7 +98,7 @@ export interface Caller {
 /** Whether the request's Origin (and, from a Hana page, its parent origin) may call `endpoint` for `app`. */
 export function checkCaller(
   env: { ENV_NAME: string; VAULT_ORIGIN?: string; AUTH_ORIGIN?: string },
-  app: Pick<App, 'environment' | 'origins'>,
+  app: Pick<App, 'environment' | 'origins' | 'frameOnlyOrigins'>,
   endpoint: string,
   headers: Headers,
 ): Caller {
@@ -110,7 +110,10 @@ export function checkCaller(
     return { ok: originAllowed(app, parent, devEnv), cors: origin, page, parentOrigin: parent };
   }
   const allowed = originAllowed(app, origin, devEnv);
-  const permitted = PARTNER_ENDPOINTS.has(endpoint) || (PARTNER_DEV_TEST_ENDPOINTS.has(endpoint) && devEnv && isTestApp(app));
+  // D934: a frame-only origin can't prove to the API that it is framed, so it never calls the session endpoints itself
+  // (they would sign in without the vault, whose frame rule is the only check of where the page sits).
+  const frameOnly = origin !== null && app.frameOnlyOrigins.includes(origin);
+  const permitted = PARTNER_ENDPOINTS.has(endpoint) || (PARTNER_DEV_TEST_ENDPOINTS.has(endpoint) && devEnv && isTestApp(app) && !frameOnly);
   const ok = allowed && permitted;
   return { ok, cors: ok ? origin : null, page: null, parentOrigin: ok ? origin : null };
 }

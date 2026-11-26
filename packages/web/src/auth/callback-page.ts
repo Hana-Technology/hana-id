@@ -38,10 +38,10 @@
 // never logged, stored or shown, and dropped once encrypted (an access token is sent only to Google's tokeninfo, in a
 // POST body); relayKey and followKey are zeroed after use, or stored again (sessionStorage, 10 min) only for the next
 // leg.
-import { ApiError, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
+import { ApiError, type FrameSite, RELAY_CLAIM_NAME, type RelayPayload, disallowedClaim, encryptRelayPayload, followSlot } from '@hana-id/core';
 import type { AuthApi } from './api.ts';
 import { BRAND } from '@hana-id/brand';
-import { type Dom, SIGN_IN_WINDOW, dom, errorView, originText, supportCode } from './dom.ts';
+import { type Dom, SIGN_IN_WINDOW, askerBox, dom, errorView, supportCode } from './dom.ts';
 import { type BannerAction, dropEmailContext, readEmailContext } from './email-storage.ts';
 import {
   type AccessTokenSub,
@@ -219,14 +219,14 @@ export async function runCallbackPage(pageDeps: CallbackPageDeps): Promise<Callb
 }
 
 /** D881: the banner change the email page started, if its outcome is the vault's word in `next`, with the app's name. */
-function bannerChangeAt(storage: Storage, home: string, next: number | undefined, now: number): { action: BannerAction; appName: string; parentOrigin: string } | null {
+function bannerChangeAt(storage: Storage, home: string, next: number | undefined, now: number): { action: BannerAction; appName: string; parentOrigin: string; frame?: FrameSite } | null {
   const ctx = readEmailContext(storage, home, now)?.context;
   const action = ctx?.bannerAction ?? null;
-  return ctx && action && action.slot === next ? { action, appName: ctx.appName, parentOrigin: ctx.parentOrigin } : null;
+  return ctx && action && action.slot === next ? { action, appName: ctx.appName, parentOrigin: ctx.parentOrigin, ...(ctx.frame ? { frame: ctx.frame } : {}) } : null;
 }
 
 /** D881: a banner's Remove or Cancel whose Google check didn't finish: nothing changed (email-page.ts CHANGE_TEXT's words). */
-function showChangeNotProved(d: Dom, win: PageWindow, home: string, now: () => number, at: { action: BannerAction; appName: string; parentOrigin: string }, error: string): void {
+function showChangeNotProved(d: Dom, win: PageWindow, home: string, now: () => number, at: { action: BannerAction; appName: string; parentOrigin: string; frame?: FrameSite }, error: string): void {
   const change = at.action;
   const appName = at.appName;
   const kind = change.provider === 'google' ? 'Google account' : 'email address';
@@ -240,7 +240,7 @@ function showChangeNotProved(d: Dom, win: PageWindow, home: string, now: () => n
       { class: 'panel', attrs: { id: 'link-change-result', 'data-kind': change.kind, 'data-outcome': 'not_proved' } },
       d.h('h1', {}, removing ? `The ${kind} wasn’t removed` : 'The link wasn’t cancelled'),
       // Which app, at which site, as the sign-in window's other screens say (email-page.ts `header`; no logo here).
-      d.h('p', { class: 'asker' }, 'Signing in to ', d.h('strong', {}, appName), ' at ', originText(d, at.parentOrigin)),
+      askerBox(d, ['Signing in to ', d.h('strong', {}, appName)], at.parentOrigin, at.frame),
       alert(d, 'warning', { class: 'note', attrs: { role: 'alert', id: 'link-change-what' } }, removing ? `Nothing changed. The ${kind} still opens this wallet.` : 'Nothing changed. The link is still waiting.', ' ', 'Google didn’t finish checking it’s you.'),
       d.h('p', { attrs: { id: 'link-change-advice' } }, 'Close this window, then sign in to ', d.h('strong', {}, appName), ' again to try again.'),
       d.h('p', { class: 'code' }, supportCode(error)),

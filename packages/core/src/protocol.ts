@@ -59,6 +59,21 @@ export interface OtherApps {
   count: number;
   names: string[];
 }
+/**
+ * Where the page that uses the wallet (the vault's parent, `parentOrigin`) sits, as the vault checked it itself, never
+ * as a page or the SDK said: absent when the parent is the top-level page. `{ top }`: the parent is framed, and the
+ * browser's `location.ancestorOrigins` names the top-level page (every ancestor is one of the app's web addresses: the
+ * vault refuses any other). `{ top: null }`: the parent is framed but the browser doesn't say by whom. The windows show
+ * it only as a secondary fact under the page asking, never in its place: an app listing a site proves nothing about
+ * who runs it. Never sent to the partner page.
+ */
+export type FrameSite = { top: string } | { top: null };
+
+export function isFrameSite(v: unknown, parentOrigin: unknown): v is FrameSite {
+  if (!isPlainObject(v) || !exactKeys(v, ['top'])) return false;
+  return v.top === null || (isOrigin(v.top) && v.top !== parentOrigin);
+}
+
 /** How many other apps a window names at most; the rest are counted ("and 3 more"). */
 export const OTHER_APPS_NAMES_MAX = 5;
 /** The largest count a window takes (a scope holds far fewer apps; the bound only keeps the message honest). */
@@ -1027,6 +1042,8 @@ export interface WindowMessageMap {
      * Never beside `otherApps`.
      */
     otherAppsUnknown?: true;
+    /** Where the page asking sits (FrameSite), only when it is framed. */
+    frame?: FrameSite;
   };
   /**
    * Hana Home page → its own sign-in child (`/login?mode=home`), in answer to the child's `hana:auth-hello`. The nonce
@@ -1171,6 +1188,8 @@ export interface WindowMessageMap {
      * Never beside `otherApps`.
      */
     otherAppsUnknown?: true;
+    /** Where the page asking sits (FrameSite), only when it is framed. */
+    frame?: FrameSite;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
   'hana:approve-bye': Record<string, never>;
@@ -1200,6 +1219,8 @@ export interface WindowMessageMap {
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
+    /** Where the page asking sits (FrameSite), only when it is framed. */
+    frame?: FrameSite;
   };
   /**
    * Vault → export window: the session ended (logout, revoke, expiry, a newer login) or the vault's export job did;
@@ -1231,6 +1252,8 @@ export interface WindowMessageMap {
     otherApps?: OtherApps;
     /** As in hana:approve-request. */
     otherAppsUnknown?: true;
+    /** Where the page asking sits (FrameSite), only when it is framed. */
+    frame?: FrameSite;
   };
   /** Approval popup → vault: Allow (guarded like Approve) or Decline, with consentDigest of what it rendered. */
   'hana:consent-result': { id: string; allowed: boolean; digest: Uint8Array };
@@ -1256,6 +1279,8 @@ export interface WindowMessageMap {
     sealedEmail: string;
     proof: { sessionPublicKey: Uint8Array; issuedAtMs: number; nonce: Uint8Array; signature: Uint8Array };
     logoUrl?: string;
+    /** Where the page asking sits (FrameSite), only when it is framed. */
+    frame?: FrameSite;
   };
   /** Vault → the sheet: nothing to ask (already answered, sharing off, no address): the window closes. */
   'hana:email-share-close': Record<string, never>;
@@ -1328,8 +1353,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:hello': (m) => exactKeys(m, ['v', 't', 'sdk']) && typeof m.sdk === 'string' && /^[0-9A-Za-z.+-]{1,32}$/u.test(m.sdk),
   'hana:auth-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:auth-params': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl', 'emailShare', 'otherApps', 'otherAppsUnknown']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'clientId', 'mode', 'sessionPublicKey', 'expiresAtMs', 'salt', 'keyIndex', 'maxUses', 'nonce', 'relayId', 'relayKey'], ['methods', 'method', 'emailHint', 'followKey', 'task', 'emailRecord', 'logoUrl', 'emailShare', 'otherApps', 'otherAppsUnknown', 'frame']) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
+    (m.frame === undefined || isFrameSite(m.frame, m.parentOrigin)) &&
     otherAppsFields(m) &&
     (m.emailShare === undefined || (m.emailShare === true && m.task === undefined)) &&
     (m.followKey === undefined || (isBytes(m.followKey, 32, 32) && (Array.isArray(m.methods) || m.task !== undefined || m.emailRecord === true))) &&
@@ -1402,8 +1428,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auth-progress-ack': (m) => exactKeys(m, ['v', 't', 'stage']) && (m.stage === 'email_code' || m.stage === 'google' || m.stage === 'relayed' || m.stage === 'back'),
   'hana:approve-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:approve-request': (m) => {
-    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels', 'partnerLabelFacts', 'otherApps', 'otherAppsUnknown'])) return false;
+    if (!exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'kind', 'chain', 'address', 'bytes', 'context', 'position', 'queued'], ['autoApprove', 'testApp', 'mainnetDemo', 'logoUrl', 'supportId', 'emailShared', 'demoPrices', 'partnerLabels', 'partnerLabelFacts', 'otherApps', 'otherAppsUnknown', 'frame'])) return false;
     if (!otherAppsFields(m)) return false;
+    if (m.frame !== undefined && !isFrameSite(m.frame, m.parentOrigin)) return false;
     if (m.partnerLabels !== undefined && !isLabelTexts(m.partnerLabels)) return false;
     if (m.partnerLabelFacts !== undefined && (m.partnerLabels === undefined || !isLabelFacts(m.partnerLabelFacts))) return false;
     if (m.mainnetDemo !== undefined && (m.mainnetDemo !== true || m.testApp !== true)) return false;
@@ -1431,8 +1458,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:export-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:export-end': (m) => exactKeys(m, ['v', 't']),
   'hana:export-context': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'keyIndex', 'chain', 'address'], ['sessionExpiresAtMs', 'logoUrl']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'scopeId', 'signer', 'keyIndex', 'chain', 'address'], ['sessionExpiresAtMs', 'logoUrl', 'frame']) &&
     (m.sessionExpiresAtMs === undefined || isMs(m.sessionExpiresAtMs)) &&
+    (m.frame === undefined || isFrameSite(m.frame, m.parentOrigin)) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
     isPublishableKey(m.pk) &&
     isAppName(m.appName) &&
@@ -1443,8 +1471,9 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
     isWalletChain(m.chain) &&
     isAddressFor(m.chain, m.address),
   'hana:consent-request': (m) =>
-    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'mainnetDemo', 'logoUrl', 'otherApps', 'otherAppsUnknown']) &&
+    exactKeys(m, ['v', 't', 'id', 'appName', 'parentOrigin', 'policy', 'policyId', 'expiresAtMs', 'position', 'queued'], ['testApp', 'mainnetDemo', 'logoUrl', 'otherApps', 'otherAppsUnknown', 'frame']) &&
     otherAppsFields(m) &&
+    (m.frame === undefined || isFrameSite(m.frame, m.parentOrigin)) &&
     (m.testApp === undefined || m.testApp === true) &&
     (m.mainnetDemo === undefined || (m.mainnetDemo === true && m.testApp === true)) &&
     (m.logoUrl === undefined || isLogoUrl(m.logoUrl)) &&
@@ -1460,7 +1489,8 @@ const FIELDS: { [K in WindowMessageType]: (m: Obj) => boolean } = {
   'hana:auto-approve-stop': (m) => exactKeys(m, ['v', 't']),
   'hana:email-share-hello': (m) => exactKeys(m, ['v', 't']),
   'hana:email-share-request': (m) =>
-    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'ownGoogleClient', 'state', 'sealedEmail', 'proof'], ['logoUrl']) &&
+    exactKeys(m, ['v', 't', 'pk', 'appName', 'parentOrigin', 'ownGoogleClient', 'state', 'sealedEmail', 'proof'], ['logoUrl', 'frame']) &&
+    (m.frame === undefined || isFrameSite(m.frame, m.parentOrigin)) &&
     isPublishableKey(m.pk) &&
     isAppName(m.appName) &&
     isOrigin(m.parentOrigin) &&

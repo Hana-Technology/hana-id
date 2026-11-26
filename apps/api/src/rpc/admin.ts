@@ -51,6 +51,7 @@ import {
   neonWakeInput,
   relayerKeysInput,
   removeOriginsInput,
+  frameOnlyOriginsInput,
   revokeKeyInput,
   rotateKeyInput,
   securityEventsInput,
@@ -108,7 +109,7 @@ import {
 import { getApp, listApps, listChanges } from '../changes/apps.ts';
 import { createKey, revokeKey, rotateKey } from '../changes/keys.ts';
 import { ackNotice, cancelChange, expediteChange, pendingNotices } from '../changes/lifecycle.ts';
-import { addOrigins, removeOrigins } from '../changes/origins.ts';
+import { addOrigins, frameOnlyOrigins, removeOrigins } from '../changes/origins.ts';
 import { proposeSetting, setLogo, setMainnetDemo, turnOff, updateSettings } from '../changes/settings.ts';
 import { deleteApp, setSuspensionBit, suspendOrg } from '../changes/suspension.ts';
 import { governanceSnapshot } from '../governance-status.ts';
@@ -174,6 +175,11 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   removeOrigins(c: unknown) {
     return runRpc(this.env, 'admin.removeOrigins', removeOriginsInput, c, { actors: HANA }, ({ input, db, w }) => removeOrigins(db, w, input));
+  }
+
+  /** D934: staff set web addresses to work only inside the app's other web addresses, at once (a tightening). */
+  frameOnlyOrigins(c: unknown) {
+    return runRpc(this.env, 'admin.frameOnlyOrigins', frameOnlyOriginsInput, c, { actors: HANA }, ({ input, db, w }) => frameOnlyOrigins(db, w, input));
   }
 
   turnOff(c: unknown) {

@@ -80,6 +80,9 @@ function demoAction(id: string, now: number): ActionRecord | undefined {
       return { id, kind: 'origin.confirm', status: 'ok', decoded: decodedFor('origin.confirm', { appId: 'app_Pk3Cf8Ld2w', changeIds: ['gc_Pk4Ws9Ra1', 'gc_Pk6Id3Ka7'] }, now), expiresAt: now - 60_000, returnTo: `/orgs/${F.ORG_ID}/apps/app_Pk3Cf8Ld2w/origins`, outcome: { status: 'ok', confirmedAt: now - 90_000, confirmed: 2 } };
     case 'act_demo_confirm_failed':
       return { id, kind: 'origin.confirm', status: 'failed', decoded: decodedFor('origin.confirm', { appId: 'app_Pk3Cf8Ld2w', changeIds: ['gc_Pk4Ws9Ra1'] }, now), expiresAt: now - 60_000, returnTo: `/orgs/${F.ORG_ID}/apps/app_Pk3Cf8Ld2w/origins`, outcome: { status: 'failed', code: 'not_owner' } };
+    // D934: adding the network's widget (only inside Coffee Club's other web addresses) and a kiosk page.
+    case 'act_demo_frame_origin':
+      return { id, kind: 'origin.add', status: 'pending', decoded: decodedFor('origin.add', { appId: 'app_Pk3Cf8Ld2w', add: ['https://pay.lumenpay.example', 'https://tables.coffeeclub.example'], frameOnly: ['https://pay.lumenpay.example'] }, now), expiresAt, returnTo: `/orgs/${F.ORG_ID}/apps/app_Pk3Cf8Ld2w/origins` };
     case 'act_demo_expired':
       return { id, kind: 'raw_sign.on', status: 'expired', decoded: { appId: app.id, appName: app.name, settingsVersion: 12 }, expiresAt: now - 30_000 };
     default:
@@ -109,8 +112,11 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
     return { origin, display, idn: origin !== display };
   };
   switch (kind) {
-    case 'origin.add':
-      return { ...base, add: ((params.add as unknown[]) ?? []).map(asOrigin), remove: [] };
+    case 'origin.add': {
+      // D934: the marked ones, as the console builds them (actions.ts: frameOnly on those adds only).
+      const marked = new Set(((params.frameOnly as unknown[]) ?? []).map((x) => asOrigin(x).origin));
+      return { ...base, add: ((params.add as unknown[]) ?? []).map(asOrigin).map((o) => ({ ...o, ...(marked.has(o.origin) ? { frameOnly: true } : {}) })), remove: [] };
+    }
     case 'policy.set': {
       const ttl = app?.settings.sessionTtlMs ?? 43_200_000;
       const v = checked(params.policy, ttl);
@@ -143,7 +149,8 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
       const ids = ((params.changeIds as unknown[]) ?? []).map(String).sort();
       const v = ids[0] ? F.confirmationView(now, ids[0]) : undefined;
       if (!v) return base;
-      const shown = v.changes.filter((c) => ids.includes(c.changeId)).map((c) => ({ changeId: c.changeId, origin: c.origin, display: c.display, idn: c.idn, activeFrom: c.activeFrom }));
+      const framed = framedIds(now);
+      const shown = v.changes.filter((c) => ids.includes(c.changeId)).map((c) => ({ changeId: c.changeId, origin: c.origin, display: c.display, idn: c.idn, activeFrom: c.activeFrom, ...(framed.has(c.changeId) ? { frameOnly: true } : {}) }));
       return { appId: v.app.id, appName: v.app.name, scopeId: v.app.scopeId, proposedByKind: v.proposedByKind, ...(v.keyLabel !== undefined ? { keyLabel: v.keyLabel } : {}), changes: shown };
     }
     case 'owner_action':
@@ -151,6 +158,11 @@ function decodedFor(kind: string, params: Record<string, unknown>, now: number):
     default:
       return base;
   }
+}
+
+/** D934: the change ids whose web addresses the apps may use only inside their other web addresses (the API's getConfirmation marks each one, D934). */
+function framedIds(now: number): Set<string> {
+  return new Set(F.appDetails(now).flatMap((a) => a.origins.filter((o) => o.frameOnly === true && o.changeId !== undefined).map((o) => o.changeId!)));
 }
 
 /** The page an action returns to, as the console builds it (apps/console/src/actions.ts `returnPath`, D711), from its known names only. */
@@ -265,7 +277,10 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
     // `staff-proposer`: the owner is the staff member who added a four-eyes web address: nothing is theirs to confirm.
     const mine = scenario === 'staff-proposer' && found.proposedByKind === 'hana';
     const v = mine ? { ...found, sameAsProposer: true as const, changes: found.changes.map((c) => ({ ...c, confirmable: false })) } : found;
-    return ok({ confirmation: v, ability: F.confirmAbility(v, { role, frozen, chainOwner: scenario !== 'not-chain-owner' }), role, now });
+    // D934: marked as the API's getConfirmation marks them (its `frameOnly`), on top of the fixtures' view.
+    const framed = framedIds(now);
+    const shown = { ...v, changes: v.changes.map((c) => (framed.has(c.changeId) ? { ...c, frameOnly: true as const } : c)) };
+    return ok({ confirmation: shown, ability: F.confirmAbility(v, { role, frozen, chainOwner: scenario !== 'not-chain-owner' }), role, now });
   }
   // `not-chain-owner`: an owner in the console whose Google account isn't an on-chain owner of the scope (D652).
   if (rest.startsWith('/scopes/')) return ok(F.scope(now, scenario !== 'not-chain-owner'));

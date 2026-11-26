@@ -334,6 +334,8 @@ describe('the hot-DB budget', () => {
       ['getApp', (rpc) => rpc.getApp({ ...member(), orgId: app.org, appId: app.id })],
       ['listChanges', (rpc) => rpc.listChanges({ ...member(), orgId: app.org, limit: 50 })],
       ['removeOrigins', (rpc) => rpc.removeOrigins({ ...member(), orgId: app.org, appId: app.id, remove: [SECOND], expectedVersion: 2 })],
+      // D934: a tightening, as a removal: its plan read and a batch of three.
+      ['frameOnlyOrigins', async (rpc) => rpc.frameOnlyOrigins({ ...member(), orgId: app.org, appId: app.id, origins: ['https://pending2.example.com'], expectedVersion: (await appRow(app.id)).origins_version as number })],
       ['turnOff', (rpc) => rpc.turnOff({ ...member(), orgId: app.org, appId: app.id, what: 'raw_sign', expectedVersion: 0 })],
       ['updateSettings', (rpc) => rpc.updateSettings({ ...member(), orgId: app.org, appId: app.id, expectedVersion: 0, persistence: 'none', name: 'Renamed' })],
       ['setLogo', (rpc) => rpc.setLogo({ ...member(), orgId: app.org, appId: app.id, logoKey: `logos/${app.id}/${'a'.repeat(64)}.png`, expectedVersion: 1 })],

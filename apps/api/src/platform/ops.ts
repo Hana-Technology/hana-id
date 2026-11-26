@@ -33,6 +33,8 @@ import {
   originDisplay,
   platformAddOriginsBody,
   platformCreateAppBody,
+  splitOriginEntries,
+  NO_ANYWHERE_ORIGIN,
   platformRemoveOriginsBody,
   scopeIdInput,
   sha256,
@@ -46,7 +48,7 @@ import { RpcRefusal, type Writer, actorId, commitOn, committed, expectReplay, re
 import type { HotDb } from '../changes/db.ts';
 import { createKey, revokeKey } from '../changes/keys.ts';
 import { cancelChange } from '../changes/lifecycle.ts';
-import { checkOriginRules, normaliseAll, platformProposeOrigins, platformWaits, removeOrigins, requireChangeConfig } from '../changes/origins.ts';
+import { changeList, checkOriginRules, gateRows, normaliseAll, normaliseFrameOnly, platformProposeOrigins, platformWaits, removeOrigins, requireChangeConfig } from '../changes/origins.ts';
 import { appName } from '../changes/settings.ts';
 import { type Q, q, raw } from '../changes/sql.ts';
 import { type PartnerBitBy, setSuspensionBit } from '../changes/suspension.ts';
@@ -126,9 +128,9 @@ export function platformReach(key: Pick<AuthRow, 'id' | 'org_id'>, now: number, 
 const APP_JSON = raw(
   `json_object('id', a.id, 'name', a.name, 'scope_id', a.scope_id, 'created_at', a.created_at, 'user_ids', a.user_ids,
      'suspended_by', a.suspended_by, 'partner_bit_by', a.partner_bit_by, 'origins_version', a.origins_version,
-     'origins', json((SELECT json_group_array(json_object('origin', o.origin, 'active_from', o.active_from, 'change_id', o.change_id,
+     'origins', json((SELECT json_group_array(json_object('origin', o.origin, 'active_from', o.active_from, 'change_id', o.change_id, 'frame_only', o.frame_only,
                                                           'confirmed_at', (SELECT oc.confirmed_at FROM origin_confirmations oc WHERE oc.change_id = o.change_id)))
-                        FROM (SELECT origin, active_from, change_id FROM app_origins WHERE app_id = a.id ORDER BY origin) o)),
+                        FROM (SELECT origin, active_from, change_id, frame_only FROM app_origins WHERE app_id = a.id ORDER BY origin) o)),
      'keys', json((SELECT json_group_array(json_object('id', k.id, 'key', k.key, 'created_at', k.created_at, 'revoked_at', k.revoked_at))
                      FROM (SELECT id, key, created_at, revoked_at FROM app_keys WHERE app_id = a.id ORDER BY created_at DESC, id DESC LIMIT ${L.keysShown}) k)))`,
 );
@@ -142,7 +144,7 @@ interface AppJson {
   suspended_by: number;
   partner_bit_by: PartnerBitBy;
   origins_version: number;
-  origins: { origin: string; active_from: number | null; change_id: string | null; confirmed_at?: number | null }[];
+  origins: { origin: string; active_from: number | null; change_id: string | null; frame_only?: number; confirmed_at?: number | null }[];
   keys: { id: string; key: string; created_at: number; revoked_at: number | null }[];
 }
 
@@ -154,9 +156,9 @@ export function suspendedView(suspendedBy: number, holder: PartnerBitBy): Platfo
 }
 
 /** D931: `confirmedAt` once an owner confirmed it (then `activeFrom` is the same time); never who confirmed. */
-function originView(o: { origin: string; active_from: number | null; change_id: string | null; confirmed_at?: number | null }, now: number): PlatformOrigin {
+function originView(o: { origin: string; active_from: number | null; change_id: string | null; frame_only?: number; confirmed_at?: number | null }, now: number): PlatformOrigin {
   const state = o.active_from === null ? 'waiting_announcement' : o.active_from > now ? 'waiting' : 'active';
-  return { ...originDisplay(o.origin), state, activeFrom: o.active_from, confirmedAt: o.confirmed_at ?? null, ...(o.change_id === null ? {} : { changeId: o.change_id }) };
+  return { ...originDisplay(o.origin), state, activeFrom: o.active_from, confirmedAt: o.confirmed_at ?? null, ...(o.change_id === null ? {} : { changeId: o.change_id }), frameOnly: o.frame_only === 1 };
 }
 
 /** The allowlisted view of an app (A8) from its JSON. */
@@ -431,7 +433,11 @@ export async function createPlatformApp(c: OpContext, body: unknown): Promise<Op
   expectReplay(w, ['app.created']);
   const org = c.key.org_id;
   const name = appName(b.name);
-  const origins = normaliseAll(b.origins ?? []);
+  const entries = splitOriginEntries(b.origins ?? []);
+  const origins = normaliseAll(entries.origins);
+  const frameOnly = normaliseFrameOnly(origins, entries.frameOnly);
+  // D934: a new app's web addresses can't all be frame-only (nothing to sit inside).
+  if (origins.length > 0 && frameOnly.length === origins.length) refuse('bad_request', NO_ANYWHERE_ORIGIN);
   checkOriginRules(c.env, 'live', origins);
   const config = requireChangeConfig(c.env);
   const minDelayMs = proposalWait(c.env);
@@ -473,7 +479,7 @@ export async function createPlatformApp(c: OpContext, body: unknown): Promise<Op
           [creationWindows(c.key), 1, 'app creations'],
           [proposalWindows(c.key), origins.length, 'web address proposals'],
         ],
-        () => writeCreate(c, w, { scopeId: b.scopeId, name, origins, others, minDelayMs, assignedBefore: c.now - config.delayMs, keyHolds }),
+        () => writeCreate(c, w, { scopeId: b.scopeId, name, origins, frameOnly, others, minDelayMs, assignedBefore: c.now - config.delayMs, keyHolds }),
       );
     },
     (detail, app, _change, key) => {
@@ -486,13 +492,13 @@ export async function createPlatformApp(c: OpContext, body: unknown): Promise<Op
 async function writeCreate(
   c: OpContext,
   w: Writer,
-  i: { scopeId: string; name: string; origins: string[]; others: { id: string }[]; minDelayMs: number; assignedBefore: number; keyHolds: Q },
+  i: { scopeId: string; name: string; origins: string[]; frameOnly: string[]; others: { id: string }[]; minDelayMs: number; assignedBefore: number; keyHolds: Q },
 ): Promise<OpAnswer> {
   const org = c.key.org_id;
   const appId = newId('app');
   const keyId = newId('key');
   const publishableKey = newPublishableKey('test');
-  const changes = i.origins.map((origin) => ({ changeId: newId('guardedChange'), origin }));
+  const changes = changeList(i.origins, i.frameOnly, 'changeId');
   const when = committed(w.requestId);
   const list = JSON.stringify(changes);
   const othersIds = JSON.stringify(i.others.map((o) => o.id));
@@ -526,8 +532,7 @@ async function writeCreate(
       q`INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id)
         SELECT json_extract(value, '$.changeId'), ${appId}, 'origin_add', json_extract(value, '$.origin'), 'pending', 'platform', ${actorId(w.actor)}, ${c.now}, ${w.requestId}
           FROM json_each(${list}) WHERE ${when}`,
-      q`INSERT INTO app_origins (app_id, origin, active_from, change_id)
-        SELECT ${appId}, json_extract(value, '$.origin'), NULL, json_extract(value, '$.changeId') FROM json_each(${list}) WHERE ${when}`,
+      gateRows(w, appId, list, 'changeId'),
     );
   }
   await runWrite(c.db, w, stmts);
@@ -541,7 +546,7 @@ async function writeCreate(
     userIds: 'app',
     suspended: suspendedView(0, null),
     originsVersion: changes.length ? 1 : 0,
-    origins: changes.map((ch) => originView({ origin: ch.origin, active_from: null, change_id: ch.changeId }, c.now)),
+    origins: changes.map((ch) => originView({ origin: ch.origin, active_from: null, change_id: ch.changeId, frame_only: ch.frameOnly ? 1 : 0 }, c.now)),
     keys: [{ id: keyId, key: publishableKey, createdAt: c.now, revokedAt: null }],
   };
   return { status: 201, body: { app, publishableKey, changes }, appId, wrote: true };
@@ -553,16 +558,18 @@ async function writeCreate(
 export async function addPlatformOrigins(c: OpContext, appId: string, body: unknown): Promise<OpAnswer> {
   const b = platformAddOriginsBody.parse(body);
   const { w, hash } = await opWriter(c);
-  const add = normaliseAll(b.add);
+  const entries = splitOriginEntries(b.add);
+  const add = normaliseAll(entries.origins);
+  const frameOnly = normaliseFrameOnly(add, entries.frameOnly);
   return withReplay(
     c,
     w,
     hash,
     async () => {
       const r = await withQuota(c, w, [[proposalWindows(c.key), add.length, 'web address proposals']], () =>
-        platformProposeOrigins(c.db, c.env, w, { orgId: c.key.org_id, appId, add, expectedVersion: b.expectedVersion, minDelayMs: proposalWait(c.env), waitingMax: L.waitingPerOrg }),
+        platformProposeOrigins(c.db, c.env, w, { orgId: c.key.org_id, appId, add, frameOnly, expectedVersion: b.expectedVersion, minDelayMs: proposalWait(c.env), waitingMax: L.waitingPerOrg }),
       );
-      return { status: 202, body: { version: r.version, changes: r.changes.map((ch) => ({ changeId: ch.id, origin: ch.origin })) }, appId, wrote: true };
+      return { status: 202, body: { version: r.version, changes: r.changes.map((ch) => ({ changeId: ch.id, origin: ch.origin, ...(ch.frameOnly ? { frameOnly: true } : {}) })) }, appId, wrote: true };
     },
     (detail, app) => ({ version: replayApp(app).originsVersion, changes: detail.changes ?? [] }),
   );

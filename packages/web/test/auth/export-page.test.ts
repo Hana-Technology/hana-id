@@ -312,6 +312,9 @@ describe('/export: the app’s logo (batch C11)', () => {
     await ready(r);
     const box = document.querySelector('.asker-framed')!;
     expect([...box.children].map((c) => c.textContent)).toEqual(['For your wallet in Partner App at https://coffeeclub.example', `This uses a widget from ${PARTNER}.`]);
+    // Its "Confirm it's you" sign-in child is told the same.
+    await signIn(r);
+    expect(parseWindowMessage(r.child.received[0], ['hana:auth-params'])?.frame).toEqual({ top: 'https://coffeeclub.example' });
   });
 
   it('never a logo off the build’s files origin, or in a build without one', async () => {

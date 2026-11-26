@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-26 (frame-only addresses, D934; lone surrogates; origins tab; NEAR relay limits; own `sub`); 2026-11-24 (shared `sub`, labels, Hedera); 2026-11-23, SDK 0.5.0.
+Last verified against code: 2026-11-26 (frame-only addresses; lone surrogates; origins tab; NEAR relay limits; own `sub`); 2026-11-24 (shared `sub`, labels, Hedera); 2026-11-23, SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -208,7 +208,7 @@ and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per 
   the announcement email (no sign-in needed). Cancelling is immediate, and Journear and your owners keep a record of it.
 - **Remove** takes effect at once and signs out the users who signed in on that origin; a tab of theirs already open
   there can't sign after a minute or two and then shows signed out.
-- **Only inside your other web addresses** (D934): tick it when adding a widget's address (a page of yours shown in an
+- **Only inside your other web addresses**: tick it when adding a widget's address (a page of yours shown in an
   iframe on your other pages, as a network's swap widget is). The wallet then loads there only when one of your app's
   other web addresses frames it, never when someone opens the widget's address on its own, in a window of its own, or
   inside a page you don't list. The tick goes through the same Google confirmation, email and delay as the address.

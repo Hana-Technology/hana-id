@@ -6,7 +6,7 @@ creates and manages a Journear Passport app for that partner, with no person at 
 is Sodax's backend team. Everything your backend needs is in this guide; the integration guide (`integration.md`,
 sent with our SDK) covers the partner's page and our SDK.
 
-Last verified: 2026-11-26 (branch `feat/widget-frames`, D934: a web address marked `frameOnly`, in "Create an app", "The app view", "Ask for web addresses" and section 10), against the platform API's code and tests (built, not deployed anywhere yet); 2026-11-26, against the platform API's code and tests (built, not deployed anywhere yet).
+Last verified: 2026-11-26 (web addresses marked `frameOnly`), against the platform API's code and tests (built, not deployed anywhere yet).
 
 > **Not available yet.** The platform API is built and tested, but it is **not deployed** in any environment and
 > **not switched on** for any organisation. Journear switches it on per organisation. The API's address and the

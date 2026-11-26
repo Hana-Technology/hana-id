@@ -457,6 +457,8 @@ export function startExportPage(deps: ExportPageDeps): ExportPage {
         appName: a.name ?? ctx.appName,
         ...(logoUrl() ? { logoUrl: logoUrl()! } : {}),
         parentOrigin: ctx.parentOrigin,
+        // P11 (D934): the "Confirm it's you" sign-in says where the page is, as the export window does.
+        ...(ctx.frame ? { frame: { ...ctx.frame } } : {}),
         scopeId: ctx.scopeId,
         signer: env.signer,
         clientId: a.google.clientId,

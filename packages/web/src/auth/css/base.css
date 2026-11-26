@@ -304,6 +304,22 @@ header.app > p + p {
   display: block;
 }
 
+/* P11 (D934): a framed page's box has several lines: the site, the widget, and (when the browser didn't say) the check. */
+.asker-framed > p {
+  margin: 0;
+}
+
+.asker-framed > p + p,
+header.app > p.frame-widget,
+header.app > p.frame-unknown {
+  margin-top: var(--jp-space-1);
+}
+
+.frame-unknown {
+  color: var(--jp-fg);
+  font-weight: var(--jp-weight-semibold);
+}
+
 /* The origin wraps as a whole onto its own line when it fits there, and breaks inside only when it doesn't. */
 .asker .origin {
   word-break: normal;

@@ -31,13 +31,14 @@ import {
   approvalDigest,
   consentDigest,
   parseWindowMessage,
+  type FrameSite,
 } from '@hana-id/core';
 import { type DecodedApproval, decodeApprovalRequest, shortId } from '@hana-id/core/decode';
 import { type AutoApprovePolicyV1, type AutoApproveReason, policyId, validateAutoApprovePolicy } from '@hana-id/core/policy';
 import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { ApproveGuard, GUARD_DELAY_MS, type GuardInput, guardInputOf } from './approve-guard.ts';
-import { type Dom, dom, errorView, originText, row, rows } from './dom.ts';
+import { type Dom, dom, errorView, frameLines, originText, row, rows } from './dom.ts';
 import { GuardHint, coarsePointer, quietly } from './guard-hint.ts';
 import { appLogo } from './logo.ts';
 import { type GestureCheck, type PageWindow, VAULT_FRAME_NAME, childFrame, fromPartnerVault, isFramed, isUserGesture } from './page-window.ts';
@@ -349,14 +350,15 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
     return alert(d, 'info', { class: 'note test-app' }, kind === 'not_only_test' ? TEST_APP_NOT_ONLY_TEST_NOTE : TEST_APP_NOTE);
   }
 
-  function header(msg: { appName: string; parentOrigin: string; logoUrl?: string }, extra?: string): HTMLElement {
+  function header(msg: { appName: string; parentOrigin: string; logoUrl?: string; frame?: FrameSite }, extra?: string): HTMLElement {
     return d.h(
       'header',
       { class: 'app' },
       // The app's logo (batch C11), when the vault sent one on this build's files origin. "Request 2 of 3 from" only
       // when more are waiting (D853); a single request reads "From {App}".
       d.h('p', {}, appLogo(d, env, msg.logoUrl), extra ? `${extra} from ` : 'From ', d.h('strong', {}, msg.appName)),
-      originText(d, msg.parentOrigin, 'p'),
+      // P11 (D934): a framed page says where the person is and whose widget it is; else the page's address, as before.
+      ...(msg.frame ? frameLines(d, msg.parentOrigin, msg.frame) : [originText(d, msg.parentOrigin, 'p')]),
     );
   }
 
@@ -640,7 +642,7 @@ export function startApprovePage(deps: ApprovePageDeps): ApprovePage {
         sharedWalletLine(d, msg.otherApps, msg.otherAppsUnknown),
         testAppNote(msg),
         policy
-          ? renderPolicy(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, expiresAtMs: msg.expiresAtMs, nowMs: now() })
+          ? renderPolicy(d, { policy, appName: msg.appName, parentOrigin: msg.parentOrigin, ...(msg.frame ? { frame: msg.frame } : {}), expiresAtMs: msg.expiresAtMs, nowMs: now() })
           : consentRefusal(),
         buttons('Allow', policy !== null, msg.id),
       );

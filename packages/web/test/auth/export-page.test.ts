@@ -101,6 +101,8 @@ function run(
     clipboard?: { writeText(text: string): Promise<void> } | null;
     /** Batch C11: the context's logoUrl. */
     contextLogo?: string;
+    /** P11 (D934): the context's frame. */
+    frame?: Record<string, unknown>;
   } = {},
 ): Run {
   const chain = o.chain ?? 'stellar';
@@ -180,6 +182,7 @@ function run(
     address: o.address ?? addressFor(chain),
     ...(o.sessionExpiresAtMs === undefined ? {} : { sessionExpiresAtMs: o.sessionExpiresAtMs }),
     ...(o.contextLogo === undefined ? {} : { logoUrl: o.contextLogo }),
+    ...(o.frame === undefined ? {} : { frame: o.frame }),
   };
   win.message(context, ENV.vaultOrigin, vault);
   return {
@@ -302,6 +305,13 @@ describe('/export: the app’s logo (batch C11)', () => {
     const older = run({ env: FILES_ENV, contextLogo: logo('b') });
     await ready(older);
     expect(document.querySelector('img.app-logo')?.getAttribute('src')).toBe(logo('b'));
+  });
+
+  it('P11 (D934): a framed page’s context names the partner’s page and the widget in the box', async () => {
+    const r = run({ frame: { top: 'https://coffeeclub.example' } });
+    await ready(r);
+    const box = document.querySelector('.asker-framed')!;
+    expect([...box.children].map((c) => c.textContent)).toEqual(['For your wallet in Partner App at https://coffeeclub.example', `This uses a widget from ${PARTNER}.`]);
   });
 
   it('never a logo off the build’s files origin, or in a build without one', async () => {

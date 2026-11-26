@@ -104,7 +104,7 @@ import { BRAND } from '@hana-id/brand';
 import type { HanaEnv } from '../hana-env.ts';
 import { appLogo } from './logo.ts';
 import type { AuthApi } from './api.ts';
-import { type Child, type Dom, SIGN_IN_WINDOW, dom, errorView, originText, supportCode } from './dom.ts';
+import { type Child, type Dom, SIGN_IN_WINDOW, askerBox, dom, errorView, supportCode } from './dom.ts';
 import { STORAGE_BLOCKED } from './errors.ts';
 import type { EmailApi, LinkPurpose, SessionCommitment, Verified } from './email-api.ts';
 import { issuerDetail } from './email-api.ts';
@@ -541,7 +541,7 @@ export function startEmailPage(deps: EmailPageDeps): EmailPage {
   };
 
   const header = () =>
-    d.h('p', { class: 'asker' }, appLogo(d, env, ctx.logoUrl), 'Signing in to ', d.h('strong', {}, ctx.appName), ' at ', originText(d, ctx.parentOrigin));
+    askerBox(d, [appLogo(d, env, ctx.logoUrl), 'Signing in to ', d.h('strong', {}, ctx.appName)], ctx.parentOrigin, ctx.frame);
   /**
    * D912: who is asking, then the shared-wallet line, on the screens that sign in to this app's wallet (the address,
    * the code, the busy screens between them, the chooser again and the way to Google); none when the app is alone, or

@@ -13,6 +13,8 @@ import vectors from '../../../packages/console-core/test/platform-request-vector
 import guide from '../../../docs/platform-guide.md?raw';
 import sample from '../../../examples/platform-signer/platform-client.ts?raw';
 import { type PlatformConfig, callPlatform, derToRaw, importPrivateKeyPem, newIdempotencyKey, platformMessage, signHeaders } from '../../../examples/platform-signer/platform-client.ts';
+import { PLATFORM_LIMITS } from '../src/platform/request.ts';
+import { PLATFORM_ROUTES } from '../src/platform/routes.ts';
 import { deliver, freshIp, freshNow, keyRow, seedKey, switchOff } from './platform-helpers.ts';
 import { orgApp } from './rpc-helpers.ts';
 
@@ -251,9 +253,12 @@ describe('docs/platform-guide.md', () => {
     const L = PLATFORM_REQUEST_LIMITS;
     expect([L.perKeyPerMinute, L.perKeyPerDay, L.failuresPerIpPerMinute, L.breaker.perOrgPerHour, L.breaker.globalPerHour, L.breaker.floorPerOrgPerHour]).toEqual([60, 2000, 30, 10, 30, 5]);
     expect([L.killReservePerKeyPerMinute, L.killReservePerKeyPerDay]).toEqual([10, 100]);
+    // "at least 12 off switches a minute": the org's share of the platform's reserve over the costliest off switch.
+    const costliest = Math.max(...PLATFORM_ROUTES.filter((r) => r.killSwitch || r.flags).map((r) => r.cost));
+    expect(Math.floor(PLATFORM_LIMITS.platform.reserveShare.max / costliest)).toBe(12);
     expect([PLATFORM_CLOCK_SKEW_MS, PLATFORM_BODY_MAX]).toEqual([60_000, 16 * 1024]);
     const O = PLATFORM_OPS_LIMITS;
-    expect([O.creationsPerHour, O.proposalsPerHour, O.waitingPerOrg, O.keyCreationsPerHour, O.keyCreationsPerDay, O.listPage, O.stopsPerHour]).toEqual([2, 20, 30, 20, 50, 50, 60]);
+    expect([O.creationsPerHour, O.proposalsPerHour, O.waitingPerOrg, O.keyCreationsPerHour, O.keyCreationsPerDay, O.listPage, O.suspensionsPerHour, O.keyRevokesPerHour]).toEqual([2, 20, 30, 20, 50, 50, 60, 20]);
     for (const s of [
       '60 requests a minute and 2,000 a UTC day',
       '30 failed requests a minute',
@@ -266,9 +271,12 @@ describe('docs/platform-guide.md', () => {
       '20 an hour and 50 a UTC day',
       '10 an hour per organisation and 30 an hour across every organisation; your first 5 in any hour always pass',
       '10 more a minute and 100 more a UTC day, for off switches only',
-      '60 an hour per organisation, counting only those that changed something',
+      '| Suspending an app | 60 an hour per organisation, counting only those that changed something',
+      '| Revoking a publishable key | 20 an hour per organisation, counting only those that changed something',
       '`platform:key:kill:minute`, `platform:key:kill:day`',
-      '`platform:stops:hour`',
+      '`platform:suspensions:hour`',
+      '`platform:key-revokes:hour`',
+      'at least 12 off switches a minute',
     ]) {
       expect(guide, s).toContain(s);
     }

@@ -19,7 +19,7 @@ import { ackNotice } from '../src/changes/lifecycle.ts';
 import { guardedChangesMaintenance } from '../src/guarded/cron.ts';
 import { readOtherApps } from '../src/other-apps.ts';
 import { PLATFORM_LIMITS, PLATFORM_WINDOWS } from '../src/platform/request.ts';
-import { STOP_WINDOWS } from '../src/platform/ops.ts';
+import { KEY_REVOKE_WINDOWS, SUSPENSION_WINDOWS } from '../src/platform/ops.ts';
 import { placedStub } from '../src/placement.ts';
 import { PLATFORM_ROUTES } from '../src/platform/routes.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
@@ -1031,51 +1031,77 @@ describe('the platform’s breaker and reserve for its kill switches', () => {
     expect((await post(net.k, '/v1/platform/changes/gc_none/cancel', {}, { now: t + 24_000 })).status).toBe(404);
   });
 
-  it('D935: stops (suspend, key revoke) are held to 60 an org a clock hour; one that changes nothing costs nothing, even when the hour is full; another org untouched', async () => {
+  it('D935: suspensions are held to 60 an org a clock hour; one that changes nothing costs nothing, even when the hour is full; another org untouched', async () => {
     const net = await network();
     const now = freshNow();
     const a = await createdApp(net);
     const b = await createdApp(net);
-    const stops = placedStub(env, env.RATE_LIMITER, `platform:${net.org}`);
-    expect(STOP_WINDOWS).toEqual([{ name: 'stops:hour', windowMs: HOUR, max: 60 }]);
-    expect(await stops.hit(STOP_WINDOWS, now, 58)).toMatchObject({ ok: true });
-    // The 59th: a suspension.
+    const quotas = placedStub(env, env.RATE_LIMITER, `platform:${net.org}`);
+    expect(SUSPENSION_WINDOWS).toEqual([{ name: 'suspensions:hour', windowMs: HOUR, max: 60 }]);
+    expect(await quotas.hit(SUSPENSION_WINDOWS, now, 59)).toMatchObject({ ok: true });
+    // The 60th.
     expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 1000 })).status).toBe(200);
-    // Already suspended: nothing written, nothing counted.
-    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 4000 })).status).toBe(200);
-    // The 60th: a key revocation (the app's second key).
-    const k2 = (await post(net.k, `/v1/platform/apps/${b.id}/keys`, {}, { now: now + 7000 })).body.key as { id: string };
-    expect((await post(net.k, `/v1/platform/apps/${b.id}/keys/${k2.id}/revoke`, {}, { now: now + 10_000 })).status).toBe(200);
-    // Full: a real stop is refused, writing nothing ...
+    // Full: a real suspension is refused, writing nothing ...
     const before = await stateOf(net.org);
-    const over = await post(net.k, `/v1/platform/apps/${b.id}/suspend`, { suspended: true }, { now: now + 13_000 });
-    expect([over.status, over.body.limit]).toEqual([429, 'platform:stops:hour']);
-    const overKey = await post(net.k, `/v1/platform/apps/${b.id}/keys/${b.keyId}/revoke`, {}, { now: now + 16_000 });
-    expect([overKey.status, overKey.body.limit]).toEqual([429, 'platform:stops:hour']);
+    const over = await post(net.k, `/v1/platform/apps/${b.id}/suspend`, { suspended: true }, { now: now + 4000 });
+    expect([over.status, over.body.limit]).toEqual([429, 'platform:suspensions:hour']);
     expect(await stateOf(net.org)).toEqual(before);
-    // ... and stops that change nothing still answer what they are: already revoked, already suspended, an unknown key.
-    expect((await post(net.k, `/v1/platform/apps/${b.id}/keys/${k2.id}/revoke`, {}, { now: now + 19_000 })).body.code).toBe('conflict');
-    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 22_000 })).status).toBe(200);
-    expect((await post(net.k, `/v1/platform/apps/${b.id}/keys/key_none/revoke`, {}, { now: now + 25_000 })).status).toBe(404);
-    // A resume isn't a stop.
-    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: false }, { now: now + 28_000 })).status).toBe(200);
-    // Another org's stops are its own.
+    // ... one that changes nothing still answers 200; a resume isn't counted; a key revocation has its own window.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 7000 })).status).toBe(200);
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: false }, { now: now + 10_000 })).status).toBe(200);
+    const k2 = (await post(net.k, `/v1/platform/apps/${b.id}/keys`, {}, { now: now + 13_000 })).body.key as { id: string };
+    expect((await post(net.k, `/v1/platform/apps/${b.id}/keys/${k2.id}/revoke`, {}, { now: now + 16_000 })).status).toBe(200);
+    // Another org's suspensions are its own.
     const other = await network();
     const c = await createdApp(other);
-    expect((await post(other.k, `/v1/platform/apps/${c.id}/suspend`, { suspended: true }, { now: now + 31_000 })).status).toBe(200);
+    expect((await post(other.k, `/v1/platform/apps/${c.id}/suspend`, { suspended: true }, { now: now + 19_000 })).status).toBe(200);
   });
 
-  it('D935: parallel stops at the edge of the hour: exactly the room left goes through', async () => {
+  it('D935 after PR 161’s review: publishable key revocations have their own 20 an org a clock hour (not reversible); no-ops never count, even when full; suspending still works', async () => {
+    const net = await network();
+    const now = freshNow();
+    const a = await createdApp(net);
+    const quotas = placedStub(env, env.RATE_LIMITER, `platform:${net.org}`);
+    expect(KEY_REVOKE_WINDOWS).toEqual([{ name: 'key-revokes:hour', windowMs: HOUR, max: 20 }]);
+    expect(PLATFORM_OPS_LIMITS.keyRevokesPerHour).toBe(20);
+    // 19 used; three more keys.
+    expect(await quotas.hit(KEY_REVOKE_WINDOWS, now, 19)).toMatchObject({ ok: true });
+    const keys: string[] = [];
+    for (let i = 0; i < 3; i++) keys.push(((await post(net.k, `/v1/platform/apps/${a.id}/keys`, {}, { now: now + 1000 + 3000 * i })).body.key as { id: string }).id);
+    // The 20th.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/keys/${keys[0]!}/revoke`, {}, { now: now + 10_000 })).status).toBe(200);
+    // Full: a real revocation is refused, writing nothing.
+    const before = await stateOf(net.org);
+    const over = await post(net.k, `/v1/platform/apps/${a.id}/keys/${keys[1]!}/revoke`, {}, { now: now + 13_000 });
+    expect([over.status, over.body.limit]).toEqual([429, 'platform:key-revokes:hour']);
+    expect(await stateOf(net.org)).toEqual(before);
+    // No-ops answer what they are: already revoked, an unknown key.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/keys/${keys[0]!}/revoke`, {}, { now: now + 16_000 })).body.code).toBe('conflict');
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/keys/key_none/revoke`, {}, { now: now + 19_000 })).status).toBe(404);
+    // Suspending, the fast and reversible stop, still goes through.
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/suspend`, { suspended: true }, { now: now + 22_000 })).status).toBe(200);
+    // The next clock hour, it goes through.
+    const nextHour = Math.floor(now / HOUR) * HOUR + HOUR + 1000;
+    expect((await post(net.k, `/v1/platform/apps/${a.id}/keys/${keys[1]!}/revoke`, {}, { now: nextHour })).status).toBe(200);
+  });
+
+  it('D935: parallel stops at the edge of the hour: exactly the room left goes through (suspensions and key revocations)', async () => {
     const net = await network();
     const now = freshNow();
     const apps: string[] = [];
     for (let i = 0; i < 5; i++) apps.push((await bareApp(net.org, net.s1)).id);
-    expect(await placedStub(env, env.RATE_LIMITER, `platform:${net.org}`).hit(STOP_WINDOWS, now, 58)).toMatchObject({ ok: true });
+    const quotas = placedStub(env, env.RATE_LIMITER, `platform:${net.org}`);
+    expect(await quotas.hit(SUSPENSION_WINDOWS, now, 58)).toMatchObject({ ok: true });
+    expect(await quotas.hit(KEY_REVOKE_WINDOWS, now, 18)).toMatchObject({ ok: true });
     // Spaced 2 s apart in their timestamps so the buckets aren't what refuses; sent at once.
     const out = await Promise.all(apps.map((id, i) => post(net.k, `/v1/platform/apps/${id}/suspend`, { suspended: true }, { now: now + 2000 * i })));
     expect(out.filter((r) => r.status === 200)).toHaveLength(2);
-    expect(out.filter((r) => r.status !== 200).map((r) => r.body.limit)).toEqual(['platform:stops:hour', 'platform:stops:hour', 'platform:stops:hour']);
+    expect(out.filter((r) => r.status !== 200).map((r) => r.body.limit)).toEqual(['platform:suspensions:hour', 'platform:suspensions:hour', 'platform:suspensions:hour']);
     expect((await one<{ n: number }>('SELECT COUNT(*) AS n FROM apps WHERE org_id = ?1 AND suspended_by = 4', net.org)).n).toBe(2);
+    const keyIds = await Promise.all(apps.map(async (id) => (await one<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', id)).id));
+    const revokes = await Promise.all(apps.map((id, i) => post(net.k, `/v1/platform/apps/${id}/keys/${keyIds[i]!}/revoke`, {}, { now: now + 12_000 + 2000 * i })));
+    expect(revokes.filter((r) => r.status === 200)).toHaveLength(2);
+    expect(revokes.filter((r) => r.status !== 200).map((r) => r.body.limit)).toEqual(['platform:key-revokes:hour', 'platform:key-revokes:hour', 'platform:key-revokes:hour']);
   });
 
   it('D935: a key past its 2 000 a day still revokes a publishable key within its kill reserve (10 a minute, 100 a day), and is refused beyond it; ordinary calls stay refused', async () => {

@@ -260,7 +260,7 @@ export const PLATFORM_ROUTES: readonly PlatformRoute[] = [
     cost: 10,
     idempotency: 'required',
     validate: check(platformSuspendBody),
-    // D935: suspending is a stop (it only takes away), outside the breaker; held to the org's stops a clock hour instead.
+    // D935: suspending is a stop (it only takes away), outside the breaker; held to the org's 60 suspensions a clock hour instead.
     flags: (body) => (body.suspended === true ? { killSwitch: true, allowFrozen: true } : {}),
     run: (c) => suspendPlatformApp(c, c.params.appId!, platformSuspendBody.parse(c.body).suspended),
   },
@@ -283,7 +283,7 @@ export const PLATFORM_ROUTES: readonly PlatformRoute[] = [
     idempotency: 'required',
     allowFrozen: true,
     // D935: a stop, outside the breaker (the Tech Lead's decision: never blockable by the shared breaker); held to the
-    // org's stops a clock hour instead.
+    // org's 20 publishable key revocations a clock hour instead (not reversible, so fewer than suspensions).
     killSwitch: true,
     validate: check(platformEmptyBody),
     run: (c) => revokePublishableKey(c, c.params.appId!, c.params.keyId!),

@@ -353,11 +353,12 @@ const keyWindows: Limit[] = [
 ];
 
 /**
- * D935: the org's stops (an app suspended, a publishable key revoked), outside the breaker: one window, taken just before
- * the batch like the other quotas, so a stop that changes nothing (already suspended, already revoked) never reaches it.
+ * D935: the org's stops, outside the breaker, each with its own window, taken just before the batch like the other
+ * quotas, so a stop that changes nothing (already suspended, already revoked, not found) never reaches it: suspensions
+ * (reversible) 60 a clock hour, publishable key revocations (not reversible; after PR 161's review) 20 a clock hour.
  */
-export const STOP_WINDOWS: Limit[] = [{ name: 'stops:hour', windowMs: HOUR, max: L.stopsPerHour }];
-const STOPS = 'app suspensions and publishable key revocations';
+export const SUSPENSION_WINDOWS: Limit[] = [{ name: 'suspensions:hour', windowMs: HOUR, max: L.suspensionsPerHour }];
+export const KEY_REVOKE_WINDOWS: Limit[] = [{ name: 'key-revokes:hour', windowMs: HOUR, max: L.keyRevokesPerHour }];
 
 /**
  * A write's quota, taken just before its batch (`Writer.beforeBatch`: after the plan read and every check, so a refused
@@ -623,7 +624,7 @@ export async function cancelPlatformChange(c: OpContext, changeId: string): Prom
  * `POST /v1/platform/apps/:appId/suspend` `{suspended}`: the partner bit. Suspending sets it (holding it only if it was
  * clear; a kill switch, allowed while frozen); resuming clears it only while the platform holds it (`forbidden` for a
  * member's suspension, or one a member took over). Already in that state: nothing written. A suspension is a stop
- * (D935): outside the breaker, counted on the org's stops only when it changes something.
+ * (D935): outside the breaker, counted on the org's suspensions only when it changes something.
  */
 export async function suspendPlatformApp(c: OpContext, appId: string, suspended: boolean): Promise<OpAnswer> {
   const { w, hash } = await opWriter(c, { allowFrozen: suspended });
@@ -633,8 +634,8 @@ export async function suspendPlatformApp(c: OpContext, appId: string, suspended:
     hash,
     async () => {
       const set = () => setSuspensionBit(c.db, w, { orgId: c.key.org_id, appId, bit: SUSPENSION_BITS.partner, suspended });
-      // D935: suspending is a stop, counted on the org's stops (resuming is an ordinary write, not counted).
-      const r = suspended ? await withQuota(c, w, [[STOP_WINDOWS, 1, STOPS]], set) : await set();
+      // D935: suspending is a stop, counted on the org's suspensions (resuming is an ordinary write, not counted).
+      const r = suspended ? await withQuota(c, w, [[SUSPENSION_WINDOWS, 1, 'app suspensions']], set) : await set();
       return { status: 200, body: { suspended: suspendedView(r.suspendedBy, r.partnerBitBy) }, appId, wrote: w.wrote === true };
     },
     (_d, app) => ({ suspended: replayApp(app).suspended }),
@@ -663,7 +664,7 @@ export async function createPublishableKey(c: OpContext, appId: string): Promise
 
 /**
  * `POST /v1/platform/apps/:appId/keys/:keyId/revoke`: at once (a kill switch, allowed while frozen); the last key too. A
- * stop (D935): outside the breaker, counted on the org's stops only when it revokes something.
+ * stop (D935): outside the breaker, counted on the org's key revocations (20 a clock hour) only when it revokes something.
  */
 export async function revokePublishableKey(c: OpContext, appId: string, keyId: string): Promise<OpAnswer> {
   const { w, hash } = await opWriter(c, { allowFrozen: true });
@@ -672,7 +673,7 @@ export async function revokePublishableKey(c: OpContext, appId: string, keyId: s
     w,
     hash,
     async () => {
-      const r = await withQuota(c, w, [[STOP_WINDOWS, 1, STOPS]], () => revokeKey(c.db, w, { orgId: c.key.org_id, appId, keyId }));
+      const r = await withQuota(c, w, [[KEY_REVOKE_WINDOWS, 1, 'publishable key revocations']], () => revokeKey(c.db, w, { orgId: c.key.org_id, appId, keyId }));
       return { status: 200, body: { ...r }, appId, wrote: true };
     },
     (detail, app) => {

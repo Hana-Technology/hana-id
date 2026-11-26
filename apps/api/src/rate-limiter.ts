@@ -358,10 +358,16 @@ export class RateLimiter extends DurableObject<Env> {
     const bOrg = r.breaker ? recent(bOrgKey) : [];
     const bGlobal = r.breaker ? recent('platform:breaker:global') : [];
     const until = (oldest: number | undefined) => ((oldest ?? now) + L.breaker.windowMs - now) / 1000;
-    if (r.breaker && bOrg.length >= L.breaker.perOrg) return refuse('breaker_org', until(bOrg[0]));
+    // The time the `k`-th newest entry of a list slides out (the list sorted, as settles may have removed entries).
+    const slideOut = (list: number[], keep: number) => [...list].sort((a, b) => a - b)[list.length - keep];
+    if (r.breaker && bOrg.length >= L.breaker.perOrg) return refuse('breaker_org', until(slideOut(bOrg, L.breaker.perOrg)));
     // D935: below its floor an org's call passes whatever the global count (other orgs can't use up its kill switches);
-    // above it the global count holds, every call (floor ones too) counted on it.
-    if (r.breaker && bOrg.length >= L.breaker.floor && bGlobal.length >= L.breaker.global) return refuse('breaker_global', until(bGlobal[0]));
+    // above it the global count holds, every call (floor ones too) counted on it. The wait (after PR 161's review, L1):
+    // the sooner of the global count falling below its limit (floor calls can take the list past it) and the org's own
+    // count falling below its floor.
+    if (r.breaker && bOrg.length >= L.breaker.floor && bGlobal.length >= L.breaker.global) {
+      return refuse('breaker_global', Math.min(until(slideOut(bGlobal, L.breaker.global)), until(slideOut(bOrg, L.breaker.floor))));
+    }
     const orgFloor = r.killSwitch ? 0 : L.perOrg.reserve;
     const platformFloor = r.killSwitch ? 0 : L.platform.reserve;
     if (orgTokens - r.cost < orgFloor) return refuse('budget_org', (r.cost + orgFloor - orgTokens) / L.perOrg.ratePerS);
@@ -390,7 +396,7 @@ export class RateLimiter extends DurableObject<Env> {
    * happens only for the reserve-share entry of that admission, found and removed, so a second settle of the same `at`
    * refunds nothing (the second review, N6).
    */
-  platformSettle(s: { org: string; at: number; breaker: boolean; reserveUsed: number; limits: PlatformAdmission['limits'] }, now: number = Date.now()): void {
+  platformSettle(s: { org: string; at: number; breaker: boolean; reserveUsed: number; ran?: number; limits: PlatformAdmission['limits'] }, now: number = Date.now()): void {
     const kv = this.ctx.storage.kv;
     if (s.breaker) {
       for (const key of [`platform:breaker:org:${s.org}`, 'platform:breaker:global']) {
@@ -409,9 +415,12 @@ export class RateLimiter extends DurableObject<Env> {
         const st = kv.get<{ tokens: number; at: number }>(key) ?? { tokens: b.burst, at: now };
         return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
       };
-      kv.put('platform:bucket', { tokens: Math.min(s.limits.platform.burst, fill('platform:bucket', s.limits.platform) + s.reserveUsed), at: now });
+      // After PR 161's review, L2: the statements the call did run (`ran`) stay spent from the platform's bucket, so
+      // every statement of every platform call is paid there, no-ops included; only the rest goes back.
+      const back = s.reserveUsed - Math.min(s.reserveUsed, Math.max(0, s.ran ?? 0));
+      kv.put('platform:bucket', { tokens: Math.min(s.limits.platform.burst, fill('platform:bucket', s.limits.platform) + back), at: now });
       const orgKey = `platform:bucket:org:${s.org}`;
-      kv.put(orgKey, { tokens: fill(orgKey, s.limits.perOrg) - s.reserveUsed, at: now });
+      kv.put(orgKey, { tokens: fill(orgKey, s.limits.perOrg) - back, at: now });
     }
   }
 

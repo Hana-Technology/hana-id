@@ -1306,7 +1306,7 @@ describe('D935: the breaker’s per-org floor, the kill switches’ share of the
 
   it('the numbers', () => {
     expect(PLATFORM_LIMITS.breaker).toEqual({ windowMs: HOUR, perOrg: 10, global: 30, floor: 5 });
-    expect(PLATFORM_LIMITS.platform).toEqual({ ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 11 } });
+    expect(PLATFORM_LIMITS.platform).toEqual({ ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 132 } });
     expect(PLATFORM_WINDOWS.killReserve).toEqual([
       { name: 'kill:minute', windowMs: MIN, max: 10 },
       { name: 'kill:day', windowMs: 24 * HOUR, max: 100 },
@@ -1368,18 +1368,79 @@ describe('D935: the breaker’s per-org floor, the kill switches’ share of the
 
   it('other orgs holding the platform’s bucket at its reserve never refuse an org’s kill switch of the full cost (it was a 503 when one call needed more than the share)', async () => {
     const now = freshNow();
-    const [x, y, killer, second, third] = await newOrgs(5);
+    const [x, y, killer, second] = await newOrgs(4);
     // Two orgs take the bucket to exactly its reserve (60 → 22, none of it from the reserve); ordinary calls are then refused.
     for (const org of [x!, y!]) expect(await obj().platformAdmit({ org, cost: 19, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
     expect(await obj().platformAdmit({ org: x!, cost: 1, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
-    // A kill switch of cost 11 takes all of it from the reserve: admitted.
+    // A kill switch of cost 11 takes all of it from the reserve: admitted; so is the same org's second (12 fit its share).
     expect(await obj().platformAdmit({ org: killer!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 11 });
-    // That org's share is spent for the minute; another org's kill switch still finds the rest of the reserve.
-    expect(await obj().platformAdmit({ org: killer!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_reserve' });
-    expect(await obj().platformAdmit({ org: second!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 11 });
-    // Empty now: a third waits for the refill (a second), not an hour.
-    expect(await obj().platformAdmit({ org: third!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform', retryAfterS: 2 });
-    expect(await obj().platformAdmit({ org: third!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now + 1100)).toMatchObject({ ok: true });
+    expect(await obj().platformAdmit({ org: killer!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 11 });
+    // Empty now: another org's waits for the refill (a second or two), not a minute.
+    expect(await obj().platformAdmit({ org: second!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform', retryAfterS: 2 });
+    expect(await obj().platformAdmit({ org: second!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now + 1100)).toMatchObject({ ok: true });
+  });
+
+  // After PR 161's review, M1: the reviewer's scenario. Other orgs keep the platform's bucket busy (each an ordinary call of
+  // cost 5 every 100 ms, far past the bucket's 10 a second); the victim org tries a kill switch of cost 11 every 100 ms
+  // for 5 simulated minutes. With the share at 11 a minute it got about one a minute (7 in 5 minutes); the target is at
+  // least 10 a minute, and the 60 suspensions within 10 minutes.
+  for (const busy of [2, 5]) {
+    it(`M1: with ${busy} other orgs busy, an org still gets at least 10 kill switches a minute (the 60 suspensions in under 10 minutes)`, async () => {
+      const t0 = freshNow() + 30 * MIN;
+      const [victim, ...others] = await newOrgs(busy + 1);
+      const perMinute = Array<number>(5).fill(0);
+      let busyAdmitted = 0;
+      for (let tick = 0; tick < 5 * 600; tick++) {
+        const t = t0 + tick * 100;
+        for (const org of others) if ((await obj().platformAdmit({ org, cost: 5, limits: PLATFORM_LIMITS }, t)).ok) busyAdmitted++;
+        if ((await obj().platformAdmit({ org: victim!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, t + 50)).ok) perMinute[Math.floor(tick / 600)]!++;
+      }
+      // The others really were busy: they used the bucket's whole refill outside the victim's kill switches.
+      expect(busyAdmitted * 5 + perMinute.reduce((a, b) => a + b, 0) * 11).toBeGreaterThan(5 * 60 * PLATFORM_LIMITS.platform.ratePerS * 0.9);
+      for (const n of perMinute) expect(n).toBeGreaterThanOrEqual(10);
+      expect(perMinute.reduce((a, b) => a + b, 0)).toBeGreaterThanOrEqual(60);
+      // And every kill switch's statements came out of the platform's bucket: no more than it holds and refills.
+      expect(perMinute.reduce((a, b) => a + b, 0) * 11).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.burst + 5 * 60 * PLATFORM_LIMITS.platform.ratePerS);
+    }, 120_000);
+  }
+
+  it('L1: `breaker_global`’s retry-after is when the call would pass: the global count falling below 30 (floor calls take the list past it) or the org’s below its floor', async () => {
+    const t0 = freshNow();
+    const [a, b, c, d, e, f] = await newOrgs(6);
+    let t = t0;
+    for (const org of [a!, b!, c!]) for (let i = 0; i < 10; i++) expect((await removal(org, (t += 4000))).ok).toBe(true);
+    for (let i = 0; i < 5; i++) expect((await removal(d!, (t += 4000))).ok).toBe(true);
+    const refused = await removal(d!, (t += 4000));
+    expect(refused).toMatchObject({ ok: false, limit: 'breaker_global' });
+    const at = t + (refused as { retryAfterS: number }).retryAfterS * 1000;
+    // The 6th oldest of the 35 slides out first (the old answer, the oldest's, was refused again for about 20 s).
+    expect(at).toBe(t0 + 6 * 4000 + HOUR + Math.ceil((t0 + 6 * 4000 + HOUR - t) / 1000) * 1000 - (t0 + 6 * 4000 + HOUR - t));
+    expect((await removal(d!, at - 1000)).ok).toBe(false);
+    expect(await removal(d!, at)).toMatchObject({ ok: true });
+    // The other case: the org's own floor frees first. e uses its 5 early; later a and b their 10, c and f their floor of
+    // 5: 35 on the global list, whose 30th newest slides out well after e's oldest.
+    const u0 = at + 2 * HOUR;
+    for (let i = 0; i < 5; i++) expect((await removal(e!, u0 + 1000 * i)).ok).toBe(true);
+    let u = u0 + 20 * MIN;
+    for (const [org, n] of [[a!, 10], [b!, 10], [c!, 5], [f!, 5]] as const) for (let i = 0; i < n; i++) expect((await removal(org, (u += 4000))).ok).toBe(true);
+    const r2 = await removal(e!, (u += 4000));
+    expect(r2).toMatchObject({ ok: false, limit: 'breaker_global' });
+    const at2 = u + (r2 as { retryAfterS: number }).retryAfterS * 1000;
+    expect(at2).toBeLessThan(u0 + HOUR + 1000 + 1000);
+    expect(await removal(e!, at2)).toMatchObject({ ok: true });
+  });
+
+  it('L2: a no-op that dipped into the reserve gets back only what it didn’t run: every statement stays paid from the platform’s bucket', async () => {
+    // Past every time the tests above used on the shared object (its bucket refills only forwards in time).
+    const now = freshNow() + 10 * HOUR;
+    const [x, y, org, other] = await newOrgs(4);
+    for (const o of [x!, y!]) expect(await obj().platformAdmit({ org: o, cost: 19, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
+    const kill = await obj().platformAdmit({ org: org!, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now);
+    expect(kill).toMatchObject({ ok: true, reserveUsed: 11 });
+    // It ran 3 statements and changed nothing: 8 go back, 3 stay spent (11 tokens left of the 22, not 22).
+    await obj().platformSettle({ org: org!, at: now, breaker: false, reserveUsed: 11, ran: 3, limits: PLATFORM_LIMITS }, now);
+    expect(await obj().platformAdmit({ org: other!, cost: 20, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
+    expect(await obj().platformAdmit({ org: other!, cost: 19, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true });
   });
 
   it('a key past its ordinary windows: kill switches counted on their own reserve, exactly 10 of 15 at once; anything else still refused', async () => {

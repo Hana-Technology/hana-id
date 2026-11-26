@@ -116,9 +116,10 @@ export const PLATFORM_WINDOWS = {
 /**
  * The platform's admission on the `console-rpc` object (A5; after PR 156's review, F3): the org's own bucket (8
  * statements a second, burst 40, the last 10 for kill switches: both of its keys at their full 60 a minute); the
- * platform's own global bucket (10 statements a second, burst 60, the last 22 for kill switches, at most 11 of them an
- * org a minute: D935, one kill switch's whole cost, so other orgs' ordinary calls holding the bucket at its reserve can't
- * refuse an org's kill switch); the console's global bucket charged too: an ordinary platform call never takes it below
+ * platform's own global bucket (10 statements a second, burst 60, the last 22 for kill switches, at most 132 of them an
+ * org a minute: D935 after PR 161's review, M1, twelve whole kill switches, so other orgs keeping the bucket busy hold
+ * an org's kill switches to no less than 12 a minute; real ones are bounded per org anyway by the breaker, the
+ * suspensions and key revocations quotas and the key's windows); the console's global bucket charged too: an ordinary platform call never takes it below
  * 30 of its 60 tokens, so the console always keeps at least half its burst; a platform kill switch neither reads nor
  * charges it (N2 and its review: a console flood can't refuse it, and it never spends the console's kill-switch
  * reserve), bounded by the org's bucket, the platform's own bucket and reserve, each org's share of it and the breaker;
@@ -127,7 +128,7 @@ export const PLATFORM_WINDOWS = {
  */
 export const PLATFORM_LIMITS = {
   perOrg: { ratePerS: 8, burst: 40, reserve: 10 },
-  platform: { ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 11 } },
+  platform: { ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 132 } },
   shared: { ratePerS: CONSOLE_LIMITS.global.ratePerS, burst: CONSOLE_LIMITS.global.burst, sharedFloor: 30 },
   breaker: { windowMs: HOUR_MS, perOrg: L.breaker.perOrgPerHour, global: L.breaker.globalPerHour, floor: L.breaker.floorPerOrgPerHour },
 } as const satisfies PlatformAdmission['limits'];
@@ -609,7 +610,9 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   // A destructive call that changed nothing gets its breaker slot back, and its reserve tokens move to the org's bucket.
   if (settle && (settle.breaker || settle.reserveUsed > 0) && !wrote) {
     try {
-      await consoleObj(env).platformSettle({ org: key.org_id, at: now, breaker: settle.breaker, reserveUsed: settle.reserveUsed, limits: PLATFORM_LIMITS }, now);
+      // `ran`: the statements this call ran through the hot DB, its call log row and, at most, the announced keys' read
+      // (L2 of PR 161's review: those stay paid from the platform's bucket).
+      await consoleObj(env).platformSettle({ org: key.org_id, at: now, breaker: settle.breaker, reserveUsed: settle.reserveUsed, ran: db.statements + 2, limits: PLATFORM_LIMITS }, now);
     } catch {
       log({ event: 'platform', requestId, outcome: 'error', code: 'settle_failed' }, 'error');
     }

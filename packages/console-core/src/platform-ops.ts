@@ -35,8 +35,8 @@ export const platformEmptyBody = z.object({}).strict();
  * addresses waiting (proposed, not yet in force) across the org's apps; at most `platform_orgs.max_apps` (default 10)
  * apps the platform created and not deleted. Per app: `MAX_APP_ORIGINS` (20) web addresses in force or waiting, the
  * widget's origin included; 5 unrevoked publishable keys, and the org's platform keys create at most 20 publishable
- * keys a clock hour and 50 a UTC day (revoked keys are kept, so churn is bounded); 60 stops (suspensions and
- * publishable key revocations that changed something) a clock hour (D935). A list answers 50 apps a page; an
+ * keys a clock hour and 50 a UTC day (revoked keys are kept, so churn is bounded); 60 suspensions and 20 publishable key
+ * revocations that changed something a clock hour (D935). A list answers 50 apps a page; an
  * app view lists its 20 newest publishable keys.
  */
 export const PLATFORM_OPS_LIMITS = {
@@ -47,11 +47,16 @@ export const PLATFORM_OPS_LIMITS = {
   keyCreationsPerHour: 20,
   keyCreationsPerDay: 50,
   /**
-   * D935: the org's stops a clock hour (an app suspended, a publishable key revoked), outside the breaker. Only a stop
-   * that changes something counts (one already in that state writes nothing and costs nothing): more than an incident
-   * needs (10 apps suspended and 50 keys revoked).
+   * D935: the org's suspensions a clock hour, outside the breaker. Only one that changes something counts (an app
+   * already suspended writes nothing and costs nothing). Reversible (a resume), so generous: every app, several times.
    */
-  stopsPerHour: 60,
+  suspensionsPerHour: 60,
+  /**
+   * D935 after PR 161's review: the org's publishable key revocations a clock hour, outside the breaker, apart from the
+   * suspensions: a revocation can't be undone, so a stolen platform key revokes at most 20 an hour (the console's
+   * figure); already revoked or not found never counts. In an emergency, suspend first (fast, reversible).
+   */
+  keyRevokesPerHour: 20,
   listPage: 50,
   keysShown: 20,
   /** How long `platform_requests` tells a retry from another call with the same Idempotency-Key (A9). */

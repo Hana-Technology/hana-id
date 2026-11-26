@@ -24356,8 +24356,8 @@ unused and D934 is held by another branch, so this is D935.
      switch of cost 11 needed 11 of the reserve: over its share of 8, and with nothing taken yet `platformAdmit` read
      `taken[0]!.at` of an empty list and threw, so the call answered `503 rate_limiter_unavailable`. Now 22 kept, 11 an
      org a minute (every kill switch's cost fits one share, two fit the reserve: tested), and the empty-list read is
-     guarded in both admissions. (After PR 161's review, M1: 11 an org a minute left an org one kill switch a minute
-     while others kept the bucket busy; the share is now 132, below.)
+     guarded in both admissions. (After PR 161's reviews: 11 an org a minute left an org one kill switch a minute
+     while others kept the bucket busy; each org now has its own kill-switch slice first, below.)
 - **The limits, before and after.**
 
   | Limit | Before | After |
@@ -24368,7 +24368,9 @@ unused and D934 is held by another branch, so this is D935.
   | Platform publishable key revocations | the breaker | 20 an org a clock hour, only those that change something (after PR 161's review) |
   | Platform cancel | key windows, buckets | unchanged (now also the key's kill reserve) |
   | Per key, kill switches | 60 a minute, 2 000 a day, shared with every call | the same, then 10 a minute and 100 a day of their own |
-  | Platform kill-switch reserve | 15 tokens, 8 an org a minute | 22 tokens, 132 an org a minute (11 before PR 161's review) |
+  | Platform kill-switch reserve | 15 tokens, 8 an org a minute | 22 tokens, 11 an org a minute, used only past the org's own slice |
+  | Each org's own kill-switch slice | none | 2.5 statements a second, burst 44 (13 kill switches a minute, 4 at once), no other org can use it |
+  | No-op kill switches refunded (less what they ran) | every one, in full | an org's first 20 a minute; past them, none |
   | Console `revokeKey` | the console breaker (5 an org, 20 across orgs a rolling hour) | 20 an org a clock hour of its own |
   | Console suspend, rotate, remove, web client | 5 an org, 20 across orgs | unchanged |
 
@@ -24383,8 +24385,9 @@ unused and D934 is held by another branch, so this is D935.
   switch on); in practice it is the orgs staff switch on one at a time after review (none today, a handful planned),
   and every one of those calls reaches only that org's own apps. **Splitting:** across an org's 2 keys a kill switch
   gets at most 20 more a minute and 200 more a day than before, still under the org's buckets, its breaker and its
-  stops; across orgs, each new org needs staff to switch it on. **The hot database** is unchanged: every platform
-  call draws on the platform's bucket (at most 660 statements in a first minute and 600 a minute after).
+  stops; across orgs, each new org needs staff to switch it on. **The hot database** (as built first): every platform
+  call drew on the platform's bucket (at most 660 statements in a first minute and 600 a minute after); since the
+  reviews, plus each org's own kill-switch slice (44, then 150 a minute an org): see "After PR 161's review".
 - **Kept.** The identical 401 and every check before check 8 unchanged; the limiter changes all after the signature
   and nonce; `allowFrozen`/`allowOff` unchanged (a frozen org keeps every kill switch); the reach in every plan read
   and commit (the stop quota is taken after the plan read, inside the writer, so an app outside the reach answers
@@ -24412,17 +24415,20 @@ unused and D934 is held by another branch, so this is D935.
   - **M1, an org got about one kill switch a minute while others kept the platform's bucket busy.** The reserve's
     per-org share (11 tokens a minute) was checked on every kill switch that dipped into the reserve, and ordinary
     traffic holds the bucket at 22 to 27, so a kill switch of cost 10 or 11 always dips: the reviewer's run admitted 7
-    in 5 minutes (2 993 `429 platform:budget_reserve`, `retry-after` up to a minute). **Chosen: the share sized for
-    several a minute, not dropped** (dropping it would let one org's burst take the whole reserve for a minute):
-    **132 tokens an org a minute**, twelve kill switches of the largest cost (11). Target met and tested (the
-    reviewer's scenario, a kill switch tried every 100 ms for 5 simulated minutes): with 2 and with 5 other orgs
-    busy, at least 10 in every minute and at least 60 in the 5 minutes (the test fails with the old 11), so the
-    org's 60 suspensions take about 5 minutes. Real kill switches are bounded per org anyway (10 removals, 60
-    suspensions, 20 revocations an hour, at most 30 waiting cancels, the key's windows); the share only keeps one org
-    from taking the whole reserve in a minute (132 of the 600 tokens it refills a minute: at least four orgs at their
-    full share at once). **The hot database's worst case** is unchanged and now strict (L2): every statement of an
-    admitted platform call is paid from the platform's bucket, at most 660 in a first minute and 600 a minute after,
-    whatever the number of orgs; the share moves who gets those tokens, not how many there are.
+    in 5 minutes (2 993 `429 platform:budget_reserve`, `retry-after` up to a minute). A first fix raised the share to
+    132 a minute; **the review of that fix** (Medium) showed a first-come share larger than the 22-token reserve lets one
+    org take the whole reserve, so it no longer protected other orgs. **Resolved:** each org has **its own kill-switch
+    slice** (`platform:kill:org:<org>`, 2.5 statements a second, burst 44: 13 kill switches of the largest cost a
+    minute, 4 at once), outside the shared bucket; a kill switch is paid from it first and draws on the shared bucket
+    and reserve (22, back to 11 an org a minute) only past it. So an org's rate never depends on other orgs. Tested
+    (the reviewer's scenario, a kill switch tried every 100 ms for 5 simulated minutes): beside 2 and 5 orgs keeping the
+    bucket busy, and beside 5 orgs spamming kill switches and no-ops as hard as their own limits allow, at least 10 in
+    every minute, at least 60 in the 5 (the 60 suspensions in about 5 minutes), and never fewer from the slice than
+    with no neighbours. The slice is bounded by what already holds real kill switches (10 removals, 60 suspensions, 20
+    revocations an hour, at most 30 waiting cancels, the key's windows and kill reserve) and by the org's own bucket.
+    **The hot database's worst case now scales with the orgs switched on:** the shared bucket's 660 statements in a
+    first minute and 600 a minute after, **plus 44 and 150 a minute per org** (its slice): at most 660 + 44 × N, then
+    600 + 150 × N a minute; and each org is held to its own bucket's 520 a minute whatever the path.
   - **L1, `breaker_global`'s wait.** It was the oldest entry's expiry, wrong once floor calls take the list past 30 (a
     retry at the stated time was refused again for about 20 s). Now the sooner of the expiry of the global list's
     30th newest and of the org's 5th newest (lists sorted, as settles remove entries); `breaker_org`'s likewise from
@@ -24430,8 +24436,17 @@ unused and D934 is held by another branch, so this is D935.
   - **L2, a no-op's refund.** `platformSettle` gave a no-op kill switch all its reserve tokens back though it had run
     about 3 statements, so each org sending no-op kill switches added about 70 statements a minute past the bound.
     **Bounded in code:** the settle takes `ran` (the call's hot-DB statements, its call log row and the announced
-    keys' read: `db.statements + 2`) and gives back only the reserve tokens beyond it, charged to the org's bucket
-    as before. Tested.
+    keys' read: `db.statements + 2`) and gives back only the tokens beyond it (to the slice, or to the reserve charged
+    to the org's bucket as before). Tested. **The review of that fix** (Medium) found the settle still deleted the
+    org's share entry while returning only part of the tokens, so what a no-op really spent stopped counting against
+    the share and free no-ops could keep draining the reserve. **Resolved:** the entry stays, marked settled, holding
+    what stays spent (removed only when everything came back), and is never refunded twice; and no-op kill switches
+    count against a per-org window of their own (`platform:kill-noops:org:<org>`, 20 a minute): past it a no-op gets
+    nothing back and pays its whole cost from its own slice or share. No-ops still never touch the suspensions or
+    revocations quotas. Tested: what stays spent refuses the org's next dip past its share (it went through before);
+    an org spamming no-op kill switches every 100 ms runs at most about 47 calls a minute (its bucket: 40 at once and 8
+    a second, 11 each), about 141 statements, takes at most about 32 from its slice, and doesn't reduce another org's
+    kill switches.
   - **The coordinator's change, the stops split.** Suspending is reversible and stays at 60 an org a clock hour
     (`suspensions:hour`); a platform publishable key revocation can't be undone, and with the 60 a stolen platform
     key could revoke every key in its reach (up to 50) within an hour where the breaker took about 5 hours: it now has
@@ -24450,8 +24465,10 @@ unused and D934 is held by another branch, so this is D935.
   3. Only the **removal** under the breaker; suspensions and key revocations as stops (fixed clock-hour windows, so up
      to twice the figure across an hour's boundary); the cancel under none of these, as before.
   4. Each key's kill-switch reserve at **10 a minute and 100 a UTC day**, used only once the ordinary windows are full.
-  5. The platform's kill-switch reserve at **22 tokens, 132 an org a minute** (was 15 and 8; after the review's M1, so
-     at least 12 kill switches a minute an org however busy others keep it; the throw fixed).
+  5. **Each org's own kill-switch slice** at **2.5 statements a second, burst 44** (13 kill switches a minute, 4 at
+     once; after PR 161's reviews), with the shared reserve at **22 tokens, 11 an org a minute** past it (was 15 and 8;
+     the throw fixed), and **20 refunded no-ops an org a minute**. The hot database's bound gains a per-org term (150
+     statements a minute an org).
   6. **The console's `revokeKey`** at **20 an org a clock hour** of its own (the recorded decision is about it; the brief
      framed the platform's): the console's key creation has no quota of its own, so this also bounds a member's
      create-and-revoke churn (revoked keys are kept, and the console's `getApp` still lists every key, D929's open
@@ -24467,9 +24484,10 @@ unused and D934 is held by another branch, so this is D935.
   10. The figures are code constants: staff can't raise them per org by a D1 write, unlike `max_apps`.
 - **Residual risks.** (a) N, the orgs switched on, has no cap in code, so the global ceiling grows with it (5 × N +
   30): a cap on enabled orgs, or a hard ceiling far above the floor, would bound it at the cost of making the floor
-  refusable again. (b) However busy other orgs keep the platform's bucket, an org gets at least 12 kill switches a
-  minute; past those in a minute it waits for its share (under a minute), and when many orgs stop things at the same
-  moment one may wait for the refill (a second or two), never an hour. (c) An org's own ordinary calls can still delay
+  refusable again; the same N now also multiplies the hot database's per-org term (150 statements a minute an org).
+  (b) Within its own slice (13 a minute, 4 at once) an org never waits on others; past it, its kill switches share
+  the reserve first come and may wait for its share (under a minute) or the refill (a second or two), never an
+  hour. (c) An org's own ordinary calls can still delay
   its own kill switch for well under a second (its bucket keeps 10, a kill switch costs up to 11). (d) Each key's 300
   fresh nonces a minute still apply to kill switches. (e) The suspension, revocation and console windows are clock
   hours (up to twice the figure across a boundary). (f) **What a stolen platform key can do in an hour**, at most:

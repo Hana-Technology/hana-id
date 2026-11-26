@@ -71,10 +71,23 @@ export interface PlatformAdmission {
      * use up an org's kill switches); every admitted call still counts on both lists.
      */
     breaker: { windowMs: number; perOrg: number; global: number; floor: number };
+    /**
+     * D935 after PR 161's reviews: each org's own slice of the hot database for its kill switches
+     * (`platform:kill:org:<org>`), outside the platform's shared bucket, so no other org can use it: a kill switch is
+     * paid from it while it has the call's cost, and only past it from the shared bucket and its reserve.
+     */
+    killSlice: Bucket;
+    /**
+     * Kill switches that changed nothing, per org (`platform:kill-noops:org:<org>`): while under `max` in the window, a
+     * no-op gets back the tokens it didn't run; past it, nothing (it pays its whole cost), so no-ops can't be spammed for
+     * free. Never the stops' or the revocations' quotas (a no-op never reaches them).
+     */
+    killNoops: { windowMs: number; max: number };
   };
 }
 export type PlatformLimit = 'budget_org' | 'budget_platform' | 'budget_shared' | 'budget_reserve' | 'breaker_org' | 'breaker_global';
-export type PlatformAdmitResult = { ok: true; reserveUsed: number } | { ok: false; limit: PlatformLimit; retryAfterS: number; notify: boolean };
+/** `sliceUsed`: tokens of the org's kill-switch slice the call took (it then took nothing of the shared bucket). */
+export type PlatformAdmitResult = { ok: true; reserveUsed: number; sliceUsed?: number } | { ok: false; limit: PlatformLimit; retryAfterS: number; notify: boolean };
 
 /**
  * `notify`: the first breaker refusal of this limit (the org's, or the global one) in this clock hour, the only one the
@@ -371,6 +384,26 @@ export class RateLimiter extends DurableObject<Env> {
     const orgFloor = r.killSwitch ? 0 : L.perOrg.reserve;
     const platformFloor = r.killSwitch ? 0 : L.platform.reserve;
     if (orgTokens - r.cost < orgFloor) return refuse('budget_org', (r.cost + orgFloor - orgTokens) / L.perOrg.ratePerS);
+    const commitBreaker = () => {
+      if (!r.breaker) return;
+      kv.put(bOrgKey, [...bOrg, now]);
+      kv.put('platform:breaker:global', [...bGlobal, now]);
+    };
+    // D935 after PR 161's reviews: a kill switch is paid first from its org's own slice, which no other org can use, so
+    // an org's kill switches never depend on what other orgs do; only past the slice does it draw on the shared bucket.
+    if (r.killSwitch) {
+      const sliceKey = `platform:kill:org:${r.org}`;
+      const slice = fill(sliceKey, L.killSlice);
+      if (slice >= r.cost) {
+        const takenKey = `${sliceKey}:taken`;
+        const takenSlice = (kv.get<{ at: number; n: number; settled?: true }[]>(takenKey) ?? []).filter((e) => e.at > now - 60_000);
+        kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
+        kv.put(sliceKey, { tokens: slice - r.cost, at: now });
+        kv.put(takenKey, [...takenSlice, { at: now, n: r.cost }]);
+        commitBreaker();
+        return { ok: true, reserveUsed: 0, sliceUsed: r.cost };
+      }
+    }
     if (platformTokens - r.cost < platformFloor) return refuse('budget_platform', (r.cost + platformFloor - platformTokens) / L.platform.ratePerS);
     if (!r.killSwitch && sharedTokens - r.cost < L.shared.sharedFloor) return refuse('budget_shared', (r.cost + L.shared.sharedFloor - sharedTokens) / L.shared.ratePerS);
     const reserveUsed = r.killSwitch ? Math.max(0, r.cost - Math.max(0, platformTokens - L.platform.reserve)) : 0;
@@ -383,20 +416,23 @@ export class RateLimiter extends DurableObject<Env> {
     kv.put('platform:bucket', { tokens: platformTokens - r.cost, at: now });
     if (!r.killSwitch) kv.put('console:bucket', { tokens: sharedTokens - r.cost, at: now });
     if (reserveUsed > 0) kv.put(shareKey, [...taken, { at: now, n: reserveUsed }]);
-    if (r.breaker) {
-      kv.put(bOrgKey, [...bOrg, now]);
-      kv.put('platform:breaker:global', [...bGlobal, now]);
-    }
+    commitBreaker();
     return { ok: true, reserveUsed };
   }
 
   /**
-   * D927: a platform call admitted at `at` that changed nothing: its breaker slot back, and the platform reserve tokens
-   * it took back to the platform's reserve, charged to its org's own bucket instead (as consoleSettle does). The refund
-   * happens only for the reserve-share entry of that admission, found and removed, so a second settle of the same `at`
-   * refunds nothing (the second review, N6).
+   * D927: a platform call admitted at `at` that changed nothing: its breaker slot back, and the kill-switch tokens it
+   * took back less the statements it did run (`ran`: after PR 161's review, L2, every statement stays paid): to its
+   * org's own slice, or to the platform's reserve, charged to its org's own bucket instead (as consoleSettle does). Only while
+   * the org's no-ops of the last minute are under `killNoops.max`; past it nothing comes back, so a no-op flood pays in
+   * full from its own org's slice and share. The refund happens once per admission: its entry is found unsettled and
+   * marked settled (with what stays spent still counted against the org's share), so a second settle refunds nothing
+   * (the second review, N6).
    */
-  platformSettle(s: { org: string; at: number; breaker: boolean; reserveUsed: number; ran?: number; limits: PlatformAdmission['limits'] }, now: number = Date.now()): void {
+  platformSettle(
+    s: { org: string; at: number; breaker: boolean; reserveUsed: number; sliceUsed?: number; ran?: number; limits: PlatformAdmission['limits'] },
+    now: number = Date.now(),
+  ): void {
     const kv = this.ctx.storage.kv;
     if (s.breaker) {
       for (const key of [`platform:breaker:org:${s.org}`, 'platform:breaker:global']) {
@@ -405,23 +441,42 @@ export class RateLimiter extends DurableObject<Env> {
         if (i >= 0) kv.put(key, [...list.slice(0, i), ...list.slice(i + 1)]);
       }
     }
-    if (s.reserveUsed > 0) {
-      const shareKey = `platform:reserve:org:${s.org}`;
-      const list = kv.get<{ at: number; n: number }[]>(shareKey) ?? [];
-      const i = list.findIndex((e) => e.at === s.at && e.n === s.reserveUsed);
-      if (i < 0) return;
-      kv.put(shareKey, [...list.slice(0, i), ...list.slice(i + 1)]);
-      const fill = (key: string, b: Bucket) => {
-        const st = kv.get<{ tokens: number; at: number }>(key) ?? { tokens: b.burst, at: now };
-        return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
-      };
-      // After PR 161's review, L2: the statements the call did run (`ran`) stay spent from the platform's bucket, so
-      // every statement of every platform call is paid there, no-ops included; only the rest goes back.
-      const back = s.reserveUsed - Math.min(s.reserveUsed, Math.max(0, s.ran ?? 0));
-      kv.put('platform:bucket', { tokens: Math.min(s.limits.platform.burst, fill('platform:bucket', s.limits.platform) + back), at: now });
-      const orgKey = `platform:bucket:org:${s.org}`;
-      kv.put(orgKey, { tokens: fill(orgKey, s.limits.perOrg) - back, at: now });
+    const sliceUsed = s.sliceUsed ?? 0;
+    if (s.reserveUsed <= 0 && sliceUsed <= 0) return;
+    const fill = (key: string, b: Bucket) => {
+      const st = kv.get<{ tokens: number; at: number }>(key) ?? { tokens: b.burst, at: now };
+      return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
+    };
+    // Finds this admission's unsettled entry and marks it settled with what stays spent; null when there is none.
+    const settleEntry = (key: string, n: number, back: (n: number) => number): number | null => {
+      const list = kv.get<{ at: number; n: number; settled?: true }[]>(key) ?? [];
+      const i = list.findIndex((e) => e.at === s.at && e.n === n && !e.settled);
+      if (i < 0) return null;
+      const b = back(n);
+      kv.put(key, [...list.slice(0, i), ...(b === n ? [] : [{ at: s.at, n: n - b, settled: true as const }]), ...list.slice(i + 1)]);
+      return b;
+    };
+    const noopKey = `platform:kill-noops:org:${s.org}`;
+    const noops = (kv.get<number[]>(noopKey) ?? []).filter((t) => t > now - s.limits.killNoops.windowMs);
+    const free = noops.length < s.limits.killNoops.max;
+    const ran = Math.max(0, s.ran ?? 0);
+    const back = (n: number) => (free ? n - Math.min(n, ran) : 0);
+    const orgKey = `platform:bucket:org:${s.org}`;
+    let given = 0;
+    if (sliceUsed > 0) {
+      const sliceKey = `platform:kill:org:${s.org}`;
+      const b = settleEntry(`${sliceKey}:taken`, sliceUsed, back);
+      if (b === null) return;
+      // The slice is the org's own: nothing to move onto its bucket (which paid the call's whole cost at admission).
+      kv.put(sliceKey, { tokens: Math.min(s.limits.killSlice.burst, fill(sliceKey, s.limits.killSlice) + b), at: now });
+    } else {
+      const b = settleEntry(`platform:reserve:org:${s.org}`, s.reserveUsed, back);
+      if (b === null) return;
+      kv.put('platform:bucket', { tokens: Math.min(s.limits.platform.burst, fill('platform:bucket', s.limits.platform) + b), at: now });
+      given = b;
     }
+    kv.put(noopKey, [...noops, now]);
+    if (given > 0) kv.put(orgKey, { tokens: fill(orgKey, s.limits.perOrg) - given, at: now });
   }
 
   /**

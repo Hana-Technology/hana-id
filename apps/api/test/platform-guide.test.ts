@@ -253,9 +253,10 @@ describe('docs/platform-guide.md', () => {
     const L = PLATFORM_REQUEST_LIMITS;
     expect([L.perKeyPerMinute, L.perKeyPerDay, L.failuresPerIpPerMinute, L.breaker.perOrgPerHour, L.breaker.globalPerHour, L.breaker.floorPerOrgPerHour]).toEqual([60, 2000, 30, 10, 30, 5]);
     expect([L.killReservePerKeyPerMinute, L.killReservePerKeyPerDay]).toEqual([10, 100]);
-    // "at least 12 off switches a minute": the org's share of the platform's reserve over the costliest off switch.
+    // "13 off switches a minute, 4 at once": the org's own slice over the costliest off switch.
     const costliest = Math.max(...PLATFORM_ROUTES.filter((r) => r.killSwitch || r.flags).map((r) => r.cost));
-    expect(Math.floor(PLATFORM_LIMITS.platform.reserveShare.max / costliest)).toBe(12);
+    expect(Math.floor((60 * PLATFORM_LIMITS.killSlice.ratePerS) / costliest)).toBe(13);
+    expect(Math.floor(PLATFORM_LIMITS.killSlice.burst / costliest)).toBe(4);
     expect([PLATFORM_CLOCK_SKEW_MS, PLATFORM_BODY_MAX]).toEqual([60_000, 16 * 1024]);
     const O = PLATFORM_OPS_LIMITS;
     expect([O.creationsPerHour, O.proposalsPerHour, O.waitingPerOrg, O.keyCreationsPerHour, O.keyCreationsPerDay, O.listPage, O.suspensionsPerHour, O.keyRevokesPerHour]).toEqual([2, 20, 30, 20, 50, 50, 60, 20]);
@@ -276,7 +277,8 @@ describe('docs/platform-guide.md', () => {
       '`platform:key:kill:minute`, `platform:key:kill:day`',
       '`platform:suspensions:hour`',
       '`platform:key-revokes:hour`',
-      'at least 12 off switches a minute',
+      'your organisation gets 13 off switches a minute (4 at once)',
+      'no other organisation can use, whatever others do',
     ]) {
       expect(guide, s).toContain(s);
     }

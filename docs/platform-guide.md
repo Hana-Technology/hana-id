@@ -9,7 +9,7 @@ sent with our SDK) covers the partner's page and our SDK.
 Last verified: 2026-11-26, against the platform API's code and tests (built, not deployed anywhere yet); 2026-11-26
 again for the off switches' limits (section 8: the removal limit's per-organisation floor, suspensions and key
 revocations outside it with limits of their own, each key's reserve for off switches; after review, key revocations
-limited apart from suspensions, and the database reserve's rate).
+limited apart from suspensions, and each organisation's own database budget for off switches).
 
 > **Not available yet.** The platform API is built and tested, but it is **not deployed** in any environment and
 > **not switched on** for any organisation. Journear switches it on per organisation. The API's address and the
@@ -972,10 +972,9 @@ are full:
   none of these.
 - **A key that used up its requests can still stop things.** Past its 60 a minute or 2,000 a day, a key still has 10
   off switches a minute and 100 a UTC day of its own. Ordinary calls stay refused.
-- **They keep a reserve of Journear's database budget**, so they keep working when ordinary calls are refused for
-  that budget, yours or other organisations': at least 12 off switches a minute for your organisation however busy
-  others keep it. Past that, or when many organisations stop things at the same moment, one waits for `retry-after`
-  (seconds, at most a minute).
+- **They have database budget of their own**: your organisation gets 13 off switches a minute (4 at once) that
+  no other organisation can use, whatever others do. Past those, they share a small reserve with every organisation,
+  and one may wait for `retry-after` (seconds, at most a minute).
 - **Not exempt from everything:** each key's 300 nonces a minute, your organisation's own database budget and the
   limits above still apply. Only the key's self-revoke skips those.
 
@@ -1148,7 +1147,7 @@ is live.
 | `rate_limited` with `platform:breaker_org` or `platform:breaker_global` | 429 | Too many web addresses removed this hour (yours, or, past your first 5, across every organisation) | Stop and talk to Journear; suspending the app still works |
 | `rate_limited` with `platform:suspensions:hour` | 429 | Your organisation suspended apps 60 times this hour | Wait `retry-after`; owners can still stop things in the partner portal |
 | `rate_limited` with `platform:key-revokes:hour` | 429 | Your organisation revoked 20 publishable keys this hour | Suspend the app instead (it stops at once), and revoke the rest after `retry-after`; owners can still revoke keys in the partner portal |
-| `rate_limited` with `platform:budget_reserve` | 429 | Your organisation used its share of the database reserve for off switches this minute (more than 12) | Wait `retry-after` (under a minute) |
+| `rate_limited` with `platform:budget_reserve` | 429 | Your organisation used its own off-switch budget (13 a minute) and then its share of the shared reserve | Wait `retry-after` (under a minute) |
 | `rate_limited` with `platform:key:kill:minute` or `platform:key:kill:day` | 429 | This key used up its requests and then its off-switch reserve | Use your standby key, or stop things in the partner portal |
 | `internal` | 500 | Something failed on Journear's side | Retry with backoff (same Idempotency-Key); if it persists, send Journear the request id |
 | `rate_limiter_unavailable` | 503 | Journear's limiter didn't answer | Retry after a few seconds |

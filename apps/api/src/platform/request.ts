@@ -116,10 +116,10 @@ export const PLATFORM_WINDOWS = {
 /**
  * The platform's admission on the `console-rpc` object (A5; after PR 156's review, F3): the org's own bucket (8
  * statements a second, burst 40, the last 10 for kill switches: both of its keys at their full 60 a minute); the
- * platform's own global bucket (10 statements a second, burst 60, the last 22 for kill switches, at most 132 of them an
- * org a minute: D935 after PR 161's review, M1, twelve whole kill switches, so other orgs keeping the bucket busy hold
- * an org's kill switches to no less than 12 a minute; real ones are bounded per org anyway by the breaker, the
- * suspensions and key revocations quotas and the key's windows); the console's global bucket charged too: an ordinary platform call never takes it below
+ * platform's own global bucket (10 statements a second, burst 60, the last 22 for kill switches, at most 11 of them an
+ * org a minute: one whole kill switch); D935 after PR 161's reviews: before any of that, each org's own kill-switch
+ * slice (2.5 statements a second, burst 44: 13 kill switches a minute, 4 at once), which no other org can use, so an
+ * org's kill switches never depend on other orgs; the shared bucket and its reserve only past the slice; the console's global bucket charged too: an ordinary platform call never takes it below
  * 30 of its 60 tokens, so the console always keeps at least half its burst; a platform kill switch neither reads nor
  * charges it (N2 and its review: a console flood can't refuse it, and it never spends the console's kill-switch
  * reserve), bounded by the org's bucket, the platform's own bucket and reserve, each org's share of it and the breaker;
@@ -128,9 +128,13 @@ export const PLATFORM_WINDOWS = {
  */
 export const PLATFORM_LIMITS = {
   perOrg: { ratePerS: 8, burst: 40, reserve: 10 },
-  platform: { ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 132 } },
+  platform: { ratePerS: 10, burst: 60, reserve: 22, reserveShare: { windowMs: MIN, max: 11 } },
   shared: { ratePerS: CONSOLE_LIMITS.global.ratePerS, burst: CONSOLE_LIMITS.global.burst, sharedFloor: 30 },
   breaker: { windowMs: HOUR_MS, perOrg: L.breaker.perOrgPerHour, global: L.breaker.globalPerHour, floor: L.breaker.floorPerOrgPerHour },
+  /** D935 after PR 161's reviews: each org's own slice for its kill switches, 2.5 statements a second, burst 44 (13 of cost 11 a minute, 4 at once). */
+  killSlice: { ratePerS: 2.5, burst: 44 },
+  /** No-op kill switches an org may have refunded a minute (past it a no-op pays its whole cost). */
+  killNoops: { windowMs: MIN, max: 20 },
 } as const satisfies PlatformAdmission['limits'];
 
 /** What a call refused before its route (a bad body after admission) is charged: the key's read and the call's row. */
@@ -502,7 +506,7 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
   // D935: the windows the call was counted on (a kill switch past the ordinary ones: its reserve's).
   let chargedWindows: Limit[] = [...PLATFORM_WINDOWS.key];
   let lastUsed = false;
-  let settle: { breaker: boolean; reserveUsed: number } | null = null;
+  let settle: { breaker: boolean; reserveUsed: number; sliceUsed: number } | null = null;
   const undoCharge = async () => {
     if (!charged) return;
     try {
@@ -552,7 +556,7 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
         const breakerRefusal = b.limit === 'breaker_org' || b.limit === 'breaker_global';
         return finish(limited(`platform:${b.limit}`, b.retryAfterS, breakerRefusal ? 'Too many destructive changes this hour: ask Journear security' : 'Too many platform requests just now: try again shortly'));
       }
-      settle = { breaker, reserveUsed: b.reserveUsed };
+      settle = { breaker, reserveUsed: b.reserveUsed, sliceUsed: b.sliceUsed ?? 0 };
     } catch {
       // F11: a failure after the key's windows counted gives the charge and the last-used marker back.
       await undoCharge();
@@ -608,11 +612,11 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
     }
   }
   // A destructive call that changed nothing gets its breaker slot back, and its reserve tokens move to the org's bucket.
-  if (settle && (settle.breaker || settle.reserveUsed > 0) && !wrote) {
+  if (settle && (settle.breaker || settle.reserveUsed > 0 || settle.sliceUsed > 0) && !wrote) {
     try {
       // `ran`: the statements this call ran through the hot DB, its call log row and, at most, the announced keys' read
       // (L2 of PR 161's review: those stay paid from the platform's bucket).
-      await consoleObj(env).platformSettle({ org: key.org_id, at: now, breaker: settle.breaker, reserveUsed: settle.reserveUsed, ran: db.statements + 2, limits: PLATFORM_LIMITS }, now);
+      await consoleObj(env).platformSettle({ org: key.org_id, at: now, breaker: settle.breaker, reserveUsed: settle.reserveUsed, sliceUsed: settle.sliceUsed, ran: db.statements + 2, limits: PLATFORM_LIMITS }, now);
     } catch {
       log({ event: 'platform', requestId, outcome: 'error', code: 'settle_failed' }, 'error');
     }

@@ -114,7 +114,8 @@ describe('sliding windows (RateLimiter.hitSliding)', () => {
   it('counts the previous bucket by its overlap, so a refusal clears gradually; soft limits only report', async () => {
     const stub = limiter(env, `test:slide:${uid()}`);
     const l = [{ name: 'w', windowMs: 1000, max: 2 }];
-    const t0 = 1_000_000_000_000;
+    // Ahead of now, on a whole second (D935: the object ignores a time behind its own clock).
+    const t0 = Math.ceil(Date.now() / 1000) * 1000 + 1_000_000;
     expect((await stub.hitSliding(l, t0)).ok).toBe(true);
     expect((await stub.hitSliding(l, t0 + 1)).ok).toBe(true);
     const refused = await stub.hitSliding(l, t0 + 2);

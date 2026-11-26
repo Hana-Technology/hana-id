@@ -12,7 +12,7 @@ import { detectDrift } from '../src/changes/drift.ts';
 import { validatePolicy } from '../src/changes/policy.ts';
 import { forgetCapEvents, OWNER_ACTIONS_PER_IP_MINUTE } from '../src/handlers.ts';
 import { clearViewCaches } from '../src/views.ts';
-import { GOOGLE_ISS, NAMED_PII_CLAIMS, ORIGIN, call, google, uid } from './helpers.ts';
+import { GOOGLE_ISS, NAMED_PII_CLAIMS, ORIGIN, call, google, staleMarkers, uid } from './helpers.ts';
 import {
   CONSOLE_AUD as CONSOLE,
   DELAY,
@@ -93,21 +93,22 @@ describe('ConsoleRpc.changeOrigins: the API verifies the member’s step-up itse
     const nonce = await originNonce(app, [NEW], [], 0);
     const before = await ledgerCount();
     const forged = await (await import('./near-mock.ts')).rsaSigner(google.jwk.kid);
-    const cases: [string, Promise<unknown>, string][] = [
-      ['bad signature', call_(await forged.sign({ iss: GOOGLE_ISS, aud: CONSOLE, sub: SUB, nonce, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 600 })), 'forbidden'],
-      ['not a console audience', call_(await stepUp(nonce, { aud: 'app.apps.googleusercontent.com' })), 'forbidden'],
-      ['iat over 300 s', call_(await stepUp(nonce, { iat: Math.floor(Date.now() / 1000) - 301 })), 'forbidden'],
-      ['no iat', call_(await stepUp(nonce, { iat: undefined })), 'forbidden'],
-      ['iat in the future', call_(await stepUp(nonce, { iat: Math.floor(Date.now() / 1000) + 120 })), 'forbidden'],
-      ['wrong nonce (another origin)', call_(await stepUp(await originNonce(app, ['https://other.example.com'], [], 0))), 'forbidden'],
-      ['wrong nonce (another version)', call_(await stepUp(await originNonce(app, [NEW], [], 1))), 'forbidden'],
-      ['a non-owner', call_(await stepUp(nonce, { sub: 'stranger' }), { ctx: member('stranger') }), 'not_owner'],
-      ['not the member’s own token', call_(await stepUp(nonce, { sub: 'owner-sub-2' })), 'forbidden'],
-      ['an email-carrying token', call_(await stepUp(nonce, { email: 'o@partner.example', email_verified: true })), 'forbidden'],
-      ['an optional claim of the wrong type (strict)', call_(await stepUp(nonce, { amr: 'pwd' })), 'forbidden'],
-      ['a version mismatch', call_(await stepUp(nonce), { expectedVersion: 3 }), 'version_conflict'],
+    // One at a time (D935: the console's budget is reckoned on its object's clock, so calls sent together share it).
+    const cases: [string, () => Promise<unknown>, string][] = [
+      ['bad signature', async () => call_(await forged.sign({ iss: GOOGLE_ISS, aud: CONSOLE, sub: SUB, nonce, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 600 })), 'forbidden'],
+      ['not a console audience', async () => call_(await stepUp(nonce, { aud: 'app.apps.googleusercontent.com' })), 'forbidden'],
+      ['iat over 300 s', async () => call_(await stepUp(nonce, { iat: Math.floor(Date.now() / 1000) - 301 })), 'forbidden'],
+      ['no iat', async () => call_(await stepUp(nonce, { iat: undefined })), 'forbidden'],
+      ['iat in the future', async () => call_(await stepUp(nonce, { iat: Math.floor(Date.now() / 1000) + 120 })), 'forbidden'],
+      ['wrong nonce (another origin)', async () => call_(await stepUp(await originNonce(app, ['https://other.example.com'], [], 0))), 'forbidden'],
+      ['wrong nonce (another version)', async () => call_(await stepUp(await originNonce(app, [NEW], [], 1))), 'forbidden'],
+      ['a non-owner', async () => call_(await stepUp(nonce, { sub: 'stranger' }), { ctx: member('stranger') }), 'not_owner'],
+      ['not the member’s own token', async () => call_(await stepUp(nonce, { sub: 'owner-sub-2' })), 'forbidden'],
+      ['an email-carrying token', async () => call_(await stepUp(nonce, { email: 'o@partner.example', email_verified: true })), 'forbidden'],
+      ['an optional claim of the wrong type (strict)', async () => call_(await stepUp(nonce, { amr: 'pwd' })), 'forbidden'],
+      ['a version mismatch', async () => call_(await stepUp(nonce), { expectedVersion: 3 }), 'version_conflict'],
     ];
-    for (const [what, p, code] of cases) expect(await p, what).toMatchObject({ ok: false, code });
+    for (const [what, p, code] of cases) expect(await p(), what).toMatchObject({ ok: false, code });
     expect(await ledgerCount()).toBe(before);
     // A valid token works once; its copy is token_used.
     const jwt = await stepUp(nonce);
@@ -151,6 +152,16 @@ describe('ConsoleRpc.changeOrigins: the API verifies the member’s step-up itse
     await env.DB.prepare('DELETE FROM app_origins WHERE app_id = ?1 AND origin = ?2').bind(app.id, NEW).run();
     await env.DB.prepare("UPDATE guarded_changes SET status = 'cancelled' WHERE app_id = ?1").bind(app.id).run();
     expect(await consoleRpc(clock).changeOrigins({ ...member(), orgId: app.org, appId: app.id, add: [NEW], remove: [], expectedVersion: 0, stepUpJwt: jwt })).toMatchObject({ ok: false, code: 'token_used' });
+  });
+
+  it('a step-up token whose single-use object is already past its expiry is refused as expired, not token_used (D935: a stall after the check)', async () => {
+    near();
+    const app = await orgApp();
+    const jwt = await stepUp(await originNonce(app, [NEW], [], 0));
+    staleMarkers();
+    const r = await consoleRpc(clock).changeOrigins({ ...member(), orgId: app.org, appId: app.id, add: [NEW], remove: [], expectedVersion: 0, stepUpJwt: jwt });
+    vi.restoreAllMocks();
+    expect(r).toMatchObject({ ok: false, code: 'forbidden', error: 'The step-up token is not valid (token_expired)' });
   });
 
   it('a replayed request id is already_applied (before the token check), and a refused origin is origin_refused', async () => {

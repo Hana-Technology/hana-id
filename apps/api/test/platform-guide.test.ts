@@ -13,6 +13,8 @@ import vectors from '../../../packages/console-core/test/platform-request-vector
 import guide from '../../../docs/platform-guide.md?raw';
 import sample from '../../../examples/platform-signer/platform-client.ts?raw';
 import { type PlatformConfig, callPlatform, derToRaw, importPrivateKeyPem, newIdempotencyKey, platformMessage, signHeaders } from '../../../examples/platform-signer/platform-client.ts';
+import { PLATFORM_LIMITS } from '../src/platform/request.ts';
+import { PLATFORM_ROUTES } from '../src/platform/routes.ts';
 import { deliver, freshIp, freshNow, keyRow, seedKey, switchOff } from './platform-helpers.ts';
 import { orgApp } from './rpc-helpers.ts';
 
@@ -249,10 +251,17 @@ describe('docs/platform-guide.md', () => {
 
   it('states the numbers the code holds', () => {
     const L = PLATFORM_REQUEST_LIMITS;
-    expect([L.perKeyPerMinute, L.perKeyPerDay, L.failuresPerIpPerMinute, L.breaker.perOrgPerHour, L.breaker.globalPerHour]).toEqual([60, 2000, 30, 10, 30]);
+    expect([L.perKeyPerMinute, L.perKeyPerDay, L.failuresPerIpPerMinute, L.breaker.perOrgPerHour, L.breaker.globalPerHour, L.breaker.floorPerOrgPerHour]).toEqual([60, 2000, 30, 10, 30, 5]);
+    expect([L.killReservePerKeyPerMinute, L.killReservePerKeyPerDay]).toEqual([10, 100]);
+    // "about 13 off switches a minute (4 at once)": the org's kill bucket over the costliest off switch; 20 organisations.
+    const costliest = Math.max(...PLATFORM_ROUTES.filter((r) => r.killSwitch || r.flags).map((r) => r.cost));
+    expect(Math.floor((60 * PLATFORM_LIMITS.kill.ratePerS) / costliest)).toBe(13);
+    expect(Math.floor(PLATFORM_LIMITS.kill.burst / costliest)).toBe(4);
+    expect(PLATFORM_LIMITS.maxOrgs).toBe(20);
+    expect(L.bodyDeadlineMs).toBe(5000);
     expect([PLATFORM_CLOCK_SKEW_MS, PLATFORM_BODY_MAX]).toEqual([60_000, 16 * 1024]);
     const O = PLATFORM_OPS_LIMITS;
-    expect([O.creationsPerHour, O.proposalsPerHour, O.waitingPerOrg, O.keyCreationsPerHour, O.keyCreationsPerDay, O.listPage]).toEqual([2, 20, 30, 20, 50, 50]);
+    expect([O.creationsPerHour, O.proposalsPerHour, O.waitingPerOrg, O.keyCreationsPerHour, O.keyCreationsPerDay, O.listPage, O.suspensionsPerHour, O.keyRevokesPerHour]).toEqual([2, 20, 30, 20, 50, 50, 60, 20]);
     for (const s of [
       '60 requests a minute and 2,000 a UTC day',
       '30 failed requests a minute',
@@ -263,7 +272,18 @@ describe('docs/platform-guide.md', () => {
       'at most 30 web addresses waiting',
       '10 apps',
       '20 an hour and 50 a UTC day',
-      '10 an hour per organisation and 30 an hour across every organisation',
+      '10 an hour per organisation and 30 an hour across every organisation; your first 5 in any hour always pass',
+      '10 more a minute and 100 more a UTC day, for off switches only',
+      '| Suspending an app | 60 an hour per organisation, counting only those that changed something',
+      '| Revoking a publishable key | 20 an hour per organisation, counting only those that changed something',
+      '`platform:key:kill:minute`, `platform:key:kill:day`',
+      '`platform:suspensions:hour`',
+      '`platform:key-revokes:hour`',
+      'about 13 off switches a minute (4 at once), for every off switch together, repeats that change nothing included',
+      'about\n  13 a minute, 4 at once',
+      '`platform:budget_kill`',
+      '`platform:kill_orgs`',
+      'one that hasn\'t all arrived 5 seconds after the request is refused',
     ]) {
       expect(guide, s).toContain(s);
     }

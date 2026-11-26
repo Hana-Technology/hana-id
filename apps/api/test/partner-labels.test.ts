@@ -29,7 +29,7 @@ const DAY = 24 * 60 * 60 * 1000;
 
 let clock: ReturnType<typeof ownClock>;
 beforeEach(() => {
-  clock = ownClock({ freeze: true });
+  clock = ownClock({ freeze: true, monotone: true });
   clearJwksCache();
   clearViewCaches();
   ownerChain();

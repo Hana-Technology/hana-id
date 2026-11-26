@@ -73,13 +73,34 @@ const realNow = Date.now.bind(Date);
  * still running, so each test gets a fresh breaker hour and a full budget. `freeze` stops it (budget tests). The window
  * starts a second into a clock hour, so a test never straddles the fixed hours (the breaker event's once an hour).
  */
-export function ownClock(opts: { freeze?: boolean } = {}): { now: () => number; advance: (ms: number) => void } {
+export function ownClock(opts: { freeze?: boolean; monotone?: boolean } = {}): { now: () => number; advance: (ms: number) => void } {
   const real = realNow;
   const start = real();
   let offset = (++slot) * 3 * HOUR - (start % HOUR) + 1000;
-  vi.spyOn(Date, 'now').mockImplementation(() => (opts.freeze ? start : real()) + offset);
+  // D935 (H1): the limiter's objects keep a monotone clock, so with `monotone` a test's window never starts behind a time
+  // an earlier test reached (whole hours later, keeping the second into the hour): for files whose tests move the clock
+  // on by days and share the console's budget object.
+  if (opts.monotone && start + offset <= highestNow) offset += Math.ceil((highestNow - (start + offset) + 1) / HOUR) * HOUR;
+  vi.spyOn(Date, 'now').mockImplementation(() => {
+    const t = (opts.freeze ? start : real()) + offset;
+    if (opts.monotone && t > highestNow) highestNow = t;
+    return t;
+  });
   return { now: () => Date.now(), advance: (ms) => void (offset += ms) };
 }
+
+/**
+ * D935 (H1): the highest time this isolate's clock has given (or a request was run at, `advanceTo`). Outside `ownClock`,
+ * `Date.now()` never runs behind it, so code run at "now" after a test ran requests at simulated future times agrees with
+ * the limiter's objects, whose clocks never go back (else their buckets would look frozen until real time caught up).
+ */
+let highestNow = 0;
+export const advanceTo = (t: number): void => {
+  if (t > highestNow) highestNow = t;
+};
+Date.now = () => Math.max(realNow(), highestNow);
+/** The real clock, whatever the floor or a test's mock says. */
+export const realClock = (): number => realNow();
 
 export async function rows<T = Record<string, unknown>>(sql: string, ...args: unknown[]): Promise<T[]> {
   return (await env.DB.prepare(sql).bind(...args).all<T>()).results;

@@ -49,6 +49,7 @@ import {
   platformKeyLabel,
   sha256,
   sortedScopes,
+  MAX_PLATFORM_ORGS,
 } from '@hana-id/console-core';
 import type { Env } from '../env.ts';
 import { fourEyesNetwork, isLocalTestEnv, platformMinDelayMs } from '../guarded/config.ts';
@@ -672,6 +673,9 @@ const writeOrg = (w: Writer, orgId: string, set: { enabled?: 0 | 1; frozen?: 0 |
   }set_by = ${actorId(w.actor)}, set_at = ${w.now}, version = version + 1 WHERE org_id = ${orgId} AND ${committed(w.requestId)}`,
 ];
 
+/** D935: staff's refusal when the cap on organisations with the platform on is reached. */
+export const PLATFORM_ORGS_FULL = `The platform is already switched on for ${MAX_PLATFORM_ORGS} organisations, the most allowed (the cap on the platform's load on Journear's database). Switch one off first; raising the cap is a reviewed code change`;
+
 /**
  * AdminRpc.setPlatformOrg (A3, L5): staff's switch. Off: at once, and in the same batch the org's waiting keys and
  * every waiting web address the platform proposed for its apps are cancelled. On: only with `reviewedKeys` naming every
@@ -681,8 +685,9 @@ const writeOrg = (w: Writer, orgId: string, set: { enabled?: 0 | 1; frozen?: 0 |
 export async function setPlatformOrg(db: HotDb, w: Writer, i: { orgId: string; enabled: boolean; reason: string; reviewedKeys?: readonly string[] | undefined }) {
   expectReplay(w, ['platform.org_switch']);
   if (w.actor.kind !== 'hana') return refuse('forbidden', 'Only Journear staff switch the platform');
-  const p = await db.first<{ replay: string | null; enabled: number | null; frozen: number | null; review: string; waiting: string }>(
-    q`SELECT ${replayRow(w.requestId)} AS replay, po.enabled, po.frozen, ${REVIEW_KEYS_JSON(i.orgId, w.now)} AS review, ${WAITING_KEYS_JSON(i.orgId, w.now)} AS waiting
+  const p = await db.first<{ replay: string | null; enabled: number | null; frozen: number | null; review: string; waiting: string; enabled_orgs: number }>(
+    q`SELECT ${replayRow(w.requestId)} AS replay, po.enabled, po.frozen, ${REVIEW_KEYS_JSON(i.orgId, w.now)} AS review, ${WAITING_KEYS_JSON(i.orgId, w.now)} AS waiting,
+             (SELECT COUNT(*) FROM platform_orgs WHERE enabled = 1) AS enabled_orgs
         FROM (SELECT 1) LEFT JOIN platform_orgs po ON po.org_id = ${i.orgId}`,
   );
   refuseReplay(p?.replay, w);
@@ -693,12 +698,15 @@ export async function setPlatformOrg(db: HotDb, w: Writer, i: { orgId: string; e
     if (p?.enabled === 1) return { changed: false, platform: (await listPlatformKeys(db, i.orgId, w.now, true)).platform };
     const reviewed = [...new Set(i.reviewedKeys ?? [])].sort();
     if (JSON.stringify(reviewed) !== JSON.stringify(review)) refuse('conflict', `Review every key of the organisation first: confirm each one still in force or waiting, or stop it (${review.length} to review)`);
+    // D935: at most MAX_PLATFORM_ORGS organisations with the platform on, the hard ceiling on its database load.
+    if ((p?.enabled_orgs ?? 0) >= MAX_PLATFORM_ORGS) refuse('conflict', PLATFORM_ORGS_FULL);
     await runWrite(db, w, [
       commitOn(
         w,
         { kind: 'platform.org_switch', detail: { enabled: true, reason, reviewedKeys: reviewed } },
         { orgId: i.orgId },
-        q`NOT EXISTS (SELECT 1 FROM platform_orgs WHERE org_id = ${i.orgId} AND (enabled = 1 OR frozen = 1)) AND ${REVIEW_KEYS_JSON(i.orgId, w.now)} = ${JSON.stringify(reviewed)}`,
+        q`NOT EXISTS (SELECT 1 FROM platform_orgs WHERE org_id = ${i.orgId} AND (enabled = 1 OR frozen = 1)) AND ${REVIEW_KEYS_JSON(i.orgId, w.now)} = ${JSON.stringify(reviewed)}
+          AND (SELECT COUNT(*) FROM platform_orgs WHERE enabled = 1) < ${MAX_PLATFORM_ORGS}`,
       ),
       ...writeOrg(w, i.orgId, { enabled: 1, review: JSON.stringify(reviewed) }),
     ]);

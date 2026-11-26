@@ -200,7 +200,8 @@ describe('ConsoleRpc.linkUser: one person across the org’s apps', () => {
 });
 
 describe('the limits and the volume alert (counted before the read)', () => {
-  const T = Date.UTC(2026, 10, 25, 1, 0, 0);
+  // A Wednesday 01:00 UTC, whole weeks ahead of now (D935: the limiter's objects ignore times behind their own clock).
+  const T = Date.UTC(2026, 10, 25, 1, 0, 0) + Math.ceil((Date.now() - Date.UTC(2026, 10, 25, 1, 0, 0)) / (7 * DAY) + 1) * 7 * DAY;
   const allEvents = () => env.DB.prepare("SELECT id, org_id, detail_json FROM security_events WHERE kind = 'link_lookup_volume' ORDER BY detected_at, id").all<{ id: string; org_id: string | null; detail_json: string }>().then((r) => r.results);
   const events = (orgId: string) => env.DB.prepare("SELECT id, org_id, detail_json FROM security_events WHERE kind = 'link_lookup_volume' AND org_id = ?1 ORDER BY detected_at, id").bind(orgId).all<{ id: string; org_id: string; detail_json: string }>().then((r) => r.results);
   const admit = async (memberId: string, orgId: string, now: number) => {

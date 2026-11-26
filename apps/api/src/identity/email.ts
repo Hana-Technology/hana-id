@@ -363,9 +363,9 @@ export async function handleEmailConsent(request: Request, env: Env, endpoint: E
     return reject(ctx, 502, 'bad_contract_result', 'The session path is not one this API can read');
   }
   try {
-    if (!(await limiter(env, identityProofLimiter(pkHex)).reserve(await proofMarker({ sessionPk: b.sessionPk, issuedAtMs: b.issuedAtMs, nonce: b.nonce }), b.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
-      return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
-    }
+    const fresh = await limiter(env, identityProofLimiter(pkHex)).reserveFresh(await proofMarker({ sessionPk: b.sessionPk, issuedAtMs: b.issuedAtMs, nonce: b.nonce }), b.issuedAtMs + IDENTITY_PROOF_MARKER_MS, b.issuedAtMs + IDENTITY_PROOF_WINDOW_MS, now);
+    if (fresh === 'stale') return done(ctx, 400, { error: 'The session proof is too old or too new', code: 'stale_proof', serverTimeMs: Date.now() });
+    if (fresh === 'used') return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }

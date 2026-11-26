@@ -1,8 +1,19 @@
 // Fixed-window rate limiter. One instance per subject (`app:<id>` or `ip:<address>`); each call checks several
 // windows at once and only counts the hit when every window still has room, so a rejected request costs nothing.
 // The storage calls are synchronous (SQLite-backed KV), so a hit is atomic inside the object.
+//
+// D935 after PR 161's second full review, H1: every window, bucket, breaker list and stored `at` is reckoned on the
+// object's monotone clock (`clock`: the greatest of its own `Date.now()`, every time it has used before and the
+// caller's time). A caller's time can only move it forward, never back: a `now` taken before a slow body (or any stale
+// time) can't move a bucket's `at` back and be credited the same refill twice, nor pick an older window. Methods that
+// undo an earlier call take that call's `at` (as the call returned it, or the caller's own time taken before it) and
+// undo only within the window still current.
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env.ts';
+import { log } from './log.ts';
+
+/** D935 (after PR 161's third review): how far ahead of an object's own `Date.now()` a caller's time may move its clock. */
+export const CALLER_CLOCK_LEAD_MS = 5000;
 
 export interface Limit {
   /** Window name, unique per subject (e.g. `minute`, `day`, `<appId>:minute`). */
@@ -48,13 +59,16 @@ export interface ConsoleAdmission {
 export type ConsoleLimit = 'budget_org' | 'budget' | 'budget_reserve' | 'link' | 'breaker_org' | 'breaker_global';
 
 /**
- * D927 (after PR 156's review, F3; the second review, N2): one platform request's admission, on the same `console-rpc`
- * object as the console's. The platform's own keys for its org buckets, its own global bucket and its own breaker
- * (M3). An ordinary platform call also charges the console's global bucket (`console:bucket`) and never takes it below
- * `sharedFloor`, so the console always keeps the top of its bucket. A platform kill switch neither reads nor charges
- * `console:bucket` (the second review, N2, and its review): a console flood can't refuse it, and it can't spend the
- * console's own kill-switch reserve; it is bounded by the org's bucket, the platform's own bucket and reserve with each
- * org's share of it (`reserveShare`), and the breaker.
+ * D927, D935 (after PR 161's second full review): one platform request's admission, on the same `console-rpc` object as
+ * the console's. Two budget classes that never charge each other:
+ * - an ordinary call takes `cost` from its org's bucket (`platform:bucket:org:<org>`), the platform's global bucket
+ *   (`platform:bucket`) and the console's global bucket (`console:bucket`, never below `sharedFloor`), with no reserve;
+ * - a kill switch takes `cost` from its org's kill bucket (`platform:kill:org:<org>`) and nothing else, so no other org's
+ *   calls, ordinary or kill, can slow it, and it never slows anyone else's ordinary calls. At most `maxOrgs` distinct
+ *   orgs' kill buckets are used in any minute (the backstop to the cap on orgs switched on): a further org's kill switch
+ *   is refused (`kill_orgs`), failing closed for that org only.
+ * A removal also takes a breaker slot (each org's first `floor` of its rolling hour past the global count). No tokens
+ * are ever given back; only a removal that changed nothing gets its breaker slot back (`platformSettle`).
  */
 export interface PlatformAdmission {
   org: string;
@@ -62,27 +76,32 @@ export interface PlatformAdmission {
   killSwitch?: boolean;
   breaker?: boolean;
   limits: {
-    perOrg: Bucket & { reserve: number };
-    platform: Bucket & { reserve: number; reserveShare: { windowMs: number; max: number } };
+    perOrg: Bucket;
+    platform: Bucket;
     /** The console's global bucket, as CONSOLE_LIMITS.global (its rate and burst), and the floor ordinary platform calls leave. */
     shared: Bucket & { sharedFloor: number };
-    breaker: { windowMs: number; perOrg: number; global: number };
+    breaker: { windowMs: number; perOrg: number; global: number; floor: number };
+    /** Each org's kill bucket: its kill switches' only budget. */
+    kill: Bucket;
+    /** The most distinct orgs whose kill buckets are used in any minute (MAX_PLATFORM_ORGS). */
+    maxOrgs: number;
   };
 }
-export type PlatformLimit = 'budget_org' | 'budget_platform' | 'budget_shared' | 'budget_reserve' | 'breaker_org' | 'breaker_global';
-export type PlatformAdmitResult = { ok: true; reserveUsed: number } | { ok: false; limit: PlatformLimit; retryAfterS: number; notify: boolean };
+export type PlatformLimit = 'budget_org' | 'budget_platform' | 'budget_shared' | 'budget_kill' | 'kill_orgs' | 'breaker_org' | 'breaker_global';
+/** `at`: the admission's time on the object's clock (what `platformSettle` needs). */
+export type PlatformAdmitResult = { ok: true; at: number } | { ok: false; limit: PlatformLimit; retryAfterS: number; notify: boolean };
 
 /**
  * `notify`: the first breaker refusal of this limit (the org's, or the global one) in this clock hour, the only one the
  * caller writes a security event for.
  */
 /** `reserveUsed`: tokens of the global reserve this call took (settled back by `consoleSettle` if it changed nothing). */
-export type ConsoleAdmitResult = { ok: true; reserveUsed: number } | { ok: false; limit: ConsoleLimit; retryAfterS: number; notify: boolean };
+export type ConsoleAdmitResult = { ok: true; reserveUsed: number; at: number } | { ok: false; limit: ConsoleLimit; retryAfterS: number; notify: boolean };
 
 /** What a member call that changed nothing gives back (consoleSettle). */
 export interface ConsoleSettlement {
   org: string;
-  /** The admission time (`now` of consoleAdmit). */
+  /** The admission time (the `at` consoleAdmit answered). */
   at: number;
   /** Its breaker slot. */
   breaker: boolean;
@@ -106,9 +125,48 @@ export function slidingWait(l: Pick<Limit, 'windowMs' | 'max'>, elapsed: number,
 }
 
 export class RateLimiter extends DurableObject<Env> {
-  /** `n` (D929): the hit counts `n` at once (a request proposing several web addresses), all or none. */
-  hit(limits: Limit[], now: number = Date.now(), n = 1): HitResult {
+  /**
+   * D935 (H1): the object's monotone clock: never below a time it used before (stored as `clock`) nor below its own
+   * `Date.now()`. A caller's time can only move it forward (every caller passes its own `Date.now()`, which in a Worker
+   * never runs ahead of real time; tests pass simulated times): a stale one is ignored, so it can't move a bucket's `at`
+   * back (and be credited the same refill twice) or pick an older window.
+   */
+  private clock(caller?: number): number {
     const kv = this.ctx.storage.kv;
+    const before = kv.get<number>('clock') ?? 0;
+    const own = Date.now();
+    let from = Number.isFinite(caller) ? (caller as number) : 0;
+    // After PR 161's third review, M1: a caller's time at most 5 s ahead of the object's own (else one far-future time
+    // would poison the object until real time caught up: markers born expired, buckets frozen), logged when cut. Lifted
+    // only in the tests' env, which run objects at simulated times.
+    if (from > own + CALLER_CLOCK_LEAD_MS && !(this.env.LIMITER_TRUST_CALLER_CLOCK === '1' && this.env.ENV_NAME === 'sandbox-test')) {
+      // Logged at most once a minute per object (the object's kind and how far ahead, nothing else).
+      const minute = Math.floor(own / 60_000);
+      if (kv.get<number>('clock:logged') !== minute) {
+        kv.put('clock:logged', minute);
+        const name = (this.ctx.id as { name?: string }).name ?? '';
+        log({ event: 'rate_limiter', outcome: 'error', code: 'caller_clock_ahead', what: name.split(/[:@]/u)[0] || 'unnamed', aheadMs: Math.round(from - own) }, 'error');
+      }
+      from = own + CALLER_CLOCK_LEAD_MS;
+    }
+    const t = Math.max(before, own, from);
+    if (t > before) kv.put('clock', t);
+    return t;
+  }
+
+  /** Whether `at` lies in the window of `l` that is current on the object's clock (an undo touches no other). */
+  private current(l: Pick<Limit, 'windowMs'>, at: number, now: number): boolean {
+    return Math.floor(at / l.windowMs) === Math.floor(now / l.windowMs);
+  }
+
+  /**
+   * `n` (D929): the hit counts `n` at once (a request proposing several web addresses), all or none. Refused, it names
+   * the hard window that opens last and its wait (D935, L3: a retry then, with nothing else changed, is admitted).
+   * `caller`: the caller's time, used only to move the object's clock forward (H1).
+   */
+  hit(limits: Limit[], caller?: number, n = 1): HitResult {
+    const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     const slots = limits.map((l) => {
       const start = Math.floor(now / l.windowMs) * l.windowMs;
       const key = `${l.name}@${start}`;
@@ -118,12 +176,17 @@ export class RateLimiter extends DurableObject<Env> {
     // says its alert was written (`markAlerted`, a marker per window), so a failed write is retried by the next hit and
     // a written one is never repeated in the window (D925, after the review of PR 153's fixes: detection fails closed).
     const soft: string[] = [];
+    let refused: { limit: string; waitMs: number } | null = null;
     for (const s of slots) {
       if (s.count + n <= s.l.max) continue;
       if (s.l.soft) {
         if (kv.get<number>(`alerted:${s.key}`) === undefined) soft.push(s.l.name);
-      } else return { ok: false, limit: s.l.name, retryAfterS: Math.max(1, Math.ceil((s.start + s.l.windowMs - now) / 1000)) };
+      } else {
+        const waitMs = s.start + s.l.windowMs - now;
+        if (!refused || waitMs > refused.waitMs) refused = { limit: s.l.name, waitMs };
+      }
     }
+    if (refused) return { ok: false, limit: refused.limit, retryAfterS: Math.max(1, Math.ceil(refused.waitMs / 1000)) };
     for (const s of slots) kv.put(s.key, s.count + n);
     this.prune(limits, now);
     return soft.length > 0 ? { ok: true, soft } : { ok: true };
@@ -133,8 +196,9 @@ export class RateLimiter extends DurableObject<Env> {
    * Notes that the alert of each named soft window of `limits` at `now` was written: `hit` stops naming it in that window
    * (D925). Old markers of these limits are deleted here (a marker lives two windows), so they don't pile up.
    */
-  markAlerted(limits: Limit[], names: string[], now: number = Date.now()): void {
+  markAlerted(limits: Limit[], names: string[], caller?: number): void {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     for (const l of limits) {
       if (!l.soft || !names.includes(l.name)) continue;
       const start = Math.floor(now / l.windowMs) * l.windowMs;
@@ -144,13 +208,16 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /**
-   * Takes back one accepted `hit(limits, now, n)` (same limits, same `now` and `n`, so the same windows): a request that several
-   * objects must all accept, refused by a later one, then costs the earlier ones nothing. Never goes below zero; a
-   * window that has ended since is left alone.
+   * Takes back one accepted `hit(limits, …, n)` (same limits and `n`; `at` its time, or the caller's own time taken
+   * before it): a request that several objects must all accept, refused by a later one, then costs the earlier ones
+   * nothing. Never goes below zero; only the window still current is touched (D935, H1: the hit, counted between `at`
+   * and now, was counted in it; any other has ended or isn't the hit's).
    */
-  unhit(limits: Limit[], now: number, n = 1): void {
+  unhit(limits: Limit[], at: number, n = 1): void {
     const kv = this.ctx.storage.kv;
+    const now = this.clock();
     for (const l of limits) {
+      if (!this.current(l, at, now)) continue;
       const key = `${l.name}@${Math.floor(now / l.windowMs) * l.windowMs}`;
       const count = kv.get<number>(key) ?? 0;
       if (count > n) kv.put(key, count - n);
@@ -164,13 +231,41 @@ export class RateLimiter extends DurableObject<Env> {
    * the same key can't all pass. A call reads one row however many markers the object holds (D475): an expired marker
    * no longer counts, and the alarm deletes it.
    */
-  reserve(key: string, untilMs: number, now: number = Date.now()): boolean {
+  reserve(key: string, untilMs: number, caller?: number): boolean {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     const until = kv.get<number>(`mark:${key}`);
     if (until !== undefined && until > now) return false;
     kv.put(`mark:${key}`, untilMs);
     void this.scheduleMarkerSweep(untilMs);
     return true;
+  }
+
+  /**
+   * D935 (after PR 161's third review, L1): `reserve` for a marker guarding something the caller checked fresh until
+   * `notAfter` on its own clock: `'stale'` when this object's clock is already past it (a stall between the check and
+   * here), `'used'` when an unexpired marker exists, else `'ok'` and marked until `untilMs`. Atomic in the object.
+   */
+  reserveFresh(key: string, untilMs: number, notAfter: number, caller?: number): 'ok' | 'used' | 'stale' {
+    const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
+    if (now > notAfter) return 'stale';
+    const until = kv.get<number>(`mark:${key}`);
+    if (until !== undefined && until > now) return 'used';
+    kv.put(`mark:${key}`, untilMs);
+    void this.scheduleMarkerSweep(untilMs);
+    return 'ok';
+  }
+
+  /**
+   * Whether an unexpired marker `key` exists, writing nothing (after PR 161's focused review: a "peek" by a `reserve`
+   * that ends at the caller's time would, with the caller's clock ahead of this one's, leave a live marker that blocks
+   * the same request's real one).
+   */
+  marked(key: string, caller?: number): boolean {
+    const now = this.clock(caller);
+    const until = this.ctx.storage.kv.get<number>(`mark:${key}`);
+    return until !== undefined && until > now;
   }
 
   /**
@@ -200,8 +295,9 @@ export class RateLimiter extends DurableObject<Env> {
    * weighted by how much of it still overlaps the last `windowMs`, so a refusal clears gradually instead of lasting until
    * a fixed boundary. As `hit`, a request counts only when every window has room. Keys are `slide:<name>@<start>`.
    */
-  hitSliding(limits: Limit[], now: number = Date.now()): HitResult {
+  hitSliding(limits: Limit[], caller?: number): HitResult {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     const slots = limits.map((l) => {
       const start = Math.floor(now / l.windowMs) * l.windowMs;
       const key = `slide:${l.name}@${start}`;
@@ -211,11 +307,16 @@ export class RateLimiter extends DurableObject<Env> {
       return { l, key, start, current, previous, estimate };
     });
     const soft: string[] = [];
+    let refused: { limit: string; waitMs: number } | null = null;
     for (const s of slots) {
       if (s.estimate < s.l.max) continue;
       if (s.l.soft) soft.push(s.l.name);
-      else return { ok: false, limit: s.l.name, retryAfterS: Math.max(1, Math.ceil(slidingWait(s.l, now - s.start, s.current, s.previous) / 1000)) };
+      else {
+        const waitMs = slidingWait(s.l, now - s.start, s.current, s.previous);
+        if (!refused || waitMs > refused.waitMs) refused = { limit: s.l.name, waitMs };
+      }
     }
+    if (refused) return { ok: false, limit: refused.limit, retryAfterS: Math.max(1, Math.ceil(refused.waitMs / 1000)) };
     for (const s of slots) kv.put(s.key, s.current + 1);
     for (const [key] of kv.list<number>({ prefix: 'slide:' })) {
       const at = key.lastIndexOf('@');
@@ -225,10 +326,12 @@ export class RateLimiter extends DurableObject<Env> {
     return soft.length > 0 ? { ok: true, soft } : { ok: true };
   }
 
-  /** Takes back one accepted `hitSliding(limits, now)` (same `now`): a later window refused the request. */
-  unhitSliding(limits: Limit[], now: number): void {
+  /** Takes back one accepted `hitSliding(limits)` (`at` its time or the caller's taken before it), in the current window only. */
+  unhitSliding(limits: Limit[], at: number): void {
     const kv = this.ctx.storage.kv;
+    const now = this.clock();
     for (const l of limits) {
+      if (!this.current(l, at, now)) continue;
       const key = `slide:${l.name}@${Math.floor(now / l.windowMs) * l.windowMs}`;
       const count = kv.get<number>(key) ?? 0;
       if (count > 1) kv.put(key, count - 1);
@@ -242,8 +345,9 @@ export class RateLimiter extends DurableObject<Env> {
    * for a destructive call, one slot in its org's and in the global rolling hour (exact: the call times are kept).
    * Either all of it is taken or nothing is.
    */
-  consoleAdmit(r: ConsoleAdmission, now: number = Date.now()): ConsoleAdmitResult {
+  consoleAdmit(r: ConsoleAdmission, caller?: number): ConsoleAdmitResult {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     const hour = Math.floor(now / 3_600_000);
     const refuse = (limit: ConsoleLimit, waitS: number): ConsoleAdmitResult => {
       let notify = false;
@@ -262,7 +366,7 @@ export class RateLimiter extends DurableObject<Env> {
       const tokens = fill('console:link-read', r.limits.linkRead);
       if (tokens < r.cost) return refuse('link', (r.cost - tokens) / r.limits.linkRead.ratePerS);
       kv.put('console:link-read', { tokens: tokens - r.cost, at: now });
-      return { ok: true, reserveUsed: 0 };
+      return { ok: true, reserveUsed: 0, at: now };
     }
     const orgKey = `console:bucket:org:${r.org ?? ''}`;
     const orgTokens = fill(orgKey, r.limits.perOrg);
@@ -285,7 +389,7 @@ export class RateLimiter extends DurableObject<Env> {
     const share = r.limits.global.reserveShare;
     const taken = (kv.get<{ at: number; n: number }[]>(shareKey) ?? []).filter((e) => e.at > now - share.windowMs);
     if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) {
-      return refuse('budget_reserve', (taken[0]!.at + share.windowMs - now) / 1000);
+      return refuse('budget_reserve', ((taken[0]?.at ?? now) + share.windowMs - now) / 1000);
     }
     kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
     kv.put('console:bucket', { tokens: globalTokens - r.cost, at: now });
@@ -294,7 +398,7 @@ export class RateLimiter extends DurableObject<Env> {
       kv.put(bOrgKey, [...bOrg, now]);
       kv.put('console:breaker:global', [...bGlobal, now]);
     }
-    return { ok: true, reserveUsed };
+    return { ok: true, reserveUsed, at: now };
   }
 
   /**
@@ -303,8 +407,9 @@ export class RateLimiter extends DurableObject<Env> {
    * back to the reserve and are charged to the org's own bucket instead (which may go below zero: the org's next
    * ordinary calls wait for it). So refused or empty kill switches cost their org, never the shared reserve.
    */
-  consoleSettle(s: ConsoleSettlement, now: number = Date.now()): void {
+  consoleSettle(s: ConsoleSettlement, caller?: number): void {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     if (s.breaker) {
       for (const key of [`console:breaker:org:${s.org}`, 'console:breaker:global']) {
         const list = kv.get<number[]>(key) ?? [];
@@ -328,11 +433,14 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /**
-   * D927: the platform's admission (PlatformAdmission). All of it is taken or nothing is. `notify`: the first refusal of
-   * this limit for this org in this clock hour (the caller's `platform_quota` event).
+   * D927, D935: the platform's admission (PlatformAdmission), on the object's clock. All of it is taken or nothing is.
+   * `notify`: the first refusal of this limit for this org in this clock hour (the caller's `platform_quota` event).
+   * Refused, the wait is the longest of every constraint the call is short of (L3: a retry then, nothing else changed,
+   * is admitted), named by the breaker when the breaker refuses, else by the constraint that opens last.
    */
-  platformAdmit(r: PlatformAdmission, now: number = Date.now()): PlatformAdmitResult {
+  platformAdmit(r: PlatformAdmission, caller?: number): PlatformAdmitResult {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     const hour = Math.floor(now / 3_600_000);
     const refuse = (limit: PlatformLimit, waitS: number): PlatformAdmitResult => {
       const key = `platform:noticed:${limit}:${r.org}`;
@@ -345,66 +453,99 @@ export class RateLimiter extends DurableObject<Env> {
       return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
     };
     const L = r.limits;
-    const orgKey = `platform:bucket:org:${r.org}`;
-    const orgTokens = fill(orgKey, L.perOrg);
-    const platformTokens = fill('platform:bucket', L.platform);
-    const sharedTokens = fill('console:bucket', L.shared);
+    // Each constraint the call is short of, with how long until it isn't (seconds).
+    const short: { limit: PlatformLimit; waitS: number }[] = [];
+    // A cost a bucket can never hold (none of the routes' costs comes near) is refused for an hour, never "soon".
+    const need = (limit: PlatformLimit, tokens: number, needed: number, rate: number, burst: number) => {
+      // (A millionth of a token's slack: a retry at the stated second isn't refused by floating-point dust.)
+      if (tokens < needed - 1e-6) short.push({ limit, waitS: needed > burst ? 3600 : (needed - tokens) / rate });
+    };
+    // The breaker (removals): each org's first `floor` of its rolling hour past the global count (D935). Its wait: the
+    // org's count below its limit, or the sooner of the global count below its limit and the org's below its floor (L1).
     const recent = (key: string) => (kv.get<number[]>(key) ?? []).filter((t) => t > now - L.breaker.windowMs);
     const bOrgKey = `platform:breaker:org:${r.org}`;
     const bOrg = r.breaker ? recent(bOrgKey) : [];
     const bGlobal = r.breaker ? recent('platform:breaker:global') : [];
-    const until = (oldest: number | undefined) => ((oldest ?? now) + L.breaker.windowMs - now) / 1000;
-    if (r.breaker && bOrg.length >= L.breaker.perOrg) return refuse('breaker_org', until(bOrg[0]));
-    if (r.breaker && bGlobal.length >= L.breaker.global) return refuse('breaker_global', until(bGlobal[0]));
-    const orgFloor = r.killSwitch ? 0 : L.perOrg.reserve;
-    const platformFloor = r.killSwitch ? 0 : L.platform.reserve;
-    if (orgTokens - r.cost < orgFloor) return refuse('budget_org', (r.cost + orgFloor - orgTokens) / L.perOrg.ratePerS);
-    if (platformTokens - r.cost < platformFloor) return refuse('budget_platform', (r.cost + platformFloor - platformTokens) / L.platform.ratePerS);
-    if (!r.killSwitch && sharedTokens - r.cost < L.shared.sharedFloor) return refuse('budget_shared', (r.cost + L.shared.sharedFloor - sharedTokens) / L.shared.ratePerS);
-    const reserveUsed = r.killSwitch ? Math.max(0, r.cost - Math.max(0, platformTokens - L.platform.reserve)) : 0;
-    const shareKey = `platform:reserve:org:${r.org}`;
-    const share = L.platform.reserveShare;
-    const taken = (kv.get<{ at: number; n: number }[]>(shareKey) ?? []).filter((e) => e.at > now - share.windowMs);
-    if (reserveUsed > 0 && taken.reduce((n, e) => n + e.n, 0) + reserveUsed > share.max) return refuse('budget_reserve', (taken[0]!.at + share.windowMs - now) / 1000);
-    kv.put(orgKey, { tokens: orgTokens - r.cost, at: now });
-    kv.put('platform:bucket', { tokens: platformTokens - r.cost, at: now });
-    if (!r.killSwitch) kv.put('console:bucket', { tokens: sharedTokens - r.cost, at: now });
-    if (reserveUsed > 0) kv.put(shareKey, [...taken, { at: now, n: reserveUsed }]);
+    const until = (t: number | undefined) => ((t ?? now) + L.breaker.windowMs - now) / 1000;
+    const slideOut = (list: number[], keep: number) => [...list].sort((a, b) => a - b)[list.length - keep];
+    // A removal passes once the org is under its limit AND (under its floor OR the global count under its limit): with
+    // no other call, the later of the two (L3: a retry then is admitted).
+    let breakerShort: { limit: PlatformLimit; waitS: number } | null = null;
+    if (r.breaker) {
+      const orgWait = bOrg.length >= L.breaker.perOrg ? until(slideOut(bOrg, L.breaker.perOrg)) : 0;
+      const globalWait = bOrg.length >= L.breaker.floor && bGlobal.length >= L.breaker.global ? Math.min(until(slideOut(bGlobal, L.breaker.global)), until(slideOut(bOrg, L.breaker.floor))) : 0;
+      if (orgWait > 0 || globalWait > 0) breakerShort = { limit: orgWait > 0 ? 'breaker_org' : 'breaker_global', waitS: Math.max(orgWait, globalWait) };
+    }
+    const orgKey = `platform:bucket:org:${r.org}`;
+    const killKey = `platform:kill:org:${r.org}`;
+    let kill = 0;
+    let orgs: Record<string, number> = {};
+    let org = 0;
+    let platform = 0;
+    let shared = 0;
+    if (r.killSwitch) {
+      // The cap on orgs switched on, backstopped here: at most `maxOrgs` distinct orgs' kill buckets in any minute.
+      orgs = Object.fromEntries(Object.entries(kv.get<Record<string, number>>('platform:kill:orgs') ?? {}).filter(([, t]) => t > now - 60_000));
+      if (!(r.org in orgs) && Object.keys(orgs).length >= L.maxOrgs) {
+        const oldest = Math.min(...Object.values(orgs));
+        short.push({ limit: 'kill_orgs', waitS: (oldest + 60_000 - now) / 1000 });
+      }
+      kill = fill(killKey, L.kill);
+      need('budget_kill', kill, r.cost, L.kill.ratePerS, L.kill.burst);
+    } else {
+      org = fill(orgKey, L.perOrg);
+      platform = fill('platform:bucket', L.platform);
+      shared = fill('console:bucket', L.shared);
+      need('budget_org', org, r.cost, L.perOrg.ratePerS, L.perOrg.burst);
+      need('budget_platform', platform, r.cost, L.platform.ratePerS, L.platform.burst);
+      need('budget_shared', shared, r.cost + L.shared.sharedFloor, L.shared.ratePerS, L.shared.burst);
+    }
+    if (breakerShort || short.length > 0) {
+      const all = breakerShort ? [breakerShort, ...short] : short;
+      const waitS = Math.max(...all.map((x) => x.waitS));
+      const named = breakerShort ?? short.reduce((a, b) => (b.waitS > a.waitS ? b : a));
+      return refuse(named.limit, waitS);
+    }
+    if (r.killSwitch) {
+      kv.put(killKey, { tokens: Math.max(0, kill - r.cost), at: now });
+      kv.put('platform:kill:orgs', { ...orgs, [r.org]: now });
+    } else {
+      kv.put(orgKey, { tokens: Math.max(0, org - r.cost), at: now });
+      kv.put('platform:bucket', { tokens: Math.max(0, platform - r.cost), at: now });
+      kv.put('console:bucket', { tokens: Math.max(0, shared - r.cost), at: now });
+    }
     if (r.breaker) {
       kv.put(bOrgKey, [...bOrg, now]);
       kv.put('platform:breaker:global', [...bGlobal, now]);
     }
-    return { ok: true, reserveUsed };
+    return { ok: true, at: now };
   }
 
   /**
-   * D927: a platform call admitted at `at` that changed nothing: its breaker slot back, and the platform reserve tokens
-   * it took back to the platform's reserve, charged to its org's own bucket instead (as consoleSettle does). The refund
-   * happens only for the reserve-share entry of that admission, found and removed, so a second settle of the same `at`
-   * refunds nothing (the second review, N6).
+   * D935 (after PR 161's third review, L2): an org switched off leaves the kill buckets' count of orgs at once, so the
+   * org switched on in its place isn't refused `kill_orgs` for the rest of that minute.
    */
-  platformSettle(s: { org: string; at: number; breaker: boolean; reserveUsed: number; limits: PlatformAdmission['limits'] }, now: number = Date.now()): void {
+  platformForgetOrg(org: string): void {
     const kv = this.ctx.storage.kv;
-    if (s.breaker) {
-      for (const key of [`platform:breaker:org:${s.org}`, 'platform:breaker:global']) {
-        const list = kv.get<number[]>(key) ?? [];
-        const i = list.indexOf(s.at);
-        if (i >= 0) kv.put(key, [...list.slice(0, i), ...list.slice(i + 1)]);
-      }
-    }
-    if (s.reserveUsed > 0) {
-      const shareKey = `platform:reserve:org:${s.org}`;
-      const list = kv.get<{ at: number; n: number }[]>(shareKey) ?? [];
-      const i = list.findIndex((e) => e.at === s.at && e.n === s.reserveUsed);
-      if (i < 0) return;
-      kv.put(shareKey, [...list.slice(0, i), ...list.slice(i + 1)]);
-      const fill = (key: string, b: Bucket) => {
-        const st = kv.get<{ tokens: number; at: number }>(key) ?? { tokens: b.burst, at: now };
-        return Math.min(b.burst, st.tokens + (Math.max(0, now - st.at) / 1000) * b.ratePerS);
-      };
-      kv.put('platform:bucket', { tokens: Math.min(s.limits.platform.burst, fill('platform:bucket', s.limits.platform) + s.reserveUsed), at: now });
-      const orgKey = `platform:bucket:org:${s.org}`;
-      kv.put(orgKey, { tokens: fill(orgKey, s.limits.perOrg) - s.reserveUsed, at: now });
+    this.clock();
+    const orgs = kv.get<Record<string, number>>('platform:kill:orgs');
+    if (!orgs || !(org in orgs)) return;
+    const { [org]: _gone, ...rest } = orgs;
+    kv.put('platform:kill:orgs', rest);
+  }
+
+  /**
+   * D927, D935: a removal admitted at `at` (as platformAdmit answered) that changed nothing gets its breaker slot back,
+   * once (the entry is removed). No tokens are ever given back.
+   */
+  platformSettle(s: { org: string; at: number; breaker: boolean }): void {
+    if (!s.breaker) return;
+    const kv = this.ctx.storage.kv;
+    this.clock();
+    for (const key of [`platform:breaker:org:${s.org}`, 'platform:breaker:global']) {
+      const list = kv.get<number[]>(key) ?? [];
+      const i = list.indexOf(s.at);
+      if (i >= 0) kv.put(key, [...list.slice(0, i), ...list.slice(i + 1)]);
     }
   }
 
@@ -413,8 +554,9 @@ export class RateLimiter extends DurableObject<Env> {
    * the total stays at most `max`, else refuses and adds nothing. Amounts are non-negative integers as decimal strings
    * (yoctoNEAR exceeds 2^53). `spent` is the window's total after the call. Keys are `budget:<name>@<start>`.
    */
-  spend(name: string, windowMs: number, max: string, amount: string, now: number = Date.now()): { ok: true; spent: string } | { ok: false; spent: string; retryAfterS: number } {
+  spend(name: string, windowMs: number, max: string, amount: string, caller?: number): { ok: true; spent: string } | { ok: false; spent: string; retryAfterS: number } {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     const start = Math.floor(now / windowMs) * windowMs;
     const key = `budget:${name}@${start}`;
     const spent = BigInt(kv.get<string>(key) ?? '0');
@@ -428,7 +570,8 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /** The total `spend` has counted in the window of `now` ('0' when none). Read only (the admin's NEAR relay tile, D785). */
-  spent(name: string, windowMs: number, now: number = Date.now()): string {
+  spent(name: string, windowMs: number, caller?: number): string {
+    const now = this.clock(caller);
     return this.ctx.storage.kv.get<string>(`budget:${name}@${Math.floor(now / windowMs) * windowMs}`) ?? '0';
   }
 
@@ -436,7 +579,8 @@ export class RateLimiter extends DurableObject<Env> {
    * Adds `amount` to the window of `at` whatever its total (what a relay burnt beyond its reservation): the next
    * `spend` sees it. An ended window is left alone.
    */
-  charge(name: string, windowMs: number, amount: string, at: number, now: number = Date.now()): void {
+  charge(name: string, windowMs: number, amount: string, at: number, caller?: number): void {
+    const now = this.clock(caller);
     const start = Math.floor(at / windowMs) * windowMs;
     if (start + windowMs <= now || BigInt(amount) <= 0n) return;
     const kv = this.ctx.storage.kv;
@@ -471,8 +615,9 @@ export class RateLimiter extends DurableObject<Env> {
    * A small durable queue (the NEAR relay's billing records that D1 couldn't take, D863): `queuePush` keeps `item` unless
    * `max` are already held (false then); `queuePeek` lists the oldest `n` with their keys; `queueAck` drops those keys.
    */
-  queuePush(name: string, item: unknown, max: number, now: number = Date.now()): boolean {
+  queuePush(name: string, item: unknown, max: number, caller?: number): boolean {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
     const countKey = `qn:${name}`;
     const held = kv.get<number>(countKey) ?? 0;
     if (held >= max) return false;
@@ -504,11 +649,15 @@ export class RateLimiter extends DurableObject<Env> {
    * `cap` is empty (a valid self-revoke, which can succeed once per key: F1), the marker is held until `untilMs` and the
    * answer is `ok`; else `full`, and nothing is written. Atomic in the object.
    */
-  reserveNonce(nonce: string, untilMs: number, cap: Limit[], now: number = Date.now()): 'ok' | 'replayed' | 'full' {
+  reserveNonce(nonce: string, untilMs: number, cap: Limit[], caller?: number, notAfter?: number): 'ok' | 'replayed' | 'full' | 'stale' {
     const kv = this.ctx.storage.kv;
+    const now = this.clock(caller);
+    // D935 (L1): the request's timestamp window ends at `notAfter`; on this clock past it, the nonce isn't reserved (a
+    // request checked fresh but held up past its marker's hold would otherwise be taken as new).
+    if (notAfter !== undefined && now > notAfter) return 'stale';
     const until = kv.get<number>(`mark:n:${nonce}`);
     if (until !== undefined && until > now) return 'replayed';
-    if (cap.length > 0 && !this.hit(cap, now).ok) return 'full';
+    if (cap.length > 0 && !this.hit(cap, caller).ok) return 'full';
     kv.put(`mark:n:${nonce}`, untilMs);
     void this.scheduleMarkerSweep(untilMs);
     return 'ok';
@@ -517,12 +666,24 @@ export class RateLimiter extends DurableObject<Env> {
   /**
    * D927: `hit(limits)` and, only when it counted, a test-and-set of the marker `mark` until `untilMs` (`reserve`): one
    * call for a platform key's request windows and its once-an-hour `last_used_at` write. `marked` is true when this call
-   * set the marker.
+   * set the marker. D935: with `reserve` (a kill switch's own windows), a request the ordinary windows refuse is counted
+   * there instead when they have room (`reserve: true`: give back those windows, not the ordinary ones).
    */
-  hitMark(limits: Limit[], mark: string, untilMs: number, now: number = Date.now()): HitResult & { marked?: boolean } {
-    const r = this.hit(limits, now);
+  hitMark(limits: Limit[], mark: string, untilMs: number, caller?: number, reserve: Limit[] = []): HitResult & { marked?: boolean; reserve?: true } {
+    let r = this.hit(limits, caller);
+    let fromReserve = false;
+    // D935: a kill switch past the ordinary windows takes from its own reserve windows instead (counted apart, in the
+    // same call, so parallel requests can't both take the last slot). Refused by both, it may go as soon as either set
+    // has room: the sooner of the two waits (each the longest of its own full windows), named by that set's window.
+    if (!r.ok && reserve.length > 0) {
+      const first = r;
+      const again = this.hit(reserve);
+      if (!again.ok) return again.retryAfterS <= first.retryAfterS ? again : first;
+      r = again;
+      fromReserve = true;
+    }
     if (!r.ok) return r;
-    return { ...r, marked: this.reserve(mark, untilMs, now) };
+    return { ...r, marked: this.reserve(mark, untilMs), ...(fromReserve ? { reserve: true as const } : {}) };
   }
 
   /** Drops a marker (a reservation whose relay definitely did not execute). */

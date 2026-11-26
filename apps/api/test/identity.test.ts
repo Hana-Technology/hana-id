@@ -12,7 +12,7 @@ import { JWKS_MAX_AGE_S } from '../src/identity/public.ts';
 import { IdentitySignerError, WorkerSecretSigner, clearIdentitySignerCache, identityConfig, publicIdentityConfig, verifyEs256, workerSecretSigner } from '../src/identity/signer.ts';
 import { toMintRequest } from '../src/identity/token.ts';
 import { clearViewCaches } from '../src/views.ts';
-import { GOOGLE_ISS, ORIGIN, appHeaders, call, google, newSessionKey, seedApp, sessionBody, uid, minuteHeadroom } from './helpers.ts';
+import { GOOGLE_ISS, ORIGIN, appHeaders, call, google, newSessionKey, seedApp, sessionBody, staleMarkers, uid, minuteHeadroom } from './helpers.ts';
 import { limiterKeys, mint, mintBody, publishedKids, randomPrk, setSlidingBucket, verifyToken } from './identity-helpers.ts';
 import { hanaHeaders, loginBody } from './login-helpers.ts';
 import { HOUR, VAULT, act, createShare, setSettings, setShare, spentSession, storedShare, vaultHeaders, vaultSetup } from './vault-helpers.ts';
@@ -256,6 +256,16 @@ describe('POST /v1/identity/token: refusals, in order', () => {
     await expectCode(await call('/v1/identity/token', { headers: vaultHeaders(app), body: b }), 409, 'proof_replayed');
     const marker = await limiter(env, identityProofLimiter(hex(Uint8Array.from(spk)))).reserve('probe', Date.now() + 1000);
     expect(marker).toBe(true);
+  });
+
+  it('400 stale_proof (with serverTimeMs) when the proof marker\'s object is already past the proof window (D935: a stall after the check)', async () => {
+    const { app, spk } = await sessionSetup();
+    const b = await mintBody(app, spk);
+    staleMarkers();
+    const r = await call('/v1/identity/token', { headers: vaultHeaders(app), body: b });
+    vi.restoreAllMocks();
+    const j = await expectCode(r, 400, 'stale_proof');
+    expect(typeof j.serverTimeMs).toBe('number');
   });
 
   it('429 rate_limited after IDENTITY_PER_SESSION_MINUTE mints of one session key in a minute', async () => {

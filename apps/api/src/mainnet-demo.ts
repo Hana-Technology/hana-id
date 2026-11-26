@@ -117,9 +117,9 @@ export async function handleMainnetDemoEvent(request: Request, env: Env, request
   lap(ctx, 'session');
   try {
     // Single use (as the identity token's proofs), then the app's hourly cap.
-    if (!(await limiter(env, `mainnet-demo-proof:${hex(r.sessionPk)}`).reserve(await proofMarker(r), r.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
-      return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
-    }
+    const fresh = await limiter(env, `mainnet-demo-proof:${hex(r.sessionPk)}`).reserveFresh(await proofMarker(r), r.issuedAtMs + IDENTITY_PROOF_MARKER_MS, r.issuedAtMs + IDENTITY_PROOF_WINDOW_MS, now);
+    if (fresh === 'stale') return done(ctx, 400, { error: 'The session proof is too old or too new', code: 'stale_proof', serverTimeMs: Date.now() });
+    if (fresh === 'used') return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
     const hit = await limiter(env, `mainnet-demo:${app.id}`).hit([{ name: 'mainnet_demo:hour', windowMs: HOUR, max: MAINNET_DEMO_EVENTS_PER_HOUR }]);
     if (!hit.ok) return reject(ctx, 429, 'rate_limited', 'Too many mainnet demo events for this app', { 'retry-after': String(hit.retryAfterS) });
   } catch {

@@ -90,6 +90,13 @@ export function loadEnv(name: string): Manifest {
   return parseManifest(name, readFileSync(manifestPath(name), 'utf8'));
 }
 
+/**
+ * D935: the env name the apps' fixed test manifests use (TEST_MANIFEST in each gen-wrangler), with which alone the API's
+ * rate limiter lifts its clamp on callers' times (`LIMITER_TRUST_CALLER_CLOCK`, set only by the API's vitest config).
+ * The schema accepts it (those test manifests are parsed by it in their own tests); a file in `envs/` may not use it.
+ */
+export const TEST_ENV_NAME = 'sandbox-test';
+
 /** Validates the text of envs/<name>.json: valid JSON with no key twice in one object (D904), then the schema. */
 export function parseManifest(name: string, text: string): Manifest {
   const raw: unknown = JSON.parse(text);
@@ -97,5 +104,6 @@ export function parseManifest(name: string, text: string): Manifest {
   if (duplicate !== null) throw new Error(`envs/${name}.json has a key twice in one object (${duplicate}): JSON keeps only the last, which a reader of the file may not see`);
   const manifest = manifestSchema.parse(raw);
   if (manifest.name !== name) throw new Error(`Manifest ${name}.json declares name "${manifest.name}"`);
+  if (manifest.name === TEST_ENV_NAME) throw new Error(`envs/${name}.json: the name ${TEST_ENV_NAME} is reserved for the tests (the rate limiter's test-only clock); use another`);
   return manifest;
 }

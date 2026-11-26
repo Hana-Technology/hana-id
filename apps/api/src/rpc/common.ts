@@ -70,6 +70,8 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
   const w: Writer = { actor: input.actor, requestId: input.requestId, now };
   let breakerTaken = false;
   let reserveUsed = 0;
+  // The admission's time on the limiter's clock (D935, H1): what the settlement names.
+  let admittedAt = now;
   let code: RpcCode | null = null;
   let admittedRevoke = false;
   const revokeOf = setup.revokeGuard ? { orgId: orgId!, keyId: (input as { keyId?: string }).keyId ?? '', method, requestId: input.requestId } : null;
@@ -85,7 +87,7 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
       }
       admittedRevoke = true;
     } else if (consoleCall) {
-      ({ reserveUsed } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
+      ({ reserveUsed, at: admittedAt } = await admitMemberCall(env, { org: orgId!, cost: setup.cost!, ...(setup.killSwitch ? { killSwitch: true } : {}), ...(setup.breaker ? { breaker: true } : {}) }, now));
       breakerTaken = !!setup.breaker;
     }
     const db = new HotDb(env.DB, consoleCall ? CONSOLE_DB_LIMITS : undefined);
@@ -106,6 +108,6 @@ export async function runRpc<I extends { actor: Actor; requestId: string; client
     return { ok: false, code: 'internal' };
   } finally {
     const changedNothing = (code === null && !w.wrote) || (code !== null && REFUNDED.has(code));
-    if (changedNothing && (breakerTaken || reserveUsed > 0)) await settleMemberCall(env, { org: orgId!, at: now, breaker: breakerTaken, reserveUsed });
+    if (changedNothing && (breakerTaken || reserveUsed > 0)) await settleMemberCall(env, { org: orgId!, at: admittedAt, breaker: breakerTaken, reserveUsed });
   }
 }

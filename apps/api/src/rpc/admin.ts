@@ -121,6 +121,9 @@ import { identitySubKey } from '../identity/signer.ts';
 import { linkStats } from '../link-usage.ts';
 import { deletedApps, purgeAudit, purgeDirectory, purgePlatformCalls, purgeUserEvents } from '../changes/retention.ts';
 import { runRpc } from './common.ts';
+import { placedStub } from '../placement.ts';
+import { log } from '../log.ts';
+import { CONSOLE_LIMITER } from '../changes/guard.ts';
 import { isLabelChange } from '../labels/sql.ts';
 import { ackLabelNotice, labelNotices } from '../labels/lifecycle.ts';
 
@@ -373,7 +376,19 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
 
   /** The org's platform switch; turning it on needs every key in force or waiting reviewed (L5). */
   setPlatformOrg(c: unknown) {
-    return runRpc(this.env, 'admin.setPlatformOrg', setPlatformOrgInput, c, { actors: HANA }, ({ input, db, w }) => setPlatformOrg(db, w, input));
+    return runRpc(this.env, 'admin.setPlatformOrg', setPlatformOrgInput, c, { actors: HANA }, async ({ input, db, w }) => {
+      const r = await setPlatformOrg(db, w, input);
+      // D935 (L2): switched off, the org leaves the limiter's count of orgs using kill switches (best effort: else it
+      // drops out within the minute).
+      if (!input.enabled && r.changed) {
+        try {
+          await placedStub(this.env, this.env.RATE_LIMITER, CONSOLE_LIMITER).platformForgetOrg(input.orgId);
+        } catch {
+          log({ event: 'platform', outcome: 'error', code: 'kill_orgs_forget_failed', orgId: input.orgId }, 'error');
+        }
+      }
+      return r;
+    });
   }
 
   /** The admin Worker's mirror of a console freeze (staff's route, and its hourly reconciliation as `system`). */

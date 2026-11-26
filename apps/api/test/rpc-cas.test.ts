@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAppByKey } from '../src/apps.ts';
 import type { Writer } from '../src/changes/cas.ts';
 import { HotDb } from '../src/changes/db.ts';
+import { CONSOLE_KEY_REVOKES } from '../src/changes/guard.ts';
+import { placedStub } from '../src/placement.ts';
 import { rotateKey } from '../src/changes/keys.ts';
 import { removeOrigins } from '../src/changes/origins.ts';
 import { AdminRpc } from '../src/rpc/admin.ts';
@@ -131,17 +133,20 @@ describe('the destructive-call breaker', () => {
     clk = ownClock();
   });
 
-  it('the sixth suspension, revocation, rotation or removal for one org within an hour is refused with a breaker event', async () => {
+  it('the sixth suspension, rotation or removal for one org within an hour is refused with a breaker event; a publishable key’s revocation is neither counted nor refused (D935)', async () => {
     const org = newOrg();
     const apps = await Promise.all([1, 2, 3].map(() => orgApp({ org, origins: [ORIGIN, SECOND] })));
     const keyOf = async (appId: string) => (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1 AND revoked_at IS NULL', appId))[0]!.id;
     const rpc = consoleRpc(clk);
+    // D935: a revocation before the five counted calls isn't one of them.
+    expect(await rpc.createKey({ ...member(), orgId: org, appId: apps[0]!.id })).toMatchObject({ ok: true });
+    expect(await rpc.revokeKey({ ...member(), orgId: org, appId: apps[0]!.id, keyId: await keyOf(apps[0]!.id) })).toMatchObject({ ok: true });
     const calls = [
       () => rpc.setSuspended({ ...member(), orgId: org, appId: apps[0]!.id, suspended: true }),
-      async () => rpc.revokeKey({ ...member(), orgId: org, appId: apps[0]!.id, keyId: await keyOf(apps[0]!.id) }),
       async () => rpc.rotateKey({ ...member(), orgId: org, appId: apps[1]!.id, keyId: await keyOf(apps[1]!.id) }),
       () => rpc.removeOrigins({ ...member(), orgId: org, appId: apps[1]!.id, remove: [SECOND], expectedVersion: 0 }),
       () => rpc.setSuspended({ ...member(), orgId: org, appId: apps[2]!.id, suspended: true }),
+      () => rpc.removeOrigins({ ...member(), orgId: org, appId: apps[2]!.id, remove: [SECOND], expectedVersion: 0 }),
     ];
     for (const c of calls) expect(await c()).toMatchObject({ ok: true });
     // Not counted: a resume, a turn-off, a cancel, and every AdminRpc call.
@@ -152,6 +157,10 @@ describe('the destructive-call breaker', () => {
     const sixth = await rpc.removeOrigins({ ...member(), orgId: org, appId: apps[0]!.id, remove: [SECOND], expectedVersion: 0 });
     expect(sixth).toMatchObject({ ok: false, code: 'rate_limited' });
     expect(await rows('SELECT origin FROM app_origins WHERE app_id = ?1', apps[0]!.id)).toHaveLength(2);
+    // D935: with the org's breaker full, a publishable key's revocation still goes through.
+    const live = await keyOf(apps[0]!.id);
+    expect(await rpc.revokeKey({ ...member(), orgId: org, appId: apps[0]!.id, keyId: live })).toMatchObject({ ok: true, warning: 'last_key' });
+    expect((await rows<{ revoked_at: number | null }>('SELECT revoked_at FROM app_keys WHERE id = ?1', live))[0]!.revoked_at).not.toBeNull();
     const events = await rows<{ kind: string; detail_json: string }>("SELECT kind, detail_json FROM security_events WHERE kind = 'breaker' AND org_id = ?1", org);
     expect(events).toHaveLength(1);
     expect(JSON.parse(events[0]!.detail_json)).toMatchObject({ limit: 'org', perOrg: 5 });
@@ -174,6 +183,79 @@ describe('the destructive-call breaker', () => {
     const t = Math.floor(Date.now() / (60 * 60 * 1000)) * 60 * 60 * 1000;
     const events = await rows<{ detail_json: string }>("SELECT detail_json FROM security_events WHERE kind = 'breaker' AND org_id IS NULL AND detected_at >= ?1", t);
     expect(events.map((e) => JSON.parse(e.detail_json).limit)).toEqual(['global']);
+    // D935: with the global breaker full, another org's publishable key revocation still goes through.
+    const keyId = (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1', app.id))[0]!.id;
+    expect(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId })).toMatchObject({ ok: true });
+  });
+});
+
+describe('D935: a member’s publishable key revocations, outside the breaker', () => {
+  beforeEach(() => {
+    clk = ownClock();
+  });
+  const live = async (appId: string) => (await rows<{ id: string }>('SELECT id FROM app_keys WHERE app_id = ?1 AND revoked_at IS NULL ORDER BY id', appId)).map((r) => r.id);
+  const stops = (org: string) => placedStub(env, env.RATE_LIMITER, `console-stops:${org}`);
+
+  it('20 an org a clock hour, then `rate_limited` writing nothing; a revocation that changes nothing never counts; another org untouched', async () => {
+    const app = await orgApp();
+    const rpc = consoleRpc(clk);
+    expect(CONSOLE_KEY_REVOKES).toEqual([{ name: 'key-revokes:hour', windowMs: 60 * 60 * 1000, max: 20 }]);
+    for (let i = 0; i < 20; i++) {
+      expect(await rpc.createKey({ ...member(), orgId: app.org, appId: app.id }), `create ${i}`).toMatchObject({ ok: true });
+      const [first] = await live(app.id);
+      expect(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: first! }), `revoke ${i}`).toMatchObject({ ok: true });
+      // No-ops in between: an already revoked key and an unknown one, each its usual answer.
+      expect(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: first! })).toMatchObject({ ok: false, code: 'conflict' });
+      expect(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: 'key_none' })).toMatchObject({ ok: false, code: 'not_found' });
+    }
+    const [last] = await live(app.id);
+    const ledger = await ledgerCount();
+    expect(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: last! })).toMatchObject({ ok: false, code: 'rate_limited' });
+    expect(await ledgerCount()).toBe(ledger);
+    expect(await live(app.id)).toEqual([last]);
+    // A no-op past the limit still answers what it is, not the limit.
+    expect(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: 'key_none' })).toMatchObject({ ok: false, code: 'not_found' });
+    // Another org's revocation, at the same moment, is its own.
+    const other = await orgApp();
+    expect(await rpc.revokeKey({ ...member(), orgId: other.org, appId: other.id, keyId: (await live(other.id))[0]! })).toMatchObject({ ok: true });
+    // The next clock hour, it goes through.
+    clk.advance(60 * 60 * 1000);
+    expect(await rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId: last! })).toMatchObject({ ok: true, warning: 'last_key' });
+  });
+
+  it('parallel revocations at the edge of the window: exactly the room left goes through', async () => {
+    const app = await orgApp();
+    const rpc = consoleRpc(clk);
+    for (let i = 0; i < 4; i++) expect(await rpc.createKey({ ...member(), orgId: app.org, appId: app.id })).toMatchObject({ ok: true });
+    const keys = await live(app.id);
+    expect(keys).toHaveLength(5);
+    // 18 of the hour's 20 used.
+    expect(await stops(app.org).hit(CONSOLE_KEY_REVOKES, Date.now(), 18)).toMatchObject({ ok: true });
+    const out = await Promise.all(keys.map((keyId) => rpc.revokeKey({ ...member(), orgId: app.org, appId: app.id, keyId })));
+    expect(out.filter((r) => r.ok)).toHaveLength(2);
+    expect(out.filter((r) => !r.ok).map((r) => (r as { code: string }).code)).toEqual(['rate_limited', 'rate_limited', 'rate_limited']);
+    expect(await live(app.id)).toHaveLength(3);
+  });
+
+  it('a revocation whose batch fails gives its unit back; a limiter error refuses it (fails closed)', async () => {
+    const app = await orgApp();
+    const keyId = (await live(app.id))[0]!;
+    const w = { actor: member().actor, requestId: rid(), now: Date.now() };
+    const { withKeyRevokeQuota } = await import('../src/changes/guard.ts');
+    const { revokeKey } = await import('../src/changes/keys.ts');
+    expect(await stops(app.org).hit(CONSOLE_KEY_REVOKES, w.now, 19)).toMatchObject({ ok: true });
+    const failing = new HotDb(countingDb(env.DB, { reads: 0, batches: 0, statements: 0 }, { faultAt: 1 }));
+    await expect(withKeyRevokeQuota(env, w, app.org, () => revokeKey(failing, w, { orgId: app.org, appId: app.id, keyId }))).rejects.toThrow();
+    // The unit came back: the 20th is still free.
+    expect(await stops(app.org).hit(CONSOLE_KEY_REVOKES, w.now)).toMatchObject({ ok: true });
+    await stops(app.org).unhit(CONSOLE_KEY_REVOKES, w.now);
+    vi.spyOn(env.RATE_LIMITER, 'get').mockImplementation(() => {
+      throw new Error('limiter down');
+    });
+    const w2 = { actor: member().actor, requestId: rid(), now: Date.now() };
+    await expect(withKeyRevokeQuota(env, w2, app.org, () => revokeKey(new HotDb(env.DB), w2, { orgId: app.org, appId: app.id, keyId }))).rejects.toThrow();
+    vi.restoreAllMocks();
+    expect(await live(app.id)).toEqual([keyId]);
   });
 });
 

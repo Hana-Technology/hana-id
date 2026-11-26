@@ -605,11 +605,6 @@ describe('the org’s switch and freeze, and the self-revoke', () => {
 
   it('a key that expires, is stopped, or whose org is frozen or switched off between two requests is refused at once', async () => {
     const now = freshNow();
-    const expiring = await seedKey();
-    const row = await keyRow(expiring.id);
-    expect((await send(expiring, { now: (row.expires_at as number) - 1 })).status).toBe(200);
-    expect((await send(expiring, { now: row.expires_at as number })).status).toBe(401);
-
     const stopped = await seedKey();
     expect((await send(stopped, { now })).status).toBe(200);
     const admin = new AdminRpc({ waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext, env);
@@ -625,6 +620,12 @@ describe('the org’s switch and freeze, and the self-revoke', () => {
     expect((await send(off, { now })).status).toBe(200);
     await switchOff(off.org);
     expect((await send(off, { now })).body.code).toBe('platform_off');
+
+    // Last (D935: a request run a year on moves this isolate's test clock there).
+    const expiring = await seedKey();
+    const row = await keyRow(expiring.id);
+    expect((await send(expiring, { now: (row.expires_at as number) - 1 })).status).toBe(200);
+    expect((await send(expiring, { now: row.expires_at as number })).status).toBe(401);
   });
 
   it('two keys of one org each work with their own windows and nonces; stopping one leaves the other', async () => {
@@ -737,16 +738,17 @@ describe('each route within its hot-DB cost (L8)', () => {
     const b = await seedKey({ org: a.app });
     const other = await seedKey();
     const now = freshNow();
-    // 40 tokens, 4 a call, 10 kept for kill switches: 7 calls, then the org's bucket says no.
+    // 4 a call: in a burst the console's floor (an ordinary platform call leaves it 30 of its 60) holds first, at 7 calls;
+    // the org's own 40 (no reserve since D935) would allow 10.
     const results: number[] = [];
     for (let i = 0; i < 7; i++) results.push((await send(i % 2 ? a : b, { now })).status);
     expect(results).toEqual(Array(7).fill(200));
     const refused = await send(a, { now });
-    expect([refused.status, refused.body.limit]).toEqual([429, 'platform:budget_org']);
+    expect([refused.status, refused.body.limit]).toEqual([429, 'platform:budget_shared']);
     // The platform as a whole never takes the console's shared bucket below its floor: another org's call a second later.
     expect((await send(other, { now: now + 1000 })).status).toBe(200);
     // The key's minute wasn't charged for the refused ones (unhit), so it isn't what refuses.
-    expect(PLATFORM_LIMITS.perOrg).toEqual({ ratePerS: 8, burst: 40, reserve: 10 });
+    expect(PLATFORM_LIMITS.perOrg).toEqual({ ratePerS: 8, burst: 40 });
   });
 });
 
@@ -763,6 +765,8 @@ describe('the platform’s destructive-call breaker is its own (M3)', () => {
     for (let i = 0; i < 10; i++) expect((await platformAdmit(orgs[0]!, now + i)).ok).toBe(true);
     expect(await platformAdmit(orgs[0]!, now + 10)).toMatchObject({ ok: false, limit: 'breaker_org', notify: true });
     for (let i = 0; i < 20; i++) expect((await platformAdmit(orgs[1 + (i % 2)]!, now + 20 + i)).ok).toBe(true);
+    // D935: a fourth org's first 5 pass the full global count (its floor); its 6th doesn't.
+    for (let i = 0; i < PLATFORM_LIMITS.breaker.floor; i++) expect((await platformAdmit(orgs[3]!, now + 45 + i)).ok).toBe(true);
     expect(await platformAdmit(orgs[3]!, now + 50)).toMatchObject({ ok: false, limit: 'breaker_global' });
     // The console's breaker for the same orgs: every destructive console call still admitted.
     for (const org of orgs) expect(await admitMemberCall(env, { org, cost: 5, killSwitch: true, breaker: true }, now + 60)).toMatchObject({ reserveUsed: expect.any(Number) });
@@ -771,7 +775,9 @@ describe('the platform’s destructive-call breaker is its own (M3)', () => {
     const later = now + 30 * MIN;
     for (let i = 0; i < 5; i++) await admitMemberCall(env, { org: fresh, cost: 1, killSwitch: true, breaker: true }, later + i);
     await expect(admitMemberCall(env, { org: fresh, cost: 1, killSwitch: true, breaker: true }, later + 6)).rejects.toMatchObject({ code: 'rate_limited' });
-    expect((await platformAdmit(fresh, later + 7)).ok).toBe(false); // the platform's global window is still full from the flood above
+    // The platform's global window is still full from the flood above: a fresh org gets its floor of 5 (D935), then no more ...
+    for (let i = 0; i < PLATFORM_LIMITS.breaker.floor; i++) expect((await platformAdmit(fresh, later + 7 + i)).ok).toBe(true);
+    expect((await platformAdmit(fresh, later + 20)).ok).toBe(false);
     expect((await platformAdmit(fresh, now + 2 * HOUR)).ok).toBe(true); // ... until it slides out, whatever the console's state
   });
 
@@ -780,7 +786,7 @@ describe('the platform’s destructive-call breaker is its own (M3)', () => {
     const now = freshNow() + 3 * HOUR;
     for (let i = 0; i < 10; i++) {
       expect((await platformAdmit(org, now + i)).ok).toBe(true);
-      await consoleRpcObj().platformSettle({ org, at: now + i, breaker: true, reserveUsed: 0, limits: PLATFORM_LIMITS }, now + i);
+      await consoleRpcObj().platformSettle({ org, at: now + i, breaker: true });
     }
     expect((await platformAdmit(org, now + 20)).ok).toBe(true);
   });
@@ -983,9 +989,10 @@ describe('F3: the platform’s own global bucket, and a floor in the console’s
     const consoleOrgs = await Promise.all(Array.from({ length: 4 }, async () => (await orgApp()).org));
     const network = (await orgApp()).org;
     let admitted = 0;
+    // 5 s apart: the network's own kill bucket (2.5 a second, D935) refills each one's 11.
     for (let t = 0; t < 10; t++) {
-      for (const org of consoleOrgs) for (let i = 0; i < 20; i++) await admitMemberCall(env, { org, cost: 1 }, now + t * 1000).catch(() => undefined);
-      if ((await obj.platformAdmit({ org: network, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now + t * 1000 + 1)).ok) admitted++;
+      for (const org of consoleOrgs) for (let i = 0; i < 20; i++) await admitMemberCall(env, { org, cost: 1 }, now + t * 5000).catch(() => undefined);
+      if ((await obj.platformAdmit({ org: network, cost: 11, killSwitch: true, limits: PLATFORM_LIMITS }, now + t * 5000 + 1)).ok) admitted++;
     }
     expect(admitted).toBe(10);
   });
@@ -995,9 +1002,9 @@ describe('F3: the platform’s own global bucket, and a floor in the console’s
     const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
     const orgs = await Promise.all(Array.from({ length: 4 }, async () => (await orgApp()).org));
     let admitted = 0;
-    // 10 seconds, every org trying 10 calls of cost 3 a second: the platform's bucket (10/s, burst 60, 15 kept) bounds it.
+    // 10 seconds, every org trying 10 calls of cost 3 a second: the platform's bucket (10/s, burst 60, no reserve) bounds it.
     for (let t = 0; t < 10; t++) for (const org of orgs) for (let i = 0; i < 10; i++) if ((await obj.platformAdmit({ org, cost: 3, limits: PLATFORM_LIMITS }, now + t * 1000)).ok) admitted++;
-    expect(admitted * 3).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.burst - PLATFORM_LIMITS.platform.reserve + 10 * PLATFORM_LIMITS.platform.ratePerS);
+    expect(admitted * 3).toBeLessThanOrEqual(PLATFORM_LIMITS.platform.burst + 10 * PLATFORM_LIMITS.platform.ratePerS);
   });
 });
 
@@ -1210,21 +1217,18 @@ describe('the second review', () => {
     expect((await send(k, { now: now + MIN, method: 'POST', path: '/v1/platform/credential/revoke' })).status).toBe(200);
   });
 
-  it('N6: a second settle of the same admission refunds nothing', async () => {
+  it('N6: a second settle of the same admission gives nothing back (D935: only a breaker slot, once; never tokens)', async () => {
     const org = (await orgApp()).org;
     const now = freshNow();
     const obj = placedStub(env, env.RATE_LIMITER, 'console-rpc');
-    // Take the platform's bucket down to its reserve (60 → 15, three kill switches of 15 from other orgs), then a kill switch that dips into it.
-    for (let i = 0; i < 3; i++) expect(await obj.platformAdmit({ org: (await orgApp()).org, cost: 15, killSwitch: true, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: true, reserveUsed: 0 });
-    const kill = await obj.platformAdmit({ org, cost: 6, killSwitch: true, limits: PLATFORM_LIMITS }, now);
-    expect(kill).toMatchObject({ ok: true, reserveUsed: expect.any(Number) });
-    const used = (kill as { reserveUsed: number }).reserveUsed;
-    expect(used).toBeGreaterThan(0);
-    const settle = () => obj.platformSettle({ org, at: now, breaker: false, reserveUsed: used, limits: PLATFORM_LIMITS }, now);
-    await settle();
-    await settle();
-    // One refund only: the reserve holds exactly what the kill switch took back, so an ordinary call still can't reach it.
-    expect(await obj.platformAdmit({ org: (await orgApp()).org, cost: 1, limits: PLATFORM_LIMITS }, now)).toMatchObject({ ok: false, limit: 'budget_platform' });
+    const r = await obj.platformAdmit({ org, cost: 1, killSwitch: true, breaker: true, limits: PLATFORM_LIMITS }, now);
+    expect(r).toMatchObject({ ok: true, at: now });
+    for (let i = 1; i < 10; i++) expect((await obj.platformAdmit({ org, cost: 1, killSwitch: true, breaker: true, limits: PLATFORM_LIMITS }, now + i)).ok).toBe(true);
+    // Its 10 used; one settle gives one back, a second of the same admission nothing.
+    await obj.platformSettle({ org, at: now, breaker: true });
+    await obj.platformSettle({ org, at: now, breaker: true });
+    expect((await obj.platformAdmit({ org, cost: 1, killSwitch: true, breaker: true, limits: PLATFORM_LIMITS }, now + 20)).ok).toBe(true);
+    expect(await obj.platformAdmit({ org, cost: 1, killSwitch: true, breaker: true, limits: PLATFORM_LIMITS }, now + 21)).toMatchObject({ ok: false, limit: 'breaker_org' });
   });
 
   it('N6: one local* predicate for the platform minimum and the published-key rule', () => {

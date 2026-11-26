@@ -167,7 +167,9 @@ export async function homeGate(request: Request, env: Env, ctx: Ctx, opts: HomeG
 
   // 10. Single use: (sha256(hk_pub), counter) until expiresAtMs (a counter is any unused u64, so concurrent calls work).
   try {
-    if (!(await keyLimiter.reserve(`counter:${header.counter}`, header.expiresAtMs, now))) return fail(409, 'counter_reused', 'This Home request was already sent');
+    const fresh = await keyLimiter.reserveFresh(`counter:${header.counter}`, header.expiresAtMs, header.expiresAtMs, now);
+    if (fresh === 'stale') return fail(401, 'home_identity_expired', 'The Home sign-in has ended, sign in again');
+    if (fresh === 'used') return fail(409, 'counter_reused', 'This Home request was already sent');
   } catch {
     return fail(503, 'rate_limiter_unavailable', 'Try again');
   }

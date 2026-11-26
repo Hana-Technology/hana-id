@@ -15,7 +15,7 @@ import { usageTransport } from '../src/usage/record.ts';
 import { EVM_SPONSOR_LIMITS } from '../src/evm/sponsor-checks.ts';
 import { maxStartingFees, sponsorGasLimit } from '../src/evm/op-fee.ts';
 import { encodeExecuteCalldata } from '@hana-id/core/evm-sponsor';
-import { appHeaders, call, ORIGIN, seedApp, type SeededApp, startOfMinuteClock } from './helpers.ts';
+import { appHeaders, call, ORIGIN, seedApp, type SeededApp, staleMarkers, startOfMinuteClock } from './helpers.ts';
 import { vaultHeaders } from './vault-helpers.ts';
 import { isEvmSponsorPrepareResponse, isEvmSponsorSendResponse, isEvmSponsorStatusResponse } from '../../../packages/core/src/api-types.ts';
 import {
@@ -1682,6 +1682,15 @@ describe('the session proof of prepare and send (D856)', () => {
         const before = s.chain.calls.length;
         expect(await code(await go(s, sent))).toEqual([409, 'proof_replayed']);
         expect(s.chain.calls.length).toBe(before);
+      });
+      it('a proof whose marker\'s object is already past the proof window: 400 stale_session_proof with serverTimeMs (D935: a stall after the check)', async () => {
+        const s = await setup();
+        const sent = withProof(s.app, make(s), method);
+        staleMarkers();
+        const r = await go(s, sent);
+        vi.restoreAllMocks();
+        const j = await body(r);
+        expect([r.status, j.code, typeof j.serverTimeMs]).toEqual([400, 'stale_session_proof', 'number']);
       });
 
       it('the session: not visible on chain 503 session_not_visible; expired 410 session_ended; another scope 403 scope_mismatch', async () => {

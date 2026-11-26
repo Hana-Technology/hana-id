@@ -445,7 +445,8 @@ export async function handleNearRelay(request: Request, env: Env, requestId: str
     // `accessKeyNonce` is the lowest nonce Hana won't take for this sender: the client builds above it.
     if (d.nonce <= floor) return done(ctx, 409, { error: 'The delegate nonce is already used', code: 'delegate_nonce_used', accessKeyNonce: floor.toString() });
     // A copy of a request in flight right now (the hash, for concurrent copies only).
-    if (!(await limiter(env, marks).reserve(hash, Date.now(), Date.now()))) return reject(ctx, 409, ALREADY_RELAYED, 'This delegate action was already relayed');
+    // (A read, never a marker: D935 after PR 161's focused review.)
+    if (await limiter(env, marks).marked(hash)) return reject(ctx, 409, ALREADY_RELAYED, 'This delegate action was already relayed');
   } catch {
     return reject(ctx, 503, 'rate_limiter_unavailable', 'Try again');
   }

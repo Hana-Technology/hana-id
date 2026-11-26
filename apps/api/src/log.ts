@@ -14,6 +14,8 @@ export interface LogFields {
   status?: number;
   code?: string;
   latencyMs?: number;
+  /** D935: how far ahead of a rate limiter object's own clock a caller's time was (the clamp's log). */
+  aheadMs?: number;
   /** Milliseconds per stage of a request (see handlers.ts `lap`). */
   phases?: Record<string, number>;
   /** Cloudflare data center that ran the request (e.g. SIN). */

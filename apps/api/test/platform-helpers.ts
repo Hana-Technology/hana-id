@@ -7,7 +7,7 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import { env } from 'cloudflare:workers';
 import { clearKnownKeyIds } from '../src/platform/known-keys.ts';
 import { handlePlatform } from '../src/platform/request.ts';
-import { type OrgApp, orgApp } from './rpc-helpers.ts';
+import { type OrgApp, advanceTo, orgApp, realClock } from './rpc-helpers.ts';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -91,7 +91,11 @@ let clockSlot = 0;
  * A clock of its own for each test: an hour apart, so every limiter window starts empty, a second into a clock minute
  * (a test's run of requests a few hundred ms apart stays in one minute window). Within the key's year.
  */
-export const freshNow = (): number => Math.floor((Date.now() + ++clockSlot * HOUR) / 60_000) * 60_000 + 1000;
+/**
+ * A fresh hour of its own for a test's requests: an hour further each call, and (D935) never behind a time a request ran at
+ * (the limiter's objects keep a monotone clock).
+ */
+export const freshNow = (): number => Math.floor(Math.max(realClock() + ++clockSlot * HOUR, Date.now() + HOUR) / 60_000) * 60_000 + 1000;
 
 export interface SendOpts {
   method?: string;
@@ -165,6 +169,8 @@ export async function send(k: Pick<Seeded, 'id' | 'privateKey'>, o: SendOpts = {
 
 /** A request delivered to the platform handler at `now`, waiting for its waitUntil work. */
 export async function deliver(request: Request, now = Date.now(), bindings?: Partial<typeof env>): Promise<Response> {
+  // D935 (H1): a request run at a simulated time moves this isolate's clock floor there (rpc-helpers `advanceTo`).
+  advanceTo(now);
   const ctx = createExecutionContext();
   const ray = request.headers.get('cf-ray');
   const res = await handlePlatform(request, new URL(request.url), { ...env, ...(bindings ?? {}) } as typeof env, ray ?? crypto.randomUUID(), ctx, now);

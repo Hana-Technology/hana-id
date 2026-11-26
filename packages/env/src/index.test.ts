@@ -332,6 +332,13 @@ describe('manifests with a key twice in one object (D904, after PR 133\'s review
     expect(duplicateJsonKey('"a"')).toBeNull();
   });
 
+  it('D935: parseManifest refuses an env named sandbox-test (reserved for the tests), which the schema alone accepts', () => {
+    const dev = JSON.parse(readFileSync(manifestPath('sandbox-dev'), 'utf8')) as Record<string, unknown>;
+    const asTest = JSON.stringify({ ...dev, name: 'sandbox-test' });
+    expect(manifestSchema.safeParse(JSON.parse(asTest)).success).toBe(true);
+    expect(() => parseManifest('sandbox-test', asTest)).toThrow('envs/sandbox-test.json: the name sandbox-test is reserved for the tests');
+  });
+
   it('parseManifest refuses one; every committed env parses to exactly what JSON.parse and the schema give', () => {
     const t = text();
     const twice = t.replace('"network": "testnet",', '"network": "testnet",\n  "network": "testnet",');

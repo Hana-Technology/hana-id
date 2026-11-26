@@ -23484,7 +23484,8 @@ A dated note sits under each entry it confirms (D914, D915, D916, D918, D919, D9
       most 300 repeats that change nothing a minute across organisations, and an alert at 3 stops in an organisation
       or 10 across organisations within 10 minutes (7a).
     - Open: stopping a publishable key still counts against the shared limit of 5 an hour per organisation and 20
-      across, so a burst elsewhere can refuse it (the review's point 7).
+      across, so a burst elsewhere can refuse it (the review's point 7). **Decided and fixed 2026-11-26 (D935):** out
+      of the breaker, 20 an org a clock hour of its own.
     - Decide knowingly: the short wait for local test setups is held only by the setup's name until P10's guard, so
       P10 must ship before the platform is switched on anywhere.
     - Decide knowingly: the API's copy of "frozen" can lag the console by up to about an hour when its write fails.
@@ -23719,7 +23720,8 @@ From `next` @ bcb121bd; not merged, not deployed, migration applied nowhere. Pie
     - **L4, the global breaker.** Three orgs each spending their 10 counted kill switches an hour (remove, suspend,
       key revoke) fill the platform's global 30 an hour and refuse every other org's platform kill switches for up to
       an hour. The console's, staff's and the self-revoke are unaffected. Possible fix: a small per-org floor through
-      the global breaker (each org's first few always admitted).
+      the global breaker (each org's first few always admitted). **Fixed by D935 (2026-11-26):** each org's first 5
+      removals an hour pass the global count, and suspend and key revoke left the breaker.
     - **N3, fixed windows.** Clock-hour windows let about 4 creations through across an hour's boundary (2 just
       before, 2 just after); a sliding window would hold 2 in any 60 minutes.
     - **N5, the partner bit's holder.** A suspension staff set on bit 4 shows to the platform as `byOrganisation`;
@@ -24303,7 +24305,7 @@ caller assigned.
   (i), and lone surrogates refused in every display-safe line, which reverses D904's open point (m). (b) is moot: the
   guide no longer names `sodax-sdk-integration.md`. (j): a request refused while the organisation is switched off or
   frozen holds no nonce and can be sent again unchanged within the clock window; **left as it is, no code change**.
-  (l), the global breaker, stays open under D929 (revisit before real money). After PRs 158 and 159 merged, the
+  (l), the global breaker, stays open under D929 (revisit before real money). (Fixed by D935, 2026-11-26.) After PRs 158 and 159 merged, the
   console's tab is "Web addresses (origins)" (D930): the guide doesn't name the tab, so nothing here changed for it.
 
 
@@ -24479,3 +24481,218 @@ caller assigned (D933 is unused, D935 another branch's).
      that row (the flag itself stays, held by the triggers).
   2. `frameOnlyOrigins` on `ConsoleRpc` accepts any member actor; the owner role is enforced in the console's route,
      as for removals (a pre-existing pattern of the console's kill switches).
+
+## Kill switches no other organisation can block (branch `fix/kill-switch-limits`), 2026-11-26
+
+From `next` @ 96fb0ec7, merged with `next` @ bd7917f1 (PR 160) and @ 8e9cfe9a (PR 162, D934); not merged, not
+deployed, no migration. The Tech Lead's decision 10 of 2026-11-26: "stopping a publishable key must not be blockable by
+the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
+
+### D935. No organisation's kill switches are blockable by other organisations: each org's kill switches have a budget of their own and nothing else; the platform's breaker counts only web address removals, each org's first 5 an hour past the global count; suspensions and key revocations have their own limits; every limiter on its object's monotone clock; at most 20 organisations with the platform on
+- Date 2026-11-26 · Status: **built**; the principle **decided by the Tech Lead 2026-11-26** (decision 10); the design
+  after PR 161's second full review is the coordinator's; **settled by the Tech Lead 2026-11-26**: the cap of 20
+  organisations, platform key revocations at 20 an hour and the accepted stolen-key weakness (below); the other figures
+  and the points under "To confirm" are **to confirm (the Tech Lead)** · Relates to D918 (point 7's open point), D927, D928
+  (its D918 list), D929 (L4), D932 ((l)) · Built: `apps/api/src/rate-limiter.ts` (the object's `clock`, `platformAdmit`
+  and `platformSettle`, honest waits in `hit`, `hitSliding`, `hitMark`), `platform/request.ts` (`PLATFORM_LIMITS`, the
+  body's deadline and the clock read again, `PLATFORM_WINDOWS.killReserve`), `platform/routes.ts`, `platform/ops.ts`
+  (`SUSPENSION_WINDOWS`, `KEY_REVOKE_WINDOWS`), `platform/keys.ts` (the cap in `setPlatformOrg`), `changes/guard.ts`
+  (`CONSOLE_KEY_REVOKES`, `withKeyRevokeQuota`), `rpc/console.ts`, `rpc/common.ts`, console-core
+  `PLATFORM_REQUEST_LIMITS` (`killBucket`, `bodyDeadlineMs`), `MAX_PLATFORM_ORGS`, `PLATFORM_OPS_LIMITS`, the playbook
+  `platform-quota`
+- **What was recorded.** (1) D918 point 7's open point, carried into D928's list: "the existing `revokeKey` (a
+  publishable key) is a kill switch held to the shared breaker (5 destructive calls per org an hour, 20 across orgs),
+  so a burst elsewhere can refuse it; not changed here" — the **console's** revocation and the **console's** breaker.
+  (2) D929's L4: three orgs at their 10 counted platform kill switches an hour fill the platform's global 30 and refuse
+  every other org's for up to an hour (the reviewer's fix: a per-org floor through the global breaker). (3) D932's (l),
+  the same from the guide's side. (4) The second review of PR 160, L4: a key past its 2 000 a day or 60 a minute can
+  call no kill switch.
+- **What it does (the final design).**
+  1. **Two budget classes that never charge each other.** An **ordinary** platform call takes its cost from its org's
+     bucket (8 statements a second, burst 40: 520 a minute), the platform's global bucket (10 a second, burst 60) and
+     the console's global bucket, never below 30 of its 60 — **no reserve**. A **kill switch** (remove, cancel, suspend
+     `true`, a publishable key's revoke) takes its cost from its org's **kill bucket** (`platform:kill:org:<org>`, 2.5
+     statements a second, burst 44: about 13 kill switches of the largest cost, 11, a minute, 4 at once) **and nothing
+     else**. No other org's calls touch it, and it touches nobody's ordinary budget.
+  2. **No token is ever given back**, and there are no reserves, shares, negative balances, active-org sets or no-op
+     windows. A no-op kill switch pays in full from its own org's kill bucket (it hurts only that org). The only
+     refunds are exact counts: a removal's breaker slot when it changed nothing, and a quota unit when no ledger row
+     was written.
+  3. **At most 20 organisations with the platform switched on** (`MAX_PLATFORM_ORGS`): staff's switch-on refuses a 21st
+     (`conflict`, "The platform is already switched on for 20 organisations, the most allowed (…). Switch one off
+     first; raising the cap is a reviewed code change"), in the plan read and in the commit predicate. Backstopped in
+     the limiter: at most 20 distinct orgs' kill buckets in any minute (`platform:kill:orgs`); a further org's API kill
+     switches are refused (`platform:kill_orgs`), failing closed for that org only, logged `kill_orgs_full` at error
+     level; the portal's and staff's stops are unaffected.
+  4. **The breaker** counts only removals (10 an org, 30 across orgs a rolling hour); each org's first 5 of its hour pass
+     whatever the global count (every admitted one counted on both lists). **Suspensions** 60 an org a clock hour and
+     **platform publishable key revocations** 20 (a revocation can't be undone), on the org's quota object, taken just
+     before the batch so one that changes nothing never counts. **Each key's kill-switch reserve**: a kill switch the
+     key's ordinary windows refuse is counted on `kill:minute` (10) and `kill:day` (100) instead, in the same atomic
+     call. **The console's `revokeKey`** is outside the console's breaker, 20 an org a clock hour of real revocations.
+  5. **One monotone clock per limiter object (H1).** Every bucket, window, breaker list and stored `at` is reckoned on
+     the object's clock: the greatest of its own `Date.now()`, every time it used before and the caller's time. A stale
+     caller time can't move a bucket's `at` back (and be credited the same refill twice) or pick an older window; undo
+     calls touch only the window still current. This covers every method (`hit`, `unhit`, `hitSliding`,
+     `unhitSliding`, `reserve`, `reserveNonce`, `hitMark`, `consoleAdmit`, `consoleSettle`, `platformAdmit`,
+     `platformSettle`, `spend`, `spent`, `charge`, `queuePush`, `markAlerted`); `consoleAdmit` and `platformAdmit`
+     answer the `at` they used, and the settlements name it. **The platform handler** reads the body within 5 s (else
+     `400 bad_request`, the same for every key id), then reads its clock again: the timestamp window is checked again
+     and every limiter and record uses that time.
+  6. **Honest retry-afters (L3), per limiter stage.** Within one limiter (a key's windows, the admission on
+     `console-rpc`, an org's quota object) a refusal's wait is the longest among everything the call is short of there
+     (the breaker's is when the org is under its limit and under its floor or the global count under its limit; a key's
+     kill switch with both window sets full, the sooner set; `hit` and `hitSliding` the window that opens last), so a
+     retry at the stated time, nothing else changed, passes **that** stage; a later stage of the same request may still
+     refuse it. A cost no bucket can hold is refused for an hour.
+- **The bounds.**
+
+  | Limit | Before this PR | Now |
+  |---|---|---|
+  | Platform kill switches' budget | the org's and the platform's buckets with a reserve (15 tokens, 8 an org a minute) | the org's kill bucket only: 2.5 statements a second, burst 44 (about 13 a minute, 4 at once) |
+  | Ordinary platform calls | org bucket (40, 10 kept), platform bucket (60, 15 kept), console floor 30 | org bucket (40), platform bucket (60), console floor 30; nothing kept back |
+  | Token refunds | a kill switch that changed nothing got its reserve tokens back | none |
+  | Organisations with the platform on | no cap | 20 (staff's switch-on; the limiter's backstop) |
+  | Breaker: what it counts | remove, suspend, publishable key revoke | remove only |
+  | Breaker numbers | 10 an org, 30 across orgs a rolling hour | the same, each org's first 5 of its hour past the global 30 |
+  | Platform suspensions | the breaker | 60 an org a clock hour, only those that change something |
+  | Platform publishable key revocations | the breaker | 20 an org a clock hour, only those that change something |
+  | Kill switches per key | 60 a minute, 2 000 a day, shared with every call | the same, then 10 a minute and 100 a day of their own |
+  | Console `revokeKey` | the console breaker (5 an org, 20 across orgs) | 20 an org a clock hour of its own |
+  | Limiter clocks | each call's caller time | the object's monotone clock |
+
+  **The hard ceiling on the platform's load on the hot D1**, with the 20 organisations the cap allows: ordinary calls
+  at most 660 statements in any first minute and 600 a minute after; kill switches 20 × (44 + 150) = 3 880 in a first
+  minute and 3 000 a minute sustained; together 4 540, then 3 600 a minute (60 statements a second), on the one hot D1
+  the console and the API also use, beside the console's own budget of 30 statements a second. Removals at most
+  10 × 20 = 200 an hour by count and 5 × 20 + 30 = 130 with the global breaker. **What a stolen platform key can do in an
+  hour**, at most: suspend every app in its reach (10 by default; up to 60 suspensions with resumes), revoke 20
+  publishable keys, make 10 removal calls (each can remove every web address of one app, so all of its 10 apps'), and
+  cancel every web address the organisation's platform keys asked for that still waits (up to 30), only on its own
+  org's platform-created test apps.
+- **Tests** (`apps/api/test/platform-limits.test.ts`, its own database and objects; `platform-ops.test.ts`,
+  `platform-request.test.ts`, `rpc-cas.test.ts`, `platform-guide.test.ts`):
+  - the reviewer's three H1 scenarios held: a stale call never refills (the platform's bucket at 25 stays at 25 less the
+    call); one org alternating stale and fresh calls within a second admitted no more than its buckets plus a second's
+    refill; 6 orgs alternating for a minute within 660 + 6 × 194; a key's windows can't be dodged by a stale time;
+  - isolation: a victim's kill switches at 17 in its first minute and 13 after beside 5 and 19 orgs flooding ordinary
+    calls, real kill switches and no-ops; its ordinary calls exactly as under an ordinary flood alone (295 of 900 tries
+    of cost 5 in 3 minutes, with 5 or with 19 neighbours trying calls of 13);
+  - the hard ceilings at N = 20 over ten idle minutes and two burst minutes (ordinary ≤ 660 then ≤ 613; kill ≤ 3 880
+    then ≤ 3 220, and reached); the 21st org refused until the oldest of the 20 is a minute old, its ordinary calls
+    unaffected; staff's 21st switch-on refused, in the plan and, raced, in the commit;
+  - honest retry-afters: a property test over three seeds (ordinary, kill switches and removals of 22 orgs; every
+    refusal retried exactly at its stated time and admitted; `budget_shared`, `budget_kill`, `breaker_org`,
+    `breaker_global` and `kill_orgs` all met), the org's and the platform's buckets one at a time, a key's kill switch
+    with both window sets full;
+  - token conservation: three seeds of random admits and settles, stale and future caller times, clock jumps, costs
+    0, 1, 11, 44, 45 and 1 000, 24 orgs: every bucket at or below its start plus its refill on the object's clock less
+    what it gave, never negative, its `at` never past the clock;
+  - a body still arriving after 5 s refused; a timestamp 58 s old at the start and a 3 s upload `stale_request`;
+  - the earlier tests kept: the breaker's floor (three orgs filling the global 30, a fourth's 5 removals passing, the
+    6th refused; parallel calls at the floor and at the org's edge; any order within 10 an org and 5 × N + 30), the
+    removal through the handler, suspensions at 60 and key revocations at 20 with no-ops uncounted and parallel calls
+    at the edge, a key past its day revoking within its reserve, the console's `revokeKey` at 20 an hour; the
+    freeze-mirror interleaving test untouched and passing.
+  - The test clocks: the objects' clocks never go back, so the helpers keep simulated time monotone too (a request run
+    at a simulated time moves the isolate's `Date.now()` floor there; `ownClock({ monotone: true })` for files that move
+    their clock on by days), and rows-read pins warm the announced keys' list first.
+- **History, briefly.** The first version raised the reserve's share and later gave each org a "slice" paid first,
+  charged to the shared bucket below zero, with partial refunds for no-ops; four review rounds found each piece
+  gameable (a first-come share larger than the reserve; refunds that dropped a share's spent part; the slice outside
+  the global budget; then a refund minting tokens from an entry without its recorded charge), and the second full
+  review found the stale-clock refill (H1, already on `next`: a caller's time moved a bucket's `at` back), that
+  no-op kill switches charged to the shared bucket could starve every org's ordinary calls indefinitely (M1), that
+  there was no hard global ceiling (M2), and a same-millisecond swap that minted 8 tokens (L2). The coordinator's
+  decision: replace the mechanics with this simpler design. Kept from the reviewed parts: the breaker's floor and
+  honest wait, the split stops, the per-key reserve, the console's 20.
+- **After PR 161's third review (2026-11-26)** ("simple and sound enough to merge"; one Medium, two Low), each fixed,
+  with tests (`platform-limits.test.ts` "after PR 161's third review", `scripts/test/gen-wrangler.test.ts`):
+  - **M1, one far-future caller time poisoned an object** (on the nonce object a held nonce accepted again and fresh
+    markers born expired; the console's bucket refilled once then frozen; a key's windows reset early then frozen; a
+    relay's daily `spend` reset early). No production path passes a client-controlled time, but client-derived expiries
+    sit beside the caller time as positional numbers. **Fixed:** the clock takes a caller's time at most 5 s ahead of
+    the object's own `Date.now()` (`CALLER_CLOCK_LEAD_MS`), logging `caller_clock_ahead` at error level (the object's
+    name up to its first `:` and how far ahead, nothing else). The tests lift it through `LIMITER_TRUST_CALLER_CLOCK`
+    (`'1'`), set only in `vitest.config.ts` and honoured only with ENV_NAME `sandbox-test`; `gen-wrangler`'s test holds
+    that no generated config (every manifest in `envs/`, the tests' own) or `.dev.vars` sets it and no manifest is named
+    `sandbox-test`, so a var added by hand to a deployed Worker does nothing (`deploy-check` reads no var but
+    `HANA_BUILD`: `operations.md` says to check the dashboard's vars instead). Tested with the clamp on: a caller time an
+    hour and ten years ahead leaves a nonce replayed, the console's bucket refusing for seconds and a key's minute
+    window refusing for under a minute, and logs. **Follow-up, not done:** times as named fields (`reserve(key, {
+    until, now, notAfter })`) at the ~20 call sites of `reserve`, `reserveNonce` and `charge`, so a swapped pair can't
+    pass silently (the clamp makes a future time harmless; an until swapped for a now still makes a marker expire at
+    once, as before this PR).
+  - **L1, freshness and the marker on two clocks.** A request checked fresh at timestamp + 60 s that reached the nonce
+    object after timestamp + 120 s (a D1 stall of over 60 s between) was taken as new. **Fixed:** `reserveNonce` and
+    `reserve` take a `notAfter`; past it on the object's clock they refuse (`'stale'`, answered `400 stale_request`;
+    `false`, answered as each caller's "already used"). Passed by the platform's nonce (timestamp + 60 s), the session
+    proofs of the identity token, email-sharing consent (`identity/email.ts`), the mainnet demo and gas sponsorship
+    (`issuedAtMs` + the proof window),
+    Home's request counter (its `expiresAtMs`), owner tokens and step-up tokens (their `expMs`). Tested at the object and
+    through the handler with an 11 s D1 stall (a request 50 s old at its checks answered `stale_request`, not a replay).
+  - **L2, a switched-off org's place in the count of 20.** **Chosen: dropped at the switch-off.** `AdminRpc.setPlatformOrg`
+    turning an org off removes it from `platform:kill:orgs` (`platformForgetOrg`, best effort: a failure is logged
+    `kill_orgs_forget_failed`, and the entry lapses within the minute). Tested: 20 orgs counted, a newcomer refused,
+    one switched off by staff, the newcomer admitted at once.
+  - **Notes fixed:** point 6 now says honesty is per limiter stage; "what a stolen platform key can do in an hour" adds
+    cancelling every waiting web address of the organisation (up to 30) (here and `security.md`); `readCapped` clears its
+    timer however the read ends, a rejected read included.
+  - **Recorded, open:** a console `revokeKey` refused by its 20-an-hour quota keeps the global-reserve tokens it took
+    (capped by the org's share of the console's reserve); `giveBackNotCharged` (`evm/sponsor-settle.ts`) is the one undo
+    that can un-count (it gives back units on a window it didn't take them from, if the window is still current); every
+    Durable Object call of the limiter now reads and writes one more row (`clock`).
+- **After PR 161's focused review (2026-11-26)** ("ready to merge"; three Low and notes), each fixed, with tests:
+  - **Peeks no longer mark.** `near/relay.ts`'s in-flight check, `evm/sponsor.ts`'s and `platform/revoke-guard.ts`'s
+    no-op probes used `reserve(key, now, now)`, relying on the marker being born expired; with a caller's clock more
+    than 5 s ahead (clamped) it lived and refused the same request's real mark. Now a read that writes nothing,
+    `marked(key)`. Tested with a caller 8 s ahead of a clamped object: peek then mark succeeds (the old peek blocked it).
+  - **A stale marker answers as stale, not as "already used".** `reserve` lost its `notAfter`; `reserveFresh(key,
+    until, notAfter)` answers `'ok'`, `'used'` or `'stale'`, and each caller its existing code: `stale_proof` with
+    `serverTimeMs` (identity token, email-sharing consent, mainnet demo), `stale_session_proof` with `serverTimeMs` (gas
+    sponsorship, its own existing code), `home_identity_expired` (Home's counter), `token_expired` (owner tokens),
+    `forbidden` "The step-up token is not valid (token_expired)" (step-up, its existing message shape); no new code.
+    A test per call site (the object's `reserveFresh` answering `'stale'`).
+  - **`platformForgetOrg` is awaited in a `try`** (an error before a promise exists is caught too), and the e2e admin
+    lane's limiter passes it (and `reserveFresh`, `marked`) to the real object; the stack's allow-all limiter answers
+    them too.
+  - **Notes:** a manifest named `sandbox-test` is refused by `parseManifest` (every `envs/<name>.json` goes through it;
+    tested); the schema itself still accepts the name, because the apps' fixed test manifests (`TEST_MANIFEST` in each
+    `gen-wrangler`) are parsed by it in their own tests: that is the explicit test-only path. `caller_clock_ahead` is
+    logged at most once a minute per object (tested). "email login" corrected to email-sharing consent above.
+- **Settled by the Tech Lead (2026-11-26):**
+  1. **The cap of 20 organisations with the platform switched on**, as the hard ceiling on the platform's database load
+     (raising it is a code change).
+  2. **Platform publishable key revocations at 20 an organisation a clock hour**, apart from suspensions at 60.
+  3. **The accepted weakness:** one of an organisation's two platform keys, if stolen, can spend the organisation's kill
+     budget (with no-ops) until it is revoked in the portal, holding back the other key's API kill switches; the
+     portal's and staff's stops are unaffected.
+- **To confirm (the Tech Lead):**
+  4. The kill bucket at 2.5 statements a second, burst 44 (about 13 kill switches a minute, 4 at once), no-ops included.
+  5. The breaker's floor at 5 an org a rolling hour, floor calls counted on the global list too.
+  6. Each key's kill-switch reserve at 10 a minute and 100 a UTC day.
+  7. The console's `revokeKey` at 20 an org a clock hour (the recorded decision is about it). A hostile console member
+     can create and revoke 20 keys (console key creation has no quota) and so hold back the owners' console revocations
+     for the rest of the clock hour; owners still have suspend, staff's revoke and the platform's stops. Possible fix:
+     a console key-creation quota.
+  8. The console's other kill switches (suspend, remove) stay under the console's breaker (5 an org, 20 across orgs),
+     so the same class remains there. Recommended next: the same floor for the console.
+  9. The limiters take a caller's time ahead of their own clock by at most 5 s (after PR 161's third review: clamped and
+     logged past that); a stale one is ignored. The tests lift the clamp through `LIMITER_TRUST_CALLER_CLOCK`, honoured
+     only with ENV_NAME `sandbox-test`.
+  10. The body's 5 s, and a request whose body is slower answering `400` (the same for every key id).
+  11. No new alert: refusals use `platform_quota` with the limit's name; the console's past-limit revocation is a warn
+      log. The figures are code constants.
+- **Residual risks.** (a) The 20-organisation ceiling is the platform's whole budget; at 20 the kill switches alone can
+  use 3 000 statements a minute of the hot D1. (b) L1, above. (c) An organisation's own no-ops (a cleanup script) use
+  its kill budget. (d) Each key's 300 fresh nonces a minute still apply to kill switches. (e) The suspension,
+  revocation and console windows are clock hours (up to twice the figure across a boundary). (f) Outside the platform,
+  the limiter's other callers pass their own times, which now only move clocks forward; their refunds (`unhit`,
+  `unhitSliding`) touch only the window still current, so a refund across a window's boundary is dropped (it errs
+  towards counting). (g) The console's own budget still has its reserve and refunds (`consoleAdmit`, `consoleSettle`),
+  now on the monotone clock; not reviewed again here.
+- **Docs:** `api.md`, `security.md`, `operations.md`, `architecture.md`, `platform-guide.md` (section 8's table and off
+  switches, the body rule, the remove, suspend and key sections, section 13's rows; its drift test pins them),
+  `playbooks.md` (through `packages/playbooks`).
+- Address impact: **none.** Limiter state, admission rules and a staff switch's cap; nothing touches the contract, a
+  key, a path or an address derivation.

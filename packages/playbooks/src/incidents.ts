@@ -1274,10 +1274,11 @@ const platformQuota: Playbook = {
   severity: 'warning',
   status: 'live',
   summary:
-    "A `platform_quota` security event: a network's backend, signing with its platform key, was refused by one of its organisation's limits for the first time in a clock hour (`limit`: `platform:creations:hour` or `:day` for new apps, `platform:proposals:hour` or `:day` for web addresses asked for, `platform:keys:hour` or `:day` for publishable keys; the key in `keyId`). It is written once an hour per limit; the requests past the limit were refused (`429 rate_limited`), nothing was written for them.",
+    "A `platform_quota` security event: a network's backend, signing with its platform key, was refused by one of its organisation's limits for the first time in a clock hour (`limit`: `platform:creations:hour` or `:day` for new apps, `platform:proposals:hour` or `:day` for web addresses asked for, `platform:keys:hour` or `:day` for publishable keys, `platform:suspensions:hour` for suspensions, `platform:key-revokes:hour` for publishable key revocations, `platform:breaker_org` or `platform:breaker_global` for web address removals, `platform:budget_kill` for an organisation's off-switch budget (about 13 a minute, repeats that change nothing included), `platform:kill_orgs` when more than 20 organisations' off switches arrive in a minute, `kill:minute` or `kill:day` for a key whose kill-switch reserve is used up too; the key in `keyId`). It is written once an hour per limit; the requests past the limit were refused (`429 rate_limited`), nothing was written for them.",
   signals: ["A `platform_quota` row in the admin's security events, emailed by the feed: the organisation, `limit`, `keyId` and the hour (`windowStart`). The organisation's Platform keys panel lists the calls (Activity) with the refused ones as “Limit reached”."],
   impact: [
-    'The network can’t create apps, ask for web addresses or make publishable keys until the window passes. Its apps keep working; its kill switches (remove, suspend, revoke) are not counted by these limits.',
+    'For the creation, address and key-creation limits: the network can’t create apps, ask for web addresses or make publishable keys until the window passes. Its apps keep working, and its off switches don’t count against those limits.',
+    'For `platform:suspensions:hour`, `platform:key-revokes:hour`, `platform:breaker_*`, `platform:budget_kill`, `platform:kill_orgs` or `kill:*` the network’s own off switches were refused: its owners can still stop things in the partner portal, and staff here. Other organisations can’t cause these for it (each org’s first 5 removals an hour pass the global count, and each org’s off-switch budget is its own, D935), except `platform:kill_orgs`, which means more than 20 organisations’ off switches arrived in a minute: check that no more than 20 have the platform switched on; a `platform:breaker_global` means several organisations removed web addresses at once: look at each one’s Activity.',
     'A burst can be a normal onboarding day, a bug in the network’s backend retrying, or someone else using its key.',
     'How urgent: today.',
   ],
@@ -1289,7 +1290,7 @@ const platformQuota: Playbook = {
   ],
   verify: ['No further `platform_quota` row for the organisation in the next hours, and the Activity shows calls at the usual rate.'],
   followUps: ['Note the cause in the decision log if a limit was raised.'],
-  refs: ['D929', 'D930', 'docs/operations.md#platform-app-operations-hot-db-migration-0033-d929'],
+  refs: ['D929', 'D930', 'D935', 'docs/operations.md#platform-app-operations-hot-db-migration-0033-d929'],
   related: ['platform-auth-failures'],
 };
 

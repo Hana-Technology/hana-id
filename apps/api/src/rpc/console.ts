@@ -50,6 +50,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
 import { getApp, listApps, listChanges } from '../changes/apps.ts';
 import { refuse } from '../changes/cas.ts';
+import { withKeyRevokeQuota } from '../changes/guard.ts';
 import { createKey, revokeKey, rotateKey } from '../changes/keys.ts';
 import { cancelChange, cancelChangeByLink } from '../changes/lifecycle.ts';
 import { changeOrigins, frameOnlyOrigins, removeOrigins } from '../changes/origins.ts';
@@ -333,7 +334,10 @@ export class ConsoleRpc extends WorkerEntrypoint<Env> {
   }
 
   revokeKey(c: unknown) {
-    return runRpc(this.env, 'revokeKey', revokeKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokeKey, killSwitch: true, breaker: true }, ({ input, db, w }) => revokeKey(db, w, input));
+    // D935: a kill switch outside the breaker, held to its org's own revocations a clock hour (changes/guard.ts).
+    return runRpc(this.env, 'revokeKey', revokeKeyInput, c, { actors: MEMBER, cost: CONSOLE_COSTS.revokeKey, killSwitch: true }, ({ input, db, w }) =>
+      withKeyRevokeQuota(this.env, w, input.orgId, () => revokeKey(db, w, input)),
+    );
   }
 
   /**

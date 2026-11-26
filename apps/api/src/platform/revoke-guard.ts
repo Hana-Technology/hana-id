@@ -68,9 +68,9 @@ export async function admitRevoke(env: Env, a: { orgId: string; userId: string; 
     log({ event: 'rpc_admit', method: a.method, requestId: a.requestId, orgId: a.orgId, outcome: 'rejected', code: 'revoke_org_limit' }, 'error');
     throw new RpcRefusal('rate_limited', 'Too many stops in this organisation just now: try again in a minute');
   }
-  // A marker probe (`reserve` is a test-and-set: false while an earlier no-op's marker lasts; true leaves one that ends now).
+  // A marker probe: a read that writes nothing (D935 after PR 161's focused review).
   const key = keyObj(env, a.orgId, a.keyId);
-  const seen = !(await key.reserve('noop:conflict', now, now)) ? 'conflict' : !(await key.reserve('noop:not_found', now, now)) ? 'not_found' : null;
+  const seen = (await key.marked('noop:conflict', now)) ? 'conflict' : (await key.marked('noop:not_found', now)) ? 'not_found' : null;
   if (seen) {
     log({ event: 'rpc_admit', method: a.method, requestId: a.requestId, orgId: a.orgId, outcome: 'rejected', code: 'revoke_noop_repeat' });
     throw new RpcRefusal(seen, NOOP_ANSWER[seen]);

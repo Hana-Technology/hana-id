@@ -202,7 +202,9 @@ can't be used again once it has been answered (the one exception is under "The n
 
 - **Methods:** `GET` and `POST` only (anything else: `405`).
 - **A `POST`** has `content-type: application/json` (optionally `; charset=utf-8`), a body of at most **16 KiB** of
-  UTF-8 JSON that is an object (send `{}` when there is nothing to say), no `content-encoding`, and no query.
+  UTF-8 JSON that is an object (send `{}` when there is nothing to say), no `content-encoding`, and no query. Send the
+  body at once: one that hasn't all arrived 5 seconds after the request is refused (`400 bad_request`), and the
+  timestamp must still be within 60 seconds of Journear's clock once the body is in.
 - **A `GET`** has no body, no content type and no `Idempotency-Key`.
 - **The path** is `/v1/platform/` followed by plain segments of letters, digits, `_` and `-`: no empty segment, no
   `.` or `..`, no percent-encoding, no trailing slash.
@@ -961,7 +963,9 @@ All limits are provisional and kept low while you have few partners. Journear ca
 | Web address removals | 10 an hour per organisation and 30 an hour across every organisation; your first 5 in any hour always pass, whatever other organisations did | `429`, `platform:breaker_org`, `platform:breaker_global` ("ask Journear security") |
 | Suspending an app | 60 an hour per organisation, counting only those that changed something; never limited by other organisations | `429`, `platform:suspensions:hour` |
 | Revoking a publishable key | 20 an hour per organisation, counting only those that changed something; never limited by other organisations | `429`, `platform:key-revokes:hour` |
-| Journear's database budget | per organisation and shared | `429`, `platform:budget_org`, `platform:budget_platform`, `platform:budget_shared`, `platform:budget_reserve` |
+| Off switches' database budget, per organisation | about 13 off switches a minute (4 at once), for every off switch together, repeats that change nothing included; no other organisation can use it | `429`, `platform:budget_kill` |
+| Journear's database budget for everything else | per organisation and shared | `429`, `platform:budget_org`, `platform:budget_platform`, `platform:budget_shared` |
+| Organisations using off switches through the API in one minute | 20 (the most that can have the platform switched on) | `429`, `platform:kill_orgs` (stop things in the partner portal; tell Journear) |
 | Self-revokes | 10 a minute per key | `429`, `platform:key:revoke:minute` |
 
 Clock hours and UTC days are fixed windows; the removal limit is a rolling hour (the last 60 minutes). A refused or
@@ -975,21 +979,27 @@ same moment may both use a unit ([section 6](#6-retries-idempotency-and-versions
 for an hour or a day window, queue the work and tell your team. The removal limit (the "breaker") protects against a
 runaway script or a stolen key signing people out: if you hit it, stop and talk to Journear.
 
-**Your off switches** (remove, cancel, suspend, revoke a publishable key) are built to keep working when other limits
-are full:
+**Your off switches** (remove, cancel, suspend, revoke a publishable key) have a budget of their own, and keep
+working when other limits are full:
 
-- **Other organisations can't use them up.** Your first 5 removals in any hour pass even when the limit across every
-  organisation is full. Suspending and revoking a publishable key aren't counted by that limit at all: they have your
-  organisation's own limits (60 suspensions and 20 revocations an hour). Cancelling a waiting address counts against
-  none of these.
+- **One budget for all of them, about 13 a minute.** Your organisation's off switches share one database budget: about
+  13 a minute, 4 at once. Everything counts against it, repeats that change nothing too: a cleanup script suspending
+  apps that are already suspended uses it up just as real stops do. Send each off switch once, and read the app first
+  if you aren't sure.
+- **Other organisations can't use it, and it never slows your other calls.** No other organisation's calls, ordinary or
+  off switches, touch your budget, and your off switches don't use the budget of your ordinary calls.
+- **Other organisations can't use up your removals.** Your first 5 removals in any hour pass even when the limit across
+  every organisation is full. Suspending and revoking a publishable key aren't counted by that limit at all: they have
+  your organisation's own limits (60 suspensions and 20 revocations an hour). A revocation can't be undone, so it has
+  the lower limit: in an emergency, suspend the app first (it stops everything at once and can be undone), then
+  revoke keys. Cancelling a waiting address counts against none of these.
 - **A key that used up its requests can still stop things.** Past its 60 a minute or 2,000 a day, a key still has 10
   off switches a minute and 100 a UTC day of its own. Ordinary calls stay refused.
-- **They have database budget of their own**: your organisation gets 13 off switches a minute (4 at once) that
-  no other organisation can use, whatever others do. Past those, they share a small reserve with every organisation,
-  and one may wait for `retry-after` (seconds, at most a minute). Off switches go first: while several organisations
-  use theirs at once, your ordinary calls may get `429` `platform:budget_platform` for up to about half a minute.
-- **Not exempt from everything:** each key's 300 nonces a minute, your organisation's own database budget and the
-  limits above still apply. Only the key's self-revoke skips those.
+- **Not exempt from everything:** each key's 300 nonces a minute and the limits above still apply. Only the key's
+  self-revoke skips those.
+- **If one of your two keys is stolen**, whoever holds it can spend your organisation's off-switch budget (with repeats
+  that change nothing) and so hold back your other key's off switches through the API. Stop the stolen key in the
+  partner portal; the portal's stops and Journear's never use this budget.
 
 If your key's own windows are full in an emergency, use your standby key, or stop things in the partner portal, which
 these limits don't touch.
@@ -1165,7 +1175,8 @@ is live.
 | `rate_limited` with `platform:breaker_org` or `platform:breaker_global` | 429 | Too many web addresses removed this hour (yours, or, past your first 5, across every organisation) | Stop and talk to Journear; suspending the app still works |
 | `rate_limited` with `platform:suspensions:hour` | 429 | Your organisation suspended apps 60 times this hour | Wait `retry-after`; owners can still stop things in the partner portal |
 | `rate_limited` with `platform:key-revokes:hour` | 429 | Your organisation revoked 20 publishable keys this hour | Suspend the app instead (it stops at once), and revoke the rest after `retry-after`; owners can still revoke keys in the partner portal |
-| `rate_limited` with `platform:budget_reserve` | 429 | Your organisation used its own off-switch budget (13 a minute) and then its share of the shared reserve | Wait `retry-after` (under a minute) |
+| `rate_limited` with `platform:budget_kill` | 429 | Your organisation used its off-switch budget (about 13 a minute, 4 at once), repeats included | Wait `retry-after` (seconds); send each off switch once; in an emergency, stop things in the partner portal |
+| `rate_limited` with `platform:kill_orgs` | 429 | Journear can take off switches through the API from at most 20 organisations a minute | Stop things in the partner portal and tell Journear |
 | `rate_limited` with `platform:key:kill:minute` or `platform:key:kill:day` | 429 | This key used up its requests and then its off-switch reserve | Use your standby key, or stop things in the partner portal |
 | `internal` | 500 | Something failed on Journear's side | Retry with backoff (same Idempotency-Key); if it persists, send Journear the request id |
 | `rate_limiter_unavailable` | 503 | Journear's limiter didn't answer | Retry after a few seconds |

@@ -258,6 +258,7 @@ describe('docs/platform-guide.md', () => {
     expect(Math.floor((60 * PLATFORM_LIMITS.kill.ratePerS) / costliest)).toBe(13);
     expect(Math.floor(PLATFORM_LIMITS.kill.burst / costliest)).toBe(4);
     expect(PLATFORM_LIMITS.maxOrgs).toBe(20);
+    expect(L.bodyDeadlineMs).toBe(5000);
     expect([PLATFORM_CLOCK_SKEW_MS, PLATFORM_BODY_MAX]).toEqual([60_000, 16 * 1024]);
     const O = PLATFORM_OPS_LIMITS;
     expect([O.creationsPerHour, O.proposalsPerHour, O.waitingPerOrg, O.keyCreationsPerHour, O.keyCreationsPerDay, O.listPage, O.suspensionsPerHour, O.keyRevokesPerHour]).toEqual([2, 20, 30, 20, 50, 50, 60, 20]);
@@ -278,8 +279,11 @@ describe('docs/platform-guide.md', () => {
       '`platform:key:kill:minute`, `platform:key:kill:day`',
       '`platform:suspensions:hour`',
       '`platform:key-revokes:hour`',
-      'your organisation gets 13 off switches a minute (4 at once)',
-      'no other organisation can use, whatever others do',
+      'about 13 off switches a minute (4 at once), for every off switch together, repeats that change nothing included',
+      'about\n  13 a minute, 4 at once',
+      '`platform:budget_kill`',
+      '`platform:kill_orgs`',
+      'one that hasn\'t all arrived 5 seconds after the request is refused',
     ]) {
       expect(guide, s).toContain(s);
     }

@@ -60,7 +60,7 @@ export interface OtherApps {
   names: string[];
 }
 /**
- * P11 (D934): where the page that uses the wallet (the vault's parent, `parentOrigin`) sits, as the vault checked it
+ * Where the page that uses the wallet (the vault's parent, `parentOrigin`) sits, as the vault checked it
  * itself, never as a page or the SDK said: absent when the parent is the top-level page (the window shows it, as
  * before). `{ top }`: the parent is framed, and the browser's `location.ancestorOrigins` names the top-level page, the
  * address in the browser's bar (every ancestor is one of the app's web addresses: the vault refuses any other).
@@ -1044,7 +1044,7 @@ export interface WindowMessageMap {
      * Never beside `otherApps`.
      */
     otherAppsUnknown?: true;
-    /** P11 (D934): where the page asking sits (FrameSite), only when it is framed. */
+    /** Where the page asking sits (FrameSite), only when it is framed. */
     frame?: FrameSite;
   };
   /**
@@ -1190,7 +1190,7 @@ export interface WindowMessageMap {
      * Never beside `otherApps`.
      */
     otherAppsUnknown?: true;
-    /** P11 (D934): where the page asking sits (FrameSite), only when it is framed. */
+    /** Where the page asking sits (FrameSite), only when it is framed. */
     frame?: FrameSite;
   };
   'hana:approve-result': { id: string; approved: boolean; digest: Uint8Array };
@@ -1221,7 +1221,7 @@ export interface WindowMessageMap {
      * the vault's build pins, so an app without a logo sends exactly the message older pages take.
      */
     logoUrl?: string;
-    /** P11 (D934): where the page asking sits (FrameSite), only when it is framed. */
+    /** Where the page asking sits (FrameSite), only when it is framed. */
     frame?: FrameSite;
   };
   /**
@@ -1254,7 +1254,7 @@ export interface WindowMessageMap {
     otherApps?: OtherApps;
     /** As in hana:approve-request. */
     otherAppsUnknown?: true;
-    /** P11 (D934): where the page asking sits (FrameSite), only when it is framed. */
+    /** Where the page asking sits (FrameSite), only when it is framed. */
     frame?: FrameSite;
   };
   /** Approval popup → vault: Allow (guarded like Approve) or Decline, with consentDigest of what it rendered. */
@@ -1281,7 +1281,7 @@ export interface WindowMessageMap {
     sealedEmail: string;
     proof: { sessionPublicKey: Uint8Array; issuedAtMs: number; nonce: Uint8Array; signature: Uint8Array };
     logoUrl?: string;
-    /** P11 (D934): where the page asking sits (FrameSite), only when it is framed. */
+    /** Where the page asking sits (FrameSite), only when it is framed. */
     frame?: FrameSite;
   };
   /** Vault → the sheet: nothing to ask (already answered, sharing off, no address): the window closes. */

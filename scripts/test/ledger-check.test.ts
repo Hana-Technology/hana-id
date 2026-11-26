@@ -489,6 +489,22 @@ describe('ledger-check: a snapshot taken at any level from 0021 to 0026 (D924)',
     expect(levelOf(['9999_foreign.sql'], FILES)).toBeUndefined();
   });
 
+  it('D934: 0035 (a column and two triggers on app_origins) leaves the ledger as it was: a snapshot at 0034 compared after 0035 is identical, nothing missing, unexpected or changed', async () => {
+    const db = populated('0027');
+    applyRange(db, '0027', '0035');
+    const to34 = FILES.filter((f) => f < '0035');
+    const at34 = { ...(await snap(db)), applied: to34 };
+    applyRange(db, '0035', '0036');
+    const to35 = FILES.filter((f) => f < '0036');
+    const at35 = { ...(await snap(db)), applied: to35 };
+    const ref = (applied: readonly string[]) => referenceSchema(MIGRATIONS_DIR, levelOf(applied, FILES));
+    const c = compareSnapshots(at34, at35, ref(to35), ref(to34));
+    expect(c.verdict, c.lines.join('\n')).toBe('identical');
+    expect(c.lines.join('\n')).not.toMatch(/MISSING|UNEXPECTED|CHANGED|Replaced/u);
+    for (const t of LEDGER_TABLES) expect(at35.tables[t.name]!.sha256, t.name).toBe(at34.tables[t.name]!.sha256);
+    expect(levelOf(to35, FILES)).toBe(file('0035'));
+  });
+
   it('from 0021: every damaged copy of 0027 is still a rollback', async () => {
     for (const [what, mutate, finding] of BROKEN) {
       const db = populated('0022');

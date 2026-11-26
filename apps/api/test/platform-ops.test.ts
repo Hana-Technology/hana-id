@@ -340,6 +340,30 @@ describe('POST /v1/platform/apps (A4.4)', () => {
     expect([r.status, r.body.limit]).toEqual([429, 'platform:waiting_origins']);
     expect((await create(net.k, { scopeId: net.s2, name: 'Second', origins: Array.from({ length: 10 }, (_, i) => `https://x${i}.example`) })).status).toBe(201);
   });
+
+  it('a name with a lone surrogate (a JSON "\\ud800" escape in the body): 400 bad_request, nothing written (PR 160’s review)', async () => {
+    const net = await network();
+    const before = await written();
+    const r = await create(net.k, { scopeId: net.s1, name: 'Bad \ud800 Swap' });
+    expect([r.status, r.body.code], JSON.stringify(r.body)).toEqual([400, 'bad_request']);
+    expect(await written()).toEqual(before);
+  });
+
+  it('a proposal past the 30 waiting: `429 platform:waiting_origins` with the hour to wait, before any quota unit (not version_conflict; after PR 160’s review, M1)', async () => {
+    const net = await network();
+    await createdApp(net, Array.from({ length: 20 }, (_, i) => `https://w${i}.example`));
+    const b = await createdApp(net, [], { scope: net.s2 });
+    const before = await written();
+    // One clock for both, so a refusal that took 11 proposal units would leave the 10 past the hour's 20.
+    const now = freshNow();
+    const add = (n: number) => post(net.k, `/v1/platform/apps/${b.id}/origins`, { add: Array.from({ length: n }, (_, i) => `https://y${i}.example`), expectedVersion: b.version }, { now });
+    const r = await add(11);
+    expect([r.status, r.body.code, r.body.limit, r.body.retryAfterS], JSON.stringify(r.body)).toEqual([429, 'rate_limited', 'platform:waiting_origins', 3600]);
+    expect(r.headers.find(([k]) => k === 'retry-after')?.[1]).toBe('3600');
+    expect(await written()).toEqual(before);
+    const ok = await add(10);
+    expect(ok.status, JSON.stringify(ok.body)).toBe(202);
+  });
 });
 
 // ---- reads ----
@@ -638,12 +662,17 @@ describe('POST /v1/platform/apps/:appId/origins and …/origins/remove', () => {
     let vb = b.version;
     const add = async (app: string, v: number, k: number, from: number, now: number) => post(net.k, `/v1/platform/apps/${app}/origins`, { add: Array.from({ length: k }, (_, i) => `https://p${from + i}.example`), expectedVersion: v }, { now });
     expect((await add(a.id, va + 9, 2, 0, base)).body.code).toBe('version_conflict'); // refused: not counted
-    expect((await add(a.id, va++, 15, 0, base + 1000)).status).toBe(202);
+    const first = await add(a.id, va++, 15, 0, base + 1000);
+    expect(first.status).toBe(202);
     expect((await add(a.id, va, 5, 100, base + 2000)).status).toBe(202);
     va++;
     const over = await add(b.id, vb, 1, 200, base + 3000);
     expect([over.status, over.body.limit]).toEqual([429, 'platform:proposals:hour']);
     expect((await add(b.id, vb++, 10, 300, base + HOUR)).status).toBe(202);
+    // 30 now wait across the org: one cancelled, so the next is held by the day's window, not the waiting cap (which the
+    // plan read checks first since PR 160's review, M1).
+    const one = (first.body.changes as { changeId: string }[])[0]!.changeId;
+    expect((await post(net.k, `/v1/platform/changes/${one}/cancel`, {}, { now: base + HOUR + 500 })).status).toBe(200);
     const day = await add(b.id, vb, 1, 400, base + HOUR + 1000);
     expect([day.status, day.body.limit]).toEqual([429, 'platform:proposals:day']);
     while (freshNow() < base + 3 * HOUR);
@@ -1051,7 +1080,7 @@ describe('each route within its D1 cost (statements and rows read)', () => {
       'GET /v1/platform/apps': 420, // measured 352: ten apps, their 200 web addresses and 50 keys, once each
       'GET /v1/platform/apps/:appId': 50, // 39
       'POST /v1/platform/apps': 300, // 249: the org's apps and waiting proposals counted, the scope's apps for the names
-      'POST /v1/platform/apps/:appId/origins': 250, // 202: the org's waiting proposals counted
+      'POST /v1/platform/apps/:appId/origins': 330, // 277: the org's waiting proposals counted twice (the plan read's cap check, after PR 160's review, M1; the commit predicate)
       'POST /v1/platform/apps/:appId/origins/remove': 90, // 69
       'POST /v1/platform/changes/:changeId/cancel': 50, // 40
       'POST /v1/platform/apps/:appId/suspend': 30, // 23

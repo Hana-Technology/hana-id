@@ -6,7 +6,7 @@ sign-in with Google or email with a switch. This page says what works today, wha
 the risks and the questions to settle with Sodax. Decisions: D909, D913 and D923 in `decisions.md`. The build spec
 for the portal connection (the platform API) and per-app User IDs: `partner-platform-spec.md`.
 
-Last verified: 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
+Last verified: 2026-11-26 (branch `docs/platform-guide`, after PRs 158 and 159 merged: "Open" and section 12, the Tech Lead's settled module id and approved P11 and P12, D923, D926); 2026-11-26 (branch `docs/platform-guide`, from `feat/owner-confirmation`, not merged, docs only: the summary's portal-switch row and a pointer at the top of section 3 to `platform-guide.md`, D932; no other text changed); 2026-11-26 (branch `docs/confirmations-1126`, docs only: the fork's Actions switched off and its commit email, the worked example's branch pushed to the sample repository, D928; no other text changed); 2026-11-25 (branch `feat/app-user-linking`, from `next`, not merged, not deployed: section 4's item 2, the linking built, D925); 2026-11-25 (branch `docs/sodax-decisions`, from `next`, not merged, docs only: the Tech Lead's
 answers to D923 (D926): the fork holding the Stellar change (section 2, "The Stellar change, on our fork"), the
 widget decided as one app per partner (section 12), switching off decided, the worked example's home (section 2), "Open";
 nothing else re-checked); 2026-11-25 (branch `chore/tidy-1125`, from `next`, not merged, not deployed: "Chains", the window's details
@@ -49,7 +49,7 @@ talked to Sodax (D913); the spec is `partner-platform-spec.md`.
 | Inside Sodax's swap widget (an iframe on the partner's page) | **Works only if every page around the widget is a registered web address of the app**; decided: one app per partner listing the widget's address and the partner's pages (D926); the approval window names the widget's address, not the partner's page (section 12) |
 | Sodax's built-in Hana Wallet entries | Sodax's "Hana" calls also catch our Stellar module (`hana-id`); hosts can now pick another id (`journear-passport`, D923; section 11) |
 | One wallet across partner sites | **Works** (one scope); the sign-in and approval windows say the wallet is also used on other apps (D912) |
-| A switch in Sodax's portal | **Missing**: no service-to-service API exists; apps are made by Journear staff |
+| A switch in Sodax's portal | **Built, not deployed or switched on**: the platform API (`partner-platform-spec.md`), with the guide for Sodax's backend team, `platform-guide.md` (section 3) |
 | Our SDK on npm | **No** (tarballs, D706) |
 | Real swaps for Sodax partners | Only through the staff-only mainnet demo (Base and Stellar, $9.99 a transaction); real launch needs live keys |
 | Sodax's chains | EVM chains (all 14 named in our windows, D910) and Stellar covered; Solana, Sui, Bitcoin, Injective, ICON and Stacks planned (below); NEAR: not planned for the swap |
@@ -182,6 +182,11 @@ public npm (or a private registry), the licence of `@hana-id/core` (BUSL today, 
 a protected environment, and removing `"private": true` (`operations.md`, "Publishing: what is left to enable it").
 
 ## 3. The portal switch: what our side lacks
+
+**Since 2026-11-25 (not deployed, not switched on for any organisation):** the platform API below is built
+(`partner-platform-spec.md`, its status line), and `platform-guide.md` is the guide for Sodax's backend team (keys,
+signing, every endpoint, the wait and the owner's confirmation, limits, the toggle recipe). The rest of this section
+is the first design note, kept as it was written; where they differ, the guide and `api.md` are current.
 
 **Today** no other company's backend can create an app, set its web addresses, read its key or switch it off:
 
@@ -411,10 +416,11 @@ recommendation, to be adjusted after the talk with Sodax. Still open:
 - D923's points answered by the Tech Lead (2026-11-25, D926): the Stellar change goes on a public fork in the
   Hana-Technology org, a pull request "later if needed" (section 2); one app per partner, including for the widget
   (section 12); the example lives in the sample-partner repository; switching off doesn't sign users out.
-- Still to confirm (the Tech Lead), from D923, not yet put: keep `hana-id` as the default Stellar module id with the
-  `productId` option for hosts (section 11); no EVM change, the production domain decides it (section 11).
-- Proposed, not decided (D926): pieces P11 (the partner's page in our windows) and P12 (the widget's origin only as a
-  frame) in `partner-platform-spec.md`'s build plan.
+- Settled by the Tech Lead (2026-11-26, D923): `hana-id` stays the default Stellar module id, with `journear-passport`
+  offered through the `productId` option for hosts (section 11). Still to confirm: no EVM change, the production
+  domain decides it (section 11).
+- Approved by the Tech Lead (2026-11-26, D926), to build: pieces P11 (the partner's page in our windows) and P12 (the
+  widget's origin only as a frame) in `partner-platform-spec.md`'s build plan.
 
 ## 10. Sodax's public source
 
@@ -543,6 +549,6 @@ works, because the widget's origin is registered for every partner's app, so any
 
 **Decided: D** (the Tech Lead, 2026-11-25: "ok", D926): one app per partner, also for Sodax's widget; each partner's
 app lists the widget's address and the partner's own pages (`partner-platform-spec.md` A10, A13). The two changes are
-**proposed, not decided**, as later pieces P11 and P12 of that spec's build plan; P12's reason (anyone can open the
+**approved** (the Tech Lead, 2026-11-26, D926), to build as pieces P11 and P12 of that spec's build plan; P12's reason (anyone can open the
 widget top-level with a partner's settings and get that partner's app) was read in our code and inferred, not
 tested.

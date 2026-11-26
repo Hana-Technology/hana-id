@@ -59,6 +59,17 @@ describe('isDisplaySafeText / isDisplaySafeLine', () => {
     expect(isDisplaySafeLine(`a${c}b`)).toBe(false);
   });
 
+  it('refuses a lone surrogate (half of a UTF-16 pair) in both, and keeps a well-formed pair (after PR 160’s review)', () => {
+    for (const c of ['\ud800', '\udbff', '\udc00', '\udfff', '\ud83d', '\ude80']) {
+      expect(isDisplaySafeText(`Bad ${c} Swap`)).toBe(false);
+      expect(isDisplaySafeLine(`Bad ${c} Swap`)).toBe(false);
+      expect(displaySafeLine(`Bad ${c} Swap`)).toBe('Bad ? Swap');
+    }
+    // A JSON escape carries one in, as a platform or console body would.
+    expect(isDisplaySafeLine(JSON.parse('"Bad \\ud800 Swap"') as string)).toBe(false);
+    expect(isDisplaySafeLine('\ud83d\ude80 Launch')).toBe(true);
+  });
+
   it('allows tab, LF and CR in multi-line text only', () => {
     for (const c of ['\t', '\n', '\r']) {
       expect(isDisplaySafeText(`a${c}b`)).toBe(true);
@@ -113,13 +124,14 @@ describe('the shared module (D904): the same rule as before, on every code point
   const OLD_MULTILINE = new RegExp(String.raw`[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f${OLD_INVISIBLE}]`, 'u');
   const OLD_LINE = new RegExp(String.raw`[\p{Cc}${OLD_INVISIBLE}]`, 'u');
 
-  it('accepts and refuses exactly what the old patterns did, alone and inside text, lone surrogates included', () => {
+  it('accepts and refuses exactly what the old patterns did, alone and inside text, but for lone surrogates, now refused (PR 160’s review)', () => {
     const differ: string[] = [];
     for (let cp = 0; cp <= 0x10ffff; cp++) {
-      const c = cp >= 0xd800 && cp <= 0xdfff ? String.fromCharCode(cp) : String.fromCodePoint(cp);
+      const lone = cp >= 0xd800 && cp <= 0xdfff;
+      const c = lone ? String.fromCharCode(cp) : String.fromCodePoint(cp);
       for (const s of [c, `a${c}b`]) {
-        if (isDisplaySafeText(s) !== !OLD_MULTILINE.test(s)) differ.push(`text U+${cp.toString(16)}`);
-        if (isDisplaySafeLine(s) !== !OLD_LINE.test(s)) differ.push(`line U+${cp.toString(16)}`);
+        if (isDisplaySafeText(s) !== (!lone && !OLD_MULTILINE.test(s))) differ.push(`text U+${cp.toString(16)}`);
+        if (isDisplaySafeLine(s) !== (!lone && !OLD_LINE.test(s))) differ.push(`line U+${cp.toString(16)}`);
       }
     }
     expect(differ).toEqual([]);

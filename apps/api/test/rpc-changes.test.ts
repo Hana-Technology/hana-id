@@ -280,6 +280,16 @@ describe('cancel', () => {
 });
 
 describe('waivers', () => {
+  it('createApp refuses a name with a lone surrogate (PR 160’s review), nothing written', async () => {
+    const org = newOrg();
+    await ok(adminRpc().setSecurityContacts({ ...hana(), orgId: org, emails: ['sec@partner.example'] }));
+    scopeChain(['owner-sub-1']);
+    const scopeId = `s${uid()}`;
+    const r = await adminRpc().createApp({ ...hana(), orgId: org, scopeId, environment: 'test', name: 'Bad \ud800 Swap', origins: [], orgOwnerSubs: ['owner-sub-1'] });
+    expect(r).toMatchObject({ ok: false, code: 'bad_request' });
+    expect(await env.DB.prepare('SELECT COUNT(*) AS c FROM apps WHERE org_id = ?1').bind(org).first<{ c: number }>()).toEqual({ c: 0 });
+  });
+
   it('no_session for createApp’s initial origins on a scope it created, while no user has a key there', async () => {
     const org = newOrg();
     await ok(adminRpc().setSecurityContacts({ ...hana(), orgId: org, emails: ['sec@partner.example'] }));
@@ -660,6 +670,8 @@ describe('settings', () => {
     expect(await s({ sessionTtlMs: 59 * 60 * 1000 })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ idleTtlMs: 13 * HOUR })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ name: 'Bad‮name' })).toMatchObject({ ok: false, code: 'bad_request' });
+    // A lone surrogate (a JSON "\ud800" escape): refused like any invisible character (PR 160's review).
+    expect(await s({ name: 'Bad \ud800 Swap' })).toMatchObject({ ok: false, code: 'bad_request' });
     expect(await s({ name: 'x'.repeat(65) })).toMatchObject({ ok: false, code: 'bad_request' });
     // The service's names (D686 as extended by D765): "Hana", "Journear" and look-alikes, "Passport Home".
     for (const name of ['Hana Pay', 'Journear', 'J0urnear', 'JOURNEAR', 'journear-pay', `J${String.fromCharCode(0x043e)}urnear`, 'Passport Home']) {

@@ -5,6 +5,7 @@
 // - format characters (Cf): bidi controls and isolates, zero-width characters, U+00AD, U+061C, U+180E, U+206A–U+206F,
 //   U+FEFF, U+FFF9–U+FFFB, the tag characters U+E0000–U+E007F, U+1D173–U+1D17A, …;
 // - private use (Co), and line and paragraph separators (Zl, Zp);
+// - a lone surrogate (Cs), half of a UTF-16 pair with no other half;
 // - the other default-ignorable code points: U+034F, the Hangul fillers U+115F, U+1160, U+3164 and U+FFA0, U+17B4,
 //   U+17B5, the Mongolian selectors U+180B–U+180F, and every variation selector (U+FE00–U+FE0F, U+E0100–U+E01EF).
 // Unassigned code points (Cn) aren't refused: what is unassigned depends on the engine's Unicode version, and the
@@ -15,8 +16,10 @@
 // The invisible characters, as the body of a character class (for a `u` RegExp): format characters (bidi controls,
 // zero-width characters, tags), private use, line and paragraph separators, and the other default-ignorable code points
 // (the combining grapheme joiner, the Hangul fillers, the Khmer inherent vowels, the Mongolian selectors, every
-// variation selector). Controls are not in it: each rule says which ones it allows.
-const INVISIBLE_CHARS = String.raw`\p{Cf}\p{Co}\p{Zl}\p{Zp}\u{34f}\u{115f}\u{1160}\u{17b4}\u{17b5}\u{180b}-\u{180f}\u{3164}\u{fe00}-\u{fe0f}\u{ffa0}\u{e0100}-\u{e01ef}`;
+// variation selector). Controls are not in it: each rule says which ones it allows. Also a lone surrogate (Cs: in a `u`
+// RegExp a well-formed pair is one code point, so only a half pair matches), which a JSON `\ud800` escape can carry
+// into a string and no UTF-8 can encode (after PR 160's review: an app named "Bad \ud800 Swap" was accepted).
+const INVISIBLE_CHARS = String.raw`\p{Cf}\p{Co}\p{Cs}\p{Zl}\p{Zp}\u{34f}\u{115f}\u{1160}\u{17b4}\u{17b5}\u{180b}-\u{180f}\u{3164}\u{fe00}-\u{fe0f}\u{ffa0}\u{e0100}-\u{e01ef}`;
 
 // The controls multi-line text may not hold, as a character-class body: every one but tab, LF and CR.
 const CONTROLS_BUT_TAB_LF_CR = String.raw`\u{0}-\u{8}\u{b}\u{c}\u{e}-\u{1f}\u{7f}-\u{9f}`;

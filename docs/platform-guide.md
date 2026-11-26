@@ -10,7 +10,9 @@ Last verified: 2026-11-26 (web addresses marked `frameOnly`), against the platfo
 deployed anywhere yet); 2026-11-26 again for the off switches' limits (section 8: each organisation's own budget for
 its off switches, about 13 a minute; the removal limit's per-organisation floor; suspensions and key revocations
 outside it with limits of their own; each key's reserve for off switches; the body sent at once; a `stale_request`
-after a delay); 2026-11-26 again for the toggle off and on (section 10: one EIP-6963 entry per page).
+after a delay); 2026-11-26 again for the toggle off and on (section 10: one EIP-6963 entry per page); 2026-11-26 again
+for section 8's database budget for everything else (the partner portal's traffic no longer uses it, so its refusal
+names one limit fewer).
 
 > **Not available yet.** The platform API is built and tested, but it is **not deployed** in any environment and
 > **not switched on** for any organisation. Journear switches it on per organisation. The API's address and the
@@ -965,7 +967,7 @@ All limits are provisional and kept low while you have few partners. Journear ca
 | Suspending an app | 60 an hour per organisation, counting only those that changed something; never limited by other organisations | `429`, `platform:suspensions:hour` |
 | Revoking a publishable key | 20 an hour per organisation, counting only those that changed something; never limited by other organisations | `429`, `platform:key-revokes:hour` |
 | Off switches' database budget, per organisation | about 13 off switches a minute (4 at once), for every off switch together, repeats that change nothing included; no other organisation can use it | `429`, `platform:budget_kill` |
-| Journear's database budget for everything else | per organisation and shared | `429`, `platform:budget_org`, `platform:budget_platform`, `platform:budget_shared` |
+| Journear's database budget for everything else | per organisation and across every organisation; never used by the partner portal | `429`, `platform:budget_org`, `platform:budget_platform` |
 | Organisations using off switches through the API in one minute | 20 (the most that can have the platform switched on) | `429`, `platform:kill_orgs` (stop things in the partner portal; tell Journear) |
 | Self-revokes | 10 a minute per key | `429`, `platform:key:revoke:minute` |
 

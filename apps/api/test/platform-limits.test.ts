@@ -1,5 +1,7 @@
 // D935 (after PR 161's second full review): the platform's two budget classes on the rate limiter's own monotone
-// clock. Ordinary calls: the org's bucket, the platform's global bucket and the console's shared floor, no reserve.
+// clock. Ordinary calls: the org's bucket and the platform's global bucket, no reserve (D938: never the console's
+// bucket; before, also the console's global bucket above a floor of 30; the separation's own tests:
+// surface-buckets.test.ts).
 // Kill switches: each org's kill bucket only. No tokens ever given back; only a removal's breaker slot when it changed
 // nothing. At most MAX_PLATFORM_ORGS organisations switched on (staff's switch) and kill buckets in use a minute (the
 // limiter's backstop). The reviewer's stale-clock scenarios (H1), the isolation of an org's kill switches from every
@@ -45,7 +47,6 @@ describe('the numbers and the two budget classes', () => {
     expect(L).toEqual({
       perOrg: { ratePerS: 8, burst: 40 },
       platform: { ratePerS: 10, burst: 60 },
-      shared: { ratePerS: CONSOLE_LIMITS.global.ratePerS, burst: CONSOLE_LIMITS.global.burst, sharedFloor: 30 },
       breaker: { windowMs: HOUR, perOrg: 10, global: 30, floor: 5 },
       kill: { ratePerS: 2.5, burst: 44 },
       maxOrgs: 20,
@@ -84,7 +85,7 @@ describe('H1: the object’s monotone clock (the reviewer’s three scenarios)',
     const stub = fresh();
     const t = start();
     const orgs = orgsOf(3);
-    // 60 → 25 by ordinary calls of three orgs at t (35 statements), each within the console's floor.
+    // 60 → 25 by ordinary calls of three orgs at t (35 statements).
     expect(await ordinary(stub, orgs[0]!, 12, t)).toMatchObject({ ok: true });
     expect(await ordinary(stub, orgs[1]!, 12, t)).toMatchObject({ ok: true });
     expect(await ordinary(stub, orgs[2]!, 11, t + 1000)).toMatchObject({ ok: true });
@@ -111,8 +112,9 @@ describe('H1: the object’s monotone clock (the reviewer’s three scenarios)',
       if ((await ordinary(stub, org!, 11, at)).ok) ordinaryCost += 11;
       if ((await kill(stub, org!, 11, at)).ok) killCost += 11;
     }
-    // Within t … t + 1 s: the org's ordinary bucket 40 + 8, the console's floor 30 above it; the kill bucket 44 + 2.5.
-    expect(ordinaryCost).toBeLessThanOrEqual(Math.min(L.perOrg.burst + L.perOrg.ratePerS, L.shared.burst - L.shared.sharedFloor + L.shared.ratePerS));
+    // Within t … t + 1 s: the org's ordinary bucket 40 + 8 (D938: before, also the console's 30 above its floor, and a
+    // second's refill); the kill bucket 44 + 2.5.
+    expect(ordinaryCost).toBeLessThanOrEqual(L.perOrg.burst + L.perOrg.ratePerS);
     expect(killCost).toBeLessThanOrEqual(L.kill.burst + L.kill.ratePerS);
   });
 
@@ -187,7 +189,7 @@ describe('isolation: another org’s calls never slow an org’s kill switches, 
       }
       // Kill switches and no-ops from every neighbour change nothing for the victim's ordinary calls.
       expect(everything.victimOrdinary).toBe(ordinaryOnly.victimOrdinary);
-      // Under an ordinary flood its share is about one org's in the shared bucket's 600 a minute: at least a twentieth of it.
+      // Under an ordinary flood its share is about one org's in the platform's global bucket's 600 a minute: at least a twentieth of it.
       expect(ordinaryOnly.victimOrdinary * 5).toBeGreaterThanOrEqual(Math.floor((3 * 60 * L.platform.ratePerS) / (neighbours + 1) / 4));
     }, 180_000);
   }
@@ -212,7 +214,7 @@ describe('the hard ceilings with the 20 organisations the cap allows', () => {
     expect(ordinaryCost[1]).toBeLessThanOrEqual(600 + 13);
     expect(killCost[0]).toBeLessThanOrEqual(20 * (44 + 150));
     expect(killCost[1]).toBeLessThanOrEqual(20 * (150 + 11));
-    // And they are reached, not merely bounded: the shared bucket's minute and every org's kill rate used.
+    // And they are reached, not merely bounded: the platform's global bucket's minute and every org's kill rate used.
     expect(ordinaryCost[1]).toBeGreaterThanOrEqual(600 - 13);
     expect(killCost[1]).toBeGreaterThanOrEqual(20 * 13 * 11);
   }, 240_000);
@@ -273,7 +275,7 @@ describe('the hard ceilings with the 20 organisations the cap allows', () => {
 });
 
 describe('L3: every refusal’s retry-after is honest', () => {
-  it('ordinary (org, platform, shared), kill bucket, breaker (org and global) and the 21st org: a retry at exactly the stated time, nothing else changed, is admitted', async () => {
+  it('ordinary (org, platform), kill bucket, breaker (org and global) and the 21st org: a retry at exactly the stated time, nothing else changed, is admitted', async () => {
     const seen = new Set<string>();
     for (const seed of [1, 935, 4242]) {
       const stub = fresh();
@@ -301,11 +303,13 @@ describe('L3: every refusal’s retry-after is honest', () => {
         expect(again, `seed ${seed} step ${step}: ${a.limit} after ${a.retryAfterS} s`).toMatchObject({ ok: true });
       }
     }
-    for (const l of ['budget_shared', 'budget_kill', 'breaker_org', 'breaker_global', 'kill_orgs']) expect(seen.has(l), l).toBe(true);
+    // D938: `budget_shared` (the console's bucket) is gone; the platform's own global bucket is met instead.
+    for (const l of ['budget_platform', 'budget_kill', 'breaker_org', 'breaker_global', 'kill_orgs']) expect(seen.has(l), l).toBe(true);
+    expect(seen.has('budget_shared')).toBe(false);
   }, 120_000);
 
   it('the ordinary paths one at a time: the org’s bucket, the platform’s bucket', async () => {
-    // The org's own: one org spaced so the console's floor (30 a second) is never short, its 8 a second is.
+    // The org's own: one org a second, its 8 a second short.
     const s1 = fresh();
     const t = start();
     let at = t;
@@ -316,8 +320,7 @@ describe('L3: every refusal’s retry-after is honest', () => {
     }
     expect(refused).toMatchObject({ ok: false, limit: 'budget_org' });
     expect((await ordinary(s1, 'org_one', 13, at + (refused as { retryAfterS: number }).retryAfterS * 1000)).ok).toBe(true);
-    // The platform's: the console's floor is short first in a burst, so two fresh orgs a second: the console's 30 a
-    // second refills it, the platform's 10 doesn't.
+    // The platform's: two fresh orgs a second (26 statements), more than the platform's 10 a second refills.
     const s2 = fresh();
     let u = t;
     let short: Awaited<ReturnType<typeof ordinary>> | null = null;
@@ -360,8 +363,8 @@ describe('token conservation on the object’s clock', () => {
       const orgs = orgsOf(24);
       let t = start();
       const t0 = t;
-      const keys = [...orgs.flatMap((o) => [`platform:bucket:org:${o}`, `platform:kill:org:${o}`]), 'platform:bucket', 'console:bucket'];
-      const bucketOf = (key: string) => (key === 'platform:bucket' ? L.platform : key === 'console:bucket' ? L.shared : key.startsWith('platform:kill:') ? L.kill : L.perOrg);
+      const keys = [...orgs.flatMap((o) => [`platform:bucket:org:${o}`, `platform:kill:org:${o}`]), 'platform:bucket'];
+      const bucketOf = (key: string) => (key === 'platform:bucket' ? L.platform : key.startsWith('platform:kill:') ? L.kill : L.perOrg);
       const spent = new Map<string, number>();
       const removals: { org: string; at: number }[] = [];
       let clock = t0;
@@ -383,12 +386,14 @@ describe('token conservation on the object’s clock', () => {
         clock = Math.max(clock, caller);
         if (a.ok) {
           clock = a.at;
-          for (const key of killSwitch ? [`platform:kill:org:${org}`] : [`platform:bucket:org:${org}`, 'platform:bucket', 'console:bucket']) spent.set(key, (spent.get(key) ?? 0) + cost);
+          for (const key of killSwitch ? [`platform:kill:org:${org}`] : [`platform:bucket:org:${org}`, 'platform:bucket']) spent.set(key, (spent.get(key) ?? 0) + cost);
           if (breaker) removals.push({ org, at: a.at });
         }
         // Every bucket, read now, against its start plus its refill on the object's clock less what was taken.
-        const state = await runInDurableObject(stub, (_i, st) => ({ clock: st.storage.kv.get<number>('clock') ?? 0, all: keys.map((k) => st.storage.kv.get<{ tokens: number; at: number }>(k) ?? null) }));
+        const state = await runInDurableObject(stub, (_i, st) => ({ clock: st.storage.kv.get<number>('clock') ?? 0, all: keys.map((k) => st.storage.kv.get<{ tokens: number; at: number }>(k) ?? null), console: st.storage.kv.get('console:bucket') ?? null }));
         expect(state.clock).toBeGreaterThanOrEqual(clock);
+        // D938: no platform call touches the console's bucket (before, an ordinary one took its cost from it).
+        expect(state.console).toBeNull();
         for (const [i, key] of keys.entries()) {
           const b = state.all[i];
           if (!b) continue;

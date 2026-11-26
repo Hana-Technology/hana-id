@@ -24510,7 +24510,8 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
 - **What it does (the final design).**
   1. **Two budget classes that never charge each other.** An **ordinary** platform call takes its cost from its org's
      bucket (8 statements a second, burst 40: 520 a minute), the platform's global bucket (10 a second, burst 60) and
-     the console's global bucket, never below 30 of its 60 — **no reserve**. A **kill switch** (remove, cancel, suspend
+     the console's global bucket, never below 30 of its 60 — **no reserve** (**D938**: no longer the console's bucket;
+     the two surfaces share no bucket). A **kill switch** (remove, cancel, suspend
      `true`, a publishable key's revoke) takes its cost from its org's **kill bucket** (`platform:kill:org:<org>`, 2.5
      statements a second, burst 44: about 13 kill switches of the largest cost, 11, a minute, 4 at once) **and nothing
      else**. No other org's calls touch it, and it touches nobody's ordinary budget.
@@ -24693,7 +24694,9 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   `unhitSliding`) touch only the window still current, so a refund across a window's boundary is dropped (it errs
   towards counting). (g) The console's own budget still has its reserve and refunds (`consoleAdmit`, `consoleSettle`),
   now on the monotone clock; not reviewed again here. **Fixed by D937:** the reserve, the share and the refunds are gone;
-  the console's kill switches have buckets of their own.
+  the console's kill switches have buckets of their own. The coupling left beside it (an ordinary platform call needing
+  the console's `console:bucket` above 30, so a console flood refused every network's ordinary calls; D937's (g)):
+  **fixed by D938**, the platform's ordinary calls on its own buckets only.
 - **Docs:** `api.md`, `security.md`, `operations.md`, `architecture.md`, `platform-guide.md` (section 8's table and off
   switches, the body rule, the remove, suspend and key sections, section 13's rows; its drift test pins them),
   `playbooks.md` (through `packages/playbooks`).
@@ -24853,7 +24856,8 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
 ### D937. No organisation's console suspensions or kill-switch budget are blockable by other organisations: kill switches in a budget class of their own (each org's kill bucket and a global one, each org's first 5 a minute past it), suspensions out of the console's breaker on the org's own 20 a clock hour, the console breaker's first 3 an org past the global 20 within a global overflow of 60 (a hard 80 an hour), rotation stays in the breaker, no token refunds
 - Date 2026-11-26 · Status: **built** (branch `fix/console-kill-limits`, from `next`, not merged, not deployed); the fix
   of D935's point 8 **approved by the Tech Lead 2026-11-26**; the design and every figure below are the coordinator's,
-  **to confirm (the Tech Lead)** · Relates to D935 (point 8 of its "To confirm", its residual risk (g), its recorded
+  **to confirm (the Tech Lead)**, but for points 1, 8 and 9 of "To confirm", **settled by the Tech Lead 2026-11-26**
+  (below; 9 built as D938) · Relates to D935 (point 8 of its "To confirm", its residual risk (g), its recorded
   open point on the console `revokeKey`'s reserve tokens), D228 (the console's reserve and share), D918, D930 · Built:
   `apps/api/src/rate-limiter.ts` (`ConsoleAdmission`, `consoleAdmit`, `consoleSettle`), `changes/guard.ts`
   (`CONSOLE_LIMITS`, `CONSOLE_SUSPENSIONS`, `withStopQuota`, `withSuspensionQuota`), `rpc/console.ts` (`setSuspended`,
@@ -25047,9 +25051,20 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
     separate, and an owner removes the hostile member.
   - **Notes:** an organisation's own kill switches now run at about 12 at once (60 tokens at a cost of 5), then one
     every 5–6 s (before: from the org's ordinary bucket, 10 statements a second); residual risk (g) corrected below;
-    the follow-ups below added to "To confirm". Nothing is settled by the Tech Lead yet.
-- **To confirm (the Tech Lead):**
-  1. **The trade-off on removals: a hard global ceiling against never refusing a victim's removal.** The console
+    the follow-ups below added to "To confirm". Nothing was settled by the Tech Lead then (three points were later:
+    "Settled by the Tech Lead", below).
+- **Settled by the Tech Lead (2026-11-26)** (he answered "ok" to the three recommendations):
+  1. **The removals trade-off is accepted** (point 1 below): a hard ceiling of 80 console breaker calls an hour across
+     every organisation (the global 20 and the overflow of 60); about 24 organisations' owners at once making 80 calls
+     whose batch ran can refuse a victim's console removals, frame-only tightenings and rotations for up to an hour,
+     while suspensions, revocations and staff's removals are never refused.
+  2. **The own-organisation weakness is accepted** (point 8 below): one compromised owner session can hold its own
+     organisation's kill bucket down (`ownerAction` safety calls that change nothing, 2 tokens about every 2 s);
+     staff's stops are unlimited, and an owner can remove the member.
+  3. **The follow-up is approved** (point 9 below): the platform's ordinary calls stop using the console's
+     `console:bucket`. **Built as D938.**
+- **To confirm (the Tech Lead):** (points 1, 8 and 9 settled, above; the others open)
+  1. **Settled (above): bounded.** **The trade-off on removals: a hard global ceiling against never refusing a victim's removal.** The console
      breaker's floor at 3 of each org's 5 a rolling hour, within a global overflow of 60 a rolling hour: a hard 80
      breaker calls an hour across orgs. Bounded (built): about 24 organisations' owners at once (80 calls whose batch
      ran) can refuse other orgs' console removals for up to an hour, while suspensions, revocations and staff's
@@ -25069,12 +25084,12 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
      distinct organisations a minute (hard ceiling 900 + 30 M statements in a first minute), as the platform's
      `platform:kill:orgs`; trigger: before onboarding passes about 50 organisations, or before the one-partner gate
      lifts on mainnet.
-  8. The accepted weakness above: one compromised owner session can hold its own org's kill bucket under a stop's cost
+  8. **Settled (above): accepted.** The accepted weakness above: one compromised owner session can hold its own org's kill bucket under a stop's cost
      with `ownerAction` safety calls that change nothing (2 tokens about every 2 s); mitigations: staff's stops are
      unlimited, an owner removes the hostile member.
-  9. **Open follow-up:** stop charging the platform's ordinary calls to the console's `console:bucket`, so the two
-     surfaces never share a bucket (their combined ordinary ceiling 1 800 → 2 400 statements a minute: the console's
-     30 a second and the platform's 10 a second apart). See residual risk (g).
+  9. **Settled (above): approved; done by D938.** Stop charging the platform's ordinary calls to the console's
+     `console:bucket`, so the two surfaces never share a bucket (their combined ordinary ceiling 1 800 → 2 400
+     statements a minute: the console's 30 a second and the platform's 10 a second apart). See residual risk (g).
   10. The RPC answers carry no retry-after; the console shows a fixed "try again" message for a refused stop.
   11. **Open point (pre-existing):** no playbook covers the console's `breaker` security event (org or global).
   12. **Related open point, not built (from D935's point 7):** console key creation has no quota, so a hostile console
@@ -25096,9 +25111,117 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   which protects the console from the platform, not the reverse; the console's ordinary calls taking the bucket to
   zero (where the reserve used to stop them at 20) changes nothing for that. This PR improved the kill-flood cases
   (platform ordinary calls admitted beside a console kill flood 1 of 300 → 93 of 300, since console kill switches no
-  longer touch that bucket); the platform's kill switches never use it. Follow-up in "To confirm" 9.
+  longer touch that bucket); the platform's kill switches never use it. Follow-up in "To confirm" 9. **Fixed by D938**
+  (the platform's ordinary calls on its own buckets only: beside 3 or 10 organisations' console floods, every
+  network's ordinary calls exactly as with no console traffic, 164 of 900 tries, the platform's whole 10 a second).
 - **Docs:** `security.md` (the console's bound in "Invariants"), `api.md` ("Breaker and budget", the limiter's keys, the
   objects), `operations.md` ("The partner console's kill switches"), `architecture.md` (the RPC writes row); the
   console README lists no limits.
 - Address impact: **none.** Limiter state and admission rules; nothing touches the contract, a key, a path or an
   address derivation.
+
+### D938. The platform API and the partner console never share a bucket: an ordinary platform call draws only on its org's bucket and the platform's global one (10 a second, burst 60), never the console's `console:bucket`; no floor, reserve or refund in its place
+- Date 2026-11-26 · Status: **built** (branch `fix/separate-ordinary-buckets`, from `next`, not merged, not deployed);
+  **approved by the Tech Lead 2026-11-26** (D937's "To confirm" 9, settled there); every figure is D935's or D937's,
+  unchanged; the points under "To confirm" are **to confirm (the Tech Lead)** · Relates to D927 (F3, the floor's
+  origin), D935 (point 1, residual (g)), D937 (residual (g), "To confirm" 9) · Built: `apps/api/src/rate-limiter.ts`
+  (`PlatformAdmission`, `PlatformLimit`, `platformAdmit`), `platform/request.ts` (`PLATFORM_LIMITS`, the header's
+  check 8), `changes/guard.ts` (comments only)
+- **What was recorded.** D937's residual (g): a console ordinary flood starved the platform's ordinary calls, already
+  true before D937 (a reviewer measured 0 admitted of 300 with three organisations' members flooding reads).
+- **The coupling that existed.** An ordinary platform call (not a kill switch) passed three bucket checks on the
+  `console-rpc` object: its org's `platform:bucket:org:<org>`, the platform's `platform:bucket`, and the console's own
+  global `console:bucket`, which had to hold the call's cost **plus 30** (`PLATFORM_LIMITS.shared.sharedFloor`; refused
+  `budget_shared`, answered `429 platform:budget_shared`) and was charged the cost. The floor (F3, D927) protected the
+  console from the platform: the networks together never took it below 30 of its 60. Nothing protected the platform
+  from the console: three organisations' members at their org's full 10 a second are the console's whole 30 a second,
+  so `console:bucket` stays under 34 and every network's ordinary call is refused for as long as they go on (since
+  D937 the console's own calls take the bucket to zero; before it, its reserve stopped them at 20, still under 34).
+- **What it does.**
+  1. An ordinary platform call takes its cost from its org's bucket and the platform's global bucket **only**; it
+     neither reads nor writes `console:bucket` or any `console:` key. An ordinary console call never read or wrote a
+     `platform:` key and still doesn't. The two surfaces now share no bucket, ordinary or kill.
+  2. **Removed:** `PLATFORM_LIMITS.shared` (the console's rate and burst and `sharedFloor: 30`), its field in
+     `PlatformAdmission['limits']`, the `budget_shared` limit and so the `platform:budget_shared` answer, the
+     `CONSOLE_LIMITS` import in `platform/request.ts`. **Nothing added:** no reserve, floor, refund or new key.
+  3. **Unchanged:** the kill switches on both sides (the platform's per-org kill bucket and `platform:kill:orgs`; the
+     console's kill buckets and floor), both breakers, the stops quotas, the per-key windows, the cap of 20
+     organisations, the objects' monotone clock, honest waits per stage, the `console-rpc` object itself.
+- **What protects the console now.** Before: the floor of 30 (the platform never took the console's bucket below
+  half). Now: the platform doesn't touch the console's bucket at all, and the platform's own global bucket holds every
+  network's ordinary calls together to 10 statements a second, burst 60, **whatever the number of organisations**
+  (`platformAdmit` checks it on every ordinary call, and no other path admits one; tested: 5 and 20 organisations
+  flooding for 30 s, 351 statements each, of the 360 allowed; 20 for a minute, 650 of 660). The D1 load the platform
+  adds is the same 10 a second it always could; what changes is that it no longer comes out of the console's 30.
+- **The bounds.**
+
+  | Limit | Before D938 | Now |
+  |---|---|---|
+  | An ordinary platform call's buckets | its org's (8/s, burst 40), the platform's (10/s, burst 60), the console's `console:bucket` at cost + 30, charged | its org's (8/s, burst 40), the platform's (10/s, burst 60) |
+  | A console ordinary flood (3 or 10 orgs' members at full rate), 3 networks each trying a read (4) every 200 ms for a minute | 0 of 300 admitted for each network (`budget_shared`) | 164 of 900 (656 statements of the platform's 660), exactly as with no console traffic |
+  | 20 networks flooding (13 every 200 ms), the console's reads (4 orgs, once a second each) | 240 of 240 | 240 of 240 |
+  | The console's burst right after the networks' burst | 8 reads of 4 (the networks left 34 of its 60) | 15 (its whole 60), as with no networks |
+  | Both surfaces flooding for two minutes (10 console orgs, 20 networks) | console 1 848 then 1 800, platform 0 and 0 | console 1 848 then 1 800, platform 650 then 598 |
+  | Ordinary ceiling of both surfaces on the hot D1 | the console's 1 860 in a first minute, 1 800 a minute after (30/s), the platform's inside it | 1 860 + 660 = 2 520, then 1 800 + 600 = **2 400 a minute** (40/s) |
+  | Kill switches, both surfaces | the platform victim 17 then 14 a minute, the console victim 19 then 10, as with no flood | the same |
+  | The platform's refusal names | `budget_org`, `budget_platform`, `budget_shared`, `budget_kill`, `kill_orgs`, `breaker_org`, `breaker_global` | the same without `budget_shared` |
+
+  **The whole ceiling on the one hot D1** (ordinary and kill, both surfaces): ordinary 2 520 in a first minute, 2 400 a
+  minute after; the platform's kill switches 3 880 then 3 000 (D935, the cap of 20 organisations); the console's kill
+  switches min(120 N, 900 + 30 N) then min(60 N, 600 + 30 N) (D937, N the console organisations using them, not
+  capped). At N = 20: 2 520 + 3 880 + 1 500 = 7 900 in a first minute and 2 400 + 3 000 + 1 200 = **6 600 a minute
+  after (110 statements a second)**; before D938, 7 240 and 6 000 (D935's sum counted the platform's 600 apart, though
+  it came out of the console's 1 800).
+- **Tests** (`apps/api/test/surface-buckets.test.ts`, new, its own database and objects, the real `console-rpc` object
+  class, the real `admitMemberCall` and the real platform handler; each "before" measured by running it against the
+  code before this branch):
+  - the limits name no console bucket; an ordinary platform call writes only `platform:` keys (before: also
+    `console:bucket`), a console one only `console:` keys;
+  - the reviewer's scenario: 3 and 10 organisations' console members flooding reads, 3 networks' 300 tries each
+    exactly as with no console traffic (before: 0 of 300 each), the console's own 463 reads exactly as without the
+    networks, its bucket under the old gate's 34 at every tick; through the handler, three orgs' members at full rate
+    and a network's 30 signed reads a second apart: 30 answered 200 (before: 0, each `429 platform:budget_shared`);
+  - 20 networks flooding: the console's 240 reads and its burst of 15 as with no networks (before: burst 8); the
+    platform at its own 10 a second with 5 or 20 organisations;
+  - both floods for two minutes: within 2 520 and 2 400 + a call each, and reached; both victims' kill switches
+    exactly as with no flood;
+  - token conservation over three seeds (both surfaces, ordinary and kill, breaker calls and settles, stale and future
+    caller times, clock jumps, costs 0 to 1 000): every bucket of both within its start plus its refill less what it
+    gave, never negative, its `at` never past the clock, and no call changing any key of the other surface;
+  - honest waits: both surfaces interleaved over three seeds, every refusal retried at its stated time admitted
+    (`budget_org`, `budget_platform`, the console's `budget_org` and `budget` all met, no platform refusal naming a
+    console bucket); a platform read beside an empty `console:bucket` passes at once (before: `budget_shared`, 2 s);
+  - fail closed: the platform's admission erroring answers `503 rate_limiter_unavailable` and gives the key's window
+    back; the console's erroring admits nothing;
+  - **existing tests changed, only where they pinned the coupling:** `platform-limits.test.ts` "the limits as built"
+    (no `shared`), "one org alternating stale and fresh calls" (the console floor's term dropped from its bound), the
+    L3 property test (`budget_shared` replaced by `budget_platform` among the limits met, and never seen), the token
+    conservation test (`console:bucket` no longer charged by platform calls: now held never written), comments;
+    `platform-request.test.ts` "the org's bucket: a flood of one org's requests" (refused at the 11th call by
+    `platform:budget_org`; before at the 8th by `platform:budget_shared`) and F3 "a platform flood from several orgs"
+    (20 admitted, the platform's 60; before 10, the console's 30 above its floor; then a console call of 40 passes);
+    `platform-guide.test.ts` pins section 8's row without `budget_shared`;
+  - untouched and passing: `console-kill-limits.test.ts`, the freeze-mirror interleaving test, the rest of
+    `platform-limits.test.ts`, `platform-ops.test.ts`, `rpc-cas.test.ts`.
+- **To confirm (the Tech Lead):**
+  1. The combined ordinary ceiling on the one hot D1: 2 400 statements a minute sustained (40 a second), 2 520 in a
+     first minute, up from 1 800 and 1 860; with both surfaces' kill switches, 6 600 a minute at 20 console
+     organisations using them (110 a second). Proposed: measure the hot D1's headroom before mainnet.
+  2. No floor or reserve in either direction: each surface is protected from the other only by the other's own
+     global bucket (the platform's 10 a second, the console's 30); both still share the one D1 and the one
+     `console-rpc` object, so a flood of one adds latency to the other, never a refusal.
+  3. `platform:budget_shared` is no longer answered. The guide listed it in section 8; a partner's code matching on it
+     sees `platform:budget_org` or `platform:budget_platform` instead, each a `429` with `retry-after`, so a client that
+     waits `retry-after` needs no change (no partner is live yet).
+- **Residual risks.** (a) One D1 and one `console-rpc` object for both surfaces: under a flood of either, the other's
+  admissions wait in the object's queue and its statements in D1's (latency, not refusals). (b) Unchanged since D935:
+  the platform's global 10 a second is every network's together, and one network's org may use 8 of it, so two
+  networks at their full rate leave the others little (the other networks' kill switches are untouched). (c) Objects
+  written before this branch keep their `platform:noticed:budget_shared:<org>` markers (one hour number an org, at
+  most one per org); nothing reads them; no migration.
+- **Docs:** `security.md` (the console's "Invariants" bound, the platform's two budget classes and its hard ceiling),
+  `api.md` ("Breaker and budget", the platform's check 8 and its limit names), `operations.md` ("The ordinary budgets
+  of the platform and the console"), `architecture.md` (the Platform API row), `platform-guide.md` (section 8's
+  database-budget row and its "Last verified"; its drift test pins the row).
+- Address impact: **none.** Limiter admission rules only; nothing touches the contract, a key, a path or an address
+  derivation.

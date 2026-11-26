@@ -287,6 +287,9 @@ describe('docs/platform-guide.md', () => {
     ]) {
       expect(guide, s).toContain(s);
     }
+    // D938: ordinary calls never use the portal's budget; the limit that did is gone.
+    expect(guide).toContain('| Journear\'s database budget for everything else | per organisation and across every organisation; never used by the partner portal | `429`, `platform:budget_org`, `platform:budget_platform` |');
+    expect(guide).not.toContain('budget_shared');
   });
 });
 

@@ -177,6 +177,11 @@ export interface AppSpec {
    * its own User IDs (`apps.user_ids` 'app', migration 0030, D919), as the API's createApp writes it.
    */
   sharedScope?: boolean;
+  /**
+   * D934 (migration 0035): those of `origins` the app may use only inside a frame (`app_origins.frame_only`), as a
+   * guarded add marked frame-only leaves them once in force.
+   */
+  frameOnly?: string[];
 }
 
 export interface MockApiOptions {
@@ -309,6 +314,8 @@ export class MockApi {
     this.d1.db.prepare("INSERT INTO app_keys (id, app_id, key, created_by, created_at) VALUES (?, ?, ?, 'e2e', ?)").run(`key_${appId}`, appId, pk, now);
     const insert = this.d1.db.prepare('INSERT INTO app_origins (app_id, origin, active_from) VALUES (?, ?, 0)');
     for (const o of spec.origins) insert.run(appId, o);
+    const frameOnly = this.d1.db.prepare('UPDATE app_origins SET frame_only = 1 WHERE app_id = ? AND origin = ?');
+    for (const o of spec.frameOnly ?? []) frameOnly.run(appId, o);
     return { appId, pk };
   }
 

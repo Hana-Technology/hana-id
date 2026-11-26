@@ -181,3 +181,24 @@ describe('the login path and the partner endpoints', () => {
     void ORIGIN;
   });
 });
+
+describe('the confirmation page and the staff queue mark a frame-only web address', () => {
+  it('a staff proposal on a shared wallet (four eyes): the queue’s second-person row and the confirmation page say which is frame-only', async () => {
+    const app = await orgApp({ origins: [PAGE] });
+    await env.DB.prepare('UPDATE scopes SET app_user_ids = 1 WHERE scope_id = ?1').bind(app.scope).run();
+    const r = await ok(adminRpc().addOrigins({ ...hana(), orgId: app.org, appId: app.id, add: [WIDGET, 'https://tea.example'], frameOnly: [WIDGET], expectedVersion: 0 }));
+    const widgetChange = r.changes.find((c) => c.origin === WIDGET)!;
+    const queue = await ok(adminRpc().platformQueue({ ...hana(), limit: 50 }));
+    const mine = queue.secondPerson.filter((x) => x.appId === app.id);
+    expect(mine.map((x) => [x.origin, x.frameOnly ?? false]).sort()).toEqual([
+      ['https://tea.example', false],
+      [WIDGET, true],
+    ]);
+    await ack(widgetChange.id);
+    const view = (await ok(consoleRpc(clock).getConfirmation({ ...member(), orgId: app.org, changeId: widgetChange.id }))).confirmation;
+    expect(view.changes.map((c) => [c.origin, c.frameOnly ?? false])).toEqual([
+      ['https://tea.example', false],
+      [WIDGET, true],
+    ]);
+  });
+});

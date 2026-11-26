@@ -94,6 +94,8 @@ export interface ConfirmationChange {
   confirmedAt?: number;
   /** It may be confirmed now (announced, waiting, not confirmed). */
   confirmable: boolean;
+  /** D934: the app may use it only inside its other web addresses (a widget's); absent otherwise. */
+  frameOnly?: true;
 }
 
 /** The confirmation page's view: the app, who asked, and the web addresses of that one request on that app. */
@@ -129,13 +131,15 @@ export interface ConfirmationNotice {
   keyLabel?: string | null;
   /** The proposing staff member's Access subject (a staff proposal): the notice names both people. */
   proposedBy?: string;
-  changes: { changeId: string; origin: string; display: string; idn: boolean }[];
+  changes: { changeId: string; origin: string; display: string; idn: boolean; frameOnly?: true }[];
   /** Earlier failed runs (retried until CONFIRM_NOTICE_RETRY_MS after the confirmation). */
   failures: number;
 }
 
 /** A confirmed web address in the staff queue (A11): for 7 days after its confirmation (14 if its notice never went out). */
 export interface ConfirmedQueueRow {
+  /** D934: the app may use it only inside its other web addresses (a widget's); absent otherwise. */
+  frameOnly?: true;
   changeId: string;
   appId: string;
   appName: string;
@@ -161,6 +165,8 @@ export interface ConfirmedQueueRow {
 
 /** A staff proposal under four eyes that waits for a second person, as the staff queue lists it. */
 export interface SecondPersonQueueRow {
+  /** D934: the app may use it only inside its other web addresses (a widget's); absent otherwise. */
+  frameOnly?: true;
   changeId: string;
   appId: string;
   appName: string;

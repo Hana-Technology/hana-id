@@ -53,6 +53,8 @@ export type PlatformCallsPage = {
 
 /** A web address a platform key proposed that isn't in force yet (the staff queue). */
 export interface PlatformQueueOrigin {
+  /** D934: the app may use it only inside its other web addresses (a widget's); absent otherwise. */
+  frameOnly?: true;
   changeId: string;
   appId: string;
   appName: string;

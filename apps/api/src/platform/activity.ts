@@ -74,26 +74,28 @@ interface QueueOriginRow {
   org_id: string;
   scope_id: string;
   key_label: string | null;
+  /** D934: its gate row is frame-only (NULL once the row is gone). */
+  frame_only: number | null;
 }
 
 /** The staff queue (AdminRpc only): two reads, `limit` rows of each, soonest first. */
 export async function platformQueue(db: HotDb, now: number, limit: number): Promise<PlatformQueue> {
   const [origins, keys, confirmed, second] = await db.batch([
     q`SELECT g.id, g.app_id, g.origin, g.proposed_by, g.proposed_at, g.notified_at, g.active_from, a.name AS app_name, a.org_id, a.scope_id,
-             (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) AS key_label
+             (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) AS key_label, (SELECT ao.frame_only FROM app_origins ao WHERE ao.app_id = g.app_id AND ao.change_id = g.id) AS frame_only
         FROM guarded_changes g JOIN apps a ON a.id = g.app_id
        WHERE g.status = 'pending' AND g.kind = 'origin_add' AND g.proposed_by_kind = 'platform' AND (g.active_from IS NULL OR g.active_from > ${now}) AND a.deleted_at IS NULL
        ORDER BY g.active_from IS NULL DESC, g.active_from, g.proposed_at, g.id LIMIT ${limit}`,
     q`SELECT ${PLATFORM_KEY_COLUMNS('k')} FROM platform_keys k WHERE ${KEY_WAITING('k', now)} ORDER BY k.proposed_at, k.id LIMIT ${limit}`,
     // D931: confirmed in the last 7 days (newest first); `removed` once its web address no longer works there.
     q`SELECT oc.change_id, oc.app_id, oc.origin, oc.confirmed_by_kind, oc.confirmed_by, oc.confirmed_at, g.proposed_by_kind, g.proposed_by, a.name AS app_name, a.org_id,
-             oc.notice_at, oc.notice_failures,
+             oc.notice_at, oc.notice_failures, (SELECT ao.frame_only FROM app_origins ao WHERE ao.app_id = oc.app_id AND ao.change_id = oc.change_id) AS frame_only,
              (g.status NOT IN ('pending', 'active') OR NOT EXISTS (SELECT 1 FROM app_origins ao WHERE ao.app_id = oc.app_id AND ao.change_id = oc.change_id)) AS removed
         FROM origin_confirmations oc JOIN guarded_changes g ON g.id = oc.change_id JOIN apps a ON a.id = oc.app_id
        WHERE oc.confirmed_at > ${now - CONFIRMED_QUEUE_MS} OR (oc.notice_at IS NULL AND oc.confirmed_at > ${now - CONFIRM_NOTICE_RETRY_MS - CONFIRM_NOT_TOLD_SHOWN_MS})
        ORDER BY oc.confirmed_at DESC, oc.change_id LIMIT ${limit}`,
     // D931: staff web addresses on a shared wallet waiting for a second person (or their 24 hours), not confirmed.
-    q`SELECT g.id, g.app_id, g.origin, g.request_id, g.proposed_by, g.proposed_at, g.notified_at, g.active_from, a.name AS app_name, a.org_id
+    q`SELECT g.id, g.app_id, g.origin, g.request_id, g.proposed_by, g.proposed_at, g.notified_at, g.active_from, a.name AS app_name, a.org_id, (SELECT ao.frame_only FROM app_origins ao WHERE ao.app_id = g.app_id AND ao.change_id = g.id) AS frame_only
         FROM staff_origin_waits sw JOIN guarded_changes g ON g.id = sw.change_id JOIN apps a ON a.id = g.app_id
        WHERE g.status = 'pending' AND (g.active_from IS NULL OR g.active_from > ${now}) AND a.deleted_at IS NULL
          AND NOT EXISTS (SELECT 1 FROM origin_confirmations oc WHERE oc.change_id = g.id)
@@ -111,6 +113,7 @@ export async function platformQueue(db: HotDb, now: number, limit: number): Prom
         keyId: r.proposed_by,
         keyLabel: r.key_label,
         proposedAt: r.proposed_at,
+        ...(r.frame_only === 1 ? { frameOnly: true as const } : {}),
       };
       if (r.notified_at !== null) o.notifiedAt = r.notified_at;
       if (r.active_from !== null) o.activeFrom = r.active_from;
@@ -133,6 +136,7 @@ export async function platformQueue(db: HotDb, now: number, limit: number): Prom
         // After PR 159's second review: whether the people were told.
         notice: r.notice_at !== null ? 'sent' : r.confirmed_at <= now - CONFIRM_NOTICE_RETRY_MS ? 'not_sent' : r.notice_failures > 0 ? 'retrying' : 'waiting',
         noticeFailures: r.notice_failures,
+        ...(r.frame_only === 1 ? { frameOnly: true as const } : {}),
       }),
     ),
     secondPerson: (second!.results as unknown as SecondRow[]).map(
@@ -147,12 +151,14 @@ export async function platformQueue(db: HotDb, now: number, limit: number): Prom
         proposedAt: r.proposed_at,
         notifiedAt: r.notified_at,
         activeFrom: r.active_from,
+        ...(r.frame_only === 1 ? { frameOnly: true as const } : {}),
       }),
     ),
   };
 }
 
 interface ConfirmedRow {
+  frame_only: number | null;
   change_id: string;
   app_id: string;
   origin: string;
@@ -169,6 +175,7 @@ interface ConfirmedRow {
 }
 
 interface SecondRow {
+  frame_only: number | null;
   id: string;
   app_id: string;
   origin: string;

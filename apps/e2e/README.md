@@ -61,6 +61,19 @@ nothing until Remove, which stops it at once. A viewer (`/__e2e/console/sign-in?
 no on-chain owner) opens the same page and sees no tick box and no Confirm. Screens with `HANA_SHOTS_DIR=<dir>`
 (Chromium only).
 
+A network's widget inside a partner's page (D934, pieces P11 and P12): `tests/widget-frames.spec.ts` serves the
+partner's page from the stack itself (`/shop?widget=<url>&mode=plain|sandbox|srcdoc|data` on the partner hosts,
+`src/server/partner.ts`: a routed page has no address, so Chromium's local network access checks would block its
+loopback frame), framing the partner test app as the widget, with the widget's address frame-only (`newApp({
+frameOnly })`). In all three browsers: inside the partner's page it signs in and signs, and the sign-in and approval
+windows say "You're on {page}. This uses a widget from {widget}."; on its own, in a window it opens itself, inside a
+page the app doesn't list, in a sandboxed frame without its own origin or in a `data:` frame it gets no vault; a
+`srcdoc` frame in between changes nothing; framed by its own address at the top it is refused.
+`tests/widget-frames-no-ancestors.spec.ts` (Firefox only) runs with `dom.location.ancestorOrigins.enabled` off, as
+Firefox releases before it shipped: the windows say the browser didn't name the site, with the page to check against,
+and the residual (framed by its own address at the top, taken) is shown as it is. Shared steps: `tests/widget-steps.ts`.
+Screens with `HANA_SHOTS_DIR=<dir>` (Chromium, and Firefox for the second spec).
+
 The shared-wallet line (D912): `tests/shared-wallet.spec.ts` puts two apps on a scope of their own (with a suspended
 one, one with no web address and one no one has signed in to, which don't count; the others are made `launched`, since
 the mocked /v1/login records no first sign-in) and sees "This wallet is also used on 1 other app." under who is asking

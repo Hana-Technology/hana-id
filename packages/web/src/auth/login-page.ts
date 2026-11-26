@@ -34,7 +34,7 @@
 import { type LoginMethod, type WindowMessage, fromHex, homeNonce, isTestPublishableKey, linkChangeNonce, parseWindowMessage, sessionNonce } from '@hana-id/core';
 import type { HanaEnv } from '../hana-env.ts';
 import { BRAND } from '@hana-id/brand';
-import { type Dom, SIGN_IN_WINDOW, dom, errorView, originText } from './dom.ts';
+import { type Dom, SIGN_IN_WINDOW, askerBox, dom, errorView } from './dom.ts';
 import { PageError, STORAGE_BLOCKED, safetyStop, uncheckedStop } from './errors.ts';
 
 /** Where a partner sign-in starts again (D853's stop sentences). */
@@ -344,7 +344,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
       const url = googleRequest.url;
       // The app's logo (batch C11), when the preparer sent one on this build's files origin.
       const intro = () =>
-        d.h('p', { class: 'asker' }, appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName), ' at ', originText(d, msg.parentOrigin));
+        // P11 (D934): a framed page's box says where the person is (dom.ts askerBox).
+        askerBox(d, [appLogo(d, env, msg.logoUrl), task ? 'Adding a sign-in method in ' : 'Signing in to ', d.h('strong', {}, msg.appName)], msg.parentOrigin, msg.frame);
       // D912: the other apps that use this wallet, as the vault sent them (none: nothing drawn, the screen as before).
       // Not in export mode: that sign-in only confirms it's you for the key window, which has its own words.
       const shared = () => (mode === 'export' ? null : sharedWalletLine(d, msg.otherApps, msg.otherAppsUnknown));
@@ -364,6 +365,8 @@ export function startLoginPage(deps: LoginPageDeps): LoginPage {
               ...(msg.otherApps && mode !== 'export' ? { otherApps: { count: msg.otherApps.count, names: [...msg.otherApps.names] } } : {}),
               ...(msg.otherAppsUnknown && mode !== 'export' ? { otherAppsUnknown: true as const } : {}),
               parentOrigin: msg.parentOrigin,
+              // P11 (D934): the email step's screens say where the page is too.
+              ...(msg.frame ? { frame: { ...msg.frame } } : {}),
               scopeId: msg.scopeId,
               sessionPublicKey: Uint8Array.from(msg.sessionPublicKey),
               expiresAtMs: msg.expiresAtMs,

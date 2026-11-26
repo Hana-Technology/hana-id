@@ -12,6 +12,8 @@ export const DOMAINS = {
   consoleLogin: 'hana-console/login/v1',
   stepUp: 'hana-console/step-up/v1',
   originChange: 'hana-id/origin-change/v1',
+  /** D934: an origin change that marks some of its adds frame-only (only then: every other change keeps v1). */
+  originChangeFrameOnly: 'hana-id/origin-change/v2',
   settingsChange: 'hana-id/settings-change/v1',
   /** D894: a partner label document proposed or removed. */
   labelChange: 'hana-id/label-change/v1',
@@ -80,14 +82,22 @@ function sortedOrigins(list: readonly string[], what: string): string[] {
 /**
  * Origin change (adds, with any removes sent with them): d = sha256("hana-id/origin-change/v1" ‖ borsh(signer) ‖
  * borsh(app_id) ‖ borsh(sorted add) ‖ borsh(sorted remove) ‖ origins_version u64 LE). Checked by the console and the
- * API, which recomputes it from the request and the stored version.
+ * API, which recomputes it from the request and the stored version. D934: when some adds are frame-only (`frameOnly`,
+ * a subset of `add`), d = sha256("hana-id/origin-change/v2" ‖ borsh(signer) ‖ borsh(app_id) ‖ borsh(sorted add) ‖
+ * borsh(sorted remove) ‖ borsh(sorted frameOnly) ‖ origins_version u64 LE), so the fresh sign-in binds where each
+ * web address may be used; with none, the v1 digest exactly as before.
  */
-export async function originChangeDigest(i: { signer: string; appId: string; add: readonly string[]; remove: readonly string[]; originsVersion: number | bigint }): Promise<Uint8Array> {
+export async function originChangeDigest(i: { signer: string; appId: string; add: readonly string[]; remove: readonly string[]; frameOnly?: readonly string[]; originsVersion: number | bigint }): Promise<Uint8Array> {
   if (i.add.length === 0) throw new TypeError('An origin change adds at least one origin (removals alone need no step-up)');
   const add = sortedOrigins(i.add, 'add');
   const remove = sortedOrigins(i.remove, 'remove');
   if (add.some((o) => remove.includes(o))) throw new TypeError('An origin is both added and removed');
-  return sha256(concatBytes(utf8(DOMAINS.originChange), borshString(i.signer), borshString(i.appId), borshStringVec(add), borshStringVec(remove), u64le(i.originsVersion)));
+  const frameOnly = sortedOrigins(i.frameOnly ?? [], 'frameOnly');
+  if (frameOnly.some((o) => !add.includes(o))) throw new TypeError('frameOnly: every frame-only origin is one of the adds');
+  if (frameOnly.length === 0) return sha256(concatBytes(utf8(DOMAINS.originChange), borshString(i.signer), borshString(i.appId), borshStringVec(add), borshStringVec(remove), u64le(i.originsVersion)));
+  return sha256(
+    concatBytes(utf8(DOMAINS.originChangeFrameOnly), borshString(i.signer), borshString(i.appId), borshStringVec(add), borshStringVec(remove), borshStringVec(frameOnly), u64le(i.originsVersion)),
+  );
 }
 
 export type SettingsChangeKind = 'policy_set' | 'raw_sign_on';

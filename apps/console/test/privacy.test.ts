@@ -149,6 +149,11 @@ describe('audit details', () => {
           "confirmed",
           "requestId",
         ],
+        "origin.frame_only": [
+          "code",
+          "version",
+          "origins",
+        ],
         "origin.link_remove": [
           "code",
           "changeId",
@@ -158,6 +163,7 @@ describe('audit details', () => {
           "version",
           "added",
           "removed",
+          "frameOnly",
         ],
         "origins.removed": [
           "code",

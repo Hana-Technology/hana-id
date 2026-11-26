@@ -150,7 +150,8 @@ interface ScopeRow {
 
 /**
  * Live apps first, then deleted ones, one more than `appsLimit` (the extra one says there are more: it is never sent);
- * origins in force, at most HOME_ORIGINS_PER_APP each. `allApps`: true for the user's own scopes (the marker may have
+ * origins in force, at most HOME_ORIGINS_PER_APP each, never one the app may use only inside a frame (D934: Home's
+ * "where it runs" and its cancel button name a page to open, and such a web address opened on its own is refused). `allApps`: true for the user's own scopes (the marker may have
  * failed to write, and the directory is per scope, so it can't say which app they used); otherwise only apps with a
  * first login. A scope with no more apps than the limit is counted from what this read; only a scope with more is
  * counted, by `countApps` (D922's review: a count in this statement read every app row of every scope again).
@@ -159,7 +160,7 @@ const scopeColumns = (now: number, allApps: Q, appsLimit: number): Q =>
   q`s.scope_id, s.environment, s.app_user_ids,
     (SELECT json_group_array(json_object('id', a.id, 'name', a.name, 'status', a.status, 'suspended_by', a.suspended_by, 'deleted_at', a.deleted_at,
         'logo_key', a.logo_key, 'google_web_client_id', a.google_web_client_id,
-        'origins', json((SELECT json_group_array(o.origin) FROM (SELECT origin FROM app_origins WHERE app_id = a.id AND active_from <= ${now} ORDER BY origin LIMIT ${HOME_ORIGINS_PER_APP}) o))))
+        'origins', json((SELECT json_group_array(o.origin) FROM (SELECT origin FROM app_origins WHERE app_id = a.id AND active_from <= ${now} AND frame_only = 0 ORDER BY origin LIMIT ${HOME_ORIGINS_PER_APP}) o))))
        FROM (SELECT x.* FROM apps x WHERE x.scope_id = s.scope_id AND (x.first_login_at IS NOT NULL OR ${allApps}) ORDER BY (x.deleted_at IS NOT NULL), x.created_at, x.id LIMIT ${appsLimit + 1}) a) AS apps_json,
     (SELECT json_group_array(h.aud) FROM hana_held_clients h WHERE h.scope_id = s.scope_id AND h.provider = 'google') AS held_json`;
 

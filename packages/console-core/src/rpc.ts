@@ -52,6 +52,17 @@ const app = { orgId: orgIdInput, appId: appIdInput };
 export const listAppsInput = ctx.extend(org).strict();
 export const getAppInput = ctx.extend(app).strict();
 export const removeOriginsInput = ctx.extend({ ...app, remove: origins, expectedVersion: version }).strict();
+/**
+ * D934: the refusal when a change would leave an app with no web address that works on its own page (every one
+ * frame-only): such an app could never be used, and its frame-only addresses would have nothing to sit inside.
+ */
+export const NO_ANYWHERE_ORIGIN = 'At least one of the app’s web addresses must work on its own page, not only inside another: this would leave none.';
+
+/**
+ * D934: web addresses of the app set to work only inside its other web addresses (frame-only): a tightening, at once,
+ * like a removal (no step-up, open in a frozen org). The way back is a removal and a new add.
+ */
+export const frameOnlyOriginsInput = ctx.extend({ ...app, origins, expectedVersion: version }).strict();
 export const turnOffInput = ctx.extend({ ...app, what: z.enum(['policy', 'raw_sign', 'email']), expectedVersion: version }).strict();
 /** AdminRpc.setMainnetDemo (D428): Hana staff only; ConsoleRpc has no such method. */
 export const setMainnetDemoInput = ctx.extend({ ...app, on: z.boolean(), expectedVersion: version }).strict();
@@ -80,7 +91,7 @@ export const revokeKeyInput = ctx.extend({ ...app, keyId: keyIdInput }).strict()
 export const listChangesInput = ctx.extend({ ...org, beforeSeq: z.number().int().positive().optional(), limit: limit(200) }).strict();
 /** A member's origin add (with any removes sent with it), bound to its step-up token (spec "API verification"). */
 export const changeOriginsInput = ctx
-  .extend({ ...app, add: origins, remove: z.array(originInput).max(MAX_APP_ORIGINS), expectedVersion: version, stepUpJwt: jwt })
+  .extend({ ...app, add: origins, remove: z.array(originInput).max(MAX_APP_ORIGINS), frameOnly: z.array(originInput).max(MAX_APP_ORIGINS).optional(), expectedVersion: version, stepUpJwt: jwt })
   .strict();
 /** A member's policy set or raw-signing enable, bound to its step-up token. */
 export const consoleProposeChangeInput = ctx
@@ -112,7 +123,8 @@ export const setScopeAppUserIdsInput = ctx.extend({ scopeId: scopeIdInput, ...or
 export const deleteAppInput = ctx.extend({ appId: appIdInput }).strict();
 export const adminSetSuspendedInput = ctx.extend({ appId: appIdInput, bit: z.union([z.literal(1), z.literal(2), z.literal(4)]), suspended: z.boolean() }).strict();
 export const suspendOrgInput = ctx.extend({ ...org, suspended: z.boolean() }).strict();
-export const addOriginsInput = ctx.extend({ ...app, add: origins, expectedVersion: version }).strict();
+/** D934: `frameOnly`, those of `add` the app may use only inside its other web addresses (each guarded as any add). */
+export const addOriginsInput = ctx.extend({ ...app, add: origins, frameOnly: z.array(originInput).max(MAX_APP_ORIGINS).optional(), expectedVersion: version }).strict();
 export const adminProposeChangeInput = ctx
   .extend({ ...app, kind: z.enum(['policy_set', 'raw_sign_on']), policy: z.unknown().optional(), expectedVersion: version })
   .strict();
@@ -135,6 +147,7 @@ export const relayerKeysInput = ctx.strict();
 export type ListAppsInput = z.infer<typeof listAppsInput>;
 export type GetAppInput = z.infer<typeof getAppInput>;
 export type RemoveOriginsInput = z.infer<typeof removeOriginsInput>;
+export type FrameOnlyOriginsInput = z.infer<typeof frameOnlyOriginsInput>;
 export type TurnOffInput = z.infer<typeof turnOffInput>;
 export type SetMainnetDemoInput = z.infer<typeof setMainnetDemoInput>;
 export type UpdateSettingsInput = z.infer<typeof updateSettingsInput>;

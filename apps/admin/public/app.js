@@ -1115,6 +1115,7 @@ const LOG_KIND = {
   'key.rotated': 'Key rotated',
   'origin.proposed': 'Web address asked for',
   'origin.removed': 'Web address removed',
+  'origin.frame_only': 'Web address set to work only inside your other pages',
   'org.security_contacts': 'Security contacts replaced',
   'scope.assigned': 'Scope moved to this organisation',
   'scope.app_user_ids': 'Scope marked as a shared wallet',
@@ -1868,7 +1869,7 @@ async function platformQueuePage(main) {
   const left = (at) => (typeof at === 'number' ? (at > Date.now() ? `in ${Math.max(1, Math.round((at - Date.now()) / 3_600_000))} h` : 'due now') : '');
   const origins = q.origins.map((o) =>
     tr(
-      h('span', {}, o.idn ? h('span', {}, o.display, ' ', badge('IDN', 'warning')) : o.display, o.idn ? h('span', { class: 'sub' }, mono(o.origin)) : ''),
+      h('span', {}, o.idn ? h('span', {}, o.display, ' ', badge('IDN', 'warning')) : o.display, o.idn ? h('span', { class: 'sub' }, mono(o.origin)) : '', frameOnlyMark(o)),
       h('span', {}, link(`/orgs/${encodeURIComponent(o.orgId)}/apps/${encodeURIComponent(o.appId)}`, o.appName), h('span', { class: 'sub' }, mono(o.appId)), h('span', { class: 'sub' }, link(`/orgs/${encodeURIComponent(o.orgId)}#platform`, o.orgId))),
       h('span', {}, o.keyLabel || '', h('span', { class: 'sub' }, mono(o.keyId))),
       h('span', {}, o.notifiedAt ? h('span', {}, time(o.activeFrom), h('span', { class: 'sub' }, left(o.activeFrom))) : badge('Email not sent yet', 'warning'), h('span', { class: 'sub' }, `asked for ${time(o.proposedAt)}`)),
@@ -1896,8 +1897,15 @@ async function platformQueuePage(main) {
   main.append(confirmedPanel(q.confirmed || []));
 }
 
-/** A web address with its decoded form and the lookalike flag (the queue's way). */
-const queueOrigin = (o) => h('span', {}, o.idn ? h('span', {}, o.display, ' ', badge('IDN', 'warning')) : o.display, o.idn ? h('span', { class: 'sub' }, mono(o.origin)) : '');
+/**
+ * D934: a web address the app may use only inside its other web addresses (a network's widget), as a badge under the
+ * address; nothing for any other (a row the API sends without the field reads as usable anywhere).
+ */
+const FRAME_ONLY_WORDS = 'Only inside the app’s other web addresses';
+const frameOnlyMark = (o) => (o && o.frameOnly === true ? h('span', { class: 'sub' }, badge(FRAME_ONLY_WORDS, 'info long')) : '');
+
+/** A web address with its decoded form and the lookalike flag (the queue's way), and its frame-only mark (D934). */
+const queueOrigin = (o) => h('span', {}, o.idn ? h('span', {}, o.display, ' ', badge('IDN', 'warning')) : o.display, o.idn ? h('span', { class: 'sub' }, mono(o.origin)) : '', frameOnlyMark(o));
 const queueApp = (o) => h('span', {}, link(`/orgs/${encodeURIComponent(o.orgId)}/apps/${encodeURIComponent(o.appId)}`, o.appName), h('span', { class: 'sub' }, mono(o.appId)), h('span', { class: 'sub' }, link(`/orgs/${encodeURIComponent(o.orgId)}`, o.orgId)));
 /** A staff member by their Access identity, "(you)" when it is the one signed in. */
 const staffWho = (sub) => h('span', {}, `${BRAND.company} staff`, h('span', { class: 'sub' }, mono(sub)), me && me.sub === sub ? h('span', { class: 'sub' }, '(you)') : '');
@@ -2219,10 +2227,26 @@ async function appPage(main, orgId, appId) {
         ['Origin', 'Shown to users as', 'State', ''],
         app.origins.map((x) =>
           tr(
-            mono(x.origin),
+            h('span', {}, mono(x.origin), frameOnlyMark(x)),
             h('span', {}, x.display, x.idn ? [' ', badge('Lookalike check: international characters', 'warning')] : ''),
             x.activeFrom === null ? badge('Pending', 'warning') : h('span', {}, 'Active', h('span', { class: 'sub' }, `since ${time(x.activeFrom)}`)),
-            app.deleted ? '' : actionButton('Remove', () => api('POST', `${base}/origins/remove`, { orgId, remove: [x.origin], expectedVersion: app.originsVersion }), `Remove ${x.origin}? It stops working at once.`, true, { done: `${x.origin} was removed.` }),
+            app.deleted
+              ? ''
+              : h(
+                  'div',
+                  { class: 'cell-actions' },
+                  actionButton('Remove', () => api('POST', `${base}/origins/remove`, { orgId, remove: [x.origin], expectedVersion: app.originsVersion }), `Remove ${x.origin}? It stops working at once.`, true, { done: `${x.origin} was removed.` }),
+                  // D934: a tightening, at once; never the other way here (remove it and add it again, which waits).
+                  x.frameOnly === true || x.origin === 'http://localhost:*'
+                    ? ''
+                    : actionButton(
+                        'Make it frame-only',
+                        () => api('POST', `${base}/origins/frame-only`, { orgId, origins: [x.origin], expectedVersion: app.originsVersion }),
+                        `Make ${x.origin} work only inside this app’s other web addresses? It takes effect at once: a page that opens it on its own can’t use the wallet any more. To undo it, remove it and add it again, which waits as any new web address does.`,
+                        true,
+                        { done: `${x.origin} now works only inside this app’s other web addresses.` },
+                      ),
+                ),
           ),
         ),
         { empty: 'No origin yet: the app can’t be used from any page until one is added.' },
@@ -2234,9 +2258,13 @@ async function appPage(main, orgId, appId) {
             {},
             h('h3', {}, 'Propose origins'),
             form(
-              [{ name: 'add', label: 'Origins to add', placeholder: 'https://new.partner.example', required: true, size: 'wide', help: originsHelp(app) }],
+              [
+                { name: 'add', label: 'Origins to add', placeholder: 'https://new.partner.example', required: true, size: 'wide', help: originsHelp(app) },
+                // D934: for a network's widget: the vault then takes these only inside another of the app's web addresses.
+                { name: 'frameOnly', type: 'checkbox', label: 'Only inside the app’s other web addresses (a widget)' },
+              ],
               'Propose',
-              (v) => api('POST', `${base}/origins`, { orgId, add: lines(v.add), expectedVersion: app.originsVersion }),
+              (v) => api('POST', `${base}/origins`, { orgId, add: lines(v.add), ...(v.frameOnly ? { frameOnly: lines(v.add) } : {}), expectedVersion: app.originsVersion }),
               fourEyes(app)
                 ? { confirm: `Propose these origins? The security contacts and owners are emailed. ${FOUR_EYES_WAIT}`, done: 'Origins proposed. They wait for a second person, or 24 hours after their email.' }
                 : { confirm: 'Propose these origins? The security contacts are emailed and they take effect after the delay.', done: 'Origins proposed. They take effect after the waiting period, once the email has gone out.' },
@@ -2253,7 +2281,7 @@ async function appPage(main, orgId, appId) {
         ['Change', 'State', 'Proposed', 'Emailed', 'In force from', ''],
         app.changes.map((c) =>
           tr(
-            h('span', {}, CHANGE_KIND[c.kind] || c.kind, c.origin || c.policyId ? h('span', { class: 'sub' }, c.origin || c.policyId) : '', h('span', { class: 'sub' }, h('code', {}, c.id))),
+            h('span', {}, CHANGE_KIND[c.kind] || c.kind, c.origin || c.policyId ? h('span', { class: 'sub' }, c.origin || c.policyId) : '', frameOnlyMark(c), h('span', { class: 'sub' }, h('code', {}, c.id))),
             changeStatus(c.status),
             h('span', {}, time(c.proposedAt), h('span', { class: 'sub' }, `by ${ACTOR[c.proposedByKind] || c.proposedByKind} ${c.proposedBy}`)),
             c.notifiedAt ? when(c.notifiedAt) : h('span', { class: 'muted' }, 'not yet'),

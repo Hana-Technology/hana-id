@@ -1,5 +1,6 @@
 // DOM helpers for the auth pages. Every string reaches the page through textContent or a text node, never innerHTML,
 // so partner-controlled values (app names, origins, policy labels, decoded request fields) can't become markup.
+import type { FrameSite } from '@hana-id/core';
 
 export type Child = Node | string | null | undefined | false;
 
@@ -71,6 +72,33 @@ export function originText(d: Dom, origin: string, tag: 'span' | 'p' = 'span'): 
     el.append(d.doc.createTextNode(part));
   });
   return el;
+}
+
+/**
+ * P11 (D934): the words for a page asking for the wallet that is shown inside another page (a network's widget on a
+ * partner's site). A neutral, secondary fact under the page asking, which stays the subject: an app can list any site,
+ * so the top-level page is never presented as who is asking or as vouching for it.
+ */
+export const FRAME_TEXT = Object.freeze({
+  insideAt: 'Shown inside a page at ',
+  insideUnknown: 'Shown inside another page. Check your browser’s address bar shows a site you trust.',
+});
+
+/** The line under who is asking for a framed page (FrameSite, core protocol.ts). */
+export function frameNote(d: Dom, frame: FrameSite): HTMLElement {
+  return frame.top !== null
+    ? d.h('p', { class: 'frame-note' }, FRAME_TEXT.insideAt, originText(d, frame.top), '.')
+    : d.h('p', { class: 'frame-note' }, FRAME_TEXT.insideUnknown);
+}
+
+/**
+ * Who is asking, as the sign-in, export and email windows say it: "{lead} at {page asking}" in one box (`.asker`), as
+ * before. Framed (P11): the same paragraph, then the frame note in the same box. Not framed: exactly the one paragraph.
+ */
+export function askerBox(d: Dom, lead: Child[], parentOrigin: string, frame?: FrameSite): HTMLElement {
+  const line = (cls?: string) => d.h('p', cls ? { class: cls } : {}, ...lead, ' at ', originText(d, parentOrigin));
+  if (!frame) return line('asker');
+  return d.h('div', { class: 'asker asker-framed' }, line(), frameNote(d, frame));
 }
 
 /**

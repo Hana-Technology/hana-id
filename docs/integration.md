@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-26 (lone surrogates in names; the origins tab's name; NEAR relay limits; own `sub`, Support ID); 2026-11-24 (shared `sub`, labels, Hedera); 2026-11-23, SDK 0.5.0.
+Last verified against code: 2026-11-26 (frame-only addresses; lone surrogates; origins tab; NEAR relay limits; own `sub`); 2026-11-24 (shared `sub`, labels, Hedera); 2026-11-23, SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -208,6 +208,17 @@ and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per 
   the announcement email (no sign-in needed). Cancelling is immediate, and Journear and your owners keep a record of it.
 - **Remove** takes effect at once and signs out the users who signed in on that origin; a tab of theirs already open
   there can't sign after a minute or two and then shows signed out.
+- **Only inside your other web addresses**: tick it when adding a widget's address (a page of yours shown in an
+  iframe on your other pages, as a network's swap widget is). The wallet then loads there only when one of your app's
+  other web addresses frames it, never when someone opens the widget's address on its own, in a window of its own, or
+  inside a page you don't list. The tick goes through the same Google confirmation, email and delay as the address.
+  **Use only inside your pages** sets it on an address you already have, at once; to let such an address work on its
+  own again, remove it and add it again (that waits like any new address). Ticking, or adding only ticked addresses,
+  is refused when your app would have no working (not waiting) address without the tick; removing or cancelling an
+  address never is, and can leave none. Journear's windows still name the widget's address as the site asking and
+  add "Shown inside a page at {your page}." In Firefox without `location.ancestorOrigins` (not confirmed in release
+  builds, so possibly every Firefox user), any script on the widget's own address can get round the tick with one
+  inner frame of its own.
 - Live apps must use `https://` and can't use loopback origins. Wildcard hosts, IP addresses (other than loopback for
   test apps) and Journear Passport's own origins are refused ("A Journear origin can't be an app's origin").
 
@@ -724,6 +735,7 @@ signInButton.addEventListener('click', () => {
 | Popups allowed for your site | the "Sign in with Journear Passport" button fallback (`popup_blocked` if you cancel) |
 | `Cross-Origin-Opener-Policy` is not `same-origin` (`same-origin-allow-popups` and `unsafe-none` are fine) | `coop_blocks_popup` |
 | Every page that frames yours is also one of your origins (`frame-ancestors` checks all ancestors) | `vault_unavailable` |
+| A web address marked "only inside your other web addresses" (a widget's) is shown only inside another of your web addresses, never on its own | `vault_unavailable` (opened on its own, or inside a page you don't list) |
 | `login()` and `eth_requestAccounts` run in a click | one extra click (the fallback button) |
 | Signing calls run in a click, before any `await` (or after `hana.prepareApproval()`) | one extra click per signature (the "Review in Journear Passport" button) |
 

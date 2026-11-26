@@ -38,7 +38,7 @@ async function platformKey(org: string, scope: string, label = 'Partner backend'
 }
 
 /** One platform request's web addresses as P4's proposal writes them: each wait first, then the change and its row. */
-async function platformProposal(app: { id: string }, keyId: string, origins: string[], requestId = `pf_${uid()}`): Promise<string[]> {
+async function platformProposal(app: { id: string }, keyId: string, origins: string[], requestId = `pf_${uid()}`, frameOnly: readonly string[] = []): Promise<string[]> {
   const now = Date.now();
   const ids: string[] = [];
   for (const origin of origins) {
@@ -48,7 +48,7 @@ async function platformProposal(app: { id: string }, keyId: string, origins: str
       .prepare("INSERT INTO guarded_changes (id, app_id, kind, origin, status, proposed_by_kind, proposed_by, proposed_at, request_id) VALUES (?1, ?2, 'origin_add', ?3, 'pending', 'platform', ?4, ?5, ?6)")
       .bind(id, app.id, origin, keyId, now, requestId)
       .run();
-    await hot().prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id) VALUES (?1, ?2, NULL, ?3)').bind(app.id, origin, id).run();
+    await hot().prepare('INSERT INTO app_origins (app_id, origin, active_from, change_id, frame_only) VALUES (?1, ?2, NULL, ?3, ?4)').bind(app.id, origin, id, frameOnly.includes(origin) ? 1 : 0).run();
     ids.push(id);
   }
   return ids;
@@ -107,6 +107,24 @@ describe('a platform request’s web addresses: one email', () => {
     // Never later than the real time (minutes are cut), and close to it.
     expect(stated).toBeLessThanOrEqual(at);
     expect(at - stated).toBeLessThan(3 * 60_000);
+  });
+
+  it('D934: a frame-only web address in the request says where it works, under that address only', async () => {
+    const app = await seedHotApp();
+    const key = await platformKey(app.org, app.scope);
+    const widget = `https://widget-${uid()}.network.example`;
+    const page = `https://shop-${uid()}.partner.example`;
+    const ids = await platformProposal(app, key, [page, widget], `pf_${uid()}`, [widget]);
+    const fake = new FakeEmail();
+    await runChangeNotices(env, fake, big());
+    const m = fake.sent.find((x) => x.to === ALIAS && ids.every((id) => x.text.includes(`/cancel/${id}`)))!;
+    expect(m).toBeDefined();
+    const where = 'Only inside the app’s other web addresses (for example a widget in an iframe). Opened on its own, the wallet won’t load there.';
+    // Once, and after the widget's address, before the next address's block.
+    expect(m.text.split(where)).toHaveLength(2);
+    const at = m.text.indexOf(where);
+    expect(m.text.lastIndexOf(widget, at)).toBeGreaterThan(m.text.lastIndexOf(page, at));
+    expect(m.html).toContain('Where it works');
   });
 
   it('two requests on one app: two emails; a member’s proposal keeps its own email with the env’s delay', async () => {

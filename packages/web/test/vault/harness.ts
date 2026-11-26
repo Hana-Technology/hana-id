@@ -1005,6 +1005,11 @@ export interface TabOptions {
   ancestorOrigin?: string;
   /** location.ancestorOrigins as a whole (parent first). */
   ancestorOrigins?: string[];
+  /**
+   * D934: `window.parent === window.top` (default: by `ancestorOrigins` when given, a single entry being top-level,
+   * else true); 'throws' makes the host's read throw.
+   */
+  parentIsTop?: boolean | 'throws';
   loginFlow?: 'combined' | 'split';
   googleJwk?: Google['jwk'];
   options?: Partial<VaultOptions>;
@@ -1039,6 +1044,10 @@ export function openTab(browser: Browser, o: TabOptions = {}): Tab {
       parent,
       ancestorOrigin: () => o.ancestorOrigin,
       ancestorOrigins: () => o.ancestorOrigins,
+      parentIsTop: () => {
+        if (o.parentIsTop === 'throws') throw new Error('top unreadable');
+        return o.parentIsTop ?? (o.ancestorOrigins ? o.ancestorOrigins.length <= 1 : true);
+      },
       onMessage: (l) => listeners.push(l),
       open: (url, name, features) => {
         const w = new FakeWindow(url, name, features, null);

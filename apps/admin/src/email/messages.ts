@@ -53,6 +53,16 @@ const byWords = (kind: string, id: string): string => `${Object.hasOwn(CHANGED_B
 const KIND_LABEL: Record<string, string> = { origin_add: 'a new allowed origin', policy_set: 'an auto-approve policy', raw_sign_on: 'raw signing (with approval)' };
 /** Each guarded change kind in plain words (D699): the notice's subject and its "Change" row (the id kept after it for support). */
 const KIND_SUBJECT: Record<string, string> = { origin_add: 'New allowed origin proposed', policy_set: 'Auto-approve policy proposed', raw_sign_on: 'Raw signing proposed' };
+/**
+ * D934: the row a frame-only web address adds to every email that lists it (the change notice here, the platform's and
+ * the four-eyes request emails and the confirmation's notice in platform-messages.ts). Only then: any other email is
+ * byte for byte the one before.
+ */
+export const FRAME_ONLY_ROW: readonly [string, string] = Object.freeze([
+  'Where it works',
+  'Only inside the app’s other web addresses (for example a widget in an iframe). Opened on its own, the wallet won’t load there.',
+] as const);
+
 const KIND_ACTION: Record<string, string> = { origin_add: 'Add an allowed origin', policy_set: 'Set an auto-approve policy', raw_sign_on: 'Turn on raw signing (with approval)' };
 
 /** Every path in a policy where `addressArgs` is `'any'` (any address may be passed: the notice calls each out). */
@@ -81,6 +91,7 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
   if (ch.kind === 'origin_add' && ch.origin) {
     rows.push(['Origin', ch.origin]);
     if (ch.display && ch.display !== ch.origin) rows.push(['Shown as', ch.display]);
+    if (ch.frameOnly === true) rows.push([...FRAME_ONLY_ROW]);
   }
   if (ch.kind === 'policy_set' && ch.policyId) rows.push(['Policy id', ch.policyId]);
   rows.push(['Proposed by', `${Object.hasOwn(PROPOSED_BY, ch.proposedByKind) ? PROPOSED_BY[ch.proposedByKind] : ch.proposedByKind} (${ch.proposedBy})`]);

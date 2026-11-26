@@ -42,6 +42,12 @@ export interface App {
   scope_conflict: boolean;
   /** The origins in force now (`active_from <= now`; NULL, not yet announced, never matches). */
   origins: string[];
+  /**
+   * D934 (migration 0035): those of `origins` the app may use only inside a frame: the vault takes one as its parent
+   * only when the top-level page is another of the app's origins that isn't frame-only (packages/web vault.ts
+   * `frameRule`), and a partner page on one never calls the dev-env session endpoints (origins.ts `checkCaller`).
+   */
+  frameOnlyOrigins: string[];
 }
 
 /**
@@ -59,7 +65,7 @@ export { LOCALHOST_WILDCARD, originAllowed } from './origins.ts';
 /** Whether the gate refuses the app as suspended: any suspension bit, or the legacy status column. */
 export const appSuspended = (app: Pick<App, 'suspended_by' | 'status'>): boolean => app.suspended_by !== 0 || app.status !== 'active';
 
-type AppRow = Omit<App, 'origins' | 'scope_conflict'>;
+type AppRow = Omit<App, 'origins' | 'frameOnlyOrigins' | 'scope_conflict'>;
 
 /**
  * The app behind an unrevoked publishable key (`revoked_at` NULL or still in the future: the rotation grace), with its
@@ -76,9 +82,11 @@ export async function getAppByKey(db: D1Database, publishableKey: string, now = 
     .bind(publishableKey, now)
     .first<AppRow>();
   if (!row) return null;
-  const { results } = await db.prepare('SELECT origin FROM app_origins WHERE app_id = ?1 AND active_from <= ?2').bind(row.id, now).all<{ origin: string }>();
+  const { results } = await db.prepare('SELECT origin, frame_only FROM app_origins WHERE app_id = ?1 AND active_from <= ?2').bind(row.id, now).all<{ origin: string; frame_only: number }>();
   const keyEnvironment = row.publishable_key.startsWith('pk_live_') ? 'live' : 'test';
-  return { ...row, scope_conflict: keyEnvironment !== row.environment, origins: results.map((r) => r.origin) };
+  // Anything but exactly 0 reads as frame-only (fail closed: the stricter rule).
+  const frameOnlyOrigins = results.filter((r) => r.frame_only !== 0).map((r) => r.origin);
+  return { ...row, scope_conflict: keyEnvironment !== row.environment, origins: results.map((r) => r.origin), frameOnlyOrigins };
 }
 
 /**

@@ -70,7 +70,7 @@ export interface AppOriginsView {
   id: string;
   name: string;
   scopeId: string;
-  origins: { origin: string; display: string; idn: boolean; activeFrom: number | null }[];
+  origins: { origin: string; display: string; idn: boolean; activeFrom: number | null; frameOnly?: true }[];
 }
 
 /**
@@ -83,6 +83,8 @@ export interface AdminRpcClient {
   getApp(c: unknown): Answer<{ app: AppOriginsView & Record<string, unknown> }>;
   listChanges(c: unknown): Answer<{ changes: AppChange[] }>;
   removeOrigins(c: unknown): Loose;
+  /** D934: web addresses set to work only inside the app's other web addresses, at once (a tightening). */
+  frameOnlyOrigins(c: unknown): Answer<{ version: number }>;
   turnOff(c: unknown): Loose;
   /** The mainnet demo exception to D39 (D428): a test app in a dev testnet env only. */
   setMainnetDemo(c: unknown): Loose;

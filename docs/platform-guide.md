@@ -6,7 +6,7 @@ creates and manages a Journear Passport app for that partner, with no person at 
 is Sodax's backend team. Everything your backend needs is in this guide; the integration guide (`integration.md`,
 sent with our SDK) covers the partner's page and our SDK.
 
-Last verified: 2026-11-26, against the platform API's code and tests (built, not deployed anywhere yet).
+Last verified: 2026-11-26 (web addresses marked `frameOnly`), against the platform API's code and tests (built, not deployed anywhere yet).
 
 > **Not available yet.** The platform API is built and tested, but it is **not deployed** in any environment and
 > **not switched on** for any organisation. Journear switches it on per organisation. The API's address and the
@@ -694,7 +694,7 @@ key at once ([section 3](#stop-a-key-at-once)). Answers `{ revokedAt }`. The `Id
 `POST /v1/platform/apps`
 
 ```json
-{ "scopeId": "<your shared scope>", "name": "Acme Swap", "origins": ["https://swap.acme.example", "https://widget.network.example"] }
+{ "scopeId": "<your shared scope>", "name": "Acme Swap", "origins": ["https://swap.acme.example", { "origin": "https://widget.network.example", "frameOnly": true }] }
 ```
 
 - `name`: what users see in Journear Passport's windows ("Signing in to Acme Swap"). The same rules as every app name
@@ -706,13 +706,23 @@ key at once ([section 3](#stop-a-key-at-once)). Answers `{ revokedAt }`. The `Id
   loopback address (`localhost`, `127.0.0.1`), no port wildcard and no host name that mixes alphabets. For a partner
   that uses your own widget in an iframe, list the widget's web address **and** every page of the partner's that
   frames it ([section 10](#10-the-front-end-the-partners-site-and-your-sdk)).
+- Each entry of `origins` is a web address as a string, or `{ "origin": "…", "frameOnly": true }`. **`frameOnly`**
+  marks your widget's address: our wallet then works there only when the widget is inside one of the app's other web
+  addresses (the partner's pages), never when someone opens the widget's address on its own, in a window of its own,
+  or inside a page the app doesn't list. A string, or `"frameOnly": false`, is usable anywhere, as before. The mark is
+  part of the web address's request: an owner sees it when they confirm, and it waits like any address. To take it
+  off later, remove the address and ask for it again without the mark (that waits again); an owner in your
+  organisation can add the mark to an address at once in our partner portal. A create whose addresses are all marked
+  is `400 bad_request`, and a proposal of only marked addresses is `409 conflict` unless the app already has a working
+  (not waiting) address without the mark. Removing or cancelling an address is never refused, so it can still leave
+  an app with only marked addresses (which then work nowhere until you add a page).
 
 **Answer `201`:**
 
 ```json
 { "app": { "id": "app_…", "name": "Acme Swap", "originsVersion": 1, "origins": [ … ], "keys": [ … ], … },
   "publishableKey": "pk_test_…",
-  "changes": [ { "changeId": "gc_…", "origin": "https://swap.acme.example" }, … ],
+  "changes": [ { "changeId": "gc_…", "origin": "https://swap.acme.example" }, { "changeId": "gc_…", "origin": "https://widget.network.example", "frameOnly": true } ],
   "requestId": "…" }
 ```
 
@@ -745,7 +755,7 @@ through the platform, on your key's scopes. A `scopeId` your key doesn't name is
   "suspended": { "byJournear": false, "byOrganisation": false, "byYou": false, "youCanResume": false },
   "originsVersion": 1,
   "origins": [ { "origin": "https://xn--bcher-kva.example", "display": "https://bücher.example", "idn": true,
-                 "state": "waiting", "activeFrom": 1800086400000, "confirmedAt": null, "changeId": "gc_…" } ],
+                 "state": "waiting", "activeFrom": 1800086400000, "confirmedAt": null, "changeId": "gc_…", "frameOnly": false } ],
   "keys": [ { "id": "key_…", "key": "pk_test_…", "createdAt": 0, "revokedAt": null } ] }
 ```
 
@@ -760,6 +770,7 @@ through the platform, on your key's scopes. A `scopeId` your key doesn't name is
 | `origins[].state` | `waiting_announcement`, `waiting` or `active` ([section 7](#7-what-a-partner-experiences)) |
 | `origins[].activeFrom` | When it starts (or started) working; `null` until announced. For a waiting one: the time it works if nobody confirms it |
 | `origins[].confirmedAt` | When an owner confirmed it (never who); `null` otherwise |
+| `origins[].frameOnly` | `true`: it works only inside the app's other web addresses (your widget's); `false`: anywhere |
 | `keys` | The 20 newest publishable keys, oldest first; a revoked key has `revokedAt` |
 
 A cancelled or removed web address is no longer in `origins`.
@@ -767,7 +778,8 @@ A cancelled or removed web address is no longer in `origins`.
 ### Ask for web addresses
 
 `POST /v1/platform/apps/:appId/origins` with `{ "add": ["https://shop.acme.example"], "expectedVersion": 1 }` (1 to
-20 addresses). Answer `202 { version, changes: [{ changeId, origin }] }`. Each address waits like a create's
+20 addresses; each a string or `{ "origin": "…", "frameOnly": true }`, as in a create). Answer
+`202 { version, changes: [{ changeId, origin, frameOnly? }] }` (`frameOnly: true` only on a marked one). Each address waits like a create's
 ([section 7](#7-what-a-partner-experiences)): announced by email, then working when an owner confirms it or 24 hours
 after the email. Nothing you send can make it faster.
 
@@ -1034,11 +1046,16 @@ What your SDK needs to know about ours (the integration guide has the full API):
 **Your widget in an iframe.** If the partner uses your widget, served from your own web address inside the partner's
 page, the partner's app must list **the widget's web address and every partner page that frames it**. Our frame
 checks every page around it, so an app that lists only the widget's address is refused on the partner's page, and
-partner B's page can't use partner A's app. The widget's address counts as one of the app's 20. Two things to know:
-the approval window names the **widget's** web address, not the partner's page (the app's name is what tells
-partners apart); and anyone can open the widget's own page, outside any partner's site, with a partner's settings
-and get that partner's app. Two changes of ours are planned, not built yet: our windows will also show the partner's
-page, and an app will be able to accept the widget's address only inside a partner's page, which closes that gap.
+partner B's page can't use partner A's app. The widget's address counts as one of the app's 20. **Mark the widget's
+address `frameOnly`** (in the create or the proposal): then anyone opening the widget's own page outside the
+partner's pages, with the partner's settings, gets nothing (our wallet answers as for a site the app doesn't list).
+Unmarked, it works there too, as before. Our sign-in and approval windows still name the widget's address as the
+site asking, and add, read from the browser itself, "Shown inside a page at https://swap.acme.example."; in a browser
+that doesn't say which page is around a frame (Firefox without `location.ancestorOrigins`; whether release Firefox has
+it is not confirmed), they say "Shown inside another page. Check your browser's address bar shows a site you trust."
+**In such a browser the mark can be defeated by any script running on the widget's own address**: one inner frame of
+its own (a plain frame or an `about:srcdoc` one) makes the widget look framed, and the browser doesn't say by whom. Keep
+the widget's own pages free of anything that frames them, and of third-party scripts you don't control.
 
 **Switching a partner off in your portal doesn't sign its users out** on their devices: your SDK just stops loading
 ours, as closing the tab would. Suspending the partner's app is what ends its sign-ins

@@ -27,3 +27,12 @@ export function servedOrigins(envName: string, app: Pick<App, 'environment' | 'o
   const loopback = (o: string) => o === LOCALHOST_WILDCARD || isLoopbackOrigin(o);
   return [...new Set(app.origins)].filter((o) => (o === LOCALHOST_WILDCARD || SAFE_ORIGIN_RE.test(o)) && (loopbackOk || !loopback(o))).sort();
 }
+
+/**
+ * D934: the served origins the app may use only inside a frame (`servedOrigins` ∩ the app's frame-only ones), sorted.
+ * The vault refuses one of them as its parent when it is the top-level page (packages/web vault.ts `frameRule`).
+ */
+export function servedFrameOnly(envName: string, app: Pick<App, 'environment' | 'origins' | 'frameOnlyOrigins'>): string[] {
+  const frameOnly = new Set(app.frameOnlyOrigins);
+  return servedOrigins(envName, app).filter((o) => o !== LOCALHOST_WILDCARD && frameOnly.has(o));
+}

@@ -13,7 +13,7 @@ import { type Writer, actorId, commitOnChange, committed, refuseReplay, refuse, 
 import type { HotDb } from './db.ts';
 import { requireChangeConfig } from './origins.ts';
 import { type Q, q, raw } from './sql.ts';
-import { CHANGE_COLUMNS, type ChangeRow, changeView } from './views.ts';
+import { CHANGE_COLUMNS, type ChangeRow, FRAME_ONLY_OF, changeView } from './views.ts';
 
 interface ChangePlan extends ChangeRow {
   replay: string | null;
@@ -174,7 +174,8 @@ export async function pendingNotices(db: HotDb, limit: number, env?: Env): Promi
              (SELECT json_group_array(email) FROM (SELECT email FROM org_security_contacts WHERE org_id = a.org_id ORDER BY email)) AS contacts,
              (SELECT pw.min_delay_ms FROM platform_origin_waits pw WHERE pw.change_id = g.id) AS pw_min_delay_ms,
              (SELECT sw.min_delay_ms FROM staff_origin_waits sw WHERE sw.change_id = g.id) AS sw_min_delay_ms,
-             CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS pk_label
+             CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS pk_label,
+             ${raw(FRAME_ONLY_OF('g'))}
         FROM guarded_changes g JOIN apps a ON a.id = g.app_id JOIN scopes s ON s.scope_id = a.scope_id
        WHERE g.status = 'pending' AND g.notified_at IS NULL AND a.deleted_at IS NULL
        ORDER BY g.proposed_at, g.request_id, g.id LIMIT ${limit}`,

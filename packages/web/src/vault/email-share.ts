@@ -22,6 +22,7 @@ import {
   emailConsentPayload,
   identityMessage,
   parseWindowMessage,
+  type FrameSite,
 } from '@hana-id/core';
 import type { Clock, Timers, WindowMessageEvent, WindowRef } from './runtime.ts';
 
@@ -68,6 +69,8 @@ export interface SheetRequest {
   pk: string;
   appName: string;
   parentOrigin: string;
+  /** P11 (D934): where the page asking sits (frame.ts), only when it is framed. */
+  frame?: FrameSite;
   logoUrl: string | null;
   ownGoogleClient: boolean;
   state: 'not_asked' | 'declined' | 'granted';
@@ -230,6 +233,7 @@ export class ShareSheet {
         pk: request.pk,
         appName: request.appName,
         parentOrigin: request.parentOrigin,
+        ...(request.frame ? { frame: request.frame } : {}),
         ownGoogleClient: request.ownGoogleClient,
         state: request.state,
         sealedEmail: request.sealedEmail,

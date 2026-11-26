@@ -33,6 +33,12 @@ export interface VaultConfig {
   appName: string;
   scopeId: string;
   origins: readonly string[];
+  /**
+   * D934 (P12): those of `origins` the app may use only inside a frame (a network's widget): the vault refuses one as
+   * its parent when it is the top-level page, and any as the top-level page (frame.ts `frameRuleAllows`). Present
+   * only when there is one (apps/api vault/page.ts); absent reads as none.
+   */
+  frameOnly?: readonly string[];
   settings: VaultSettings;
   publishableKey: string;
   serverTimeMs: number;
@@ -76,7 +82,7 @@ function parseSettings(v: unknown): VaultSettings | null {
 /** Validates the config object, or null. */
 export function parseVaultConfig(value: unknown): VaultConfig | null {
   if (!isPlainObject(value)) return null;
-  if (!exactKeys(value, ['v', 'appId', 'appName', 'scopeId', 'origins', 'settings', 'publishableKey', 'serverTimeMs'])) return null;
+  if (!exactKeys(value, ['v', 'appId', 'appName', 'scopeId', 'origins', 'settings', 'publishableKey', 'serverTimeMs'], ['frameOnly'])) return null;
   const { appId, appName, scopeId, origins, publishableKey, serverTimeMs } = value;
   if (value.v !== 1) return null;
   if (typeof appId !== 'string' || !APP_ID_RE.test(appId)) return null;
@@ -86,9 +92,25 @@ export function parseVaultConfig(value: unknown): VaultConfig | null {
   if (!isInt(serverTimeMs, 0, Number.MAX_SAFE_INTEGER)) return null;
   if (!Array.isArray(origins) || origins.length > MAX_ORIGINS) return null;
   if (!origins.every((o) => o === LOCALHOST_WILDCARD || isOrigin(o))) return null;
+  // D934: each one of `origins`, once, never the localhost wildcard; an empty list is malformed (the API omits it).
+  const frameOnly = value.frameOnly;
+  if (frameOnly !== undefined) {
+    if (!Array.isArray(frameOnly) || frameOnly.length === 0 || new Set(frameOnly).size !== frameOnly.length) return null;
+    if (!frameOnly.every((o) => typeof o === 'string' && o !== LOCALHOST_WILDCARD && isOrigin(o) && (origins as string[]).includes(o))) return null;
+  }
   const settings = parseSettings(value.settings);
   if (!settings) return null;
-  return Object.freeze({ v: 1, appId, appName, scopeId, origins: Object.freeze([...(origins as string[])]), settings: Object.freeze(settings), publishableKey, serverTimeMs });
+  return Object.freeze({
+    v: 1,
+    appId,
+    appName,
+    scopeId,
+    origins: Object.freeze([...(origins as string[])]),
+    ...(frameOnly !== undefined ? { frameOnly: Object.freeze([...(frameOnly as string[])]) } : {}),
+    settings: Object.freeze(settings),
+    publishableKey,
+    serverTimeMs,
+  });
 }
 
 /** Reads and validates `#hana-config` from the vault page, or null (missing, not JSON, or malformed). */

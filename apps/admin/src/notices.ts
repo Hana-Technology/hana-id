@@ -222,6 +222,8 @@ async function sendRequestGroup(env: Env, sender: EmailSender, budget: Budget, k
     origin: n.change.origin ?? '',
     display: n.change.display,
     idn: n.change.idn,
+    // D934: a frame-only add says where it works.
+    ...(n.change.frameOnly === true ? { frameOnly: true } : {}),
     cancelUrl: consoleLink(env.CONSOLE_ORIGIN, `/cancel/${encodeURIComponent(n.change.id)}#t=${b64url(tokens[k]!)}`),
   }));
   // D931: the Confirm link only opens the partner portal's page for the request (its first change); a GET confirms nothing.

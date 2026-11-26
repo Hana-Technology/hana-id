@@ -608,7 +608,7 @@ export function rdnsFor(authOrigin: string): string {
 let bindAnnounced: (announced: HanaEip6963Provider, to: HanaEthereumProvider | null) => void;
 
 /**
- * The EIP-1193 provider EIP-6963 announces (`hana.eip6963.provider`, D936): one per page and wallet slot, never
+ * The EIP-1193 provider EIP-6963 announces (`hana.eip6963.provider`): one per page and wallet slot, never
  * replaced, so wallet lists that keep the first announcement of a uuid (mipd, and wagmi through it) keep one that
  * works after the wallet is turned off and on. It forwards `request` and the four events to the `hana.ethereum` of the
  * live client holding its slot. With none (after `hana.destroy()`, until the next `createHana` with the same
@@ -678,7 +678,7 @@ export interface Eip6963Announcement {
 
 /**
  * Announces `provider` (`eip6963:announceProvider`) now and on every `eip6963:requestProvider`, until `stop()`. It
- * takes the page's first free slot for `rdns` (D936): a client created after another was destroyed reuses its uuid and
+ * takes the page's first free slot for `rdns`: a client created after another was destroyed reuses its uuid and
  * announced provider, so a store keyed by uuid keeps one entry, which now forwards to `provider`; clients alive at
  * once each hold their own slot, so their announcements stay distinct. A new slot's uuid is a fresh random v4
  * (crypto.randomUUID), kept in memory for the page's lifetime only.

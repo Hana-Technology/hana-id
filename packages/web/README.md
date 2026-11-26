@@ -95,6 +95,8 @@ Create one client per page and keep it; `hana.destroy()` removes it.
   reachable through its own `hana.ethereum`), and switching to another app moves the entry to it.
 - Anything built on `hana.ethereum` itself (viem's `custom(hana.ethereum)`, ethers) belongs to that client: build it
   again on the new one, or once on `hana.eip6963.provider`.
+- The entry is shared by everything on the page: on it, remove only your own listeners (`removeListener`), never
+  `removeAllListeners()`.
 
 The `uuid` is random, in memory for the page's lifetime only, never stored: a reload or another site gets a new one.
 

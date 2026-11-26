@@ -24705,8 +24705,9 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
 - **Date:** 2026-11-26 · **Status:** built and tested (PR 163, after two independent reviews); the choices below **to
   confirm (the Tech Lead)** · **Relates to:** D114 (HanaClient a type only), D838 (EIP-5792 on the provider), D909 and
   D926 (Sodax's toggle), `sodax-sdk-integration.md` · **Built:** `packages/web` (`client/ethereum.ts`,
-  `client/client.ts`, `client/emitter.ts`, `index.ts`; tests `test/client/eip6963-lifecycle.test.ts`), `packages/react`
-  (test `test/eip6963-remount.test.tsx` only; `provider.tsx` unchanged), `scripts/pack-smoke/types.ts`. Real `mipd`
+  `client/client.ts`, `index.ts`; tests `test/client/eip6963-lifecycle.test.ts`), `packages/react`
+  (test `test/eip6963-remount.test.tsx` only; `provider.tsx` unchanged), `scripts/pack-smoke/types.ts`; `emitter.ts`
+  is `next`'s (the final review's fix removed the protected `emitWhile` an earlier round added). Real `mipd`
   0.0.7, `@wagmi/core` 3.6.5 and `viem` 2.57.7 as devDependencies of the two packages (already in the lockfile through
   `apps/e2e`). Docs `integration.md`, `packages/web/README.md`, `packages/react/README.md` (unchanged in the end),
   `platform-guide.md` section 10, `architecture.md`, `sodax-sdk-integration.md`. SDK version unchanged: 0.5.0 is not
@@ -24734,11 +24735,23 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
     second `connect`). It hears `hana.ethereum` through a module-private sink called before the public listeners, so
     a host's `hana.ethereum.removeAllListeners()` can't cut it off. It is frozen in its constructor (state in private
     fields), so a page script can't swap `request` for every later client. Binding is module-private (static blocks).
-  - **No event after a move.** An event being delivered when the entry moves on (a listener destroyed or created a
-    client) is not delivered further: the entry keeps a generation, changed on every move and when its client starts
-    being destroyed, and `Emitter.emitWhile` stops between listeners once it changed; `hana.ethereum.emit` skips a sink
-    detached during the delivery and stops once the provider retired. Otherwise a later listener heard the destroyed
-    client's account after the entry had reported the other client's (the second review's L1, proved and tested).
+  - **Every listener hears every event, in one order (FIFO).** Every event the entry says (forwarded ones and the
+    "what changed" ones of a move) goes on a queue; one drain loop delivers each to all listeners registered at that
+    moment before the next starts; an event caused meanwhile (a listener created or destroyed a client) is appended
+    and delivered after. A move queues all its changes before any is delivered, and compares the new client's state
+    with what the listeners will have heard once the queue is out (the last state said or queued). So every listener
+    ends with the bound client's state, by construction, whatever order the listeners were registered in. A listener
+    that throws doesn't stop the loop (the Emitter rethrows on a fresh task, as for any emitter here). The queue grows
+    only by what listeners cause: the SDK only says a difference, and a move to the client already bound says nothing,
+    so no SDK loop exists (a host listener that re-creates on every `disconnect` is bounded by the host; no cap).
+    `request` doesn't use the queue: it goes straight to the bound client. This replaced the second review's fix (a
+    generation that cut a delivery short), which the final review showed could leave later listeners wrong for good
+    when the new client's state matched what the entry had meant to say (cases A, B and C below).
+  - **A destroyed client's own `hana.ethereum`** says nothing after its teardown: when a listener destroys it while it
+    is delivering an event, the rest of that event goes out first, then `accountsChanged []` and `disconnect`, then its
+    listeners are dropped (`retire()` defers the teardown to the end of the delivery in progress). Its requests are
+    refused from the first moment either way. The sink-skip of the second round is gone: one entry per environment
+    means one sink per provider.
   - **`destroy()` order:** the client leaves the entry (`release()`: it moves at once to the next newest live client,
     else stays on this one for its last events), then `hana.ethereum.retire()`, then `stop()` (the entry lets go of
     this client and, with none left, stops answering `eip6963:requestProvider`), the vault connection, `destroyed`, and
@@ -24749,7 +24762,8 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
     refused: the second review's L3, proved and tested), then `accountsChanged []` (if it had an account) and
     `disconnect` (4900, only if connected and not already said), then drops its listeners. Before, it still answered
     `eth_chainId` and reads after `destroy()`. It holds a frozen dead host, so nothing keeps the client or the removed
-    frame alive. The 4900's message is the vault-gone one.
+    frame alive. The 4900's message is the vault-gone one. A `wallet_getCapabilities` awaiting `ready` across
+    `destroy()` resolved `{}` or 4100 (the dead host has no chains and no address); it now rejects 4900 (one line).
   - **New API:** `hana.eip6963` (the frozen detail, or null without `evm`), the `destroyed` event (last, once) and
     `hana.destroyed`, types `Eip6963ProviderDetail` and `HanaEip6963Provider`. No wagmi dependency in the SDK.
 - **What is given up:** two apps (or keys) alive at once on one page and one environment don't each get their own
@@ -24764,7 +24778,9 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   message. The second review found it sound but more complex than needed, and the flush could destroy a client its
   provider was about to take back under `<Activity>`. The Tech Lead's decision: one entry following the newest client.
   It removed the slots, the borrowing and the flush (`HanaProvider` is back to `next`'s, unchanged by this PR),
-  kept the sink, the frozen provider and the message, and fixed the second review's L1 and L3 within it.
+  kept the sink, the frozen provider and the message, and fixed the second review's L1 and L3 within it. The final review
+  found that L1's fix (cutting a delivery short) could leave later listeners wrong for good; it was replaced by the
+  FIFO queue, and the in-flight `wallet_getCapabilities` and the shared `removeAllListeners()` were addressed.
 - **What EIP-6963 says, and why this complies** (quoted from memory of the final EIP text; no network was used):
   `info.uuid` is "a globally unique identifier the Wallet Provider that MUST be (UUIDv4 compliant) to uniquely
   distinguish different EIP-1193 provider sessions that have matching properties defined below during the lifetime of
@@ -24794,22 +24810,33 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   explicit wagmi `disconnect` loop with `connectorsOf` (`destroy()` ends wagmi's connection; `connectorsOf` compares
   with `client.ethereum` and would find nothing). A filter on its own EVM list only if the kit must hide the wallet
   while off. Its test helpers that expect 0 mipd entries after the switch goes off would see 1 (dormant).
-- **Tests:** `eip6963-lifecycle.test.ts` (23: one entry and uuid over off/on ×3; clients alive at once share it,
+- **Tests.** `eip6963-lifecycle.test.ts` (33): one entry and uuid over off/on ×3; clients alive at once share it,
   newest then next newest; another rdns its own; the "say what changed" sequence across chains; per-page uuid and no
-  storage; after `destroy()`: every method 4900, no listener, no frame, requests from inside the teardown listeners
-  refused (L3); a retired provider never reaches its host; a never-destroying host sees the client's own checks
-  (4200, 4100, 4902); no event after a move, with one client and with two (L1); a request answered by the client bound
-  when made; frozen; sink after `removeAllListeners()`; real mipd; real wagmi ×5; and a randomised state machine: 40
-  rounds of 14 steps, up to 4 clients on mixed chains, creates and destroys also inside the entry's and `hana.ethereum`'s
-  `accountsChanged` and `disconnect` listeners, checking at every step that the entry is bound to the newest live
-  client, that what its listeners heard is that client's state, no duplicate `connect`, and that a request reaches that
-  client's vault only; passed on 8 further seeds), and `eip6963-remount.test.tsx` (React 19: 7, React 18: 6 and
-  `<Activity>` skipped: key remount ×2 modes, two providers ×2 modes, `<Activity>` hide/show with a key remount in the
-  same task, mount/unmount ×2 modes). The L1 and L3 tests fail with their fixes reverted (checked).
-- **Residual.** A listener that changes clients from inside its own handler can leave later listeners of that one
-  delivery without that event (they get the entry's correction, not the event itself); the state they end with is the
-  bound client's. When two clients go in the same tick, wagmi's own throwaway connectors can log an unhandled 4900
-  from their async handlers (wagmi's code).
+  storage; after `destroy()`: every method 4900, no listener, no frame, calls from inside the teardown listeners
+  refused (second review's L3); a retired provider never reaches its host; a never-destroying host gets the client's own
+  checks (4200, 4100, 4902); FIFO delivery: a destroy inside `accountsChanged` with two clients and with one, the final
+  review's cases A (chain), B (`connect`) and C (accounts), a vault dying under a destroying `disconnect` listener, a
+  throwing listener (the queue goes on; the error is rethrown on a fresh task); a request answered by the client bound
+  when made; the in-flight `wallet_getCapabilities`; frozen; sink after `removeAllListeners()`; real mipd; real wagmi
+  ×7 (off/on ×3, create-first across chains, re-create in a teardown listener, cases A and B, `localStorage`); and the
+  state machine in three modes (triggers on the entry registered before the observer, after it, and mixed; some on a
+  client's own `hana.ethereum`): up to 4 clients on mixed chains, creates, destroys (also from inside listeners, up to 3
+  deep), chain switches, account changes, vault deaths and requests in flight, 3 seeds × 8 rounds × 18 steps per mode,
+  a mulberry32 generator with every op code asserted to have run; at every quiescent point every listener's view
+  (accounts, chain, connected) is the bound client's (or off), no second `connect`, requests reach only the bound
+  client's vault, and a destroyed client says nothing after its teardown. The new cases and the "before" and "mixed"
+  modes fail on the second round's code (checked; "after" passed there, which is how the earlier test missed it). The
+  tests remove only their own listeners from the shared entry. `eip6963-remount.test.tsx` (React 19: 7; React 18: 6,
+  `<Activity>` skipped): key remount ×2 modes, two providers ×2 modes, `<Activity>` hide/show with a key remount in the
+  same task, mount/unmount ×2 modes, all with real wagmi.
+- **Residual.** Every listener hears every event and ends with the bound client's state, by construction (the queue
+  above); an event a listener caused reaches the listeners after the current one, not nested inside it. `createHana`
+  can fire the entry's listeners synchronously before it returns (the entry moves to the new client and says what
+  changed). The entry is shared and its `removeAllListeners()` is the standard one: one integration calling it
+  removes everyone's listeners (wagmi's included) for good. Kept as is, documented ("remove only your own
+  listeners"): a no-op would leave a library's handlers running after its own teardown, and a throw would break that
+  teardown; both are likelier to break a well-behaved library than a documented rule. When two clients go in the same
+  tick, wagmi's own throwaway connectors can log an unhandled 4900 from their async handlers (wagmi's code).
 - **To confirm (the Tech Lead):**
   1. The announced provider is a separate object from `hana.ethereum`, so `detail.provider !== hana.ethereum` for
      every host, also one that never destroys.

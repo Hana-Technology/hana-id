@@ -11,29 +11,41 @@ import { StrictMode, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { sepolia } from 'viem/chains';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { HanaClient } from '@hana-id/web';
+import { type HanaClient, HanaEthereumProvider } from '@hana-id/web';
 import { HanaProvider, useHana } from '../src/index.ts';
 import { CONFIG, EVM, LOGGED_IN, attachVault, settle, stubBrowser, vaultFrames } from './harness.tsx';
 
 const EVM_CONFIG = { chains: [{ id: sepolia.id, rpcUrl: 'https://sepolia.rpc.test' }], defaultChainId: sepolia.id };
 const WITH_EVM = { ...CONFIG, evm: EVM_CONFIG };
 
-let announced: { info: { uuid: string }; provider: { removeAllListeners(): void } }[];
+let announced: { info: { uuid: string } }[];
 const onAnnounce = (e: Event) => announced.push((e as CustomEvent<(typeof announced)[number]>).detail);
 /** The clients each named spot in the tree saw, in order. */
 const seen: Record<string, HanaClient[]> = {};
+/**
+ * The listeners this test (its wagmi) put on the page's shared entry, removed in afterEach: the entry outlives a test,
+ * and its removeAllListeners() would also remove other integrations' listeners. The entry's `on` is the Emitter's.
+ */
+let added: { p: { removeListener(e: string, l: unknown): unknown }; event: string; listener: unknown }[];
 beforeEach(() => {
   stubBrowser();
   announced = [];
+  added = [];
+  const emitterProto = Object.getPrototypeOf(HanaEthereumProvider.prototype) as { on(this: unknown, e: string, l: unknown): unknown };
+  const on = emitterProto.on;
+  vi.spyOn(emitterProto, 'on').mockImplementation(function (this: unknown, event: string, listener: unknown) {
+    if (!(this instanceof HanaEthereumProvider)) added.push({ p: this as (typeof added)[number]['p'], event, listener });
+    return on.call(this, event, listener);
+  });
   for (const k of Object.keys(seen)) delete seen[k];
   window.addEventListener('eip6963:announceProvider', onAnnounce);
 });
 afterEach(async () => {
   window.removeEventListener('eip6963:announceProvider', onAnnounce);
+  // This test's listeners first: they mustn't react (wagmi's async handlers) to the unmounts below.
+  for (const { p, event, listener } of added) p.removeListener(event, listener);
   cleanup();
   await settle();
-  // The page's entry outlives a test: a test's wagmi must not hear the next test's clients.
-  for (const d of announced) d.provider.removeAllListeners();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.body.replaceChildren();

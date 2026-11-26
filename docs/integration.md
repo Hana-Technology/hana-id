@@ -604,6 +604,9 @@ twice). The order doesn't matter: the new client may be created before or after 
 - **What you built on `hana.ethereum` itself** (viem's `custom(hana.ethereum)`, ethers' `BrowserProvider`, a connector
   you created with it) belongs to that client: build it again on the new `hana.ethereum`, or once on
   `hana.eip6963.provider`, which follows the newest client. The two answer the same, but they are different objects.
+- **The entry is shared by everything on the page** (wagmi and any other library listening to it): on it, remove only
+  your own listeners (`removeListener`), never `removeAllListeners()`, which would also remove theirs. Its events go
+  to every listener in one order, one at a time; a listener may fire during `createHana` itself.
 
 The `uuid` is random, kept in memory for the page's lifetime and never stored: a reload, another tab or another site
 gets a new one, so it can't be used to recognise a user across pages. Turning the wallet off and on changes no address.

@@ -3,8 +3,8 @@
 // page's lifetime, forwarding to the newest live client (else the next newest, else none), so the real mipd store and
 // real wagmi keep exactly one "Journear Passport" entry and it works with the live client; a uuid that lives in memory
 // for the page only; a destroyed client's hana.ethereum that refuses everything from its first teardown event and lets
-// go; no event delivered after the entry moved on. Includes a randomised state-machine test (adapted from PR 163's
-// second review).
+// go; every entry listener hears every event in one order and ends with the bound client's state. Includes the
+// reviews' cut-off cases (A, B, C, with real wagmi) and a randomised state machine in three modes (PR 163's reviews).
 import { checksumEvmAddress, stellarAddress } from '@hana-id/core';
 import { connect, createConfig, disconnect, getAccount, getConnectors, http } from '@wagmi/core';
 import { type EIP6963ProviderDetail, createStore } from 'mipd';
@@ -12,7 +12,7 @@ import { baseSepolia, sepolia } from 'viem/chains';
 import { Window as HappyWindow } from 'happy-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderRpcError } from '../../src/client/errors.ts';
-import { type EthereumHost, type HanaEip6963Provider, HanaEthereumProvider, announceEip6963, rdnsFor } from '../../src/client/ethereum.ts';
+import { type EthereumHost, HanaEip6963Provider, HanaEthereumProvider, announceEip6963, rdnsFor } from '../../src/client/ethereum.ts';
 import { FakeVault, LOGGED_IN, ORIGINS, type Setup, flush, rpcFetch, setup } from './harness.ts';
 
 const SEPOLIA = 11155111;
@@ -35,30 +35,46 @@ const loggedIn = (n: number) => ({ ...LOGGED_IN, addresses: { stellar: stellarAd
 let alive: Setup[] = [];
 let announced: EIP6963ProviderDetail[];
 const onAnnounce = (e: Event) => announced.push((e as CustomEvent<EIP6963ProviderDetail>).detail);
+/**
+ * The listeners this test (and its wagmi) put on the page's shared entry, so afterEach removes exactly those: the
+ * entry outlives a test, and removeAllListeners() on it would also remove other integrations' listeners.
+ */
+let added: { p: HanaEip6963Provider; event: string; listener: (...a: never[]) => void }[];
 beforeEach(() => {
   announced = [];
+  added = [];
+  const on = HanaEip6963Provider.prototype.on;
+  vi.spyOn(HanaEip6963Provider.prototype, 'on').mockImplementation(function (this: HanaEip6963Provider, event, listener) {
+    added.push({ p: this, event, listener: listener as unknown as (...a: never[]) => void });
+    return on.call(this, event, listener);
+  });
   window.addEventListener('eip6963:announceProvider', onAnnounce);
 });
 afterEach(() => {
   window.removeEventListener('eip6963:announceProvider', onAnnounce);
+  // This test's listeners first: they mustn't react (wagmi's async handlers) to the clean-up below.
+  for (const { p, event, listener } of added) p.removeListener(event as 'connect', listener as never);
   for (const s of alive) s.client.destroy();
   alive = [];
-  // The page's entry outlives a test (module memory): a test's listeners (wagmi's) must not hear the next test.
-  for (const d of announced) (d.provider as unknown as HanaEip6963Provider).removeAllListeners();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   document.body.replaceChildren();
 });
 
-/** A client of user n with `evm` (default chain `chain`), its vault on its own (newest) frame answering eth_accounts. */
+/** A client of user n with `evm` (default chain `chain`), its vault on its own frame answering eth_accounts. */
+const claimed = new WeakSet<Element>();
 function client(n = 1, chain = SEPOLIA): Setup {
   const first = document.querySelector('iframe[name^="hana-vault-"]');
   const desc = first ? Object.getOwnPropertyDescriptor(first, 'contentWindow') : undefined;
+  const before = new Set(document.querySelectorAll('iframe[name^="hana-vault-"]'));
   const made = setup({ config: { evm: CHAINS(chain) }, fetch: rpcFetch({ eth_blockNumber: '0x10' }) });
   // setup() scripts the first frame; put back the vault already scripted there.
   if (first && desc) Object.defineProperty(first, 'contentWindow', desc);
-  const frames = document.querySelectorAll<HTMLIFrameElement>('iframe[name^="hana-vault-"]');
-  const frame = frames[frames.length - 1]!;
+  // This client's frame: the one it added (a client created inside another's teardown sees that one's frame too).
+  const mine = [...document.querySelectorAll<HTMLIFrameElement>('iframe[name^="hana-vault-"]')].filter((f) => !before.has(f) && !claimed.has(f));
+  if (mine.length !== 1) throw new Error(`expected one new vault frame, found ${mine.length}`);
+  const frame = mine[0]!;
+  claimed.add(frame);
   const s = frame === made.frame ? made : { ...made, frame, vault: new FakeVault(frame) };
   s.vault.handle('eth_accounts', () => ({ result: [addr(n)] }));
   alive.push(s);
@@ -362,8 +378,10 @@ describe('after destroy()', () => {
   });
 });
 
-describe('no event after the entry moved on', () => {
-  it('a listener that destroys its client inside accountsChanged, while another lives: later listeners hear only the other', async () => {
+const switchTo = (id: number) => ({ method: 'wallet_switchEthereumChain', params: [{ chainId: `0x${id.toString(16)}` }] });
+
+describe('every listener hears every event, in one order (FIFO), and ends with the bound client’s state', () => {
+  it('a listener that destroys its client inside accountsChanged, while another lives: all hear it, then the other', async () => {
     const a = client(1);
     await a.vault.connect(loggedIn(1));
     const b = client(2);
@@ -374,11 +392,11 @@ describe('no event after the entry moved on', () => {
     const st = observe(entry);
     b.vault.emit('accountsChanged', { addresses: loggedIn(9).addresses });
     await flush();
-    expect(st.log).toEqual([`acc:${addr(1)}`]);
+    expect(st.log).toEqual([`acc:${addr(9)}`, `acc:${addr(1)}`]);
     expect(await entry.request({ method: 'eth_accounts' })).toEqual([addr(1)]);
   });
 
-  it('with one client: later listeners hear [] and disconnect, not the destroyed client’s new account', async () => {
+  it('with one client: all hear its new account, then [] and disconnect; its own listeners hear the teardown last', async () => {
     const a = client(1);
     await a.vault.connect(loggedIn(1));
     const entry = a.client.eip6963!.provider;
@@ -388,9 +406,112 @@ describe('no event after the entry moved on', () => {
     a.client.ethereum.on('accountsChanged', (x) => own.push(x));
     a.vault.emit('accountsChanged', { addresses: loggedIn(9).addresses });
     await flush();
+    expect(st.log).toEqual([`acc:${addr(9)}`, 'acc:', 'disconnect']);
+    expect(own).toEqual([[addr(9)], []]);
+  });
+
+  it('A: a chainChanged listener destroys the newest, the entry falls back to an older client on that chain: all end on it', async () => {
+    const older = client(1, BASE_SEPOLIA);
+    await older.vault.connect(loggedIn(1));
+    const entry = older.client.eip6963!.provider;
+    let target: Setup | null = null;
+    entry.on('chainChanged', () => {
+      const t = target;
+      target = null;
+      t?.client.destroy();
+    });
+    const st = observe(entry);
+    const newer = client(1, SEPOLIA);
+    await newer.vault.connect(loggedIn(1));
+    expect(st.chainId).toBe('0xaa36a7');
+    target = newer;
+    await entry.request(switchTo(BASE_SEPOLIA));
+    await flush();
+    expect(await entry.request({ method: 'eth_chainId' })).toBe('0x14a34');
+    expect(st.chainId, st.log.join(' ')).toBe('0x14a34');
+    expect(st.connected).toBe(true);
+  });
+
+  it('B: a connect listener destroys the newer client, the entry returns to an older connected one: all stay connected', async () => {
+    const older = client(1, SEPOLIA);
+    await older.vault.connect(loggedIn(1));
+    const entry = older.client.eip6963!.provider;
+    let target: Setup | null = null;
+    entry.on('connect', () => {
+      const t = target;
+      target = null;
+      t?.client.destroy();
+    });
+    const st = observe(entry);
+    const newer = client(1, SEPOLIA);
+    target = newer;
+    await newer.vault.connect(loggedIn(1));
+    await flush();
+    expect(await entry.request({ method: 'eth_accounts' })).toEqual([addr(1)]);
+    expect(st.connected, st.log.join(' ')).toBe(true);
+    expect(st.log.includes('DUP-CONNECT')).toBe(false);
+  });
+
+  it('C: a move’s accountsChanged, and a second move inside it to a client with the same account: all end on that account', async () => {
+    const d = client(2);
+    await d.vault.connect(loggedIn(2));
+    const b = client(2);
+    await b.vault.connect(loggedIn(2));
+    const a = client(1);
+    await a.vault.connect(loggedIn(1));
+    const entry = a.client.eip6963!.provider;
+    let target: Setup | null = null;
+    entry.on('accountsChanged', () => {
+      const t = target;
+      target = null;
+      t?.client.destroy();
+    });
+    const st = observe(entry);
+    target = b;
+    a.client.destroy();
+    await flush();
+    expect(await entry.request({ method: 'eth_accounts' })).toEqual([addr(2)]);
+    expect(st.accounts, st.log.join(' ')).toEqual([addr(2)]);
+  });
+
+  it('one client whose vault dies, destroyed from a disconnect listener: every listener hears disconnect', async () => {
+    const a = client(1);
+    await a.vault.connect(loggedIn(1));
+    const entry = a.client.eip6963!.provider;
+    entry.on('disconnect', () => a.client.destroy());
+    const st = observe(entry);
+    a.vault.load(); // the vault document was replaced: the connection is gone
+    await flush();
     expect(st.log).toEqual(['acc:', 'disconnect']);
-    // Its own listeners hear its teardown, and not the account it was given before.
-    expect(own).toEqual([[]]);
+    expect(st.connected).toBe(false);
+  });
+
+  it('a listener that throws stops neither the delivery nor the queue (rethrown on a fresh task, as the Emitter does)', async () => {
+    const later: (() => void)[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    try {
+      const older = client(1);
+      await older.vault.connect(loggedIn(1));
+      const newer = client(2);
+      await newer.vault.connect(loggedIn(2));
+      const entry = older.client.eip6963!.provider;
+      entry.on('accountsChanged', () => {
+        newer.client.destroy();
+        throw new Error('listener bug');
+      });
+      const st = observe(entry);
+      // The Emitter rethrows a listener's error on a fresh task (setTimeout 0): capture it here.
+      vi.stubGlobal('setTimeout', ((fn: () => void, ms?: number) => (ms === 0 ? (later.push(fn), 0) : realSetTimeout(fn, ms))) as typeof setTimeout);
+      newer.vault.emit('accountsChanged', { addresses: loggedIn(9).addresses });
+      await flush();
+      vi.unstubAllGlobals();
+      expect(st.log).toEqual([`acc:${addr(9)}`, `acc:${addr(1)}`]);
+      expect(later.length).toBeGreaterThan(0);
+      expect(() => later.forEach((f) => f())).toThrow('listener bug');
+    } finally {
+      vi.stubGlobal('setTimeout', realSetTimeout);
+      vi.unstubAllGlobals();
+    }
   });
 
   it('a request is answered by the client bound when it was made, even if the entry moves on before the answer', async () => {
@@ -406,6 +527,16 @@ describe('no event after the entry moved on', () => {
     b.vault.reply(asked.id, [addr(2)]);
     await expect(pending).resolves.toEqual([addr(2)]);
     expect(c.vault.seen('eth_accounts')).toHaveLength(0);
+  });
+
+  it('wallet_getCapabilities in flight across destroy() rejects with 4900 (not {} or 4100)', async () => {
+    for (const params of [[addr(1)], []]) {
+      const a = client(1);
+      await a.vault.connect(loggedIn(1));
+      const p = a.client.ethereum.request({ method: 'wallet_getCapabilities', params });
+      a.client.destroy(); // while it awaits `ready` (already resolved: one microtask)
+      await refused(p, 4900);
+    }
   });
 });
 
@@ -549,6 +680,53 @@ describe('real wallet lists', () => {
     expect(new Set(announced.map((d) => d.info.uuid))).toEqual(new Set([uuid]));
   });
 
+  it('wagmi, case A: a chainChanged listener destroys the newest client, the entry falls back to an older one on that chain: wagmi follows', async () => {
+    const older = client(1, BASE_SEPOLIA);
+    await older.vault.connect(loggedIn(1));
+    const entry = older.client.eip6963!.provider;
+    let target: Setup | null = null;
+    entry.on('chainChanged', () => {
+      const t = target;
+      target = null;
+      t?.client.destroy();
+    });
+    const config = wagmi();
+    const newer = client(1, SEPOLIA);
+    await newer.vault.connect(loggedIn(1));
+    await flush();
+    const [connector] = oursIn(config);
+    if (getAccount(config).status !== 'connected') await connect(config, { connector: connector! });
+    await flush();
+    expect(getAccount(config)).toMatchObject({ status: 'connected', chainId: SEPOLIA });
+    target = newer;
+    await entry.request(switchTo(BASE_SEPOLIA));
+    await flush();
+    expect(await entry.request({ method: 'eth_chainId' })).toBe('0x14a34');
+    expect(getAccount(config)).toMatchObject({ status: 'connected', chainId: BASE_SEPOLIA });
+  });
+
+  it('wagmi, case B: a connect listener destroys the newer client, the entry returns to an older connected one: wagmi stays connected', async () => {
+    const older = client(1, SEPOLIA);
+    await older.vault.connect(loggedIn(1));
+    const entry = older.client.eip6963!.provider;
+    let target: Setup | null = null;
+    entry.on('connect', () => {
+      const t = target;
+      target = null;
+      t?.client.destroy();
+    });
+    const config = wagmi();
+    await flush();
+    await connect(config, { connector: oursIn(config)[0]! });
+    expect(getAccount(config)).toMatchObject({ status: 'connected' });
+    const newer = client(1, SEPOLIA);
+    target = newer;
+    await newer.vault.connect(loggedIn(1));
+    await flush();
+    expect(await entry.request({ method: 'eth_accounts' })).toEqual([addr(1)]);
+    expect(getAccount(config)).toMatchObject({ status: 'connected', address: addr(1) });
+  });
+
   it('wagmi with real storage: a user who disconnected, then the wallet off and on, is connected again by wagmi once the session is restored', async () => {
     localStorage.clear();
     const config = wagmi('local');
@@ -574,88 +752,229 @@ describe('real wallet lists', () => {
   });
 });
 
-describe('state machine (randomised)', () => {
-  it('up to 4 clients, created and destroyed (also inside the entry’s and hana.ethereum’s listeners), on mixed chains: every invariant holds at every step', async () => {
-    let seed = 0x1630;
-    const rand = (n: number) => {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      return seed % n;
-    };
-    // Set from inside make() (a closure), so held in an object TypeScript doesn't narrow.
-    const page: { entry: HanaEip6963Provider | null; st: ReturnType<typeof observe> | null } = { entry: null, st: null };
-    for (let round = 0; round < 40; round++) {
-      const live: { s: Setup; n: number; ready: boolean }[] = [];
-      const make = (n: number) => {
-        const e = { s: client(n, rand(2) ? SEPOLIA : BASE_SEPOLIA), n, ready: false };
-        live.push(e);
-        if (!page.entry) {
-          page.entry = e.s.client.eip6963!.provider;
-          page.st = observe(page.entry);
-        }
-        expect(e.s.client.eip6963!.provider).toBe(page.entry);
-        return e;
-      };
-      for (let step = 0; step < 14; step++) {
-        const op = rand(6);
-        const where = `round ${round} step ${step} op ${op}`;
-        if (op <= 1 && live.length < 4) {
-          const e = make(rand(4));
-          if (rand(2)) {
-            await e.s.vault.connect(loggedIn(e.n));
-            e.ready = true;
-          }
-        } else if (op === 2 && live.length > 0) {
-          const [e] = live.splice(rand(live.length), 1);
-          e!.s.client.destroy();
-        } else if ((op === 3 || op === 4) && live.length > 0) {
-          // Destroy, creating a client from inside a listener (the entry's, or the client's own hana.ethereum's).
-          const [e] = live.splice(rand(live.length), 1);
-          const target = op === 3 ? page.entry! : e!.s.client.ethereum;
-          const ev = rand(2) ? 'accountsChanged' : 'disconnect';
-          let made = false;
-          const l = () => {
-            if (!made && live.length < 4) {
-              made = true;
-              make(rand(4));
-            }
-          };
-          target.on(ev as 'disconnect', l);
-          e!.s.client.destroy();
-          target.removeListener(ev as 'disconnect', l);
-        } else if (op === 5) {
-          for (const e of live) {
-            if (e.ready) continue;
-            await e.s.vault.connect(loggedIn(e.n));
-            e.ready = true;
-          }
-        }
-        await flush();
-        const { entry, st: s } = page;
-        if (!entry || !s) continue;
-        expect(s.log.includes('DUP-CONNECT'), `${where}: ${s.log.join(' ')}`).toBe(false);
-        const newest = live.at(-1) ?? null;
-        if (newest === null) {
-          expect(s.accounts, `${where}: unbound`).toEqual([]);
-          expect(s.connected, `${where}: unbound`).toBe(false);
-          expect((await refused(entry.request({ method: 'eth_chainId' }), 4900)).message).toBe(TURNED_OFF);
-          continue;
-        }
-        // Bound to the newest live client: what the listeners heard is that client's state.
-        expect(entry.chainId, where).toBe(newest.s.client.ethereum.chainId);
-        expect(s.accounts, `${where}: ${s.log.join(' ')}`).toEqual(newest.ready ? [addr(newest.n)] : []);
-        expect(s.connected, `${where}: ${s.log.join(' ')}`).toBe(newest.ready);
-        if (newest.ready) expect(s.chainId, `${where}: ${s.log.join(' ')}`).toBe(newest.s.client.ethereum.chainId);
-        // A request reaches that client's vault only (an unready client's waits for its vault: skipped).
-        if (!newest.ready) continue;
-        const before = live.map((e) => e.s.vault.seen('eth_accounts').length);
-        await expect(entry.request({ method: 'eth_accounts' })).resolves.toEqual([addr(newest.n)]);
-        live.forEach((e, i) => expect(e.s.vault.seen('eth_accounts').length - before[i]!, where).toBe(e === newest ? 1 : 0));
-      }
-      for (const e of live.splice(0)) e.s.client.destroy();
-      await flush();
-      expect(page.st?.connected ?? false).toBe(false);
+type Ev = 'accountsChanged' | 'chainChanged' | 'connect' | 'disconnect';
+const EVS: readonly Ev[] = ['accountsChanged', 'chainChanged', 'connect', 'disconnect'];
+const OPS = 10;
+
+/** mulberry32: every bit usable with `% n` (an LCG mod 2^31's low bit alternates). */
+function mulberry32(seed0: number): (n: number) => number {
+  let seed = seed0 | 0;
+  return (n) => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) % n;
+  };
+}
+
+/**
+ * The randomised state machine (PR 163's reviews): up to 4 clients on mixed chains; creates, destroys, chain
+ * switches, account changes, vault deaths and requests in flight, with listeners ("triggers") on the entry and on a
+ * client's own hana.ethereum that create or destroy clients, registered before the observer, after it, or mixed.
+ * Returns the invariant violations and how often each op ran.
+ */
+async function machine(mode: 'before' | 'after' | 'mixed', seed0: number, rounds: number) {
+  const rand = mulberry32(seed0);
+  const violations: string[] = [];
+  const ops = new Array<number>(OPS).fill(0);
+  type C = { s: Setup; n: number; ready: boolean; dead: boolean; down: boolean; reqsAtDeath: number; own: string[]; ownAtDeath: number; settled?: number };
+  const all: C[] = [];
+  let live: C[] = [];
+  const page: { entry: HanaEip6963Provider | null; st: ReturnType<typeof observe> | null; triggers: { before: boolean; ev: Ev; fn: () => void }[] } = { entry: null, st: null, triggers: [] };
+  const fire = (before: boolean, ev: Ev) => {
+    const mine = page.triggers.filter((t) => t.before === before && t.ev === ev);
+    page.triggers = page.triggers.filter((t) => !mine.includes(t));
+    for (const t of mine) t.fn();
+  };
+  const make = (n: number, chain: number): C => {
+    const c = { n, ready: false, dead: false, down: false, reqsAtDeath: -1, own: [] as string[], ownAtDeath: -1 } as C;
+    all.push(c);
+    live.push(c);
+    c.s = client(n, chain);
+    for (const e of EVS) c.s.client.ethereum.on(e, (x: unknown) => c.own.push(`${e}:${JSON.stringify(x)}`));
+    if (!page.entry) {
+      page.entry = c.s.client.eip6963!.provider;
+      for (const e of EVS) page.entry.on(e, () => fire(true, e));
+      page.st = observe(page.entry);
+      for (const e of EVS) page.entry.on(e, () => fire(false, e));
     }
-    // Keep the entry's observers out of the next tests.
-    page.entry?.removeAllListeners();
-  }, 60_000);
+    if (c.s.client.eip6963!.provider !== page.entry) violations.push('a second entry');
+    return c;
+  };
+  const kill = (c: C) => {
+    // A client still being constructed (a trigger fired from inside its createHana) can't be destroyed yet.
+    if (c.dead || !c.s) return;
+    live = live.filter((x) => x !== c);
+    c.dead = true;
+    c.ownAtDeath = c.own.length;
+    c.s.client.destroy();
+    c.reqsAtDeath = c.s.vault.requests.length;
+  };
+  const chainOf = () => (rand(3) === 0 ? BASE_SEPOLIA : SEPOLIA);
+  const syncOp = (depth: number) => {
+    if (depth < 3 && rand(2)) arm(depth + 1);
+    const k = rand(5);
+    if (k <= 1 && live.length < 4) make(rand(3), chainOf());
+    else if (k === 2 && live.length > 0) kill(live[rand(live.length)]!);
+    else if (k === 3 && live.length > 0) kill(live.at(-1)!);
+    else if (k === 4) for (const c of [...live]) kill(c);
+  };
+  const arm = (depth: number) => {
+    const before = mode === 'before' ? true : mode === 'after' ? false : rand(2) === 0;
+    const ev = EVS[rand(4)]!;
+    if (rand(3) === 0 && live.length > 0) {
+      const c = live[rand(live.length)]!;
+      if (!c.s) return;
+      let done = false;
+      c.s.client.ethereum.on(ev, () => {
+        if (done) return;
+        done = true;
+        syncOp(depth);
+      });
+      return;
+    }
+    page.triggers.push({ before, ev, fn: () => syncOp(depth) });
+  };
+  const connectIt = async (c: C) => {
+    await c.s.vault.connect(loggedIn(c.n));
+    if (!c.dead) c.ready = true;
+  };
+  const inflight: { c: C; id: string | null; outcome?: string }[] = [];
+  for (let round = 0; round < rounds; round++) {
+    for (let step = 0; step < 18; step++) {
+      const op = rand(OPS);
+      ops[op]!++;
+      const where = `[${mode} seed ${seed0}] round ${round} step ${step} op ${op}`;
+      if (op === 0 && live.length < 4) {
+        const c = make(rand(3), chainOf());
+        if (rand(2)) await connectIt(c);
+      } else if (op === 1) {
+        for (const c of [...live]) kill(c);
+        await flush();
+        await connectIt(make(rand(3), chainOf()));
+      } else if (op === 2) {
+        arm(1);
+        syncOp(1);
+      } else if (op === 3) {
+        for (const c of [...live]) if (!c.ready && !c.dead && !c.down) await connectIt(c);
+      } else if (op === 4 && page.entry && live.at(-1)?.ready) {
+        arm(1);
+        await page.entry.request(switchTo(rand(2) ? BASE_SEPOLIA : SEPOLIA)).catch(() => {});
+      } else if (op === 5 && live.length > 0) {
+        arm(1);
+        const c = live[rand(live.length)]!;
+        if (c.ready) {
+          c.n = rand(4);
+          const n = c.n;
+          c.s.vault.handle('eth_accounts', () => ({ result: [addr(n)] }));
+          c.s.vault.emit('accountsChanged', { addresses: rand(4) === 0 ? null : loggedIn(n).addresses });
+        }
+      } else if (op === 6 && page.entry && live.at(-1)?.ready) {
+        // A request in flight on the bound client.
+        const c = live.at(-1)!;
+        c.s.vault.handle('eth_accounts', () => 'manual');
+        const before = all.map((x) => x.s.vault.seen('eth_accounts').length);
+        const rec: (typeof inflight)[number] = { c, id: null };
+        page.entry.request({ method: 'eth_accounts' }).then(
+          (r) => (rec.outcome = `ok:${JSON.stringify(r)}`),
+          (e: { code: number }) => (rec.outcome = `err:${e.code}`),
+        );
+        inflight.push(rec);
+        await flush();
+        all.forEach((x, i) => {
+          if (x.s.vault.seen('eth_accounts').length - before[i]! !== (x === c ? 1 : 0)) violations.push(`${where}: request delivered to another vault`);
+        });
+        rec.id = c.dead ? null : c.s.vault.last('eth_accounts').id;
+        const n = c.n;
+        c.s.vault.handle('eth_accounts', () => ({ result: [addr(n)] }));
+      } else if (op === 7 && inflight.length > 0) {
+        const rec = inflight.shift()!;
+        if (rand(2) && !rec.c.dead && rec.id) rec.c.s.vault.reply(rec.id, [`0xR${rec.c.n}`]);
+        else kill(rec.c);
+        await flush();
+        if (!rec.c.dead && rec.outcome !== `ok:["0xR${rec.c.n}"]`) violations.push(`${where}: in-flight not settled by its own client: ${rec.outcome}`);
+        if (rec.c.dead && rec.outcome !== 'err:4900' && !(rec.outcome ?? '').startsWith('ok:["0xR')) violations.push(`${where}: in-flight on a destroyed client: ${rec.outcome}`);
+      } else if (op === 8 && live.length > 0) {
+        const c = live[rand(live.length)]!;
+        if (c.ready) {
+          c.s.vault.load(); // its vault connection dies
+          await flush();
+          c.ready = false;
+          c.down = true;
+        }
+      } else if (op === 9) {
+        arm(1);
+        if (live.length > 0) kill(live[rand(live.length)]!);
+      }
+      await flush();
+      // ---- invariants, at this quiescent point ----
+      const { entry, st } = page;
+      if (!entry || !st) continue;
+      if (st.log.includes('DUP-CONNECT')) violations.push(`${where}: a second connect`);
+      for (const c of all) {
+        if (!c.dead) continue;
+        // After its destroy(), a client's own hana.ethereum says at most the rest of the event it was delivering (when a
+        // listener destroyed it), then its teardown, and nothing after that, ever.
+        const tail = c.own.slice(c.ownAtDeath);
+        const isTeardown = (x: string) => x === 'accountsChanged:[]' || x.startsWith('disconnect:');
+        const firstTeardown = tail.findIndex(isTeardown);
+        const afterTeardown = firstTeardown < 0 ? [] : tail.slice(firstTeardown);
+        if (tail.length > 3 || afterTeardown.some((x) => !isTeardown(x)) || (firstTeardown < 0 && tail.length > 1)) violations.push(`${where}: a destroyed client spoke after its teardown: ${tail.join(' ')}`);
+        c.settled ??= c.own.length;
+        if (c.own.length !== c.settled) violations.push(`${where}: a destroyed client spoke again: ${c.own.slice(c.settled).join(' ')}`);
+        if (c.s.vault.requests.length !== c.reqsAtDeath) violations.push(`${where}: a destroyed client's vault was reached`);
+      }
+      const newest = live.at(-1) ?? null;
+      if (newest === null) {
+        if (st.accounts.length || st.connected) violations.push(`${where}: off, but listeners think ${JSON.stringify(st.accounts)} connected=${st.connected}`);
+        const e = await entry.request({ method: 'eth_chainId' }).then(
+          () => 'ok',
+          (x: { code: number; message: string }) => `${x.code}:${x.message}`,
+        );
+        if (e !== `4900:${TURNED_OFF}`) violations.push(`${where}: off, but answered ${e}`);
+        continue;
+      }
+      if (entry.chainId !== newest.s.client.ethereum.chainId) violations.push(`${where}: the entry's chainId isn't the newest client's`);
+      const acct = newest.s.client.addresses?.evm ?? null;
+      const want = newest.ready && acct ? [acct] : [];
+      const label = `${where}: ${st.log.slice(-8).join(' ')}`;
+      if (JSON.stringify(st.accounts) !== JSON.stringify(want)) violations.push(`${label} :: heard accounts ${JSON.stringify(st.accounts)}, bound ${JSON.stringify(want)}`);
+      if (st.connected !== newest.ready) violations.push(`${label} :: heard connected ${st.connected}, bound ${newest.ready}`);
+      if (newest.ready && st.chainId !== newest.s.client.ethereum.chainId) violations.push(`${label} :: heard chain ${st.chainId}, bound ${newest.s.client.ethereum.chainId}`);
+      if (newest.ready && acct) {
+        const before = all.map((x) => x.s.vault.seen('eth_accounts').length);
+        const got = await entry.request({ method: 'eth_accounts' });
+        if (JSON.stringify(got) !== JSON.stringify([acct])) violations.push(`${where}: the entry answered ${JSON.stringify(got)}`);
+        all.forEach((x, i) => {
+          if (x.s.vault.seen('eth_accounts').length - before[i]! !== (x === newest ? 1 : 0)) violations.push(`${where}: eth_accounts reached another vault`);
+        });
+      }
+    }
+    for (const c of [...live]) kill(c);
+    await flush();
+    if (page.st?.connected) violations.push(`round ${round}: connected after every client was destroyed`);
+    for (const rec of inflight.splice(0)) {
+      await flush();
+      if (rec.outcome !== 'err:4900') violations.push(`round ${round}: an in-flight request left: ${rec.outcome}`);
+    }
+    page.triggers = [];
+  }
+  return { violations, ops };
+}
+
+describe('state machine (randomised, three modes)', () => {
+  for (const mode of ['before', 'after', 'mixed'] as const) {
+    it(`triggers registered ${mode === 'mixed' ? 'before and after' : mode} the observer: every listener ends with the bound client's state at every step`, async () => {
+      const ops = new Array<number>(OPS).fill(0);
+      const violations: string[] = [];
+      for (const seed of [1, 42, 1630]) {
+        const r = await machine(mode, seed, 8);
+        violations.push(...r.violations);
+        r.ops.forEach((n, i) => (ops[i]! += n));
+      }
+      expect(violations.slice(0, 10)).toEqual([]);
+      // Every op code ran (the generator's low bits are usable).
+      ops.forEach((n, i) => expect(n, `op ${i}`).toBeGreaterThan(0));
+    }, 120_000);
+  }
 });

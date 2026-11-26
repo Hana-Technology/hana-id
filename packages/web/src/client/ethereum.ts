@@ -217,8 +217,10 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** `connect` was emitted and no `disconnect` since. */
   #connected = false;
   #retired = false;
-  /** Changes when the provider retires, so a delivery in progress then stops (see emit). */
-  #emitGen = 0;
+  /** How deep `emit` is: a retire() from a listener says its teardown once the delivery in progress is out. */
+  #emitting = 0;
+  /** The teardown retire() left for the end of that delivery. */
+  #teardown: (() => void) | null = null;
   /**
    * The announced providers forwarding this one (module-private, so a host's `removeAllListeners()` can't cut them
    * off). They hear each event before the public listeners.
@@ -252,17 +254,23 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   }
 
   /**
-   * Sinks first (the announced provider), then the public listeners. A sink detached during the delivery (its
-   * announced provider moved to another client) is skipped, and once the provider retires mid-delivery the rest of
-   * an earlier event is dropped: nobody hears it after its `accountsChanged []` and `disconnect`.
+   * Sinks first (the announced provider), then the public listeners. A teardown that a listener started (retire())
+   * goes out after this delivery, so every listener hears this event before `accountsChanged []` and `disconnect`,
+   * and nothing after them.
    */
   override emit<E extends keyof EthereumEvents>(event: E, ...args: EthereumEvents[E]): boolean {
-    const gen = this.#emitGen;
-    for (const sink of [...this.#sinks]) {
-      if (this.#emitGen !== gen) return true;
-      if (this.#sinks.has(sink)) sink(event, args);
+    this.#emitting++;
+    try {
+      for (const sink of [...this.#sinks]) sink(event, args);
+      return super.emit(event, ...args);
+    } finally {
+      this.#emitting--;
+      const teardown = this.#emitting === 0 ? this.#teardown : null;
+      if (teardown) {
+        this.#teardown = null;
+        teardown();
+      }
     }
-    return this.emitWhile(() => this.#emitGen === gen, event, ...args);
   }
 
   /** The current chain as `0x` hex, or null when no EVM chain is configured. */
@@ -335,6 +343,7 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
         // Before `ready` the sponsored chains aren't known: wait for it (bounded by the client's timeouts), as
         // hana.evm.sponsorship() does, rather than answer no capabilities.
         if (this.#host.ready) await this.#host.ready();
+        if (this.#retired) throw disconnectedError(); // destroyed while waiting
         return this.#capabilities(params);
       case 'wallet_sendCalls':
         return this.#sendCalls(params);
@@ -609,25 +618,27 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /**
    * hana.destroy(): from this call on every request rejects with 4900 (also one made from a listener of the events
    * below) and the client is let go (RETIRED_HOST), so a host still holding the provider keeps neither the client nor
-   * its frame alive; then `accountsChanged []` (if it had an account) and `disconnect` (4900, if connected); then the
-   * listeners are dropped and no event fires again. Idempotent.
+   * its frame alive; then `accountsChanged []` (if it had an account) and `disconnect` (4900, if connected), after
+   * the event being delivered if a listener called it; then the listeners are dropped and no event fires again.
+   * Idempotent.
    */
   retire(): void {
     if (this.#retired) return;
     this.#retired = true;
-    this.#emitGen++;
     this.#host = RETIRED_HOST;
     this.#nextNonce.clear();
     this.#batches.clear();
-    if (this.#lastAccounts.length > 0) {
-      this.#lastAccounts = [];
-      this.emit('accountsChanged', []);
-    }
-    if (this.#connected) {
-      this.#connected = false;
-      this.emit('disconnect', err(ErrorCode.disconnected, 'The Journear Passport vault is disconnected'));
-    }
-    this.removeAllListeners();
+    const hadAccounts = this.#lastAccounts.length > 0;
+    const wasConnected = this.#connected;
+    this.#lastAccounts = [];
+    this.#connected = false;
+    const teardown = () => {
+      if (hadAccounts) this.emit('accountsChanged', []);
+      if (wasConnected) this.emit('disconnect', err(ErrorCode.disconnected, 'The Journear Passport vault is disconnected'));
+      this.removeAllListeners();
+    };
+    if (this.#emitting > 0) this.#teardown = teardown;
+    else teardown();
   }
 }
 
@@ -656,8 +667,6 @@ export function rdnsFor(authOrigin: string): string {
 
 /** Points an announced provider at a client's provider, or at none (set in the class's static block). */
 let bindAnnounced: (announced: HanaEip6963Provider, to: HanaEthereumProvider | null) => void;
-/** Stops the delivery in progress on an announced provider (its client is being destroyed). */
-let interruptAnnounced: (announced: HanaEip6963Provider) => void;
 /** The provider an announced one forwards to now, or null. */
 let boundTo: (announced: HanaEip6963Provider) => HanaEthereumProvider | null;
 
@@ -673,8 +682,9 @@ const sameAccounts = (a: readonly string[], b: readonly string[]) => a.length ==
  * of its environment, else to the next newest, else to none: then every request rejects with 4900 ("Journear Passport
  * is turned off on this page.") and no event fires. A request goes to the provider bound when it is made, whose own
  * promise is returned. When it moves to another client it says what changed for its listeners (`accountsChanged`,
- * `chainChanged`, then `connect` or `disconnect`), as a wallet whose account changed would; an event being delivered
- * when it moves is not delivered further. It holds nothing of a destroyed client. Frozen; only the SDK binds one.
+ * `chainChanged`, then `connect` or `disconnect`), as a wallet whose account changed would. Its events go out one at a
+ * time to every listener, in one order, so every listener ends with the bound client's state. It holds nothing of a
+ * destroyed client. Frozen; only the SDK binds one. Shared by the page: remove only your own listeners.
  */
 export class HanaEip6963Provider extends Emitter<EthereumEvents> {
   /** Lets dapps and connectors recognise the provider when they read flags. */
@@ -684,13 +694,16 @@ export class HanaEip6963Provider extends Emitter<EthereumEvents> {
   #accounts: readonly string[] = [];
   #connected = false;
   #chainId: Hex | null = null;
-  /** Changes on every move (and when its client is being destroyed): a delivery in progress then stops. */
-  #gen = 0;
+  /**
+   * Every event this provider says, in one order: each goes to all its listeners before the next starts, and one
+   * caused meanwhile (a listener created or destroyed a client) waits its turn. Events only: `request` is direct.
+   */
+  readonly #queue: { event: keyof EthereumEvents; args: unknown[] }[] = [];
+  #draining = false;
   readonly #sink: EventSink = (event, args) => this.#forward(event, args);
 
   static {
     bindAnnounced = (announced, to) => announced.#bind(to);
-    interruptAnnounced = (announced) => void announced.#gen++;
     boundTo = (announced) => announced.#current;
   }
 
@@ -715,35 +728,56 @@ export class HanaEip6963Provider extends Emitter<EthereumEvents> {
     return this.#current === null ? Promise.reject(turnedOffError()) : this.#current.request(args);
   }
 
+  /** A bound provider's event: said in turn. */
   #forward<E extends keyof EthereumEvents>(event: E, args: EthereumEvents[E]): void {
+    this.#say(event, args);
+    this.#drain();
+  }
+
+  /**
+   * Queues an event, after recording it as what the listeners will have heard (the state a move compares with).
+   * Never a second `connect` without a `disconnect` between them, nor a `disconnect` when not connected.
+   */
+  #say<E extends keyof EthereumEvents>(event: E, args: EthereumEvents[E]): void {
     if (event === 'accountsChanged') this.#accounts = [...(args[0] as string[])];
     else if (event === 'connect') {
-      if (this.#connected) return; // never a second connect without a disconnect
+      if (this.#connected) return;
       this.#connected = true;
       this.#chainId = (args[0] as ProviderConnectInfo).chainId;
     } else if (event === 'disconnect') {
       if (!this.#connected) return;
       this.#connected = false;
     } else if (event === 'chainChanged') this.#chainId = args[0] as Hex;
-    const gen = this.#gen;
-    this.emitWhile(() => this.#gen === gen, event, ...args);
+    this.#queue.push({ event, args });
+  }
+
+  /** Delivers the queue in order, unless a delivery is already doing so further up the stack. */
+  #drain(): void {
+    if (this.#draining) return;
+    this.#draining = true;
+    try {
+      // A listener's throw is the Emitter's (rethrown on a fresh task): it never stops this loop.
+      for (let next = this.#queue.shift(); next; next = this.#queue.shift()) this.emit(next.event, ...(next.args as EthereumEvents[typeof next.event]));
+    } finally {
+      this.#draining = false;
+    }
   }
 
   #bind(to: HanaEthereumProvider | null): void {
     const from = this.#current;
     if (from === to) return;
-    const gen = ++this.#gen;
     if (from !== null) detachSink(from, this.#sink);
     this.#current = to;
     if (to !== null) attachSink(to, this.#sink);
-    // Say what changed, in the order a provider says it: accounts, chain, then connect or disconnect; each step only
-    // while this is still the latest move (a listener may have moved it on again).
+    // Say what changed, in the order a provider says it: accounts, chain, then connect or disconnect, compared with what
+    // the listeners will have heard once the queue is out. All of it is queued before any of it is delivered, so a
+    // listener that moves the entry again only adds its own changes after these.
     const next: HeardState = to === null ? { accounts: [], connected: false, chainId: null } : heardState(to);
-    const still = () => this.#gen === gen;
-    if (still() && !sameAccounts(next.accounts, this.#accounts)) this.#forward('accountsChanged', [[...next.accounts]]);
-    if (still() && next.connected && this.#connected && next.chainId !== null && next.chainId !== this.#chainId) this.#forward('chainChanged', [next.chainId]);
-    if (still() && next.connected && !this.#connected && next.chainId !== null) this.#forward('connect', [{ chainId: next.chainId }]);
-    if (still() && !next.connected && this.#connected) this.#forward('disconnect', [to === null ? turnedOffError() : disconnectedError()]);
+    if (!sameAccounts(next.accounts, this.#accounts)) this.#say('accountsChanged', [[...next.accounts]]);
+    if (next.connected && this.#connected && next.chainId !== null && next.chainId !== this.#chainId) this.#say('chainChanged', [next.chainId]);
+    if (next.connected && !this.#connected && next.chainId !== null) this.#say('connect', [{ chainId: next.chainId }]);
+    if (!next.connected && this.#connected) this.#say('disconnect', [to === null ? turnedOffError() : disconnectedError()]);
+    this.#drain();
   }
 }
 
@@ -817,7 +851,6 @@ export function announceEip6963(win: Window, provider: HanaEthereumProvider, rdn
     const i = entry.live.indexOf(provider);
     if (i >= 0) entry.live.splice(i, 1);
     if (boundTo(entry.detail.provider) !== provider) return;
-    interruptAnnounced(entry.detail.provider);
     if (entry.live.length === 0 && entry.retiring === null) entry.retiring = provider;
     else follow(entry);
   };

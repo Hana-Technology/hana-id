@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-26 (the origins tab's name; NEAR relay limits; own `sub`, Support ID); 2026-11-24 (shared-scope `sub`, labels, Hedera); 2026-11-23 (gas sponsorship), SDK 0.5.0.
+Last verified against code: 2026-11-26 (lone surrogates in names; the origins tab's name; NEAR relay limits; own `sub`, Support ID); 2026-11-24 (shared `sub`, labels, Hedera); 2026-11-23, SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -107,7 +107,8 @@ refused (when an app is created or renamed, by Journear staff or on **Branding**
   their forms) as the name's last word or right after a bracket, bar, slash or comma ("Acme Official", "Acme
   (Verified)"): "From Acme Official" reads as an endorsement. At the start of the name they're fine ("Verified
   Voting");
-- as before, control, bidi, zero-width and other invisible characters, and names over 64 characters.
+- as before, control, bidi, zero-width and other invisible characters, a lone half of a character pair (a JSON
+  `\ud800` escape, for example), and names over 64 characters.
 
 An app whose name was set before this rule keeps working, but its sign-in emails say "an app" instead of the name
 until it is renamed.

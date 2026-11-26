@@ -165,11 +165,12 @@ describe('operator names: the shared display-safety rule (D904), as the copy ref
   // The schema's own pattern before it used @hana-id/core's rule, as written then.
   const OLD_UNSAFE_OPERATOR_CHAR = /[\p{Cc}\p{Cf}\p{Co}\p{Zl}\p{Zp}\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\ufe00-\ufe0f\uffa0\u{e0100}-\u{e01ef}]/u;
 
-  it('accepts and refuses the same code points, alone and inside a name', () => {
+  it('accepts and refuses the same code points, alone and inside a name, but for lone surrogates, now refused (PR 160’s review)', () => {
     const differ: number[] = [];
     for (let cp = 0; cp <= 0x10ffff; cp++) {
-      const c = cp >= 0xd800 && cp <= 0xdfff ? String.fromCharCode(cp) : String.fromCodePoint(cp);
-      for (const v of [c, `Fast${c}Near`]) if (isDisplaySafeLine(v) === OLD_UNSAFE_OPERATOR_CHAR.test(v)) differ.push(cp);
+      const lone = cp >= 0xd800 && cp <= 0xdfff;
+      const c = lone ? String.fromCharCode(cp) : String.fromCodePoint(cp);
+      for (const v of [c, `Fast${c}Near`]) if (isDisplaySafeLine(v) !== (!lone && !OLD_UNSAFE_OPERATOR_CHAR.test(v))) differ.push(cp);
     }
     expect(differ).toEqual([]);
   });
@@ -177,11 +178,12 @@ describe('operator names: the shared display-safety rule (D904), as the copy ref
   it('the schema gives the same answer and message for a sample of names', () => {
     const msg = (v: string) => manifestSchema.safeParse({ ...raw(), rpcOperator: v }).error?.issues.map((i) => i.message) ?? [];
     const unsafe = 'an operator name must not hold a control, format (bidi, zero-width), separator or other invisible character';
-    for (const c of ['\u0000', '\u0085', '\u00ad', '\u034f', '\u061c', '\u115f', '\u17b5', '\u180e', '\u200b', '\u2028', '\u202e', '\u2066', '\u3164', '\ue000', '\ufe0f', '\ufeff', '\uffa0', '\u{e0041}', '\u{e01ef}']) {
+    for (const c of ['\ud800', '\udfff', '\u0000', '\u0085', '\u00ad', '\u034f', '\u061c', '\u115f', '\u17b5', '\u180e', '\u200b', '\u2028', '\u202e', '\u2066', '\u3164', '\ue000', '\ufe0f', '\ufeff', '\uffa0', '\u{e0041}', '\u{e01ef}']) {
       expect(msg(`Fast${c}Near`), JSON.stringify(c)).toEqual([unsafe]);
     }
-    // Allowed, as before: the braille blank and unassigned code points (not in the rule), and a lone surrogate (D904, to confirm).
-    for (const ok of ['FastNear', 'Café Nodes', '日本 RPC', 'Fast\u2800Near', 'Fast\u{10ffff}Near', '🚀 Nodes', 'Fast\ud800Near']) expect(msg(ok), ok).toEqual([]);
+    // Allowed, as before: the braille blank and unassigned code points (not in the rule). A lone surrogate, allowed
+    // under D904 (to confirm), is refused since PR 160's review (D932); a well-formed pair stays fine.
+    for (const ok of ['FastNear', 'Café Nodes', '日本 RPC', 'Fast\u2800Near', 'Fast\u{10ffff}Near', '🚀 Nodes']) expect(msg(ok), ok).toEqual([]);
   });
 });
 

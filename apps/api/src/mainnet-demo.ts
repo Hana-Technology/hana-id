@@ -117,7 +117,7 @@ export async function handleMainnetDemoEvent(request: Request, env: Env, request
   lap(ctx, 'session');
   try {
     // Single use (as the identity token's proofs), then the app's hourly cap.
-    if (!(await limiter(env, `mainnet-demo-proof:${hex(r.sessionPk)}`).reserve(await proofMarker(r), r.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
+    if (!(await limiter(env, `mainnet-demo-proof:${hex(r.sessionPk)}`).reserve(await proofMarker(r), r.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now, r.issuedAtMs + IDENTITY_PROOF_WINDOW_MS))) {
       return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
     }
     const hit = await limiter(env, `mainnet-demo:${app.id}`).hit([{ name: 'mainnet_demo:hour', windowMs: HOUR, max: MAINNET_DEMO_EVENTS_PER_HOUR }]);

@@ -43,6 +43,9 @@ export default defineConfig(async () => {
             // A dev env (sandbox*): partner-origin calls and loopback origins for pk_test_ keys, as apps/smoke uses them.
             // Tests of the production rules override ENV_NAME per request.
             ENV_NAME: 'sandbox-test',
+            // D935: the rate limiter honours callers' simulated future times here only (its clamp lifted); never in a
+            // generated or deployed config (scripts/test/gen-wrangler.test.ts).
+            LIMITER_TRUST_CALLER_CLOCK: '1',
             MPC_ACCOUNT: 'mpc.test.near',
             BLS_PRECHECK: '0',
             // Tests use unplaced objects unless they set a hint (the test manifest has none either).

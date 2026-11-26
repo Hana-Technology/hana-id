@@ -251,23 +251,26 @@ async function readCapped(request: Request, max: number, deadlineMs = L.bodyDead
   const late = new Promise<'slow'>((resolve) => {
     timer = setTimeout(() => resolve('slow'), deadlineMs);
   });
-  for (;;) {
-    const next = await Promise.race([reader.read(), late]);
-    if (next === 'slow') {
-      await reader.cancel().catch(() => undefined);
-      return 'slow';
+  // The timer is cleared however the read ends: done, too long, too slow, or the stream failing (after PR 161's third review).
+  try {
+    for (;;) {
+      const next = await Promise.race([reader.read(), late]);
+      if (next === 'slow') {
+        await reader.cancel().catch(() => undefined);
+        return 'slow';
+      }
+      const { done, value } = next;
+      if (done) break;
+      if (size + value.byteLength > max) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      out.set(value, size);
+      size += value.byteLength;
     }
-    const { done, value } = next;
-    if (done) break;
-    if (size + value.byteLength > max) {
-      clearTimeout(timer);
-      await reader.cancel().catch(() => undefined);
-      return null;
-    }
-    out.set(value, size);
-    size += value.byteLength;
+  } finally {
+    clearTimeout(timer);
   }
-  clearTimeout(timer);
   return out.slice(0, size);
 }
 
@@ -518,7 +521,8 @@ export async function handlePlatform(request: Request, url: URL, env: Env, reque
 
   // 7. The nonce, once (a valid self-revoke outside the cap: it can succeed once per key).
   try {
-    const n = await nonceObj(env, keyId).reserveNonce(nonce, timestamp + PLATFORM_NONCE_HOLD_MS, validRevoke ? [] : [...PLATFORM_WINDOWS.nonce], now);
+    const n = await nonceObj(env, keyId).reserveNonce(nonce, timestamp + PLATFORM_NONCE_HOLD_MS, validRevoke ? [] : [...PLATFORM_WINDOWS.nonce], now, timestamp + PLATFORM_CLOCK_SKEW_MS);
+    if (n === 'stale') return finish(refusal('stale_request', 'The request’s timestamp is more than 60 seconds from our clock', { serverTimeMs: Date.now() }));
     if (n === 'replayed') return finish(refusal('request_replayed', 'This request was already received: sign each request with a fresh nonce'));
     if (n === 'full') return finish(limited('platform:nonce', 60, 'Too many requests for this key just now: try again in a minute'));
   } catch {

@@ -8,7 +8,8 @@
 import { MAX_PLATFORM_ORGS, PLATFORM_REQUEST_LIMITS, b64url } from '@hana-id/console-core';
 import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test';
 import { env } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { placedStub } from '../src/placement.ts';
 import { CONSOLE_LIMITS } from '../src/changes/guard.ts';
 import { PLATFORM_ORGS_FULL } from '../src/platform/keys.ts';
 import { PLATFORM_LIMITS, PLATFORM_WINDOWS, handlePlatform } from '../src/platform/request.ts';
@@ -442,4 +443,116 @@ describe('the body: read within 5 s, and the clock read again once it is in', ()
     const r = await read(res);
     expect([r.status, r.body.code]).toEqual([400, 'stale_request']);
   }, 20_000);
+});
+
+describe('after PR 161’s third review', () => {
+  /** The object with the production clamp on (the tests' env lifts it): its env without LIMITER_TRUST_CALLER_CLOCK. */
+  const clamped = async (stub: Stub) => {
+    await runInDurableObject(stub, (instance) => {
+      const o = instance as unknown as { env: typeof env };
+      o.env = { ...o.env, LIMITER_TRUST_CALLER_CLOCK: undefined };
+    });
+    return stub;
+  };
+
+  it('M1: with the clamp, a caller time an hour or ten years ahead moves the clock at most 5 s, logged; nonce replay, the console’s bucket and a key’s window behave normally', async () => {
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((l: unknown) => void errors.push(String(l)));
+    try {
+      for (const ahead of [HOUR, 10 * 365 * DAY]) {
+        // The nonce object: a nonce reserved with a far-future caller time is still held a moment later.
+        const nonce = await clamped(fresh());
+        const real = Date.now();
+        expect(await nonce.reserveNonce('n1', real + 120_000, [], real + ahead)).toBe('ok');
+        expect(await nonce.reserveNonce('n1', real + 120_000, [], real)).toBe('replayed');
+        expect(await nonce.reserveNonce('n2', real + 120_000, [], real)).toBe('ok');
+        const clock = (await stored(nonce, 'none')).clock;
+        expect(clock).toBeLessThanOrEqual(Date.now() + 5000);
+        // The console's bucket: drained by calls stamped ahead, it refills as usual and its waits are seconds.
+        const cpc = await clamped(fresh());
+        let refused: { retryAfterS: number } | null = null;
+        for (let i = 0; i < 20 && !refused; i++) {
+          const r = await cpc.consoleAdmit({ org: 'org_c', cost: 8, limits: CONSOLE_LIMITS }, Date.now() + ahead);
+          if (!r.ok) refused = r;
+        }
+        expect(refused!.retryAfterS).toBeLessThanOrEqual(10);
+        // A key's window: filled with calls stamped ahead, still this minute's (a call now is refused, for under a minute).
+        const k = await clamped(fresh());
+        for (let i = 0; i < PLATFORM_REQUEST_LIMITS.perKeyPerMinute; i++) await k.hit([...PLATFORM_WINDOWS.key], Date.now() + ahead);
+        const r = await k.hit([...PLATFORM_WINDOWS.key], Date.now());
+        expect(r).toMatchObject({ ok: false });
+        expect((r as { retryAfterS: number }).retryAfterS).toBeLessThanOrEqual(66);
+      }
+      expect(errors.some((l) => l.includes('"caller_clock_ahead"') && l.includes('"aheadMs"'))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('M1: the tests’ lift of the clamp needs both the var and the tests’ env name', () => {
+    expect(env.LIMITER_TRUST_CALLER_CLOCK).toBe('1');
+    expect(env.ENV_NAME).toBe('sandbox-test');
+  });
+
+  it('L1: a marker or a nonce past its not-after on the object’s clock is refused, not reserved anew', async () => {
+    const stub = fresh();
+    const t = start();
+    expect(await stub.reserve('m', t + 120_000, t, t + 60_000)).toBe(true);
+    expect(await stub.reserve('m2', t + 200_000, t + 90_000, t + 60_000)).toBe(false);
+    expect(await stub.reserveNonce('n', t + 120_000, [...PLATFORM_WINDOWS.nonce], t + 61_000, t + 60_000)).toBe('stale');
+    // Within its window: fine; the one refused as stale was never marked.
+    const s2 = fresh();
+    expect(await s2.reserveNonce('n', t + 120_000, [...PLATFORM_WINDOWS.nonce], t + 30_000, t + 60_000)).toBe('ok');
+    expect(await s2.reserveNonce('n', t + 120_000, [...PLATFORM_WINDOWS.nonce], t + 40_000, t + 60_000)).toBe('replayed');
+  });
+
+  it('L1 through the handler: a request checked fresh but held up past its window before the nonce is refused as stale', async () => {
+    const k = await seedKey();
+    const signedAt = Date.now() - 50_000;
+    const sent = await send(k, { now: signedAt, timestampMs: signedAt, nonce: b64url(crypto.getRandomValues(new Uint8Array(16))) });
+    // A D1 that stalls its first read 11 s: the request is fresh at its checks, 61 s old when its nonce is reserved
+    // (without the stall the same request is a replay, 409).
+    let stalled = false;
+    const wrap = (st: D1PreparedStatement): D1PreparedStatement =>
+      new Proxy(st, {
+        get(t2, q2) {
+          if (q2 === 'bind') return (...args: unknown[]) => wrap(t2.bind(...args));
+          if ((q2 === 'first' || q2 === 'all' || q2 === 'raw') && !stalled)
+            return async (...args: unknown[]) => {
+              stalled = true;
+              await new Promise((resolve) => setTimeout(resolve, 11_000));
+              return (t2[q2] as (...a: unknown[]) => unknown).apply(t2, args);
+            };
+          const v: unknown = Reflect.get(t2, q2);
+          return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(t2) : v;
+        },
+      });
+    const slowDb = new Proxy(env.DB, {
+      get(target, p) {
+        if (p === 'prepare') return (sql: string) => wrap(target.prepare(sql));
+        const v: unknown = Reflect.get(target, p);
+        return typeof v === 'function' ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const ctx = createExecutionContext();
+    const req = sent.request();
+    const res = await handlePlatform(new Request(req.url, { method: req.method, headers: req.headers }), new URL(req.url), { ...env, DB: slowDb }, 'stall-1', ctx);
+    await waitOnExecutionContext(ctx);
+    const r = await read(res);
+    expect([r.status, r.body.code]).toEqual([400, 'stale_request']);
+  }, 30_000);
+
+  it('L2: an organisation switched off leaves the count of organisations using kill switches at once', async () => {
+    const cpc = placedStub(env, env.RATE_LIMITER, 'console-rpc');
+    const t = Date.now();
+    const twenty = await Promise.all(Array.from({ length: 20 }, async () => (await orgApp()).org));
+    for (const o of twenty) expect((await cpc.platformAdmit({ org: o, cost: 1, killSwitch: true, limits: L }, t)).ok).toBe(true);
+    const newcomer = (await orgApp()).org;
+    expect(await cpc.platformAdmit({ org: newcomer, cost: 1, killSwitch: true, limits: L }, t + 10)).toMatchObject({ ok: false, limit: 'kill_orgs' });
+    // Staff switch one of the twenty off: its place is free at once.
+    const gone = twenty[0]!;
+    await switchOn(gone);
+    expect(await new AdminRpc(createExecutionContext(), env).setPlatformOrg({ ...hana(), orgId: gone, enabled: false, reason: 'Offboarded' })).toMatchObject({ ok: true });
+    expect((await cpc.platformAdmit({ org: newcomer, cost: 1, killSwitch: true, limits: L }, t + 20)).ok).toBe(true);
+  });
 });

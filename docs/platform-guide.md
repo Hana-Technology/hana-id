@@ -9,7 +9,8 @@ sent with our SDK) covers the partner's page and our SDK.
 Last verified: 2026-11-26 (web addresses marked `frameOnly`), against the platform API's code and tests (built, not
 deployed anywhere yet); 2026-11-26 again for the off switches' limits (section 8: each organisation's own budget for
 its off switches, about 13 a minute; the removal limit's per-organisation floor; suspensions and key revocations
-outside it with limits of their own; each key's reserve for off switches; the body sent at once).
+outside it with limits of their own; each key's reserve for off switches; the body sent at once; a `stale_request`
+after a delay).
 
 > **Not available yet.** The platform API is built and tested, but it is **not deployed** in any environment and
 > **not switched on** for any organisation. Journear switches it on per organisation. The API's address and the
@@ -862,7 +863,7 @@ each operation from one worker at a time.
 | `500 internal` | Yes, with backoff (a write that committed answers its result; a retry gets the replay) |
 | `503 rate_limiter_unavailable` | Yes, after a few seconds |
 | `429 rate_limited` | After `retry-after` seconds. For a daily window that is hours: stop and report instead of looping |
-| `400 stale_request` | Not until your clock is fixed (`serverTimeMs` is Journear's time) |
+| `400 stale_request` | Once, signed again with a fresh timestamp and nonce (a slow upload or a delay on Journear's side can cause it); if it repeats, fix your clock first (`serverTimeMs` is Journear's time) |
 | `409 request_replayed` | Only signed again with a new nonce: you reused one, which is a bug |
 | `409 version_conflict` | Read the app, decide again, and send the new request with a **new** Idempotency-Key |
 | Any other `4xx` | No: read `code` and fix the cause |
@@ -1154,7 +1155,7 @@ is live.
 | Code | Status | Meaning | What to do |
 |---|---|---|---|
 | `unauthenticated` | 401 | The request isn't signed by a key in force in this environment (any reason) | Check the key's state in the portal, the env name and signer account, the exact path and query, the body bytes, the raw 64-byte signature; compare your signer with the test vector |
-| `stale_request` | 400 | Your timestamp is more than 60 s from Journear's (`serverTimeMs`) | Sync your clock (NTP) |
+| `stale_request` | 400 | Your timestamp is more than 60 s from Journear's (`serverTimeMs`), or became so before Journear finished checking the request (a slow upload, a delay on Journear's side) | Sync your clock (NTP); retry with a fresh timestamp and nonce |
 | `bad_request` | 400 | A shape is wrong: the path, the query, the body (not a JSON object, too large, an unknown field), a missing or malformed `Idempotency-Key`, a name or origin | Read `error`; fix the request |
 | `origin_refused` | 400 | A web address breaks the rules (`http`, loopback, mixed alphabets) | Use the exact `https://` address |
 | `browser_refused` | 403 | The request had an `Origin` header | Call from your server only |

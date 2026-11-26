@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KeyPair } from '@near-js/crypto';
@@ -686,5 +686,18 @@ describe('a dev env on custom domains in another account (D404)', () => {
 
   it("the tests' config stays local: no route for the placeholder apiUrl", () => {
     for (const k of ['routes', 'workers_dev', 'preview_urls', 'account_id']) expect(testWranglerConfig()).not.toHaveProperty(k);
+  });
+
+  it('D935: the rate limiter’s clamp is never lifted outside the tests: no generated config or .dev.vars sets LIMITER_TRUST_CALLER_CLOCK, and no manifest is named sandbox-test (the only env name it is honoured with)', () => {
+    const names = readdirSync(join(repoRoot, 'envs')).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -'.json'.length));
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      const m = loadEnv(name);
+      expect(m.name, name).not.toBe('sandbox-test');
+      const cfg = JSON.stringify(wranglerConfig(m, LOCAL_D1_ID));
+      expect(cfg, name).not.toContain('LIMITER_TRUST_CALLER_CLOCK');
+    }
+    expect(JSON.stringify(testWranglerConfig())).not.toContain('LIMITER_TRUST_CALLER_CLOCK');
+    expect(devVarsContent({})).not.toContain('LIMITER_TRUST_CALLER_CLOCK');
   });
 });

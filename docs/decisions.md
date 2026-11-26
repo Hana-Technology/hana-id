@@ -24538,10 +24538,12 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
      answer the `at` they used, and the settlements name it. **The platform handler** reads the body within 5 s (else
      `400 bad_request`, the same for every key id), then reads its clock again: the timestamp window is checked again
      and every limiter and record uses that time.
-  6. **Honest retry-afters (L3).** A refusal's wait is the longest among everything the call is short of (the breaker's
-     is when the org is under its limit and under its floor or the global count under its limit; a key's kill switch
-     with both window sets full, the sooner set; `hit` and `hitSliding` the window that opens last), so a retry at the
-     stated time, nothing else changed, is admitted. A cost no bucket can hold is refused for an hour.
+  6. **Honest retry-afters (L3), per limiter stage.** Within one limiter (a key's windows, the admission on
+     `console-rpc`, an org's quota object) a refusal's wait is the longest among everything the call is short of there
+     (the breaker's is when the org is under its limit and under its floor or the global count under its limit; a key's
+     kill switch with both window sets full, the sooner set; `hit` and `hitSliding` the window that opens last), so a
+     retry at the stated time, nothing else changed, passes **that** stage; a later stage of the same request may still
+     refuse it. A cost no bucket can hold is refused for an hour.
 - **The bounds.**
 
   | Limit | Before this PR | Now |
@@ -24564,8 +24566,9 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   the console and the API also use, beside the console's own budget of 30 statements a second. Removals at most
   10 × 20 = 200 an hour by count and 5 × 20 + 30 = 130 with the global breaker. **What a stolen platform key can do in an
   hour**, at most: suspend every app in its reach (10 by default; up to 60 suspensions with resumes), revoke 20
-  publishable keys, make 10 removal calls (each can remove every web address of one app, so all of its 10 apps'),
-  only on its own org's platform-created test apps.
+  publishable keys, make 10 removal calls (each can remove every web address of one app, so all of its 10 apps'), and
+  cancel every web address the organisation's platform keys asked for that still waits (up to 30), only on its own
+  org's platform-created test apps.
 - **Tests** (`apps/api/test/platform-limits.test.ts`, its own database and objects; `platform-ops.test.ts`,
   `platform-request.test.ts`, `rpc-cas.test.ts`, `platform-guide.test.ts`):
   - the reviewer's three H1 scenarios held: a stale call never refills (the platform's bucket at 25 stays at 25 less the
@@ -24602,6 +24605,41 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   there was no hard global ceiling (M2), and a same-millisecond swap that minted 8 tokens (L2). The coordinator's
   decision: replace the mechanics with this simpler design. Kept from the reviewed parts: the breaker's floor and
   honest wait, the split stops, the per-key reserve, the console's 20.
+- **After PR 161's third review (2026-11-26)** ("simple and sound enough to merge"; one Medium, two Low), each fixed,
+  with tests (`platform-limits.test.ts` "after PR 161's third review", `scripts/test/gen-wrangler.test.ts`):
+  - **M1, one far-future caller time poisoned an object** (on the nonce object a held nonce accepted again and fresh
+    markers born expired; the console's bucket refilled once then frozen; a key's windows reset early then frozen; a
+    relay's daily `spend` reset early). No production path passes a client-controlled time, but client-derived expiries
+    sit beside the caller time as positional numbers. **Fixed:** the clock takes a caller's time at most 5 s ahead of
+    the object's own `Date.now()` (`CALLER_CLOCK_LEAD_MS`), logging `caller_clock_ahead` at error level (the object's
+    name up to its first `:` and how far ahead, nothing else). The tests lift it through `LIMITER_TRUST_CALLER_CLOCK`
+    (`'1'`), set only in `vitest.config.ts` and honoured only with ENV_NAME `sandbox-test`; `gen-wrangler`'s test holds
+    that no generated config (every manifest in `envs/`, the tests' own) or `.dev.vars` sets it and no manifest is named
+    `sandbox-test`, so a var added by hand to a deployed Worker does nothing (`deploy-check` reads no var but
+    `HANA_BUILD`: `operations.md` says to check the dashboard's vars instead). Tested with the clamp on: a caller time an
+    hour and ten years ahead leaves a nonce replayed, the console's bucket refusing for seconds and a key's minute
+    window refusing for under a minute, and logs. **Follow-up, not done:** times as named fields (`reserve(key, {
+    until, now, notAfter })`) at the ~20 call sites of `reserve`, `reserveNonce` and `charge`, so a swapped pair can't
+    pass silently (the clamp makes a future time harmless; an until swapped for a now still makes a marker expire at
+    once, as before this PR).
+  - **L1, freshness and the marker on two clocks.** A request checked fresh at timestamp + 60 s that reached the nonce
+    object after timestamp + 120 s (a D1 stall of over 60 s between) was taken as new. **Fixed:** `reserveNonce` and
+    `reserve` take a `notAfter`; past it on the object's clock they refuse (`'stale'`, answered `400 stale_request`;
+    `false`, answered as each caller's "already used"). Passed by the platform's nonce (timestamp + 60 s), the session
+    proofs of the identity token, email login, the mainnet demo and gas sponsorship (`issuedAtMs` + the proof window),
+    Home's request counter (its `expiresAtMs`), owner tokens and step-up tokens (their `expMs`). Tested at the object and
+    through the handler with an 11 s D1 stall (a request 50 s old at its checks answered `stale_request`, not a replay).
+  - **L2, a switched-off org's place in the count of 20.** **Chosen: dropped at the switch-off.** `AdminRpc.setPlatformOrg`
+    turning an org off removes it from `platform:kill:orgs` (`platformForgetOrg`, best effort: a failure is logged
+    `kill_orgs_forget_failed`, and the entry lapses within the minute). Tested: 20 orgs counted, a newcomer refused,
+    one switched off by staff, the newcomer admitted at once.
+  - **Notes fixed:** point 6 now says honesty is per limiter stage; "what a stolen platform key can do in an hour" adds
+    cancelling every waiting web address of the organisation (up to 30) (here and `security.md`); `readCapped` clears its
+    timer however the read ends, a rejected read included.
+  - **Recorded, open:** a console `revokeKey` refused by its 20-an-hour quota keeps the global-reserve tokens it took
+    (capped by the org's share of the console's reserve); `giveBackNotCharged` (`evm/sponsor-settle.ts`) is the one undo
+    that can un-count (it gives back units on a window it didn't take them from, if the window is still current); every
+    Durable Object call of the limiter now reads and writes one more row (`clock`).
 - **To confirm (the Tech Lead):**
   1. **The cap of 20 organisations with the platform switched on**, as the hard ceiling on the platform's database load
      (raising it is a code change).
@@ -24619,10 +24657,9 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
      a console key-creation quota.
   8. The console's other kill switches (suspend, remove) stay under the console's breaker (5 an org, 20 across orgs),
      so the same class remains there. Recommended next: the same floor for the console.
-  9. The limiters honour a caller's time that is ahead of their own clock (only our own Workers call them, and their
-     `Date.now()` never runs ahead of real time; the tests use it as simulated time); a stale one is ignored. The
-     coordinator's brief asked for the object's own `Date.now()` alone: honouring a later caller time keeps every
-     test's simulated clock without a test seam, and can't move a clock back.
+  9. The limiters take a caller's time ahead of their own clock by at most 5 s (after PR 161's third review: clamped and
+     logged past that); a stale one is ignored. The tests lift the clamp through `LIMITER_TRUST_CALLER_CLOCK`, honoured
+     only with ENV_NAME `sandbox-test`.
   10. The body's 5 s, and a request whose body is slower answering `400` (the same for every key id).
   11. No new alert: refusals use `platform_quota` with the limit's name; the console's past-limit revocation is a warn
       log. The figures are code constants.

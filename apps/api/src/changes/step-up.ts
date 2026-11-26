@@ -93,7 +93,7 @@ export async function confirmStepUpScopes(env: Env, t: StepUpToken, c: { expecte
     const scope = await scopeOnChain(env, scopeId);
     if (!scope || !oidcOwners(scope).some(([p, s]) => p === t.provider && s === t.sub)) refuse('not_owner', `The step-up token is not from an on-chain owner of scope ${scopeId}`);
   }
-  if (!(await tokens(env).reserve(t.hash, t.expMs))) refuse('token_used', 'This step-up token was already used: sign in again');
+  if (!(await tokens(env).reserve(t.hash, t.expMs, undefined, t.expMs))) refuse('token_used', 'This step-up token was already used: sign in again');
 }
 
 /** Gives a reserved token back after a write that certainly changed nothing (a refused or failed batch). Never throws. */

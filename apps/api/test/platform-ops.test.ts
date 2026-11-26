@@ -992,9 +992,11 @@ describe('the key and the org, checked again inside each write’s commit', () =
     // Two keys proposing the same web address to one app at once: one proposal.
     const app = await bareApp(net.org, net.s1, 'Shared target');
     await env.DB.prepare('UPDATE platform_orgs SET max_apps = 20 WHERE org_id = ?1').bind(net.org).run();
+    // At one moment (D935: sent together at two simulated hours, the later one moves the test clock under the other).
+    const at = freshNow();
     const [p, q] = await Promise.all([
-      post(net.k, `/v1/platform/apps/${app.id}/origins`, { add: ['https://same.example'], expectedVersion: 0 }),
-      post(k2, `/v1/platform/apps/${app.id}/origins`, { add: ['https://same.example'], expectedVersion: 0 }),
+      post(net.k, `/v1/platform/apps/${app.id}/origins`, { add: ['https://same.example'], expectedVersion: 0 }, { now: at }),
+      post(k2, `/v1/platform/apps/${app.id}/origins`, { add: ['https://same.example'], expectedVersion: 0 }, { now: at }),
     ]);
     expect([p.status, q.status].sort()).toEqual([202, 409]);
     expect((await rows('SELECT id FROM guarded_changes WHERE app_id = ?1', app.id)).length).toBe(1);
@@ -1101,7 +1103,7 @@ describe('the platform’s breaker and reserve for its kill switches', () => {
     // Another org's suspensions are its own.
     const other = await network();
     const c = await createdApp(other);
-    expect((await post(other.k, `/v1/platform/apps/${c.id}/suspend`, { suspended: true }, { now: now + 19_000 })).status).toBe(200);
+    expect((await post(other.k, `/v1/platform/apps/${c.id}/suspend`, { suspended: true })).status).toBe(200);
   });
 
   it('D935 after PR 161’s review: publishable key revocations have their own 20 an org a clock hour (not reversible); no-ops never count, even when full; suspending still works', async () => {

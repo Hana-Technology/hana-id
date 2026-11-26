@@ -10,6 +10,10 @@
 // undo only within the window still current.
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from './env.ts';
+import { log } from './log.ts';
+
+/** D935 (after PR 161's third review): how far ahead of an object's own `Date.now()` a caller's time may move its clock. */
+export const CALLER_CLOCK_LEAD_MS = 5000;
 
 export interface Limit {
   /** Window name, unique per subject (e.g. `minute`, `day`, `<appId>:minute`). */
@@ -130,7 +134,17 @@ export class RateLimiter extends DurableObject<Env> {
   private clock(caller?: number): number {
     const kv = this.ctx.storage.kv;
     const before = kv.get<number>('clock') ?? 0;
-    const t = Math.max(before, Date.now(), Number.isFinite(caller) ? (caller as number) : 0);
+    const own = Date.now();
+    let from = Number.isFinite(caller) ? (caller as number) : 0;
+    // After PR 161's third review, M1: a caller's time at most 5 s ahead of the object's own (else one far-future time
+    // would poison the object until real time caught up: markers born expired, buckets frozen), logged when cut. Lifted
+    // only in the tests' env, which run objects at simulated times.
+    if (from > own + CALLER_CLOCK_LEAD_MS && !(this.env.LIMITER_TRUST_CALLER_CLOCK === '1' && this.env.ENV_NAME === 'sandbox-test')) {
+      const name = (this.ctx.id as { name?: string }).name ?? '';
+      log({ event: 'rate_limiter', outcome: 'error', code: 'caller_clock_ahead', what: name.split(/[:@]/u)[0] || 'unnamed', aheadMs: Math.round(from - own) }, 'error');
+      from = own + CALLER_CLOCK_LEAD_MS;
+    }
+    const t = Math.max(before, own, from);
     if (t > before) kv.put('clock', t);
     return t;
   }
@@ -212,9 +226,12 @@ export class RateLimiter extends DurableObject<Env> {
    * the same key can't all pass. A call reads one row however many markers the object holds (D475): an expired marker
    * no longer counts, and the alarm deletes it.
    */
-  reserve(key: string, untilMs: number, caller?: number): boolean {
+  reserve(key: string, untilMs: number, caller?: number, notAfter?: number): boolean {
     const kv = this.ctx.storage.kv;
     const now = this.clock(caller);
+    // D935 (after PR 161's third review, L1): what the marker guards was checked fresh on the caller's clock; past its
+    // `notAfter` on this one (a stall between), refused rather than marked anew.
+    if (notAfter !== undefined && now > notAfter) return false;
     const until = kv.get<number>(`mark:${key}`);
     if (until !== undefined && until > now) return false;
     kv.put(`mark:${key}`, untilMs);
@@ -476,6 +493,19 @@ export class RateLimiter extends DurableObject<Env> {
   }
 
   /**
+   * D935 (after PR 161's third review, L2): an org switched off leaves the kill buckets' count of orgs at once, so the
+   * org switched on in its place isn't refused `kill_orgs` for the rest of that minute.
+   */
+  platformForgetOrg(org: string): void {
+    const kv = this.ctx.storage.kv;
+    this.clock();
+    const orgs = kv.get<Record<string, number>>('platform:kill:orgs');
+    if (!orgs || !(org in orgs)) return;
+    const { [org]: _gone, ...rest } = orgs;
+    kv.put('platform:kill:orgs', rest);
+  }
+
+  /**
    * D927, D935: a removal admitted at `at` (as platformAdmit answered) that changed nothing gets its breaker slot back,
    * once (the entry is removed). No tokens are ever given back.
    */
@@ -590,9 +620,12 @@ export class RateLimiter extends DurableObject<Env> {
    * `cap` is empty (a valid self-revoke, which can succeed once per key: F1), the marker is held until `untilMs` and the
    * answer is `ok`; else `full`, and nothing is written. Atomic in the object.
    */
-  reserveNonce(nonce: string, untilMs: number, cap: Limit[], caller?: number): 'ok' | 'replayed' | 'full' {
+  reserveNonce(nonce: string, untilMs: number, cap: Limit[], caller?: number, notAfter?: number): 'ok' | 'replayed' | 'full' | 'stale' {
     const kv = this.ctx.storage.kv;
     const now = this.clock(caller);
+    // D935 (L1): the request's timestamp window ends at `notAfter`; on this clock past it, the nonce isn't reserved (a
+    // request checked fresh but held up past its marker's hold would otherwise be taken as new).
+    if (notAfter !== undefined && now > notAfter) return 'stale';
     const until = kv.get<number>(`mark:n:${nonce}`);
     if (until !== undefined && until > now) return 'replayed';
     if (cap.length > 0 && !this.hit(cap, caller).ok) return 'full';

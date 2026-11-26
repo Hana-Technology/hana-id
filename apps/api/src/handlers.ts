@@ -952,7 +952,7 @@ export async function runOwnerAction(env: Env, ctx: Ctx, src: OwnerActionSource)
   try {
     // An owner token is bound to one action by its nonce: once relayed it can only fail. Reserve it atomically
     // before relaying, so concurrent copies of one request can't all pass.
-    if (token && !(await tokens.reserve(token.hash, token.expMs))) return no(409, 'token_used', 'This owner token was already used, get a fresh one');
+    if (token && !(await tokens.reserve(token.hash, token.expMs, undefined, token.expMs))) return no(409, 'token_used', 'This owner token was already used, get a fresh one');
   } catch {
     return no(503, 'rate_limiter_unavailable', 'Try again');
   }

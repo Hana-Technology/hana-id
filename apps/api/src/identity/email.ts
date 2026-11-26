@@ -363,7 +363,7 @@ export async function handleEmailConsent(request: Request, env: Env, endpoint: E
     return reject(ctx, 502, 'bad_contract_result', 'The session path is not one this API can read');
   }
   try {
-    if (!(await limiter(env, identityProofLimiter(pkHex)).reserve(await proofMarker({ sessionPk: b.sessionPk, issuedAtMs: b.issuedAtMs, nonce: b.nonce }), b.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
+    if (!(await limiter(env, identityProofLimiter(pkHex)).reserve(await proofMarker({ sessionPk: b.sessionPk, issuedAtMs: b.issuedAtMs, nonce: b.nonce }), b.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now, b.issuedAtMs + IDENTITY_PROOF_WINDOW_MS))) {
       return reject(ctx, 409, 'proof_replayed', 'This session proof was already used');
     }
   } catch {

@@ -35,7 +35,7 @@
 // SECURITY: nothing here logs an address, a signature, a digest, an authorization, a session key or an RPC URL (log()
 // has no field for them); the request log has the app, the outcome, the code and phase times. An RPC's own error text
 // is never echoed. A response carries only this app's own figures, never another app's or the env's spend.
-import { IDENTITY_PROOF_MARKER_MS, identityRoot } from '@hana-id/core/identity';
+import { IDENTITY_PROOF_MARKER_MS, IDENTITY_PROOF_WINDOW_MS, identityRoot } from '@hana-id/core/identity';
 import { SPONSOR_DELEGATES, type SignedAuthorization, encodeExecuteCalldata } from '@hana-id/core/evm-sponsor';
 import { type EvmSponsorRequestMethod, checkEvmSponsorSessionProof } from '@hana-id/core/sponsor-session';
 import type { App } from '../apps.ts';
@@ -298,7 +298,7 @@ function proofRefusal(ctx: Ctx, method: EvmSponsorRequestMethod, env: Env, app: 
  */
 async function sessionBound(env: Env, ctx: Ctx, app: App, parentOrigin: string, chain: Readonly<EvmSponsorChainConfig>, account: Hex, p: { sessionPk: Uint8Array; nonce: Uint8Array; issuedAtMs: number }, now: number): Promise<Step<Session>> {
   try {
-    if (!(await limiter(env, identityProofLimiter(hex(p.sessionPk))).reserve(await proofMarker({ sessionPk: p.sessionPk, issuedAtMs: p.issuedAtMs, nonce: p.nonce }), p.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now))) {
+    if (!(await limiter(env, identityProofLimiter(hex(p.sessionPk))).reserve(await proofMarker({ sessionPk: p.sessionPk, issuedAtMs: p.issuedAtMs, nonce: p.nonce }), p.issuedAtMs + IDENTITY_PROOF_MARKER_MS, now, p.issuedAtMs + IDENTITY_PROOF_WINDOW_MS))) {
       return { ok: false, response: reject(ctx, 409, 'proof_replayed', 'This session proof was already used') };
     }
   } catch {

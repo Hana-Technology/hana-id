@@ -33,6 +33,12 @@ export interface Env {
   BLS_PRECHECK?: string;
   /** Optional Durable Object location hint for the shared objects (manifest cloudflare.durableObjectLocation). */
   DO_LOCATION_HINT?: string;
+  /**
+   * D935 (after PR 161's third review): `'1'` lifts the rate limiter's clamp on callers' times, so tests can run objects at
+   * simulated future times. Set only by vitest.config.ts, and honoured only with ENV_NAME `sandbox-test` (no manifest is
+   * named so; tested). Never in a generated or deployed config.
+   */
+  LIMITER_TRUST_CALLER_CLOCK?: string;
   /** Secret: session pool. JSON array of `ed25519:...` secret keys (create_session, create_session_and_derive, derive_key, revoke_session and the link methods). */
   RELAYER_KEYS: string;
   /**

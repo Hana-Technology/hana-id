@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-26 (turning the wallet off and on; frame-only addresses; lone surrogates; origins tab; NEAR relay limits; own `sub`); 2026-11-23, SDK 0.5.0.
+Last verified against code: 2026-11-26 (turning the wallet off and on, again; frame-only addresses; lone surrogates; origins tab; NEAR relay limits; own `sub`); 2026-11-23, SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -606,7 +606,9 @@ twice). The order doesn't matter: the new client may be created before or after 
   `hana.eip6963.provider`, which follows the newest client. The two answer the same, but they are different objects.
 - **The entry is shared by everything on the page** (wagmi and any other library listening to it): on it, remove only
   your own listeners (`removeListener`), never `removeAllListeners()`, which would also remove theirs. Its events go
-  to every listener in one order, one at a time; a listener may fire during `createHana` itself.
+  to every listener in one order, one at a time; a listener may fire during `createHana` itself. Don't switch chains
+  from a `chainChanged` listener in reaction to another listener doing the same: two such listeners keep the page
+  busy switching back and forth.
 
 The `uuid` is random, kept in memory for the page's lifetime and never stored: a reload, another tab or another site
 gets a new one, so it can't be used to recognise a user across pages. Turning the wallet off and on changes no address.

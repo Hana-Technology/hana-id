@@ -24840,6 +24840,23 @@ the shared breaker". D933 is unused and D934 is PR 162's, so this is D935.
   listeners"): a no-op would leave a library's handlers running after its own teardown, and a throw would break that
   teardown; both are likelier to break a well-behaved library than a documented rule. When two clients go in the same
   tick, wagmi's own throwaway connectors can log an unhandled 4900 from their async handlers (wagmi's code).
+  From the last check of PR 163 (none breaks the invariant):
+  1. A host bug where two listeners on the shared entry keep switching chains back and forth synchronously (each
+     `wallet_switchEthereumChain` in reaction to the other's `chainChanged`) now keeps the page busy in one delivery
+     loop instead of ending in a stack overflow as before; the queue holds one event at a time, so memory doesn't
+     grow. The SDK's own reactions can't loop (it only says differences and never repeats `connect` or
+     `disconnect`). No cap was added; a cap that hands the rest of a very long drain to a later task is the possible
+     follow-up.
+  2. A listener added to the entry while a delivery is in progress can hear events queued before it registered,
+     after having read newer state from the `chainId` getter. It always ends correct, and requests are checked
+     against the bound client's current chain and address, so a stale event can't lead to a signature for the wrong
+     chain or account.
+  3. `hana.ethereum`'s own direct listeners (not the entry's) keep ordinary nested-emit ordering, as on `next`: a
+     listener on the entry that switches chains synchronously can make them hear the newer `chainChanged` before the
+     older one.
+  4. A teardown started from inside the client's own event delivery reports `disconnect` with the "turned off on
+     this page" message (the entry's, as it lets go); one started outside reports the vault-disconnected message.
+     Both are code 4900.
 - **To confirm (the Tech Lead):**
   1. The announced provider is a separate object from `hana.ethereum`, so `detail.provider !== hana.ethereum` for
      every host, also one that never destroys.

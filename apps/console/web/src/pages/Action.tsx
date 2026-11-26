@@ -312,7 +312,7 @@ function takesEffect(kind: string, d: Record<string, unknown>): string {
       : 'Not at once. After you confirm, Journear emails your security contacts and owners. An owner can confirm it then (you too); if nobody does, it starts working 24 hours after that email. Any owner can cancel it until then.';
   if (kind === 'platform.key_accept') return 'It starts working once Journear has emailed your security contacts and owners about it, usually within a few minutes. Any owner can stop it at once afterwards.';
   if (kind === 'platform.key_confirm') return 'At once, when you confirm. Journear then emails your security contacts and owners, with a link that stops the key.';
-  if (kind === 'origin.confirm') return 'At once: they start working as soon as you confirm. Journear then emails your security contacts and owners, with a link to remove each one that works for 7 days. Any owner can also remove them on the app’s Web addresses tab.';
+  if (kind === 'origin.confirm') return 'At once: they start working as soon as you confirm. Journear then emails your security contacts and owners, with a link to remove each one that works for 7 days. Any owner can also remove them on the app’s Web addresses (origins) tab.';
   if (GUARDED.has(kind))
     return 'Not at once. After you confirm, it is announced by email to your organisation’s security contacts and takes effect after the security delay (24 hours on production deployments). Any owner can cancel it until then, from the app’s page or the email.';
   if (kind === 'member.invite') return 'The invite email goes out after every owner and your security contacts have been told. The link works once, for that address only.';
@@ -346,7 +346,7 @@ const LABELS_OUTCOME: Record<string, string> = {
 };
 
 const APP_TAB: Record<string, string> = { 'origin.add': 'origins', 'origin.confirm': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.settings': 'sessions', 'app.resume': 'suspend' };
-const TAB_LABEL: Record<string, string> = { origins: 'Web addresses', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login', labels: 'Request labels' };
+const TAB_LABEL: Record<string, string> = { origins: 'Web addresses (origins)', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login', labels: 'Request labels' };
 
 /**
  * The server's `returnTo`, only as one of the console's own pages that start actions: an app's tab, a scope's page or

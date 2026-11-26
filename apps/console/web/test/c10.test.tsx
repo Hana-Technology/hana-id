@@ -284,7 +284,7 @@ describe('changes that need an on-chain owner of the scope (Origins, Signing)', 
     expect(screen.queryByPlaceholderText('https://app.example.com')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Review and confirm with Google' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy();
-    expect(screen.getByText(/An on-chain owner of the app’s scope adds|Allowed web addresses/u)).toBeTruthy();
+    expect(screen.getAllByText(/An on-chain owner of the app’s scope adds|^Web addresses \(origins\)$/u).length).toBeGreaterThan(0);
     cleanup();
     await sections('/signing');
     expect(await screen.findByText(/Setting a policy needs an on-chain owner/u)).toBeTruthy();

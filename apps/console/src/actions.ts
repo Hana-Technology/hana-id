@@ -185,7 +185,7 @@ export const RETURN_PAGES = {
   'platform.key_add': ['platform-keys'],
   'platform.key_accept': ['platform-keys'],
   'platform.key_confirm': ['platform-keys'],
-  // D931: the app's Web addresses tab.
+  // D931: the app's Web addresses (origins) tab.
   'origin.confirm': ['origins'],
 } as const satisfies Record<StepUpKind, readonly string[]>;
 type ReturnPage = (typeof RETURN_PAGES)[StepUpKind][number];

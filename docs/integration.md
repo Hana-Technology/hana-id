@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-26 (names: lone surrogates); 2026-11-25 (Web addresses tab; NEAR limits; own `sub`); 2026-11-24 (shared `sub`, labels, Hedera); 2026-11-23, SDK 0.5.0.
+Last verified against code: 2026-11-26 (lone surrogates in names; the origins tab's name; NEAR relay limits; own `sub`, Support ID); 2026-11-24 (shared `sub`, labels, Hedera); 2026-11-23, SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -175,7 +175,7 @@ changes are waiting. An app's page shows the **App ID** and the **Publishable ke
 | Tab | What you do there |
 |---|---|
 | **Overview** | a getting-started checklist, and every change waiting to take effect, with **Cancel** |
-| **Web addresses** | the allowed origins, called web addresses on the page ([below](#allowed-origins)) |
+| **Web addresses (origins)** | the allowed origins, called web addresses on the page ([below](#allowed-origins)) |
 | **Keys** | **Create a key** (at most 5 active), **Rotate** (you get a new key now; the old one keeps working 24 hours), **Revoke** (at once; a page already open notices within 30 s) |
 | **Login & sessions** | persistence, the session and idle limits and the Google web client ([section 7](#7-app-settings)), confirmed with Google and in force at once; a link to your scope's page ("Google clients and on-chain owners") for your own Google client ([section 6](#6-google-client-shared-or-your-own)) |
 | **Signing** | the auto-approve policy ([section 9](#9-auto-approve-policies)) and raw signing ([Raw signing](#raw-signing)) |
@@ -195,7 +195,7 @@ app's mail per day (sent, bounced, complaints, refusals), never an address ([sec
 
 <a id="allowed-origins"></a>**Allowed origins.** The vault loads only on pages served from one of your app's origins,
 compared exactly: scheme, host and port, no path (`http://localhost:5173` and `http://localhost:5174` are two origins,
-and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per app. On the **Web addresses** tab:
+and so are `http://localhost:5173` and `http://127.0.0.1:5173`). At most 20 per app. On the **Web addresses (origins)** tab:
 
 - **Add**: on-chain owners ([above](#on-chain-owners)) type one origin per line, then **Review and confirm with Google**, review the change and
   **Confirm with Google**. Journear Passport then announces the change by email to your security contacts and to Journear (the notices
@@ -531,7 +531,7 @@ failure the SDK removes the frame. `error.data.reason` says which part failed:
 frame was used. A page whose origin isn't one of your app's origins, or an unknown or suspended key, fails with
 `no_answer` about 3 s after the client is created (two frames, each given 1.5 s after it loads; about 10 s with SDK
 0.2.0). Journear Passport can't tell your page which of these it was (the vault refuses without saying why, so that a framing page
-learns nothing about a key or an origin), so check the origin first: `data.origin` against the app's **Web addresses** tab.
+learns nothing about a key or an origin), so check the origin first: `data.origin` against the app's **Web addresses (origins)** tab.
 
 **Dev servers that change port.** Vite (and most dev servers) moves to the next free port when its own is taken, and
 `http://localhost:5174` is not `http://localhost:5173`: the page then runs on an origin your app doesn't allow. Pin the
@@ -2138,7 +2138,7 @@ window, not returned.
 | `4200` | Unsupported method (`eth_sign`, …) | use a supported method |
 | `4900` | The session or the vault is gone. `data.reason: 'signed_out'`: Journear Passport signed this device out (Journear Passport's own page, `revokeOtherDevices()` on another device, a newer sign-in in another tab of this device, or your app's settings), and the vault is fine. Without it: the vault connection is gone (frame replaced, `hana.status` `'error'`), or the session ended another way (a logout in another tab, its end on Journear Passport's side, a stored session that couldn't be opened), where the vault is fine (`hana.status` `'logged_out'`) | with `signed_out`, or with `hana.status` `'logged_out'`, ask the user to log in again (no reload); with `'error'`, create the client again or reload |
 | `4902` | EVM chain not in `evm.chains` | add it to `createHana` |
-| `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins (`no_answer`'s `data.origin` against the portal's **Web addresses** tab), the network. A wrong origin or key takes about 3 s to report (`no_answer`; about 10 s with SDK 0.2.0) |
+| `vault_unavailable` | The vault didn't load (one automatic retry; `data.reason`: `csp_frame_src`, `no_answer`, `frame_timeout`, `ready_timeout`, `frame_replaced`, [section 3](#3-create-the-client)) | check `frame-src`, your origins (`no_answer`'s `data.origin` against the portal's **Web addresses (origins)** tab), the network. A wrong origin or key takes about 3 s to report (`no_answer`; about 10 s with SDK 0.2.0) |
 | `popup_blocked` | The browser blocked the popup and the sign-in was cancelled | call `login()` in a click |
 | `coop_blocks_popup` | The popup closed before it connected (COOP `same-origin`, or the user closed it at once) | fix COOP |
 | `login_timeout` | The popup never connected (15 s, `data.stage: 'connect'`), or the sign-in was left unfinished for 5 min (`data.stage: 'pending'`: the popup left open, or closed within a few seconds of reaching Google's page) | retry |

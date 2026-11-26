@@ -143,7 +143,7 @@ test('a platform request’s email, an owner’s confirmation with a fresh sign-
   expect(await gate(b!.origin)).toEqual({ status: 403, code: 'origin_not_allowed' });
   expect((await proposal(b!.changeId)).activeFrom).toBeGreaterThan(Date.now() + 23 * 3_600_000);
 
-  // The Web addresses tab shows who confirmed it.
+  // The Web addresses (origins) tab shows who confirmed it.
   await page.goto(`${origin}/orgs/${net.orgId}/apps/${appId}/origins`);
   await expect(page.getByText(/Confirmed on .* by an owner/u).first()).toBeVisible();
 

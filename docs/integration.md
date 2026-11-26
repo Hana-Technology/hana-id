@@ -26,7 +26,7 @@ your testers, and your first sign-in in four steps. This guide has the detail.
 > get a Stellar and an EVM wallet and, with SDK 0.4.0, a NEAR account of their own ([section 8, NEAR](#near)), separate
 > from Journear Passport's NEAR accounts.
 
-Last verified against code: 2026-11-26 (frame-only addresses; lone surrogates; origins tab; NEAR relay limits; own `sub`); 2026-11-24 (shared `sub`, labels, Hedera); 2026-11-23, SDK 0.5.0.
+Last verified against code: 2026-11-26 (turning the wallet off and on; frame-only addresses; lone surrogates; origins tab; NEAR relay limits; own `sub`); 2026-11-23, SDK 0.5.0.
 "SDK releases after 0.2.0" marks what came after 0.2.0.
 
 ## How it works
@@ -277,9 +277,9 @@ at the top). A new environment means a new release.
 ### Release notes
 
 **0.5.0** (after 0.4.1, **not yet published**: until Journear sends you its tarballs, stay on 0.4.1; same environments:
-`sandbox-dev`). Code written for 0.4.x builds as it is: every change to the types is an addition. One behaviour
-changed, for EIP-5792 batches (step 3 below). Replace all the tarballs you use together (they depend on each other
-at `^0.5.0`).
+`sandbox-dev`). Code written for 0.4.x builds as it is: every change to the types is an addition. Two behaviours
+changed: EIP-5792 batches (step 3 below), and the EIP-6963 announcement with `hana.destroy()` (step 5). Replace all
+the tarballs you use together (they depend on each other at `^0.5.0`).
 
 - New: errors carry a plain sentence to show your users, `error.userMessage`, on `HanaError`, `HanaSponsorError` and
   the EIP-1193 provider's `ProviderRpcError`, and `userMessageFor(code, data)` for a code read elsewhere
@@ -300,6 +300,15 @@ at `^0.5.0`).
   Only for a host that finds other wallets by part of their id or name: pass `JOURNEAR_PASSPORT_MODULE_ID`
   (`'journear-passport'`) where "hana" would also catch Journear Passport (Sodax's wallet kit finds Hana Wallet that
   way; [Stellar Wallets Kit](#stellar-wallets-kit-ids)). Everyone else changes nothing.
+- New: turning the wallet off and on in one page ([section 3](#turning-the-wallet-off-and-on)). `hana.eip6963` is the
+  EIP-6963 announcement (`{ info, provider }`, frozen), the same object every time a client of the same environment is
+  created after the last one was destroyed, so wallet lists such as wagmi's show "Journear Passport" once, through
+  one working entry, with no clean-up of yours. The `destroyed` event and `hana.destroyed` say `destroy()` ran. New
+  type exports: `Eip6963ProviderDetail`, `HanaEip6963Provider`.
+- Changed: the provider the EIP-6963 announcement carries is no longer `hana.ethereum` itself but
+  `hana.eip6963.provider`, which forwards to it (same answers, same events). After `hana.destroy()`, `hana.ethereum`
+  emits `accountsChanged []` and `disconnect` (`4900`) and rejects every request with `4900`; 0.4.x still answered
+  `eth_chainId` and read-only calls, and emitted nothing.
 - `wallet_sendCalls`, `wallet_getCapabilities` and `wallet_getCallsStatus` are no longer `4200`. On a chain without
   gas sponsorship, `wallet_getCapabilities` answers no capabilities and `wallet_sendCalls` is `5710` (unsupported
   chain). `eth_sendTransaction` is unchanged (never sponsored).
@@ -327,7 +336,11 @@ at `^0.5.0`).
    transactions when it shows nothing for the chain ([Gas sponsorship](#gas-sponsorship-not-live)).
 4. Handle `login_cancelled` with `data.reason: 'link_remove'` as the user's choice, not a failure
    ([section 4](#when-sign-in-doesnt-finish)). Your 0.4.x code already receives it.
-5. Nothing else: sign-in, Stellar, EVM, NEAR, the policies and the identity token behave as in 0.4.1.
+5. If you turn the wallet off and on (`hana.destroy()`, then `createHana`): remove any clean-up you added for wallet
+   lists (resetting wagmi's EIP-6963 store, removing its Journear Passport connector); it is no longer needed. If you
+   compared the provider a wallet list found with `hana.ethereum`, compare it with `hana.eip6963.provider` instead.
+   A page that never destroys its client needs no change.
+6. Nothing else: sign-in, Stellar, EVM, NEAR, the policies and the identity token behave as in 0.4.1.
 
 **0.4.1** (after 0.4.0; same environments: `sandbox-dev`). **Nothing to change** unless you find Journear Passport's
 wallet by its display name: code written for 0.4.0 builds and runs as it is. Replace all the tarballs you use together
@@ -476,8 +489,9 @@ hana.addresses;   // { stellar: 'G…', evm: '0x…', near: '6e5e…' } or null
 hana.supportId;   // 'HANA-XXXX-XXXX' while logged in, or null (section 4, "Support ID")
 ```
 
-Create one client per page and keep it. `hana.destroy()` removes the iframe and its listeners (for example on an SPA
-unmount).
+Create one client per page and keep it. `hana.destroy()` turns the wallet off on the page: it removes the iframe and
+its listeners (for example on an SPA unmount) and doesn't log the user out. To turn it on again, create a new client
+([Turning the wallet off and on](#turning-the-wallet-off-and-on)).
 
 RPC, Horizon and Soroban RPC URLs (`evm.chains[].rpcUrl`, `stellar.horizonUrl`, `stellar.sorobanRpcUrl`, and the
 Sodax adapters' `rpcUrl`, `horizonUrl`, `sorobanRpcUrl`) must be `https://` for a `pk_live_` key; plaintext `http://`
@@ -505,6 +519,7 @@ hana.on('autoApproved', ({ kind, chain, contract, function: fn }) => {});
 hana.on('persistenceChanged', (persistence) => {}); // 'none': this login won't survive a reload (see "Sessions")
 hana.on('linkChanged', ({ provider, status, effectiveAtMs }) => {}); // a sign-in method added, activated or removed (section 4)
 hana.on('supportIdChanged', (supportId) => {}); // 'HANA-XXXX-XXXX' or null (section 4, "Support ID")
+hana.on('destroyed', () => {});                 // hana.destroy() ran (SDK 0.5.0); the last event
 ```
 
 `disconnect` is always code 4900. With `reason: 'signed_out'` (SDK 0.3.1 or later) Journear Passport ended this device's
@@ -556,6 +571,34 @@ export default defineConfig({ server: { port: 5173, strictPort: true } });
 
 Also check that `localhost` reaches your server: a server listening on IPv6 only (`[::1]:5173`) answers a browser's
 `localhost:5173` before one on `127.0.0.1:5173`, so another process can hold "your" origin.
+
+### Turning the wallet off and on
+
+SDK 0.5.0. A page can turn Journear Passport off with `hana.destroy()` and on again with a new `createHana` (a wallet
+kit's switch, a settings page, or React's strict mode, which mounts twice). Destroy the old client before you create
+the new one (a React effect's clean-up already runs first).
+
+- **The old client is gone for good.** `hana.ethereum` emits `accountsChanged []` and `disconnect` (`4900`), then
+  rejects every request with `4900` (`eth_chainId` and reads too) and keeps nothing of the client. `destroyed` fires,
+  the last event (`hana.destroyed` is then `true`). The user is still signed in: the new client finds the session as a
+  reload would.
+- **EVM wallet lists need nothing from you.** EIP-6963 has no "wallet gone" event, and lists such as wagmi's keep the
+  first announcement of each `uuid`. So Journear Passport keeps one announcement per page and environment, the same
+  every time the wallet comes back: `hana.eip6963`, `{ info, provider }`, frozen (`null` without `evm`). Its
+  `provider` forwards to the `hana.ethereum` of the live client; while the wallet is off it rejects with `4900`.
+  wagmi lists "Journear Passport" once, through the same connector, so don't reset its EIP-6963 store or remove the
+  connector. Its connection ends when the wallet goes; when the wallet comes back with the user still signed in, wagmi
+  connects again by itself, as it does for an unlocked browser extension.
+- **While the wallet is off,** wagmi still lists that connector (its `id` is `hana.eip6963.info.rdns`), and
+  connecting through it fails with `4900`. To hide it, leave it out of the list you show while the wallet is off.
+- **What you built on `hana.ethereum` itself** (viem's `custom(hana.ethereum)`, ethers' `BrowserProvider`, a connector
+  you created with it) belongs to that client: build it again on the new `hana.ethereum`, or once on
+  `hana.eip6963.provider`, which follows the live client. The two answer the same, but they are different objects.
+- **Two clients alive at once** (two apps or environments on one page) have two announcements, each with its own
+  `uuid`.
+
+The `uuid` is random, kept in memory for the page's lifetime and never stored: a reload, another tab or another site
+gets a new one, so it can't be used to recognise a user across pages. Turning the wallet off and on changes no address.
 
 ## 4. Log in, log out
 
@@ -1133,7 +1176,9 @@ SWK's `{code, message, ext}`, with `4001` for a rejection and the Journear Passp
 ### EVM (EIP-1193)
 
 `hana.ethereum` is an EIP-1193 provider, announced through EIP-6963 as "Journear Passport" (`info.name`, with the
-Journear mark as `info.icon`; `info.rdns` is unchanged) when you pass `evm` to `createHana`:
+Journear mark as `info.icon`; `info.rdns` is unchanged) when you pass `evm` to `createHana`. The announcement is
+`hana.eip6963` (SDK 0.5.0): its `provider` forwards to `hana.ethereum` and stays the same when the wallet is turned off
+and on ([Turning the wallet off and on](#turning-the-wallet-off-and-on)):
 
 ```ts
 // viem

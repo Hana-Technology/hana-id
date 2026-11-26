@@ -19,9 +19,18 @@
 // Errors are ProviderRpcError with numeric codes (errors.ts maps Hana's string codes). Events: `connect {chainId}`
 // once the vault is ready, `chainChanged`, `accountsChanged`, and `disconnect` (4900) when the vault connection dies.
 // Logging out is `accountsChanged []`, as wallets do, not `disconnect`.
+//
+// `hana.destroy()` retires the provider for good (D936): `accountsChanged []` and `disconnect` (4900, unless it already
+// said so), then every request rejects with 4900, and it lets go of its client and its listeners.
+//
+// EIP-6963 (D936): the announcement carries a HanaEip6963Provider, not `hana.ethereum` itself. One exists per page,
+// wallet name (`rdns`) and slot, with one uuid for the page's lifetime, and forwards to the `hana.ethereum` of the live
+// client that holds its slot. A wallet list that keeps the first announcement of a uuid (mipd, wagmi) so keeps one
+// that works again when the wallet is turned off (`destroy()`) and on (`createHana`). Two clients alive at once never
+// share a slot.
 import { ErrorCode, type PortMethod, type PortParamsMap, type PortResultMap, TEST_APP_NETWORK_RULE, isEvmAddress, isTestEvmChain, toHex, utf8 } from '@hana-id/core';
 import { Emitter } from './emitter.ts';
-import { ProviderRpcError, RpcCode, toProviderRpcError } from './errors.ts';
+import { ProviderRpcError, RpcCode, hanaError, toProviderRpcError } from './errors.ts';
 import { type NormalizedTx, fillTransaction, normalizeTxInput, toQuantity } from './evm-tx.ts';
 import type { ApprovalTicket } from './approval-window.ts';
 import { HANA_ID_ICON, HANA_ID_NAME } from './icon.ts';
@@ -164,6 +173,16 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 const err = (code: number, message: string, data?: unknown) => new ProviderRpcError(code, message, data);
 const noop = () => {};
 const nonceKey = (chainId: number, from: string) => `${chainId}:${from.toLowerCase()}`;
+/** The 4900 a retired provider, or an announced one with no live client, rejects with (the vault-gone one's words). */
+const disconnectedError = (): ProviderRpcError => toProviderRpcError(hanaError(ErrorCode.disconnected));
+
+/** What a retired provider has instead of its client: nothing to reach, so it keeps nothing of the client alive. */
+const RETIRED_HOST: EthereumHost = Object.freeze({
+  evmAddress: () => null,
+  login: () => Promise.reject(disconnectedError()),
+  request: () => Promise.reject(disconnectedError()),
+  fetch: () => Promise.reject(disconnectedError()),
+});
 
 /** A validated transaction call, pinned to the signer and chain current when the dapp made it. */
 interface TxCall {
@@ -175,10 +194,14 @@ interface TxCall {
 export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   /** Lets dapps and connectors recognise the provider when they read flags. */
   readonly isHanaId = true;
-  readonly #host: EthereumHost;
+  /** The client, until `retire()` swaps in RETIRED_HOST. */
+  #host: EthereumHost;
   readonly #chains: ReadonlyMap<number, EvmChainConfig>;
   #chainId: number | null;
   #lastAccounts: string[] = [];
+  /** `connect` was emitted and no `disconnect` since. */
+  #connected = false;
+  #retired = false;
   /**
    * Per chain ID, the settled tail of the eth_sendTransaction queue. Each one fills its nonce from the RPC's 'pending'
    * count only after the one before it was broadcast or failed, so back-to-back sends (approve, then swap) get
@@ -211,6 +234,9 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
   }
 
   request(args: RequestArguments): Promise<unknown> {
+    // After hana.destroy(): EIP-1193's "disconnected" for every method, the ones answered here (eth_chainId) and the
+    // RPC's (reads, eth_sendRawTransaction) included.
+    if (this.#retired) return Promise.reject(disconnectedError());
     if (!isObject(args) || typeof args.method !== 'string' || args.method.length === 0) {
       return Promise.reject(err(RpcCode.invalidParams, 'request() takes {method, params?}'));
     }
@@ -516,11 +542,14 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
 
   /** The vault became ready. */
   connected(): void {
-    if (this.#chainId !== null) this.emit('connect', { chainId: chainHex(this.#chainId) });
+    if (this.#retired || this.#chainId === null) return;
+    this.#connected = true;
+    this.emit('connect', { chainId: chainHex(this.#chainId) });
   }
 
   /** The vault's addresses changed (null: logged out). Emits only on a change. */
   accountsChanged(evm: string | null): void {
+    if (this.#retired) return;
     const next = evm === null ? [] : [evm];
     if (next.length === this.#lastAccounts.length && next.every((a, i) => a === this.#lastAccounts[i])) return;
     this.#lastAccounts = next;
@@ -529,8 +558,26 @@ export class HanaEthereumProvider extends Emitter<EthereumEvents> {
 
   /** The vault connection died. */
   disconnected(): void {
+    if (this.#retired) return;
     this.accountsChanged(null);
+    this.#connected = false;
     this.emit('disconnect', err(ErrorCode.disconnected, 'The Journear Passport vault is disconnected'));
+  }
+
+  /**
+   * hana.destroy(): `accountsChanged []` (if it had an account) and `disconnect` (4900, if connected), then for good
+   * every request rejects with 4900, no event fires, the listeners are dropped and the client is let go (RETIRED_HOST),
+   * so a host still holding the provider keeps neither the client nor its frame alive. Idempotent.
+   */
+  retire(): void {
+    if (this.#retired) return;
+    this.accountsChanged(null);
+    if (this.#connected) this.disconnected();
+    this.#retired = true;
+    this.#host = RETIRED_HOST;
+    this.#nextNonce.clear();
+    this.#batches.clear();
+    this.removeAllListeners();
   }
 }
 
@@ -543,6 +590,12 @@ export interface Eip6963ProviderInfo {
   readonly rdns: string;
 }
 
+/** EIP-6963's `EIP6963ProviderDetail`: what `eip6963:announceProvider` carries and `hana.eip6963` is (frozen). */
+export interface Eip6963ProviderDetail {
+  readonly info: Eip6963ProviderInfo;
+  readonly provider: HanaEip6963Provider;
+}
+
 /**
  * The provider's `rdns`: the reverse-DNS name of the env's authOrigin host (Q26 is open until the production domain,
  * Q15, is chosen; deriving it from a host Hana controls keeps it truthful meanwhile).
@@ -551,15 +604,117 @@ export function rdnsFor(authOrigin: string): string {
   return new URL(authOrigin).hostname.split('.').reverse().join('.');
 }
 
+/** Points an announced provider at a client's provider, or at none (set in the class's static block). */
+let bindAnnounced: (announced: HanaEip6963Provider, to: HanaEthereumProvider | null) => void;
+
 /**
- * Announces `provider` (`eip6963:announceProvider`) now and on every `eip6963:requestProvider`. Returns the function
- * that stops re-announcing. The uuid is a fresh v4 per client, as EIP-6963 asks.
+ * The EIP-1193 provider EIP-6963 announces (`hana.eip6963.provider`, D936): one per page and wallet slot, never
+ * replaced, so wallet lists that keep the first announcement of a uuid (mipd, and wagmi through it) keep one that
+ * works after the wallet is turned off and on. It forwards `request` and the four events to the `hana.ethereum` of the
+ * live client holding its slot. With none (after `hana.destroy()`, until the next `createHana` with the same
+ * environment) every request rejects with 4900 and no event fires; the next client's `connect` and `accountsChanged`
+ * then arrive through it. It holds nothing of a destroyed client. Only the SDK binds one: one built elsewhere stays
+ * disconnected.
  */
-export function announceEip6963(win: Window, provider: HanaEthereumProvider, rdns: string): () => void {
-  const info: Eip6963ProviderInfo = Object.freeze({ uuid: crypto.randomUUID(), name: HANA_ID_NAME, icon: HANA_ID_ICON, rdns });
-  const detail = Object.freeze({ info, provider });
-  const announce = () => win.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail }));
+export class HanaEip6963Provider extends Emitter<EthereumEvents> {
+  /** Lets dapps and connectors recognise the provider when they read flags. */
+  readonly isHanaId = true;
+  #current: HanaEthereumProvider | null = null;
+  readonly #forward: { readonly [E in keyof EthereumEvents]: (...a: EthereumEvents[E]) => void } = {
+    connect: (info) => this.emit('connect', info),
+    disconnect: (error) => this.emit('disconnect', error),
+    chainChanged: (chainId) => this.emit('chainChanged', chainId),
+    accountsChanged: (accounts) => this.emit('accountsChanged', accounts),
+  };
+
+  static {
+    bindAnnounced = (announced, to) => announced.#bind(to);
+  }
+
+  /** As `hana.ethereum.chainId` of the live client, or null with none. */
+  get chainId(): Hex | null {
+    return this.#current?.chainId ?? null;
+  }
+
+  /** As `hana.ethereum.chainIds` of the live client, or empty with none. */
+  get chainIds(): number[] {
+    return this.#current?.chainIds ?? [];
+  }
+
+  request(args: RequestArguments): Promise<unknown> {
+    // Synchronous, as hana.ethereum's: a call from a click keeps the browser's user activation for the popup.
+    return this.#current === null ? Promise.reject(disconnectedError()) : this.#current.request(args);
+  }
+
+  #bind(to: HanaEthereumProvider | null): void {
+    const from = this.#current;
+    if (from === to) return;
+    if (from !== null) for (const e of EVENTS) from.removeListener(e, this.#forward[e] as never);
+    this.#current = to;
+    if (to !== null) for (const e of EVENTS) to.on(e, this.#forward[e] as never);
+  }
+}
+
+const EVENTS = ['connect', 'disconnect', 'chainChanged', 'accountsChanged'] as const satisfies readonly (keyof EthereumEvents)[];
+
+/** One announcement a page keeps for its lifetime: its frozen detail, and whether a live client holds it. */
+interface Slot {
+  readonly detail: Eip6963ProviderDetail;
+  held: boolean;
+}
+
+/**
+ * Per window, per `rdns`, the page's slots in creation order. Module memory only, never storage: a page load (a new
+ * module) starts empty, so a uuid never outlives its page and never reaches another origin.
+ */
+const pageSlots = new WeakMap<Window, Map<string, Slot[]>>();
+
+/** What announceEip6963 returns to the client. */
+export interface Eip6963Announcement {
+  readonly detail: Eip6963ProviderDetail;
+  /** Stops answering `eip6963:requestProvider` and frees the slot (the announced provider then rejects with 4900). */
+  stop(): void;
+}
+
+/**
+ * Announces `provider` (`eip6963:announceProvider`) now and on every `eip6963:requestProvider`, until `stop()`. It
+ * takes the page's first free slot for `rdns` (D936): a client created after another was destroyed reuses its uuid and
+ * announced provider, so a store keyed by uuid keeps one entry, which now forwards to `provider`; clients alive at
+ * once each hold their own slot, so their announcements stay distinct. A new slot's uuid is a fresh random v4
+ * (crypto.randomUUID), kept in memory for the page's lifetime only.
+ */
+export function announceEip6963(win: Window, provider: HanaEthereumProvider, rdns: string): Eip6963Announcement {
+  let byRdns = pageSlots.get(win);
+  if (!byRdns) {
+    byRdns = new Map();
+    pageSlots.set(win, byRdns);
+  }
+  let slots = byRdns.get(rdns);
+  if (!slots) {
+    slots = [];
+    byRdns.set(rdns, slots);
+  }
+  let slot = slots.find((x) => !x.held);
+  if (!slot) {
+    const info: Eip6963ProviderInfo = Object.freeze({ uuid: crypto.randomUUID(), name: HANA_ID_NAME, icon: HANA_ID_ICON, rdns });
+    slot = { detail: Object.freeze({ info, provider: new HanaEip6963Provider() }), held: false };
+    slots.push(slot);
+  }
+  const held = slot;
+  held.held = true;
+  bindAnnounced(held.detail.provider, provider);
+  const announce = () => win.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail: held.detail }));
   win.addEventListener('eip6963:requestProvider', announce);
   announce();
-  return () => win.removeEventListener('eip6963:requestProvider', announce);
+  let stopped = false;
+  return {
+    detail: held.detail,
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      win.removeEventListener('eip6963:requestProvider', announce);
+      bindAnnounced(held.detail.provider, null);
+      held.held = false;
+    },
+  };
 }

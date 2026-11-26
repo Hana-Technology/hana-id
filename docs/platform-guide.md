@@ -10,7 +10,7 @@ Last verified: 2026-11-26 (web addresses marked `frameOnly`), against the platfo
 deployed anywhere yet); 2026-11-26 again for the off switches' limits (section 8: each organisation's own budget for
 its off switches, about 13 a minute; the removal limit's per-organisation floor; suspensions and key revocations
 outside it with limits of their own; each key's reserve for off switches; the body sent at once; a `stale_request`
-after a delay).
+after a delay); 2026-11-26 again for the toggle off and on (section 10: one EIP-6963 entry per page).
 
 > **Not available yet.** The platform API is built and tested, but it is **not deployed** in any environment and
 > **not switched on** for any organisation. Journear switches it on per organisation. The API's address and the
@@ -1075,8 +1075,10 @@ What your SDK needs to know about ours (the integration guide has the full API):
   (the user said no). Keep the wallet's own error (as a `cause`, for example) rather than replacing it, so partners
   can tell what happened.
 - **Size.** Our SDK is about 35 kB gzipped and is loaded only when the toggle is on.
-- **Toggle off on the page.** Remove our module from your lists, disconnect, and call `hana.destroy()`: it removes
-  our hidden frame.
+- **Toggle off on the page.** Remove our Stellar module from your lists and call `hana.destroy()`: it removes our
+  hidden frame and ends the EVM connection. EVM lists need no clean-up: when the toggle comes back on, the new client
+  reuses the page's one EIP-6963 entry (`hana.eip6963`), so wagmi lists "Journear Passport" once; to hide that entry
+  while the toggle is off, leave it out of the list you show.
 
 **Your widget in an iframe.** If the partner uses your widget, served from your own web address inside the partner's
 page, the partner's app must list **the widget's web address and every partner page that frames it**. Our frame

@@ -895,6 +895,9 @@ importers:
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
+      '@wagmi/core':
+        specifier: 3.6.5
+        version: 3.6.5(@types/react@19.3.0)(react@19.3.1)(typescript@5.9.3)(use-sync-external-store@1.2.0(react@19.3.1))(viem@2.57.7(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.6.7))
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -904,12 +907,18 @@ importers:
       happy-dom:
         specifier: 21.0.3
         version: 21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+      mipd:
+        specifier: 0.0.7
+        version: 0.0.7(typescript@5.9.3)
       tsx:
         specifier: 4.23.15
         version: 4.23.15
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+      viem:
+        specifier: 2.57.7
+        version: 2.57.7(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.6.7)
       vitest:
         specifier: 4.1.12
         version: 4.1.12(@types/node@22.20.5)(happy-dom@21.0.3(bufferutil@4.1.0)(utf-8-validate@6.0.6))(vite@7.3.7(@types/node@22.20.5)(tsx@4.23.15)(yaml@2.9.1))
@@ -7982,6 +7991,20 @@ snapshots:
       eventemitter3: 5.0.1
       mipd: 0.0.7(typescript@5.9.3)
       viem: 2.57.7(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@3.25.76)
+      zustand: 5.0.0(@types/react@19.3.0)(react@19.3.1)(use-sync-external-store@1.2.0(react@19.3.1))
+    optionalDependencies:
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - '@types/react'
+      - immer
+      - react
+      - use-sync-external-store
+
+  '@wagmi/core@3.6.5(@types/react@19.3.0)(react@19.3.1)(typescript@5.9.3)(use-sync-external-store@1.2.0(react@19.3.1))(viem@2.57.7(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.6.7))':
+    dependencies:
+      eventemitter3: 5.0.1
+      mipd: 0.0.7(typescript@5.9.3)
+      viem: 2.57.7(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.6.7)
       zustand: 5.0.0(@types/react@19.3.0)(react@19.3.1)(use-sync-external-store@1.2.0(react@19.3.1))
     optionalDependencies:
       typescript: 5.9.3

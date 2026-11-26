@@ -64,7 +64,8 @@ export const AUDIT_DETAIL_KEYS = {
   'origins.removed': ['code', 'version', 'removed'],
   'app.turned_off': ['code', 'version', 'what'],
   'change.cancelled': ['code', 'changeId'],
-  'app.suspended': ['code', 'suspendedBy'],
+  // D930: `takenOver` when an owner took the backend's (platform's) suspension over.
+  'app.suspended': ['code', 'suspendedBy', 'takenOver'],
   'app.renamed': ['code', 'version'],
   'key.created': ['code', 'keyId'],
   'key.rotated': ['code', 'keyId', 'newKeyId'],

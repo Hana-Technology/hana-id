@@ -43,7 +43,7 @@ on-chain owners, the only ones who can add origins or set a policy. You then man
 
 - the header shows the **Publishable key** (`pk_test_…`, public: ship it in your page) and the **App ID** (`app_…`,
   for your backend's identity-token check), each with a Copy button;
-- **Origins** lists the exact origins (scheme, host and port, no path; at most 20) your page may run on. An added
+- **Web addresses (origins)** lists the exact origins (scheme, host and port, no path; at most 20) your page may run on. An added
   origin takes effect after it is announced to your security contacts and a delay (60 s on sandbox-dev, 24 h in
   production; `http://localhost:<port>` on a test app as soon as it is announced), and you can cancel it until then;
   removing one is immediate;

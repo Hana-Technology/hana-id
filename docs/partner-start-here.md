@@ -10,7 +10,7 @@ and every signature needs the user's Approve in a Journear Passport window. This
 > `hana.*`), error codes, event names and the addresses below keep their old names, so no code change is needed.
 > Match on error codes, never on messages.
 
-Last verified against code: 2026-11-23 (gas sponsorship named so); 2026-11-18 (SDK 0.5.0: userMessage, a stopped sign-in, email codes).
+Last verified against code: 2026-11-26 (the Web addresses (origins) tab); 2026-11-23 (gas sponsorship named so); 2026-11-18 (SDK 0.5.0: userMessage, a stopped sign-in, email codes).
 
 > **This environment, `sandbox-dev`, is testnet only.** Its wallets are test wallets: until Journear Passport's address
 > freeze, Journear may still change how keys are made, which gives every user new addresses. Never keep real funds in them. A test
@@ -81,7 +81,7 @@ Your own Google client is an option for later (guide section 6).
    don't send `Cross-Origin-Opener-Policy: same-origin`, and pin your dev server's port (guide sections 3 and 5).
 
 If `hana.ready` rejects with `vault_unavailable` and `data.reason: 'no_answer'` (after about 3 seconds), the page's
-origin isn't exactly one of the app's active origins: compare `error.data.origin` with the **Origins** tab.
+origin isn't exactly one of the app's active origins: compare `error.data.origin` with the **Web addresses (origins)** tab.
 
 ## SDK 0.5.0: what changes for you
 
@@ -106,7 +106,7 @@ is. The guide's section 2 ("Upgrading from 0.4.x to 0.5.0") has the steps.
 ## What to expect on testnet
 
 **Changes are announced before they count.** Adding an origin (or an auto-approve policy) is confirmed with Google,
-then announced by email to your security contacts and to Journear within about 5 minutes. The **Origins** tab shows each
+then announced by email to your security contacts and to Journear within about 5 minutes. The **Web addresses (origins)** tab shows each
 step. It then takes effect:
 
 - **at once**, when announced, for a `http://localhost:<port>` origin (or `http://localhost:*`) on a test app, and for

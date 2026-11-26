@@ -386,7 +386,7 @@ export function Users() {
   const r = useApi<{ users: PartnerUser[]; next?: string }>(`/api/orgs/${org}/users${qs ? `?${qs}` : ''}`);
   return (
     <>
-      <PageHeader title="Users" description="The people who have signed in to your apps. Each has a User ID (the identity token’s sub, the id your backend stores) and a short Support ID to quote to Journear. An email address or a name appears only once the user shares it with one of your apps." />
+      <PageHeader title="Users" description="The people who have signed in to your apps. Each has a User ID (the ID your backend receives when they sign in, and keeps for them) and a short Support ID to quote to Journear. An email address or a name appears only once the user shares it with one of your apps." />
       <form
         className="form form-inline filters"
         onSubmit={(e) => {

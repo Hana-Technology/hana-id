@@ -303,7 +303,7 @@ describe('navigation', () => {
       ['Overview', ['Status']],
       ['Partners', ['Organisations']],
       ['Support', ['Users', 'Support ID lookup']],
-      ['Security', ['Security & monitoring', 'Feed and notices', 'Partner labels', 'Pending upgrades', 'Playbooks', 'Audit log']],
+      ['Security', ['Security & monitoring', 'Feed and notices', 'Partner labels', 'Platform queue', 'Pending upgrades', 'Playbooks', 'Audit log']],
       ['Email login', ['Email issuer', 'Account links']],
       ['Money', ['Reports', 'Statements', 'Rates']],
       ['System', ['Retention']],

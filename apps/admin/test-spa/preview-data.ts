@@ -98,6 +98,8 @@ export const orgDetail: Record<string, unknown> = {
     apps: [
       { id: 'app_01jcblumen', name: 'Lumen Pay checkout', scopeId: 's5d1e8a0c2f6b9', environment: 'live', deleted: false, suspendedBy: 0, activeOrigins: 3, pendingChanges: 1 },
       { id: 'app_01jcblumentest', name: 'Lumen Pay checkout (test)', scopeId: 's5d1e8a0c2f6ba', environment: 'test', deleted: false, suspendedBy: 4, activeOrigins: 2, pendingChanges: 0 },
+      // D930: an app the organisation's backend made with its platform key, on the shared scope.
+      { id: 'app_01jdplatcoffee', name: 'Coffee Club', scopeId: 's5d1e8a0c2f6ba', environment: 'test', deleted: false, suspendedBy: 4, activeOrigins: 1, pendingChanges: 2, sharedScope: true, createdByKind: 'platform' },
     ],
     flags: { noSecurityContacts: false, ownersNotContacts: [] },
   },
@@ -167,7 +169,71 @@ export const orgChanges = (orgId: string) => ({
         : [],
 });
 
+/** The working platform key's id (D930: the creator of the apps the backend made). */
+const PREVIEW_PKC = 'pkc_Wk7Hq2Lm9Xc4Pz';
+
+/** D930: the app the organisation's backend made with its platform key (suspended by the backend, two web addresses waiting). */
+const platformApp = (orgId: string) => ({
+  app: {
+    id: 'app_01jdplatcoffee',
+    orgId,
+    name: 'Coffee Club',
+    scopeId: 's5d1e8a0c2f6ba',
+    environment: 'test',
+    suspendedBy: 4,
+    partnerBitBy: 'platform',
+    deleted: false,
+    originsVersion: 3,
+    settingsVersion: 0,
+    origins: [
+      { origin: 'https://coffeeclub.example', display: 'https://coffeeclub.example', idn: false, activeFrom: ago(DAY) },
+      { origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, activeFrom: NOW + 23 * HOUR },
+      { origin: 'https://widget.lumenpay.example', display: 'https://widget.lumenpay.example', idn: false, activeFrom: null },
+    ],
+    changes: [
+      { id: 'gc_01jdplat1', kind: 'origin_add', origin: 'https://order.coffeeclub.example', status: 'pending', proposedAt: ago(70 * MIN), proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', notifiedAt: ago(60 * MIN), activeFrom: NOW + 23 * HOUR },
+      { id: 'gc_01jdplat2', kind: 'origin_add', origin: 'https://widget.lumenpay.example', status: 'pending', proposedAt: ago(70 * MIN), proposedByKind: 'platform', proposedBy: 'pkc_Wk7Hq2Lm9Xc4Pz', activeFrom: null },
+    ],
+    settings: { rawSign: 'off', persistence: 'session', policy: null, mainnetDemo: false },
+    sharedScope: true,
+    createdByKind: 'platform',
+    createdByKey: PREVIEW_PKC,
+    sharedWallet: true,
+    userIds: 'app',
+    keys: [{ id: 'key_01jdplat', key: 'pk_test_previewfakekey000009', createdAt: ago(2 * DAY), createdBy: 'pkc_Wk7Hq2Lm9Xc4Pz', revokedAt: null }],
+  },
+});
+
+/** D930: an org's platform calls as `GET /api/orgs/:org/platform-calls` answers staff (with the caller's network). */
+export function platformCalls() {
+  const k = 'pkc_Wk7Hq2Lm9Xc4Pz';
+  const c = (seq: number, mins: number, method: string, route: string, status: number, appId?: string, code?: string) => ({ seq, at: ago(mins * MIN), keyId: k, method, route, status, requestId: `pf_preview${seq}fakerequest`, ipPrefix: '203.0.113.0/24', ...(appId ? { appId } : {}), ...(code ? { code } : {}) });
+  return {
+    calls: [
+      c(412, 6, 'POST', '/v1/platform/apps/:appId/suspend', 200, 'app_01jdplatcoffee'),
+      c(411, 50, 'GET', '/v1/platform/apps/:appId', 200, 'app_01jdplatcoffee'),
+      c(410, 65, 'POST', '/v1/platform/apps', 429, undefined, 'rate_limited'),
+      c(409, 70, 'POST', '/v1/platform/apps', 201, 'app_01jdplatcoffee'),
+      c(408, 180, 'GET', '/v1/platform/credential', 200),
+    ],
+  };
+}
+
+/** D930: the platform queue across orgs (GET /api/platform-queue). */
+export function platformQueue() {
+  const p = orgPlatform('org_01jc8lumenpay');
+  return {
+    origins: [
+      { changeId: 'gc_01jdplat2', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', scopeId: 's5d1e8a0c2f6ba', origin: 'https://widget.lumenpay.example', display: 'https://widget.lumenpay.example', idn: false, keyId: 'pkc_Wk7Hq2Lm9Xc4Pz', keyLabel: 'Production backend', proposedAt: ago(70 * MIN) },
+      { changeId: 'gc_01jdplat1', appId: 'app_01jdplatcoffee', appName: 'Coffee Club', orgId: 'org_01jc8lumenpay', scopeId: 's5d1e8a0c2f6ba', origin: 'https://order.coffeeclub.example', display: 'https://order.coffeeclub.example', idn: false, keyId: 'pkc_Wk7Hq2Lm9Xc4Pz', keyLabel: 'Production backend', proposedAt: ago(70 * MIN), notifiedAt: ago(60 * MIN), activeFrom: NOW + 23 * HOUR },
+      { changeId: 'gc_01jdplat3', appId: 'app_01jdplattiles', appName: 'Tile Shop', orgId: 'org_01jc8lumenpay', scopeId: 's5d1e8a0c2f6ba', origin: 'https://xn--tilshop-yya.example', display: 'https://tilèshop.example', idn: true, keyId: 'pkc_Wk7Hq2Lm9Xc4Pz', keyLabel: 'Production backend', proposedAt: ago(5 * HOUR), notifiedAt: ago(5 * HOUR), activeFrom: NOW + 19 * HOUR },
+    ],
+    keys: p.keys.filter((k) => k.state === 'awaiting_acceptance'),
+  };
+}
+
 export const appDetail = (orgId: string, appId: string) => {
+  if (appId === 'app_01jdplatcoffee') return platformApp(orgId);
   const live = appId === 'app_01jcblumen';
   // D915: the test app's scope is marked as shared by several partners' apps (auto-approve off, no proposal form).
   const shared = appId === 'app_01jcblumentest';
@@ -621,7 +687,7 @@ export function orgPlatform(orgId: string) {
     platform: { orgId, enabled: true, frozen: false, maxApps: 10, creationsPerDay: 5, proposalsPerDay: 30, setBy: 'access-sub', setAt: now - 30 * D },
     keys: [
       { id: 'pkc_Wa9Gh6Tn1sLk2V', orgId, label: 'Key sent by email', thumbprint: T('Pz5Lq8Wc3Nb6Vt0_'), scopes: ['s_lumen_test'], status: 'awaiting_acceptance', state: 'awaiting_acceptance', fourEyes: false, proposedByKind: 'hana', proposedBy: '7335d417-61da-459d-899c-0a01c76a2b94', proposedByEmail: 'ops@journear.example', proposedAt: now - 30 * 60_000 },
-      { id: 'pkc_Wk7Hq2Lm9Xc4Pz', orgId, label: 'Production backend', thumbprint: T('Nq3vTz8kLm2Xb7Wp_'), scopes: ['s_lumen_test'], status: 'active', state: 'in_force', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Dm7Vx2Kp4r', proposedAt: now - 40 * D, notifiedAt: now - 40 * D, activeFrom: now - 40 * D, expiresAt: now + 325 * D, confirmedKind: 'confirm', confirmedBy: 'usr_Ak3Pz8Qw2n', confirmedAt: now - 40 * D },
+      { id: 'pkc_Wk7Hq2Lm9Xc4Pz', orgId, label: 'Production backend', thumbprint: T('Nq3vTz8kLm2Xb7Wp_'), scopes: ['s_lumen_test'], status: 'active', state: 'in_force', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Dm7Vx2Kp4r', proposedAt: now - 40 * D, notifiedAt: now - 40 * D, activeFrom: now - 40 * D, expiresAt: now + 325 * D, confirmedKind: 'confirm', confirmedBy: 'usr_Ak3Pz8Qw2n', confirmedAt: now - 40 * D, lastUsedAt: now - 6 * 60_000 },
       { id: 'pkc_Wr2Sm9Lk2Vb7qX', orgId, label: 'Old laptop key', thumbprint: T('Ty6Mn1Qx4Kc9Rb2-'), scopes: ['s_lumen_test'], status: 'revoked', state: 'revoked', fourEyes: false, proposedByKind: 'member', proposedBy: 'usr_Ak3Pz8Qw2n', proposedAt: now - 90 * D, activeFrom: now - 89 * D, revokedAt: now - 41 * D, revokedByKind: 'member' },
     ],
   };

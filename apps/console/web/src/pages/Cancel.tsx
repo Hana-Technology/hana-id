@@ -81,7 +81,7 @@ export function CancelChange() {
       explain={
         labels
           ? 'This cancels the change to your app’s request labels announced in the email (the words the approval window would show your users). It never takes effect. You don’t need to sign in.'
-          : 'This cancels the app change announced in the email (a new origin, an auto-approve policy or raw signing). It never takes effect. You don’t need to sign in.'
+          : 'This cancels the app change announced in the email (a new web address, an auto-approve policy or raw signing). It never takes effect. You don’t need to sign in.'
       }
       idOk={ok}
       post={(token) => postJson('/api/cancel', { changeId, token })}

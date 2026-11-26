@@ -88,6 +88,8 @@ import {
   registerPlatformKeyInput,
   setPlatformOrgFrozenInput,
   setPlatformOrgInput,
+  platformCallsInput,
+  platformQueueInput,
 } from '@hana-id/console-core';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { Env } from '../env.ts';
@@ -142,6 +144,7 @@ import {
   setPlatformOrg,
   setPlatformOrgFrozen,
 } from '../platform/keys.ts';
+import { platformCalls, platformQueue } from '../platform/activity.ts';
 import { adminRun, noteNeonWake, storeAdminRuns } from '../usage/neon-compute.ts';
 import { mainnetDemoEnv } from '../mainnet-demo-setting.ts';
 
@@ -255,7 +258,7 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   }
 
   pendingNotices(c: unknown) {
-    return runRpc(this.env, 'admin.pendingNotices', pendingNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db }) => ({ notices: await pendingNotices(db, input.limit) }));
+    return runRpc(this.env, 'admin.pendingNotices', pendingNoticesInput, c, { actors: HANA_OR_SYSTEM }, async ({ input, db }) => ({ notices: await pendingNotices(db, input.limit, this.env) }));
   }
 
   /** Called only by the admin Worker's notice cron, after the email provider accepted every send; starts the clock. */
@@ -339,6 +342,16 @@ export class AdminRpc extends WorkerEntrypoint<Env> {
   /** The admin Worker's mirror of a console freeze (staff's route, and its hourly reconciliation as `system`). */
   setPlatformOrgFrozen(c: unknown) {
     return runRpc(this.env, 'admin.setPlatformOrgFrozen', setPlatformOrgFrozenInput, c, { actors: HANA_OR_SYSTEM }, ({ input, db, w }) => setPlatformOrgFrozen(db, w, input));
+  }
+
+  /** D930: one page of an org's platform calls, with the caller's network prefix (staff only). */
+  platformCalls(c: unknown) {
+    return runRpc(this.env, 'admin.platformCalls', platformCallsInput, c, { actors: HANA }, ({ input, db }) => platformCalls(db, input, true));
+  }
+
+  /** D930: the platform queue: every waiting web address a platform key proposed and every waiting platform key, across orgs. */
+  platformQueue(c: unknown) {
+    return runRpc(this.env, 'admin.platformQueue', platformQueueInput, c, { actors: HANA }, ({ input, db, w }) => platformQueue(db, w.now, input.limit));
   }
 
   platformOrgs(c: unknown) {

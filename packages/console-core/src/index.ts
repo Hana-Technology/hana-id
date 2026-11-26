@@ -16,6 +16,7 @@ export * from './names.ts';
 export * from './origins.ts';
 export * from './owner-actions.ts';
 export * from './partner.ts';
+export * from './platform-activity.ts';
 export * from './platform-keys.ts';
 export * from './platform-ops.ts';
 export * from './platform-request.ts';

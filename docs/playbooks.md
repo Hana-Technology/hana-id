@@ -64,6 +64,8 @@ alert kind means: `docs/operations.md` "Watchdog alerts (runbook)".
 | [Auto-approve found on an app that shares a wallet](#shared-wallet-policy) | critical | — |
 | [A shared wallet’s mark was removed by hand](#shared-scope-unmarked) | critical | — |
 | [Many look-ups of one network’s people across its apps](#link-lookup-volume) | warning | — |
+| [A network’s platform key reached a limit](#platform-quota) | warning | — |
+| [Many failed requests for one platform key](#platform-auth-failures) | warning | — |
 | [`KEYS_UPDATER_KEY` stolen (API secrets leaked)](#updater-key-stolen) | critical | — |
 | [A relayer key stolen (session pool or owner pool)](#relayer-key-stolen) | warning | — |
 | [`VAULT_KEK` leaked (and routine rotation)](#vault-kek-leaked) | critical | — |
@@ -1985,6 +1987,80 @@ A `link_lookup_volume` security event: an owner of a network's organisation look
 - Note the cause and what was done in the decision log; if the network needs more for real support work, raise the thresholds there first.
 
 **Refs:** D913 (`docs/decisions.md`), D925 (`docs/decisions.md`) · **See also:** [api-or-cloudflare-compromised](#api-or-cloudflare-compromised)
+
+<a id="platform-quota"></a>
+
+### A network’s platform key reached a limit
+
+`platform-quota` · warning
+
+A `platform_quota` security event: a network's backend, signing with its platform key, was refused by one of its organisation's limits for the first time in a clock hour (`limit`: `platform:creations:hour` or `:day` for new apps, `platform:proposals:hour` or `:day` for web addresses asked for, `platform:keys:hour` or `:day` for publishable keys; the key in `keyId`). It is written once an hour per limit; the requests past the limit were refused (`429 rate_limited`), nothing was written for them.
+
+**Signals**
+
+- A `platform_quota` row in the admin's security events, emailed by the feed: the organisation, `limit`, `keyId` and the hour (`windowStart`). The organisation's Platform keys panel lists the calls (Activity) with the refused ones as “Limit reached”.
+
+**Impact**
+
+- The network can’t create apps, ask for web addresses or make publishable keys until the window passes. Its apps keep working; its kill switches (remove, suspend, revoke) are not counted by these limits.
+- A burst can be a normal onboarding day, a bug in the network’s backend retrying, or someone else using its key.
+- How urgent: today.
+
+**Steps**
+
+1. **See what the key did** (who: anyone). Open the organisation in the admin portal: the Platform keys panel's Activity shows each call (when, what, which app, the result, the caller's network) and the Platform queue shows the web addresses waiting. Many new apps or web addresses nobody announced to you, or calls from an unusual network, point at a stolen key.
+
+2. **Ask the network** (who: anyone). Contact the organisation's security contacts (not through the key's own backend) and ask whether the burst was theirs.
+
+3. **If it isn’t theirs** (who: anyone). Stop the key on the Platform keys panel (it stops at once, and every web address it asked for that still waits is cancelled with it), or switch the platform off for the organisation. Cancel any waiting web address you don’t trust from its app’s page.
+
+4. **If it is theirs and they need more** (who: anyone). The Tech Lead raises the organisation's `platform_orgs.max_apps`, `creations_per_day` or `proposals_per_day` by a reviewed D1 write (docs/operations.md “Platform app operations”). The hourly limits are fixed in code.
+
+**Verify**
+
+- No further `platform_quota` row for the organisation in the next hours, and the Activity shows calls at the usual rate.
+
+**Follow-ups**
+
+- Note the cause in the decision log if a limit was raised.
+
+**Refs:** D929 (`docs/decisions.md`), D930 (`docs/decisions.md`), [`docs/operations.md#platform-app-operations-hot-db-migration-0033-d929`](operations.md#platform-app-operations-hot-db-migration-0033-d929) · **See also:** [platform-auth-failures](#platform-auth-failures)
+
+<a id="platform-auth-failures"></a>
+
+### Many failed requests for one platform key
+
+`platform-auth-failures` · warning
+
+A `platform_auth_failures` security event: ten or more requests in a minute named one network's platform key (`keyId`) but failed its signature check. Written once an hour per key. Failed requests are only counted, never stored: they aren't in the Activity.
+
+**Signals**
+
+- A `platform_auth_failures` row in the admin's security events, emailed by the feed: the organisation, `keyId`, `failures` and the hour. The API's request log has `event: "platform"` lines with status 401 and the key id, and their IP prefix.
+
+**Impact**
+
+- Someone has the key’s id but not its private key (the id is not secret), or the network’s request signer is broken (a wrong clock, a changed body, a DER signature sent as it is).
+- A flood from one network can hold that key’s ordinary calls out from the same network for a while (docs/security.md, “Platform API”); its other networks are unaffected.
+- How urgent: today; now if the key’s own calls are failing too.
+
+**Steps**
+
+1. **See where they come from** (who: anyone). In the API’s request log, filter `event: "platform"` with status 401 and the key id: the IP prefixes and the reasons (`bad_signature`, `not_in_force`, `malformed_signature`). One prefix that is the network’s own usually means a broken signer.
+
+2. **Ask the network** (who: anyone). Tell the organisation's security contacts what you see and ask whether their backend is failing. A broken signer is theirs to fix (the reference signer and test vectors in their guide).
+
+3. **If the key may be stolen** (who: anyone). A failed signature can’t act, so nothing was done with the key by these requests. If the network also sees calls it didn’t make in the Activity, stop the key on the Platform keys panel and have the network register a new one.
+
+**Verify**
+
+- No further `platform_auth_failures` row for the key in the next hours.
+
+**Follow-ups**
+
+- If a shared egress address was the cause, remind the network that a production backend needs a dedicated egress IP (docs/operations.md “Platform API”).
+
+**Refs:** D927 (`docs/decisions.md`), D930 (`docs/decisions.md`), [`docs/operations.md#platform-api-hot-db-migration-0032-d927`](operations.md#platform-api-hot-db-migration-0032-d927) · **See also:** [platform-quota](#platform-quota)
 
 <a id="updater-key-stolen"></a>
 

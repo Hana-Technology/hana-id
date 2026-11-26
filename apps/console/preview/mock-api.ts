@@ -198,7 +198,7 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   const appM = /^\/apps\/([^/]+)$/u.exec(rest);
   if (appM) {
     const a = apps.find((x) => x.id === appM[1]);
-    return a ? ok({ app: a, now }) : fail(404, 'not_found', 'Not found');
+    return a ? ok({ app: a, now, ...(a.createdByKey || a.changes.some((c) => c.proposedByKind === 'platform') ? { keyLabels: keyLabels(now) } : {}) }) : fail(404, 'not_found', 'Not found');
   }
   const emailM = /^\/apps\/([^/]+)\/email$/u.exec(rest);
   if (emailM) {
@@ -208,7 +208,13 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
     return ok(F.emailStatus(a, now, state.emailState, state.emailSince));
   }
   if (rest === '/members') return ok(scenario === 'new-org' ? { members: [F.members(now).members[0]!], invites: [], grants: [] } : F.members(now));
-  if (rest === '/audit') return ok(F.audit(now));
+  if (rest === '/audit') return ok({ ...F.audit(now), keyLabels: keyLabels(now) });
+  // D930: what the backend did with its platform keys (`?app=` narrows it).
+  if (rest === '/platform-activity') {
+    const only = url.searchParams.get('app');
+    const calls = apps.length ? F.platformCalls(now).filter((c) => !only || c.appId === only) : [];
+    return ok({ calls, keyLabels: keyLabels(now), apps: apps.filter((a) => a.createdByKind === 'platform').map((a) => ({ id: a.id, name: a.name })), appNames: Object.fromEntries(apps.map((a) => [a.id, a.name])), platform: { enabled: true } });
+  }
   // D918: the org's platform keys and one key's page.
   // Two live keys at most (the quota): the default shows a working and a waiting one (no Register form); `multi` a key
   // awaiting acceptance and a stopped one, with the form.
@@ -216,7 +222,7 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   const keyM = /^\/platform-keys\/([^/]+)$/u.exec(rest);
   if (keyM) {
     const k = F.platformKeys(now).find((x) => x.id === keyM[1]);
-    return k ? ok({ key: k, people: F.PLATFORM_PEOPLE, role, ...F.platformKeyAbilities(k.id, role, frozen), now }) : fail(404, 'not_found', 'No such platform key in this organisation');
+    return k ? ok({ key: { ...k, ...(k.id === 'pkc_Ws4Bn8Rt5Wp1Qa' && role === 'owner' ? { registeredByYou: true } : {}) }, people: F.PLATFORM_PEOPLE, role, ...F.platformKeyAbilities(k.id, role, frozen), owners: 2, now }) : fail(404, 'not_found', 'No such platform key in this organisation');
   }
   // `not-chain-owner`: an owner in the console whose Google account isn't an on-chain owner of the scope (D652).
   if (rest.startsWith('/scopes/')) return ok(F.scope(now, scenario !== 'not-chain-owner'));
@@ -240,6 +246,9 @@ export function answer(scenario: Scenario, method: string, url: URL, body: unkno
   if (rest === '/users') return ok({ users: F.users(now) });
   return fail(404, 'not_found', 'Not found');
 }
+
+/** The org's platform keys by id → label (D930: the screens name a key by its label). */
+const keyLabels = (now: number): Record<string, string> => Object.fromEntries(F.platformKeys(now).map((k) => [k.id, k.label]));
 
 function write(scenario: Scenario, orgId: string, rest: string, body: unknown, state: PreviewState, now: number): Answer {
   const b = (body ?? {}) as Record<string, unknown>;

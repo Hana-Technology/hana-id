@@ -16,6 +16,7 @@ import { Suspend } from './pages/app/Suspend.tsx';
 import { Audit } from './pages/Audit.tsx';
 import { CancelChange, CancelOwner, CancelPlatformKey, RevokePlatformKey } from './pages/Cancel.tsx';
 import { ConfirmPlatformKey, PlatformKeyPage, PlatformKeys } from './pages/PlatformKeys.tsx';
+import { PlatformActivity } from './pages/PlatformActivity.tsx';
 import { Members } from './pages/Members.tsx';
 import { ScopePage } from './pages/Scope.tsx';
 import { StatementPage, Statements } from './pages/Statements.tsx';
@@ -71,6 +72,7 @@ export function App() {
         <Route path="members" element={<Members />} />
         <Route path="platform-keys" element={<PlatformKeys />} />
         <Route path="platform-keys/:keyId" element={<PlatformKeyPage />} />
+        <Route path="platform-activity" element={<PlatformActivity />} />
         <Route path="usage" element={<Usage />} />
         <Route path="statements" element={<Statements />} />
         <Route path="statements/:month" element={<StatementPage />} />

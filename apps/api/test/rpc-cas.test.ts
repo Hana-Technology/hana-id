@@ -338,6 +338,8 @@ describe('the hot-DB budget', () => {
         await adminRpc().ackPlatformKeyNotice({ ...system(), keyId: keys.five!, cancelTokenHash: await t.hash, revokeTokenHash: await r.hash });
         return rpc.revokePlatformKeyByLink({ actor: { kind: 'link', id: keys.five! }, requestId: `req_${uid()}`, clientIp: '203.0.113.9', keyId: keys.five!, token: r.token });
       }],
+      // D930: one page of the org's platform calls (one read).
+      ['platformCalls', (rpc) => rpc.platformCalls({ ...member(), orgId: app.org, limit: 50 })],
       ['getUser', async (rpc) => {
         const userId = `u1_${'E'.repeat(21)}A`;
         await env.DB.prepare('INSERT OR IGNORE INTO end_users (user_id, token_sub, support_code, scope_id, created_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, 1, 1)').bind(`hu_${'1'.repeat(26)}`, userId, '11111111', app.scope).run();

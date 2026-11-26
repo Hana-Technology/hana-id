@@ -24,7 +24,7 @@ interface ActionAnswer {
 }
 
 const TITLES: Record<string, string> = {
-  'origin.add': 'Add origins',
+  'origin.add': 'Add web addresses',
   'policy.set': 'Set the auto-approve policy',
   'raw_sign.on': 'Turn raw signing on',
   'app.resume': 'Resume the app',
@@ -156,7 +156,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
       return (
         <>
           <p>
-            App <strong>{str(d.appName)}</strong>. The new origins are announced to your security contacts and become active after the delay; any owner can cancel them until then.
+            App <strong>{str(d.appName)}</strong>. The new web addresses are announced to your security contacts and become active after the delay; any owner can cancel them until then.
           </p>
           <ul className="decoded-list">
             {add.map((o) => (
@@ -170,7 +170,7 @@ export function Decoded({ kind, d }: { kind: string; d: Record<string, unknown> 
               </li>
             ))}
           </ul>
-          {add.some((o) => o.idn) && <Callout tone="warn">An origin above uses an internationalised (punycode) name: check the ASCII form is the domain you own.</Callout>}
+          {add.some((o) => o.idn) && <Callout tone="warn">A web address above uses international letters (an internationalised, punycode name): check the plain form is the domain you own.</Callout>}
         </>
       );
     }
@@ -312,7 +312,7 @@ const LABELS_OUTCOME: Record<string, string> = {
 };
 
 const APP_TAB: Record<string, string> = { 'origin.add': 'origins', 'policy.set': 'signing', 'raw_sign.on': 'signing', 'app.settings': 'sessions', 'app.resume': 'suspend' };
-const TAB_LABEL: Record<string, string> = { origins: 'Origins', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login', labels: 'Request labels' };
+const TAB_LABEL: Record<string, string> = { origins: 'Web addresses (origins)', signing: 'Signing', suspend: 'Suspend', sessions: 'Login & sessions', email: 'Email login', labels: 'Request labels' };
 
 /**
  * The server's `returnTo`, only as one of the console's own pages that start actions: an app's tab, a scope's page or

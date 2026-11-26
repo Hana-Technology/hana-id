@@ -77,6 +77,7 @@ async function samples(m: Member, app: { id: string; scope: string }): Promise<S
     { method: 'POST', path: `${o}/users/link`, body: { query: 'u1_AAAAAAAAAAAAAAAAAAAAAA', purpose: 'panel' } },
     // D918: platform keys (an unknown key: the route's role and frozen rules still apply first).
     { method: 'GET', path: `${o}/platform-keys` },
+    { method: 'GET', path: `${o}/platform-activity` },
     { method: 'GET', path: `${o}/platform-keys/pkc_Unknown1Unknown1` },
     { method: 'POST', path: `${o}/platform-keys/pkc_Unknown1Unknown1/revoke`, body: {} },
     { method: 'POST', path: `${o}/platform-keys/pkc_Unknown1Unknown1/cancel`, body: {} },

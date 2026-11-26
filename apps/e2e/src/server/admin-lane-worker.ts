@@ -41,6 +41,8 @@
 //   POST /__e2e/lane/linking               D925: in the labels org, a new scope marked as shared with an app of before
 //                                          and one made after the mark, and one person signed in on both (the wallet
 //                                          directory's rows, by SQL) → {orgId, scopeId, apps, person}
+//   POST /__e2e/lane/platform {action, …} D930: the labels org as a network with a platform key (lane-platform.ts):
+//                                          reset, notices (the admin's real notice step, kept here), switch, create, state
 //   POST /__e2e/lane/run {times?}          time passes for the relayer: its alarm runs (then the API cron's relay check)
 //   POST /__e2e/lane/acquire               waits until no other test holds the lane, then holds it → {lease}; a lease
 //                                          ends by `release {lease}` or after 3 minutes (a test that died). The suite's
@@ -70,6 +72,7 @@ import { D1Shim } from './d1.ts';
 import { json } from './http.ts';
 import { LaneEvm } from './lane-evm.ts';
 import { LedgerWire, type PGliteLike } from './pglite-wire.ts';
+import { PlatformLane } from './lane-platform.ts';
 import { advanceLaneClock, freezeLaneClock, laneClockFrozen, laneClockOffset, realNow } from './lane-clock.ts';
 import { ExecContext, MemoryNamespace, allowAllLimiter } from './workers.ts';
 
@@ -234,7 +237,8 @@ function laneLimiter(real: MemoryNamespace<Record<string, (...a: unknown[]) => u
     get: (id: string) => {
       const obj = real.get(id);
       const via = (m: string) => async (...a: unknown[]) => obj[m]!(...a);
-      return { ...allowAllLimiter.get(id), consoleAdmit: async () => ({ ok: true as const, reserveUsed: 0 }), consoleSettle: async () => undefined, reserve: via('reserve'), release: via('release') };
+      // D930: the platform API's admission and its marks are the real object's too (lane-platform.ts signs requests).
+      return { ...allowAllLimiter.get(id), consoleAdmit: async () => ({ ok: true as const, reserveUsed: 0 }), consoleSettle: async () => undefined, reserve: via('reserve'), release: via('release'), platformAdmit: via('platformAdmit'), hitMark: via('hitMark'), reserveNonce: via('reserveNonce'), platformSettle: via('platformSettle') };
     },
   };
 }
@@ -253,6 +257,8 @@ class Lane {
   readonly adminEnv: Record<string, unknown>;
   /** Partner labels' org, its owner's proposals and the staff tools (lane-labels.ts). */
   readonly labels: InstanceType<typeof LabelsLane>;
+  /** D930: the labels org as a network with a platform key (lane-platform.ts). */
+  readonly platform: PlatformLane;
   /** The partner console on its own origins (D899, lane-console.ts): the browser lanes only. */
   readonly console: InstanceType<typeof ConsoleLane> | null;
   evm!: LaneEvm;
@@ -322,6 +328,7 @@ class Lane {
       },
       delayMs: CHANGE_DELAY_MS,
     });
+    this.platform = new PlatformLane({ api: this.api, d1: this.d1, modules, adminRpc: apiRpc as never, labels: this.labels, adminEnv: this.adminEnv });
     const origins = (CONSOLE_LANES as Record<string, { origin: string; authOrigin: string } | undefined>)[data.name];
     this.console = origins
       ? new ConsoleLane({ ...origins, dist: fileURLToPath(CONSOLE_DIR), db: this.consoleEnv.CONSOLE_DB, api: binding(new ConsoleRpc(new ExecContext(), env)), labels: this.labels, signer: E2E_ENV.signer, nearRpc: LANE_NEAR, envName: ENV_NAME })
@@ -668,6 +675,32 @@ async function labelsControl(b: Record<string, unknown>): Promise<Record<string,
   }
 }
 
+/**
+ * POST /__e2e/lane/platform {action, …} (D930, lane-platform.ts): the labels org as a network.
+ *   reset                      a fresh labels org, its scope marked as shared, a new key pair → {orgId, scopeId, publicKey}
+ *   notices                    the admin Worker's real notice step, its messages kept here → {sent: [{to, subject, text, html}]}
+ *   switch                     the org's platform switch on with the review of every key → {keys}
+ *   create {name, origins}     the network's backend's signed create → {status, body}
+ *   state                      the org's platform proposals → {proposals}
+ */
+async function platformControl(b: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const p = lane.platform;
+  switch (b.action) {
+    case 'reset':
+      return p.reset();
+    case 'notices':
+      return p.notices();
+    case 'switch':
+      return p.switchOn();
+    case 'create':
+      return p.create({ name: String(b.name), origins: Array.isArray(b.origins) ? b.origins.map(String) : [] });
+    case 'state':
+      return p.state();
+    default:
+      throw new Error('platform: action is reset, notices, switch, create or state');
+  }
+}
+
 let linkingSeeds = 0;
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const randomOf = (alphabet: string, n: number): string => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => alphabet[b % alphabet.length]).join('');
@@ -739,6 +772,7 @@ async function control(request: Request, url: URL): Promise<Response> {
     }
     if (url.pathname === '/__e2e/lane/labels') return json(200, await labelsControl(b as Record<string, unknown>));
     if (url.pathname === '/__e2e/lane/linking') return json(200, await linkingSeed());
+    if (url.pathname === '/__e2e/lane/platform') return json(200, await platformControl(b as Record<string, unknown>));
     if (url.pathname === '/__e2e/lane/run') {
       await lane.run(typeof b.times === 'number' && b.times >= 1 && b.times <= 10 ? b.times : 1);
       return json(200, await lane.state());

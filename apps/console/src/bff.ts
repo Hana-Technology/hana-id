@@ -88,9 +88,14 @@ export async function orgRoute(url: URL, env: Env, info: RequestInfo, s: Session
   const ctx = { actor: memberActor(s), requestId: info.requestId, clientIp: info.clientIp };
   if (apps && appId) {
     const r = await env.API.getApp({ ...ctx, orgId: orgId!, appId });
+    if (!r.ok) return rpcError(r, info, 'getApp');
+    // D930: the labels of the platform keys the app names (its creator, a change's proposer), so the page says which
+    // key; one more read only for an app the platform touched.
+    const named = [r.app.createdByKey, ...r.app.changes.filter((c) => c.proposedByKind === 'platform').map((c) => c.proposedBy)];
+    const keyLabels = named.some((k) => k !== undefined) ? await platformKeyLabels(env, ctx, orgId!) : undefined;
     // `now`: this answer's time on the server's clock, so the SPA judges what is still waiting by it, not by the
     // reader's clock (a laptop running fast must never hide a Cancel the server would still accept; D701).
-    return r.ok ? json(200, { app: r.app, now: Date.now() }) : rpcError(r, info, 'getApp');
+    return json(200, { app: r.app, now: Date.now(), ...(keyLabels ? { keyLabels } : {}) });
   }
   if (apps) {
     const r = await env.API.listApps({ ...ctx, orgId: orgId! });
@@ -101,6 +106,19 @@ export async function orgRoute(url: URL, env: Env, info: RequestInfo, s: Session
   const org = await env.CONSOLE_DB.prepare('SELECT id, name, status, required_hd FROM orgs WHERE id = ?').bind(orgId).first<{ id: string; name: string; status: Membership['status']; required_hd: string | null }>();
   const body: OrgAnswer = { org: { id: org!.id, name: org!.name, status: org!.status, ...(org!.required_hd !== null ? { requiredHd: org!.required_hd } : {}) }, role: membership.role };
   return json(200, body);
+}
+
+/**
+ * D930: the org's platform keys by id → label (its own keys only: ConsoleRpc.listPlatformKeys is org-bound), for the
+ * screens that name a key. Empty when they can't be read: a screen then names the key by its id, as before.
+ */
+export async function platformKeyLabels(env: Env, ctx: { actor: Actor; requestId: string; clientIp: string }, orgId: string): Promise<Record<string, string>> {
+  try {
+    const r = await env.API.listPlatformKeys({ ...ctx, orgId });
+    return r.ok ? Object.fromEntries(r.keys.map((k) => [k.id, k.label])) : {};
+  } catch {
+    return {};
+  }
 }
 
 /** Members (with the role in force now), open invites and live owner grants. */
@@ -235,6 +253,8 @@ async function orgAudit(url: URL, env: Env, info: RequestInfo, ctx: { actor: Act
     else entries.push(apiRows[j++]!);
   }
   const body: AuditAnswer = { entries };
+  // D930: the platform keys' labels, when a row names one as its actor (one more read, only then).
+  if (entries.some((e) => e.source === 'api' && e.actorKind === 'platform')) body.keyLabels = await platformKeyLabels(env, ctx, orgId);
   if (i < consoleRows.length || j < apiRows.length) {
     // Each source's bound: below the last row taken from it, else where it stood (or, unbounded, above its newest row).
     const bound = (rows: PartnerAuditEntry[], taken: number, prev: number | undefined) => (taken > 0 ? rows[taken - 1]!.seq : prev ?? (rows.length ? rows[0]!.seq + 1 : 1));

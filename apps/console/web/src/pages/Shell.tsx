@@ -159,6 +159,7 @@ export function OrgShell() {
         <NavLink to={`${base}/statements`}>Statements</NavLink>
         <span className="side-nav-group">Security</span>
         <NavLink to={`${base}/platform-keys`}>Platform keys</NavLink>
+        <NavLink to={`${base}/platform-activity`}>Platform activity</NavLink>
         <NavLink to={`${base}/upgrades`}>Pending upgrades</NavLink>
         <NavLink to={`${base}/audit`}>Audit</NavLink>
       </nav>

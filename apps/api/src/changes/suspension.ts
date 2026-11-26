@@ -29,7 +29,7 @@ export async function setSuspensionBit(
   db: HotDb,
   w: Writer,
   i: { orgId: string | null; appId: string; bit: 1 | 2 | 4; suspended: boolean },
-): Promise<{ suspendedBy: number; partnerBitBy: PartnerBitBy }> {
+): Promise<{ suspendedBy: number; partnerBitBy: PartnerBitBy; takenOver?: true }> {
   expectReplay(w, ['suspension.set', 'suspension.cleared']);
   const partner = i.bit === SUSPENSION_BITS.partner;
   const plan = await planApp(db, { appId: i.appId, orgId: i.orgId, w, ...(partner ? { with: { partnerBit: true } } : {}) });
@@ -63,7 +63,7 @@ export async function setSuspensionBit(
     q`UPDATE apps SET suspended_by = ${i.suspended ? q`suspended_by | ${i.bit}` : q`suspended_by & ~${i.bit}`}${setHolder} WHERE id = ${i.appId} AND ${committed(w.requestId)}`,
     q`SELECT suspended_by FROM apps WHERE id = ${i.appId}`,
   ]);
-  return { suspendedBy: (results[2]!.results[0] as { suspended_by: number }).suspended_by, partnerBitBy: nextHolder };
+  return { suspendedBy: (results[2]!.results[0] as { suspended_by: number }).suspended_by, partnerBitBy: nextHolder, ...(takenOver ? { takenOver: true as const } : {}) };
 }
 
 /** AdminRpc.suspendOrg: bit 2 on (or off) for every app of the org that isn't deleted; one `app_changes` row for the org. */

@@ -141,18 +141,42 @@ export interface Notice {
   app: { id: string; name: string; orgId: string; scopeId: string; environment: 'test' | 'live' };
   /** policy_set: the proposed policy (canonical JSON, parsed), for the notice's description of it. */
   policy?: unknown;
+  /**
+   * D930: a web address the platform proposed (an additive field). `requestId` groups one request's addresses into one
+   * email (finding L14); `waitMs` is the wait the ack will give it from the announcement, the one `ackNotice` computes
+   * (the greater of the env's delay, the platform minimum and the wait its proposal recorded), so the email states the
+   * real time; `keyLabel` names the proposing key (its org's, null if it can't be read).
+   */
+  platform?: { keyId: string; keyLabel: string | null; requestId: string; waitMs: number };
 }
 
-/** AdminRpc.pendingNotices: every pending change not yet announced (oldest first), with its org's security contacts. */
-export async function pendingNotices(db: HotDb, limit: number): Promise<Notice[]> {
+/** The rows `pendingNotices` reads: the change, its app and scope, the org's contacts, and a platform proposal's wait and key. */
+type NoticeRow = ChangeRow & { app_name: string; org_id: string; scope_id: string; environment: 'test' | 'live'; contacts: string; pw_min_delay_ms: number | null; pk_label: string | null };
+
+/**
+ * AdminRpc.pendingNotices: every pending change not yet announced (oldest first, one request's changes together), with
+ * its org's security contacts; a platform proposal also with its wait and its key (D930). `env` gives the wait the ack
+ * applies; without it (a config that can't be read) a platform proposal says the platform minimum, the least it waits.
+ */
+export async function pendingNotices(db: HotDb, limit: number, env?: Env): Promise<Notice[]> {
   const cols = CHANGE_COLUMNS.split(', ').map((c) => `g.${c}`).join(', ');
-  const rows = await db.all<ChangeRow & { app_name: string; org_id: string; scope_id: string; environment: 'test' | 'live'; contacts: string }>(
+  const rows = await db.all<NoticeRow>(
     q`SELECT ${raw(cols)}, a.name AS app_name, a.org_id, a.scope_id, s.environment,
-             (SELECT json_group_array(email) FROM (SELECT email FROM org_security_contacts WHERE org_id = a.org_id ORDER BY email)) AS contacts
+             (SELECT json_group_array(email) FROM (SELECT email FROM org_security_contacts WHERE org_id = a.org_id ORDER BY email)) AS contacts,
+             (SELECT pw.min_delay_ms FROM platform_origin_waits pw WHERE pw.change_id = g.id) AS pw_min_delay_ms,
+             CASE WHEN g.proposed_by_kind = 'platform' THEN (SELECT pk.label FROM platform_keys pk WHERE pk.id = g.proposed_by AND pk.org_id = a.org_id) END AS pk_label
         FROM guarded_changes g JOIN apps a ON a.id = g.app_id JOIN scopes s ON s.scope_id = a.scope_id
        WHERE g.status = 'pending' AND g.notified_at IS NULL AND a.deleted_at IS NULL
-       ORDER BY g.proposed_at, g.id LIMIT ${limit}`,
+       ORDER BY g.proposed_at, g.request_id, g.id LIMIT ${limit}`,
   );
+  let envWait = PLATFORM_MIN_DELAY_MS;
+  if (env) {
+    try {
+      envWait = Math.max(requireChangeConfig(env).delayMs, platformMinDelayMs(env));
+    } catch {
+      // The ack refuses without a config anyway; the notice then names the least a platform proposal waits.
+    }
+  }
   return rows.map((r) => {
     const n: Notice = {
       change: changeView(r),
@@ -160,6 +184,10 @@ export async function pendingNotices(db: HotDb, limit: number): Promise<Notice[]
       app: { id: r.app_id, name: r.app_name, orgId: r.org_id, scopeId: r.scope_id, environment: r.environment },
     };
     if (r.policy_json !== null) n.policy = JSON.parse(r.policy_json) as unknown;
+    if (r.proposed_by_kind === 'platform') {
+      // As ackNotice: MAX(the env's delay, the platform minimum, the recorded wait, or the minimum when none is recorded).
+      n.platform = { keyId: r.proposed_by, keyLabel: r.pk_label, requestId: r.request_id, waitMs: Math.max(envWait, r.pw_min_delay_ms ?? PLATFORM_MIN_DELAY_MS) };
+    }
     return n;
   });
 }

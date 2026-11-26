@@ -4,7 +4,7 @@ The partner console: one Worker (`hana-id-console-<env>`) on `console.origin` th
 `/api/*` backend, with partner sign-in through console-auth. Routes, sessions, CSRF, fresh sign-in and the write paths
 are in `docs/api.md` ("Console Worker"); the security properties in `docs/security.md` ("Console Worker").
 
-Last verified: 2026-11-25 (branch `feat/app-user-linking`, not merged, not deployed: "Users": the linking view for owners, the "(all your apps)" labels, D925); 2026-11-25 (branch `feat/platform-keys`, from `next`, not merged, not deployed: "Layout"'s platform key files, the preview's platform keys answers and demo actions `act_demo_key_add` and `act_demo_key_confirm`, D918); 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
+Last verified: 2026-11-26 (branch `feat/platform-screens`: the tab and its heading "Web addresses (origins)", the Tech Lead's choice, D930); 2026-11-25 (branch `feat/platform-screens`, not merged, not deployed: the platform's screens, the Web addresses tab, the Users intro's wording, phone width, the preview's platform apps and activity, D930); 2026-11-25 (branch `feat/app-user-linking`, not merged, not deployed: "Users": the linking view for owners, the "(all your apps)" labels, D925); 2026-11-25 (branch `feat/platform-keys`, from `next`, not merged, not deployed: "Layout"'s platform key files, the preview's platform keys answers and demo actions `act_demo_key_add` and `act_demo_key_confirm`, D918); 2026-11-25 (branch `feat/platform-actor`, not merged, not deployed: the Audit's and a waiting change's words for the `platform` actor, the preview's platform rows, D916); 2026-11-12 (branch `feat/journear-new-mark`, not merged, not deployed: the new mark, the lockup drawn
 from `@hana-id/brand`'s `LOCKUP`, outlined, D789); 2026-11-12 (branch `feat/journear-design-console`, not merged, not deployed: the SPA on the Journear
 Passport design system, "Brand" and "Patterns" below, D765: its tokens, component classes, self-hosted Archivo and IBM
 Plex and the Journear lockup; toasts, the save bar, setting rows, choice cards, validate on blur, the stats strip; the
@@ -19,8 +19,8 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
 |---|---|
 | `src/` | The Worker: host dispatch, headers and CSRF, sign-in, sessions, fresh sign-in (`actions.ts`), the read and write routes, StaffRpc, the hourly cron |
 | `web/` | The SPA (React 18, React Router 6, Vite), built to `dist/` and served as the Worker's assets |
-| `web/src/pages/` | One file per page; `pages/app/` holds an app's sections (overview, origins, keys, login and sessions, signing, branding, suspend); `PlatformKeys.tsx` the org's platform keys, one key's page and the Confirm link's page (D918) |
-| `src/platform-keys.ts` | Platform keys (D918): the list and key routes (the people named from the org's current members only), Stop and Cancel, the emailed links, four eyes' person checks |
+| `web/src/pages/` | One file per page; `pages/app/` holds an app's sections (overview, origins, keys, login and sessions, signing, branding, suspend); `PlatformKeys.tsx` the org's platform keys, one key's page and the Confirm link's page (D918); `PlatformActivity.tsx` what the backend did with its keys (D930) |
+| `src/platform-keys.ts` | Platform keys (D918): the list and key routes (the people named from the org's current members only), Stop and Cancel, the emailed links, four eyes' person checks; the Platform activity route and the key page's count of owners (D930) |
 | `web/src/ui.tsx` | The UI kit: errors and notes, panels, badges, copy buttons, the in-page confirm, the fresh sign-in hint, the guarded-change timeline |
 | `web/src/messages.ts` | Every API error code in plain language, with what to do next |
 | `web/src/lib.tsx` | The data, write and fresh-sign-in hooks, the fragment-token reader, formatting |
@@ -114,8 +114,18 @@ the 12 h end, `GET /api/me` `sessionExpiresAt`, the preview's two session scenar
   shared with the admin's feed digests (D704): every audit action and app-change kind has a past-tense title ("Invite
   revoked", "Suspension lifted", …; `test/privacy.test.ts` wants one for each action), an unknown code reads as its
   words. Who did it: a member by their address ("a member" on an app change), "Journear", "system", "emailed link", or
-  "your platform key pkc_…" (the org's network backend, D916; nothing writes it yet); a waiting change proposed by the
-  platform reads "Requested by your platform key pkc_…".
+  "your backend (platform key “label”)" with the key's id under it (D916; the label from the answer's `keyLabels`,
+  D930; the id alone when the label can't be read); a box keeps only the backend's rows. A waiting change proposed by
+  the platform reads "Requested by your backend (platform key “label”)" with an "Asked for by your backend" badge.
+- **The platform's screens (D930)**: **Platform activity** (`/orgs/:org/platform-activity`, any member: each call the
+  backend made, what it did in words, the app, the key, the result, the request id; one app at a time; Older); the
+  Apps list and an app's header mark an app the backend made ("Made by your backend"); its Overview says which key made
+  it, its shared wallet and its User IDs; its **Web addresses (origins)** tab (the Origins tab, renamed in plain words; its heading the same, the Tech Lead's choice, D930) marks what
+  the backend asked for and says it waits 24 hours; **Suspend** names who holds the suspension (Journear, an owner, or
+  the backend, which an owner can **Take the suspension over**: the Audit row keeps `app.suspended` with `takenOver` and
+reads "Suspension taken over from your backend"); **Platform keys** shows each key's wallet settings,
+  last use, who accepted it, "Working, expires soon", and the frozen and one-owner lines. Pages no wider than a phone at
+  390 and 360 px (a table's hidden words and the upgrades' commands kept inside their boxes).
 - **Users** (`/orgs/:org/users`): on where the env's manifest sets `console.usersScreen: true` (`gen` writes
   `USERS_SCREEN`; testnet only, sandbox-dev has it on, D702); off elsewhere, the tab hidden and its routes `404` (D357).
   On a wallet several of the org's apps share (a marked scope, D925) the list and the detail label the person's IDs

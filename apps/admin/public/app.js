@@ -1113,8 +1113,8 @@ const LOG_KIND = {
   'key.created': 'Key created',
   'key.revoked': 'Key revoked',
   'key.rotated': 'Key rotated',
-  'origin.proposed': 'Origin proposed',
-  'origin.removed': 'Origin removed',
+  'origin.proposed': 'Web address asked for',
+  'origin.removed': 'Web address removed',
   'org.security_contacts': 'Security contacts replaced',
   'scope.assigned': 'Scope moved to this organisation',
   'scope.app_user_ids': 'Scope marked as a shared wallet',
@@ -1194,6 +1194,7 @@ const NAV_GROUPS = [
       { path: '/security/monitoring', label: 'Security & monitoring' },
       { path: '/security', label: 'Feed and notices' },
       { path: '/labels', label: 'Partner labels' },
+      { path: '/platform-queue', label: 'Platform queue' },
       { path: '/security/upgrades', label: 'Pending upgrades' },
       { path: '/security/playbooks', label: 'Playbooks' },
       { path: '/audit', label: 'Audit log' },
@@ -1716,7 +1717,7 @@ const KEY_STATE = { awaiting_acceptance: ['Awaiting acceptance', 'warning'], wai
 async function platformPanel(main, o) {
   const id = encodeURIComponent(o.id);
   const box = h('div', {}, loading());
-  main.append(panel('Platform keys', { anchor: 'platform', hint: 'Keys the organisation’s backend will sign its requests with (nothing accepts those requests yet). A staff-registered key works only once an owner of each scope accepts it, or a second staff member approves it.' }, box));
+  main.append(panel('Platform keys', { anchor: 'platform', hint: 'Keys the organisation’s backend signs its platform requests with: it creates and manages test apps on its shared wallets with them. A staff-registered key works only once an owner of each scope accepts it, or a second staff member approves it.' }, box));
   let d;
   try {
     d = await api('GET', `/api/orgs/${id}/platform`);
@@ -1742,6 +1743,7 @@ async function platformPanel(main, o) {
           : k.activeFrom && (k.state === 'waiting' || k.state === 'in_force')
             ? h('span', { class: 'sub' }, `${k.state === 'waiting' ? 'from' : 'since'} ${time(k.activeFrom)}`)
             : '',
+        k.state === 'in_force' || k.lastUsedAt ? h('span', { class: 'sub' }, k.lastUsedAt ? `last used ${time(k.lastUsedAt)}` : 'not used yet') : '',
       ),
       mono(k.thumbprint),
       k.scopes.map((s) => mono(s)),
@@ -1779,8 +1781,10 @@ async function platformPanel(main, o) {
       ),
     );
   box.replaceChildren(
-    h('p', {}, d.platform.enabled ? 'Platform keys are on for this organisation.' : 'Platform keys are off for this organisation: no key works.', d.platform.frozen ? ' The organisation is frozen.' : ''),
+    h('p', {}, d.platform.enabled ? 'Platform keys are on for this organisation.' : 'Platform keys are off for this organisation: no key works.', d.platform.frozen ? ' The organisation is frozen: its keys don’t work until it is unfrozen.' : ''),
     h('div', { class: 'row' }, switchBox),
+    // D930: the org's quotas (`platform_orgs`; raised by a reviewed D1 write, docs/operations.md "Platform API").
+    h('p', { class: 'hint' }, `Limits: at most ${d.platform.maxApps} apps made by its keys, ${d.platform.creationsPerDay} new apps a day, ${d.platform.proposalsPerDay} web addresses asked for a day. Raised by a reviewed database change (operations.md, “Platform API”).`),
     table(['Key', 'State', 'Fingerprint', 'Scopes', 'Registered by', ''], rows, { empty: 'No platform key yet.' }),
     ...approvals,
     h('h3', {}, 'Register a key'),
@@ -1796,6 +1800,96 @@ async function platformPanel(main, o) {
       { done: 'Key registered: it waits for an owner of each scope to accept it, or a second staff member to approve it.' },
     ),
   );
+  if (d.keys.length) box.append(await platformActivity(o.id));
+}
+
+/** A platform call's outcome in words (D930). */
+const callOutcome = (c) => (c.status < 300 ? badge('Worked', 'ok') : c.status === 429 ? badge('Limit reached', 'warning') : badge('Refused', 'critical'));
+
+/**
+ * D930: the org's platform calls, newest first (GET /api/orgs/:org/platform-calls), 50 a page with Older: what the
+ * backend did with its keys, which key, the app, the outcome, the request id and the caller's network.
+ */
+async function platformActivity(orgId, before) {
+  const box = h('div', { class: 'platform-activity' }, h('h3', {}, 'Activity'));
+  let d;
+  try {
+    d = await api('GET', `/api/orgs/${encodeURIComponent(orgId)}/platform-calls${before ? `?before=${before}` : ''}`);
+  } catch (err) {
+    box.append(errorBox(err));
+    return box;
+  }
+  const rows = d.calls.map((c) =>
+    tr(
+      time(c.at),
+      h('span', {}, ROUTE_WORDS[`${c.method} ${c.route}`] || `${c.method} ${c.route}`, h('span', { class: 'sub' }, mono(`${c.method} ${c.route}`))),
+      c.appId ? link(`/orgs/${encodeURIComponent(orgId)}/apps/${encodeURIComponent(c.appId)}`, c.appId) : '',
+      mono(c.keyId),
+      h('span', {}, callOutcome(c), c.code ? h('span', { class: 'sub' }, mono(c.code)) : ''),
+      mono(c.ipPrefix || ''),
+      mono(c.requestId),
+    ),
+  );
+  box.append(table(['When', 'What', 'App', 'Key', 'Result', 'From', 'Request ID'], rows, { empty: 'No platform request yet.' }));
+  if (d.next) {
+    const more = h('button', { type: 'button', class: btn('secondary', { small: true }) }, 'Older');
+    more.addEventListener('click', async () => box.replaceWith(await platformActivity(orgId, d.next)));
+    box.append(h('div', { class: 'row' }, more));
+  }
+  return box;
+}
+
+/** The platform API's routes in words (console-core platform-words.ts keeps the same; test-spa holds them equal). */
+const ROUTE_WORDS = {
+  'GET /v1/platform/credential': 'Read its own key',
+  'POST /v1/platform/credential/revoke': 'Stop its own key',
+  'POST /v1/platform/apps': 'Create an app',
+  'GET /v1/platform/apps': 'List apps',
+  'GET /v1/platform/apps/:appId': 'Read an app',
+  'POST /v1/platform/apps/:appId/origins': 'Ask for web addresses',
+  'POST /v1/platform/apps/:appId/origins/remove': 'Remove web addresses',
+  'POST /v1/platform/changes/:changeId/cancel': 'Cancel a waiting web address',
+  'POST /v1/platform/apps/:appId/suspend': 'Suspend or resume an app',
+  'POST /v1/platform/apps/:appId/keys': 'Create a publishable key',
+  'POST /v1/platform/apps/:appId/keys/:keyId/revoke': 'Revoke a publishable key',
+};
+
+/**
+ * D930 (docs/partner-platform-spec.md A11): the platform queue. Every web address a platform key asked for that isn't
+ * working yet, and every platform key still waiting, across organisations, soonest first, so staff see each before it
+ * works. Cancelling a web address is on its app's page; a key's Stop and Cancel are on its organisation's page. An
+ * owner's confirmation of a web address (and the queue's 7 days of confirmed ones) comes with piece P10.
+ */
+async function platformQueuePage(main) {
+  main.append(pageHead('Platform queue', { subtitle: 'What networks’ platform keys asked for that isn’t working yet: each web address waits at least 24 hours after its email, and each key waits for its acceptance or its time. Check each one; cancel a web address on its app’s page, a key on its organisation’s page.' }));
+  const q = await api('GET', '/api/platform-queue');
+  const left = (at) => (typeof at === 'number' ? (at > Date.now() ? `in ${Math.max(1, Math.round((at - Date.now()) / 3_600_000))} h` : 'due now') : '');
+  const origins = q.origins.map((o) =>
+    tr(
+      h('span', {}, o.idn ? h('span', {}, o.display, ' ', badge('IDN', 'warning')) : o.display, o.idn ? h('span', { class: 'sub' }, mono(o.origin)) : ''),
+      h('span', {}, link(`/orgs/${encodeURIComponent(o.orgId)}/apps/${encodeURIComponent(o.appId)}`, o.appName), h('span', { class: 'sub' }, mono(o.appId)), h('span', { class: 'sub' }, link(`/orgs/${encodeURIComponent(o.orgId)}#platform`, o.orgId))),
+      h('span', {}, o.keyLabel || '', h('span', { class: 'sub' }, mono(o.keyId))),
+      h('span', {}, o.notifiedAt ? h('span', {}, time(o.activeFrom), h('span', { class: 'sub' }, left(o.activeFrom))) : badge('Email not sent yet', 'warning'), h('span', { class: 'sub' }, `asked for ${time(o.proposedAt)}`)),
+    ),
+  );
+  main.append(
+    panel(
+      'Web addresses waiting',
+      { hint: 'Asked for by a platform key, not working yet. A web address comes into force by itself when its time comes, unless someone cancels it.' },
+      table(['Web address', 'App and organisation', 'Platform key', 'Works from'], origins, { empty: 'No web address waiting.' }),
+    ),
+  );
+  const keys = q.keys.map((k) => {
+    const [label, tone] = KEY_STATE[k.state] || [k.state, 'neutral'];
+    return tr(
+      h('span', {}, k.label, h('span', { class: 'sub' }, mono(k.id))),
+      link(`/orgs/${encodeURIComponent(k.orgId)}#platform`, k.orgId),
+      h('span', {}, badge(label, tone), k.heldUntil ? h('span', { class: 'sub' }, `held until ${time(k.heldUntil)}`) : k.activeFrom ? h('span', { class: 'sub' }, `from ${time(k.activeFrom)} (${left(k.activeFrom)})`) : ''),
+      k.proposedByKind === 'hana' ? `Journear staff (${k.proposedByEmail || k.proposedBy})` : `member ${k.proposedBy}`,
+      time(k.proposedAt),
+    );
+  });
+  main.append(panel('Platform keys waiting', { hint: 'Registered, not working yet: awaiting an owner’s acceptance, or announced and waiting for an owner’s confirmation or their time.' }, table(['Key', 'Organisation', 'State', 'Registered by', 'Registered'], keys, { empty: 'No platform key waiting.' })));
 }
 
 function dangerPanel(o, legacy) {
@@ -1970,6 +2064,12 @@ function originsHelp(app) {
   ].join('');
 }
 
+/**
+ * H3 (docs/partner-platform-spec.md A11; D930): the mainnet demo on an app that shares one wallet with other apps (its
+ * scope marked as shared, or the platform created it) asks staff to confirm this as well.
+ */
+const SHARED_WALLET_MAINNET_WARNING = 'This app shares one wallet with every app on its scope. Real money signed here comes from the same wallet as on the network’s other sites.';
+
 async function appPage(main, orgId, appId) {
   const { app } = await api('GET', `/api/apps/${encodeURIComponent(appId)}?org=${encodeURIComponent(orgId)}`);
   const base = `/api/apps/${encodeURIComponent(app.id)}`;
@@ -1977,10 +2077,19 @@ async function appPage(main, orgId, appId) {
   main.append(
     pageHead(app.name, {
       crumbs: [{ href: '/orgs', text: 'Organisations' }, { href: `/orgs/${encodeURIComponent(orgId)}`, text: legacy ? 'Legacy apps' : orgId }],
-      meta: [envBadge(app.environment), appState(app), mono(app.id), h('span', {}, 'scope ', mono(app.scopeId))],
+      meta: [envBadge(app.environment), appState(app), app.createdByKind === 'platform' ? badge('Made by the platform', 'long') : '', mono(app.id), h('span', {}, 'scope ', mono(app.scopeId))],
     }),
   );
   if (app.deleted) main.append(note('warn', 'This app is deleted', 'Its keys are revoked. Nothing here can be changed.'));
+  // D930: an app a network's backend created with its platform key (docs/partner-platform-spec.md A11).
+  if (app.createdByKind === 'platform')
+    main.append(
+      note(
+        'info',
+        'Created by the platform',
+        `The organisation’s backend created this app with its platform key ${app.createdByKey || ''} and manages it: its web addresses (each waits at least 24 hours after its email), its suspension and its publishable keys. Journear’s suspension and deleting the app stay staff’s.`,
+      ),
+    );
 
   // Suspensions: one switch each for Hana, the organisation and the partner.
   const bits = [1, 2, 4].filter((b) => app.suspendedBy & b);
@@ -1991,7 +2100,7 @@ async function appPage(main, orgId, appId) {
       bits.length
         ? table(
             ['Suspended by', ''],
-            bits.map((b) => tr(SUSPENDERS.find(([x]) => x === b)[1].replace(/^the /u, '').replace(/^./u, (c) => c.toUpperCase()), actionButton(b === 4 ? 'Lift the partner’s suspension' : b === 2 ? 'Lift the organisation-wide suspension' : 'Lift Journear’s suspension', () => api('POST', `${base}/resume`, { bit: b }), b === 4 ? 'Lift the partner’s own suspension? Only do this when the partner asked for it.' : null, false, { done: 'Suspension lifted.' }))),
+            bits.map((b) => tr(h('span', {}, SUSPENDERS.find(([x]) => x === b)[1].replace(/^the /u, '').replace(/^./u, (c) => c.toUpperCase()), b === 4 && app.partnerBitBy ? h('span', { class: 'sub' }, app.partnerBitBy === 'platform' ? 'held by the organisation’s backend (its platform key), which may lift it' : 'held by an owner in the partner portal: the backend can’t lift it') : ''), actionButton(b === 4 ? 'Lift the partner’s suspension' : b === 2 ? 'Lift the organisation-wide suspension' : 'Lift Journear’s suspension', () => api('POST', `${base}/resume`, { bit: b }), b === 4 ? 'Lift the partner’s own suspension? Only do this when the partner asked for it.' : null, false, { done: 'Suspension lifted.' }))),
           )
         : h('p', {}, badge('Not suspended', 'ok'), ' Logins work.'),
     ),
@@ -2113,14 +2222,16 @@ async function appPage(main, orgId, appId) {
       ? null
       : settingRow(
           'Mainnet demo',
-          app.settings.mainnetDemo ? 'On: signs on Base and Stellar’s public network, up to $9.99 per transaction, every request through the approval popup.' : 'Off: mainnets refused (D39).',
+          app.settings.mainnetDemo
+            ? `On: signs on Base and Stellar’s public network, up to $9.99 per transaction, every request through the approval popup.${app.sharedWallet ? ` ${SHARED_WALLET_MAINNET_WARNING}` : ''}`
+            : `Off: mainnets refused (D39).${app.sharedWallet ? ' This app shares one wallet with other apps: turning it on asks you to confirm that too.' : ''}`,
           !ro && app.environment === 'test'
             ? actionButton(
                 app.settings.mainnetDemo ? 'Turn the mainnet demo off' : 'Turn the mainnet demo on',
                 () => api('POST', `${base}/mainnet-demo`, { orgId, on: !app.settings.mainnetDemo, expectedVersion: app.settingsVersion }),
                 app.settings.mainnetDemo
                   ? 'Turn the mainnet demo off? Open wallets stop signing on mainnets within 10 s.'
-                  : 'Turn the mainnet demo on? This test app’s users can then sign real-funds transactions on Base and Stellar (up to $9.99 each) with testnet-MPC keys, which can be lost. It takes effect at once.',
+                  : `Turn the mainnet demo on? This test app’s users can then sign real-funds transactions on Base and Stellar (up to $9.99 each) with testnet-MPC keys, which can be lost. It takes effect at once.${app.sharedWallet ? ` ${SHARED_WALLET_MAINNET_WARNING}` : ''}`,
                 !app.settings.mainnetDemo,
                 { done: app.settings.mainnetDemo ? 'The mainnet demo is off.' : 'The mainnet demo is on.' },
               )
@@ -4604,6 +4715,7 @@ async function render() {
     else if ((m = /^\/security\/playbooks\/([a-z0-9-]{1,64})$/u.exec(path))) await playbookPage(main, m[1]);
     else if ((m = /^\/gas-sponsorship\/([1-9][0-9]{0,15})$/u.exec(path))) await evmRelayPage(main, Number(m[1]));
     else if (path === '/labels') await labelsPage(main);
+    else if (path === '/platform-queue') await platformQueuePage(main);
     else if ((m = /^\/labels\/(lc_[A-Za-z0-9]{1,64})$/u.exec(path))) await labelPage(main, m[1]);
     else if (path === '/reports') await reportsPage(main);
     else if (path === '/statements') await statementsPage(main);

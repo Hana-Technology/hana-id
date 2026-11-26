@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { duration } from '../../lib.tsx';
 import { Badge, Callout, Panel, Snippet, Stats } from '../../ui.tsx';
-import { suspension, useApp } from '../Apps.tsx';
+import { keyWords, suspension, useApp } from '../Apps.tsx';
 import { PendingChanges, isWaiting } from './Changes.tsx';
 
 type Done = 'done' | 'partly' | 'todo' | 'code';
@@ -60,7 +60,8 @@ export function Overview() {
   const waiting = a.origins.filter((o) => o.activeFrom === null || o.activeFrom > now);
   const key = a.keys.filter((k) => k.revokedAt === undefined).sort((x, y) => y.createdAt - x.createdAt)[0];
   const s = a.settings;
-  const susp = suspension(a.suspendedBy);
+  const susp = suspension(a.suspendedBy, a.partnerBitBy);
+  const byBackend = a.createdByKind === 'platform';
   const client = clientSnippet(key?.key, ctl.envName);
   const live = a.keys.filter((k) => k.revokedAt === undefined || k.revokedAt > now).length;
   const changes = a.changes.filter((c) => isWaiting(c, now)).length;
@@ -69,7 +70,7 @@ export function Overview() {
       <Stats
         label="This app at a glance"
         items={[
-          { label: 'Active origins', value: active.length, note: waiting.length ? `${waiting.length} waiting` : undefined },
+          { label: 'Active web addresses', value: active.length, note: waiting.length ? `${waiting.length} waiting` : undefined },
           { label: 'Working keys', value: live },
           { label: 'Pending changes', value: changes },
         ]}
@@ -81,6 +82,36 @@ export function Overview() {
           </p>
         </Callout>
       )}
+      {(byBackend || a.sharedWallet) && (
+        <Panel title={byBackend ? 'Made by your backend' : 'Shared wallet'} className="managed-by">
+          {byBackend && (
+            <p>
+              Your organisation’s backend created this app with {a.createdByKey ? keyWords(a.createdByKey, ctl.keyLabels) : 'its platform key'}, and manages it from there: it can ask for and remove web addresses, suspend and
+              resume the app, and make or revoke its publishable keys. Web addresses it asks for wait 24 hours after Journear emails your security contacts, and any owner can cancel them here until then.
+            </p>
+          )}
+          <dl className="facts">
+            {byBackend && (
+              <>
+                <dt>Made by</dt>
+                <dd>{a.createdByKey ? <>{keyWords(a.createdByKey, ctl.keyLabels)} <span className="mono small muted">{a.createdByKey}</span></> : 'your platform key'}</dd>
+              </>
+            )}
+            {a.sharedWallet && (
+              <>
+                <dt>Wallet</dt>
+                <dd>Shared: people get the same wallet on every app of these wallet settings (scope <span className="mono small">{a.scopeId}</span>). Auto-approve is off.</dd>
+              </>
+            )}
+            {a.userIds !== undefined && (
+              <>
+                <dt>User IDs</dt>
+                <dd>{a.userIds === 'app' ? 'Its own: each person gets a User ID and Support ID on this app that no other app shares.' : 'Shared with the other apps of these wallet settings: a person has the same User ID on each.'}</dd>
+              </>
+            )}
+          </dl>
+        </Panel>
+      )}
       {a.changes.some((c) => isWaiting(c, now)) && (
         <Panel title="Changes waiting" description="These take effect on their own after the security delay unless someone cancels them.">
           <PendingChanges ctl={ctl} kinds={['origin_add', 'policy_set', 'raw_sign_on']} title={null} />
@@ -88,19 +119,19 @@ export function Overview() {
       )}
       <Panel title="Getting started" description="The steps of the partner guide (integration.md, sent with the SDK). The console ticks what it can see.">
         <ol className="checklist">
-          <Step n={1} title="Allow your app’s origins" state={active.length ? 'done' : waiting.length ? 'partly' : 'todo'}>
+          <Step n={1} title="Allow your app’s web addresses" state={active.length ? 'done' : waiting.length ? 'partly' : 'todo'}>
             <p>
               {active.length
-                ? `${active.length} ${active.length === 1 ? 'origin is' : 'origins are'} active${waiting.length ? `, ${waiting.length} waiting` : ''}.`
+                ? `${active.length} ${active.length === 1 ? 'web address is' : 'web addresses are'} active${waiting.length ? `, ${waiting.length} waiting` : ''}.`
                 : waiting.length
                   ? `${waiting.length} waiting to take effect.`
-                  : 'The wallet loads only on the exact origins you allow.'}{' '}
-              <Link to={`${base}/origins`}>Manage origins</Link>
+                  : 'The wallet loads only on the exact web addresses you allow.'}{' '}
+              <Link to={`${base}/origins`}>Manage web addresses</Link>
             </p>
           </Step>
           <Step n={2} title="Copy your publishable key" state={key ? 'done' : 'todo'}>
             <p>
-              {key ? 'It is public: ship it in your page. Your origins are what protect it.' : 'The app has no active key.'} <Link to={`${base}/keys`}>Manage keys</Link>
+              {key ? 'It is public: ship it in your page. Your web addresses are what protect it.' : 'The app has no active key.'} <Link to={`${base}/keys`}>Manage keys</Link>
             </p>
           </Step>
           <Step n={3} title="Install the SDK" state="code">

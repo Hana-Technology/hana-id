@@ -26,8 +26,13 @@ interface KeyAnswer {
   role: 'owner' | 'viewer';
   accept: Ability;
   confirm: Ability;
+  /** D930: how many owners the organisation has now (on a real-money setup, one owner means the key always waits). */
+  owners?: number;
   now: number;
 }
+
+/** A working key this close to its end reads "expires soon" (the expiry emails go 30 and 7 days before). */
+const EXPIRING_MS = 30 * 86_400_000;
 
 const PER_ORG = 2;
 
@@ -46,6 +51,7 @@ export function stateWords(k: PlatformKeyView, now: number): { label: string; to
         line: `Starts working on ${when(k.activeFrom)} (${relative(k.activeFrom ?? now, now)}) if nobody confirms it.`,
       };
     case 'in_force':
+      if (k.expiresAt !== undefined && k.expiresAt - now <= EXPIRING_MS) return { label: 'Working, expires soon', tone: 'warn', line: `Stops working on ${when(k.expiresAt)}: register its next key now.` };
       return { label: 'Working', tone: 'ok', line: `Works until ${when(k.expiresAt)}.` };
     case 'cancelled':
       return { label: 'Cancelled', tone: 'neutral' };
@@ -106,7 +112,15 @@ export function PlatformKeys() {
       {head}
       <div className="stack">
         {!platform.enabled && <Callout tone="info">Journear hasn’t switched platform keys on for your organisation yet. You can register a key now: your backend can use it once Journear switches them on.</Callout>}
-        <Panel title="Keys">
+        {platform.frozen && <Callout tone="danger">Journear has frozen your organisation, so your backend’s keys don’t work until it is unfrozen. Stopping a key still works.</Callout>}
+        <Panel
+          title="Keys"
+          actions={
+            <Link className="jp-btn jp-btn-ghost jp-btn-sm" to={`/orgs/${org}/platform-activity`}>
+              See what your backend did
+            </Link>
+          }
+        >
           {keys.length === 0 ? (
             <Empty title="No platform keys yet">Register your backend’s public key below, or send it to Journear.</Empty>
           ) : (
@@ -131,14 +145,23 @@ export function PlatformKeys() {
                         <td>
                           <Link to={`/orgs/${org}/platform-keys/${k.id}`}>{k.label}</Link>
                           <div className="muted small mono">{k.thumbprint.slice(0, 16)}…</div>
+                          <div className="muted small">
+                            Wallet settings: <span className="mono">{k.scopes.join(', ')}</span>
+                          </div>
                         </td>
                         <td>
                           <Badge tone={s.tone}>{s.label}</Badge>
                           {s.line && <div className="muted small">{s.line}</div>}
+                          {(k.state === 'in_force' || k.lastUsedAt !== undefined) && <div className="muted small">{k.lastUsedAt !== undefined ? `Last used ${when(k.lastUsedAt)}` : 'Not used yet'}</div>}
                         </td>
                         <td>
                           {personOf(k.proposedByKind, k.proposedBy, people)}
                           <div className="muted small">{when(k.proposedAt)}</div>
+                          {k.acceptedByKind && (
+                            <div className="muted small">
+                              {k.acceptedByKind === 'hana' ? 'Approved by' : 'Accepted by'} {personOf(k.acceptedByKind, k.acceptedBy, people)}
+                            </div>
+                          )}
                         </td>
                         <td className="cell-actions">
                           <Link className="jp-btn jp-btn-secondary jp-btn-sm" to={`/orgs/${org}/platform-keys/${k.id}`}>
@@ -230,7 +253,7 @@ export function PlatformKeyPage() {
         <Loading />
       </>
     );
-  const { key: k, people, accept, confirm, now } = r.data;
+  const { key: k, people, accept, confirm, owners, now } = r.data;
   const owner = ctx?.role === 'owner';
   const s = stateWords(k, now);
   const act = (path: string, msg: string) =>
@@ -276,6 +299,12 @@ export function PlatformKeyPage() {
                 </dd>
               </>
             )}
+            {(k.state === 'in_force' || k.lastUsedAt !== undefined) && (
+              <>
+                <dt>Last used</dt>
+                <dd>{k.lastUsedAt !== undefined ? when(k.lastUsedAt) : 'Not used yet'}</dd>
+              </>
+            )}
           </dl>
         </Panel>
 
@@ -296,7 +325,12 @@ export function PlatformKeyPage() {
           </Panel>
         )}
 
-        {k.state === 'waiting' && (
+        {k.state === 'waiting' && k.fourEyes && k.registeredByYou && k.notifiedAt !== undefined && (
+          <Callout tone="info">
+            {owners === 1 ? `Your organisation has one owner, so this key starts working on ${when(k.activeFrom)}.` : `Another owner needs to confirm this key. If nobody does, it starts working on ${when(k.activeFrom)}.`}
+          </Callout>
+        )}
+        {k.state === 'waiting' && !(k.fourEyes && k.registeredByYou) && (
           <Panel title="Confirm this key">
             <p>Only confirm a key you know is your organisation’s. Once you confirm, your backend can use it straight away.</p>
             {confirm.allowed ? (

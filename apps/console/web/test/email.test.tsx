@@ -307,7 +307,7 @@ describe('the fresh sign-in page goes back to the page that started the action (
       ['app.settings', app, '/orgs/org_a/apps/app_1/email', 'Back to Email login'],
       ['owner_action', { scopeId: 's1', method: 'propose_change', change: { kind: 'AddClient', provider: 'email', aud: 'email:s1' } }, '/orgs/org_a/apps/app_1/email', 'Back to Email login'],
       ['app.settings', app, '/orgs/org_a/apps/app_1/sessions', 'Back to Login & sessions'],
-      ['origin.add', { ...app, add: [], remove: [] }, '/orgs/org_a/apps/app_1/origins', 'Back to Origins'],
+      ['origin.add', { ...app, add: [], remove: [] }, '/orgs/org_a/apps/app_1/origins', 'Back to Web addresses (origins)'],
       ['raw_sign.on', app, '/orgs/org_a/apps/app_1/signing', 'Back to Signing'],
       ['app.resume', app, '/orgs/org_a/apps/app_1/suspend', 'Back to Suspend'],
       ['owner_action', { scopeId: 's1', method: 'disable_shared_login', immediate: true }, '/orgs/org_a/scopes/s1', 'Back to the scope'],

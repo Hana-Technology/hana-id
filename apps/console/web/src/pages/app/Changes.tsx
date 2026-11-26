@@ -7,7 +7,7 @@ import { useNow, useWrite } from '../../lib.tsx';
 import { Badge, ChangeTrack, ConfirmButton, WriteNote, proposer } from '../../ui.tsx';
 import type { AppCtl } from '../Apps.tsx';
 
-const TITLE: Record<GuardedChange['kind'], string> = { origin_add: 'Add origin', policy_set: 'Set the auto-approve policy', raw_sign_on: 'Turn raw signing on' };
+const TITLE: Record<GuardedChange['kind'], string> = { origin_add: 'Add web address', policy_set: 'Set the auto-approve policy', raw_sign_on: 'Turn raw signing on' };
 
 export function changeTitle(c: GuardedChange): string {
   if (c.kind === 'origin_add') return `${TITLE.origin_add} ${c.display ?? c.origin ?? ''}`;
@@ -22,8 +22,17 @@ export function changeTitle(c: GuardedChange): string {
  */
 export const isWaiting = (c: GuardedChange, now: number): boolean => c.status === 'pending' && (c.activeFrom === null || c.activeFrom === undefined || c.activeFrom > now);
 
+/** A platform proposal's wait in words: whole hours ("24 hours"), else minutes (a local test setup's short wait). */
+const waitWords = (ms: number): string => (ms >= 3_600_000 ? `${Math.round(ms / 3_600_000)} hours` : `${Math.max(1, Math.round(ms / 60_000))} minutes`);
+
 /** One-line state for tables and summaries. */
 export function changeState(c: GuardedChange, now: number): string {
+  // D930: a web address your backend asked for always waits 24 hours after its email (outside local test setups), and
+  // nothing brings it forward yet (an owner's confirmation is still to come: docs/partner-platform-spec.md A15, P10).
+  if (isWaiting(c, now) && c.proposedByKind === 'platform')
+    return c.notifiedAt === undefined
+      ? 'Waiting for the announcement email: its 24 hours start once it is sent'
+      : `Waiting ${waitWords((c.activeFrom ?? 0) - c.notifiedAt)} after its email: starts working ${new Date(c.activeFrom ?? 0).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
   if (isWaiting(c, now)) return c.notifiedAt === undefined ? 'Waiting for the announcement email: the delay starts once it is sent' : `Pending: active from ${new Date(c.activeFrom ?? 0).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
   if (c.status === 'active' || c.status === 'pending') return 'In effect';
   return c.status === 'cancelled' ? 'Cancelled' : 'Ended';
@@ -70,8 +79,13 @@ export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }:
                 />
               )}
             </div>
+            {c.proposedByKind === 'platform' && (
+              <p className="pending-by small">
+                <Badge tone="info">Asked for by your backend</Badge>
+              </p>
+            )}
             <p className="pending-by muted small">
-              Requested by {(c.proposedByKind === 'member' && ctl.nameOf(c.proposedBy)) || proposer(c)}
+              Requested by {(c.proposedByKind === 'member' && ctl.nameOf(c.proposedBy)) || proposer(c, ctl.keyLabels)}
               {c.proposedByKind === 'member' && ctl.nameOf(c.proposedBy) && c.requestCountry ? ` (from ${c.requestCountry})` : ''}. {changeState(c, at)}.
             </p>
             <ChangeTrack change={c} now={at} />
@@ -79,6 +93,9 @@ export function PendingChanges({ ctl, kinds, title = 'Waiting to take effect' }:
         ))}
       </ul>
       <p className="muted small">Each change is announced by email to your organisation’s security contacts, then takes effect after the security delay. Until then any owner can cancel it here, or anyone with the email can use its cancel link.</p>
+      {list.some((c) => c.proposedByKind === 'platform') && (
+        <p className="muted small">Web addresses your backend asks for always wait 24 hours after their email, and nothing makes them start sooner. If one isn’t yours, cancel it.</p>
+      )}
       <WriteNote error={w.error} />
     </div>
   );

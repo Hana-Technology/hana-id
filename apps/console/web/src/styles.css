@@ -778,6 +778,14 @@ label.setting-row {
 .jp-table-wrap.tall {
   max-height: min(72vh, 760px);
 }
+/* D930: a table that scrolls sideways keeps its own absolutely placed text (the screen readers' "visually hidden"
+   words) inside it. Without a positioned box around them they sat at their place in the wide table but counted
+   against the page, so a phone could scroll the whole page sideways. The same for the section tabs and the nav row. */
+.jp-table-wrap,
+.tabs,
+.side-nav {
+  position: relative;
+}
 .jp-table td {
   vertical-align: top;
 }
@@ -949,6 +957,12 @@ tr.failed td {
 .snippet {
   position: relative;
   margin: 6px 0 4px;
+}
+/* D930: a command (the pending upgrades' near CLI lines) wraps instead of widening the page on a phone. */
+.snippet pre.mono {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 .snippet .jp-code {
   padding-right: 104px;
@@ -1946,4 +1960,18 @@ body:has(.jp-savebar) .toast-region {
   .facts.key-facts dd {
     margin-bottom: 8px;
   }
+}
+
+/* D930: the Platform activity page's app filter: a label and a select of a readable width, not the page's. */
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.filter-row select {
+  max-width: 22rem;
+}
+.audit-filter {
+  margin-bottom: 12px;
 }

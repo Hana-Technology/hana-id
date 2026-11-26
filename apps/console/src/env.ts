@@ -46,7 +46,7 @@ import type {
   PlatformOrgView,
 } from '@hana-id/console-core';
 import type { z } from '@hana-id/env/zod';
-import type { listPlatformKeysInput, platformKeyByLinkInput, platformKeyInput, proposePlatformKeyInput, revokePlatformKeyInput, stepUpPlatformKeyInput } from '@hana-id/console-core';
+import type { PlatformCallsInput, PlatformCallsPage, listPlatformKeysInput, platformKeyByLinkInput, platformKeyInput, proposePlatformKeyInput, revokePlatformKeyInput, stepUpPlatformKeyInput } from '@hana-id/console-core';
 import type { ConsoleUsersClient } from './users.ts';
 
 type Answer<T extends object> = Promise<RpcOk<T> | RpcFail>;
@@ -72,7 +72,8 @@ export interface ConsoleRpcClient {
   updateSettings(c: UpdateSettingsInput): Answer<{ version: number }>;
   /** A guarded change (`gc_`) or a request labels version (`lc_`, D894): the answer is that change's own view. */
   cancelChange(c: CancelChangeInput): Answer<{ change: GuardedChange | LabelChangeView }>;
-  setSuspended(c: ConsoleSetSuspendedInput): Answer<{ suspendedBy: number }>;
+  /** `takenOver` (D930): the member took the backend's (platform's) suspension over. */
+  setSuspended(c: ConsoleSetSuspendedInput): Answer<{ suspendedBy: number; takenOver?: true }>;
   createKey(c: CreateKeyInput): Answer<{ key: KeyView }>;
   rotateKey(c: RotateKeyInput): Answer<{ key: KeyView; oldKeyRevokedAt: number }>;
   revokeKey(c: RevokeKeyInput): Answer<object>;
@@ -99,6 +100,8 @@ export interface ConsoleRpcClient {
   revokePlatformKey(c: z.infer<typeof revokePlatformKeyInput>): Answer<{ key: PlatformKeyView }>;
   cancelPlatformKeyByLink(c: z.infer<typeof platformKeyByLinkInput>): Answer<{ key: { id: string; label: string; state: 'cancelled' | 'revoked' } }>;
   revokePlatformKeyByLink(c: z.infer<typeof platformKeyByLinkInput>): Answer<{ key: { id: string; label: string; state: 'cancelled' | 'revoked' } }>;
+  /** D930: one page of the org's platform calls (the Platform activity page). */
+  platformCalls(c: PlatformCallsInput): Answer<PlatformCallsPage>;
 }
 
 export interface Env {

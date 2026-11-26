@@ -101,7 +101,11 @@ export function changePending(c: MailContext, n: ChangeNotice, o: { cancelUrl: s
   }
   if (ch.kind === 'raw_sign_on') blocks.push({ kind: 'warn', text: 'Raw signing lets the app ask users to sign arbitrary bytes (each with the user’s approval).' });
   blocks.push(
-    { kind: 'p', text: `It takes effect about ${duration(o.delayMs)} after this notice. It may take effect at once if it qualifies for a waiver: a loopback origin on a test app, or a scope that no user has used yet.` },
+    // A platform proposal never has a waiver (D929); notices.ts sends it as platformOriginsProposed with its real wait
+    // (D930), so this line is only ever a member's, staff's or the system's, and says nothing of a waiver otherwise.
+    ch.proposedByKind === 'platform'
+      ? { kind: 'p', text: 'It waits at least 24 hours after this notice. No waiver applies to it.' }
+      : { kind: 'p', text: `It takes effect about ${duration(o.delayMs)} after this notice. It may take effect at once if it qualifies for a waiver: a loopback origin on a test app, or a scope that no user has used yet.` },
     { kind: 'p', text: 'If you did not expect this change, cancel it now. The page asks you to confirm; opening the link alone changes nothing.' },
     { kind: 'link', label: 'Cancel this change', url: o.cancelUrl },
     { kind: 'p', text: 'An owner can also cancel it in the console, and Journear security can cancel it from the admin console.' },
